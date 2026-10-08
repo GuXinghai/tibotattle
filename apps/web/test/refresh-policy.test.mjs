@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createContext, runInContext } from "node:vm";
-import { SUPPORTED_LOCALES, translate } from "../public/localization.js";
-import { refreshAccountingStatus, refreshQuickResultStatus } from "../public/lib.js";
+import { SUPPORTED_LOCALES, translate, translatePlural } from "../public/localization.js";
+import { historyCoverageNoticeKind, refreshAccountingStatus, refreshQuickResultStatus } from "../public/lib.js";
 import { observationRecency } from "../public/dashboard-ui.js";
 import { createDomHelpers } from "../public/ui-format.js";
 import { createElectronRefreshLease } from "../public/electron-refresh-lifecycle.js";
@@ -30,6 +30,12 @@ function refreshElement(tagName = "button") {
       add: (name) => classes.add(name),
       remove: (name) => classes.delete(name),
       contains: (name) => classes.has(name),
+      toggle: (name, force) => {
+        const enabled = force === undefined ? !classes.has(name) : Boolean(force);
+        if (enabled) classes.add(name);
+        else classes.delete(name);
+        return enabled;
+      },
     },
     get textContent() { return this.children.map((child) => child.textContent).join(""); },
     set textContent(value) { this.children = [{ textContent: String(value) }]; },
@@ -98,6 +104,14 @@ function refreshHarness({
     electronStartupRefreshDeferred: false,
     activeLocalDashboardLoad: null,
     globalState: { state: "stale", companionReachable: true },
+    refreshResultNotice: null,
+    lastRefreshResultReceipt: null,
+    PUBLIC_QUOTA_REFRESH_ERROR_CODES: new Set([
+      "app_server_unavailable",
+      "malformed_output",
+      "temporary_disconnect",
+      "collection_failed",
+    ]),
     electronRefreshLifecycleState: null,
     tibotattleDesktop: bridge,
     createElectronRefreshLease: (options) => createElectronRefreshLease({
@@ -147,6 +161,10 @@ function refreshHarness({
     refreshAccountingStatus,
     refreshQuickResultStatus,
     observationRecency,
+    historyCoverageNoticeKind,
+    finite: (value, fallback = 0) => Number.isFinite(value) ? value : fallback,
+    formatNumber: (value) => String(value),
+    tPlural: (key, count, values = {}) => translatePlural(key, count, values, "en-US"),
     setGlobalState(state, options = {}) {
       globalStates.push({ state, ...options });
       context.globalState = { state, ...options };
@@ -165,7 +183,7 @@ function refreshHarness({
     setLocalizedText(element, key) {
       element.textContent = translate(key, {}, "en-US");
     },
-    t: (key) => translate(key, {}, "en-US"),
+    t: (key, values = {}) => translate(key, values, "en-US"),
   });
   for (const name of [
     "localAnalysisLabel",
@@ -177,6 +195,13 @@ function refreshHarness({
   }
   runInContext(productionFunction("refreshElectronCadenceHealth"), context);
   runInContext(productionFunction("dashboardObservationPresentation"), context);
+  runInContext(productionFunction("renderObservationConnectionState"), context);
+  runInContext(productionFunction("quotaRefreshDisposition"), context);
+  runInContext(productionFunction("quotaRefreshFailureMessage"), context);
+  runInContext(productionFunction("refreshResultReceipt"), context);
+  runInContext(productionFunction("renderCurrentObservationConnectionState"), context);
+  runInContext(productionFunction("publishRefreshResultNotice"), context);
+  runInContext(productionFunction("loadLocalDashboardSecondaryState"), context);
   runInContext(productionFunction("requestRefresh"), context);
   runInContext(productionFunction("scheduleReturningUserRefresh"), context);
   return { context, calls, routes, notices, timers, buttons, priorDashboard, progressFrames, globalStates };
@@ -334,6 +359,135 @@ test("refresh polling preserves counted indexing and count-free accounting phase
   assert.equal(accounting.description, `Calculating accounting… · ${accounting.slots[2]}`);
   assert.deepEqual(harness.calls, ["detailed", "status", "status", "status", "reload", "continuation-check"]);
   assert.deepEqual(harness.notices, []);
+});
+
+test("quota refresh failures and no-new observations remain explicit over stale observation ticks", () => {
+  const harness = refreshHarness();
+  const checked = {
+    refreshId: "refresh-checked",
+    status: "succeeded",
+    result: { quotaRefresh: { attempted: true, recordWritten: false, errorCode: null } },
+  };
+
+  harness.context.publishRefreshResultNotice(checked);
+  assert.equal(harness.context.refreshResultNotice.titleKey, "refresh.quota.checkedTitle");
+  assert.equal(harness.notices.at(-1).copyKey, "refresh.quota.noNewCopy");
+  const noticeCount = harness.notices.length;
+
+  harness.context.renderObservationConnectionState(
+    { mode: "local", state: "stale" },
+    { status: "stale" },
+  );
+  assert.equal(harness.notices.length, noticeCount + 1);
+  assert.equal(harness.notices.at(-1).titleKey, "refresh.quota.checkedTitle",
+    "the generic stale timer restores the completed quota result");
+
+  harness.context.publishRefreshResultNotice({
+    refreshId: "refresh-failed",
+    status: "succeeded",
+    result: { quotaRefresh: { attempted: true, recordWritten: false, errorCode: "app_server_unavailable" } },
+  });
+  assert.equal(harness.context.refreshResultNotice.titleKey, "refresh.quota.failureTitle");
+  assert.equal(harness.notices.at(-1).kind, "warning");
+  assert.equal(harness.notices.at(-1).copyKey, "refresh.quota.appServerUnavailableCopy");
+
+  harness.context.publishRefreshResultNotice({
+    refreshId: "refresh-recovered",
+    status: "succeeded",
+    result: { quotaRefresh: { attempted: true, recordWritten: true, errorCode: null } },
+  });
+  assert.equal(harness.context.refreshResultNotice, null,
+    "a written quota observation clears the prior quota failure");
+});
+
+test("degraded history and quota failures are combined in one persistent notice", async () => {
+  const harness = refreshHarness({ refreshStates: [{
+    refreshId: "refresh-degraded-quota",
+    status: "degraded",
+    errorCode: "refresh_degraded",
+    failureCode: "unified_index",
+    result: {
+      unifiedIndex: { generation: { skippedSourceCount: 1, skippedThreadCount: 1 } },
+      quotaRefresh: { attempted: true, recordWritten: false, errorCode: "app_server_unavailable" },
+    },
+  }] });
+
+  await harness.context.requestRefresh();
+
+  const notice = harness.notices.at(-1);
+  assert.equal(notice.titleKey, "refresh.degradedQuotaFailureTitle");
+  assert.match(notice.copy, /left out 1 rollout source across 1 affected thread/u);
+  assert.match(notice.copy, /could not start the Codex CLI/u);
+  assert.equal(harness.context.refreshResultNotice, notice,
+    "a later generic stale render cannot replace the combined result");
+});
+
+test("dashboard reload reads the latest quota result from refresh status", async () => {
+  const harness = refreshHarness();
+  harness.context.localClient.health = async () => ({ status: "ready" });
+  harness.context.localClient.onboarding = async () => ({ ready: true });
+  harness.context.localClient.refreshStatus = async () => ({ refresh: {
+    refreshId: "native-refresh",
+    status: "succeeded",
+    result: { quotaRefresh: { attempted: true, recordWritten: false, errorCode: "temporary_disconnect" } },
+  } });
+  for (const name of [
+    "renderLocalOnboarding",
+    "renderAccounting",
+    "startElectronStartupRefresh",
+    "scheduleReturningUserRefresh",
+    "scheduleLocalReadinessPoll",
+  ]) harness.context[name] = () => {};
+
+  await harness.context.loadLocalDashboardSecondaryState({ isCurrent: () => true });
+
+  assert.equal(harness.context.refreshResultNotice.titleKey, "refresh.quota.failureTitle");
+  assert.equal(harness.notices.at(-1).copyKey, "refresh.quota.failureCodeCopy");
+  assert.equal(harness.notices.at(-1).copyValues.code, "temporary_disconnect");
+});
+
+test("quota failure messages explain a missing Codex CLI and expose only fixed error codes", () => {
+  const harness = refreshHarness();
+  harness.context.publishRefreshResultNotice({
+    refreshId: "refresh-cli-unavailable",
+    status: "succeeded",
+    result: { quotaRefresh: { attempted: true, recordWritten: false, errorCode: "app_server_unavailable" } },
+  });
+  const unavailable = harness.notices.at(-1);
+  assert.equal(unavailable.titleKey, "refresh.quota.failureTitle");
+  assert.equal(unavailable.copyKey, "refresh.quota.appServerUnavailableCopy");
+  for (const locale of SUPPORTED_LOCALES) {
+    const title = translate(unavailable.titleKey, {}, locale);
+    const copy = translate(unavailable.copyKey, {}, locale);
+    assert.match(title, /quota|额度|cuota/iu, locale);
+    assert.match(copy, /CODEX_BIN/u, locale);
+    assert.match(copy, /TiboTattle/u, locale);
+    assert.match(copy, /Codex CLI/u, locale);
+    assert.match(copy, /restart|重启|reinicia/iu, locale);
+  }
+
+  harness.context.publishRefreshResultNotice({
+    refreshId: "refresh-malformed-output",
+    status: "succeeded",
+    result: { quotaRefresh: { attempted: true, recordWritten: false, errorCode: "malformed_output" } },
+  });
+  const fixedCode = harness.notices.at(-1);
+  assert.equal(fixedCode.copyKey, "refresh.quota.failureCodeCopy");
+  assert.equal(fixedCode.copyValues.code, "malformed_output");
+  for (const locale of SUPPORTED_LOCALES) {
+    const copy = translate(fixedCode.copyKey, fixedCode.copyValues, locale);
+    assert.ok(copy.includes("malformed_output"), locale);
+    assert.equal(copy.includes("private_detail_untrusted"), false, locale);
+  }
+
+  harness.context.publishRefreshResultNotice({
+    refreshId: "refresh-untrusted-code",
+    status: "succeeded",
+    result: { quotaRefresh: { attempted: true, recordWritten: false, errorCode: "private_detail_untrusted" } },
+  });
+  const untrusted = harness.notices.at(-1);
+  assert.equal(untrusted.copyKey, "refresh.quota.failureCopy");
+  assert.equal(JSON.stringify(untrusted).includes("private_detail_untrusted"), false);
 });
 
 test("both visible manual refresh controls request detailed accounting once", async (t) => {
@@ -703,4 +857,22 @@ test("already-running guidance is translated and the duplicate action copy is re
     }
   }
   assert.doesNotMatch(source, /recalculate-detailed-accounting|refresh\.recalculateDetailed/u);
+});
+
+test("quota refresh outcome copy is localized in every shipped locale", () => {
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const key of [
+      "refresh.quota.failureTitle",
+      "refresh.quota.failureCopy",
+      "refresh.quota.appServerUnavailableCopy",
+      "refresh.quota.failureCodeCopy",
+      "refresh.quota.checkedTitle",
+      "refresh.quota.noNewCopy",
+      "refresh.degradedQuotaFailureTitle",
+    ]) {
+      const values = key === "refresh.quota.failureCodeCopy" ? { code: "malformed_output" } : {};
+      const copy = translate(key, values, locale);
+      assert.ok(copy.length > 0 && copy !== key, `${locale}: ${key}`);
+    }
+  }
 });

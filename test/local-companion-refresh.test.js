@@ -1393,6 +1393,186 @@ test("a fresh unified machine completes its first refresh when the app-server re
   }
 });
 
+test("quick refresh reports a quota failure, preserves no-change state, and recovers on the next observation", async () => {
+  const collectorResults = [
+    {
+      rolloutRecordsWritten: 0,
+      filesDiscovered: 0,
+      refresh: {
+        attempted: true,
+        recordWritten: false,
+        errorCode: "app_server_unavailable",
+      },
+    },
+    {
+      rolloutRecordsWritten: 0,
+      filesDiscovered: 0,
+      refresh: {
+        attempted: true,
+        recordWritten: false,
+        errorCode: null,
+      },
+    },
+    {
+      rolloutRecordsWritten: 0,
+      filesDiscovered: 0,
+      refresh: {
+        attempted: true,
+        recordWritten: true,
+        errorCode: null,
+      },
+    },
+  ];
+  const collectorOptions = [];
+  let unifiedIndexRuns = 0;
+  const runner = createLocalCollectorRefreshRunner({
+    accountingSourceMode: "unified",
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async (options) => {
+      collectorOptions.push(options);
+      return collectorResults.shift();
+    },
+    refreshUnifiedIndex: async () => {
+      unifiedIndexRuns += 1;
+      return { status: "ingested" };
+    },
+  });
+
+  const failed = await runner({ mode: "quick" });
+  assert.deepEqual(failed.quotaRefresh, {
+    attempted: true,
+    recordWritten: false,
+    errorCode: "app_server_unavailable",
+  });
+  assert.equal(failed.unifiedIndex, undefined);
+
+  const unchanged = await runner({ mode: "quick" });
+  assert.deepEqual(unchanged.quotaRefresh, {
+    attempted: true,
+    recordWritten: false,
+    errorCode: null,
+  });
+
+  const recovered = await runner({ mode: "quick" });
+  assert.deepEqual(recovered.quotaRefresh, {
+    attempted: true,
+    recordWritten: true,
+    errorCode: null,
+  });
+  assert.equal(collectorOptions.length, 3);
+  assert.equal(collectorOptions.every((options) => options.skipRolloutIngestion), true);
+  assert.equal(unifiedIndexRuns, 0);
+});
+
+test("detailed refresh keeps quota and unified-index failures independent and recovers", async () => {
+  const completeGeneration = {
+    id: 1,
+    fingerprint: "e".repeat(64),
+    status: "complete",
+    discoveryComplete: true,
+    diagnosticsComplete: true,
+    usageProvenanceComplete: true,
+    sourceOrderComplete: true,
+    quotaProvenanceComplete: true,
+    toolProvenanceComplete: true,
+  };
+  const collectorResults = [
+    {
+      rolloutRecordsWritten: 0,
+      filesDiscovered: 0,
+      refresh: {
+        attempted: true,
+        recordWritten: false,
+        errorCode: "app_server_unavailable",
+      },
+    },
+    {
+      rolloutRecordsWritten: 0,
+      filesDiscovered: 0,
+      refresh: {
+        attempted: true,
+        recordWritten: false,
+        errorCode: "app_server_unavailable",
+      },
+    },
+    {
+      rolloutRecordsWritten: 0,
+      filesDiscovered: 0,
+      refresh: {
+        attempted: true,
+        recordWritten: false,
+        errorCode: null,
+      },
+    },
+    {
+      rolloutRecordsWritten: 0,
+      filesDiscovered: 0,
+      refresh: {
+        attempted: true,
+        recordWritten: true,
+        errorCode: null,
+      },
+    },
+  ];
+  let indexPass = 0;
+  const runner = createLocalCollectorRefreshRunner({
+    accountingSourceMode: "unified",
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => collectorResults.shift(),
+    refreshUnifiedIndex: async () => {
+      indexPass += 1;
+      if (indexPass === 2) {
+        const error = new Error("synthetic index failure");
+        error.code = "local_unified_index_file_changed";
+        throw error;
+      }
+      return {
+        status: "ingested",
+        generation: completeGeneration,
+        unchanged: indexPass === 3,
+      };
+    },
+    readAccountingCache: async () => ({
+      status: "unavailable",
+      errorCode: "cache_missing",
+      cache: null,
+    }),
+    refreshAccounting: async () => ({
+      generatedAt: "2026-08-19T12:00:00.000Z",
+      periods: [{ id: "7d", events: 0 }],
+      diagnostics: {},
+      sourceDescriptor: { fallbackCount: 0 },
+    }),
+  });
+
+  const quotaFailureWithIndexSuccess = await runner({ mode: "detailed" });
+  assert.equal(quotaFailureWithIndexSuccess.quotaRefresh.errorCode, "app_server_unavailable");
+  assert.equal(quotaFailureWithIndexSuccess.unifiedIndex.status, "ingested");
+  assert.equal(quotaFailureWithIndexSuccess.accounting.status, "replay_safe");
+
+  const bothFailed = await runner({ mode: "detailed" });
+  assert.equal(bothFailed.quotaRefresh.errorCode, "app_server_unavailable");
+  assert.deepEqual(bothFailed.unifiedIndex, {
+    status: "failed",
+    errorCode: "local_unified_index_file_changed",
+  });
+  assert.equal(bothFailed.accounting.status, "unavailable");
+
+  const noNewObservation = await runner({ mode: "detailed" });
+  assert.equal(noNewObservation.quotaRefresh.recordWritten, false);
+  assert.equal(noNewObservation.unifiedIndex.status, "ingested");
+  assert.equal(noNewObservation.unifiedIndex.unchanged, true);
+
+  const recovered = await runner({ mode: "detailed" });
+  assert.deepEqual(recovered.quotaRefresh, {
+    attempted: true,
+    recordWritten: true,
+    errorCode: null,
+  });
+  assert.equal(recovered.unifiedIndex.status, "ingested");
+  assert.equal(indexPass, 4);
+});
+
 test("a mid-run checkpoint loss fails the refresh under the stable collector code", async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-store-fault-"));
   const clock = () => Date.parse("2026-08-19T12:00:00.000Z");
@@ -2066,14 +2246,17 @@ test("archive coverage advances before a foreground resource limit is surfaced",
   ]);
 });
 
-test("zero-write local refresh reuses a current valid accounting cache without altering it", async () => {
+test("zero-write local refresh reuses a current valid accounting cache without altering it", async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-zero-write-state-"));
+  const stateFile = join(stateRoot, "local-collector-state.sqlite");
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
   const controller = new AbortController();
   const clock = () => Date.parse("2026-07-23T12:00:00.000Z");
   const before = structuredClone(REUSABLE_ACCOUNTING_CACHE);
   let readOptions;
   let rebuilds = 0;
   const runner = createLocalCollectorRefreshRunner({
-    stateFile: "/private/local-collector-state.sqlite",
+    stateFile,
     clock,
     selectAccountObservationSecret: () => ({
       loadAccountObservationSecret: null,
@@ -2104,7 +2287,7 @@ test("zero-write local refresh reuses a current valid accounting cache without a
   const result = await runner({ signal: controller.signal });
 
   assert.deepEqual(readOptions, {
-    stateFile: "/private/local-collector-state.sqlite",
+    stateFile,
     now: clock,
     sourceMode: "legacy",
     maximumAgeMs: 30 * 60 * 1_000,
@@ -2245,13 +2428,16 @@ test("a quota-only refresh reuses current accounting while retaining fresh quota
   });
 });
 
-test("a memory-budget rebuild miss serves the retained cache, reports deferred, and backs off", async () => {
+test("a memory-budget rebuild miss serves the retained cache, reports deferred, and backs off", async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-budget-state-"));
+  const stateFile = join(stateRoot, "local-collector-state.sqlite");
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
   let nowMs = Date.parse("2026-07-23T12:00:00.000Z");
   const clock = () => nowMs;
   let rebuildAttempts = 0;
   let deferForNextRebuild = true;
   const runner = createLocalCollectorRefreshRunner({
-    stateFile: "/private/state.sqlite",
+    stateFile,
     clock,
     selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
     runCollector: async () => ({
@@ -2349,9 +2535,12 @@ test("a memory-budget rebuild miss serves the retained cache, reports deferred, 
   });
 });
 
-test("a budget miss with no retained cache defers without fabricating an accounting block", async () => {
+test("a budget miss with no retained cache defers without fabricating an accounting block", async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-empty-budget-state-"));
+  const stateFile = join(stateRoot, "local-collector-state.sqlite");
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
   const runner = createLocalCollectorRefreshRunner({
-    stateFile: "/private/state.sqlite",
+    stateFile,
     selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
     runCollector: async () => ({
       rolloutRecordsWritten: 5,
@@ -2533,13 +2722,16 @@ test("local refresh rebuilds when rollout usage changes or no definitive count i
   }
 });
 
-test("local refresh forwards its AbortSignal into replay-safe accounting", async () => {
+test("local refresh forwards its AbortSignal into replay-safe accounting", async (t) => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-abort-state-"));
+  const stateFile = join(stateRoot, "local-collector-state.sqlite");
+  t.after(() => rm(stateRoot, { recursive: true, force: true }));
   const controller = new AbortController();
   const clock = () => Date.parse("2026-07-23T12:00:00.000Z");
   let accountingOptions;
   const runner = createLocalCollectorRefreshRunner({
     codexHome: "/private/codex-home",
-    stateFile: "/private/local-collector-state.sqlite",
+    stateFile,
     unifiedIndexFile: "/private/local-unified-index-v1.sqlite",
     clock,
     selectAccountObservationSecret: () => ({
@@ -2568,7 +2760,7 @@ test("local refresh forwards its AbortSignal into replay-safe accounting", async
   const result = await runner({ signal: controller.signal });
 
   assert.equal(accountingOptions.codexHome, "/private/codex-home");
-  assert.equal(accountingOptions.stateFile, "/private/local-collector-state.sqlite");
+  assert.equal(accountingOptions.stateFile, stateFile);
   assert.equal(accountingOptions.now, clock);
   // Re-pinned 93 -> 365 (2026-08-08): the standing owner rule forbids
   // convenience-sized history windows (31 and 93 were both wrong). The

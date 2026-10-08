@@ -1199,6 +1199,7 @@ export async function run(
       system_legacy_resource: "system app legacy layout",
       user_bundled_cli: "user app CLI layout",
       user_legacy_resource: "user app legacy layout",
+      user_windows_cli: "user Windows desktop CLI",
     }[binary.location];
     const binaryDescription = binaryLocation ? `${binarySource}, ${binaryLocation}` : binarySource;
     console.log(`Codex binary: ${binaryDescription} (${binary.versionStatus === "available" ? binary.version : "version unavailable"})`);

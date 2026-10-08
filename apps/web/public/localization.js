@@ -118,6 +118,7 @@ export const WEB_MESSAGES = Object.freeze({
     .filter((key) => key.startsWith("allowance.")
       || key.startsWith("trends.")
       || key.startsWith("contribution.")
+      || key.startsWith("refresh.")
       || key.startsWith("continuityConsent.")
       || key.startsWith("page.")
       || key.startsWith("reporting.")

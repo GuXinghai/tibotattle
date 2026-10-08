@@ -352,6 +352,14 @@ let electronStartupRefreshTriggered = false;
 let electronStartupRefreshDeferred = false;
 let globalState = null;
 let visibleConnectionNotice = null;
+let refreshResultNotice = null;
+let lastRefreshResultReceipt = null;
+const PUBLIC_QUOTA_REFRESH_ERROR_CODES = new Set([
+  "app_server_unavailable",
+  "malformed_output",
+  "temporary_disconnect",
+  "collection_failed",
+]);
 let dashboardUnavailableState = null;
 let lastObservationPresentationStatus = null;
 
@@ -848,6 +856,7 @@ function showConnectionNotice({
   titleKey = null,
   copy,
   copyKey = null,
+  copyValues = null,
   kind = "warning",
   showDemo = false,
   showCheck = false,
@@ -855,6 +864,7 @@ function showConnectionNotice({
   visibleConnectionNotice = {
     copy,
     copyKey,
+    ...(copyValues === null ? {} : { copyValues }),
     kind,
     showCheck,
     showDemo,
@@ -869,6 +879,7 @@ function renderConnectionNotice() {
   const {
     copy,
     copyKey,
+    copyValues = null,
     kind,
     showCheck,
     showDemo,
@@ -883,7 +894,7 @@ function renderConnectionNotice() {
     setProductText($("#connection-title"), title);
   }
   if (copyKey) {
-    setLocalizedText($("#connection-copy"), copyKey);
+    setLocalizedText($("#connection-copy"), copyKey, copyValues ?? {});
   } else {
     setProductText($("#connection-copy"), copy);
   }
@@ -1463,6 +1474,11 @@ function dashboardObservationPresentation(data, recency) {
 }
 
 function renderObservationConnectionState(data, recency) {
+  if (refreshResultNotice !== null) {
+    showConnectionNotice(refreshResultNotice);
+    $("#connection-notice").classList.toggle("notice-compact", data.state === "stale");
+    return;
+  }
   if (data.mode === "demo") {
     showConnectionNotice({
       title: "You are exploring a labeled demonstration",
@@ -1495,6 +1511,121 @@ function renderObservationConnectionState(data, recency) {
     hideConnectionNotice();
   }
   $("#connection-notice").classList.toggle("notice-compact", data.state === "stale");
+}
+
+function quotaRefreshDisposition(refresh) {
+  const result = refresh?.result?.quotaRefresh;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) return null;
+  if (typeof result.errorCode === "string" && result.errorCode.length > 0) return "failed";
+  if (result.attempted === true && result.recordWritten === true) return "written";
+  if (result.attempted === true && result.recordWritten === false) return "no-new";
+  return null;
+}
+
+function quotaRefreshFailureMessage(refresh) {
+  const errorCode = refresh?.result?.quotaRefresh?.errorCode;
+  if (errorCode === "app_server_unavailable") {
+    return { copyKey: "refresh.quota.appServerUnavailableCopy" };
+  }
+  if (PUBLIC_QUOTA_REFRESH_ERROR_CODES.has(errorCode)) {
+    return {
+      copyKey: "refresh.quota.failureCodeCopy",
+      copyValues: { code: errorCode },
+    };
+  }
+  return { copyKey: "refresh.quota.failureCopy" };
+}
+
+function refreshResultReceipt(refresh) {
+  if (!refresh || typeof refresh !== "object") return null;
+  const quota = refresh.result?.quotaRefresh;
+  if (!quota && refresh.status !== "degraded") return null;
+  return JSON.stringify({
+    refreshId: typeof refresh.refreshId === "string" ? refresh.refreshId : null,
+    status: refresh.status ?? null,
+    errorCode: typeof refresh.errorCode === "string" ? refresh.errorCode : null,
+    failureCode: typeof refresh.failureCode === "string" ? refresh.failureCode : null,
+    quotaRefresh: quota ?? null,
+  });
+}
+
+function renderCurrentObservationConnectionState() {
+  if (!dashboard) return;
+  const recency = observationRecency(dashboard);
+  renderObservationConnectionState(
+    dashboardObservationPresentation(dashboard, recency),
+    recency,
+  );
+}
+
+function publishRefreshResultNotice(refresh) {
+  if (!refresh || !["succeeded", "degraded"].includes(refresh.status)) return;
+  const disposition = quotaRefreshDisposition(refresh);
+  const receipt = refreshResultReceipt(refresh);
+  if (receipt !== null && receipt === lastRefreshResultReceipt) return;
+  if (receipt !== null) lastRefreshResultReceipt = receipt;
+
+  if (refresh.status === "degraded") {
+    const unifiedIndex = refresh.result?.unifiedIndex ?? null;
+    const history = dashboard?.pricing?.historyCoverage
+      ?? dashboard?.accounting?.historyCoverage
+      ?? null;
+    const skipped = finite(unifiedIndex?.generation?.skippedSourceCount, 0);
+    const threads = finite(unifiedIndex?.generation?.skippedThreadCount, 0);
+    const degradedCopy = skipped > 0
+      ? t("refresh.degradedCopy", {
+        sources: tPlural("format.rolloutSourceCount", skipped, {
+          count: formatNumber(skipped),
+        }),
+        threads: tPlural("format.affectedThreadCount", threads, {
+          count: formatNumber(threads),
+        }),
+      })
+      : t("refresh.degradedGenericCopy", {
+        code: refresh.failureCode ?? "unified_index",
+      });
+    const failureMessage = quotaRefreshFailureMessage(refresh);
+    const quotaCopy = disposition === "failed"
+      ? t(failureMessage.copyKey, failureMessage.copyValues ?? {})
+      : disposition === "no-new"
+        ? t("refresh.quota.noNewCopy")
+        : "";
+    refreshResultNotice = {
+      titleKey: disposition === "failed"
+        ? "refresh.degradedQuotaFailureTitle"
+        : "refresh.degradedTitle",
+      copy: quotaCopy ? `${degradedCopy} ${quotaCopy}` : degradedCopy,
+      kind: disposition === "failed"
+        ? "error"
+        : historyCoverageNoticeKind({
+          history,
+          accountingProjection: dashboard?.accounting?.projection,
+        }),
+    };
+    showConnectionNotice(refreshResultNotice);
+    return;
+  }
+
+  if (disposition === "failed" || disposition === "no-new") {
+    refreshResultNotice = disposition === "failed"
+      ? {
+        titleKey: "refresh.quota.failureTitle",
+        ...quotaRefreshFailureMessage(refresh),
+        kind: "warning",
+      }
+      : {
+        titleKey: "refresh.quota.checkedTitle",
+        copyKey: "refresh.quota.noNewCopy",
+        kind: "info",
+      };
+    showConnectionNotice(refreshResultNotice);
+    return;
+  }
+
+  if (disposition === "written" && refreshResultNotice !== null) {
+    refreshResultNotice = null;
+    renderCurrentObservationConnectionState();
+  }
 }
 
 function renderLiveObservationPresentation(data, recency = observationRecency(data)) {
@@ -11126,6 +11257,7 @@ async function loadLocalDashboardSecondaryState({ isCurrent }) {
     if (refreshState === null) return;
     accountingRebuildDeferral =
       refreshState?.refresh?.result?.accountingRebuildDeferred ?? null;
+    publishRefreshResultNotice(refreshState?.refresh);
     if (dashboard) renderAccounting(dashboard);
   });
   await Promise.all([health, onboarding, refresh]);
@@ -11391,7 +11523,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     let finalErrorCode = null;
     let finalFailedStep = null;
     let finalFailureCode = null;
-    let finalUnifiedIndex = null;
+    let finalRefreshState = null;
     let pollCount = 0;
     let timeoutSettlementNoted = false;
     while (pollingBudget.hasTime()
@@ -11409,11 +11541,11 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
         continue;
       }
       const refresh = status?.refresh ?? {};
+      finalRefreshState = refresh;
       outcome = refresh.status ?? "failed";
       finalErrorCode = refresh.errorCode ?? null;
       finalFailedStep = refresh.failedStep ?? finalFailedStep;
       finalFailureCode = refresh.failureCode ?? finalFailureCode;
-      finalUnifiedIndex = refresh.result?.unifiedIndex ?? finalUnifiedIndex;
       const progress = refresh.progress ?? refresh.result?.indexing ?? null;
       const collectorProgress = progress?.kind === undefined;
       const archiveScanning = progress?.kind === "archive_index";
@@ -11532,36 +11664,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       renderRefreshProgress(button, t("refresh.degradedLoading"));
       await loadLocalDashboard();
       lastReindexProgressReceipt = historyProgressReceipt();
-      const history = dashboard?.pricing?.historyCoverage
-        ?? dashboard?.accounting?.historyCoverage
-        ?? null;
-      const skipped = finite(
-        finalUnifiedIndex?.generation?.skippedSourceCount,
-        0,
-      );
-      const threads = finite(
-        finalUnifiedIndex?.generation?.skippedThreadCount,
-        0,
-      );
-      showConnectionNotice({
-        title: t("refresh.degradedTitle"),
-        copy: skipped > 0
-          ? t("refresh.degradedCopy", {
-            sources: tPlural("format.rolloutSourceCount", skipped, {
-              count: formatNumber(skipped),
-            }),
-            threads: tPlural("format.affectedThreadCount", threads, {
-              count: formatNumber(threads),
-            }),
-          })
-          : t("refresh.degradedGenericCopy", {
-            code: finalFailureCode ?? "unified_index",
-          }),
-        kind: historyCoverageNoticeKind({
-          history,
-          accountingProjection: dashboard?.accounting?.projection,
-        }),
-      });
+      publishRefreshResultNotice(finalRefreshState);
       return;
     }
     if (outcome !== "succeeded") {
@@ -11582,6 +11685,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     refreshProgressClock = null;
     renderRefreshProgress(button, "Loading updated evidence…");
     await loadLocalDashboard();
+    publishRefreshResultNotice(finalRefreshState);
     if (detailed) scheduleReindexAutoContinuation();
   } catch (error) {
     if (dashboard) {

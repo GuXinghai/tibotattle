@@ -374,6 +374,19 @@ cancelled, and interrupted detailed attempts count toward that hour so they do
 not become a retry loop. After an already-running quick quota check finishes,
 you can choose Refresh again to request detailed work.
 
+Completion of local analysis does not imply that every provider quota read
+succeeded. When quota collection fails, the dashboard keeps existing usage and
+its observation timestamp and reports the quota failure separately. A successful
+check with no new observation says so; it does not renew the timestamp. A later
+successful quota read clears the quota warning.
+
+On Windows, CLI selection prefers a valid `CODEX_BIN`, then a working `codex.exe`
+on PATH, then a verified CLI from the three most recently modified installation
+directories below `%LOCALAPPDATA%\OpenAI\Codex\bin`. Desktop discovery is bounded
+to five seconds. If Codex cannot be started, confirm that it is installed or set
+`CODEX_BIN` to its executable, restart TiboTattle, and refresh again. History
+analysis remains available even when live quota collection is unavailable.
+
 In the Electron app, the shell pauses its one-shot schedule only after the
 dashboard's local request has been accepted. The dashboard then sends a
 content-free heartbeat while that exact quick or detailed pass is active. A

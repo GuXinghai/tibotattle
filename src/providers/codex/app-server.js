@@ -1,9 +1,9 @@
 import { constants as fsConstants } from "node:fs";
-import { access, stat } from "node:fs/promises";
+import { access, stat, lstat, readdir, realpath } from "node:fs/promises";
 import { execFile, spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { deriveOpenAIAccountScope, sanitizeAccountScope } from "./account-scope.js";
@@ -20,6 +20,7 @@ const BINARY_VERSION_TIMEOUT_MS = 5_000;
 const BINARY_VERSION_MAXIMUM_BYTES = 4_096;
 const CODEX_BINARY_DIAGNOSTIC_SCHEMA_VERSION = "codex-binary-diagnostic-v0.2";
 const execFileAsync = promisify(execFile);
+const windowsBinaryCache = { key: null, selected: null };
 const ACCOUNT_HMAC_ENV = "APP_USAGEMONITOR_ACCOUNT_HMAC_KEY";
 const VOLATILE_RESET_CREDIT_INVENTORY = Symbol(
   "tibotattle.volatileResetCreditInventory",
@@ -59,6 +60,14 @@ async function resolveCodexBinary({
   statFile = stat,
   platform = process.platform,
   applicationsDir = "/Applications",
+  lstatFile = lstat,
+  readDirectory = readdir,
+  resolvePath = realpath,
+  readVersion = readCodexBinaryVersion,
+  now = () => performance.now(),
+  forceRefresh = false,
+  binaryCache = environment === process.env && statFile === stat && readVersion === readCodexBinaryVersion
+    ? windowsBinaryCache : null,
 } = {}) {
   const candidates = [{
     binary: environment.CODEX_BIN,
@@ -93,6 +102,99 @@ async function resolveCodexBinary({
   ))) {
     if (await isExecutable(candidate.binary, accessFile, statFile)) return candidate;
   }
+  if (platform === "win32") {
+    const envValue = (name) => {
+      const key = Object.keys(environment).sort().find((key) => key.toUpperCase() === name);
+      return key === undefined ? undefined : environment[key];
+    };
+    const path = typeof envValue("PATH") === "string" ? envValue("PATH") : "";
+    const localAppData = envValue("LOCALAPPDATA");
+    const cacheKey = `${path}\0${localAppData ?? ""}`;
+    if (binaryCache && !forceRefresh && binaryCache.key === cacheKey
+        && binaryCache.selected && await isExecutable(binaryCache.selected.binary, accessFile, statFile)) {
+      const selected = binaryCache.selected;
+      try {
+        if (selected.location !== "user_windows_cli"
+            || (!(await lstatFile(selected.binary)).isSymbolicLink()
+              && await resolvePath(selected.binary) === selected.binary)) return selected;
+      } catch { /* Removal between the cache check and identity check forces rediscovery. */ }
+    }
+    if (binaryCache) { binaryCache.key = null; binaryCache.selected = null; }
+    const deadline = now() + BINARY_VERSION_TIMEOUT_MS;
+    const discover = async () => {
+      const validate = async (candidate) => {
+        const remaining = Math.floor(deadline - now());
+        if (remaining <= 0) return false;
+        let timer;
+        try {
+          const version = normalizedCodexBinaryVersion(await Promise.race([
+            readVersion(candidate, { environment, timeoutMs: remaining }),
+            new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("binary_probe_timeout")), remaining); }),
+          ]));
+          return now() < deadline ? version : null;
+        } catch { return false; }
+        finally { clearTimeout(timer); }
+      };
+      const remember = (selected) => {
+        if (now() >= deadline) return null;
+        if (binaryCache) { binaryCache.key = cacheKey; binaryCache.selected = selected; }
+        return selected;
+      };
+      for (const directory of path.split(";")) {
+        const clean = directory.trim().replace(/^"|"$/gu, "");
+        if (!isAbsolute(clean)) continue;
+        const binary = join(clean, "codex.exe");
+        if (await isExecutable(binary, accessFile, statFile)) {
+          const version = await validate(binary);
+          if (version) return remember({ binary, source: "path", location: "path", version });
+        }
+        if (now() >= deadline) break;
+      }
+      if (typeof localAppData === "string" && isAbsolute(localAppData) && now() < deadline) {
+        const root = join(localAppData, "OpenAI", "Codex", "bin");
+        try {
+          const rootMetadata = await lstatFile(root);
+          if (!rootMetadata.isDirectory() || rootMetadata.isSymbolicLink()) return null;
+          const canonicalRoot = await resolvePath(root);
+          const expectedRoot = join(await resolvePath(localAppData), "OpenAI", "Codex", "bin");
+          if (relative(expectedRoot, canonicalRoot) !== "") return null;
+          const directories = [];
+          for (const entry of await readDirectory(root, { withFileTypes: true })) {
+            if (now() >= deadline) break;
+            if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+            const metadata = await lstatFile(join(root, entry.name));
+            if (!metadata.isDirectory() || metadata.isSymbolicLink() || !Number.isFinite(metadata.mtimeMs)) continue;
+            directories.push({ name: entry.name, mtimeMs: metadata.mtimeMs });
+          }
+          directories.sort((a, b) => b.mtimeMs - a.mtimeMs || a.name.localeCompare(b.name, "en"));
+          for (const directory of directories.slice(0, 3)) {
+            if (now() >= deadline) break;
+            const binary = join(root, directory.name, "codex.exe");
+            try {
+              const metadata = await lstatFile(binary);
+              if (!metadata.isFile() || metadata.isSymbolicLink()) continue;
+              const canonical = await resolvePath(binary);
+              const within = relative(canonicalRoot, canonical);
+              if (isAbsolute(within) || within === ".." || within.startsWith(`..${sep}`)) continue;
+              if (await isExecutable(canonical, accessFile, statFile)) {
+                const version = await validate(canonical);
+                if (version) return remember({ binary: canonical, source: "codex_bundled", location: "user_windows_cli", version });
+              }
+            } catch { /* A rotated or invalid candidate cannot widen discovery. */ }
+          }
+        } catch { /* A missing desktop installation preserves the PATH fallback. */ }
+      }
+      return null;
+    };
+    let deadlineTimer;
+    try {
+      const selected = await Promise.race([
+        discover(),
+        new Promise((resolve) => { deadlineTimer = setTimeout(() => resolve(null), BINARY_VERSION_TIMEOUT_MS); }),
+      ]);
+      if (selected !== null) return selected;
+    } finally { clearTimeout(deadlineTimer); }
+  }
   return { binary: "codex", source: "path", location: "path" };
 }
 
@@ -102,12 +204,13 @@ export async function findCodexBinary(options = {}) {
 
 async function readCodexBinaryVersion(binary, {
   environment = process.env,
+  timeoutMs = BINARY_VERSION_TIMEOUT_MS,
 } = {}) {
   const { stdout } = await execFileAsync(binary, ["--version"], {
     encoding: "utf8",
     env: codexAppServerChildEnv(environment),
     maxBuffer: BINARY_VERSION_MAXIMUM_BYTES,
-    timeout: BINARY_VERSION_TIMEOUT_MS,
+    timeout: timeoutMs,
     windowsHide: true,
   });
   return stdout;
@@ -138,13 +241,14 @@ export async function inspectCodexBinary({
   platform = process.platform,
   applicationsDir = "/Applications",
   readVersion = readCodexBinaryVersion,
+  ...discoveryOptions
 } = {}) {
   const selected = await resolveCodexBinary({
-    environment, accessFile, statFile, platform, applicationsDir,
+    environment, accessFile, statFile, platform, applicationsDir, readVersion, ...discoveryOptions,
   });
-  let version = null;
+  let version = selected.version ?? null;
   try {
-    version = normalizedCodexBinaryVersion(await readVersion(selected.binary, {
+    if (version === null) version = normalizedCodexBinaryVersion(await readVersion(selected.binary, {
       environment,
     }));
   } catch {
@@ -177,11 +281,13 @@ function classifyAppServerFailure(error, stderr = "") {
 }
 
 export class CodexAppServerClient extends EventEmitter {
-  constructor({ timeoutMs = DEFAULT_TIMEOUT_MS, spawnProcess = spawn } = {}) {
+  constructor({ timeoutMs = DEFAULT_TIMEOUT_MS, spawnProcess = spawn, findBinary = findCodexBinary } = {}) {
     super();
     this.timeoutMs = timeoutMs;
     this.spawnProcess = spawnProcess;
+    this.findBinary = findBinary;
     this.child = null;
+    this.binary = null;
     this.lines = null;
     this.pending = new Map();
     this.nextRequestId = 1;
@@ -193,7 +299,21 @@ export class CodexAppServerClient extends EventEmitter {
 
   async start() {
     if (this.child) return this;
-    const binary = await findCodexBinary();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const binary = await this.findBinary({ forceRefresh: attempt > 0 });
+      try { return await this.#startOnce(binary); }
+      catch (error) {
+        if (attempt > 0 || error?.code !== "app_server_unavailable") throw error;
+        this.lines?.close();
+        this.child?.kill("SIGTERM");
+        this.child = null;
+        this.lines = null;
+        this.stderr = "";
+      }
+    }
+  }
+
+  async #startOnce(binary) {
     try {
       this.child = this.spawnProcess(binary, ["app-server"], {
         stdio: ["pipe", "pipe", "pipe"],
@@ -207,9 +327,12 @@ export class CodexAppServerClient extends EventEmitter {
       this.stderr = `${this.stderr}${chunk}`.slice(-2_000);
     });
     this.lines.on("line", (line) => this.#handleLine(line));
-    this.child.once("error", (error) => this.#handleDisconnect(error));
+    const startedChild = this.child;
+    this.child.once("error", (error) => {
+      if (this.child === startedChild) this.#handleDisconnect(error);
+    });
     this.child.once("exit", (code, signal) => {
-      if (this.closed) return;
+      if (this.closed || this.child !== startedChild) return;
       this.#handleDisconnect(new Error(`Codex app-server exited (${code ?? signal})`));
     });
     await this.request("initialize", {
@@ -223,6 +346,7 @@ export class CodexAppServerClient extends EventEmitter {
       },
     }, { requestId: 0 });
     this.notify("initialized", {});
+    this.binary = binary;
     return this;
   }
 
@@ -327,7 +451,6 @@ export class CodexAppServerClient extends EventEmitter {
 }
 
 export async function readCodexAccountSnapshot({ timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  const binary = await findCodexBinary();
   const client = new CodexAppServerClient({ timeoutMs });
   try {
     await client.start();
@@ -336,7 +459,7 @@ export async function readCodexAccountSnapshot({ timeoutMs = DEFAULT_TIMEOUT_MS 
       client.readRateLimits(),
       client.readAccountUsage(),
     ]);
-    return { account, rateLimits, accountUsage, binary };
+    return { account, rateLimits, accountUsage, binary: client.binary };
   } finally {
     client.close();
   }

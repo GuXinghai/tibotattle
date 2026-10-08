@@ -114,20 +114,20 @@ function disposeCredentialBroker(broker) {
 function companionEnvironment(environment, parentPid, credentialBrokerKind = null, platform = process.platform) {
   const selected = {};
   for (const key of COMPANION_ENVIRONMENT_KEYS) {
-    if (Object.hasOwn(environment, key) && typeof environment[key] === "string") {
-      selected[key] = environment[key];
-    }
+    const value = environmentValue(environment, key, platform);
+    if (value !== undefined) selected[key] = value;
   }
   // Only the explicit local Mac QA lane can select a private identity file.
   // Never pass secret bytes or silently fall back to Keychain on a broken pair.
-  if (environment.USAGE_MONITOR_TEST_LANE === "macos-electron-local-qa-v1") {
-    const file = environment.USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE;
-    const accountFile = environment.USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE;
-    const enabled = environment.USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY;
+  if (selected.USAGE_MONITOR_TEST_LANE === "macos-electron-local-qa-v1") {
+    const file = environmentProperty(environment, "USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE", platform);
+    const accountFile = environmentProperty(environment, "USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE", platform);
+    const enabled = environmentProperty(environment, "USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY", platform);
     if (file !== undefined || enabled !== undefined || accountFile !== undefined) {
       if (typeof file !== "string" || !file.startsWith("/") || file.includes("\0")
-          || enabled !== "1" || environment.USAGE_MONITOR_CENTRAL_ORIGIN
-          || environment.APP_USAGEMONITOR_EXPORT_SECRET !== undefined) {
+          || enabled !== "1"
+          || environmentProperty(environment, "USAGE_MONITOR_CENTRAL_ORIGIN", platform)
+          || environmentProperty(environment, "APP_USAGEMONITOR_EXPORT_SECRET", platform) !== undefined) {
         throw shellError("electron_configuration_invalid");
       }
       selected.USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE = file;
@@ -139,8 +139,9 @@ function companionEnvironment(environment, parentPid, credentialBrokerKind = nul
             || posix.resolve(accountFile) !== accountFile || posix.resolve(file) !== file
             || posix.basename(file) !== "export-identity" || posix.basename(posix.dirname(file)) !== "identity"
             || accountFile !== posix.join(posix.dirname(file), "account-observation-development")
-            || environment.USAGE_MONITOR_ACCOUNTLESS_ORIGIN
-            || environment.USAGE_MONITOR_ACCOUNTLESS_MODE || credentialBrokerKind !== null) {
+            || environmentProperty(environment, "USAGE_MONITOR_ACCOUNTLESS_ORIGIN", platform)
+            || environmentProperty(environment, "USAGE_MONITOR_ACCOUNTLESS_MODE", platform)
+            || credentialBrokerKind !== null) {
           throw shellError("electron_configuration_invalid");
         }
         selected.USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE = accountFile;
@@ -168,6 +169,32 @@ function companionEnvironment(environment, parentPid, credentialBrokerKind = nul
       LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER;
   }
   return selected;
+}
+
+function environmentValue(environment, key, platform) {
+  const candidates = environmentCandidates(environment, key, platform);
+  const stringCandidate = candidates.find((name) => typeof environment[name] === "string");
+  return stringCandidate === undefined ? undefined : environment[stringCandidate];
+}
+
+function environmentProperty(environment, key, platform) {
+  const candidates = environmentCandidates(environment, key, platform);
+  return candidates.length > 0 ? environment[candidates[0]] : undefined;
+}
+
+function environmentCandidates(environment, key, platform) {
+  if (platform !== "win32") return Object.hasOwn(environment, key) ? [key] : [];
+  // Windows treats environment variable names without regard to case, while
+  // callers and tests can still supply a plain object containing both PATH
+  // and Path. Prefer the canonical allowlist spelling, then use a stable
+  // ordinal name order so object insertion order cannot change the result.
+  return Object.getOwnPropertyNames(environment)
+    .filter((name) => name.toUpperCase() === key.toUpperCase())
+    .sort((left, right) => {
+      if (left === key) return right === key ? 0 : -1;
+      if (right === key) return 1;
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
 }
 
 /**

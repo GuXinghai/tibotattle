@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { Duplex } from "node:stream";
 import { attachDesktopKeychainBroker } from "../desktop-keychain-broker.js";
 import { createCompanionSupervisor } from "../companion-supervisor.js";
@@ -134,6 +135,103 @@ test("owned child uses its own credential descriptor with sharing on or off", {
       assert.equal(requests, 12);
       assert.equal(values.size, 4);
     } finally { await supervisor.stop(); }
+  }
+});
+
+test("Windows companion environment reads case-insensitively and resolves PATH duplicates stably", async () => {
+  const readyLine = "USAGE_MONITOR_READY http://127.0.0.1:4545/\n";
+  const common = [
+    ["hOmE", "C:\\synthetic\\home"],
+    ["codex_home", "C:\\synthetic\\codex"],
+    ["NODE_OPTIONS", "--require=C:\\synthetic\\unsafe.js"],
+    ["OpenAI_API_Key", "synthetic-secret"],
+    ["APP_USAGEMONITOR_EXPORT_SECRET", "synthetic-secret"],
+    ["UNRELATED_PRIVATE_TOKEN", "synthetic-secret"],
+  ];
+  const cases = [
+    {
+      entries: [["Path", "C:\\synthetic\\path-title"], ["PATH", "C:\\synthetic\\path-upper"]],
+      expectedPath: "C:\\synthetic\\path-upper",
+    },
+    {
+      entries: [["PATH", "C:\\synthetic\\path-upper"], ["Path", "C:\\synthetic\\path-title"]],
+      expectedPath: "C:\\synthetic\\path-upper",
+    },
+    {
+      entries: [["Path", "C:\\synthetic\\path-title"]],
+      expectedPath: "C:\\synthetic\\path-title",
+    },
+  ];
+
+  for (const { entries, expectedPath } of cases) {
+    const environment = Object.fromEntries([...entries, ...common]);
+    // Keep the actual Windows child runtime bootable while all test values
+    // remain synthetic and isolated from a user profile.
+    if (typeof process.env.SystemRoot === "string") {
+      environment.SystemRoot = process.env.SystemRoot;
+    }
+    const supervisor = createCompanionSupervisor({
+      command: process.execPath,
+      args: ["--input-type=module", "--eval", `
+        import assert from 'node:assert/strict';
+        assert.equal(process.env.PATH, ${JSON.stringify(expectedPath)});
+        assert.equal(Object.keys(process.env).filter((key) => key.toUpperCase() === 'PATH').length, 1);
+        assert.equal(process.env.HOME, 'C:\\\\synthetic\\\\home');
+        assert.equal(process.env.CODEX_HOME, 'C:\\\\synthetic\\\\codex');
+        assert.equal(process.env.NODE_OPTIONS, undefined);
+        assert.equal(process.env.OPENAI_API_KEY, undefined);
+        assert.equal(process.env.APP_USAGEMONITOR_EXPORT_SECRET, undefined);
+        assert.equal(process.env.UNRELATED_PRIVATE_TOKEN, undefined);
+        process.stdout.write(${JSON.stringify(readyLine)});
+        setInterval(() => {}, 1000);
+      `],
+      environment,
+      platform: "win32",
+      startupTimeoutMs: 2000,
+      shutdownTimeoutMs: 1000,
+    });
+    try {
+      await supervisor.start();
+    } finally {
+      await supervisor.stop();
+    }
+  }
+});
+
+test("non-Windows companion environment retains exact-case whitelist behavior", async () => {
+  const environment = {
+    Path: "C:\\synthetic\\path",
+    hOmE: "C:\\synthetic\\home",
+    NODE_OPTIONS: "--require=C:\\synthetic\\unsafe.js",
+  };
+  if (typeof process.env.SystemRoot === "string") {
+    environment.SystemRoot = process.env.SystemRoot;
+  }
+  let selectedEnvironment;
+  const supervisor = createCompanionSupervisor({
+    spawnChild: (command, args, options) => {
+      selectedEnvironment = options.env;
+      return spawn(command, args, options);
+    },
+    command: process.execPath,
+    args: ["--input-type=module", "--eval", `
+      process.stdout.write('USAGE_MONITOR_READY http://127.0.0.1:4545/\\n');
+      setInterval(() => {}, 1000);
+    `],
+    environment,
+    platform: "linux",
+    startupTimeoutMs: 2000,
+    shutdownTimeoutMs: 1000,
+  });
+  try {
+    await supervisor.start();
+    assert.equal(selectedEnvironment.PATH, undefined);
+    assert.equal(selectedEnvironment.Path, undefined);
+    assert.equal(selectedEnvironment.HOME, undefined);
+    assert.equal(selectedEnvironment.hOmE, undefined);
+    assert.equal(selectedEnvironment.NODE_OPTIONS, undefined);
+  } finally {
+    await supervisor.stop();
   }
 });
 

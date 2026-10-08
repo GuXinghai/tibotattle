@@ -196,6 +196,234 @@ test("Codex binary diagnostic names the bundle layout without revealing the user
   assert.equal(JSON.stringify(diagnostic).includes(privateHome), false);
 });
 
+function windowsDiscoveryFixture() {
+  const local = join(tmpdir(), "synthetic-codex-local");
+  const root = join(local, "OpenAI", "Codex", "bin");
+  const path = join(local, "cli");
+  const entries = ["old", "middle", "newest", "older"];
+  const probes = [];
+  const files = new Set(entries.map(name => join(root, name, "codex.exe")));
+  const versions = new Map([...files].map(file => [file, "codex-cli 0.162.0\n"]));
+  const options = {
+    platform: "win32", environment: { LOCALAPPDATA: local, Path: path },
+    statFile: async candidate => ({ isFile: () => files.has(candidate) }),
+    accessFile: async () => {},
+    readDirectory: async () => entries.map(name => ({ name, isDirectory: () => true, isSymbolicLink: () => false })),
+    lstatFile: async candidate => ({
+      isDirectory: () => !candidate.endsWith(".exe"), isFile: () => files.has(candidate),
+      isSymbolicLink: () => false,
+      mtimeMs: { old: 2, middle: 3, newest: 4, older: 1 }[candidate.split(/[\\/]/u).at(-1)] ?? 0,
+    }),
+    resolvePath: async candidate => candidate,
+    readVersion: async candidate => { probes.push(candidate); return versions.get(candidate) ?? "invalid"; },
+  };
+  return { root, path, options, files, versions, probes };
+}
+
+test("Windows Codex discovery prioritizes override and working PATH before recent desktop candidates", async () => {
+  const fixture = windowsDiscoveryFixture();
+  const override = join(fixture.path, "override.exe");
+  fixture.files.add(override);
+  assert.equal(await accountFacade.findCodexBinary({ ...fixture.options,
+    environment: { ...fixture.options.environment, CODEX_BIN: override } }), override);
+  assert.deepEqual(fixture.probes, []);
+  const pathBinary = join(fixture.path, "codex.exe");
+  fixture.files.add(pathBinary);
+  fixture.versions.set(pathBinary, "codex-cli 0.162.0");
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), pathBinary);
+  fixture.files.delete(pathBinary);
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), join(fixture.root, "newest", "codex.exe"));
+});
+
+test("Windows Codex desktop discovery is limited to three recent candidates and rejects escaped paths", async () => {
+  const fixture = windowsDiscoveryFixture();
+  fixture.versions.clear();
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), "codex");
+  assert.deepEqual(fixture.probes, ["newest", "middle", "old"].map(name => join(fixture.root, name, "codex.exe")));
+  fixture.probes.length = 0;
+  fixture.options.resolvePath = async candidate => candidate.endsWith(".exe") ? join(tmpdir(), "outside", "codex.exe") : candidate;
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), "codex");
+  assert.deepEqual(fixture.probes, []);
+  fixture.options.resolvePath = async candidate => candidate;
+  fixture.options.lstatFile = async () => ({ isDirectory: () => true, isFile: () => true, isSymbolicLink: () => true });
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), "codex");
+  assert.deepEqual(fixture.probes, []);
+});
+
+test("Windows discovery enforces one shared probe budget", async () => {
+  const fixture = windowsDiscoveryFixture();
+  let time = 0;
+  fixture.options.now = () => time;
+  fixture.options.readVersion = async (candidate, { timeoutMs }) => {
+    assert.equal(timeoutMs, 5_000);
+    fixture.probes.push(candidate); time += 5_000;
+    throw new Error("timeout");
+  };
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), "codex");
+  assert.equal(fixture.probes.length, 1);
+});
+
+test("Windows discovery returns the PATH fallback when the desktop install directory is absent", async () => {
+  const fixture = windowsDiscoveryFixture();
+  let directoryReads = 0;
+  fixture.options.readDirectory = async () => {
+    directoryReads += 1;
+    throw Object.assign(new Error("missing"), { code: "ENOENT" });
+  };
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), "codex");
+  assert.equal(directoryReads, 1);
+});
+
+test("Windows discovery rejects symlinked version directories and executable files", async () => {
+  for (const target of ["version-directory", "executable-file"]) {
+    const fixture = windowsDiscoveryFixture();
+    const newestDirectory = join(fixture.root, "newest");
+    const newestBinary = join(newestDirectory, "codex.exe");
+    const originalLstat = fixture.options.lstatFile;
+    fixture.options.lstatFile = async candidate => {
+      if ((target === "version-directory" && candidate === newestDirectory)
+          || (target === "executable-file" && candidate === newestBinary)) {
+        return {
+          isDirectory: () => target === "version-directory",
+          isFile: () => target === "executable-file",
+          isSymbolicLink: () => true,
+          mtimeMs: 4,
+        };
+      }
+      return originalLstat(candidate);
+    };
+    const middleBinary = join(fixture.root, "middle", "codex.exe");
+    assert.equal(await accountFacade.findCodexBinary(fixture.options), middleBinary, target);
+    assert.deepEqual(fixture.probes, [middleBinary], target);
+  }
+});
+
+test("Windows discovery reuses a valid cache, invalidates removed files, and honors forced rediscovery", async () => {
+  const fixture = windowsDiscoveryFixture();
+  fixture.options.binaryCache = {};
+  const newest = join(fixture.root, "newest", "codex.exe");
+  const middle = join(fixture.root, "middle", "codex.exe");
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), newest);
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), newest);
+  assert.deepEqual(fixture.probes, [newest]);
+  fixture.files.delete(newest);
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), middle);
+  fixture.files.add(newest);
+  assert.equal(await accountFacade.findCodexBinary({ ...fixture.options, forceRefresh: true }), newest);
+  assert.deepEqual(fixture.probes, [newest, middle, newest]);
+});
+
+test("Windows discovery skips malformed versions, missing candidates, and redirected installation roots", async () => {
+  const fixture = windowsDiscoveryFixture();
+  const newest = join(fixture.root, "newest", "codex.exe");
+  fixture.versions.set(newest, "private malformed output");
+  fixture.files.delete(join(fixture.root, "middle", "codex.exe"));
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), join(fixture.root, "old", "codex.exe"));
+  fixture.probes.length = 0;
+  fixture.options.resolvePath = async candidate => candidate === fixture.root ? join(tmpdir(), "redirected") : candidate;
+  assert.equal(await accountFacade.findCodexBinary(fixture.options), "codex");
+  assert.deepEqual(fixture.probes, []);
+});
+
+test("Codex startup rediscovers exactly once on synchronous ENOENT and not on other spawn errors", async () => {
+  for (const errorCode of ["ENOENT", "EACCES"]) {
+    const selections = [];
+    let starts = 0;
+    const client = new accountFacade.CodexAppServerClient({
+      findBinary: async options => { selections.push(options.forceRefresh); return "synthetic-codex"; },
+      spawnProcess: () => { starts += 1; throw Object.assign(new Error("startup failed"), { code: errorCode }); },
+    });
+    await assert.rejects(client.start(), { code: errorCode === "ENOENT" ? "app_server_unavailable" : "temporary_disconnect" });
+    assert.equal(starts, errorCode === "ENOENT" ? 2 : 1);
+    assert.deepEqual(selections, errorCode === "ENOENT" ? [false, true] : [false]);
+    client.close();
+  }
+});
+
+test("Codex startup does not rediscover after authentication or protocol initialization errors", async () => {
+  for (const { label, response } of [
+    { label: "authentication", response: { error: { code: -32000, message: "authentication required" } } },
+    { label: "protocol", response: { error: { code: -32600, message: "invalid initialize request" } } },
+  ]) {
+    const selections = [];
+    let starts = 0;
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({
+      write(chunk, _encoding, done) {
+        const request = JSON.parse(chunk.toString("utf8"));
+        queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: request.id, ...response })}\n`));
+        done();
+      },
+    });
+    child.kill = () => true;
+    const client = new accountFacade.CodexAppServerClient({
+      findBinary: async options => { selections.push(options.forceRefresh); return "synthetic-codex"; },
+      spawnProcess: () => { starts += 1; return child; },
+    });
+    try {
+      const failure = await client.start().then(() => null, error => error);
+      assert.ok(failure, label);
+      assert.notEqual(failure.code, "app_server_unavailable", label);
+      assert.equal(starts, 1, label);
+      assert.deepEqual(selections, [false], label);
+    } finally {
+      client.close();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }
+  }
+});
+
+test("Codex startup recovers asynchronous ENOENT without admitting a stale child exit", async () => {
+  const selections = [];
+  let starts = 0;
+  let firstChild;
+  let secondChild;
+  const disconnects = [];
+  const client = new accountFacade.CodexAppServerClient({
+    findBinary: async options => { selections.push(options.forceRefresh); return "synthetic-codex"; },
+    spawnProcess: () => {
+      starts += 1;
+      const fails = starts === 1;
+      const child = new EventEmitter();
+      child.stdout = new PassThrough(); child.stderr = new PassThrough();
+      child.kill = () => true;
+      if (fails) firstChild = child;
+      else secondChild = child;
+      child.stdin = new Writable({ write(chunk, _encoding, done) {
+        const request = JSON.parse(chunk.toString());
+        queueMicrotask(() => fails
+          ? child.emit("error", Object.assign(new Error("missing"), { code: "ENOENT" }))
+          : child.stdout.write(`${JSON.stringify({ id: request.id, result: {} })}\n`));
+        done();
+      } });
+      return child;
+    },
+  });
+  client.on("disconnect", event => disconnects.push(event));
+  try {
+    await client.start();
+    assert.equal(starts, 2);
+    assert.deepEqual(selections, [false, true]);
+    assert.equal(client.child, secondChild);
+    const disconnectCountAfterRetry = disconnects.length;
+    firstChild.emit("exit", 1);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(disconnects.length, disconnectCountAfterRetry);
+    assert.deepEqual(await client.readAccount(), {});
+  } finally {
+    client.close();
+    for (const child of [firstChild, secondChild]) {
+      child?.stdin.destroy();
+      child?.stdout.destroy();
+      child?.stderr.destroy();
+    }
+  }
+});
+
 test("rate-limit sanitation retains provider duration and fails closed on plan evidence", () => {
   const sanitized = accountFacade.sanitizeRateLimit({
     limitId: "codex",
