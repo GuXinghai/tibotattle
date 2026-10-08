@@ -1,10 +1,10 @@
 /* Count-scaled cache evidence. Motion emphasizes inspection, never fabricates
    changing cache evidence or a provider retention deadline. */
 .cache-matrix {
-  --matrix-stage: #102b24;
-  --matrix-light: #ecf6ea;
-  --matrix-dim: #b0c7b6;
-  --matrix-good: #77e6b9;
+  --matrix-stage: #1d2125;
+  --matrix-light: #f1f2f4;
+  --matrix-dim: #b3b9c0;
+  --matrix-good: #7cc4f2;
   --matrix-poor: #ffad89;
   min-width: 0;
 }
@@ -17,14 +17,14 @@
   overflow: hidden;
   background: var(--matrix-stage);
   color: var(--matrix-light);
-  box-shadow: inset 0 1px 0 rgb(236 246 234 / 18%);
+  box-shadow: inset 0 1px 0 rgb(241 242 244 / 18%);
 }
 .cache-matrix-stage::before {
   content: "";
   position: absolute;
   z-index: -1;
   inset: 0;
-  background: radial-gradient(ellipse at 25% 10%, rgb(119 230 185 / 9%), transparent 65%);
+  background: radial-gradient(ellipse at 25% 10%, rgb(124 196 242 / 9%), transparent 65%);
   pointer-events: none;
 }
 .cache-matrix-instrument-head {
@@ -47,7 +47,7 @@
   height: 7px;
   border-radius: 1px;
   background: var(--matrix-good);
-  box-shadow: 0 0 7px rgb(119 230 185 / 40%);
+  box-shadow: 0 0 7px rgb(124 196 242 / 40%);
 }
 .cache-matrix-model-field { display: flex; align-items: center; gap: 9px; margin-inline-start: auto; max-width: 100%; }
 .cache-matrix-model-note { flex-basis: 100%; margin-top: -6px; text-align: end; color: var(--matrix-dim); font-size: .75rem; }
@@ -57,9 +57,9 @@
   max-width: 100%;
   min-height: 42px;
   padding: 8px 12px;
-  border: 1px solid rgb(176 199 182 / 30%);
+  border: 1px solid rgb(179 185 192 / 30%);
   border-radius: 10px;
-  background: #203a31;
+  background: #2c3237;
   color: var(--matrix-light);
   color-scheme: dark;
   font: inherit;
@@ -93,7 +93,7 @@
     max-width: calc(100vw - 28px);
     max-height: min(430px, 70vh);
     overflow-y: auto;
-    border: 1px solid rgb(176 199 182 / 30%);
+    border: 1px solid rgb(179 185 192 / 30%);
     border-radius: 14px;
     padding: 6px;
     margin-top: 6px;
@@ -111,8 +111,8 @@
     font-size: .85rem;
     white-space: normal;
   }
-  .cache-matrix-model-picker option:hover { background: rgb(236 246 234 / 7%); }
-  .cache-matrix-model-picker option:checked, .cache-matrix-model-picker option:checked:hover { background: rgb(119 230 185 / 13%); }
+  .cache-matrix-model-picker option:hover { background: rgb(241 242 244 / 7%); }
+  .cache-matrix-model-picker option:checked, .cache-matrix-model-picker option:checked:hover { background: rgb(124 196 242 / 13%); }
   .cache-matrix-model-picker option:focus-visible { outline-color: var(--matrix-light); }
   .cache-matrix-model-picker option::checkmark { order: 2; margin-inline-start: auto; color: var(--matrix-good); }
   .cache-matrix-model-picker::picker-icon { color: var(--matrix-dim); font-size: .75rem; }
@@ -158,14 +158,14 @@
   .cache-matrix-plot .cache-matrix-rate { font-size: 12px; }
 }
 .cache-matrix-gap { font-weight: 600; }
-.cache-matrix-baseline { stroke: rgb(176 199 182 / 25%); }
-.cache-matrix-gridline { stroke: rgb(176 199 182 / 8%); }
-.cache-matrix-cells { filter: drop-shadow(0 0 2.4px rgb(119 230 185 / 24%)); }
+.cache-matrix-baseline { stroke: rgb(179 185 192 / 25%); }
+.cache-matrix-gridline { stroke: rgb(179 185 192 / 8%); }
+.cache-matrix-cells { filter: drop-shadow(0 0 2.4px rgb(124 196 242 / 24%)); }
 .cache-matrix-cell-more { fill: var(--matrix-good); }
 .cache-matrix-cell-less { fill: var(--matrix-poor); }
 .cache-matrix-selection {
-  fill: rgb(236 246 234 / 4%);
-  stroke: rgb(236 246 234 / 34%);
+  fill: rgb(241 242 244 / 4%);
+  stroke: rgb(241 242 244 / 34%);
   stroke-width: 1;
   pointer-events: none;
   transition: transform 220ms cubic-bezier(.2,.8,.2,1), opacity 160ms ease;
@@ -197,7 +197,7 @@
 }
 .cache-matrix-detail {
   position: relative;
-  border-top: 1px solid rgb(176 199 182 / 17%);
+  border-top: 1px solid rgb(179 185 192 / 17%);
   padding: 17px 20px;
   display: flex;
   align-items: center;
@@ -218,7 +218,7 @@
 .cache-matrix-metrics { width: 100%; display: flex; flex-wrap: wrap; gap: 4px 20px; }
 .cache-matrix-legend { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; margin-top: 13px; color: var(--muted, #57625c); font-size: .75rem; }
 .cache-matrix-legend > span { display: flex; align-items: center; gap: 7px; }
-.cache-matrix-legend > .cache-matrix-more::before { background: #237b5c; box-shadow: none; }
+.cache-matrix-legend > .cache-matrix-more::before { background: #2f7fb8; box-shadow: none; }
 .cache-matrix-legend > .cache-matrix-less::before { background: #b06544; box-shadow: none; }
 .cache-matrix-note { margin-inline-start: auto; color: var(--muted, #57625c); }
 .cache-matrix-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

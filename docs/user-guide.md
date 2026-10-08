@@ -181,7 +181,7 @@ and disclosed; that subtotal is not the whole-period total or a percentage of
 your allowance. A subtotal with no priceable comparisons stays unavailable,
 not a zero-valued placeholder.
 
-The **Did the cache carry over?** memory matrix compares follow-up turns with
+The **How long the cache lasts** memory matrix compares follow-up turns with
 unchanged model and settings across nine time gaps, ending at **24h+**. The
 percentage above each column is the share that reused more than half of the
 previous cached input; **n** is the number of checked follow-ups. Light counts

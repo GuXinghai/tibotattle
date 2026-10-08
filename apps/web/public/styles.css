@@ -1967,8 +1967,8 @@ tbody tr:last-child td { border-bottom: 0; }
   height: 8px;
   flex: 0 0 auto;
   border-radius: var(--radius-round);
-  background: var(--green-2);
-  box-shadow: 0 0 0 3px rgba(45, 116, 102, .12);
+  background: var(--blue);
+  box-shadow: 0 0 0 3px rgba(44, 88, 120, .14);
 }
 .cache-reuse-summary {
   display: grid;
