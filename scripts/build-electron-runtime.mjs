@@ -83,7 +83,10 @@ const MAXIMUM_BINDING_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_MANIFEST_BYTES = 1 * 1024 * 1024;
 const DEFAULT_PACKAGING_PROFILE = "development";
 const DEFAULT_TARGET = "darwin-arm64";
-const STAGED_ELECTRON_MODULE_LINKAGE_TIMEOUT_MS = 10_000;
+// Importing a freshly copied closure on Windows can exceed ten seconds even
+// when the Node process starts immediately. Keep the import check bounded and
+// fail closed, while allowing the Windows build host time to read the closure.
+const STAGED_ELECTRON_MODULE_LINKAGE_TIMEOUT_MS = process.platform === "win32" ? 30_000 : 10_000;
 const ELECTRON_RUNTIME_ONLY_DYNAMIC_IMPORTS = new Set([
   "electron",
 ]);
