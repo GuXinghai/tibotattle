@@ -5353,8 +5353,6 @@ test("local analysis exposes quick results and cancel-safe progress", async () =
   assert.match(appSource, /kind === "unified_index"/u);
   assert.match(appSource, /Scanning local history/u);
   assert.doesNotMatch(appSource, /Headline ready; finishing deeper accounting/u);
-  assert.match(appSource, /refresh\.cancelledTitle/u);
-  assert.match(translate("refresh.cancelledCopy"), /verified results and the checkpoint/u);
   assert.match(translate("refresh.cancelRequestedCopy"), /keep a checkpoint so you can resume/u);
   assert.match(appSource, /refresh_resource_limited/u);
   assert.match(appSource, /refresh\.resourceTitle/u);

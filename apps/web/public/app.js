@@ -11659,11 +11659,6 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       refreshProgressClock = null;
       renderRefreshProgress(button, "Loading saved results…");
       await loadLocalDashboard();
-      showConnectionNotice({
-        titleKey: "refresh.cancelledTitle",
-        copyKey: "refresh.cancelledCopy",
-        kind: "info",
-      });
       return;
     }
     if (outcome === "failed"
