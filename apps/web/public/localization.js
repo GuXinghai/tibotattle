@@ -178,6 +178,7 @@ export const WEB_MESSAGES = Object.freeze({
       || key.startsWith("workUsage.")
       || key.startsWith("performance.")
       || key.startsWith("performanceConsent.")
+      || key.startsWith("dashboard.overview.")
       || key === "dashboard.pricing.speedNote"
       || key === "accounting.pricingDisclosure"
       || key.startsWith("appearance.")
