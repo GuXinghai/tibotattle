@@ -1390,10 +1390,10 @@ function renderLocalOnboarding(value) {
   card.hidden = false;
   card.removeAttribute("aria-hidden");
   card.classList.toggle("needs-attention", !ready);
-  // Preserve a manual disclosure choice while readiness stays unchanged.
+  // Setup reading opens in a dialog so a readiness change cannot expand Overview.
   const compactSetup = ready && !boundedPause && Boolean(dashboard);
   const setupMode = compactSetup ? "ready" : "attention";
-  if (card.dataset.setupMode !== setupMode) card.open = !compactSetup;
+  card.open = false;
   card.dataset.setupMode = setupMode;
   setLocalizedText($("#setup-title"), boundedPause
     ? "setup.state.continueTitle"
@@ -8125,7 +8125,7 @@ function formatForecastDuration(hours) {
 let weeklyPaceDetailsOpen = false;
 
 function ensureWeeklyPaceForecastCard() {
-  const hero = $("#quota-cards");
+  const hero = $("#weekly .dashboard-page-header");
   if (!hero?.parentNode) return null;
   let card = $("#weekly-pace-forecast");
   if (!card) {
@@ -12387,6 +12387,86 @@ mountDashboardNavigation({
   documentRef: document,
   windowRef: window,
 });
+
+/** Keep optional reading out of the overview's viewport without duplicating live data. */
+function mountOverviewLayout({ documentRef, windowRef }) {
+  const dialog = documentRef.querySelector("#overview-details-dialog");
+  const content = documentRef.querySelector("#overview-details-content");
+  const title = documentRef.querySelector("#overview-details-title");
+  const screen = documentRef.querySelector("#overview-screen");
+  const main = documentRef.querySelector("#main");
+  if (!dialog || !content || !screen || !main) return;
+  let disclosure = null;
+  let opener = null;
+
+  const restore = () => {
+    if (disclosure) {
+      disclosure.append(...content.childNodes);
+      disclosure.open = false;
+    }
+    disclosure = null;
+    opener?.focus({ preventScroll: true });
+    opener = null;
+  };
+  for (const details of screen.querySelectorAll(".overview-method-notes, #setup-card")) {
+    const summary = details.querySelector("summary");
+    summary.addEventListener("click", (event) => {
+      if (typeof dialog.showModal !== "function") return;
+      event.preventDefault();
+      disclosure = details;
+      opener = summary;
+      title.textContent = summary.textContent.trim();
+      // Keep the same nodes: incoming results and retries continue to update them.
+      content.append(...[...details.children].filter((child) => child !== summary));
+      details.open = false;
+      dialog.showModal();
+    });
+  }
+  dialog.querySelector("[data-overview-close]").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("close", restore);
+
+  // The compact layout fits ordinary desktop windows at its natural size. In
+  // smaller windows or unusually long evidence states, fit the whole summary
+  // proportionally instead of cropping values or adding a second screen.
+  let frame = null;
+  const fit = () => {
+    frame = null;
+    const active = documentRef.body.dataset.dashboardPage === "overview";
+    if (!active && dialog.open) dialog.close();
+    screen.style.zoom = "1";
+    if (!active) return;
+    const header = documentRef.querySelector(".topbar");
+    const sidebar = documentRef.querySelector(".dashboard-sidebar");
+    const headerHeight = header?.getBoundingClientRect().height ?? 0;
+    const sidebarHeight = windowRef.innerWidth <= 900
+      ? sidebar?.getBoundingClientRect().height ?? 0 : 0;
+    const available = Math.max(1, windowRef.innerHeight - headerHeight - sidebarHeight - 26);
+    main.style.setProperty("--overview-height", `${available}px`);
+    const natural = screen.scrollHeight;
+    if (natural > available) screen.style.zoom = String(available / natural);
+  };
+  const schedule = () => {
+    if (frame === null) frame = windowRef.requestAnimationFrame(fit);
+  };
+  if (windowRef.ResizeObserver) {
+    const resize = new windowRef.ResizeObserver(schedule);
+    resize.observe(screen);
+    resize.observe(main);
+    const header = documentRef.querySelector(".topbar");
+    if (header) resize.observe(header);
+  }
+  if (windowRef.MutationObserver) {
+    const changes = new windowRef.MutationObserver(schedule);
+    changes.observe(screen, { childList: true, subtree: true, characterData: true,
+      attributes: true, attributeFilter: ["hidden", "class", "open"] });
+    changes.observe(documentRef.body, { attributes: true,
+      attributeFilter: ["data-dashboard-page", "class"] });
+  }
+  windowRef.addEventListener("resize", schedule);
+  schedule();
+}
+
+mountOverviewLayout({ documentRef: document, windowRef: window });
 
 async function bootstrapDashboard() {
   renderSharedInstallerJourney(document, {

@@ -52,20 +52,23 @@ states are meaningful; TiboTattle does not replace missing evidence with zero.
 ## Reading the dashboard
 
 Overview shows compact cards for each observed allowance. Each card names the
-allowance window and shows the remaining percentage, a static percentage bar,
-reset time and observation freshness. The bar represents the observed remaining
-percentage; it does not compare the absolute capacity of different windows.
+allowance window and shows the remaining percentage,
+reset time and observation freshness. Percentages do not compare the absolute
+capacity of different windows.
 GPT-5.3 Codex Spark uses its shared model name and icon. Unavailable amounts retain
 their text state, and stale observations remain explicitly marked. A single current
-Codex weekly forecast appears beneath the cards when usable pacing evidence exists. Otherwise,
+Codex weekly forecast appears on the Allowance Estimate page when usable pacing evidence exists. Otherwise,
 a waiting panel explains that fresh or sufficient allowance evidence is needed;
 it does not display a guessed rate or run-out time. Choosing a historical plan
 on the Allowance Estimate page does not change that current forecast.
 
-Overview keeps its API-equivalent total and allowance comparison measurements
-together in each card. The latest absolute difference is shown as a separate
-percentage-point value. Expand **Calculation notes** for pricing methodology,
-examples and fitted-rate interpretation. Stale results, incomplete history,
+Overview is a single-screen summary: allowance rows sit beside the API-equivalent
+total and the allowance comparison. It fits the available window height,
+proportionally reducing the summary in small windows instead of cropping data.
+The latest absolute difference is shown as a separate percentage-point value.
+Choose **Calculation notes** to open a dialog for usage components, fitted rates,
+pricing methodology and examples. Local setup also opens in a dialog, so reading
+details does not expand the overview. Stale results, incomplete history,
 unavailable comparisons and account/plan qualifiers remain visible outside
 those notes; the API-equivalent total is explicitly not a bill.
 

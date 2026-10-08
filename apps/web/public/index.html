@@ -139,6 +139,7 @@
       </aside>
       <div class="dashboard-content">
     <main id="main">
+      <div id="overview-screen">
 
       <section
         class="dashboard-boot-state"
@@ -275,7 +276,7 @@
         </div>
       </section>
 
-      <details class="setup-card" open id="setup-card" aria-labelledby="setup-title" data-dashboard-page="overview" hidden>
+      <details class="setup-card" id="setup-card" aria-labelledby="setup-title" data-dashboard-page="overview" hidden>
         <summary><h2 id="setup-title">Check this Mac before analyzing</h2><span id="setup-ready-label" class="setup-ready-label" hidden data-i18n="setup.ready">Ready</span></summary>
         <div class="setup-details-body">
           <div class="setup-copy">
@@ -311,6 +312,7 @@
           </div>
         </div>
 
+        <div class="overview-allowances">
         <p id="allowance-context" class="allowance-context" hidden></p>
         <div class="metric-grid quota-grid" id="quota-cards" aria-live="polite">
           <div class="skeleton-card"></div>
@@ -326,6 +328,7 @@
         -->
         <ul class="evidence-warnings" id="evidence-warnings" hidden></ul>
 
+        </div>
         <div class="two-column overview-panels">
           <article class="panel overview-data-card">
             <div class="panel-heading">
@@ -344,7 +347,6 @@
               <strong id="cost-total">—</strong>
             </div>
             <p class="overview-metric-basis" data-i18n="dashboard.overview.apiBasis">API-price equivalent · not your bill</p>
-            <div class="component-list" id="cost-components"></div>
             <!--
               How much of the discovered history this figure is actually drawn
               from. It stays out of the document once the index is complete,
@@ -366,6 +368,7 @@
             <ul class="evidence-warnings" id="cost-warnings" hidden></ul>
             <details class="overview-method-notes">
               <summary data-i18n="dashboard.overview.notes">Calculation notes</summary>
+              <div class="component-list" id="cost-components"></div>
               <p class="annotation" id="pricing-note" data-i18n="dashboard.pricing.speedNote">
                 Published Standard, Fast and Ultrafast API prices are applied to
                 non-overlapping recorded usage where a matching rate is available.
@@ -407,15 +410,10 @@
                 <span data-i18n="dashboard.overview.absoluteGap">Latest absolute difference</span>
                 <strong id="comparison-gap">—</strong>
               </div>
-              <span class="evidence-chip" id="fit-chip">No evidence</span>
             </div>
-            <!--
-              Owner-directed restyle (2026-08-10): the three-column table of
-              sentence-length cells is now a two-tile stat row — value
-              prominent, short label beneath — and the "example translation"
-              sentence reads as prose below the stats, because it is a
-              sentence, not a datum.
-            -->
+            <details class="overview-method-notes">
+              <summary data-i18n="dashboard.overview.notes">Calculation notes</summary>
+              <span class="evidence-chip" id="fit-chip">No evidence</span>
             <div class="calibration-stats" id="calibration-facts">
               <div>
                 <strong id="calibration-rate">Not estimable</strong>
@@ -426,8 +424,6 @@
                 <span>Plausible 80% range · per point</span>
               </div>
             </div>
-            <details class="overview-method-notes">
-              <summary data-i18n="dashboard.overview.notes">Calculation notes</summary>
               <p class="annotation" id="comparison-result">
                 More observations are required before a useful comparison can be made.
               </p>
@@ -458,6 +454,8 @@
         </div>
 
       </section>
+
+      </div>
 
       <section class="dashboard-section lead-section dashboard-page-inactive" id="weekly" aria-labelledby="weekly-title" data-dashboard-page="weekly" data-requires-evidence aria-hidden="true" inert>
         <div class="dashboard-page-header">
@@ -1062,6 +1060,14 @@
     </footer>
       </div>
     </div>
+
+    <dialog id="overview-details-dialog" class="overview-details-dialog" aria-labelledby="overview-details-title">
+      <div class="overview-dialog-heading">
+        <h2 id="overview-details-title"></h2>
+        <button class="button button-quiet" data-overview-close type="button" data-i18n="dashboard.overview.close">Close</button>
+      </div>
+      <div id="overview-details-content"></div>
+    </dialog>
 
     <noscript>
       <div class="noscript">JavaScript is required to render local monitoring evidence.</div>

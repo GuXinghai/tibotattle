@@ -38,6 +38,14 @@ bars, absolute difference and fitted rates stay in the primary card body;
 methodology and examples move into a separate disclosure. Coverage, stale,
 unavailable and account/plan qualifications remain visible.
 
+The owner's single-screen follow-up replaces stacked allowance cards with compact
+rows beside two small measurement panels. Components, fit statistics and setup
+reading open in a native HTML dialog that retains the live result nodes and
+restores keyboard focus on close. The forecast moves to Allowance Estimate.
+Overview uses the available viewport height and fits unusually long states or
+small windows proportionally without clipping values. No UI tests or automated
+window review are run for this follow-up; visual acceptance remains owner-led.
+
 ## Validation boundary
 
 Before the owner's request to stop further UI tests, 94 focused rendering,
