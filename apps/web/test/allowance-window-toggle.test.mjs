@@ -9,7 +9,7 @@ import {
   normalizeDashboardPayload,
 } from "../public/data-client.js";
 
-async function allowanceWindowResolver(activeWindowMinutes = null, planType = null) {
+async function allowanceWindowResolver(activeWindowMinutes = null) {
   const source = await readFile(
     new URL("../public/app.js", import.meta.url),
     "utf8",
@@ -21,13 +21,11 @@ async function allowanceWindowResolver(activeWindowMinutes = null, planType = nu
     "CODEX_FIVE_HOUR_ALLOWANCE_MINUTES",
     "CODEX_WEEKLY_ALLOWANCE_MINUTES",
     "activeAllowanceWindowMinutes",
-    "activeWeeklyPlanType",
     `${source.slice(start, end)}\nreturn resolvedAllowanceWindowMinutes;`,
   )(
     CODEX_FIVE_HOUR_ALLOWANCE_MINUTES,
     CODEX_WEEKLY_ALLOWANCE_MINUTES,
     activeWindowMinutes,
-    planType,
   );
 }
 
@@ -189,28 +187,7 @@ test("the Allowance page exposes one real two-state window control", async () =>
   assert.match(appSource, /renderWeekly\(dashboard\);/u);
   assert.match(
     appSource,
-    /windowControl\.hidden = !fiveHourAvailable;/u,
-    "the window choice disappears when the plan has no five-hour history",
-  );
-});
-
-test("the five-hour window is offered only for a plan that has its own five-hour history", async () => {
-  const evidence = { status: "available", weeklyValues: [{ value_usd: 110 }] };
-  const data = {
-    weekly: { status: "available", weeklyValues: [{ value_usd: 1_800 }] },
-    allowanceHistoryByWindow: {
-      [CODEX_FIVE_HOUR_ALLOWANCE_MINUTES]: {
-        ...evidence,
-        planPopulations: [{ planType: "plus", ...evidence }],
-      },
-    },
-  };
-  assert.equal(
-    (await allowanceWindowResolver(CODEX_FIVE_HOUR_ALLOWANCE_MINUTES, "plus"))(data),
-    CODEX_FIVE_HOUR_ALLOWANCE_MINUTES,
-  );
-  assert.equal(
-    (await allowanceWindowResolver(CODEX_FIVE_HOUR_ALLOWANCE_MINUTES, "prolite"))(data),
-    CODEX_WEEKLY_ALLOWANCE_MINUTES,
+    /note\.hidden = !fiveHourSelected && fiveHourAvailable;/u,
+    "an unavailable five-hour lane explains the evidence gate on the default view",
   );
 });

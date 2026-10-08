@@ -8622,23 +8622,9 @@ function renderWeeklyPaceForecast(data) {
 function allowanceHistoryForWindow(data, windowMinutes) {
   if (windowMinutes === CODEX_WEEKLY_ALLOWANCE_MINUTES) return data?.weekly ?? null;
   if (windowMinutes !== CODEX_FIVE_HOUR_ALLOWANCE_MINUTES) return null;
-  const history = data?.allowanceHistoryByWindow?.[
+  return data?.allowanceHistoryByWindow?.[
     CODEX_FIVE_HOUR_ALLOWANCE_MINUTES
   ] ?? null;
-  if (history === null) return null;
-  // A five-hour window is not a property of every plan. Offer it only when
-  // the plan being viewed has its own five-hour evidence.
-  const planType = activeWeeklyPlanType
-    ?? data?.weekly?.selectedPlanType
-    ?? history.selectedPlanType
-    ?? null;
-  const populations = Array.isArray(history.planPopulations)
-    ? history.planPopulations : [];
-  const match = populations.find((row) => row.planType === planType);
-  if (match) return allowanceHistoryHasEvidence(match) ? history : null;
-  if (populations.length > 0) return null;
-  return history.planType == null || planType == null
-    || history.planType === planType ? history : null;
 }
 
 function allowanceHistoryHasEvidence(history) {
@@ -8707,19 +8693,17 @@ function renderAllowanceWindowChrome(data, windowMinutes) {
     button.classList.toggle("active", active);
     button.setAttribute("aria-pressed", String(active));
     button.disabled = unavailable;
-    button.hidden = unavailable;
     button.title = unavailable ? t("weekly.window.unavailable") : "";
     setLocalizedText(button, duration === CODEX_FIVE_HOUR_ALLOWANCE_MINUTES
       ? "weekly.window.fiveHour"
       : "weekly.window.sevenDay");
   }
   setLocalizedText($("#weekly-title"), "page.weekly.title");
-  // With one window left there is nothing to choose between.
-  const windowControl = $("#allowance-window-control");
-  if (windowControl) windowControl.hidden = !fiveHourAvailable;
   const note = $("#allowance-window-note");
-  note.hidden = !fiveHourSelected;
-  if (!note.hidden) setLocalizedText(note, "weekly.window.historyOnly");
+  note.hidden = !fiveHourSelected && fiveHourAvailable;
+  if (!note.hidden) setLocalizedText(note, fiveHourSelected
+    ? "weekly.window.historyOnly"
+    : "weekly.window.unavailable");
   $("#share-panel").hidden = fiveHourSelected;
   setLocalizedText($("#weekly-table-caption"), fiveHourSelected
     ? "weekly.table.fiveHourCaption"
