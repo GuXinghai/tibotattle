@@ -12408,7 +12408,8 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     ] },
     { page: "method", root: "#accounting", views: [
       ["summary", "#accounting-summary"], ["components", ".accounting-component-grid"],
-      ["models", ".accounting-models-panel"], ["diagnostics", ".advanced-diagnostics"],
+      ["models", ".accounting-models-panel"], ["cache", "#cache-reuse-outcome"],
+      ["diagnostics", ".advanced-diagnostics"],
     ] },
     { page: "projects", root: "#projects", host: ".work-usage-body", views: [
       ["list", ".work-usage-table-panel, .work-usage-body > .table-pagination, .work-usage-components"],
