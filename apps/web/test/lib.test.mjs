@@ -9766,10 +9766,6 @@ test("Forest Ink dark appearance is explicit, balanced, and live-updateable", as
   );
   assert.match(
     styles,
-    /html\[data-theme="dark"\] \.notice\.notice-info\.accounting-disclosure \{[\s\S]*?border-inline-start: 3px solid var\(--blue\);[\s\S]*?background: var\(--surface\);/u,
-  );
-  assert.match(
-    styles,
     /Portable share-card exports deliberately keep the existing light brand/u,
   );
   assert.doesNotMatch(

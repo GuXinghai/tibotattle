@@ -181,7 +181,6 @@ export const WEB_MESSAGES = Object.freeze({
       || key.startsWith("dashboard.overview.")
       || key.startsWith("dashboard.views.")
       || key === "dashboard.pricing.speedNote"
-      || key === "accounting.pricingDisclosure"
       || key.startsWith("appearance.")
       || key.startsWith("site.features.")
       || key.startsWith("accounting.cacheContinuity.matrix.")
@@ -2277,7 +2276,6 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "How the estimate was calculated": ["估计的计算方式", "Cómo se calculó la estimación"],
   "30d": ["30 天", "30 días"],
   "90d": ["90 天", "90 días"],
-  "API pricing is a measuring stick, not your bill.": ["API 定价是衡量标尺，不是你的账单。", "Los precios de API son una regla de medida, no tu factura."],
   "Token components": ["Token 组成", "Componentes de tokens"],
   "Token count": ["Token 数量", "Recuento de tokens"],
   "Every token is counted in exactly one component. Output text excludes reasoning tokens. Combined output is used only when the source doesn't split them.": ["每个 token 只计入一个组成部分。输出文本不含推理 token。只有来源没有拆分时才使用合并输出。", "Cada token se cuenta en un único componente. El texto de salida excluye los tokens de razonamiento. La salida combinada solo se usa cuando la fuente no los separa."],

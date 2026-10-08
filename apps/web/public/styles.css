@@ -1814,7 +1814,6 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .lead-chart-panel .weekly-history-chart svg { height: clamp(270px, 30vw, 330px); }
 
-.accounting-disclosure { margin-top: -12px; }
 /* Two cards form each accounting row. Auto-fit created four columns on wide
    windows, leaving both the headline and overhead pairs stranded in the left
    half of the available space. */
@@ -4758,12 +4757,6 @@ html[data-theme="dark"] .weekly-pace-forecast.is-over-pace.is-critical {
   --pace-accent-wash: rgba(189, 115, 95, .13);
 }
 
-html[data-theme="dark"] .notice.notice-info.accounting-disclosure {
-  border-color: rgba(125, 158, 184, .2);
-  border-inline-start: 3px solid var(--blue);
-  background: var(--surface);
-}
-
 html[data-theme="dark"] .chart-grid {
   stroke: rgba(245, 241, 232, .1);
 }
@@ -6071,8 +6064,6 @@ body[data-dashboard-page] .dashboard-shell .table-wrap { max-height: none; }
 #timeline .chart-summary-grid { gap: 8px; margin-top: 8px; }
 #timeline .chart-summary-grid > div { padding: 8px 10px; }
 #timeline .trends-exact-panel > h3 { margin: 0 0 10px; font: var(--weight-semibold) 16px var(--sans); }
-/* Accounting keeps its pricing and coverage qualifiers above every view. */
-#accounting .accounting-disclosure { display: block; }
 #accounting .accounting-summary { gap: 10px; }
 #accounting .accounting-summary .metric-card { padding: 14px; min-height: 0; }
 #accounting .accounting-summary .metric-value { font: var(--weight-semibold) 28px var(--sans); }
