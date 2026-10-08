@@ -359,6 +359,13 @@ and its remaining limits.
 
 ## Refresh, progress, and recovery
 
+On Windows, a detailed update can wait for existing history reports to finish
+reading before it replaces the local history index. If publication times out or
+fails, the app retains existing results and shows a specific error. Wait for
+report loading to finish and retry manually; if the problem persists, restart
+TiboTattle. Source files changing during indexing have a separate retry message.
+Quota collection and history indexing report their results independently.
+
 Use **Refresh** to update quota, retained history,
 and detailed Usage-and-costs and Trends evidence together. A valid
 generation-bound accounting cache is reused; a changed generation is

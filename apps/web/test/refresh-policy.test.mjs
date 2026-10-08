@@ -198,6 +198,7 @@ function refreshHarness({
   runInContext(productionFunction("renderObservationConnectionState"), context);
   runInContext(productionFunction("quotaRefreshDisposition"), context);
   runInContext(productionFunction("quotaRefreshFailureMessage"), context);
+  runInContext(productionFunction("historyRefreshFailureMessage"), context);
   runInContext(productionFunction("refreshResultReceipt"), context);
   runInContext(productionFunction("renderCurrentObservationConnectionState"), context);
   runInContext(productionFunction("publishRefreshResultNotice"), context);
@@ -470,6 +471,69 @@ test("dashboard reload reads the latest quota result from refresh status", async
   assert.equal(harness.context.refreshResultNotice.titleKey, "refresh.quota.failureTitle");
   assert.equal(harness.notices.at(-1).copyKey, "refresh.quota.failureCodeCopy");
   assert.equal(harness.notices.at(-1).copyValues.code, "temporary_disconnect");
+});
+
+test("history publication failures explain the fixed cause in every language and keep quota failures visible", () => {
+  const codes = [
+    ["local_unified_index_publication_busy", "refresh.history.publicationBusyCopy"],
+    ["local_unified_index_publication_timed_out", "refresh.history.publicationTimedOutCopy"],
+    ["local_unified_index_publication_failed", "refresh.history.publicationFailedCopy"],
+  ];
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const [code, copyKey] of codes) {
+      const harness = refreshHarness();
+      harness.context.t = (key, values = {}) => translate(key, values, locale);
+      harness.context.publishRefreshResultNotice({
+        refreshId: "refresh-publication-failure",
+        status: "degraded",
+        failedStep: "unified_index",
+        failureCode: code,
+        result: {
+          unifiedIndex: { status: "failed", errorCode: code },
+          quotaRefresh: { attempted: true, recordWritten: false, errorCode: "app_server_unavailable" },
+        },
+      });
+      const notice = harness.notices.at(-1);
+      assert.equal(notice.titleKey, "refresh.degradedQuotaFailureTitle");
+      assert.equal(notice.kind, "error");
+      assert.equal(notice.copy, `${translate(copyKey, { code }, locale)} ${translate("refresh.quota.appServerUnavailableCopy", {}, locale)}`);
+      assert.ok(notice.copy.includes(code), locale);
+      assert.equal(harness.calls.includes("continuation-check"), false,
+        "presenting a failure does not change the retry policy");
+      harness.context.renderObservationConnectionState({ mode: "local", state: "stale" }, { status: "stale" });
+      assert.equal(harness.notices.at(-1), notice, "a stale tick preserves the specific history error");
+    }
+  }
+});
+
+test("source changes explain that no new history index was published", () => {
+  const code = "codex_rollout_source_changed";
+  for (const locale of SUPPORTED_LOCALES) {
+    const harness = refreshHarness();
+    harness.context.t = (key, values = {}) => translate(key, values, locale);
+    harness.context.publishRefreshResultNotice({
+      refreshId: "refresh-source-changed",
+      status: "degraded",
+      result: { unifiedIndex: { status: "failed", errorCode: code } },
+    });
+    const notice = harness.notices.at(-1);
+    assert.equal(notice.titleKey, "refresh.degradedTitle");
+    assert.equal(notice.copy, translate("refresh.history.sourceChangedCopy", { code }, locale));
+    assert.match(notice.copy, /not published|未发布|no se publicó/u);
+  }
+});
+
+test("partial source coverage is unchanged and cannot be mislabeled as a publication failure", () => {
+  const harness = refreshHarness();
+  harness.context.publishRefreshResultNotice({
+    refreshId: "refresh-partial-source",
+    status: "degraded",
+    failureCode: "local_unified_index_publication_timed_out",
+    result: { unifiedIndex: { status: "partial", generation: { skippedSourceCount: 1, skippedThreadCount: 1 } } },
+  });
+  const notice = harness.notices.at(-1);
+  assert.match(notice.copy, /left out 1 rollout source across 1 affected thread/u);
+  assert.equal(notice.copy.includes("within the time limit"), false);
 });
 
 test("quota failure messages explain a missing Codex CLI and expose only fixed error codes", () => {

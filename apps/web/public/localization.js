@@ -369,9 +369,29 @@ export const WEB_MESSAGES = Object.freeze({
     "Los totales verificados siguen disponibles. TiboTattle dejó fuera {sources} de {threads} que no superaron la validación local; ningún uso ausente se muestra como cero. Actualiza de nuevo cuando cambien los archivos de origen o cuando quieras comprobarlo.",
   ],
   "refresh.degradedGenericCopy": [
-    "Verified headline evidence remains available, but the unified history step ended in a fixed degraded state ({code}). Automatic retries have stopped; an explicit retry remains available.",
-    "已验证的概要证据仍然可用，但统一历史步骤以固定的降级状态结束（{code}）。自动重试已停止；仍可明确重试。",
-    "La evidencia resumida verificada sigue disponible, pero el paso de historial unificado terminó en un estado degradado fijo ({code}). Los reintentos automáticos se han detenido; aún puedes reintentar expresamente.",
+    "The summary is available, but the full history index could not be updated ({code}). Existing results have been kept. Automatic retries have stopped; you can retry manually.",
+    "概要仍然可用，但完整历史索引更新失败（{code}）。已保留已有结果，并停止自动重试；你可以手动重试。",
+    "El resumen sigue disponible, pero no se pudo actualizar el índice del historial completo ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; puedes reintentar manualmente.",
+  ],
+  "refresh.history.publicationBusyCopy": [
+    "The index is being published, so this operation could not finish ({code}). Existing results have been kept. Automatic retries have stopped; retry manually after publication finishes.",
+    "索引正在发布，本次操作暂时无法完成（{code}）。已保留已有结果，并停止自动重试；请稍后手动重试。",
+    "El índice se está publicando y esta operación no pudo finalizar ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; reintenta manualmente cuando termine la publicación.",
+  ],
+  "refresh.history.publicationTimedOutCopy": [
+    "The full history index update exceeded its time limit ({code}). Existing results have been kept. Automatic retries have stopped; wait for report loading to finish, then retry manually. If this persists, restart TiboTattle and try again.",
+    "完整历史索引更新超时（{code}）。已保留已有结果，并停止自动重试；请等报表加载结束后手动重试。若仍失败，请重启 TiboTattle 后再试。",
+    "La actualización del índice del historial completo superó el tiempo límite ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; espera a que terminen de cargar los informes y reintenta manualmente. Si el problema persiste, reinicia TiboTattle e inténtalo de nuevo.",
+  ],
+  "refresh.history.publicationFailedCopy": [
+    "The summary is available, but the new full history index could not replace the existing index file ({code}). Existing results have been kept. Automatic retries have stopped; you can retry manually. If this persists, check that TiboTattle can write to its data folder.",
+    "概要仍然可用，但新生成的完整历史索引无法替换已有索引文件（{code}）。已保留已有结果，并停止自动重试；你可以手动重试。若仍失败，请检查 TiboTattle 的数据文件夹是否可写。",
+    "El resumen sigue disponible, pero el nuevo índice del historial completo no pudo reemplazar el archivo del índice existente ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; puedes reintentar manualmente. Si el problema persiste, comprueba que TiboTattle pueda escribir en su carpeta de datos.",
+  ],
+  "refresh.history.sourceChangedCopy": [
+    "The summary is available, but Codex source files changed while the full history index was being built ({code}). The new index was not published, and existing results have been kept. Automatic retries have stopped; retry manually when the source files are no longer changing.",
+    "概要仍然可用，但构建完整历史索引期间，Codex 来源文件发生了变化（{code}）。本次未发布新索引，已有结果已保留，并停止自动重试；请等来源文件稳定后手动重试。",
+    "El resumen sigue disponible, pero los archivos de origen de Codex cambiaron mientras se construía el índice del historial completo ({code}). El nuevo índice no se publicó y se conservaron los resultados existentes. Los reintentos automáticos se han detenido; reintenta manualmente cuando los archivos de origen dejen de cambiar.",
   ],
   "refresh.alreadyRunningTitle": ["An update is already running", "更新正在进行中", "Ya hay una actualización en curso"],
   "refresh.alreadyRunningCopy": [

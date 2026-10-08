@@ -1529,6 +1529,24 @@ function quotaRefreshFailureMessage(refresh) {
   return { copyKey: "refresh.quota.failureCopy" };
 }
 
+function historyRefreshFailureMessage(refresh) {
+  const unifiedIndex = refresh?.result?.unifiedIndex;
+  if (refresh?.failedStep !== "unified_index" && unifiedIndex?.status !== "failed") return null;
+  const code = refresh.failureCode ?? unifiedIndex?.errorCode;
+  switch (code) {
+    case "local_unified_index_publication_busy":
+      return { copyKey: "refresh.history.publicationBusyCopy", copyValues: { code } };
+    case "local_unified_index_publication_timed_out":
+      return { copyKey: "refresh.history.publicationTimedOutCopy", copyValues: { code } };
+    case "local_unified_index_publication_failed":
+      return { copyKey: "refresh.history.publicationFailedCopy", copyValues: { code } };
+    case "codex_rollout_source_changed":
+      return { copyKey: "refresh.history.sourceChangedCopy", copyValues: { code } };
+    default:
+      return null;
+  }
+}
+
 function refreshResultReceipt(refresh) {
   if (!refresh || typeof refresh !== "object") return null;
   const quota = refresh.result?.quotaRefresh;
@@ -1565,7 +1583,10 @@ function publishRefreshResultNotice(refresh) {
       ?? null;
     const skipped = finite(unifiedIndex?.generation?.skippedSourceCount, 0);
     const threads = finite(unifiedIndex?.generation?.skippedThreadCount, 0);
-    const degradedCopy = skipped > 0
+    const historyFailureMessage = historyRefreshFailureMessage(refresh);
+    const degradedCopy = historyFailureMessage
+      ? t(historyFailureMessage.copyKey, historyFailureMessage.copyValues)
+      : skipped > 0
       ? t("refresh.degradedCopy", {
         sources: tPlural("format.rolloutSourceCount", skipped, {
           count: formatNumber(skipped),

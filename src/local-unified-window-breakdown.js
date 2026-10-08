@@ -6,7 +6,7 @@ import {
   safeSpeed,
   usageProjection,
 } from "./local-companion-usage-model.js";
-import { openLocalUnifiedIndex } from "./local-unified-index.js";
+import { openLocalUnifiedIndexRead } from "./local-unified-index.js";
 import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 
 // Windowed per-model / per-speed repricing over the unified local index.
@@ -257,7 +257,7 @@ export async function readLocalUnifiedWindowBreakdown({
   }
   let database;
   try {
-    database = openLocalUnifiedIndex(indexFile, { readOnly: true });
+    database = await openLocalUnifiedIndexRead(indexFile);
   } catch (error) {
     return {
       status: "unavailable",

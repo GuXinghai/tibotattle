@@ -53,6 +53,7 @@ import {
   LOCAL_UNIFIED_INDEX_USER_VERSION,
   readLocalUnifiedIndexCompatibility,
   readUnifiedIndexGenerationDescriptor,
+  trackLocalUnifiedIndexReadConnection,
 } from "../../src/local-unified-index.js";
 import {
   readLocalUnifiedWindowBreakdown,
@@ -310,10 +311,10 @@ function localUnifiedIndexHasSidecar(indexFile, inspect) {
 function openImmutableLocalUnifiedIndex(indexFile) {
   const immutableUrl = pathToFileURL(indexFile);
   immutableUrl.searchParams.set("immutable", "1");
-  return new DatabaseSync(immutableUrl.href, {
+  return trackLocalUnifiedIndexReadConnection(indexFile, new DatabaseSync(immutableUrl.href, {
     readOnly: true,
     timeout: 1_000,
-  });
+  }));
 }
 
 const COLD_REFRESH_V19_PREDECESSOR_PARSERS = Object.freeze([

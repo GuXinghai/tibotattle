@@ -118,6 +118,10 @@ const ACCOUNTING_TERMINAL_FAILURE_CODES = new Set([
 // arbitrary internal string can still be well formed while carrying an
 // unreviewed diagnostic promise.
 const UNIFIED_INDEX_PUBLIC_ERROR_CODES = new Set([
+  "codex_rollout_source_changed",
+  "local_unified_index_publication_busy",
+  "local_unified_index_publication_timed_out",
+  "local_unified_index_publication_failed",
   "codex_rollout_compression_unsupported",
   "codex_rollout_filename_identity_mismatch",
   "codex_rollout_generation_ambiguous",

@@ -6,7 +6,7 @@ import {
   LOCAL_UNIFIED_INDEX_PARSER_VERSION,
   LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARSER_VERSION,
   LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-  openLocalUnifiedIndex,
+  openLocalUnifiedIndexRead,
   readUnifiedIndexGenerationDescriptor,
   readUnifiedIndexToolFactFingerprint,
 } from "./local-unified-index.js";
@@ -1553,7 +1553,10 @@ export function createLocalUnifiedAccountingSource({
 
     let database;
     try {
-      database = openLocalUnifiedIndex(indexFile, { readOnly: true });
+      database = await openLocalUnifiedIndexRead(indexFile, {
+        signal,
+        onOpened: (opened) => { if (process.platform === "win32") metadata = opened; },
+      });
       let reopenedMetadata;
       try {
         reopenedMetadata = await lstat(indexFile);

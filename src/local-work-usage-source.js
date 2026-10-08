@@ -616,7 +616,7 @@ export async function readLocalWorkUsageSnapshot({
     if (!period.snapshots[selected])
       throw workUsageError("work_usage_scope_unavailable");
     return period.snapshots[selected];
-  }, { onOpenFailure });
+  }, { onOpenFailure, signal });
 }
 
 export async function enrichWorkUsageRows({ result, rows, codexHome, purpose }) {

@@ -22,6 +22,9 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 
 import { syncDirectory } from "./platform/index.js";
+import { localUnifiedIndexPublication } from "./local-unified-index-publication.js";
+
+const openedReadMetadata = new WeakMap();
 
 // The one local index.
 //
@@ -1621,6 +1624,7 @@ export function openLocalUnifiedIndex(indexFile, {
   deferSecondaryIndexes = false,
   allowRecoveryLock = false,
 } = {}) {
+  if (readOnly) localUnifiedIndexPublication.assertReadable(indexFile);
   const resolvedIndexFile = resolve(indexFile);
   let directoryChain = captureSafeLocalUnifiedIndexDirectoryChain(
     resolvedIndexFile,
@@ -1735,13 +1739,34 @@ export function openLocalUnifiedIndex(indexFile, {
     }
     if (!readOnly) migrateDatabase(database, { deferSecondaryIndexes });
     validateDatabase(database, { readOnly, deferSecondaryIndexes });
-    return database;
+    if (readOnly) openedReadMetadata.set(database, openedMetadata);
+    return readOnly
+      ? localUnifiedIndexPublication.trackReader(resolvedIndexFile, database)
+      : database;
   } catch (error) {
     if (preflight?.isOpen) preflight.close();
     if (database?.isOpen) database.close();
     if (error?.code?.startsWith("local_unified_index_")) throw error;
     throw fixedError("local_unified_index_unavailable");
   }
+}
+
+export async function openLocalUnifiedIndexRead(indexFile, { signal = null, onOpened = null } = {}) {
+  if (onOpened !== null && typeof onOpened !== "function") {
+    throw new TypeError("onOpened must be a function or null");
+  }
+  return localUnifiedIndexPublication.openReader(indexFile,
+    () => {
+      const database = openLocalUnifiedIndex(indexFile, { readOnly: true });
+      try { onOpened?.(openedReadMetadata.get(database)); }
+      catch (error) { database.close(); throw error; }
+      return database;
+    }, { signal });
+}
+
+// Immutable URL readers also hold Windows handles and share the same barrier.
+export function trackLocalUnifiedIndexReadConnection(indexFile, database) {
+  return localUnifiedIndexPublication.trackReader(indexFile, database);
 }
 
 /**
@@ -1923,7 +1948,7 @@ export function readUnifiedIndexGenerationDescriptor(database, generationId = nu
 export async function withReadOnlyUnifiedIndex(
   indexFile,
   callback,
-  { openIndex = openLocalUnifiedIndex, onOpenFailure = null } = {},
+  { openIndex = openLocalUnifiedIndexRead, onOpenFailure = null, signal = null } = {},
 ) {
   if (typeof callback !== "function") {
     throw new TypeError("read-only unified-index callback must be a function");
@@ -1939,7 +1964,7 @@ export async function withReadOnlyUnifiedIndex(
   let primaryFailure = false;
   try {
     try {
-      database = openIndex(indexFile, { readOnly: true });
+      database = await openIndex(indexFile, { readOnly: true, signal });
     } catch (error) {
       if (onOpenFailure !== null) return await onOpenFailure(error);
       throw error;
@@ -3204,44 +3229,90 @@ export function createUnifiedIndexWriter(database, {
 export async function publishStagedUnifiedIndex(
   stageFile,
   indexFile,
-  { allowRecoveryLock = false, signal = null } = {},
+  { allowRecoveryLock = false, signal = null, publicationTimeoutMs } = {},
 ) {
   if (signal !== null
       && (typeof signal !== "object" || typeof signal.aborted !== "boolean")) {
     throw new TypeError("signal must be an AbortSignal or null");
   }
   if (signal?.aborted) throw fixedError("local_unified_index_aborted");
-  if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
-  await chmod(stageFile, 0o600);
-  await syncFile(stageFile);
-  // A rebuild close can be entirely synchronous. Yield once after the durable
-  // stage fsync so an already-queued cancellation becomes observable before
-  // final target validation; never yield after validation or the signal check.
-  await new Promise((resolvePromise) => setImmediate(resolvePromise));
-  if (signal?.aborted) throw fixedError("local_unified_index_aborted");
-  if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
-  await assertSafeLocalUnifiedIndexTarget(indexFile, { allowMissing: true });
-  // Target validation yields to the event loop. Recovery can acquire its lock
-  // while that validation is in flight, so re-check exclusion after the await
-  // and adjacent to the atomic rename. No asynchronous boundary remains after
-  // this cancellation/lock pair; neither an abort nor a newly acquired recovery
-  // lock can therefore be missed because target verification was suspended.
-  if (signal?.aborted) throw fixedError("local_unified_index_aborted");
-  if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
-  await rename(stageFile, indexFile);
-  try {
-    await syncDirectory(dirname(resolve(indexFile)));
-    await syncFile(indexFile);
-  } catch {
-    // The rename has already happened. Report that exact bounded state so the
-    // caller retains its last generation-bound cache and retries inspection;
-    // never pretend the old file is still live or attempt a destructive undo.
-    const error = fixedError(
-      "local_unified_index_publication_durability_uncertain",
-    );
-    error.published = true;
-    throw error;
-  }
+  return localUnifiedIndexPublication.publish(indexFile, async (deadline) => {
+    if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
+    await chmod(stageFile, 0o600);
+    await syncFile(stageFile);
+    // A rebuild close can be entirely synchronous. Yield once after the durable
+    // stage fsync so an already-queued cancellation becomes observable before
+    // final target validation; never yield after validation or the signal check.
+    await new Promise((resolvePromise) => setImmediate(resolvePromise));
+    if (signal?.aborted) throw fixedError("local_unified_index_aborted");
+    if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
+    const expectedTarget = await assertSafeLocalUnifiedIndexTarget(indexFile, { allowMissing: true });
+    const expectedStage = await assertSafeLocalUnifiedIndexTarget(stageFile, { allowMissing: false });
+    // Sharing retries revalidate both identities and recovery exclusion. Never
+    // delete the live destination or admit a replacement from a stale stage.
+    const sharingDeadline = Math.min(deadline ?? Infinity, performance.now() + 5_000);
+    while (true) {
+      if (signal?.aborted) throw fixedError("local_unified_index_aborted");
+      if (deadline !== undefined && performance.now() >= deadline) {
+        throw fixedError("local_unified_index_publication_timed_out");
+      }
+      if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
+      const target = await assertSafeLocalUnifiedIndexTarget(indexFile, { allowMissing: true });
+      const stage = await assertSafeLocalUnifiedIndexTarget(stageFile, { allowMissing: false });
+      if ((expectedTarget === null ? target !== null
+        : target === null || !sameLocalUnifiedIndexTarget(expectedTarget, target))
+        || !sameLocalUnifiedIndexTarget(expectedStage, stage)) {
+        throw fixedError("local_unified_index_file_changed");
+      }
+      if (signal?.aborted) throw fixedError("local_unified_index_aborted");
+      if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
+      if (deadline !== undefined && performance.now() >= deadline) {
+        throw fixedError("local_unified_index_publication_timed_out");
+      }
+      try {
+        await rename(stageFile, indexFile);
+        break;
+      } catch (error) {
+        if (process.platform !== "win32") throw error;
+        if (!["EPERM", "EACCES", "EBUSY"].includes(error?.code)) {
+          throw fixedError("local_unified_index_publication_failed");
+        }
+        if (performance.now() >= sharingDeadline) {
+          throw fixedError("local_unified_index_publication_timed_out");
+        }
+        await waitForPublicationRetry(Math.min(100, sharingDeadline - performance.now()), signal);
+      }
+    }
+    try {
+      await syncDirectory(dirname(resolve(indexFile)));
+      await syncFile(indexFile);
+    } catch {
+      // The rename has already happened. Report that exact bounded state so the
+      // caller retains its last generation-bound cache and retries inspection;
+      // never pretend the old file is still live or attempt a destructive undo.
+      const error = fixedError(
+        "local_unified_index_publication_durability_uncertain",
+      );
+      error.published = true;
+      throw error;
+    }
+  }, { signal, ...(publicationTimeoutMs === undefined ? {} : { timeoutMs: publicationTimeoutMs }) });
+}
+
+function waitForPublicationRetry(ms, signal) {
+  return new Promise((resolvePromise, reject) => {
+    const aborted = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", aborted);
+      reject(fixedError("local_unified_index_aborted"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", aborted);
+      resolvePromise();
+    }, ms);
+    signal?.addEventListener("abort", aborted, { once: true });
+    if (signal?.aborted) aborted();
+  });
 }
 
 export async function removeIfPresent(path) {

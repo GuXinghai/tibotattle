@@ -4285,6 +4285,12 @@ test("refresh controller publishes bounded progress and reloads after success", 
 
 test("refresh controller exposes only allowlisted unified-index failure codes", async () => {
   for (const fixture of [
+    ...[
+      "local_unified_index_publication_busy",
+      "local_unified_index_publication_timed_out",
+      "local_unified_index_publication_failed",
+      "codex_rollout_source_changed",
+    ].map((input) => ({ input, expected: input })),
     {
       input: "local_unified_index_file_changed",
       expected: "local_unified_index_file_changed",

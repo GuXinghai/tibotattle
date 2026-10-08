@@ -18,7 +18,7 @@ import {
 } from "./local-companion-usage-model.js";
 import {
   createUnifiedIndexToolFactFingerprintAccumulator,
-  openLocalUnifiedIndex,
+  openLocalUnifiedIndexRead,
   readUnifiedIndexGenerationDescriptor,
 } from "./local-unified-index.js";
 import {
@@ -469,7 +469,10 @@ export async function readLocalUnifiedCompanionProjection({
   const startedAt = performance.now();
   let database;
   try {
-    database = openLocalUnifiedIndex(indexFile, { readOnly: true });
+    database = await openLocalUnifiedIndexRead(indexFile, {
+      signal,
+      onOpened: (opened) => { if (process.platform === "win32") metadata = opened; },
+    });
   } catch (error) {
     return complete(unavailable(
       "unavailable",
