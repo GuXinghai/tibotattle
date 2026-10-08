@@ -5259,7 +5259,7 @@ function renderUsageTimeline(data) {
       segmentKey: "allowanceSegment", maxGapMs: { hour: 6, day: 36, week: 192 }[activeUsageGrouping] * 3_600_000 }],
     yLabel: { key: "trends.remainingPercent" }, title: { key: "trends.allowance" },
     description: { key: "trends.allowanceDescription" },
-    yDomain: { low: 0, high: 100, ticks: [0, 25, 50, 75, 100] }, height: 260, xDomain: viewport,
+    yDomain: { low: 0, high: 100, ticks: [0, 25, 50, 75, 100] }, height: 180, xDomain: viewport,
     width: Math.max(360, allowanceShell.clientWidth || 900),
   }));
   if (!visiblePoints.length) {
@@ -5665,7 +5665,7 @@ function renderTimeline(data) {
         values: { timeZone: formatTimeZoneLabel() },
       },
       includeZero: true,
-      height: 270,
+      height: 200,
       width: Math.max(360, shell.clientWidth || 900),
       xDomain: viewport,
       statusIntervals: usingLive && viewport !== null

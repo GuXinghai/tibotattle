@@ -6061,8 +6061,13 @@ body[data-dashboard-page] .dashboard-shell .table-wrap { max-height: none; }
 #timeline .chart-heading p { font-size: 12px; margin: 4px 0; }
 #timeline .trends-horizon { margin-bottom: 8px; padding: 8px 12px; }
 #timeline .trends-time-controls { margin-block: 8px; }
-#timeline .trends-capacity-panel .chart-shell svg { height: clamp(100px, 20dvh, 180px); }
-#timeline .trends-comparison-panel .chart-shell svg { height: clamp(100px, 22dvh, 200px); }
+/* Stacked trend charts share one time axis, so each must span the panel's
+   full width. They are drawn at the panel's measured pixel width, so taking
+   the height from each drawing's own viewBox keeps them 1:1. A shared fixed
+   height instead letterboxed the taller drawing, which shrank it sideways and
+   pulled its dates out of line with the chart beneath it. The compact height
+   is chosen where each chart is drawn in app.js. */
+#timeline :is(.trends-capacity-panel, .trends-comparison-panel) .chart-shell svg { height: auto; aspect-ratio: auto; max-height: none; }
 #timeline .chart-summary-grid { gap: 8px; margin-top: 8px; }
 #timeline .chart-summary-grid > div { padding: 8px 10px; }
 #timeline .trends-exact-panel > h3 { margin: 0 0 10px; font: var(--weight-semibold) 16px var(--sans); }
