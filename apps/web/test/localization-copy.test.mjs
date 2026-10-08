@@ -29,6 +29,21 @@ test("every explicit dashboard translation key resolves through the browser cata
   }
 });
 
+test("dynamic setup, refresh and diagnostic messages exist in every locale", async () => {
+  const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  const keys = new Set([...source.matchAll(/"((?:setup\.(?:source|state|check|note|location)|page\.(?:analysis|observation|dataSource)|refresh\.(?:progress|error|diagnostic))\.[^"]+)"/gu)]
+    .map(match => match[1]));
+  assert.ok(keys.size > 60, "cover dynamic messages beyond markup-only keys");
+  for (const key of keys) {
+    for (const locale of SUPPORTED_LOCALES) {
+      const copy = translate(key, { reference: "TT-ABC123", requestId: "synthetic-request", count: "3+", location: "synthetic-location" }, locale);
+      assert.notEqual(copy, key, `${locale}: ${key}`);
+      assert.ok(copy.trim().length > 0, `${locale}: ${key}`);
+      if (locale === "zh-Hans") assert.match(copy, /[\u4e00-\u9fff]/u, key);
+    }
+  }
+});
+
 test("unavailable fitted-rate copy follows the weekly calibration contract", async () => {
   const contractSource = await readFile(
     new URL("../../../src/reporting/weekly-calibration.js", import.meta.url),

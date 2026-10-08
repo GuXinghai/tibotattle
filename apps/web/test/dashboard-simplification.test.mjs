@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createContext, runInContext } from "node:vm";
+import { translate } from "../public/localization.js";
+import { diagnosticReferenceSentence } from "../public/lib.js";
 
 const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 function productionFunction(name) {
@@ -38,16 +40,18 @@ test("accountless sharing uses the existing versioned Electron bridge", () => {
 });
 
 test("diagnostics keep fixed copy and require an exact write receipt", async () => {
+  for (const locale of ["en-US", "zh-Hans", "es"]) {
   for (const outcome of ["recorded", "refused", "unreachable"]) {
     const calls = [];
     const errors = [];
     const context = createContext({
       createDiagnosticReference: () => "TT-ABC123",
       diagnosticErrorCode: value => value ?? null,
-      serviceRequestId: () => null,
+      serviceRequestId: () => "",
       diagnosticSurface: () => "local_refresh",
-      diagnosticReferenceSentence: ({ writtenToLocalLog }) => writtenToLocalLog ? "Recorded." : "Reference only.",
-      LOCAL_COMPANION_ERROR_COPY: { refresh_not_authorized: "Fixed collection failure." },
+      diagnosticReferenceSentence,
+      t: (key, values = {}) => translate(key, values, locale),
+      LOCAL_COMPANION_ERROR_COPY: { refresh_not_authorized: "refresh.error.refresh_not_authorized" },
       localClient: { async recordDiagnosticNote(note) {
         calls.push(note);
         if (outcome === "unreachable") throw new Error("private untrusted error");
@@ -59,7 +63,10 @@ test("diagnostics keep fixed copy and require an exact write receipt", async () 
     runInContext(productionFunction("describeFailure"), context);
     const result = await context.describeFailure({ surface: "local_refresh",
       error: { code: "refresh_not_authorized", message: "private untrusted error" }, fallback: "Fallback." });
-    assert.equal(result.text, `Fixed collection failure. ${outcome === "recorded" ? "Recorded." : "Reference only."}`);
+    assert.equal(result.text, `${translate("refresh.error.refresh_not_authorized", {}, locale)} ${translate(
+      outcome === "recorded" ? "refresh.diagnostic.logged" : "refresh.diagnostic.reference",
+      { reference: "TT-ABC123" }, locale,
+    )}`);
     assert.equal(result.localNote, outcome);
     assert.equal(calls.length, 1);
     assert.equal(errors.length, outcome === "refused" ? 1 : 0);
@@ -67,6 +74,7 @@ test("diagnostics keep fixed copy and require an exact write receipt", async () 
     const unknown = await context.describeFailure({ surface: "local_refresh",
       error: { code: "constructor", message: "private untrusted error" }, fallback: "Fallback." });
     assert.match(unknown.text, /^Fallback\./u);
+  }
   }
 });
 

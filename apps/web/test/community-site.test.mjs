@@ -1780,7 +1780,7 @@ test("community spend card sums only reported equivalents and qualifies incomple
 test("community spend coverage wording is translated in every shipped language", () => {
   for (const [locale, label, detail] of [
     ["en-US", "Total API-equivalent spend", "API-equivalent spend unavailable; not an actual bill"],
-    ["zh-Hans", "API 等值总支出", "API 等值支出不可用；非实际账单"],
+    ["zh-Hans", "API 等价金额总支出", "API 等价金额支出不可用；非实际账单"],
     ["es", "Gasto total equivalente de API", "Gasto equivalente de API no disponible; no es una factura real"],
   ]) {
     const documentRef = fakeDocument();
@@ -1991,7 +1991,7 @@ test("unsafe all-token sums stay unavailable and break the token line", () => {
 test("all-token activity labels preserve their meaning in every shipped language", () => {
   for (const [locale, label, detail] of [
     ["en-US", "All tokens counted", "Input and output across 2 shared days"],
-    ["zh-Hans", "已计入的全部 token", "跨 2 个共享日期的输入与输出"],
+    ["zh-Hans", "已计入的全部 Token", "跨 2 个共享日期的输入与输出"],
     ["es", "Todos los tokens contabilizados", "Entrada y salida en 2 días compartidos"],
   ]) {
     const documentRef = fakeDocument();

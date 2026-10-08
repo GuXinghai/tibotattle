@@ -186,7 +186,7 @@ function refreshHarness({
     t: (key, values = {}) => translate(key, values, "en-US"),
   });
   for (const name of [
-    "localAnalysisLabel",
+    "localAnalysisMessageKey",
     "renderRefreshProgress",
     "startRefreshProgressClock",
     "updateLocalActionButtons",
@@ -206,6 +206,32 @@ function refreshHarness({
   runInContext(productionFunction("scheduleReturningUserRefresh"), context);
   return { context, calls, routes, notices, timers, buttons, priorDashboard, progressFrames, globalStates };
 }
+
+test("dynamic progress and idle actions follow the selected language", () => {
+  const { context } = refreshHarness();
+  let locale = "zh-Hans";
+  context.setLocalizedText = (element, key, values = {}) => {
+    element.textContent = translate(key, values, locale);
+  };
+  context.t = (key, values = {}) => translate(key, values, locale);
+  const button = context.$("#refresh-button");
+  context.localActionBusy = true;
+  context.localRefreshInProgress = true;
+  for (const nextLocale of ["zh-Hans", "en-US", "es", "zh-Hans"]) {
+    locale = nextLocale;
+    context.renderRefreshProgress(button, "Analyzing files…", {
+      processed: 9, selected: 100, elapsedSeconds: 60,
+    });
+    const phase = translate("refresh.progress.files", {}, locale);
+    assert.deepEqual(button.children.map(child => child.textContent), [phase, "9/100", "1:00"]);
+    assert.equal(button.getAttribute("aria-label"), `${phase} · 9/100 · 1:00`);
+  }
+  context.localActionBusy = false;
+  context.localRefreshInProgress = false;
+  context.updateLocalActionButtons();
+  assert.match(button.textContent, /[\u4e00-\u9fff]/u);
+  assert.equal(button.getAttribute("aria-label"), null);
+});
 
 test("refresh progress reserves distinct count and timer slots and clears them when idle", () => {
   const harness = refreshHarness();

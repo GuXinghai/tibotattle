@@ -29,7 +29,7 @@ const states = [
   ["starting", "Starting", "正在启动", "Iniciando"],
   ["analyzing", "Analyzing", "正在分析", "Analizando"],
   ["fresh", "Fresh", "最新", "Actualizado"],
-  ["stale", "Stale", "已过期", "Desactualizado"],
+  ["stale", "Stale", "已过时", "Desactualizado"],
   ["unavailable", "Status unavailable", "状态不可用", "Estado no disponible"],
 ];
 
@@ -44,8 +44,8 @@ const actionStates = {
   "zh-Hans": {
     starting: ["正在启动", false],
     analyzing: ["正在分析", false],
-    fresh: ["更新本地使用情况", true],
-    stale: ["更新本地使用情况", true],
+    fresh: ["更新本地用量", true],
+    stale: ["更新本地用量", true],
     unavailable: ["重试", true],
   },
   es: {
@@ -64,7 +64,7 @@ test("semantic tray states project fixed status copy in every supported locale",
       ["zh-Hans", labels[1]],
       ["es", labels[2]],
     ]) {
-      const template = createDesktopTrayTemplate({
+      const template = createTrayFixture({
         appName: "TiboTattle Dev",
         locale,
         trayStatus: { status, allowance: null, notificationEvidence: null },
@@ -110,7 +110,7 @@ test("tray refresh control follows companion lifecycle and avoids overlap", () =
     ["stale", "Update Local Usage", true, "refresh"],
     ["unavailable", "Retry", true, "retry"],
   ]) {
-    const template = createDesktopTrayTemplate({
+    const template = createTrayFixture({
       actions,
       trayStatus: { status, allowance: null, notificationEvidence: null },
     });
@@ -144,7 +144,7 @@ test("fresh direct evidence projects compact title, evidence age, and quota lane
       resetProofKind: "provider_reported_schedule_only",
     }],
   };
-  const fiveHour = createDesktopTrayTemplate({
+  const fiveHour = createTrayFixture({
     appName: "TiboTattle Dev",
     locale: "en-US",
     trayStatus: {
@@ -172,7 +172,7 @@ test("fresh direct evidence projects compact title, evidence age, and quota lane
     "Quit TiboTattle Dev",
   ]);
 
-  const sevenDay = createDesktopTrayTemplate({
+  const sevenDay = createTrayFixture({
     appName: "TiboTattle Dev",
     locale: "zh-Hans",
     trayStatus: {
@@ -190,7 +190,7 @@ test("fresh direct evidence projects compact title, evidence age, and quota lane
 });
 
 test("analyzing tray keeps a live percentage and labels the second line as analyzing", () => {
-  const template = createDesktopTrayTemplate({
+  const template = createTrayFixture({
     appName: "TiboTattle Dev",
     platform: "darwin",
     now: Date.parse("2026-08-22T12:04:00.000Z"),
@@ -223,7 +223,7 @@ test("analyzing tray keeps a live percentage and labels the second line as analy
 test("allowance evidence never leaks into non-refreshing non-fresh tray states", () => {
   for (const status of ["starting", "stale", "unavailable"]) {
     assert.throws(
-      () => createDesktopTrayTemplate({
+      () => createTrayFixture({
         trayStatus: {
           status,
           allowance: { source: "direct", window: "five_hour", remainingPercent: 80 },
@@ -250,12 +250,12 @@ test("tray status rejects arbitrary fields and renderer-shaped labels", () => {
     }, notificationEvidence: null },
   ]) {
     assert.throws(
-      () => createDesktopTrayTemplate({ trayStatus }),
+      () => createTrayFixture({ trayStatus }),
       TypeError,
     );
   }
   assert.throws(
-    () => createDesktopTrayTemplate({
+    () => createTrayFixture({
       trayStatus: { status: "fresh", allowance: null, notificationEvidence: null },
       statusLabel: "arbitrary renderer label",
     }),
@@ -265,7 +265,7 @@ test("tray status rejects arbitrary fields and renderer-shaped labels", () => {
 
 test("default and legacy label callers remain bounded and preserve action identity", () => {
   const { actions, calls } = actionRecorder();
-  const defaultTemplate = createDesktopTrayTemplate({
+  const defaultTemplate = createTrayFixture({
     appName: "TiboTattle Dev",
     actions,
   });
@@ -299,11 +299,15 @@ test("default and legacy label callers remain bounded and preserve action identi
     assert.equal(calls.at(-1), action);
   }
 
-  const legacy = createDesktopTrayTemplate({
+  const legacy = createTrayFixture({
     appName: "TiboTattle Dev",
     statusLabel: "Status unavailable",
   });
   assert.equal(legacy[1].label, STATUS_PLACEHOLDER);
-  assert.throws(() => createDesktopTrayTemplate({ statusLabel: "" }), TypeError);
-  assert.throws(() => createDesktopTrayTemplate({ statusLabel: 42 }), TypeError);
+  assert.throws(() => createTrayFixture({ statusLabel: "" }), TypeError);
+  assert.throws(() => createTrayFixture({ statusLabel: 42 }), TypeError);
 });
+
+function createTrayFixture(options = {}) {
+  return createDesktopTrayTemplate({ locale: "en-US", ...options });
+}

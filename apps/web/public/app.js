@@ -494,6 +494,8 @@ function rerenderLocalizedDashboard() {
   // Everything else — every status line, chip, and button label written from a
   // message key anywhere on this page — re-translates from the registry those
   // writes populate. Nothing has to be named here for it to be covered.
+  if (localOnboarding) renderLocalOnboarding(localOnboarding);
+  updateLocalActionButtons();
   retranslateLocalizedNodes();
   localization.localizeTree();
   renderElectronAccountlessCommunity();
@@ -550,19 +552,42 @@ function localAnalysisAllowed(value = localOnboarding) {
   );
 }
 
-function localAnalysisLabel() {
+function localAnalysisMessageKey() {
   if (dashboard?.collector?.indexing?.status === "bounded_pause") {
-    return "Continue local analysis";
+    return "page.analysis.continue";
   }
   return dashboard?.activity?.lastScanAt || dashboard?.collector?.lastScanAt
-    ? "Update local usage"
-    : "Analyze local usage";
+    ? "page.analysis.update"
+    : "page.analysis.analyze";
 }
 
 // Keep phase, count and elapsed time in stable slots across refresh updates.
 function renderRefreshProgress(button, phase, { processed = null, selected = null, elapsedSeconds = null } = {}) {
   button.classList.add("refresh-progress");
   const label = node("span", "refresh-progress-phase", phase);
+  const phaseMessages = new Map([
+    ["Starting detailed accounting…", "refresh.progress.startingDetailed"],
+    ["Starting local analysis…", "refresh.progress.starting"],
+    ["Update running…", "refresh.progress.running"],
+    ["Update running; reconnecting…", "refresh.progress.reconnecting"],
+    ["Stopping safely…", "refresh.progress.stopping"],
+    ["Indexing archive history…", "refresh.progress.archive"],
+    ["Scanning local history…", "refresh.progress.history"],
+    ["Calculating usage and allowance…", "refresh.progress.calculating"],
+    ["Analyzing files…", "refresh.progress.files"],
+    ["Analyzing local evidence…", "refresh.progress.evidence"],
+    ["Analyzing…", "refresh.progress.analyzing"],
+    ["Continuing local analysis…", "refresh.progress.continuing"],
+    ["Stopping timed-out analysis…", "refresh.progress.timeout"],
+    ["Loading saved results…", "refresh.progress.saved"],
+    ["Loading updated evidence…", "refresh.progress.updated"],
+    ["Loading evidence…", "refresh.progress.loading"],
+    ["Calculating accounting…", "refresh.progress.accounting"],
+    ["Preparing local summary…", "refresh.progress.summary"],
+    ["Local summary updated · checking full history…", "refresh.progress.summaryReady"],
+  ]);
+  const phaseKey = phaseMessages.get(phase);
+  if (phaseKey) setLocalizedText(label, phaseKey);
   const count = node("span", "refresh-progress-count");
   if (processed !== null && selected !== null) {
     const current = node("span", "refresh-progress-current", String(processed));
@@ -572,7 +597,7 @@ function renderRefreshProgress(button, phase, { processed = null, selected = nul
   const elapsed = elapsedSeconds === null ? "" :
     `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, "0")}`;
   const timer = node("span", "refresh-progress-time", elapsed);
-  const description = [phase, count.textContent, elapsed].filter(Boolean).join(" · ");
+  const description = [label.textContent, count.textContent, elapsed].filter(Boolean).join(" · ");
   button.title = description;
   button.setAttribute("aria-label", description);
   button.replaceChildren(label, count, timer);
@@ -653,7 +678,7 @@ function startRefreshProgressClock(button, phase, options = {}) {
 
 function updateLocalActionButtons() {
   const allowed = localAnalysisAllowed();
-  const label = localAnalysisLabel();
+  const labelKey = localAnalysisMessageKey();
   const refreshActive = localRefreshInProgress;
   for (const selector of ["#refresh-button", "#setup-refresh"]) {
     const button = $(selector);
@@ -668,7 +693,7 @@ function updateLocalActionButtons() {
       renderRefreshProgress(button, "Update running…");
     }
     if (!localActionBusy && !refreshActive) {
-      button.textContent = label;
+      setLocalizedText(button, labelKey);
       button.classList.remove("refresh-progress");
       button.removeAttribute("aria-label");
       button.removeAttribute("title");
@@ -683,7 +708,8 @@ function updateLocalActionButtons() {
   const cancel = $("#cancel-refresh");
   cancel.hidden = !localRefreshInProgress;
   cancel.disabled = localRefreshCancelRequested;
-  cancel.textContent = localRefreshCancelRequested ? "Cancelling…" : "Cancel";
+  setLocalizedText(cancel, localRefreshCancelRequested
+    ? "page.analysis.cancelling" : "page.analysis.cancel");
 }
 
 let activeInformationPopover = null;
@@ -1256,47 +1282,22 @@ function renderDashboardUnavailableState(kind) {
 }
 
 function onboardingSourceGuidance(value) {
-  const customLocation = value.customCodexHomeConfigured
-    ? "The custom Codex data location configured for this app"
-    : "The usual Codex data folder";
+  const values = { location: t(value.customCodexHomeConfigured
+    ? "setup.location.custom" : "setup.location.default") };
   const guidance = {
-    codex_home_missing: {
-      title: value.customCodexHomeConfigured
-        ? "The configured Codex location is missing"
-        : "Open Codex once, then check again",
-      summary: `${customLocation} was not found. ${
-        value.customCodexHomeConfigured
-          ? "Reopen the normal app build or restore the configured location, then check again."
-          : "Open Codex, start or resume a task, and let one response finish."
-      }`,
-      check: `${customLocation} was not found`,
-    },
-    codex_home_unreadable: {
-      title: "Allow local Codex access, then check again",
-      summary: `${customLocation} exists but cannot be read. Quit TiboTattle, open System Settings → Privacy & Security → Files and Folders, allow TiboTattle if it is listed, then reopen the app.`,
-      check: `${customLocation} cannot be read`,
-    },
-    session_directories_missing: {
-      title: "Complete one Codex task, then check again",
-      summary: "Codex is present but has not created a readable sessions folder. Start or resume a Codex task, let one response finish, then check again.",
-      check: "No Codex sessions folder has been created yet",
-    },
-    session_directories_unreadable: {
-      title: "Allow access to Codex sessions, then check again",
-      summary: "Codex session folders exist but cannot be read. Quit TiboTattle, allow it under System Settings → Privacy & Security → Files and Folders if it is listed, then reopen the app.",
-      check: "Codex session folders cannot be read",
-    },
-    no_rollout_files: {
-      title: "Complete one Codex response, then check again",
-      summary: "The Codex sessions folder is readable but contains no completed rollout yet. Start or resume a task and let one response finish.",
-      check: "No completed local Codex task was detected",
-    },
+    codex_home_missing: [value.customCodexHomeConfigured
+      ? "setup.source.missingTitle" : "setup.source.openTitle",
+    value.customCodexHomeConfigured
+      ? "setup.source.customMissing" : "setup.source.defaultMissing",
+    "setup.source.missingCheck"],
+    codex_home_unreadable: ["setup.source.unreadableTitle", "setup.source.unreadableCopy", "setup.source.unreadableCheck"],
+    session_directories_missing: ["setup.source.sessionsMissingTitle", "setup.source.sessionsMissingCopy", "setup.source.sessionsMissingCheck"],
+    session_directories_unreadable: ["setup.source.sessionsUnreadableTitle", "setup.source.sessionsUnreadableCopy", "setup.source.sessionsUnreadableCheck"],
+    no_rollout_files: ["setup.source.noResponsesTitle", "setup.source.noResponsesCopy", "setup.source.noResponsesCheck"],
   };
-  return guidance[value.sourceStatus] ?? {
-    title: "Open Codex once, then check again",
-    summary: "TiboTattle cannot find readable Codex session metadata yet. Open Codex, start or resume a task, and let one response finish.",
-    check: "Codex session metadata is not ready",
-  };
+  const [titleKey, summaryKey, checkKey] = guidance[value.sourceStatus]
+    ?? ["setup.source.openTitle", "setup.source.notReadyCopy", "setup.source.notReadyCheck"];
+  return { titleKey, summaryKey, checkKey, values };
 }
 
 let reportingWindow = null;
@@ -1389,53 +1390,39 @@ function renderLocalOnboarding(value) {
   const setupMode = compactSetup ? "ready" : "attention";
   if (card.dataset.setupMode !== setupMode) card.open = !compactSetup;
   card.dataset.setupMode = setupMode;
-  $("#setup-title").textContent = boundedPause
-    ? "Continue your local analysis"
-    : ready
-      ? t("setup.title")
+  setLocalizedText($("#setup-title"), boundedPause
+    ? "setup.state.continueTitle"
+    : ready ? "setup.title"
       : value.stateStatus === "unwritable" && sourceReady
-        ? "Local app state needs attention"
-        : sourceGuidance.title;
+        ? "setup.state.unwritableTitle" : sourceGuidance.titleKey,
+  sourceGuidance.values);
   $("#setup-ready-label").hidden = !ready || boundedPause;
-  $("#setup-summary").textContent = boundedPause
-    ? `A bounded pass completed safely: ${compact(indexing.filesProcessed)} of ${compact(indexing.filesSelected)} recent rollout files are analyzed. Continue when convenient; existing results remain usable.`
-    : ready
-      ? "Codex metadata and TiboTattle's private state are available. Raw logs remain inside the local companion."
-    : value.stateStatus === "unwritable" && sourceReady
-      ? "TiboTattle can read Codex metadata but cannot safely write its private app state. Quit and reopen the Mac app, then check again before attempting an analysis."
-      : sourceGuidance.summary;
+  setLocalizedText($("#setup-summary"), boundedPause
+    ? "setup.state.boundedCopy"
+    : ready ? "setup.state.readyCopy"
+      : value.stateStatus === "unwritable" && sourceReady
+        ? "setup.state.unwritableCopy" : sourceGuidance.summaryKey,
+  { ...sourceGuidance.values,
+    processed: compact(indexing?.filesProcessed), selected: compact(indexing?.filesSelected) });
 
   const checks = $("#setup-checks");
   clear(checks);
   const items = [
-    {
-      ok: sourceAccessible,
-      text: sourceAccessible
-        ? "Codex session metadata is readable"
-        : sourceGuidance.check
-    },
-    {
-      ok: value.stateWritable,
-      text: value.stateWritable
-        ? "Private app state is writable"
-        : "Quit and reopen TiboTattle"
-    },
-    {
-      ok: value.rolloutFilesPresent,
-      text: value.rolloutFilesPresent
-        ? `${value.rolloutFilesObservedCapped ? `${compact(value.rolloutFilesObserved)}+` : compact(value.rolloutFilesObserved)} local rollout file${value.rolloutFilesObserved === 1 ? "" : "s"} detected`
-        : "No completed local Codex task detected yet"
-    }
+    { ok: sourceAccessible, key: sourceAccessible ? "setup.check.readable" : sourceGuidance.checkKey,
+      values: sourceGuidance.values },
+    { ok: value.stateWritable, key: value.stateWritable ? "setup.check.writable" : "setup.check.reopen" },
+    { ok: value.rolloutFilesPresent, key: value.rolloutFilesPresent
+      ? "setup.check.files" : "setup.source.noResponsesCheck",
+    values: { count: `${compact(value.rolloutFilesObserved)}${value.rolloutFilesObservedCapped ? "+" : ""}` } },
   ];
   for (const item of items) {
-    const row = node("li", item.ok ? "" : "missing", item.text);
+    const row = node("li", item.ok ? "" : "missing");
+    row.append(localizedNode("span", "", item.key, item.values));
     checks.append(row);
   }
-  $("#setup-note").textContent = ready
-    ? boundedPause
-      ? "Continue when convenient. A useful headline is already available; later bounded updates are normally faster. Existing results remain visible, and every additional pass stays on this Mac."
-      : "A useful headline often appears in seconds. The first deep pass can take a few minutes and later updates are normally faster. Work stops or checkpoints at a fixed bound; prompts, responses, commands, paths, and account identifiers never enter this page."
-      : "After completing the action above, choose Check again. Checking does not analyze logs or upload anything.";
+  setLocalizedText($("#setup-note"), ready
+    ? boundedPause ? "setup.note.continue" : "setup.note.ready"
+    : "setup.note.check");
   if (!ready) setGlobalState("setup", { companionReachable: true });
   setJourneyState(ready ? "local-ready" : "needs-local-setup");
   updateLocalActionButtons();
@@ -1481,8 +1468,8 @@ function renderObservationConnectionState(data, recency) {
   }
   if (data.mode === "demo") {
     showConnectionNotice({
-      title: "You are exploring a labeled demonstration",
-      copy: "Every number on this page is illustrative. Open the Mac app and use the TiboTattle in-app window to see your own evidence.",
+      titleKey: "refresh.demoTitle",
+      copyKey: "refresh.demoCopy",
       kind: "demo",
       showCheck: true
     });
@@ -1502,8 +1489,8 @@ function renderObservationConnectionState(data, recency) {
     }
   } else if (data.state === "insufficient") {
     showConnectionNotice({
-      title: "The companion is connected, but evidence is incomplete",
-      copy: "Available measurements are shown below. Missing estimates remain blank rather than being filled with demo values.",
+      titleKey: "refresh.incompleteTitle",
+      copyKey: "refresh.incompleteCopy",
       kind: "warning",
       showCheck: true
     });
@@ -1636,12 +1623,10 @@ function renderLiveObservationPresentation(data, recency = observationRecency(da
   card.dataset.freshness = recency.status;
   setLocalizedText(card.querySelector("span"), recency.status === "stale"
     ? "dashboard.freshness.stale" : "dashboard.freshness.observation");
-  $("#latest-observation").textContent = recency.ageSeconds !== null
-    ? formatAge(recency.ageSeconds)
-    : "No timestamp";
-  $("#data-source").textContent = data.mode === "demo"
-    ? "Illustrative fixture — not your usage"
-    : formatLocal(data.freshness.latestObservedAt);
+  if (recency.ageSeconds !== null) setRawText($("#latest-observation"), formatAge(recency.ageSeconds));
+  else setLocalizedText($("#latest-observation"), "page.observation.noTimestamp");
+  if (data.mode === "demo") setLocalizedText($("#data-source"), "page.dataSource.demo");
+  else setRawText($("#data-source"), formatLocal(data.freshness.latestObservedAt));
 
   if (priorStatus !== recency.status) {
     setGlobalState(presentation.state, {
@@ -11287,7 +11272,7 @@ async function loadLocalDashboard() {
   localActionBusy = true;
   const button = $("#refresh-button");
   if (localRefreshInProgress) renderRefreshProgress(button, "Loading evidence…");
-  else button.textContent = "Connecting…";
+  else setLocalizedText(button, "refresh.progress.connecting");
   updateLocalActionButtons();
   try {
     const loadDashboardData = async () => {
@@ -11470,8 +11455,8 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
   if (!autoContinue) reindexAutoContinuations = 0;
   if (!localAnalysisAllowed()) {
     showConnectionNotice({
-      title: "Finish the local check before analyzing",
-      copy: "Open Codex and complete one response, then choose Check again. TiboTattle will not start an analysis while its local preflight is incomplete.",
+      titleKey: "refresh.preflightTitle",
+      copyKey: "refresh.preflightCopy",
       kind: "warning",
       showCheck: true,
       showDemo: !dashboard,
@@ -11639,8 +11624,8 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       renderRefreshProgress(button, "Loading saved results…");
       await loadLocalDashboard();
       showConnectionNotice({
-        title: "Local analysis cancelled",
-        copy: "TiboTattle stopped at a safe boundary. Verified existing results were kept, and the resumable checkpoint remains on this Mac.",
+        titleKey: "refresh.cancelledTitle",
+        copyKey: "refresh.cancelledCopy",
         kind: "info",
       });
       return;
@@ -11652,8 +11637,8 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       renderRefreshProgress(button, "Loading saved results…");
       await loadLocalDashboard();
       showConnectionNotice({
-        title: "This scan paused to protect your Mac",
-        copy: "Your last verified results are still shown. This unusually large history reached TiboTattle’s fixed local safety limit, so it paused before exceeding it. No partial result replaced your existing results, and nothing left this Mac.",
+        titleKey: "refresh.resourceTitle",
+        copyKey: "refresh.resourceCopy",
         kind: "warning",
       });
       return;
@@ -11721,19 +11706,19 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       surface: "local_refresh",
       error,
       fallback: continuationLimitReached
-        ? "TiboTattle stopped this one-click analysis rather than repeatedly reading a very large history. Your available headline and previously verified results remain usable; you can run the analysis again later from its durable checkpoint."
+        ? t("refresh.continuationCopy")
         : refreshAccepted
           ? (error?.refreshFailureDetail
-            ? `The analysis failed at: ${error.refreshFailureDetail}. Existing evidence is still available and no partial accounting result replaced it.`
-            : "The analysis was accepted, but it did not reach a verified completion state. Existing evidence is still available and no partial accounting result replaced it.")
-        : "The local companion may be offline, busy, or rejecting this request. Existing evidence has not been altered.",
+            ? t("refresh.failedDetailCopy", { detail: error.refreshFailureDetail })
+            : t("refresh.failedCopy"))
+        : t("refresh.notStartedCopy"),
     });
     showConnectionNotice({
       title: continuationLimitReached
-        ? "Deep analysis paused after two bounded continuations"
+        ? t("refresh.continuationTitle")
         : refreshAccepted
-          ? "The local analysis did not finish"
-        : "Local analysis could not be started",
+          ? t("refresh.failedTitle")
+        : t("refresh.notStartedTitle"),
       copy: described.text,
       kind: continuationLimitReached ? "warning" : "error",
       showDemo: !dashboard
@@ -11777,15 +11762,15 @@ async function cancelLocalAnalysis() {
   try {
     await localClient.cancelRefresh();
     showConnectionNotice({
-      title: "Cancellation requested",
-      copy: "TiboTattle is stopping after its current atomic step and preserving a resumable local checkpoint.",
+      titleKey: "refresh.cancelRequestedTitle",
+      copyKey: "refresh.cancelRequestedCopy",
       kind: "info",
     });
   } catch {
     localRefreshCancelRequested = false;
     showConnectionNotice({
-      title: "Cancellation could not be requested",
-      copy: "The analysis may already have finished or the local companion may be reconnecting. Existing verified results are unchanged.",
+      titleKey: "refresh.cancelUnavailableTitle",
+      copyKey: "refresh.cancelUnavailableCopy",
       kind: "warning",
       showCheck: true,
     });
@@ -11802,16 +11787,16 @@ async function checkLocalSetup() {
     "#setup-check-again",
   ]) {
     const button = $(selector);
-    if (button) button.textContent = "Checking…";
+    if (button) setLocalizedText(button, "refresh.progress.checking");
   }
   updateLocalActionButtons();
   try {
     await loadLocalDashboard();
   } finally {
     localActionBusy = false;
-    $("#connection-check").textContent = "Check again";
-    $("#companion-check").textContent = "Check this page again";
-    $("#setup-check-again").textContent = "Check again";
+    setProductText($("#connection-check"), "Check again");
+    setProductText($("#companion-check"), "Check this page again");
+    setProductText($("#setup-check-again"), "Check again");
     updateLocalActionButtons();
   }
 }
@@ -11961,8 +11946,8 @@ function scheduleReturningUserRefresh() {
     }
     returnRefreshDeferrals = 0;
     showConnectionNotice({
-      title: "Cached results are ready",
-      copy: "TiboTattle is checking for new local evidence from the last verified checkpoint. You can keep reading or cancel the update; no upload occurs.",
+      titleKey: "refresh.cachedTitle",
+      copyKey: "refresh.cachedCopy",
       kind: "info",
     });
     void requestRefresh();
@@ -11995,45 +11980,28 @@ function handleElectronAutomaticRefresh(event) {
  */
 function fixedCopy(map, code) {
   return typeof code === "string" && Object.hasOwn(map, code)
-    ? map[code]
+    ? (map === LOCAL_COMPANION_ERROR_COPY ? t(map[code]) : map[code])
     : null;
 }
 
 const LOCAL_COMPANION_ERROR_COPY = {
-  unsupported_media_type:
-    "The local companion rejected this request format. Nothing was uploaded; reload TiboTattle and try again.",
-  request_too_large:
-    "The local request exceeded the local safety bound. Nothing was uploaded; reload TiboTattle and try again.",
-  invalid_json:
-    "The local companion could not read this request. Nothing was uploaded; reload TiboTattle and try again.",
-  invalid_request:
-    "The local companion could not validate this request. Nothing was uploaded; reload TiboTattle and try again.",
-  refresh_in_progress:
-    "A local analysis is already running. Wait for it to finish before starting another.",
-  refresh_not_authorized:
-    "TiboTattle refused to analyze local usage because the request did not come from the local dashboard. Nothing was changed.",
-  refresh_cancel_not_authorized:
-    "TiboTattle refused to cancel the analysis because the request did not come from the local dashboard. The analysis is still running.",
-  refresh_not_running:
-    "There is no local analysis running to cancel. Nothing was changed.",
-  app_record_checkpoint_unavailable:
-    "The analysis checkpoint stored on this Mac disappeared while the analysis was running, so TiboTattle stopped rather than continue without it. Existing results are unchanged; run the analysis again to start over safely.",
-  diagnostic_note_not_authorized:
-    "TiboTattle refused to write a diagnostic note because the request did not come from the local dashboard. The reference above is still quotable.",
-  diagnostic_note_not_recorded:
-    "TiboTattle could not write the diagnostic note to its local log. The reference above is still quotable.",
-  loopback_required:
-    "This request has to come from the local dashboard on this Mac. Nothing was changed. Open TiboTattle and try again.",
-  host_not_allowed:
-    "TiboTattle only answers the local dashboard on this Mac and refused this request. Nothing was changed.",
-  method_not_allowed:
-    "TiboTattle does not offer that action on this route. Nothing was changed; install the current signed build.",
-  not_found:
-    "This build asked TiboTattle for something it does not provide. Nothing was changed; install the current signed build.",
-  internal_error:
-    "TiboTattle failed while handling this request on your Mac. Nothing was uploaded; reopen TiboTattle and try again.",
-  request_failed:
-    "TiboTattle could not complete this request. Nothing was uploaded; reopen TiboTattle and try again.",
+  unsupported_media_type: "refresh.error.unsupported_media_type",
+  request_too_large: "refresh.error.request_too_large",
+  invalid_json: "refresh.error.invalid_json",
+  invalid_request: "refresh.error.invalid_request",
+  refresh_in_progress: "refresh.error.refresh_in_progress",
+  refresh_not_authorized: "refresh.error.refresh_not_authorized",
+  refresh_cancel_not_authorized: "refresh.error.refresh_cancel_not_authorized",
+  refresh_not_running: "refresh.error.refresh_not_running",
+  app_record_checkpoint_unavailable: "refresh.error.app_record_checkpoint_unavailable",
+  diagnostic_note_not_authorized: "refresh.error.diagnostic_note_not_authorized",
+  diagnostic_note_not_recorded: "refresh.error.diagnostic_note_not_recorded",
+  loopback_required: "refresh.error.loopback_required",
+  host_not_allowed: "refresh.error.host_not_allowed",
+  method_not_allowed: "refresh.error.method_not_allowed",
+  not_found: "refresh.error.not_found",
+  internal_error: "refresh.error.internal_error",
+  request_failed: "refresh.error.request_failed",
 };
 
 /**
@@ -12093,11 +12061,17 @@ async function describeFailure({ surface, error, messages = {}, fallback }) {
   const fixedExplanation = fixedCopy(messages, code)
     ?? fixedCopy(LOCAL_COMPANION_ERROR_COPY, code);
   const explanation = fixedExplanation ?? fallback;
-  const trailer = diagnosticReferenceSentence({
+  const validatedTrailer = diagnosticReferenceSentence({
     reference,
     requestId,
     writtenToLocalLog,
   });
+  const trailer = validatedTrailer === "" ? "" : t(
+    writtenToLocalLog
+      ? (requestId === "" ? "refresh.diagnostic.logged" : "refresh.diagnostic.serviceLogged")
+      : "refresh.diagnostic.reference",
+    { reference, requestId },
+  );
   return Object.freeze({
     reference,
     requestId,

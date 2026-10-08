@@ -1144,6 +1144,11 @@ test("controller retains persisted roots and exposes bounded recovery when compa
   const snapshot = await value.controller.handlers.getSettings({});
   assert.equal(snapshot.settings.codexFolder.recovery.status, "apply_failed");
   assert.doesNotMatch(JSON.stringify(snapshot), /custom-codex/u);
+  await value.controller.handlers.setLanguage({ value: "zh-Hans" });
+  const localized = await value.controller.handlers.getSettings({});
+  assert.equal(localized.settings.codexFolder.recovery.detail,
+    "所选的 Codex 文件夹已保存，但本地辅助服务未能重启。请重试以应用这些文件夹设置。");
+  assert.doesNotMatch(JSON.stringify(localized), /custom-codex|electron\.settings\.codexRoots\./u);
 });
 
 test("controller retains missing configured roots instead of validating or falling back", async () => {

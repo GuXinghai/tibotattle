@@ -26,7 +26,7 @@ const OVERRIDE_KEYS = [
 const EXPECTED_OVERRIDES = {
   "electron.menu.refresh": {
     "en-US": "Update Local Usage",
-    "zh-Hans": "更新本地使用情况",
+    "zh-Hans": "更新本地用量",
     "es": "Actualizar uso local",
   },
   "electron.settings.codexFolder.title": {
@@ -66,12 +66,12 @@ const EXPECTED_CRASH_COPY = {
   },
   "electron.diagnostics.prepareSupportIssue": {
     "en-US": "Prepare public GitHub issue…",
-    "zh-Hans": "准备公开的 GitHub 问题…",
+    "zh-Hans": "准备 GitHub 公开问题报告…",
     "es": "Preparar incidencia pública en GitHub…",
   },
   "electron.diagnostics.message": {
     "en-US": "Review this content-free report. Preparing a public issue sends it to GitHub in the URL; review the form before submitting. Local crash dumps may contain private data and are not uploaded by TiboTattle. Capture changes take effect after restart.",
-    "zh-Hans": "请查看这份不含内容的报告。准备公开问题会通过网址将报告发送给 GitHub；提交前请检查表单。本地崩溃转储可能包含私密数据，TiboTattle 不会上传它们。捕获设置会在重启后生效。",
+    "zh-Hans": "请检查这份不含会话内容的诊断报告。准备公开问题报告时，会通过网址将报告发送给 GitHub；提交前请检查表单。本地崩溃转储文件可能包含私密数据，TiboTattle 不会上传这些文件。崩溃捕获设置将在重启后生效。",
     "es": "Revisa este informe sin contenido. Preparar una incidencia pública lo envía a GitHub en la URL; revisa el formulario antes de publicarlo. Los volcados locales pueden contener datos privados y TiboTattle no los sube. Los cambios de captura se aplican tras reiniciar.",
   },
   "electron.diagnostics.title": {
@@ -89,14 +89,14 @@ function placeholders(value) {
 
 test("Electron localization is generated, bounded, and ownership-stable", async () => {
   assert.equal(await checkI18nElectronCopy(), true);
-  assert.equal(I18N_ELECTRON_COPY_FILE.endsWith("apps/electron/desktop-copy.js"), true);
+  assert.equal(I18N_ELECTRON_COPY_FILE.replaceAll("\\", "/").endsWith("apps/electron/desktop-copy.js"), true);
   assert.equal(DESKTOP_SHARED_KEYS.length, 39);
-  assert.equal(Object.keys(DESKTOP_OVERLAY_MESSAGES).length, 90);
+  assert.equal(Object.keys(DESKTOP_OVERLAY_MESSAGES).length, 112);
   assert.deepEqual(Object.keys(DESKTOP_OVERRIDES).sort(), [...OVERRIDE_KEYS].sort());
   assert.deepEqual(DESKTOP_SHARED_KEYS, desktopOwnership.DESKTOP_SHARED_KEYS);
   assert.deepEqual(DESKTOP_OVERLAY_MESSAGES, desktopOwnership.DESKTOP_OVERLAY_MESSAGES);
   assert.deepEqual(DESKTOP_OVERRIDES, desktopOwnership.DESKTOP_OVERRIDES);
-  assert.equal(Object.keys(DESKTOP_MESSAGES).length, 132);
+  assert.equal(Object.keys(DESKTOP_MESSAGES).length, 154);
   assert.deepEqual(
     Object.fromEntries(CRASH_COPY_KEYS.map((key) => [key, DESKTOP_OVERLAY_MESSAGES[key]])),
     EXPECTED_CRASH_COPY,

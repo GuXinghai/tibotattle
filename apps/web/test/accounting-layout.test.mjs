@@ -66,7 +66,7 @@ test("short accounting headings retain Standard-rate context in every locale", a
     ["Configuration", "配置", "Configuración"]);
   for (const kind of ["cacheSwitch", "cacheContinuity"]) {
     assert.deepEqual(SUPPORTED_LOCALES.map((locale) => translate(`accounting.${kind}.column.apiEquivalent`, {}, locale)),
-      ["API equivalent", "API 等值", "Equivalente de API"]);
+      ["API equivalent", "API 等价金额", "Equivalente de API"]);
   }
   for (const locale of SUPPORTED_LOCALES) {
     const headline = appFunction("accountingPriceHeadline", "renderAccounting", localizedDependencies(locale));

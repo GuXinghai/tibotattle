@@ -62,7 +62,7 @@ test("missing usage refresh is a no-op and cannot invoke the separate retry acti
 
 test("application menu maps all desktop commands to the injected action interface", () => {
   const { actions, calls } = actionRecorder();
-  const template = createDesktopMenuTemplate({
+  const template = createMenuFixture({
     appName: "TiboTattle Dev",
     platform: "darwin",
     actions,
@@ -117,7 +117,7 @@ test("application menu maps all desktop commands to the injected action interfac
 test("Windows and Linux menus use conventional File and Help entries", () => {
   const { actions, calls } = actionRecorder();
   for (const platform of ["win32", "linux"]) {
-    const template = createDesktopMenuTemplate({
+    const template = createMenuFixture({
       appName: "TiboTattle Dev",
       platform,
       actions,
@@ -156,12 +156,12 @@ test("desktop menu and tray copy resolves every supported language", () => {
     "zh-Hans": {
       file: "文件",
       projects: "项目与会话",
-      refresh: "更新本地使用情况",
+      refresh: "更新本地用量",
       checkForUpdates: "检查更新…",
       tray: "打开 TiboTattle Dev",
-      update: "更新本地使用情况",
+      update: "更新本地用量",
       quit: "退出 TiboTattle Dev",
-      status: "已过期",
+      status: "已过时",
     },
     es: {
       file: "Archivo",
@@ -176,7 +176,7 @@ test("desktop menu and tray copy resolves every supported language", () => {
   };
   for (const [locale, copy] of Object.entries(expected)) {
     assert.equal(resolveDesktopLocale(locale, ["en-US"]), locale);
-    const menu = createDesktopMenuTemplate({
+    const menu = createMenuFixture({
       appName: "TiboTattle Dev",
       platform: "win32",
       locale,
@@ -187,7 +187,7 @@ test("desktop menu and tray copy resolves every supported language", () => {
     const view = menu.find(({ label }) => label === (locale === "en-US" ? "View" : locale === "zh-Hans" ? "视图" : "Ver"));
     assert.equal(view.submenu[0].label, copy.refresh);
     assert.equal(typeof item(view.submenu, copy.projects).click, "function");
-    const tray = createDesktopTrayTemplate({
+    const tray = createTrayFixture({
       appName: "TiboTattle Dev",
       locale,
       trayStatus: { status: "stale", allowance: null, notificationEvidence: null },
@@ -223,7 +223,7 @@ test("application menu installation is dependency-injected and optional in plain
 
 test("tray menu exposes truthful status and shared action callbacks", () => {
   const { actions, calls } = actionRecorder();
-  const template = createDesktopTrayTemplate({
+  const template = createTrayFixture({
     appName: "TiboTattle Dev",
     actions,
   });
@@ -269,7 +269,7 @@ test("tray menu exposes truthful status and shared action callbacks", () => {
 });
 
 test("macOS tray header uses a native secondary line and other platforms use the fallback row", () => {
-  const mac = createDesktopTrayTemplate({
+  const mac = createTrayFixture({
     appName: "TiboTattle Dev",
     platform: "darwin",
   });
@@ -277,7 +277,7 @@ test("macOS tray header uses a native secondary line and other platforms use the
   assert.equal(mac[0].enabled, false);
   assert.equal(mac[1].visible, false);
 
-  const windows = createDesktopTrayTemplate({
+  const windows = createTrayFixture({
     appName: "TiboTattle Dev",
     platform: "win32",
   });
@@ -288,7 +288,7 @@ test("macOS tray header uses a native secondary line and other platforms use the
 
 test("tray check-for-updates is enabled only for an injected bounded capability", () => {
   const calls = [];
-  const template = createDesktopTrayTemplate({
+  const template = createTrayFixture({
     appName: "TiboTattle Dev",
     actions: { checkForUpdates: () => calls.push("checkForUpdates") },
   });
@@ -737,3 +737,11 @@ test("tray icon resolution fails closed for missing, empty, and invalid images",
     resourceRoot: "relative-root",
   }), undefined);
 });
+
+function createTrayFixture(options = {}) {
+  return createDesktopTrayTemplate({ locale: "en-US", ...options });
+}
+
+function createMenuFixture(options = {}) {
+  return createDesktopMenuTemplate({ locale: "en-US", ...options });
+}

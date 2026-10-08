@@ -4863,6 +4863,7 @@ async function createDashboardStartupHarness({
   };
   const context = createContext({
     $: element,
+    setLocalizedText(target, key, values = {}) { target.textContent = translate(key, values, "en-US"); },
     window: { setTimeout: (callback) => { queueMicrotask(callback); } },
     document: { documentElement: { dataset: {} } },
     cacheDropThreadLinks: { loadToken: 0 },
@@ -5316,7 +5317,8 @@ test("first run is a truthful install and local preflight journey", async () => 
   ]) {
     assert.match(appSource, new RegExp(`${status}:`));
   }
-  assert.match(appSource, /System Settings → Privacy & Security → Files and Folders/u);
+  assert.match(appSource, /setup\.source\.unreadableCopy/u);
+  assert.match(translate("setup.source.unreadableCopy", { location: "Codex folder" }, "en-US"), /account can read the selected folder/u);
   assert.match(appSource, /customCodexHomeConfigured/u);
   assert.match(appSource, /rolloutFilesObservedCapped/u);
   assert.match(appSource, /setup-check-again.*checkLocalSetup/su);
@@ -5351,13 +5353,13 @@ test("local analysis exposes quick results and cancel-safe progress", async () =
   assert.match(appSource, /kind === "unified_index"/u);
   assert.match(appSource, /Scanning local history/u);
   assert.doesNotMatch(appSource, /Headline ready; finishing deeper accounting/u);
-  assert.match(appSource, /Local analysis cancelled/u);
-  assert.match(appSource, /Verified existing results were kept/u);
-  assert.match(appSource, /preserving a resumable local checkpoint/u);
+  assert.match(appSource, /refresh\.cancelledTitle/u);
+  assert.match(translate("refresh.cancelledCopy"), /verified results and the checkpoint/u);
+  assert.match(translate("refresh.cancelRequestedCopy"), /local checkpoint for resuming/u);
   assert.match(appSource, /refresh_resource_limited/u);
-  assert.match(appSource, /This scan paused to protect your Mac/u);
-  assert.match(appSource, /No partial result replaced your existing results/u);
-  assert.match(appSource, /Deep analysis paused after two bounded continuations/u);
+  assert.match(appSource, /refresh\.resourceTitle/u);
+  assert.match(translate("refresh.resourceCopy"), /no partial result replaced them/u);
+  assert.match(appSource, /refresh\.continuationTitle/u);
 });
 
 test("timeline keeps time, uncertainty, and primary navigation explicit", async () => {

@@ -155,9 +155,9 @@ function assertObject(value, label) {
   return value;
 }
 
-async function requestDesktopSecureStorageRecovery(dialog, reason) {
+async function requestDesktopSecureStorageRecovery(dialog, reason, textOptions) {
   const response = await dialog?.showMessageBox?.(
-    createDesktopSecureStorageDialog(reason),
+    createDesktopSecureStorageDialog(reason, textOptions),
   );
   return response?.response === 1 ? "retry" : "quit";
 }
@@ -1121,6 +1121,9 @@ export async function launchDesktopRuntime({
   // does not start the companion, register a login item, or enable updates.
   await markStartupPhase("app_ready");
   await app.whenReady?.();
+  const desktopSystemLocales = requestedDesktopSystemLocales
+    ?? electronSystemLocales(app);
+  const startupTextOptions = { locale: firstRunLocale, systemLocales: desktopSystemLocales };
   if (prepareNativeHandover !== undefined) {
     await markStartupPhase("native_handover");
     while (true) {
@@ -1142,7 +1145,7 @@ export async function launchDesktopRuntime({
         handover?.status === "credential_preflight_blocked";
       if (credentialPreflightBlocked) {
         const reason = normalizeDesktopSecureStorageFailureReason(handover?.reason);
-        if (await requestDesktopSecureStorageRecovery(runtime.dialog, reason) === "retry") {
+        if (await requestDesktopSecureStorageRecovery(runtime.dialog, reason, startupTextOptions) === "retry") {
           continue;
         }
         deepLinkIntakeCleanup();
@@ -1163,15 +1166,15 @@ export async function launchDesktopRuntime({
       }
       await runtime.dialog?.showMessageBox?.({
         type: "warning",
-        title: "Unable to finish updating TiboTattle",
-        message: "TiboTattle could not finish transferring your existing data.",
-        detail: "Your history and settings have been preserved. Quit and reopen TiboTattle to try again. If this continues, contact support."
+        title: desktopText("electron.handover.failure.title", {}, startupTextOptions),
+        message: desktopText("electron.handover.failure.message", {}, startupTextOptions),
+        detail: desktopText("electron.handover.failure.detail", {}, startupTextOptions)
           + (["TRANSFER_IDENTITY", "TRANSFER_NATIVE_APPLICATION", "TRANSFER_LOGIN_ITEM_UNREGISTER",
             "TRANSFER_LOGIN_ITEM_STATUS", "TRANSFER_LOGIN_ITEM_REQUIRES_APPROVAL", "TRANSFER_LOGIN_ITEM_NOT_FOUND",
             "TRANSFER_LOGIN_ITEM_STATUS_UNKNOWN", "TRANSFER_NATIVE_WRITER", "TRANSFER_OTHER_SAME_IDENTITY_RUNNING",
             "TRANSFER_PREFERENCES", "TRANSFER_INVALID_REQUEST", "TRANSFER_UNKNOWN"].includes(handover?.supportCode)
-            ? ` Support code: ${handover.supportCode}.` : ""),
-        buttons: ["Quit"], defaultId: 0, cancelId: 0, noLink: true,
+            ? ` ${desktopText("electron.recovery.supportCode", { code: handover.supportCode }, startupTextOptions)}` : ""),
+        buttons: [desktopText("electron.recovery.quit", {}, startupTextOptions)], defaultId: 0, cancelId: 0, noLink: true,
       });
       deepLinkIntakeCleanup();
       await stopStartup("native_handover_blocked");
@@ -1181,8 +1184,6 @@ export async function launchDesktopRuntime({
         settingsBackend: null, ipc: createNoopIpcInstallation(), childEnvironment: null });
     }
   }
-  const desktopSystemLocales = requestedDesktopSystemLocales
-    ?? electronSystemLocales(app);
   const settingsRootPath = accountlessRehearsalPaths?.settingsRoot
     ?? join(userDataPath(app), DESKTOP_SETTINGS_DIRECTORY);
   const injectedSettings = settingsBackend !== undefined || settingsStore !== undefined
@@ -1341,7 +1342,7 @@ export async function launchDesktopRuntime({
         break;
       } catch (error) {
         const reason = classifyDesktopSecureStorageFailure(error);
-        if (await requestDesktopSecureStorageRecovery(runtime.dialog, reason) === "retry") {
+        if (await requestDesktopSecureStorageRecovery(runtime.dialog, reason, startupTextOptions) === "retry") {
           continue;
         }
         deepLinkIntakeCleanup();
@@ -1700,6 +1701,7 @@ export async function launchDesktopRuntime({
     settingsStore: store,
     platformServices: services,
     desktopPlatform: platform,
+    desktopSystemLocales,
     notificationCoordinator,
     notificationDelivery,
     getLifecycle: () => facade ?? lifecycle,

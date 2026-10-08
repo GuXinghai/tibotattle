@@ -64,6 +64,29 @@ test("unknown or hostile failures collapse to security unavailable", () => {
     "security_unavailable");
 });
 
+test("localized secure storage recovery keeps support codes and safe defaults", () => {
+  for (const reason of DESKTOP_SECURE_STORAGE_FAILURE_REASONS) {
+    const english = createDesktopSecureStorageDialog(reason);
+    const chinese = createDesktopSecureStorageDialog(reason, { locale: "system", systemLocales: ["zh-CN"] });
+    const spanish = createDesktopSecureStorageDialog(reason, { locale: "es" });
+    const supportCode = english.detail.match(/SECURE_STORAGE_[A-Z_]+/u)?.[0];
+    assert.equal(chinese.title, "无法准备安全存储");
+    assert.deepEqual(chinese.buttons, ["退出", "重试"]);
+    assert.match(chinese.detail, /未创建、替换或删除任何凭据/u);
+    assert.ok(chinese.detail.endsWith(`支持代码：${supportCode}。`));
+    assert.deepEqual(spanish.buttons, ["Salir", "Reintentar"]);
+    assert.ok(spanish.detail.endsWith(`Código de soporte: ${supportCode}.`));
+    for (const dialog of [chinese, spanish]) {
+      assert.equal(dialog.defaultId, 0);
+      assert.equal(dialog.cancelId, 0);
+      assert.doesNotMatch(JSON.stringify(dialog), /electron\.(?:secureStorage|recovery)\./u);
+    }
+  }
+  const migration = createDesktopSecureStorageDialog("migration_required", { locale: "zh-Hans" });
+  assert.match(migration.detail, /请勿删除或重置凭据或应用数据/u);
+  assert.match(migration.detail, /重试或重新安装此版本均无法迁移凭据/u);
+});
+
 test("explicit readiness failures retain only a fixed reason", () => {
   const error = createDesktopSecureStorageFailure("credential_invalid");
   assert.equal(error.code, "desktop_secure_storage_unavailable");

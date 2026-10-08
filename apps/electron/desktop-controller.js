@@ -331,6 +331,7 @@ export function createDesktopController({
   settingsStore,
   platformServices,
   desktopPlatform = process.platform,
+  desktopSystemLocales = [],
   notificationCoordinator,
   notificationDelivery,
   getLifecycle = () => null,
@@ -831,7 +832,15 @@ export function createDesktopController({
       kind: primaryRoot?.kind ?? codexHome?.mode ?? "default",
     };
     if (codexHomeRecovery !== null) {
-      codexFolder.recovery = codexHomeRecovery;
+      codexFolder.recovery = Object.freeze({
+        ...codexHomeRecovery,
+        detail: desktopText(codexHomeRecovery.reason === "saved_folder_unavailable"
+          ? "electron.settings.codexRoots.savedFolderUnavailable"
+          : "electron.settings.codexRoots.restartFailed", {}, {
+          locale: settings.language,
+          systemLocales: desktopSystemLocales,
+        }),
+      });
     }
     return Object.freeze({
       settings: Object.freeze({
@@ -905,7 +914,6 @@ export function createDesktopController({
           codexHomeRecovery = Object.freeze({
             status: "fallback",
             reason: "saved_folder_unavailable",
-            detail: "The saved Codex folder was unavailable. The default folder is active; choose a folder again in Settings.",
           });
           try {
             await store.useDefaultCodexHome();
@@ -985,7 +993,6 @@ export function createDesktopController({
       codexHomeRecovery = Object.freeze({
         status: "apply_failed",
         reason: "companion_restart_failed",
-        detail: "The selected Codex folders were saved, but the local companion could not restart. Retry to apply them.",
       });
       throw codexRootOperationError(error, "desktop_codex_roots_apply_failed");
     }
