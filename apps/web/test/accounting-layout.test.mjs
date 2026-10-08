@@ -2,7 +2,7 @@ import { cacheReuseCoverageNote } from "../public/cache-reuse-metrics.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { SUPPORTED_LOCALES, translate } from "../public/localization.js";
+import { SUPPORTED_LOCALES, translate, translateLegacyText } from "../public/localization.js";
 
 const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 
@@ -17,6 +17,7 @@ function appFunction(name, nextName, dependencies) {
 function localizedDependencies(locale = "en-US") {
   return {
     t: (key, values) => translate(key, values, locale),
+    localization: { translateText: value => translateLegacyText(value, locale) },
     formatCount: String,
     formatApiMoney: (value) => `$${value.toFixed(2)}`,
   };
@@ -47,6 +48,17 @@ test("the live price headline shows one amount and moves its Standard comparison
   assert.equal(absent[3], "No increment in this period could be weighted");
   assert.doesNotMatch(absent[1], /\$/u);
   assert.equal(headline({ ...period, quotaWeightedApiPriceEquivalentUsd: 0 })[2], "$0.00");
+});
+
+test("source-owned metric and period labels translate before composing accounting headlines", () => {
+  for (const locale of SUPPORTED_LOCALES) {
+    const headline = appFunction("accountingPriceHeadline", "renderAccounting", localizedDependencies(locale));
+    const row = headline({ fastMode: { metricShortLabel: "Speed-priced API equivalent" },
+      quotaWeightedApiPriceEquivalentUsd: 2, apiPriceEquivalentUsd: 1, periodLabel: "Last 7 days" });
+    assert.equal(row[0], translateLegacyText("Speed-priced API equivalent", locale));
+    assert.equal(row[3], translate("share.period.lastSevenDays", {}, locale));
+    if (locale === "zh-Hans") assert.doesNotMatch(`${row[0]} ${row[3]}`, /Speed-priced|Last 7 days/u);
+  }
 });
 
 test("short accounting headings retain Standard-rate context in every locale", async () => {

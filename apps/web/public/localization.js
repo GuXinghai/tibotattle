@@ -113,7 +113,59 @@ function interpolate(message, values = {}) {
 // New DOM code must use these stable keys; the exact-text catalog below is a
 // bounded migration bridge for static markup and explicitly registered,
 // product-owned legacy nodes only.
+// A closed presentation vocabulary for source-owned companion warnings.
+// Match only these sentences and bounded numeric/date slots: arbitrary service
+// or provider text remains raw and cannot be interpreted as product copy.
+const EVIDENCE_WARNING_MESSAGES = Object.freeze({
+  "retainedRefresh": ["The full history projection is still being recalculated in the background. The figures shown are the most recent completed projection and are replaced automatically when it finishes.", "正在后台重新计算完整历史。当前显示的是最近一次计算完成的结果，新结果完成后会自动替换。", "El historial completo se está recalculando en segundo plano. Las cifras mostradas son el último resultado completo y se sustituirán automáticamente cuando termine."],
+  "loading": ["Full indexed history is loading. The latest replay-safe snapshot is shown meanwhile and will be replaced only by the completed full projection.", "正在加载完整的已索引历史。期间显示最近一次可安全重放的快照，完整计算完成后才会替换它。", "Se está cargando el historial indexado completo. Mientras tanto se muestra la última instantánea reproducible sin duplicaciones; solo se sustituirá por el resultado completo."],
+  "partialIndex": ["The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.", "统一本地索引可读取，但覆盖不完整。完整且与当前索引版本一致的结果发布前，不显示用量总计和时间线。", "El índice local unificado se puede leer, pero su cobertura es parcial. Los totales y las cronologías no se muestran hasta disponer de una publicación completa vinculada a la generación del índice."],
+  "missingIndex": ["The unified local index has not been built yet. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "尚未建立统一本地索引。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado aún no se ha creado. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
+  "unavailableIndex": ["The unified local index is unavailable. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "统一本地索引不可用。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado no está disponible. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
+  "newerBuild": ["This local history was created by a newer TiboTattle build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.", "本地历史由较新版本的 TiboTattle 创建。当前版本无法更新其用量总计和时间线，请安装兼容的较新版本。保留的本地历史未被删除。", "Este historial local se creó con una versión más reciente de TiboTattle. Esta versión no puede actualizar sus totales ni cronologías; instala una versión posterior compatible. El historial local conservado no se ha eliminado."],
+  "indexing": ["History indexing is still advancing. Complete historical totals stay hidden until an indexed aggregate is available.", "历史索引仍在进行。已索引的汇总结果可用前，不显示完整历史总计。", "La indexación del historial sigue avanzando. Los totales históricos completos no se muestran hasta disponer de un agregado indexado."],
+  "summaryUnavailable": ["The history scan is complete, but the current accounting summary is unavailable. Update local usage to retry.", "历史扫描已完成，但当前用量汇总不可用。请更新本地用量以重试。", "El análisis del historial ha terminado, pero el resumen contable actual no está disponible. Actualiza el uso local para reintentar."],
+  "priceRegistry": ["Official API prices changed. Cached price estimates are withheld until the next local replay rebuilds them with the current registry.", "官方 API 价格已变更。下次本地重放按最新价格重新计算前，不显示缓存中的价格估算。", "Los precios oficiales de API han cambiado. Las estimaciones en caché no se muestran hasta que la siguiente reproducción local las recalcule con el registro vigente."],
+  "accountingChanged": ["Historical event-time accounting changed. The prior cache is withheld until the next local replay rebuilds it.", "历史事件时间核算方式已变更。下次本地重放重新计算前，不显示旧缓存。", "Ha cambiado la contabilidad histórica por hora del evento. La caché anterior no se muestra hasta que la siguiente reproducción local la reconstruya."],
+  "collectorCosts": ["Recent cost figures come from the live collector projection until the replay-safe cache is refreshed. They may double-count usage that forked child sessions inherited.", "可安全重放的缓存更新前，近期成本来自实时采集结果，可能重复计入分叉子会话继承的用量。", "Hasta actualizar la caché reproducible sin duplicaciones, los costes recientes proceden del recolector activo. Podrían contar dos veces el uso heredado por sesiones secundarias bifurcadas."],
+  "toolPartial": ["Usage accounting is complete, but typed tool history is partial. Tool totals are withheld rather than reported as zero.", "用量核算已完成，但按类型划分的工具历史不完整。因此不显示工具总计，也不会将其记为零。", "La contabilidad de uso está completa, pero el historial de herramientas por tipo es parcial. Los totales de herramientas no se muestran en lugar de indicarlos como cero."],
+  "unknownModel": ["Some usage events name an unrecognized model and remain unpriced rather than being assigned a guessed price.", "部分用量事件中的模型无法识别，因此保持未定价，不会猜测价格。", "Algunos eventos de uso indican un modelo no reconocido y quedan sin precio, en lugar de asignarles un precio supuesto."],
+  "aggregateUnavailable": ["Historical sources are indexed, but their aggregate is temporarily unavailable and is not substituted with a recent-window total.", "历史来源已完成索引，但汇总暂不可用，不会用近期时段的总计代替。", "Las fuentes históricas están indexadas, pero su agregado no está disponible temporalmente y no se sustituye por un total del período reciente."],
+  "collectorOld": ["The newest retained collector evidence is more than {minutes} minutes old. This is expected after an idle stretch; any newer usage is counted on the next collector pass.", "最近保留的采集证据已有超过 {minutes} 分钟未更新。闲置一段时间后出现此状态属正常现象；较新的用量会在下次采集时计入。", "La evidencia más reciente conservada por el recolector tiene más de {minutes} minutos. Es normal tras un período de inactividad; el uso posterior se contará en la siguiente pasada."],
+  "indexMissingRecent": ["The unified local index has not been built yet. Usage history and the broadest period are bounded to the recent {days}-day collector window until it is.", "尚未建立统一本地索引。在索引建立前，用量历史和最长查看范围仅涵盖最近 {days} 天的采集记录。", "El índice local unificado aún no se ha creado. Hasta entonces, el historial de uso y el período más amplio se limitan a los últimos {days} días del recolector."],
+  "indexUnreadableRecent": ["The unified local index is unreadable. Usage history and the broadest period are bounded to the recent {days}-day collector window until it recovers.", "统一本地索引无法读取。在恢复前，用量历史和最长查看范围仅涵盖最近 {days} 天的采集记录。", "El índice local unificado no se puede leer. Hasta que se recupere, el historial de uso y el período más amplio se limitan a los últimos {days} días del recolector."],
+  "indexBehind": ["The unified local index is {minutes} minutes behind the newest collector evidence and catches up on the next refresh.", "统一本地索引比最新采集证据落后 {minutes} 分钟，会在下次刷新时追上。", "El índice local unificado va {minutes} minutos por detrás de la evidencia más reciente del recolector y se pondrá al día en la siguiente actualización."],
+  "priceEvidenceStart": ["Verified OpenAI price evidence was reviewed beginning {date}; events without a recognized or separately evidenced card remain unpriced.", "经核实的 OpenAI 价格证据自 {date} 起接受审核；没有可识别价格表或单独证据的事件仍保持未定价。", "La revisión de la evidencia verificada de precios de OpenAI comienza el {date}; los eventos sin una tabla reconocida o evidencia independiente quedan sin precio."],
+  "coverageGrowing": ["Indexed-history totals currently cover {indexed}/{sources} discovered sources and expand as later foreground refreshes advance the index.", "已索引历史总计目前覆盖已发现来源中的 {indexed}/{sources} 个；后续前台刷新推进索引时，覆盖范围会扩大。", "Los totales del historial indexado cubren actualmente {indexed}/{sources} fuentes descubiertas y se ampliarán a medida que las próximas actualizaciones en primer plano hagan avanzar el índice."],
+  "excludedSources": ["Excluded from indexed history: {skipped} {sourcenoun} across {threads} {threadnoun} did not pass local validation. Their usage remains unavailable.", "未计入已索引历史：{threads} 个会话中的 {skipped} 个来源未通过本地验证，其用量仍不可用。", "Excluidas del historial indexado: {skipped} fuentes de {threads} conversaciones no superaron la validación local. Su uso sigue sin estar disponible."],
+  "coverageLimited": ["Indexed-history totals include {indexed} of {sources} verified sources. {skipped} sources across {threads} threads did not pass local validation, so this result has limited history coverage; missing usage remains unavailable rather than zero.", "已索引历史总计包含 {sources} 个已验证来源中的 {indexed} 个。{threads} 个会话中的 {skipped} 个来源未通过本地验证，因此历史覆盖有限；缺失用量仍不可用，不会记为零。", "Los totales del historial indexado incluyen {indexed} de {sources} fuentes verificadas. {skipped} fuentes de {threads} conversaciones no superaron la validación local, por lo que la cobertura del historial es limitada; el uso faltante no está disponible y no se cuenta como cero."],
+  "coverageGap": ["Indexed-history totals include {indexed} of {sources} verified sources. {skipped} sources across {threads} threads did not pass local validation. This is a material coverage gap; missing usage remains unavailable rather than zero.", "已索引历史总计包含 {sources} 个已验证来源中的 {indexed} 个。{threads} 个会话中的 {skipped} 个来源未通过本地验证。这是明显的覆盖缺口；缺失用量仍不可用，不会记为零。", "Los totales del historial indexado incluyen {indexed} de {sources} fuentes verificadas. {skipped} fuentes de {threads} conversaciones no superaron la validación local. Se trata de una carencia significativa de cobertura; el uso faltante no está disponible y no se cuenta como cero."],
+});
+
+const EVIDENCE_WARNING_PATTERNS = Object.entries(EVIDENCE_WARNING_MESSAGES).map(([id, row]) => {
+  const names = [];
+  const pattern = row[0].split(/(\{[a-z]+\})/u).map((part) => {
+    if (!/^\{[a-z]+\}$/u.test(part)) return part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    const name = part.slice(1, -1);
+    names.push(name);
+    if (name === "sourcenoun") return "(sources?)";
+    if (name === "threadnoun") return "(threads?)";
+    return name === "date" ? "(\\d{4}-\\d{2}-\\d{2})" : "(\\d{1,15})";
+  }).join("");
+  return { key: `dashboard.warning.${id}`, names, pattern: new RegExp(`^${pattern}$`, "u") };
+});
+
+export function evidenceWarningLocalization(message) {
+  if (typeof message !== "string" || message.length > 2000 || /[\r\n]/u.test(message)) return null;
+  for (const { key, names, pattern } of EVIDENCE_WARNING_PATTERNS) {
+    const match = pattern.exec(message);
+    if (match) return { key, values: Object.fromEntries(names.map((name, index) => [name, match[index + 1]])) };
+  }
+  return null;
+}
+
 export const WEB_MESSAGES = Object.freeze({
+  ...Object.fromEntries(Object.entries(EVIDENCE_WARNING_MESSAGES).map(([id, row]) => [`dashboard.warning.${id}`, row])),
   ...Object.fromEntries(Object.keys(CATALOGS[DEFAULT_LOCALE])
     .filter((key) => key.startsWith("allowance.")
       || key.startsWith("trends.")
@@ -684,7 +736,7 @@ export const WEB_MESSAGES = Object.freeze({
   "chart.usage.description": ["Local speed-priced API-equivalent usage per {unit}, using recorded or selected Codex speed and published Fast and Ultrafast API price ratios where eligible, with the provider-observed seven-day allowance remaining on the right axis. Times are shown in {timeZone}.", "按{unit}汇总本地用量的 API 等价金额。计算采用已记录或所选的 Codex 速度，符合条件时应用已公布的 Fast 和 Ultrafast API 价格倍率；右轴显示提供方报告的七天剩余额度。时间以 {timeZone} 时区显示。", "Uso local equivalente de API con precio según velocidad por {unit}, con la velocidad de Codex registrada o seleccionada y multiplicadores de precio de API Fast y Ultrafast publicados cuando corresponde; la cuota restante de siete días observada por el proveedor aparece en el eje derecho. Las horas se muestran en {timeZone}."],
   "chart.usage.heading": ["Speed-priced API-equivalent usage by {unit}", "每{unit}的 API 等价金额（按速度档定价）", "Uso equivalente de API con precio según velocidad por {unit}"],
   "chart.usage.standardTitle": ["Standard-rate API-equivalent usage over time", "按 Standard 费率计算的 API 等价金额随时间变化", "Uso equivalente de API con tarifa Standard a lo largo del tiempo"],
-  "chart.usage.standardDescription": ["Local Standard-rate API-equivalent usage per {unit}. The allowance series is omitted because no matching speed-priced capacity is available. Times are shown in {timeZone}.", "按{unit}显示的本地 按 Standard 费率计算的 API 等价金额。由于没有匹配的按速度档定价容量，因此不显示额度序列。时间显示为 {timeZone}。", "Uso local equivalente de API con tarifa Standard por {unit}. Se omite la serie de cuota porque no hay una capacidad ponderada coincidente. Las horas se muestran en {timeZone}."],
+  "chart.usage.standardDescription": ["Local Standard-rate API-equivalent usage per {unit}. The allowance series is omitted because no matching speed-priced capacity is available. Times are shown in {timeZone}.", "按{unit}显示本地用量对应的 API 等价金额，以 Standard 费率计算。由于没有匹配的按速度档定价容量，不显示额度序列。时间以 {timeZone} 显示。", "Uso local equivalente de API con tarifa Standard por {unit}. Se omite la serie de cuota porque no hay una capacidad ponderada coincidente. Las horas se muestran en {timeZone}."],
   "chart.usage.standardHeading": ["Standard-rate API-equivalent usage by {unit}", "每{unit}的 API 等价金额（Standard 费率）", "Uso equivalente de API con tarifa Standard por {unit}"],
   "chart.usage.emptyTitle": ["No real usage timeline loaded", "未加载真实用量时间线", "No se cargó ninguna cronología de uso real"],
   "chart.usage.emptyCopy": ["Analyze local usage to build recent content-free usage buckets.", "分析本地用量，按时间段汇总近期数据；汇总不含会话内容。", "Analiza el uso local para crear intervalos recientes de uso sin contenido."],
@@ -1773,6 +1825,21 @@ export function pseudoLocalize(value) {
 // test keeps this catalog complete for both shipped HTML entry points; new DOM
 // code should instead use a semantic `t` key above.
 export const LEGACY_TEXT_CATALOG = Object.freeze({
+  "Cached input": ["缓存输入", "Entrada en caché"],
+  "Uncached input": ["未缓存输入", "Entrada sin caché"],
+  "Cache writes": ["缓存写入", "Escrituras de caché"],
+  "Output text": ["输出文本", "Texto de salida"],
+  "Reasoning output": ["推理输出", "Salida de razonamiento"],
+  "Output (split unavailable)": ["输出（无法拆分）", "Salida (desglose no disponible)"],
+  "Time intervals": ["时间段数量", "Número de intervalos"],
+  "The number of displayed hour, day, or week intervals.": ["图表中显示的小时、天或周时间段数量。", "Número de intervalos de horas, días o semanas mostrados."],
+  "Speed-priced API equivalent": ["API 等价金额（按速度档定价）", "Equivalente de API con precio según velocidad"],
+  "Standard-rate API-price equivalent": ["API 等价金额（Standard 费率）", "Equivalente a precio de API con tarifa Standard"],
+  "Standard API prices with Fast and Ultrafast increments priced at their published API rates, compared only with a capacity fitted on the same basis. This is a comparison, not a bill or included-allowance formula.": ["以 Standard API 价格为基础，Fast 和 Ultrafast 用量增量按各自公布的 API 费率计价，仅与按相同口径拟合的容量比较。此结果用于比较，不代表账单，也不是套餐额度的计算公式。", "Precios de API Standard, con los incrementos Fast y Ultrafast a sus tarifas de API publicadas, comparados solo con una capacidad ajustada sobre la misma base. Es una comparación, no una factura ni una fórmula del límite incluido."],
+  "A Standard-rate accounting series. Provider allowance is hidden because no matching weighted capacity is available.": ["这是按 Standard 费率核算的序列。由于没有口径匹配的加权容量，不显示服务商额度。", "Serie contable a tarifa Standard. El límite del proveedor no se muestra porque no hay una capacidad ponderada compatible."],
+  "Last 24 hours": ["过去 24 小时", "Últimas 24 horas"],
+  "Last 7 days": ["过去 7 天", "Últimos 7 días"],
+  "Last 30 days": ["过去 30 天", "Últimos 30 días"],
   // The single approve-once contribution flow (2026-08-08).
   "Contribute anonymous usage data": ["贡献匿名使用数据", "Contribuir datos de uso anónimos"],
   // One-step flow (owner-directed 2026-08-08): sign in, then approve once.

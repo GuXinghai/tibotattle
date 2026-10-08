@@ -53,6 +53,7 @@ import {
 import {
   COMPOSITION_MINIMUM_MODEL_COST_SHARE_PERCENT,
   createBrowserLocalization,
+  evidenceWarningLocalization,
 } from "./localization.js";
 import {
   TELEMETRY_PLAN_DISPLAY_NAMES,
@@ -767,6 +768,9 @@ function openInformationPopover(button, { pinned = false } = {}) {
 }
 
 function informationLabel(label, explanation, accessibleLabel = label) {
+  label = localization.translateText(label);
+  explanation = localization.translateText(explanation);
+  accessibleLabel = localization.translateText(accessibleLabel);
   const fragment = document.createDocumentFragment();
   fragment.append(document.createTextNode(label));
   const button = node("button", "info-button", "i");
@@ -814,7 +818,9 @@ const COMPONENT_LABELS = Object.freeze({
 });
 
 function componentLabel(value) {
-  return COMPONENT_LABELS[value] ?? humanize(value);
+  return Object.hasOwn(COMPONENT_LABELS, value)
+    ? localization.translateText(COMPONENT_LABELS[value])
+    : humanize(value);
 }
 
 function setGlobalState(state, { companionReachable = false } = {}) {
@@ -1954,7 +1960,7 @@ function renderPricing(data) {
       retainedEvidence
         ? "accounting.projection.lastVerifiedPeriod"
         : "accounting.projection.periodUnavailable",
-      retainedEvidence ? { period: retainedPeriod.periodLabel } : {},
+      retainedEvidence ? { period: localization.translateText(retainedPeriod.periodLabel) } : {},
     );
     setLocalizedText(
       $("#cost-metric-kicker"),
@@ -1979,18 +1985,18 @@ function renderPricing(data) {
     return;
   }
   const fastMode = pricing.fastMode;
-  setRawText($("#cost-period"), pricing.periodLabel);
+  setProductText($("#cost-period"), pricing.periodLabel);
   // The headline is the speed-priced figure whenever a weighting exists;
   // when nothing can be weighted legitimately the label falls back to the
   // Standard-rate name rather than presenting an unweighted number under a
   // weighted heading.
   const weighted = pricing.quotaWeightedTotalCostUsd;
   const useWeighted = weighted !== null && fastMode.weightingStatus !== "unknown";
-  setRawText($("#cost-metric-kicker"), useWeighted
+  setProductText($("#cost-metric-kicker"), useWeighted
     ? fastMode.metricLabel
     : fastMode.standardMetricLabel);
   $("#cost-metric-kicker").title = useWeighted
-    ? fastMode.metricExplainer
+    ? localization.translateText(fastMode.metricExplainer)
     : t("dashboard.pricing.noWeightedTitle");
   $("#cost-total").textContent = formatMoney(
     useWeighted ? weighted : pricing.totalCostUsd,
@@ -2240,7 +2246,9 @@ function renderEvidenceWarnings(data) {
         : EVIDENCE_WARNING_INFORMATIONAL.test(message)
           ? "evidence-warning informational"
           : "evidence-warning");
-      setRawText(item, message);
+      const localized = evidenceWarningLocalization(message);
+      if (localized) setLocalizedText(item, localized.key, localized.values);
+      else setRawText(item, message);
       list.append(item);
     }
   }
@@ -10525,12 +10533,12 @@ function accountingPriceHeadline(accounting) {
     }));
   }
   return [
-    accounting.fastMode.metricShortLabel,
+    localization.translateText(accounting.fastMode.metricShortLabel),
     explanation.join(" "),
     weighted === null ? "—" : formatApiMoney(weighted),
     weighted === null
       ? t("accounting.apiEquivalent.noWeightedUsage")
-      : accounting.periodLabel,
+      : localization.translateText(accounting.periodLabel),
   ];
 }
 
@@ -10622,7 +10630,7 @@ function renderAccounting(data) {
           ? formatApiMoney((staleRow ?? accounting).apiPriceEquivalentUsd)
           : "—",
         t("accounting.projection.lastVerifiedPeriod", {
-          period: (staleRow ?? accounting).periodLabel,
+          period: localization.translateText((staleRow ?? accounting).periodLabel),
         }),
       ],
       [
@@ -10632,7 +10640,7 @@ function renderAccounting(data) {
           ? compact((staleRow ?? accounting).totalTokens)
           : "—",
         t("accounting.projection.lastVerifiedPeriod", {
-          period: (staleRow ?? accounting).periodLabel,
+          period: localization.translateText((staleRow ?? accounting).periodLabel),
         }),
       ],
     ]
@@ -10642,7 +10650,7 @@ function renderAccounting(data) {
         "Tokens",
         "The tokens attached to those usage changes during the selected time period.",
         compact(accounting.totalTokens),
-        accounting.periodLabel
+        localization.translateText(accounting.periodLabel)
       ]
     ];
   for (const [label, explanation, value, note] of headlineRows) {
