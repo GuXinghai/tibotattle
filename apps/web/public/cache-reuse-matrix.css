@@ -1,11 +1,11 @@
 /* Count-scaled cache evidence. Motion emphasizes inspection, never fabricates
    changing cache evidence or a provider retention deadline. */
 .cache-matrix {
-  --matrix-stage: #1d2125;
-  --matrix-light: #f1f2f4;
-  --matrix-dim: #b3b9c0;
-  --matrix-good: #7cc4f2;
-  --matrix-poor: #ffad89;
+  --matrix-stage: transparent;
+  --matrix-light: var(--ink, #17211e);
+  --matrix-dim: var(--muted, #57625c);
+  --matrix-good: #2f7fb8;
+  --matrix-poor: #b06544;
   min-width: 0;
 }
 .cache-matrix *, .cache-matrix *::before, .cache-matrix *::after { box-sizing: border-box; }
@@ -17,14 +17,12 @@
   overflow: hidden;
   background: var(--matrix-stage);
   color: var(--matrix-light);
-  box-shadow: inset 0 1px 0 rgb(241 242 244 / 18%);
 }
 .cache-matrix-stage::before {
   content: "";
   position: absolute;
   z-index: -1;
   inset: 0;
-  background: radial-gradient(ellipse at 25% 10%, rgb(124 196 242 / 9%), transparent 65%);
   pointer-events: none;
 }
 .cache-matrix-instrument-head {
@@ -47,7 +45,6 @@
   height: 7px;
   border-radius: 1px;
   background: var(--matrix-good);
-  box-shadow: 0 0 7px rgb(124 196 242 / 40%);
 }
 .cache-matrix-model-field { display: flex; align-items: center; gap: 9px; margin-inline-start: auto; max-width: 100%; }
 .cache-matrix-model-note { flex-basis: 100%; margin-top: -6px; text-align: end; color: var(--matrix-dim); font-size: .75rem; }
@@ -57,12 +54,11 @@
   max-width: 100%;
   min-height: 42px;
   padding: 8px 12px;
-  border: 1px solid rgb(179 185 192 / 30%);
+  border: 1px solid var(--line-strong, rgba(23, 33, 30, .18));
   border-radius: 10px;
-  background: #2c3237;
+  background: var(--surface-raised, #fffef9);
   color: var(--matrix-light);
-  color-scheme: dark;
-  font: inherit;
+    font: inherit;
   font-size: .85rem;
   cursor: pointer;
 }
@@ -79,12 +75,12 @@
   stroke-linejoin: round;
   background: color-mix(in srgb, var(--matrix-model-color, var(--matrix-dim)) 12%, transparent);
 }
-.cache-matrix-model-picker .allowance-model-astra { --matrix-model-color: #94c8d6; }
-.cache-matrix-model-picker .allowance-model-sol { --matrix-model-color: #f4c778; }
-.cache-matrix-model-picker .allowance-model-terra { --matrix-model-color: #c5d49a; }
-.cache-matrix-model-picker .allowance-model-luna { --matrix-model-color: #c5c6ef; }
-.cache-matrix-model-picker .allowance-model-review { --matrix-model-color: #abd5c1; }
-.cache-matrix-model-picker .allowance-model-spark { --matrix-model-color: #efc18c; }
+.cache-matrix-model-picker .allowance-model-astra { --matrix-model-color: #3f7f93; }
+.cache-matrix-model-picker .allowance-model-sol { --matrix-model-color: #a8741c; }
+.cache-matrix-model-picker .allowance-model-terra { --matrix-model-color: #6b7f2e; }
+.cache-matrix-model-picker .allowance-model-luna { --matrix-model-color: #6667a8; }
+.cache-matrix-model-picker .allowance-model-review { --matrix-model-color: #3f8a68; }
+.cache-matrix-model-picker .allowance-model-spark { --matrix-model-color: #a86a2a; }
 @supports (appearance: base-select) {
   .cache-matrix-model-picker, .cache-matrix-model-picker::picker(select) { appearance: base-select; }
   .cache-matrix-model-picker { padding: 5px 11px 5px 6px; }
@@ -93,13 +89,13 @@
     max-width: calc(100vw - 28px);
     max-height: min(430px, 70vh);
     overflow-y: auto;
-    border: 1px solid rgb(179 185 192 / 30%);
+    border: 1px solid var(--line-strong, rgba(23, 33, 30, .18));
     border-radius: 14px;
     padding: 6px;
     margin-top: 6px;
-    background: var(--matrix-stage);
+    background: var(--surface-raised, #fffef9);
     color: var(--matrix-light);
-    box-shadow: 0 16px 38px rgb(5 24 17 / 55%);
+    box-shadow: 0 16px 38px rgb(23 33 30 / 18%);
   }
   .cache-matrix-model-picker option {
     display: flex;
@@ -111,8 +107,8 @@
     font-size: .85rem;
     white-space: normal;
   }
-  .cache-matrix-model-picker option:hover { background: rgb(241 242 244 / 7%); }
-  .cache-matrix-model-picker option:checked, .cache-matrix-model-picker option:checked:hover { background: rgb(124 196 242 / 13%); }
+  .cache-matrix-model-picker option:hover { background: rgb(23 33 30 / 6%); }
+  .cache-matrix-model-picker option:checked, .cache-matrix-model-picker option:checked:hover { background: rgb(47 127 184 / 12%); }
   .cache-matrix-model-picker option:focus-visible { outline-color: var(--matrix-light); }
   .cache-matrix-model-picker option::checkmark { order: 2; margin-inline-start: auto; color: var(--matrix-good); }
   .cache-matrix-model-picker::picker-icon { color: var(--matrix-dim); font-size: .75rem; }
@@ -158,14 +154,14 @@
   .cache-matrix-plot .cache-matrix-rate { font-size: 12px; }
 }
 .cache-matrix-gap { font-weight: 600; }
-.cache-matrix-baseline { stroke: rgb(179 185 192 / 25%); }
-.cache-matrix-gridline { stroke: rgb(179 185 192 / 8%); }
-.cache-matrix-cells { filter: drop-shadow(0 0 2.4px rgb(124 196 242 / 24%)); }
+.cache-matrix-baseline { stroke: rgb(23 33 30 / 18%); }
+.cache-matrix-gridline { stroke: rgb(23 33 30 / 7%); }
+.cache-matrix-cells { filter: none; }
 .cache-matrix-cell-more { fill: var(--matrix-good); }
 .cache-matrix-cell-less { fill: var(--matrix-poor); }
 .cache-matrix-selection {
-  fill: rgb(241 242 244 / 4%);
-  stroke: rgb(241 242 244 / 34%);
+  fill: rgb(23 33 30 / 4%);
+  stroke: rgb(23 33 30 / 40%);
   stroke-width: 1;
   pointer-events: none;
   transition: transform 220ms cubic-bezier(.2,.8,.2,1), opacity 160ms ease;
@@ -197,7 +193,7 @@
 }
 .cache-matrix-detail {
   position: relative;
-  border-top: 1px solid rgb(179 185 192 / 17%);
+  border-top: 1px solid var(--line, rgba(23, 33, 30, .1));
   padding: 17px 20px;
   display: flex;
   align-items: center;
