@@ -7,7 +7,6 @@ import { createReportingPeriod, reportingDays, reportingSelection, mountReportin
 import { createCacheReuseMatrix } from "./cache-reuse-matrix.js";
 import { cacheReuseMetricLines, cacheReuseCoverageNote } from "./cache-reuse-metrics.js";
 import { mountTrendsHorizon, createSpendRateLookup } from "./trends-horizon.js";
-import { mountAllowanceTanks } from "./allowance-tanks.js";
 import { modelUsagePresentation, modelThemeIcon } from "./model-visuals.js";
 import { buildAllowanceTrends } from "./allowance-trends.js";
 import { mountWorkUsageView } from "./work-usage-view.js";
@@ -1660,14 +1659,8 @@ function renderLiveObservationPresentation(data, recency = observationRecency(da
       companionReachable: data.mode !== "demo"
     });
     renderObservationConnectionState(presentation, recency);
-    allowanceTankView?.dispose();
     renderQuotaCards(presentation);
     renderWeeklyPaceForecast(presentation);
-    allowanceTankView = mountAllowanceTanks(
-      $("#quota-cards"),
-      $("#weekly-pace-forecast"),
-      { t },
-    );
   }
 }
 
@@ -1736,8 +1729,6 @@ function renderDashboard(data) {
   void loadCacheDropThreadLinks(data);
 }
 
-let allowanceTankView = null;
-
 function renderQuotaCards(data) {
   closeInformationPopover();
   const container = $("#quota-cards");
@@ -1805,7 +1796,7 @@ function renderQuotaCards(data) {
       ? reportedRemaining : null;
     const spark = isSparkQuotaLimitId(window.limitId);
     const card = node("article", [
-      "metric-card quota-tank",
+      "metric-card quota-tank quota-summary",
       spark ? "quota-card-spark" : "",
       window.status === "stale" ? "stale" : "",
       remaining === null ? "insufficient" : "",
@@ -1818,12 +1809,6 @@ function renderQuotaCards(data) {
     card.dataset.forecastPool = String(isPrimaryCodexWeeklyQuotaWindow(window));
     card.dataset.resetAt = String(forecastTimestamp(window.resetAt) ?? "");
     card.dataset.stale = String(window.status === "stale");
-    if (remaining !== null) {
-      const fuel = node("div", "quota-tank-fuel");
-      fuel.style.blockSize = `${remaining}%`;
-      fuel.setAttribute("aria-hidden", "true");
-      card.append(fuel);
-    }
     const header = node("div", "quota-tank-header");
     const family = node("span", "quota-tank-family");
     if (spark) {
@@ -1862,6 +1847,21 @@ function renderQuotaCards(data) {
     }
     bottom.append(amount, reset);
     card.append(header, bottom);
+    if (remaining !== null) {
+      const progress = node("div", "quota-summary-progress");
+      progress.setAttribute("aria-hidden", "true");
+      const fuel = node("div", "quota-tank-fuel");
+      fuel.style.inlineSize = `${remaining}%`;
+      fuel.setAttribute("aria-hidden", "true");
+      progress.append(fuel);
+      card.append(progress);
+    }
+    const observedAt = forecastTimestamp(window.observedAt);
+    const observed = node("small", "quota-summary-observed");
+    observed.textContent = observedAt === null
+      ? t("page.observation.noTimestamp")
+      : t("dashboard.quota.observedAtPlain", { time: formatLocal(new Date(observedAt).toISOString()) });
+    card.append(observed);
     container.append(card);
   }
 }
@@ -11360,8 +11360,6 @@ async function loadLocalDashboard() {
 
 function renderDashboardSkeleton() {
   closeInformationPopover();
-  allowanceTankView?.dispose();
-  allowanceTankView = null;
   const forecast = $("#weekly-pace-forecast");
   if (forecast) { forecast.hidden = true; clear(forecast); }
   if ($("#allowance-context")) $("#allowance-context").hidden = true;

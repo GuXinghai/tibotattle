@@ -58,14 +58,14 @@ function harness(locale = "en-US") {
     const localizedQuotaWindowDuration = value => value + " minutes";
     let activeInformationPopover = null;
     let weeklyPaceDetailsOpen = false;
-    let allowanceTankView = null;
+    const formatLocal = value => value;
     const closeInformationPopover = () => { activeInformationPopover = null; };
     const openInformationPopover = button => { activeInformationPopover = { button }; };
     const ensureWeeklyPaceForecastCard = () => card;
     ${constants}
     ${functions}
     return { renderQuotaCards, renderWeeklyPaceForecast, weeklyPaceTrack, formatAllowanceDuration,
-      allowanceTimestamp, renderDashboardSkeleton, setTankView: view => { allowanceTankView = view; },
+      allowanceTimestamp, renderDashboardSkeleton,
       popover: () => activeInformationPopover };
   `);
   const api = factory(node, document, modelThemeIcon, selector => ({ "#quota-cards": quota, "#allowance-context": context, "#weekly-pace-forecast": card })[selector],
@@ -89,7 +89,7 @@ function forecast(overrides = {}) {
       sampleCount: 4, elapsedHours: 16 }, ...overrides };
 }
 
-test("tanks retain one, two and many pools, with the current Codex pool first", () => {
+test("compact cards retain one, two and many pools, with the current Codex pool first", () => {
   for (const count of [1, 2, 4, 7]) {
     const h = harness();
     const windows = Array.from({ length: count }, (_, i) => window({ limitId: i ? `future_${i}` : "codex", limitName: i ? `Future ${i}` : null }));
@@ -107,7 +107,7 @@ test("unknown capacity has no fill; zero is a real empty tank; stale evidence st
   h.renderQuotaCards(payload([window({ remainingPercent: null }), window({ remainingPercent: 0 }), window({ status: "stale" })]));
   assert.equal(find(h.quota.children[0], "quota-tank-fuel").length, 0);
   assert.match(h.quota.children[0].textContent, /unknown/u);
-  assert.equal(find(h.quota.children[1], "quota-tank-fuel")[0].style.blockSize, "0%");
+    assert.equal(find(h.quota.children[1], "quota-tank-fuel")[0].style.inlineSize, "0%");
   assert.match(h.quota.children[2].textContent, /Stale observation/u);
   assert.doesNotMatch(h.quota.textContent, /Observation time/u);
   h.renderQuotaCards(payload([]));
@@ -118,7 +118,7 @@ test("an elapsed reset never becomes a fresh full tank or a negative countdown",
   const h = harness();
   h.renderQuotaCards(payload([window({ resetAt: new Date(now - 1000).toISOString() })]));
   assert.match(h.quota.textContent, /Reset time passed/u);
-  assert.equal(find(h.quota, "quota-tank-fuel")[0].style.blockSize, "67%");
+  assert.equal(find(h.quota, "quota-tank-fuel")[0].style.inlineSize, "67%");
 });
 test("relative durations retain sub-hour precision honestly and translate", () => {
   const h = harness();
@@ -253,22 +253,31 @@ test("animated forecast coverage retains absolute positioning and a non-collapsi
 });
 
 
-test("unavailable dashboard disposes tank observers before removing their DOM", () => {
+test("unavailable dashboard clears compact cards and the previous forecast", () => {
   const h = harness();
   h.renderQuotaCards(payload([window()]));
   h.card.append(new Element());
-  let disposals = 0;
-  h.setTankView({ dispose() {
-    assert.equal(find(h.quota, "quota-tank").length, 1, "dispose while the observed card still exists");
-    disposals++;
-  } });
   h.renderDashboardSkeleton();
-  assert.equal(disposals, 1);
   assert.equal(find(h.quota, "quota-tank").length, 0);
   assert.equal(h.card.hidden, true);
   assert.equal(h.card.children.length, 0);
   h.renderDashboardSkeleton();
-  assert.equal(disposals, 1, "repeated unavailable renders do not retain or dispose an old manager");
+  assert.equal(find(h.quota, "quota-tank").length, 0);
+});
+
+test("each allowance card retains its own observation time or an explicit missing timestamp", () => {
+  const h = harness();
+  const older = new Date(now - 3_600_000).toISOString();
+  h.renderQuotaCards(payload([
+    window(), window({ limitId: "future", observedAt: older }),
+    window({ limitId: "missing", observedAt: null }),
+  ]));
+  const observed = find(h.quota, "quota-summary-observed");
+  assert.equal(observed[0].textContent, `Observed ${observedAt}`);
+  assert.equal(observed[1].textContent, `Observed ${older}`);
+  assert.equal(observed[2].textContent, translate("page.observation.noTimestamp", {}, "en-US"));
+  assert.doesNotMatch(source, /mountAllowanceTanks|allowanceTankView/u,
+    "the dashboard must not mount decorative frame loops");
 });
 
 

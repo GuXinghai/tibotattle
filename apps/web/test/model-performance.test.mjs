@@ -247,7 +247,7 @@ test('recovered estimates stay in one output-speed chart with explicit populatio
     t: (key, values) => translate(key, values, 'en-US') });
   dom.show(); await controller.refresh();
   assert.deepEqual(dom.root.all().filter(node => node.tagName === 'h4').map(node => node.textContent),
-    ['Output speed', 'First-token latency']);
+    ['Output speed', 'Time before the reply starts']);
   assert.equal(dom.root.all().find(node => node.className === 'performance-method-note').textContent,
     'When response timing is unavailable, eligible single-response turns without tools provide full-turn estimates. These include initial waiting and can be lower than response-timed speed.');
   assert.equal(dom.root.all().filter(node => node.className === 'performance-unit')[0].textContent,
@@ -433,7 +433,7 @@ test('plot-area sweep works away from points, clears on exit, and keyboard order
   const tooltipPercentiles = dom.root.all().filter(node => node.className === 'performance-tooltip-percentiles');
   assert.equal(tooltipPercentiles.length, 2);
   assert.deepEqual(tooltipPercentiles[0].children.filter(node => node.tagName === 'span').map(node => node.textContent), ['P90', 'P75', 'P25', 'P10']);
-  assert.deepEqual(dom.root.all().filter(node => node.className === 'performance-tooltip-method').map(node => node.textContent), ['Median (P50)', 'First-token latency']);
+  assert.deepEqual(dom.root.all().filter(node => node.className === 'performance-tooltip-method').map(node => node.textContent), ['Median (P50)', 'Time before the reply starts']);
   assert.ok(dom.root.all().filter(node => node.className?.startsWith('performance-tooltip ')).every(node => node.className.includes('performance-tooltip-after')));
   svgs[0].listeners.pointermove({ clientX: 52, clientY: 200 });
   assert.ok(readouts().every(node => node.textContent.includes('Median 50')), 'vertical position never changes selected date');

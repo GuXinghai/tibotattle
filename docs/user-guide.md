@@ -51,26 +51,19 @@ states are meaningful; TiboTattle does not replace missing evidence with zero.
 
 ## Reading the dashboard
 
-Overview shows one glass fuel tank for each observed allowance. Five-hour vessels
-are visually narrower (40% of standard width); this styling is not a measured
-capacity ratio. GPT-5.3 Codex Spark uses its shared model name and icon.
-Liquid motion is illustrative: the level stays at the observed percentage. Only
-a matching fresh forecast drives the outlet; greater pace produces more flow,
-with amber or red overflow for excessive pace. Overflow is a pace cue, not wasted
-quota. A discreet pause icon in the forecast header stops both tank and forecast-bar
-motion. The control is hidden when all tanks are stale, empty or unavailable.
-The system reduced-motion preference is respected silently and hides the motion control.
-The forecast bar has a subtle moving sheen; its extent and time markers do not
-move with the animation. Offscreen tanks stop animating. Unavailable capacity retains its text
-state and stale observations have no animated flow. The fill
-and percentage both represent remaining capacity. A single current Codex weekly
-forecast appears beneath the tanks when usable pacing evidence exists. Otherwise,
+Overview shows compact cards for each observed allowance. Each card names the
+allowance window and shows the remaining percentage, a static percentage bar,
+reset time and observation freshness. The bar represents the observed remaining
+percentage; it does not compare the absolute capacity of different windows.
+GPT-5.3 Codex Spark uses its shared model name and icon. Unavailable amounts retain
+their text state, and stale observations remain explicitly marked. A single current
+Codex weekly forecast appears beneath the cards when usable pacing evidence exists. Otherwise,
 a waiting panel explains that fresh or sufficient allowance evidence is needed;
 it does not display a guessed rate or run-out time. Choosing a historical plan
-on the Allowance Value page does not change that current forecast.
+on the Allowance Estimate page does not change that current forecast.
 
 The forecast names its pace assessment, estimated run-out, reset countdown and
-any time without allowance. Its timeline represents time until reset, not quota
+any time without allowance. Its static timeline represents time until reset, not quota
 percentage. Countdown labels use days and hours (less than an hour stays explicit).
 Hover, focus or tap an underlined time for the exact timestamp and time zone.
 Expand **Forecast basis and assumptions** for observation coverage, overall and
@@ -419,22 +412,23 @@ independent macOS crash doctor can inspect Apple reports without launching it;
 the support page gives the exact command, a more detailed `--verbose` mode, and
 an explicitly requested local export for private evidence review.
 
-Trends shows three linked views: **Allowance and activity**, the **three-hour
-observed versus calculated comparison**, and **Cumulative drift**. The first
-view keeps remaining percentage separate from API-price-equivalent activity.
+Trends shows **Allowance and activity** by default, keeping remaining percentage
+separate from API-price-equivalent activity. Expand **Detailed comparison of
+observed and estimated usage** to inspect the linked **three-hour observed versus
+calculated comparison** and **Cumulative drift**.
 Warm and cool fills in the comparison show movement above and below the
 estimate; the signed difference has its own strip. Cycle drift uses the existing
 cycle anchor calculation, not a sum of overlapping three-hour windows.
 
 Hover or tap a chart, or use the history slider, to inspect a shared time across
 all views. **Play history** advances that cursor; **Latest** returns to the end
-of the displayed range. The bright daytime and moonlit nighttime Horizon follows
-local clock time, not astronomical sunrise or sunset. Replay stops when the page
+of the displayed range. The selected-time toolbar shows the cursor time in the
+local time zone. Replay stops when the page
 is hidden and is omitted when reduced motion is enabled. The slider and exact
 sample timestamps remain available. Range and zoom controls move the views
 together; detailed comparison assumptions and exact evidence remain expandable.
 
-The Horizon readouts show allowance remaining at the selected time and a
+The toolbar readouts show allowance remaining at the selected time and a
 three-hour moving average of recorded API-equivalent usage per hour. The spending
 rate uses completed usage buckets, independently of whether allowance observations
 can be compared. It updates at fifteen-minute boundaries for the selected plan.

@@ -118,16 +118,16 @@ test("quota cards preserve unknown percentages and label stale observations", as
     render({ quotaWindows: [{ remainingPercent, status: "stale", durationMinutes: 10080, observedAt: "2026-09-13T12:00:00Z" }] });
     const card = container.children[0];
     const unknown = remainingPercent == null || remainingPercent < 0 || remainingPercent > 100;
-    const progress = card.children.find(child => child.className === "quota-tank-fuel");
+    const progress = descendants(card).find(child => child.className === "quota-tank-fuel");
     assert.equal(Boolean(progress), !unknown);
     if (progress) {
       assert.equal(progress.attributes["aria-hidden"], "true");
-      assert.equal(progress.style.blockSize, `${remainingPercent}%`);
+      assert.equal(progress.style.inlineSize, `${remainingPercent}%`);
     }
     const value = descendants(card).find(child => child.className === "quota-tank-value");
     assert.equal(value.textContent, unknown ? "—" : `${remainingPercent}%`);
     assert.equal(descendants(card).some(child => child.textContent === "allowance.stale"), true);
-    assert.equal(descendants(card).some(child => /^allowance\.observation:/u.test(child.textContent)), false,
-      "observation time is disclosed once above the allowance section");
+    assert.equal(descendants(card).some(child => child.textContent === "dashboard.quota.observedAtPlain"), true,
+      "each allowance pool keeps its own observation timestamp");
   }
 });

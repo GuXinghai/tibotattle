@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { horizonAt, advanceHorizonTime, sampleAt, hourlySpend, createSpendRateLookup, resetMarkerGroups, mountTrendsHorizon, presentationSegments, differenceLobes } from "../public/trends-horizon.js";
 import { translate, SUPPORTED_LOCALES } from "../public/localization.js";
 
-test("the sun and moon cross midnight continuously, with an unmistakably brighter day", () => {
+test("the optional public-tour sky crosses midnight continuously, with an unmistakably brighter day", () => {
   const before = horizonAt(24 - 1 / 3600), after = horizonAt(1 / 3600);
   for (const body of ["sun", "moon"]) {
     for (const axis of ["x", "y", "opacity"]) assert.ok(Math.abs(before[body][axis] - after[body][axis]) < .01);
@@ -110,7 +110,7 @@ test("spending cannot borrow future pricing or silently fill unpriced buckets", 
   assert.equal(createSpendRateLookup([{ ...buckets[0], endMs: 2 * step }])(step), null);
 });
 
-test("header spending needs no quota-comparison chart, uses exact observations, and clears on an unavailable view", () => {
+test("the compact time toolbar needs no decorative DOM, uses exact observations, and clears on an unavailable view", () => {
   class Element {
     constructor() { this.attributes = {}; this.children = []; this.style = {}; this.dataset = {}; this.isConnected = true; this.hidden = false; this.textContent = ""; }
     setAttribute(key, value) { this.attributes[key] = String(value); }
@@ -120,7 +120,7 @@ test("header spending needs no quota-comparison chart, uses exact observations, 
     removeEventListener() {}
     querySelector(selector) { return elements.get(selector) ?? null; }
   }
-  const elements = new Map(["#trends-time", "#trends-replay", "#trends-latest", ".trends-sky", ".trends-sun", ".trends-moon", ".trends-stars", "#trends-date", "#trends-clock", "#trends-allowance-value", "#trends-spend-value", "#trends-spend-basis"].map(key => [key, new Element()]));
+  const elements = new Map(["#trends-time", "#trends-replay", "#trends-latest", "#trends-date", "#trends-clock", "#trends-allowance-value", "#trends-spend-value", "#trends-spend-basis"].map(key => [key, new Element()]));
   const win = { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }),
     cancelAnimationFrame() {}, MutationObserver: class { observe() {} disconnect() {} } };
   const document = { defaultView: win, createElement: () => new Element(), createElementNS: () => new Element(), addEventListener() {}, removeEventListener() {} };
@@ -145,6 +145,8 @@ test("header spending needs no quota-comparison chart, uses exact observations, 
   const text = selector => elements.get(selector).textContent;
   assert.equal(text("#trends-allowance-value"), "20", "the first refresh must populate data received after chart registration");
   controller.select(2.75 * hour);
+  assert.equal(text("#trends-clock"), "2:45 AM");
+  assert.match(elements.get("#trends-time").attributes["aria-valuetext"], /2:45 AM/);
   assert.equal(text("#trends-allowance-value"), "90", "a within-hour observation must not lag until the next chart bucket");
   assert.equal(text("#trends-spend-value"), "40");
   controller.select(3.25 * hour);
@@ -156,6 +158,7 @@ test("header spending needs no quota-comparison chart, uses exact observations, 
   controller.refresh();
   assert.equal(text("#trends-spend-value"), "—");
   assert.equal(elements.get("#trends-time").disabled, true);
+  assert.equal(text("#trends-clock"), "—");
   controller.dispose();
 });
 
@@ -169,12 +172,16 @@ test("difference fills split sign at the crossing and leave missing windows empt
   assert.deepEqual(differenceLobes(points.map((p, residualSegment) => ({ ...p, residualSegment })), x, y), { above: "", below: "" });
 });
 
-test("all three analyses are visible and time navigation has one visible range control", async () => {
+test("core trends stay visible while deeper comparison expands on demand, with one time range control", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.ok(html.indexOf('id="allowance-timeline-chart"') < html.indexOf('id="timeline-chart"'));
   assert.ok(html.indexOf('id="difference-timeline-chart"') < html.indexOf('id="residual-chart"'));
   assert.doesNotMatch(html, /<details class="advanced-calibration"/);
+  assert.match(html, /<details class="trends-analysis-details">\s*<summary data-i18n="trends.analysisDetails">/);
+  assert.ok(html.indexOf('class="trends-analysis-details"') > html.indexOf('id="usage-timeline-summary"'));
+  assert.ok(html.indexOf('class="trends-analysis-details"') < html.indexOf('class="panel chart-panel trends-comparison-panel"'));
+  assert.doesNotMatch(html, /class="trends-sky"/);
   assert.match(html, /class="calibration-controls" hidden/);
   assert.match(source, /activeCalibrationRangeDays = activeUsageRangeDays/);
   assert.match(source, /format: formatPp, breakBefore: "driftReanchor"/);

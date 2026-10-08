@@ -84,7 +84,7 @@ test('rendered mixed badges never imply credits are allowance resets and clear o
     removeEventListener() {}
     querySelector(selector) { return this.children.find(child => child.attributes.class === selector.slice(1)) ?? elements.get(selector) ?? null; }
   }
-  const elements = new Map(['#trends-time', '#trends-replay', '#trends-latest', '.trends-sky', '.trends-sun', '.trends-moon', '.trends-stars', '#trends-reset-count', '#trends-event-detail'].map(key => [key, new Element()]));
+  const elements = new Map(['#trends-time', '#trends-replay', '#trends-latest', '#trends-reset-count', '#trends-event-detail'].map(key => [key, new Element()]));
   const win = { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), cancelAnimationFrame() {}, MutationObserver: class { observe() {} disconnect() {} } };
   const document = { defaultView: win, createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag), addEventListener() {}, removeEventListener() {} };
   const root = new Element(); root.ownerDocument = document;

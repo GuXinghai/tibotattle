@@ -129,7 +129,7 @@
       <aside class="dashboard-sidebar" aria-label="Dashboard navigation" data-i18n-aria-label="aria.dashboardNavigation">
         <nav class="primary-nav" aria-label="Dashboard sections" data-i18n-aria-label="aria.dashboardSections">
           <a href="#overview" data-nav="overview" data-requires-evidence>Overview</a>
-          <a href="#weekly" data-nav="weekly" data-requires-evidence data-i18n="allowance.valueTab">Allowance Value</a>
+          <a href="#weekly" data-nav="weekly" data-requires-evidence data-i18n="allowance.valueTab">Allowance Estimate</a>
           <a href="#timeline" data-nav="trends" data-requires-evidence>Trends</a>
           <a href="#performance" data-nav="performance" data-i18n="performance.title">Model performance</a>
           <a href="#accounting" data-nav="method" data-requires-evidence>Usage and costs</a>
@@ -448,8 +448,8 @@
       <section class="dashboard-section lead-section dashboard-page-inactive" id="weekly" aria-labelledby="weekly-title" data-dashboard-page="weekly" data-requires-evidence aria-hidden="true" inert>
         <div class="dashboard-page-header">
           <div>
-            <h2 id="weekly-title" data-i18n="page.weekly.title">Allowance Value</h2>
-            <p class="page-description" data-i18n="page.weekly.description">Estimated capacity and how it changes over time.</p>
+            <h2 id="weekly-title" data-i18n="page.weekly.title">Allowance Estimate</h2>
+            <p class="page-description" data-i18n="page.weekly.description">Estimate the API-equivalent amount of a full allowance cycle from local usage and quota changes. This is an estimate, not a bill.</p>
           </div>
           <div class="allowance-header-controls">
             <div class="allowance-window-control" id="allowance-window-control">
@@ -495,7 +495,7 @@
           <p id="weekly-span-note" class="small muted" hidden></p>
           <div class="legend weekly-legend chart-card-legend" aria-label="Weekly estimate chart legend" data-i18n-aria-label="aria.weeklyEstimateLegend">
             <span><i class="legend-dot weekly-center"></i>All-data median</span>
-            <span id="weekly-lowess-legend"><i class="legend-dot weekly-lowess"></i><span data-i18n="weekly.controls.lowess">Robust LOWESS</span></span>
+            <span id="weekly-lowess-legend"><i class="legend-dot weekly-lowess"></i><span data-i18n="weekly.controls.lowess">Smoothed trend (LOWESS)</span></span>
             <span><i class="legend-dot weekly-mature"></i><span id="weekly-span-legend">Observed across 50+ points</span></span>
             <span id="weekly-partial-legend" hidden><i class="legend-dot weekly-partial"></i>Short observation</span>
             <span><i class="legend-dot weekly-error-bar"></i>Slope-agreement range</span>
@@ -613,7 +613,6 @@
 
         <article class="panel chart-panel trends-capacity-panel">
           <div class="trends-horizon">
-            <div class="trends-sky" aria-hidden="true"><div class="trends-stars"></div><div class="trends-clouds"></div><div class="trends-sun"></div><div class="trends-moon"></div><div class="trends-ridge"></div></div>
             <div class="trends-clock-content"><span class="trends-clock-label" data-i18n="trends.localClock">Local clock · selected time</span><span id="trends-date" data-i18n-skip>—</span><strong id="trends-clock" data-i18n-skip>—</strong></div>
             <div class="trends-live-metrics">
               <div><span data-i18n="trends.headerAllowance">Allowance remaining</span><strong id="trends-allowance-value" data-i18n-skip>—</strong><small data-i18n="trends.headerObserved">Latest observation at this time</small></div>
@@ -661,121 +660,124 @@
           <div class="chart-summary-grid" id="usage-timeline-summary"></div>
         </article>
 
-        <article class="panel chart-panel trends-comparison-panel">
-          <div class="chart-heading">
-            <div>
-              <h3 id="timeline-chart-title">Observed quota change versus cost-implied change</h3>
-              <p id="timeline-chart-copy">Chart and table use this Mac’s reporting time zone.</p>
-            </div>
-            <div class="calibration-controls" hidden>
-              <!--
-                Owner decision 2026-08-06: the rolling comparison window is
-                fixed at three hours. The 15-minute and 1-hour widths the old
-                segmented control offered proved inaccurate, and a control
-                with one honest option is clutter, so the width lives in
-                app.js as CALIBRATION_WINDOW_HOURS rather than here.
-              -->
-              <div class="chart-navigation" aria-label="Calibration zoom and pan" data-i18n-aria-label="aria.calibrationZoomPan">
-                <button class="button button-quiet compact" id="timeline-pan-back" type="button" title="Pan calibration earlier" data-i18n-title="title.panCalibrationEarlier">← Earlier</button>
-                <button class="button button-quiet compact" id="timeline-zoom-out" type="button" title="Zoom out" data-i18n-title="title.zoomOut">−</button>
-                <button class="button button-quiet compact" id="timeline-zoom-in" type="button" title="Zoom in" data-i18n-title="title.zoomIn">+</button>
-                <button class="button button-quiet compact" id="timeline-reset-zoom" type="button">Reset view</button>
-                <button class="button button-quiet compact" id="timeline-pan-forward" type="button" title="Pan calibration later" data-i18n-title="title.panCalibrationLater">Later →</button>
-                <span class="sr-only" id="timeline-zoom-status" aria-live="polite"></span>
+        <details class="trends-analysis-details">
+          <summary data-i18n="trends.analysisDetails">Detailed comparison of observed and estimated usage</summary>
+          <article class="panel chart-panel trends-comparison-panel">
+            <div class="chart-heading">
+              <div>
+                <h3 id="timeline-chart-title">Observed quota change versus cost-implied change</h3>
+                <p id="timeline-chart-copy">Chart and table use this Mac’s reporting time zone.</p>
+              </div>
+              <div class="calibration-controls" hidden>
+                <!--
+                  Owner decision 2026-08-06: the rolling comparison window is
+                  fixed at three hours. The 15-minute and 1-hour widths the old
+                  segmented control offered proved inaccurate, and a control
+                  with one honest option is clutter, so the width lives in
+                  app.js as CALIBRATION_WINDOW_HOURS rather than here.
+                -->
+                <div class="chart-navigation" aria-label="Calibration zoom and pan" data-i18n-aria-label="aria.calibrationZoomPan">
+                  <button class="button button-quiet compact" id="timeline-pan-back" type="button" title="Pan calibration earlier" data-i18n-title="title.panCalibrationEarlier">← Earlier</button>
+                  <button class="button button-quiet compact" id="timeline-zoom-out" type="button" title="Zoom out" data-i18n-title="title.zoomOut">−</button>
+                  <button class="button button-quiet compact" id="timeline-zoom-in" type="button" title="Zoom in" data-i18n-title="title.zoomIn">+</button>
+                  <button class="button button-quiet compact" id="timeline-reset-zoom" type="button">Reset view</button>
+                  <button class="button button-quiet compact" id="timeline-pan-forward" type="button" title="Pan calibration later" data-i18n-title="title.panCalibrationLater">Later →</button>
+                  <span class="sr-only" id="timeline-zoom-status" aria-live="polite"></span>
+                </div>
               </div>
             </div>
-          </div>
-          <div class="legend calibration-legend" aria-label="Calibration chart legend" data-i18n-aria-label="aria.calibrationLegend">
-            <span><i class="legend-dot observed"></i>Observed quota</span>
-            <span><i class="legend-dot expected"></i>Expected from speed-priced API cost</span>
-            <span class="legend-group-sep" aria-hidden="true"></span>
-            <span><i class="legend-dot area chart-status-missing"></i>Missing quota bracket</span>
-            <span><i class="legend-dot area chart-status-reset"></i>Window boundary or track change</span>
-            <span><i class="legend-dot area chart-status-weighting"></i>Speed pricing unavailable</span>
-            <span><i class="legend-dot area chart-status-ambiguous"></i>Movement needs context</span>
-            <span><i class="legend-dot area chart-status-saturated"></i>Allowance exhausted</span>
-          </div>
-          <div class="dashboard-state chart-empty" id="timeline-empty" role="status" data-state="empty">
-            <strong>No timeline loaded</strong>
-            <p>Connect the local companion or choose the labeled demo.</p>
-          </div>
-          <div class="chart-shell" id="timeline-chart" hidden></div>
-          <p class="series-coverage" id="timeline-coverage" role="status" hidden></p>
-          <div class="trends-difference-heading"><span data-i18n="trends.difference">Observed minus calculated</span><span class="trends-sign-key"><i></i><span data-i18n="trends.above">Above estimate</span><i></i><span data-i18n="trends.below">Below estimate</span></span></div>
-          <div class="chart-shell trends-difference-chart" id="difference-timeline-chart" hidden></div>
-          <p class="timeline-confidence" id="residual-coverage" role="status"></p>
-          <details class="trends-evidence-details"><summary data-i18n="trends.method">Comparison quality and assumptions</summary>
-          <p class="annotation" data-i18n="trends.quiet">Quiet periods with no activity and no quota change are neutral, not errors.</p>
-          <div class="chart-summary-grid" id="timeline-summary"></div>
-          <p class="timeline-confidence" id="timeline-confidence" role="status"></p>
-          </details>
-        </article>
-
-        <article class="panel trends-drift-panel">
-          <div class="panel-heading"><div><p class="panel-kicker" data-i18n="trends.cycle">Within each allowance cycle</p><h3 data-i18n="trends.drift">Cumulative drift</h3></div></div>
-          <p class="annotation" data-i18n="trends.driftCopy">Observed minus calculated movement since the cycle anchor. Gaps and changes of cycle interrupt the line.</p>
-            <div class="chart-empty small" id="residual-empty">No residual evidence loaded.</div>
-            <div class="chart-shell compact-chart" id="residual-chart" hidden></div>
-            <p class="timeline-confidence" id="trends-drift-coverage" role="status"></p>
-          </article>
-        <article class="panel divergence-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="panel-kicker">Divergence periods</p>
-              <h3 data-i18n="trends.divergenceTitle">When usage and allowance disagree</h3>
+            <div class="legend calibration-legend" aria-label="Calibration chart legend" data-i18n-aria-label="aria.calibrationLegend">
+              <span><i class="legend-dot observed"></i>Observed quota</span>
+              <span><i class="legend-dot expected"></i>Expected from speed-priced API cost</span>
+              <span class="legend-group-sep" aria-hidden="true"></span>
+              <span><i class="legend-dot area chart-status-missing"></i>Missing quota bracket</span>
+              <span><i class="legend-dot area chart-status-reset"></i>Window boundary or track change</span>
+              <span><i class="legend-dot area chart-status-weighting"></i>Speed pricing unavailable</span>
+              <span><i class="legend-dot area chart-status-ambiguous"></i>Movement needs context</span>
+              <span><i class="legend-dot area chart-status-saturated"></i>Allowance exhausted</span>
             </div>
-          </div>
-          <p class="annotation" data-i18n="trends.divergenceCopy">Periods when allowance fell more or less than recorded usage would explain. Each gap is measured in percentage points from the cycle’s comparison start. Select a period to inspect the charts.</p>
-          <p class="timeline-confidence" id="divergence-summary" role="status" hidden></p>
-          <p class="annotation" id="divergence-caveat" hidden></p>
-          <div class="chart-empty small" id="divergence-empty" hidden></div>
-          <ol class="divergence-list" id="divergence-list"></ol>
-          <div class="table-pagination" id="divergence-pagination" hidden>
-            <button class="button button-quiet compact" id="divergence-page-prev" type="button" aria-controls="divergence-list" data-i18n="table.pagination.previous">Previous</button>
-            <span class="table-pagination-status" id="divergence-page-status" role="status"></span>
-            <button class="button button-quiet compact" id="divergence-page-next" type="button" aria-controls="divergence-list" data-i18n="table.pagination.next">Next</button>
-          </div>
-        </article>
-          <details class="panel trends-evidence-details">
-            <summary data-i18n="trends.evidence">Exact windows and evidence</summary>
+            <div class="dashboard-state chart-empty" id="timeline-empty" role="status" data-state="empty">
+              <strong>No timeline loaded</strong>
+              <p>Connect the local companion or choose the labeled demo.</p>
+            </div>
+            <div class="chart-shell" id="timeline-chart" hidden></div>
+            <p class="series-coverage" id="timeline-coverage" role="status" hidden></p>
+            <div class="trends-difference-heading"><span data-i18n="trends.difference">Observed minus calculated</span><span class="trends-sign-key"><i></i><span data-i18n="trends.above">Above estimate</span><i></i><span data-i18n="trends.below">Below estimate</span></span></div>
+            <div class="chart-shell trends-difference-chart" id="difference-timeline-chart" hidden></div>
+            <p class="timeline-confidence" id="residual-coverage" role="status"></p>
+            <details class="trends-evidence-details"><summary data-i18n="trends.method">Comparison quality and assumptions</summary>
+            <p class="annotation" data-i18n="trends.quiet">Quiet periods with no activity and no quota change are neutral, not errors.</p>
+            <div class="chart-summary-grid" id="timeline-summary"></div>
+            <p class="timeline-confidence" id="timeline-confidence" role="status"></p>
+            </details>
+          </article>
+
+          <article class="panel trends-drift-panel">
+            <div class="panel-heading"><div><p class="panel-kicker" data-i18n="trends.cycle">Within each allowance cycle</p><h3 data-i18n="trends.drift">Cumulative drift</h3></div></div>
+            <p class="annotation" data-i18n="trends.driftCopy">Actual allowance use minus estimated use since the comparison began. Gaps or a new cycle interrupt the line.</p>
+              <div class="chart-empty small" id="residual-empty">No residual evidence loaded.</div>
+              <div class="chart-shell compact-chart" id="residual-chart" hidden></div>
+              <p class="timeline-confidence" id="trends-drift-coverage" role="status"></p>
+            </article>
+          <article class="panel divergence-panel">
             <div class="panel-heading">
               <div>
-                <p class="panel-kicker">Inspect exact periods</p>
-                <h3 data-i18n="trends.evidenceTitle">What each comparison tells us</h3>
+                <p class="panel-kicker">Divergence periods</p>
+                <h3 data-i18n="trends.divergenceTitle">When usage and allowance disagree</h3>
               </div>
             </div>
-            <p class="annotation" data-i18n="trends.evidenceIntro">Each sample compares a rolling window, normally 3 hours. Observed is allowance used; estimated is the amount predicted from recorded activity. Difference = observed − estimated, in percentage points (pp).</p>
-            <p class="annotation" data-i18n="trends.evidenceHelp">For example, falling from 60% to 50% remaining uses 10 pp. Comparable means the two values can be compared, not that they agree. A dash means a value could not be established.</p>
-            <div class="table-wrap">
-              <table class="residual-inspection-table">
-                <caption class="sr-only">Largest unexplained quota movement periods</caption>
-                <thead>
-                  <tr>
-                  <th scope="col" id="residual-time-heading">Local time</th>
-                  <th scope="col">Observed</th>
-                  <th scope="col" data-i18n="trends.estimated">Estimated</th>
-                  <th scope="col">Difference</th>
-                  <th scope="col" data-i18n="trends.evidenceColumn">How to read this row</th>
-                  </tr>
-                </thead>
-                <tbody id="residual-table">
-                  <tr><td colspan="5" class="empty-cell">No periods loaded.</td></tr>
-                </tbody>
-              </table>
+            <p class="annotation" data-i18n="trends.divergenceCopy">Periods when allowance fell more or less than recorded usage would explain. Each gap is measured in percentage points from the cycle’s comparison start. Select a period to inspect the charts.</p>
+            <p class="timeline-confidence" id="divergence-summary" role="status" hidden></p>
+            <p class="annotation" id="divergence-caveat" hidden></p>
+            <div class="chart-empty small" id="divergence-empty" hidden></div>
+            <ol class="divergence-list" id="divergence-list"></ol>
+            <div class="table-pagination" id="divergence-pagination" hidden>
+              <button class="button button-quiet compact" id="divergence-page-prev" type="button" aria-controls="divergence-list" data-i18n="table.pagination.previous">Previous</button>
+              <span class="table-pagination-status" id="divergence-page-status" role="status"></span>
+              <button class="button button-quiet compact" id="divergence-page-next" type="button" aria-controls="divergence-list" data-i18n="table.pagination.next">Next</button>
             </div>
-            <!--
-              Simple pagination (owner-directed, 2026-08-08): ten rows per
-              page over the full merged inspection list, with the shown range
-              stated as "N–M of T". The status span is written by the
-              renderer, so it starts empty rather than carrying placeholder
-              copy.
-            -->
-            <div class="table-pagination" id="residual-pagination" hidden>
-              <button class="button button-quiet compact" id="residual-page-prev" type="button" disabled>Previous</button>
-              <span class="table-pagination-status" id="residual-page-status" role="status"></span>
-              <button class="button button-quiet compact" id="residual-page-next" type="button" disabled>Next</button>
-            </div>
-          </details>
+          </article>
+            <details class="panel trends-evidence-details">
+              <summary data-i18n="trends.evidence">Exact windows and evidence</summary>
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-kicker">Inspect exact periods</p>
+                  <h3 data-i18n="trends.evidenceTitle">What each comparison tells us</h3>
+                </div>
+              </div>
+              <p class="annotation" data-i18n="trends.evidenceIntro">Each sample compares a rolling window, normally 3 hours. Observed is allowance used; estimated is the amount predicted from recorded activity. Difference = observed − estimated, in percentage points (pp).</p>
+              <p class="annotation" data-i18n="trends.evidenceHelp">For example, falling from 60% to 50% remaining uses 10 pp. Comparable means the two values can be compared, not that they agree. A dash means a value could not be established.</p>
+              <div class="table-wrap">
+                <table class="residual-inspection-table">
+                  <caption class="sr-only">Largest unexplained quota movement periods</caption>
+                  <thead>
+                    <tr>
+                    <th scope="col" id="residual-time-heading">Local time</th>
+                    <th scope="col">Observed</th>
+                    <th scope="col" data-i18n="trends.estimated">Estimated</th>
+                    <th scope="col">Difference</th>
+                    <th scope="col" data-i18n="trends.evidenceColumn">How to read this row</th>
+                    </tr>
+                  </thead>
+                  <tbody id="residual-table">
+                    <tr><td colspan="5" class="empty-cell">No periods loaded.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <!--
+                Simple pagination (owner-directed, 2026-08-08): ten rows per
+                page over the full merged inspection list, with the shown range
+                stated as "N–M of T". The status span is written by the
+                renderer, so it starts empty rather than carrying placeholder
+                copy.
+              -->
+              <div class="table-pagination" id="residual-pagination" hidden>
+                <button class="button button-quiet compact" id="residual-page-prev" type="button" disabled>Previous</button>
+                <span class="table-pagination-status" id="residual-page-status" role="status"></span>
+                <button class="button button-quiet compact" id="residual-page-next" type="button" disabled>Next</button>
+              </div>
+            </details>
+        </details>
 
       </section>
 

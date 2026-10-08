@@ -4,6 +4,8 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const finite = value => typeof value === "number" && Number.isFinite(value);
 const clamp = (value, low, high) => Math.max(low, Math.min(high, value));
 
+// The public feature tour keeps its optional day/night illustration. The local
+// dashboard uses the same time controller without this decorative layer.
 export function horizonAt(hour) {
   const h = ((hour % 24) + 24) % 24;
   const stops = [
@@ -234,7 +236,7 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
     if (!formatters.has(key)) formatters.set(key, new Intl.DateTimeFormat(formatLocale, { timeZone, ...options }));
     return formatters.get(key);
   };
-  const clockParts = new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+  const clockParts = sky ? new Intl.DateTimeFormat("en-GB", { timeZone, hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" }) : null;
   const format = (timestamp, options) => formatter(options).format(timestamp);
   const domain = () => {
     for (const id of ["usage-timeline-chart", "timeline-chart", "allowance-timeline-chart"]) {
@@ -257,16 +259,18 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
     if (user) stop();
     at = clamp(timestamp, bounds.startMs, bounds.endMs);
     input.value = String(at);
-    const parts = clockParts.formatToParts(at);
-    const part = key => Number(parts.find(p => p.type === key)?.value ?? 0);
-    const light = horizonAt(part("hour") + part("minute") / 60 + part("second") / 3600);
-    sky.style.background = `linear-gradient(125deg,${light.top},${light.bottom})`;
-    for (const body of ["sun", "moon"]) {
-      const element = sky.querySelector(`.trends-${body}`), position = light[body];
-      // Keep the orbit in the open sky between the clock and the readouts.
-      element.style.left = `${45 + (position.x - 77) * .5}%`; element.style.top = `${position.y}%`; element.style.opacity = position.opacity;
+    if (sky) {
+      const parts = clockParts.formatToParts(at);
+      const part = key => Number(parts.find(p => p.type === key)?.value ?? 0);
+      const light = horizonAt(part("hour") + part("minute") / 60 + part("second") / 3600);
+      sky.style.background = `linear-gradient(125deg,${light.top},${light.bottom})`;
+      for (const body of ["sun", "moon"]) {
+        const element = sky.querySelector(`.trends-${body}`), position = light[body];
+        // Keep the public-tour orbit between the clock and the readouts.
+        element.style.left = `${45 + (position.x - 77) * .5}%`; element.style.top = `${position.y}%`; element.style.opacity = position.opacity;
+      }
+      sky.querySelector(".trends-stars").style.opacity = light.stars;
     }
-    sky.querySelector(".trends-stars").style.opacity = light.stars;
     setText("#trends-date", format(at, { weekday: "long", month: "short", day: "numeric", year: "numeric" }));
     setText("#trends-clock", format(at, { hour: "numeric", minute: "2-digit" }));
     const description = format(at, { dateStyle: "medium", timeStyle: "short" });

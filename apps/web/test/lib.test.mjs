@@ -6376,7 +6376,7 @@ test("the weekly allowance chart leads the dashboard", async () => {
     html.indexOf('data-nav="weekly"') < html.indexOf('data-nav="trends"'),
     "primary navigation follows the same order as the sections",
   );
-  assert.match(html, /<h2 id="weekly-title" data-i18n="page.weekly.title">Allowance Value<\/h2>/u);
+  assert.match(html, /<h2 id="weekly-title" data-i18n="page.weekly.title">Allowance Estimate<\/h2>/u);
   assert.match(html, /<h2 id="timeline-title" data-i18n="page.timeline.title">Trends<\/h2>/u);
   assert.match(html, /class="dashboard-section lead-section(?: dashboard-page-inactive)?" id="weekly"/u);
   assert.match(html, /class="panel weekly-history-panel lead-chart-panel chart-card"/u);
@@ -9111,7 +9111,7 @@ test("the residual panel draws the cumulative line and states the signed-AUC dri
   // the legacy inventory (checked by the static-copy test).
   assert.match(
     html,
-    /Observed minus calculated movement since the cycle anchor\. Gaps and changes of cycle interrupt the line\./u,
+    /Actual allowance use minus estimated use since the comparison began\. Gaps or a new cycle interrupt the line\./u,
   );
   for (const locale of SUPPORTED_LOCALES) {
     for (const key of [
