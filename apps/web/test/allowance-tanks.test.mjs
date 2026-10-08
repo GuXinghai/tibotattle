@@ -108,7 +108,7 @@ test("unknown capacity has no fill; zero is a real empty tank; stale evidence st
   assert.equal(find(h.quota.children[0], "quota-tank-fuel").length, 0);
   assert.match(h.quota.children[0].textContent, /unknown/u);
     assert.equal(find(h.quota.children[1], "quota-tank-fuel")[0].style.inlineSize, "0%");
-  assert.match(h.quota.children[2].textContent, /Stale observation/u);
+  assert.match(h.quota.children[2].textContent, /Stale reading/u);
   assert.doesNotMatch(h.quota.textContent, /Observation time/u);
   h.renderQuotaCards(payload([]));
   assert.equal(h.context.hidden, true);
@@ -291,7 +291,7 @@ test("primary weekly allowance keeps a neutral forecast panel when pace evidence
     h.renderWeeklyPaceForecast({ ...payload([window()]), weekly: { paceForecast } });
     assert.equal(h.card.hidden, false, JSON.stringify(paceForecast));
     assert.match(h.card.className, /is-waiting/u);
-    assert.match(h.card.textContent, /More valid allowance observations/u);
+    assert.match(h.card.textContent, /more valid allowance readings/u);
     assert.doesNotMatch(h.card.textContent, /out of date|refreshing|runs out in/iu);
     assert.equal(find(h.card, "weekly-pace-track").length, 0);
     assert.equal(find(h.card, "allowance-timestamp").length, 0);
@@ -309,8 +309,8 @@ test("stale allowance cannot retain a confident forecast and a fresh single obse
   assert.ok(h.card.dataset.tankRatio);
   h.renderWeeklyPaceForecast({ ...payload([window({ status: "stale" })]), weekly: { paceForecast: forecast() } });
   assert.equal(h.card.hidden, false);
-  assert.match(h.card.textContent, /Fresh allowance evidence needed/u);
-  assert.match(h.card.textContent, /observation is out of date/u);
+  assert.match(h.card.textContent, /Fresh allowance readings needed/u);
+  assert.match(h.card.textContent, /reading is out of date/u);
   assert.equal(h.card.dataset.tankRatio, undefined);
   assert.equal(find(h.card, "weekly-pace-track").length, 0);
   h.renderWeeklyPaceForecast({ ...payload([window()]), weekly: { paceForecast: forecast({

@@ -4739,7 +4739,7 @@ test("native dashboard readiness follows both first-render outcomes", async () =
   assert.match(bootSurface, /Loading saved results…/u);
   assert.match(
     bootSurface,
-    /Checking the summary on this Mac\. Nothing is sent while you look at it\./u,
+    /Checking the summary on this device\. Nothing is sent\./u,
   );
   const bootOpeningTag = bootSurface.match(/^<section[\s\S]*?>/u)?.[0] ?? "";
   assert.doesNotMatch(bootOpeningTag, /\shidden(?:\s|=|>)/u);
@@ -5257,13 +5257,13 @@ test("first run is a truthful install and local preflight journey", async () => 
   assert.match(html, /id="installer-link"[^>]*hidden/u);
   assert.match(html, /id="open-installed-app" href=""/u);
   assert.match(html, /id="installer-details"[^>]*hidden/u);
-  assert.match(html, /A public installer is not configured for this build/u);
-  assert.match(html, /A normal website cannot read Codex files/u);
-  assert.match(html, /Your real usage appears only on that loopback page/u);
-  assert.match(html, /You may close this hosted browser tab at any time/u);
-  assert.match(html, /A useful headline often appears in seconds/u);
+  assert.match(html, /This build has no public download/u);
+  assert.match(html, /A website can't read your Codex files/u);
+  assert.match(html, /Your real usage appears only there/u);
+  assert.match(html, /You can close this browser tab at any time/u);
+  assert.match(html, /A first summary often appears in seconds/u);
   assert.match(html, /first deep pass can\s+take a few minutes/u);
-  assert.match(html, /later updates are normally faster/u);
+  assert.match(html, /later updates are usually faster/u);
   assert.match(html, /id="release-notes-link"/u);
   assert.match(html, /id="privacy-link"/u);
   assert.match(html, /id="security-link"/u);
@@ -5318,7 +5318,7 @@ test("first run is a truthful install and local preflight journey", async () => 
     assert.match(appSource, new RegExp(`${status}:`));
   }
   assert.match(appSource, /setup\.source\.unreadableCopy/u);
-  assert.match(translate("setup.source.unreadableCopy", { location: "Codex folder" }, "en-US"), /account can read the selected folder/u);
+  assert.match(translate("setup.source.unreadableCopy", { location: "Codex folder" }, "en-US"), /your account can read that folder/u);
   assert.match(appSource, /customCodexHomeConfigured/u);
   assert.match(appSource, /rolloutFilesObservedCapped/u);
   assert.match(appSource, /setup-check-again.*checkLocalSetup/su);
@@ -5355,7 +5355,7 @@ test("local analysis exposes quick results and cancel-safe progress", async () =
   assert.doesNotMatch(appSource, /Headline ready; finishing deeper accounting/u);
   assert.match(appSource, /refresh\.cancelledTitle/u);
   assert.match(translate("refresh.cancelledCopy"), /verified results and the checkpoint/u);
-  assert.match(translate("refresh.cancelRequestedCopy"), /local checkpoint for resuming/u);
+  assert.match(translate("refresh.cancelRequestedCopy"), /keep a checkpoint so you can resume/u);
   assert.match(appSource, /refresh_resource_limited/u);
   assert.match(appSource, /refresh\.resourceTitle/u);
   assert.match(translate("refresh.resourceCopy"), /no partial result replaced them/u);
@@ -5650,7 +5650,7 @@ test("the weekly headline is a stable all-data median and says so on screen", as
     "the explanation reports the subset each view is drawing",
   );
   for (const view of views) {
-    assert.match(view.explanation, /never moves with the controls below/u);
+    assert.match(view.explanation, /doesn't change with the controls below/u);
     assert.match(view.explanation, /drawing \d+ of 52 estimates/u);
     // The range is anchored at the newest fit, and the sentence says so
     // (estimator audit, 2026-08-08): "7d" is seven days back from that fit,
@@ -6096,7 +6096,7 @@ test("weekly points carry measured ranges with pointer and keyboard detail", asy
   // the within-reset slope spread as a supported/measured range and now names
   // it a slope-agreement diagnostic, matching the calibration report.
   assert.match(html, /Each reset estimate is drawn with its slope-agreement range/u);
-  assert.match(html, /a within-reset disagreement diagnostic,\s*\n?\s*not a confidence interval/u);
+  assert.match(html, /disagreement inside one reset, not a\s+confidence interval/u);
   // The assertion `/markers: false,\s*hitTargets: true/` used to sit here. It
   // asserted the defect: it required the allowance chart's reset estimates to
   // be drawn as invisible hit targets, so restoring the owner's plotted points
@@ -9111,7 +9111,7 @@ test("the residual panel draws the cumulative line and states the signed-AUC dri
   // the legacy inventory (checked by the static-copy test).
   assert.match(
     html,
-    /Actual allowance use minus estimated use since the comparison began\. Gaps or a new cycle interrupt the line\./u,
+    /Actual allowance use minus estimated use since the comparison began\. Gaps or a new cycle break the line\./u,
   );
   for (const locale of SUPPORTED_LOCALES) {
     for (const key of [

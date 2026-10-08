@@ -20,10 +20,7 @@
           <div>
             <p class="eyebrow">TiboTattle</p>
             <h1 data-i18n="electron.settings.heading">Settings</h1>
-            <p class="settings-lede" data-i18n="electron.settings.lede">
-              Keep the local dashboard aligned with the way you work.
-              Raw Codex logs stay on this device.
-            </p>
+            <p class="settings-lede" data-i18n="electron.settings.lede">Adjust how TiboTattle works for you. Raw Codex logs stay on this device.</p>
           </div>
         </div>
         <p class="settings-bridge-status" id="settings-bridge-status" role="status" aria-live="polite">
@@ -96,7 +93,7 @@
           <section class="settings-card" aria-labelledby="settings-language-title">
             <div class="settings-card-copy">
               <h3 id="settings-language-title" data-i18n="electron.settings.language.title">Language</h3>
-              <p data-i18n="electron.settings.language.description">Choose the language used for TiboTattle controls and explanations.</p>
+              <p data-i18n="electron.settings.language.description">Choose the language for TiboTattle's controls and explanations.</p>
             </div>
             <label class="settings-field" for="settings-language">
               <span data-i18n="electron.settings.language.label">Language</span>
@@ -112,7 +109,7 @@
           <section class="settings-card" aria-labelledby="settings-appearance-title">
             <div class="settings-card-copy">
               <h3 id="settings-appearance-title" data-i18n="electron.settings.appearance.title">Appearance</h3>
-              <p data-i18n="electron.settings.appearance.description">Choose whether TiboTattle follows the operating system or uses a fixed light or dark appearance.</p>
+              <p data-i18n="electron.settings.appearance.description">Follow your operating system, or always use light or dark.</p>
             </div>
             <label class="settings-field" for="settings-appearance">
               <span data-i18n="electron.settings.appearance.label">Appearance</span>
@@ -195,12 +192,8 @@
             <div class="settings-roots-heading">
               <div class="settings-card-copy">
                 <h3 id="settings-codex-roots-title" data-i18n="electron.settings.codexRoots.title">Codex folder</h3>
-                <p data-i18n="electron.settings.codexRoots.description">
-                  TiboTattle analyzes the selected Codex folder for local usage and quota evidence.
-                </p>
-                <p data-i18n="electron.settings.codexRoots.removalNote">
-                  Saved additional folders are retained for future multi-folder support and are not analyzed.
-                </p>
+                <p data-i18n="electron.settings.codexRoots.description">TiboTattle analyzes the selected Codex folder for usage and quota data.</p>
+                <p data-i18n="electron.settings.codexRoots.removalNote">Extra saved folders are kept for future multi-folder support but aren't analyzed.</p>
                 <output class="settings-value" id="settings-codex-folder-status" aria-live="polite">
                   Default location (~/.codex)
                 </output>
@@ -221,7 +214,7 @@
           <section class="settings-card" aria-labelledby="settings-refresh-title">
             <div class="settings-card-copy">
               <h3 id="settings-refresh-title" data-i18n="electron.settings.refresh.title">Refresh interval</h3>
-              <p data-i18n="electron.settings.refresh.description">Local usage refreshes while TiboTattle is open.</p>
+              <p data-i18n="electron.settings.refresh.description">Usage refreshes while TiboTattle is open.</p>
             </div>
             <label class="settings-field" for="settings-refresh-interval">
               <span data-i18n="electron.settings.refresh.label">Refresh interval</span>
@@ -237,9 +230,7 @@
           <section class="settings-card settings-local-tools-card" aria-labelledby="settings-local-tools-title">
             <div class="settings-card-copy">
               <h3 id="settings-local-tools-title" data-i18n="electron.settings.localTools.title">Local tools</h3>
-              <p data-i18n="electron.settings.localTools.description">
-                Open the current dashboard in your browser, inspect the support doctor, or reveal TiboTattle's local data folder.
-              </p>
+              <p data-i18n="electron.settings.localTools.description">Open the dashboard in your browser, run diagnostics, or show TiboTattle's local data folder.</p>
             </div>
             <div class="settings-actions" aria-label="Local tools" data-i18n-aria-label="electron.settings.localTools.actions">
               <button class="button button-secondary" id="settings-open-dashboard-browser" type="button" data-i18n="electron.settings.localTools.openBrowser">
@@ -266,17 +257,13 @@
           <div class="settings-panel-heading">
             <p class="eyebrow" data-i18n="electron.settings.notifications.eyebrow">Local notification controls</p>
             <h2 data-i18n="electron.settings.notifications.title">Notifications</h2>
-            <p data-i18n="electron.settings.notifications.description">
-              Allowance alerts are local, off by default, and evaluated only from fresh provider-reported evidence while the app is open.
-            </p>
+            <p data-i18n="electron.settings.notifications.description">Allowance alerts are local, off by default, and use only fresh provider-reported data while the app is open.</p>
           </div>
 
           <section class="settings-card" aria-labelledby="settings-notifications-title">
             <div class="settings-card-copy">
               <h3 id="settings-notifications-title" data-i18n="electron.settings.notifications.alertsTitle">Allowance alerts</h3>
-              <p id="settings-notifications-detail" data-i18n="electron.settings.notifications.status.checking">
-                Checking local alert capability…
-              </p>
+              <p id="settings-notifications-detail" data-i18n="electron.settings.notifications.status.checking">Checking whether alerts are available…</p>
             </div>
             <label class="settings-switch" for="settings-notifications-enabled">
               <input id="settings-notifications-enabled" type="checkbox" role="switch" disabled aria-describedby="settings-notifications-detail">
@@ -288,7 +275,7 @@
           <section class="settings-card" aria-labelledby="settings-thresholds-title">
             <div class="settings-card-copy">
               <h3 id="settings-thresholds-title" data-i18n="electron.settings.notifications.thresholdTitle">Usage alerts</h3>
-              <p data-i18n="electron.settings.notifications.thresholdDescription">Choose which local usage thresholds should produce an alert when delivery is available.</p>
+              <p data-i18n="electron.settings.notifications.thresholdDescription">Choose which usage thresholds trigger an alert when alerts can be delivered.</p>
             </div>
             <fieldset class="settings-radio-group">
               <legend class="sr-only" data-i18n="electron.settings.notifications.thresholdLegend">Usage alert thresholds</legend>
@@ -310,7 +297,7 @@
           <section class="settings-card" aria-labelledby="settings-notification-test-title">
             <div class="settings-card-copy">
               <h3 id="settings-notification-test-title" data-i18n="electron.settings.notifications.testTitle">Test delivery</h3>
-              <p data-i18n="electron.settings.notifications.testDetail">Send a test without changing alert settings or usage history. Your operating system may silence banners.</p>
+              <p data-i18n="electron.settings.notifications.testDetail">Send a test without changing alert settings or usage history. Your system may silence banners.</p>
               <p id="settings-notification-test-status" class="settings-status" role="status" aria-live="polite"></p>
             </div>
             <button class="button button-secondary" id="settings-test-notification" type="button" disabled data-i18n="electron.settings.notifications.sendTest">Send test notification</button>
@@ -319,9 +306,7 @@
           <section class="settings-card" aria-labelledby="settings-notification-permission-title">
             <div class="settings-card-copy">
               <h3 id="settings-notification-permission-title" data-i18n="electron.settings.notifications.permissionTitle">Operating system permission</h3>
-              <p id="settings-notification-status" class="settings-status" role="status" aria-live="polite" data-i18n="electron.settings.notifications.permission.unknown">
-                Operating-system notification permission has not been confirmed.
-              </p>
+              <p id="settings-notification-status" class="settings-status" role="status" aria-live="polite" data-i18n="electron.settings.notifications.permission.unknown">Notification permission hasn't been confirmed.</p>
             </div>
             <button class="button button-secondary" id="settings-open-notification-settings" type="button" disabled>
               <span data-i18n="electron.settings.notifications.openPermission">Open Notification Settings</span>

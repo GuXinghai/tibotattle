@@ -540,7 +540,7 @@ test("weekly pace explains a verified zero-observation state without estimating"
   renderTrayPopup(documentRef, projection);
   assert.equal(documentRef.getElementById("pace-section").hidden, false);
   assert.equal(documentRef.getElementById("pace-state").textContent, "Insufficient evidence");
-  assert.match(documentRef.getElementById("pace-headline").textContent, /Two fresh weekly allowance observations/u);
+  assert.match(documentRef.getElementById("pace-headline").textContent, /Two fresh weekly allowance readings/u);
   assert.equal(documentRef.getElementById("pace-timeline").hidden, true);
 });
 
@@ -573,13 +573,13 @@ test("critical weekly pace explains the dry stretch with matching timeline geome
   assert.equal(documentRef.getElementById("pace-outlook-caption").textContent, "Estimated run-out");
   assert.equal(documentRef.getElementById("pace-outlook-duration").textContent, "In 1d 6h");
   assert.equal(documentRef.getElementById("pace-outlook-tooltip").textContent,
-    "Projected exhaustion Sep 6, 12:00 AM EDT");
+    "Projected to run out Sep 6, 12:00 AM EDT");
   assert.match(documentRef.getElementById("pace-outlook-duration").attributes.get("aria-label"),
     /Estimated run-out.*In 1d 6h.*Sep 6, 12:00 AM EDT/u);
   assert.equal(documentRef.getElementById("pace-outlook-duration").attributes.get("tabindex"), "0");
   assert.equal(documentRef.getElementById("pace-marker-note").hidden, false);
   assert.match(documentRef.getElementById("pace-marker-note").textContent,
-    /active use continues without a pause/u);
+    /keep using it without a pause/u);
   assert.match(documentRef.getElementById("pace-explanation").textContent, /2\.5×/u);
   assert.equal(documentRef.getElementById("pace-fill").style.width, `${(30 / 74) * 100}%`);
   assert.equal(documentRef.getElementById("pace-active-marker").style.left, `${(20 / 74) * 100}%`);
@@ -614,7 +614,7 @@ test("an older forecast remains readable without inventing timeline geometry", (
   const documentRef = new FakeDocument();
   renderTrayPopup(documentRef, projection);
   assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.match(documentRef.getElementById("pace-headline").textContent, /Projected exhaustion/u);
+  assert.match(documentRef.getElementById("pace-headline").textContent, /Projected to run out/u);
   assert.equal(documentRef.getElementById("pace-timeline").hidden, true);
   assert.equal(documentRef.getElementById("pace-explanation").textContent, "");
 });
@@ -1006,7 +1006,7 @@ test("native model disables Refresh immediately without hidden companion reads",
 
   modelListener({ status: "starting", refreshEnabled: false });
   assert.equal(refresh.disabled, true);
-  assert.equal(documentRef.getElementById("tray-popup-freshness").textContent, "Preparing local usage");
+  assert.equal(documentRef.getElementById("tray-popup-freshness").textContent, "Preparing usage");
   assert.equal(loadCalls, 0);
 
   // Lifecycle remains fail-closed even if a malformed status event claims it

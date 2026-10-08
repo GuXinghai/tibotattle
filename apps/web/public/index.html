@@ -156,7 +156,7 @@
           </span>
           <strong class="dashboard-boot-title">Loading saved results…</strong>
           <p class="dashboard-boot-copy">
-            Checking the summary on this Mac. Nothing is sent while you look at it.
+            Checking the summary on this device. Nothing is sent.
           </p>
         </div>
       </section>
@@ -176,10 +176,10 @@
 
       <div class="notice notice-warning" id="connection-notice" role="status" data-dashboard-page="overview" hidden>
         <div>
-          <strong id="connection-title">Local companion unavailable</strong>
+          <strong id="connection-title">Can't reach the local app</strong>
           <p id="connection-copy">
-            Open TiboTattle from Applications and use the in-app window it
-            opens. Nothing has been presented as your real usage.
+            Open TiboTattle and use the window it opens. Nothing on this page
+            is your real usage.
           </p>
         </div>
         <div class="notice-actions">
@@ -215,9 +215,8 @@
           <p class="eyebrow">First-time setup</p>
           <h2 id="companion-setup-title">Open TiboTattle on this Mac</h2>
           <p>
-            A normal website cannot read Codex files. The TiboTattle Mac app
-            runs a private loopback companion, reads metadata locally, and opens
-            your dashboard in its own TiboTattle in-app window.
+            A website can't read your Codex files. The TiboTattle Mac app reads
+            them locally and shows your dashboard in its own window.
           </p>
         </div>
         <ol class="companion-steps">
@@ -239,8 +238,8 @@
               <a id="support-link" href="" hidden>Support</a>
             </nav>
             <span class="installer-unavailable" id="installer-unavailable">
-              A public installer is not configured for this build. If you
-              already received the app, continue below.
+              This build has no public download. If you already have the app,
+              continue below.
             </span>
           </li>
           <li>
@@ -251,10 +250,10 @@
             <span>Wait for <b>Ready</b>, then open the dashboard in TiboTattle.</span>
           </li>
           <li>
-            <strong>Use the TiboTattle in-app window</strong>
+            <strong>Use the TiboTattle window</strong>
             <span>
-              Your real usage appears only on that loopback page. This hosted
-              page never receives permission to read local logs.
+              Your real usage appears only there. This web page can never read
+              your local logs.
             </span>
           </li>
         </ol>
@@ -263,14 +262,13 @@
             Check this page again
           </button>
           <p>
-            This check only reconnects to the current page. If the app opened a
-            TiboTattle window, continue there.
+            This only reconnects this page. If the app opened a TiboTattle
+            window, continue there.
           </p>
           <p class="safe-close-guidance">
-            You may close this hosted browser tab at any time. During an
-            analysis, keep the TiboTattle app open; closing the app stops its
-            local companion, while the last durable checkpoint remains available
-            when you reopen it.
+            You can close this browser tab at any time. Keep the TiboTattle app
+            open during an analysis. If you close it, the analysis stops, and
+            the last saved checkpoint is still there when you reopen it.
           </p>
           <p id="open-installed-app-status" role="status" hidden></p>
         </div>
@@ -281,18 +279,17 @@
         <div class="setup-details-body">
           <div class="setup-copy">
             <p id="setup-summary">
-              TiboTattle checks only whether the expected Codex folders and its
-              private state directory are available. It does not send or display
-              prompts, responses, commands, paths, or account identifiers.
+              TiboTattle only checks that the Codex folders and its own data
+              folder are available. It never sends or shows prompts, responses,
+              commands, paths or account identifiers.
             </p>
           </div>
           <ol class="setup-checks" id="setup-checks" aria-live="polite"></ol>
           <p id="setup-note">
-              A useful headline often appears in seconds. The first deep pass can
-              take a few minutes; later updates are normally faster. Work stops or
-              checkpoints at a fixed bound, so a large Codex history may continue
-              in another pass. You may close the browser tab; keep the Usage
-              Monitor app open while analysis runs.
+              A first summary often appears in seconds. The first deep pass can
+              take a few minutes, and later updates are usually faster. A large
+              Codex history may need more than one pass. Keep the TiboTattle app
+              open while it runs.
           </p>
           <div class="setup-actions">
             <button class="button button-primary" id="setup-refresh" type="button" disabled>
@@ -371,14 +368,14 @@
               <div class="component-list" id="cost-components"></div>
               <p class="annotation" id="pricing-note" data-i18n="dashboard.pricing.speedNote">
                 Published Standard, Fast and Ultrafast API prices are applied to
-                non-overlapping recorded usage where a matching rate is available.
-                This is an API-equivalent comparison, not a subscription charge or
-                an allowance limit.
+                recorded usage that doesn't overlap, wherever a matching rate
+                exists. This is an API-equivalent comparison, not a subscription
+                charge or an allowance limit.
               </p>
               <p class="annotation">
-                This activity total can exceed the inferred weekly limit: it spans
-                a calendar period, while the weekly estimate describes one observed
-                reset track and may cross resets, credits, or account changes.
+                This total can be higher than the estimated weekly limit. It
+                covers a calendar period, while the weekly estimate covers one
+                reset track and can span resets, credits or account changes.
               </p>
             </details>
           </article>
@@ -446,8 +443,8 @@
                 <p class="annotation" id="calibration-model-shared" hidden></p>
               </details>
               <p class="annotation calibration-explanation" id="calibration-explanation">
-                This fit uses speed-priced API prices as a measuring stick. It is not a
-                provider-published dollar allowance.
+                This fit uses speed-priced API prices as a yardstick. It is not a
+                dollar allowance published by the provider.
               </p>
             </details>
           </article>
@@ -461,7 +458,7 @@
         <div class="dashboard-page-header">
           <div>
             <h2 id="weekly-title" data-i18n="page.weekly.title">Allowance Estimate</h2>
-            <p class="page-description" data-i18n="page.weekly.description">Estimate the API-equivalent amount of a full allowance cycle from local usage and quota changes. This is an estimate, not a bill.</p>
+            <p class="page-description" data-i18n="page.weekly.description">Estimate what a full allowance cycle is worth in API prices, based on your local usage and quota changes. It's an estimate, not a bill.</p>
           </div>
           <div class="allowance-header-controls">
             <div class="allowance-window-control" id="allowance-window-control">
@@ -507,7 +504,7 @@
           <p id="weekly-span-note" class="small muted" hidden></p>
           <div class="legend weekly-legend chart-card-legend" aria-label="Weekly estimate chart legend" data-i18n-aria-label="aria.weeklyEstimateLegend">
             <span><i class="legend-dot weekly-center"></i>All-data median</span>
-            <span id="weekly-lowess-legend"><i class="legend-dot weekly-lowess"></i><span data-i18n="weekly.controls.lowess">Smoothed trend (LOWESS)</span></span>
+            <span id="weekly-lowess-legend"><i class="legend-dot weekly-lowess"></i><span data-i18n="weekly.controls.lowess">Smoothed trend</span></span>
             <span><i class="legend-dot weekly-mature"></i><span id="weekly-span-legend">Observed across 50+ points</span></span>
             <span id="weekly-partial-legend" hidden><i class="legend-dot weekly-partial"></i>Short observation</span>
             <span><i class="legend-dot weekly-error-bar"></i>Slope-agreement range</span>
@@ -523,10 +520,10 @@
             confidence range here overclaimed.
           -->
           <p class="annotation chart-card-note">
-            Each reset estimate is drawn with its slope-agreement range: the
-            spread of slopes from different pairs of observed quota boundaries
-            within that reset. It is a within-reset disagreement diagnostic,
-            not a confidence interval.
+            Each reset estimate is drawn with its slope-agreement range: how
+            much the slopes differ between pairs of observed quota boundaries
+            within that reset. It shows disagreement inside one reset, not a
+            confidence interval.
           </p>
           <!-- The zone is named once per chart, from the reader's own system
                zone, instead of being repeated on every tick and tooltip. -->
@@ -549,8 +546,8 @@
             </div>
           </div>
           <p class="annotation">
-            The card follows the chart’s active date range and span filter.
-            It contains no prompts, responses, paths, account details, or raw
+            The card uses the chart's current date range and span filter. It
+            contains no prompts, responses, paths, account details or raw
             activity.
           </p>
           <div class="share-preview">
@@ -725,7 +722,7 @@
 
           <article class="panel trends-drift-panel">
             <div class="panel-heading"><div><p class="panel-kicker" data-i18n="trends.cycle">Within each allowance cycle</p><h3 data-i18n="trends.drift">Cumulative drift</h3></div></div>
-            <p class="annotation" data-i18n="trends.driftCopy">Actual allowance use minus estimated use since the comparison began. Gaps or a new cycle interrupt the line.</p>
+            <p class="annotation" data-i18n="trends.driftCopy">Actual allowance use minus estimated use since the comparison began. Gaps or a new cycle break the line.</p>
               <div class="chart-empty small" id="residual-empty">No residual evidence loaded.</div>
               <div class="chart-shell compact-chart" id="residual-chart" hidden></div>
               <p class="timeline-confidence" id="trends-drift-coverage" role="status"></p>
@@ -737,7 +734,7 @@
                 <h3 data-i18n="trends.divergenceTitle">When usage and allowance disagree</h3>
               </div>
             </div>
-            <p class="annotation" data-i18n="trends.divergenceCopy">Periods when allowance fell more or less than recorded usage would explain. Each gap is measured in percentage points from the cycle’s comparison start. Select a period to inspect the charts.</p>
+            <p class="annotation" data-i18n="trends.divergenceCopy">Periods when the allowance fell more or less than recorded usage would explain. Each gap is in percentage points from the cycle's comparison start. Select a period to see it on the charts.</p>
             <p class="timeline-confidence" id="divergence-summary" role="status" hidden></p>
             <p class="annotation" id="divergence-caveat" hidden></p>
             <div class="chart-empty small" id="divergence-empty" hidden></div>
@@ -749,15 +746,15 @@
             </div>
           </article>
             <div class="panel trends-exact-panel">
-              <h3 data-i18n="trends.evidence">Exact windows and evidence</h3>
+              <h3 data-i18n="trends.evidence">Exact windows and details</h3>
               <div class="panel-heading">
                 <div>
                   <p class="panel-kicker">Inspect exact periods</p>
-                  <h3 data-i18n="trends.evidenceTitle">What each comparison tells us</h3>
+                  <h3 data-i18n="trends.evidenceTitle">What each row means</h3>
                 </div>
               </div>
-              <p class="annotation" data-i18n="trends.evidenceIntro">Each sample compares a rolling window, normally 3 hours. Observed is allowance used; estimated is the amount predicted from recorded activity. Difference = observed − estimated, in percentage points (pp).</p>
-              <p class="annotation" data-i18n="trends.evidenceHelp">For example, falling from 60% to 50% remaining uses 10 pp. Comparable means the two values can be compared, not that they agree. A dash means a value could not be established.</p>
+              <p class="annotation" data-i18n="trends.evidenceIntro">Each sample compares a rolling window, normally 3 hours. Observed is the allowance used. Estimated is what recorded activity predicts. Difference = observed − estimated, in percentage points (pp).</p>
+              <p class="annotation" data-i18n="trends.evidenceHelp">For example, going from 60% to 50% remaining is 10 pp used. Comparable means the two values can be compared, not that they match. A dash means the value couldn't be determined.</p>
               <div class="table-wrap">
                 <table class="residual-inspection-table">
                   <caption class="sr-only">Largest unexplained quota movement periods</caption>
@@ -805,12 +802,7 @@
         <details class="notice notice-info accounting-disclosure">
           <summary>API pricing is a measuring stick, not your bill.</summary>
           <div>
-            <p data-i18n="accounting.pricingDisclosure">
-              Recorded usage uses the published API rate for its model, context
-              and service tier, including Fast and Ultrafast where supported.
-              Missing rates remain unavailable. Included allowance can use
-              different multipliers; these amounts are comparisons, not invoices.
-            </p>
+            <p data-i18n="accounting.pricingDisclosure">Recorded usage is priced at the published API rate for its model, context size and service tier, including Fast and Ultrafast where supported. Missing rates stay unavailable. Included allowance may use different multipliers, so these amounts are comparisons, not invoices.</p>
           </div>
         </details>
         <ul class="evidence-warnings" id="accounting-warnings" hidden></ul>
@@ -826,9 +818,9 @@
               </div>
             </div>
             <p class="annotation">
-              Every token belongs to one non-overlapping component.
-              Output text excludes reasoning tokens; combined output is only used
-              when a source does not provide that split.
+              Every token is counted in exactly one component. Output text
+              excludes reasoning tokens. Combined output is used only when the
+              source doesn't split them.
             </p>
             <div class="accounting-bars" id="accounting-component-counts"></div>
           </article>
@@ -841,7 +833,7 @@
             </div>
             <p class="annotation">
               Standard-rate API equivalent by component. Coverage and price
-              provenance stay visible without adding a guessed cost.
+              sources stay visible, and no cost is guessed.
             </p>
             <div class="accounting-bars" id="accounting-component-costs"></div>
           </article>
@@ -855,7 +847,7 @@
           </div>
             <div class="table-wrap dashboard-table-scroll" tabindex="0" role="region" aria-labelledby="accounting-models-title">
               <table class="dashboard-data-table">
-                <caption class="sr-only">Replay-safe usage grouped by model, across every allowance. Each model expands into its token components as rows of the same table.</caption>
+                <caption class="sr-only">Usage grouped by model, across every allowance. Each model expands into its token components as rows of the same table.</caption>
                 <thead>
                   <tr>
                     <th scope="col">Model</th>
@@ -881,19 +873,18 @@
               translated sentence rather than a sentence plus a glyph.
             -->
             <p class="annotation model-allowance-footnote">
-              A model on a separate allowance is listed on its own row and
-              carries no API equivalent, because that figure cannot be compared
-              with the main allowance.
+              A model on a separate allowance has its own row and no API
+              equivalent, because that figure can't be compared with the main
+              allowance.
             </p>
         </article>
         <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details" id="cache-switch-details" hidden>
           <summary data-i18n="accounting.cacheSwitch.detailsSummary">See possible switch overhead</summary>
           <p class="annotation cache-impact-sample" id="cache-switch-sample" hidden></p>
           <p class="annotation" data-i18n="accounting.cacheSwitch.detailsExplanation">
-            These recent rows pair an adjacent model or reasoning change with
-            an observed material cache-read drop within five minutes. The
-            cache-read change is observed; its relationship to the setting
-            change is inferred.
+            These recent rows pair a model or reasoning change with a large
+            cache-read drop within five minutes. The drop was observed. Its link
+            to the setting change is inferred.
           </p>
           <div class="table-wrap">
             <table>

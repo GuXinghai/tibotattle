@@ -260,7 +260,7 @@ test("Electron settings expose one analyzed Codex folder and retain extras witho
   ]);
   const renderer = extractFunction(settingsSource, "renderCodexRoots");
   assert.match(settingsHtml, /TiboTattle analyzes the selected Codex folder/u);
-  assert.match(settingsHtml, /retained for future multi-folder support and are not analyzed/u);
+  assert.match(settingsHtml, /kept for future multi-folder support but aren't analyzed/u);
   assert.match(settingsHtml, /id="settings-add-codex-root"[^>]*hidden[^>]*disabled/u);
   assert.match(settingsHtml, /id="settings-use-default-codex-folder"[^>]*disabled/u);
   assert.match(renderer, /add\.hidden = true;[\s\S]*?add\.disabled = true;/u);
@@ -633,7 +633,7 @@ test("Settings coalesces trusted updater status refreshes and renders a later do
   refreshCommand({ command: "refresh" });
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(elements.get("#settings-bridge-status").hidden, false);
-  assert.match(elements.get("#settings-bridge-status").textContent, /could not be read/u);
+  assert.match(elements.get("#settings-bridge-status").textContent, /Couldn't read desktop settings/u);
   failRead = false;
   refreshCommand({ command: "refresh" });
   await new Promise((resolve) => setImmediate(resolve));
@@ -850,11 +850,11 @@ test("Settings asks Electron for notification permission before opening system s
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(testCalls, 1);
   assert.equal(elements.get("#settings-notifications-enabled").checked, false);
-  assert.match(elements.get("#settings-notification-test-status").textContent, /Test requested/u);
+  assert.match(elements.get("#settings-notification-test-status").textContent, /Test sent/u);
   testFails = true;
   testButton.click();
   await new Promise((resolve) => setImmediate(resolve));
-  assert.match(elements.get("#settings-notification-test-status").textContent, /could not be sent/u);
+  assert.match(elements.get("#settings-notification-test-status").textContent, /Couldn't send the test/u);
   const permissionButton = elements.get("#settings-open-notification-settings");
   assert.equal(permissionButton.textContent, "Allow Notifications");
   permissionButton.click();

@@ -1184,7 +1184,7 @@ test("name search keeps the report snapshot and nested filter, and clearing rest
     assert.equal(requests.at(-1).snapshotId, PROJECT_ROWS_RESPONSE.snapshotId);
     assert.equal(requests.at(-1).grouping, "project");
     assert.equal(requests.at(-1).findThread, undefined);
-    assert.match(root.textContent, /Rows show matching work/);
+    assert.match(root.textContent, /Rows show matches/);
     findMounted(root, n => n.classList.contains("work-usage-project-toggle"))[0].click();
     await settleMountedView();
     assert.equal(requests.at(-1).search, "Build café");
@@ -1678,7 +1678,7 @@ test("shared reporting waits for its bound, hides local period controls, and sen
   await settleMountedView();
   assert.equal(calls.length, 0);
   assert.equal(findMounted(root, node => node.dataset?.period).length, 0);
-  assert.match(root.textContent, /unavailable until local evidence loads/u);
+  assert.match(root.textContent, /unavailable until local data loads/u);
   assert.equal(view.setReportingWindow(window), true);
   await settleMountedView();
   assert.equal(calls.length, 1);

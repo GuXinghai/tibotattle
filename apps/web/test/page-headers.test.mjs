@@ -36,16 +36,16 @@ test("setup failures render in the selected language and update after language c
   const h = onboardingHarness("zh-Hans");
   const missing = { ...h.ready, state: "needs_setup", sourceStatus: "codex_home_missing", customCodexHomeConfigured: true };
   h.update(missing);
-  assert.equal(h.get("#setup-title").textContent, "找不到配置的 Codex 数据文件夹");
-  assert.match(h.get("#setup-summary").textContent, /设置中选择现有的 Codex 数据文件夹/u);
+  assert.equal(h.get("#setup-title").textContent, "找不到你的 Codex 文件夹");
+  assert.match(h.get("#setup-summary").textContent, /设置中选择现有的 Codex 文件夹/u);
   assert.doesNotMatch(h.get("#setup-summary").textContent, /Mac|System Settings/u);
   assert.match(h.get("#setup-note").textContent, /不会分析日志，也不会上传/u);
   h.setLocale("en-US");
   h.update(missing);
-  assert.equal(h.get("#setup-title").textContent, "The configured Codex location is missing");
+  assert.equal(h.get("#setup-title").textContent, "Can't find your Codex folder");
   h.setLocale("es");
   h.update(missing);
-  assert.equal(h.get("#setup-title").textContent, "No se encuentra la carpeta de Codex configurada");
+  assert.equal(h.get("#setup-title").textContent, "No se encuentra tu carpeta de Codex");
   for (const sourceStatus of ["codex_home_unreadable", "session_directories_missing", "session_directories_unreadable", "no_rollout_files", "unknown"]) {
     h.setLocale("zh-Hans");
     h.update({ ...missing, sourceStatus });
@@ -90,7 +90,7 @@ test("translated setup checks preserve list semantics and capped observation cou
   const checks = h.get("#setup-checks").children;
   assert.equal(checks.length, 3);
   assert.ok(checks.every(row => row.tag === "li"));
-  assert.equal(checks[2].children[0].textContent, "检测到 3+ 个本地会话日志文件");
+  assert.equal(checks[2].children[0].textContent, "找到 3+ 个 Codex 会话文件");
 });
 
 test("every static page header is available through the browser locale entrypoint", async () => {

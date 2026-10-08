@@ -470,7 +470,7 @@ test("both community views label retained figures, keep the figures, and never c
     assert.equal(view.stateNode.textContent, "Showing cached figures");
     // Never the live chip class: a glance and a read carry the same claim.
     assert.equal(view.stateNode.className, "evidence-chip neutral");
-    assert.match(view.container.text, /The service could not be reached/u);
+    assert.match(view.container.text, /Couldn't reach the service/u);
     assert.ok(view.container.text.includes(age), `states the age (${age})`);
     assert.match(view.container.text, /nothing has been estimated/u);
   }

@@ -239,9 +239,9 @@ test("refresh progress reserves distinct count and timer slots and clears them w
   const button = harness.context.$("#refresh-button");
   harness.context.localActionBusy = true;
   harness.context.localRefreshInProgress = true;
-  harness.context.renderRefreshProgress(button, "Starting detailed accounting…");
+  harness.context.renderRefreshProgress(button, "Starting detailed analysis…");
   assert.deepEqual(button.children.map((child) => child.textContent), [
-    "Starting detailed accounting…", "", "",
+    "Starting detailed analysis…", "", "",
   ]);
   for (const [processed, seconds, expectedTime] of [[9, 59, "0:59"], [10, 60, "1:00"]]) {
     harness.context.renderRefreshProgress(button, "Analyzing files…", {
@@ -376,14 +376,14 @@ test("refresh polling preserves counted indexing and count-free accounting phase
   ] });
   await harness.context.requestRefresh({ detailed: true });
   const indexed = harness.progressFrames.find((frame) => frame.slots[0] === "Analyzing files…");
-  const accounting = harness.progressFrames.find((frame) => frame.slots[0] === "Calculating accounting…");
+  const accounting = harness.progressFrames.find((frame) => frame.slots[0] === "Calculating usage and costs…");
   assert.ok(indexed, "the indexed-file progress reaches the production renderer");
   assert.equal(indexed.slots[1], "9/100");
   assert.match(indexed.slots[2], /^\d+:\d{2}$/u);
   assert.ok(accounting, "accounting remains a distinct work phase");
   assert.equal(accounting.slots[1], "", "accounting cannot inherit an earlier source count");
   assert.match(accounting.slots[2], /^\d+:\d{2}$/u);
-  assert.equal(accounting.description, `Calculating accounting… · ${accounting.slots[2]}`);
+  assert.equal(accounting.description, `Calculating usage and costs… · ${accounting.slots[2]}`);
   assert.deepEqual(harness.calls, ["detailed", "status", "status", "status", "reload", "continuation-check"]);
   assert.deepEqual(harness.notices, []);
 });
@@ -444,7 +444,7 @@ test("degraded history and quota failures are combined in one persistent notice"
   const notice = harness.notices.at(-1);
   assert.equal(notice.titleKey, "refresh.degradedQuotaFailureTitle");
   assert.match(notice.copy, /left out 1 rollout source across 1 affected thread/u);
-  assert.match(notice.copy, /could not start the Codex CLI/u);
+  assert.match(notice.copy, /couldn't start the Codex CLI/u);
   assert.equal(harness.context.refreshResultNotice, notice,
     "a later generic stale render cannot replace the combined result");
 });

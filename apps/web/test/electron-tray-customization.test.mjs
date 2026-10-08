@@ -66,7 +66,7 @@ test("a rejected save retains confirmed values and readable error; newer setting
   controller.update({ tray: TRAY_DEFAULTS, traySettingsStatus: "future" });
   assert.equal(preset.disabled, true);
   assert.equal(doc.root.all().find((n) => n.textContent === "Restore tray defaults").disabled, true);
-  assert.match(text(doc.root), /newer app version/);
+  assert.match(text(doc.root), /newer version of the app/);
 });
 
 test("section controls preserve exact order, keyboard focus and prevent empty visible usage", async () => {
@@ -139,7 +139,7 @@ test("platforms without tray titles hide text controls but retain tooltip select
   const metric = doc.getElementById("tray-barMetric");
   assert.equal(doc.root.all().find((n) => n.tagName === "label" && n.children.includes(metric)).hidden, true);
   assert.match(text(doc.root), /Tooltip information/);
-  assert.match(text(doc.root), /text beside the icon is unavailable/);
+  assert.match(text(doc.root), /Text beside the icon isn't available/);
   const preview = doc.root.all().find((n) => n.className === "settings-tray-preview-bar");
   assert.equal(preview.children.length, 1);
   assert.equal(preview.title, "7d 8%");

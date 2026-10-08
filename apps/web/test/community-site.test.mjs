@@ -1131,7 +1131,7 @@ test("unavailable community activity uses the compact public state", async () =>
   assert.match(html, /Community activity over time/u);
   assert.match(
     html,
-    /This public view includes no prompts, responses, or account details\./u,
+    /No prompts, responses or account details are included\./u,
   );
   assert.doesNotMatch(
     html,
@@ -2338,7 +2338,7 @@ test("the allowance section degrades honestly through every state", () => {
     });
     assert.equal(state, "estimates_accumulating");
     assert.equal(stateNode.textContent, "Estimates still accumulating");
-    assert.match(container.text, /still accumulating/u);
+    assert.match(container.text, /still building up/u);
     assert.equal(
       container.descendants().some(({ tag }) => tag === "svg"),
       false,
@@ -2596,10 +2596,10 @@ test("the install card refuses a partially injected release", () => {
 test("the feature tour labels every demonstration as synthetic in markup and catalog", async () => {
   const html = await readFile(SITE_HTML, "utf8");
   for (const [label, key] of [
-    ["Synthetic demonstration", "site.features.insightExample"],
-    ["not measured results", "site.features.insightExample"],
-    ["The app’s interactive tank · illustrative allowance, not live account data.", "site.features.example"],
-    ["Synthetic example week", "site.features.weekExample"],
+    ["Sample data", "site.features.insightExample"],
+    ["not real measurements", "site.features.insightExample"],
+    ["Interactive tank from the app · sample allowance, not live account data.", "site.features.example"],
+    ["Sample week", "site.features.weekExample"],
   ]) {
     assert.ok(html.includes(label), `served markup states "${label}"`);
     assert.ok(
@@ -2860,8 +2860,8 @@ test("the two closing tour cards are one component pair", async () => {
     html.indexOf('<div class="tour-bottom">'),
     html.indexOf('<section class="tour-cta">'),
   );
-  assert.ok(section.includes("Follow the tokens to the work."));
-  assert.ok(section.includes("Personal by design."));
+  assert.ok(section.includes("See where your tokens go."));
+  assert.ok(section.includes("Private by default."));
   // Identical header structure: both cards lead with the same head row.
   assert.equal(
     section.match(/<div class="tour-bottom-head">/gu)?.length,
@@ -2877,7 +2877,7 @@ test("the two closing tour cards are one component pair", async () => {
   // Copy is unchanged: this was a layout repair, not a rewrite.
   assert.match(section, /data-i18n="site\.features\.cost">Tokens → Models → Projects → Threads<\/p>/u);
   assert.match(section, /data-i18n="site\.features\.projectsCopy">Drill into projects and threads\./u);
-  assert.match(section, /data-i18n="site\.features\.privacyCopy">Your personal analysis runs locally\./u);
+  assert.match(section, /data-i18n="site\.features\.privacyCopy">Your analysis runs on your device\./u);
   // A shared row grid is what lines the titles and bodies up across columns.
   assert.match(styles, /\.tour-bottom \{[^}]*grid-template-rows: auto auto auto;[^}]*gap: 0 28px;/u);
   assert.match(styles, /\.tour-bottom article \{[^}]*grid-row: span 3;[^}]*grid-template-rows: subgrid;/u);

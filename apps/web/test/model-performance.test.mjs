@@ -249,7 +249,7 @@ test('recovered estimates stay in one output-speed chart with explicit populatio
   assert.deepEqual(dom.root.all().filter(node => node.tagName === 'h4').map(node => node.textContent),
     ['Output speed', 'Time before the reply starts']);
   assert.equal(dom.root.all().find(node => node.className === 'performance-method-note').textContent,
-    'When response timing is unavailable, eligible single-response turns without tools provide full-turn estimates. These include initial waiting and can be lower than response-timed speed.');
+    "When response timing isn't available, eligible single-response turns without tools give full-turn estimates. These include initial waiting, so they can be lower than response-timed speed.");
   assert.equal(dom.root.all().filter(node => node.className === 'performance-unit')[0].textContent,
     'tokens/s · 12 of 20 turns measured · 10 response-timed · 2 full-turn estimates');
   assert.deepEqual(dom.root.all().filter(node => node.className === 'performance-unit').map(node => node.dataset.state),
@@ -541,7 +541,7 @@ test('shared reporting waits for its bound, maps 24h to the rolling backend peri
   });
   assert.equal(calls.length, 0);
   assert.equal(dom.root.all().some(node => node.dataset.performanceFocus?.startsWith('period-')), false);
-  assert.match(dom.root.all().find(node => node.className === 'performance-status').textContent, /unavailable until local evidence loads/u);
+  assert.match(dom.root.all().find(node => node.className === 'performance-status').textContent, /unavailable until local data loads/u);
   dom.show();
   assert.equal(controller.setReportingWindow(window), true);
   await new Promise(resolve => setImmediate(resolve));
@@ -1007,7 +1007,7 @@ test('Ultrafast clears other modes while pending and retains its own empty resul
   await settle(); await settle();
   assert.equal(hasPanel(dom), false);
   assert.ok(dom.root.all().some(node => node.textContent?.includes('No Ultrafast mode measurements')));
-  assert.ok(dom.root.all().some(node => node.textContent?.includes('Only Ultrafast mode measurements')));
+  assert.ok(dom.root.all().some(node => node.textContent?.includes('Ultrafast mode only')));
   assert.ok(dom.root.all().some(node => node.textContent?.includes('Excluded turns (unknown or mixed speed mode): 17.')));
   dom.find('mode-standard').listeners.click();
   assert.equal(hasPanel(dom), true);
