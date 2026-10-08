@@ -4921,16 +4921,21 @@ html[data-theme="dark"] .noscript {
 }
 .dashboard-page-header > div { min-width: 0; }
 .dashboard-shell .dashboard-page-header :is(h1, h2) {
-  margin: 0;
-  font-family: var(--serif);
-  font-size: 36px;
-  font-weight: var(--weight-regular);
-  letter-spacing: -.035em;
-  line-height: 1.15;
+  /* Navigation names the page visually; retain headings for accessible landmarks. */
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 .dashboard-shell .dashboard-page-header .page-description {
   max-width: 70ch;
-  margin: 8px 0 0;
+  margin: 0;
   font-size: 15px;
   line-height: 1.5;
   color: var(--muted);
