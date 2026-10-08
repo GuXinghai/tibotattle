@@ -62,6 +62,13 @@ a waiting panel explains that fresh or sufficient allowance evidence is needed;
 it does not display a guessed rate or run-out time. Choosing a historical plan
 on the Allowance Estimate page does not change that current forecast.
 
+Overview keeps its API-equivalent total and allowance comparison measurements
+together in each card. The latest absolute difference is shown as a separate
+percentage-point value. Expand **Calculation notes** for pricing methodology,
+examples and fitted-rate interpretation. Stale results, incomplete history,
+unavailable comparisons and account/plan qualifiers remain visible outside
+those notes; the API-equivalent total is explicitly not a bill.
+
 The forecast names its pace assessment, estimated run-out, reset countdown and
 any time without allowance. Its static timeline represents time until reset, not quota
 percentage. Countdown labels use days and hours (less than an hour stays explicit).

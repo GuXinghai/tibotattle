@@ -327,19 +327,13 @@
         <ul class="evidence-warnings" id="evidence-warnings" hidden></ul>
 
         <div class="two-column overview-panels">
-          <article class="panel">
+          <article class="panel overview-data-card">
             <div class="panel-heading">
               <div>
                 <p class="panel-kicker" id="cost-metric-kicker">Speed-priced API-price equivalent</p>
-                <h3>Replay-safe usage cost</h3>
+                <h3 data-i18n="dashboard.overview.usageTitle">Usage equivalent</h3>
               </div>
             </div>
-            <p class="annotation" id="pricing-note" data-i18n="dashboard.pricing.speedNote">
-              Published Standard, Fast and Ultrafast API prices are applied to
-              non-overlapping recorded usage where a matching rate is available.
-              This is an API-equivalent comparison, not a subscription charge or
-              an allowance limit.
-            </p>
             <!--
               The coverage/provenance metadata line that sat under the total
               was removed (owner-directed, 2026-08-10); coverage honesty now
@@ -349,6 +343,8 @@
               <span id="cost-period">Recorded period</span>
               <strong id="cost-total">—</strong>
             </div>
+            <p class="overview-metric-basis" data-i18n="dashboard.overview.apiBasis">API-price equivalent · not your bill</p>
+            <div class="component-list" id="cost-components"></div>
             <!--
               How much of the discovered history this figure is actually drawn
               from. It stays out of the document once the index is complete,
@@ -368,25 +364,30 @@
               <p class="index-progress-detail" id="history-progress-note"></p>
             </div>
             <ul class="evidence-warnings" id="cost-warnings" hidden></ul>
-            <p class="annotation">
-              This activity total can exceed the inferred weekly limit: it spans
-              a calendar period, while the weekly estimate describes one observed
-              reset track and may cross resets, credits, or account changes.
-            </p>
-            <div class="component-list" id="cost-components"></div>
+            <details class="overview-method-notes">
+              <summary data-i18n="dashboard.overview.notes">Calculation notes</summary>
+              <p class="annotation" id="pricing-note" data-i18n="dashboard.pricing.speedNote">
+                Published Standard, Fast and Ultrafast API prices are applied to
+                non-overlapping recorded usage where a matching rate is available.
+                This is an API-equivalent comparison, not a subscription charge or
+                an allowance limit.
+              </p>
+              <p class="annotation">
+                This activity total can exceed the inferred weekly limit: it spans
+                a calendar period, while the weekly estimate describes one observed
+                reset track and may cross resets, credits, or account changes.
+              </p>
+            </details>
           </article>
 
-          <article class="panel comparison-panel">
+          <article class="panel comparison-panel overview-data-card">
             <div class="panel-heading">
               <div>
                 <p class="panel-kicker">Measured versus calculated</p>
-                <h3>Does token cost explain the quota change?</h3>
+                <h3 data-i18n="dashboard.overview.comparisonTitle">Allowance usage comparison</h3>
               </div>
-              <span class="evidence-chip" id="fit-chip">No evidence</span>
             </div>
-            <p class="plain-result" id="comparison-result">
-              More observations are required before a useful comparison can be made.
-            </p>
+            <p class="plain-result" id="comparison-status" role="status" hidden></p>
             <p class="annotation stale-serve-note" id="comparison-stale-note" hidden></p>
             <p class="annotation" id="comparison-plan-note" hidden></p>
             <div class="comparison-visual" id="comparison-visual">
@@ -400,6 +401,13 @@
                 <div class="bar-track"><i style="width:0%"></i></div>
                 <strong>—</strong>
               </div>
+            </div>
+            <div class="overview-comparison-facts">
+              <div class="overview-comparison-gap">
+                <span data-i18n="dashboard.overview.absoluteGap">Latest absolute difference</span>
+                <strong id="comparison-gap">—</strong>
+              </div>
+              <span class="evidence-chip" id="fit-chip">No evidence</span>
             </div>
             <!--
               Owner-directed restyle (2026-08-10): the three-column table of
@@ -418,28 +426,34 @@
                 <span>Plausible 80% range · per point</span>
               </div>
             </div>
-            <p class="annotation calibration-example" id="calibration-example" hidden></p>
-            <!--
-              Composition-aware calibration (owner decision 2026-08-10): the
-              headline stays one blended "$ per point" figure for the recent
-              mix; the per-model rates the NNLS fit actually resolved are one
-              disclosure away, never the default read.
-            -->
-            <details class="calibration-models" id="calibration-models" hidden>
-              <summary data-i18n="dashboard.calibration.perModelSummary">Per-model rates</summary>
-              <p class="annotation" data-i18n="dashboard.calibration.perModelExplainer">Each model consumes the weekly allowance at its own rate, so the headline blends these over your recent mix.</p>
-              <ul class="calibration-model-list" id="calibration-model-list"></ul>
+            <details class="overview-method-notes">
+              <summary data-i18n="dashboard.overview.notes">Calculation notes</summary>
+              <p class="annotation" id="comparison-result">
+                More observations are required before a useful comparison can be made.
+              </p>
+              <p class="annotation calibration-example" id="calibration-example" hidden></p>
               <!--
-                Shown only when the list carries a model the fit could not
-                price on its own, so the reader learns why it sits at a shared
-                rate instead of wondering why its rate matches another's.
+                Composition-aware calibration (owner decision 2026-08-10): the
+                headline stays one blended "$ per point" figure for the recent
+                mix; the per-model rates the NNLS fit actually resolved are one
+                disclosure away, never the default read.
               -->
-              <p class="annotation" id="calibration-model-shared" hidden></p>
+              <details class="calibration-models" id="calibration-models" hidden>
+                <summary data-i18n="dashboard.calibration.perModelSummary">Per-model rates</summary>
+                <p class="annotation" data-i18n="dashboard.calibration.perModelExplainer">Each model consumes the weekly allowance at its own rate, so the headline blends these over your recent mix.</p>
+                <ul class="calibration-model-list" id="calibration-model-list"></ul>
+                <!--
+                  Shown only when the list carries a model the fit could not
+                  price on its own, so the reader learns why it sits at a shared
+                  rate instead of wondering why its rate matches another's.
+                -->
+                <p class="annotation" id="calibration-model-shared" hidden></p>
+              </details>
+              <p class="annotation calibration-explanation" id="calibration-explanation">
+                This fit uses speed-priced API prices as a measuring stick. It is not a
+                provider-published dollar allowance.
+              </p>
             </details>
-            <p class="annotation calibration-explanation" id="calibration-explanation">
-              This fit uses speed-priced API prices as a measuring stick. It is not a
-              provider-published dollar allowance.
-            </p>
           </article>
         </div>
 

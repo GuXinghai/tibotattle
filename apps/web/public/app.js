@@ -2304,6 +2304,10 @@ function allowanceTimelineUsage(data) {
 
 function renderComparison(data) {
   data = selectAllowancePlanPopulation(data, activeWeeklyPlanType);
+  const gapValue = $("#comparison-gap");
+  const status = $("#comparison-status");
+  if (gapValue) gapValue.textContent = "—";
+  if (status) { status.hidden = true; status.textContent = ""; }
   const planNote = $("#comparison-plan-note");
   if (planNote) {
     planNote.hidden = data.allowancePlanSelection?.comparisonAvailable !== true;
@@ -2398,6 +2402,10 @@ function renderComparison(data) {
         "There is not yet a matched quota-and-cost window to compare.",
       );
     }
+    if (status) {
+      status.textContent = $("#comparison-result").textContent;
+      status.hidden = false;
+    }
     return;
   }
   const max = Math.max(Math.abs(pair.observed), Math.abs(pair.expected), 1);
@@ -2408,6 +2416,7 @@ function renderComparison(data) {
     row.querySelector("strong").textContent = formatPp(values[index]);
   });
   const residual = pair.residual ?? pair.observed - pair.expected;
+  if (gapValue) gapValue.textContent = formatPp(Math.abs(residual));
   chip.textContent = mae === null
     ? t("dashboard.comparison.matchedWindow")
     : t("dashboard.comparison.mae", { value: formatDecimal(mae, 1) });

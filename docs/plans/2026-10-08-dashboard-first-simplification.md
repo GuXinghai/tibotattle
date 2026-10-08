@@ -32,6 +32,12 @@ The installed app and its data are outside this development change.
 Cache-dot-matrix replacement and a broader redesign of other pages are deferred
 to a later pass. This first pass does not alter pricing or prediction methods.
 
+The owner's subsequent review also removes repeated visual page titles and
+separates Overview measurements from explanatory prose. Totals, comparison
+bars, absolute difference and fitted rates stay in the primary card body;
+methodology and examples move into a separate disclosure. Coverage, stale,
+unavailable and account/plan qualifications remain visible.
+
 ## Validation boundary
 
 Before the owner's request to stop further UI tests, 94 focused rendering,

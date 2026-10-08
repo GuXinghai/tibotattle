@@ -4949,6 +4949,27 @@ html[data-theme="dark"] .noscript {
   min-width: 0; padding: 0; border: 0; background: none; box-shadow: none;
 }
 .dashboard-page-header .freshness-card strong { font-family: var(--sans); font-size: 15px; }
+/* Overview puts measurements together and separates optional explanations. */
+.overview-panels { align-items: start; }
+.overview-data-card .panel-heading { margin-bottom: 16px; }
+.overview-data-card .panel-heading h3 { font-family: var(--sans); font-size: 1.25rem; font-weight: var(--weight-semibold); line-height: 1.4; }
+.overview-data-card .cost-total { grid-template-columns: 1fr; gap: 8px; padding: 0; border-top: 0; }
+.overview-data-card .cost-total strong { font-family: var(--sans); font-size: clamp(2rem, 4vw, 3rem); line-height: 1.2; overflow-wrap: anywhere; }
+.overview-metric-basis { margin: 8px 0 20px; color: var(--muted); font-size: .78rem; }
+.overview-data-card .comparison-visual { margin: 20px 0; }
+.overview-comparison-facts { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+.overview-comparison-gap { display: flex; align-items: baseline; gap: 12px; }
+.overview-comparison-gap > span { color: var(--muted); font-size: .8rem; }
+.overview-comparison-gap > strong { font-size: 1.2rem; font-variant-numeric: tabular-nums; }
+.overview-data-card .calibration-stats strong { font-family: var(--sans); font-size: 1.35rem; line-height: 1.25; }
+.overview-method-notes { margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--line); }
+.overview-method-notes > summary { width: fit-content; cursor: pointer; color: var(--muted); font-size: .85rem; font-weight: var(--weight-medium); }
+.overview-method-notes > summary:focus-visible { outline: 2px solid var(--green-text); outline-offset: 3px; }
+.overview-method-notes > .annotation { margin: 12px 0 0; font-size: .8rem; line-height: 1.6; }
+@media (max-width: 650px) {
+  .overview-data-card .comparison-row { grid-template-columns: minmax(0, 1fr) minmax(40px, 1fr) auto; gap: 8px; }
+  .overview-data-card .component-row { grid-template-columns: minmax(0, 1fr) minmax(40px, 1fr) auto; gap: 8px; }
+}
 .dashboard-shell #community {
   display: block; margin-top: 0; padding: 0 0 var(--space-8);
   border: 0; border-radius: 0; background: none; box-shadow: none;
