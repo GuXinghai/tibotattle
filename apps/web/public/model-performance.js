@@ -581,6 +581,7 @@ export function mountModelPerformance(options = {}) {
     subheading.append(identity, element("span", "", translate(payload.interval))); panel.append(subheading);
     for (const metric of ["speed", "latency"]) {
       const card = element("article", "performance-card chart-card");
+      card.dataset.performanceMetric = metric;
       const cardHeading = element("div", "performance-card-heading chart-card-header"), cardTitle = element("div");
       const summary = metric === "speed"
         ? translate("combinedSpeedSummary", { measured: number(selected.speedTurns), total: number(selected.turns),

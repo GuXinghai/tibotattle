@@ -21,7 +21,7 @@ const BASE_QUERY = Object.freeze({
   period: "7d",
   grouping: "project",
   sort: "tokens",
-  pageSize: 25,
+  pageSize: 6,
 });
 
 function completeComponents(values = {}) {

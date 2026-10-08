@@ -5875,17 +5875,17 @@ html[data-theme="dark"] .quota-tank.stale { --tank-fluid: #8c9a8d; --tank-glow: 
 
 /* Overview is a viewport summary. Optional reading opens above it in a dialog. */
 #overview-screen { display: contents; }
-body[data-dashboard-page="overview"] { height: 100dvh; display: flex; flex-direction: column; }
-body[data-dashboard-page="overview"] > .topbar { flex: none; }
-body[data-dashboard-page="overview"] .dashboard-shell { flex: 1; min-height: 0; width: 100%; }
-body[data-dashboard-page="overview"] .dashboard-sidebar { min-height: 0; height: 100%; }
-body[data-dashboard-page="overview"] .dashboard-content { min-height: 0; }
-body[data-dashboard-page="overview"] .dashboard-shell main {
+body[data-dashboard-page] { height: 100dvh; display: flex; flex-direction: column; }
+body[data-dashboard-page] > .topbar { flex: none; }
+body[data-dashboard-page] .dashboard-shell { flex: 1; min-height: 0; width: 100%; }
+body[data-dashboard-page] .dashboard-sidebar { min-height: 0; height: 100%; }
+body[data-dashboard-page] .dashboard-content { min-height: 0; }
+body[data-dashboard-page] .dashboard-shell main {
   width: calc(100% - 32px); padding: 12px 0;
   height: calc(var(--overview-height, 100dvh - 100px) + 24px);
 }
-body[data-dashboard-page="overview"] footer { display: none; }
-body[data-dashboard-page="overview"] #overview-screen { display: block; transform-origin: top left; }
+body[data-dashboard-page] footer { display: none; }
+body[data-dashboard-page] #overview-screen { display: block; transform-origin: top left; }
 #overview-screen > .dashboard-page-header { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 #overview-screen > .dashboard-page-header > :first-child { width: 0; height: 0; }
 #overview-screen > .dashboard-page-header .page-description { display: none; }
@@ -5948,8 +5948,8 @@ body[data-dashboard-page="overview"] #overview-screen { display: block; transfor
 #weekly .weekly-pace-forecast-title { font: var(--weight-semibold) 18px var(--sans); }
 #weekly .weekly-pace-track-covered::after { content: none; }
 @media (max-width: 900px) {
-  body[data-dashboard-page="overview"] .dashboard-sidebar { height: auto; padding-block: 4px; }
-  body[data-dashboard-page="overview"] .primary-nav a { min-height: 32px; padding-block: 6px; }
+  body[data-dashboard-page] .dashboard-sidebar { height: auto; padding-block: 4px; }
+  body[data-dashboard-page] .primary-nav a { min-height: 32px; padding-block: 6px; }
 }
 @media (max-width: 580px) {
   #overview { grid-template-columns: 1fr; gap: 8px; }
@@ -5957,4 +5957,91 @@ body[data-dashboard-page="overview"] #overview-screen { display: block; transfor
   #overview .overview-data-card { padding: 10px; }
   #overview .comparison-row { grid-template-columns: 1fr auto; }
   #overview .comparison-row .bar-track { display: none; }
+}
+
+/* Each dashboard page shows one measurement view inside the same viewport. */
+[data-page-view-inactive] { display: none !important; }
+.dashboard-view-switch { display: flex; flex-wrap: wrap; width: fit-content; gap: 2px; margin: 0 0 10px; }
+.dashboard-shell .dashboard-view-switch button { min-height: 30px; padding: 5px 12px; font-size: 12px; }
+.dashboard-shell .dashboard-view-switch button[aria-pressed="true"] { color: var(--action-ink); background: var(--action-bg); }
+.dashboard-view-empty { margin: 12px 0; }
+body[data-dashboard-page] .dashboard-section { padding: 0; margin-top: 0; }
+body[data-dashboard-page] #community { padding: 0; }
+body[data-dashboard-page] .dashboard-page-header { margin-bottom: 10px; gap: 12px; }
+body[data-dashboard-page] .dashboard-page-header .page-description { display: none; }
+body[data-dashboard-page] .dashboard-page-header:has(> div:only-child) { margin: 0; height: 0; }
+body[data-dashboard-page] .dashboard-shell .panel { padding: 16px; border-radius: 12px; box-shadow: none; }
+body[data-dashboard-page] .panel-heading { margin-bottom: 10px; }
+body[data-dashboard-page] .panel-kicker { display: none; }
+body[data-dashboard-page] .dashboard-shell .panel-heading :is(h2, h3),
+body[data-dashboard-page] .dashboard-shell .chart-heading h3 { font: var(--weight-semibold) 16px var(--sans); }
+body[data-dashboard-page] .dashboard-shell :is(.annotation, .series-coverage, .timeline-confidence) { font-size: 12px; line-height: 1.45; margin-block: 6px; }
+body[data-dashboard-page] .dashboard-shell .notice { padding: 10px 14px; margin-bottom: 10px; font-size: 12px; }
+body[data-dashboard-page] .dashboard-shell details > summary { cursor: pointer; font-size: 12px; }
+body[data-dashboard-page] .dashboard-shell details > summary:focus-visible { outline: 2px solid var(--green-text); outline-offset: 3px; }
+body[data-dashboard-page] .dashboard-shell .chart-shell svg { min-width: 0; min-height: 0; max-height: 300px; }
+body[data-dashboard-page] .dashboard-shell .chart-empty { min-height: 100px; padding: 16px; }
+body[data-dashboard-page] .dashboard-shell :is(th, td) { padding: 8px 10px; font-size: 12px; }
+body[data-dashboard-page] .dashboard-shell .table-pagination { margin: 8px 0; gap: 12px; }
+body[data-dashboard-page] .dashboard-shell .table-pagination-status { font-size: 12px; }
+body[data-dashboard-page] .dashboard-shell .table-wrap { max-height: none; }
+/* Allowance history, forecast, reset rows and share canvas are separate views. */
+#weekly .weekly-hero { padding: 12px 16px; margin-bottom: 10px; gap: 16px; border-radius: 10px; }
+#weekly .weekly-hero > div:first-child strong { font: var(--weight-semibold) 28px var(--sans); }
+#weekly .weekly-hero > p { font-size: 12px; line-height: 1.45; }
+#weekly .weekly-history-panel { margin: 0; }
+#weekly .weekly-chart-controls { gap: 8px; }
+#weekly .weekly-legend { margin: 8px 0; gap: 6px 12px; font-size: 11px; }
+#weekly .weekly-table-panel > h3 { margin: 0 0 10px; font: var(--weight-semibold) 16px var(--sans); }
+#weekly .share-panel { margin: 0; }
+#weekly .share-preview { max-width: 660px; margin: 12px auto; }
+#weekly .share-preview canvas { display: block; width: 100%; height: auto; max-height: 360px; object-fit: contain; }
+#weekly .weekly-pace-forecast { padding: 16px; margin: 0; }
+/* Only one analysis chart/list is visible; controls and evidence remain live. */
+#timeline .trends-analysis-details { display: contents; }
+#timeline .trends-capacity-panel { overflow: visible; }
+#timeline .chart-heading { gap: 12px; margin-block: 10px; }
+#timeline .chart-heading p { font-size: 12px; margin: 4px 0; }
+#timeline .trends-horizon { margin-bottom: 8px; padding: 8px 12px; }
+#timeline .trends-time-controls { margin-block: 8px; }
+#timeline .trends-capacity-panel .chart-shell svg { height: clamp(100px, 20dvh, 180px); }
+#timeline .trends-comparison-panel .chart-shell svg { height: clamp(100px, 22dvh, 200px); }
+#timeline .chart-summary-grid { gap: 8px; margin-top: 8px; }
+#timeline .chart-summary-grid > div { padding: 8px 10px; }
+#timeline .trends-exact-panel > h3 { margin: 0 0 10px; font: var(--weight-semibold) 16px var(--sans); }
+/* Accounting keeps its pricing and coverage qualifiers above every view. */
+#accounting .accounting-disclosure { display: block; }
+#accounting .accounting-summary { gap: 10px; }
+#accounting .accounting-summary .metric-card { padding: 14px; min-height: 0; }
+#accounting .accounting-summary .metric-value { font: var(--weight-semibold) 28px var(--sans); }
+#accounting .accounting-component-grid { gap: 12px; margin: 0; }
+#accounting .accounting-models-panel { margin-top: 0; }
+#accounting .advanced-diagnostics { margin: 0 0 8px; }
+/* Project batches stay navigable; components get their own view. */
+#projects .work-usage-toolbar { gap: 8px; margin-bottom: 8px; }
+#projects .work-usage-body > .dashboard-view-switch { margin-bottom: 10px; }
+#projects .work-usage-summary { gap: 10px; margin-block: 8px; }
+#projects .work-usage-card { padding: 10px 12px; }
+#projects .work-usage-card strong { font-size: 24px; }
+#projects .work-usage-evidence { margin: 8px 0; font-size: 12px; }
+#projects .work-usage-table-panel { margin-top: 8px; }
+#projects .work-usage-mix { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+#projects .work-usage-mix > h3 { grid-column: 1 / -1; margin: 0; }
+#projects .work-usage-mix-group + .work-usage-mix-group { margin: 0; }
+/* Performance keeps model/mode controls; one plot occupies the main surface. */
+body[data-dashboard-page] #performance .performance-card { padding: 14px 16px; margin-bottom: 10px; box-shadow: none; }
+body[data-dashboard-page] #performance .performance-model-heading { padding: 8px 0; }
+body[data-dashboard-page] #performance .performance-model-heading h3 { font-size: 16px; }
+body[data-dashboard-page] #performance .performance-model { min-height: 32px; font-size: 12px; }
+body[data-dashboard-page] #performance .performance-mode-controls { gap: 8px; margin-bottom: 8px; }
+body[data-dashboard-page] #performance .performance-actions { margin: 6px 0; }
+body[data-dashboard-page] #performance .performance-evidence { gap: 4px 12px; margin-block: 6px; font-size: 11px; }
+body[data-dashboard-page] #performance .performance-card-heading { margin-bottom: 8px; }
+body[data-dashboard-page] #performance :is(.performance-unit, .performance-method-note, .performance-mode-note, .performance-provider) { font-size: 11px; line-height: 1.4; margin-block: 4px; }
+body[data-dashboard-page] #performance .performance-plot svg { max-height: 300px; }
+body[data-dashboard-page] #performance .performance-details summary { padding: 10px 14px; }
+@media (max-width: 650px) {
+  #projects .work-usage-mix { grid-template-columns: 1fr; }
+  #accounting .accounting-component-grid { grid-template-columns: 1fr; }
+  .dashboard-shell .dashboard-view-switch button { padding-inline: 8px; }
 }

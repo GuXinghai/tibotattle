@@ -76,9 +76,27 @@ The forecast names its pace assessment, estimated run-out, reset countdown and
 any time without allowance. Its static timeline represents time until reset, not quota
 percentage. Countdown labels use days and hours (less than an hour stays explicit).
 Hover, focus or tap an underlined time for the exact timestamp and time zone.
-Expand **Forecast basis and assumptions** for observation coverage, overall and
+Choose **Forecast basis and assumptions** to open observation coverage, overall and
 active rates, and the uninterrupted-use estimate. Unknown amounts have no fill;
 stale or earlier observations retain their evidence qualifiers.
+
+All dashboard pages fit the window height. View switches separate related
+measurements without changing the selected reporting range or fetching a new
+report. Allowance Estimate separates history, forecast, reset details and share
+cards; Trends separates activity, comparison, cumulative difference, divergence
+periods and exact evidence. Usage and costs separates summary, components,
+models and diagnostics; Projects separates lists from token composition;
+Performance separates speed from response wait. Selections survive report
+redraws and language changes. Arrow keys, Home and End also operate each view
+switch. Scope, coverage, freshness and failure messages remain available across
+measurement views. Tables use short batches with their existing row navigation,
+so the complete retained row set remains accessible.
+
+Optional disclosures open in a dialog instead of extending the page. Close it
+with **Close** or Escape to return to the originating control. If the owning
+report is replaced while a dialog is open, it closes rather than displaying
+detached evidence. Community keeps its existing sharing controls and policy
+inside the same compact viewport layout.
 
 
 - **Overview and trends** summarize locally derived activity and quota evidence.

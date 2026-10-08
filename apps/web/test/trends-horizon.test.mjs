@@ -172,13 +172,13 @@ test("difference fills split sign at the crossing and leave missing windows empt
   assert.deepEqual(differenceLobes(points.map((p, residualSegment) => ({ ...p, residualSegment })), x, y), { above: "", below: "" });
 });
 
-test("core trends stay visible while deeper comparison expands on demand, with one time range control", async () => {
+test("core trends and deeper comparison retain separate view groups, with one time range control", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.ok(html.indexOf('id="allowance-timeline-chart"') < html.indexOf('id="timeline-chart"'));
   assert.ok(html.indexOf('id="difference-timeline-chart"') < html.indexOf('id="residual-chart"'));
   assert.doesNotMatch(html, /<details class="advanced-calibration"/);
-  assert.match(html, /<details class="trends-analysis-details">\s*<summary data-i18n="trends.analysisDetails">/);
+  assert.match(html, /<div class="trends-analysis-details">/);
   assert.ok(html.indexOf('class="trends-analysis-details"') > html.indexOf('id="usage-timeline-summary"'));
   assert.ok(html.indexOf('class="trends-analysis-details"') < html.indexOf('class="panel chart-panel trends-comparison-panel"'));
   assert.doesNotMatch(html, /class="trends-sky"/);

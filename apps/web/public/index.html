@@ -582,8 +582,8 @@
           <p class="participant-action-status" id="share-card-status" role="status" hidden></p>
         </article>
 
-        <details class="panel weekly-table-panel evidence-disclosure">
-          <summary>See individual usage changes</summary>
+        <div class="panel weekly-table-panel">
+          <h3>See individual usage changes</h3>
           <div class="table-wrap">
             <table>
               <caption class="sr-only" id="weekly-table-caption">Individual seven-day reset estimates</caption>
@@ -603,7 +603,7 @@
           </div>
           <!--
             Pagination over the full reset-estimate row set (owner-directed,
-            2026-08-10): twenty rows per page, newest first, replacing the old
+            2026-08-10): short batches, newest first, replacing the old
             newest-fourteen truncation. Same pager idiom as the exact-windows
             inspection table; the status span is written by the renderer.
           -->
@@ -612,7 +612,7 @@
             <span class="table-pagination-status" id="weekly-table-status" role="status"></span>
             <button class="button button-quiet compact" id="weekly-table-next" type="button" disabled>Next</button>
           </div>
-        </details>
+        </div>
       </section>
 
       <section class="dashboard-section dashboard-page-inactive" id="timeline" aria-labelledby="timeline-title" data-dashboard-page="trends" data-requires-evidence aria-hidden="true" inert>
@@ -672,8 +672,7 @@
           <div class="chart-summary-grid" id="usage-timeline-summary"></div>
         </article>
 
-        <details class="trends-analysis-details">
-          <summary data-i18n="trends.analysisDetails">Detailed comparison of observed and estimated usage</summary>
+        <div class="trends-analysis-details">
           <article class="panel chart-panel trends-comparison-panel">
             <div class="chart-heading">
               <div>
@@ -749,8 +748,8 @@
               <button class="button button-quiet compact" id="divergence-page-next" type="button" aria-controls="divergence-list" data-i18n="table.pagination.next">Next</button>
             </div>
           </article>
-            <details class="panel trends-evidence-details">
-              <summary data-i18n="trends.evidence">Exact windows and evidence</summary>
+            <div class="panel trends-exact-panel">
+              <h3 data-i18n="trends.evidence">Exact windows and evidence</h3>
               <div class="panel-heading">
                 <div>
                   <p class="panel-kicker">Inspect exact periods</p>
@@ -788,8 +787,8 @@
                 <span class="table-pagination-status" id="residual-page-status" role="status"></span>
                 <button class="button button-quiet compact" id="residual-page-next" type="button" disabled>Next</button>
               </div>
-            </details>
-        </details>
+            </div>
+        </div>
 
       </section>
 
@@ -803,9 +802,9 @@
             <p class="page-description" data-i18n="page.accounting.description">Recorded tokens and their API-equivalent cost.</p>
           </div>
         </div>
-        <div class="notice notice-info accounting-disclosure">
+        <details class="notice notice-info accounting-disclosure">
+          <summary>API pricing is a measuring stick, not your bill.</summary>
           <div>
-            <strong>API pricing is a measuring stick, not your bill.</strong>
             <p data-i18n="accounting.pricingDisclosure">
               Recorded usage uses the published API rate for its model, context
               and service tier, including Fast and Ultrafast where supported.
@@ -813,7 +812,7 @@
               different multipliers; these amounts are comparisons, not invoices.
             </p>
           </div>
-        </div>
+        </details>
         <ul class="evidence-warnings" id="accounting-warnings" hidden></ul>
         <p class="evidence-warning" id="accounting-rebuild-deferred" hidden></p>
         <p class="annotation stale-serve-note" id="accounting-stale-serve" hidden></p>
@@ -889,7 +888,7 @@
         </article>
         <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details" id="cache-switch-details" hidden>
           <summary data-i18n="accounting.cacheSwitch.detailsSummary">See possible switch overhead</summary>
-          <p class="annotation cache-impact-sample" hidden></p>
+          <p class="annotation cache-impact-sample" id="cache-switch-sample" hidden></p>
           <p class="annotation" data-i18n="accounting.cacheSwitch.detailsExplanation">
             These recent rows pair an adjacent model or reasoning change with
             an observed material cache-read drop within five minutes. The
@@ -933,7 +932,7 @@
         </section>
         <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details cache-continuity-details" id="cache-continuity-details" hidden>
           <summary data-i18n="accounting.cacheContinuity.detailsSummary">See recent large cache drops</summary>
-          <p class="annotation cache-impact-sample" hidden></p>
+          <p class="annotation cache-impact-sample" id="cache-continuity-sample" hidden></p>
           <div class="table-wrap">
             <table class="cache-continuity-recent-table">
               <caption class="sr-only" data-i18n="accounting.cacheContinuity.tableCaption">Recent covered cache-continuity comparisons at Standard API rates; not a period total</caption>

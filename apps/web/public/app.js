@@ -253,7 +253,7 @@ let usagePointerStart = null;
 // re-derived on every timeline render; the page index is clamped there and
 // returns to the first page whenever the underlying selection changes shape,
 // so Prev/Next can never show a stale slice of a different selection.
-const RESIDUAL_TABLE_PAGE_SIZE = 10;
+const RESIDUAL_TABLE_PAGE_SIZE = 6;
 let residualTablePage = 0;
 let residualInspectionRows = [];
 let residualInspectionSignature = "";
@@ -261,7 +261,7 @@ let residualInspectionSignature = "";
 // growing indefinitely. Each table owns its page because the model, switch,
 // time-band, and recent-continuity row sets change independently. A changed
 // period or refreshed row set returns to page one.
-const CACHE_IMPACT_TABLE_PAGE_SIZE = 10;
+const CACHE_IMPACT_TABLE_PAGE_SIZE = 6;
 const accountingModelsTablePagination = { page: 0, signature: "" };
 // Which model rows the reader has opened. Held outside the render so a
 // background refresh redraws the table without collapsing a row mid-read.
@@ -6275,7 +6275,7 @@ function focusTrendsPeriod(period) {
   }));
   requestAnimationFrame(() => {
     trendsHorizonView?.select(period.endMs, true);
-    $("#timeline").scrollIntoView({ block: "start", behavior: "instant" });
+    document.dispatchEvent(new CustomEvent("tibotattle:page-view", { detail: { page: "trends", view: "activity" } }));
     $("#trends-time").focus({ preventScroll: true });
   });
 }
@@ -6289,7 +6289,7 @@ let nextDivergenceBreakdownId = 0;
 // contributor mix cannot inherit another window's answer. Pagination controls
 // readability without dropping evidence from the detector result.
 const divergenceDetails = new Map();
-const DIVERGENCE_PAGE_SIZE = 10;
+const DIVERGENCE_PAGE_SIZE = 4;
 let divergenceTablePage = 0;
 let divergencePeriodRows = [];
 let divergencePeriodDetailScope = "";
@@ -8878,10 +8878,10 @@ function renderWeekly(data) {
 
 // The Allowance page's reset-estimate table pages through its full row set
 // (owner-directed 2026-08-10) instead of truncating to the newest fourteen:
-// twenty rows per page, newest first, same pager idiom as the exact-windows
+// Six rows per batch, newest first, same pager idiom as the exact-windows
 // inspection table. The state lives beside its renderers so the render
 // harness that extracts this section gets the whole mechanism.
-const WEEKLY_TABLE_PAGE_SIZE = 20;
+const WEEKLY_TABLE_PAGE_SIZE = 6;
 let weeklyTablePage = 0;
 let weeklyTableRows = [];
 let weeklyTableSignature = "";
@@ -9678,7 +9678,7 @@ function renderAccountingCacheSwitchDetails(impact) {
     return;
   }
   const recent = Array.isArray(impact.recent) ? impact.recent : [];
-  const sampleNote = disclosure.querySelector(".cache-impact-sample");
+  const sampleNote = $("#cache-switch-sample");
   if (sampleNote) {
     sampleNote.hidden = impact.cacheReadDrops <= recent.length;
     setLocalizedText(sampleNote, "accounting.cacheImpact.bulletSample", {
@@ -9934,7 +9934,7 @@ function renderAccountingCacheContinuityDetails(impact) {
     return;
   }
   const recent = Array.isArray(impact.recent) ? impact.recent : [];
-  const sampleNote = disclosure.querySelector(".cache-impact-sample");
+  const sampleNote = $("#cache-continuity-sample");
   if (sampleNote) {
     sampleNote.hidden = impact.cacheReadDrops <= recent.length;
     setLocalizedText(sampleNote, "accounting.cacheImpact.bulletSample", {
@@ -12388,60 +12388,168 @@ mountDashboardNavigation({
   windowRef: window,
 });
 
-/** Keep optional reading out of the overview's viewport without duplicating live data. */
-function mountOverviewLayout({ documentRef, windowRef }) {
+/** Switch measurement views without rebuilding their data or fetching again. */
+function mountDashboardLayout({ documentRef, windowRef }) {
   const dialog = documentRef.querySelector("#overview-details-dialog");
   const content = documentRef.querySelector("#overview-details-content");
   const title = documentRef.querySelector("#overview-details-title");
-  const screen = documentRef.querySelector("#overview-screen");
   const main = documentRef.querySelector("#main");
-  if (!dialog || !content || !screen || !main) return;
+  if (!dialog || !content || !main) return;
+  const configurations = [
+    { page: "weekly", root: "#weekly", views: [
+      ["history", ".weekly-hero, .allowance-window-note, .weekly-history-panel"],
+      ["forecast", "#weekly-pace-forecast"],
+      ["details", ".weekly-table-panel"], ["share", "#share-panel"],
+    ] },
+    { page: "trends", root: "#timeline", views: [
+      ["activity", ".trends-capacity-panel"], ["comparison", ".trends-comparison-panel"],
+      ["drift", ".trends-drift-panel"], ["divergence", ".divergence-panel"],
+      ["evidence", ".trends-exact-panel"],
+    ] },
+    { page: "method", root: "#accounting", views: [
+      ["summary", "#accounting-summary"], ["components", ".accounting-component-grid"],
+      ["models", ".accounting-models-panel"], ["diagnostics", ".advanced-diagnostics"],
+    ] },
+    { page: "projects", root: "#projects", host: ".work-usage-body", views: [
+      ["list", ".work-usage-table-panel, .work-usage-body > .table-pagination, .work-usage-components"],
+      ["components", ".work-usage-mix"],
+    ] },
+    { page: "performance", root: "#performance", before: ".performance-model-panel", views: [
+      ["speed", '[data-performance-metric="speed"]'],
+      ["latency", '[data-performance-metric="latency"]'],
+    ] },
+  ];
+  const selections = new Map(configurations.map(config => [config.page, config.views[0][0]]));
   let disclosure = null;
   let opener = null;
+  let focusedViewButton = null;
+  let dialogPage = null;
+  let frame = null;
 
   const restore = () => {
-    if (disclosure) {
+    if (disclosure?.isConnected) {
       disclosure.append(...content.childNodes);
       disclosure.open = false;
-    }
+    } else content.replaceChildren();
     disclosure = null;
-    opener?.focus({ preventScroll: true });
+    if (opener?.isConnected) opener.focus({ preventScroll: true });
     opener = null;
+    dialogPage = null;
   };
-  for (const details of screen.querySelectorAll(".overview-method-notes, #setup-card")) {
-    const summary = details.querySelector("summary");
-    summary.addEventListener("click", (event) => {
-      if (typeof dialog.showModal !== "function") return;
-      event.preventDefault();
-      disclosure = details;
-      opener = summary;
-      title.textContent = summary.textContent.trim();
-      // Keep the same nodes: incoming results and retries continue to update them.
-      content.append(...[...details.children].filter((child) => child !== summary));
-      details.open = false;
-      dialog.showModal();
-    });
-  }
+  documentRef.addEventListener("click", event => {
+    const summary = event.target.closest?.("summary");
+    const details = summary?.parentElement;
+    if (details?.tagName !== "DETAILS" || !main.contains(details)
+        || typeof dialog.showModal !== "function") return;
+    event.preventDefault();
+    disclosure = details;
+    opener = summary;
+    dialogPage = documentRef.body.dataset.dashboardPage;
+    title.textContent = summary.textContent.trim();
+    // Move the actual nodes so incoming measurements/retry handlers remain live.
+    content.append(...[...details.children].filter(child => child !== summary));
+    details.open = false;
+    dialog.showModal();
+  });
   dialog.querySelector("[data-overview-close]").addEventListener("click", () => dialog.close());
   dialog.addEventListener("close", restore);
+  documentRef.addEventListener("focusin", event => {
+    focusedViewButton = event.target.dataset?.dashboardView ? event.target : null;
+  });
 
-  // The compact layout fits ordinary desktop windows at its natural size. In
-  // smaller windows or unusually long evidence states, fit the whole summary
-  // proportionally instead of cropping values or adding a second screen.
-  let frame = null;
+  const choose = (config, view) => {
+    if (!config.views.some(([key]) => key === view)) return;
+    selections.set(config.page, view);
+    syncViews(config);
+    schedule();
+    // Hidden charts retain their data. Redraw at the revealed width, without a fetch.
+    windowRef.requestAnimationFrame(() => windowRef.dispatchEvent(new Event("resize")));
+  };
+  documentRef.addEventListener("tibotattle:page-view", event => {
+    const config = configurations.find(item => item.page === event.detail?.page);
+    if (config) choose(config, event.detail.view);
+  });
+
+  const syncViews = config => {
+    const root = documentRef.querySelector(config.root);
+    const host = config.host ? root?.querySelector(config.host) : root;
+    const before = config.before ? root?.querySelector(config.before) : null;
+    if (!host || config.before && !before) return;
+    let bar = host.querySelector(":scope > .dashboard-view-switch");
+    if (!bar) {
+      bar = documentRef.createElement("div");
+      bar.className = "dashboard-view-switch segmented-control";
+      bar.setAttribute("role", "group");
+      for (const [key] of config.views) {
+        const button = documentRef.createElement("button");
+        button.type = "button";
+        button.dataset.dashboardView = key;
+        button.addEventListener("click", () => choose(config, key));
+        bar.append(button);
+      }
+      bar.addEventListener("keydown", event => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+        const buttons = [...bar.querySelectorAll("button")];
+        const index = buttons.indexOf(event.target);
+        if (index < 0) return;
+        event.preventDefault();
+        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+          : (index + (event.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length;
+        buttons[next].focus();
+        choose(config, buttons[next].dataset.dashboardView);
+      });
+      host.insertBefore(bar, before ?? host.firstChild);
+    }
+    const label = t("dashboard.views.label");
+    if (bar.getAttribute("aria-label") !== label) bar.setAttribute("aria-label", label);
+    const selection = selections.get(config.page);
+    let visible = false;
+    for (const [key, selector] of config.views) {
+      const button = [...bar.children].find(child => child.dataset.dashboardView === key);
+      const text = t(`dashboard.views.${key}`);
+      if (button.textContent !== text) button.textContent = text;
+      const pressed = String(key === selection);
+      if (button.getAttribute("aria-pressed") !== pressed) button.setAttribute("aria-pressed", pressed);
+      for (const panel of root.querySelectorAll(selector)) {
+        panel.toggleAttribute("data-page-view-inactive", key !== selection);
+        if (key === selection && !panel.hidden) visible = true;
+      }
+    }
+    let empty = host.querySelector(":scope > .dashboard-view-empty");
+    if (!empty) {
+      empty = documentRef.createElement("p");
+      empty.className = "dashboard-view-empty annotation";
+      empty.setAttribute("role", "status");
+      host.insertBefore(empty, bar.nextSibling);
+    }
+    const emptyText = t("dashboard.views.empty");
+    if (empty.textContent !== emptyText) empty.textContent = emptyText;
+    if (empty.hidden !== visible) empty.hidden = visible;
+    if (focusedViewButton && !focusedViewButton.isConnected
+        && documentRef.body.dataset.dashboardPage === config.page) {
+      [...bar.children].find(button => button.dataset.dashboardView === selection)?.focus({ preventScroll: true });
+    }
+  };
+
   const fit = () => {
     frame = null;
-    const active = documentRef.body.dataset.dashboardPage === "overview";
-    if (!active && dialog.open) dialog.close();
-    screen.style.zoom = "1";
-    if (!active) return;
-    const header = documentRef.querySelector(".topbar");
-    const sidebar = documentRef.querySelector(".dashboard-sidebar");
-    const headerHeight = header?.getBoundingClientRect().height ?? 0;
+    for (const config of configurations) syncViews(config);
+    const page = documentRef.body.dataset.dashboardPage;
+    if (dialog.open && (dialogPage !== page || !disclosure?.isConnected || disclosure.hidden)) dialog.close();
+    const screens = [documentRef.querySelector("#overview-screen"),
+      ...["#weekly", "#timeline", "#projects", "#performance", "#accounting", "#community"]
+        .map(selector => documentRef.querySelector(selector))].filter(Boolean);
+    for (const screen of screens) screen.style.zoom = "1";
+    const screen = page === "overview" ? screens[0]
+      : screens.find(element => element.dataset.dashboardPage === page);
+    if (!screen) return;
+    const headerHeight = documentRef.querySelector(".topbar")?.getBoundingClientRect().height ?? 0;
     const sidebarHeight = windowRef.innerWidth <= 900
-      ? sidebar?.getBoundingClientRect().height ?? 0 : 0;
+      ? documentRef.querySelector(".dashboard-sidebar")?.getBoundingClientRect().height ?? 0 : 0;
     const available = Math.max(1, windowRef.innerHeight - headerHeight - sidebarHeight - 26);
     main.style.setProperty("--overview-height", `${available}px`);
+    // Compact views fit ordinary desktop sizes naturally; unusual evidence
+    // states and smaller windows shrink proportionally rather than lose data.
     const natural = screen.scrollHeight;
     if (natural > available) screen.style.zoom = String(available / natural);
   };
@@ -12450,23 +12558,24 @@ function mountOverviewLayout({ documentRef, windowRef }) {
   };
   if (windowRef.ResizeObserver) {
     const resize = new windowRef.ResizeObserver(schedule);
-    resize.observe(screen);
     resize.observe(main);
+    for (const element of main.children) resize.observe(element);
     const header = documentRef.querySelector(".topbar");
     if (header) resize.observe(header);
   }
   if (windowRef.MutationObserver) {
     const changes = new windowRef.MutationObserver(schedule);
-    changes.observe(screen, { childList: true, subtree: true, characterData: true,
+    changes.observe(main, { childList: true, subtree: true, characterData: true,
       attributes: true, attributeFilter: ["hidden", "class", "open"] });
     changes.observe(documentRef.body, { attributes: true,
       attributeFilter: ["data-dashboard-page", "class"] });
   }
   windowRef.addEventListener("resize", schedule);
+  windowRef.addEventListener("tibotattle:locale-change", schedule);
   schedule();
 }
 
-mountOverviewLayout({ documentRef: document, windowRef: window });
+mountDashboardLayout({ documentRef: document, windowRef: window });
 
 async function bootstrapDashboard() {
   renderSharedInstallerJourney(document, {

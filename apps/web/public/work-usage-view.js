@@ -207,7 +207,7 @@ export function mountWorkUsageView(options = {}) {
     period: sharedReporting ? reportingWindow?.period ?? null : "7d",
     grouping: "project",
     sort: "tokens",
-    pageSize: 25,
+    pageSize: 6,
   };
   if (sharedReporting && reportingWindow) query.endAt = reportingWindow.endAt;
   let response = null;
@@ -813,7 +813,7 @@ export function mountWorkUsageView(options = {}) {
     setStatus("cancelled");
   });
   cancel.hidden = true;
-  const body = el("div");
+  const body = el("div", "work-usage-body");
   const eyebrow = el("p", "annotation", tr("local"));
   const actions = el("div", "dashboard-actions work-usage-actions");
   actions.append(message, cancel);
