@@ -497,6 +497,12 @@ function rerenderLocalizedDashboard() {
   if (localOnboarding) renderLocalOnboarding(localOnboarding);
   updateLocalActionButtons();
   retranslateLocalizedNodes();
+  if (visibleConnectionNotice) {
+    const notice = $("#connection-notice");
+    const compact = notice.classList.contains("notice-compact");
+    renderConnectionNotice();
+    notice.classList.toggle("notice-compact", compact);
+  }
   localization.localizeTree();
   renderElectronAccountlessCommunity();
   renderElectronSharingNotice();
@@ -882,11 +888,16 @@ function renderGlobalState() {
   );
 }
 
+// `titleFn` and `copyFn` render a notice whose text is composed from several
+// messages. They run again on every render, so a language change re-composes
+// the sentence instead of leaving the old language's words in place.
 function showConnectionNotice({
   title,
   titleKey = null,
+  titleFn = null,
   copy,
   copyKey = null,
+  copyFn = null,
   copyValues = null,
   kind = "warning",
   showDemo = false,
@@ -895,12 +906,14 @@ function showConnectionNotice({
   visibleConnectionNotice = {
     copy,
     copyKey,
+    copyFn,
     ...(copyValues === null ? {} : { copyValues }),
     kind,
     showCheck,
     showDemo,
     title,
     titleKey,
+    titleFn,
   };
   renderConnectionNotice();
 }
@@ -910,21 +923,27 @@ function renderConnectionNotice() {
   const {
     copy,
     copyKey,
+    copyFn = null,
     copyValues = null,
     kind,
     showCheck,
     showDemo,
     title,
     titleKey,
+    titleFn = null,
   } = visibleConnectionNotice;
   const notice = $("#connection-notice");
   notice.className = `notice notice-${kind}`;
-  if (titleKey) {
+  if (titleFn) {
+    setRawText($("#connection-title"), titleFn());
+  } else if (titleKey) {
     setLocalizedText($("#connection-title"), titleKey);
   } else {
     setProductText($("#connection-title"), title);
   }
-  if (copyKey) {
+  if (copyFn) {
+    setRawText($("#connection-copy"), copyFn());
+  } else if (copyKey) {
     setLocalizedText($("#connection-copy"), copyKey, copyValues ?? {});
   } else {
     setProductText($("#connection-copy"), copy);
@@ -1583,31 +1602,36 @@ function publishRefreshResultNotice(refresh) {
     const skipped = finite(unifiedIndex?.generation?.skippedSourceCount, 0);
     const threads = finite(unifiedIndex?.generation?.skippedThreadCount, 0);
     const historyFailureMessage = historyRefreshFailureMessage(refresh);
-    const degradedCopy = historyFailureMessage
-      ? t(historyFailureMessage.copyKey, historyFailureMessage.copyValues)
-      : skipped > 0
-      ? t("refresh.degradedCopy", {
-        sources: tPlural("format.rolloutSourceCount", skipped, {
-          count: formatNumber(skipped),
-        }),
-        threads: tPlural("format.affectedThreadCount", threads, {
-          count: formatNumber(threads),
-        }),
-      })
-      : t("refresh.degradedGenericCopy", {
-        code: refresh.failureCode ?? "unified_index",
-      });
     const failureMessage = quotaRefreshFailureMessage(refresh);
-    const quotaCopy = disposition === "failed"
-      ? t(failureMessage.copyKey, failureMessage.copyValues ?? {})
-      : disposition === "no-new"
-        ? t("refresh.quota.noNewCopy")
-        : "";
+    // Composed on every render, never stored as text: the notice outlives a
+    // language switch, and a stored sentence would stay in the old language.
+    const composeCopy = () => {
+      const degradedCopy = historyFailureMessage
+        ? t(historyFailureMessage.copyKey, historyFailureMessage.copyValues)
+        : skipped > 0
+        ? t("refresh.degradedCopy", {
+          sources: tPlural("format.rolloutSourceCount", skipped, {
+            count: formatNumber(skipped),
+          }),
+          threads: tPlural("format.affectedThreadCount", threads, {
+            count: formatNumber(threads),
+          }),
+        })
+        : t("refresh.degradedGenericCopy", {
+          code: refresh.failureCode ?? "unified_index",
+        });
+      const quotaCopy = disposition === "failed"
+        ? t(failureMessage.copyKey, failureMessage.copyValues ?? {})
+        : disposition === "no-new"
+          ? t("refresh.quota.noNewCopy")
+          : "";
+      return quotaCopy ? `${degradedCopy} ${quotaCopy}` : degradedCopy;
+    };
     refreshResultNotice = {
       titleKey: disposition === "failed"
         ? "refresh.degradedQuotaFailureTitle"
         : "refresh.degradedTitle",
-      copy: quotaCopy ? `${degradedCopy} ${quotaCopy}` : degradedCopy,
+      copyFn: composeCopy,
       kind: disposition === "failed"
         ? "error"
         : historyCoverageNoticeKind({
@@ -11718,8 +11742,8 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       // run is not proof that this request's detailed work was accepted. Do
       // not enqueue an escalation or turn a safe conflict into a failure.
       showConnectionNotice({
-        title: t("refresh.alreadyRunningTitle"),
-        copy: t("refresh.alreadyRunningCopy"),
+        titleKey: "refresh.alreadyRunningTitle",
+        copyKey: "refresh.alreadyRunningCopy",
         kind: "info",
       });
       return;
