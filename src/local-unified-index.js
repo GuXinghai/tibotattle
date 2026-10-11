@@ -22,7 +22,10 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 
 import { syncDirectory } from "./platform/index.js";
-import { localUnifiedIndexPublication } from "./local-unified-index-publication.js";
+import {
+  LOCAL_UNIFIED_INDEX_PUBLICATION_TIMEOUT_MS,
+  localUnifiedIndexPublication,
+} from "./local-unified-index-publication.js";
 
 const openedReadMetadata = new WeakMap();
 
@@ -3250,7 +3253,12 @@ export async function publishStagedUnifiedIndex(
     const expectedStage = await assertSafeLocalUnifiedIndexTarget(stageFile, { allowMissing: false });
     // Sharing retries revalidate both identities and recovery exclusion. Never
     // delete the live destination or admit a replacement from a stale stage.
-    const sharingDeadline = Math.min(deadline ?? Infinity, performance.now() + 5_000);
+    // The retry budget is the publication deadline itself. A virus scanner or
+    // search indexer can hold a freshly written index of several hundred
+    // megabytes open for far longer than a few seconds; abandoning the swap
+    // then discards a complete rebuild and forces the whole pass to repeat.
+    const sharingDeadline = deadline
+      ?? performance.now() + LOCAL_UNIFIED_INDEX_PUBLICATION_TIMEOUT_MS;
     while (true) {
       if (signal?.aborted) throw fixedError("local_unified_index_aborted");
       if (deadline !== undefined && performance.now() >= deadline) {

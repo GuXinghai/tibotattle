@@ -397,6 +397,7 @@ function runPublicationChild(scenario) {
     const controller = new AbortController();
     const scenario = ${JSON.stringify(scenario)};
     let attempts = 0;
+    let firstAttemptAt = null;
     let recoveryLock;
     fs.open = async (path, ...rest) => {
       const metadata = await lstat(path);
@@ -422,6 +423,10 @@ function runPublicationChild(scenario) {
       if (scenario === "abort" && attempts === 1) controller.abort();
       if (scenario === "nontransient") throw Object.assign(new Error("private arbitrary error must not escape"), { code: "EIO" });
       if (scenario === "retry-success" && attempts > 1) return originalRename(from, to);
+      if (scenario === "long-sharing") {
+        firstAttemptAt ??= Date.now();
+        if (Date.now() - firstAttemptAt > 5_500) return originalRename(from, to);
+      }
       throw Object.assign(new Error("synthetic sharing conflict"), { code: "EPERM" });
     };
     syncBuiltinESMExports();
@@ -432,7 +437,7 @@ function runPublicationChild(scenario) {
       await writeFile(target, "old", { mode: 0o600 });
       await writeFile(stage, "new", { mode: 0o600 });
       let errorCode = null;
-      try { await publishStagedUnifiedIndex(stage, target, { publicationTimeoutMs: 250, signal: controller.signal }); }
+      try { await publishStagedUnifiedIndex(stage, target, { publicationTimeoutMs: scenario === "long-sharing" ? 12_000 : 250, signal: controller.signal }); }
       catch (error) { errorCode = error.code; }
       const stageValue = await readFile(stage, "utf8").catch((error) => error.code === "ENOENT" ? null : "unknown");
       const targetValue = await readFile(target, "utf8");
@@ -446,6 +451,14 @@ function runPublicationChild(scenario) {
 
 test("Windows rename policy retries transient sharing failures and retains the atomic target replacement", () => {
   assert.deepEqual(runPublicationChild("retry-success"), { errorCode: null, attempts: 2, stageValue: null, targetValue: "new" });
+});
+
+test("Windows rename policy keeps retrying a sharing conflict past five seconds within the publication budget", () => {
+  const result = runPublicationChild("long-sharing");
+  assert.equal(result.errorCode, null);
+  assert.equal(result.targetValue, "new");
+  assert.equal(result.stageValue, null);
+  assert.equal(result.attempts > 10, true);
 });
 
 for (const scenario of ["target-changed", "stage-changed", "recovery-lock", "abort", "nontransient", "timeout", "deadline-during-sync"]) {
