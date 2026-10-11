@@ -12,6 +12,7 @@
  */
 
 import { spawn as nodeSpawn } from "node:child_process";
+import { lstatSync, readdirSync } from "node:fs";
 import {
   chmod,
   lstat,
@@ -321,6 +322,45 @@ export async function prepareWindowsDevelopmentProfile({
   return paths;
 }
 
+function isPlainWindowsExecutable(path) {
+  try {
+    if (typeof path !== "string" || path.includes(" ") || !isAbsolute(path)) return false;
+    if (basename(path).toLowerCase() !== "codex.exe") return false;
+    const metadata = lstatSync(path);
+    return metadata.isFile() && !metadata.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The private profile replaces LOCALAPPDATA, which hides the real Codex desktop
+ * install from the packaged app's binary discovery. Locate that install from
+ * the invoking environment and hand the app its exact executable through the
+ * reviewed CODEX_BIN knob. Returns null when nothing safe is found, which
+ * leaves discovery to the app exactly as before.
+ */
+export function locateInstalledCodexBinary(environment = process.env) {
+  if (isPlainWindowsExecutable(environment?.CODEX_BIN)) return environment.CODEX_BIN;
+  const localAppData = environment?.LOCALAPPDATA;
+  if (typeof localAppData !== "string" || !isAbsolute(localAppData)) return null;
+  const root = join(localAppData, "OpenAI", "Codex", "bin");
+  try {
+    if (lstatSync(root).isSymbolicLink()) return null;
+    const candidates = [];
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+      const binary = join(root, entry.name, "codex.exe");
+      if (!isPlainWindowsExecutable(binary)) continue;
+      candidates.push({ binary, mtimeMs: lstatSync(binary).mtimeMs });
+    }
+    candidates.sort((a, b) => b.mtimeMs - a.mtimeMs || a.binary.localeCompare(b.binary));
+    return candidates[0]?.binary ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function copySafeEnvironment(environment) {
   const selected = {};
   for (const key of FORWARDED_ENVIRONMENT_KEYS) {
@@ -362,9 +402,11 @@ function assertProfileObject(profile) {
 export function buildWindowsDevelopmentEnvironment({
   environment = process.env,
   profile,
+  codexBinary = null,
 } = {}) {
   const paths = assertProfileObject(profile);
   const selected = copySafeEnvironment(environment);
+  if (isPlainWindowsExecutable(codexBinary)) selected.CODEX_BIN = codexBinary;
   selected.USERPROFILE = paths.home;
   selected.HOME = paths.home;
   selected.APPDATA = paths.appdata;
@@ -484,7 +526,11 @@ export function buildWindowsDevelopmentLaunchSpec({
     args: Object.freeze([`--user-data-dir=${paths.userData}`]),
     options: Object.freeze({
       cwd: dirname(selectedAppPath),
-      env: buildWindowsDevelopmentEnvironment({ environment, profile: paths }),
+      env: buildWindowsDevelopmentEnvironment({
+        environment,
+        profile: paths,
+        codexBinary: locateInstalledCodexBinary(environment),
+      }),
       shell: false,
       windowsHide: true,
       stdio: "ignore",

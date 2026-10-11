@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, realpath, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   buildWindowsDevelopmentEnvironment,
   buildWindowsDevelopmentLaunchSpec,
+  locateInstalledCodexBinary,
   parseWindowsDevelopmentLaunchArguments,
   prepareWindowsDevelopmentProfile,
   runWindowsDevelopmentLaunch,
@@ -138,4 +139,49 @@ test("Windows development dry-run stays an explicit non-production handoff", asy
     hostedContribution: false,
     credentialSmoke: false,
   });
+});
+
+test("Windows development launcher hands the real Codex install to the private profile", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "tibotattle-codex-locate-")));
+  try {
+    const bin = join(root, "OpenAI", "Codex", "bin");
+    const older = join(bin, "aaaa", "codex.exe");
+    const newer = join(bin, "bbbb", "codex.exe");
+    const helperOnly = join(bin, "cccc", "rg.exe");
+    for (const file of [older, newer, helperOnly]) {
+      await mkdir(join(file, ".."), { recursive: true });
+      await writeFile(file, "");
+    }
+    await utimes(older, new Date(2026, 0, 1), new Date(2026, 0, 1));
+    await utimes(newer, new Date(2026, 5, 1), new Date(2026, 5, 1));
+
+    assert.equal(locateInstalledCodexBinary({ LOCALAPPDATA: root }), newer,
+      "the newest installed codex.exe wins and folders without one are ignored");
+    assert.equal(locateInstalledCodexBinary({ LOCALAPPDATA: join(root, "missing") }), null);
+    assert.equal(locateInstalledCodexBinary({ LOCALAPPDATA: "relative" }), null);
+    assert.equal(locateInstalledCodexBinary({ CODEX_BIN: older, LOCALAPPDATA: root }), older,
+      "an explicit executable override takes precedence");
+    assert.equal(locateInstalledCodexBinary({ CODEX_BIN: join(root, "not-codex.cmd") }), null);
+
+    const profile = await prepareWindowsDevelopmentProfile({
+      appPath: join(root, "app", "TiboTattle Dev.exe"),
+      profilePath: join(root, "profile"),
+    });
+    const withBinary = buildWindowsDevelopmentEnvironment({
+      environment: { PATH: "C:\Windows" },
+      profile,
+      codexBinary: newer,
+    });
+    assert.equal(withBinary.CODEX_BIN, newer);
+    assert.equal(withBinary.LOCALAPPDATA, profile.localappdata,
+      "the profile stays isolated; only the executable is shared");
+    const without = buildWindowsDevelopmentEnvironment({
+      environment: { PATH: "C:\Windows", CODEX_BIN: newer },
+      profile,
+    });
+    assert.equal("CODEX_BIN" in without, false,
+      "an inherited override is never forwarded unless it was validated");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
