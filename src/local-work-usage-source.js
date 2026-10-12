@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { APP_PRICE_REGISTRY_MANIFEST } from "@app-usagemonitor/accounting";
-import { lstat } from "node:fs/promises";
 import { setImmediate as yieldTurn } from "node:timers/promises";
 import {
   withReadOnlyUnifiedIndex,
+  lstatPublishedLocalUnifiedIndex,
   readExistingDeviceSalt,
   defaultLocalUnifiedIndexSecretPath,
   localDigest,
@@ -558,7 +558,7 @@ export async function readLocalWorkUsageSnapshot({
     throw workUsageError("local_unified_index_work_query_invalid");
   const onOpenFailure = async () => {
     try {
-      await lstat(indexFile);
+      await lstatPublishedLocalUnifiedIndex(indexFile);
       return { status: "unavailable" };
     } catch (error) {
       return { status: error.code === "ENOENT" ? "missing" : "unavailable" };

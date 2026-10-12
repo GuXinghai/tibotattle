@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { localCodexLogScanner } from "./local-node-runtime.js";
 import {
   defaultLocalUnifiedIndexPath,
+  lstatPublishedLocalUnifiedIndex,
   openLocalUnifiedIndex,
   readUnifiedIndexGenerationDescriptor,
 } from "./local-unified-index.js";
@@ -3574,7 +3575,7 @@ async function fitCompositionFromCorpusStream({
 async function probeUnifiedCalibrationCorpus(indexFile) {
   let metadata;
   try {
-    metadata = await lstat(indexFile);
+    metadata = await lstatPublishedLocalUnifiedIndex(indexFile);
   } catch {
     return false;
   }
@@ -3676,7 +3677,7 @@ async function openUnifiedIndexCalibrationCorpus({
 }) {
   let metadata;
   try {
-    metadata = await lstat(indexFile);
+    metadata = await lstatPublishedLocalUnifiedIndex(indexFile);
   } catch {
     return null;
   }
@@ -4166,7 +4167,7 @@ async function openUnifiedIndexCalibrationCorpus({
     verifyGeneration();
     let openMetadata;
     try {
-      openMetadata = await lstat(indexFile);
+      openMetadata = await lstatPublishedLocalUnifiedIndex(indexFile);
     } catch {
       throw fixedError("accounting_unified_generation_changed");
     }
@@ -4289,7 +4290,7 @@ async function openUnifiedIndexCalibrationCorpus({
           verifyGeneration();
           let finalMetadata;
           try {
-            finalMetadata = await lstat(indexFile);
+            finalMetadata = await lstatPublishedLocalUnifiedIndex(indexFile);
           } catch {
             throw fixedError("accounting_unified_generation_changed");
           }

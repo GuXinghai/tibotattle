@@ -1,485 +1,423 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
-import { createLocalUnifiedIndexPublicationCoordinator } from "../src/local-unified-index-publication.js";
+import { ingestLocalUnifiedIndexIncrement } from "../src/local-unified-index-ingest.js";
 import {
   createUnifiedIndexWriter,
+  LOCAL_UNIFIED_INDEX_SNAPSHOT_ORPHAN_MIN_AGE_MS,
+  localUnifiedIndexPointerPath,
   openLocalUnifiedIndex,
   openLocalUnifiedIndexRead,
   publishStagedUnifiedIndex,
-  trackLocalUnifiedIndexReadConnection,
+  removeObsoleteLocalUnifiedIndexSnapshots,
+  resolveLocalUnifiedIndexFile,
 } from "../src/local-unified-index.js";
+import { rebuildLocalUnifiedIndex } from "../src/local-unified-index-build.js";
 
-const delay = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
 const code = (expected) => (error) => error?.code === expected;
+const windows = process.platform === "win32";
+const CONTRACT = "usage-event-v0.2";
+const LATER = Date.now() + LOCAL_UNIFIED_INDEX_SNAPSHOT_ORPHAN_MIN_AGE_MS + 60_000;
 
-function deferred() {
-  let resolve;
-  const promise = new Promise((settle) => { resolve = settle; });
-  return { promise, resolve };
+// A publication that waits for a reader would hang the test instead of failing.
+function withinSeconds(promise, seconds = 10) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("publication waited for a reader")), seconds * 1_000);
+    }),
+  ]);
 }
-
-function fakeDatabase({ failClose = false } = {}) {
-  return {
-    isOpen: true,
-    failClose,
-    close() {
-      if (this.failClose) throw new Error("synthetic close failed");
-      this.isOpen = false;
-    },
-  };
-}
-
-test("Windows publication drains actual readers and gates new readers until publication settles", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-gate.sqlite");
-  const existing = coordinator.trackReader(path, fakeDatabase());
-  const entered = deferred();
-  const release = deferred();
-  const events = [];
-  const publication = coordinator.publish(path, async () => {
-    events.push("publish");
-    entered.resolve();
-    await release.promise;
-  });
-  let opened = false;
-  const reader = coordinator.openReader(path, () => {
-    opened = true;
-    events.push("read");
-    return coordinator.trackReader(path, fakeDatabase());
-  });
-  assert.throws(() => coordinator.assertReadable(path), code("local_unified_index_publication_busy"));
-  await delay();
-  assert.equal(opened, false);
-  assert.deepEqual(events, []);
-  existing.close();
-  await entered.promise;
-  assert.equal(opened, false);
-  release.resolve();
-  await publication;
-  const next = await reader;
-  assert.deepEqual(events, ["publish", "read"]);
-  let nextPublished = false;
-  const nextPublication = coordinator.publish(path, () => { nextPublished = true; });
-  await delay();
-  assert.equal(nextPublished, false, "queued reader remains registered after old publication state is released");
-  next.close();
-  await nextPublication;
-  assert.equal(nextPublished, true);
-});
-
-test("a second Windows publisher is refused rather than publishing a potentially obsolete stage later", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-two.sqlite");
-  const release = deferred();
-  const entered = deferred();
-  const first = coordinator.publish(path, async () => {
-    entered.resolve();
-    await release.promise;
-  });
-  await entered.promise;
-  let secondCalled = false;
-  await assert.rejects(coordinator.publish(path, () => { secondCalled = true; }), code("local_unified_index_publication_busy"));
-  assert.equal(secondCalled, false);
-  release.resolve();
-  await first;
-  await coordinator.publish(path, () => { secondCalled = true; });
-  assert.equal(secondCalled, true);
-});
-
-test("publication timeout releases queued readers but never closes or publishes across an active reader", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-timeout.sqlite");
-  const existing = coordinator.trackReader(path, fakeDatabase());
-  let published = false;
-  const publication = assert.rejects(coordinator.publish(path, () => { published = true; }, { timeoutMs: 40 }), code("local_unified_index_publication_timed_out"));
-  const queued = coordinator.openReader(path, () => coordinator.trackReader(path, fakeDatabase()));
-  await publication;
-  assert.equal(published, false);
-  assert.equal(existing.isOpen, true);
-  const next = await queued;
-  coordinator.assertReadable(path);
-  next.close();
-  existing.close();
-  await coordinator.publish(path, () => { published = true; });
-  assert.equal(published, true);
-});
-
-test("cancelling Windows publication releases its barrier without closing active readers", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-abort.sqlite");
-  const existing = coordinator.trackReader(path, fakeDatabase());
-  const controller = new AbortController();
-  let called = false;
-  const publication = assert.rejects(coordinator.publish(path, () => { called = true; }, { signal: controller.signal }), code("local_unified_index_aborted"));
-  const nextReader = coordinator.openReader(path, () => fakeDatabase());
-  controller.abort();
-  await publication;
-  const next = await nextReader;
-  assert.equal(called, false);
-  assert.equal(existing.isOpen, true);
-  coordinator.assertReadable(path);
-  existing.close();
-  next.close();
-});
-
-test("cancelling a queued reader never opens a database and does not cancel publication", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-reader-abort.sqlite");
-  const release = deferred();
-  const entered = deferred();
-  const publication = coordinator.publish(path, async () => {
-    entered.resolve();
-    await release.promise;
-  });
-  await entered.promise;
-  const controller = new AbortController();
-  let opened = false;
-  const reader = assert.rejects(coordinator.openReader(path, () => { opened = true; }, { signal: controller.signal }), code("local_unified_index_aborted"));
-  controller.abort();
-  await reader;
-  assert.equal(opened, false);
-  assert.throws(() => coordinator.assertReadable(path), code("local_unified_index_publication_busy"));
-  release.resolve();
-  await publication;
-  coordinator.assertReadable(path);
-});
-
-test("a failed close which leaves SQLite open cannot release publication admission", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-close-failure.sqlite");
-  const existing = coordinator.trackReader(path, fakeDatabase({ failClose: true }));
-  let called = false;
-  const publication = coordinator.publish(path, () => { called = true; });
-  assert.throws(() => existing.close(), /synthetic close failed/u);
-  await delay();
-  assert.equal(existing.isOpen, true);
-  assert.equal(called, false);
-  existing.failClose = false;
-  existing.close();
-  await publication;
-  assert.equal(called, true);
-});
-
-test("publication waits for every reader rather than only the first connection closed", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-multiple-readers.sqlite");
-  const first = coordinator.trackReader(path, fakeDatabase());
-  const second = coordinator.trackReader(path, fakeDatabase());
-  let published = false;
-  const publication = coordinator.publish(path, () => { published = true; });
-  first.close();
-  await delay();
-  assert.equal(published, false);
-  second.close();
-  await publication;
-  assert.equal(published, true);
-});
-
-test("late connection registration fails closed and closes the newly supplied handle", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-late-reader.sqlite");
-  const release = deferred();
-  const entered = deferred();
-  const publication = coordinator.publish(path, async () => {
-    entered.resolve();
-    await release.promise;
-  });
-  await entered.promise;
-  const late = fakeDatabase();
-  assert.throws(() => coordinator.trackReader(path, late), code("local_unified_index_publication_busy"));
-  assert.equal(late.isOpen, false);
-  release.resolve();
-  await publication;
-});
-
-test("operation failure releases publication admission for subsequent readers and publication", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-publication-operation-failure.sqlite");
-  await assert.rejects(coordinator.publish(path, () => { throw new Error("synthetic operation failure"); }), /synthetic operation failure/u);
-  coordinator.assertReadable(path);
-  const database = await coordinator.openReader(path, () => coordinator.trackReader(path, fakeDatabase()));
-  database.close();
-  assert.equal(await coordinator.publish(path, () => "next"), "next");
-});
-
-test("publication barriers are path-specific and Windows path casing shares a barrier", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "win32" });
-  const path = join(tmpdir(), "synthetic-PUBLICATION-case.sqlite");
-  const existing = coordinator.trackReader(path, fakeDatabase());
-  const publication = coordinator.publish(path.toLowerCase(), () => "done");
-  assert.throws(() => coordinator.assertReadable(path), code("local_unified_index_publication_busy"));
-  coordinator.assertReadable(`${path}.other`);
-  assert.equal(await coordinator.publish(`${path}.other`, () => "independent"), "independent");
-  existing.close();
-  assert.equal(await publication, "done");
-});
-
-test("other platforms preserve open-reader behavior without Windows publication gating", async () => {
-  const coordinator = createLocalUnifiedIndexPublicationCoordinator({ platform: "linux" });
-  const path = join(tmpdir(), "synthetic-publication-posix.sqlite");
-  const database = fakeDatabase();
-  const originalClose = database.close;
-  assert.equal(coordinator.trackReader(path, database), database);
-  assert.equal(database.close, originalClose);
-  const release = deferred();
-  const publication = coordinator.publish(path, () => release.promise);
-  coordinator.assertReadable(path);
-  assert.equal(await coordinator.openReader(path, () => "read"), "read");
-  release.resolve();
-  await publication;
-  assert.equal(database.isOpen, true);
-  database.close();
-});
 
 async function createSyntheticIndex(path, marker) {
   const database = openLocalUnifiedIndex(path, { create: true, staging: true });
-  const writer = createUnifiedIndexWriter(database, { contractVersion: "usage-event-v0.2" });
+  const writer = createUnifiedIndexWriter(database, { contractVersion: CONTRACT });
   database.prepare("INSERT INTO meta(key, value) VALUES ('publication_test', ?)").run(marker);
   await writer.close({ fsyncPath: path });
-}
-
-async function publicationFixture(callback) {
-  const root = await mkdtemp(join(tmpdir(), "unified-index-publication-"));
-  const indexFile = join(root, "published.sqlite");
-  const stageFile = join(root, "stage.sqlite");
-  try {
-    await createSyntheticIndex(indexFile, "old");
-    await createSyntheticIndex(stageFile, "new");
-    await callback({ indexFile, stageFile });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
 }
 
 function marker(database) {
   return database.prepare("SELECT value FROM meta WHERE key = 'publication_test'").get().value;
 }
 
-const windowsOnly = { skip: process.platform !== "win32" };
+function readMarker(indexFile) {
+  const database = openLocalUnifiedIndex(indexFile, { readOnly: true });
+  try { return marker(database); } finally { database.close(); }
+}
 
-test("physical Windows tracked SQLite reader drains before replacement and new async readers see the published file", windowsOnly, async () => {
-  await publicationFixture(async ({ indexFile, stageFile }) => {
-    const existing = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    let next = null;
+async function fixture(callback) {
+  const root = await mkdtemp(join(tmpdir(), "unified-index-publication-"));
+  const indexFile = join(root, "published.sqlite");
+  try {
+    await createSyntheticIndex(indexFile, "gen-1");
+    await callback({ root, indexFile });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}
+
+async function publishMarker(root, indexFile, value) {
+  const stage = join(root, `stage-${value}.sqlite`);
+  await createSyntheticIndex(stage, value);
+  await withinSeconds(publishStagedUnifiedIndex(stage, indexFile));
+}
+
+async function names(root) {
+  return (await readdir(root)).sort();
+}
+
+test("an uncontended publication keeps the single-file layout", async () => {
+  await fixture(async ({ root, indexFile }) => {
+    await publishMarker(root, indexFile, "gen-2");
+    assert.equal(resolveLocalUnifiedIndexFile(indexFile), indexFile);
+    assert.deepEqual(await names(root), ["published.sqlite"]);
+    assert.equal(readMarker(indexFile), "gen-2");
+  });
+});
+
+test("publication does not wait for a reader, which keeps the generation it opened", async () => {
+  await fixture(async ({ root, indexFile }) => {
+    const reader = await openLocalUnifiedIndexRead(indexFile);
     try {
-      assert.equal(marker(existing), "old");
-      let settled = false;
-      const publication = publishStagedUnifiedIndex(stageFile, indexFile, { publicationTimeoutMs: 2_000 }).then(() => { settled = true; });
-      let opened = false;
-      let openedMetadata = null;
-      const pendingReader = openLocalUnifiedIndexRead(indexFile, {
-        onOpened: (metadata) => { openedMetadata = metadata; },
-      }).then((database) => { opened = true; next = database; return database; });
-      await delay(50);
-      assert.equal(settled, false);
-      assert.equal(opened, false);
-      assert.equal(marker(existing), "old");
-      assert.throws(() => openLocalUnifiedIndex(indexFile, { readOnly: true }), code("local_unified_index_publication_busy"));
-      existing.close();
-      await publication;
-      await pendingReader;
-      assert.equal(marker(next), "new");
-      assert.equal(openedMetadata.ino, (await stat(indexFile)).ino,
-        "waiting readers receive the validated identity of the new publication");
-      await assert.rejects(stat(stageFile), { code: "ENOENT" });
+      await publishMarker(root, indexFile, "gen-2");
+      assert.equal(marker(reader), "gen-1", "an open reader is never switched mid-read");
+      assert.equal(readMarker(indexFile), "gen-2", "a new reader sees the new publication");
+      if (windows) {
+        // Windows refused to replace the open file, so a pointer names a snapshot.
+        assert.notEqual(resolveLocalUnifiedIndexFile(indexFile), indexFile);
+        assert.ok((await names(root)).includes("published.sqlite"),
+          "the open superseded file is retained while its reader is open");
+      }
     } finally {
-      if (existing.isOpen) existing.close();
-      if (next?.isOpen) next.close();
+      reader.close();
     }
   });
 });
 
-test("physical Windows publication also drains manually tracked SQLite readers", windowsOnly, async () => {
-  await publicationFixture(async ({ indexFile, stageFile }) => {
-    const existing = trackLocalUnifiedIndexReadConnection(indexFile, new DatabaseSync(indexFile, { readOnly: true }));
+test("overlapping readers and repeated publications each see one consistent generation", async () => {
+  await fixture(async ({ root, indexFile }) => {
+    const first = await openLocalUnifiedIndexRead(indexFile);
+    let second = null;
     try {
-      let settled = false;
-      const publication = publishStagedUnifiedIndex(stageFile, indexFile, { publicationTimeoutMs: 2_000 }).then(() => { settled = true; });
-      await delay(40);
-      assert.equal(settled, false);
-      existing.close();
-      await publication;
+      await publishMarker(root, indexFile, "gen-2");
+      second = await openLocalUnifiedIndexRead(indexFile);
+      await publishMarker(root, indexFile, "gen-3");
+      assert.equal(marker(first), "gen-1");
+      assert.equal(marker(second), "gen-2");
+      assert.equal(readMarker(indexFile), "gen-3");
     } finally {
-      if (existing.isOpen) existing.close();
+      first.close();
+      second?.close();
     }
-    const next = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    try { assert.equal(marker(next), "new"); }
-    finally { next.close(); }
+    // Once nothing holds them, every superseded publication is reclaimed.
+    await removeObsoleteLocalUnifiedIndexSnapshots(indexFile, { nowMs: LATER });
+    const remaining = await names(root);
+    const current = basename(resolveLocalUnifiedIndexFile(indexFile));
+    assert.deepEqual(
+      remaining,
+      windows ? [current, "published.sqlite.current"].sort() : ["published.sqlite"],
+    );
+    assert.equal(readMarker(indexFile), "gen-3");
   });
 });
 
-test("physical Windows external SQLite sharing conflict retries after the untracked handle closes", windowsOnly, async () => {
-  await publicationFixture(async ({ indexFile, stageFile }) => {
-    const external = new DatabaseSync(indexFile, { readOnly: true });
-    assert.equal(marker(external), "old");
-    let settled = false;
-    const publication = publishStagedUnifiedIndex(stageFile, indexFile, { publicationTimeoutMs: 2_000 }).then(() => { settled = true; });
+test("cleanup retains a superseded snapshot while it is open and removes it after", { skip: !windows }, async () => {
+  await fixture(async ({ root, indexFile }) => {
+    const holdLegacy = await openLocalUnifiedIndexRead(indexFile);
+    await publishMarker(root, indexFile, "gen-2");
+    holdLegacy.close();
+    const snapshotReader = await openLocalUnifiedIndexRead(indexFile);
+    const held = resolveLocalUnifiedIndexFile(indexFile);
     try {
-      await delay(100);
-      assert.equal(settled, false);
-      assert.equal(marker(external), "old");
-      external.close();
-      await publication;
+      await publishMarker(root, indexFile, "gen-3");
+      const result = await removeObsoleteLocalUnifiedIndexSnapshots(indexFile, { nowMs: LATER });
+      assert.equal(result.retained, 1, "Windows refuses to delete the open snapshot");
+      assert.ok((await names(root)).includes(basename(held)));
+      assert.equal(marker(snapshotReader), "gen-2");
     } finally {
-      if (external.isOpen) external.close();
+      snapshotReader.close();
     }
-    const next = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    try { assert.equal(marker(next), "new"); }
-    finally { next.close(); }
+    const result = await removeObsoleteLocalUnifiedIndexSnapshots(indexFile, { nowMs: LATER });
+    assert.equal(result.retained, 0);
+    assert.equal((await names(root)).includes(basename(held)), false);
   });
 });
 
-test("physical Windows exhausted external-sharing budget preserves old publication and stage", windowsOnly, async () => {
-  await publicationFixture(async ({ indexFile, stageFile }) => {
-    const before = await readFile(indexFile);
-    const candidate = await readFile(stageFile);
-    const external = new DatabaseSync(indexFile, { readOnly: true });
+test("cleanup keeps a recent unreferenced snapshot a concurrent publication may still point at", async () => {
+  await fixture(async ({ root, indexFile }) => {
+    const reader = await openLocalUnifiedIndexRead(indexFile);
     try {
-      assert.equal(marker(external), "old");
-      await assert.rejects(publishStagedUnifiedIndex(stageFile, indexFile, { publicationTimeoutMs: 200 }), code("local_unified_index_publication_timed_out"));
-      assert.deepEqual(await readFile(indexFile), before);
-      assert.deepEqual(await readFile(stageFile), candidate);
-      assert.equal(external.isOpen, true);
-      external.close();
-      await publishStagedUnifiedIndex(stageFile, indexFile, { publicationTimeoutMs: 2_000 });
+      await publishMarker(root, indexFile, "gen-2");
     } finally {
-      if (external.isOpen) external.close();
+      reader.close();
     }
+    if (!windows) return;
+    const orphan = join(root, `published.sqlite.snapshot-${Date.now().toString(36)}-${"a".repeat(32)}`);
+    const old = join(root, `published.sqlite.snapshot-${(Date.now() - 2 * LOCAL_UNIFIED_INDEX_SNAPSHOT_ORPHAN_MIN_AGE_MS).toString(36)}-${"b".repeat(32)}`);
+    await writeFile(orphan, "crash orphan", { mode: 0o600 });
+    await writeFile(old, "older crash orphan", { mode: 0o600 });
+    await removeObsoleteLocalUnifiedIndexSnapshots(indexFile);
+    const remaining = await names(root);
+    assert.ok(remaining.includes(basename(orphan)), "a young orphan is not yet proven abandoned");
+    assert.equal(remaining.includes(basename(old)), false, "an old crash orphan is reclaimed");
+    assert.equal(readMarker(indexFile), "gen-2");
   });
 });
 
-test("physical Windows cancellation during external-sharing retry preserves both files and permits explicit retry", windowsOnly, async () => {
-  await publicationFixture(async ({ indexFile, stageFile }) => {
-    const before = await readFile(indexFile);
-    const candidate = await readFile(stageFile);
-    const external = new DatabaseSync(indexFile, { readOnly: true });
-    const controller = new AbortController();
-    let abortTimer;
-    try {
-      assert.equal(marker(external), "old");
-      const pending = assert.rejects(publishStagedUnifiedIndex(stageFile, indexFile, { signal: controller.signal }), code("local_unified_index_aborted"));
-      abortTimer = setTimeout(() => controller.abort(), 100);
-      await pending;
-      assert.deepEqual(await readFile(indexFile), before);
-      assert.deepEqual(await readFile(stageFile), candidate);
-      external.close();
-      await publishStagedUnifiedIndex(stageFile, indexFile, { publicationTimeoutMs: 2_000 });
-    } finally {
-      clearTimeout(abortTimer);
-      if (external.isOpen) external.close();
-    }
+test("pointer temporaries are reclaimed only when their writer has exited", async () => {
+  await fixture(async ({ root, indexFile }) => {
+    await writeFile(localUnifiedIndexPointerPath(indexFile), JSON.stringify({
+      format: "tibotattle-local-unified-index-pointer-v1",
+      snapshot: "published.sqlite.snapshot-0-" + "c".repeat(32),
+    }), { mode: 0o600 });
+    await createSyntheticIndex(join(root, "published.sqlite.snapshot-0-" + "c".repeat(32)), "pointed");
+    const dead = join(root, `published.sqlite.current.tmp-4242-${"d".repeat(16)}`);
+    const alive = join(root, `published.sqlite.current.tmp-${process.pid}-${"e".repeat(16)}`);
+    await writeFile(dead, "{}", { mode: 0o600 });
+    await writeFile(alive, "{}", { mode: 0o600 });
+    await removeObsoleteLocalUnifiedIndexSnapshots(indexFile, {
+      isProcessAlive: (pid) => pid === process.pid,
+    });
+    const remaining = await names(root);
+    assert.equal(remaining.includes(basename(dead)), false);
+    assert.ok(remaining.includes(basename(alive)));
+    assert.equal(remaining.includes("published.sqlite"), false, "the superseded single file is reclaimed");
+    assert.equal(readMarker(indexFile), "pointed");
   });
 });
 
-// These child cases inject sharing errors and adversarial changes at the exact
-// rename boundary. Physical Windows SQLite behavior is independently tested
-// above; changing the platform here is only for deterministic policy coverage.
-function runPublicationChild(scenario) {
+test("a damaged or redirected pointer fails closed instead of falling back to a stale file", async () => {
+  for (const content of [
+    "not json",
+    JSON.stringify({ format: "tibotattle-local-unified-index-pointer-v1", snapshot: "../elsewhere.sqlite" }),
+    JSON.stringify({ format: "tibotattle-local-unified-index-pointer-v1", snapshot: "other.sqlite.snapshot-0-" + "a".repeat(32) }),
+    JSON.stringify({ format: "tibotattle-local-unified-index-pointer-v1", snapshot: "published.sqlite.snapshot-0-" + "a".repeat(32), extra: 1 }),
+  ]) {
+    await fixture(async ({ indexFile }) => {
+      await writeFile(localUnifiedIndexPointerPath(indexFile), content, { mode: 0o600 });
+      assert.throws(() => resolveLocalUnifiedIndexFile(indexFile), code("local_unified_index_file_invalid"));
+      await assert.rejects(openLocalUnifiedIndexRead(indexFile), code("local_unified_index_file_invalid"));
+    });
+  }
+  await fixture(async ({ indexFile }) => {
+    await writeFile(localUnifiedIndexPointerPath(indexFile), JSON.stringify({
+      format: "tibotattle-local-unified-index-pointer-v1",
+      snapshot: "published.sqlite.snapshot-0-" + "f".repeat(32),
+    }), { mode: 0o600 });
+    await assert.rejects(openLocalUnifiedIndexRead(indexFile), code("local_unified_index_unavailable"),
+      "a pointer to a missing snapshot is unavailable, never the superseded file");
+  });
+});
+
+// The child cases force the Windows sharing refusal at the single-file rename
+// and inject faults at the exact snapshot publication boundaries.
+function runSnapshotChild(scenario) {
   const moduleUrl = new URL("../src/local-unified-index.js", import.meta.url).href;
   const source = `
     import { createRequire, syncBuiltinESMExports } from "node:module";
-    import { mkdtemp, rm, writeFile, readFile, lstat } from "node:fs/promises";
+    import { mkdtemp, rm, writeFile, readFile, readdir } from "node:fs/promises";
     import { tmpdir } from "node:os";
     import { join } from "node:path";
     const require = createRequire(import.meta.url);
     const fs = require("node:fs/promises");
     const originalRename = fs.rename;
-    const originalOpen = fs.open;
-    const root = await mkdtemp(join(tmpdir(), "unified-publication-policy-"));
+    const root = await mkdtemp(join(tmpdir(), "unified-snapshot-policy-"));
     const stage = join(root, "stage.sqlite");
     const target = join(root, "published.sqlite");
     const controller = new AbortController();
     const scenario = ${JSON.stringify(scenario)};
-    let attempts = 0;
-    let firstAttemptAt = null;
     let recoveryLock;
-    fs.open = async (path, ...rest) => {
-      const metadata = await lstat(path);
-      if (metadata.isDirectory()) throw Object.assign(new Error("synthetic directory sync unavailable"), { code: "EPERM" });
-      const handle = await originalOpen(path, ...rest);
-      if (scenario === "deadline-during-sync" && path === stage) {
-        const sync = handle.sync.bind(handle);
-        handle.sync = async () => { await new Promise((resolve) => setTimeout(resolve, 300)); await sync(); };
-      }
-      return handle;
-    };
     fs.rename = async (from, to) => {
-      attempts += 1;
-      if (scenario === "target-changed" && attempts === 1) {
-        await originalRename(target, join(root, "previous.sqlite"));
-        await writeFile(target, "replacement", { mode: 0o600 });
+      if (to === target) throw Object.assign(new Error("synthetic sharing conflict"), { code: "EPERM" });
+      if (to.endsWith(".current") && scenario === "pointer-fails") {
+        throw Object.assign(new Error("private detail"), { code: "EIO" });
       }
-      if (scenario === "stage-changed" && attempts === 1) {
-        await originalRename(stage, join(root, "previous-stage.sqlite"));
-        await writeFile(stage, "replacement-stage", { mode: 0o600 });
+      if (to.includes(".snapshot-")) {
+        // Between the snapshot rename and the pointer swap.
+        if (scenario === "abort") controller.abort();
+        if (scenario === "recovery-lock") await writeFile(recoveryLock, "synthetic recovery lock", { mode: 0o600 });
       }
-      if (scenario === "recovery-lock" && attempts === 1) await writeFile(recoveryLock, "synthetic recovery lock", { mode: 0o600 });
-      if (scenario === "abort" && attempts === 1) controller.abort();
-      if (scenario === "nontransient") throw Object.assign(new Error("private arbitrary error must not escape"), { code: "EIO" });
-      if (scenario === "retry-success" && attempts > 1) return originalRename(from, to);
-      if (scenario === "long-sharing") {
-        firstAttemptAt ??= Date.now();
-        if (Date.now() - firstAttemptAt > 5_500) return originalRename(from, to);
-      }
-      throw Object.assign(new Error("synthetic sharing conflict"), { code: "EPERM" });
+      return originalRename(from, to);
     };
     syncBuiltinESMExports();
     Object.defineProperty(process, "platform", { value: "win32", configurable: true });
-    const { publishStagedUnifiedIndex, defaultLocalUnifiedIndexRecoveryLockPath } = await import(${JSON.stringify(moduleUrl)});
-    recoveryLock = defaultLocalUnifiedIndexRecoveryLockPath(target);
+    const index = await import(${JSON.stringify(moduleUrl)});
+    recoveryLock = index.defaultLocalUnifiedIndexRecoveryLockPath(target);
     try {
       await writeFile(target, "old", { mode: 0o600 });
       await writeFile(stage, "new", { mode: 0o600 });
+      if (scenario === "stage-changed") {
+        // Replace the stage after its identity was captured but before the swap.
+        const originalLstat = fs.lstat;
+        let calls = 0;
+        fs.lstat = async (path, ...rest) => {
+          if (path === stage && ++calls === 2) {
+            await originalRename(stage, join(root, "previous-stage.sqlite"));
+            await writeFile(stage, "replacement-stage", { mode: 0o600 });
+          }
+          return originalLstat(path, ...rest);
+        };
+        syncBuiltinESMExports();
+      }
       let errorCode = null;
-      try { await publishStagedUnifiedIndex(stage, target, { publicationTimeoutMs: scenario === "long-sharing" ? 12_000 : 250, signal: controller.signal }); }
+      try { await index.publishStagedUnifiedIndex(stage, target, { signal: controller.signal }); }
       catch (error) { errorCode = error.code; }
-      const stageValue = await readFile(stage, "utf8").catch((error) => error.code === "ENOENT" ? null : "unknown");
-      const targetValue = await readFile(target, "utf8");
-      process.stdout.write(JSON.stringify({ errorCode, attempts, stageValue, targetValue }));
+      const live = await readFile(index.resolveLocalUnifiedIndexFile(target), "utf8");
+      const files = (await readdir(root)).map((name) => name
+        .replace(/snapshot-[0-9a-z]+-[0-9a-f]{32}$/u, "snapshot-*")
+        .replace(/tmp-[0-9]+-[0-9a-f]{16}$/u, "tmp-*")).sort();
+      process.stdout.write(JSON.stringify({ errorCode, live, files }));
     } finally { await rm(root, { recursive: true, force: true }); }
   `;
-  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", source], { encoding: "utf8", timeout: 15_000 });
+  const result = spawnSync(process.execPath, ["--input-type=module", "--eval", source], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
   assert.equal(result.status, 0, result.stderr);
   return JSON.parse(result.stdout);
 }
 
-test("Windows rename policy retries transient sharing failures and retains the atomic target replacement", () => {
-  assert.deepEqual(runPublicationChild("retry-success"), { errorCode: null, attempts: 2, stageValue: null, targetValue: "new" });
-});
-
-test("Windows rename policy keeps retrying a sharing conflict past five seconds within the publication budget", () => {
-  const result = runPublicationChild("long-sharing");
+test("a refused Windows swap publishes a snapshot and points to it", () => {
+  const result = runSnapshotChild("success");
   assert.equal(result.errorCode, null);
-  assert.equal(result.targetValue, "new");
-  assert.equal(result.stageValue, null);
-  assert.equal(result.attempts > 10, true);
+  assert.equal(result.live, "new");
+  // Nothing really holds the superseded file here, so cleanup removes it at once.
+  assert.deepEqual(result.files, [
+    "published.sqlite.current",
+    "published.sqlite.snapshot-*",
+  ]);
 });
 
-for (const scenario of ["target-changed", "stage-changed", "recovery-lock", "abort", "nontransient", "timeout", "deadline-during-sync"]) {
-  test(`Windows retry policy fails closed after ${scenario}`, () => {
-    const result = runPublicationChild(scenario);
-    const expectedCode = {
-      "target-changed": "local_unified_index_file_changed",
-      "stage-changed": "local_unified_index_file_changed",
-      "recovery-lock": "local_unified_index_recovery_in_progress",
-      abort: "local_unified_index_aborted",
-      nontransient: "local_unified_index_publication_failed",
-      timeout: "local_unified_index_publication_timed_out",
-      "deadline-during-sync": "local_unified_index_publication_timed_out",
-    }[scenario];
+for (const [scenario, expectedCode] of [
+  ["pointer-fails", "local_unified_index_publication_failed"],
+  ["abort", "local_unified_index_aborted"],
+  ["recovery-lock", "local_unified_index_recovery_in_progress"],
+]) {
+  test(`snapshot publication keeps the old publication live after ${scenario}`, () => {
+    const result = runSnapshotChild(scenario);
     assert.equal(result.errorCode, expectedCode);
-    assert.equal(result.targetValue, scenario === "target-changed" ? "replacement" : "old");
-    assert.equal(result.stageValue, scenario === "stage-changed" ? "replacement-stage" : "new");
-    if (scenario === "deadline-during-sync") assert.equal(result.attempts, 0);
-    else {
-      assert.equal(result.attempts >= 1, true);
-      if (scenario !== "timeout") assert.equal(result.attempts, 1);
-    }
+    assert.equal(result.live, "old", "the pointer never moved");
+    // The unreferenced snapshot is an orphan for cleanup; no temporary remains.
+    assert.deepEqual(result.files, [
+      "published.sqlite",
+      "published.sqlite.snapshot-*",
+      ...(scenario === "recovery-lock" ? ["published.sqlite.recovery.lock"] : []),
+    ].sort());
   });
 }
+
+test("a stage replaced before the swap is never published", () => {
+  const result = runSnapshotChild("stage-changed");
+  assert.equal(result.errorCode, "local_unified_index_file_changed");
+  assert.equal(result.live, "old");
+});
+
+// The production shape: a long report read holds the live index while a
+// refresh ingests new history and publishes it.
+function sessionMeta(sessionId) {
+  return JSON.stringify({
+    timestamp: "2026-07-25T00:00:00.000Z",
+    type: "session_meta",
+    payload: { id: sessionId, session_id: sessionId, thread_source: "user", originator: "codex_cli_rs", cwd: "/Users/nobody/project" },
+  });
+}
+
+function turnContext(timestamp) {
+  return JSON.stringify({
+    timestamp,
+    type: "turn_context",
+    payload: { turn_id: "turn-1", cwd: "/Users/nobody/project", model: "gpt-5.6-sol", effort: "high", summary: "auto" },
+  });
+}
+
+function tokenCount(timestamp, total, last) {
+  return JSON.stringify({
+    timestamp,
+    type: "event_msg",
+    payload: { type: "token_count", info: { total_token_usage: total, last_token_usage: last } },
+  });
+}
+
+function usage(input) {
+  return {
+    input_tokens: input,
+    cached_input_tokens: 0,
+    cache_write_input_tokens: 0,
+    output_tokens: 0,
+    reasoning_output_tokens: 0,
+    total_tokens: input,
+  };
+}
+
+function usageEvents(database) {
+  return Number(database.prepare("SELECT COUNT(*) AS count FROM usage_event").get().count);
+}
+
+test("a refresh publishes new history while a report read holds the index open", async () => {
+  const root = await mkdtemp(join(tmpdir(), "unified-index-active-reader-"));
+  const sessions = join(root, "sessions", "2026", "07", "25");
+  const rollout = join(sessions, "rollout-2026-07-25T00-00-00-active-reader.jsonl");
+  const indexFile = join(root, "index.sqlite");
+  const options = {
+    codexHome: root,
+    indexFile,
+    secretFile: join(root, "salt"),
+    contractVersion: CONTRACT,
+  };
+  try {
+    await mkdir(sessions, { recursive: true });
+    await writeFile(rollout, `${[
+      sessionMeta("session-active-reader"),
+      turnContext("2026-07-25T00:00:00.000Z"),
+      tokenCount("2026-07-25T00:00:01.000Z", usage(100), usage(100)),
+    ].join("\n")}\n`);
+    await rebuildLocalUnifiedIndex(options);
+    const report = await openLocalUnifiedIndexRead(indexFile);
+    try {
+      assert.equal(usageEvents(report), 1);
+      for (const [index, total] of [[2, 250], [3, 400]]) {
+        await appendFile(rollout, `${tokenCount(`2026-07-25T00:00:0${index}.000Z`, usage(total), usage(150))}\n`);
+        const result = await withinSeconds(ingestLocalUnifiedIndexIncrement(options), 60);
+        assert.equal(result.status, "ingested");
+        assert.equal(result.totalUsageEvents, index);
+        const fresh = openLocalUnifiedIndex(indexFile, { readOnly: true });
+        try { assert.equal(usageEvents(fresh), index); } finally { fresh.close(); }
+      }
+      assert.equal(usageEvents(report), 1, "the long read finishes on the generation it opened");
+    } finally {
+      report.close();
+    }
+    // A later refresh reclaims what the report held; the live index is intact.
+    await removeObsoleteLocalUnifiedIndexSnapshots(indexFile, { nowMs: LATER });
+    const after = openLocalUnifiedIndex(indexFile, { readOnly: true });
+    try { assert.equal(usageEvents(after), 3); } finally { after.close(); }
+    const stray = (await readdir(root)).filter((name) => (
+      name.startsWith("index.sqlite") && name !== basename(resolveLocalUnifiedIndexFile(indexFile))
+        && name !== "index.sqlite.current"));
+    assert.deepEqual(stray, []);
+    // An external untracked SQLite handle is treated exactly like our own.
+    const external = new DatabaseSync(resolveLocalUnifiedIndexFile(indexFile), { readOnly: true });
+    try {
+      await appendFile(rollout, `${tokenCount("2026-07-25T00:00:04.000Z", usage(500), usage(100))}\n`);
+      const result = await withinSeconds(ingestLocalUnifiedIndexIncrement(options), 60);
+      assert.equal(result.totalUsageEvents, 4);
+    } finally {
+      external.close();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

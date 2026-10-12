@@ -51,9 +51,10 @@ import {
   LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
   LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION,
   LOCAL_UNIFIED_INDEX_USER_VERSION,
+  lstatPublishedLocalUnifiedIndex,
   readLocalUnifiedIndexCompatibility,
   readUnifiedIndexGenerationDescriptor,
-  trackLocalUnifiedIndexReadConnection,
+  resolveLocalUnifiedIndexFile,
 } from "../../src/local-unified-index.js";
 import {
   readLocalUnifiedWindowBreakdown,
@@ -308,13 +309,14 @@ function localUnifiedIndexHasSidecar(indexFile, inspect) {
   return false;
 }
 
+// Callers pass the physical file from resolveLocalUnifiedIndexFile.
 function openImmutableLocalUnifiedIndex(indexFile) {
   const immutableUrl = pathToFileURL(indexFile);
   immutableUrl.searchParams.set("immutable", "1");
-  return trackLocalUnifiedIndexReadConnection(indexFile, new DatabaseSync(immutableUrl.href, {
+  return new DatabaseSync(immutableUrl.href, {
     readOnly: true,
     timeout: 1_000,
-  }));
+  });
 }
 
 const COLD_REFRESH_V19_PREDECESSOR_PARSERS = Object.freeze([
@@ -492,8 +494,9 @@ export function localCompanionRefreshTimeoutForUnifiedIndex(
       throw new TypeError(`${name} is outside the refresh timeout bound`);
     }
   }
-  const resolvedIndexFile = resolve(indexFile);
+  let resolvedIndexFile;
   try {
+    resolvedIndexFile = resolveLocalUnifiedIndexFile(indexFile);
     inspect(resolvedIndexFile);
   } catch (error) {
     return error?.code === "ENOENT" ? freshTimeoutMs : existingTimeoutMs;
@@ -515,7 +518,7 @@ const LOCAL_UNIFIED_PROJECTION_PERIOD_MS = Object.freeze([
 ]);
 
 async function localUnifiedProjectionValidUntil({
-  indexFile,
+  indexFile: logicalIndexFile,
   generationFingerprint,
   nowMs,
   includeWorkUsage = false,
@@ -525,6 +528,8 @@ async function localUnifiedProjectionValidUntil({
   let before;
   let database;
   try {
+    // Every check below concerns the one publication current at the start.
+    const indexFile = resolveLocalUnifiedIndexFile(logicalIndexFile);
     before = await inspect(indexFile);
     if (!ownerOnlyRegularUnifiedIndex(before) || localUnifiedIndexHasSidecar(indexFile, lstatSync)) return nowMs;
     database = openDatabase(indexFile);
@@ -588,9 +593,10 @@ async function localUnifiedProjectionValidUntil({
   }
 }
 
-async function currentUnifiedProjectionGeneration({ indexFile }) {
+async function currentUnifiedProjectionGeneration({ indexFile: logicalIndexFile }) {
   let database;
   try {
+    const indexFile = resolveLocalUnifiedIndexFile(logicalIndexFile);
     const before = await lstat(indexFile);
     if (!ownerOnlyRegularUnifiedIndex(before) || localUnifiedIndexHasSidecar(indexFile, lstatSync)) return null;
     database = openImmutableLocalUnifiedIndex(indexFile);
@@ -4261,7 +4267,7 @@ function createPreparedLocalCompanionServer({
   };
   const unifiedIndexPresent = async () => {
     try {
-      const metadata = await lstat(statePaths.unifiedIndexFile);
+      const metadata = await lstatPublishedLocalUnifiedIndex(statePaths.unifiedIndexFile);
       return metadata.isFile() && !metadata.isSymbolicLink();
     } catch {
       return false;

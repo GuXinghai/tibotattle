@@ -279,6 +279,24 @@ creates a bound backup, and provides a non-writing `--dry-run`; follow the
 maintained recovery runbook rather than invoking the primitive as a recovery
 rehearsal.
 
+Publication never waits for readers. POSIX lets an open reader keep the inode
+it opened. Windows refuses to replace a file any SQLite connection holds, so
+when that rename is refused the fsynced stage is renamed to an immutable
+`<index>.snapshot-<time>-<random>` file and an owner-only
+`<index>.current` pointer is atomically replaced to name it. Readers resolve
+the pointer once per open and finish on the snapshot they opened; a reader
+that loses a race with cleanup re-resolves. Once a pointer exists, later
+publications are further snapshots. A malformed pointer, or one naming a
+missing snapshot, fails closed rather than falling back to the superseded
+file. Superseded snapshots, the superseded single file, and pointer
+temporaries of exited processes are deleted at the next publication or
+refresh once nothing has them open; Windows' own refusal to delete an open
+file is what protects a long read. An unreferenced snapshot younger than ten
+minutes is kept, because a concurrent publication may not have moved the
+pointer yet. A crash before the pointer moves leaves the previous publication
+live and an orphan for that cleanup. The recovery runbook applies to the
+single-file layout only.
+
 ## Reader and writer rules
 
 - Read-only inspection may recognize a migratable legacy family as partial

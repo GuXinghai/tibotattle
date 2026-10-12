@@ -53,6 +53,8 @@ import {
   readUnifiedIndexGenerationDescriptor,
   removeAbandonedLocalUnifiedIndexStages,
   removeIfPresent,
+  removeObsoleteLocalUnifiedIndexSnapshots,
+  resolveLocalUnifiedIndexFile,
   sessionLocal,
   snapshotLocal,
   sourceLocal,
@@ -301,8 +303,10 @@ export async function ingestLocalUnifiedIndexIncrement({
   validateLocalUnifiedIndexAttemptToken(attemptToken);
   const startedAt = performance.now();
   const resolvedIndexFile = resolve(indexFile);
+  // Every check and the stage copy below read the publication current now.
+  const publishedFile = resolveLocalUnifiedIndexFile(resolvedIndexFile);
   const existingIndexMetadata = await assertSafeLocalUnifiedIndexTarget(
-    resolvedIndexFile,
+    publishedFile,
     {
       allowMissing: true,
     },
@@ -320,7 +324,7 @@ export async function ingestLocalUnifiedIndexIncrement({
   if (existingIndexMetadata !== null) {
     let raw;
     try {
-      raw = new DatabaseSync(resolvedIndexFile, {
+      raw = new DatabaseSync(publishedFile, {
         readOnly: true,
         timeout: 5_000,
       });
@@ -348,6 +352,8 @@ export async function ingestLocalUnifiedIndexIncrement({
   await removeAbandonedLocalUnifiedIndexStages(resolvedIndexFile, {
     activeAttemptToken: attemptToken,
   });
+  // Snapshots superseded while a reader still had them open become free later.
+  await removeObsoleteLocalUnifiedIndexSnapshots(resolvedIndexFile).catch(() => {});
   const deviceSalt = await readOrCreateDeviceSalt(
     secretFile ?? defaultLocalUnifiedIndexSecretPath(resolvedIndexFile),
   );
@@ -653,21 +659,22 @@ export async function ingestLocalUnifiedIndexIncrement({
   let writer = null;
   let generation = null;
   try {
+    const liveFile = resolveLocalUnifiedIndexFile(resolvedIndexFile);
     const liveExists = await assertSafeLocalUnifiedIndexTarget(
-      resolvedIndexFile,
+      liveFile,
       { allowMissing: true },
     ) !== null;
     if (liveExists) {
       try {
         await copyFile(
-          resolvedIndexFile,
+          liveFile,
           stageFile,
           constants.COPYFILE_FICLONE ?? 0,
         );
       } catch {
         // APFS clone is the cheap path, but not every filesystem supports it.
         // A regular copy preserves the same atomic publication boundary.
-        await copyFile(resolvedIndexFile, stageFile);
+        await copyFile(liveFile, stageFile);
       }
     }
     database = openLocalUnifiedIndex(stageFile, {

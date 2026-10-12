@@ -1,11 +1,10 @@
-import { lstat } from "node:fs/promises";
-
 import { isValidQuotaWindowDuration } from "@app-usagemonitor/quota-analysis";
 
 import {
   LOCAL_UNIFIED_INDEX_PARSER_VERSION,
   LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARSER_VERSION,
   LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
+  lstatPublishedLocalUnifiedIndex,
   openLocalUnifiedIndexRead,
   readUnifiedIndexGenerationDescriptor,
   readUnifiedIndexToolFactFingerprint,
@@ -901,7 +900,7 @@ async function revalidatePublishedSnapshot({
 }) {
   let finalMetadata;
   try {
-    finalMetadata = await lstat(indexFile);
+    finalMetadata = await lstatPublishedLocalUnifiedIndex(indexFile);
   } catch {
     throw fixedError("local_unified_index_file_changed");
   }
@@ -926,7 +925,7 @@ async function revalidatePublishedSnapshot({
   // entire callback/read boundary.
   let settledMetadata;
   try {
-    settledMetadata = await lstat(indexFile);
+    settledMetadata = await lstatPublishedLocalUnifiedIndex(indexFile);
   } catch {
     throw fixedError("local_unified_index_file_changed");
   }
@@ -1540,7 +1539,7 @@ export function createLocalUnifiedAccountingSource({
     throwIfAborted(signal);
     let metadata;
     try {
-      metadata = await lstat(indexFile);
+      metadata = await lstatPublishedLocalUnifiedIndex(indexFile);
     } catch (error) {
       if (error?.code === "ENOENT") {
         throw fixedError("local_unified_index_missing");
@@ -1559,7 +1558,7 @@ export function createLocalUnifiedAccountingSource({
       });
       let reopenedMetadata;
       try {
-        reopenedMetadata = await lstat(indexFile);
+        reopenedMetadata = await lstatPublishedLocalUnifiedIndex(indexFile);
       } catch {
         throw fixedError("local_unified_index_file_changed");
       }

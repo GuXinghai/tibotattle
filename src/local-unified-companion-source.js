@@ -1,5 +1,4 @@
 import { prepareWorkUsageCollector } from "./local-work-usage-source.js";
-import { lstat } from "node:fs/promises";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
 import {
   addTimelineUsage,
@@ -18,6 +17,7 @@ import {
 } from "./local-companion-usage-model.js";
 import {
   createUnifiedIndexToolFactFingerprintAccumulator,
+  lstatPublishedLocalUnifiedIndex,
   openLocalUnifiedIndexRead,
   readUnifiedIndexGenerationDescriptor,
 } from "./local-unified-index.js";
@@ -130,8 +130,8 @@ async function revalidatePublishedPath(indexFile, metadata) {
   let first;
   let second;
   try {
-    first = await lstat(indexFile);
-    second = await lstat(indexFile);
+    first = await lstatPublishedLocalUnifiedIndex(indexFile);
+    second = await lstatPublishedLocalUnifiedIndex(indexFile);
   } catch {
     throw fixedError("local_unified_index_file_changed");
   }
@@ -458,7 +458,7 @@ export async function readLocalUnifiedCompanionProjection({
     : [];
   let metadata;
   try {
-    metadata = await lstat(indexFile);
+    metadata = await lstatPublishedLocalUnifiedIndex(indexFile);
   } catch (error) {
     if (error?.code === "ENOENT") return complete(unavailable("missing"));
     return complete(unavailable("unavailable", "local_unified_index_unavailable"));

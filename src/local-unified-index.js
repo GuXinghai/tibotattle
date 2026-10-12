@@ -4,7 +4,13 @@ import {
   createSecretKey,
   randomBytes,
 } from "node:crypto";
-import { closeSync, constants, lstatSync, openSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  lstatSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import {
   chmod,
   copyFile,
@@ -14,6 +20,7 @@ import {
   mkdir,
   open,
   opendir,
+  readdir,
   rename,
   unlink,
 } from "node:fs/promises";
@@ -22,10 +29,6 @@ import { tmpdir } from "node:os";
 import { DatabaseSync } from "node:sqlite";
 
 import { syncDirectory } from "./platform/index.js";
-import {
-  LOCAL_UNIFIED_INDEX_PUBLICATION_TIMEOUT_MS,
-  localUnifiedIndexPublication,
-} from "./local-unified-index-publication.js";
 
 const openedReadMetadata = new WeakMap();
 
@@ -773,6 +776,93 @@ export function defaultLocalUnifiedIndexRecoveryLockPath(indexFile) {
   return `${resolve(indexFile)}.recovery.lock`;
 }
 
+// Published snapshots.
+//
+// Publication replaces the live file by an atomic rename. POSIX lets readers
+// keep the inode they opened, but Windows refuses to replace or delete a file
+// while any SQLite connection holds it, in this process or any other. A long
+// report read would otherwise decide whether new history can be published.
+//
+// When Windows refuses, the finished stage becomes an immutable snapshot beside
+// the index and a small pointer file names it. Readers resolve the pointer when
+// they open, so a reader keeps the snapshot it opened while later readers see
+// the new one. Once a pointer exists every later publication is a new snapshot;
+// returning to the plain file would need a second crash-ordered swap for no
+// benefit. Superseded snapshots are deleted once nothing has them open.
+const SNAPSHOT_POINTER_FORMAT = "tibotattle-local-unified-index-pointer-v1";
+const SNAPSHOT_POINTER_MAX_BYTES = 1024;
+// A snapshot another publication has just created may not be named by the
+// pointer yet. Only superseded snapshots older than this are reclaimed.
+export const LOCAL_UNIFIED_INDEX_SNAPSHOT_ORPHAN_MIN_AGE_MS = 10 * 60_000;
+const SHARING_CONFLICT_CODES = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+export function localUnifiedIndexPointerPath(indexFile) {
+  return `${resolve(indexFile)}.current`;
+}
+
+function snapshotNamePattern(indexFile) {
+  const escaped = basename(resolve(indexFile))
+    .replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(`^${escaped}\\.snapshot-([0-9a-z]{1,12})-[0-9a-f]{32}$`, "u");
+}
+
+function newSnapshotName(indexFile, nowMs = Date.now()) {
+  return `${basename(resolve(indexFile))}.snapshot-${nowMs.toString(36)}-${
+    randomBytes(16).toString("hex")}`;
+}
+
+function readSnapshotPointer(indexFile) {
+  const pointer = localUnifiedIndexPointerPath(indexFile);
+  let text;
+  try {
+    const metadata = lstatSync(pointer);
+    if (!ownerOnlyRegularFile(metadata) || metadata.size > SNAPSHOT_POINTER_MAX_BYTES) {
+      throw fixedError("local_unified_index_file_invalid");
+    }
+    text = readFileSync(pointer, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    if (error?.code?.startsWith("local_unified_index_")) throw error;
+    throw fixedError("local_unified_index_unavailable");
+  }
+  let value;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw fixedError("local_unified_index_file_invalid");
+  }
+  if (value === null || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).sort().join(",") !== "format,snapshot"
+      || value.format !== SNAPSHOT_POINTER_FORMAT
+      || typeof value.snapshot !== "string"
+      || !snapshotNamePattern(indexFile).test(value.snapshot)) {
+    throw fixedError("local_unified_index_file_invalid");
+  }
+  return value.snapshot;
+}
+
+/**
+ * The physical file currently published for a logical index path: the
+ * snapshot its pointer names, or the path itself when there is no pointer.
+ * Resolve once per read and use the result for every check on that read.
+ */
+export function resolveLocalUnifiedIndexFile(indexFile) {
+  const resolvedIndexFile = resolve(indexFile);
+  const snapshot = readSnapshotPointer(resolvedIndexFile);
+  return snapshot === null
+    ? resolvedIndexFile
+    : join(dirname(resolvedIndexFile), snapshot);
+}
+
+/** lstat of the currently published file; ENOENT when nothing is published. */
+export async function lstatPublishedLocalUnifiedIndex(indexFile) {
+  return lstat(resolveLocalUnifiedIndexFile(indexFile));
+}
+
+export function lstatPublishedLocalUnifiedIndexSync(indexFile) {
+  return lstatSync(resolveLocalUnifiedIndexFile(indexFile));
+}
+
 function ownerOnlyRegularFile(metadata) {
   return metadata.isFile()
     && !metadata.isSymbolicLink()
@@ -1376,11 +1466,11 @@ export async function validateRetainedNativeState({ stateRoot } = {}) {
  * without opening a writable connection or migrating the preserved backup.
  */
 export function validateLocalUnifiedIndexForMigration(indexFile) {
-  const path = resolve(indexFile);
+  const path = resolveLocalUnifiedIndexFile(indexFile);
   let chain = captureSafeLocalUnifiedIndexDirectoryChain(path);
   const before = safeLocalUnifiedIndexTargetSync(path, { allowMissing: true });
   if (before === null) return true;
-  assertLocalUnifiedIndexRecoveryUnlocked(path);
+  assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
   let database;
   try {
     database = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
@@ -1620,15 +1710,34 @@ function migrateDatabase(database, { deferSecondaryIndexes = false } = {}) {
   }
 }
 
-export function openLocalUnifiedIndex(indexFile, {
+export function openLocalUnifiedIndex(indexFile, options = {}) {
+  if (options?.readOnly !== true) {
+    // Writers only ever open private stages. A published snapshot is immutable.
+    return openLocalUnifiedIndexFile(indexFile, indexFile, options);
+  }
+  // A publication may supersede, and cleanup may then delete, the snapshot a
+  // reader resolved before that reader opens it. Re-resolve when the pointer
+  // moved; a failure against an unchanged pointer is the real answer.
+  for (let attempt = 0; ; attempt += 1) {
+    const physical = resolveLocalUnifiedIndexFile(indexFile);
+    try {
+      return openLocalUnifiedIndexFile(physical, indexFile, options);
+    } catch (error) {
+      if (attempt >= 2 || resolveLocalUnifiedIndexFile(indexFile) === physical) {
+        throw error;
+      }
+    }
+  }
+}
+
+function openLocalUnifiedIndexFile(physicalFile, indexFile, {
   readOnly = false,
   create = false,
   staging = false,
   deferSecondaryIndexes = false,
   allowRecoveryLock = false,
 } = {}) {
-  if (readOnly) localUnifiedIndexPublication.assertReadable(indexFile);
-  const resolvedIndexFile = resolve(indexFile);
+  const resolvedIndexFile = resolve(physicalFile);
   let directoryChain = captureSafeLocalUnifiedIndexDirectoryChain(
     resolvedIndexFile,
   );
@@ -1649,7 +1758,7 @@ export function openLocalUnifiedIndex(indexFile, {
   let targetMetadata = null;
   try {
     if (!allowRecoveryLock) {
-      assertLocalUnifiedIndexRecoveryUnlocked(resolvedIndexFile);
+      assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
     }
     // Refuse symlinks, hard links, non-owner files and shared modes before any
     // SQLite handle is opened. Missing writable/create targets are atomically
@@ -1734,7 +1843,7 @@ export function openLocalUnifiedIndex(indexFile, {
       throw fixedError("local_unified_index_file_invalid");
     }
     if (!allowRecoveryLock) {
-      assertLocalUnifiedIndexRecoveryUnlocked(resolvedIndexFile);
+      assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
     }
     configureDatabase(database, { readOnly, staging });
     if (create && !existedBeforeOpen) {
@@ -1743,9 +1852,7 @@ export function openLocalUnifiedIndex(indexFile, {
     if (!readOnly) migrateDatabase(database, { deferSecondaryIndexes });
     validateDatabase(database, { readOnly, deferSecondaryIndexes });
     if (readOnly) openedReadMetadata.set(database, openedMetadata);
-    return readOnly
-      ? localUnifiedIndexPublication.trackReader(resolvedIndexFile, database)
-      : database;
+    return database;
   } catch (error) {
     if (preflight?.isOpen) preflight.close();
     if (database?.isOpen) database.close();
@@ -1754,22 +1861,20 @@ export function openLocalUnifiedIndex(indexFile, {
   }
 }
 
+/**
+ * Open the published index read-only. `onOpened` receives the validated
+ * identity of the physical file actually opened; compare later checks with
+ * `lstatPublishedLocalUnifiedIndex`, never with the logical path.
+ */
 export async function openLocalUnifiedIndexRead(indexFile, { signal = null, onOpened = null } = {}) {
   if (onOpened !== null && typeof onOpened !== "function") {
     throw new TypeError("onOpened must be a function or null");
   }
-  return localUnifiedIndexPublication.openReader(indexFile,
-    () => {
-      const database = openLocalUnifiedIndex(indexFile, { readOnly: true });
-      try { onOpened?.(openedReadMetadata.get(database)); }
-      catch (error) { database.close(); throw error; }
-      return database;
-    }, { signal });
-}
-
-// Immutable URL readers also hold Windows handles and share the same barrier.
-export function trackLocalUnifiedIndexReadConnection(indexFile, database) {
-  return localUnifiedIndexPublication.trackReader(indexFile, database);
+  if (signal?.aborted) throw fixedError("local_unified_index_aborted");
+  const database = openLocalUnifiedIndex(indexFile, { readOnly: true });
+  try { onOpened?.(openedReadMetadata.get(database)); }
+  catch (error) { database.close(); throw error; }
+  return database;
 }
 
 /**
@@ -3224,22 +3329,38 @@ export function createUnifiedIndexWriter(database, {
   };
 }
 
+// Publications in flight in this process. Cleanup never runs beside one, so it
+// cannot reclaim a snapshot a concurrent publication has not yet pointed at.
+let publicationsInFlight = 0;
+
+function durabilityUncertain() {
+  // The new publication is already visible. Report that exact bounded state so
+  // the caller retains its last generation-bound cache and retries inspection;
+  // never pretend the old file is still live or attempt a destructive undo.
+  const error = fixedError("local_unified_index_publication_durability_uncertain");
+  error.published = true;
+  return error;
+}
+
 /**
- * Publish a staged index over the live one by atomic rename. The staged file is
- * fsynced first, so a crash mid-publish leaves either the old index or the new
- * one, never a torn mixture.
+ * Publish a staged index. The staged file is fsynced first, so a crash
+ * mid-publish leaves either the old publication or the new one, never a torn
+ * mixture. Publication never waits for readers: when Windows refuses to
+ * replace a live file that is open, the stage is published as a snapshot
+ * instead (see "Published snapshots" above).
  */
 export async function publishStagedUnifiedIndex(
   stageFile,
   indexFile,
-  { allowRecoveryLock = false, signal = null, publicationTimeoutMs } = {},
+  { allowRecoveryLock = false, signal = null } = {},
 ) {
   if (signal !== null
       && (typeof signal !== "object" || typeof signal.aborted !== "boolean")) {
     throw new TypeError("signal must be an AbortSignal or null");
   }
   if (signal?.aborted) throw fixedError("local_unified_index_aborted");
-  return localUnifiedIndexPublication.publish(indexFile, async (deadline) => {
+  publicationsInFlight += 1;
+  try {
     if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
     await chmod(stageFile, 0o600);
     await syncFile(stageFile);
@@ -3249,78 +3370,168 @@ export async function publishStagedUnifiedIndex(
     await new Promise((resolvePromise) => setImmediate(resolvePromise));
     if (signal?.aborted) throw fixedError("local_unified_index_aborted");
     if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
-    const expectedTarget = await assertSafeLocalUnifiedIndexTarget(indexFile, { allowMissing: true });
+    const singleFile = readSnapshotPointer(indexFile) === null;
+    const expectedTarget = singleFile
+      ? await assertSafeLocalUnifiedIndexTarget(indexFile, { allowMissing: true })
+      : null;
     const expectedStage = await assertSafeLocalUnifiedIndexTarget(stageFile, { allowMissing: false });
-    // Sharing retries revalidate both identities and recovery exclusion. Never
-    // delete the live destination or admit a replacement from a stale stage.
-    // The retry budget is the publication deadline itself. A virus scanner or
-    // search indexer can hold a freshly written index of several hundred
-    // megabytes open for far longer than a few seconds; abandoning the swap
-    // then discards a complete rebuild and forces the whole pass to repeat.
-    const sharingDeadline = deadline
-      ?? performance.now() + LOCAL_UNIFIED_INDEX_PUBLICATION_TIMEOUT_MS;
-    while (true) {
+    // Never delete the live destination or admit a replacement from a stale stage.
+    const assertUnchanged = async () => {
       if (signal?.aborted) throw fixedError("local_unified_index_aborted");
-      if (deadline !== undefined && performance.now() >= deadline) {
-        throw fixedError("local_unified_index_publication_timed_out");
-      }
       if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
-      const target = await assertSafeLocalUnifiedIndexTarget(indexFile, { allowMissing: true });
       const stage = await assertSafeLocalUnifiedIndexTarget(stageFile, { allowMissing: false });
-      if ((expectedTarget === null ? target !== null
-        : target === null || !sameLocalUnifiedIndexTarget(expectedTarget, target))
-        || !sameLocalUnifiedIndexTarget(expectedStage, stage)) {
+      if (!sameLocalUnifiedIndexTarget(expectedStage, stage)) {
         throw fixedError("local_unified_index_file_changed");
       }
       if (signal?.aborted) throw fixedError("local_unified_index_aborted");
       if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
-      if (deadline !== undefined && performance.now() >= deadline) {
-        throw fixedError("local_unified_index_publication_timed_out");
+    };
+    if (singleFile) {
+      const target = await assertSafeLocalUnifiedIndexTarget(indexFile, { allowMissing: true });
+      if (expectedTarget === null ? target !== null
+        : target === null || !sameLocalUnifiedIndexTarget(expectedTarget, target)) {
+        throw fixedError("local_unified_index_file_changed");
       }
+      await assertUnchanged();
+      let replaced = false;
       try {
         await rename(stageFile, indexFile);
-        break;
+        replaced = true;
       } catch (error) {
         if (process.platform !== "win32") throw error;
-        if (!["EPERM", "EACCES", "EBUSY"].includes(error?.code)) {
+        if (!SHARING_CONFLICT_CODES.has(error?.code)) {
           throw fixedError("local_unified_index_publication_failed");
         }
-        if (performance.now() >= sharingDeadline) {
-          throw fixedError("local_unified_index_publication_timed_out");
+        // The live file is open somewhere. Publish beside it instead.
+      }
+      if (replaced) {
+        try {
+          await syncDirectory(dirname(resolve(indexFile)));
+          await syncFile(indexFile);
+        } catch {
+          throw durabilityUncertain();
         }
-        await waitForPublicationRetry(Math.min(100, sharingDeadline - performance.now()), signal);
+        return;
       }
     }
-    try {
-      await syncDirectory(dirname(resolve(indexFile)));
-      await syncFile(indexFile);
-    } catch {
-      // The rename has already happened. Report that exact bounded state so the
-      // caller retains its last generation-bound cache and retries inspection;
-      // never pretend the old file is still live or attempt a destructive undo.
-      const error = fixedError(
-        "local_unified_index_publication_durability_uncertain",
-      );
-      error.published = true;
-      throw error;
-    }
-  }, { signal, ...(publicationTimeoutMs === undefined ? {} : { timeoutMs: publicationTimeoutMs }) });
+    await assertUnchanged();
+    await publishStageAsSnapshot(stageFile, indexFile, { allowRecoveryLock, signal });
+  } finally {
+    publicationsInFlight -= 1;
+  }
+  // Best effort: a snapshot still open elsewhere is retried after a later one.
+  try {
+    await removeObsoleteLocalUnifiedIndexSnapshots(indexFile);
+  } catch {
+    // Reclaiming space never decides whether publication succeeded.
+  }
 }
 
-function waitForPublicationRetry(ms, signal) {
-  return new Promise((resolvePromise, reject) => {
-    const aborted = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", aborted);
-      reject(fixedError("local_unified_index_aborted"));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", aborted);
-      resolvePromise();
-    }, ms);
-    signal?.addEventListener("abort", aborted, { once: true });
-    if (signal?.aborted) aborted();
-  });
+async function publishStageAsSnapshot(stageFile, indexFile, { allowRecoveryLock, signal }) {
+  const directory = dirname(resolve(indexFile));
+  const name = newSnapshotName(indexFile);
+  const snapshot = join(directory, name);
+  if (await assertSafeLocalUnifiedIndexTarget(snapshot, { allowMissing: true }) !== null) {
+    throw fixedError("local_unified_index_publication_failed");
+  }
+  try {
+    await rename(stageFile, snapshot);
+  } catch {
+    throw fixedError("local_unified_index_publication_failed");
+  }
+  // From here the stage is gone. Until the pointer moves, the snapshot is an
+  // unreferenced orphan that cleanup reclaims; the old publication stays live.
+  const pointer = localUnifiedIndexPointerPath(indexFile);
+  const temporary = `${pointer}.tmp-${process.pid}-${randomBytes(8).toString("hex")}`;
+  try {
+    const handle = await open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(JSON.stringify({
+        format: SNAPSHOT_POINTER_FORMAT,
+        snapshot: name,
+      }));
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await syncFile(snapshot);
+    if (signal?.aborted) throw fixedError("local_unified_index_aborted");
+    if (!allowRecoveryLock) assertLocalUnifiedIndexRecoveryUnlocked(indexFile);
+    // Readers open the pointer briefly and share delete access, so replacing it
+    // does not wait for them the way replacing an open SQLite file does.
+    await rename(temporary, pointer);
+  } catch (error) {
+    await removeIfPresent(temporary).catch(() => {});
+    if (error?.code?.startsWith("local_unified_index_")) throw error;
+    throw fixedError("local_unified_index_publication_failed");
+  }
+  try {
+    await syncDirectory(directory);
+  } catch {
+    throw durabilityUncertain();
+  }
+}
+
+/**
+ * Delete superseded publications of `indexFile` that nothing has open: older
+ * snapshots, the single file a pointer replaced, and pointer temporaries of
+ * exited processes. Windows refuses to delete an open file, so a snapshot a
+ * reader still uses is retained and retried after a later publication; that
+ * refusal, not a timeout, is what keeps a long read safe.
+ */
+export async function removeObsoleteLocalUnifiedIndexSnapshots(
+  indexFile,
+  {
+    nowMs = Date.now(),
+    minimumAgeMs = LOCAL_UNIFIED_INDEX_SNAPSHOT_ORPHAN_MIN_AGE_MS,
+    isProcessAlive = processAppearsAlive,
+  } = {},
+) {
+  const resolvedIndexFile = resolve(indexFile);
+  const current = readSnapshotPointer(resolvedIndexFile);
+  if (current === null || publicationsInFlight > 0) {
+    return Object.freeze({ removed: 0, retained: 0 });
+  }
+  const directory = dirname(resolvedIndexFile);
+  const base = basename(resolvedIndexFile);
+  const directoryChain = assertSafeLocalUnifiedIndexParentPath(resolvedIndexFile);
+  const snapshotPattern = snapshotNamePattern(resolvedIndexFile);
+  const temporaryPrefix = `${base}.current.tmp-`;
+  let removed = 0;
+  let retained = 0;
+  for (const name of await readdir(directory)) {
+    if (name === current) continue;
+    let reclaimable = false;
+    const snapshot = snapshotPattern.exec(name);
+    if (name === base) {
+      reclaimable = true;
+    } else if (snapshot !== null) {
+      const createdAtMs = Number.parseInt(snapshot[1], 36);
+      reclaimable = Number.isSafeInteger(createdAtMs)
+        && nowMs - createdAtMs >= minimumAgeMs;
+    } else if (name.startsWith(temporaryPrefix)) {
+      const owner = /^([1-9][0-9]*)-[0-9a-f]{16}$/u.exec(
+        name.slice(temporaryPrefix.length),
+      );
+      reclaimable = owner !== null && !isProcessAlive(Number(owner[1]));
+    }
+    if (!reclaimable) continue;
+    const candidate = join(directory, name);
+    try {
+      recheckLocalUnifiedIndexDirectoryChain(resolvedIndexFile, directoryChain);
+      if (!ownerOnlyRegularFile(await lstat(candidate))) {
+        retained += 1;
+        continue;
+      }
+      // The pointer only moves to brand-new snapshots, so a name superseded
+      // at the start of this pass cannot become current again.
+      await unlink(candidate);
+      removed += 1;
+    } catch (error) {
+      if (error?.code !== "ENOENT") retained += 1;
+    }
+  }
+  return Object.freeze({ removed, retained });
 }
 
 export async function removeIfPresent(path) {
@@ -3689,7 +3900,7 @@ export async function inspectLocalUnifiedIndex({
 } = {}) {
   let metadata;
   try {
-    metadata = await lstat(indexFile);
+    metadata = await lstatPublishedLocalUnifiedIndex(indexFile);
   } catch (error) {
     if (error?.code === "ENOENT") return EMPTY_INSPECTION;
     throw fixedError("local_unified_index_unavailable");

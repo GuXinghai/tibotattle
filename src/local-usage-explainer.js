@@ -9,6 +9,7 @@ import {
 import {
   defaultLocalUnifiedIndexSecretPath,
   localDigest,
+  localUnifiedIndexPointerPath,
   openLocalUnifiedIndex,
   readExistingDeviceSalt,
   readUnifiedIndexGenerationDescriptor,
@@ -66,7 +67,11 @@ export function defaultLocalUsageExplainerPaths({
   }
   const selected = environment.USAGE_MONITOR_STATE_ROOT === undefined
     ? candidates.find(([, root]) => (
+      // A snapshot publication may have replaced the plain file by a pointer.
       fileExists(localCompanionStatePaths(root).unifiedIndexFile)
+        || fileExists(localUnifiedIndexPointerPath(
+          localCompanionStatePaths(root).unifiedIndexFile,
+        ))
     )) ?? candidates[0]
     : ["environment_override", environment.USAGE_MONITOR_STATE_ROOT];
   const [sourceKind, stateRoot] = selected;
