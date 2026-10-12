@@ -901,6 +901,38 @@ test("workspace observations preserve sparse updates and invalidate explicit mal
   }
 });
 
+test("skipping undecoded message lines never changes which workspace observations are found", async () => {
+  const root = await mkdtemp(join(tmpdir(), "work-context-prefilter-"));
+  try {
+    const big = "x".repeat(64 * 1024);
+    const lines = [
+      JSON.stringify(sessionMeta("/synthetic/initial")),
+      // Skipped without decoding: a large message with no metadata marker.
+      JSON.stringify({ type: "response_item", payload: { type: "message", content: big } }),
+      // Mentions a marker in its content, so it is decoded and still ignored.
+      JSON.stringify({ type: "response_item", payload: { type: "message", content: `turn_context ${big}` } }),
+      // A JSON escape can spell a kind; this one must be decoded and observed.
+      '{"type":"\\u0074urn_context","payload":{"cwd":"/synthetic/escaped"}}',
+      // Duplicate discriminators: JSON keeps the last, which is a turn context.
+      '{"type":"response_item","payload":{"cwd":"/synthetic/duplicate"},"type":"turn_context"}',
+      JSON.stringify({ type: "compacted", payload: { message: big } }),
+      // Malformed lines with an unknown header still reset to an unknown directory.
+      '{"payload": {"cwd": "/synthetic/never"}, broken',
+      JSON.stringify({ type: "turn_context", payload: { cwd: "/synthetic/last" } }),
+    ];
+    const bytes = Buffer.from(`${lines.join("\n")}\n`);
+    const path = join(root, "synthetic.jsonl");
+    await writeFile(path, bytes);
+    const observations = [];
+    await extractRolloutWorkContexts(path, { end: bytes.length, onContext: row => observations.push(row) });
+    assert.deepEqual(observations.map(row => row.cwd), [
+      "/synthetic/initial", "/synthetic/escaped", "/synthetic/duplicate", null, "/synthetic/last",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("initial session and applied settings directories attribute usage without a turn context", async () => {
   const fixture = await makeFixture({ events: [
     { timestamp: "2026-08-24T00:00:01.000Z", total: 120, last: 120, context: "none" },

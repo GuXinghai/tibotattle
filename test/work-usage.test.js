@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { addUsdStrings } from "@app-usagemonitor/accounting";
+
 import {
+  ExactUsdSum,
   WORK_USAGE_SCHEMA,
   createWorkUsageAccumulator,
   projectRecordedTokenComponents,
@@ -262,6 +265,58 @@ test("accumulator sums exact decimal costs and rejects new cells beyond capacity
     () => accumulator.add(event({ thread: "thread-b" })),
     (error) => error.code === "work_usage_capacity_exceeded",
   );
+});
+
+test("exact running sums render the same canonical string as a per-fact ledger fold", () => {
+  let seed = 0x5eed;
+  const random = () => (seed = (seed * 1_103_515_245 + 12_345) % 2 ** 31) / 2 ** 31;
+  const amounts = ["0", "0.000", "1.50", "007.10", "0.000000001", "123456789.987654321"];
+  for (let index = 0; index < 400; index += 1) {
+    const whole = Math.floor(random() * 1_000);
+    const scale = Math.floor(random() * 13);
+    const fraction = String(Math.floor(random() * 10 ** Math.min(scale, 9))).padStart(scale, "0");
+    amounts.push(scale === 0 ? String(whole) : `${whole}.${fraction}`);
+  }
+  for (const count of [1, 2, 3, 50, amounts.length]) {
+    const selected = amounts.slice(0, count);
+    const sum = new ExactUsdSum();
+    for (const amount of selected) sum.add(amount);
+    assert.equal(sum.toString(), selected.reduce((total, amount) => addUsdStrings(total, amount), "0"));
+  }
+  assert.throws(() => new ExactUsdSum().add("-1"), TypeError);
+  assert.throws(() => new ExactUsdSum().add("1e3"), TypeError);
+});
+
+test("accumulated cells keep every coverage count beside the exact cost", () => {
+  const zero = {
+    input_uncached_tokens: 0,
+    input_cache_read_tokens: 0,
+    input_cache_write_tokens: 0,
+    output_text_tokens: 0,
+    output_reasoning_tokens: 0,
+  };
+  const facts = [
+    event({ tokens: { ...zero, input_uncached_tokens: 100, output_text_tokens: 10 },
+      price: { amount: "0.10", status: "fully_priced" } }),
+    event({ at: 3_000, tokens: { output_text_tokens: 5 },
+      price: { amount: "0.0000001", status: "partially_priced" } }),
+    event({ at: 2_000, tokens: zero, partial: true, price: {} }),
+    event({ thread: "thread-b", price: {} }),
+    { ...event({ thread: "thread-b", at: 4_000, tokens: zero, price: {} }), cacheWriteAssumedZero: true },
+  ];
+  const accumulator = createWorkUsageAccumulator();
+  for (const fact of facts) accumulator.add(fact);
+  const cells = accumulator.finish();
+  assert.deepEqual(cells.map((cell) => [cell.events, cell.tokens, cell.costUsdExact,
+    cell.unpricedEvents, cell.partialPriceEvents, cell.incompleteEvents,
+    cell.unknownEvents, cell.assumedEvents, cell.lastAt]), [
+    [3, 115, "0.1000001", 1, 1, 2, 0, 0, 3_000],
+    // An unknown fact and a known zero: the zero needs no price, the unknown stays unpriced.
+    [2, 0, "0", 1, 0, 1, 1, 1, 4_000],
+  ]);
+  assert.equal(cells[0].components.input_uncached_tokens, 100);
+  assert.equal(cells[0].components.output_text_tokens, 15);
+  assert.equal(cells[0].components.output_reasoning_tokens, 0);
 });
 
 test("service pagination reads one immutable snapshot while later builds can change", async () => {

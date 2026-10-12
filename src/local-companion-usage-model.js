@@ -1,6 +1,5 @@
-import { projectRecordedTokenComponents } from "./reporting/index.js";
+import { ExactUsdSum, projectRecordedTokenComponents } from "./reporting/index.js";
 import {
-  addUsdStrings,
   emptySpeedWeightingCrossing,
   FAST_MODE_MODEL_FAMILY_KEYS,
   speedModeModelFamilyKey,
@@ -27,6 +26,10 @@ import {
 // usage event is what keeps the two sources comparable figure-for-figure —
 // any parity diff between them is then a difference in evidence, never a
 // difference in arithmetic.
+
+// Exact USD totals of a period or price-card row while events are added. They
+// become the period's string fields in finalizeUsagePeriod, the only reader.
+const pendingExactUsd = new WeakMap();
 
 export const COMPONENT_KEYS = Object.freeze([
   "input_uncached_tokens",
@@ -501,25 +504,27 @@ export function addUsageToPeriod(period, projection) {
   );
   period.apiPriceEquivalentUsd += projection.apiPriceEquivalentUsd;
   if (projection.apiPriceEquivalentUsdExact !== null) {
-    period.apiPriceEquivalentUsdExact = period.apiPriceEquivalentUsdExact === null
-      ? projection.apiPriceEquivalentUsdExact
-      : addUsdStrings(
-        period.apiPriceEquivalentUsdExact,
-        projection.apiPriceEquivalentUsdExact,
-      );
+    let exact = pendingExactUsd.get(period);
+    if (!exact) {
+      // A lone addend is reported verbatim, as the string fold always did.
+      exact = { first: projection.apiPriceEquivalentUsdExact, count: 0, sum: new ExactUsdSum() };
+      pendingExactUsd.set(period, exact);
+    }
+    exact.count += 1;
+    exact.sum.add(projection.apiPriceEquivalentUsdExact);
   }
   for (const id of projection.priceCardIds) {
     if (!period.priceCardIds.includes(id)) period.priceCardIds.push(id);
   }
   for (const item of projection.priceCardBreakdown) {
-    const row = period.priceCardBreakdown[item.priceCardId] ?? {
-      priceCardId: item.priceCardId,
-      events: 0,
-      costUsd: "0",
-    };
+    let row = period.priceCardBreakdown[item.priceCardId];
+    if (!row) {
+      row = { priceCardId: item.priceCardId, events: 0, costUsd: "0" };
+      pendingExactUsd.set(row, new ExactUsdSum());
+      period.priceCardBreakdown[item.priceCardId] = row;
+    }
     row.events += item.events;
-    row.costUsd = addUsdStrings(row.costUsd, item.costUsd);
-    period.priceCardBreakdown[item.priceCardId] = row;
+    pendingExactUsd.get(row).add(item.costUsd);
   }
   addDimension(period.bySpeed, projection.speed, projection);
   addSpeedWeighting(period.speedWeighting, projection);
@@ -562,6 +567,14 @@ function roundComponentCosts(componentCosts) {
 }
 
 export function finalizeUsagePeriod(period) {
+  const exact = pendingExactUsd.get(period);
+  if (exact) {
+    period.apiPriceEquivalentUsdExact = exact.count === 1 ? exact.first : exact.sum.toString();
+  }
+  for (const row of Object.values(period.priceCardBreakdown)) {
+    const sum = pendingExactUsd.get(row);
+    if (sum) row.costUsd = sum.toString();
+  }
   const priced = period.pricingCoverage.fullyPricedEvents + period.pricingCoverage.partiallyPricedEvents;
   const finalized = {
     ...period,

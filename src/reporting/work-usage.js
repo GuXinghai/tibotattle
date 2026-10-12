@@ -128,9 +128,48 @@ function dto(row, denominator) {
   };
 }
 
+const DECIMAL = /^\d+(?:\.\d+)?$/u;
+
+/**
+ * An exact running sum of non-negative decimal USD strings for hot report
+ * loops. Folding `addUsdStrings` one fact at a time re-parses and re-formats
+ * the growing total on every add; this keeps the same exact sum as an integer
+ * over 10^scale and renders it through the canonical ledger once. The exact
+ * sum is identical either way, so the string is too.
+ */
+export class ExactUsdSum {
+  value = 0n;
+  scale = 0;
+
+  add(amount) {
+    if (typeof amount !== "string" || amount.length > 100 || !DECIMAL.test(amount)) {
+      throw new TypeError("exact USD addend must be a non-negative decimal string");
+    }
+    const point = amount.indexOf(".");
+    const scale = point < 0 ? 0 : amount.length - point - 1;
+    const value = BigInt(point < 0 ? amount : amount.slice(0, point) + amount.slice(point + 1));
+    if (this.scale >= scale) {
+      this.value += value * 10n ** BigInt(this.scale - scale);
+    } else {
+      this.value = this.value * 10n ** BigInt(scale - this.scale) + value;
+      this.scale = scale;
+    }
+    return this;
+  }
+
+  toString() {
+    const digits = this.value.toString().padStart(this.scale + 1, "0");
+    return addUsdStrings("0", this.scale === 0
+      ? digits
+      : `${digits.slice(0, -this.scale)}.${digits.slice(-this.scale)}`);
+  }
+}
+
 /** Bounded content-free contribution cells. Never re-deduplicate admitted facts. */
 export function createWorkUsageAccumulator({ maximumCells = 50_000 } = {}) {
   const cells = new Map();
+  // Exact cell costs, rendered once in finish().
+  const costs = new Map();
   return {
     add(event) {
       const {
@@ -147,9 +186,12 @@ export function createWorkUsageAccumulator({ maximumCells = 50_000 } = {}) {
       )
         throw workUsageError("work_usage_fact_invalid");
       const key = JSON.stringify([thread, project, worktree, model]);
-      if (!cells.has(key) && cells.size >= maximumCells)
-        throw workUsageError("work_usage_capacity_exceeded");
-      const row = cells.get(key) ?? empty(key, "cell");
+      let row = cells.get(key);
+      if (!row) {
+        if (cells.size >= maximumCells)
+          throw workUsageError("work_usage_capacity_exceeded");
+        row = empty(key, "cell");
+      }
       const tokens = projectRecordedTokenComponents(event.components);
       const price = event.price ?? {};
       const priced =
@@ -159,27 +201,39 @@ export function createWorkUsageAccumulator({ maximumCells = 50_000 } = {}) {
       // The shared positive-usage projection skips zero-token facts. A fully
       // recorded zero needs no model rate; missing components remain unknown.
       const knownZero = tokens.totalComplete && tokens.totalTokens === 0 && !event.partial;
-      merge(row, {
-        tokens: tokens.totalTokens,
-        events: 1,
-        incompleteEvents: tokens.totalComplete && !event.partial ? 0 : 1,
-        unknownEvents: tokens.totalTokens === null ? 1 : 0,
-        assumedEvents: event.cacheWriteAssumedZero === true ? 1 : 0,
-        lastAt: event.at,
-        costUsdExact: priced ? price.amount : knownZero ? "0" : null,
-        unpricedEvents: priced || knownZero ? 0 : 1,
-        partialPriceEvents: priced && price.status !== "fully_priced" ? 1 : 0,
-        components: tokens.components,
-        threads: new Set([thread]),
-        projects: new Set([project]),
-        worktrees: new Set([worktree]),
-        models: new Set([model]),
-      });
+      // Field for field what merge() does with a one-fact row.
+      row.events = add(row.events, 1);
+      if (!tokens.totalComplete || event.partial)
+        row.incompleteEvents = add(row.incompleteEvents, 1);
+      if (tokens.totalTokens === null) row.unknownEvents = add(row.unknownEvents, 1);
+      if (event.cacheWriteAssumedZero === true) row.assumedEvents = add(row.assumedEvents, 1);
+      if (!priced && !knownZero) row.unpricedEvents = add(row.unpricedEvents, 1);
+      if (priced && price.status !== "fully_priced")
+        row.partialPriceEvents = add(row.partialPriceEvents, 1);
+      if (tokens.totalTokens !== null)
+        row.tokens = add(row.tokens ?? 0, tokens.totalTokens);
+      if (priced || knownZero) {
+        let cost = costs.get(key);
+        if (!cost) costs.set(key, cost = new ExactUsdSum());
+        cost.add(priced ? price.amount : "0");
+      }
+      row.lastAt = Math.max(row.lastAt ?? 0, event.at);
+      for (const component of WORK_USAGE_COMPONENTS)
+        if (tokens.components[component] !== null)
+          row.components[component] = add(
+            row.components[component] ?? 0,
+            tokens.components[component],
+          );
+      row.threads.add(thread);
+      row.projects.add(project);
+      row.worktrees.add(worktree);
+      row.models.add(model);
       cells.set(key, row);
     },
     finish() {
       return [...cells.values()].map((cell) => ({
         ...cell,
+        costUsdExact: costs.get(cell.id)?.toString() ?? null,
         threads: [...cell.threads],
         projects: [...cell.projects],
         worktrees: [...cell.worktrees],

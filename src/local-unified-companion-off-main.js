@@ -249,8 +249,11 @@ export function createLocalUnifiedCompanionProjectionReader({
     if (queue.length === 0) {
       worker?.unref?.();
       clearIdle();
-      if (worker || cacheScope !== null) {
-        idleTimer = setTimeout(() => { discardDirectCache(); stopWorker(); }, idleTimeoutMs);
+      // The direct-mode metadata cache is bounded and outlives idle periods:
+      // automatic refreshes are usually further apart than the idle timeout,
+      // and discarding it made every report re-read all rollout history.
+      if (worker) {
+        idleTimer = setTimeout(() => { stopWorker(); }, idleTimeoutMs);
         idleTimer.unref?.();
       }
       return;
