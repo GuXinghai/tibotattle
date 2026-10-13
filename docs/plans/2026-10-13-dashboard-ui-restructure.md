@@ -5,206 +5,282 @@ type: plan
 status: planned
 ---
 
-# Dashboard UI 重构计划
+# Dashboard UI restructuring plan
 
-## 状态与授权边界
+## Status and authorization boundary
 
-用户于 2026-10-13 通过四入口概念稿，并明确要求实施时保留概念稿省略的
-细节及原有优秀设计。本计划记录导航、呈现、功能迁移和验收边界；尚未实施。
-概念稿的通过是设计方向确认，不是源代码、原生界面或发布验收。
+The owner approved the four-entry concept on 2026-10-13 and explicitly required
+the implementation to retain details omitted from the preview and valuable
+existing design references. This plan defines navigation, presentation, feature
+migration, and acceptance criteria. It has not been implemented. Concept approval
+confirms the design direction; it is not source, native UI, or release acceptance.
 
-本次源码调查基线为 `8b0e5646`。实施前重新检查工作区和入口，不重复已经完成
-的文案与弹窗修改。范围是 Windows Electron dashboard、设置的视觉协调及
-相关导航调用；公共网站、Worker、采集、计价、额度算法、身份与持久数据不重构。
-不发布、部署或修改真实用户资料。本次只提交计划，不构建或重启应用。
+The source investigation baseline is `8b0e5646`; the original plan was committed
+as `1bb83bc9`. Recheck the checkout and entrypoints before implementation. Do not
+repeat completed copy and dialog changes. Scope covers the Windows Electron
+dashboard, visual coordination with Settings, and associated navigation callers.
+The public website, Worker, ingestion, pricing, quota algorithms, identity, and
+persistent data are outside this restructuring scope. Do not publish, deploy,
+or modify real user profiles. This English rewrite is documentation-only and
+does not build or restart the application.
 
-概念稿只决定布局方向、卡片气质、四入口导航和情形表达。其虚构项目、模型、
-活跃时长、同比、排名、缓存命中率及简化曲线不是功能或数据契约；没有现成
-权威数据的指标不进入正式界面。正式实现复用已有结果，不从样例反推算法。
+The concept establishes layout direction, card treatment, four-entry navigation,
+and state presentation. Its fictional projects, models, active hours, period
+comparisons, rankings, cache-hit rates, and simplified curves are not feature or
+data contracts. Do not introduce metrics without an existing authoritative data
+source. Reuse real results; do not derive algorithms from the mockup.
 
-## 目标与不变约束
+## Goals and invariants
 
-- 四个主入口：**概览、用量与成本、额度、模型性能**；设置为工具入口。
-- 移除桌面社区导航和页面模块。共享设置、过渡告知、上传能力说明和持久
-  opt-out 继续由现有能力承载；不因此删除公共网站、后端、历史或共享契约。
-- 保留卡片、暖中性色、品牌绿、模型图标与现有格式化。统一层级与位置，
-  不用替换整套图表和控件来追求外观一致。
-- 默认主视图在支持的普通桌面窗口内可扫描；复杂明细通过明确视图、分页
-  或详情访问。小窗口与高缩放允许受控滚动，不裁切、不整页缩小文字。
-- 精简常驻文案，保留结果的必要限定及完整详情。缺失、陈旧、部分、失败、
-  未归属、不可用和明确为零继续区分；展示范围不改变留存。
-- 不新增计算、查询范围或网络能力，不把重排变成兼容旧版本或迁移数据库。
+- Four primary destinations: **Overview, Usage & costs, Allowance, Model
+  performance**. Settings remains a utility entry. Retain the approved Chinese
+  labels: **概览、用量与成本、额度、模型性能**.
+- Remove the desktop Community navigation and page module. Existing capabilities
+  must continue to own sharing preferences, transition notices, upload capability
+  information, and durable opt-outs. This does not remove the public website,
+  backend, retained history, or sharing contracts.
+- Retain cards, warm neutral surfaces, brand green, model icons, and existing
+  formatting. Unify hierarchy and placement without replacing the complete chart
+  or control system merely for visual consistency.
+- Keep default primary views scannable within ordinary supported desktop windows.
+  Expose complex details through explicit views, pagination, or detail surfaces.
+  Allow bounded scrolling in small windows or at high display scaling; do not
+  crop content or shrink all text to fit.
+- Reduce permanent copy while preserving essential qualifications and complete
+  details. Missing, stale, partial, failed, unattributed, unavailable, and observed
+  zero remain distinct. Display windows do not change retention.
+- Do not add calculations, query scope, or network capabilities. Presentation
+  changes do not justify old-version compatibility layers or database migrations.
 
-## 设计依据及保留方式
+## Design references and preservation
 
-当前代码负责证明已实现能力；下列旧文档是设计依据，不能独立证明当前行为。
-本计划取代其冲突的导航与呈现方向，保留有价值的交互和分析设计。
+Current source establishes implemented capabilities. The older documents below
+provide design rationale; they do not independently establish current behavior.
+This plan supersedes conflicting navigation and presentation directions while
+retaining valuable interaction and analytical designs.
 
-| 依据 | 继续使用 | 本轮调整或不恢复 |
+| Reference | Preserve | Adjust or do not restore |
 |---|---|---|
-| 用户通过的 `tibotattle-concept.html` | 四入口、轻卡片、数字与文字层级、短状态和情形切换的视觉方向 | 样例数据、删减的功能、固定图形及演示按钮不作为生产规格 |
-| [组件参考](../reference/2026-09-13-dashboard-component-reference.md) | 视图与筛选不同外观、图卡结构、状态语义、区域格式、原生表格、键盘焦点、深浅主题 | 早期额度液罐、重复时间文字及旧导航不能恢复；类名只复用仍有效的部分 |
-| [趋势设计研究](../research/2026-09-13-trends-visual-design-direction.md) | 共用时间轴与游标、余额/活动双轨、差异面积、零中心差值、事件标记、累计偏差和精确证据 | 天空场景、日夜装饰和全分析平铺已被后续精简替代，不重新引入 |
-| [性能设计](../design/2026-09-09-model-performance-page.md) | 聚焦模型、P10–P90/P25–P75/P50、单位、样本覆盖、稀疏标记、键盘与悬停检查 | 旧独立日期控件和长页面布局不优先于当前共享时间范围；不采用概念稿的模型排名 |
-| [项目与会话设计](../design/2026-09-08-thread-project-usage.md) | 表格精确比较、小型占比条、项目/工作树/会话层级、未归属项、全结果分母 | 历史版本的名称、搜索和 worker 限制须按当前源码核对；不恢复重复设备说明 |
-| [首轮精简](./2026-10-08-dashboard-first-simplification.md) | 静态额度条、短说明、保留真实节点的详情弹窗、预测与概览分工 | 不沿用整页比例缩放；已移除的装饰继续移除 |
-| [单屏视图](./2026-10-08-single-screen-dashboard-views.md) | 保留全部明细的视图切换、分页、取消、重试、范围和选择稳定性 | 七页分类与同级技术标签改为下述任务结构 |
+| Owner-approved `tibotattle-concept.html` | Four destinations, light cards, number/text hierarchy, compact statuses, and scenario presentation | Sample data, omitted features, fixed graphics, and demonstration actions are not production specifications |
+| [Component reference](../reference/2026-09-13-dashboard-component-reference.md) | Distinct treatments for views and filters; chart-card anatomy; state semantics; regional formatting; native tables; keyboard focus; light/dark themes | Do not restore early liquid allowance tanks, repeated timestamps, or old navigation; reuse only applicable classes |
+| [Trends design research](../research/2026-09-13-trends-visual-design-direction.md) | Shared time axis and cursor; allowance/activity tracks; difference area; zero-centered difference strip; event markers; cumulative drift; exact evidence | Sky scenes, day/night decoration, and simultaneous display of every analysis were superseded by later simplification |
+| [Model performance design](../design/2026-09-09-model-performance-page.md) | Focused model; P10–P90, P25–P75, and P50; units; measurement coverage; sparse markers; keyboard and hover inspection | Older standalone date controls and long-page layouts do not override the current shared reporting range; do not adopt mockup model rankings |
+| [Projects and threads design](../design/2026-09-08-thread-project-usage.md) | Precise table comparison; small share bars; project/worktree/thread hierarchy; unattributed rows; denominators over the entire result population | Reconcile historical naming, search, and worker limitations with current source; do not restore redundant device explanations |
+| [Initial simplification](./2026-10-08-dashboard-first-simplification.md) | Static allowance bars; concise explanations; dialogs that retain live DOM nodes; separation of forecast and overview | Replace whole-page proportional scaling; keep retired decoration removed |
+| [Single-screen views](./2026-10-08-single-screen-dashboard-views.md) | View switching that retains all detail; pagination; cancellation; retry; scope and selection stability | Replace the seven-page classification and peer-level technical labels with the task structure below |
 
-这些参考保留为可追溯的设计依据。实施时在相关参考中明确新的适用边界，
-不删除仍有设计价值的材料，也不让旧文档与新导航同时充当操作指南。
-外部产品链接仅作为既有研究线索；本计划不声称重新验证了外部资料。
+Retain these references as traceable design rationale. During implementation,
+clarify their new applicability where needed. Preserve material with continuing
+design value, and prevent old documents and the new navigation from acting as
+conflicting operational instructions. External product links remain existing
+research leads; this plan does not claim to have reverified those sources.
 
-## 导航与功能迁移清单
+## Navigation and feature migration inventory
 
-四个主入口按照“看结果、查去向、查额度、查响应表现”组织。概览为启动入口。
-侧栏不再增加折叠分组或“更多分析”来隐藏原来的六项。
+The four destinations correspond to viewing results, locating usage, examining
+allowance, and inspecting responsiveness. Overview is the startup destination.
+Do not hide the original six destinations behind collapsible groups or a generic
+“More analysis” menu.
 
-| 原页面/视图 | 新位置 | 必须保留的能力 |
+| Existing page/view | New location | Required capabilities |
 |---|---|---|
-| overview | 概览 | 各真实额度池、余额、重置、价格、索引进度、额度对比、计算依据和不确定性 |
-| accounting.summary | 用量与成本的合计区 | Token 和金额总量、速度计价/保留结果口径、部分覆盖 |
-| projects.list | 用量与成本默认“项目”维度 | 项目/会话选择、搜索、排序、模型/作用域筛选、返回与展开、完整分页 |
-| accounting.models | 用量与成本“模型”维度 | 模型全部行、组成展开、Token 与金额占比、缺失/部分价格、独立额度标记 |
-| accounting.components | 合计区“用量构成” | 已有各 Token 组成及金额构成、组件互斥规则、Standard 计价依据 |
-| projects.components | 项目/会话结果“组成”视图 | 当前筛选范围内的组成，不能替换成全局合计 |
-| accounting.cache | 用量与成本“缓存分析” | 现有缓存矩阵、时间间隔/配置维度、样本量、可用性与解释 |
-| accounting.diagnostics | 缓存分析的诊断明细 | 切换关联、连续性大幅下降、估计损失、线程入口、分页及观察/推断区别 |
-| trends.activity | 额度“额度变化”；用量页提供同一时间范围的用量趋势入口 | 共轴余额/活动、选中时间读数、粒度、回放、平移缩放和重置检查 |
-| trends.comparison | 额度变化“分析差异” | 观测/计算线、差异区域、符号、质量分类、覆盖与固定比较窗口 |
-| trends.drift | 分析差异的累计偏差图 | 周期内累计、重置/缺口断开、正负方向与单位 |
-| trends.divergence | 分析差异的差异时段 | 全列表、分页、定位图表、模型/速度明细、失败重试 |
-| trends.evidence | 分析差异“证据明细” | 精确窗口、观测/估计/差值/质量、全部行、时间与测量跨度 |
-| weekly.history | 额度“额度折算” | 总体中位数、历史估计、斜率分歧范围、观察跨度筛选、短观测分类 |
-| weekly.forecast | 额度“使用预测” | 当前已有预测、适用窗口、样本与区间、缺证据原因 |
-| weekly.details | 额度折算“周期明细” | 全部周期结果、分页、状态和范围 |
-| weekly.share | 额度页“生成分享卡”操作 | 实际图表筛选范围、预览、保存/复制、完成/失败反馈及无私密内容边界 |
-| performance.speed/latency | 模型性能“生成速度/首字延迟” | 模型/档位、分位带、实际样本、计量方法、稀疏和局部恢复行为 |
-| community | 桌面模块移除 | 共享开关、已保存选择、上传能力与必要告知在设置中继续可访问 |
+| overview | Overview | Every real allowance pool; remaining allowance; reset; price; indexing progress; allowance comparison; calculation basis and uncertainty |
+| accounting.summary | Usage & costs totals area | Token and monetary totals; speed-pricing and retained-result basis; partial coverage |
+| projects.list | Usage & costs default Project dimension | Project/thread grouping; search; sorting; model/scope filters; return and expansion; complete pagination |
+| accounting.models | Usage & costs Model dimension | Every model row; component expansion; token/value shares; unavailable/partial prices; separate-allowance markers |
+| accounting.components | Totals area: Usage composition | Existing token and price components; mutually exclusive component rules; Standard-rate pricing basis |
+| projects.components | Project/thread results: Composition view | Composition within the active filtered scope, without substituting global totals |
+| accounting.cache | Usage & costs: Cache analysis | Existing cache matrix; elapsed-time/configuration dimensions; sample counts; availability and explanation |
+| accounting.diagnostics | Cache analysis diagnostic detail | Switching associations; large continuity drops; estimated reuse loss; thread links; pagination; observed-versus-inferred distinction |
+| trends.activity | Allowance: Allowance changes; Usage provides a usage-trend entry for the same reporting range | Aligned allowance/activity tracks; selected-time readouts; grouping; replay; pan/zoom; reset inspection |
+| trends.comparison | Allowance changes: Analyze differences | Observed/calculated lines; difference areas; signs; quality classifications; coverage; fixed comparison window |
+| trends.drift | Analyze differences: Cumulative drift chart | Within-cycle accumulation; breaks at resets/gaps; signed direction and units |
+| trends.divergence | Analyze differences: Divergence periods | Complete list; pagination; chart localization; model/speed breakdowns; failure retry |
+| trends.evidence | Analyze differences: Evidence detail | Exact windows; observed/estimated/difference/quality; all rows; timestamps and measured spans |
+| weekly.history | Allowance: Allowance equivalent | Overall median; historical estimates; slope-agreement range; observed-span control; short-observation classification |
+| weekly.forecast | Allowance: Usage forecast | Existing forecasts; applicable window; samples and intervals; insufficient-evidence reasons |
+| weekly.details | Allowance equivalent: Cycle detail | Complete cycle results; pagination; status and range |
+| weekly.share | Allowance action: Generate share card | Actual chart/filter scope; preview; save/copy; completion/failure feedback; content-free output boundary |
+| performance.speed/latency | Model performance: Generation speed/First-token latency | Model/mode selection; percentile bands; actual samples; measurement methods; sparse evidence; local recovery behavior |
+| community | Desktop module removed | Sharing switch, saved preference, upload capability, and necessary notices remain accessible through Settings |
 
-每项能力都须有可发现的入口，不能仅保留隐藏 DOM 或后端响应来声称保留。
-用量趋势入口复用现有数据和交互，可定位额度变化的活动轨道；先复用完整双轨
-查看，若拆成单轨须同时验证两入口的时间、选择和缺口一致，不重新计算。
+Every capability needs a discoverable entry. Hidden DOM or a surviving backend
+response does not demonstrate feature preservation. The Usage trend entry reuses
+existing data and interactions and may navigate to the activity track in
+Allowance changes. Initially reuse the complete dual-track view. If split into
+single tracks, verify matching time, selection, and gaps across both entries;
+do not recalculate the series.
 
-## 页面结构
+## Page structure
 
-### 概览
+### Overview
 
-保留结果卡与简短对比，按实际数据确定卡片，不照搬样例的活跃时长或同比。
-额度按池/窗口明确区分：Codex 与 Spark 不合并，未知不画成空余额。
-卡片固定为名称、主值、短状态、必要时间/重置、详情入口；主要数字不因
-错误长文改变位置。已有价格右侧“部分”及比较方法/拟合信息继续可访问。
-可点击卡片进入明确的目标视图，并保留当前统计范围。
+Retain result cards and a concise comparison. Choose cards from available real
+data, not mockup active hours or period comparisons. Distinguish allowance pools
+and windows: do not merge Codex and Spark or render unknown values as exhausted
+balances. Each card has stable slots for its name, main value, short status,
+necessary time/reset information, and detail entry. Long error copy must not
+move primary values. Preserve the existing Partial marker beside price and
+access to comparison methods and fitted information. Card navigation targets a
+specific view and retains the active reporting range.
 
-### 用量与成本
+### Usage & costs
 
-合计区在上方，默认项目表为主内容。“项目/模型”是查看维度；项目维度内
-保留项目/会话分组。筛选有明确标签并显示有效条件，不把分组、排序和视图
-都画成同样的胶囊。项目数、会话数可收为轻摘要，但不能丢失或改变定义。
+Place totals above the default project table. Project/Model selects the viewing
+dimension; retain Project/Thread grouping within the Project dimension. Label
+filters and show effective conditions. Grouping, sorting, and view switching
+must not all look like identical pills. Project and thread counts may become a
+quiet summary row, but their values and definitions remain intact.
 
-模型表、项目表保留各自数据所有者和统计范围：不能共用假想的聚合接口，
-不能让项目筛选隐式作用于全局模型表。切换时明确哪些筛选继续有效；保留
-各维度的选择、分页、父级位置和失败恢复。金额显示原有数值与必要“部分”，
-详情保存原有计价覆盖。可见列名区分“Token 占比”和“金额占比”。
+Model and project tables retain their respective data owners and scopes. Do not
+invent a common aggregation API or silently apply project filters to the global
+model table. Explain which filters remain effective on dimension changes, and
+preserve each dimension’s selection, pagination, parent position, and recovery.
+Keep existing amounts with necessary Partial markers; preserve pricing coverage
+in detail. Visible columns must distinguish Token share from Value share.
 
-合计卡的“用量构成”、项目的“组成”及“缓存分析”须显著可达。复杂缓存矩阵
-和诊断表使用分析视图，不挤进小型提示框。两项缓存影响不再与期间总量同级。
+Usage composition from totals, Composition for project results, and Cache
+analysis must be readily discoverable. Complex cache matrices and diagnostic
+tables use analytical views rather than small popovers. The two cache-impact
+measures no longer have equal visual weight with reporting-period totals.
 
-### 额度
+### Allowance
 
-保留“额度变化/额度折算/使用预测”三任务视图；窗口与套餐选择放在其真实
-作用范围内。额度变化保留双轨主图，分析差异为可返回的分析视图，完整显示
-比较、累计和差异时段；证据表再按需打开，避免三层标签栏。
+Retain three task views: Allowance changes, Allowance equivalent, and Usage
+forecast. Place window and plan selectors within their actual scope. Allowance
+changes retains the main dual-track chart. Analyze differences is a returnable
+analytical view with comparison, cumulative drift, and divergence periods.
+Evidence tables open on demand without creating three stacked tab levels.
 
-额度折算的总体中位数与筛选后的历史图不能冒充同一范围。明确短标签和
-当前筛选；保留跨度筛选在短周期下的实际含义。斜率分歧范围不是置信区间，
-全局报告期间不是额度重置周期，三小时比较窗口不是新的日期筛选。
+The overall allowance-equivalent median and filtered history chart must not
+appear to cover the same population. Use explicit short labels and the active
+filter. Preserve the observed-span control’s actual meaning in short windows.
+A slope-agreement range is not a confidence interval; a reporting period is not
+an allowance reset cycle; the three-hour comparison window is not a date filter.
 
-### 模型性能
+### Model performance
 
-保留聚焦模型设计，模型/档位筛选与速度/首字延迟视图区分。图表主体沿用
-分层分位设计，不替换成概念稿的固定柱图、简单平均或多模型排名。
-每个指标保存自身样本覆盖、单位、区间与稀疏表示；方法详情保留直接计时和
-估算样本区别、未知档位排除及现有统计定义。只有首字延迟可用的模型仍可查看。
-模型切换、报告范围、预加载和取消/重试不增加不必要的重复读取。
+Retain the focused-model design. Separate model/mode filters from speed/latency
+view selection. Preserve layered percentile charts instead of replacing them
+with fixed mockup bars, simple averages, or model rankings. Each metric keeps
+its own coverage, units, interval, and sparse representation. Measurement detail
+retains direct-timing versus estimated-sample distinctions, unknown-mode
+exclusions, and existing statistical definitions. Models with available latency
+but unavailable generation speed remain inspectable. Model switching, reporting
+range changes, preloading, cancellation, and retry must not add unnecessary
+repeated reads.
 
-### 设置、分享与详情
+### Settings, result sharing, and detail surfaces
 
-设置沿用 Electron 所有者及既有分组，仅协调视觉；不迁移状态存储。
-共享选择与上传能力分别显示，移除社区后必要告知和保持关闭操作仍有效。
-结果分享是生成卡片的操作，不是打开持续上传；不创建概念稿演示的外部链接。
-顶部分享动作必须先选择正确页面/分享视图，再聚焦；不聚焦隐藏面板。
+Settings retains its Electron owner and existing sections; coordinate visuals
+without migrating stored state. Show the saved sharing preference separately
+from upload capability. Removing Community must preserve required notices and
+Keep sharing off actions. Result sharing generates a card; it does not enable
+ongoing contribution or create a mockup external link. The global Share action
+must select the correct page and share view before focusing its content.
 
-短说明用现有详情弹窗，复杂图表/表格用可返回的分析视图。普通详情无关闭
-按钮，外部点击和 Esc 关闭、焦点返回；保留真实内容节点和更新/重试处理。
-设置、确认及有未保存输入的流程不机械套用普通详情的关闭规则。
+Short explanations use the existing detail dialog. Complex charts/tables use
+returnable analytical views. Ordinary detail dialogs have no close button:
+clicking outside or pressing Escape dismisses them and returns focus. Retain
+live content nodes and update/retry handlers. Do not mechanically apply this
+closing behavior to Settings, confirmations, or flows with unsaved input.
 
-## 公共视觉与状态契约
+## Shared visual and state contract
 
-- 统一系统字体和数字样式；标题、主值、辅助信息分层，保留模型标识。
-  普通卡片轻边线、适度圆角、统一内边距；图例颜色继续表达原来的数据语义。
-- 顶部唯一统计范围继续为 24 小时/7 天/30 天/全部，确切范围可展开。
-  每页窗口、模型、档位和作用域只有一个明确归属，不恢复概念稿的重复设置入口。
-- 视图用选中线，筛选用带标签控件，操作用按钮，状态用短文字；不依赖颜色。
-- 全局刷新错误放刷新旁“分析已完成，但额度更新失败 [详情]”等短摘要。
-  局部图表、查询和设置失败留在相应区域，保留真实重试与取消。
-- 部分定价保留金额，右侧“── 部分”，展开可查看计价与覆盖详情。
-  陈旧结果保留值并就近限定；缺失用“—”和短原因，明确零才显示零。
-- 不恢复“此设备已记录的 Codex 用量”、常驻报告时间、金额下重复天数、
-  “API 等价金额 · 不代表账单”、超过 30 分钟长提示或未知模型未定价长提示。
-  所需价格依据、新鲜度和精确时间继续可访问，不改写 companion 的事实。
-- 维持深浅主题、中文/英文/西班牙语、区域日期/金额格式、可见焦点与减少动画。
-  处理窄窗口靠换行、缩减可选列、分页/详情及局部滚动，不靠整体 `zoom`。
+- Unify system typography and number formatting. Distinguish titles, primary
+  values, and supporting text while retaining model identity. Use light card
+  borders, moderate radii, and consistent padding. Chart colors keep their
+  existing data meaning.
+- Keep one reporting-range control in the header: 24 hours, 7 days, 30 days,
+  and All. Exact boundaries remain available on demand. Each local window,
+  model, mode, and scope has one clear owner. Do not reproduce the mockup’s
+  duplicate Settings entries.
+- Views use an active underline, filters use labeled inputs, actions use
+  buttons, and statuses use short text. Meaning must not depend on color alone.
+- Global refresh failures appear beside Refresh as a compact summary, such as
+  “Analysis completed, but allowance update failed [Details].” Local chart,
+  query, and setting failures stay in their affected region with real retry
+  and cancellation behavior.
+- Partial pricing retains the amount with “── Partial” to its right; pricing
+  and coverage details remain accessible. Keep stale values with nearby
+  qualifications. Missing values use “—” with a short reason; only observed
+  zero becomes zero.
+- Do not restore “Codex usage recorded on this device,” a permanent report
+  timestamp, repeated days below the amount, “API-equivalent amount · Not a
+  bill,” the long 30-minute-old warning, or the long unknown-model/unpriced
+  warning. Necessary pricing basis, freshness, and exact timestamps remain
+  accessible without rewriting companion facts.
+- Preserve light/dark themes, Chinese/English/Spanish, regional date/money
+  formatting, visible focus, and reduced motion. Handle narrow windows through
+  wrapping, optional-column reduction, pagination/detail, and bounded local
+  scrolling rather than whole-page `zoom`.
 
-## 实施阶段与退出条件
+## Implementation stages and exit criteria
 
-| 阶段 | 工作 | 完成条件与独立提交边界 |
+| Stage | Work | Exit criteria and independent commit boundary |
 |---|---|---|
-| 0：清单 | 对照本表核对当前入口、每项控件/详情及已有状态；标出当前实现缺陷 | 每项能力记录新位置与验收方式，未实现项不能记为已保留；不重新调查无关平台 |
-| 1：外壳 | 四入口、视图与筛选层级、状态槽位、分享导航；社区页面与死引用移除 | 四入口可达、所有内部导航/快捷动作更新；共享与设置仍可达；单独提交外壳改动 |
-| 2：用量 | 合并项目/会话与全局模型视图，接入组成和缓存分析 | 搜索/作用域/分页/展开及全结果分母不变；诊断与总量分层；独立提交 |
-| 3：额度 | 合并额度折算与趋势，保留全部分析与预测/分享 | 共用时间、事件定位、全部证据、窗口/筛选语义可核对；独立提交 |
-| 4：视觉 | 概览与性能卡片、公共排版、设置协调，替代整页缩放 | 默认视图清楚、细节可发现、长状态/语言不压小字号；按可验证模块提交 |
-| 5：验收 | 分页/状态/导航重点检查、Windows 试用包与人工逐页审阅 | 源码、浏览器、打包运行分别记录；用户确认设计和细节，发布门槛另行处理 |
+| 0: Inventory | Reconcile this table with current entries, controls, detail, and states; identify existing defects | Record destination and verification for every capability; do not label unimplemented behavior preserved or reinvestigate unrelated platforms |
+| 1: Shell | Four destinations; view/filter hierarchy; status slots; Share navigation; Community page and dead references removed | All four destinations and internal navigation/shortcuts work; sharing and Settings remain accessible; commit the shell independently |
+| 2: Usage | Compose project/thread and global model views; connect composition and cache analysis | Search, scope, pagination, expansion, and full-population denominators unchanged; diagnostics separated from totals; independent commit |
+| 3: Allowance | Compose allowance equivalent and trends; retain all analysis, forecasts, and sharing | Verify shared time, event localization, complete evidence, and window/filter semantics; independent commit |
+| 4: Visuals | Overview/performance cards; common typography; Settings coordination; replace whole-page scaling | Clear defaults and discoverable detail; long states/languages do not shrink text; commit by verified module |
+| 5: Acceptance | Focused pagination/state/navigation checks; Windows trial package; manual page-by-page review | Record source, browser, and packaged runtime separately; owner reviews design and detail; release gates remain separate |
 
-每阶段先完整接通新位置再删除旧容器；不保留一套长期双 UI。不为旧版本
-构建兼容层：更新当前真实调用方、hash/视图事件、菜单与分享动作；仅在当前
-调用链确实需要时保留一个明确映射，不能新增无调用方的旧地址别名。
-不提前删除共享的图表、格式化、模型视觉或计量组件；检索实际引用再清理。
+Connect every replacement destination completely before removing its old
+container. Do not maintain two long-lived UI implementations. Update actual
+callers, hashes/view events, menus, and Share actions instead of building
+old-version compatibility. Retain a single explicit mapping only where a
+current call chain needs it; do not add aliases without callers. Check real
+references before removing shared charts, formatting, model visuals, or
+measurement components.
 
-实现前后更新 canonical i18n 并生成镜像，处理实际运行时 key 白名单；同步
-导航/DOM/功能契约的测试及受影响帮助和组件参考。保护文档中的历史边界，
-不把本计划完成时间写入旧收据。已验证的独立改动及时本地提交。
+Update canonical i18n and regenerate mirrors, including the actual runtime key
+allowlist. Align navigation/DOM/feature-contract tests and affected help and
+component references. Preserve historical documentation boundaries; do not
+rewrite old receipts with later completion claims. Commit verified independent
+changes locally as they are completed.
 
-## 验收清单
+## Acceptance checklist
 
-功能保留是首要门槛：迁移表每行均有入口、可查看结果及失败路径，不能只检验
-概念稿四页能切换。原实现确实没有的数据/动作单列缺口，不凭旧设计文档补造。
+Feature preservation is the first gate. Every migration row must have an entry,
+inspectable results, and its failure path. Merely switching four concept pages
+is insufficient. Record genuinely absent data/actions as gaps; do not invent
+them from historical design documents.
 
-| 情形 | 必须看到/完成 |
+| Scenario | Required observation or action |
 |---|---|
-| 正常 | 四入口、清楚的默认结果；日期/模型/窗口选择一致；所有分析和明细可进入并返回 |
-| 部分 | 金额保留且标“部分”；覆盖、估计样本及图表缺口可检查，不造零或隐藏整个页面 |
-| 刷新失败 | 顶部短摘要、详情、保存结果及必要限定；局部请求独立重试，不中断其他有效结果 |
-| 首次/暂无 | 无记录、搜索无匹配、能力不可用和索引等待分别表达；有效筛选和恢复操作仍可用 |
-| 陈旧/进行中 | 最后可信值、实际进度、取消及重启后的恢复语义不变，不把旧结果写成刚更新 |
-| 复杂明细 | 多页项目/会话、工作树/子 worker、组成、缓存矩阵、异常时段、全周期和精确证据均可访问 |
-| 表现与访问 | 键盘/Esc/焦点、缩放/窄窗口、深浅主题与长语言可读；tooltip、游标和事件选择一致 |
+| Normal | Four destinations and clear default results; consistent date/model/window selection; all analysis and detail reachable with return navigation |
+| Partial | Amount retained with Partial; inspectable coverage, estimated samples, and chart gaps; no fabricated zero or whole-page concealment |
+| Refresh failure | Compact header summary, detail, retained results and necessary qualifiers; local retry independent of other valid results |
+| First use/no data | Distinguish no records, no search matches, unavailable capability, and indexing wait; retain valid filters and recovery actions |
+| Stale/in progress | Last trustworthy values, actual progress, cancellation, and restart recovery unchanged; old results never presented as newly updated |
+| Complex detail | Multi-page project/thread results, worktrees/subworkers, composition, cache matrix, divergence periods, all cycles, and exact evidence accessible |
+| Presentation/accessibility | Keyboard/Escape/focus; scaling/narrow windows; light/dark and long translations readable; consistent tooltips, cursors, and event selection |
 
-先运行受影响的导航、视图、i18n、范围、保留结果、分页和交互契约检查。
-不为像素样式写镜像测试，不反复跑全根套件追绿；每次失败判断是否揭示真实
-回归。UI 整合后按 owning gate 运行 `pnpm run product:ui:test`；边界变化运行
-`pnpm run architecture:check`。文档运行 `pnpm run docs:check` 和
-`pnpm run test:preflight`。不增加超时、放宽断言或牺牲细节以通过检查。
+Start with affected navigation, views, i18n, scope, retained-result, pagination,
+and interaction-contract checks. Do not write tests that merely mirror pixel
+styling or repeatedly rerun the entire root suite to chase green. Determine
+whether each failure reveals a genuine regression. After UI integration, run
+`pnpm run product:ui:test`; run `pnpm run architecture:check` for dependency
+boundary changes. Documentation requires `pnpm run docs:check` and
+`pnpm run test:preflight`. Do not increase timeouts, weaken assertions, or
+sacrifice detail to pass checks.
 
-人工审阅以真实 Windows Electron 为最终视觉对象，使用隔离合成资料覆盖上述
-状态与多页明细；真实资料仅用于 owner 本地人工查看，不转为测试/日志/截图
-或提交内容。检查代表性窗口及 Windows 125%/150% 缩放，发现拥挤时调整布局。
-试用包只在实施阶段另行更新；当前计划阶段不构建。源码与浏览器通过不代表
-安装态、签名、更新器或发布资格；关键发布门槛通过前不发布。
+Final visual review targets actual Windows Electron. Use isolated synthetic
+profiles for the scenarios and multi-page detail above. Real data is for
+owner-controlled local manual viewing only, never automated fixtures, logs,
+screenshots, or committed content. Check representative windows and Windows
+125%/150% scaling; correct crowding through layout. Update the trial package
+only during implementation; this planning handoff does not build it. Source or
+browser success does not qualify installation, signing, updating, or release.
+Do not publish before critical release gates pass.
 
-## 当前未通过的门槛
+## Outstanding gates
 
-- 本计划未实施，尚无新导航或功能迁移验收。
-- 顶部分享聚焦隐藏视图是静态路径发现，实施阶段复现并修正。
-- 移除社区后的告知入口、用量趋势入口和复杂分析可发现性尚待完整接通。
-- 概念稿的通过不能证明正式数据的密度、计量范围或所有明细足够可读。
+- No implementation or acceptance of the new navigation and feature migration.
+- Share focusing a hidden view is a static path finding; reproduce and fix it
+  during implementation.
+- Notice access after Community removal, the Usage trend entry, and discovery
+  of complex analysis still require complete integration.
+- Approved concept appearance does not prove production-data density, correct
+  measurement scopes, or readable access to every detail.
