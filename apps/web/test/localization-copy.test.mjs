@@ -75,7 +75,7 @@ test("unavailable fitted-rate copy follows the weekly calibration contract", asy
   }
 
   const hostedCopy = translate("dashboard.unavailable.companionCopy");
-  assert.match(hostedCopy, /Applications/u);
+  assert.match(hostedCopy, /Start menu/u);
   assert.match(hostedCopy, /installer/u);
 
   const inAppCopy = translate("dashboard.unavailable.companionInAppCopy");

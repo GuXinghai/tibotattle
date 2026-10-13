@@ -267,7 +267,6 @@ import {
   type WorkerRouteMatch,
   type WorkerRouteMethod,
 } from "./route-registry";
-import { handleSparkleAppcastGuard } from "./sparkle-appcast-guard";
 import {
   assertAdminCsrf,
   assertCsrf,
@@ -1108,7 +1107,7 @@ const SIGNIN_HANDOFF_BINDING_PATTERN = /^[0-9a-f]{64}$/u;
 const SIGNIN_COMPLETED_MESSAGE = "Signed in — return to TiboTattle.";
 const SIGNIN_NOT_COMPLETED_MESSAGE =
   "Sign-in was not completed. Return to TiboTattle and start the sign-in again.";
-// This is the fixed, registered macOS application URL from the signed bundle.
+// This is the fixed, registered usagemonitor:// app URL that the Windows app handles.
 // It is deliberately not derived from a callback request, state, code, or
 // provider payload, so returning to the app reveals nothing from the OAuth
 // exchange.
@@ -4253,8 +4252,6 @@ async function routeApi(
       return handleAccountlessTelemetryPerformanceAuthorization(request, env);
     case "accountless_renewal":
       return handleAccountlessRenewal(request, env);
-    case "sparkle_appcast_guard":
-      return handleSparkleAppcastGuard(request, env);
     case "identity_google_start":
       return handleIdentityGoogleStart(request, env);
     case "identity_google_callback":

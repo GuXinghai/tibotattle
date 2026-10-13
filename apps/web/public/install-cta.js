@@ -4,26 +4,23 @@
 // partially injected release renders as "unavailable" rather than as a
 // half-filled download card.
 //
-// Shared by the public site entry (community.js), where it is the primary
-// call to action, and by the in-app dashboard entry (app.js), which uses the
-// same card when the local companion is not yet reachable.
+// TiboTattle is Windows x64 only, so there is one installer slot and one
+// architecture. Shared by the public site entry (community.js), where it is
+// the primary call to action, and by the in-app dashboard entry (app.js),
+// which uses the same card when the local companion is not yet reachable.
 
 import { DEFAULT_LOCALE, translate } from "./localization.js";
 import { getFormattingLocale } from "./ui-format.js";
+
+const WINDOWS_ARCHITECTURE = "x64";
 
 function defaultMessage(key, values = {}) {
   return translate(key, values, DEFAULT_LOCALE);
 }
 
-function installerMetaName(name, architecture) {
-  return architecture === "x64"
-    ? name.replace("usage-monitor-", "usage-monitor-intel-")
-    : name;
-}
-
-function configuredInstallerUrl(documentRef, architecture) {
+function configuredInstallerUrl(documentRef) {
   const raw = documentRef
-    .querySelector(`meta[name="${installerMetaName("usage-monitor-installer-url", architecture)}"]`)
+    .querySelector('meta[name="usage-monitor-installer-url"]')
     ?.getAttribute("content")
     ?.trim();
   if (!raw) return null;
@@ -35,7 +32,7 @@ function configuredInstallerUrl(documentRef, architecture) {
       && !selected.port
       && !selected.search
       && !selected.hash
-      && selected.pathname.toLowerCase().endsWith(".dmg")
+      && selected.pathname.toLowerCase().endsWith(".exe")
       ? selected.href
       : null;
   } catch {
@@ -72,11 +69,10 @@ function configuredReleaseUrl(documentRef, name) {
   }
 }
 
-export function configuredInstallerRelease(documentRef, { architecture = "arm64" } = {}) {
-  if (architecture !== "arm64" && architecture !== "x64") return null;
-  const installerUrl = configuredInstallerUrl(documentRef, architecture);
+export function configuredInstallerRelease(documentRef) {
+  const installerUrl = configuredInstallerUrl(documentRef);
   const metadata = (name, pattern) => configuredInstallerMetadata(
-    documentRef, installerMetaName(name, architecture), pattern,
+    documentRef, name, pattern,
   );
   const version = metadata(
     "usage-monitor-installer-version",
@@ -90,15 +86,14 @@ export function configuredInstallerRelease(documentRef, { architecture = "arm64"
     "usage-monitor-installer-bytes",
     /^[1-9][0-9]{0,15}$/u,
   );
-  const minimumMacos = metadata(
-    "usage-monitor-minimum-macos",
-    /^(?:1[0-9]|[2-9][0-9])\.(?:0|[1-9][0-9]?)(?:\.(?:0|[1-9][0-9]?))?$/u,
+  const minimumWindows = metadata(
+    "usage-monitor-minimum-windows",
+    /^(?:10|11)(?:\.[0-9]{1,5}){0,2}$/u,
   );
   const architectureText = metadata(
     "usage-monitor-architectures",
-    architecture === "x64" ? /^x64$/u : /^(?:arm64|x86_64)(?:,(?:arm64|x86_64))?$/u,
+    /^x64$/u,
   );
-  const architectures = architectureText?.split(",") ?? [];
   const links = {
     releaseNotes: configuredReleaseUrl(
       documentRef,
@@ -114,22 +109,19 @@ export function configuredInstallerRelease(documentRef, { architecture = "arm64"
       || !sha256
       || !Number.isSafeInteger(bytes)
       || bytes <= 0
-      || !minimumMacos
-      || architectures.length === 0
-      || new Set(architectures).size !== architectures.length
+      || !minimumWindows
+      || architectureText !== WINDOWS_ARCHITECTURE
       || Object.values(links).some((value) => value === null)) {
     return null;
   }
-  if (architecture === "x64" && (new URL(installerUrl).pathname.split("/").at(-1)
-      !== `TiboTattle-${version}-macOS-x64.dmg`
-      || configuredInstallerRelease(documentRef)?.version !== version)) return null;
+  if (new URL(installerUrl).pathname.split("/").at(-1)
+      !== `TiboTattle-${version}-Windows-x64.exe`) return null;
   return {
     installerUrl,
     version,
     sha256,
     bytes,
-    minimumMacos,
-    architectures,
+    minimumWindows,
     links,
   };
 }
@@ -138,9 +130,8 @@ export function configuredInstallerRelease(documentRef, { architecture = "arm64"
  * Show the compact assurance only when the download itself passed the closed
  * release-metadata contract. Detailed verification guidance lives in Docs.
  */
-export function renderInstallerAssurance(documentRef, release, { architecture = "arm64" } = {}) {
-  const assurance = documentRef.querySelector(architecture === "x64"
-    ? "#intel-download-assurance" : "#download-assurance");
+export function renderInstallerAssurance(documentRef, release) {
+  const assurance = documentRef.querySelector("#download-assurance");
   if (!assurance) return null;
   assurance.hidden = !release;
   return release ?? null;
@@ -163,34 +154,21 @@ export function formatInstallerSize(bytes, {
   });
 }
 
-export function compactMacOSVersion(version) {
-  return typeof version === "string"
-    ? version.replace(/(?:\.0)+$/u, "")
-    : version;
-}
-
 export function renderInstallerJourney(documentRef, {
-  architecture = "arm64",
   compactDetails = false,
   showUnavailableAction = false,
   showReleaseLinks = true,
   formatLocale = getFormattingLocale(),
   translateMessage = defaultMessage,
 } = {}) {
-  const select = (selector) => documentRef.querySelector(architecture === "x64"
-    ? selector.replace("#", "#intel-") : selector);
-  const release = configuredInstallerRelease(documentRef, { architecture });
+  const select = (selector) => documentRef.querySelector(selector);
+  const release = configuredInstallerRelease(documentRef);
   const link = select("#installer-link");
   const details = select("#installer-details");
   const releaseLinks = select("#installer-links");
   const unavailable = select("#installer-unavailable");
   const unavailableAction = select("#installer-unavailable-action");
   if (release) {
-    const architectureLabel = release.architectures.length === 2
-      ? translateMessage("installer.appleSiliconAndIntel")
-      : release.architectures[0] === "arm64"
-        ? translateMessage("installer.appleSilicon")
-        : translateMessage("installer.intel");
     link.href = release.installerUrl;
     link.hidden = false;
     link.removeAttribute("aria-disabled");
@@ -202,12 +180,10 @@ export function renderInstallerJourney(documentRef, {
     select("#installer-compatibility").textContent = translateMessage(
       compactDetails
         ? "installer.compatibilitySummary"
-        : "installer.requiresMacOS",
+        : "installer.requiresWindows",
       {
-        architecture: architectureLabel,
-        version: compactDetails
-          ? compactMacOSVersion(release.minimumMacos)
-          : release.minimumMacos,
+        architecture: WINDOWS_ARCHITECTURE,
+        version: release.minimumWindows,
       },
     );
     select("#installer-size").textContent = formatInstallerSize(release.bytes, {

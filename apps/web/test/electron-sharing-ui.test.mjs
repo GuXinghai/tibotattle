@@ -656,7 +656,7 @@ test("Settings coalesces trusted updater status refreshes and renders a later do
   windowListeners.get("focus")();
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(retryLoginStatus.hidden, true);
-  assert.equal(openLoginSettings.hidden, true, "Linux has no single system startup page");
+  assert.equal(openLoginSettings.hidden, true, "no system startup page is offered without the capability");
   failNextRead = true;
   windowListeners.get("focus")();
   await new Promise((resolve) => setImmediate(resolve));

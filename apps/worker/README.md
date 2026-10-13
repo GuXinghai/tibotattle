@@ -3,8 +3,8 @@
 This Cloudflare Worker is TiboTattle's only current hosted product runtime. It
 serves the public website and optional contribution service at
 `https://tibotattle.com`, the Access-protected operator surface at
-`https://admin.tibotattle.com`, and the guarded Sparkle feed integration for
-`https://updates.tibotattle.com`.
+`https://admin.tibotattle.com`. The Windows app's update feed is served from
+`https://updates.tibotattle.com` outside this Worker's routes.
 
 Local TiboTattle remains fully useful without this service. Contribution is off
 by default and requires a reviewed local payload, explicit first send, and a
@@ -153,8 +153,8 @@ bounds, runtime bindings, and identity/device/upload sequence are documented in
 the maintained
 [TiboTattle API surface reference](../../docs/reference/api-surface.md).
 That reference is checked directly against `src/route-registry.ts`, so newer
-identity, admin, device-sync, daily-community, credential-renewal, and appcast
-guard routes cannot disappear behind a stale partial list here.
+identity, admin, device-sync, daily-community, and credential-renewal routes
+cannot disappear behind a stale partial list here.
 
 Session endpoints accept only a short-lived D1-backed web session delivered as
 a Secure, HttpOnly, SameSite=Strict `__Host-` cookie. Session-authenticated
@@ -171,7 +171,7 @@ been retired, and neither authority substitutes for the other.
 
 An enrolled participant can create a short-lived, one-use pairing code. The
 collector generates its device UUID and 32-byte secret locally, stores the
-secret in the app-owned macOS Keychain item, and sends only a domain-separated
+secret in the app-owned Windows Credential Manager item, and sends only a domain-separated
 credential hash while claiming the pairing. Device authority can synchronize,
 renew or disconnect itself, and mint Upload authority; it cannot read session
 controls, export data, manage other devices, or delete hosted participation.

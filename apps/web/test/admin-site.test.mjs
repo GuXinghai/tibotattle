@@ -10,6 +10,9 @@ const fixture = async (name) => JSON.parse(await readFile(
   new URL(`./fixtures/${name}`, import.meta.url),
   "utf8",
 ));
+// Read once up front: healthy reads answer from memory, so polling for a render
+// never races a disk read whose latency varies with the host.
+const RECONSTRUCTION_PROGRESS_FIXTURE = await fixture("admin-reconstruction-progress-valid.json");
 const ADMIN_READ_PATHS = [
   "/api/v1/admin/overview", "/api/v1/admin/community/allowance-preview",
   "/api/v1/admin/metrics/history", "/api/v1/admin/reconstruction-progress?detail=preparation",
@@ -1124,31 +1127,26 @@ test("admin tables preserve row order, text rendering, and empty states", async 
     ]]);
 
     assert.deepEqual(tableTexts(documentRef, "distribution-version-rows"), [
-      ["Native", "macOS · Apple silicon", "0.1.12", "66%", "19", "64"],
-      ["Electron", "macOS · Intel", "0.1.23", "24%", "7", "12"],
-      ["Native", "macOS · Apple silicon", "0.1.11", "17%", "5", "9"],
-      ["Electron", "Windows", "0.1.23", "14%", "4", "8"],
-      ["Electron", "Linux", "Unknown", "7%", "2", "3"],
+      ["Electron", "Windows", "0.1.12", "66%", "19", "14"],
+      ["Electron", "Windows", "0.1.23", "24%", "7", "6"],
+      ["Electron", "Windows", "Unknown", "10%", "3", "3"],
     ]);
     assert.deepEqual(
       metricTexts(documentRef, "distribution-counts"),
       [
         ["Active-install proxy", "19", "Last 24h above · 29 distinct source addresses/7d"],
-        ["App preflight call-ins", "22", "Last 24h above · 16 addresses · 78 requests/7d"],
-        ["Sparkle update checks", "14", "Last 24h above · 13 addresses · 40 checks/7d"],
-        ["Electron update checks", "11", "Last 24h above · 9 addresses · 23 checks/7d"],
-        ["Sparkle artifact fetches", "3", "Last 24h above · 3 addresses · 3 fetches/7d"],
+        ["Windows update checks", "11", "Last 24h above · 9 addresses · 23 checks/7d"],
         ["Latest GitHub tag match", "18", "v0.1.12 · last 24h above · 19 addresses/7d"],
-        ["GitHub DMG downloads", "110", "2 releases · 3 DMG assets · all time"],
-        ["GitHub DMG downloads since prior snapshot", "6", `${formatReportingTime("2026-08-16T12:00:00.000Z")} → ${formatReportingTime("2026-08-17T12:00:00.000Z")}`],
+        ["Historical DMG downloads", "110", "2 releases · 3 DMG assets · all time"],
+        ["Historical DMG downloads since prior snapshot", "6", `${formatReportingTime("2026-08-16T12:00:00.000Z")} → ${formatReportingTime("2026-08-17T12:00:00.000Z")}`],
       ],
     );
     assert.deepEqual(tableTexts(documentRef, "github-release-rows"), [
-      ["v0.1.12", "Stable", "88", "0", "7", "6", "101", formatReportingTime("2026-08-15T18:00:00.000Z")],
-      ["v0.1.11", "Stable", "22", "—", "—", "—", "22", formatReportingTime("2026-08-01T18:00:00.000Z")],
+      ["v0.1.12", "Stable", "7", "7", formatReportingTime("2026-08-15T18:00:00.000Z")],
+      ["v0.1.11", "Stable", "—", "—", formatReportingTime("2026-08-01T18:00:00.000Z")],
     ]);
     assert.deepEqual(tableTexts(documentRef, "github-release-total-rows"), [
-      ["Grand total · all 2 releases", "All versions", "110", "0", "7", "6", "123", "All time"],
+      ["Grand total · all 2 releases", "All versions", "7", "7", "All time"],
     ]);
 
     assert.deepEqual(
@@ -1313,7 +1311,7 @@ test("admin tables preserve row order, text rendering, and empty states", async 
     assert.deepEqual(
       metricTexts(documentRef, "distribution-counts").at(-2),
       [
-        "GitHub DMG downloads",
+        "Historical DMG downloads",
         "—",
         "unavailable from GitHub; activity counts are unaffected",
       ],
@@ -1766,7 +1764,7 @@ async function healthyAdminRead(path, overview) {
   if (path === ADMIN_READ_PATHS[1]) return response(createAdminAllowancePreviewPayload());
   if (path === ADMIN_READ_PATHS[2]) return response(metricsHistoryPayload());
   assert.equal(path, ADMIN_READ_PATHS[3]);
-  return response(await fixture("admin-reconstruction-progress-valid.json"));
+  return response(structuredClone(RECONSTRUCTION_PROGRESS_FIXTURE));
 }
 
 test("attention cannot give all-clear until independent sources recover", async () => {
@@ -2178,7 +2176,7 @@ test("plan-switch cohorts retain known totals and first snapshots have no compar
     assert.equal(cohort.children[1].textContent, "3");
     assert.match(allText(cohort), /0 on plan · ~\$250\/window/u);
     assert.match(allText(cohort), /3 on plan/u);
-    for (const label of ["DMG downloads", "Published band cohort"]) {
+    for (const label of ["Historical DMG downloads", "Published band cohort"]) {
       const card = cards.find(item => item.children[0].children[0].textContent === label);
       assert.match(allText(card), /Comparison unavailable/u);
       assert.doesNotMatch(allText(card), /0 last 24h/u);
@@ -2239,27 +2237,17 @@ test("database failures reach attention and older Workers show unavailable witho
 test("platform and overall totals use the API union and clear on access refusal", async () => {
   const overview = await fixture("admin-overview-valid.json");
   overview.distribution.cloudflare.observedTotals = {
-    macosArchitectures: [
-      { architecture: "arm64", requestsLast7Days: 60, sourceAddressesLast7Days: 20 },
-      { architecture: "x64", requestsLast7Days: 25, sourceAddressesLast7Days: 10 },
-    ],
     platforms: [
-      { operatingSystem: "macos", requestsLast7Days: 85, sourceAddressesLast7Days: 25 },
-      { operatingSystem: "windows", requestsLast7Days: 8, sourceAddressesLast7Days: 4 },
-      { operatingSystem: "linux", requestsLast7Days: 3, sourceAddressesLast7Days: 2 },
-    ], overall: { requestsLast7Days: 96, sourceAddressesLast7Days: 29 },
+      { operatingSystem: "windows", requestsLast7Days: 23, sourceAddressesLast7Days: 29 },
+    ], overall: { requestsLast7Days: 23, sourceAddressesLast7Days: 29 },
   };
   let refused = false;
   await withAdminPage(async path => refused
     ? { ok: false, status: 403, json: async () => ({ error: { code: "ADMIN_DENIED" } }) }
     : healthyAdminRead(path, overview), async documentRef => {
     assert.deepEqual(tableTexts(documentRef, "distribution-total-rows"), [
-      ["Architecture total", "macOS · Apple silicon", "All versions", "69%", "20", "60"],
-      ["Architecture total", "macOS · Intel", "All versions", "34%", "10", "25"],
-      ["macOS subtotal", "macOS", "All versions", "86%", "25", "85"],
-      ["Platform total", "Windows", "All versions", "14%", "4", "8"],
-      ["Platform total", "Linux", "All versions", "7%", "2", "3"],
-      ["Overall total", "All OS", "All versions", "100%", "29", "96"],
+      ["Platform total", "Windows", "All versions", "100%", "29", "23"],
+      ["Overall total", "All OS", "All versions", "100%", "29", "23"],
     ]);
     refused = true;
     await documentRef.byId.get("refresh").listeners.get("click")();
@@ -2271,6 +2259,7 @@ test("platform and overall totals use the API union and clear on access refusal"
 test("sampled traffic explains approximations once and keeps source failures visible", async () => {
   const overview = await fixture("admin-overview-valid.json");
   overview.distribution.cloudflare.sampled = true;
+  overview.distribution.cloudflare.observedTotals = null;
   overview.distribution.github.sync.lastFailureCode = "GITHUB_UNAVAILABLE";
   await withAdminPage(async path => healthyAdminRead(path, overview), async documentRef => {
     assert.match(documentRef.byId.get("distribution-estimate-note").textContent, /≈ marks sampled Cloudflare traffic/u);

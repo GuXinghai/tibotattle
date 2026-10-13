@@ -923,7 +923,7 @@ export function contributionReviewBootstrapAction(preview) {
  * is the bootstrap's only step that mints durable state — a prepared set the
  * v0.1 queue will hold until it delivers or is retired — so it additionally
  * requires a positively read pre-consent verdict from the incremental sync
- * status. An unreadable verdict must never prepare: on an approved Mac the
+ * status. An unreadable verdict must never prepare: on an approved device the
  * set could never deliver and would only strand disk and queue weight
  * (observed live 2026-08-19). A consent-version change reads approved with
  * current=false and stays permitted — that ceremony needs its fresh review.
@@ -935,7 +935,7 @@ export function contributionReviewPreparationPermitted(incrementalStatus) {
 }
 
 /**
- * A local preparation or exact-review read crosses native Keychain, SQLite,
+ * A local preparation or exact-review read crosses native Credential Manager, SQLite,
  * and loopback boundaries. None may leave the contribution ceremony busy
  * forever: after one minute the page exposes its explicit retry so the caller
  * can record a bounded diagnostic, while the local operation remains free to

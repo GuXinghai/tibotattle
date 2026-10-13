@@ -34,7 +34,9 @@
         <a href="./privacy.html">Privacy</a>
       </nav>
       <a class="header-download" href="./community.html#download">
-        <img src="./apple.svg" alt="" width="14" height="14">
+        <svg class="header-download-icon" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+          <path d="M10 2v10m0 0 4-4m-4 4L6 8M3 15.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
         <span class="header-download-label">Download</span>
       </a>
     </header>
@@ -44,10 +46,10 @@
         <p class="eyebrow">Docs</p>
         <h1>TiboTattle, from download to dashboard.</h1>
         <p class="resource-lede">
-          TiboTattle is a local-first Mac app for understanding personal Codex
-          usage. It estimates your seven-day allowance in API-equivalent terms,
-          keeps its reset history, and shows uncertainty instead of filling gaps
-          with guesses.
+          TiboTattle is a local-first Windows app for understanding personal
+          Codex usage. It estimates your seven-day allowance in API-equivalent
+          terms, keeps its reset history, and shows uncertainty instead of
+          filling gaps with guesses.
         </p>
       </header>
 
@@ -66,8 +68,8 @@
               <span>Review the app and its release tooling in the <a href="https://github.com/adamallcock/tibotattle" target="_blank" rel="noreferrer">public repository</a>.</span>
             </li>
             <li>
-              <strong>Signed for the platform</strong>
-              <span>A published direct macOS download is Developer ID signed and notarized. Store subjects use their own signing and acceptance evidence. Other platforms appear here only after their own native release gates pass.</span>
+              <strong>Signed for Windows</strong>
+              <span>A published direct Windows download is Authenticode signed when its release lists it. Store subjects use their own signing and acceptance evidence. The release page states which exact file each signal covers.</span>
             </li>
             <li>
               <strong>Exact bytes</strong>
@@ -83,8 +85,8 @@
             <h3 id="verify-download-title">Four quick checks</h3>
             <p>
               Open the exact GitHub release, compare its checksum with your
-              download, and let your operating system verify the publisher.
-              For a release that publishes them, the canonical
+              download, and let Windows verify the publisher. For a release
+              that publishes them, the canonical
               <code>release-manifest.json</code>, SPDX SBOM, and artifact-named
               provenance bundles are release assets on GitHub and must be
               independently checked against their named artifact. The website
@@ -94,7 +96,7 @@
             <ol class="verification-steps">
               <li>Use the release page for the exact version and artifact distribution.</li>
               <li>Compare the published SHA-256 with the downloaded bytes.</li>
-              <li>Use Gatekeeper, Authenticode, a package signature, or the relevant store to verify the platform subject.</li>
+              <li>Check the Authenticode signature in the file's Properties → Digital Signatures tab, or use the relevant store, to verify the publisher.</li>
               <li>For source/build evidence, follow the release-specific commands in the canonical guide.</li>
             </ol>
           </section>
@@ -110,10 +112,10 @@
               that software is vulnerability-free.
             </p>
             <p>
-              macOS is the currently available lane. Windows and Linux become
-              official only when their final native artifact and v1 manifest
-              entry are listed in that release. A complete non-null evidence set
-              is the attested path; provenance is never inferred from a public
+              Windows x64 is the only supported platform. A download becomes
+              official only when its final installer and v1 manifest entry are
+              listed in that release. A complete non-null evidence set is the
+              attested path; provenance is never inferred from a public
               repository or a checksum.
             </p>
           </aside>
@@ -129,19 +131,14 @@
           </p>
         </article>
         <article class="resource-card" id="start">
-          <h2>Start on your Mac</h2>
+          <h2>Start on Windows</h2>
           <p>
-            TiboTattle supports macOS 14 or later on Apple silicon and Intel.
-            If you use <a href="https://brew.sh/" target="_blank" rel="noreferrer">Homebrew</a>,
-            the same command installs the signed release for your Mac:
-          </p>
-          <pre><code data-i18n-skip>brew install --cask adamallcock/tap/tibotattle</code></pre>
-          <p>
-            Or choose the matching Apple silicon or Intel download on the
-            <a href="./community.html#download">public home page</a> or
+            TiboTattle supports Windows x64. Choose the Windows installer on the
+            <a href="./community.html#download">public home page</a> or on
             <a href="https://github.com/adamallcock/tibotattle/releases/latest" target="_blank" rel="noreferrer">GitHub Releases</a>,
-            open the DMG, and drag TiboTattle to Applications. The app includes
-            its runtime; installing it does not require Node.js, pnpm, or Xcode.
+            check it against the published SHA-256, and run it. The installed
+            app includes its runtime; installing it does not require Node.js or
+            pnpm.
           </p>
           <p>
             On first launch, read the complete
@@ -161,7 +158,7 @@
             Codex app-server <code>account/read</code>,
             <code>account/rateLimits/read</code>, and
             <code>account/usage/read</code> methods. Processing and derived
-            personal results stay on this Mac.
+            personal results stay on this PC.
           </p>
         </article>
         <article class="resource-card" id="weekly-value">
@@ -204,12 +201,13 @@
           <h2>Local state and uninstall</h2>
           <p>
             Personal indexes, settings, cached calculations, and prepared
-            contributions live in the owner-only
-            <code>~/Library/Application Support/Usage Monitor</code> state root.
-            Ordinary uninstall preserves that state. Homebrew
-            <code>--zap</code> removes the app's local state and preferences but
-            deliberately leaves Codex data and TiboTattle Keychain identities
-            alone; identity reset and hosted deletion are separate actions.
+            contributions live in the owner-only Electron user-data folder for
+            your Windows account. Ordinary uninstall preserves that state and
+            the TiboTattle Windows Credential Manager entries; identity reset
+            and hosted deletion are separate actions. The app's
+            <strong>Erase local data</strong> control moves its state root to
+            the Recycle Bin, and it leaves Codex data and Credential Manager
+            capabilities alone.
           </p>
         </article>
         <article class="resource-card" id="sharing-lifecycle">
@@ -220,8 +218,7 @@
             off in Settings or Community to save a persistent choice. Existing
             choices are preserved; undecided existing installations receive
             three visible notices before delayed activation. Choosing now
-            cancels the remaining reminders. Older native Mac releases retain
-            their review-and-approve flow.
+            cancels the remaining reminders.
           </p>
           <p>
             An installation credential identifies a contribution source, not a
@@ -253,12 +250,12 @@
         <article class="resource-card" id="updates">
           <h2>Updates and channels</h2>
           <p>
-            Signed releases use the Sparkle feed at
-            <code>updates.tibotattle.com</code>. Manual checks are always under
-            <strong>Settings → About</strong>; automatic downloads can also be
-            changed there. Development builds have no updater and preview
-            builds use manual checks only. A source build, preview, installed
-            release, and published update are separate evidence gates.
+            Signed Windows releases are checked by the app's updater. Manual
+            checks are always under <strong>Settings → About</strong>; automatic
+            downloads can also be changed there. Development builds have no
+            updater and preview builds use manual checks only. A source build,
+            preview, installed release, and published update are separate
+            evidence gates.
           </p>
         </article>
         <article class="resource-card" id="support">
@@ -274,11 +271,10 @@
         <article class="resource-card" id="platforms">
           <h2>Platform support</h2>
           <p>
-            The published product currently supports macOS 14 or later on Apple
-            silicon and Intel. Windows and Linux source, contract, container, or native
-            experiments are preparation evidence only; neither platform is a
-            supported install until a release lists and qualifies its own final
-            artifact.
+            TiboTattle supports Windows x64 only. macOS and Linux are not
+            supported platforms. Windows source, contract, and native checks are
+            preparation evidence only; a Windows install is supported only once
+            a release lists and qualifies its own final installer.
           </p>
         </article>
       </div>

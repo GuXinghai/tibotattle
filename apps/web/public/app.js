@@ -268,7 +268,6 @@ const accountingModelsTablePagination = { page: 0, signature: "" };
 const accountingExpandedModels = new Set();
 const cacheSwitchTablePagination = { page: 0, signature: "" };
 const cacheContinuityTablePagination = { page: 0, signature: "" };
-const sideChatTablePagination = { page: 0, signature: "" };
 
 function paginateCacheImpactRows(rows, state, signature) {
   const selectedRows = Array.isArray(rows) ? rows : [];
@@ -333,11 +332,6 @@ let localActionBusy = false;
 let activeLocalDashboardLoad = null;
 let localRefreshInProgress = false;
 let localRefreshCancelRequested = false;
-// Archive indexing progress is intentionally transient: the durable dashboard
-// continues to show only the last verified complete/partial coverage receipt.
-// While a refresh owns a new pass, make that distinction visible beside cost
-// rather than letting a previous complete receipt look current.
-let archiveHistoryScanActive = false;
 let returnRefreshScheduled = false;
 let returnRefreshDeferrals = 0;
 // Electron's main process owns the recurring cadence. The renderer lifecycle
@@ -518,11 +512,11 @@ function openInstalledApp() {
   const status = $("#open-installed-app-status");
   status.hidden = false;
   status.textContent =
-    "Opening TiboTattle… If no app appears, install the signed Mac download above, then try again.";
+    "Opening TiboTattle… If no app appears, install the signed Windows download above, then try again.";
   window.setTimeout(() => {
     if (!status.hidden) {
       status.textContent =
-        "Continue in the TiboTattle in-app window. If nothing opened, the app is not installed or macOS blocked the link.";
+        "Continue in the TiboTattle in-app window. If nothing opened, the app is not installed or Windows blocked the link.";
     }
   }, 2_000);
 }
@@ -577,7 +571,6 @@ function renderRefreshProgress(button, phase, { processed = null, selected = nul
     ["Update running…", "refresh.progress.running"],
     ["Update running; reconnecting…", "refresh.progress.reconnecting"],
     ["Stopping safely…", "refresh.progress.stopping"],
-    ["Indexing archive history…", "refresh.progress.archive"],
     ["Scanning local history…", "refresh.progress.history"],
     ["Calculating usage and allowance…", "refresh.progress.calculating"],
     ["Analyzing files…", "refresh.progress.files"],
@@ -2047,12 +2040,6 @@ function renderPricing(data) {
     useWeighted ? weighted : pricing.totalCostUsd,
     2
   );
-  // Drawn above the early return for a period with no priced components: a
-  // figure of nothing is exactly when a reader most needs to know how little
-  // of their history is indexed. Calling it from here rather than from
-  // `renderDashboard` also means the two points where an active archive pass
-  // flips `archiveHistoryScanActive` and re-runs this renderer move the
-  // progress statement with it.
   renderHistoryProgress(data);
   // The metadata line under the total ("100% coverage · stale replay-safe
   // cache · price registry … · History index complete") is gone
@@ -2166,17 +2153,12 @@ function renderHistoryProgress(data) {
   } else {
     setLocalizedText(
       $("#history-progress-headline"),
-      archiveHistoryScanActive
-      ? "dashboard.history.indexingActive"
-      : history.phase === "not_started"
+history.phase === "not_started"
         ? "dashboard.history.indexingNotStarted"
         : "dashboard.history.indexingPaused",
       { percent: formatPercent(percent, 1) },
     );
   }
-  container.classList.toggle(
-    "active", archiveHistoryScanActive && !aggregateUnavailable,
-  );
   const track = $("#history-progress-track");
   track.setAttribute("aria-valuenow", String(Math.round(percent)));
   const coverageKey = partialTerminal
@@ -2743,7 +2725,7 @@ let shareCard = null;
 let shareCardReference = "";
 let shareCardSignature = "";
 let shareCardBusy = false;
-// The posted image uses the same bundled mark as the dashboard and macOS app.
+// The posted image uses the same bundled mark as the dashboard and Windows app.
 // If it loads after a card has been drawn, repaint the existing card rather
 // than leaving an approximated logo in the image.
 const shareCardBrandImage = new Image();
@@ -5496,83 +5478,14 @@ function selectedTimelinePoints(data) {
     return timelineSeriesMemo.selection;
   }
   const scopedUsage = allowanceTimelineUsage(data);
-  // Side-chat estimates predate plan-era attribution. They remain visible in
-  // all-plan accounting, but cannot enter a current-plan numerator until they
-  // carry the same plan/generation scope as the exact usage timeline.
-  const sideChatAdjusted = !data.allowancePlanSelection
-    && data.accounting?.sideChatEstimates?.status
-      === "available"
-    && data.accounting.sideChatEstimates.methodology
-      ?.includedInCalibrationTimeline === true
-    && Array.isArray(data.timeline.calibrationUsage)
-    && data.timeline.calibrationUsage.length > 0;
-  const exactByBucket = new Map(scopedUsage.map((row) => [
-    `${row.startAt}|${row.endAt}`,
-    row,
-  ]));
-  // Keep the comparison on identical timestamps. A side-chat-only bucket is
-  // represented by a zero-cost baseline row so a changed sampling grid cannot
-  // masquerade as a changed area under the residual curve.
-  const alignedExactUsage = sideChatAdjusted
-    ? data.timeline.calibrationUsage.map((row) => (
-      exactByBucket.get(`${row.startAt}|${row.endAt}`) ?? {
-        ...row,
-        usageEvents: 0,
-        totalTokens: 0,
-        apiPriceEquivalentUsd: 0,
-        allowanceWeighting: {
-          status: data.timeline.allowanceCapacity?.status === "available"
-            ? "complete"
-            : data.timeline.allowanceCapacity?.status === "range"
-              ? "range"
-              : "unavailable",
-          basisFamilyId: row.allowanceWeighting.basisFamilyId,
-          selectedScenario:
-            data.timeline.allowanceCapacity?.selectedScenario ?? null,
-          selectedUsd:
-            data.timeline.allowanceCapacity?.status === "available" ? 0 : null,
-          scenarios: Object.fromEntries(Object.entries(
-            row.allowanceWeighting.scenarios,
-          ).map(([scenario, value]) => [scenario, {
-            ...value,
-            sourceWeightingStatus: "complete",
-            quotaWeightedUsd: 0,
-            coveredSubtotalUsd: 0,
-            coverage: {
-              totalEvents: 0,
-              observedEvents: 0,
-              declaredFromConfigEvents: 0,
-              assumedEvents: 0,
-              inferredEvents: 0,
-              unknownEvents: 0,
-              observedSharePercent: null,
-              unknownSharePercent: null,
-            },
-          }])),
-          rangeUsd: data.timeline.allowanceCapacity?.status === "range"
-            ? { lower: 0, upper: 0 }
-            : null,
-        },
-      }
-    ))
-    : [];
-  const exactLivePoints = sideChatAdjusted
-    ? liveTimelinePoints(data, { usage: alignedExactUsage })
-    : [];
-  const livePoints = liveTimelinePoints(data, {
-    usage: sideChatAdjusted
-      ? data.timeline.calibrationUsage
-      : scopedUsage,
-  });
+  const livePoints = liveTimelinePoints(data, { usage: scopedUsage });
   // Retained gradient artifacts carry only Standard-rate rolling cost. They
   // can remain historical evidence elsewhere, but may never replace the
   // speed-priced allowance comparison. An unavailable weighted live series
   // therefore stays unavailable instead of silently drawing the old red line.
   const selection = {
     points: livePoints,
-    baselinePoints: exactLivePoints,
     usingLive: true,
-    sideChatAdjusted,
   };
   timelineSeriesMemo = {
     data,
@@ -5604,17 +5517,11 @@ function renderTimeline(data) {
   data = selectAllowancePlanPopulation(data, activeWeeklyPlanType);
   const {
     points,
-    baselinePoints,
     usingLive,
-    sideChatAdjusted,
   } = selectedTimelinePoints(data);
   const usageBounds = timelineBounds(selectedUsagePoints(data));
   const viewport = usageTimelineViewport ?? timelineViewport ?? usageBounds ?? normalizeTimelineViewport(points);
   const visiblePoints = timelinePointsInViewport(points, viewport);
-  const visibleBaselinePoints = timelinePointsInViewport(
-    baselinePoints,
-    viewport,
-  );
   const matchedVisible = visiblePoints.filter(
     (point) => point.observed !== null && point.expected !== null,
   );
@@ -5626,9 +5533,7 @@ function renderTimeline(data) {
   });
   $("#timeline-chart-copy").textContent = usingLive
     ? t(
-      sideChatAdjusted
-        ? "dashboard.timeline.liveCopySideChatAdjusted"
-        : "dashboard.timeline.liveCopy",
+      "dashboard.timeline.liveCopy",
       { timeZone: formatTimeZoneLabel() },
     )
     : t("dashboard.timeline.historicalCopy", {
@@ -5703,7 +5608,7 @@ function renderTimeline(data) {
     data,
     activeCalibrationRangeDays,
   );
-  renderTimelineSummary(data, visiblePoints, visibleBaselinePoints, usingLive);
+  renderTimelineSummary(data, visiblePoints, usingLive);
   renderTimelineConfidence(data, points, visiblePoints, usingLive, viewport);
   const differenceShell = $("#difference-timeline-chart");
   const differenceLimit = visiblePoints.reduce((maximum, point) => Math.max(maximum, Math.abs(finite(point.residual, 0))), 1) * 1.1;
@@ -5918,7 +5823,6 @@ function signedResidualAucPpHours(matched) {
 function renderTimelineSummary(
   data,
   points,
-  baselinePoints = [],
   usingLive = true,
 ) {
   const summary = data.gradient.summary ?? {};
@@ -5939,20 +5843,6 @@ function renderTimelineSummary(
   // summary in src/simple-quota-gradient.js. The historical view reports the
   // artifact's own whole-history figure instead of re-deriving one.
   const liveSignedAuc = signedResidualAucPpHours(matched);
-  const baselineMatched = baselinePoints.filter(
-    (row) => row.status !== "inactive"
-      && row.observed !== null
-      && row.expected !== null,
-  );
-  const baselineSignedAuc = signedResidualAucPpHours(baselineMatched);
-  const baselineByTimestamp = new Map(
-    baselineMatched.map((row) => [row.timestamp, row]),
-  );
-  const sideChatMatchedOverlap = matched.filter((row) => {
-    const baseline = baselineByTimestamp.get(row.timestamp);
-    return baseline !== undefined
-      && Math.abs(row.expected - baseline.expected) > 1e-12;
-  }).length;
   const values = [
     [
       "Matched windows",
@@ -5984,30 +5874,6 @@ function renderTimelineSummary(
         : "—",
     ],
   ];
-  if (live && baselineMatched.length > 0) {
-    values.splice(4, 0,
-      [
-        t("dashboard.summary.sideChatBaseline"),
-        t("dashboard.summary.sideChatBaselineExplanation"),
-        formatSignedPpHours(baselineSignedAuc),
-      ],
-      [
-        t("dashboard.summary.sideChatAdjustment"),
-        t(
-          sideChatMatchedOverlap > 0
-            ? "dashboard.summary.sideChatAdjustmentExplanation"
-            : "dashboard.summary.sideChatAdjustmentNoOverlapExplanation",
-        ),
-        sideChatMatchedOverlap > 0
-          ? formatSignedPpHours(
-            liveSignedAuc === null || baselineSignedAuc === null
-              ? null
-              : liveSignedAuc - baselineSignedAuc,
-          )
-          : t("dashboard.summary.sideChatNoMatchedOverlap"),
-      ],
-    );
-  }
   const container = $("#timeline-summary");
   clear(container);
   for (const [label, explanation, value] of values) {
@@ -9047,31 +8913,6 @@ function accountingPeriod(data) {
     : rootCacheContinuityImpact?.periodId === cacheSwitchPeriodId
       ? rootCacheContinuityImpact.allowanceImpact
       : { status: "unavailable" };
-  const rootSideChatEstimates = data.accounting.sideChatEstimates;
-  const sideChatPeriod = rootSideChatEstimates?.status === "available"
-    ? rootSideChatEstimates.periods.find(
-      (period) => period?.periodId === cacheSwitchPeriodId,
-    )
-    : null;
-  const sideChatStartMs = Date.parse(sideChatPeriod?.startAt ?? "");
-  const sideChatEndMs = Date.parse(sideChatPeriod?.endAt ?? "");
-  const sideChatNumericCoverageStartMs = Date.parse(
-    rootSideChatEstimates?.coverage?.logs2?.startAt ?? "",
-  );
-  const sideChatSelectionCoverage = sideChatPeriod !== null
-      && Number.isFinite(sideChatStartMs)
-      && Number.isFinite(sideChatNumericCoverageStartMs)
-      && sideChatNumericCoverageStartMs <= sideChatStartMs
-    ? "selected_period_within_numeric_retention"
-    : "retained_subset_of_selected_period";
-  const sideChatRecent = sideChatPeriod === null
-    ? []
-    : rootSideChatEstimates.recent.filter((row) => {
-      const observedMs = Date.parse(row.observedAt);
-      return Number.isFinite(observedMs)
-        && (!Number.isFinite(sideChatStartMs) || observedMs >= sideChatStartMs)
-        && (!Number.isFinite(sideChatEndMs) || observedMs <= sideChatEndMs);
-    });
   return {
     ...data.accounting,
     ...selected,
@@ -9083,18 +8924,6 @@ function accountingPeriod(data) {
       ...selectedCacheContinuityImpact,
       allowanceImpact: continuityAllowanceImpact,
     },
-    sideChatEstimates: sideChatPeriod === null
-      ? rootSideChatEstimates
-      : {
-        ...rootSideChatEstimates,
-        ...sideChatPeriod,
-        periods: rootSideChatEstimates.periods,
-        recent: sideChatRecent,
-        selectedAccountingPeriodId: selected.periodId,
-        selectionCoverage: sideChatSelectionCoverage,
-        retainedEvidenceStartAt:
-          rootSideChatEstimates?.coverage?.logs2?.startAt ?? null,
-      },
     replayExclusionDiagnostics: data.accounting.replayExclusionDiagnostics,
     accountingSource: data.accounting.accountingSource,
   };
@@ -10017,484 +9846,6 @@ function renderAccountingCacheContinuityDetails(impact) {
   }
 }
 
-function sideChatConfigurationDescription(row) {
-  const configuration = t("accounting.sideChat.configuration", {
-    model: formatModelName(row?.model),
-    effort: t(
-      `accounting.cacheSwitch.effort.${row?.reasoningEffort}`,
-    ),
-  });
-  return row?.pricingBasis === "reviewed_alias_assumption"
-    ? t("accounting.sideChat.configurationAliasAssumption", { configuration })
-    : configuration;
-}
-
-function sideChatEstimateRange(row) {
-  if (row?.estimatedApiPriceEquivalentUsd === null) return "—";
-  const range = row?.estimatedRangeUsd;
-  return range === null
-    ? formatApiMoney(row.estimatedApiPriceEquivalentUsd)
-    : t("accounting.sideChat.estimateRange", {
-      point: formatApiMoney(row.estimatedApiPriceEquivalentUsd),
-      lower: formatApiMoney(range.lower),
-      upper: formatApiMoney(range.upper),
-    });
-}
-
-function sideChatCalibrationKey(status) {
-  return {
-    eligible_active_retention:
-      "accounting.sideChat.calibration.eligibleActiveRetention",
-    withheld_no_retained_calls:
-      "accounting.sideChat.calibration.withheldNoCalls",
-    withheld_unpriced_calls:
-      "accounting.sideChat.calibration.withheldUnpriced",
-    withheld_parser_gaps:
-      "accounting.sideChat.calibration.withheldParserGaps",
-    withheld_cohort_mismatch:
-      "accounting.sideChat.calibration.withheldCohortMismatch",
-    withheld_context_mismatch:
-      "accounting.sideChat.calibration.withheldContextMismatch",
-    withheld_stale_calibration:
-      "accounting.sideChat.calibration.withheldStaleCalibration",
-  }[status] ?? "accounting.sideChat.calibration.withheldUnavailable";
-}
-
-function appendSideChatMetricNote(container, estimate) {
-  if (estimate?.status !== "available") {
-    container.append(localizedNode(
-      "span",
-      "",
-      "accounting.sideChat.noteUnavailable",
-    ));
-    return;
-  }
-  if (estimate.selectionCoverage === "retained_subset_of_selected_period") {
-    container.append(localizedNode(
-      "span",
-      "",
-      "accounting.sideChat.noteRetainedSubset",
-      {
-        estimate: estimate.estimatedApiPriceEquivalentUsd === null
-          ? "—"
-          : formatApiMoney(estimate.estimatedApiPriceEquivalentUsd),
-        start: estimate.retainedEvidenceStartAt
-          ? formatLocal(estimate.retainedEvidenceStartAt, { dateOnly: true })
-          : t("format.unknown"),
-      },
-    ));
-    return;
-  }
-  container.append(localizedNode(
-    "span",
-    "",
-    "accounting.sideChat.noteObserved",
-    {
-      calls: formatCount(estimate.samplingCalls),
-      retained: formatCount(estimate.retainedSessions),
-      detected: formatCount(estimate.detectedSessions),
-    },
-  ));
-  if (estimate.estimatedRangeUsd !== null) {
-    container.append(
-      document.createTextNode(" "),
-      localizedNode(
-        "span",
-        "",
-        "accounting.sideChat.noteRange",
-        {
-          lower: formatApiMoney(estimate.estimatedRangeUsd.lower),
-          upper: formatApiMoney(estimate.estimatedRangeUsd.upper),
-        },
-      ),
-    );
-  }
-  if (estimate.methodology?.calibrationStatus
-      !== "eligible_active_retention") {
-    container.append(
-      document.createTextNode(" "),
-      localizedNode(
-        "span",
-        "",
-        sideChatCalibrationKey(estimate.methodology?.calibrationStatus),
-      ),
-    );
-  }
-}
-
-function formatHistoricalGapPercentagePointRange(range) {
-  const lower = finite(range?.lower, null);
-  const upper = finite(range?.upper, null);
-  if (lower === null || upper === null) return "—";
-  return closeEnough(lower, upper)
-    ? t("accounting.sideChat.historicalGap.percentagePoints", {
-      value: formatDecimal(lower, 2),
-    })
-    : t("accounting.sideChat.historicalGap.percentagePointRange", {
-      lower: formatDecimal(lower, 2),
-      upper: formatDecimal(upper, 2),
-    });
-}
-
-function formatHistoricalGapWeightedUsage(weighting) {
-  if (weighting?.status === "complete") {
-    return formatApiMoney(weighting.selectedUsd);
-  }
-  if (weighting?.status === "range") {
-    return t("accounting.sideChat.historicalGap.moneyRange", {
-      lower: formatApiMoney(weighting.rangeUsd?.lower),
-      upper: formatApiMoney(weighting.rangeUsd?.upper),
-    });
-  }
-  return "—";
-}
-
-function formatHistoricalGapExpected(comparison) {
-  if (comparison?.status === "complete") {
-    return formatHistoricalGapPercentagePointRange({
-      lower: comparison.selectedExpectedPercentagePoints,
-      upper: comparison.selectedExpectedPercentagePoints,
-    });
-  }
-  if (comparison?.status === "range") {
-    return formatHistoricalGapPercentagePointRange(
-      comparison.expectedRangePercentagePoints,
-    );
-  }
-  return "—";
-}
-
-function formatHistoricalGapBackcast(estimate) {
-  if (estimate?.allowanceComparison?.status === "complete") {
-    return t("accounting.sideChat.historicalGap.backcastValue", {
-      standard: formatApiMoney(
-        estimate.impliedMissingStandardApiEquivalentUsd,
-      ),
-      weighted: formatApiMoney(
-        estimate.impliedMissingQuotaWeightedApiEquivalentUsd,
-      ),
-    });
-  }
-  return t("accounting.sideChat.historicalGap.backcastRange", {
-    standard: t("accounting.sideChat.historicalGap.moneyRange", {
-      lower: formatApiMoney(estimate?.sensitivityRangeUsd?.lower),
-      upper: formatApiMoney(estimate?.sensitivityRangeUsd?.upper),
-    }),
-    weighted: t("accounting.sideChat.historicalGap.moneyRange", {
-      lower: formatApiMoney(
-        estimate?.quotaWeightedSensitivityRangeUsd?.lower,
-      ),
-      upper: formatApiMoney(
-        estimate?.quotaWeightedSensitivityRangeUsd?.upper,
-      ),
-    }),
-  });
-}
-
-function closeEnough(left, right) {
-  return Number.isFinite(left) && Number.isFinite(right)
-    && Math.abs(left - right) < 1e-9;
-}
-
-function historicalGapPeakThreeHourPoint(probe) {
-  if (!dashboard || probe?.status !== "available") return null;
-  const startMs = Date.parse(probe.startAt);
-  const endMs = Date.parse(probe.endAt);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
-  return liveTimelinePoints(dashboard, {
-    windowHours: CALIBRATION_WINDOW_HOURS,
-    rangeDays: ALL_HISTORY_RANGE_DAYS,
-  }).filter((point) => (
-    point.timestampMs >= startMs
-      && point.timestampMs <= endMs
-      && point.observed !== null
-      && point.expected !== null
-      && point.residual !== null
-  )).sort((left, right) => right.residual - left.residual)[0] ?? null;
-}
-
-function appendHistoricalGapMetric(container, labelKey, value) {
-  const item = node("div");
-  item.append(
-    localizedNode("span", "", labelKey),
-    rawNode("strong", "", value),
-  );
-  container.append(item);
-}
-
-function renderSideChatHistoricalGapProbe(probe) {
-  const section = $("#side-chat-historical-gap");
-  const summary = $("#side-chat-historical-gap-summary");
-  const explanation = $("#side-chat-historical-gap-explanation");
-  const note = $("#side-chat-historical-gap-note");
-  const focus = $("#side-chat-historical-gap-focus");
-  if (!section || !summary || !explanation || !note || !focus) return;
-  clear(summary);
-  const available = probe?.status === "available";
-  section.hidden = !available;
-  focus.disabled = !available;
-  if (!available) {
-    explanation.textContent = "";
-    note.textContent = "";
-    return;
-  }
-  const exact = probe.exactUsage;
-  const quota = probe.quota;
-  const estimate = probe.estimate;
-  const calibration = probe.calibration;
-  const date = formatLocal(probe.startAt, { dateOnly: true });
-  explanation.textContent = t(
-    "accounting.sideChat.historicalGap.explanation",
-    {
-      date,
-      events: formatCount(exact.events),
-      sessions: formatCount(exact.sessions),
-      model: formatModelName(estimate.assumedMissingModel),
-      multiplier: formatDecimal(estimate.fastQuotaMultiplier, 1),
-    },
-  );
-  appendHistoricalGapMetric(
-    summary,
-    "accounting.sideChat.historicalGap.metric.quota",
-    formatHistoricalGapPercentagePointRange({
-      lower: quota.minimumMovementPercentagePoints,
-      upper: quota.maximumMovementPercentagePoints,
-    }),
-  );
-  appendHistoricalGapMetric(
-    summary,
-    "accounting.sideChat.historicalGap.metric.exact",
-    t("accounting.sideChat.historicalGap.exactValue", {
-      cost: formatApiMoney(exact.standardApiPriceEquivalentUsd),
-      events: formatCount(exact.events),
-    }),
-  );
-  appendHistoricalGapMetric(
-    summary,
-    "accounting.sideChat.historicalGap.metric.weighted",
-    formatHistoricalGapWeightedUsage(exact.allowanceWeighting),
-  );
-  appendHistoricalGapMetric(
-    summary,
-    "accounting.sideChat.historicalGap.metric.expected",
-    formatHistoricalGapExpected(estimate.allowanceComparison),
-  );
-  appendHistoricalGapMetric(
-    summary,
-    "accounting.sideChat.historicalGap.metric.unexplained",
-    formatHistoricalGapPercentagePointRange(
-      estimate.unexplainedMedianRangePercentagePoints,
-    ),
-  );
-  appendHistoricalGapMetric(
-    summary,
-    "accounting.sideChat.historicalGap.metric.backcast",
-    formatHistoricalGapBackcast(estimate),
-  );
-  const peak = historicalGapPeakThreeHourPoint(probe);
-  if (peak !== null) {
-    appendHistoricalGapMetric(
-      summary,
-      "accounting.sideChat.historicalGap.metric.peak",
-      t("accounting.sideChat.historicalGap.peakValue", {
-        residual: formatDecimal(peak.residual, 2),
-        observed: formatDecimal(peak.observed, 2),
-        expected: formatDecimal(peak.expected, 2),
-      }),
-    );
-  }
-  note.textContent = t("accounting.sideChat.historicalGap.note", {
-    fast: formatCount(exact.bySpeed.fast.events),
-    ultrafast: formatCount(exact.bySpeed.ultrafast.events),
-    standard: formatCount(exact.bySpeed.standard.events),
-    unknown: formatCount(exact.bySpeed.unknown.events),
-    standardSensitivity: t("accounting.sideChat.historicalGap.moneyRange", {
-      lower: formatApiMoney(estimate.sensitivityRangeUsd.lower),
-      upper: formatApiMoney(estimate.sensitivityRangeUsd.upper),
-    }),
-    weightedSensitivity: t("accounting.sideChat.historicalGap.moneyRange", {
-      lower: formatApiMoney(
-        estimate.quotaWeightedSensitivityRangeUsd.lower,
-      ),
-      upper: formatApiMoney(
-        estimate.quotaWeightedSensitivityRangeUsd.upper,
-      ),
-    }),
-    resets: formatCount(
-      calibration.scenarios.unresolved_as_standard.qualifyingResets,
-    ),
-    capacity: t("accounting.sideChat.historicalGap.moneyRange", {
-      lower: formatApiMoney(Math.min(
-        calibration.scenarios.unresolved_as_standard
-          .medianWeeklyCapacityUsd,
-        calibration.scenarios.unresolved_as_fast.medianWeeklyCapacityUsd,
-      )),
-      upper: formatApiMoney(Math.max(
-        calibration.scenarios.unresolved_as_standard
-          .medianWeeklyCapacityUsd,
-        calibration.scenarios.unresolved_as_fast.medianWeeklyCapacityUsd,
-      )),
-    }),
-  });
-}
-
-function renderAccountingSideChatDetails(estimate) {
-  const disclosure = $("#side-chat-details");
-  const rows = $("#side-chat-rows");
-  const summary = $("#side-chat-evidence-summary");
-  const coverage = $("#side-chat-coverage-note");
-  if (!disclosure || !rows || !summary || !coverage) return;
-  renderSideChatHistoricalGapProbe(estimate?.historicalGapProbe);
-  clear(rows);
-  clear(summary);
-  const available = estimate?.status === "available";
-  const historicalGapAvailable = estimate?.historicalGapProbe?.status
-    === "available";
-  disclosure.hidden = !available && !historicalGapAvailable;
-  if (!available) {
-    disclosure.open = false;
-    coverage.textContent = "";
-    renderCacheImpactPagination(
-      "side-chat",
-      sideChatTablePagination,
-      paginateCacheImpactRows([], sideChatTablePagination, "side-chat:unavailable"),
-    );
-    return;
-  }
-  for (const [labelKey, value] of [
-    ["accounting.sideChat.summary.detected", formatCount(estimate.detectedSessions)],
-    ["accounting.sideChat.summary.visibleTurns", formatCount(estimate.visibleTurns)],
-    ["accounting.sideChat.summary.samplingCalls", formatCount(estimate.samplingCalls)],
-    ["accounting.sideChat.summary.activeContext", compact(estimate.activeContextTokens)],
-  ]) {
-    const item = node("div");
-    item.append(
-      localizedNode("span", "", labelKey),
-      rawNode("strong", "", value),
-    );
-    summary.append(item);
-  }
-  const globalCoverage = estimate.coverage;
-  const coverageParts = [t(
-    globalCoverage?.status === "partial_diagnostic_retention"
-      ? "accounting.sideChat.coveragePartial"
-      : "accounting.sideChat.coverageComplete",
-    {
-      retained: formatCount(globalCoverage?.retainedNumericSessions ?? 0),
-      detected: formatCount(globalCoverage?.detectedSessions ?? 0),
-      missing: formatCount(globalCoverage?.sessionsWithoutNumericEvidence ?? 0),
-    },
-  )];
-  if ((globalCoverage?.sessionsAtRetentionLimit ?? 0) > 0) {
-    coverageParts.push(tPlural(
-      "accounting.sideChat.coverageRetentionLimit",
-      globalCoverage.sessionsAtRetentionLimit,
-      {
-        count: formatCount(globalCoverage.sessionsAtRetentionLimit),
-      },
-    ));
-  }
-  if ((globalCoverage?.duplicateSamplingMarkers ?? 0) > 0) {
-    coverageParts.push(tPlural(
-      "accounting.sideChat.coverageDuplicates",
-      globalCoverage.duplicateSamplingMarkers,
-      {
-        count: formatCount(globalCoverage.duplicateSamplingMarkers),
-      },
-    ));
-  }
-  coverageParts.push(t("accounting.sideChat.coverageActiveRetention"));
-  coverageParts.push(t("accounting.sideChat.coverageKnownFormats"));
-  if ((globalCoverage?.rejectedSamplingMarkers ?? 0) > 0
-      || (globalCoverage?.rejectedCompactionMarkers ?? 0) > 0
-      || (globalCoverage?.ambiguousDuplicateMarkers ?? 0) > 0
-      || (globalCoverage?.desktop?.oversizedLinesSkipped ?? 0) > 0) {
-    coverageParts.push(t("accounting.sideChat.coverageParserGaps", {
-      sampling: formatCount(globalCoverage?.rejectedSamplingMarkers ?? 0),
-      compactions: formatCount(
-        globalCoverage?.rejectedCompactionMarkers ?? 0,
-      ),
-      duplicates: formatCount(
-        globalCoverage?.ambiguousDuplicateMarkers ?? 0,
-      ),
-      lines: formatCount(
-        globalCoverage?.desktop?.oversizedLinesSkipped ?? 0,
-      ),
-    }));
-  }
-  coverageParts.push(t("accounting.sideChat.pricingCoverage", {
-    priced: formatCount(estimate.pricedCalls ?? 0),
-    calls: formatCount(estimate.samplingCalls ?? 0),
-    unpriced: formatCount(estimate.unpricedCalls ?? 0),
-  }));
-  const omittedDetails = Math.max(
-    0,
-    (estimate.samplingCalls ?? 0) - (estimate.recent?.length ?? 0),
-  );
-  if (omittedDetails > 0) {
-    coverageParts.push(tPlural(
-      "accounting.sideChat.detailsTruncated",
-      omittedDetails,
-      {
-        count: formatCount(omittedDetails),
-        limit: formatCount(estimate.recentDetailLimit ?? 500),
-      },
-    ));
-  }
-  coverageParts.push(t(sideChatCalibrationKey(
-    estimate.methodology?.calibrationStatus,
-  )));
-  coverage.textContent = coverageParts.join(" ");
-  const recent = Array.isArray(estimate.recent) ? estimate.recent : [];
-  const page = paginateCacheImpactRows(
-    recent,
-    sideChatTablePagination,
-    cacheImpactTableSignature("side-chat", estimate, recent),
-  );
-  renderCacheImpactPagination("side-chat", sideChatTablePagination, page);
-  if (!recent.length) {
-    const row = node("tr");
-    const cell = localizedNode(
-      "td",
-      "empty-cell",
-      "accounting.sideChat.detailsEmpty",
-    );
-    cell.colSpan = 6;
-    row.append(cell);
-    rows.append(row);
-    return;
-  }
-  for (const item of page.rows) {
-    const row = node("tr");
-    row.append(
-      rawNode("td", "", formatLocal(item.observedAt)),
-      localizedNode(
-        "td",
-        "numeric-cell",
-        "accounting.sideChat.turnOrdinal",
-        { ordinal: formatCount(item.turnOrdinal) },
-      ),
-      rawNode(
-        "td",
-        "cache-switch-change",
-        sideChatConfigurationDescription(item),
-      ),
-      rawNode("td", "numeric-cell", formatCount(item.activeContextTokens)),
-      localizedNode(
-        "td",
-        "",
-        item.cacheAssumption === "cold_after_compaction"
-          ? "accounting.sideChat.cache.coldAfterCompaction"
-          : item.cacheAssumption === "retention_unknown"
-            ? "accounting.sideChat.cache.retentionUnknown"
-            : "accounting.sideChat.cache.warmPrefix",
-      ),
-      rawNode("td", "model-api-equivalent", sideChatEstimateRange(item)),
-    );
-    rows.append(row);
-  }
-}
-
 /**
  * Say WHY the replay-safe accounting artifacts are missing when the rebuild
  * keeps being postponed, instead of leaving bare zero cards. The rebuild
@@ -10661,7 +10012,6 @@ function renderAccounting(data) {
     renderAccountingModels(data.accounting, { unavailable: true });
     renderAccountingCacheSwitchDetails(null);
     renderAccountingCacheContinuityDetails(null);
-    renderAccountingSideChatDetails(null);
     return;
   }
   const summary = $("#accounting-summary");
@@ -10769,35 +10119,6 @@ function renderAccounting(data) {
   );
   summary.append(cacheContinuityCard);
 
-  const sideChatEstimates = accounting.sideChatEstimates;
-  if (sideChatEstimates?.status === "available") {
-    const sideChatCard = node("article", "metric-card compact-metric");
-    const sideChatLabel = node("span", "metric-name");
-    sideChatLabel.append(informationLabel(
-      t("accounting.sideChat.metricLabel"),
-      t("accounting.sideChat.metricExplanation"),
-    ));
-    const sideChatNote = node("p");
-    appendSideChatMetricNote(sideChatNote, sideChatEstimates);
-    sideChatCard.append(
-      sideChatLabel,
-      rawNode(
-        "strong",
-        "metric-value",
-        sideChatEstimates.selectionCoverage
-            === "retained_subset_of_selected_period"
-          ? "—"
-          : sideChatEstimates.estimatedApiPriceEquivalentUsd === null
-          ? "—"
-          : formatApiMoney(
-            sideChatEstimates.estimatedApiPriceEquivalentUsd,
-          ),
-      ),
-      sideChatNote,
-    );
-    summary.append(sideChatCard);
-  }
-
   const componentCountRows = Object.entries(accounting.components ?? {})
     .filter(([, tokens]) => tokens > 0)
     .map(([key, tokens]) => ({ key, tokens }))
@@ -10834,7 +10155,6 @@ function renderAccounting(data) {
   });
   renderAccountingCacheSwitchDetails(cacheSwitchImpact);
   renderAccountingCacheContinuityDetails(cacheContinuityImpact);
-  renderAccountingSideChatDetails(sideChatEstimates);
 }
 
 /**
@@ -11535,7 +10855,6 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
   localActionBusy = true;
   localRefreshInProgress = true;
   localRefreshCancelRequested = false;
-  archiveHistoryScanActive = false;
   renderRefreshProgress(button, detailed
     ? "Starting detailed accounting…"
     : "Starting local analysis…");
@@ -11593,14 +10912,9 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       finalFailureCode = refresh.failureCode ?? finalFailureCode;
       const progress = refresh.progress ?? refresh.result?.indexing ?? null;
       const collectorProgress = progress?.kind === undefined;
-      const archiveScanning = progress?.kind === "archive_index";
       const unifiedIndexScanning = progress?.kind === "unified_index"
         && progress?.status === "scanning"
         && progress?.phase === "rollout_index";
-      if (archiveScanning && !archiveHistoryScanActive) {
-        archiveHistoryScanActive = true;
-        if (dashboard) renderPricing(dashboard);
-      }
       if (collectorProgress
           && progress?.phase === "quick_result" && !quickResultLoaded) {
         try {
@@ -11625,8 +10939,6 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
         ? "Stopping safely…"
         : accountingStatus !== null
           ? accountingStatus
-        : archiveScanning
-          ? "Indexing archive history…"
         : collectorProgress && progress?.phase === "quick_result"
           ? refreshQuickResultStatus({
               dashboardLoaded: quickResultLoaded,
@@ -11720,7 +11032,6 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       failure.refreshFailureDetail = failureDetail || null;
       throw failure;
     }
-    archiveHistoryScanActive = false;
     refreshProgressClock.stop();
     refreshProgressClock = null;
     renderRefreshProgress(button, "Loading updated evidence…");
@@ -11781,9 +11092,6 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
   } finally {
     refreshProgressClock?.stop();
     if (electronRefresh && refreshAccepted) await refreshLeaseSession?.finish();
-    const wasArchiveScanning = archiveHistoryScanActive;
-    archiveHistoryScanActive = false;
-    if (wasArchiveScanning && dashboard) renderPricing(dashboard);
     localActionBusy = false;
     localRefreshInProgress = false;
     localRefreshCancelRequested = false;
@@ -11939,15 +11247,8 @@ function startElectronStartupRefresh() {
     const startupRefreshOptions = freshIndex ? {} : { detailed: true };
     void requestRefresh(startupRefreshOptions);
   };
-  const macSmokeBridge = globalThis.__TIBOTATTLE_ELECTRON_MACOS_SMOKE__;
-  const windowsSmokeBridge = globalThis.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__;
-  // A mixed or stale preload must not choose one platform barrier silently.
-  const smokeBridge = macSmokeBridge !== undefined
-    && windowsSmokeBridge !== undefined
-    ? null
-    : windowsSmokeBridge !== undefined
-      ? windowsSmokeBridge
-      : macSmokeBridge;
+  // The Windows preload is the only smoke barrier this product exposes.
+  const smokeBridge = globalThis.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__;
   if (smokeBridge !== undefined) {
     if (smokeBridge === null
         || smokeBridge.version !== "v1"
@@ -11969,7 +11270,7 @@ function startElectronStartupRefresh() {
 }
 
 function scheduleReturningUserRefresh() {
-  // The native macOS shell owns the foreground cadence. Running both the web
+  // The native Windows shell owns the foreground cadence. Running both the web
   // return-visit timer and the native timer races the same bounded companion
   // request, which can surface a harmless 409 as a confusing dashboard error.
   // What the shell owes in return is a signal when its refresh finished, which
@@ -12275,39 +11576,6 @@ $("#cache-continuity-page-next").addEventListener("click", () => {
       ? null
       : accountingPeriod(dashboard)?.cacheContinuityImpact,
   );
-});
-$("#side-chat-page-prev").addEventListener("click", () => {
-  sideChatTablePagination.page -= 1;
-  renderAccountingSideChatDetails(
-    dashboard === null
-      ? null
-      : accountingPeriod(dashboard)?.sideChatEstimates,
-  );
-});
-$("#side-chat-page-next").addEventListener("click", () => {
-  sideChatTablePagination.page += 1;
-  renderAccountingSideChatDetails(
-    dashboard === null
-      ? null
-      : accountingPeriod(dashboard)?.sideChatEstimates,
-  );
-});
-$("#side-chat-historical-gap-focus").addEventListener("click", () => {
-  if (!dashboard) return;
-  const probe = accountingPeriod(dashboard)?.sideChatEstimates
-    ?.historicalGapProbe;
-  const startMs = Date.parse(probe?.startAt ?? "");
-  const endMs = Date.parse(probe?.endAt ?? "");
-  if (probe?.status !== "available"
-      || !Number.isFinite(startMs) || !Number.isFinite(endMs)
-      || endMs <= startMs) return;
-  reportingPeriod.select("all");
-  timelineViewport = { startMs, endMs };
-  usageTimelineViewport = { startMs, endMs };
-  timelineSeriesMemo = null;
-  window.location.hash = "#timeline";
-  renderUsageTimeline(dashboard);
-  renderTimeline(dashboard);
 });
 $("#usage-group-controls").addEventListener("click", (event) => {
   const button = event.target.closest("[data-group]");

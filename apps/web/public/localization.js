@@ -209,7 +209,8 @@ export const WEB_MESSAGES = Object.freeze({
   "status.moreDataNeeded": ["More data needed", "需要更多数据", "Se necesitan más datos"],
   "status.setUpMac": ["Set up this computer", "设置这台电脑", "Configura este equipo"],
   "status.readyToAnalyze": ["Ready to analyze", "可以开始分析", "Listo para analizar"],
-  "status.openMacApp": ["Open the Mac app", "打开 Mac 应用", "Abre la app para Mac"],
+  "status.openMacApp": ["Open the Windows app", "打开 Windows 应用", "Abre la app para Windows"],
+
   "status.labeledDemoData": ["Labeled demo data", "已标注的演示数据", "Datos de demostración etiquetados"],
   "dashboard.comparison.matchedWindow": ["Matched window", "匹配窗口", "Ventana coincidente"],
   "dashboard.comparison.mae": ["MAE {value} pp", "平均绝对误差 {value} 个百分点", "EMA de {value} pp"],
@@ -219,11 +220,14 @@ export const WEB_MESSAGES = Object.freeze({
   "dashboard.unavailable.companionUnavailable": ["Companion unavailable", "伴随程序不可用", "Acompañante no disponible"],
   "dashboard.unavailable.noRealUsage": ["No real usage is displayed", "未显示真实使用情况", "No se muestra uso real"],
   "dashboard.unavailable.backendOnlyTitle": ["This address is the backend-only service", "此地址仅提供后端服务", "Esta dirección es el servicio solo de backend"],
-  "dashboard.unavailable.backendOnlyCopy": ["This service handles optional community requests but can't read this Mac. Open TiboTattle from Applications and use its window.", "此服务接受可选的社区请求，但无法读取这台 Mac。请从“应用程序”打开 TiboTattle，并使用其应用内窗口。", "Este servicio acepta solicitudes comunitarias opcionales, pero no puede leer este Mac. Abre TiboTattle desde Aplicaciones y usa su ventana integrada."],
+  "dashboard.unavailable.backendOnlyCopy": ["This service handles optional community requests but can't read this PC. Open TiboTattle from the Start menu and use its window.", "此服务接受可选的社区请求，但无法读取这台电脑。请从开始菜单打开 TiboTattle，并使用其应用内窗口。", "Este servicio atiende solicitudes comunitarias opcionales, pero no puede leer este PC. Abre TiboTattle desde el menú Inicio y usa su ventana."],
+
   "dashboard.unavailable.dashboardTitle": ["The companion could not load the local dashboard", "伴随程序无法加载本地仪表板", "El acompañante no pudo cargar el panel local"],
-  "dashboard.unavailable.dashboardCopy": ["The Mac app is running, but its dashboard couldn't load. Quit and reopen TiboTattle, open the dashboard in its window and check again.", "Mac 应用正在运行，但无法加载其应用内仪表板。退出并重新打开 TiboTattle，然后在其窗口中打开仪表板并再次检查。", "La app para Mac está en ejecución, pero no se pudo cargar su panel integrado. Cierra y vuelve a abrir TiboTattle, luego abre el panel en su ventana y comprueba de nuevo."],
+  "dashboard.unavailable.dashboardCopy": ["The Windows app is running, but its dashboard couldn't load. Quit and reopen TiboTattle, open the dashboard in its window and check again.", "Windows 应用正在运行，但无法加载其应用内仪表板。退出并重新打开 TiboTattle，然后在其窗口中打开仪表板并再次检查。", "La app para Windows está en ejecución, pero no se pudo cargar su panel. Cierra y vuelve a abrir TiboTattle, abre el panel en su ventana y vuelve a comprobarlo."],
+
   "dashboard.unavailable.companionTitle": ["The local companion is not available", "本地伴随程序不可用", "El acompañante local no está disponible"],
-  "dashboard.unavailable.companionCopy": ["Open TiboTattle from Applications, wait for Ready, then open the dashboard in its window. If no installer is listed below, this build isn't available for new installations yet.", "从“应用程序”打开 TiboTattle，等待显示“就绪”，然后在其窗口中打开仪表板。如果下方没有发布安装程序，此构建尚不可用于新的安装。", "Abre TiboTattle desde Aplicaciones, espera a que esté Listo y luego abre el panel en su ventana. Si no hay un instalador publicado a continuación, esta compilación aún no está disponible para una instalación nueva."],
+  "dashboard.unavailable.companionCopy": ["Open TiboTattle from the Start menu, wait for Ready, then open the dashboard in its window. If no installer is listed below, this build isn't available for new installations yet.", "从开始菜单打开 TiboTattle，等待显示“就绪”，然后在其窗口中打开仪表板。如果下方没有发布安装程序，此构建尚不可用于新的安装。", "Abre TiboTattle desde el menú Inicio, espera a que aparezca Listo y luego abre el panel en su ventana. Si abajo no aparece ningún instalador, esta versión todavía no está disponible para nuevas instalaciones."],
+
   "dashboard.unavailable.companionInAppCopy": ["The local service stopped. Try Refresh. If that doesn't help, quit and reopen TiboTattle, and contact Support if it still fails.", "本地服务已停止。请先使用“刷新”，然后退出并重新打开 TiboTattle 再试一次。如果仍然失败，请联系支持。", "El servicio local se detuvo. Prueba Actualizar; luego cierra y vuelve a abrir TiboTattle e inténtalo de nuevo. Si sigue fallando, contacta con Soporte."],
   "dashboard.unavailable.noLocalEvidence": ["No local evidence", "没有本地证据", "Sin evidencia local"],
   "dashboard.unavailable.offline": ["Offline", "离线", "Sin conexión"],
@@ -554,69 +558,69 @@ export const WEB_MESSAGES = Object.freeze({
   "accounting.cacheContinuity.gapMinutes": ["{value} min", "{value} 分钟", "{value} min"],
   "accounting.cacheContinuity.gapHours": ["{value} hr", "{value} 小时", "{value} h"],
   "accounting.cacheContinuity.gapDays": ["{value} days", "{value} 天", "{value} días"],
-  "accounting.sideChat.metricLabel": ["Estimated side-chat usage", "估算的侧聊用量", "Uso estimado de chats laterales"],
-  "accounting.sideChat.metricExplanation": ["A development-only Standard API-price scenario for deduplicated side-chat sampling markers. Only active-context volume is observed; token components and cache behavior are reconstructed. The estimate never changes exact totals. Surviving calls from the approximately 10-day active logs_2 window do enter the experimental speed-priced red line, calibration metrics, and AUC when parser, pricing, and cohort checks pass; expired history remains unknown.", "仅用于开发的 Standard API 价格情景，基于已去重的侧聊采样标记。仅活动上下文量是观测值；Token 组成和缓存行为均为重建。该估算绝不更改精确总额。约 10 天的当前 logs_2 窗口中仍保留的调用在解析、定价和队列检查通过后，会进入实验性的按速度档定价红线、校准指标和 AUC；已过期历史仍为未知。", "Escenario de precios de API Standard solo para desarrollo basado en marcadores deduplicados. Solo se observa el volumen de contexto activo; los componentes de tokens y el comportamiento de caché se reconstruyen. La estimación nunca cambia los totales exactos. Las llamadas que sobreviven en la ventana activa de logs_2 de unos 10 días entran en la línea roja experimental con precio según velocidad, las métricas de calibración y el AUC cuando superan las comprobaciones; el historial caducado sigue siendo desconocido."],
-  "accounting.sideChat.noteRetainedSubset": ["The selected period begins before active numeric side-chat retention. {estimate} is the surviving estimate from {start} onward, not an estimate for the selected period; missing history is unknown, not zero.", "所选期间早于当前侧聊数值证据的保留起点。{estimate} 仅是自 {start} 起仍保留的估算，并非所选期间的估算；缺失历史是未知，而不是零。", "El período seleccionado comienza antes de la retención numérica activa de chats laterales. {estimate} es la estimación que sobrevive desde {start}, no una estimación del período seleccionado; el historial ausente es desconocido, no cero."],
-  "accounting.sideChat.retainedHeading": ["Retained numeric estimate", "保留的数值估算", "Estimación numérica conservada"],
-  "accounting.sideChat.historicalGap.kicker": ["Historical test case", "历史测试案例", "Caso de prueba histórico"],
-  "accounting.sideChat.historicalGap.heading": ["Historical quota-gap backcast", "历史额度缺口回推", "Retrocálculo histórico de la brecha de cuota"],
-  "accounting.sideChat.historicalGap.focus": ["View this day on the timeline", "在时间线中查看这一天", "Ver este día en la cronología"],
-  "accounting.sideChat.historicalGap.explanation": ["For {date}, the unified index preserves {events} exact logged calls across {sessions} sessions. It does not preserve expired side-chat turns. The final scenario asks how much additional {model} Fast activity at {multiplier}× would be required to explain the residual.", "对于 {date}，统一索引保留了 {sessions} 个会话中的 {events} 次精确日志调用，但不会保留已过期的侧聊轮次。最终情景询问：还需要多少按 {multiplier}× 计权的 {model} Fast 活动才能解释残差。", "Para {date}, el índice unificado conserva {events} llamadas exactas registradas en {sessions} sesiones, pero no los turnos caducados de chats laterales. El escenario final pregunta cuánta actividad Fast adicional de {model}, ponderada a {multiplier}×, haría falta para explicar el residuo."],
-  "accounting.sideChat.historicalGap.metric.quota": ["Observed quota movement", "观测到的额度变化", "Movimiento de cuota observado"],
-  "accounting.sideChat.historicalGap.metric.exact": ["Exact logged usage", "精确日志用量", "Uso exacto registrado"],
-  "accounting.sideChat.historicalGap.metric.weighted": ["Exact usage after speed weighting", "速度权重后的精确用量", "Uso exacto tras ponderar la velocidad"],
-  "accounting.sideChat.historicalGap.metric.expected": ["Cost-implied movement", "成本推算的变化", "Movimiento implícito por el coste"],
-  "accounting.sideChat.historicalGap.metric.unexplained": ["Movement still unexplained", "仍未解释的变化", "Movimiento aún sin explicar"],
-  "accounting.sideChat.historicalGap.metric.backcast": ["Missing Fast usage required to close the daily gap", "填补每日缺口所需的 Fast 用量", "Uso Fast faltante necesario para cerrar la brecha diaria"],
-  "accounting.sideChat.historicalGap.metric.peak": ["Largest 3-hour speed-priced gap", "最大的 3 小时按速度档定价缺口", "Mayor brecha con precio según velocidad de 3 horas"],
-  "accounting.sideChat.historicalGap.percentagePoints": ["{value} pp", "{value} 个百分点", "{value} pp"],
-  "accounting.sideChat.historicalGap.percentagePointRange": ["{lower}–{upper} pp", "{lower}–{upper} 个百分点", "{lower}–{upper} pp"],
-  "accounting.sideChat.historicalGap.exactValue": ["{cost} · {events} calls", "{cost} · {events} 次调用", "{cost} · {events} llamadas"],
-  "accounting.sideChat.historicalGap.moneyRange": ["{lower}–{upper}", "{lower}–{upper}", "{lower}–{upper}"],
-  "accounting.sideChat.historicalGap.backcastValue": ["{standard} Standard API equivalent · {weighted} speed-priced", "{standard} Standard API 等价金额 · {weighted} 按速度档定价", "{standard} equivalente de API Standard · {weighted} con precio según velocidad"],
-  "accounting.sideChat.historicalGap.backcastRange": ["{standard} Standard API-equivalent range · {weighted} speed-priced range", "{standard} Standard API 等价范围 · {weighted} 按速度档定价范围", "{standard} rango equivalente de API Standard · {weighted} rango con precio según velocidad"],
-  "accounting.sideChat.historicalGap.peakValue": ["{residual} pp gap ({observed} observed − {expected} speed-priced)", "缺口 {residual} 个百分点（观测 {observed} − 按速度档定价推算 {expected}）", "Brecha de {residual} pp ({observed} observado − {expected} con precio según velocidad)"],
-  "accounting.sideChat.historicalGap.note": ["Speed evidence: {ultrafast} Ultrafast, {fast} Fast, {standard} Standard, and {unknown} source-unknown. Source-unknown calls are attributed to Standard at 1x by default. The retained weekly fit uses {resets} resets and paired scenario medians of {capacity} that may combine accounts. Each numerator is divided only by its matching speed scenario. Missing calls are hypothetical and their context was not observed, so their backcast conversion explicitly assumes 2x Standard, not a published Priority rate. The broader backcast sensitivity is {standardSensitivity} in Standard API-equivalent units and {weightedSensitivity} after quota weighting. No July 13 side-chat calls were recovered from retained numeric diagnostics. This value is fitted to observed quota movement, not independently observed, and remains excluded from exact totals, the expected line, and AUC. The 3-hour chart now uses speed-priced cost per bucket.", "速度证据：{ultrafast} 次 Ultrafast、{fast} 次 Fast、{standard} 次 Standard、{unknown} 次来源未知。来源未知的调用默认按 Standard 的 1× 归因。保留的每周拟合使用 {resets} 次重置，以及可能合并多个账户的 {capacity} 配对情景中位数。每个分子只除以其匹配的速度情景。缺失调用是假设的，其上下文未经观测，因此回推换算明确假定为 Standard 的 2×，而非已公布的 Priority 价格。更广的回推敏感性范围为 Standard API 等价单位的 {standardSensitivity}，按速度档定价后为 {weightedSensitivity}。保留的数值诊断没有恢复任何 7 月 13 日的侧聊调用。该数值是根据观测额度变化拟合的，并非独立观测；仍不计入精确总额、预期线或 AUC。3 小时图表现在使用每个时间段的按速度档定价成本。", "Evidencia de velocidad: {ultrafast} Ultrafast, {fast} Fast, {standard} Standard y {unknown} con origen desconocido. Las llamadas de origen desconocido se atribuyen a Standard a 1× por defecto. El ajuste semanal conservado usa {resets} restablecimientos y medianas emparejadas por escenario de {capacity}, que pueden combinar cuentas. Cada numerador se divide solo por su escenario de velocidad correspondiente. Las llamadas ausentes son hipotéticas y su contexto no se observó, por lo que su conversión retrospectiva asume explícitamente 2× Standard, no un precio Priority publicado. La sensibilidad más amplia del retrocálculo es {standardSensitivity} en unidades equivalentes de API Standard y {weightedSensitivity} tras ponderar por cuota. No se recuperó ninguna llamada de chat lateral del 13 de julio en los diagnósticos numéricos conservados. Este valor se ajusta al movimiento de cuota observado, no se observa independientemente, y sigue excluido de los totales exactos, la línea esperada y el AUC. El gráfico de 3 horas ahora usa coste con precio según velocidad en cada intervalo."],
-  "accounting.sideChat.noteUnavailable": ["The development estimator is not enabled.", "开发估算器未启用。", "El estimador de desarrollo no está activado."],
-  "accounting.sideChat.noteObserved": ["{calls} deduplicated retained sampling markers in {retained} side chats · {detected} side-chat lifecycles began in this period.", "{retained} 个侧聊中保留了 {calls} 个已去重采样标记 · 此期间开始了 {detected} 个侧聊生命周期。", "{calls} marcadores de muestreo conservados y deduplicados en {retained} chats laterales · {detected} ciclos comenzaron en este período."],
-  "accounting.sideChat.noteRange": ["Sensitivity range {lower}–{upper}.", "敏感性范围 {lower}–{upper}。", "Intervalo de sensibilidad {lower}–{upper}."],
-  "accounting.sideChat.detailsSummary": ["See experimental side-chat estimate", "查看实验性侧聊估算", "Ver la estimación experimental de chats laterales"],
-  "accounting.sideChat.detailsExplanation": ["This development-only estimate finds confirmed desktop side-chat lifecycles and prices deduplicated sampling markers that still survive in numeric local diagnostics. The active window is approximately 10 days; expired or rotated partitions are unknown and are not reconstructed. Active-context volume is observed, while input, cache, output, and reasoning components are reconstructed. Ordinary calls use the owner-directed mostly-warm point; an observed compaction makes the next point cold. Auto Review and other reviewed aliases retain their conditional alias-rate assumption. Exact totals remain unchanged. Surviving eligible estimates are speed-weighted and added only to the experimental red line, calibration metrics, and AUC, with the exact-ledger baseline kept beside them.", "此仅用于开发的估算会查找已确认的桌面侧聊生命周期，并为本地数值诊断中仍保留的已去重采样标记计价。当前窗口约为 10 天；已过期或轮换的分区为未知，且不会重建。活动上下文量是观测值，而输入、缓存、输出和推理组成均为重建。普通调用使用用户指定的主要为热缓存点估算；观测到压缩后，下一个点按冷缓存处理。Auto Review 和其他已审核别名保留条件性别名费率假设。精确总额保持不变。仍保留且符合条件的估算会按速度加权，只加入实验性红线、校准指标和 AUC，并保留精确账本基线作对照。", "Esta estimación solo para desarrollo detecta ciclos confirmados de chats laterales y valora marcadores deduplicados que aún sobreviven en los diagnósticos numéricos locales. La ventana activa es de unos 10 días; las particiones caducadas o rotadas son desconocidas y no se reconstruyen. Se observa el volumen de contexto activo, mientras que los componentes de entrada, caché, salida y razonamiento se reconstruyen. Las llamadas ordinarias usan el punto mayormente caliente indicado; una compactación observada hace frío el punto siguiente. Auto Review y otros alias revisados conservan su supuesto condicional. Los totales exactos no cambian. Las estimaciones elegibles se ponderan por velocidad y se añaden solo a la línea roja experimental, las métricas de calibración y el AUC, manteniendo al lado la base del registro exacto."],
-  "accounting.sideChat.recentHeading": ["Retained sampling calls", "保留的采样调用", "Llamadas de muestreo conservadas"],
-  "accounting.sideChat.tableCaption": ["Experimental side-chat sampling-call estimates", "实验性侧聊采样调用估算", "Estimaciones experimentales de llamadas de chats laterales"],
-  "accounting.sideChat.column.localTime": ["Local time", "本地时间", "Hora local"],
-  "accounting.sideChat.column.turn": ["Turn", "轮次", "Turno"],
-  "accounting.sideChat.column.configuration": ["Configuration", "配置", "Configuración"],
-  "accounting.sideChat.column.activeContext": ["Active context", "活动上下文", "Contexto activo"],
-  "accounting.sideChat.column.cacheAssumption": ["Cache assumption", "缓存假设", "Supuesto de caché"],
-  "accounting.sideChat.column.apiEstimate": ["Estimated Standard API equivalent", "估算的 Standard API 等价金额", "Equivalente de API Standard estimado"],
-  "accounting.sideChat.summary.detected": ["Lifecycles begun", "开始的生命周期", "Ciclos iniciados"],
-  "accounting.sideChat.summary.visibleTurns": ["Visible turns", "可见轮次", "Turnos visibles"],
-  "accounting.sideChat.summary.samplingCalls": ["Sampling calls", "采样调用", "Llamadas de muestreo"],
-  "accounting.sideChat.summary.activeContext": ["Active-context tokens", "活动上下文 Token", "Tokens de contexto activo"],
-  "accounting.sideChat.coveragePartial": ["Numeric diagnostics survive for {retained} of {detected} detected side chats; {missing} expired before their numeric evidence could be recovered. Missing is unknown, not zero.", "{detected} 个已检测侧聊中有 {retained} 个仍保留数值诊断；另有 {missing} 个在恢复数值证据前已过期。缺失表示未知，而不是零。", "Los diagnósticos numéricos sobreviven para {retained} de {detected} chats laterales detectados; {missing} caducaron antes de poder recuperar su evidencia numérica. Ausente significa desconocido, no cero."],
-  "accounting.sideChat.coverageComplete": ["Numeric diagnostics survive for all {detected} detected side chats in the retained desktop-log span.", "在保留的桌面日志时间范围内，所有 {detected} 个已检测侧聊都保留了数值诊断。", "Los diagnósticos numéricos sobreviven para los {detected} chats laterales detectados en el intervalo conservado de registros del escritorio."],
-  "accounting.sideChat.coverageParserGaps": ["Parser gaps: {sampling} sampling markers, {compactions} compaction markers, {duplicates} ambiguous duplicate markers, and {lines} oversized desktop-log lines could not be classified safely.", "解析器缺口：有 {sampling} 个采样标记、{compactions} 个压缩标记、{duplicates} 个歧义重复标记和 {lines} 行超大桌面日志无法安全分类。", "Brechas del analizador: no se pudieron clasificar de forma segura {sampling} marcadores de muestreo, {compactions} de compactación, {duplicates} duplicados ambiguos y {lines} líneas sobredimensionadas."],
-  "accounting.sideChat.coverageActiveRetention": ["Numeric coverage is limited to the active logs_2.sqlite window of approximately 10 days; rotated or expired partitions are unknown and are not reconstructed.", "数值覆盖仅限约 10 天的当前 logs_2.sqlite 窗口；轮换或已过期的分区为未知，且不会被重建。", "La cobertura numérica se limita a la ventana activa de logs_2.sqlite de unos 10 días; las particiones rotadas o caducadas son desconocidas y no se reconstruyen."],
-  "accounting.sideChat.coverageKnownFormats": ["Detection recognizes only the current known desktop lifecycle and numeric diagnostic formats; a logging-format change or a lifecycle split across rotated files can create an unmeasured gap.", "检测仅识别当前已知的桌面生命周期和数值诊断格式；日志格式变化或生命周期跨轮换文件拆分都可能造成无法测量的缺口。", "La detección solo reconoce los formatos actuales conocidos del ciclo de vida de escritorio y de los diagnósticos numéricos; un cambio de formato o un ciclo dividido entre archivos rotados puede crear una brecha no medida."],
-  "accounting.sideChat.pricingCoverage": ["{priced} of {calls} retained calls have a complete reviewed scenario price; {unpriced} are unavailable.", "{calls} 个保留调用中有 {priced} 个具有完整的审核情景价格；{unpriced} 个不可用。", "{priced} de {calls} llamadas conservadas tienen un precio de escenario revisado completo; {unpriced} no están disponibles."],
-  "accounting.sideChat.detailsEmpty": ["No retained sampling calls fall in this period.", "此期间没有保留的采样调用。", "No hay llamadas de muestreo conservadas en este período."],
-  "accounting.sideChat.configuration": ["{model} · {effort}", "{model} · {effort}", "{model} · {effort}"],
-  "accounting.sideChat.configurationAliasAssumption": ["{configuration} · conditional alias-rate assumption", "{configuration} · 条件性别名费率假设", "{configuration} · supuesto condicional de tarifa del alias"],
-  "accounting.sideChat.turnOrdinal": ["Turn {ordinal}", "第 {ordinal} 轮", "Turno {ordinal}"],
-  "accounting.sideChat.cache.warmPrefix": ["Owner-directed mostly-warm point · full-cold sensitivity · cache unobserved", "用户指定的主要为热缓存点估算 · 完全冷缓存敏感性 · 未观测缓存状态", "Punto mayormente caliente indicado · sensibilidad totalmente fría · caché no observada"],
-  "accounting.sideChat.cache.coldAfterCompaction": ["Cold point after compaction · full-cold sensitivity · cache unobserved", "压缩后的冷缓存点估算 · 完全冷缓存敏感性 · 未观测缓存状态", "Punto frío tras compactación · sensibilidad totalmente fría · caché no observada"],
-  "accounting.sideChat.cache.retentionUnknown": ["Mostly-warm point · full-cold sensitivity after elapsed proxy · cache unobserved", "较长代理间隔后的主要为热缓存点估算 · 完全冷缓存敏感性 · 未观测缓存状态", "Punto mayormente caliente · sensibilidad totalmente fría tras el proxy temporal · caché no observada"],
-  "accounting.sideChat.calibration.eligibleActiveRetention": ["Eligible estimates surviving in the approximately 10-day active window are included in the development-only speed-priced red line, calibration metrics, and AUC; expired history remains unknown.", "约 10 天当前窗口中仍保留且符合条件的估算会计入仅用于开发的按速度档定价红线、校准指标和 AUC；已过期历史仍为未知。", "Las estimaciones elegibles que sobreviven en la ventana activa de unos 10 días se incluyen en la línea roja con precio según velocidad, las métricas de calibración y el AUC solo para desarrollo; el historial caducado sigue siendo desconocido."],
-  "accounting.sideChat.calibration.withheldNoCalls": ["The calibration overlay is withheld because no retained sampling markers are available.", "由于没有保留的采样标记，校准叠加已被禁用。", "La superposición de calibración se retiene porque no hay marcadores conservados."],
-  "accounting.sideChat.calibration.withheldUnpriced": ["The calibration overlay is withheld because at least one reconstructed scenario has no reviewed price card.", "由于至少一个重建情景没有经过审核的价格卡，校准叠加已被禁用。", "La superposición se retiene porque al menos un escenario reconstruido carece de precio revisado."],
-  "accounting.sideChat.calibration.withheldParserGaps": ["The calibration overlay is withheld because parser coverage is incomplete.", "由于解析器覆盖不完整，校准叠加已被禁用。", "La superposición se retiene porque la cobertura del analizador es incompleta."],
-  "accounting.sideChat.calibration.withheldPartialRetention": ["The calibration overlay is withheld because some side-chat evidence expired or reached its retention limit; the displayed estimate covers only what survives.", "由于部分侧聊证据已过期或达到保留上限，校准叠加已被禁用；显示的估算仅覆盖仍保留的证据。", "La superposición se retiene porque parte de la evidencia caducó o alcanzó su límite; la estimación mostrada solo cubre lo que sobrevive."],
-  "accounting.sideChat.calibration.withheldCohortMismatch": ["The calibration overlay is withheld because retained calls fall outside the frozen GPT-5.6 Sol high/max cohort.", "由于保留调用超出冻结的 GPT-5.6 Sol high/max 校准队列，校准叠加已被禁用。", "La superposición se retiene porque las llamadas quedan fuera de la cohorte congelada GPT-5.6 Sol high/max."],
-  "accounting.sideChat.calibration.withheldContextMismatch": ["The calibration overlay is withheld because at least one retained call falls outside the frozen short-context cohort.", "由于至少一个保留调用超出冻结的短上下文校准队列，校准叠加已被禁用。", "La superposición se retiene porque al menos una llamada queda fuera de la cohorte congelada de contexto corto."],
-  "accounting.sideChat.calibration.withheldStaleCalibration": ["The calibration overlay is withheld because the frozen comparison cohort is more than 30 days old.", "由于冻结的比较队列已超过 30 天，校准叠加已被禁用。", "La superposición se retiene porque la cohorte de comparación congelada tiene más de 30 días."],
-  "accounting.sideChat.calibration.withheldUnavailable": ["The calibration overlay is unavailable.", "校准叠加不可用。", "La superposición de calibración no está disponible."],
-  "accounting.sideChat.estimateRange": ["{point} ({lower}–{upper})", "{point}（{lower}–{upper}）", "{point} ({lower}–{upper})"],
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   "accounting.model.noneInPeriod": ["No model usage in this period.", "此期间没有模型使用记录。", "No hay uso de modelos en este período."],
   "accounting.model.unavailable": ["Model usage accounting is unavailable; no zero usage is inferred.", "模型用量核算不可用；不会推断为零用量。", "La contabilidad de uso por modelo no está disponible; no se infiere un uso cero."],
   "accounting.model.identityUnavailable": ["Model unavailable", "模型不可用", "Modelo no disponible"],
@@ -709,7 +713,7 @@ export const WEB_MESSAGES = Object.freeze({
   ],
   "dashboard.timeline.title": ["{window} rolling quota change versus cost-implied change", "{window} 滚动额度变化与成本推算的变化的对比", "Cambio móvil de cuota de {window} frente al cambio implícito por coste"],
   "dashboard.timeline.liveCopy": ["Quota movement compared with speed-priced local usage, applying published API price ratios to eligible Fast and Ultrafast usage. Times are in {timeZone}.", "额度变化与按速度档定价的本地用量进行比较，并对符合条件的 Fast 和 Ultrafast 用量应用已公布的 API 价格倍率；时间显示为 {timeZone}。", "El movimiento de cuota se compara con el uso local con precio según velocidad, aplicando los multiplicadores de precio de API publicados al uso Fast y Ultrafast elegible; las horas se muestran en {timeZone}."],
-  "dashboard.timeline.liveCopySideChatAdjusted": ["Quota movement is compared with speed-priced exact usage plus eligible side-chat estimates surviving in the approximately 10-day active window; expired side-chat history is unknown. Times are shown in {timeZone}.", "额度变化与按速度档定价的精确用量加上约 10 天当前窗口中仍保留且符合条件的侧聊估算进行比较；已过期侧聊历史为未知。时间显示为 {timeZone}。", "El movimiento de cuota se compara con el uso exacto con precio según velocidad más las estimaciones elegibles de chats laterales que sobreviven en la ventana activa de unos 10 días; el historial caducado es desconocido. Las horas se muestran en {timeZone}."],
+
   "dashboard.timeline.liveCopyHistoricalGapCapacity": ["Speed-priced local usage and retained quota movement are shown in {timeZone}. The development probe supplies an account-unattributed weekly median; published Fast and Ultrafast API price ratios apply to eligible buckets.", "按速度档定价的本地用量和保留的额度变化显示为 {timeZone}。开发探针提供未确定所属账户的每周中位数；符合条件的时间段会应用已公布的 Fast 和 Ultrafast API 价格倍率。", "El uso local con precio según velocidad y el movimiento de cuota conservado se muestran en {timeZone}. La sonda aporta una mediana semanal sin atribución de cuenta; los multiplicadores de precio de API Fast y Ultrafast publicados se aplican a los intervalos elegibles."],
   "dashboard.timeline.historicalCopy": ["Historical local calibration artifact from {generatedAt} · recent quota snapshots are too sparse to bracket {window} endpoints", "来自 {generatedAt} 的历史本地校准产物 · 最近的额度快照过于稀疏，无法界定 {window} 的端点", "Artefacto histórico de calibración local de {generatedAt} · las instantáneas recientes de cuota son demasiado escasas para acotar los extremos de {window}"],
   "dashboard.timeline.notComparableYet": ["Not comparable yet", "尚不可比较", "Aún no comparable"],
@@ -848,16 +852,12 @@ export const WEB_MESSAGES = Object.freeze({
     "可见残差序列下的带符号面积：以小时积分的“观测减预期”百分点。为正表示观测到的额度变化超过了记录成本所推断的变化。",
     "El área con signo bajo la serie de residuos visible: puntos porcentuales observados menos esperados integrados en horas. Un valor positivo significa que el movimiento de cuota observado superó lo que implica el coste registrado.",
   ],
-  "dashboard.summary.sideChatBaseline": ["Before side-chat estimate", "加入侧聊估算之前", "Antes de estimar chats laterales"],
-  "dashboard.summary.sideChatBaselineExplanation": ["The same signed area using only the exact local usage ledger. Comparing it with cumulative drift isolates the effect of the experimental side-chat estimate.", "仅使用精确本地使用账本时的同一带符号面积。将其与累计漂移比较，可单独看出实验性侧聊估算的影响。", "La misma área con signo usando solo el registro local exacto. Compararla con la deriva acumulada aísla el efecto de la estimación experimental de chats laterales."],
-  "dashboard.summary.sideChatAdjustment": ["Side-chat adjustment", "侧聊调整", "Ajuste por chats laterales"],
-  "dashboard.summary.sideChatAdjustmentExplanation": ["Adjusted cumulative drift minus the exact-ledger baseline. A negative value means the estimated side-chat usage moved the cost-implied line upward.", "调整后的累计漂移减去精确账本基线。负值表示估算的侧聊用量使成本推断线向上移动。", "Deriva acumulada ajustada menos la base del registro exacto. Un valor negativo significa que el uso estimado de chats laterales elevó la línea implícita por coste."],
-  "dashboard.summary.sideChatNoMatchedOverlap": ["No matched overlap", "无匹配重叠", "Sin solapamiento comparable"],
-  "dashboard.summary.sideChatAdjustmentNoOverlapExplanation": [
-    "The retained side-chat estimates do not overlap any currently matched quota windows, so their effect on residual area is not testable from this evidence.",
-    "保留的侧聊估算与当前任何已匹配的额度窗口都不重叠，因此无法依据这些证据检验其对残差面积的影响。",
-    "Las estimaciones conservadas de chats laterales no coinciden con ninguna ventana de cuota comparable actual, por lo que estas pruebas no permiten medir su efecto sobre el área residual.",
-  ],
+
+
+
+
+
+
   "format.ppHours": ["{value} pp·h", "{value} 个百分点·小时", "{value} pp·h"],
   // The deviation-period detector's Trends panel: sustained stretches where
   // observed quota movement and priced (cost-implied) usage persistently
@@ -1087,10 +1087,10 @@ export const WEB_MESSAGES = Object.freeze({
   "aria.dashboardSections": ["Dashboard sections", "仪表板分区", "Secciones del panel"],
   "aria.siteSections": ["Site sections", "网站分区", "Secciones del sitio"],
   "aria.releaseInformation": ["Release information", "发行信息", "Información de lanzamiento"],
-  "aria.choosePlatform": ["Choose TiboTattle for your platform", "选择适合你平台的 TiboTattle", "Elige TiboTattle para tu plataforma"],
-  "aria.getTiboTattleForMac": ["Get TiboTattle for Mac", "获取适用于 Mac 的 TiboTattle", "Obtén TiboTattle para Mac"],
-  "aria.installWithHomebrew": ["Install with Homebrew", "使用 Homebrew 安装", "Instalar con Homebrew"],
-  "aria.copyHomebrewCommand": ["Copy Homebrew install command", "复制 Homebrew 安装命令", "Copiar el comando de instalación de Homebrew"],
+
+
+
+
   "aria.copyInstallerSha256": ["Copy the published SHA-256 checksum", "复制已发布的 SHA-256 校验和", "Copiar la suma de comprobación SHA-256 publicada"],
   "aria.installerSha256": ["SHA-256 checksum", "SHA-256 校验和", "Suma de comprobación SHA-256"],
   "aria.tibotattleFeatures": ["What TiboTattle provides", "TiboTattle 提供的功能", "Qué ofrece TiboTattle"],
@@ -1152,16 +1152,10 @@ export const WEB_MESSAGES = Object.freeze({
   // something the reader can see is untrue. These two state the real fact —
   // no answer to a status check yet — and differ on the one thing the reader
   // can act on: whether another attempt is still coming.
-  "journey.community.waitingHealth": [
-    "The Mac app has not answered a status check yet. Checking again.",
-    "Mac 应用尚未响应状态检查。正在重新检查。",
-    "La app para Mac aún no responde a una comprobación de estado. Reintentando.",
-  ],
-  "journey.community.noHealthAnswer": [
-    "The Mac app has not answered a status check. Reload to try again.",
-    "Mac 应用未响应状态检查。请重新加载页面再试。",
-    "La app para Mac no respondió a una comprobación de estado. Recarga para reintentar.",
-  ],
+  "journey.community.waitingHealth": ["The Windows app has not answered a status check yet. Checking again.", "Windows 应用尚未响应状态检查。正在重新检查。", "La app para Windows aún no responde a una comprobación de estado. Reintentando."],
+
+  "journey.community.noHealthAnswer": ["The Windows app has not answered a status check. Reload to try again.", "Windows 应用未响应状态检查。请重新加载页面再试。", "La app para Windows no respondió a una comprobación de estado. Recarga para reintentar."],
+
   "journey.community.noService": [
     "This build has no contribution service.",
     "此构建没有贡献服务。",
@@ -1200,40 +1194,22 @@ export const WEB_MESSAGES = Object.freeze({
   // The pending re-pair's two honest stage lines (owner-reported
   // contradictory state, 2026-08-08): "done · syncing" may not render while
   // the approve card is asking for a sign-in.
-  "journey.community.signInAgain": [
-    "Sign in again to finish reconnecting this Mac.",
-    "请重新登录以完成这台 Mac 的重新连接。",
-    "Inicia sesión de nuevo para terminar de reconectar este Mac.",
-  ],
-  "journey.community.refreshingAuthority": [
-    "Refreshing this Mac's upload authorization…",
-    "正在刷新这台 Mac 的上传授权…",
-    "Actualizando la autorización de subida de este Mac…",
-  ],
-  "syncStatus.verifyingSummary": [
-    "Verifying the prepared summary on this Mac. Nothing is sent while it is checked.",
-    "正在这台 Mac 上校验已准备的摘要。检查期间不会发送任何内容。",
-    "Verificando el resumen preparado en este Mac. No se envía nada mientras se comprueba.",
-  ],
-  "syncStatus.summaryVerified": [
-    "The covered data shown above is verified on this Mac. Nothing uploads without your approval.",
-    "上方显示的涵盖数据已在这台 Mac 上完成校验。未经你的核准不会上传任何内容。",
-    "Los datos cubiertos mostrados arriba están verificados en este Mac. No se sube nada sin tu aprobación.",
-  ],
+  "journey.community.signInAgain": ["Sign in again to finish reconnecting this device.", "请重新登录以完成这台设备的重新连接。", "Inicia sesión de nuevo para terminar de reconectar este dispositivo."],
+
+  "journey.community.refreshingAuthority": ["Refreshing this device's upload authorization…", "正在刷新这台设备的上传授权…", "Actualizando la autorización de subida de este dispositivo…"],
+
+  "syncStatus.verifyingSummary": ["Verifying the prepared summary on this PC. Nothing is sent while it is checked.", "正在这台电脑上校验已准备的摘要。检查期间不会发送任何内容。", "Verificando el resumen preparado en este PC. No se envía nada mientras se comprueba."],
+
+  "syncStatus.summaryVerified": ["The covered data shown above is verified on this PC. Nothing uploads without your approval.", "上方显示的涵盖数据已在这台电脑上完成校验。未经你的核准不会上传任何内容。", "Los datos cubiertos mostrados arriba están verificados en este PC. No se sube nada sin tu aprobación."],
+
   // A full day of very heavy local activity does not fit the fixed
   // reviewed-set size bound, and the bootstrap narrows to the latest hour on
   // its own. Approving is a decision about what this review shows, so the
   // narrowing is stated rather than left for the reader to infer.
-  "syncStatus.summaryVerifiedNarrowed": [
-    "The covered data shown above is verified on this Mac. A full day exceeded a fixed reviewed-set size bound, so this review covers the latest hour instead. Nothing uploads without your approval.",
-    "上方显示的涵盖数据已在这台 Mac 上完成校验。整天的数据超出了固定的审阅集大小上限，因此本次审阅改为涵盖最近一小时。未经你的核准不会上传任何内容。",
-    "Los datos cubiertos mostrados arriba están verificados en este Mac. Un día completo superó un límite fijo de tamaño del conjunto de revisión, así que esta revisión cubre la última hora. No se sube nada sin tu aprobación.",
-  ],
-  "consent.reviewFirst": [
-    "TiboTattle is preparing and verifying one real instance of the covered data on this Mac for you to review. Nothing is uploaded.",
-    "TiboTattle 正在这台 Mac 上准备并校验一份涵盖数据的真实实例供你审阅。不会上传任何内容。",
-    "TiboTattle está preparando y verificando en este Mac una instancia real de los datos cubiertos para que la revises. No se sube nada.",
-  ],
+  "syncStatus.summaryVerifiedNarrowed": ["The covered data shown above is verified on this PC. A full day exceeded a fixed reviewed-set size bound, so this review covers the latest hour instead. Nothing uploads without your approval.", "上方显示的涵盖数据已在这台电脑上完成校验。整天的数据超出了固定的审阅集大小上限，因此本次审阅改为涵盖最近一小时。未经你的核准不会上传任何内容。", "Los datos cubiertos mostrados arriba están verificados en este PC. Un día completo superó el límite fijo del conjunto de revisión, así que esta revisión cubre la última hora. Nada se sube sin tu aprobación."],
+
+  "consent.reviewFirst": ["TiboTattle is preparing and verifying one real instance of the covered data on this PC for you to review. Nothing is uploaded.", "TiboTattle 正在这台电脑上准备并校验一份涵盖数据的真实实例供你审阅。不会上传任何内容。", "TiboTattle está preparando y verificando en este PC una instancia real de los datos cubiertos para que la revises. No se sube nada."],
+
   "consent.readyToApprove": [
     "The verified instance above is the review. Approving covers this kind of data from now on.",
     "上方经校验的实例即为审阅内容。核准后即涵盖今后同类数据。",
@@ -1274,16 +1250,9 @@ export const WEB_MESSAGES = Object.freeze({
   // action that fixes it. Deliberately not failure copy — nothing the user
   // did failed, the approval stands, and the ceremony resumes by itself after
   // the sign-in.
-  "consent.signInAgainToFinish": [
-    "Sign in again to finish connecting this Mac. Your approval still stands, and connecting resumes automatically after you sign in. Nothing was uploaded.",
-    "请重新登录以完成这台 Mac 的连接。你的核准仍然有效，登录后连接会自动继续。未上传任何内容。",
-    "Inicia sesión de nuevo para terminar de conectar este Mac. Tu aprobación sigue vigente y la conexión se reanuda automáticamente tras iniciar sesión. No se cargó nada.",
-  ],
-  "consent.preparingReview": [
-    "Preparing one real instance of the covered data on this Mac for you to review. No network upload is performed.",
-    "正在这台 Mac 上准备一份涵盖数据的真实实例供你审阅。不会执行任何网络上传。",
-    "Preparando en este Mac una instancia real de los datos cubiertos para que la revises. No se realiza ninguna subida de red.",
-  ],
+  "consent.signInAgainToFinish": ["Sign in again to finish connecting this device. Your approval still stands, and connecting resumes automatically after you sign in. Nothing was uploaded.", "请重新登录以完成这台设备的连接。你的核准仍然有效，登录后连接会自动继续。未上传任何内容。", "Inicia sesión de nuevo para terminar de conectar este dispositivo. Tu aprobación sigue vigente y la conexión se reanuda automáticamente al iniciar sesión. No se cargó nada."],
+
+  "consent.preparingReview": ["Preparing one real instance of the covered data on this PC for you to review. No network upload is performed.", "正在这台电脑上准备一份涵盖数据的真实实例供你审阅。不会执行任何网络上传。", "Preparando en este PC una instancia real de los datos cubiertos para que la revises. No se realiza ninguna subida de red."],
   "consent.reviewUnavailable": [
     "TiboTattle could not read the local review state. Choose Check again. Nothing was uploaded.",
     "TiboTattle 无法读取本地审阅状态。请选择“再次检查”。未上传任何内容。",
@@ -1324,28 +1293,16 @@ export const WEB_MESSAGES = Object.freeze({
     "正在上传第 {current} 天（共 {total} 天）…",
     "Subiendo el día {current} de {total}…",
   ],
-  "consent.syncRefreshingAuthority": [
-    "Sync: refreshing this Mac's upload authorization…",
-    "同步：正在刷新这台 Mac 的上传授权…",
-    "Sincronización: actualizando la autorización de subida de este Mac…",
-  ],
-  "consent.repairRequired": [
-    "Sharing is paused until this Mac is reconnected. Your history is preserved.",
-    "共享已暂停，重新连接这台 Mac 后才能继续。您的历史记录已保留。",
-    "La contribución está en pausa hasta que vuelvas a conectar este Mac. Tu historial se conserva.",
-  ],
+  "consent.syncRefreshingAuthority": ["Sync: refreshing this device's upload authorization…", "同步：正在刷新这台设备的上传授权…", "Sincronización: actualizando la autorización de subida de este dispositivo…"],
+
+  "consent.repairRequired": ["Sharing is paused until this device is reconnected. Your history is preserved.", "共享已暂停，重新连接这台设备后才能继续。您的历史记录已保留。", "La contribución está en pausa hasta que vuelvas a conectar este dispositivo. Tu historial se conserva."],
+
   "consent.repairConnection": ["Repair connection", "修复连接", "Reparar conexión"],
-  "consent.repairIncomplete": [
-    "This Mac's connection could not be confirmed. Sharing stays paused; try Repair connection again.",
-    "无法确认这台 Mac 的连接。共享仍暂停，请再次尝试修复连接。",
-    "No se pudo confirmar la conexión de este Mac. La contribución sigue en pausa; vuelve a elegir Reparar conexión.",
-  ],
+  "consent.repairIncomplete": ["This device's connection could not be confirmed. Sharing stays paused; try Repair connection again.", "无法确认这台设备的连接。共享仍暂停，请再次尝试修复连接。", "No se pudo confirmar la conexión de este dispositivo. La contribución sigue en pausa; vuelve a elegir Reparar conexión."],
+
   "consent.reviewAndApprove": ["Review and approve", "审阅并核准", "Revisar y aprobar"],
-  "consent.authorityRefreshed": [
-    "This Mac's contribution authorization is refreshed. Uploads continue automatically.",
-    "这台 Mac 的贡献授权已刷新。上传将自动继续。",
-    "La autorización de contribución de este Mac se ha actualizado. Las subidas continúan automáticamente.",
-  ],
+  "consent.authorityRefreshed": ["This device's contribution authorization is refreshed. Uploads continue automatically.", "这台设备的贡献授权已刷新。上传将自动继续。", "La autorización de contribución de este dispositivo se ha actualizado. Las subidas continúan automáticamente."],
+
   "consent.syncPaused": [
     "Paused: {reason}.",
     "已暂停：{reason}。",
@@ -1361,11 +1318,8 @@ export const WEB_MESSAGES = Object.freeze({
     "重试请求失败：{code}。",
     "La solicitud de reintento falló: {code}.",
   ],
-  "consent.approving": [
-    "Recording your approval on this Mac…",
-    "正在这台 Mac 上记录你的核准…",
-    "Registrando tu aprobación en este Mac…",
-  ],
+  "consent.approving": ["Recording your approval on this PC…", "正在这台电脑上记录你的核准…", "Registrando tu aprobación en este PC…"],
+
   "consent.approved": [
     "Approved. Uploads run and recompute the community estimates; only a change to the kind of data or the destination asks again.",
     "已核准。上传将运行并重新计算社区估计；只有数据类型或目的地发生变化时才会再次询问。",
@@ -1391,26 +1345,14 @@ export const WEB_MESSAGES = Object.freeze({
     "请在浏览器中完成；准备就绪后 TiboTattle 会自动返回。",
     "Termina en tu navegador; TiboTattle vuelve cuando esté listo.",
   ],
-  "identity.next.signedIn": [
-    "Review below, then approve to connect this Mac. Nothing uploads before approval.",
-    "请在下方审阅并核准以连接这台 Mac。核准前不会上传任何内容。",
-    "Revisa abajo y aprueba para conectar este Mac. Nada se sube antes de aprobar.",
-  ],
-  "identity.next.reconnecting": [
-    "Reconnecting this Mac automatically. Nothing was uploaded.",
-    "正在自动重新连接这台 Mac。未上传任何内容。",
-    "Reconectando este Mac automáticamente. No se cargó nada.",
-  ],
-  "identity.next.reconnectSignIn": [
-    "Sign in again to finish connecting this Mac.",
-    "请重新登录以完成这台 Mac 的连接。",
-    "Inicia sesión de nuevo para terminar de conectar este Mac.",
-  ],
-  "identity.next.connected": [
-    "This Mac is contributing.",
-    "这台 Mac 正在贡献。",
-    "Este Mac está contribuyendo.",
-  ],
+  "identity.next.signedIn": ["Review below, then approve to connect this device. Nothing uploads before approval.", "请在下方审阅并核准以连接这台设备。核准前不会上传任何内容。", "Revisa abajo y aprueba para conectar este dispositivo. Nada se sube antes de aprobar."],
+
+  "identity.next.reconnecting": ["Reconnecting this device automatically. Nothing was uploaded.", "正在自动重新连接这台设备。未上传任何内容。", "Reconectando este dispositivo automáticamente. No se cargó nada."],
+
+  "identity.next.reconnectSignIn": ["Sign in again to finish connecting this device.", "请重新登录以完成这台设备的连接。", "Inicia sesión de nuevo para terminar de conectar este dispositivo."],
+
+  "identity.next.connected": ["This device is contributing.", "这台设备正在贡献。", "Este dispositivo está contribuyendo."],
+
   "title.panCalibrationEarlier": ["Pan calibration earlier", "向前平移校准", "Desplazar la calibración hacia antes"],
   "title.zoomOut": ["Zoom out", "缩小", "Alejar"],
   "title.zoomIn": ["Zoom in", "放大", "Acercar"],
@@ -1419,25 +1361,26 @@ export const WEB_MESSAGES = Object.freeze({
   "title.panUsageLater": ["Pan usage later", "向后平移使用情况", "Desplazar el uso hacia después"],
   "installer.headerDownload": ["Get the app", "获取应用", "Obtener la app"],
   "installer.installDesktop": ["Install the desktop app", "安装桌面应用", "Instala la app de escritorio"],
-  "installer.choosePlatform": ["Choose your platform", "选择你的平台", "Elige tu plataforma"],
-  "installer.platform.macos": ["macOS Apple silicon", "macOS Apple 芯片", "macOS Apple Silicon"],
-  "installer.platform.macosIntel": ["macOS Intel", "macOS Intel", "macOS Intel"],
-  "installer.macosIntel.download": ["Download for macOS Intel", "下载 Intel Mac 版", "Descargar para macOS Intel"],
-  "installer.platform.windows": ["Windows", "Windows", "Windows"],
-  "installer.platform.linux": ["Linux", "Linux", "Linux"],
-  "installer.availability.notYetAvailable": ["Not yet available", "尚未提供", "Aún no disponible"],
-  "installer.macosIntel.unavailableTitle": ["TiboTattle for macOS Intel is not available yet.", "Intel Mac 版 TiboTattle 尚未提供。", "TiboTattle para macOS Intel aún no está disponible."],
-  "installer.macosIntel.unavailableCopy": ["Follow the macOS Intel support work for progress. A download will appear only after the macOS Intel release passes its platform and release checks.", "关注 Intel Mac 支持工作的进展。只有在 Intel Mac 版本通过平台和发行检查后，才会提供下载。", "Sigue el trabajo de compatibilidad con macOS Intel para ver los avances. La descarga solo aparecerá cuando la versión para macOS Intel supere las comprobaciones de plataforma y lanzamiento."],
-  "installer.macosIntel.trackSupport": ["Track macOS Intel support", "关注 Intel Mac 支持", "Seguir la compatibilidad con macOS Intel"],
-  "installer.windows.unavailableTitle": ["TiboTattle for Windows is not available yet.", "Windows 版 TiboTattle 尚未提供。", "TiboTattle para Windows aún no está disponible."],
-  "installer.windows.unavailableCopy": ["Follow the Windows support work for progress. A download will appear only after the Windows release passes its platform and release checks.", "关注 Windows 支持工作的进展。只有在 Windows 版本通过平台和发行检查后，才会提供下载。", "Sigue el trabajo de compatibilidad con Windows para ver los avances. La descarga solo aparecerá cuando la versión para Windows supere las comprobaciones de plataforma y lanzamiento."],
-  "installer.windows.trackSupport": ["Track Windows support", "关注 Windows 支持", "Seguir la compatibilidad con Windows"],
-  "installer.linux.unavailableTitle": ["TiboTattle for Linux is not available yet.", "Linux 版 TiboTattle 尚未提供。", "TiboTattle para Linux aún no está disponible."],
-  "installer.linux.unavailableCopy": ["Follow the Linux support work for progress. A download will appear only after the Linux release passes its platform and release checks.", "关注 Linux 支持工作的进展。只有在 Linux 版本通过平台和发行检查后，才会提供下载。", "Sigue el trabajo de compatibilidad con Linux para ver los avances. La descarga solo aparecerá cuando la versión para Linux supere las comprobaciones de plataforma y lanzamiento."],
-  "installer.linux.trackSupport": ["Track Linux support", "关注 Linux 支持", "Seguir la compatibilidad con Linux"],
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   "installer.version": ["Version {version}", "版本 {version}", "Versión {version}"],
-  "installer.requiresMacOS": ["Requires macOS {version} or later · {architecture}", "需要 macOS {version} 或更高版本 · {architecture}", "Requiere macOS {version} o posterior · {architecture}"],
-  "installer.compatibilitySummary": ["macOS {version} or later · {architecture}", "macOS {version} 或更高版本 · {architecture}", "macOS {version} o posterior · {architecture}"],
+
+  "installer.compatibilitySummary": ["Windows {version} or later · {architecture}", "Windows {version} 或更高版本 · {architecture}", "Windows {version} o posterior · {architecture}"],
+
   "installer.downloadKiB": ["{value} KiB download", "下载 {value} KiB", "Descarga de {value} KiB"],
   "installer.downloadMiB": ["{value} MiB download", "下载 {value} MiB", "Descarga de {value} MiB"],
   "installer.sha256": ["SHA-256 {value}", "SHA-256 {value}", "SHA-256 {value}"],
@@ -1445,15 +1388,16 @@ export const WEB_MESSAGES = Object.freeze({
   "installer.sha256.copied": ["SHA-256 copied", "SHA-256 已复制", "SHA-256 copiado"],
   "installer.sha256.copySuccess": ["SHA-256 checksum copied.", "SHA-256 校验和已复制。", "Se copió la suma de comprobación SHA-256."],
   "installer.sha256.copyFailure": ["Automatic copy was blocked. Select the displayed SHA-256 checksum to copy it manually.", "自动复制被阻止。请选择显示的 SHA-256 校验和以手动复制。", "Se bloqueó la copia automática. Selecciona la suma de comprobación SHA-256 mostrada para copiarla manualmente."],
-  "installer.appleSilicon": ["Apple silicon", "Apple 芯片", "Apple Silicon"],
-  "installer.intel": ["Intel", "Intel", "Intel"],
-  "installer.appleSiliconAndIntel": ["Apple silicon and Intel", "Apple 芯片和 Intel", "Apple Silicon e Intel"],
-  "installer.homebrew.copy": ["Copy", "复制", "Copiar"],
-  "installer.homebrew.copied": ["Copied", "已复制", "Copiado"],
-  "installer.homebrew.copyManually": ["Copy manually", "手动复制", "Copiar manualmente"],
-  "installer.homebrew.copySuccess": ["Homebrew install command copied.", "已复制 Homebrew 安装命令。", "Comando de instalación de Homebrew copiado."],
-  "installer.homebrew.copyFailure": ["Automatic copy was blocked. The command is selected; copy it manually.", "自动复制被阻止。命令已选中；请手动复制。", "La copia automática fue bloqueada. El comando está seleccionado; cópialo manualmente."],
-  "installer.assurance.message": ["Developer ID signed and Apple notarized.", "Developer ID 签名并通过 Apple 公证。", "Firmada con Developer ID y notarizada por Apple."],
+
+
+
+
+
+
+
+
+  "installer.assurance.message": ["Signed installer with a published SHA-256 checksum.", "已签名的安装程序，并公布 SHA-256 校验和。", "Instalador firmado con suma de comprobación SHA-256 publicada."],
+
   "installer.assurance.details": ["Security and verification", "安全与验证", "Seguridad y verificación"],
   "community.daily.title": ["Community daily activity", "社区每日活动", "Actividad comunitaria diaria"],
   "community.reportedCause": ["Reported cause: {code}.", "报告原因：{code}。", "Causa informada: {code}."],
@@ -1608,6 +1552,9 @@ export const WEB_MESSAGES = Object.freeze({
   "community.allowance.tooltipRange": ["Plausible range {lower}–{upper}", "合理范围 {lower}–{upper}", "Rango plausible {lower}–{upper}"],
   "community.allowance.methodNote": ["Each point combines qualifying reset fits from the trailing 30 days after normalizing supported personal plans to a Pro 10× equivalent (Pro ×1, Pro 5× ×2, Pro Max 25× ×0.4, Plus ×10). The line is the median, the range is the middle 80%, and every fit passes the shared calibration gates including the 25-point observed-span floor. Unsupported plans are excluded; late data republishes the day.", "每个点都汇总过去 30 天内的合格重置拟合，并将支持的个人方案换算为 Pro 10× 等值（Pro ×1、Pro 5× ×2、Pro Max 25× ×0.4、Plus ×10）。折线为中位数，区间为中间 80%；每个拟合均通过共享校准门槛，包括 25 个百分点的观测跨度下限。不支持的方案会被排除；迟到的数据会重新发布对应日期。", "Cada punto combina los ajustes de restablecimiento válidos de los últimos 30 días tras normalizar los planes personales compatibles a un equivalente de Pro 10× (Pro ×1, Pro 5× ×2, Pro Max 25× ×0,4 y Plus ×10). La línea es la mediana, el rango es el 80 % central y cada ajuste supera las puertas de calibración compartidas, incluido el mínimo de 25 puntos de amplitud observada. Los planes no compatibles se excluyen; los datos tardíos vuelven a publicar el día."],
   "community.allowance.methodNoteLegacy": ["Each point combines qualifying reset fits from the trailing 30 days after normalizing supported personal plans to a Pro 20x equivalent (Pro ×1, Pro 5x ×4, Plus ×20). The line is the median, the range is the middle 80%, and every fit passes the shared calibration gates recorded with that published basis. Unsupported plans are excluded; late data republishes the day.", "每个点都汇总过去 30 天内的合格重置拟合，并将支持的个人方案换算为 Pro 20x 等值（Pro ×1、Pro 5x ×4、Plus ×20）。折线为中位数，区间为中间 80%；每个拟合均通过共享校准门槛，以已发布的换算基准为准。不支持的方案会被排除；迟到的数据会重新发布对应日期。", "Cada punto combina los ajustes de restablecimiento válidos de los últimos 30 días tras normalizar los planes personales compatibles a un equivalente de Pro 20x (Pro ×1, Pro 5x ×4 y Plus ×20). La línea es la mediana, el rango es el 80 % central y cada ajuste supera las puertas de calibración compartidas, registradas con esa base publicada. Los planes no compatibles se excluyen; los datos tardíos vuelven a publicar el día."],
+  "installer.requiresWindows": ["Requires Windows {version} or later · {architecture}", "需要 Windows {version} 或更高版本 · {architecture}", "Requiere Windows {version} o posterior · {architecture}"],
+  "aria.downloadWindows": ["Download TiboTattle for Windows", "下载适用于 Windows 的 TiboTattle", "Descargar TiboTattle para Windows"],
+  "aria.windowsDownload": ["Windows download", "Windows 下载", "Descarga para Windows"],
 });
 
 function catalogIndex(locale) {
@@ -1665,18 +1612,9 @@ export const WEB_PLURAL_MESSAGES = Object.freeze({
     one: ["The indexed totals remain usable. {count} affected thread did not pass local validation, so its missing usage remains unavailable rather than zero. You can check again after the local rollout files change.", "已索引的总计仍然可用。受影响的 {count} 个线程未通过本地验证，因此缺失用量保持为不可用，而不是零。本地 rollout 文件发生变化后可以再次检查。", "Los totales indexados siguen siendo utilizables. {count} hilo afectado no superó la validación local, por lo que su uso ausente permanece no disponible en lugar de mostrarse como cero. Puedes comprobarlo de nuevo cuando cambien los archivos rollout locales."],
     other: ["The indexed totals remain usable. {count} affected threads did not pass local validation, so their missing usage remains unavailable rather than zero. You can check again after the local rollout files change.", "已索引的总计仍然可用。受影响的 {count} 个线程未通过本地验证，因此缺失用量保持为不可用，而不是零。本地 rollout 文件发生变化后可以再次检查。", "Los totales indexados siguen siendo utilizables. {count} hilos afectados no superaron la validación local, por lo que su uso ausente permanece no disponible en lugar de mostrarse como cero. Puedes comprobarlo de nuevo cuando cambien los archivos rollout locales."],
   }),
-  "accounting.sideChat.coverageRetentionLimit": Object.freeze({
-    one: ["{count} retained side-chat partition reached the local 1,000-row retention limit, so earlier evidence in it may be missing.", "{count} 个保留的侧聊分区已达到本地 1,000 行保留上限，因此其中较早的证据可能缺失。", "{count} partición conservada alcanzó el límite local de 1.000 filas, por lo que puede faltar evidencia anterior."],
-    other: ["{count} retained side-chat partitions reached the local 1,000-row retention limit, so earlier evidence in them may be missing.", "{count} 个保留的侧聊分区已达到本地 1,000 行保留上限，因此其中较早的证据可能缺失。", "{count} particiones conservadas alcanzaron el límite local de 1.000 filas, por lo que puede faltar evidencia anterior."],
-  }),
-  "accounting.sideChat.coverageDuplicates": Object.freeze({
-    one: ["{count} repeated sampling marker was deduplicated.", "已去重 {count} 个重复采样标记。", "Se deduplicó {count} marcador de muestreo repetido."],
-    other: ["{count} repeated sampling markers were deduplicated.", "已去重 {count} 个重复采样标记。", "Se deduplicaron {count} marcadores de muestreo repetidos."],
-  }),
-  "accounting.sideChat.detailsTruncated": Object.freeze({
-    one: ["{count} retained call is outside the {limit}-row detail cap.", "有 {count} 个保留调用超出 {limit} 行详情上限。", "{count} llamada conservada queda fuera del límite de {limit} filas de detalle."],
-    other: ["{count} retained calls are outside the {limit}-row detail cap.", "有 {count} 个保留调用超出 {limit} 行详情上限。", "{count} llamadas conservadas quedan fuera del límite de {limit} filas de detalle."],
-  }),
+
+
+
   "dashboard.timeline.window": Object.freeze({
     one: ["{count} matched quota window", "{count} 个匹配额度窗口", "{count} ventana de cuota coincidente"],
     other: ["{count} matched quota windows", "{count} 个匹配额度窗口", "{count} ventanas de cuota coincidentes"],
@@ -1881,7 +1819,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Sign in & approve": ["登录并核准", "Iniciar sesión y aprobar"],
   "This summary is the review": ["这份摘要就是审阅", "Este resumen es la revisión"],
   "Check summary again": ["再次检查摘要", "Volver a comprobar el resumen"],
-  "Send unlocks only after these exact figures are verified on this Mac. What you see summarized here is exactly what would be sent.": ["只有在这台 Mac 上校验完这些确切数字后，“发送”才会解锁。你在此看到的摘要内容正是将要发送的内容。", "Enviar se desbloquea solo después de que estas cifras exactas se verifiquen en este Mac. Lo que ves resumido aquí es exactamente lo que se enviaría."],
+
   "Approve once": ["一次核准", "Aprobar una vez"],
   "Automatic full-history contribution": ["自动贡献完整历史", "Contribución automática del historial completo"],
   "Not approved": ["未核准", "No aprobado"],
@@ -1919,8 +1857,10 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Can't reach the local app": ["无法连接本地应用", "No se puede conectar con la app local"],
   "Explore labeled demo": ["查看标注演示", "Explorar demostración etiquetada"],
   "First-time setup": ["首次设置", "Configuración inicial"],
-  "Open TiboTattle on this Mac": ["在这台 Mac 上打开 TiboTattle", "Abre TiboTattle en este Mac"],
-  "Get the Mac app": ["获取 Mac 应用", "Obtén la app para Mac"],
+  "Open TiboTattle on this PC": ["在这台电脑上打开 TiboTattle", "Abre TiboTattle en este PC"],
+
+  "Get the Windows app": ["获取 Windows 应用", "Obtén la app para Windows"],
+
   "Get the app": ["获取应用", "Obtener la app"],
   "Install the desktop app": ["安装桌面应用", "Instala la app de escritorio"],
   "TiboTattle turns your seven-day Codex allowance into an API-price-equivalent estimate, shows how it changes over time, and calculates your personal dashboard locally on your computer.": ["TiboTattle 会将你的 Codex 七天额度转换为 API 等价金额估计，展示它如何随时间变化，并在你的电脑上本地计算个人仪表板。", "TiboTattle convierte tu asignación de Codex de siete días en una estimación equivalente al precio de API, muestra cómo cambia con el tiempo y calcula tu panel personal localmente en tu ordenador."],
@@ -1935,12 +1875,13 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "There is no published Windows build yet.": ["尚未发布 Windows 版本。", "Todavía no hay una versión publicada para Windows."],
   "Follow the Windows support work for progress. A download will appear only after the Windows release passes its platform and release checks.": ["关注 Windows 支持工作的进展。只有在 Windows 版本通过平台和发行检查后，才会提供下载。", "Sigue el trabajo de compatibilidad con Windows para ver los avances. La descarga solo aparecerá cuando la versión para Windows supere las comprobaciones de plataforma y lanzamiento."],
   "Track Windows support": ["关注 Windows 支持", "Seguir la compatibilidad con Windows"],
-  "TiboTattle for Linux is not available yet.": ["Linux 版 TiboTattle 尚未提供。", "TiboTattle para Linux aún no está disponible."],
-  "Linux is not yet available": ["Linux 尚未提供", "Linux aún no está disponible"],
-  "There is no published Linux build yet.": ["尚未发布 Linux 版本。", "Todavía no hay una versión publicada para Linux."],
-  "Follow the Linux support work for progress. A download will appear only after the Linux release passes its platform and release checks.": ["关注 Linux 支持工作的进展。只有在 Linux 版本通过平台和发行检查后，才会提供下载。", "Sigue el trabajo de compatibilidad con Linux para ver los avances. La descarga solo aparecerá cuando la versión para Linux supere las comprobaciones de plataforma y lanzamiento."],
-  "Track Linux support": ["关注 Linux 支持", "Seguir la compatibilidad con Linux"],
-  "Download TiboTattle for Mac": ["下载适用于 Mac 的 TiboTattle", "Descargar TiboTattle para Mac"],
+
+
+
+
+
+  "Download TiboTattle for Windows": ["下载适用于 Windows 的 TiboTattle", "Descargar TiboTattle para Windows"],
+
   "Release notes": ["发行说明", "Notas de la versión"],
   "Privacy": ["隐私", "Privacidad"],
   "Security": ["安全", "Seguridad"],
@@ -1949,7 +1890,8 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Open installed app": ["打开已安装的应用", "Abrir la app instalada"],
   "Use the TiboTattle window": ["使用 TiboTattle 窗口", "Usa la ventana de TiboTattle"],
   "Local setup": ["本地设置", "Configuración local"],
-  "Check this Mac before analyzing": ["分析前检查这台 Mac", "Comprueba este Mac antes de analizar"],
+  "Check this PC before analyzing": ["分析前检查这台电脑", "Comprueba este PC antes de analizar"],
+
   "Share": ["分享", "Compartir"],
   "Save image": ["保存图片", "Guardar imagen"],
   "Copy image": ["复制图片", "Copiar imagen"],
@@ -1981,7 +1923,8 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Dashboard contract: waiting": ["仪表板契约：等待中", "Contrato del panel: en espera"],
   "Observed": ["已观测", "Observado"],
   "Reported time": ["报告时间", "Hora informada"],
-  "Chart and table use this Mac’s reporting time zone.": ["图表和表格使用这台 Mac 的报告时区。", "El gráfico y la tabla usan la zona horaria de informes de este Mac."],
+  "Chart and table use this PC’s reporting time zone.": ["图表和表格使用这台电脑的报告时区。", "El gráfico y la tabla usan la zona horaria de informes de este PC."],
+
   "Estimate": ["估计", "Estimación"],
   "Status": ["状态", "Estado"],
   "Hour": ["小时", "Hora"],
@@ -2005,10 +1948,10 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Sending now. This runs once and then stops.": ["正在发送。此操作只运行一次，然后停止。", "Enviando. Esto se ejecuta una vez y luego se detiene."],
   "Checking the summary on this device. Nothing is sent.": ["正在检查此设备上的摘要。不会发送任何内容。", "Comprobando el resumen en este dispositivo. No se envía nada."],
   "Look at the times and totals above, then confirm the send.": ["请查看上方的时间和总量，然后确认发送。", "Mira las horas y los totales de arriba y confirma el envío."],
-  "Connect this Mac": ["连接这台 Mac", "Conectar este Mac"],
+
   "Sign in above to contribute": ["请在上方登录以参与贡献", "Inicia sesión arriba para contribuir"],
   "See what the community published": ["查看社区已发布的内容", "Ver lo que ha publicado la comunidad"],
-  "Everything here happens on your Mac. Sending is a separate button you press after you have looked at the summary.": ["这里的所有操作都在你的 Mac 上完成。发送是另一个按钮，你查看摘要后再按。", "Todo lo de aquí ocurre en tu Mac. Enviar es un botón aparte que pulsas después de mirar el resumen."],
+
   "Prepare a summary": ["准备摘要", "Preparar un resumen"],
   "How much to include": ["包含多少内容", "Cuánto incluir"],
   "Analyze your local usage first to see how much would be included.": ["先分析本地使用情况，看看会包含多少内容。", "Analiza primero tu uso local para ver cuánto se incluiría."],
@@ -2024,23 +1967,23 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Send stays off until you have looked at this summary.": ["在你查看此摘要之前，发送将保持关闭。", "Enviar permanece desactivado hasta que hayas mirado este resumen."],
   "Checking that this build has a contribution service…": ["正在检查此版本是否配置了贡献服务…", "Comprobando que esta versión tenga un servicio de contribución…"],
   "Creating pseudonymous contribution access…": ["正在创建匿名贡献访问权限…", "Creando acceso de contribución seudónimo…"],
-  "Connecting this Mac as an upload-only device…": ["正在将这台 Mac 连接为仅上传设备…", "Conectando este Mac como dispositivo solo de carga…"],
-  "Uploads are paused because TiboTattle could not access this Mac's upload credential. The existing credential and local history are unchanged. Nothing was uploaded. You can try again later.": ["TiboTattle 无法访问这台 Mac 的上传凭据，因此上传已暂停。现有凭据和本地历史记录均未改变。没有上传任何内容。你可以稍后重试。", "Las cargas están en pausa porque TiboTattle no pudo acceder a la credencial de carga de este Mac. La credencial existente y el historial local no han cambiado. No se ha subido nada. Puedes volver a intentarlo más tarde."],
+
+
   "Your existing local identity and history are unchanged. In TiboTattle, open Settings… → General and choose Review migration… under Secure upgrade when you’re ready. No upload occurred. Do not reset, delete, or rotate the identity.": ["现有本地身份和历史记录均未改变。你可以在方便时，在 TiboTattle 中打开“设置…”→“通用”，然后在“安全升级”下选择“查看迁移…”。没有上传任何内容。请勿重置、删除或更换该身份。", "Tu identidad local y tu historial existentes no han cambiado. Cuando quieras, abre Configuración… → General en TiboTattle y elige Revisar migración… en Actualización segura. No se ha subido nada. No restablezcas, elimines ni cambies la identidad."],
-  "This Mac's existing upload credential and local history are unchanged. In TiboTattle, open Settings… → General and choose Review migration… under Secure upgrade when you’re ready. Nothing was uploaded. Do not reset or delete the credential.": ["这台 Mac 的现有上传凭据和本地历史记录均未改变。你可以在方便时，在 TiboTattle 中打开“设置…”→“通用”，然后在“安全升级”下选择“查看迁移…”。没有上传任何内容。请勿重置或删除该凭据。", "La credencial de carga y el historial local existentes de este Mac no han cambiado. Cuando quieras, abre Configuración… → General en TiboTattle y elige Revisar migración… en Actualización segura. No se ha subido nada. No restablezcas ni elimines la credencial."],
+
   "Resetting clears only that unusable credential and its local record. Then choose Review and approve again. If the reset fails too, quit and reopen TiboTattle first.": ["重置只会清除那条无法使用的凭据及其本地记录。然后请再次选择“查看并批准”。如果重置也失败，请先退出并重新打开 TiboTattle。", "Restablecer borra solo esa credencial inutilizable y su registro local. Después elige Revisar y aprobar de nuevo. Si el restablecimiento también falla, cierra y vuelve a abrir TiboTattle primero."],
   // The locked-keychain pause. Kept apart from the reset guidance above on
   // purpose: nothing is broken, so neither sentence may suggest clearing or
   // re-approving anything.
-  "Uploads are paused: your Mac's login keychain is locked.": ["上传已暂停：这台 Mac 的登录钥匙串已锁定。", "Las cargas están en pausa: el llavero de inicio de sesión de tu Mac está bloqueado."],
-  "Unlocking restores uploads by itself — there is nothing to reset and nothing to approve again. Anything not yet sent stays queued on this Mac.": ["解锁后上传会自行恢复——无需重置，也无需重新批准。尚未发送的内容会继续在这台 Mac 上排队等待。", "Desbloquearlo restaura las cargas por sí solo: no hay nada que restablecer ni que volver a aprobar. Lo que aún no se ha enviado permanece en cola en este Mac."],
-  "Connecting stores this Mac's upload credential in your login keychain. Local reporting and history are unchanged.": ["连接会把这台 Mac 的上传凭据保存到你的登录钥匙串。本地报告和历史记录保持不变。", "Conectar guarda la credencial de carga de este Mac en tu llavero de inicio de sesión. Los informes y el historial locales no cambian."],
-  "This Mac has an upload credential from an older build. TiboTattle first tries to move it to app-owned Keychain storage silently, without changing its value or uploading anything. If Secure upgrade appears in Settings, open Settings… → General and choose Review migration… when you’re ready. The existing credential and local history stay unchanged until migration finishes.": ["这台 Mac 有一个来自旧版本的上传凭据。TiboTattle 会先尝试在不更改其值或上传任何内容的情况下，将它静默迁移到应用自有的钥匙串存储中。如果“设置”中出现“安全升级”，请打开“设置…”→“通用”，并在方便时选择“查看迁移…”。在迁移完成前，现有凭据和本地历史记录保持不变。", "Este Mac tiene una credencial de carga de una versión anterior. TiboTattle primero intenta trasladarla silenciosamente al almacenamiento del llavero propio de la app, sin cambiar su valor ni subir nada. Si aparece Actualización segura en Configuración, abre Configuración… → General y elige Revisar migración… cuando quieras. La credencial y el historial local existentes no cambian hasta que finalice la migración."],
+
+
+
+
   "Reading the local contribution queue…": ["正在读取本地贡献队列…", "Leyendo la cola de contribuciones local…"],
   "Preparing a local summary for you to review…": ["正在准备供你查看的本地摘要…", "Preparando un resumen local para que lo revises…"],
   "Opening the local review…": ["正在打开本地审阅…", "Abriendo la revisión local…"],
-  "This is a development build. It signs summaries with a file on this Mac instead of your login Keychain.": ["这是开发版本。它使用这台 Mac 上的文件而不是你的登录钥匙串来签署摘要。", "Esta es una versión de desarrollo. Firma los resúmenes con un archivo de este Mac en lugar de tu llavero de inicio de sesión."],
-  "TiboTattle cannot reach your Mac's login Keychain, so preparing a summary will fail. Open Keychain Access, unlock the login Keychain, then try again. Do not delete or reset the entry.": ["TiboTattle 无法访问这台 Mac 的登录钥匙串，因此准备摘要会失败。请打开“钥匙串访问”，解锁登录钥匙串后重试。不要删除或重置该条目。", "TiboTattle no puede acceder al llavero de inicio de sesión de tu Mac, así que preparar un resumen fallará. Abre Acceso a Llaveros, desbloquea el llavero de inicio de sesión y vuelve a intentarlo. No elimines ni restablezcas la entrada."],
+
+
   "Ready to review": ["可以审阅", "Listo para revisar"],
   "Nothing waiting": ["没有等待中的内容", "Nada en espera"],
   "Not set up": ["尚未设置", "Sin configurar"],
@@ -2055,22 +1998,22 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Snapshot": ["快照", "Resumen"],
   "Mac app": ["Mac 应用", "App para Mac"],
   "FAQ": ["常见问题", "Preguntas frecuentes"],
-  "Mac app availability": ["Mac 应用可用性", "Disponibilidad de la app para Mac"],
+
   "See the snapshot": ["查看快照", "Ver el resumen"],
-  "Signed Mac installer": ["已签名的 Mac 安装程序", "Instalador de Mac firmado"],
-  "Download for Mac": ["下载 Mac 版", "Descargar para Mac"],
+
+
   "Choose what to share": ["选择要分享的内容", "Elige qué compartir"],
   "Local-first by design": ["本地优先设计", "Local primero por diseño"],
-  "TiboTattle · Private usage visibility for Mac": ["TiboTattle · 在 Mac 上私密地查看用量", "TiboTattle · Visibilidad privada de uso para Mac"],
+
   "Skip to TiboTattle": ["跳到 TiboTattle", "Ir a TiboTattle"],
   "Docs": ["文档", "Documentación"],
   "Release status": ["发布状态", "Estado de la versión"],
   "See where your Codex allowance stands.": ["查看你的 Codex 额度状况。", "Consulta el estado de tu límite de Codex."],
   "What the Codex allowance is really worth.": ["Codex 额度到底值多少。", "Cuánto vale realmente la asignación de Codex."],
-  "TiboTattle turns your seven-day Codex allowance into an API-price-equivalent estimate, shows how it changes over time, and calculates your personal dashboard on your Mac.": ["TiboTattle 将你的七天 Codex 额度换算为 API 价格等价估计，展示它如何随时间变化，并在你的 Mac 上计算个人仪表板。", "TiboTattle convierte tu asignación de Codex de siete días en una estimación equivalente al precio de API, muestra cómo cambia con el tiempo y calcula tu panel personal en tu Mac."],
+
   "Copy SHA-256": ["复制 SHA-256", "Copiar SHA-256"],
   "Copy": ["复制", "Copiar"],
-  "TiboTattle is a private Mac app that estimates how much of your seven-day Codex allowance remains and shows how your usage changes over time. Your personal dashboard is calculated on your Mac.": ["TiboTattle 是一款私密的 Mac 应用，可估算你的 Codex 七天额度还剩多少，并展示使用情况随时间的变化。你的个人仪表板会在 Mac 上计算。", "TiboTattle es una app privada para Mac que estima cuánto queda de tu límite de Codex de siete días y muestra cómo cambia tu uso con el tiempo. Tu panel personal se calcula en tu Mac."],
+
   "Public download coming soon.": ["公开下载即将推出。", "La descarga pública estará disponible pronto."],
   "Latest community evidence": ["最新社区证据", "Evidencia comunitaria más reciente"],
   "Install the Mac app": ["安装 Mac 应用", "Instala la app para Mac"],
@@ -2092,7 +2035,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Checking allowance estimates": ["正在检查额度估计", "Comprobando las estimaciones de asignación"],
   "Checking for published allowance estimates…": ["正在检查已发布的额度估计…", "Comprobando las estimaciones de asignación publicadas…"],
   "Checking daily activity": ["正在检查每日活动", "Comprobando la actividad diaria"],
-  "Personal dashboards and contributions stay in the Mac app.": ["个人仪表板和贡献功能保留在 Mac 应用中。", "Los paneles personales y las contribuciones permanecen en la app para Mac."],
+
   "See community activity": ["查看社区活动", "Ver la actividad de la comunidad"],
   "Community activity over time": ["社区活动趋势", "Actividad de la comunidad a lo largo del tiempo"],
   "Delayed, aggregate daily totals from optional contributions. This public view includes no prompts, responses, or account details.": ["来自可选贡献的延迟汇总每日总量。此公开视图不包含提示词、回复或账户详情。", "Totales diarios agregados y diferidos de contribuciones opcionales. Esta vista pública no incluye prompts, respuestas ni datos de cuentas."],
@@ -2102,15 +2045,12 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Time range": ["时间范围", "Intervalo de tiempo"],
   "Close": ["关闭", "Cerrar"],
   "Understand your Codex week.": ["了解你的 Codex 一周。", "Entiende tu semana de Codex."],
-  "TiboTattle is a local-first Mac app for understanding personal Codex usage. It estimates your personal seven-day allowance in API-equivalent terms; the dashboard and its history stay on your Mac.": ["TiboTattle 是一款本地优先的 Mac 应用，用于了解个人 Codex 使用情况。它以 API 等价金额估算你的个人七天额度；仪表板及其历史记录保留在你的 Mac 上。", "TiboTattle es una app para Mac que prioriza lo local y ayuda a entender tu uso personal de Codex. Estima tu límite personal de siete días en términos equivalentes de API; el panel y su historial permanecen en tu Mac."],
-  "Download for macOS": ["下载 macOS 版", "Descargar para macOS"],
-  "Developer ID signed and Apple notarized.": ["Developer ID 签名并通过 Apple 公证。", "Firmada con Developer ID y notarizada por Apple."],
+
+
   "Security and verification": ["安全与验证", "Seguridad y verificación"],
-  "Or install with Homebrew": ["或使用 Homebrew 安装", "O instala con Homebrew"],
-  "brew install --cask adamallcock/tap/tibotattle": ["brew install --cask adamallcock/tap/tibotattle", "brew install --cask adamallcock/tap/tibotattle"],
+
   "Already installed?": ["已经安装？", "¿Ya está instalada?"],
   "Open TiboTattle": ["打开 TiboTattle", "Abrir TiboTattle"],
-  "Signed release coming soon.": ["已签名版本即将推出。", "Próximamente habrá una versión firmada."],
   "A download link appears only after a signed public installer and its release metadata pass the release checks. Otherwise, this release remains unavailable.": ["只有在已签名的公开安装程序及其发行元数据通过发行检查后，才会显示下载链接。否则，此版本仍不可用。", "El enlace de descarga solo aparece después de que un instalador público firmado y sus metadatos de versión superen las comprobaciones. De lo contrario, esta versión no está disponible."],
   "This website is read-only: it does not enroll contributors or accept uploads.": ["本网站是只读的：不会为贡献者注册账户或接受上传。", "Este sitio web es de solo lectura: no registra colaboradores ni acepta cargas."],
   "Delayed community activity": ["延迟的社区活动", "Actividad comunitaria diferida"],
@@ -2122,11 +2062,11 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Observed resets": ["已观测到的重置", "Restablecimientos observados"],
   "Allowance remaining": ["剩余额度", "Asignación restante"],
   "61%": ["61%", "61%"],
-  "Your dashboard is calculated privately on your Mac.": ["你的仪表板会在 Mac 上私密计算。", "Tu panel se calcula de forma privada en tu Mac."],
+
   "Personal seven-day view": ["个人七天视图", "Vista personal de siete días"],
-  "On your Mac, see your private allowance estimate and its history across observed resets.": ["在你的 Mac 上查看私人的额度估计及其在已观测重置间的历史记录。", "En tu Mac, consulta tu estimación privada del límite y su historial entre restablecimientos observados."],
+
   "Local by default": ["默认保留在本地", "Local de forma predeterminada"],
-  "Your dashboard stays on your Mac. Community contribution is optional.": ["你的仪表板保留在 Mac 上。是否贡献给社区由你决定。", "Tu panel permanece en tu Mac. La contribución a la comunidad es opcional."],
+
   "Evidence, not guesses": ["基于证据，而非猜测", "Evidencia, no conjeturas"],
   "Missing or weak evidence stays visibly unknown.": ["缺失或薄弱的证据会明确显示为未知。", "La evidencia ausente o débil permanece visiblemente desconocida."],
   "Published as delayed, aggregate activity for a defined reporting period.": ["以定义报告期间的延迟汇总活动形式发布。", "Se publica como actividad agregada y diferida para un período de informe definido."],
@@ -2140,23 +2080,23 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "GitHub": ["GitHub", "GitHub"],
   "X": ["X", "X"],
   "Turn on JavaScript to check download availability and the published daily community activity.": ["启用 JavaScript 以查看下载可用性和已发布的每日社区活动。", "Activa JavaScript para consultar la disponibilidad de descarga y la actividad comunitaria diaria publicada."],
-  "Private usage visibility for Mac": ["在 Mac 上私密地查看用量", "Visibilidad privada de uso para Mac"],
+
   "Know what your Codex week is doing.": ["了解你的 Codex 一周使用情况。", "Conoce qué está ocurriendo en tu semana de Codex."],
-  "TiboTattle is a local-first Mac app that reads content-free usage and quota metadata on your Mac. Your personal dashboard stays in the app; this site only publishes delayed, aggregate activity that contributors chose to share.": ["TiboTattle 是一款本地优先的 Mac 应用，会在你的 Mac 上读取不含内容的使用情况和额度元数据。你的个人仪表板保留在应用内；本网站只发布贡献者选择分享的延迟汇总活动。", "TiboTattle es una app para Mac que prioriza lo local y lee metadatos de uso y cuota sin contenido en tu Mac. Tu panel personal permanece en la app; este sitio solo publica actividad agregada y diferida que los colaboradores eligieron compartir."],
+
   "A delayed activity snapshot, shared carefully.": ["谨慎分享的延迟活动快照。", "Un resumen de actividad diferida, compartido con cuidado."],
   "This page shows delayed, aggregate weekly activity from opt-in contributors — not your personal usage, reading, or cost.": ["本页展示自愿贡献者的延迟汇总每周活动，而不是你的个人使用情况、读数或成本。", "Esta página muestra actividad semanal agregada y diferida de colaboradores que aceptaron participar, no tu uso, lectura ni coste personal."],
   "A public community activity snapshot appears only when the service publishes one; this page does not derive one from activity totals.": ["只有服务发布公开社区活动快照时才会显示；本页不会根据活动总量推导快照。", "Un resumen público de actividad comunitaria solo aparece cuando el servicio publica uno; esta página no lo deriva de los totales de actividad."],
   "Community daily activity": ["社区每日活动", "Actividad comunitaria diaria"],
   "How this snapshot is produced": ["此快照如何生成", "Cómo se produce este resumen"],
   "Community values use a fixed delay, eligible provider-account support, account-level clipping, and coarse rounding. A sealed revision is never rewritten; privacy-affecting deletion withdraws it and schedules a replacement revision without the deleted source.": ["社区数值采用固定延迟、符合条件的提供商账户支持、账户级别截断和粗粒度取整。已封存的修订绝不会被重写；影响隐私的删除会撤回该修订，并安排不含已删除来源的替代修订。", "Los valores comunitarios usan un retraso fijo, soporte de cuentas de proveedor elegibles, recorte por cuenta y redondeo grueso. Una revisión sellada nunca se reescribe; una eliminación que afecta a la privacidad la retira y programa una revisión de sustitución sin la fuente eliminada."],
-  "Keep your personal view on your Mac.": ["让你的个人视图留在 Mac 上。", "Mantén tu vista personal en tu Mac."],
+
   "The app reads your local Codex metadata and shows the personal dashboard in its own window. The website never asks for access to those files, and nothing is uploaded unless you explicitly choose to contribute from the app.": ["该应用会读取你的本地 Codex 元数据，并在自己的窗口中显示个人仪表板。网站绝不会请求访问这些文件，除非你明确选择在应用中贡献，否则不会上传任何内容。", "La app lee tus metadatos locales de Codex y muestra el panel personal en su propia ventana. El sitio web nunca solicita acceso a esos archivos y no se sube nada salvo que elijas explícitamente contribuir desde la app."],
-  "The signed Mac app is not available to download yet. We will only offer it here after its installer and release metadata verify.": ["已签名的 Mac 应用尚不可下载。只有在其安装程序和发行元数据通过验证后，我们才会在此提供它。", "La app firmada para Mac todavía no está disponible para descargar. Solo la ofreceremos aquí cuando se verifiquen su instalador y sus metadatos de lanzamiento."],
+
   "Open TiboTattle from Applications": ["从“应用程序”打开 TiboTattle", "Abre TiboTattle desde Aplicaciones"],
-  "The personal dashboard opens inside the Mac app and uses its private loopback companion.": ["个人仪表板在 Mac 应用内打开，并使用其私有回环伴随程序。", "El panel personal se abre dentro de la app para Mac y usa su acompañante de bucle local privado."],
+
   "Any community contribution is optional, delayed, clipped, and rounded before a public snapshot can be released.": ["任何社区贡献都是可选的，并会在发布公开快照前经过延迟、截断和取整。", "Toda contribución comunitaria es opcional, se retrasa, se recorta y se redondea antes de poder publicar un resumen."],
   "A clear boundary for personal data.": ["个人数据的清晰边界。", "Un límite claro para los datos personales."],
-  "On your Mac": ["在你的 Mac 上", "En tu Mac"],
+
   "Personal evidence stays local.": ["个人证据保留在本地。", "La evidencia personal permanece local."],
   "TiboTattle reads content-free metadata locally for the personal dashboard. Raw prompts, responses, transcripts, and file paths are not part of this public page.": ["TiboTattle 会在本地读取不含内容的元数据以提供个人仪表板。原始提示词、回复、转录内容和文件路径不属于此公开页面。", "TiboTattle lee metadatos sin contenido localmente para el panel personal. Las indicaciones, respuestas, transcripciones y rutas de archivos sin procesar no forman parte de esta página pública."],
   "In the snapshot": ["在快照中", "En el resumen"],
@@ -2164,10 +2104,10 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "The public view is delayed and support-gated. Released metrics are clipped per participant, rounded down, and may show a status instead of a value when support is insufficient.": ["公开视图经过延迟处理并受支持门槛限制。已发布指标按参与者截断并向下取整；当支持不足时，可能显示状态而非数值。", "La vista pública se retrasa y está sujeta a un umbral de soporte. Las métricas publicadas se recortan por participante, se redondean hacia abajo y pueden mostrar un estado en lugar de un valor cuando el soporte es insuficiente."],
   "A few useful boundaries": ["几个重要边界", "Algunos límites útiles"],
   "Can this website show my personal usage?": ["这个网站能显示我的个人使用情况吗？", "¿Puede este sitio web mostrar mi uso personal?"],
-  "No. Your personal dashboard is a Mac-app surface backed by the local loopback companion. This page only requests the public community snapshot endpoint.": ["不能。你的个人仪表板是由本地回环伴随程序支持的 Mac 应用界面。本页只请求公开的社区快照端点。", "No. Tu panel personal es una superficie de la app para Mac respaldada por el acompañante de bucle local. Esta página solo solicita el punto de conexión público del resumen comunitario."],
+
   "What do the published numbers mean?": ["已发布的数字代表什么？", "¿Qué significan los números publicados?"],
   "They are delayed activity totals from contributors, clipped per participant and rounded down. A cell can instead show a release status. They do not describe an individual or group limit.": ["它们是来自贡献者的延迟活动总数，按参与者截断并向下取整。单元格也可能显示发布状态。它们不描述个人或群体限额。", "Son totales de actividad diferida de colaboradores, recortados por participante y redondeados hacia abajo. Una celda puede mostrar en su lugar un estado de publicación. No describen un límite individual o de grupo."],
-  "Why might Download for Mac be unavailable?": ["为什么 Mac 版下载可能不可用？", "¿Por qué podría no estar disponible Descargar para Mac?"],
+
   "The download remains hidden until a signed public installer and its release metadata pass the fixed checks. No placeholder or unverified artifact is offered.": ["在已签名的公开安装程序及其发行元数据通过固定检查前，下载会保持隐藏。不会提供占位符或未经验证的工件。", "La descarga permanece oculta hasta que un instalador público firmado y sus metadatos de lanzamiento superen las comprobaciones establecidas. No se ofrece ningún marcador de posición ni artefacto no verificado."],
   "TiboTattle · evidence, uncertainty, and privacy boundaries kept visible.": ["TiboTattle · 让证据、不确定性和隐私边界保持可见。", "TiboTattle · evidencia, incertidumbre y límites de privacidad visibles."],
   "Named with affection for the Codex community. Not affiliated with or endorsed by OpenAI or Thibault Sottiaux — and we will happily rename if asked.": ["这个名字是对 Codex 社区的亲切致意。它与 OpenAI 或 Thibault Sottiaux 没有隶属或认可关系；如被要求，我们会乐意更名。", "Nombrado con afecto por la comunidad de Codex. No está afiliado a OpenAI ni a Thibault Sottiaux, ni cuenta con su respaldo; cambiaremos el nombre con gusto si nos lo piden."],
@@ -2176,7 +2116,8 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Compare content-free token metadata with observed quota movement, see what the model can and cannot explain, and improve the estimate over time.": ["将不含内容的 Token 元数据与观测到的额度变化进行比较，了解模型能解释和不能解释的内容，并随时间改进估计。", "Compara metadatos de tokens sin contenido con el movimiento de cuota observado, ve qué puede y no puede explicar el modelo y mejora la estimación con el tiempo."],
   "Open TiboTattle and use the window it opens. Nothing on this page is your real usage.": ["打开 TiboTattle 并使用它弹出的窗口。此页面上的内容都不是你的真实用量。", "Abre TiboTattle y usa la ventana que se abre. Nada de esta página es tu uso real."],
   "Check again": ["再次检查", "Comprobar de nuevo"],
-  "A website can't read your Codex files. The TiboTattle Mac app reads them locally and shows your dashboard in its own window.": ["网站无法读取你的 Codex 文件。TiboTattle Mac 应用会在本地读取它们，并在自己的窗口中显示你的仪表板。", "Un sitio web no puede leer tus archivos de Codex. La app de TiboTattle para Mac los lee localmente y muestra tu panel en su propia ventana."],
+  "A website can't read your Codex files. The TiboTattle Windows app reads them locally and shows your dashboard in its own window.": ["网站无法读取你的 Codex 文件。TiboTattle Windows 应用会在本地读取这些文件，并在其自身窗口中显示你的仪表板。", "Un sitio web no puede leer tus archivos de Codex. La app de TiboTattle para Windows los lee localmente y muestra tu panel en su propia ventana."],
+
   "This build has no public download. If you already have the app, continue below.": ["此版本没有公开下载。如果你已有该应用，请继续下面的步骤。", "Esta versión no tiene descarga pública. Si ya tienes la app, continúa abajo."],
   "Wait for": ["等待", "Espera a que aparezca"],
   "Ready": ["就绪", "Listo"],
@@ -2327,17 +2268,17 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Recent covered cache-continuity comparisons at Standard API rates; not a period total": ["近期已覆盖的缓存连续性比较，按 Standard API 费率计算；并非期间总额", "Comparaciones recientes con cobertura de continuidad de caché, con tarifas de API Standard; no es un total del período"],
   "Time between turns": ["轮次间隔", "Tiempo entre turnos"],
   "Unchanged configuration": ["未更改的配置", "Configuración sin cambios"],
-  "See experimental side-chat estimate": ["查看实验性侧聊估算", "Ver la estimación experimental de chats laterales"],
-  "This development-only estimate finds confirmed desktop side-chat lifecycles and prices deduplicated sampling markers that still survive in numeric local diagnostics. The active window is approximately 10 days; expired or rotated partitions are unknown and are not reconstructed. Active-context volume is observed, while input, cache, output, and reasoning components are reconstructed. Ordinary calls use the owner-directed mostly-warm point; an observed compaction makes the next point cold. Auto Review and other reviewed aliases retain their conditional alias-rate assumption. Exact totals remain unchanged. Surviving eligible estimates are speed-weighted and added only to the experimental red line, calibration metrics, and AUC, with the exact-ledger baseline kept beside them.": ["此仅用于开发的估算会查找已确认的桌面侧聊生命周期，并为本地数值诊断中仍保留的已去重采样标记计价。当前窗口约为 10 天；已过期或轮换的分区为未知，且不会重建。活动上下文量是观测值，而输入、缓存、输出和推理组成均为重建。普通调用使用用户指定的主要为热缓存点估算；观测到压缩后，下一个点按冷缓存处理。Auto Review 和其他已审核别名保留条件性别名费率假设。精确总额保持不变。仍保留且符合条件的估算会按速度加权，只加入实验性红线、校准指标和 AUC，并保留精确账本基线作对照。", "Esta estimación solo para desarrollo detecta ciclos confirmados de chats laterales y valora marcadores deduplicados que aún sobreviven en los diagnósticos numéricos locales. La ventana activa es de unos 10 días; las particiones caducadas o rotadas son desconocidas y no se reconstruyen. Se observa el volumen de contexto activo, mientras que los componentes de entrada, caché, salida y razonamiento se reconstruyen. Las llamadas ordinarias usan el punto mayormente caliente indicado; una compactación observada hace frío el punto siguiente. Auto Review y otros alias revisados conservan su supuesto condicional. Los totales exactos no cambian. Las estimaciones elegibles se ponderan por velocidad y se añaden solo a la línea roja experimental, las métricas de calibración y el AUC, manteniendo al lado la base del registro exacto."],
+
+
   "Retained sampling calls": ["保留的采样调用", "Llamadas de muestreo conservadas"],
-  "Experimental side-chat sampling-call estimates": ["实验性侧聊采样调用估算", "Estimaciones experimentales de llamadas de chats laterales"],
+
   "Configuration": ["配置", "Configuración"],
   "Turn": ["轮次", "Turno"],
   "Active context": ["活动上下文", "Contexto activo"],
   "Cache assumption": ["缓存假设", "Supuesto de caché"],
   "Estimated Standard API equivalent": ["估算的 Standard API 等价金额", "Equivalente de API Standard estimado"],
   "Share one anonymous summary": ["分享一份匿名摘要", "Comparte un resumen anónimo"],
-  "What leaves this Mac — and what never does": ["什么会离开这台 Mac，以及什么永远不会", "Qué sale de este Mac y qué no sale nunca"],
+
   "Not signed in": ["未登录", "Sin sesión iniciada"],
   // The pre-JS default of the identity next-action line; renderHostedIdentity
   // rewrites it per state, but the static copy still legacy-translates on load.
@@ -2372,17 +2313,20 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   // The refresh failure code app_record_checkpoint_unavailable: the durable
   // analysis checkpoint vanished mid-run. The sentence must exist in every
   // supported language alongside the English copy map in app.js.
-  "The analysis checkpoint stored on this Mac disappeared while the analysis was running, so TiboTattle stopped rather than continue without it. Existing results are unchanged; run the analysis again to start over safely.": ["分析运行期间，这台 Mac 上保存的分析检查点丢失，TiboTattle 因此停止而不是在缺少它的情况下继续。现有结果保持不变；再次运行分析即可安全地重新开始。", "El punto de control del análisis guardado en este Mac desapareció mientras el análisis se ejecutaba, así que TiboTattle se detuvo en lugar de continuar sin él. Los resultados existentes no cambian; ejecuta el análisis de nuevo para empezar de forma segura desde el principio."],
+
   "Loading saved results…": ["正在加载已保存结果…", "Cargando resultados guardados…"],
   "Loading updated evidence…": ["正在加载更新后的证据…", "Cargando evidencia actualizada…"],
   "Preparing locally…": ["正在本地准备…", "Preparando localmente…"],
-  "Opening TiboTattle… If no app appears, install the signed Mac download above, then try again.": ["正在打开 TiboTattle…如果没有出现应用，请安装上方已签名的 Mac 下载，然后重试。", "Abriendo TiboTattle… Si no aparece la app, instala la descarga firmada para Mac de arriba y vuelve a intentarlo."],
-  "Continue in the TiboTattle in-app window. If nothing opened, the app is not installed or macOS blocked the link.": ["请在 TiboTattle 应用内窗口继续。如果没有打开任何内容，说明应用未安装或 macOS 阻止了该链接。", "Continúa en la ventana integrada de TiboTattle. Si no se abrió nada, la app no está instalada o macOS bloqueó el enlace."],
+  "Opening TiboTattle… If no app appears, install the signed Windows download above, then try again.": ["正在打开 TiboTattle…如果没有出现应用，请安装上方已签名的 Windows 下载，然后重试。", "Abriendo TiboTattle… Si no aparece la app, instala la descarga firmada para Windows de arriba y vuelve a intentarlo."],
+
+  "Continue in the TiboTattle in-app window. If nothing opened, the app is not installed or Windows blocked the link.": ["请在 TiboTattle 应用内窗口继续。如果没有打开任何内容，说明应用未安装，或 Windows 阻止了该链接。", "Continúa en la ventana de TiboTattle. Si no se abrió nada, la app no está instalada o Windows bloqueó el enlace."],
+
   "Signed out on this page. Sign in again with Google or Apple when you want to contribute.": ["已在此页面退出登录。想继续贡献时，请使用 Google 或 Apple 再次登录。", "Sesión cerrada en esta página. Inicia sesión de nuevo con Google o Apple cuando quieras contribuir."],
   "Sign in first: hosted participation requires Google or Apple sign-in above. Local-only use needs no account, and nothing was uploaded.": ["请先登录：托管参与需要使用上方的 Google 或 Apple 登录。本地使用不需要账户，也没有上传任何内容。", "Inicia sesión primero: la participación alojada requiere iniciar sesión arriba con Google o Apple. El uso solo local no necesita cuenta y no se cargó nada."],
   "Connected. Review the content-free result below before deciding whether to send it. Nothing will repeat automatically.": ["已连接。请在决定是否发送前审阅下方不含内容的结果。不会自动重复任何操作。", "Conectado. Revisa el resultado sin contenido de abajo antes de decidir si enviarlo. Nada se repetirá automáticamente."],
   "Nothing will be contributed. Your local reporting continues unchanged.": ["不会贡献任何内容。你的本地报告会继续保持不变。", "No se aportará nada. Tus informes locales continúan sin cambios."],
   "JavaScript is required to render local monitoring evidence.": ["需要 JavaScript 才能呈现本地监测证据。", "Se requiere JavaScript para mostrar evidencia de monitorización local."],
+  "Download for Windows": ["下载 Windows 版", "Descargar para Windows"],
 });
 
 function normalizeText(value) {

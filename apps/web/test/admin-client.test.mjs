@@ -730,60 +730,41 @@ test("admin overview fixture projects to the renderer's explicit contract", asyn
           endsAt: "2026-08-17T12:00:00.000Z",
         },
         activeSourceAddresses: { last24Hours: 19, last7Days: 29 },
-        preflight: {
-          requests: { last24Hours: 22, last7Days: 78 },
-          sourceAddresses: { last24Hours: 16, last7Days: 25 },
-        },
-        sparkleChecks: {
-          requests: { last24Hours: 14, last7Days: 40 },
-          sourceAddresses: { last24Hours: 13, last7Days: 21 },
-        },
         electronChecks: {
           requests: { last24Hours: 11, last7Days: 23 },
           sourceAddresses: { last24Hours: 9, last7Days: 13 },
         },
-        sparkleDownloads: {
-          requests: { last24Hours: 3, last7Days: 3 },
-          sourceAddresses: { last24Hours: 3, last7Days: 3 },
-        },
         currentVersion: "0.1.12",
         currentVersionSourceAddresses: { last24Hours: 18, last7Days: 19 },
-        observedTotals: null,
+        observedTotals: {
+          platforms: [{
+            operatingSystem: "windows",
+            requestsLast7Days: 23,
+            sourceAddressesLast7Days: 29,
+          }],
+          overall: { requestsLast7Days: 23, sourceAddressesLast7Days: 29 },
+        },
         observedVersions: [{
-          client: "native",
-          operatingSystem: "macos",
-          architecture: "arm64",
-          version: "0.1.12",
-          requestsLast7Days: 64,
-          sourceAddressesLast7Days: 19,
-        }, {
           client: "electron",
-          operatingSystem: "macos",
+          operatingSystem: "windows",
           architecture: "x64",
-          version: "0.1.23",
-          requestsLast7Days: 12,
-          sourceAddressesLast7Days: 7,
-        }, {
-          client: "native",
-          operatingSystem: "macos",
-          architecture: "arm64",
-          version: "0.1.11",
-          requestsLast7Days: 9,
-          sourceAddressesLast7Days: 5,
+          version: "0.1.12",
+          requestsLast7Days: 14,
+          sourceAddressesLast7Days: 19,
         }, {
           client: "electron",
           operatingSystem: "windows",
           architecture: "x64",
           version: "0.1.23",
-          requestsLast7Days: 8,
-          sourceAddressesLast7Days: 4,
+          requestsLast7Days: 6,
+          sourceAddressesLast7Days: 7,
         }, {
           client: "electron",
-          operatingSystem: "linux",
+          operatingSystem: "windows",
           architecture: "x64",
           version: null,
           requestsLast7Days: 3,
-          sourceAddressesLast7Days: 2,
+          sourceAddressesLast7Days: 3,
         }],
         bySegment: [],
         observedVersionsBounded: false,
@@ -814,7 +795,7 @@ test("admin overview fixture projects to the renderer's explicit contract", asyn
           allAssetDownloads: 101,
           dmgAssetCount: 2,
           assetCount: 4,
-          installerDownloads: { macArm64: 88, macX64: 0, windowsX64: 7, linuxX64: 6 },
+          installerDownloads: { windowsX64: 7 },
         }, {
           id: 11,
           tag: "v0.1.11",
@@ -824,7 +805,7 @@ test("admin overview fixture projects to the renderer's explicit contract", asyn
           allAssetDownloads: 34,
           dmgAssetCount: 1,
           assetCount: 2,
-          installerDownloads: { macArm64: 22, macX64: null, windowsX64: null, linuxX64: null },
+          installerDownloads: { windowsX64: null },
         }],
         releasesBounded: false,
         history: {
@@ -1238,7 +1219,7 @@ test("distribution version rows require a known app and operating system", async
   );
 
   const unsupportedArchitecture = await fixture("admin-overview-valid.json");
-  unsupportedArchitecture.distribution.cloudflare.observedVersions[3]
+  unsupportedArchitecture.distribution.cloudflare.observedVersions[2]
     .architecture = "arm64";
   assert.throws(
     () => projectAdminOverview(unsupportedArchitecture),
@@ -1254,7 +1235,7 @@ test("installer breakdown refuses unclassified fields and impossible totals", as
 
   const overcount = await fixture("admin-overview-valid.json");
   overcount.distribution.github.releases[0].installerDownloads
-    .macX64 = 1;
+    .windowsX64 = 999;
   assert.throws(() => projectAdminOverview(overcount), /ADMIN_OVERVIEW_INVALID/u);
 });
 
@@ -1460,40 +1441,31 @@ test("database health projects only closed, consistent role evidence", async () 
 });
 
 
-test("version totals validate OS coverage, counts and unavailable states without inferring legacy totals", async () => {
+test("version totals validate Windows coverage, counts and unavailable states without inferring legacy totals", async () => {
   const payload = await fixture("admin-overview-valid.json");
+  payload.distribution.cloudflare.observedTotals = null;
   assert.equal(projectAdminOverview(payload).distribution.cloudflare.observedTotals, null);
   const totals = {
     platforms: [
-      { operatingSystem: "macos", requestsLast7Days: 85, sourceAddressesLast7Days: 25 },
-      { operatingSystem: "windows", requestsLast7Days: 8, sourceAddressesLast7Days: 4 },
-      { operatingSystem: "linux", requestsLast7Days: 3, sourceAddressesLast7Days: 2 },
+      { operatingSystem: "windows", requestsLast7Days: 23, sourceAddressesLast7Days: 29 },
     ],
-    overall: { requestsLast7Days: 96, sourceAddressesLast7Days: 29 },
+    overall: { requestsLast7Days: 23, sourceAddressesLast7Days: 29 },
   };
   payload.distribution.cloudflare.observedTotals = totals;
   totals.overall.privateField = "omit me";
   const projected = projectAdminOverview(payload).distribution.cloudflare.observedTotals;
   assert.equal(projected.overall.privateField, undefined);
   assert.ok(Object.isFrozen(projected.platforms));
-  assert.equal(projected.macosArchitectures, null);
-  totals.macosArchitectures = [
-    { architecture: "arm64", requestsLast7Days: 60, sourceAddressesLast7Days: 20 },
-    { architecture: "x64", requestsLast7Days: 25, sourceAddressesLast7Days: 10 },
-  ];
-  assert.equal(projectAdminOverview(payload).distribution.cloudflare.observedTotals
-    .macosArchitectures[1].architecture, "x64");
+  assert.equal(Object.hasOwn(projected, "macosArchitectures"), false);
   for (const mutate of [
-    p => p.platforms[0].operatingSystem = "darwin",
-    p => p.platforms[1].operatingSystem = "macos",
+    p => p.platforms[0].operatingSystem = "macos",
+    p => p.platforms[0].operatingSystem = "linux",
+    p => p.platforms.push({ operatingSystem: "windows", requestsLast7Days: 0, sourceAddressesLast7Days: 0 }),
     p => p.platforms.pop(),
     p => p.platforms[0].sourceAddressesLast7Days = 30,
     p => p.platforms[0].requestsLast7Days = -1,
     p => p.overall.requestsLast7Days = 97,
     p => p.overall.sourceAddressesLast7Days = 28,
-    p => p.macosArchitectures[1].architecture = "arm64",
-    p => p.macosArchitectures[0].requestsLast7Days = 61,
-    p => p.macosArchitectures[0].sourceAddressesLast7Days = 26,
   ]) {
     const invalid = structuredClone(payload);
     mutate(invalid.distribution.cloudflare.observedTotals);

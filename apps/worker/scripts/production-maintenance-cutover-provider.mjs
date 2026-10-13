@@ -136,7 +136,7 @@ export async function createMaintenanceCutoverProvider({plan,cutover,operationDi
  const prepare=async()=>{
   const worker=resolve(candidateWorkerDirectory),root=resolve(worker,'../..');source(root,c.sourceCommit);
   const snapshot=await snapshotFactory({workerDirectory:worker,sourceCommit:c.sourceCommit});
-  // macOS temporary roots may enter through /var; persist their canonical
+  // Temporary roots may be reached through a symlink; persist their canonical
   // directory spelling while retaining the original snapshot Git adapter.
   snapshot.repositoryRoot=await realpath(snapshot.repositoryRoot);
   snapshot.workerDirectory=join(snapshot.repositoryRoot,'apps/worker');

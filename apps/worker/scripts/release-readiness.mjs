@@ -9,7 +9,6 @@ import {
   REMOTE_CONTAINMENT_OBSERVED_STATUS,
   verifyReleaseReadiness,
 } from "./release-readiness-lib.mjs";
-import { getReleaseChannel } from "../../../config/release-channels.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 
@@ -50,9 +49,7 @@ export function parseReleaseReadinessArguments(argv) {
       if (!value || value.startsWith("--")) {
         usageError("--channel requires a named release channel");
       }
-      try {
-        getReleaseChannel(value);
-      } catch {
+      if (value !== DEFAULT_RELEASE_CHANNEL) {
         usageError("--channel must name a reviewed release channel");
       }
       options.channel = value;
@@ -79,12 +76,11 @@ function writeUsage(writer = process.stdout) {
       + "[--channel NAME] [--probe-public] [--timeout-ms N]\n",
   );
   writer.write(
-    "  --channel NAME  select one reviewed named channel (default stable); "
-      + "unconfigured channels fail closed\n",
+    "  --channel NAME  the only reviewed channel is stable (default stable)\n",
   );
   writer.write(
-    "  --probe-public  explicitly perform bounded GET checks for health, "
-      + "ready, and appcast\n",
+    "  --probe-public  explicitly perform bounded GET checks for health "
+      + "and ready\n",
   );
   writer.write(
     `  --timeout-ms N  per-request timeout, 1..${MAX_RELEASE_PROBE_TIMEOUT_MS} `

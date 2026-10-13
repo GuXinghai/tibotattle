@@ -6,7 +6,7 @@
     <meta name="color-scheme" content="light">
     <meta name="theme-color" content="#082f2a">
     <!--
-      This is the public website surface. It introduces the Mac app, offers
+      This is the public website surface. It introduces the Windows app, offers
       its verified installer, and shows the published daily community activity
       series. Everything that needs the local companion — the personal
       dashboard, contribution preparation and upload, and hosted sign-in —
@@ -21,14 +21,8 @@
     <meta name="usage-monitor-installer-version" content="">
     <meta name="usage-monitor-installer-sha256" content="">
     <meta name="usage-monitor-installer-bytes" content="">
-    <meta name="usage-monitor-minimum-macos" content="">
+    <meta name="usage-monitor-minimum-windows" content="">
     <meta name="usage-monitor-architectures" content="">
-    <meta name="usage-monitor-intel-installer-url" content="">
-    <meta name="usage-monitor-intel-installer-version" content="">
-    <meta name="usage-monitor-intel-installer-sha256" content="">
-    <meta name="usage-monitor-intel-installer-bytes" content="">
-    <meta name="usage-monitor-intel-minimum-macos" content="">
-    <meta name="usage-monitor-intel-architectures" content="">
     <meta name="usage-monitor-release-notes-url" content="">
     <meta name="usage-monitor-privacy-url" content="">
     <meta name="usage-monitor-security-url" content="">
@@ -38,7 +32,7 @@
     <meta property="og:title" content="TiboTattle">
     <meta
       property="og:description"
-      content="TiboTattle is a private Mac app that estimates your seven-day Codex allowance locally and shows delayed, aggregate activity from contributors when published."
+      content="TiboTattle is a private Windows app that estimates your seven-day Codex allowance locally and shows delayed, aggregate activity from contributors when published."
     >
     <meta property="og:url" content="">
     <meta property="og:image" content="">
@@ -47,17 +41,17 @@
     <!-- Describes the card's subject, never its numbers: the card is regenerated
          from this page by scripts/generate-social-preview.js and its figures move
          daily, so any amount written here would be wrong by the next render. -->
-    <meta property="og:image:alt" content="The TiboTattle homepage: the community-fitted seven-day Codex allowance in API-equivalent dollars, with its plausible range and daily history, beside the macOS download">
+    <meta property="og:image:alt" content="The TiboTattle homepage: the community-fitted seven-day Codex allowance in API-equivalent dollars, with its plausible range and daily history, beside the Windows download">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="TiboTattle">
     <meta
       name="twitter:description"
-      content="TiboTattle is a private Mac app that estimates your seven-day Codex allowance locally and shows delayed, aggregate activity from contributors when published."
+      content="TiboTattle is a private Windows app that estimates your seven-day Codex allowance locally and shows delayed, aggregate activity from contributors when published."
     >
     <meta name="twitter:image" content="">
     <meta
       name="description"
-      content="Understand what your Codex allowance is really worth with a private Mac app that calculates your personal dashboard locally."
+      content="Understand what your Codex allowance is really worth with a private Windows app that calculates your personal dashboard locally."
     >
     <title>TiboTattle</title>
     <link rel="icon" type="image/png" href="./tibotattle-icon.png">
@@ -127,122 +121,32 @@
             class="install-cluster"
             id="download"
             role="region"
-            aria-label="Choose your TiboTattle platform"
-            data-i18n-aria-label="aria.choosePlatform"
+            aria-label="Download TiboTattle for Windows"
+            data-i18n-aria-label="aria.downloadWindows"
           >
-            <div
-              class="platform-selector"
-              id="platform-selector"
-              role="tablist"
-              aria-label="Choose your platform"
-              data-i18n-aria-label="aria.choosePlatform"
-              hidden
-            >
-              <button
-                class="platform-tab"
-                id="platform-tab-macos"
-                type="button"
-                role="tab"
-                aria-selected="true"
-                aria-controls="platform-panel-macos"
-                data-platform="macos"
-                tabindex="0"
-              >
-                <span data-i18n="installer.platform.macos">macOS Apple silicon</span>
-              </button>
-              <button
-                class="platform-tab"
-                id="platform-tab-macos-intel"
-                type="button"
-                role="tab"
-                aria-selected="false"
-                aria-controls="platform-panel-macos-intel"
-                data-platform="macos-intel"
-                tabindex="-1"
-              >
-                <span data-i18n="installer.platform.macosIntel">macOS Intel</span>
-              </button>
-              <button
-                class="platform-tab"
-                id="platform-tab-windows"
-                type="button"
-                role="tab"
-                aria-selected="false"
-                aria-controls="platform-panel-windows"
-                data-platform="windows"
-                tabindex="-1"
-              >
-                <span data-i18n="installer.platform.windows">Windows</span>
-              </button>
-              <button
-                class="platform-tab"
-                id="platform-tab-linux"
-                type="button"
-                role="tab"
-                aria-selected="false"
-                aria-controls="platform-panel-linux"
-                data-platform="linux"
-                tabindex="-1"
-              >
-                <span data-i18n="installer.platform.linux">Linux</span>
-              </button>
-            </div>
-
             <section
               class="platform-panel"
-              id="platform-panel-macos"
-              role="tabpanel"
-              aria-labelledby="platform-tab-macos"
-              data-platform-panel="macos"
-              tabindex="0"
+              id="platform-panel-windows"
+              aria-label="Windows download"
+              data-i18n-aria-label="aria.windowsDownload"
             >
               <div class="install-actions">
                 <a
-                  class="button mac-download-button"
+                  class="button download-button"
                   id="installer-link"
                   hidden
                 >
-                  <img class="download-platform-icon" src="./apple.svg" alt="" width="22" height="22">
-                  Download for macOS
+                  Download for Windows
                 </a>
                 <button
-                  class="button mac-download-button"
+                  class="button download-button"
                   id="installer-unavailable-action"
                   type="button"
                   aria-describedby="installer-unavailable"
                   disabled
                 >
-                  <img class="download-platform-icon" src="./apple.svg" alt="" width="22" height="22">
-                  Download for macOS
+                  Download for Windows
                 </button>
-                <div
-                  class="homebrew-install"
-                  id="homebrew-install"
-                  role="group"
-                  aria-label="Install with Homebrew"
-                  data-i18n-aria-label="aria.installWithHomebrew"
-                  hidden
-                >
-                  <span class="homebrew-prompt" aria-hidden="true">$</span>
-                  <code id="homebrew-install-command" data-i18n-skip>brew install --cask adamallcock/tap/tibotattle</code>
-                  <button
-                    class="homebrew-copy-button"
-                    id="homebrew-copy-button"
-                    type="button"
-                    aria-label="Copy Homebrew install command"
-                    aria-describedby="homebrew-copy-status"
-                    data-i18n-aria-label="aria.copyHomebrewCommand"
-                  >
-                    <span id="homebrew-copy-label" data-i18n="installer.homebrew.copy">Copy</span>
-                  </button>
-                </div>
-                <span
-                  class="sr-only"
-                  id="homebrew-copy-status"
-                  role="status"
-                  aria-live="polite"
-                  aria-atomic="true"
-                ></span>
                 <span class="installer-unavailable" id="installer-unavailable">
                   Public download coming soon.
                 </span>
@@ -288,123 +192,9 @@
               </nav>
               <p class="download-assurance" id="download-assurance" hidden>
                 <span class="download-assurance-mark" aria-hidden="true"></span>
-                <strong data-i18n="installer.assurance.message">Developer ID signed and Apple notarized.</strong>
+                <strong data-i18n="installer.assurance.message">Signed installer with a published SHA-256 checksum.</strong>
                 <a href="./docs.html#download-security" data-i18n="installer.assurance.details">Security and verification</a>
               </p>
-            </section>
-
-            <section
-              class="platform-panel"
-              id="platform-panel-macos-intel"
-              role="tabpanel"
-              aria-labelledby="platform-tab-macos-intel"
-              data-platform-panel="macos-intel"
-              tabindex="0"
-              hidden
-            >
-              <div id="intel-installation" hidden>
-                <div class="install-actions">
-                  <a class="button mac-download-button" id="intel-installer-link" hidden>
-                    <img class="download-platform-icon" src="./apple.svg" alt="" width="22" height="22">
-                    <span data-i18n="installer.macosIntel.download">Download for macOS Intel</span>
-                  </a>
-                  <div
-                    class="homebrew-install"
-                    id="intel-homebrew-install"
-                    role="group"
-                    aria-label="Install with Homebrew"
-                    data-i18n-aria-label="aria.installWithHomebrew"
-                    hidden
-                  >
-                    <span class="homebrew-prompt" aria-hidden="true">$</span>
-                    <code id="intel-homebrew-install-command" data-i18n-skip>brew install --cask adamallcock/tap/tibotattle</code>
-                    <button
-                      class="homebrew-copy-button"
-                      id="intel-homebrew-copy-button"
-                      type="button"
-                      aria-label="Copy Homebrew install command"
-                      aria-describedby="intel-homebrew-copy-status"
-                      data-i18n-aria-label="aria.copyHomebrewCommand"
-                    >
-                      <span id="intel-homebrew-copy-label" data-i18n="installer.homebrew.copy">Copy</span>
-                    </button>
-                  </div>
-                  <span
-                    class="sr-only"
-                    id="intel-homebrew-copy-status"
-                    role="status"
-                    aria-live="polite"
-                    aria-atomic="true"
-                  ></span>
-                </div>
-                <div class="installer-details installer-details-compact" id="intel-installer-details" hidden>
-                  <span class="installer-summary">
-                    <span id="intel-installer-version"></span>
-                    <span class="installer-summary-divider" aria-hidden="true">·</span>
-                    <span id="intel-installer-compatibility"></span>
-                  </span>
-                  <button
-                    class="installer-checksum-copy"
-                    id="intel-installer-sha256-copy"
-                    type="button"
-                    aria-label="Copy the published SHA-256 checksum"
-                    aria-describedby="intel-installer-sha256-copy-status"
-                    data-i18n-aria-label="aria.copyInstallerSha256"
-                  >
-                    <span id="intel-installer-sha256-copy-label" data-i18n="installer.sha256.copy">Copy SHA-256</span>
-                  </button>
-                  <code class="installer-checksum-fallback" id="intel-installer-sha256" data-i18n-skip hidden></code>
-                  <span class="sr-only" id="intel-installer-size" aria-hidden="true"></span>
-                  <span class="sr-only" id="intel-installer-sha256-copy-status" role="status" aria-live="polite" aria-atomic="true"></span>
-                </div>
-                <nav class="installer-links" id="intel-installer-links" aria-label="Release information" data-i18n-aria-label="aria.releaseInformation" hidden>
-                  <a id="intel-release-notes-link" hidden>Release notes</a>
-                  <a id="intel-privacy-link" hidden>Privacy</a>
-                  <a id="intel-security-link" hidden>Security</a>
-                  <a id="intel-support-link" hidden>Support</a>
-                </nav>
-                <p class="download-assurance" id="intel-download-assurance" hidden>
-                  <span class="download-assurance-mark" aria-hidden="true"></span>
-                  <strong data-i18n="installer.assurance.message">Developer ID signed and Apple notarized.</strong>
-                  <a href="./docs.html#download-security" data-i18n="installer.assurance.details">Security and verification</a>
-                </p>
-              </div>
-              <div class="platform-unavailable-panel" id="intel-installer-unavailable">
-                <p class="platform-availability" data-i18n="installer.availability.notYetAvailable">Not yet available</p>
-                <h2 data-i18n="installer.macosIntel.unavailableTitle">TiboTattle for macOS Intel is not available yet.</h2>
-                <p data-i18n="installer.macosIntel.unavailableCopy">Follow the macOS Intel support work for progress. A download will appear only after the macOS Intel release passes its platform and release checks.</p>
-                <a href="https://github.com/adamallcock/tibotattle/issues/93" data-i18n="installer.macosIntel.trackSupport">Track macOS Intel support</a>
-              </div>
-            </section>
-
-            <section
-              class="platform-panel platform-unavailable-panel"
-              id="platform-panel-windows"
-              role="tabpanel"
-              aria-labelledby="platform-tab-windows"
-              data-platform-panel="windows"
-              tabindex="0"
-              hidden
-            >
-              <p class="platform-availability" data-i18n="installer.availability.notYetAvailable">Not yet available</p>
-              <h2 data-i18n="installer.windows.unavailableTitle">TiboTattle for Windows is not available yet.</h2>
-              <p data-i18n="installer.windows.unavailableCopy">Follow the Windows support work for progress. A download will appear only after the Windows release passes its platform and release checks.</p>
-              <a href="https://github.com/adamallcock/tibotattle/issues/3" data-i18n="installer.windows.trackSupport">Track Windows support</a>
-            </section>
-
-            <section
-              class="platform-panel platform-unavailable-panel"
-              id="platform-panel-linux"
-              role="tabpanel"
-              aria-labelledby="platform-tab-linux"
-              data-platform-panel="linux"
-              tabindex="0"
-              hidden
-            >
-              <p class="platform-availability" data-i18n="installer.availability.notYetAvailable">Not yet available</p>
-              <h2 data-i18n="installer.linux.unavailableTitle">TiboTattle for Linux is not available yet.</h2>
-              <p data-i18n="installer.linux.unavailableCopy">Follow the Linux support work for progress. A download will appear only after the Linux release passes its platform and release checks.</p>
-              <a href="https://github.com/adamallcock/tibotattle/issues/4" data-i18n="installer.linux.trackSupport">Track Linux support</a>
             </section>
           </div>
 
@@ -422,8 +212,8 @@
             reading as the reader's own numbers.
 
             It sits after the community link, which is both where the freshness
-            label already lives and outside the slice the published-platform
-            contract reads between the last platform panel and that link.
+            label already lives and outside the slice the published-download
+            contract reads between the download panel and that link.
 
             The host stays empty until a published day exists, and the renderer
             leaves it untouched on an unavailable or retained answer, so the

@@ -63,12 +63,6 @@ const EXACT_ROUTES = [
     authority: "accountless_ownership",
   },
   {
-    pathname: "/api/v1/internal/release/appcast",
-    id: "sparkle_appcast_guard",
-    methods: ["POST"],
-    authority: "operator",
-  },
-  {
     pathname: "/api/v1/identity/google/start",
     id: "identity_google_start",
     methods: ["POST"],

@@ -34,7 +34,9 @@
         <a href="./privacy.html" aria-current="page">Privacy</a>
       </nav>
       <a class="header-download" href="./community.html#download">
-        <img src="./apple.svg" alt="" width="14" height="14">
+        <svg class="header-download-icon" viewBox="0 0 20 20" width="14" height="14" aria-hidden="true">
+          <path d="M10 2v10m0 0 4-4m-4 4L6 8M3 15.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+        </svg>
         <span class="header-download-label">Download</span>
       </a>
     </header>
@@ -74,12 +76,12 @@
         <article class="resource-card" id="local-processing">
           <h2>Local processing and storage</h2>
           <p>
-            Source records are parsed on your Mac. Prompts and response text may
+            Source records are parsed on your PC. Prompts and response text may
             exist in Codex's own rollout files, but TiboTattle does not retain
             them in derived state. It stores content-free indexes, settings,
             cached calculations, checkpoints, and prepared contributions in the
-            owner-only <code>Usage Monitor</code> Application Support root.
-            Pseudonymous identity and device credentials use the macOS Keychain.
+            owner-only <code>Usage Monitor</code> application data root.
+            Pseudonymous identity and device credentials use Windows Credential Manager.
           </p>
         </article>
         <article class="resource-card" id="network">
@@ -118,7 +120,6 @@
             observations, and pseudonymous continuity identifiers. They exclude
             prompts, responses, credentials, private paths, and raw account
             identifiers. The public website has no enrollment or upload control.
-            Older native Mac releases retain their review-and-approve flow.
           </p>
         </article>
         <article class="resource-card" id="hosted-identity">
@@ -168,11 +169,11 @@
           <p>
             The local display window is not a retention limit: accumulated
             owner-only evidence remains until you run an explicit local erase.
-            Local erase and Keychain identity reset have separate consequences.
+            Local erase and identity reset have separate consequences.
             Turning sharing off stops future automatic delivery; a request
             already sent may have reached the service. It does not delete
             previously accepted hosted history or local analysis. In the older
-            sign-in flow, Disconnect this Mac stops that device's uploads;
+            sign-in flow, disconnect this device stops that device's uploads;
             signing out only ends the hosted session and does not disconnect
             the upload device.
           </p>
@@ -195,11 +196,11 @@
         <article class="resource-card" id="uninstall">
           <h2>Uninstall boundaries</h2>
           <p>
-            Ordinary app or Homebrew uninstall preserves local analysis state.
-            Homebrew <code>--zap</code> removes the app's Application Support,
-            cache, WebKit, and preference state, but not <code>~/.codex</code>,
-            Keychain identities, or data already contributed. Use the explicit
-            local identity controls for Keychain state, and see the support
+            Ordinary app uninstall preserves local analysis state.
+            Erase local data removes the app's user-data state root,
+            cache, and preference state, but not <code>~/.codex</code>,
+            Windows Credential Manager entries, or data already contributed. Use the explicit
+            local identity controls for credential state, and see the support
             guidance above for hosted erasure requests. Uninstalling or disconnecting
             does not erase hosted history.
           </p>

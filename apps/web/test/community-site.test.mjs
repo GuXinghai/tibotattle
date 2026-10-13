@@ -20,17 +20,11 @@ import {
 } from "../public/community-view.js";
 import { SUPPORTED_LOCALES, translate } from "../public/localization.js";
 import {
-  HOMEBREW_INSTALL_COMMAND,
   copyInstallerChecksum,
-  copyHomebrewInstallCommand,
-  detectPublicPlatform,
-  resolveInitialPublicPlatform,
   renderPublicInstallerJourney,
-  wirePublicPlatformSelector,
   selectCommunityAllowancePayload,
 } from "../public/community.js";
 import {
-  compactMacOSVersion,
   configuredInstallerRelease,
   formatInstallerSize,
   renderInstallerAssurance,
@@ -122,114 +116,6 @@ function openingTagForId(html, id) {
   return match[0];
 }
 
-class FakePlatformNode {
-  constructor({ dataset = {}, hidden = false } = {}) {
-    this.attributes = new Map();
-    this.dataset = { ...dataset };
-    this.hidden = hidden;
-    this.focusCount = 0;
-    this.listeners = new Map();
-  }
-
-  addEventListener(type, listener) {
-    this.listeners.set(type, listener);
-  }
-
-  dispatch(type, event) {
-    this.listeners.get(type)?.(event);
-  }
-
-  setAttribute(name, value) {
-    this.attributes.set(name, value);
-  }
-
-  focus() {
-    this.focusCount += 1;
-  }
-
-  closest(selector) {
-    return selector === '[role="tab"][data-platform]' && this.dataset.platform
-      ? this
-      : null;
-  }
-}
-
-function fakePlatformSelectorDocument({ missingPanel = null } = {}) {
-  const platforms = ["macos", "macos-intel", "windows", "linux"];
-  const tabs = new Map(platforms.map((platform) => [
-    platform,
-    new FakePlatformNode({ dataset: { platform } }),
-  ]));
-  const panels = new Map(platforms
-    .filter((platform) => platform !== missingPanel)
-    .map((platform) => [
-      platform,
-      new FakePlatformNode({
-        dataset: { platformPanel: platform },
-        hidden: platform !== "macos",
-      }),
-    ]));
-  const selector = new FakePlatformNode({ hidden: true });
-  selector.querySelectorAll = (query) => query === '[role="tab"][data-platform]'
-    ? [...tabs.values()]
-    : [];
-  selector.contains = (candidate) => [...tabs.values()].includes(candidate);
-  const documentRef = {
-    documentElement: { dataset: {} },
-    querySelector(query) {
-      return query === "#platform-selector" ? selector : null;
-    },
-    querySelectorAll(query) {
-      return query === "[data-platform-panel]" ? [...panels.values()] : [];
-    },
-  };
-  return { documentRef, panels, selector, tabs };
-}
-
-function recordingStorage(initial = {}) {
-  const values = new Map(Object.entries(initial));
-  const reads = [];
-  const writes = [];
-  return {
-    getItem(key) {
-      reads.push(key);
-      return values.get(key) ?? null;
-    },
-    reads,
-    setItem(key, value) {
-      writes.push([key, value]);
-      values.set(key, value);
-    },
-    values,
-    writes,
-  };
-}
-
-function assertPlatformSelection(fixture, selectedPlatform) {
-  assert.equal(
-    fixture.documentRef.documentElement.dataset.downloadPlatform,
-    selectedPlatform,
-  );
-  assert.equal(fixture.selector.hidden, false);
-  for (const platform of ["macos", "macos-intel", "windows", "linux"]) {
-    assert.equal(
-      fixture.tabs.get(platform).attributes.get("aria-selected"),
-      String(platform === selectedPlatform),
-      `${platform} aria-selected`,
-    );
-    assert.equal(
-      fixture.tabs.get(platform).attributes.get("tabindex"),
-      platform === selectedPlatform ? "0" : "-1",
-      `${platform} tabindex`,
-    );
-    assert.equal(
-      fixture.panels.get(platform).hidden,
-      platform !== selectedPlatform,
-      `${platform} panel visibility`,
-    );
-  }
-}
-
 function publishedSnapshot(overrides = {}) {
   const releasedTokens = {
     status: "released",
@@ -299,7 +185,7 @@ test("the public site presents only the install call to action and the community
   );
   assert.match(html, /id="installer-sha256"[\s\S]*?data-i18n-skip[\s\S]*?hidden/u);
   assert.match(html, /id="download-assurance"[^>]*hidden/u);
-  assert.match(html, /Developer ID signed and Apple notarized\./u);
+  assert.match(html, /Signed installer with a published SHA-256 checksum\./u);
   assert.match(html, /href="\.\/docs\.html#download-security"/u);
   assert.doesNotMatch(
     html,
@@ -307,10 +193,6 @@ test("the public site presents only the install call to action and the community
   );
   assert.doesNotMatch(html, /installer-verification|role="tooltip"/u);
   assert.match(html, /id="installer-unavailable"/u);
-  assert.match(html, /id="homebrew-install"[^>]*hidden/u);
-  assert.match(html, /id="homebrew-copy-button"/u);
-  assert.match(html, /id="intel-homebrew-install"[^>]*hidden/u);
-  assert.match(html, /id="intel-homebrew-copy-button"/u);
   assert.doesNotMatch(html, /open-installed-app|usage-monitor-semantic-open-target|usagemonitor:\/\//u);
   assert.match(html, /id="community-daily-result"/u);
   assert.match(html, /id="community-daily-state"/u);
@@ -393,24 +275,8 @@ test("the public site presents only the install call to action and the community
     /<nav\s+class="primary-nav"\s+aria-label="Site sections"(?:\s[^>]*)?>/u,
   );
   assert.match(html, /aria-labelledby="install-title"/u);
-  const tablist = openingTagForId(html, "platform-selector");
-  assert.match(tablist, /\brole="tablist"/u);
-  assert.match(tablist, /\baria-label="Choose your platform"/u);
-  assert.match(tablist, /\bhidden(?:\s|>)/u);
-  for (const platform of ["macos", "macos-intel", "windows", "linux"]) {
-    const tab = openingTagForId(html, `platform-tab-${platform}`);
-    assert.match(tab, /\brole="tab"/u);
-    assert.match(tab, new RegExp(`\\baria-controls="platform-panel-${platform}"`, "u"));
-    const panel = openingTagForId(html, `platform-panel-${platform}`);
-    assert.match(panel, /\brole="tabpanel"/u);
-    assert.match(panel, new RegExp(`\\baria-labelledby="platform-tab-${platform}"`, "u"));
-    assert.match(panel, /\btabindex="0"/u);
-  }
-  assert.doesNotMatch(
-    openingTagForId(html, "platform-panel-macos"),
-    /\bhidden(?:\s|>)/u,
-    "macOS remains the usable no-JavaScript fallback",
-  );
+  assert.match(openingTagForId(html, "platform-panel-windows"), /\bclass="platform-panel"/u);
+  assert.doesNotMatch(html, /platform-selector|platform-tab-|data-platform/u);
   assert.match(html, /aria-labelledby="community-method-summary"/u);
   assert.match(
     await readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
@@ -425,7 +291,7 @@ test("the public site presents only the install call to action and the community
       "usage-monitor-installer-version",
       "usage-monitor-installer-sha256",
       "usage-monitor-installer-bytes",
-      "usage-monitor-minimum-macos",
+      "usage-monitor-minimum-windows",
       "usage-monitor-architectures",
       "usage-monitor-release-notes-url",
       "usage-monitor-privacy-url",
@@ -483,33 +349,11 @@ test("the first visit leads with the product, platform choice, and daily communi
   assert.doesNotMatch(html, /calculates your personal dashboard on your Mac\./u);
   assert.match(html, /id="header-download-label"[^>]*>\s*Get the app\s*<\/span>/u);
   assert.doesNotMatch(html, /Get the Mac app/u);
-  for (const [platform, label] of [
-    ["macos", "macOS Apple silicon"],
-    ["macos-intel", "macOS Intel"],
-    ["windows", "Windows"],
-    ["linux", "Linux"],
-  ]) {
-    const start = html.indexOf(`id="platform-tab-${platform}"`);
-    const end = html.indexOf("</button>", start);
-    assert.ok(start >= 0 && end > start, `${label} tab is complete`);
-    assert.match(html.slice(start, end), new RegExp(`>${label}<\\/span>`, "u"));
-    assert.doesNotMatch(
-      html.slice(start, end),
-      /<small\b/u,
-      `${label} keeps availability detail in its panel instead of the selector`,
-    );
-  }
-  assert.match(html, /Download for macOS/u);
-  assert.equal(
-    html.match(/Download for macOS/gu)?.length,
-    3,
-    "the ARM actions and optional Intel action retain their platform-specific labels",
-  );
+  assert.match(html, /id="installer-link"[^>]*hidden/u);
+  assert.match(html, /Download for Windows/u);
   assert.match(html, /Copy SHA-256/u);
-  assert.match(
-    html,
-    /brew install --cask adamallcock\/tap\/tibotattle/u,
-  );
+  assert.match(html, /Copy SHA-256/u);
+  assert.doesNotMatch(html, /brew install|--cask|Homebrew|Get the Mac app/u);
   assert.match(html, /Latest community evidence/u);
   assert.match(html, /Explore the contribution history/u);
   assert.match(html, /Community activity over time/u);
@@ -526,7 +370,6 @@ test("the first visit leads with the product, platform choice, and daily communi
   assert.match(html, /Control your sharing/u);
   assert.match(html, /<section class="product-hero"[^>]*id="install"/u);
   assert.match(html, /src="\.\/tibotattle-icon\.png"/u);
-  assert.match(html, /src="\.\/apple\.svg"/u);
   assert.match(
     html,
     /<section class="community-window" id="allowance" tabindex="-1" aria-labelledby="community-allowance-heading">/u,
@@ -566,393 +409,6 @@ test("the first visit leads with the product, platform choice, and daily communi
   assert.doesNotMatch(
     html,
     /best guess|privacy[- ]reviewed|privacy and quality checks/u,
-  );
-});
-
-test("platform tabs keep the live macOS release separate from honest unavailable panels", async () => {
-  const html = await readFile(SITE_HTML, "utf8");
-  const macosStart = html.indexOf('id="platform-panel-macos"');
-  const intelStart = html.indexOf('id="platform-panel-macos-intel"');
-  const windowsStart = html.indexOf('id="platform-panel-windows"');
-  const linuxStart = html.indexOf('id="platform-panel-linux"');
-  const panelsEnd = html.indexOf('class="community-inline"', linuxStart);
-
-  assert.ok(macosStart >= 0, "macOS panel exists");
-  assert.ok(intelStart > macosStart, "Intel panel follows Apple silicon");
-  assert.ok(windowsStart > intelStart, "Windows panel follows macOS Intel");
-  assert.ok(linuxStart > windowsStart, "Linux panel follows Windows");
-  assert.ok(panelsEnd > linuxStart, "platform panels end before community activity");
-
-  const macosPanel = html.slice(macosStart, intelStart);
-  const intelPanel = html.slice(intelStart, windowsStart);
-  const windowsPanel = html.slice(windowsStart, linuxStart);
-  const linuxPanel = html.slice(linuxStart, panelsEnd);
-
-  assert.match(macosPanel, /id="installer-link"/u);
-  assert.match(macosPanel, /id="homebrew-install"/u);
-  assert.match(macosPanel, /id="installer-sha256-copy"/u);
-  assert.match(macosPanel, /Developer ID signed and Apple notarized\./u);
-  assert.match(intelPanel, /id="intel-homebrew-install"/u);
-  assert.match(intelPanel, /id="intel-homebrew-install-command"[^>]*>brew install --cask adamallcock\/tap\/tibotattle<\/code>/u);
-  assert.match(intelPanel, /id="intel-homebrew-copy-button"[\s\S]*?aria-describedby="intel-homebrew-copy-status"/u);
-
-  for (const [platform, panel] of [
-    ["macOS Intel", intelPanel.slice(intelPanel.indexOf('id="intel-installer-unavailable"'))],
-    ["Windows", windowsPanel],
-    ["Linux", linuxPanel],
-  ]) {
-    assert.match(panel, new RegExp(`TiboTattle for ${platform} is not available yet\\.`, "u"));
-    assert.match(panel, /Not yet available/u);
-    assert.doesNotMatch(panel, /id="installer-|id="homebrew-|brew install/iu);
-    assert.doesNotMatch(panel, /Download for|\.dmg\b|\.exe\b|\.msi\b|AppImage/iu);
-    assert.doesNotMatch(panel, /SHA-256|Developer ID|notarized|Version 0\./iu);
-    assert.doesNotMatch(panel, /<a\b[^>]*class="[^"]*\bbutton\b/iu);
-    assert.doesNotMatch(panel, /<button\b[^>]*disabled/iu);
-  }
-  assert.match(intelPanel, /tibotattle\/issues\/93/u);
-  assert.match(openingTagForId(html, "intel-installation"), /\bhidden(?:\s|>)/u);
-  assert.match(openingTagForId(html, "intel-download-assurance"), /\bhidden(?:\s|>)/u);
-  assert.match(windowsPanel, /tibotattle\/issues\/3/u);
-  assert.match(linuxPanel, /tibotattle\/issues\/4/u);
-
-  const macosTab = openingTagForId(html, "platform-tab-macos");
-  assert.match(macosTab, /\baria-selected="true"/u);
-  assert.match(macosTab, /\btabindex="0"/u);
-  for (const platform of ["macos-intel", "windows", "linux"]) {
-    const tab = openingTagForId(html, `platform-tab-${platform}`);
-    assert.match(tab, /\baria-selected="false"/u);
-    assert.match(tab, /\btabindex="-1"/u);
-    assert.match(openingTagForId(html, `platform-panel-${platform}`), /\bhidden(?:\s|>)/u);
-  }
-});
-
-test("platform detection is conservative and explicit choices take precedence", () => {
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "Windows",
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-    }),
-    "windows",
-  );
-  assert.equal(
-    detectPublicPlatform({ userAgentDataPlatform: "macOS", userAgent: "" }),
-    "macos",
-  );
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "MacIntel",
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-    }),
-    "macos",
-    "Intel browser tokens also occur on Apple silicon and cannot identify the chip",
-  );
-  assert.equal(
-    detectPublicPlatform({ userAgentDataPlatform: "Linux", userAgent: "" }),
-    "linux",
-  );
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "",
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    }),
-    "windows",
-  );
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "",
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-    }),
-    "macos",
-  );
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "",
-      userAgent: "Mozilla/5.0 (X11; Linux x86_64)",
-    }),
-    "linux",
-  );
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "",
-      userAgent: "Mozilla/5.0 (Linux; Android 15; Pixel 9)",
-    }),
-    null,
-    "Android's Linux token must not imply Linux desktop availability",
-  );
-  assert.equal(
-    detectPublicPlatform({ userAgentDataPlatform: "Chrome OS", userAgent: "" }),
-    null,
-  );
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "macOS",
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-      maxTouchPoints: 5,
-    }),
-    null,
-    "an iPad presenting a desktop Mac user agent must not select macOS",
-  );
-  assert.equal(
-    detectPublicPlatform({
-      userAgentDataPlatform: "Linux",
-      userAgent: "Mozilla/5.0 (X11; CrOS x86_64 16093.68.0)",
-    }),
-    null,
-    "a ChromeOS Linux token must not select a Linux desktop build",
-  );
-
-  assert.equal(
-    resolveInitialPublicPlatform({
-      urlPlatform: "macos-intel",
-      savedPlatform: "windows",
-      detectedPlatform: "macos",
-    }),
-    "macos-intel",
-  );
-  assert.equal(
-    resolveInitialPublicPlatform({
-      urlPlatform: "linux",
-      savedPlatform: "windows",
-      detectedPlatform: "macos",
-    }),
-    "linux",
-  );
-  assert.equal(
-    resolveInitialPublicPlatform({
-      urlPlatform: "not-a-platform",
-      savedPlatform: "windows",
-      detectedPlatform: "macos",
-    }),
-    "windows",
-  );
-  assert.equal(
-    resolveInitialPublicPlatform({
-      urlPlatform: null,
-      savedPlatform: "invalid",
-      detectedPlatform: "linux",
-    }),
-    "linux",
-  );
-  assert.equal(
-    resolveInitialPublicPlatform({
-      urlPlatform: null,
-      savedPlatform: null,
-      detectedPlatform: null,
-    }),
-    "macos",
-    "macOS remains the truthful default when no desktop platform can be inferred",
-  );
-});
-
-test("the platform selector applies URL state and persists only user interaction", () => {
-  const storageKey = "tibotattle.download-platform.v1";
-  const storage = recordingStorage({ [storageKey]: "windows" });
-  const fixture = fakePlatformSelectorDocument();
-  assert.equal(
-    wirePublicPlatformSelector(fixture.documentRef, {
-      navigatorRef: {
-        userAgentData: { platform: "macOS" },
-        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-        maxTouchPoints: 0,
-      },
-      locationRef: { search: "?campaign=homepage&platform=linux" },
-      storage,
-    }),
-    "linux",
-  );
-  assert.equal(fixture.selector.dataset.platformBound, "true");
-  assert.deepEqual(storage.reads, [storageKey]);
-  assert.deepEqual(storage.writes, [], "initial selection is never persisted");
-  assertPlatformSelection(fixture, "linux");
-
-  fixture.selector.dispatch("click", { target: fixture.tabs.get("windows") });
-  assertPlatformSelection(fixture, "windows");
-  assert.deepEqual(storage.writes, [[storageKey, "windows"]]);
-
-  function press(platform, key, expectedPlatform) {
-    let prevented = 0;
-    fixture.selector.dispatch("keydown", {
-      key,
-      preventDefault() {
-        prevented += 1;
-      },
-      target: fixture.tabs.get(platform),
-    });
-    assert.equal(prevented, 1, `${key} prevents native scrolling`);
-    assertPlatformSelection(fixture, expectedPlatform);
-    assert.ok(
-      fixture.tabs.get(expectedPlatform).focusCount > 0,
-      `${key} moves focus to ${expectedPlatform}`,
-    );
-  }
-
-  press("windows", "ArrowRight", "linux");
-  press("linux", "ArrowRight", "macos");
-  press("macos", "ArrowRight", "macos-intel");
-  press("macos-intel", "ArrowRight", "windows");
-  press("windows", "ArrowLeft", "macos-intel");
-  press("macos-intel", "ArrowLeft", "macos");
-  press("macos", "ArrowLeft", "linux");
-  press("linux", "Home", "macos");
-  press("macos", "End", "linux");
-  assert.deepEqual(
-    storage.writes.map(([, value]) => value),
-    ["windows", "linux", "macos", "macos-intel", "windows", "macos-intel", "macos", "linux", "macos", "linux"],
-  );
-});
-
-test("explicit Intel selection hides the ARM panel and survives the next visit", () => {
-  const storage = recordingStorage();
-  const fixture = fakePlatformSelectorDocument();
-  wirePublicPlatformSelector(fixture.documentRef, {
-    navigatorRef: { userAgentData: { platform: "macOS" } },
-    locationRef: { search: "" },
-    storage,
-  });
-  fixture.selector.dispatch("click", { target: fixture.tabs.get("macos-intel") });
-  assertPlatformSelection(fixture, "macos-intel");
-  assert.equal(fixture.panels.get("macos").hidden, true);
-
-  const nextVisit = fakePlatformSelectorDocument();
-  assert.equal(wirePublicPlatformSelector(nextVisit.documentRef, {
-    navigatorRef: { userAgentData: { platform: "macOS" } },
-    locationRef: { search: "" },
-    storage,
-  }), "macos-intel");
-  assertPlatformSelection(nextVisit, "macos-intel");
-  assert.equal(storage.writes.length, 1, "only the deliberate selection is persisted");
-
-  const linkedVisit = fakePlatformSelectorDocument();
-  assert.equal(wirePublicPlatformSelector(linkedVisit.documentRef, {
-    navigatorRef: { userAgentData: { platform: "Windows" } },
-    locationRef: { search: "?platform=macos-intel" },
-    storage: recordingStorage({ "tibotattle.download-platform.v1": "windows" }),
-  }), "macos-intel");
-  assertPlatformSelection(linkedVisit, "macos-intel");
-});
-
-test("platform inference reveals the selector without writing session state", () => {
-  const storage = recordingStorage();
-  const fixture = fakePlatformSelectorDocument();
-  assert.equal(
-    wirePublicPlatformSelector(fixture.documentRef, {
-      navigatorRef: {
-        userAgentData: { platform: "Windows" },
-        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-      },
-      locationRef: { search: "" },
-      storage,
-    }),
-    "windows",
-  );
-  assertPlatformSelection(fixture, "windows");
-  assert.deepEqual(storage.writes, []);
-});
-
-test("mobile Mac and ChromeOS hints fall back safely through the wired selector", () => {
-  for (const [label, navigatorRef] of [
-    ["iPad", {
-      userAgentData: { platform: "macOS" },
-      userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
-      maxTouchPoints: 5,
-    }],
-    ["ChromeOS", {
-      userAgentData: { platform: "Linux" },
-      userAgent: "Mozilla/5.0 (X11; CrOS x86_64 16093.68.0)",
-      maxTouchPoints: 0,
-    }],
-  ]) {
-    const storage = recordingStorage();
-    const fixture = fakePlatformSelectorDocument();
-    assert.equal(
-      wirePublicPlatformSelector(fixture.documentRef, {
-        navigatorRef,
-        locationRef: { search: "" },
-        storage,
-      }),
-      "macos",
-      label,
-    );
-    assertPlatformSelection(fixture, "macos");
-    assert.deepEqual(storage.writes, [], label);
-  }
-});
-
-test("the selector tolerates unavailable or throwing storage", () => {
-  const throwingStorage = {
-    getItem() {
-      throw new Error("storage blocked");
-    },
-    setItem() {
-      throw new Error("storage blocked");
-    },
-  };
-  for (const [label, storage] of [
-    ["unavailable", null],
-    ["throwing", throwingStorage],
-  ]) {
-    const fixture = fakePlatformSelectorDocument();
-    assert.equal(
-      wirePublicPlatformSelector(fixture.documentRef, {
-        navigatorRef: {
-          userAgentData: { platform: "Windows" },
-          userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-        },
-        locationRef: { search: "" },
-        storage,
-      }),
-      "windows",
-      label,
-    );
-    assertPlatformSelection(fixture, "windows");
-    assert.doesNotThrow(() => fixture.selector.dispatch("click", {
-      target: fixture.tabs.get("linux"),
-    }));
-    assertPlatformSelection(fixture, "linux");
-  }
-});
-
-test("a malformed platform selector fails closed before binding", () => {
-  const fixture = fakePlatformSelectorDocument({ missingPanel: "linux" });
-  const storage = recordingStorage();
-  assert.equal(
-    wirePublicPlatformSelector(fixture.documentRef, {
-      navigatorRef: { userAgentData: { platform: "Linux" } },
-      locationRef: { search: "?platform=linux" },
-      storage,
-    }),
-    null,
-  );
-  assert.equal(fixture.selector.hidden, true);
-  assert.equal(fixture.selector.dataset.platformBound, undefined);
-  assert.equal(fixture.documentRef.documentElement.dataset.downloadPlatform, undefined);
-  assert.deepEqual(storage.reads, []);
-  assert.deepEqual(storage.writes, []);
-});
-
-test("the Homebrew action copies only the fixed first-party tap command", async () => {
-  const writes = [];
-  assert.equal(
-    await copyHomebrewInstallCommand({
-      async writeText(value) {
-        writes.push(value);
-      },
-    }),
-    true,
-  );
-  assert.deepEqual(writes, [HOMEBREW_INSTALL_COMMAND]);
-  assert.equal(
-    HOMEBREW_INSTALL_COMMAND,
-    "brew install --cask adamallcock/tap/tibotattle",
-  );
-  assert.equal(await copyHomebrewInstallCommand(null), false);
-  assert.equal(
-    await copyHomebrewInstallCommand({
-      async writeText() {
-        throw new Error("clipboard blocked");
-      },
-    }),
-    false,
   );
 });
 
@@ -999,50 +455,6 @@ test("the public hero keeps equal top-aligned columns and a bounded stacked prev
     /\.community-site \.community-window-content \{\s*padding: 22px;/u,
   );
   assert.doesNotMatch(styles, /font-size: clamp\(3\.15rem, 16vw, 5\.2rem\);/u);
-});
-
-test("the Homebrew command stays bounded and readable at narrow widths", async () => {
-  const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
-  assert.match(
-    styles,
-    /\.community-site \.hero-copy \{[\s\S]*?min-width: 0;/u,
-  );
-  assert.match(
-    styles,
-    /@media \(max-width: 420px\) \{[\s\S]*?\.community-site \.install-actions \{\s*flex-direction: column;/u,
-  );
-  assert.match(
-    styles,
-    /@media \(max-width: 420px\) \{[\s\S]*?\.community-site \.homebrew-install code \{\s*overflow-x: visible;\s*white-space: normal;/u,
-  );
-  assert.match(
-    styles,
-    /\.community-site \.homebrew-install code \{[\s\S]*?font-size: \.6rem;/u,
-    "the long fixed command uses the deliberately smaller desktop type size",
-  );
-});
-
-test("the platform selector stays compact and wraps full architecture labels at narrow widths", async () => {
-  const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
-  const selectorRule = styles.match(/\.community-site \.platform-selector \{([^}]*)\}/u)?.[1] ?? "";
-  const tabRule = styles.match(/\.community-site \.platform-tab \{([^}]*)\}/u)?.[1] ?? "";
-  const selectedRule = styles.match(/\.community-site \.platform-tab\[aria-selected="true"\] \{([^}]*)\}/u)?.[1] ?? "";
-
-  assert.match(selectorRule, /display: inline-flex;/u);
-  assert.match(selectorRule, /flex-wrap: wrap;/u);
-  assert.match(selectorRule, /width: auto;/u);
-  assert.match(selectorRule, /border: 0;/u);
-  assert.match(selectorRule, /background: transparent;/u);
-  assert.match(selectorRule, /box-shadow: none;/u);
-  assert.match(tabRule, /min-height: 32px;/u);
-  assert.match(
-    styles,
-    /\.community-site \.platform-tab \+ \.platform-tab \{\s*border-inline-start: 1px solid/u,
-  );
-  assert.match(selectedRule, /border-bottom-color: var\(--site-green-bright\);/u);
-  assert.match(selectedRule, /font-weight: var\(--weight-bold\);/u);
-  assert.match(selectedRule, /background: transparent;/u);
-  assert.match(selectedRule, /box-shadow: none;/u);
 });
 
 test("the public header and footer stay compact on narrow screens", async () => {
@@ -1155,9 +567,9 @@ test("the public guidance pages are useful stubs without app-only controls", asy
   const verifyRelease = await readFile(VERIFY_RELEASE, "utf8");
   const privacy = await readFile(PRIVACY_HTML, "utf8");
   assert.match(docs, /<title>TiboTattle Docs<\/title>/u);
-  assert.match(docs, /macOS 14 or later on Apple silicon and Intel/u);
-  assert.match(docs, /<code data-i18n-skip>brew install --cask adamallcock\/tap\/tibotattle<\/code>/u);
-  assert.match(docs, /installing it does not require Node\.js, pnpm, or Xcode/u);
+  assert.match(docs, /TiboTattle supports Windows x64 only\./u);
+  assert.doesNotMatch(docs, /brew install|--cask|Homebrew|Sparkle|Gatekeeper|Keychain|DMG|AppImage/u);
+  assert.match(docs, /installing it does not require Node\.js or\s+pnpm\./u);
   assert.match(
     docs,
     /Estimated API-equivalent value of the observed seven-day allowance\./u,
@@ -1165,7 +577,7 @@ test("the public guidance pages are useful stubs without app-only controls", asy
   assert.match(docs, /Activity totals alone are never presented as an allowance\./u);
   assert.match(docs, /id="download-security"/u);
   assert.match(docs, /A download you can check/u);
-  assert.match(docs, /Signed for the platform/u);
+  assert.match(docs, /Signed for Windows/u);
   assert.match(docs, /release-manifest\.json/u);
   assert.match(docs, /fields not published are explicitly null/u);
   assert.match(docs, /complete non-null evidence set/u);
@@ -1178,11 +590,11 @@ test("the public guidance pages are useful stubs without app-only controls", asy
   assert.match(verifyRelease, /gh release verify-asset/u);
   assert.match(verifyRelease, /gh release download "\$VERSION" --repo "\$REPO"/u);
   assert.match(verifyRelease, /npm run release:evidence:validate --/u);
-  assert.match(verifyRelease, /### Important: v0\.1\.12 is a legacy release/u);
+  assert.match(verifyRelease, /### Important: pre-v1 releases/u);
   assert.ok(
-    verifyRelease.indexOf("### Important: v0.1.12 is a legacy release")
+    verifyRelease.indexOf("### Important: pre-v1 releases")
       < verifyRelease.indexOf('gh release verify "$VERSION"'),
-    "the legacy release caveat appears before release-level verification commands",
+    "the pre-v1 caveat appears before release-level verification commands",
   );
   assert.match(verifyRelease, /--bundle "\$PROVENANCE_BUNDLE"/u);
   assert.match(verifyRelease, /--bundle "\$SBOM_BUNDLE"/u);
@@ -1190,10 +602,8 @@ test("the public guidance pages are useful stubs without app-only controls", asy
   assert.match(verifyRelease, /--source-ref "refs\/tags\/\$VERSION"/u);
   assert.match(verifyRelease, /--source-digest "\$COMMIT"/u);
   assert.match(verifyRelease, /--signer-workflow/u);
-  assert.match(verifyRelease, /### macOS direct DMG/u);
   assert.match(verifyRelease, /### Windows direct installer or MSIX/u);
-  assert.match(verifyRelease, /### Linux AppImage/u);
-  assert.match(verifyRelease, /Mac App Store/u);
+  assert.doesNotMatch(verifyRelease, /macOS|\bMac\b|AppImage|Linux|\.dmg\b|Homebrew|Sparkle|Gatekeeper|Notariz/u);
   assert.match(verifyRelease, /does not prove safety/u);
   assert.match(privacy, /<title>TiboTattle Privacy Overview<\/title>/u);
   assert.match(privacy, /This website cannot read local Codex files\./u);
@@ -2424,76 +1834,15 @@ test("public sample privacy paragraphs have explicit translations and retain the
   }
 });
 
-test("Intel download rendering stays independent and refuses partial or ARM metadata", () => {
-  const metadata = {
-    "usage-monitor-installer-url": "https://downloads.example.org/TiboTattle-1.2.3-macOS-arm64.dmg",
-    "usage-monitor-installer-version": "1.2.3",
-    "usage-monitor-installer-sha256": "a".repeat(64),
-    "usage-monitor-installer-bytes": "12000000",
-    "usage-monitor-minimum-macos": "13.0",
-    "usage-monitor-architectures": "arm64",
-    "usage-monitor-release-notes-url": "https://example.org/releases/1.2.3",
-    "usage-monitor-privacy-url": "https://example.org/privacy",
-    "usage-monitor-security-url": "https://example.org/security",
-    "usage-monitor-support-url": "https://example.org/support",
-  };
-  const intel = {
-    "usage-monitor-intel-installer-url": "https://downloads.example.org/TiboTattle-1.2.3-macOS-x64.dmg",
-    "usage-monitor-intel-installer-version": "1.2.3",
-    "usage-monitor-intel-installer-sha256": "b".repeat(64),
-    "usage-monitor-intel-installer-bytes": "13000000",
-    "usage-monitor-intel-minimum-macos": "14.0",
-    "usage-monitor-intel-architectures": "x64",
-  };
-  const documentRef = fakeDocument({ ...metadata, ...intel });
-  renderPublicInstallerJourney(documentRef);
-  assert.equal(documentRef.byId.get("installer-link").href, metadata["usage-monitor-installer-url"]);
-  assert.equal(documentRef.byId.get("intel-installer-link").href, intel["usage-monitor-intel-installer-url"]);
-  assert.equal(documentRef.byId.get("intel-installation").hidden, false);
-  assert.equal(documentRef.byId.get("intel-installer-unavailable").hidden, true);
-  assert.equal(documentRef.byId.get("intel-download-assurance").hidden, false);
-  assert.equal(documentRef.byId.get("intel-installer-sha256-copy").dataset.checksum, "b".repeat(64));
-  assert.equal(documentRef.byId.get("installer-sha256-copy").dataset.checksum, "a".repeat(64));
-  assert.equal(documentRef.byId.get("intel-installer-version").textContent, "Version 1.2.3");
-  assert.equal(documentRef.byId.get("intel-installer-compatibility").textContent, "macOS 14 or later · Intel");
-  assert.equal(documentRef.byId.get("homebrew-install").hidden, false);
-  assert.equal(documentRef.byId.get("intel-homebrew-install").hidden, false);
-
-  // The existing release contract requires a verified, same-version pair.
-  const missingPrimary = fakeDocument({ ...metadata, "usage-monitor-installer-url": "", ...intel });
-  renderPublicInstallerJourney(missingPrimary);
-  assert.equal(missingPrimary.byId.get("homebrew-install").hidden, true);
-  assert.equal(missingPrimary.byId.get("intel-homebrew-install").hidden, true);
-
-  for (const invalid of [
-    {},
-    ...Object.keys(intel).map((key) => ({ ...intel, [key]: "" })),
-    { ...intel, "usage-monitor-intel-architectures": "arm64" },
-    { ...intel, "usage-monitor-intel-installer-url": metadata["usage-monitor-installer-url"] },
-  ]) {
-    const unavailable = fakeDocument({ ...metadata, ...invalid });
-    renderPublicInstallerJourney(unavailable);
-    assert.equal(unavailable.byId.get("installer-link").hidden, false);
-    assert.equal(unavailable.byId.get("homebrew-install").hidden, false);
-    assert.equal(unavailable.byId.get("intel-homebrew-install").hidden, true);
-    assert.equal(unavailable.byId.get("intel-installation").hidden, true);
-    assert.equal(unavailable.byId.get("intel-installer-link").hidden, true);
-    assert.equal(Object.hasOwn(unavailable.byId.get("intel-installer-link"), "href"), false);
-    assert.equal(unavailable.byId.get("intel-download-assurance").hidden, true);
-    assert.equal(unavailable.byId.get("intel-installer-unavailable").hidden, false);
-    assert.equal(unavailable.byId.get("intel-installer-sha256-copy").dataset.checksum, undefined);
-  }
-});
-
 test("the install card refuses a partially injected release", () => {
   const complete = {
     "usage-monitor-installer-url":
-      "https://downloads.example.org/TiboTattle.dmg",
+      "https://downloads.example.org/TiboTattle-1.2.3-Windows-x64.exe",
     "usage-monitor-installer-version": "1.2.3",
     "usage-monitor-installer-sha256": "a".repeat(64),
     "usage-monitor-installer-bytes": "12582912",
-    "usage-monitor-minimum-macos": "13.0",
-    "usage-monitor-architectures": "arm64",
+    "usage-monitor-minimum-windows": "10",
+    "usage-monitor-architectures": "x64",
     "usage-monitor-release-notes-url": "https://example.org/releases/1.2.3",
     "usage-monitor-privacy-url": "https://example.org/privacy",
     "usage-monitor-security-url": "https://example.org/security",
@@ -2503,9 +1852,6 @@ test("the install card refuses a partially injected release", () => {
   const release = configuredInstallerRelease(ready);
   assert.equal(release.version, "1.2.3");
   assert.equal(formatInstallerSize(12_582_912), "12 MiB download");
-  assert.equal(compactMacOSVersion("14.0"), "14");
-  assert.equal(compactMacOSVersion("14.0.0"), "14");
-  assert.equal(compactMacOSVersion("14.1"), "14.1");
   assert.equal(renderInstallerJourney(ready)?.version, "1.2.3");
   assert.equal(ready.byId.get("installer-link").hidden, false);
   assert.equal(ready.byId.get("installer-unavailable-action").hidden, true);
@@ -2516,7 +1862,7 @@ test("the install card refuses a partially injected release", () => {
   assert.equal(ready.byId.get("installer-unavailable").hidden, true);
   assert.match(
     ready.byId.get("installer-compatibility").textContent,
-    /Requires macOS 13\.0 or later · Apple silicon/u,
+    /Requires Windows 10 or later · x64/u,
   );
 
   const compact = fakeDocument(complete);
@@ -2529,7 +1875,7 @@ test("the install card refuses a partially injected release", () => {
   );
   assert.equal(
     compact.byId.get("installer-compatibility").textContent,
-    "macOS 13 or later · Apple silicon",
+    "Windows 10 or later · x64",
   );
   assert.equal(compact.byId.get("installer-links").hidden, true);
   for (const id of [
@@ -2551,11 +1897,13 @@ test("the install card refuses a partially injected release", () => {
 
   for (
     const [name, hostile] of [
-      ["usage-monitor-installer-url", "http://downloads.example.org/x.dmg"],
+      ["usage-monitor-installer-url", "http://downloads.example.org/x.exe"],
       ["usage-monitor-installer-url", "https://downloads.example.org/x.zip"],
       ["usage-monitor-installer-sha256", "not-a-digest"],
       ["usage-monitor-installer-bytes", "0"],
-      ["usage-monitor-minimum-macos", "thirteen"],
+      ["usage-monitor-minimum-windows", "seven"],
+      ["usage-monitor-architectures", "arm64"],
+      ["usage-monitor-installer-url", "https://downloads.example.org/TiboTattle-1.2.4-Windows-x64.exe"],
       ["usage-monitor-privacy-url", "http://example.org/privacy"],
     ]
   ) {
@@ -2912,20 +2260,20 @@ test("the community's contribution figures sit in the hero, below the download",
   const ledeIndex = html.indexOf('class="hero-lede"');
   const hostIndex = html.indexOf('id="community-contribution-summary"');
   const downloadIndex = html.indexOf('id="download"');
-  const lastPanelIndex = html.indexOf('id="platform-panel-linux"');
+  const lastPanelIndex = html.indexOf('id="download-assurance"');
   const heroColumnEnd = html.indexOf('class="community-window"');
   const bandIndex = html.indexOf('id="community-daily-result"');
   assert.ok(hostIndex >= 0, "the hero carries the contribution host");
   assert.ok(heroStart >= 0 && ledeIndex > heroStart);
   assert.ok(downloadIndex > ledeIndex, "the download still follows the hero lede");
-  assert.ok(lastPanelIndex > downloadIndex, "the platform panels are the download cluster");
+  assert.ok(lastPanelIndex > downloadIndex, "the download panel is the download cluster");
   assert.ok(hostIndex > lastPanelIndex, "the figures come after the whole download cluster");
   assert.ok(hostIndex < heroColumnEnd, "the figures stay in the hero's copy column");
   assert.ok(heroColumnEnd < bandIndex, "the activity band still follows the hero");
   // The published-platform contract slices between the last platform panel
   // and the community link and asserts what each panel does and does not
   // contain. Keeping the host after that link is what keeps it out of the
-  // Linux panel's slice; before it, this markup would be read as part of it.
+  // download panel's slice; before it, this markup would be read as part of it.
   const communityLinkIndex = html.indexOf('class="community-inline"');
   assert.ok(communityLinkIndex > lastPanelIndex);
   assert.ok(

@@ -121,13 +121,10 @@ const INFO_HINTS = Object.freeze({
   "Orphan objects removed": "Eligible objects with no accepted-data reference that were safely deleted during the most recent pass.",
   "Reconciliation failure": "The last recorded reconciliation error code. A dash means no failure was recorded.",
   "Active-install proxy": "Distinct source IP addresses seen on first-party app update traffic in the trailing 24 hours. It is a rough activity proxy, not a count of people or devices.",
-  "App preflight call-ins": "Requests to the app preflight endpoint. They show running copies checking compatibility, but retries and shared addresses prevent a user census.",
-  "Sparkle update checks": "Requests for the Sparkle appcast used to discover updates. A single installation can check more than once.",
-  "Electron update checks": "Requests for the OS-specific Electron update manifest. A single installation can check more than once.",
-  "Sparkle artifact fetches": "Requests for update artifacts. Fetches can include retries or automated checks and do not prove a completed installation.",
-  "Latest GitHub tag match": "Source addresses reporting the version of the latest stable GitHub release tag. Native and Electron feeds can have different current versions; this is not cross-platform update compliance.",
-  "GitHub DMG downloads": "GitHub's cumulative download counter for every currently published DMG asset. It counts asset downloads, not launches, active users, or unique devices. This optional total does not affect the first-party activity estimates.",
-  "GitHub DMG downloads since prior snapshot": "The non-negative change in current GitHub DMG counters since the last complete owner snapshot. It begins after the first successful sync and does not infer downloads before this dashboard started recording snapshots.",
+  "Windows update checks": "Requests for the Windows Electron update manifest. A single installation can check more than once.",
+  "Latest GitHub tag match": "Source addresses reporting the version of the latest stable GitHub release tag. The observed Windows update feed can lag a new release; this is not update compliance.",
+  "Historical DMG downloads": "GitHub's cumulative download counter for every currently published DMG asset. It counts asset downloads, not launches, active users, or unique devices. This optional total does not affect the first-party activity estimates.",
+  "Historical DMG downloads since prior snapshot": "The non-negative change in current GitHub DMG counters since the last complete owner snapshot. It begins after the first successful sync and does not infer downloads before this dashboard started recording snapshots.",
   "Cloudflare analytics": "Whether first-party request analytics were available for this dashboard refresh.",
   "Evidence window": "The exact request-analytics time range used for the displayed activity estimates.",
   "Sampling": "Whether Cloudflare returned every matching row or a sampled estimate.",
@@ -167,7 +164,7 @@ const INFO_HINTS = Object.freeze({
   "Chunks uploaded": "Accepted v1, v1.1 and v1.2 incremental chunks, including staged and later superseded chunks. This is a retained upload total, not a count of currently selected evidence.",
   "Records uploaded": "Records inside accepted v1, v1.1 and v1.2 chunks, summed per upload day. Overlapping source records can appear more than once here; the effective public series resolves them separately.",
   "Identities uploading": "Distinct pseudonymous contributor identities with accepted chunks. The headline covers retained evidence; daily points count identities active on each UTC day and must not be summed as unique people.",
-  "DMG downloads": "Cumulative installer downloads across all GitHub releases, sampled by the distribution sync. The delta is movement since the prior day's last sample.",
+  "Historical DMG downloads": "Cumulative DMG downloads across all GitHub releases, sampled by the distribution sync. The delta is movement since the prior day's last sample.",
   "Published band cohort": "People inside the published community allowance band (the site's “from N people”).",
   "Plan cohorts": "Distinct contributors on each Codex plan (each counted under their current plan only), and that plan's measured allowance-window value in API-price-equivalent dollars. Ratios are measured from real fits, never assumed from the nominal plan multipliers.",
 });
@@ -1111,7 +1108,7 @@ function renderGrowth(history) {
     const latest = points.at(-1).value;
     const prior = points.at(-2)?.value;
     cards.push(growthCard({
-      label: "DMG downloads",
+      label: "Historical DMG downloads",
       value: count(latest),
       delta: prior === undefined ? null : latest - prior,
       deltaWindow: "since prior sampled day",
@@ -1515,7 +1512,7 @@ function collectAttentionItems(overview) {
       detail = "The dashboard could not read the current upload admission budget.";
     } else if (!ingressUnavailable && activityEvidenceUnavailable) {
       title = "App activity evidence is unavailable";
-      detail = "First-party preflight, native and Electron update activity could not be refreshed.";
+      detail = "First-party Windows update activity could not be refreshed.";
     }
     addAttentionItem(
       items,
@@ -1764,10 +1761,7 @@ function renderDistribution(distribution) {
         : "Activity evidence unavailable";
 
   const active = cloudflare.activeSourceAddresses;
-  const preflight = cloudflare.preflight;
-  const checks = cloudflare.sparkleChecks;
   const electronChecks = cloudflare.electronChecks;
-  const downloads = cloudflare.sparkleDownloads;
   const current = cloudflare.currentVersionSourceAddresses;
   const release = github.release;
   const summary = github.summary;
@@ -1781,31 +1775,10 @@ function renderDistribution(distribution) {
       historyUnavailable: cloudflareHistoryUnavailable,
     },
     {
-      label: "App preflight call-ins",
-      value: distributionCount(preflight?.requests.last24Hours, cloudflare),
-      detail: `Last 24h above · ${distributionCount(preflight?.sourceAddresses.last24Hours, cloudflare)} addresses · ${distributionCount(preflight?.requests.last7Days, cloudflare)} requests/7d`,
-      points: distributionSegmentPoints(cloudflare, "preflightRequests"),
-      historyUnavailable: cloudflareHistoryUnavailable,
-    },
-    {
-      label: "Sparkle update checks",
-      value: distributionCount(checks?.requests.last24Hours, cloudflare),
-      detail: `Last 24h above · ${distributionCount(checks?.sourceAddresses.last24Hours, cloudflare)} addresses · ${distributionCount(checks?.requests.last7Days, cloudflare)} checks/7d`,
-      points: distributionSegmentPoints(cloudflare, "sparkleCheckRequests"),
-      historyUnavailable: cloudflareHistoryUnavailable,
-    },
-    {
-      label: "Electron update checks",
+      label: "Windows update checks",
       value: distributionCount(electronChecks?.requests.last24Hours, cloudflare),
       detail: `Last 24h above · ${distributionCount(electronChecks?.sourceAddresses.last24Hours, cloudflare)} addresses · ${distributionCount(electronChecks?.requests.last7Days, cloudflare)} checks/7d`,
       points: distributionSegmentPoints(cloudflare, "electronCheckRequests"),
-      historyUnavailable: cloudflareHistoryUnavailable,
-    },
-    {
-      label: "Sparkle artifact fetches",
-      value: distributionCount(downloads?.requests.last24Hours, cloudflare),
-      detail: `Last 24h above · ${distributionCount(downloads?.sourceAddresses.last24Hours, cloudflare)} addresses · ${distributionCount(downloads?.requests.last7Days, cloudflare)} fetches/7d`,
-      points: distributionSegmentPoints(cloudflare, "sparkleDownloadRequests"),
       historyUnavailable: cloudflareHistoryUnavailable,
     },
     {
@@ -1822,7 +1795,7 @@ function renderDistribution(distribution) {
         || cloudflare.currentVersion === null,
     },
     [
-      "GitHub DMG downloads",
+      "Historical DMG downloads",
       summary ? count(summary.dmgDownloads) : "—",
       summary
         ? `${summary.releaseCount} releases · ${summary.dmgAssetCount} DMG assets · all time`
@@ -1830,7 +1803,7 @@ function renderDistribution(distribution) {
       downloadHistoryPoints(),
     ],
     [
-      "GitHub DMG downloads since prior snapshot",
+      "Historical DMG downloads since prior snapshot",
       history.dmgDownloadsSincePrevious === null
         ? "—"
         : count(history.dmgDownloadsSincePrevious),
@@ -1861,10 +1834,8 @@ function renderDistribution(distribution) {
   const activeAddresses = active?.last7Days ?? 0;
   $("#distribution-version-rows").replaceChildren(
     ...versions.map((version) => tableRow([
-      version.client === "native" ? "Native" : "Electron",
-      version.operatingSystem === "macos"
-        ? version.architecture === "arm64" ? "macOS · Apple silicon" : "macOS · Intel"
-        : version.operatingSystem === "windows" ? "Windows" : "Linux",
+      "Electron",
+      "Windows",
       version.version ?? "Unknown",
       percentage(version.sourceAddressesLast7Days, activeAddresses),
       distributionCount(version.sourceAddressesLast7Days, cloudflare),
@@ -1873,19 +1844,10 @@ function renderDistribution(distribution) {
   );
   if (isAdminPage) {
     const totals = cloudflare.observedTotals;
-    const platformName = os => ({ macos: "macOS", windows: "Windows", linux: "Linux" })[os];
     $("#distribution-total-rows").replaceChildren(...(totals ? [
-      ...(totals.macosArchitectures ?? []).map(row => tableRow([
-        "Architecture total",
-        row.architecture === "arm64" ? "macOS · Apple silicon" : "macOS · Intel",
-        "All versions",
-        percentage(row.sourceAddressesLast7Days, activeAddresses),
-        distributionCount(row.sourceAddressesLast7Days, cloudflare),
-        distributionCount(row.requestsLast7Days, cloudflare),
-      ])),
       ...totals.platforms.map(row => tableRow([
-        row.operatingSystem === "macos" ? "macOS subtotal" : "Platform total",
-        platformName(row.operatingSystem), "All versions",
+        "Platform total",
+        "Windows", "All versions",
         percentage(row.sourceAddressesLast7Days, activeAddresses),
         distributionCount(row.sourceAddressesLast7Days, cloudflare),
         distributionCount(row.requestsLast7Days, cloudflare),
@@ -1901,16 +1863,13 @@ function renderDistribution(distribution) {
     ? "No recognized app-version traffic was observed in this window."
     : "App-version evidence is unavailable; this does not mean there are no active apps.";
   if (isAdminPage) $("#distribution-version-coverage").textContent =
-    `${cloudflare.observedVersionsBounded ? "Version list capped; additional rows are omitted. " : ""}macOS architecture comes from the update-feed path. The macOS subtotal counts each address once across Apple silicon and Intel; architecture rows can overlap. Address reach uses all observed active addresses as its denominator. One address can occur in several app, OS, architecture or version rows, so percentages need not sum to 100%. Each total counts an address once across all included apps and versions; platform totals can overlap. ${cloudflare.observedTotals ? "" : "Totals are unavailable from this snapshot. "}Unknown means no usable TiboTattle app version was present in the updater request; it cannot be recovered from the OS or update feed.`;
+    `${cloudflare.observedVersionsBounded ? "Version list capped; additional rows are omitted. " : ""}Address reach uses all observed active addresses as its denominator. One address can occur in several app, OS, architecture or version rows, so percentages need not sum to 100%. Each total counts an address once across all included apps and versions; platform totals can overlap. ${cloudflare.observedTotals ? "" : "Totals are unavailable from this snapshot. "}Unknown means no usable TiboTattle app version was present in the updater request; it cannot be recovered from the OS or update feed.`;
 
   const releases = github.releases;
   $("#github-release-rows").replaceChildren(
     ...releases.map((githubRelease) => {
       const installers = githubRelease.installerDownloads;
-      const values = [
-        installers.macArm64, installers.macX64,
-        installers.windowsX64, installers.linuxX64,
-      ];
+      const values = [installers.windowsX64];
       const total = values.some(value => value !== null)
         ? count(values.reduce((sum, value) => sum + (value ?? 0), 0))
         : "—";
@@ -1923,7 +1882,7 @@ function renderDistribution(distribution) {
       ]);
     }),
   );
-  const installerKeys = ["macArm64", "macX64", "windowsX64", "linuxX64"];
+  const installerKeys = ["windowsX64"];
   const installerTotals = installerKeys.map(key => {
     const published = releases.some(release => release.installerDownloads[key] !== null);
     return published

@@ -2,12 +2,12 @@ import { mountExampleInsights } from "./feature-insights.js";
 import { mountExampleWeek } from "./feature-week.js";
 // Entry point for the public website.
 //
-// The website introduces the Mac app, offers its verified installer, and
-// renders the live community allowance and daily activity series. All three work with no local
-// companion. Everything that needs the companion — the personal dashboard,
-// contribution preparation and upload, hosted sign-in, participant deletion —
-// is deliberately absent here and lives in the Mac app's own window, so this
-// page can never show a control that cannot work.
+// The website introduces the Windows app, offers its verified installer, and
+// renders the live community allowance and daily activity series. All three
+// work with no local companion. Everything that needs the companion — the
+// personal dashboard, contribution preparation and upload, hosted sign-in,
+// participant deletion — is deliberately absent here and lives in the Windows
+// app's own window, so this page can never show a control that cannot work.
 //
 // Every rendering routine below is imported, not copied: the install card and
 // the community view are the same modules the in-app dashboard entry uses.
@@ -39,15 +39,6 @@ import {
 const localization = createBrowserLocalization();
 setFormattingLocale(localization.formatLocale());
 setMessageLocale(localization.locale());
-export const HOMEBREW_INSTALL_COMMAND =
-  "brew install --cask adamallcock/tap/tibotattle";
-export const PUBLIC_PLATFORMS = Object.freeze([
-  "macos",
-  "macos-intel",
-  "windows",
-  "linux",
-]);
-const PUBLIC_PLATFORM_STORAGE_KEY = "tibotattle.download-platform.v1";
 // Resolve generated copy from the document language at render time. The
 // browser localizer updates that attribute before emitting its locale-change
 // event, which keeps a rerender from observing a stale closure during a live
@@ -102,165 +93,6 @@ function currentCacheProvenance(cache) {
     : null;
 }
 
-function normalizePublicPlatform(candidate) {
-  if (typeof candidate !== "string") return null;
-  const normalized = candidate.trim().toLowerCase();
-  return PUBLIC_PLATFORMS.includes(normalized) ? normalized : null;
-}
-
-/**
- * Coarse browser-reported platform detection is used only to choose the first
- * visible tab. It never redirects, hides alternatives, starts a download, or
- * claims that the app is installed. Unknown and mobile platforms return null.
- * MacIntel and Intel Mac OS X tokens also occur on Apple Silicon browsers, so
- * Intel selection requires an explicit tab, URL, or saved choice.
- */
-export function detectPublicPlatform({
-  userAgentDataPlatform = "",
-  userAgent = "",
-  maxTouchPoints = 0,
-} = {}) {
-  const platformHint = String(userAgentDataPlatform).toLowerCase();
-  const userAgentHint = String(userAgent);
-  const isAndroid = /android/iu.test(userAgentHint);
-  const isChromeOS = /cros/iu.test(userAgentHint);
-  const isIPadMasqueradingAsMac = maxTouchPoints > 1
-    && /macintosh|mac os x/iu.test(userAgentHint);
-
-  if (/windows|win32/iu.test(platformHint)) return "windows";
-  if (/macos|macintosh|macintel|darwin/iu.test(platformHint)) {
-    return isIPadMasqueradingAsMac ? null : "macos";
-  }
-  if (/linux|x11/iu.test(platformHint)) {
-    return isAndroid || isChromeOS ? null : "linux";
-  }
-
-  if (/windows nt|windows/iu.test(userAgentHint)) return "windows";
-  if (isAndroid || isChromeOS) return null;
-  if (/macintosh|mac os x/iu.test(userAgentHint)) {
-    return isIPadMasqueradingAsMac ? null : "macos";
-  }
-  if (/linux|x11/iu.test(userAgentHint)) return "linux";
-  return null;
-}
-
-/** Explicit URL and saved choices outrank the low-confidence browser hint. */
-export function resolveInitialPublicPlatform({
-  urlPlatform = null,
-  savedPlatform = null,
-  detectedPlatform = null,
-} = {}) {
-  return normalizePublicPlatform(urlPlatform)
-    ?? normalizePublicPlatform(savedPlatform)
-    ?? normalizePublicPlatform(detectedPlatform)
-    ?? "macos";
-}
-
-function browserSessionStorage() {
-  try {
-    return globalThis.sessionStorage ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function readSavedPublicPlatform(storage = browserSessionStorage()) {
-  try {
-    return normalizePublicPlatform(storage?.getItem(PUBLIC_PLATFORM_STORAGE_KEY));
-  } catch {
-    return null;
-  }
-}
-
-function savePublicPlatform(platform, storage = browserSessionStorage()) {
-  try {
-    storage?.setItem(PUBLIC_PLATFORM_STORAGE_KEY, platform);
-  } catch {
-    // Storage can be blocked by the browser. Selection still works in-memory.
-  }
-}
-
-function publicPlatformFromUrl(search = globalThis.location?.search ?? "") {
-  try {
-    return normalizePublicPlatform(new URLSearchParams(search).get("platform"));
-  } catch {
-    return null;
-  }
-}
-
-export function wirePublicPlatformSelector(documentRef = document, {
-  navigatorRef = globalThis.navigator,
-  locationRef = globalThis.location,
-  storage = browserSessionStorage(),
-} = {}) {
-  const selector = documentRef.querySelector("#platform-selector");
-  if (!selector || selector.dataset.platformBound === "true") return null;
-  const tabs = [...selector.querySelectorAll('[role="tab"][data-platform]')];
-  const panels = new Map(
-    [...documentRef.querySelectorAll("[data-platform-panel]")]
-      .map((panel) => [panel.dataset.platformPanel, panel]),
-  );
-  if (
-    tabs.length !== PUBLIC_PLATFORMS.length
-    || PUBLIC_PLATFORMS.some((platform) => !panels.has(platform))
-  ) return null;
-
-  const selectPlatform = (candidate, { focus = false, persist = false } = {}) => {
-    const platform = normalizePublicPlatform(candidate);
-    if (!platform) return false;
-    for (const tab of tabs) {
-      const active = tab.dataset.platform === platform;
-      tab.setAttribute("aria-selected", String(active));
-      tab.setAttribute("tabindex", active ? "0" : "-1");
-      if (active && focus) tab.focus();
-    }
-    for (const [panelPlatform, panel] of panels) {
-      panel.hidden = panelPlatform !== platform;
-    }
-    documentRef.documentElement.dataset.downloadPlatform = platform;
-    if (persist) savePublicPlatform(platform, storage);
-    return true;
-  };
-
-  selector.dataset.platformBound = "true";
-  selector.addEventListener("click", (event) => {
-    const tab = event.target?.closest?.('[role="tab"][data-platform]');
-    if (!tab || !selector.contains(tab)) return;
-    selectPlatform(tab.dataset.platform, { persist: true });
-  });
-  selector.addEventListener("keydown", (event) => {
-    const tab = event.target?.closest?.('[role="tab"][data-platform]');
-    if (!tab || !selector.contains(tab)) return;
-    const currentIndex = tabs.indexOf(tab);
-    const targetIndex = {
-      "ArrowLeft": (currentIndex - 1 + tabs.length) % tabs.length,
-      "ArrowRight": (currentIndex + 1) % tabs.length,
-      "Home": 0,
-      "End": tabs.length - 1,
-    }[event.key];
-    if (targetIndex === undefined) return;
-    event.preventDefault();
-    selectPlatform(tabs[targetIndex].dataset.platform, {
-      focus: true,
-      persist: true,
-    });
-  });
-
-  const detectedPlatform = detectPublicPlatform({
-    userAgentDataPlatform: navigatorRef?.userAgentData?.platform ?? "",
-    userAgent: navigatorRef?.userAgent ?? "",
-    maxTouchPoints: navigatorRef?.maxTouchPoints ?? 0,
-  });
-  const initialPlatform = resolveInitialPublicPlatform({
-    urlPlatform: publicPlatformFromUrl(locationRef?.search ?? ""),
-    savedPlatform: readSavedPublicPlatform(storage),
-    detectedPlatform,
-  });
-  selectPlatform(initialPlatform);
-  selector.hidden = false;
-  return initialPlatform;
-}
-
 function publicErrorCode(candidate) {
   return typeof candidate === "string" && publicErrorCodePattern.test(candidate)
     ? candidate
@@ -307,54 +139,33 @@ export function setPublicDailyPresentation(documentRef, state, {
 }
 
 export function renderPublicInstallerJourney(documentRef = document) {
-  // Static Electron links are generated from the reviewed four-target plan.
+  // Static Electron links are generated from the reviewed plan.
   if (documentRef.querySelector('meta[name="usage-monitor-electron-stable"]')?.content === "true") return null;
   const select = (selector) => documentRef.querySelector(selector);
-  const renderArchitecture = (architecture) => {
-    const prefix = architecture === "x64" ? "intel-" : "";
-    const release = renderInstallerJourney(documentRef, {
-      architecture,
-      compactDetails: true,
-      showUnavailableAction: true,
-      showReleaseLinks: false,
-      formatLocale: getFormattingLocale(),
-      translateMessage: t,
-    });
-    const checksumCopy = select(`#${prefix}installer-sha256-copy`);
-    if (checksumCopy) {
-      if (release) checksumCopy.dataset.checksum = release.sha256;
-      else delete checksumCopy.dataset.checksum;
-    }
-    const checksumFallback = select(`#${prefix}installer-sha256`);
-    if (checksumFallback) {
-      checksumFallback.textContent = release?.sha256 ?? "";
-      checksumFallback.hidden = true;
-    }
-    renderInstallerAssurance(documentRef, release, { architecture });
-    const homebrewInstall = select(`#${prefix}homebrew-install`);
-    if (homebrewInstall) homebrewInstall.hidden = release === null;
-    return release;
-  };
-  const release = renderArchitecture("arm64");
-  const intelRelease = renderArchitecture("x64");
-  const intelInstallation = select("#intel-installation");
-  if (intelInstallation) intelInstallation.hidden = intelRelease === null;
+  const release = renderInstallerJourney(documentRef, {
+    compactDetails: true,
+    showUnavailableAction: true,
+    showReleaseLinks: false,
+    formatLocale: getFormattingLocale(),
+    translateMessage: t,
+  });
+  const checksumCopy = select("#installer-sha256-copy");
+  if (checksumCopy) {
+    if (release) checksumCopy.dataset.checksum = release.sha256;
+    else delete checksumCopy.dataset.checksum;
+  }
+  const checksumFallback = select("#installer-sha256");
+  if (checksumFallback) {
+    checksumFallback.textContent = release?.sha256 ?? "";
+    checksumFallback.hidden = true;
+  }
+  renderInstallerAssurance(documentRef, release);
   const headerDownloadLabel = select("#header-download-label");
   if (headerDownloadLabel) {
     headerDownloadLabel.dataset.i18n = "installer.headerDownload";
     headerDownloadLabel.textContent = t("installer.headerDownload");
   }
   return release;
-}
-
-export async function copyHomebrewInstallCommand(clipboard) {
-  if (typeof clipboard?.writeText !== "function") return false;
-  try {
-    await clipboard.writeText(HOMEBREW_INSTALL_COMMAND);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 const installerChecksumPattern = /^[a-f0-9]{64}$/u;
@@ -373,48 +184,8 @@ export async function copyInstallerChecksum(checksum, clipboard) {
   }
 }
 
-function selectHomebrewInstallCommand(prefix = "") {
-  const command = $(`#${prefix}homebrew-install-command`);
-  const selection = window.getSelection?.();
-  const range = document.createRange?.();
-  if (!command || !selection || !range) return;
-  range.selectNodeContents(command);
-  selection.removeAllRanges();
-  selection.addRange(range);
-}
-
-function renderHomebrewCopyState(state = "idle", prefix = "") {
-  const button = $(`#${prefix}homebrew-copy-button`);
-  const label = $(`#${prefix}homebrew-copy-label`);
-  const status = $(`#${prefix}homebrew-copy-status`);
-  if (!button || !label || !status) return;
-  const presentation = {
-    copied: ["installer.homebrew.copied", "installer.homebrew.copySuccess"],
-    failed: ["installer.homebrew.copyManually", "installer.homebrew.copyFailure"],
-    idle: ["installer.homebrew.copy", null],
-  }[state] ?? ["installer.homebrew.copy", null];
-  button.dataset.copyState = state;
-  label.dataset.i18n = presentation[0];
-  label.textContent = t(presentation[0]);
-  status.textContent = presentation[1] ? t(presentation[1]) : "";
-}
-
-function wireHomebrewInstallCommand(prefix = "") {
-  const button = $(`#${prefix}homebrew-copy-button`);
-  if (!button || button.dataset.copyBound === "true") return;
-  button.dataset.copyBound = "true";
-  renderHomebrewCopyState("idle", prefix);
-  button.addEventListener("click", async () => {
-    button.disabled = true;
-    const copied = await copyHomebrewInstallCommand(navigator.clipboard);
-    button.disabled = false;
-    if (!copied) selectHomebrewInstallCommand(prefix);
-    renderHomebrewCopyState(copied ? "copied" : "failed", prefix);
-  });
-}
-
-function selectInstallerChecksum(prefix = "") {
-  const checksum = $(`#${prefix}installer-sha256`);
+function selectInstallerChecksum() {
+  const checksum = $(`#installer-sha256`);
   const selection = window.getSelection?.();
   const range = document.createRange?.();
   if (!checksum || !selection || !range) return;
@@ -424,11 +195,11 @@ function selectInstallerChecksum(prefix = "") {
   selection.addRange(range);
 }
 
-function renderInstallerChecksumCopyState(state = "idle", prefix = "") {
-  const button = $(`#${prefix}installer-sha256-copy`);
-  const label = $(`#${prefix}installer-sha256-copy-label`);
-  const status = $(`#${prefix}installer-sha256-copy-status`);
-  const fallback = $(`#${prefix}installer-sha256`);
+function renderInstallerChecksumCopyState(state = "idle") {
+  const button = $(`#installer-sha256-copy`);
+  const label = $(`#installer-sha256-copy-label`);
+  const status = $(`#installer-sha256-copy-status`);
+  const fallback = $(`#installer-sha256`);
   if (!button || !label || !status || !fallback) return;
   const presentation = {
     copied: ["installer.sha256.copied", "installer.sha256.copySuccess"],
@@ -443,11 +214,11 @@ function renderInstallerChecksumCopyState(state = "idle", prefix = "") {
     || !installerChecksumPattern.test(fallback.textContent);
 }
 
-function wireInstallerChecksumCopy(prefix = "") {
-  const button = $(`#${prefix}installer-sha256-copy`);
+function wireInstallerChecksumCopy() {
+  const button = $(`#installer-sha256-copy`);
   if (!button || button.dataset.copyBound === "true") return;
   button.dataset.copyBound = "true";
-  renderInstallerChecksumCopyState("idle", prefix);
+  renderInstallerChecksumCopyState("idle");
   button.addEventListener("click", async () => {
     button.disabled = true;
     const copied = await copyInstallerChecksum(
@@ -455,8 +226,8 @@ function wireInstallerChecksumCopy(prefix = "") {
       navigator.clipboard,
     );
     button.disabled = false;
-    if (!copied) selectInstallerChecksum(prefix);
-    renderInstallerChecksumCopyState(copied ? "copied" : "failed", prefix);
+    if (!copied) selectInstallerChecksum();
+    renderInstallerChecksumCopyState(copied ? "copied" : "failed");
   });
 }
 
@@ -704,13 +475,7 @@ if (typeof document !== "undefined") {
   });
   mountExampleWeek(document.querySelector("#week-demo"), t);
   renderPublicInstallerJourney();
-  wirePublicPlatformSelector();
-  wireHomebrewInstallCommand();
-  wireHomebrewInstallCommand("intel-");
   wireInstallerChecksumCopy();
-  wireInstallerChecksumCopy("intel-");
-  wireInstallerChecksumCopy("windows-");
-  wireInstallerChecksumCopy("linux-");
   wireAllowanceRangeControls();
   wireAllowanceDialog();
   const refresh = createCommunityRefresh({
@@ -726,21 +491,9 @@ if (typeof document !== "undefined") {
     setFormattingLocale(event.detail?.formatLocale ?? localization.formatLocale());
     setMessageLocale(event.detail?.locale ?? localization.locale());
     renderPublicInstallerJourney();
-    renderHomebrewCopyState(
-      $("#homebrew-copy-button")?.dataset.copyState ?? "idle",
-    );
-    renderHomebrewCopyState(
-      $("#intel-homebrew-copy-button")?.dataset.copyState ?? "idle", "intel-",
-    );
     renderInstallerChecksumCopyState(
       $("#installer-sha256-copy")?.dataset.copyState ?? "idle",
     );
-    renderInstallerChecksumCopyState(
-      $("#intel-installer-sha256-copy")?.dataset.copyState ?? "idle", "intel-",
-    );
-    for (const prefix of ["windows-", "linux-"]) {
-      renderInstallerChecksumCopyState($(`#${prefix}installer-sha256-copy`)?.dataset.copyState ?? "idle", prefix);
-    }
     if (communityDailySettled) {
       renderCommunityDailyResult({
         payload: lastCommunityDailyPayload,

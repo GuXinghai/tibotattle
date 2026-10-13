@@ -1741,10 +1741,10 @@ test("history coverage only becomes complete from coherent archive evidence", ()
   assert.equal(
     normalizeDashboardPayload({
       pricing: {
-        historyCoverage: { ...complete, status: "partial", phase: "awaiting_resume", errorCode: "archive_disk_space" },
+        historyCoverage: { ...complete, status: "partial", phase: "awaiting_resume", errorCode: "local_unified_index_unavailable" },
       },
     }).pricing.historyCoverage.errorCode,
-    "archive_disk_space",
+    "local_unified_index_unavailable",
   );
   const terminalGap = {
     status: "partial",
@@ -5236,7 +5236,7 @@ test("first run is a truthful install and local preflight journey", async () => 
   );
   for (const name of [
     "usage-monitor-installer-bytes",
-    "usage-monitor-minimum-macos",
+    "usage-monitor-minimum-windows",
     "usage-monitor-architectures",
     "usage-monitor-release-notes-url",
     "usage-monitor-privacy-url",
@@ -5286,11 +5286,11 @@ test("first run is a truthful install and local preflight journey", async () => 
     new URL("../public/install-cta.js", import.meta.url),
     "utf8",
   );
-  assert.match(installSource, /function configuredInstallerUrl\(documentRef, architecture\)/u);
+  assert.match(installSource, /function configuredInstallerUrl\(documentRef\)/u);
   assert.match(installSource, /function configuredInstallerMetadata\(/u);
   assert.match(
     installSource,
-    /export function configuredInstallerRelease\(documentRef, \{ architecture = "arm64" \} = \{\}\)/u,
+    /export function configuredInstallerRelease\(documentRef\)/u,
   );
   assert.doesNotMatch(installSource, /configuredSemanticOpenTarget|usage-monitor-semantic-open-target/u);
   assert.match(appSource, /from "\.\/install-cta\.js"/u);
@@ -5301,7 +5301,7 @@ test("first run is a truthful install and local preflight journey", async () => 
   assert.match(installSource, /translateMessage\(\s*"installer\.sha256",\s*\{ value: release\.sha256 \}/u);
   assert.match(
     installSource,
-    /translateMessage\(\s*\n\s*compactDetails\s*\n\s*\?\s*"installer\.compatibilitySummary"\s*\n\s*:\s*"installer\.requiresMacOS",/u,
+    /translateMessage\(\s*\n\s*compactDetails\s*\n\s*\?\s*"installer\.compatibilitySummary"\s*\n\s*:\s*"installer\.requiresWindows",/u,
   );
   assert.match(installSource, /selected\.protocol === "https:"/u);
   assert.doesNotMatch(appSource, /loopbackHttp/u);
@@ -5348,7 +5348,7 @@ test("local analysis exposes quick results and cancel-safe progress", async () =
   assert.match(appSource, /const collectorProgress = progress\?\.kind === undefined/u);
   assert.match(appSource, /if \(collectorProgress\s*&& progress\?\.phase === "quick_result"/u);
   assert.match(appSource, /const countedProgress = collectorProgress \|\| unifiedIndexScanning/u);
-  assert.match(appSource, /outcome === "cancelling"[\s\S]*?accountingStatus !== null[\s\S]*?archiveScanning/u);
+  assert.match(appSource, /outcome === "cancelling"[\s\S]*?accountingStatus !== null/u);
   assert.doesNotMatch(appSource, /Verified summary ready|Preparing verified summary/u);
   assert.match(appSource, /kind === "unified_index"/u);
   assert.match(appSource, /Scanning local history/u);

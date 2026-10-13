@@ -15,7 +15,7 @@
     <meta name="usage-monitor-installer-version" content="">
     <meta name="usage-monitor-installer-sha256" content="">
     <meta name="usage-monitor-installer-bytes" content="">
-    <meta name="usage-monitor-minimum-macos" content="">
+    <meta name="usage-monitor-minimum-windows" content="">
     <meta name="usage-monitor-architectures" content="">
     <meta name="usage-monitor-release-notes-url" content="">
     <meta name="usage-monitor-privacy-url" content="">
@@ -23,7 +23,7 @@
     <meta name="usage-monitor-support-url" content="">
     <!--
       Not a release slot: this is the product version this dashboard build ships
-      as, and it is filled in source so the packaged Mac app carries it too. A
+      as, and it is filled in source so the packaged Windows app carries it too. A
       shared results card names it, so a posted figure can be tied back to the
       build that produced it. The local companion and packaged app stamp it
       from the release manifest.
@@ -213,17 +213,17 @@
       <section class="companion-setup" id="companion-setup" aria-labelledby="companion-setup-title" data-dashboard-page="overview" hidden>
         <div class="companion-setup-copy">
           <p class="eyebrow">First-time setup</p>
-          <h2 id="companion-setup-title">Open TiboTattle on this Mac</h2>
+          <h2 id="companion-setup-title">Open TiboTattle on this PC</h2>
           <p>
-            A website can't read your Codex files. The TiboTattle Mac app reads
+            A website can't read your Codex files. The TiboTattle Windows app reads
             them locally and shows your dashboard in its own window.
           </p>
         </div>
         <ol class="companion-steps">
           <li>
-            <strong>Get the Mac app</strong>
+            <strong>Get the Windows app</strong>
             <a class="button button-primary" id="installer-link" href="" hidden>
-              Download TiboTattle for Mac
+              Download TiboTattle for Windows
             </a>
             <div class="installer-details" id="installer-details" hidden>
               <span id="installer-version"></span>
@@ -275,7 +275,7 @@
       </section>
 
       <details class="setup-card" id="setup-card" aria-labelledby="setup-title" data-dashboard-page="overview" hidden>
-        <summary><h2 id="setup-title">Check this Mac before analyzing</h2><span id="setup-ready-label" class="setup-ready-label" hidden data-i18n="setup.ready">Ready</span></summary>
+        <summary><h2 id="setup-title">Check this PC before analyzing</h2><span id="setup-ready-label" class="setup-ready-label" hidden data-i18n="setup.ready">Ready</span></summary>
         <div class="setup-details-body">
           <div class="setup-copy">
             <p id="setup-summary">
@@ -674,7 +674,7 @@
             <div class="chart-heading">
               <div>
                 <h3 id="timeline-chart-title">Observed quota change versus cost-implied change</h3>
-                <p id="timeline-chart-copy">Chart and table use this Mac’s reporting time zone.</p>
+                <p id="timeline-chart-copy">Chart and table use this PC’s reporting time zone.</p>
               </div>
               <div class="calibration-controls" hidden>
                 <!--
@@ -937,57 +937,6 @@
             <button class="button button-quiet compact" id="cache-continuity-page-prev" type="button" aria-controls="cache-continuity-rows" data-i18n="table.pagination.previous">Previous</button>
             <span class="table-pagination-status" id="cache-continuity-page-status" role="status"></span>
             <button class="button button-quiet compact" id="cache-continuity-page-next" type="button" aria-controls="cache-continuity-rows" data-i18n="table.pagination.next">Next</button>
-          </div>
-        </details>
-        <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details side-chat-details" id="side-chat-details" hidden>
-          <summary data-i18n="accounting.sideChat.detailsSummary">See experimental side-chat estimate</summary>
-          <p class="annotation" data-i18n="accounting.sideChat.detailsExplanation">
-            This development-only estimate finds confirmed desktop side-chat
-            lifecycles and prices deduplicated sampling markers that still
-            survive in numeric local diagnostics. The active window is
-            approximately 10 days; expired or rotated partitions are unknown
-            and are not reconstructed. Active-context volume is observed,
-            while input, cache, output, and reasoning components are
-            reconstructed. Ordinary calls use the owner-directed mostly-warm
-            point; an observed compaction makes the next point cold. Auto
-            Review and other reviewed aliases retain their conditional
-            alias-rate assumption. Exact totals remain unchanged. Surviving
-            eligible estimates are speed-weighted and added only to the
-            experimental red line, calibration metrics, and AUC, with the
-            exact-ledger baseline kept beside them.
-          </p>
-          <section class="historical-gap-probe" id="side-chat-historical-gap" hidden>
-            <p class="panel-kicker" data-i18n="accounting.sideChat.historicalGap.kicker">Historical test case</p>
-            <h3 data-i18n="accounting.sideChat.historicalGap.heading">Historical quota-gap backcast</h3>
-            <p class="annotation" id="side-chat-historical-gap-explanation"></p>
-            <div class="chart-summary-grid side-chat-historical-gap-summary" id="side-chat-historical-gap-summary"></div>
-            <p class="timeline-confidence low" id="side-chat-historical-gap-note"></p>
-            <button class="button button-secondary compact" id="side-chat-historical-gap-focus" type="button" data-i18n="accounting.sideChat.historicalGap.focus">View this day on the timeline</button>
-          </section>
-          <h3 class="evidence-subheading" data-i18n="accounting.sideChat.retainedHeading">Retained numeric estimate</h3>
-          <div class="chart-summary-grid side-chat-evidence-summary" id="side-chat-evidence-summary"></div>
-          <p class="annotation" id="side-chat-coverage-note"></p>
-          <h3 class="evidence-subheading" data-i18n="accounting.sideChat.recentHeading">Retained sampling calls</h3>
-          <div class="table-wrap">
-            <table class="side-chat-recent-table">
-              <caption class="sr-only" data-i18n="accounting.sideChat.tableCaption">Experimental side-chat sampling-call estimates</caption>
-              <thead>
-                <tr>
-                  <th data-i18n="accounting.sideChat.column.localTime">Local time</th>
-                  <th data-i18n="accounting.sideChat.column.turn">Turn</th>
-                  <th data-i18n="accounting.sideChat.column.configuration">Configuration</th>
-                  <th data-i18n="accounting.sideChat.column.activeContext">Active context</th>
-                  <th data-i18n="accounting.sideChat.column.cacheAssumption">Cache assumption</th>
-                  <th data-i18n="accounting.sideChat.column.apiEstimate">Estimated Standard API equivalent</th>
-                </tr>
-              </thead>
-              <tbody id="side-chat-rows"></tbody>
-            </table>
-          </div>
-          <div class="table-pagination" id="side-chat-pagination" hidden>
-            <button class="button button-quiet compact" id="side-chat-page-prev" type="button" aria-controls="side-chat-rows" data-i18n="table.pagination.previous">Previous</button>
-            <span class="table-pagination-status" id="side-chat-page-status" role="status"></span>
-            <button class="button button-quiet compact" id="side-chat-page-next" type="button" aria-controls="side-chat-rows" data-i18n="table.pagination.next">Next</button>
           </div>
         </details>
       </section>

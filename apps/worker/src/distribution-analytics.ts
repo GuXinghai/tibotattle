@@ -1,4 +1,3 @@
-import stableSparkleReleaseContract from "./sparkle-release-contract.json";
 import {
   githubUnavailable,
   readGithubDistributionInventory,
@@ -9,76 +8,22 @@ import {
 export type { GithubDistributionAnalytics } from "./github-distribution-history";
 
 const ANALYTICS_ENDPOINT = "https://api.cloudflare.com/client/v4/graphql";
-const UPDATE_HOST = new URL(stableSparkleReleaseContract.updateOrigin).hostname;
+// The reviewed update origin from config/deployment-endpoints.js (sparkle.origin).
+const UPDATE_HOST = "updates.tibotattle.com";
 const LOOKBACK_DAYS = 7 as const;
 const DAY_MILLISECONDS = 24 * 60 * 60 * 1_000;
 const GRAPHQL_ROW_LIMIT = 10_000;
 const MAX_RESPONSE_BYTES = 2 * 1_024 * 1_024;
 const FETCH_TIMEOUT_MILLISECONDS = 8_000;
 const MAX_RENDERED_VERSIONS = 24;
-const OBSERVED_OPERATING_SYSTEMS = ["macos", "windows", "linux"] as const;
-const OBSERVED_MACOS_ARCHITECTURES = ["arm64", "x64"] as const;
 
+// TiboTattle is Windows x64 only. The single observed update feed is the
+// Windows Electron manifest; the retired native, Sparkle, macOS and Linux
+// feeds are deliberately not queried, so they are never presented as zero.
 const ANALYTICS_QUERY = `
   query TiboTattleDistribution($zoneTag: string, $start: Time, $end: Time) {
     viewer {
       zones(filter: { zoneTag: $zoneTag }) {
-        nativeArm64: httpRequestsAdaptiveGroups(
-          limit: ${GRAPHQL_ROW_LIMIT}
-          filter: {
-            datetime_geq: $start
-            datetime_lt: $end
-            clientRequestHTTPHost: "${UPDATE_HOST}"
-            clientRequestPath: "/appcast.xml"
-            requestSource: "eyeball"
-          }
-        ) {
-          count
-          avg { sampleInterval }
-          dimensions { clientIP userAgent edgeResponseStatus }
-        }
-        nativeX64: httpRequestsAdaptiveGroups(
-          limit: ${GRAPHQL_ROW_LIMIT}
-          filter: {
-            datetime_geq: $start
-            datetime_lt: $end
-            clientRequestHTTPHost: "${UPDATE_HOST}"
-            clientRequestPath: "/intel/appcast.xml"
-            requestSource: "eyeball"
-          }
-        ) {
-          count
-          avg { sampleInterval }
-          dimensions { clientIP userAgent edgeResponseStatus }
-        }
-        electronMacArm64: httpRequestsAdaptiveGroups(
-          limit: ${GRAPHQL_ROW_LIMIT}
-          filter: {
-            datetime_geq: $start
-            datetime_lt: $end
-            clientRequestHTTPHost: "${UPDATE_HOST}"
-            clientRequestPath: "/electron/stable/darwin-arm64/latest-mac.yml"
-            requestSource: "eyeball"
-          }
-        ) {
-          count
-          avg { sampleInterval }
-          dimensions { clientIP userAgent edgeResponseStatus }
-        }
-        electronMacX64: httpRequestsAdaptiveGroups(
-          limit: ${GRAPHQL_ROW_LIMIT}
-          filter: {
-            datetime_geq: $start
-            datetime_lt: $end
-            clientRequestHTTPHost: "${UPDATE_HOST}"
-            clientRequestPath: "/electron/stable/darwin-x64/latest-mac.yml"
-            requestSource: "eyeball"
-          }
-        ) {
-          count
-          avg { sampleInterval }
-          dimensions { clientIP userAgent edgeResponseStatus }
-        }
         electronWindowsX64: httpRequestsAdaptiveGroups(
           limit: ${GRAPHQL_ROW_LIMIT}
           filter: {
@@ -86,48 +31,6 @@ const ANALYTICS_QUERY = `
             datetime_lt: $end
             clientRequestHTTPHost: "${UPDATE_HOST}"
             clientRequestPath: "/electron/stable/win32-x64/latest.yml"
-            requestSource: "eyeball"
-          }
-        ) {
-          count
-          avg { sampleInterval }
-          dimensions { clientIP userAgent edgeResponseStatus }
-        }
-        electronLinuxX64: httpRequestsAdaptiveGroups(
-          limit: ${GRAPHQL_ROW_LIMIT}
-          filter: {
-            datetime_geq: $start
-            datetime_lt: $end
-            clientRequestHTTPHost: "${UPDATE_HOST}"
-            clientRequestPath: "/electron/stable/linux-x64/latest-linux.yml"
-            requestSource: "eyeball"
-          }
-        ) {
-          count
-          avg { sampleInterval }
-          dimensions { clientIP userAgent edgeResponseStatus }
-        }
-        releases: httpRequestsAdaptiveGroups(
-          limit: ${GRAPHQL_ROW_LIMIT}
-          filter: {
-            datetime_geq: $start
-            datetime_lt: $end
-            clientRequestHTTPHost: "${UPDATE_HOST}"
-            clientRequestPath_like: "/releases/%"
-            requestSource: "eyeball"
-          }
-        ) {
-          count
-          avg { sampleInterval }
-          dimensions { clientIP userAgent edgeResponseStatus }
-        }
-        intelReleases: httpRequestsAdaptiveGroups(
-          limit: ${GRAPHQL_ROW_LIMIT}
-          filter: {
-            datetime_geq: $start
-            datetime_lt: $end
-            clientRequestHTTPHost: "${UPDATE_HOST}"
-            clientRequestPath_like: "/${stableSparkleReleaseContract.intel.objectPrefix}/%"
             requestSource: "eyeball"
           }
         ) {
@@ -167,9 +70,9 @@ export interface DistributionRequestCounts {
 }
 
 export interface DistributionVersionActivity {
-  readonly client: "native" | "electron";
-  readonly operatingSystem: "macos" | "windows" | "linux";
-  readonly architecture: "arm64" | "x64";
+  readonly client: "electron";
+  readonly operatingSystem: "windows";
+  readonly architecture: "x64";
   readonly version: string | null;
   readonly requestsLast7Days: number;
   readonly sourceAddressesLast7Days: number;
@@ -181,15 +84,8 @@ export interface DistributionObservedPlatformTotals {
   readonly sourceAddressesLast7Days: number;
 }
 
-export interface DistributionObservedArchitectureTotals {
-  readonly architecture: DistributionVersionActivity["architecture"];
-  readonly requestsLast7Days: number;
-  readonly sourceAddressesLast7Days: number;
-}
-
 export interface DistributionObservedTotals {
   readonly platforms: readonly DistributionObservedPlatformTotals[];
-  readonly macosArchitectures: readonly DistributionObservedArchitectureTotals[];
   readonly overall: {
     readonly requestsLast7Days: number;
     readonly sourceAddressesLast7Days: number;
@@ -200,10 +96,7 @@ export interface DistributionActivitySegment {
   readonly startsAt: string;
   readonly endsAt: string;
   readonly activeSourceAddresses: number;
-  readonly preflightRequests: number;
-  readonly sparkleCheckRequests: number;
   readonly electronCheckRequests: number;
-  readonly sparkleDownloadRequests: number;
   readonly currentVersionSourceAddresses: number | null;
 }
 
@@ -217,10 +110,7 @@ export interface CloudflareDistributionAnalytics {
     readonly endsAt: string;
   } | null;
   readonly activeSourceAddresses: DistributionWindowCounts | null;
-  readonly preflight: DistributionRequestCounts | null;
-  readonly sparkleChecks: DistributionRequestCounts | null;
   readonly electronChecks: DistributionRequestCounts | null;
-  readonly sparkleDownloads: DistributionRequestCounts | null;
   readonly currentVersion: string | null;
   readonly currentVersionSourceAddresses: DistributionWindowCounts | null;
   /**
@@ -255,8 +145,7 @@ interface AnalyticsRow {
 interface AnalyticsSegment {
   readonly startsAt: string;
   readonly endsAt: string;
-  readonly checkGroups: readonly AnalyticsCheckGroup[];
-  readonly releases: readonly AnalyticsRow[];
+  readonly rows: readonly AnalyticsRow[];
   readonly bounded: boolean;
 }
 
@@ -269,13 +158,6 @@ interface VersionAccumulator {
 interface ObservedTotalsAccumulator {
   requestsLast7Days: number;
   readonly sourceAddressesLast7Days: Set<string>;
-}
-
-interface AnalyticsCheckGroup {
-  readonly client: DistributionVersionActivity["client"];
-  readonly operatingSystem: DistributionVersionActivity["operatingSystem"];
-  readonly architecture: DistributionVersionActivity["architecture"];
-  readonly rows: readonly AnalyticsRow[];
 }
 
 function configuredString(value: unknown): string | null {
@@ -331,10 +213,7 @@ function sourceUnavailable(
     bounded: null,
     window: null,
     activeSourceAddresses: null,
-    preflight: null,
-    sparkleChecks: null,
     electronChecks: null,
-    sparkleDownloads: null,
     currentVersion: null,
     currentVersionSourceAddresses: null,
     bySegment: [],
@@ -431,68 +310,12 @@ function parseAnalyticsResponse(
     throw new Error("invalid external analytics response");
   }
   const zone = record(zones[0]);
-  const nativeArm64 = parseAnalyticsRows(zone.nativeArm64);
-  const nativeX64 = parseAnalyticsRows(zone.nativeX64);
-  const electronMacArm64 = parseAnalyticsRows(zone.electronMacArm64);
-  const electronMacX64 = parseAnalyticsRows(zone.electronMacX64);
-  const electronWindowsX64 = parseAnalyticsRows(zone.electronWindowsX64);
-  const electronLinuxX64 = parseAnalyticsRows(zone.electronLinuxX64);
-  const checkGroups: readonly AnalyticsCheckGroup[] = [
-    {
-      client: "native",
-      operatingSystem: "macos",
-      architecture: "arm64",
-      rows: nativeArm64,
-    },
-    {
-      client: "native",
-      operatingSystem: "macos",
-      architecture: "x64",
-      rows: nativeX64,
-    },
-    {
-      client: "electron",
-      operatingSystem: "macos",
-      architecture: "arm64",
-      rows: electronMacArm64,
-    },
-    {
-      client: "electron",
-      operatingSystem: "macos",
-      architecture: "x64",
-      rows: electronMacX64,
-    },
-    {
-      client: "electron",
-      operatingSystem: "windows",
-      architecture: "x64",
-      rows: electronWindowsX64,
-    },
-    {
-      client: "electron",
-      operatingSystem: "linux",
-      architecture: "x64",
-      rows: electronLinuxX64,
-    },
-  ];
-  const releases = parseAnalyticsRows(zone.releases);
-  const intelReleases = parseAnalyticsRows(zone.intelReleases);
-  const queryGroups = [
-    nativeArm64,
-    nativeX64,
-    electronMacArm64,
-    electronMacX64,
-    electronWindowsX64,
-    electronLinuxX64,
-    releases,
-    intelReleases,
-  ];
+  const rows = parseAnalyticsRows(zone.electronWindowsX64);
   return {
     startsAt,
     endsAt,
-    checkGroups,
-    releases: [...releases, ...intelReleases],
-    bounded: queryGroups.some((group) => group.length >= GRAPHQL_ROW_LIMIT),
+    rows,
+    bounded: rows.length >= GRAPHQL_ROW_LIMIT,
   };
 }
 
@@ -539,8 +362,13 @@ function isSuccessfulCheck(status: number): boolean {
   return (status >= 200 && status < 300) || status === 304;
 }
 
-function isSuccessfulDownload(status: number): boolean {
-  return status >= 200 && status < 300;
+/** Only TiboTattle's own Electron updater clients count as observed checks. */
+function isWindowsUpdateClient(userAgent: string): boolean {
+  const agent = userAgent.toLowerCase();
+  return agent.includes("tibotattle/")
+    || agent.includes("electron/")
+    || agent.includes("electron-updater")
+    || agent.includes("electron-builder");
 }
 
 function appVersion(userAgent: string): string | null {
@@ -618,37 +446,11 @@ function aggregateAnalytics(
   }
   const activeAddressesLast24Hours = new Set<string>();
   const activeAddressesLast7Days = new Set<string>();
-  const preflight = requestAccumulator();
-  const sparkleChecks = requestAccumulator();
   const electronChecks = requestAccumulator();
-  const sparkleDownloads = requestAccumulator();
   const bySegment: DistributionActivitySegment[] = [];
+  // Keyed by the reported app version; the empty key is an unversioned client.
   const versions = new Map<string, VersionAccumulator>();
-  const observedTotalsByOperatingSystem = new Map<
-    DistributionVersionActivity["operatingSystem"],
-    ObservedTotalsAccumulator
-  >(
-    OBSERVED_OPERATING_SYSTEMS.map((operatingSystem) => [
-      operatingSystem,
-      {
-        requestsLast7Days: 0,
-        sourceAddressesLast7Days: new Set<string>(),
-      },
-    ]),
-  );
-  const observedTotalsByMacosArchitecture = new Map<
-    DistributionVersionActivity["architecture"],
-    ObservedTotalsAccumulator
-  >(
-    OBSERVED_MACOS_ARCHITECTURES.map((architecture) => [
-      architecture,
-      {
-        requestsLast7Days: 0,
-        sourceAddressesLast7Days: new Set<string>(),
-      },
-    ]),
-  );
-  const observedTotalsOverall: ObservedTotalsAccumulator = {
+  const observedWindowsTotals: ObservedTotalsAccumulator = {
     requestsLast7Days: 0,
     sourceAddressesLast7Days: new Set<string>(),
   };
@@ -659,121 +461,51 @@ function aggregateAnalytics(
     const inLast24Hours = index === segments.length - 1;
     const segmentActiveAddresses = new Set<string>();
     const segmentCurrentVersionAddresses = new Set<string>();
-    let segmentPreflightRequests = 0;
-    let segmentSparkleCheckRequests = 0;
     let segmentElectronCheckRequests = 0;
-    let segmentSparkleDownloadRequests = 0;
     bounded ||= segment.bounded;
-    for (const row of [
-      ...segment.checkGroups.flatMap((group) => group.rows),
-      ...segment.releases,
-    ]) {
+    for (const row of segment.rows) {
       sampled ||= row.sampleInterval > 1;
     }
-    for (const group of segment.checkGroups) {
-      for (const row of group.rows) {
-        if (!isSuccessfulCheck(row.edgeResponseStatus)) continue;
-        const agent = row.userAgent.toLowerCase();
-        const isSparkle = agent.includes("sparkle");
-        const isTiboTattle = agent.includes("tibotattle/");
-        const isElectron = group.client === "electron"
-          && (isTiboTattle
-            || agent.includes("electron/")
-            || agent.includes("electron-updater")
-            || agent.includes("electron-builder"));
-        if (group.client === "native" && !isSparkle && !isTiboTattle) continue;
-        if (group.client === "electron" && !isElectron) continue;
-
-        activeAddressesLast7Days.add(row.clientIP);
-        segmentActiveAddresses.add(row.clientIP);
-        if (inLast24Hours) activeAddressesLast24Hours.add(row.clientIP);
-        const observedPlatformTotals = observedTotalsByOperatingSystem.get(
-          group.operatingSystem,
-        );
-        if (observedPlatformTotals === undefined) {
-          throw new Error("unknown observed operating system");
-        }
-        observedPlatformTotals.requestsLast7Days = safeAdd(
-          observedPlatformTotals.requestsLast7Days,
-          row.count,
-        );
-        observedPlatformTotals.sourceAddressesLast7Days.add(row.clientIP);
-        if (group.operatingSystem === "macos") {
-          const architectureTotals = observedTotalsByMacosArchitecture.get(
-            group.architecture,
-          );
-          if (architectureTotals === undefined) {
-            throw new Error("unknown macOS architecture");
-          }
-          architectureTotals.requestsLast7Days = safeAdd(
-            architectureTotals.requestsLast7Days,
-            row.count,
-          );
-          architectureTotals.sourceAddressesLast7Days.add(row.clientIP);
-        }
-        observedTotalsOverall.requestsLast7Days = safeAdd(
-          observedTotalsOverall.requestsLast7Days,
-          row.count,
-        );
-        observedTotalsOverall.sourceAddressesLast7Days.add(row.clientIP);
-        if (group.client === "electron") {
-          addRequest(row, inLast24Hours, electronChecks);
-          segmentElectronCheckRequests = safeAdd(
-            segmentElectronCheckRequests,
-            row.count,
-          );
-        } else {
-          addRequest(row, inLast24Hours, isSparkle ? sparkleChecks : preflight);
-          if (isSparkle) {
-            segmentSparkleCheckRequests = safeAdd(
-              segmentSparkleCheckRequests,
-              row.count,
-            );
-          } else {
-            segmentPreflightRequests = safeAdd(segmentPreflightRequests, row.count);
-          }
-        }
-
-        const version = appVersion(row.userAgent);
-        const versionKey = `${group.client}\u0000${group.operatingSystem}\u0000${group.architecture}\u0000${version ?? ""}`;
-        const accumulator = versions.get(versionKey) ?? {
-          requestsLast7Days: 0,
-          sourceAddressesLast24Hours: new Set<string>(),
-          sourceAddressesLast7Days: new Set<string>(),
-        };
-        accumulator.requestsLast7Days = safeAdd(
-          accumulator.requestsLast7Days,
-          row.count,
-        );
-        accumulator.sourceAddressesLast7Days.add(row.clientIP);
-        if (inLast24Hours) {
-          accumulator.sourceAddressesLast24Hours.add(row.clientIP);
-        }
-        versions.set(versionKey, accumulator);
-        if (version !== null && version === currentVersion) {
-          segmentCurrentVersionAddresses.add(row.clientIP);
-        }
-      }
-    }
-    for (const row of segment.releases) {
-      if (!isSuccessfulDownload(row.edgeResponseStatus)
-          || !row.userAgent.toLowerCase().includes("sparkle")) {
-        continue;
-      }
-      addRequest(row, inLast24Hours, sparkleDownloads);
-      segmentSparkleDownloadRequests = safeAdd(
-        segmentSparkleDownloadRequests,
+    for (const row of segment.rows) {
+      if (!isSuccessfulCheck(row.edgeResponseStatus)) continue;
+      if (!isWindowsUpdateClient(row.userAgent)) continue;
+      activeAddressesLast7Days.add(row.clientIP);
+      segmentActiveAddresses.add(row.clientIP);
+      if (inLast24Hours) activeAddressesLast24Hours.add(row.clientIP);
+      observedWindowsTotals.requestsLast7Days = safeAdd(
+        observedWindowsTotals.requestsLast7Days,
         row.count,
       );
+      observedWindowsTotals.sourceAddressesLast7Days.add(row.clientIP);
+      addRequest(row, inLast24Hours, electronChecks);
+      segmentElectronCheckRequests = safeAdd(
+        segmentElectronCheckRequests,
+        row.count,
+      );
+      const version = appVersion(row.userAgent) ?? "";
+      const accumulator = versions.get(version) ?? {
+        requestsLast7Days: 0,
+        sourceAddressesLast24Hours: new Set<string>(),
+        sourceAddressesLast7Days: new Set<string>(),
+      };
+      accumulator.requestsLast7Days = safeAdd(
+        accumulator.requestsLast7Days,
+        row.count,
+      );
+      accumulator.sourceAddressesLast7Days.add(row.clientIP);
+      if (inLast24Hours) {
+        accumulator.sourceAddressesLast24Hours.add(row.clientIP);
+      }
+      versions.set(version, accumulator);
+      if (currentVersion !== null && version === currentVersion) {
+        segmentCurrentVersionAddresses.add(row.clientIP);
+      }
     }
     bySegment.push({
       startsAt: segment.startsAt,
       endsAt: segment.endsAt,
       activeSourceAddresses: segmentActiveAddresses.size,
-      preflightRequests: segmentPreflightRequests,
-      sparkleCheckRequests: segmentSparkleCheckRequests,
       electronCheckRequests: segmentElectronCheckRequests,
-      sparkleDownloadRequests: segmentSparkleDownloadRequests,
       currentVersionSourceAddresses: currentVersion === null
         ? null
         : segmentCurrentVersionAddresses.size,
@@ -781,73 +513,34 @@ function aggregateAnalytics(
   });
 
   const observedVersions = [...versions.entries()]
-    .map(([key, value]) => {
-      const [client, operatingSystem, architecture, version] = key.split("\u0000") as [
-        DistributionVersionActivity["client"],
-        DistributionVersionActivity["operatingSystem"],
-        DistributionVersionActivity["architecture"],
-        string,
-      ];
-      return {
-        client,
-        operatingSystem,
-        architecture,
-        version: version.length === 0 ? null : version,
-        requestsLast7Days: value.requestsLast7Days,
-        sourceAddressesLast7Days: value.sourceAddressesLast7Days.size,
-      };
-    })
+    .map(([version, value]): DistributionVersionActivity => ({
+      client: "electron",
+      operatingSystem: "windows",
+      architecture: "x64",
+      version: version.length === 0 ? null : version,
+      requestsLast7Days: value.requestsLast7Days,
+      sourceAddressesLast7Days: value.sourceAddressesLast7Days.size,
+    }))
     .sort((left, right) =>
       right.sourceAddressesLast7Days - left.sourceAddressesLast7Days
       || right.requestsLast7Days - left.requestsLast7Days
-      || left.client.localeCompare(right.client)
-      || left.operatingSystem.localeCompare(right.operatingSystem)
-      || left.architecture.localeCompare(right.architecture)
       || (left.version ?? "").localeCompare(right.version ?? ""))
     .slice(0, MAX_RENDERED_VERSIONS);
   const observedTotals: DistributionObservedTotals = {
-    platforms: OBSERVED_OPERATING_SYSTEMS.map((operatingSystem) => {
-      const totals = observedTotalsByOperatingSystem.get(operatingSystem);
-      if (totals === undefined) {
-        throw new Error("unknown observed operating system");
-      }
-      return {
-        operatingSystem,
-        requestsLast7Days: totals.requestsLast7Days,
-        sourceAddressesLast7Days: totals.sourceAddressesLast7Days.size,
-      };
-    }),
-    macosArchitectures: OBSERVED_MACOS_ARCHITECTURES.map((architecture) => {
-      const totals = observedTotalsByMacosArchitecture.get(architecture);
-      if (totals === undefined) {
-        throw new Error("unknown macOS architecture");
-      }
-      return {
-        architecture,
-        requestsLast7Days: totals.requestsLast7Days,
-        sourceAddressesLast7Days: totals.sourceAddressesLast7Days.size,
-      };
-    }),
+    platforms: [{
+      operatingSystem: "windows",
+      requestsLast7Days: observedWindowsTotals.requestsLast7Days,
+      sourceAddressesLast7Days: observedWindowsTotals.sourceAddressesLast7Days.size,
+    }],
     overall: {
-      requestsLast7Days: observedTotalsOverall.requestsLast7Days,
-      sourceAddressesLast7Days:
-        observedTotalsOverall.sourceAddressesLast7Days.size,
+      requestsLast7Days: observedWindowsTotals.requestsLast7Days,
+      sourceAddressesLast7Days: observedWindowsTotals.sourceAddressesLast7Days.size,
     },
   };
-  const currentVersionAddressesLast24Hours = new Set<string>();
-  const currentVersionAddressesLast7Days = new Set<string>();
-  if (currentVersion !== null) {
-    for (const [key, value] of versions) {
-      if (key.endsWith(`\u0000${currentVersion}`)) {
-        value.sourceAddressesLast24Hours.forEach((address) => {
-          currentVersionAddressesLast24Hours.add(address);
-        });
-        value.sourceAddressesLast7Days.forEach((address) => {
-          currentVersionAddressesLast7Days.add(address);
-        });
-      }
-    }
-  }
+  const currentVersionTotals = currentVersion === null
+    ? undefined
+    : versions.get(currentVersion);
+
   return {
     status: "available",
     reasonCode: null,
@@ -861,16 +554,13 @@ function aggregateAnalytics(
       last24Hours: activeAddressesLast24Hours.size,
       last7Days: activeAddressesLast7Days.size,
     },
-    preflight: projectRequestAccumulator(preflight),
-    sparkleChecks: projectRequestAccumulator(sparkleChecks),
     electronChecks: projectRequestAccumulator(electronChecks),
-    sparkleDownloads: projectRequestAccumulator(sparkleDownloads),
     currentVersion,
     currentVersionSourceAddresses: currentVersion === null
       ? null
       : {
-        last24Hours: currentVersionAddressesLast24Hours.size,
-        last7Days: currentVersionAddressesLast7Days.size,
+        last24Hours: currentVersionTotals?.sourceAddressesLast24Hours.size ?? 0,
+        last7Days: currentVersionTotals?.sourceAddressesLast7Days.size ?? 0,
       },
     bySegment,
     observedVersions,
@@ -902,13 +592,11 @@ export async function readDistributionAnalytics(
       github: githubUnavailable("not_configured", "DISTRIBUTION_DISABLED"),
     };
   }
-
   const zoneId = configuredString(configuration.cloudflareZoneId);
   const cloudflareApiToken = configuredString(configuration.cloudflareApiToken);
   const githubPromise = configuration.githubSnapshot === undefined
     ? readGithubDistributionInventory(configuration.githubApiToken, fetcher)
     : Promise.resolve(configuration.githubSnapshot);
-
   const analyticsPromise = zoneId === null || cloudflareApiToken === null
     ? Promise.resolve<readonly AnalyticsSegment[] | null>(null)
     : Promise.all(
@@ -921,7 +609,6 @@ export async function readDistributionAnalytics(
           fetcher,
         )),
     ).catch(() => [] as readonly AnalyticsSegment[]);
-
   const [segments, github] = await Promise.all([analyticsPromise, githubPromise]);
   let cloudflare: CloudflareDistributionAnalytics;
   if (segments === null) {

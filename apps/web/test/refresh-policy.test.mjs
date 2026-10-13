@@ -95,7 +95,6 @@ function refreshHarness({
     localActionBusy: false,
     localRefreshInProgress: false,
     localRefreshCancelRequested: false,
-    archiveHistoryScanActive: false,
     reindexAutoContinuations: 0,
     lastReindexProgressReceipt: null,
     returnRefreshScheduled: false,
@@ -744,7 +743,7 @@ test("Electron startup evaluates publication evidence after its barrier clears",
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const harness = refreshHarness({ electron: true, detailedSnapshot: true });
-  harness.context.__TIBOTATTLE_ELECTRON_MACOS_SMOKE__ = {
+  harness.context.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__ = {
     version: "v1",
     waitForStartupRefresh: () => gate,
   };
@@ -763,7 +762,7 @@ test("qualified Electron startup waits for the preload smoke barrier", async () 
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const harness = refreshHarness({ electron: true });
-  harness.context.__TIBOTATTLE_ELECTRON_MACOS_SMOKE__ = {
+  harness.context.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__ = {
     version: "v1",
     waitForStartupRefresh: () => gate,
   };
@@ -784,7 +783,7 @@ test("qualified Electron startup deferred by the initial dashboard lock runs onc
   let release;
   const gate = new Promise((resolve) => { release = resolve; });
   const harness = refreshHarness({ electron: true });
-  harness.context.__TIBOTATTLE_ELECTRON_MACOS_SMOKE__ = {
+  harness.context.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__ = {
     version: "v1",
     waitForStartupRefresh: () => gate,
   };

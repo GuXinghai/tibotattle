@@ -298,7 +298,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .dashboard-content { min-width: 0; -webkit-user-select: text; user-select: text; }
 [data-dashboard-page][hidden] { display: none !important; }
 
-/* The packaged Mac app supplies a real AppKit header and sidebar. Keep this
+/* The packaged Windows app supplies a real AppKit header and sidebar. Keep this
    document focused on the selected, readable report instead of rendering a
    second browser-shaped navigation system inside the native shell. */
 html.native-dashboard body,
@@ -620,7 +620,7 @@ h1 {
  * the header pill that `renderGlobalState` writes, so the tile reads that pill
  * through `:has()` instead of requiring a second source of truth in app.js.
  * The pill stays in the DOM even when the native shell hides the top bar, so
- * this keeps working inside the packaged Mac app.
+ * this keeps working inside the packaged Windows app.
  *
  * Green means the evidence is current. Amber means work is in flight. Muted
  * means there is nothing current to show. Blue means labelled demo data.
@@ -2680,60 +2680,8 @@ footer p { margin: 0; }
   min-width: 0;
   margin-top: 30px;
 }
-.community-site .platform-selector {
-  display: inline-flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-self: start;
-  width: auto;
-  max-width: 100%;
-  margin-bottom: 2px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-}
-.community-site .platform-selector[hidden],
 .community-site .platform-panel[hidden] {
   display: none;
-}
-.community-site .platform-tab {
-  appearance: none;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  min-height: 32px;
-  padding: .16rem .5rem;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  color: rgba(255, 253, 247, .62);
-  background: transparent;
-  font: inherit;
-  font-weight: var(--weight-semibold);
-  cursor: pointer;
-  transition: color .12s ease, border-color .12s ease;
-}
-.community-site .platform-tab + .platform-tab {
-  border-inline-start: 1px solid rgba(255, 253, 247, .22);
-}
-.community-site .platform-tab span {
-  font-size: .7rem;
-  line-height: 1.15;
-  white-space: nowrap;
-}
-.community-site .platform-tab:hover {
-  color: var(--site-paper);
-}
-.community-site .platform-tab[aria-selected="true"] {
-  border-bottom-color: var(--site-green-bright);
-  color: var(--site-paper);
-  background: transparent;
-  box-shadow: none;
-  font-weight: var(--weight-bold);
-}
-.community-site .platform-tab:focus-visible {
-  outline: 2px solid var(--site-green-bright);
-  outline-offset: 3px;
 }
 .community-site .platform-panel {
   min-width: 0;
@@ -2783,7 +2731,7 @@ footer p { margin: 0; }
   min-width: 0;
   gap: 12px 18px;
 }
-.community-site .mac-download-button {
+.community-site .download-button {
   gap: .65rem;
   min-height: 54px;
   padding: .8rem 1.3rem .8rem 1.05rem;
@@ -2795,80 +2743,16 @@ footer p { margin: 0; }
   font-size: .84rem;
   text-decoration: none;
 }
-.community-site .mac-download-button:hover:not(:disabled) {
+.community-site .download-button:hover:not(:disabled) {
   color: var(--site-green-deep);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 1), 0 19px 36px rgba(0, 0, 0, .27);
 }
-.community-site .mac-download-button:disabled {
+.community-site .download-button:disabled {
   border-color: rgba(255, 253, 247, .24);
   opacity: .78;
   cursor: default;
 }
-.community-site .homebrew-install {
-  display: flex;
-  flex: 1 1 330px;
-  align-items: stretch;
-  min-width: 0;
-  max-width: 420px;
-  min-height: 54px;
-  overflow: hidden;
-  border: 1px solid rgba(255, 253, 247, .2);
-  border-radius: var(--radius-md);
-  color: var(--site-paper);
-  background: rgba(0, 0, 0, .18);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
-}
-.community-site .homebrew-prompt {
-  align-self: center;
-  padding-inline-start: .82rem;
-  color: rgba(255, 253, 247, .48);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  font-size: .69rem;
-}
-.community-site .homebrew-install code {
-  align-self: center;
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: .75rem .62rem;
-  overflow-x: auto;
-  color: rgba(255, 253, 247, .88);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  font-size: .6rem;
-  line-height: 1.35;
-  scrollbar-width: none;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.community-site .homebrew-install code::-webkit-scrollbar {
-  display: none;
-}
-.community-site .homebrew-copy-button {
-  appearance: none;
-  flex: 0 0 auto;
-  min-width: var(--hit-target);
-  padding: .65rem .72rem;
-  border: 0;
-  border-inline-start: 1px solid rgba(255, 253, 247, .14);
-  color: rgba(255, 253, 247, .72);
-  background: rgba(255, 255, 255, .06);
-  font-size: .61rem;
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-}
-.community-site .homebrew-copy-button:hover:not(:disabled) {
-  color: var(--site-paper);
-  background: rgba(255, 255, 255, .12);
-}
-.community-site .homebrew-copy-button[data-copy-state="copied"] {
-  color: var(--site-green-deep);
-  background: var(--site-green-bright);
-}
-.community-site .homebrew-copy-button:disabled {
-  cursor: wait;
-  opacity: .72;
-}
-.community-site .product-hero a:focus-visible,
-.community-site .homebrew-copy-button:focus-visible {
+.community-site .product-hero a:focus-visible {
   outline-color: var(--site-green-bright);
 }
 .community-site .download-platform-icon {
@@ -4393,10 +4277,6 @@ html.community-chart-modal-open body {
   .community-site .install-cluster {
     margin-top: 24px;
   }
-  .community-site .homebrew-install {
-    flex-basis: 100%;
-    max-width: 100%;
-  }
   .community-site .community-inline {
     grid-template-columns: auto minmax(0, 1fr);
     row-gap: 2px;
@@ -4560,17 +4440,9 @@ html.community-chart-modal-open body {
     flex-direction: column;
     align-items: flex-start;
   }
-  .community-site .mac-download-button,
-  .community-site .homebrew-install,
+  .community-site .download-button,
   .community-site .installer-unavailable {
     width: 100%;
-  }
-  .community-site .homebrew-install {
-    flex-basis: auto;
-  }
-  .community-site .homebrew-install code {
-    overflow-x: visible;
-    white-space: normal;
   }
   .community-site .open-installed-copy {
     width: 100%;

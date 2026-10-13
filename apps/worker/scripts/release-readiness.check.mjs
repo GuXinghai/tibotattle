@@ -4,15 +4,11 @@ import {
   DEPLOYMENT_ENDPOINTS,
 } from "../../../config/deployment-endpoints.js";
 import {
-  getReleaseChannel,
-  INTERNAL_DOGFOOD_RELEASE_CHANNEL,
-  STABLE_RELEASE_CHANNEL,
-} from "../../../config/release-channels.js";
-import {
   DEFAULT_RELEASE_CHANNEL,
   OBSERVATION_CHANNEL,
   REMOTE_CONTAINMENT_OBSERVED_STATUS,
   RELEASE_READINESS_SCHEMA_VERSION,
+  STABLE_RELEASE_CHANNEL,
   verifyReleaseReadiness,
 } from "./release-readiness-lib.mjs";
 import {
@@ -58,30 +54,12 @@ const NOT_READY = {
     lifecycleFresh: false,
   },
 };
-const APPCAST_SIGNATURE = Buffer.alloc(64, 7).toString("base64");
-const APPCAST = `<?xml version="1.0" encoding="utf-8"?>
-<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
-  <channel>
-    <item>
-      <enclosure url="https://updates.tibotattle.com/releases/1/TiboTattle.dmg"
-        length="123" sparkle:version="1"
-        sparkle:edSignature="${APPCAST_SIGNATURE}" />
-    </item>
-  </channel>
-</rss>`;
 const SECRET = "private-jwk-value-must-not-escape";
 
 function jsonResponse(value, status = 200, contentType = "application/json") {
   return new Response(JSON.stringify(value), {
     status,
     headers: { "content-type": contentType },
-  });
-}
-
-function appcastResponse(status = 200, body = APPCAST) {
-  return new Response(body, {
-    status,
-    headers: { "content-type": "application/rss+xml; charset=utf-8" },
   });
 }
 
@@ -105,9 +83,8 @@ function allHealthyFetch(calls) {
   return async (url, options) => {
     calls.push({ options, url: String(url) });
     if (String(url).endsWith("/api/health")) return jsonResponse(HEALTH);
-    if (String(url).endsWith("/api/ready")) return jsonResponse(READY);
-    assert.equal(String(url), DEPLOYMENT_ENDPOINTS.sparkle.appcastURL);
-    return appcastResponse();
+    assert.equal(String(url), `${DEPLOYMENT_ENDPOINTS.public.origin}/api/ready`);
+    return jsonResponse(READY);
   };
 }
 
@@ -128,15 +105,12 @@ test("manifest-only verification is read-only and does not call fetch", async ()
   assert.equal(result.channel, DEFAULT_RELEASE_CHANNEL);
   assert.equal(result.observationChannel, OBSERVATION_CHANNEL);
   assert.equal(result.channelPolicy.name, STABLE_RELEASE_CHANNEL);
-  assert.equal(result.channelPolicy.configured, true);
   assert.equal(
     result.channelPolicy.serviceOrigin,
     DEPLOYMENT_ENDPOINTS.public.origin,
   );
-  assert.equal(
-    result.channelPolicy.sparkle.appcastURL,
-    DEPLOYMENT_ENDPOINTS.sparkle.appcastURL,
-  );
+  assert.equal(result.endpointManifest.status, "matched");
+  assert.equal(Object.hasOwn(result.endpointManifest, "appcastURL"), false);
   assert.equal(result.status, "public_unchecked");
   assert.equal(result.ready, false);
   assert.equal(result.releaseReady, false);
@@ -186,9 +160,9 @@ test("canonical endpoint drift fails closed without probing or echoing drifted v
   assert.equal(JSON.stringify(result).includes(SECRET), false);
 });
 
-test("a copied manifest with the wrong appcast is rejected without probing or claiming that endpoint", async () => {
+test("a copied manifest with a drifted Sparkle bucket is rejected without probing or claiming that endpoint", async () => {
   const endpoints = structuredClone(DEPLOYMENT_ENDPOINTS);
-  endpoints.sparkle.appcastURL = "https://updates.tibotattle.com/wrong.xml";
+  endpoints.sparkle.r2Bucket = "tibotattle-wrong-updates";
   let fetchCalls = 0;
   const result = await verifyReleaseReadiness({
     channel: STABLE_RELEASE_CHANNEL,
@@ -203,56 +177,13 @@ test("a copied manifest with the wrong appcast is rejected without probing or cl
   });
   assert.equal(fetchCalls, 0);
   assert.equal(result.channel, STABLE_RELEASE_CHANNEL);
-  assert.equal(result.channelPolicy.configured, true);
-  assert.equal(
-    result.channelPolicy.sparkle.appcastURL,
-    DEPLOYMENT_ENDPOINTS.sparkle.appcastURL,
-  );
+  assert.equal(result.channelPolicy.serviceOrigin, DEPLOYMENT_ENDPOINTS.public.origin);
   assert.equal(result.endpointManifest.status, "invalid");
+  assert.equal(result.endpointManifest.code, "ENDPOINT_MANIFEST_DRIFT");
   assert.equal(result.endpointManifest.publicOrigin, null);
-  assert.equal(result.endpointManifest.appcastURL, null);
   assert.equal(result.status, "blocked");
-  assert.equal(result.blockers.includes("ENDPOINT_MANIFEST_INVALID"), true);
-  assert.equal(JSON.stringify(result).includes("wrong.xml"), false);
-});
-
-test("configured dogfood probes its reviewed endpoints without falling back to stable", async () => {
-  const calls = [];
-  let consumerChecks = 0;
-  const dogfood = getReleaseChannel(INTERNAL_DOGFOOD_RELEASE_CHANNEL);
-  const result = await verifyReleaseReadiness({
-    channel: INTERNAL_DOGFOOD_RELEASE_CHANNEL,
-    probePublic: true,
-    endpointConsumerCheck: async () => {
-      consumerChecks += 1;
-    },
-    fetchImpl: async (url) => {
-      calls.push(String(url));
-      throw new Error("synthetic dogfood probe failure");
-    },
-    clock: fixedClock(),
-  });
-  assert.deepEqual(calls, [
-    `${dogfood.serviceOrigin}/api/health`,
-    `${dogfood.serviceOrigin}/api/ready`,
-    dogfood.sparkle.appcastURL,
-  ]);
-  assert.equal(consumerChecks, 0);
-  assert.equal(result.channel, INTERNAL_DOGFOOD_RELEASE_CHANNEL);
-  assert.equal(result.channelPolicy.name, INTERNAL_DOGFOOD_RELEASE_CHANNEL);
-  assert.equal(result.channelPolicy.configured, true);
-  assert.equal(result.channelPolicy.serviceOrigin, dogfood.serviceOrigin);
-  assert.equal(result.channelPolicy.sparkle.appcastURL, dogfood.sparkle.appcastURL);
-  assert.equal(result.endpointManifest.status, "matched");
-  assert.equal(result.endpointManifest.publicOrigin, dogfood.serviceOrigin);
-  assert.equal(result.endpointManifest.appcastURL, dogfood.sparkle.appcastURL);
-  assert.equal(result.status, "not_ready");
-  assert.equal(result.ready, false);
-  assert.equal(
-    result.blockers.includes("HEALTH_UNAVAILABLE"),
-    true,
-  );
-  assert.equal(JSON.stringify(result).includes(SECRET), false);
+  assert.equal(result.blockers.includes("ENDPOINT_MANIFEST_DRIFT"), true);
+  assert.equal(JSON.stringify(result).includes("wrong-updates"), false);
 });
 
 test("the observer rejects an arbitrary channel name instead of defaulting to stable", async () => {
@@ -273,11 +204,10 @@ test("explicit public probing reports remote containment, not a release-ready cl
   assert.deepEqual(calls.map((call) => call.url), [
     `${DEPLOYMENT_ENDPOINTS.public.origin}/api/health`,
     `${DEPLOYMENT_ENDPOINTS.public.origin}/api/ready`,
-    DEPLOYMENT_ENDPOINTS.sparkle.appcastURL,
   ]);
-  assert.deepEqual(calls.map((call) => call.options.method), ["GET", "GET", "GET"]);
-  assert.deepEqual(calls.map((call) => call.options.credentials), ["omit", "omit", "omit"]);
-  assert.deepEqual(calls.map((call) => call.options.redirect), ["manual", "manual", "manual"]);
+  assert.deepEqual(calls.map((call) => call.options.method), ["GET", "GET"]);
+  assert.deepEqual(calls.map((call) => call.options.credentials), ["omit", "omit"]);
+  assert.deepEqual(calls.map((call) => call.options.redirect), ["manual", "manual"]);
   assert.equal(Object.hasOwn(calls[0].options.headers, "authorization"), false);
   assert.equal(result.status, REMOTE_CONTAINMENT_OBSERVED_STATUS);
   assert.notEqual(result.status, "ready");
@@ -291,8 +221,7 @@ test("explicit public probing reports remote containment, not a release-ready cl
   });
   assert.equal(result.public.health.status, "pass");
   assert.equal(result.public.ready.status, "pass");
-  assert.equal(result.public.appcast.status, "pass");
-  assert.equal(typeof result.public.appcast.sha256, "string");
+  assert.equal(Object.hasOwn(result.public, "appcast"), false);
   assert.equal(JSON.stringify(result).includes(SECRET), false);
 });
 
@@ -312,8 +241,7 @@ test("disabled enrollment is expected, while an open deployment is reported as d
     fetchImpl: async (url, options) => {
       assert.equal(options.credentials, "omit");
       if (String(url).endsWith("/api/health")) return jsonResponse(openHealth);
-      if (String(url).endsWith("/api/ready")) return jsonResponse(READY);
-      return appcastResponse();
+      return jsonResponse(READY);
     },
     clock: fixedClock(),
   });
@@ -327,33 +255,13 @@ test("disabled enrollment is expected, while an open deployment is reported as d
   assert.equal(result.blockers.includes("DEPLOYED_COLLECTION_CONTROLS_DRIFT"), true);
 });
 
-test("a 404 appcast is explicitly not published and never ready", async () => {
-  const result = await verifyReleaseReadiness({
-    endpointConsumerCheck,
-    probePublic: true,
-    fetchImpl: async (url) => {
-      if (String(url).endsWith("/api/health")) return jsonResponse(HEALTH);
-      if (String(url).endsWith("/api/ready")) return jsonResponse(READY);
-      return appcastResponse(404, SECRET);
-    },
-    clock: fixedClock(),
-  });
-  assert.equal(result.status, "not_ready");
-  assert.equal(result.public.appcast.status, "not_published");
-  assert.equal(result.public.appcast.code, "APPCAST_NOT_PUBLISHED");
-  assert.equal(result.public.appcast.httpStatus, 404);
-  assert.equal(result.blockers.includes("APPCAST_NOT_PUBLISHED"), true);
-  assert.equal(JSON.stringify(result).includes(SECRET), false);
-});
-
 test("a structurally valid 503 ready response is reported as not ready", async () => {
   const result = await verifyReleaseReadiness({
     endpointConsumerCheck,
     probePublic: true,
     fetchImpl: async (url) => {
       if (String(url).endsWith("/api/health")) return jsonResponse(HEALTH);
-      if (String(url).endsWith("/api/ready")) return jsonResponse(NOT_READY, 503);
-      return appcastResponse();
+      return jsonResponse(NOT_READY, 503);
     },
     clock: fixedClock(),
   });
@@ -386,7 +294,6 @@ test("bounded timeouts return fixed codes without leaking fetch errors", async (
   assert.equal(result.status, "not_ready");
   assert.equal(result.public.health.code, "HEALTH_TIMEOUT");
   assert.equal(result.public.ready.code, "READY_TIMEOUT");
-  assert.equal(result.public.appcast.code, "APPCAST_TIMEOUT");
   assert.equal(JSON.stringify(result).includes(SECRET), false);
 });
 
@@ -399,13 +306,13 @@ test("CLI is offline by default and only fails the gate after an explicit live p
   });
   assert.deepEqual(parseReleaseReadinessArguments([
     "--channel",
-    INTERNAL_DOGFOOD_RELEASE_CHANNEL,
+    STABLE_RELEASE_CHANNEL,
     "--probe-public",
     "--timeout-ms",
     "2500",
   ]), {
     help: false,
-    channel: INTERNAL_DOGFOOD_RELEASE_CHANNEL,
+    channel: STABLE_RELEASE_CHANNEL,
     probePublic: true,
     timeoutMs: 2_500,
   });

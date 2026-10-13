@@ -136,7 +136,7 @@ test("remote mode requires separate confirmation before any subprocess", async (
 });
 
 test("remote syntax refuses all configured database identities including production and staging", async () => {
-  for (const file of ["wrangler.jsonc", "wrangler.dogfood.jsonc"]) {
+  for (const file of ["wrangler.jsonc"]) {
     const config = parse(await readFile(join(workerRoot, file), "utf8"));
     for (const environment of [config, ...Object.values(config.env ?? {})]) for (const db of environment.d1_databases ?? []) {
     const bad = structuredClone(target); bad.databases.USAGE_MONITOR_DB.database_id = db.database_id;

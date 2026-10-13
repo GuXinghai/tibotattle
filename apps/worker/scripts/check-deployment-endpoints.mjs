@@ -2,9 +2,8 @@
 /**
  * Checks every deployment endpoint consumer that cannot share the JavaScript
  * manifest directly. The manifest is authoritative; this script makes the
- * checked-in Wrangler, generated Worker types, Electron runtime,
- * signed-release configuration, and Sparkle publisher fail closed
- * if any of them drift.
+ * checked-in Wrangler, generated Worker types, and Electron runtime fail
+ * closed if any of them drift.
  */
 import { readFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -14,21 +13,6 @@ import {
   DEPLOYMENT_ENDPOINTS,
   assertDeploymentEndpoints,
 } from "../../../config/deployment-endpoints.js";
-import {
-  APPROVED_R2_BUCKET,
-  APPCAST_ATOMIC_GUARD_SCHEMA,
-  APPCAST_ATOMIC_GUARD_ROUTE,
-  APPCAST_CACHE_CONTROL,
-  CANONICAL_APPCAST_URL,
-  CANONICAL_UPDATE_ORIGIN,
-  IMMUTABLE_CACHE_CONTROL,
-} from "../../../scripts/publish-sparkle-update.js";
-import {
-  RELEASE_CHANNELS,
-  STABLE_RELEASE_CHANNEL,
-  resolveReleaseChannel,
-} from "../../../config/release-channels.js";
-
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 export const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..", "..", "..");
 export const WRANGLER_CONFIG_PATH = join(
@@ -49,34 +33,9 @@ export const WORKER_PACKAGE_PATH = join(
   "worker",
   "package.json",
 );
-export const WORKER_SPARKLE_RELEASE_CONTRACT_PATH = join(
-  REPOSITORY_ROOT,
-  "apps",
-  "worker",
-  "src",
-  "sparkle-release-contract.json",
-);
-export const SPARKLE_GUARD_NONCE_MIGRATION_PATH = join(
-  REPOSITORY_ROOT,
-  "apps",
-  "worker",
-  "migrations",
-  "0029_sparkle_appcast_guard_nonces.sql",
-);
 export const ELECTRON_RUNTIME_PATH = join(
   REPOSITORY_ROOT, "apps", "electron", "desktop-runtime.js",
 );
-export const MACOS_RELEASE_CORE_PATH = join(
-  REPOSITORY_ROOT,
-  "scripts",
-  "macos-release-core.js",
-);
-export const SPARKLE_PUBLISHER_PATH = join(
-  REPOSITORY_ROOT,
-  "scripts",
-  "publish-sparkle-update.js",
-);
-
 function fail(message) {
   const error = new Error(message);
   error.code = "DEPLOYMENT_ENDPOINTS_MISMATCH";
@@ -101,138 +60,6 @@ function rejectEmbeddedEndpoint(source, endpoint, label) {
   if (source.includes(endpoint)) {
     fail(`${label} embeds ${endpoint}; use config/deployment-endpoints.js`);
   }
-}
-
-export const SPARKLE_APPCAST_GUARD_R2_BINDING = "SPARKLE_RELEASES";
-export const SPARKLE_APPCAST_GUARD_D1_BINDING = "USAGE_MONITOR_DB";
-
-const WORKER_SPARKLE_RELEASE_CONTRACT_SCHEMA =
-  "usage-monitor-worker-sparkle-release-contract-v1";
-
-function parseWorkerSparkleReleaseContract(text) {
-  try {
-    const contract = JSON.parse(text);
-    if (!contract || typeof contract !== "object"
-        || Array.isArray(contract)) {
-      fail("Worker Sparkle release contract must be a JSON object");
-    }
-    return contract;
-  } catch (error) {
-    if (error?.code === "DEPLOYMENT_ENDPOINTS_MISMATCH") throw error;
-    fail("Worker Sparkle release contract is invalid JSON");
-  }
-}
-
-export function validateWorkerSparkleReleaseContract(
-  contract,
-  endpoints = DEPLOYMENT_ENDPOINTS,
-) {
-  assertDeploymentEndpoints(endpoints);
-  const stable = RELEASE_CHANNELS[STABLE_RELEASE_CHANNEL];
-  const expected = [
-    ["schemaVersion", WORKER_SPARKLE_RELEASE_CONTRACT_SCHEMA],
-    ["channel", STABLE_RELEASE_CHANNEL],
-    ["serviceOrigin", stable.serviceOrigin],
-    ["updateOrigin", stable.sparkle.origin],
-    ["appcastURL", stable.sparkle.appcastURL],
-    ["appcastObjectKey", stable.sparkle.appcastObjectKey],
-    ["r2Bucket", stable.sparkle.r2Bucket],
-    ["objectPrefix", stable.sparkle.objectPrefix],
-    ["guardSchema", APPCAST_ATOMIC_GUARD_SCHEMA],
-    ["guardRoute", APPCAST_ATOMIC_GUARD_ROUTE],
-    ["appcastContentType", "application/xml; charset=utf-8"],
-    ["appcastCacheControl", APPCAST_CACHE_CONTROL],
-    ["artifactContentType", "application/x-apple-diskimage"],
-    ["artifactCacheControl", IMMUTABLE_CACHE_CONTROL],
-  ];
-  for (const [field, expectedValue] of expected) {
-    if (contract?.[field] !== expectedValue) {
-      fail(
-        `Worker Sparkle release contract ${field} must match the canonical release manifests`,
-      );
-    }
-  }
-  const intel = resolveReleaseChannel(STABLE_RELEASE_CHANNEL, { architecture: "x64" });
-  for (const field of ["appcastURL", "appcastObjectKey", "objectPrefix"]) {
-    if (contract.intel?.[field] !== intel.sparkle[field]) {
-      fail(`Worker Sparkle Intel contract ${field} must match the reviewed architecture`);
-    }
-  }
-  if (contract.serviceOrigin !== endpoints.public.origin
-      || contract.updateOrigin !== endpoints.sparkle.origin
-      || contract.appcastURL !== endpoints.sparkle.appcastURL
-      || contract.r2Bucket !== endpoints.sparkle.r2Bucket) {
-    fail("Worker Sparkle release contract must match config/deployment-endpoints.js");
-  }
-  return Object.freeze({
-    channel: contract.channel,
-    appcastURL: contract.appcastURL,
-    appcastObjectKey: contract.appcastObjectKey,
-    guardRoute: contract.guardRoute,
-    objectPrefix: contract.objectPrefix,
-    r2Bucket: contract.r2Bucket,
-  });
-}
-
-function environmentEntries(configuration) {
-  return [
-    ["default", configuration],
-    ["staging", configuration?.env?.staging],
-    ["production", configuration?.env?.production],
-  ];
-}
-
-function bindingEntries(environment, field) {
-  return Array.isArray(environment?.[field]) ? environment[field] : [];
-}
-
-export function validateWorkerSparkleAppcastGuard(
-  configuration,
-  nonceMigration,
-  endpoints = DEPLOYMENT_ENDPOINTS,
-) {
-  assertDeploymentEndpoints(endpoints);
-  if (typeof nonceMigration !== "string") {
-    fail("Sparkle appcast guard nonce migration must be readable");
-  }
-  const normalizedMigration = nonceMigration
-    .replace(/--[^\n]*/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim()
-    .toLowerCase();
-  if (!/create table if not exists sparkle_appcast_guard_nonces \( nonce text primary key not null, expires_at integer not null \)/u.test(normalizedMigration)
-      || !/create index if not exists idx_sparkle_appcast_guard_nonces_expires_at on sparkle_appcast_guard_nonces\s*\(expires_at\)/u.test(normalizedMigration)) {
-    fail("Sparkle appcast guard nonce schema is required");
-  }
-
-  const environments = environmentEntries(configuration);
-  for (const [label, environment] of environments) {
-    for (const binding of bindingEntries(environment, "r2_buckets")) {
-      if (binding?.binding === SPARKLE_APPCAST_GUARD_R2_BINDING
-          && binding.bucket_name !== endpoints.sparkle.r2Bucket) {
-        fail(`${label} Sparkle R2 binding must match the reviewed manifest bucket`);
-      }
-    }
-    const mode = environment?.vars?.SPARKLE_APPCAST_GUARD_MODE;
-    if (mode !== "enabled") continue;
-    const hasReviewedR2Binding = bindingEntries(environment, "r2_buckets")
-      .some((binding) => binding?.binding === SPARKLE_APPCAST_GUARD_R2_BINDING
-        && binding.bucket_name === endpoints.sparkle.r2Bucket);
-    if (!hasReviewedR2Binding) {
-      fail(`${label} enabled Sparkle appcast guard requires the reviewed R2 binding`);
-    }
-    const hasNonceDatabase = bindingEntries(environment, "d1_databases")
-      .some((binding) => binding?.binding === SPARKLE_APPCAST_GUARD_D1_BINDING
-        && binding.migrations_dir === "migrations");
-    if (!hasNonceDatabase) {
-      fail(`${label} enabled Sparkle appcast guard requires the nonce D1 binding`);
-    }
-  }
-  return Object.freeze({
-    nonceTable: "sparkle_appcast_guard_nonces",
-    r2Binding: SPARKLE_APPCAST_GUARD_R2_BINDING,
-    r2Bucket: endpoints.sparkle.r2Bucket,
-  });
 }
 
 /**
@@ -288,28 +115,14 @@ export function validateWorkerDeploymentEndpoints(
 
 export function validateDeploymentEndpointConsumers({
   electronRuntimeSource,
-  macOSReleaseSource,
-  publisherSource,
   workerTypes,
   endpoints = DEPLOYMENT_ENDPOINTS,
 }) {
   assertDeploymentEndpoints(endpoints);
-  if (APPROVED_R2_BUCKET !== endpoints.sparkle.r2Bucket
-      || CANONICAL_UPDATE_ORIGIN !== endpoints.sparkle.origin
-      || CANONICAL_APPCAST_URL !== endpoints.sparkle.appcastURL) {
-    fail("Sparkle publisher constants must match config/deployment-endpoints.js");
-  }
-
-  for (const [source, label] of [
-    [electronRuntimeSource, "Electron desktop runtime"],
-    [macOSReleaseSource, "macOS signed-release build"],
-    [publisherSource, "Sparkle publisher"],
-  ]) {
-    requireManifestImport(source, label);
-    rejectEmbeddedEndpoint(source, endpoints.public.origin, label);
-    rejectEmbeddedEndpoint(source, endpoints.sparkle.origin, label);
-    rejectEmbeddedEndpoint(source, endpoints.sparkle.r2Bucket, label);
-  }
+  requireManifestImport(electronRuntimeSource, "Electron desktop runtime");
+  rejectEmbeddedEndpoint(electronRuntimeSource, endpoints.public.origin, "Electron desktop runtime");
+  rejectEmbeddedEndpoint(electronRuntimeSource, endpoints.sparkle.origin, "Electron desktop runtime");
+  rejectEmbeddedEndpoint(electronRuntimeSource, endpoints.sparkle.r2Bucket, "Electron desktop runtime");
   if (!electronRuntimeSource.includes("DEPLOYMENT_ENDPOINTS.public.origin")) {
     fail("Electron desktop runtime must use the reviewed public origin");
   }
@@ -319,10 +132,9 @@ export function validateDeploymentEndpointConsumers({
     fail("generated Worker types must match the manifest public origin");
   }
   return Object.freeze({
-    appcastURL: endpoints.sparkle.appcastURL,
-    previewAppcastURL: endpoints.sparkle.previewAppcastURL,
     publicOrigin: endpoints.public.origin,
     r2Bucket: endpoints.sparkle.r2Bucket,
+    updateOrigin: endpoints.sparkle.origin,
   });
 }
 
@@ -403,50 +215,27 @@ export async function checkDeploymentEndpointConsumers({
   wranglerConfigPath = WRANGLER_CONFIG_PATH,
   workerTypesPath = WORKER_TYPES_PATH,
   workerPackagePath = WORKER_PACKAGE_PATH,
-  workerSparkleReleaseContractPath = WORKER_SPARKLE_RELEASE_CONTRACT_PATH,
-  sparkleGuardNonceMigrationPath = SPARKLE_GUARD_NONCE_MIGRATION_PATH,
   electronRuntimePath = ELECTRON_RUNTIME_PATH,
-  macOSReleaseCorePath = MACOS_RELEASE_CORE_PATH,
-  sparklePublisherPath = SPARKLE_PUBLISHER_PATH,
   endpoints = DEPLOYMENT_ENDPOINTS,
 } = {}) {
   const [
     wranglerText,
     workerTypes,
     workerPackageText,
-    workerSparkleReleaseContractText,
-    sparkleGuardNonceMigration,
     electronRuntimeSource,
-    macOSReleaseSource,
-    publisherSource,
   ] = await Promise.all([
     readFile(wranglerConfigPath, "utf8"),
     readFile(workerTypesPath, "utf8"),
     readFile(workerPackagePath, "utf8"),
-    readFile(workerSparkleReleaseContractPath, "utf8"),
-    readFile(sparkleGuardNonceMigrationPath, "utf8"),
     readFile(electronRuntimePath, "utf8"),
-    readFile(macOSReleaseCorePath, "utf8"),
-    readFile(sparklePublisherPath, "utf8"),
   ]);
   const wranglerConfiguration = parseWranglerConfiguration(wranglerText);
   const worker = validateWorkerDeploymentEndpoints(
     wranglerConfiguration,
     endpoints,
   );
-  const workerSparkleReleaseContract = validateWorkerSparkleReleaseContract(
-    parseWorkerSparkleReleaseContract(workerSparkleReleaseContractText),
-    endpoints,
-  );
-  const sparkleGuard = validateWorkerSparkleAppcastGuard(
-    wranglerConfiguration,
-    sparkleGuardNonceMigration,
-    endpoints,
-  );
   const consumers = validateDeploymentEndpointConsumers({
     electronRuntimeSource,
-    macOSReleaseSource,
-    publisherSource,
     workerTypes,
     endpoints,
   });
@@ -456,17 +245,14 @@ export async function checkDeploymentEndpointConsumers({
   return Object.freeze({
     ...consumers,
     gates,
-    sparkleGuard,
     worker,
-    workerSparkleReleaseContract,
   });
 }
 
 async function main() {
   const checked = await checkDeploymentEndpointConsumers();
-  process.stdout.write(
-    `Deployment endpoints: ${checked.publicOrigin} · ${checked.appcastURL}\n`,
-  );
+  process.stdout.write(`Deployment endpoints: ${checked.publicOrigin}
+`);
 }
 
 if (process.argv[1]

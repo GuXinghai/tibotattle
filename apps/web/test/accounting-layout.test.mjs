@@ -95,7 +95,7 @@ test("cache continuity rows and empty states retain five correctly aligned cells
   const disclosure = { hidden: true, open: false, querySelector: () => sampleNote };
   const rows = element("tbody");
   const linkedItems = [];
-  const render = appFunction("renderAccountingCacheContinuityDetails", "sideChatConfigurationDescription", {
+  const render = appFunction("renderAccountingCacheContinuityDetails", "accountingRebuildRetrying", {
     $: (selector) => ({ "#cache-continuity-details": disclosure, "#cache-continuity-rows": rows })[selector] ?? null,
     cacheDropThreadLinks: { cells: { continuity: [] } },
     clear: (target) => { target.children.length = 0; },

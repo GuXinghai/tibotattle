@@ -81,12 +81,6 @@ const EXACT_WORKER_ROUTE_DEFINITIONS = [
     methods: ["POST"],
     authority: "accountless_ownership",
   },
-  {
-    pathname: "/api/v1/internal/release/appcast",
-    id: "sparkle_appcast_guard",
-    methods: ["POST"],
-    authority: "operator",
-  },
   // Both hosted providers use the same three-route handoff: the dashboard
   // starts a sign-in, the provider redirects to this service's own callback,
   // and the dashboard reads the one-time result back keyed by an unguessable

@@ -1,14 +1,13 @@
 /*
  * The settings window deliberately shares the dashboard's paper, ink, and
- * green language while keeping its own layout. Native macOS Settings uses a
- * compact toolbar and grouped controls; this is the cross-platform equivalent
- * for Electron, where the renderer owns the content area on Windows and Linux.
+ * green language while keeping its own layout. It is a compact window whose
+ * renderer owns the content area on Windows.
  */
 
 .electron-settings-page {
   /* BrowserWindow keeps a 620px native minimum, but the document itself
-     must still be able to reflow when Windows text scaling, Linux window
-     managers, or a test harness give it less room.  A page-level minimum was
+     must still be able to reflow when Windows text scaling, a narrower
+     window, or a test harness gives it less room.  A page-level minimum was
      the source of the horizontal scroll and the narrow one-word columns in
      the previous General grid. */
   min-width: 0;

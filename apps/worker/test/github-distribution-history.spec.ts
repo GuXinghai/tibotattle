@@ -144,10 +144,7 @@ describe("GitHub distribution snapshot history", () => {
       "v0.1.11",
     ]);
     expect(initial.releases[0]?.installerDownloads).toEqual({
-      macArm64: null,
-      macX64: null,
       windowsX64: null,
-      linuxX64: null,
     });
 
     const second = await syncGithubDistributionSnapshots(
@@ -206,19 +203,15 @@ describe("GitHub distribution snapshot history", () => {
     const snapshot = await readGithubDistributionSnapshot(db(), FIRST_SYNC);
     expect(snapshot.releases[0]).toMatchObject({
       installerDownloads: {
-        macArm64: 20,
-        macX64: 0,
         windowsX64: 15,
-        linuxX64: 17,
       },
+      // Historical DMG assets remain counted as stored history, but they are
+      // never classified as a current installer.
       dmgDownloads: 23,
       allAssetDownloads: 82,
     });
     expect(snapshot.releases[1]?.installerDownloads).toEqual({
-      macArm64: 4,
-      macX64: 5,
       windowsX64: null,
-      linuxX64: null,
     });
     expect(snapshot.summary?.dmgDownloads).toBe(32);
   });

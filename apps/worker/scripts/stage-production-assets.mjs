@@ -49,7 +49,6 @@ const PUBLIC_RELEASE_ASSET_BASENAMES = Object.freeze([
   "404.html",
   "allowance-tank-renderer.js",
   "allowance-tanks.js",
-  "apple.svg",
   "cache-reuse-matrix.css",
   "cache-reuse-matrix.js",
   "codex-color.svg",

@@ -390,6 +390,10 @@ export async function runMigrationRehearsalProcess({ prefix, accounts = 1000, ev
   }
   if (!Number.isInteger(accounts) || accounts < 2 || accounts > 1000 || !Number.isInteger(events) || events < accounts || events > 1_000_000
       || !Number.isSafeInteger(maxDatabaseBytes) || maxDatabaseBytes < 1 || maxDatabaseBytes > (scale ? LOCAL_SCALE_PROFILE.maxDatabaseBytes : 2 ** 30)) fail("REHEARSAL_LIMITS_INVALID");
+  // Containment is POSIX-only: it terminates a detached process group by a
+  // negative pid and samples RSS through /bin/ps. Windows has no equivalent
+  // here, so the rehearsal fails closed on win32 rather than running without
+  // its memory and termination guarantees.
   if (!["darwin", "linux"].includes(process.platform)) fail("REHEARSAL_PROCESS_CONTAINMENT_UNSUPPORTED");
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 600_000
       || !Number.isSafeInteger(maxRssBytes) || maxRssBytes < 1 || maxRssBytes > 2 ** 31

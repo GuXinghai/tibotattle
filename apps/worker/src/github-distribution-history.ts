@@ -30,16 +30,15 @@ const FORCED_SYNC_COOLDOWN_MILLISECONDS = 60 * 1_000;
 const SYNC_LEASE_MILLISECONDS = 2 * 60 * 1_000;
 const D1_BATCH_SIZE = 50;
 
-type InstallerVariant = "macArm64" | "macX64" | "windowsX64" | "linuxX64";
+// TiboTattle is Windows x64 only: the Windows installer is the one published
+// installer. Historical DMG assets are still counted below as stored history.
+type InstallerVariant = "windowsX64";
 
 export type GithubInstallerDownloads = Readonly<Record<InstallerVariant, number | null>>;
 
 const INSTALLER_VERSION_PREFIX = "TiboTattle-[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?-";
 const INSTALLER_ASSET_PATTERNS: readonly (readonly [InstallerVariant, RegExp])[] = [
-  ["macArm64", new RegExp(`^${INSTALLER_VERSION_PREFIX}(?:mac|macOS)-arm64\\.dmg$`, "iu")],
-  ["macX64", new RegExp(`^${INSTALLER_VERSION_PREFIX}(?:mac|macOS)-x64\\.dmg$`, "iu")],
   ["windowsX64", new RegExp(`^${INSTALLER_VERSION_PREFIX}Windows-x64\\.exe$`, "iu")],
-  ["linuxX64", new RegExp(`^${INSTALLER_VERSION_PREFIX}linux-x86_64\\.AppImage$`, "iu")],
 ];
 
 export interface GithubDistributionRelease {
@@ -374,10 +373,7 @@ function releaseSummary(release: GithubReleaseInventoryRecord): GithubDistributi
   let allAssetDownloads = 0;
   let dmgAssetCount = 0;
   const installerDownloads: Record<InstallerVariant, number | null> = {
-    macArm64: null,
-    macX64: null,
     windowsX64: null,
-    linuxX64: null,
   };
   for (const asset of release.assets) {
     allAssetDownloads = safeAdd(allAssetDownloads, asset.downloadCount);

@@ -40,7 +40,6 @@ async function fixture() {
   }
   const generatedFiles = {
     "404.html": "<!doctype html><title>public fallback</title>\n",
-    "apple.svg": "<svg></svg>\n",
     "community-data.js": "export const communityData = true;\n",
     "community-refresh.js": "export const communityRefresh = true;\n",
     "model-visuals.js": "export const modelVisuals = true;\n",

@@ -6,9 +6,9 @@ import {
   normalizeCacheDropThreadLinks,
   normalizeDashboardPayload,
 } from "../public/data-client.js";
-import { cacheDropThreadLookupKey as companionLookupKey } from "../../../src/local-cache-drop-thread-links.js";
+import { cacheDropThreadLookupKey as companionLookupKey } from "../../../src/local-index-cache-drop-links.js";
 import { analyzeCacheContinuityRows, analyzeCacheSwitchRows } from "../../../src/cache-switch-impact.js";
-import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, reasoningEffortOrdinal } from "../../../src/local-unified-index.js";
+import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, reasoningEffortOrdinal } from "../../../src/codex-usage-vocabulary.js";
 
 const SCHEMA = "local-cache-drop-thread-links-v1";
 const THREAD_ID = "11111111-0000-4000-8000-000000000001";

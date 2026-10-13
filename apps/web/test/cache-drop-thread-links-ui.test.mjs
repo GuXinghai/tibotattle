@@ -451,7 +451,7 @@ test("both drop tables replace local time with localized thread names and preser
 
 test("compact continuity rows preserve five translated columns, thread navigation and the empty-state span", () => {
   const start = source.indexOf("function renderAccountingCacheContinuityDetails(");
-  const end = source.indexOf("\nfunction sideChatConfigurationDescription(", start);
+  const end = source.indexOf("\nfunction accountingRebuildRetrying(", start);
   assert.ok(start >= 0 && end > start);
   for (const locale of SUPPORTED_LOCALES) {
     const harness = createHarness({ locale });

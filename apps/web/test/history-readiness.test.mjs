@@ -70,7 +70,7 @@ async function renderHistory(data, active = false, locale = "en-US") {
   const tPlural = (key, count, values) => translatePlural(key, count, values, locale);
   const render = Function(
     "$", "finite", "formatNumber", "numberFormatter", "compact", "formatPercent", "t", "tPlural",
-    "setRawText", "setLocalizedText", "archiveHistoryScanActive",
+    "setRawText", "setLocalizedText",
     `${appSource.slice(unitsStart, bytesEnd)}\n${functions.join("\n")}\nreturn (data) => {
       renderHistoryProgress(data);
       renderHistoryIndexBadge(data);

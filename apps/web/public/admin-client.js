@@ -64,9 +64,9 @@ const DISTRIBUTION_SOURCE_STATUSES = new Set([
   "not_configured",
   "unavailable",
 ]);
-const DISTRIBUTION_CLIENTS = new Set(["native", "electron"]);
-const DISTRIBUTION_OPERATING_SYSTEMS = new Set(["macos", "windows", "linux"]);
-const DISTRIBUTION_ARCHITECTURES = new Set(["arm64", "x64"]);
+const DISTRIBUTION_CLIENTS = new Set(["electron"]);
+const DISTRIBUTION_OPERATING_SYSTEMS = new Set(["windows"]);
+const DISTRIBUTION_ARCHITECTURES = new Set(["x64"]);
 const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{2,79}$/u;
 const REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 
@@ -1138,10 +1138,6 @@ function projectDistribution(value) {
     const architecture = enumValue(
       version.architecture, DISTRIBUTION_ARCHITECTURES, "ADMIN_OVERVIEW_INVALID",
     );
-    if ((client === "native" && operatingSystem !== "macos")
-        || (operatingSystem !== "macos" && architecture !== "x64")) {
-      invalid("ADMIN_OVERVIEW_INVALID");
-    }
     return Object.freeze({
       client,
       operatingSystem,
@@ -1169,44 +1165,20 @@ function projectDistribution(value) {
       });
     };
     const overall = projectCounts(totals.overall);
-    const platforms = boundedArray(totals.platforms, 3, "ADMIN_OVERVIEW_INVALID").map(value => {
+    const platforms = boundedArray(totals.platforms, 1, "ADMIN_OVERVIEW_INVALID").map(value => {
       const row = record(value, "ADMIN_OVERVIEW_INVALID");
       return Object.freeze({
         operatingSystem: enumValue(row.operatingSystem, DISTRIBUTION_OPERATING_SYSTEMS, "ADMIN_OVERVIEW_INVALID"),
         ...projectCounts(row),
       });
     });
-    if (platforms.length !== 3 || new Set(platforms.map(row => row.operatingSystem)).size !== 3
+    if (platforms.length !== 1 || new Set(platforms.map(row => row.operatingSystem)).size !== 1
         || platforms.some(row => row.sourceAddressesLast7Days > overall.sourceAddressesLast7Days)
         || platforms.reduce((sum, row) => sum + row.requestsLast7Days, 0) !== overall.requestsLast7Days) {
       invalid("ADMIN_OVERVIEW_INVALID");
     }
-    // Older cached overviews only contain OS totals. Keep the macOS subtotal
-    // available without inventing an architecture breakdown for those reads.
-    const macosArchitectures = totals.macosArchitectures === undefined
-      ? null
-      : boundedArray(totals.macosArchitectures, 2, "ADMIN_OVERVIEW_INVALID").map(value => {
-        const row = record(value, "ADMIN_OVERVIEW_INVALID");
-        return Object.freeze({
-          architecture: enumValue(row.architecture, DISTRIBUTION_ARCHITECTURES, "ADMIN_OVERVIEW_INVALID"),
-          ...projectCounts(row),
-        });
-      });
-    if (macosArchitectures !== null) {
-      const macos = platforms.find(row => row.operatingSystem === "macos");
-      if (macosArchitectures.length !== 2
-          || new Set(macosArchitectures.map(row => row.architecture)).size !== 2
-          || macosArchitectures.some(row => row.sourceAddressesLast7Days > macos.sourceAddressesLast7Days)
-          || macosArchitectures.reduce((sum, row) => sum + row.requestsLast7Days, 0)
-            !== macos.requestsLast7Days
-          || macosArchitectures.reduce((sum, row) => sum + row.sourceAddressesLast7Days, 0)
-            < macos.sourceAddressesLast7Days) {
-        invalid("ADMIN_OVERVIEW_INVALID");
-      }
-    }
     observedTotals = Object.freeze({
       platforms: Object.freeze(platforms),
-      macosArchitectures: macosArchitectures === null ? null : Object.freeze(macosArchitectures),
       overall,
     });
   }
@@ -1226,17 +1198,8 @@ function projectDistribution(value) {
         segment.activeSourceAddresses,
         "ADMIN_OVERVIEW_INVALID",
       ),
-      preflightRequests: count(segment.preflightRequests, "ADMIN_OVERVIEW_INVALID"),
-      sparkleCheckRequests: count(
-        segment.sparkleCheckRequests,
-        "ADMIN_OVERVIEW_INVALID",
-      ),
       electronCheckRequests: count(
         segment.electronCheckRequests,
-        "ADMIN_OVERVIEW_INVALID",
-      ),
-      sparkleDownloadRequests: count(
-        segment.sparkleDownloadRequests,
         "ADMIN_OVERVIEW_INVALID",
       ),
       currentVersionSourceAddresses: segment.currentVersionSourceAddresses === null
@@ -1254,10 +1217,7 @@ function projectDistribution(value) {
   }
   let cloudflareWindow = null;
   let activeSourceAddresses = null;
-  let preflight = null;
-  let sparkleChecks = null;
   let electronChecks = null;
-  let sparkleDownloads = null;
   if (cloudflareStatus === "available") {
     if (cloudflare.reasonCode !== null
         || typeof cloudflare.sampled !== "boolean"
@@ -1271,16 +1231,10 @@ function projectDistribution(value) {
     if (observedTotals && observedTotals.overall.sourceAddressesLast7Days !== activeSourceAddresses.last7Days) {
       invalid("ADMIN_OVERVIEW_INVALID");
     }
-    preflight = projectDistributionRequests(cloudflare.preflight);
-    sparkleChecks = projectDistributionRequests(cloudflare.sparkleChecks);
     electronChecks = projectDistributionRequests(cloudflare.electronChecks);
-    sparkleDownloads = projectDistributionRequests(cloudflare.sparkleDownloads);
   } else if (cloudflare.window !== null
       || cloudflare.activeSourceAddresses !== null
-      || cloudflare.preflight !== null
-      || cloudflare.sparkleChecks !== null
       || cloudflare.electronChecks !== null
-      || cloudflare.sparkleDownloads !== null
       || cloudflare.sampled !== null
       || cloudflare.bounded !== null
       || cloudflare.currentVersion !== null
@@ -1318,7 +1272,7 @@ function projectDistribution(value) {
   const projectGithubRelease = (value) => {
     const candidate = record(value, "ADMIN_OVERVIEW_INVALID");
     const installerSource = record(candidate.installerDownloads, "ADMIN_OVERVIEW_INVALID");
-    const installerKeys = ["macArm64", "macX64", "windowsX64", "linuxX64"];
+    const installerKeys = ["windowsX64"];
     if (Object.keys(installerSource).length !== installerKeys.length
         || installerKeys.some(key => !Object.hasOwn(installerSource, key))) {
       invalid("ADMIN_OVERVIEW_INVALID");
@@ -1343,8 +1297,6 @@ function projectDistribution(value) {
     });
     if (release.dmgDownloads > release.allAssetDownloads
         || release.dmgAssetCount > release.assetCount
-        || (installerDownloads.macArm64 ?? 0) + (installerDownloads.macX64 ?? 0)
-          > release.dmgDownloads
         || Object.values(installerDownloads).reduce((sum, value) => sum + (value ?? 0), 0)
           > release.allAssetDownloads) {
       invalid("ADMIN_OVERVIEW_INVALID");
@@ -1524,10 +1476,7 @@ function projectDistribution(value) {
           endsAt: string(cloudflareWindow.endsAt, "ADMIN_OVERVIEW_INVALID"),
         }),
       activeSourceAddresses,
-      preflight,
-      sparkleChecks,
       electronChecks,
-      sparkleDownloads,
       currentVersion,
       currentVersionSourceAddresses,
       observedVersions: Object.freeze(observedVersions),
