@@ -245,9 +245,18 @@ product validation or publication is implied.
 
 ### Outstanding release boundaries
 
+Owner clarification (2026-10-13): v2 release does not require a complete old
+profile migration, old-runtime differential, or continued execution of old
+formats. Preserve only irreproducible accumulated evidence, identity/ordinal
+continuity and recorded sharing choices. Rebuildable caches/indexes and retired
+runtime paths are not compatibility gates. Preserve unread archives when their
+contents cannot be reconstructed; retaining bytes does not require a reader.
+Never discard existing files as part of compatibility-code removal.
+
 - Installed/signed qualification of the new operation storage remains separate
-  from its passing native/source tests. Exact old-state ACL recovery also remains
-  a release gate; no inherited live state was rewritten.
+  from its passing native/source tests. Safe access to preserved irreplaceable
+  evidence, identity and opt-out is required; whole-profile ACL migration is not
+  a release gate. No inherited live state was rewritten.
 - Exact NTFS representation now has versioned source-level implementation and
   synthetic compatibility proof above. Installed-artifact qualification and
   the remaining native permission/reparse boundaries are still required.
@@ -257,20 +266,19 @@ product validation or publication is implied.
   regressions: test membership, installed dependencies and the active diff differ
   from the handoff receipt, so raw failure totals cannot establish improvement.
   Protected R7 evidence was not regenerated and no assertion was bypassed.
-- Worker timeout gates: captured
-  cohort publication beyond 1,024 contributors (30 s), daily-storage migration
-  setup (10 s), 16-owner graph publication (5 s), and three typed-v1.1 daily
-  projection cases (5 s each). These five test files are unchanged since
-  `cf94e9a8`, but that alone does not establish historical timing results or
-  distinguish an environment limit from a runtime regression. Timeouts were not
-  increased and the full suite was not repeated to obtain a passing sample.
+- Worker: the 16-owner graph case exceeds its five-second whole-workflow
+  deadline; production cost versus fixture provisioning remains to be resolved.
+  The captured-cohort, daily-storage and three typed-v1.1 cases passed focused
+  checks recorded above. Their earlier full-suite timeouts are diagnostic
+  history, not additional confirmed release defects. Assertions and deadlines
+  remain unchanged; no full-suite retry is required merely to obtain green.
 - Maintained callback composition still lacks the Windows adapter/readiness
   default. Its current fail-closed behavior is documented rather than described
   as operational managed callback support.
 - The old Worker nonce table and historical migrations remain. Retirement
   requires a coordinated forward migration and restore/preflight changes, plus
   separately authorized remote application.
-- Retired-v1 runtime differential, real Credential Manager, installed-artifact,
+- Real Credential Manager, installed-artifact,
   signed-release, updater and hosted deployment acceptance remain unproven.
   Production candidate preparation still requires exactly Node `26.2.0`.
 - Layer C's target decision and real-worker timing remain open. The original
