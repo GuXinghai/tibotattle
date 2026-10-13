@@ -180,10 +180,6 @@ compatibility fallback until they are explicitly migrated.
 | `packages/` | Workspace packages: accounting, quota analysis, telemetry contract, identity core, and i18n |
 | `src/` | Product source: `application/`, `platform/`, `export/`, `contribution/`, `reporting/`, `providers/` owners plus compatibility roots |
 | `docs/` | Maintained references and runbooks plus retained dated decisions and evidence |
-| `local-review/` | Reproducible standalone review artifact tooling |
-
-Despite the name, `local-review/` is committed developer tooling that builds a
-reproducible standalone review artifact — no local user data is tracked there.
 
 The hosted community-aggregate service at
 [tibotattle.com](https://tibotattle.com) is operated by the maintainer, and

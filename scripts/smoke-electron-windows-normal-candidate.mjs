@@ -161,6 +161,19 @@ export function buildWindowsNormalCandidateCodexFixture(nowMs = Date.now(), { cw
       type: "event_msg",
       payload: {
         type: "token_count",
+        // Calibration reads committed rollout quota evidence, rather than the
+        // companion's live quota poll. Keep one synthetic weekly observation
+        // beside the usage event so the ordinary v2 accounting path can run.
+        rate_limits: {
+          limit_id: "codex",
+          plan_type: "pro",
+          primary: {
+            used_percent: 2,
+            window_minutes: 10_080,
+            resets_at: Math.floor(startedAtMs / 1_000) + 604_800,
+          },
+          secondary: null,
+        },
         info: {
           total_token_usage: {
             input_tokens: 100,

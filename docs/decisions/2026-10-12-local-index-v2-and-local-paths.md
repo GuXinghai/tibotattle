@@ -48,8 +48,11 @@ rollout files do not already expose to the owner.
    step reads the `source_local -> source_ordinal` map from v1 and carries it
    into v2, so hosted quota observation identifiers stay byte-identical and
    nothing re-uploads. The map is identity metadata, not index data. The v1
-   reader exists only in that step and is removed with v1; if v1 is absent or
-   unreadable the ordinals regenerate once.
+   reader exists only in that step. If v1 is absent, fresh ordinals are
+   established once. Preservation clarification (2026-10-13): an unreadable
+   legacy index fails closed; it is not permission to mint fresh ordinals.
+   Existing v2 identity evidence or a legacy index requires the preserved
+   device salt, and loss of that salt never authorizes regeneration.
 6. **Legacy accounting mode.** The legacy accounting source mode and its
    pipelines are removed, subject to verification of their remaining
    dependencies and user-facing entry points (the plan lists them).

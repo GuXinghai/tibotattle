@@ -33,7 +33,7 @@ npm --prefix apps/worker ci
 The authoritative complete repository gate is `npm run check`. It composes
 root tests with architecture, Codex-contract, tool-inventory, documentation,
 schema-mirror, UI, release-site, local companion, and Worker
-and local-review runtime checks. Installed-app qualification
+checks. Installed-app qualification
 requires separate Windows hosts and signed artifacts;
 report an environment-blocked lane explicitly.
 

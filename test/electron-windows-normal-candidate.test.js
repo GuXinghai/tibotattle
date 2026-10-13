@@ -1490,6 +1490,13 @@ test("normal candidate adds one content-free Codex source before launch", async 
   assert.equal(records[3].payload.model, "gpt-5.6-sol");
   assert.equal(records[3].payload.service_tier, "default");
   assert.equal(records[6].payload.info.total_token_usage.total_tokens, 120);
+  assert.deepEqual(records[6].payload.rate_limits, {
+    limit_id: "codex",
+    plan_type: "pro",
+    primary: { used_percent: 2, window_minutes: 10_080,
+      resets_at: Date.parse("2026-09-15T00:00:00.000Z") / 1_000 },
+    secondary: null,
+  });
   assert.equal(records[0].payload.cwd, fixture.project);
   assert.deepEqual(calls, [
     {

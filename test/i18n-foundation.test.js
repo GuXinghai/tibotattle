@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
+import { checkI18nBrowserMirror, writeI18nBrowserMirror } from "../scripts/generate-i18n-browser-mirror.js";
 
 import {
   CATALOGS,
@@ -20,6 +23,22 @@ import {
   resolveLocalePreference,
   translate,
 } from "../packages/i18n/index.js";
+
+test("browser catalog generation atomically replaces output on Windows", async () => {
+  const root = await mkdtemp(join(tmpdir(), "tibotattle-i18n-generation-"));
+  try {
+    const sourceFile = join(root, "source.js");
+    const outputFile = join(root, "mirror.js");
+    await writeFile(sourceFile, 'export const synthetic = "first";\n', "utf8");
+    await writeI18nBrowserMirror({ sourceFile, outputFile });
+    await checkI18nBrowserMirror({ sourceFile, outputFile });
+    await writeFile(sourceFile, 'export const synthetic = "replacement";\n', "utf8");
+    await writeI18nBrowserMirror({ sourceFile, outputFile });
+    await checkI18nBrowserMirror({ sourceFile, outputFile });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("i18n is a dependency-free workspace package with complete initial catalogs", async () => {
   const manifest = JSON.parse(

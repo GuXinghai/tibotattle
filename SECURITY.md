@@ -73,13 +73,14 @@ on 2026-09-08 when explicit names are missing. Titles can contain opening-messag
 text, so they are read only for displayed rows and their parents, rendered as
 text, and never exported or uploaded. Ancestry-only reads and cache-drop tables
 retain their title-free contract.
-Directory basenames and thread display labels are transient metadata; paths,
-names and project handles are never written into the accounting index, exports,
-diagnostics, contributions or browser storage. The accepted
+Directory basenames and thread display labels are transient metadata. Names and
+project handles are excluded from persisted accounting, exports, diagnostics,
+contributions and browser storage. Under the accepted
 [local index v2 decision](docs/decisions/2026-10-12-local-index-v2-and-local-paths.md)
-will let the owner-only local store, once implemented, hold source paths and
-working directories; they still never leave the machine. Until that cutover,
-the shipping index holds none. Repository grouping describes
+current source uses the owner-only v2 local store to retain source paths and
+working directories. Those paths never enter exports, diagnostics, contributions
+or browser storage and never leave the machine. Source cutover does not prove an
+installed release has adopted v2. Repository grouping describes
 last-observed local workspace mappings, not verified historical ownership.
 Transient metadata uses the approved native source reader's current-owner,
 single-link and reparse-point checks.

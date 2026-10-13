@@ -167,8 +167,10 @@ TiboTattle keeps separate credential capabilities for:
 - current account observation pseudonymity;
 - the paired contribution-device credential.
 
-The optional managed Claude callback has its own standalone CLI/local-review
-pseudonym capability. It is not exposed by the desktop app.
+The managed Claude callback has a separate pseudonym capability contract. Its
+Windows production backend requires explicit readiness and adapter injection;
+the standalone CLI and callback defaults currently fail closed without that
+composition. It is not exposed by the desktop app.
 
 These installed-app capabilities are stored in Windows Credential Manager through
 the noninteractive native adapter. A content-free binding/renewal record lives under
