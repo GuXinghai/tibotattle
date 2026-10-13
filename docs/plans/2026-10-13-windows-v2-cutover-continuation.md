@@ -179,21 +179,85 @@ timeout was raised, production algorithm changed or 600-second run repeated.
 
 ## Remaining gates
 
+### Current continuation evidence (2026-10-13)
+
+This continuation started at `b8da3479`. The root-suite 323 failures are the
+earlier diagnostic inventory, not 323 newly established regressions. No broad
+root/Worker rerun was used to chase a passing count. Investigation prioritizes
+new product defects and unqualified release boundaries over obsolete fixtures.
+
+Independent local commits: `eacce955` restores the missing default-device-path
+import; `686c5ca4` creates local synthetic fixtures with native protected ACLs;
+`94a5def1` introduces exact filesystem identity contracts; `e2ac61ff` implements
+the explicit legacy ACL continuity copy. The owner's handoff remains untracked.
+
+New product defects established and fixed:
+
+- NTFS identifiers exceeded JavaScript safe integers. New versioned plans and
+  deletion state retain canonical unsigned-64 decimal strings from BigInt stats.
+  SQLite INTEGER affinity could round those strings again; physical workspace
+  schema 5 uses tagged identity text. Existing physical schema 4 and safe numeric
+  plans retain their version, digest, ordinals and checkpoints. Unsafe rounded
+  legacy identities are refused, never reconstructed.
+- Workspace writable configuration previously ran before newer-schema refusal.
+  Read-only preflight now refuses unsupported state before writable PRAGMAs;
+  a synthetic future-schema WAL database retains its main-file hash.
+- A native-copy crash window could retain an unfinished destination. Protected
+  no-clobber creation now starts with delete-on-close and clears it only after
+  flush and exact readback. The first complete-copy rehearsal then exposed the
+  final-file flag incorrectly reaching intermediate directories. It now applies
+  only to the final new file; nested sharing-state copy and real child-process
+  interruption passed 2/2 after rebuilding the exact binary and manifest.
+
+ACL recovery is a fixed, copy-only continuity bundle, not whole-profile
+activation. Synthetic native rehearsal preserves original salt, participant
+identity, accumulated facts, ordinals, ACLs and persisted opt-out through
+interruption/resume. Held native ancestor identities reject aliased/contained
+roots. Open writers, nonempty database sidecars, unsupported archives and
+over-limit state refuse intact. See the maintained
+[copy boundary](../runbooks/2026-10-13-windows-legacy-acl-copy.md). General native
+production/path-walk flags remain false; no real profile was modified.
+
+Focused evidence: exact-identity/source scope 133 pass and two unchanged
+chmod-only permission-rejection failures; deletion crash/recovery 26/26;
+retained physical-v4 compatibility 6/6. Local owning suite: 375 pass, zero
+fail/cancel, two deferred native ACL/reparse cases skipped (377 total). Local
+scheduler admission failure traced to unsafe synthetic ACL creation; startup
+and EBUSY suspicions were not reproduced, so no speculative runtime change was
+made. Native loader/security/copy validation before final-copy correction was
+54 pass, two fail; those two were diagnosed, the test-child error corrected,
+and the actual nested-copy defect fixed and verified by the targeted 2/2 run.
+The entire native suite was not repeated after that correction.
+
+The original 1,000-contributor Worker gate passed within its unchanged
+600-second deadline: 314.064 seconds, original bounds/assertions retained.
+The 16-owner five-second gate remains unqualified: approximately 2.3 seconds
+provisioning/delivery plus 2.8-3.2 seconds for 32 kernel computations. Temporary
+diagnostic experiments were fully reverted. No Worker production diff, timeout
+increase or retry-to-green was retained. Other previously timed-out Worker
+cases remain separate unqualified gates.
+
+Maintenance validation at the final source state: preflight 20/20, root layout
+clean, architecture 611 files/2424 imports/zero approved debt. The pnpm launcher
+attempted automatic dependency checking and hit sandbox EPERM; the existing
+manifest's Node entrypoints were run directly without installation. No broad
+product validation or publication is implied.
+
+### Outstanding release boundaries
+
 - Installed/signed qualification of the new operation storage remains separate
   from its passing native/source tests. Exact old-state ACL recovery also remains
   a release gate; no inherited live state was rewritten.
-- Exact NTFS file identity representation remains blocked in the older
-  Claude/export/deletion plan contracts. A public synthetic planner demonstrated
-  unsafe integer inode values; producers already truncate birthtime, so changing
-  timestamp validators would not fix it. A versioned exact-identity contract is
-  needed, never rounding the number or relaxing the safe-integer refusal.
+- Exact NTFS representation now has versioned source-level implementation and
+  synthetic compatibility proof above. Installed-artifact qualification and
+  the remaining native permission/reparse boundaries are still required.
 - The broad root integration run also exposes native filesystem/identity
   qualification, export-source/recovery fixtures, R7 filesystem evidence,
   metadata and localization failures. These are not all classified as baseline
   regressions: test membership, installed dependencies and the active diff differ
   from the handoff receipt, so raw failure totals cannot establish improvement.
   Protected R7 evidence was not regenerated and no assertion was bypassed.
-- Worker timeout gates: 1,000-contributor calculator scale (600 s), captured
+- Worker timeout gates: captured
   cohort publication beyond 1,024 contributors (30 s), daily-storage migration
   setup (10 s), 16-owner graph publication (5 s), and three typed-v1.1 daily
   projection cases (5 s each). These five test files are unchanged since
