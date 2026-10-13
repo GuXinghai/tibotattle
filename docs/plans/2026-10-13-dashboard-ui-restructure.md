@@ -277,6 +277,8 @@ Do not publish before critical release gates pass.
 
 ## Outstanding gates
 
+- Stage 0 inventory: [capability and caller inventory](./2026-10-13-dashboard-ui-inventory.md).
+
 - No implementation or acceptance of the new navigation and feature migration.
 - Share focusing a hidden view is a static path finding; reproduce and fix it
   during implementation.
