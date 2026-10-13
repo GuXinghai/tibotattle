@@ -489,7 +489,7 @@ test("opening revalidates the descriptor-bound supplemental plan exactly", async
   }
 });
 
-test("retained physical v4 workspaces resume safe numeric identities without schema relabeling", async () => {
+test("retired physical v4 workspaces are refused without modifying retained evidence", async () => {
   const value = await fixture();
   let source; let legacy; let reopened;
   try {
@@ -518,14 +518,10 @@ test("retained physical v4 workspaces resume safe numeric identities without sch
       }
     }
     legacy.close(); legacy = null; source.close(); source = null;
-    reopened = await openExportWorkspace({ directory: legacyDirectory });
-    assert.equal(reopened.getDescriptor().workspaceVersion, "usage-export-workspace-v0.4");
-    const retained = reopened.loadSupplementalSourcePlan();
-    assert.equal(retained.schemaVersion, "supplemental-export-source-plan-v1");
-    assert.deepEqual(retained.sources, value.supplemental.sources);
-    assert.equal(retained.supplementalSourcePlanSha256, value.supplemental.supplementalSourcePlanSha256);
-    assert.deepEqual(reopened.loadSourcePlan().sources.map(({ ordinal, sourceKey, prefixBytes, prefixSha256 }) => ({ ordinal, sourceKey, prefixBytes, prefixSha256 })), value.sourcePlan.sources.map(({ ordinal, sourceKey, prefixBytes, prefixSha256 }) => ({ ordinal, sourceKey, prefixBytes, prefixSha256 })));
-    reopened.close(); reopened = null;
+    const databaseFile = join(legacyDirectory, "workspace.sqlite3");
+    const originalBytes = await readFile(databaseFile);
+    await assert.rejects(openExportWorkspace({ directory: legacyDirectory }), error => error.code === "export_workspace_schema");
+    assert.deepEqual(await readFile(databaseFile), originalBytes);
     legacy = new DatabaseSync(join(legacyDirectory, "workspace.sqlite3"), { readOnly: true });
     assert.equal(legacy.prepare("PRAGMA user_version").get().user_version, 4);
   } finally { reopened?.close(); source?.close(); legacy?.close(); await rm(value.root, { recursive: true, force: true }); }

@@ -137,7 +137,7 @@ export function createExportWorkspaceContract(configuration = {}) {
   }
   function assertDescriptor(descriptor) {
     if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)
-        || ![EXPORT_WORKSPACE_VERSION, "usage-export-workspace-v0.4"].includes(descriptor.workspaceVersion)
+        || descriptor.workspaceVersion !== EXPORT_WORKSPACE_VERSION
         || descriptor.resourcePolicyVersion !== EXPORT_RESOURCE_POLICY_VERSION
         || !validDescriptorResourceLimits(descriptor.resourceLimits)
         || typeof descriptor.participantId !== "string" || !/^participant:v1:[a-f0-9]{64}$/.test(descriptor.participantId)

@@ -141,7 +141,6 @@ function decodeFilesystemIdentity(value) { if (typeof value === "string" && valu
 const DATABASE_NAME = EXPORT_WORKSPACE_DATABASE_BASENAME;
 const EXPORT_WORKSPACE_APPLICATION_ID = 0x55534d34;
 const EXPORT_WORKSPACE_USER_VERSION = 5;
-const LEGACY_WORKSPACE_SCHEMA_SHA256 = "48c81568f3da4d9587ed52946b295b0d81a9b2a75b93e1153c19b0eb4032917b";
 const EXPORT_WORKSPACE_SCHEMA_SHA256 = "5dcbc93efec12938bb336cc2465bab962d74ce49a6b12bdb2e9e22eae9456652";
 const DEFAULT_CRASH_RECOVERY_RESERVATION_MS = 5_000;
 const OCCURRENCE_KINDS = new Set(["usage_event", "tool_call"]);
@@ -484,7 +483,7 @@ function validateWorkspaceSchema(database) {
   try {
     const applicationId = Number(database.prepare("PRAGMA application_id").get().application_id);
     const userVersion = Number(database.prepare("PRAGMA user_version").get().user_version);
-    if (applicationId !== EXPORT_WORKSPACE_APPLICATION_ID || ![4, EXPORT_WORKSPACE_USER_VERSION].includes(userVersion)) fail("schema");
+    if (applicationId !== EXPORT_WORKSPACE_APPLICATION_ID || userVersion !== EXPORT_WORKSPACE_USER_VERSION) fail("schema");
     const tables = [...database.prepare(`
       SELECT name FROM sqlite_schema
       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -511,7 +510,7 @@ function validateWorkspaceSchema(database) {
       .update(`app-usagemonitor/export-workspace-schema/v${userVersion}\0`)
       .update(stableJson(schemaRows))
       .digest("hex");
-    if (schemaSha256 !== (userVersion === 4 ? LEGACY_WORKSPACE_SCHEMA_SHA256 : EXPORT_WORKSPACE_SCHEMA_SHA256)) fail("schema");
+    if (schemaSha256 !== EXPORT_WORKSPACE_SCHEMA_SHA256) fail("schema");
     const executableSchemaObjects = [...database.prepare(`
       SELECT type, name FROM sqlite_schema
       WHERE type IN ('trigger', 'view')

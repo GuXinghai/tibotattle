@@ -392,10 +392,12 @@ new plan version. Account/session pseudonym derivation and secrets are unchanged
 Supplemental source plan v2 carries these exact file-prefix bindings. Export
 workspace v0.5 uses physical schema 5 and `ANY` identity columns with tagged
 `u64:` strings to prevent SQLite numeric affinity from coercing decimal IDs.
-Existing physical schema 4 retains its exact schema fingerprint and can resume
-its v1 supplemental plans without migration or schema relabeling. New readers
-accept both exact fingerprints; old readers refuse schema 5. The source-plan
-columns and recorded source ordinals are unchanged.
+Only physical schema 5 is executable in the current reader. Schema 4 workspaces
+are refused before writable configuration and retained unchanged as archives;
+there is no compatibility reader, conversion or schema relabeling. Start new
+preparation from available sources, retaining any earlier sealed evidence and
+identity metadata. The source-plan columns and recorded source ordinals are
+unchanged. Committed deletion recovery remains available for its exact records.
 
 Deletion journal v0.3 and commit marker v0.2 carry the same exact representation,
 with immutable earlier schemas retained. Fresh planning never rewrites existing
