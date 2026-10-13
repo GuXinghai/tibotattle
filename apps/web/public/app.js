@@ -1970,8 +1970,12 @@ function projectionUnavailableCopyKey(data) {
 }
 
 function renderPricing(data) {
+  $("#cost-partial").hidden = !(Array.isArray(data?.warnings) && data.warnings.some(
+    message => evidenceWarningLocalization(message)?.key === "dashboard.warning.unknownModel",
+  ));
   const selected = data.reportingWindow ? accountingPeriod(data) : null;
   if (data.reportingWindow && selected === null) {
+    $("#cost-partial").hidden = true;
     setRawText($("#cost-period"), t("reporting.unavailable"));
     $("#cost-total").textContent = "—";
     clear($("#cost-components"));
@@ -2011,6 +2015,7 @@ function renderPricing(data) {
     $("#cost-total").textContent = retainedEvidence
       ? formatApiMoney(retainedPeriod.apiPriceEquivalentUsd)
       : "—";
+    if (!retainedEvidence) $("#cost-partial").hidden = true;
     renderHistoryProgress(data);
     const list = $("#cost-components");
     clear(list);
@@ -2210,7 +2215,9 @@ history.phase === "not_started"
  *
  * The companion writes each one as a finished English sentence and publishes no
  * category alongside it. This page therefore decides only *where* a sentence
- * appears, never what it says: each string is written with `setRawText`, so it
+ * appears. Repeated freshness and unknown-model notices are represented by
+ * the existing freshness status and the partial-price marker. Other strings
+ * are written with `setRawText`, so each one
  * reaches the document as text, unreworded and untruncated, and localization
  * cannot reinterpret it.
  *
@@ -2258,6 +2265,11 @@ function renderEvidenceWarnings(data) {
   ]);
   for (const message of Array.isArray(data?.warnings) ? data.warnings : []) {
     if (typeof message !== "string" || message === "") continue;
+    const localized = evidenceWarningLocalization(message);
+    if (localized?.key === "dashboard.warning.collectorOld") continue;
+    if (localized?.key === "dashboard.warning.unknownModel") {
+      continue;
+    }
     if (/^Quota tracking started fresh on this Mac, so its retained records begin /u.test(message)) continue;
     grouped.get(evidenceWarningTarget(message)).push(message);
   }

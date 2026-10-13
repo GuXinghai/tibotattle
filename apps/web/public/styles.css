@@ -5842,6 +5842,10 @@ body[data-dashboard-page] #overview-screen { display: block; transform-origin: t
 #overview .cost-total { gap: 4px; }
 #overview .cost-total > span { font-size: 12px; }
 #overview .cost-total > strong { font-size: 2rem; }
+#overview .cost-amount-line { display: flex; align-items: baseline; gap: 12px; }
+#overview .cost-amount-line > strong { font-size: 2rem; }
+#cost-partial:not([hidden]) { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+#cost-partial::before { content: ""; width: 16px; height: 1px; background: currentColor; }
 #overview .overview-metric-basis { margin: 6px 0; font-size: 11px; }
 #overview .overview-data-card .comparison-visual { margin: 10px 0; gap: 8px; }
 #overview .comparison-row { grid-template-columns: minmax(0, 1fr) 64px auto; gap: 8px; font-size: 12px; }

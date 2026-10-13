@@ -14,6 +14,8 @@ test("dashboard notice details resolve through the runtime browser translator", 
   for (const locale of canonical.SUPPORTED_LOCALES) {
     assert.equal(translate("dashboard.notice.details", {}, locale),
       canonical.CATALOGS[locale]["dashboard.notice.details"]);
+    assert.equal(translate("dashboard.overview.partial", {}, locale),
+      canonical.CATALOGS[locale]["dashboard.overview.partial"]);
   }
 });
 
