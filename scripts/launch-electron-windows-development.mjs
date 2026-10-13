@@ -532,7 +532,8 @@ export function buildWindowsDevelopmentLaunchSpec({
         codexBinary: locateInstalledCodexBinary(environment),
       }),
       shell: false,
-      windowsHide: true,
+      // This child owns native first-run dialogs and must start visible.
+      windowsHide: false,
       stdio: "ignore",
     }),
   });

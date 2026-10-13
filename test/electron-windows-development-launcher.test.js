@@ -113,7 +113,8 @@ test("Windows development profile and child environment stay private and credent
     });
     assert.deepEqual(spec.args, [`--user-data-dir=${profile.userData}`]);
     assert.equal(spec.options.shell, false);
-    assert.equal(spec.options.windowsHide, true);
+    assert.equal(spec.options.windowsHide, false,
+      "native first-run acknowledgement must be visible");
     assert.equal(spec.options.env.HOME, profile.home);
   } finally {
     await rm(root, { force: true, recursive: true });
