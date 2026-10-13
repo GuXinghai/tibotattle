@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import {
   ContributionDeviceCapabilityError,
   createProductionContributionDeviceBackend,
+  defaultContributionDeviceStateFile,
   ensureContributionDeviceCapability,
   readContributionDeviceCapability,
   removeContributionDeviceCapability,
@@ -27,6 +28,11 @@ import { assertWindowsOwnerOnly, grantSyntheticEveryoneRead } from "./helpers/wi
 const CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice;
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
 const ORIGIN = "https://usage.example";
+test('device binding default keeps the fixed Windows state filename', () => {
+  const path = defaultContributionDeviceStateFile({ platform: 'win32',
+    homeDirectory: 'C:\\synthetic-home', environment: { APPDATA: 'C:\\synthetic-appdata' } });
+  assert.equal(path, join('C:\\synthetic-home', 'AppData', 'Local', 'app-usagemonitor', 'contribution-device-binding-v1.json'));
+});
 const CANARY = "PRIVATE_DEVICE_SECRET_CANARY";
 
 function memoryBackend(initial = null) {

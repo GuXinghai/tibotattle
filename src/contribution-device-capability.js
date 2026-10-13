@@ -7,7 +7,7 @@ import {
 import {
   lstat,
 } from "node:fs/promises";
-import { basename, dirname, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { defaultExportStateDirectory } from "./export-identity.js";
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
