@@ -55,7 +55,6 @@ export function createOwnerOnlyExportDeletionPreflightInspector(configuration = 
   function assertOwnerDirectory(stats) {
     if (!stats.isDirectory() || stats.isSymbolicLink()) fail("directory");
     if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("directory");
-    if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) fail("directory");
   }
   async function directoryEntries(path, options = {}) {
     return readBoundedDirectoryEntries(path, {
@@ -91,7 +90,6 @@ export function createOwnerOnlyExportDeletionPreflightInspector(configuration = 
     if (stats.nlink !== 1) fail("artifact_links");
     if (!Number.isSafeInteger(stats.size) || stats.size < 1 || stats.size > maximumBytes) fail("artifact_size");
     if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("artifact_owner");
-    if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) fail("artifact_permissions");
   }
   async function hashOwnerOnlyFile(path, maximumBytes) {
     let before;

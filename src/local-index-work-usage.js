@@ -1,0 +1,602 @@
+import { createHash } from "node:crypto";
+import { APP_PRICE_REGISTRY_MANIFEST } from "@app-usagemonitor/accounting";
+import {
+  createWorkUsageProjectResolver,
+  readCodexLocalRepositoryOrigins,
+  readCodexLocalThreadAncestry,
+} from "./platform/index.js";
+import { createWorkUsageAccumulator, workUsageError } from "./reporting/index.js";
+import { usageProjection } from "./local-companion-usage-model.js";
+import {
+  committedPredicate,
+  rollupKeyExpressions,
+  storedContextStarts,
+} from "./local-index-rollup.js";
+import { WORK_ROLLUP_DAY_MS } from "./local-index-work-rollup.js";
+import { readCommitSeq } from "./local-index-store.js";
+import { defaultLocalUnifiedIndexSecretPath, localDigest, readExistingDeviceSalt } from "./local-device-salt.js";
+import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
+
+// The work breakdown over the local index store.
+//
+// Per-fact inputs (working directory, session, model, tokens, provenance) are
+// stored with each usage fact, so a report reads them from the store: no
+// rollout is opened, whatever the history's size. Whole UTC days come from the
+// work rollups, one projection per row weighted by its fact count; the days a
+// period boundary cuts are read fact by fact.
+
+const MAX_WORK_CELLS = 50_000;
+const WORK_RESOLVE_CONCURRENCY = 12;
+const UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+
+
+/** Which token columns a rollup row reports as unknown, from its shape. */
+function componentsOf(row) {
+  const shape = Number(row.shape);
+  const value = (bit, sum) => ((shape >> bit) & 1) === 1 ? null : Number(sum);
+  return {
+    input_uncached_tokens: value(0, row.in_uncached),
+    input_cache_read_tokens: value(1, row.in_cache_read),
+    input_cache_write_tokens: value(2, row.in_cache_write),
+    output_text_tokens: value(3, row.out_text),
+    output_reasoning_tokens: value(4, row.out_reasoning),
+    output_combined_tokens: value(5, row.out_combined),
+  };
+}
+
+function eventComponents(row) {
+  const value = (raw) => (raw === null || raw === undefined ? null : Number(raw));
+  return {
+    input_uncached_tokens: value(row.tokens_in_uncached),
+    input_cache_read_tokens: value(row.tokens_in_cache_read),
+    input_cache_write_tokens: value(row.tokens_in_cache_write),
+    output_text_tokens: value(row.tokens_out_text),
+    output_reasoning_tokens: value(row.tokens_out_reasoning),
+    output_combined_tokens: value(row.tokens_out_combined),
+  };
+}
+
+function periodsFor(nowMs, intervals) {
+  return intervals ?? [
+    { id: "24h", fromMs: Math.max(0, nowMs - 86_400_000), toMs: nowMs },
+    { id: "7d", fromMs: Math.max(0, nowMs - 7 * 86_400_000), toMs: nowMs },
+    { id: "30d", fromMs: Math.max(0, nowMs - 30 * 86_400_000), toMs: nowMs },
+    { id: "all", fromMs: 0, toMs: nowMs },
+  ];
+}
+
+/**
+ * Read the work-usage snapshots of every period and account scope.
+ *
+ * Returns what the shipping collector's `finish()` returns: `{ status, asOfMs,
+ * periods }`, each period with its scopes and one snapshot per scope.
+ */
+export async function readLocalIndexWorkUsage({
+  database,
+  indexFile = null,
+  codexHome,
+  secretFile = null,
+  nowMs = Date.now(),
+  signal = null,
+  intervals = null,
+  maximumCells = MAX_WORK_CELLS,
+  pricer = createAccountingPricer(),
+  resolveProject = null,
+} = {}) {
+  if (!Number.isSafeInteger(maximumCells) || maximumCells < 1 || maximumCells > MAX_WORK_CELLS) {
+    const error = new Error("work_usage_capacity_exceeded");
+    error.code = "work_usage_capacity_exceeded";
+    throw error;
+  }
+  const periods = periodsFor(nowMs, intervals);
+  const scopeRows = database.prepare(
+    "SELECT id, status, scope_local, reason, plan_type FROM account_scope ORDER BY id LIMIT 25001",
+  ).all();
+  if (scopeRows.length > 25_000) {
+    const error = new Error("work_usage_capacity_exceeded");
+    error.code = "work_usage_capacity_exceeded";
+    throw error;
+  }
+
+  // Project resolution, once per distinct working directory.
+  let deviceSalt = null;
+  let metadataAvailable = true;
+  let resolver = resolveProject;
+  try {
+    if (resolver === null) {
+      deviceSalt = await readExistingDeviceSalt(
+        secretFile ?? defaultLocalUnifiedIndexSecretPath(indexFile),
+      );
+      const repositoryOrigins = await readCodexLocalRepositoryOrigins(codexHome);
+      resolver = createWorkUsageProjectResolver({
+        repositoryOrigins,
+        digest: (kind, value) => localDigest(deviceSalt, `work-usage-${kind}`, value).toString("hex"),
+      });
+    }
+  } catch (error) {
+    if (error?.code === "work_usage_capacity_exceeded" || signal?.aborted) throw error;
+    metadataAvailable = false;
+    resolver = async () => null;
+  }
+  const projects = {};
+  const worktrees = {};
+  const projectByDirectory = new Map([[0, null]]);
+  const directoriesUsed = new Set(database.prepare(
+    "SELECT DISTINCT work_directory_id AS id FROM work_rollup WHERE events > 0",
+  ).all().map((row) => Number(row.id)));
+  // Each distinct directory may cost a Git process, so they run side by side,
+  // bounded. Results are applied in id order, so the output does not depend on
+  // which finished first.
+  const toResolve = database.prepare("SELECT id, path FROM work_directory ORDER BY id").all()
+    .filter((row) => directoriesUsed.has(Number(row.id)));
+  const resolved = new Array(toResolve.length);
+  let nextIndex = 0;
+  let fatal = null;
+  await Promise.all(Array.from({ length: Math.min(WORK_RESOLVE_CONCURRENCY, toResolve.length) }, async () => {
+    for (;;) {
+      if (fatal !== null) return;
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= toResolve.length) return;
+      try {
+        signal?.throwIfAborted();
+        resolved[index] = { project: await resolver(toResolve[index].path) ?? null, failed: false };
+      } catch (error) {
+        if (error?.code === "work_usage_capacity_exceeded" || signal?.aborted) {
+          fatal = error;
+          return;
+        }
+        resolved[index] = { project: null, failed: true };
+      }
+    }
+  }));
+  if (fatal !== null) throw fatal;
+  toResolve.forEach((row, index) => {
+    const { project, failed } = resolved[index];
+    if (failed) metadataAvailable = false;
+    projectByDirectory.set(Number(row.id), project);
+    if (project) {
+      projects[project.project] = { name: project.projectName, method: project.method };
+      worktrees[project.worktree] = { name: project.worktreeName };
+    }
+  });
+
+  const commitSeq = readCommitSeq(database);
+  const generation = Object.freeze({
+    status: "complete",
+    id: commitSeq,
+    commitSeq,
+    usageProvenanceComplete: true,
+  });
+  const core = createWorkUsageCollectorCore({
+    generation,
+    periods,
+    scopeRows,
+    maximumCells,
+    signal,
+    nowMs,
+    codexHome,
+    deviceSalt,
+    projects,
+    worktrees,
+    metadata: () => ({
+      discoveryFingerprint: null,
+      observationDigest: null,
+      status: metadataAvailable ? "available" : "partial",
+      metadataAvailable,
+      inspectedSources: Number(database.prepare(
+        "SELECT COUNT(*) AS n FROM source WHERE quarantine_code IS NULL",
+      ).get().n),
+      indexedSources: Number(database.prepare(
+        "SELECT COUNT(*) AS n FROM source WHERE quarantine_code IS NULL",
+      ).get().n),
+    }),
+  });
+
+  const starts = storedContextStarts(database);
+  const models = new Map(database.prepare("SELECT id, model_id FROM model").all()
+    .map((row) => [Number(row.id), row.model_id]));
+  const sessions = new Map(database.prepare("SELECT id, session_local, session_uuid FROM session").all()
+    .map((row) => [Number(row.id), { local: row.session_local, uuid: row.session_uuid }]));
+
+  const priceOf = (record) => {
+    const priced = usageProjection(record, "unknown", pricer);
+    return {
+      amount: priced?.apiPriceEquivalentUsdExact ?? null,
+      status: priced?.pricingCoverageStatus ?? "unpriced",
+    };
+  };
+  const allNull = (components) => Object.values(components).every((value) => value === null);
+
+  // Days a period boundary cuts are read fact by fact.
+  const edgeDays = new Set();
+  for (const period of periods) {
+    for (const boundary of [period.fromMs, period.toMs]) {
+      const day = Math.floor(boundary / WORK_ROLLUP_DAY_MS) * WORK_ROLLUP_DAY_MS;
+      if (boundary !== day) edgeDays.add(day);
+    }
+  }
+  const lowest = Math.min(...periods.map((period) => period.fromMs));
+  const highest = Math.max(...periods.map((period) => period.toMs));
+  const key = rollupKeyExpressions("u");
+
+  // 1. Whole days, from the rollups.
+  const latestAt = database.prepare(`
+    SELECT MAX(u.observed_at_ms) AS value
+    FROM usage_event u
+    WHERE u.session_id = ? AND u.observed_at_ms >= ? AND u.observed_at_ms < ?
+      AND COALESCE(u.work_directory_id, 0) = ? AND u.model_id = ?
+      AND u.account_scope_id = ?
+      AND ${key.shape} = ? AND ${key.ctx_class} = ?
+      AND ((u.flags & 1) | ((u.flags & 4) >> 1) | ((u.flags & 8) >> 1)) = ?
+      AND ${committedPredicate("u")}`);
+  let sinceYield = 0;
+  for (const row of database.prepare(`
+    SELECT day_ms, session_id, work_directory_id, model_id, account_scope_id, shape,
+           ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write,
+           out_text, out_reasoning, out_combined, last_at_ms
+    FROM work_rollup
+    WHERE events > 0 AND day_ms + ${WORK_ROLLUP_DAY_MS} > ? AND day_ms < ?`).iterate(lowest, highest)) {
+    const dayMs = Number(row.day_ms);
+    if (edgeDays.has(dayMs)) continue;
+    if (++sinceYield % 2_000 === 0) await new Promise((resolve) => setImmediate(resolve));
+    const prov = Number(row.prov);
+    const components = componentsOf(row);
+    const statusOnly = (prov & 4) !== 0 && allNull(components);
+    const classIndex = Number(row.ctx_class);
+    const modelId = models.get(Number(row.model_id));
+    const session = sessions.get(Number(row.session_id));
+    let lastAtMs = row.last_at_ms === null ? null : Number(row.last_at_ms);
+    if (lastAtMs === null) {
+      lastAtMs = Number(latestAt.get(
+        Number(row.session_id), dayMs, dayMs + WORK_ROLLUP_DAY_MS,
+        Number(row.work_directory_id), Number(row.model_id), Number(row.account_scope_id),
+        Number(row.shape), classIndex, prov,
+      ).value ?? dayMs);
+    }
+    core.add({
+      observedAtMs: dayMs,
+      lastAtMs,
+      accountScopeId: Number(row.account_scope_id),
+      sessionLocal: session.local,
+      sessionUuid: session.uuid,
+      modelId,
+      components,
+      statusOnly,
+      project: projectByDirectory.get(Number(row.work_directory_id)) ?? null,
+      cacheWriteAssumedZero: (prov & 2) !== 0,
+      partial: (prov & 1) !== 0,
+      price: statusOnly
+        ? { amount: null, status: "unpriced" }
+        : priceOf({
+          observedAt: new Date(dayMs).toISOString(),
+          model: modelId,
+          totalInputContextTokens: classIndex < 0 ? null : classIndex === 0 ? 0 : starts[classIndex - 1],
+          components,
+          tierSemantics: {},
+          surfaceClassification: {},
+          accountScope: {},
+        }),
+      weight: Number(row.events),
+    });
+  }
+
+  // 2. Boundary days, fact by fact.
+  const facts = database.prepare(`
+    SELECT u.observed_at_ms, u.session_id, u.work_directory_id, u.model_id,
+           u.account_scope_id, u.flags, u.total_input_context,
+           u.tokens_in_uncached, u.tokens_in_cache_read, u.tokens_in_cache_write,
+           u.tokens_out_text, u.tokens_out_reasoning, u.tokens_out_combined
+    FROM usage_event u
+    WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND ${committedPredicate("u")}`);
+  for (const dayMs of [...edgeDays].sort((left, right) => left - right)) {
+    for (const row of facts.iterate(dayMs, dayMs + WORK_ROLLUP_DAY_MS)) {
+      signal?.throwIfAborted();
+      const observedMs = Number(row.observed_at_ms);
+      if (!periods.some((period) => observedMs >= period.fromMs && observedMs < period.toMs)) continue;
+      const components = eventComponents(row);
+      const flags = Number(row.flags);
+      const statusOnly = (flags & 8) !== 0 && allNull(components);
+      const modelId = models.get(Number(row.model_id));
+      const session = sessions.get(Number(row.session_id));
+      core.add({
+        observedAtMs: observedMs,
+        accountScopeId: Number(row.account_scope_id),
+        sessionLocal: session.local,
+        sessionUuid: session.uuid,
+        modelId,
+        components,
+        statusOnly,
+        project: projectByDirectory.get(Number(row.work_directory_id ?? 0)) ?? null,
+        cacheWriteAssumedZero: (flags & 4) !== 0,
+        partial: (flags & 1) !== 0,
+        price: statusOnly
+          ? { amount: null, status: "unpriced" }
+          : priceOf({
+            observedAt: new Date(observedMs).toISOString(),
+            model: modelId,
+            totalInputContextTokens: row.total_input_context === null
+              ? null : Number(row.total_input_context),
+            components,
+            tierSemantics: {},
+            surfaceClassification: {},
+            accountScope: {},
+          }),
+        weight: 1,
+      });
+    }
+  }
+  return core.finish();
+}
+
+function scopeKey(row) {
+  return `scope-${createHash("sha256")
+    .update(
+      JSON.stringify([
+        row.status,
+        row.scope_local ? Buffer.from(row.scope_local).toString("hex") : null,
+        row.reason,
+        row.plan_type,
+      ]),
+    )
+    .digest("hex")}`;
+}
+
+/**
+ * The accumulation and snapshot assembly shared by every source of work-usage
+ * facts. A source resolves each fact's project and provenance and feeds
+ * `add`; `finish` builds the per-period, per-scope snapshots.
+ *
+ * `add` takes one neutral fact (or one rollup row with `weight` equal facts
+ * whose quantities are already summed): the project (`{project, projectName,
+ * worktree, worktreeName, method}` or null), whether it is a status update,
+ * its provenance, its summed components and its price.
+ */
+export function createWorkUsageCollectorCore({
+  generation,
+  periods,
+  scopeRows,
+  maximumCells = MAX_WORK_CELLS,
+  signal = null,
+  nowMs,
+  codexHome,
+  deviceSalt = null,
+  projects = {},
+  worktrees = {},
+  metadata = () => ({
+    discoveryFingerprint: null,
+    observationDigest: null,
+    status: "available",
+    inspectedSources: 0,
+    indexedSources: 0,
+  }),
+}) {
+  const scopeStates = new Map(
+    scopeRows.map((row) => [
+      row.id,
+      {
+        id: scopeKey(row),
+        status: row.status,
+        threadLookup: {},
+        threads: {},
+        periods: new Map(),
+      },
+    ]),
+  );
+  let threadCount = 0;
+  const cellKeys = new Set();
+  function add(fact) {
+    signal?.throwIfAborted();
+    const at = fact.observedAtMs;
+    const active = periods.filter((p) => at >= p.fromMs && at < p.toMs);
+    if (active.length === 0) return;
+    const state = scopeStates.get(fact.accountScopeId);
+    if (!state) throw workUsageError("work_usage_scope_unavailable");
+    const weight = fact.weight ?? 1;
+    const thread = `t-${state.id.slice(-16)}-${Buffer.from(fact.sessionLocal).toString("hex")}`;
+    const project = fact.project;
+    if (!fact.statusOnly) {
+      if (!state.threads[thread] && ++threadCount > 25_000)
+        throw workUsageError("work_usage_capacity_exceeded");
+      const uuid = UUID.test(fact.sessionUuid ?? "")
+        ? fact.sessionUuid.toLowerCase()
+        : null;
+      if (uuid) state.threadLookup[uuid] = thread;
+      state.threads[thread] = { uuid };
+    }
+    for (const period of active) {
+      let bucket = state.periods.get(period.id);
+      if (!bucket) {
+        bucket = {
+          accumulator: createWorkUsageAccumulator({ maximumCells }),
+          models: new Set(),
+          events: 0,
+          excludedAllowanceUpdates: 0,
+        };
+        state.periods.set(period.id, bucket);
+      }
+      bucket.events += weight;
+      if (fact.statusOnly) {
+        bucket.excludedAllowanceUpdates += weight;
+        continue;
+      }
+      const key = JSON.stringify([
+        state.id,
+        period.id,
+        thread,
+        project?.project,
+        project?.worktree,
+        fact.modelId,
+      ]);
+      if (!cellKeys.has(key)) {
+        if (cellKeys.size >= maximumCells)
+          throw workUsageError("work_usage_capacity_exceeded");
+        cellKeys.add(key);
+      }
+      bucket.accumulator.add({
+        thread,
+        project: project?.project,
+        worktree: project?.worktree,
+        model: fact.modelId,
+        // A rolled-up row stands for facts across a day: its newest instant
+        // is what the cell reports, not the day it is filed under.
+        at: fact.lastAtMs ?? at,
+        components: fact.components,
+        cacheWriteAssumedZero: fact.cacheWriteAssumedZero,
+        partial: fact.partial || !generation.usageProvenanceComplete,
+        price: fact.price,
+        weight,
+      });
+      bucket.models.add(fact.modelId);
+      if (bucket.models.size > 1000)
+        throw workUsageError("work_usage_capacity_exceeded");
+    }
+  }
+  async function finish() {
+    const ids = [
+      ...new Set(
+        [...scopeStates.values()].flatMap((state) =>
+          Object.values(state.threads)
+            .map((t) => t.uuid)
+            .filter(Boolean),
+        ),
+      ),
+    ];
+    const ancestry = await readCodexLocalThreadAncestry(codexHome, ids);
+    for (const state of scopeStates.values()) {
+      const { threads, threadLookup, id: selectedScope } = state;
+      const threadFamilies = {};
+      for (const [id, record] of Object.entries(threads)) {
+        const root = ancestry.get(record.uuid);
+        if (!root || root === record.uuid) {
+          threadFamilies[id] = id;
+          continue;
+        }
+        if (!threadLookup[root] && !deviceSalt) {
+          threadFamilies[id] = id;
+          continue;
+        }
+        const family =
+          threadLookup[root] ??
+          (deviceSalt
+            ? `t-${selectedScope.slice(-16)}-family-${localDigest(deviceSalt, "work-family", root).toString("hex")}`
+            : id);
+        threadFamilies[id] = family;
+        if (!threads[family] && ++threadCount > 25_000)
+          throw workUsageError("work_usage_capacity_exceeded");
+        threads[family] ??= { uuid: root };
+        threadLookup[root] ??= family;
+        threadFamilies[family] = family;
+      }
+      for (const length of [8, 12, 16, 36, 100]) {
+        const counts = new Map();
+        for (const [id, record] of Object.entries(threads)) {
+          const suffix = (record.uuid ?? id).slice(-length);
+          counts.set(suffix, (counts.get(suffix) ?? 0) + 1);
+        }
+        for (const [id, record] of Object.entries(threads)) {
+          const suffix = (record.uuid ?? id).slice(-length);
+          if (!record.shortId && counts.get(suffix) === 1)
+            record.shortId = suffix;
+        }
+      }
+
+      state.threadFamilies = threadFamilies;
+    }
+    // Separate clones and folders may share a basename. Disambiguate against
+    // the whole snapshot so the label remains stable across pages and filters.
+    for (const records of [projects, worktrees]) {
+      const names = new Map();
+      for (const record of Object.values(records))
+        names.set(record.name, (names.get(record.name) ?? 0) + 1);
+      for (const [id, record] of Object.entries(records))
+        if (names.get(record.name) > 1) record.shortId = id.slice(-12);
+    }
+
+    const described = metadata();
+    const common = {
+      pricing: {
+        basis: "event_time",
+        fingerprint: createHash("sha256")
+          .update(JSON.stringify(APP_PRICE_REGISTRY_MANIFEST))
+          .digest("hex"),
+      },
+      metadata: {
+        method: "last_observed_location",
+        usageClassification: "verified-quota-status-v2",
+        resolverVersion: "work-location-v3",
+        discoveryFingerprint: described.discoveryFingerprint,
+        observationDigest: described.observationDigest,
+        observedAt: Date.now(),
+        status: described.status,
+        inspectedSources: described.inspectedSources,
+        indexedSources: described.indexedSources,
+        retained: false,
+      },
+    };
+    const metadataAvailable = described.metadataAvailable !== false;
+    const output = { status: "available", asOfMs: nowMs, periods: {} };
+    for (const period of periods) {
+      const states = [...scopeStates.values()].filter((state) =>
+        state.periods.has(period.id),
+      );
+      const scopes = states.map((state) => ({
+        id: state.id,
+        status: state.status,
+        events: state.periods.get(period.id).events,
+      }));
+      const snapshots = {};
+      for (const state of states) {
+        const bucket = state.periods.get(period.id);
+        const excludedAllowanceUpdates = bucket.excludedAllowanceUpdates;
+        snapshots[state.id] = {
+          status: "available",
+          generation,
+          scope: state.id,
+          scopes,
+          fromMs: period.fromMs,
+          toMs: period.toMs,
+          cells: bucket.accumulator.finish(),
+          models: [...bucket.models].sort(),
+          threadLookup: state.threadLookup,
+          threadFamilies: state.threadFamilies,
+          display: { projects, worktrees, threads: state.threads },
+          pricing: common.pricing,
+          metadata: { ...common.metadata, excludedAllowanceUpdates },
+        };
+      }
+      // An empty interval still has a selectable, empty snapshot.
+      if (states.length === 0)
+        snapshots["scope-0"] = {
+          status: "available",
+          generation,
+          scope: "scope-0",
+          scopes,
+          cells: [],
+          models: [],
+          threadLookup: {},
+          threadFamilies: {},
+          display: { projects: {}, worktrees: {}, threads: {} },
+          pricing: {
+            basis: "event_time",
+            fingerprint: createHash("sha256")
+              .update(JSON.stringify(APP_PRICE_REGISTRY_MANIFEST))
+              .digest("hex"),
+          },
+          metadata: {
+            status: metadataAvailable ? "available" : "partial",
+            retained: false,
+          },
+        };
+      output.periods[period.id] = {
+        fromMs: period.fromMs,
+        toMs: period.toMs,
+        scopes,
+        snapshots,
+      };
+    }
+    return output;
+  }
+  return { add, finish };
+}

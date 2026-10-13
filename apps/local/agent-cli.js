@@ -3,6 +3,7 @@ import {
   USAGE_EXPLAINER_SCHEMA_VERSION,
   usageExplanationCatalog,
 } from "../../src/application/index.js";
+import { localIndexUsageExplainerOptions } from "../../src/local-index-usage-explainer.js";
 import { createLocalUsageExplainer } from "../../src/local-usage-explainer.js";
 
 export const INSTALLED_AGENT_PROTOCOL_VERSION = 1;
@@ -143,7 +144,7 @@ export async function executeInstalledAgentCommand(
   const args = parseInstalledAgentArgs(argv);
   if (args.command === "explain-usage-plans") return usageExplanationCatalog();
 
-  const explainer = createUsageExplainer();
+  const explainer = createUsageExplainer(localIndexUsageExplainerOptions(process.env));
   if (args.command === "status") {
     const dataHealth = await explainer.query({
       schemaVersion: USAGE_EXPLAINER_SCHEMA_VERSION,

@@ -208,16 +208,16 @@ async function makeFixture() {
     commit: "a".repeat(40),
     repository: "https://github.com/adamallcock/tibotattle",
     artifacts: [{
-      platform: "macos",
+      platform: "windows",
       channel: "direct",
-      architecture: "arm64",
-      format: "dmg",
+      architecture: "x64",
+      format: "exe",
       path: "TiboTattle-test.bin",
       distribution: "github-release",
       downloadUrl: "https://github.com/adamallcock/tibotattle/releases/download/v0.1.0/TiboTattle-test.bin",
       nativeTrust: {
-        signerIdentity: "Developer ID Application: TiboTattle (ABCDE12345)",
-        teamId: "ABCDE12345",
+        publisher: "Adam Allcock",
+        certificateSha256: "e".repeat(64),
       },
       build: {
         sourceManifestSha256: "c".repeat(64),
@@ -225,11 +225,8 @@ async function makeFixture() {
       },
       assurances: {
         cleanInstallSmokePassed: true,
-        developerIdSigned: true,
-        hardenedRuntime: true,
-        notarizationAccepted: true,
-        ticketStapled: true,
-        gatekeeperAssessmentPassed: true,
+        authenticodeSigned: true,
+        timestamped: true,
       },
       updater: { enabled: false, mechanism: "none", metadata: null },
       sbom: { path: "TiboTattle-test.spdx.json" },
@@ -521,10 +518,6 @@ test("bundle verification invokes gh with exact source, signer, predicate, and r
 
 test("the verifier archive matrix is pinned for every supported runner", () => {
   assert.deepEqual(Object.keys(GH_RELEASE_ARCHIVES).sort(), [
-    "darwin-arm64",
-    "darwin-x64",
-    "linux-arm64",
-    "linux-x64",
     "win32-arm64",
     "win32-x64",
   ]);
@@ -821,14 +814,14 @@ test("enriched descriptors rebase nested updater paths to the emitted base direc
   const metadataDirectory = join(fixture.root, "metadata");
   await mkdir(nested, { recursive: true });
   await mkdir(metadataDirectory);
-  await writeFile(join(metadataDirectory, "appcast.xml"), "<rss />\n", "utf8");
+  await writeFile(join(metadataDirectory, "latest.yml"), "version: 0.1.0\n", "utf8");
   const descriptor = JSON.parse(await readFile(fixture.descriptorPath, "utf8"));
   descriptor.artifacts[0].path = "../../TiboTattle-test.bin";
   descriptor.artifacts[0].sbom.path = "../../TiboTattle-test.spdx.json";
   descriptor.artifacts[0].updater = {
     enabled: true,
-    mechanism: "sparkle",
-    metadata: { path: "../../metadata/appcast.xml" },
+    mechanism: "electron-updater",
+    metadata: { path: "../../metadata/latest.yml" },
   };
   fixture.descriptorPath = join(nested, "release-descriptor.json");
   fixture.releaseDescriptorPath = fixture.descriptorPath;
@@ -856,12 +849,12 @@ test("enriched descriptors rebase nested updater paths to the emitted base direc
   const enriched = JSON.parse(
     await readFile(collected.enrichedReleaseDescriptorPath, "utf8"),
   );
-  assert.equal(enriched.artifacts[0].updater.metadata.path, "metadata/appcast.xml");
+  assert.equal(enriched.artifacts[0].updater.metadata.path, "metadata/latest.yml");
   const manifest = await generateReleaseEvidence({
     descriptor: enriched,
     baseDir: collected.enrichedReleaseDescriptorBaseDir,
   });
-  assert.equal(manifest.artifacts[0].updater.metadata.fileName, "appcast.xml");
+  assert.equal(manifest.artifacts[0].updater.metadata.fileName, "latest.yml");
 });
 
 test("collect rolls back a provenance bundle when the SBOM bundle copy fails", async () => {

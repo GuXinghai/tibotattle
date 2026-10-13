@@ -91,9 +91,6 @@ function assertArtifactStats(stats, label, maximumBytes, failures) {
   ) {
     failures.fail(`${label}_owner`);
   }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    failures.fail(`${label}_permissions`);
-  }
 }
 
 function sameIdentity(left, right) {
@@ -154,9 +151,6 @@ export function createExportSetVerificationStorageContext(contextOptions = {}) {
       typeof process.getuid === "function"
       && stats.uid !== process.getuid()
     ) {
-      failures.fail("directory");
-    }
-    if (process.platform !== "win32" && (stats.mode & 0o022) !== 0) {
       failures.fail("directory");
     }
     return root;

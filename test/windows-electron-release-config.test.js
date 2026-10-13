@@ -220,24 +220,24 @@ function validateReleaseConfig(environment) {
   });
 }
 
-async function staticallyImportedMacOSCredentialContract() {
+async function staticallyImportedWindowsCredentialContract() {
   const mainPath = resolve("apps/electron/main.js");
   const mainImports = await extractEsmImports(await fsPromises.readFile(mainPath, "utf8"), {
     sourceName: mainPath,
   });
-  const macOSCredentialImport = mainImports.find((entry) => entry.kind === "import"
-    && entry.specifier === "./desktop-macos-keychain.js");
-  assert.notEqual(macOSCredentialImport, undefined, "main must retain its credential composition import");
-  const macOSCredentialPath = resolve(dirname(mainPath), macOSCredentialImport.specifier);
+  const credentialImport = mainImports.find((entry) => entry.kind === "import"
+    && entry.specifier === "./desktop-windows-accountless-credential.js");
+  assert.notEqual(credentialImport, undefined, "main must retain its credential composition import");
+  const credentialPath = resolve(dirname(mainPath), credentialImport.specifier);
   const credentialImports = await extractEsmImports(
-    await fsPromises.readFile(macOSCredentialPath, "utf8"),
-    { sourceName: macOSCredentialPath },
+    await fsPromises.readFile(credentialPath, "utf8"),
+    { sourceName: credentialPath },
   );
   const contractImport = credentialImports.find((entry) => entry.kind === "import"
     && typeof entry.specifier === "string"
-    && entry.specifier.startsWith("../../native/macos-keychain/"));
-  assert.notEqual(contractImport, undefined, "credential facade must retain its native contract import");
-  return relative(resolve("."), resolve(dirname(macOSCredentialPath), contractImport.specifier))
+    && entry.specifier.startsWith("../../src/platform/"));
+  assert.notEqual(contractImport, undefined, "credential facade must retain its platform contract import");
+  return relative(resolve("."), resolve(dirname(credentialPath), contractImport.specifier))
     .split(sep).join("/");
 }
 
@@ -265,7 +265,9 @@ test("Windows release config requires the patched signing runtime contract", asy
     assert.equal(config.extraMetadata.tibotattleDistribution.target, "win32-x64");
     assert.equal(config.forceCodeSigning, true);
     assert.equal(config.icon, resolve("apps/electron/assets/tibotattle.ico"));
-    assert.ok(config.files[0].filter.includes(await staticallyImportedMacOSCredentialContract()));
+    const contract = await staticallyImportedWindowsCredentialContract();
+    assert.ok(config.files[0].filter.some((pattern) => pattern.endsWith("/**")
+      && contract.startsWith(pattern.slice(0, -2))), contract);
     assert.equal(config.files[0].filter.includes("native/macos-keychain.node"), false);
     assert.deepEqual(config.signExts, [".dll", "!.node"]);
     assert.equal(config.ledgerLeaf, "windows-signing-operation-ledger.json");
@@ -406,9 +408,9 @@ test("patched build finalizer includes deferred NSIS signing once across archite
   const { Arch } = appBuilderRequire("builder-util");
   const output = await fsPromises.mkdtemp(join(tmpdir(), "windows-ledger-lifecycle-"));
   try {
-    for (const scenario of ["complete", "sync-failure", "async-failure", "cancelled", "linux"]) {
+    for (const scenario of ["complete", "sync-failure", "async-failure", "cancelled"]) {
       const events = [], cancellationToken = { cancelled: false };
-      const platform = scenario === "linux" ? Platform.LINUX : Platform.WINDOWS;
+      const platform = Platform.WINDOWS;
       const targets = [false, true].map((isAsyncSupported) => ({
         name: isAsyncSupported ? "async-fixture" : "nsis-fixture", outDir: output, isAsyncSupported,
         build: async (_directory, arch) => { events.push(`build-${arch}`); },

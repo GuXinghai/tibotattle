@@ -13,14 +13,6 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
-import {
-  SYNTHETIC_LINUX_BINDING_BYTES,
-  syntheticLinuxBindingManifest,
-} from "./helpers/linux-packaging-binding.js";
-import {
-  LINUX_CREDENTIAL_MUTEX_BINDING_RELATIVE_PATH as LINUX_BINDING,
-  LINUX_CREDENTIAL_MUTEX_BINDING_MANIFEST_RELATIVE_PATH as LINUX_MANIFEST,
-} from "../src/platform/linux-credential-mutex.js";
 
 import {
   ELECTRON_SHELL_RUNTIME_FILES,
@@ -40,14 +32,11 @@ import {
 import {
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../src/platform/windows-filesystem.js";
-import { createAccountlessHostedRehearsalMetadata } from "../scripts/lib/electron-builder-package-json.mjs";
 
 const require = createRequire(import.meta.url);
 const asar = createRequire(require.resolve("electron-builder"))("@electron/asar");
 const SHELL_FILES = [
   "config/electron-production-distribution.cjs",
-  "config/macos-bundle-version-plan.cjs",
-  "native/macos-keychain/contract.js",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
   "apps/electron/desktop-command.js",
@@ -65,26 +54,17 @@ const SHELL_FILES = [
   "apps/electron/desktop-hosted-signin.js",
   "apps/electron/desktop-recovery-settings.js",
   "apps/electron/desktop-ipc.js",
-  "apps/electron/desktop-keychain-broker.js",
-  "apps/electron/desktop-linux-secret-service-broker.js",
-  "apps/electron/desktop-linux-account-observation-broker.js",
-  "apps/electron/desktop-linux-accountless-credential.js",
-  "apps/electron/desktop-linux-secret-service.js",
   "apps/electron/desktop-windows-account-observation-broker.js",
   "apps/electron/desktop-windows-account-observation-qualification.js",
   "apps/electron/desktop-owned-downloads.js",
   "apps/electron/desktop-menu.js",
   "apps/electron/desktop-lifecycle.js",
-  "apps/electron/desktop-macos-keychain.js",
   "apps/electron/desktop-secure-storage-readiness.js",
-  "apps/electron/desktop-native-migration.js",
-  "apps/electron/desktop-native-migration-macos.js",
   "apps/electron/desktop-notification-coordinator.js",
   "apps/electron/desktop-notification-delivery.js",
   "apps/electron/desktop-notification-policy.js",
   "apps/electron/desktop-windows-notification-identity.js",
   "apps/electron/desktop-platform-services.js",
-  "apps/electron/linux-autostart.js",
   "apps/electron/desktop-runtime.js",
   "apps/electron/desktop-settings-backends.js",
   "apps/electron/desktop-settings-store.js",
@@ -99,10 +79,6 @@ const SHELL_FILES = [
   "apps/electron/desktop-update-preferences.js",
   "apps/electron/desktop-updater.js",
   "apps/electron/errors.js",
-  "apps/electron/linux-qualification.js",
-  "apps/electron/linux-secret-service-qualification-smoke-child.mjs",
-  "apps/electron/linux-account-observation-qualification-smoke-child.mjs",
-  "apps/electron/linux-secret-service-qualification-smoke.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
   "apps/electron/platform-gate.js",
@@ -118,15 +94,6 @@ const SHELL_FILES = [
   "apps/electron/windows-qualification.js",
   "config/deployment-endpoints.js",
   "src/desktop-shell-status.js",
-  "src/platform/linux-account-observation-credential.js",
-  "src/platform/linux-account-observation-broker.js",
-  "src/platform/linux-accountless-installation-credential.js",
-  "src/platform/linux-credential-mutex.js",
-  "src/platform/linux-credential-mutation-lease.js",
-  "src/platform/linux-credential-state.js",
-  "src/platform/linux-secret-service-broker.js",
-  "src/platform/linux-secret-service-binding.js",
-  "src/platform/linux-secret-service.js",
   "src/platform/windows-accountless-installation-credential.js",
   "src/platform/windows-credential-manager-probe.js",
   "src/platform/windows-native-unsigned-content.js",
@@ -139,27 +106,13 @@ const SHELL_FILES = [
   "src/platform/windows-credential-operation-audit.js",
   "src/platform/windows-credential-audit-file-guard.js",
   "src/platform/windows-protected-sqlite.js",
-  "scripts/diagnose-desktop-crash.mjs",
 ];
 const KEYTAR = Object.freeze({
-  "darwin-arm64": "node_modules/@github/keytar/prebuilds/darwin-arm64/keytar.node",
-  "darwin-x64": "node_modules/@github/keytar/prebuilds/darwin-x64/keytar.node",
   "win32-x64": "node_modules/@github/keytar/prebuilds/win32-x64/keytar.node",
-  "linux-x64": "node_modules/@github/keytar/prebuilds/linux-x64/keytar.node",
 });
 const WINDOWS_BINDING =
   "native/windows-filesystem/build/Release/windows_filesystem.node";
 const WINDOWS_BINDING_MANIFEST = `${WINDOWS_BINDING}.manifest.json`;
-const REAL_MAC_STAGED_APP = resolve(".release-build/electron-dev/darwin-arm64/app");
-const REAL_MAC_ASAR = resolve(
-  ".release-build/electron-dev/darwin-arm64/artifacts/TiboTattle Dev.app/Contents/Resources/app.asar",
-);
-const REAL_MAC_UNPACKED = `${REAL_MAC_ASAR}.unpacked`;
-const REAL_MAC_ARTIFACT_AVAILABLE = [
-  REAL_MAC_STAGED_APP,
-  REAL_MAC_ASAR,
-  REAL_MAC_UNPACKED,
-].every((path) => existsSync(path));
 
 test("packager and verifier retain the exact same Electron shell closure", () => {
   assert.deepEqual(
@@ -236,7 +189,7 @@ async function makeFixture(
     physicalUnpackedMutation = null,
     packageMetadata = {},
     sourceReadBinding = false,
-    unpackPattern = target === "linux-x64" ? "{**/*.node,**/linux_credential_mutex.node.manifest.json}" : "**/*.node",
+    unpackPattern = "**/*.node",
   } = {},
 ) {
   const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-artifact-"));
@@ -283,12 +236,6 @@ async function makeFixture(
       Buffer.from(`${JSON.stringify(sidecar, null, 2)}\n`),
     );
   }
-  if (target === "linux-x64") {
-    files.set(LINUX_BINDING, SYNTHETIC_LINUX_BINDING_BYTES);
-    const linuxManifest = JSON.parse(JSON.stringify(syntheticLinuxBindingManifest()));
-    bindingManifestMutation?.(linuxManifest);
-    files.set(LINUX_MANIFEST, Buffer.from(JSON.stringify(linuxManifest)));
-  }
 
   const kinds = new Map([
     ["package.json", "runtime_metadata"],
@@ -300,10 +247,6 @@ async function makeFixture(
   if (target === "win32-x64") {
     kinds.set(WINDOWS_BINDING, "windows_native_binding");
     kinds.set(WINDOWS_BINDING_MANIFEST, "windows_native_binding");
-  }
-  if (target === "linux-x64") {
-    kinds.set(LINUX_BINDING, "linux_native_binding");
-    kinds.set(LINUX_MANIFEST, "linux_native_binding");
   }
   for (const [path, bytes] of files) await writeRelative(appPath, path, bytes);
   const rows = [...files.entries()]
@@ -388,93 +331,10 @@ function verify(fixture, target, options = {}) {
   });
 }
 
-test("verifies a macOS arm64 archive/unpacked union with aggregate-only output", async () => {
-  await withFixture("darwin-arm64", {}, async (fixture) => {
-    const result = await verify(fixture, "darwin-arm64");
-    assert.equal(result.status, FIXED_STATUS.verified);
-    assert.equal(result.target, "darwin-arm64");
-    assert.equal(result.nativeFileCount, 1);
-    assert.equal(result.binding.status, "not_applicable");
-    assert.equal(result.staged.count, result.artifact.count);
-    assert.equal(result.staged.bytes > result.unpacked.bytes, true);
-    assert.equal(result.staged.sha256, result.artifact.sha256);
-    // Compare against JSON's escaped representation so this remains a real
-    // leak check when the fixture root contains Windows backslashes.
-    const escapedFixtureRoot = JSON.stringify(fixture.root).slice(1, -1);
-    assert.equal(JSON.stringify(result).includes(escapedFixtureRoot), false);
-    assert.deepEqual(Object.keys(result).sort(), [
-      "asar", "artifact", "binding", "nativeFileCount", "staged", "status", "target", "unpacked",
-    ].sort());
-  });
-});
 
-test("hosted rehearsal archive requires its exact selected metadata even when all staged bytes match", async () => {
-  const metadata = createAccountlessHostedRehearsalMetadata({ sourceRevision: "a".repeat(40) });
-  const options = {
-    packagingProfile: "accountless-hosted-rehearsal",
-    hostedRehearsalMetadata: metadata,
-  };
-  await withFixture("darwin-arm64", {
-    packageMetadata: { tibotattleAccountlessHostedRehearsal: metadata },
-  }, async (fixture) => {
-    const result = await verify(fixture, "darwin-arm64", options);
-    assert.equal(result.status, FIXED_STATUS.verified);
-    await assert.rejects(verify(fixture, "darwin-arm64"));
-    await assert.rejects(verify(fixture, "darwin-arm64", {
-      ...options,
-      hostedRehearsalMetadata: { ...metadata, sourceRevision: "b".repeat(40) },
-    }));
-  });
-  await withFixture("darwin-arm64", {}, async (fixture) => {
-    await assert.rejects(verify(fixture, "darwin-arm64", options));
-  });
-  await assert.rejects(verifyElectronDevelopmentArtifact({
-    target: "darwin-x64", ...options,
-  }), { code: FIXED_STATUS.targetInvalid });
-});
 
-test("verifies the target-specific Keytar boundary for macOS x64 and Linux x64", async () => {
-  for (const target of ["darwin-x64", "linux-x64"]) {
-    await withFixture(target, {}, async (fixture) => {
-      const result = await verify(fixture, target);
-      assert.equal(result.status, FIXED_STATUS.verified, target);
-      assert.equal(result.target, target, target);
-      assert.equal(result.nativeFileCount, target === "linux-x64" ? 2 : 1, target);
-      assert.equal(result.binding.status, target === "linux-x64" ? "included_unverified" : "not_applicable", target);
-      assert.equal(result.staged.sha256, result.artifact.sha256, target);
-    });
-  }
-});
 
-test("verifies the rebuilt macOS arm64 Electron directory artifact when present", {
-  skip: !REAL_MAC_ARTIFACT_AVAILABLE,
-}, async () => {
-  const result = await verifyElectronDevelopmentArtifact({
-    target: "darwin-arm64",
-    appPath: REAL_MAC_STAGED_APP,
-    asarPath: REAL_MAC_ASAR,
-    unpackedPath: REAL_MAC_UNPACKED,
-  });
-  assert.equal(result.status, FIXED_STATUS.verified);
-  assert.equal(result.target, "darwin-arm64");
-  assert.equal(result.staged.count, result.artifact.count);
-  assert.equal(result.nativeFileCount, 1);
-});
 
-test("Linux native artifact requires a matching closed sidecar and physical manifest", async () => {
-  for (const mutate of [
-    (manifest) => { manifest.sha256 = "f".repeat(64); },
-    (manifest) => { manifest.nativeClaims.productionSafe = true; },
-    (manifest) => { manifest.unreviewed = true; },
-  ]) {
-    await withFixture("linux-x64", { bindingManifestMutation: mutate }, async (fixture) => {
-      await assert.rejects(verify(fixture, "linux-x64"), { code: FIXED_STATUS.linuxBindingInvalid });
-    });
-  }
-  await withFixture("linux-x64", { unpackPattern: "**/*.node" }, async (fixture) => {
-    await assert.rejects(verify(fixture, "linux-x64"), { code: FIXED_STATUS.nativeInventoryInvalid });
-  });
-});
 
 test("verifies Windows x64 binding and sidecar digests without promoting provenance", async () => {
   await withFixture("win32-x64", {}, async (fixture) => {
@@ -684,16 +544,16 @@ test("keeps the Windows native sidecar in virtual ASAR beside an unpacked .node"
 
 test("rejects a physical unpacked native file without an ASAR unpack marker", async () => {
   await withFixture(
-    "darwin-arm64",
+    "win32-x64",
     {
       physicalUnpackedMutation: async ({ keytar, unpackedPath }) => {
-        await writeRelative(unpackedPath, KEYTAR["darwin-arm64"], keytar);
+        await writeRelative(unpackedPath, KEYTAR["win32-x64"], keytar);
       },
       unpackPattern: "native/windows-filesystem/**/*.node",
     },
     async (fixture) => {
       await assert.rejects(
-        () => verify(fixture, "darwin-arm64"),
+        () => verify(fixture, "win32-x64"),
         (error) => error.code === FIXED_STATUS.nativeInventoryInvalid
           && !error.message.includes(fixture.root),
       );
@@ -703,18 +563,18 @@ test("rejects a physical unpacked native file without an ASAR unpack marker", as
 
 test("rejects an ASAR unpack marker without its physical unpacked file", async () => {
   await withFixture(
-    "darwin-arm64",
+    "win32-x64",
     {
       physicalUnpackedMutation: async ({ unpackedPath }) => {
         await rm(
-          join(unpackedPath, ...KEYTAR["darwin-arm64"].split("/")),
+          join(unpackedPath, ...KEYTAR["win32-x64"].split("/")),
           { force: true },
         );
       },
     },
     async (fixture) => {
       await assert.rejects(
-        () => verify(fixture, "darwin-arm64"),
+        () => verify(fixture, "win32-x64"),
         (error) => error.code === FIXED_STATUS.nativeInventoryInvalid
           && !error.message.includes(fixture.root),
       );
@@ -736,11 +596,11 @@ test("rejects qualification and other-platform native binaries", async () => {
     },
   );
   await withFixture(
-    "darwin-arm64",
+    "win32-x64",
     { foreignUnpacked: "native/windows-filesystem/build/Release/windows_filesystem_qualification.node" },
     async (fixture) => {
       await assert.rejects(
-        () => verify(fixture, "darwin-arm64"),
+        () => verify(fixture, "win32-x64"),
         (error) => error.code === FIXED_STATUS.nativeInventoryInvalid,
       );
     },
@@ -748,10 +608,10 @@ test("rejects qualification and other-platform native binaries", async () => {
 });
 
 test("rejects an unpacked directory that contains an extra non-native file", async () => {
-  await withFixture("darwin-arm64", {}, async (fixture) => {
+  await withFixture("win32-x64", {}, async (fixture) => {
     await writeRelative(fixture.unpackedPath, "unexpected.txt", Buffer.from("unexpected\n"));
     await assert.rejects(
-      () => verify(fixture, "darwin-arm64"),
+      () => verify(fixture, "win32-x64"),
       (error) => error.code === FIXED_STATUS.nativeInventoryInvalid
         && !error.message.includes(fixture.root),
     );
@@ -759,12 +619,12 @@ test("rejects an unpacked directory that contains an extra non-native file", asy
 });
 
 test("rejects symlinked staged inputs instead of reading outside the app root", async () => {
-  await withFixture("darwin-arm64", {}, async (fixture) => {
+  await withFixture("win32-x64", {}, async (fixture) => {
     const stagedLink = join(fixture.appPath, "apps/local/server.js");
     await rm(stagedLink);
     await symlink(join(fixture.appPath, "apps/electron/main.js"), stagedLink);
     await assert.rejects(
-      () => verify(fixture, "darwin-arm64"),
+      () => verify(fixture, "win32-x64"),
       (error) => error.code === FIXED_STATUS.inputInvalid
         && error.message === FIXED_STATUS.inputInvalid
         && !error.message.includes(fixture.root),
@@ -773,9 +633,9 @@ test("rejects symlinked staged inputs instead of reading outside the app root", 
 });
 
 test("rejects an archive containing a file outside the staged manifest", async () => {
-  await withFixture("darwin-arm64", { extraArchive: "unexpected.txt" }, async (fixture) => {
+  await withFixture("win32-x64", { extraArchive: "unexpected.txt" }, async (fixture) => {
     await assert.rejects(
-      () => verify(fixture, "darwin-arm64"),
+      () => verify(fixture, "win32-x64"),
       (error) => error.code === FIXED_STATUS.inventoryMismatch
         && !error.message.includes(fixture.root),
     );
@@ -797,11 +657,11 @@ test("rejects a Windows binding whose sidecar digest disagrees with the runtime 
 });
 
 test("fails closed for missing inputs without exposing their paths", async () => {
-  await withFixture("darwin-arm64", {}, async (fixture) => {
+  await withFixture("win32-x64", {}, async (fixture) => {
     const missing = join(fixture.root, "missing.asar");
     await assert.rejects(
       () => verifyElectronDevelopmentArtifact({
-        target: "darwin-arm64",
+        target: "win32-x64",
         appPath: fixture.appPath,
         asarPath: missing,
         unpackedPath: fixture.unpackedPath,
@@ -831,32 +691,6 @@ test("requires explicit target and artifact paths", () => {
   );
 });
 
-test("normalizes Windows-rooted ASAR list paths on macOS", async () => {
-  await withFixture("darwin-arm64", {}, async (fixture) => {
-    const listed = asar.listPackage(fixture.asarPath);
-    // @electron/asar emits paths with the host platform's separator. Build
-    // both explicitly rooted representations from the canonical inventory so
-    // this contract remains meaningful on both POSIX and Windows hosts.
-    const canonicalPaths = listed.map((path) => normalizeArchivePath(
-      path,
-      process.platform,
-    ));
-    const posixPaths = canonicalPaths.map((path) => normalizeArchivePath(
-      `/${path}`,
-      "darwin",
-    ));
-    const windowsPaths = canonicalPaths.map((path) => normalizeArchivePath(
-      `\\${path.replaceAll("/", "\\")}`,
-      "win32",
-    ));
-    assert.deepEqual(windowsPaths.sort(), posixPaths.sort());
-    assert.equal(
-      normalizeArchivePath(String.raw`\apps\electron\main.js`, "win32"),
-      "apps/electron/main.js",
-    );
-  });
-});
-
 test("rejects non-canonical ASAR list paths", () => {
   const invalid = [
     ["win32", "apps\\electron\\main.js"],
@@ -869,14 +703,6 @@ test("rejects non-canonical ASAR list paths", () => {
     ["win32", String.raw`\apps\.\main.js`],
     ["win32", String.raw`\apps\..\main.js`],
     ["win32", `\\apps\\main\0.js`],
-    ["darwin", "apps/electron/main.js"],
-    ["darwin", "//apps/electron/main.js"],
-    ["darwin", "/apps//electron/main.js"],
-    ["darwin", "/apps\\electron/main.js"],
-    ["darwin", "/C:/apps/main.js"],
-    ["darwin", "/apps/./main.js"],
-    ["darwin", "/apps/../main.js"],
-    ["darwin", "/apps/main\0.js"],
   ];
   for (const [platform, raw] of invalid) {
     assert.throws(

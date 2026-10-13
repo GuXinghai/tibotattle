@@ -1,40 +1,22 @@
-import { constants } from "node:fs";
-import { lstat, open } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createSourceFileAccess } from "./source-file-access.js";
 
 const SIDECARS = ["-wal", "-shm", "-journal"];
 
-export function ownerControlledRegularFile(stats) {
-  const uid = typeof process.getuid === "function" ? process.getuid() : null;
-  return stats.isFile() && !stats.isSymbolicLink() && stats.nlink === 1
-    && (uid === null || stats.uid === uid) && (stats.mode & 0o022) === 0;
-}
-
 export function createLocalCodexMetadataFilesystem({
   platform = process.platform, loadWindowsBinding,
 } = {}) {
-  const windows = platform === "win32";
   // Resolve only when needed, so an unavailable native capability is an ordinary
   // optional-metadata refusal rather than an import-time application failure.
   let sourceAccess;
   const sources = () => sourceAccess ??= createSourceFileAccess({ platform, loadWindowsBinding });
-  const same = (before, after) => (windows || ownerControlledRegularFile(after))
-    && before.dev === after.dev && before.ino === after.ino;
+  const same = (before, after) => before.dev === after.dev && before.ino === after.ino;
 
   async function openFile(path) {
-    if (windows) {
-      const handle = await sources().open(path);
-      try { return { path, handle, before: await handle.stat() }; }
-      catch (error) { await handle.close(); throw error; }
-    }
-    const before = await lstat(path);
-    if (!ownerControlledRegularFile(before)) throw new Error("unsafe_metadata_source");
-    const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    try {
-      if (!same(before, await handle.stat())) throw new Error("unsafe_metadata_source");
-      return { path, handle, before };
-    } catch (error) { await handle.close(); throw error; }
+    const handle = await sources().open(path);
+    try { return { path, handle, before: await handle.stat() }; }
+    catch (error) { await handle.close(); throw error; }
   }
 
   async function sidecarExists(path) {
@@ -47,16 +29,14 @@ export function createLocalCodexMetadataFilesystem({
       if (typeof path !== "string" || path.length === 0) return false;
       try {
         const stats = await lstat(path);
-        const uid = typeof process.getuid === "function" ? process.getuid() : null;
-        // On Windows the subsequent native source open authenticates the file
-        // owner and traverses every ancestor with held, reparse-rejecting handles.
-        return stats.isDirectory() && !stats.isSymbolicLink()
-          && (windows || ((uid === null || stats.uid === uid) && (stats.mode & 0o022) === 0));
+        // The subsequent native source open authenticates the file owner and
+        // traverses every ancestor with held, reparse-rejecting handles.
+        return stats.isDirectory() && !stats.isSymbolicLink();
       } catch { return false; }
     },
     openFile,
     same,
-    namedStat: (path, handle) => windows ? sources().namedStat(path, handle) : lstat(path),
+    namedStat: (path, handle) => sources().namedStat(path, handle),
     async guardDatabase(path) {
       const held = [];
       const absent = [];
@@ -95,8 +75,7 @@ export function createLocalCodexMetadataFilesystem({
             && (absent.includes(`${path}-wal`) || absent.includes(`${path}-shm`))) {
           throw new Error("unsafe_metadata_database");
         }
-        // Windows leases prevent replacement of existing files and ancestors;
-        // POSIX paths are revalidated against held descriptors. An
+        // Windows leases prevent replacement of existing files and ancestors. An
         // absent sidecar cannot be leased without mutating Codex's source; a
         // changed sidecar set therefore refuses this optional result. This does
         // not claim protection against a transient create/remove of an absent
@@ -108,7 +87,6 @@ export function createLocalCodexMetadataFilesystem({
             for (const entry of held) {
               const after = await entry.handle.stat();
               if (!same(entry.before, after)) return false;
-              if (!windows && !same(entry.before, await lstat(entry.path))) return false;
               if (immutable && (entry.before.size !== after.size
                   || entry.before.mtimeMs !== after.mtimeMs
                   || entry.before.ctimeMs !== after.ctimeMs)) return false;

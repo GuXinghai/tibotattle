@@ -201,16 +201,14 @@ export async function writeOwnerOnlyNoClobberDurable(path, content, {
     await failpoint("after_file_sync");
     const written = await handle.stat();
     if (!written.isFile() || written.nlink !== 1 || written.size !== contentBytes
-        || (typeof process.getuid === "function" && written.uid !== process.getuid())
-        || (process.platform !== "win32" && (written.mode & 0o077) !== 0)) {
+        || (typeof process.getuid === "function" && written.uid !== process.getuid())) {
       throw new Error("Owner-only publication file failed validation");
     }
     const published = await lstat(target);
     if (!published.isFile() || published.isSymbolicLink()
         || published.dev !== written.dev || published.ino !== written.ino
         || published.nlink !== written.nlink || published.size !== written.size
-        || (typeof process.getuid === "function" && published.uid !== process.getuid())
-        || (process.platform !== "win32" && (published.mode & 0o077) !== 0)) {
+        || (typeof process.getuid === "function" && published.uid !== process.getuid())) {
       throw new Error("Owner-only publication path changed before durability");
     }
     await handle.close();

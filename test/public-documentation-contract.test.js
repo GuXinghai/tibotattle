@@ -13,22 +13,25 @@ function exactStringLiterals(source) {
     .map(([, value]) => value);
 }
 
-test("Mac installation guidance separates both supported cask targets from the pinned build host", async () => {
+test("Windows installation guidance is consistent across maintained public surfaces", async () => {
   const readme = await text("README.md");
   const guide = await text("docs/user-guide.md");
   const webDocs = await text("apps/web/public/docs.html");
-  for (const [name, content] of [["README", readme], ["user guide", guide], ["website docs", webDocs]]) {
-    assert.match(content, /Apple silicon[\s\S]*Intel/u, `${name} includes both Mac targets`);
-    assert.ok(content.includes("brew install --cask adamallcock/tap/tibotattle"), `${name} retains the qualified tap command`);
-    assert.match(content, /macOS 14 or later/u, `${name} preserves the support floor`);
+  const support = await text("SUPPORT.md");
+  for (const [name, content] of [["README", readme], ["user guide", guide], ["website docs", webDocs], ["SUPPORT", support]]) {
+    assert.match(content, /Windows x64/u, `${name} names the Windows x64 target`);
+    assert.doesNotMatch(content, /brew install --cask|Homebrew|Sparkle|Gatekeeper|\.dmg\b/u, `${name} carries no macOS distribution path`);
   }
+  assert.match(webDocs, /TiboTattle supports Windows x64 only\./u);
+  assert.doesNotMatch(webDocs, /macOS 14 or later/u);
+  assert.match(readme, /## Install \(Windows x64\)/u);
   assert.match(readme, /## Build from source \(developers\)/u);
   assert.match(readme, /Electron packaging/u);
-  assert.match(readme, /retained Sparkle feed/u);
   assert.doesNotMatch(readme, /## Quick start \(macOS, Apple Silicon\)/u);
   assert.match(await text("CONTRIBUTING.md"), /## Developer setup/u);
-  assert.match(await text("SUPPORT.md"), /macOS 14 or later on Apple silicon and Intel/u);
+  assert.match(support, /TiboTattle supports Windows x64 only/u);
 });
+
 
 test("maintained Markdown retires self-service promises without implying history loss", async () => {
   const paths = [
@@ -39,9 +42,17 @@ test("maintained Markdown retires self-service promises without implying history
     "docs/user-guide.md",
     "docs/reference/local-data-and-privacy.md",
   ];
+  const disconnectNamingPaths = [
+    "apps/local/README.md",
+    "apps/worker/README.md",
+    "docs/user-guide.md",
+    "docs/reference/local-data-and-privacy.md",
+  ];
+  for (const path of disconnectNamingPaths) {
+    assert.match(await text(path), /device disconnect|Disconnect this (?:Mac|device)/u, `${path} names device disconnect`);
+  }
   for (const path of paths) {
     const markdown = await text(path);
-    assert.match(markdown, /Disconnect this Mac/u, `${path} names device disconnect`);
     assert.doesNotMatch(
       markdown,
       /Hosted deletion is always available|request deletion through the product controls|Full deletion control from the app|disclosure retains complete hosted deletion/u,
@@ -54,7 +65,7 @@ test("maintained Markdown retires self-service promises without implying history
   assert.match(guide, /Turn off \*\*Share usage measurements\*\* in Community to stop future accountless/u);
   assert.match(guide, /Settings… → Data & privacy → Community sharing → Manage sharing/u);
   assert.match(guide, /The shared dashboard no longer presents Google\/Apple sign-in/u);
-  assert.match(guide, /Older clients may offer \*\*Disconnect this Mac\*\*/u);
+  assert.match(guide, /Older clients may offer a device disconnect control/u);
   assert.match(guide, /SECURE_STORAGE_MIGRATION_REQUIRED/u);
   assert.match(guide, /current Electron app has no self-service credential migration or approval\s+control/u);
   assert.doesNotMatch(guide, /Choose \*\*Review migration…\*\*|\*\*Approve migration\*\*/u);
@@ -249,7 +260,7 @@ test("component READMEs delegate executable route inventories to the canonical r
   const workerRoutesList = [
     ...workerRoutes.matchAll(/pathname:\s*"([^"]+)"/gu),
   ].map(([, route]) => route);
-  assert.equal(workerRoutesList.length, 51, "review Worker route-count changes");
+  assert.equal(workerRoutesList.length, 50, "review Worker route-count changes");
   for (const route of workerRoutesList) {
     assert.ok(apiReference.includes(route), `API reference covers Worker ${route}`);
   }

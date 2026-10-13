@@ -439,13 +439,13 @@ test("web-only preparation refuses a receipt path redirected through a symlink",
 
 test("web-only catalogue admission permits copy only and refuses runtime changes", () => {
   const before = 'export const CATALOG = Object.freeze({\n  "old.key": "old",\n});\nexport const runtime = 1;';
-  const edited = before.replace('  "old.key"', '  "site.hero.title": "Know your usage",\n  "electron.site.download.linux": "Download Linux",\n  "old.key"');
+  const edited = before.replace('  "old.key"', '  "site.hero.title": "Know your usage",\n  "electron.site.download.windows": "Download for Windows",\n  "old.key"');
   const check = after => assertI18nCatalogScope({ repositoryRoot: "/fixture", baseCommit: "before", sourceCommit: "after",
     git: (_root, args) => args[1].startsWith("before:") ? before : after });
   assert.doesNotThrow(() => check(edited));
   assert.doesNotThrow(() => check(edited.replace('"old"', '"changed"')));
   assert.throws(() => check(edited.replace('runtime = 1', 'runtime = 2')), /changed i18n runtime code/u);
-  assert.throws(() => check(edited.replace('"Download Linux"', 'runCode()')), /changed i18n runtime code/u);
+  assert.throws(() => check(edited.replace('"Download for Windows"', 'runCode()')), /changed i18n runtime code/u);
   assert.throws(() => check(`${edited}\nexport function weakenedValidator() {}`), /changed i18n runtime code/u);
   for (const path of ['scripts/lib/electron-public-site.mjs', 'test/electron-public-site.test.js',
     I18N_CANONICAL_PATH, I18N_BROWSER_MIRROR_PATH]) assert.equal(isAllowedWebReleasePath(path), true);

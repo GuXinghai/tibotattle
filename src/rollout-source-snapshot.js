@@ -58,6 +58,17 @@ async function assertPathIdentity(path, expected) {
   return stats;
 }
 
+// A file id above 2^53 does not survive a double, and the checks above skip
+// ids that are not safe integers. Callers that resolved the exact id pass it
+// as `fileId`; it is then compared with BigInt precision on the descriptor
+// and on the path.
+async function assertExactFileId(handle, path, fileId) {
+  const opened = await handle.stat({ bigint: true });
+  if (`${opened.dev}:${opened.ino}` !== fileId) sourceChanged();
+  const linked = await lstat(path, { bigint: true });
+  if (`${linked.dev}:${linked.ino}` !== fileId) sourceChanged();
+}
+
 async function assertAppendBoundary(handle, discoveredSize) {
   if (discoveredSize === 0) return;
   const byte = Buffer.allocUnsafe(1);
@@ -88,8 +99,11 @@ export async function openStableRolloutSource(info) {
     constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
   );
   try {
+    const exactFileId = typeof info.fileId === "string"
+      && !Number.isSafeInteger(Number(info.ino)) ? info.fileId : null;
     const before = await handle.stat();
     assertIdentity(before, info);
+    if (exactFileId !== null) await assertExactFileId(handle, info.path, exactFileId);
     const pathBefore = await assertPathIdentity(info.path, before);
     if (before.size < physicalSize || pathBefore.size < physicalSize
         || (compressed && (before.size !== physicalSize || pathBefore.size !== physicalSize))) {
@@ -112,6 +126,7 @@ export async function openStableRolloutSource(info) {
         if (closed) sourceChanged();
         const after = await handle.stat();
         assertIdentity(after, before);
+        if (exactFileId !== null) await assertExactFileId(handle, info.path, exactFileId);
         const pathAfter = await assertPathIdentity(info.path, after);
         if (after.size < physicalSize || pathAfter.size < physicalSize) {
           sourceChanged();

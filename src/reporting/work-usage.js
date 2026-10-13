@@ -201,15 +201,21 @@ export function createWorkUsageAccumulator({ maximumCells = 50_000 } = {}) {
       // The shared positive-usage projection skips zero-token facts. A fully
       // recorded zero needs no model rate; missing components remain unknown.
       const knownZero = tokens.totalComplete && tokens.totalTokens === 0 && !event.partial;
-      // Field for field what merge() does with a one-fact row.
-      row.events = add(row.events, 1);
+      // Field for field what merge() does with a one-fact row. `weight` is
+      // the number of identical facts a rolled-up row stands for: counters
+      // advance by it while quantities and money, already summed, are added
+      // once. One is the per-fact path.
+      const weight = event.weight ?? 1;
+      if (!Number.isSafeInteger(weight) || weight < 1)
+        throw workUsageError("work_usage_fact_invalid");
+      row.events = add(row.events, weight);
       if (!tokens.totalComplete || event.partial)
-        row.incompleteEvents = add(row.incompleteEvents, 1);
-      if (tokens.totalTokens === null) row.unknownEvents = add(row.unknownEvents, 1);
-      if (event.cacheWriteAssumedZero === true) row.assumedEvents = add(row.assumedEvents, 1);
-      if (!priced && !knownZero) row.unpricedEvents = add(row.unpricedEvents, 1);
+        row.incompleteEvents = add(row.incompleteEvents, weight);
+      if (tokens.totalTokens === null) row.unknownEvents = add(row.unknownEvents, weight);
+      if (event.cacheWriteAssumedZero === true) row.assumedEvents = add(row.assumedEvents, weight);
+      if (!priced && !knownZero) row.unpricedEvents = add(row.unpricedEvents, weight);
       if (priced && price.status !== "fully_priced")
-        row.partialPriceEvents = add(row.partialPriceEvents, 1);
+        row.partialPriceEvents = add(row.partialPriceEvents, weight);
       if (tokens.totalTokens !== null)
         row.tokens = add(row.tokens ?? 0, tokens.totalTokens);
       if (priced || knownZero) {

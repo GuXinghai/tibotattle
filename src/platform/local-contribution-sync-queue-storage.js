@@ -103,8 +103,7 @@ export function createLocalContributionSyncQueueStorageContext({
   function assertOwnerOnlyDirectory(stats, code) {
     if (!stats.isDirectory() || stats.isSymbolicLink()
         || (typeof process.getuid === "function"
-          && stats.uid !== process.getuid())
-        || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+          && stats.uid !== process.getuid())) {
       failures.fail(code);
     }
   }
@@ -113,8 +112,7 @@ export function createLocalContributionSyncQueueStorageContext({
     if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
         || stats.size < 0 || stats.size > maximumQueueBytes
         || (typeof process.getuid === "function"
-          && stats.uid !== process.getuid())
-        || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+          && stats.uid !== process.getuid())) {
       failures.fail("queue_invalid");
     }
   }
@@ -783,8 +781,7 @@ export function createLocalContributionSyncQueueStorageContext({
         || stats.isSymbolicLink()
         || stats.nlink !== 1
         || (typeof process.getuid === "function"
-          && stats.uid !== process.getuid())
-        || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+          && stats.uid !== process.getuid())) {
       failures.fail("retirement_invalid");
     }
   }

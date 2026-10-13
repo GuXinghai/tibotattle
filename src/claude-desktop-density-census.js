@@ -191,8 +191,7 @@ function safeReadOnlyDatabasePath(value) {
   }
   const uid = typeof process.getuid === "function" ? process.getuid() : null;
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
-      || (uid !== null && stats.uid !== uid)
-      || (process.platform !== "win32" && (stats.mode & 0o022) !== 0)) {
+      || (uid !== null && stats.uid !== uid)) {
     fail("sqlite_unsafe");
   }
   return { path: selected, stats };
@@ -203,8 +202,7 @@ function readSidecarBytes(databasePath, suffix) {
     const stats = lstatSync(`${databasePath}${suffix}`);
     const uid = typeof process.getuid === "function" ? process.getuid() : null;
     if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
-        || (uid !== null && stats.uid !== uid)
-        || (process.platform !== "win32" && (stats.mode & 0o022) !== 0)) {
+        || (uid !== null && stats.uid !== uid)) {
       return { bytes: 0, present: false };
     }
     return { bytes: stats.size, present: true };

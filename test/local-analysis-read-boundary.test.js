@@ -1,12 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  createIndexedCodexLogScan,
-  inspectLocalAnalysisIndex,
-} from "../src/local-analysis-index.js";
+import { extractRolloutUsage } from "../src/local-index-extract.js";
+import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
 
 // The extraction worker reads a chunk at a time into one reused buffer. A
 // record that starts before a read ends and finishes after it is held across
@@ -138,6 +136,7 @@ async function straddlingFixture() {
   await writeFile(path, lines.join(""));
   return {
     root,
+    path,
     codexHome: join(root, "codex-home"),
     startByte,
     endByte: startByte + Buffer.byteLength(straddling),
@@ -145,53 +144,46 @@ async function straddlingFixture() {
 }
 
 test("a record straddling the read buffer boundary survives extraction", async () => {
-  const { root, codexHome, startByte, endByte } = await straddlingFixture();
-  const indexFile = join(root, "local-analysis-index-v2.sqlite");
-  const indexedScan = createIndexedCodexLogScan({
-    indexFile,
-    secretFile: join(root, "local-analysis-index-secret-v2"),
-    workerCount: 1,
-    // One chunk, so the only boundary in play is the read buffer's.
-    chunkBytes: 16 * 1024 * 1024,
-  });
+  const { root, path, codexHome, startByte, endByte } = await straddlingFixture();
+  try {
+    assert.ok(
+      startByte < READ_BUFFER_BYTES && endByte > READ_BUFFER_BYTES,
+      "fixture no longer straddles the read boundary",
+    );
+    const straddlingMs = Date.parse(STRADDLING_AT);
+    const events = [];
+    const { size } = await stat(path);
+    const outcome = await extractRolloutUsage(path, {
+      size,
+      onEvent: (event) => events.push(event),
+    });
 
-  const usageAt = [];
-  const quotaAt = [];
-  const result = await indexedScan({
-    codexHome,
-    startAt: START_AT,
-    endAt: END_AT,
-    onUsage(value) {
-      usageAt.push(value.timestamp);
-    },
-    onRateLimitSnapshot(value) {
-      quotaAt.push(value.timestamp);
-    },
-  });
+    // Held across a read and rebuilt afterwards: the record must reach the
+    // extractor's usage and quota output, not vanish at the buffer boundary.
+    assert.equal(events.length, 3);
+    assert.equal(events.some((event) => event.observedAtMs === straddlingMs), true);
+    assert.equal(events.filter((event) => event.quota.length > 0).length, 3);
+    assert.equal(events.find((event) => event.observedAtMs === straddlingMs)
+      .quota[0].usedPercent, 12);
 
-  assert.ok(
-    startByte < READ_BUFFER_BYTES && endByte > READ_BUFFER_BYTES,
-    "fixture no longer straddles the read boundary",
-  );
-  // Held across a read and rebuilt afterwards: before the carried bytes were
-  // copied this record vanished from usage_facts and quota_facts entirely.
-  assert.equal(usageAt.includes(STRADDLING_AT), true);
-  assert.equal(quotaAt.includes(STRADDLING_AT), true);
-  assert.equal(usageAt.length, 3);
-  assert.equal(quotaAt.length, 3);
+    // Nothing was silently dropped on the way: every token_count record was
+    // counted and none was malformed.
+    assert.equal(outcome.diagnostics.tokenCounts, 3);
+    assert.equal(outcome.diagnostics.malformedLines, 0);
 
-  // Nothing was silently dropped on the way: the parser counted every
-  // token_count record it saw, and every rebuilt line matched what was read.
-  assert.equal(result.diagnostics.tokenCountRecords, 3);
-  assert.equal(result.diagnostics.reassembledLineMismatches, 0);
-  assert.equal(result.diagnostics.malformedLines, 0);
-  assert.equal(result.diagnostics.impossibleSnapshotSets, 0);
-
-  const inspected = await inspectLocalAnalysisIndex({ indexFile });
-  assert.equal(inspected.tokenCountRecords, 3);
-  assert.equal(inspected.reassembledLineMismatches, 0);
-  // Distinct cumulative-token keys can only ever be fewer than the records
-  // they were deduplicated from; here all three totals differ.
-  assert.equal(inspected.snapshotKeys, 3);
-  assert.equal(result.diagnostics.snapshotKeysStored, 3);
+    // The same fixture through the store: the record is a committed fact.
+    const result = await refreshCodexHome(codexHome);
+    assert.equal(result.sourcesQuarantined, 0);
+    withReadOnlyStore(join(codexHome, "index.sqlite"), (database) => {
+      assert.equal(countRows(database, "usage_event"), 3);
+      assert.equal(Number(database.prepare(
+        "SELECT COUNT(*) AS n FROM usage_event WHERE observed_at_ms = ?",
+      ).get(straddlingMs).n), 1);
+      assert.ok(Number(database.prepare(
+        "SELECT COUNT(*) AS n FROM quota_occurrence WHERE observed_at_ms = ?",
+      ).get(straddlingMs).n) >= 1);
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });

@@ -79,7 +79,7 @@ export function sanitizePlanType(planType) {
  * The response may expose its current email as `email`, `account.email`,
  * `user.email`, or the same fields under `result`. This function intentionally
  * does not fall back to provider IDs, display names, or arbitrary fields.
- * Callers must inject a non-empty secret (for example, from macOS Keychain).
+ * Callers must inject a non-empty secret (for example, from Windows Credential Manager).
  */
 export function deriveOpenAIAccountScope(accountRead, {
   secret,

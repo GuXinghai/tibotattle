@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { telemetryV12RequiredConsent } from "@app-usagemonitor/telemetry-contract";
 import { readIncrementalContributionV12Review, runIncrementalContributionSyncOnce } from "../src/contribution-incremental-sync.js";
 import { ATTRIBUTION_FIXTURE_BINDING as binding, ATTRIBUTION_FIXTURE_START as start,
-  writeAttributionFixture } from "./helpers/local-attribution-fixture.js";
+  attributionFixtureSeams, writeAttributionFixture } from "./helpers/local-index-attribution-fixture.js";
 import { createAttributionFixtureDevice, createAttributionFixtureService } from "./helpers/attribution-transport-fixture.js";
 
 async function fixture(t, serviceOptions = {}) {
@@ -17,7 +17,7 @@ async function fixture(t, serviceOptions = {}) {
   await writeAttributionFixture(indexFile, { boundaryFlags: [1, 3] });
   const backend = await createAttributionFixtureDevice(stateFile);
   const service = createAttributionFixtureService({ successor: true, ...serviceOptions });
-  return { service, options: { indexFile, stateFile, backend, origin: binding.destinationOrigin,
+  return { service, options: { ...attributionFixtureSeams(), indexFile, stateFile, backend, origin: binding.destinationOrigin,
     consent: { ...telemetryV12RequiredConsent(), destinationOrigin: binding.destinationOrigin },
     fetchImpl: service.fetchImpl, createV12Envelope: service.createEnvelope, now: () => start,
     createV11Envelope: () => assert.fail("Successor must use its own envelope"),

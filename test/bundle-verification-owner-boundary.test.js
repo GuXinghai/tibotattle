@@ -133,7 +133,7 @@ test("verification composition requires a live compatibility tuple port", () => 
   );
 });
 
-test("export verification is runtime-neutral and local-review enters through application composition", async () => {
+test("export verification is runtime-neutral", async () => {
   const ownedFiles = [
     "src/export/bundle-verification.js",
     "src/export/bundle-verifier.js",
@@ -154,33 +154,4 @@ test("export verification is runtime-neutral and local-review enters through app
     );
   }
 
-  const localReview = await readFile(
-    resolve(REPOSITORY_ROOT, "local-review/cli.js"),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    localReview,
-    /src\/bundle-verifier\.js/u,
-  );
-  assert.match(
-    localReview,
-    /createLocalMetadataBundleVerificationContext/u,
-  );
-
-  const architecture = await readFile(
-    resolve(
-      REPOSITORY_ROOT,
-      "scripts/check-architecture-boundaries.mjs",
-    ),
-    "utf8",
-  );
-  const baseline = architecture.slice(
-    architecture.indexOf(
-      "const LOCAL_REVIEW_LEGACY_MIGRATION_TARGETS",
-    ),
-    architecture.indexOf(
-      "export const CURRENT_ARCHITECTURE_BOUNDARY_BASELINE",
-    ),
-  );
-  assert.doesNotMatch(baseline, /src\/bundle-verifier\.js/u);
 });

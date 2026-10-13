@@ -4,7 +4,7 @@ import { win32 } from "node:path";
 
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "../src/export-identity-keychain.js";
+} from "../src/platform/credential-capabilities.js";
 import {
   WindowsCredentialManagerError,
 } from "../src/platform/windows-credential-manager.js";

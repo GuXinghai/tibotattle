@@ -6,177 +6,49 @@ import { createUsageExplainerService } from "./application/index.js";
 import {
   createUsageExplainerSelectorCodec,
 } from "./reporting/index.js";
-import {
-  defaultLocalUnifiedIndexSecretPath,
-  localDigest,
-  localUnifiedIndexPointerPath,
-  openLocalUnifiedIndex,
-  readExistingDeviceSalt,
-  readUnifiedIndexGenerationDescriptor,
-} from "./local-unified-index.js";
-import { readLocalWorkUsageSnapshot } from "./local-work-usage-source.js";
+import { defaultLocalUnifiedIndexSecretPath, localDigest, readExistingDeviceSalt } from "./local-device-salt.js";
 import {
   defaultLocalCompanionStateRoot,
   localCompanionStatePaths,
 } from "./local-installation-diagnostics.js";
 
-const ALLOWANCE_SOURCE_LIMIT = 25;
+// The usage explainer's service composition. The index is read only through the
+// three readers the composition root injects (`localIndexReaders`, built over
+// the v2 store by local-index-usage-explainer.js); this module owns discovery of
+// the store and the shared device salt, the selector codec, and the allowance
+// row projection.
 
-function fixedErrorCode(error, fallback) {
-  return typeof error?.code === "string" && /^[a-z][a-z0-9_]{0,99}$/u.test(error.code)
-    ? error.code
-    : fallback;
-}
+const ALLOWANCE_SOURCE_LIMIT = 25;
 
 export function defaultLocalUsageExplainerPaths({
   environment = process.env,
   homeDirectory = homedir(),
-  platform = process.platform,
   fileExists = existsSync,
 } = {}) {
   if (typeof fileExists !== "function") {
     throw new TypeError("fileExists must be a function");
   }
-  const legacyRoot = defaultLocalCompanionStateRoot({
-    environment,
-    homeDirectory,
-    platform,
-  });
-  let candidates;
-  if (platform === "darwin") {
-    const applicationSupport = join(homeDirectory, "Library", "Application Support");
-    candidates = [
-      ["electron_production", join(applicationSupport, "TiboTattle", "companion-state")],
-      ["native_production", join(applicationSupport, "Usage Monitor")],
-      ["legacy_cli", legacyRoot],
-    ];
-  } else if (platform === "win32") {
-    const roaming = environment.APPDATA
-      ?? join(homeDirectory, "AppData", "Roaming");
-    candidates = [
-      ["electron_production", join(roaming, "TiboTattle", "companion-state")],
-      ["legacy_cli", legacyRoot],
-    ];
-  } else {
-    const configuration = environment.XDG_CONFIG_HOME
-      ?? join(homeDirectory, ".config");
-    candidates = [
-      ["electron_production", join(configuration, "TiboTattle", "companion-state")],
-      ["legacy_cli", legacyRoot],
-    ];
-  }
+  const legacyRoot = defaultLocalCompanionStateRoot({ environment, homeDirectory });
+  const roaming = environment.APPDATA
+    ?? join(homeDirectory, "AppData", "Roaming");
+  const candidates = [
+    ["electron_production", join(roaming, "TiboTattle", "companion-state")],
+    ["legacy_cli", legacyRoot],
+  ];
   const selected = environment.USAGE_MONITOR_STATE_ROOT === undefined
     ? candidates.find(([, root]) => (
-      // A snapshot publication may have replaced the plain file by a pointer.
-      fileExists(localCompanionStatePaths(root).unifiedIndexFile)
-        || fileExists(localUnifiedIndexPointerPath(
-          localCompanionStatePaths(root).unifiedIndexFile,
-        ))
+      fileExists(localCompanionStatePaths(root).localIndexStoreFile)
     )) ?? candidates[0]
     : ["environment_override", environment.USAGE_MONITOR_STATE_ROOT];
   const [sourceKind, stateRoot] = selected;
   const state = localCompanionStatePaths(stateRoot);
   return Object.freeze({
     sourceKind,
-    indexFile: state.unifiedIndexFile,
+    indexFile: state.localIndexStoreFile,
     secretFile: state.unifiedIndexSecretFile,
     codexHome: environment.CODEX_HOME ?? join(homeDirectory, ".codex"),
   });
 }
-
-export function readLocalUsageExplainerHealth({ indexFile } = {}) {
-  let database;
-  try {
-    database = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    database.exec("BEGIN");
-    const generation = readUnifiedIndexGenerationDescriptor(database);
-    if (generation === null || !["complete", "partial"].includes(generation.status)) {
-      return {
-        status: "unavailable",
-        errorCode: "usage_explainer_index_unavailable",
-        generation,
-      };
-    }
-    return { status: "available", errorCode: null, generation };
-  } catch (error) {
-    return {
-      status: "unavailable",
-      errorCode: fixedErrorCode(error, "usage_explainer_index_unavailable"),
-      generation: null,
-    };
-  } finally {
-    database?.close();
-  }
-}
-
-const ALLOWANCE_MOVEMENT_QUERY = `
-  WITH eligible AS (
-    SELECT q.id, q.observed_at_ms, q.provider, q.plan_type, q.limit_id,
-           q.used_percent, q.resets_at_ms, q.duration_mins
-    FROM quota_occurrence q
-    JOIN generation_source gs ON gs.generation_id = ?
-      AND gs.source_local = q.source_local
-      AND gs.source_ordinal = q.source_ordinal
-      AND q.source_offset >= 0
-      AND q.source_offset <= gs.scanned_bytes
-      AND gs.status IN ('skipped', 'touched', 'resumed', 'rescanned', 'complete')
-      AND gs.diagnostics_complete = 1
-    WHERE q.admission = 'admitted'
-      AND q.observed_at_ms >= ?
-      AND q.observed_at_ms < ?
-  ), ranked AS (
-    SELECT *,
-      ROW_NUMBER() OVER (
-        PARTITION BY provider, COALESCE(plan_type, ''), limit_id,
-          duration_mins, COALESCE(resets_at_ms, -1)
-        ORDER BY observed_at_ms, id
-      ) AS first_rank,
-      ROW_NUMBER() OVER (
-        PARTITION BY provider, COALESCE(plan_type, ''), limit_id,
-          duration_mins, COALESCE(resets_at_ms, -1)
-        ORDER BY observed_at_ms DESC, id DESC
-      ) AS last_rank
-    FROM eligible
-  ), collapsed AS (
-    SELECT provider, COALESCE(plan_type, 'unknown') AS plan_type, limit_id,
-           duration_mins, resets_at_ms,
-           MIN(observed_at_ms) AS first_observed_at_ms,
-           MAX(observed_at_ms) AS last_observed_at_ms,
-           MAX(CASE WHEN first_rank = 1 THEN used_percent END) AS first_used_percent,
-           MAX(CASE WHEN last_rank = 1 THEN used_percent END) AS last_used_percent,
-           COUNT(*) AS observation_count
-    FROM ranked
-    GROUP BY provider, COALESCE(plan_type, ''), limit_id,
-             duration_mins, COALESCE(resets_at_ms, -1)
-  ), classified AS (
-    SELECT *, CASE
-      WHEN resets_at_ms IS NULL THEN 3
-      WHEN observation_count < 2 THEN 4
-      WHEN last_used_percent >= first_used_percent THEN 1
-      ELSE 2
-    END AS movement_status_rank
-    FROM collapsed
-  )
-  SELECT *,
-    COUNT(*) OVER () AS total_count,
-    SUM(CASE WHEN movement_status_rank = 1 THEN 1 ELSE 0 END)
-      OVER () AS observed_count,
-    SUM(CASE WHEN movement_status_rank = 2 THEN 1 ELSE 0 END)
-      OVER () AS non_monotonic_count,
-    SUM(CASE WHEN movement_status_rank = 3 THEN 1 ELSE 0 END)
-      OVER () AS reset_identity_missing_count,
-    SUM(CASE WHEN movement_status_rank = 4 THEN 1 ELSE 0 END)
-      OVER () AS single_observation_count
-  FROM classified
-  ORDER BY movement_status_rank,
-           CASE WHEN movement_status_rank = 1
-             THEN ABS(last_used_percent - first_used_percent)
-             ELSE NULL
-           END DESC,
-           last_observed_at_ms DESC,
-           provider, plan_type, limit_id,
-           duration_mins, COALESCE(resets_at_ms, -1)
-  LIMIT ? OFFSET ?`;
 
 export function projectLocalAllowanceMovementRows(rows) {
   if (!Array.isArray(rows) || rows.length > ALLOWANCE_SOURCE_LIMIT) {
@@ -213,103 +85,11 @@ export function projectLocalAllowanceMovementRows(rows) {
   });
 }
 
-export function readLocalAllowanceMovement({
-  indexFile,
-  fromMs,
-  toMs,
-  offset = 0,
-  limit = ALLOWANCE_SOURCE_LIMIT,
-} = {}) {
-  if (
-    typeof indexFile !== "string"
-    || indexFile.length < 1
-    || !Number.isSafeInteger(fromMs)
-    || fromMs < 0
-    || !Number.isSafeInteger(toMs)
-    || toMs < fromMs
-    || !Number.isSafeInteger(offset)
-    || offset < 0
-    || !Number.isSafeInteger(limit)
-    || limit < 1
-    || limit > ALLOWANCE_SOURCE_LIMIT
-  ) {
-    throw new TypeError("allowance movement input is invalid");
-  }
-  let database;
-  try {
-    database = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    database.exec("BEGIN");
-    const generation = readUnifiedIndexGenerationDescriptor(database);
-    if (generation === null || !["complete", "partial"].includes(generation.status)) {
-      return {
-        status: "unavailable",
-        errorCode: "usage_explainer_index_unavailable",
-        generation,
-        windows: [],
-        truncated: false,
-        rowCount: 0,
-        observedMovementCount: 0,
-        resetIdentityMissingCount: 0,
-        singleObservationCount: 0,
-        nonMonotonicCount: 0,
-        nextOffset: null,
-      };
-    }
-    const rows = database.prepare(ALLOWANCE_MOVEMENT_QUERY).all(
-      generation.id,
-      fromMs,
-      toMs,
-      limit,
-      offset,
-    );
-    const rowCount = rows.length === 0 ? 0 : Number(rows[0].total_count);
-    const observedMovementCount = rows.length === 0
-      ? 0
-      : Number(rows[0].observed_count);
-    const resetIdentityMissingCount = rows.length === 0
-      ? 0
-      : Number(rows[0].reset_identity_missing_count);
-    const singleObservationCount = rows.length === 0
-      ? 0
-      : Number(rows[0].single_observation_count);
-    const nonMonotonicCount = rows.length === 0
-      ? 0
-      : Number(rows[0].non_monotonic_count);
-    const nextOffset = offset + rows.length < rowCount
-      ? offset + rows.length
-      : null;
-    return {
-      status: "available",
-      errorCode: null,
-      generation,
-      windows: projectLocalAllowanceMovementRows(rows),
-      truncated: nextOffset !== null,
-      rowCount,
-      observedMovementCount,
-      resetIdentityMissingCount,
-      singleObservationCount,
-      nonMonotonicCount,
-      nextOffset,
-    };
-  } catch (error) {
-    return {
-      status: "unavailable",
-      errorCode: fixedErrorCode(error, "usage_explainer_allowance_unavailable"),
-      generation: null,
-      windows: [],
-      truncated: false,
-      rowCount: 0,
-      observedMovementCount: 0,
-      resetIdentityMissingCount: 0,
-      singleObservationCount: 0,
-      nonMonotonicCount: 0,
-      nextOffset: null,
-    };
-  } finally {
-    database?.close();
-  }
-}
-
+/**
+ * `localIndexReaders` is `{ readHealth, readWorkUsage, readAllowance }`, as
+ * built by createLocalIndexUsageExplainerReaders(). The service consumes it
+ * unchanged; no reader is defaulted here.
+ */
 export function createLocalUsageExplainer({
   environment = process.env,
   homeDirectory = homedir(),
@@ -317,10 +97,18 @@ export function createLocalUsageExplainer({
   secretFile = null,
   codexHome = null,
   clock = Date.now,
-  readHealth = readLocalUsageExplainerHealth,
-  readWorkUsage = readLocalWorkUsageSnapshot,
-  readAllowance = readLocalAllowanceMovement,
+  localIndexReaders,
 } = {}) {
+  if (
+    localIndexReaders === null
+    || typeof localIndexReaders !== "object"
+    || typeof localIndexReaders.readHealth !== "function"
+    || typeof localIndexReaders.readWorkUsage !== "function"
+    || typeof localIndexReaders.readAllowance !== "function"
+  ) {
+    throw new TypeError("localIndexReaders must provide the three index readers");
+  }
+  const { readHealth, readWorkUsage, readAllowance } = localIndexReaders;
   const defaults = indexFile === null
     ? defaultLocalUsageExplainerPaths({ environment, homeDirectory })
     : null;

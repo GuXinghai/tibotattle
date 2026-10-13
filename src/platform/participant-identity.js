@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, mkdir, open, rename, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, posix, resolve, win32 } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 
 import {
   deriveExportPseudonym,
@@ -17,8 +17,7 @@ const ROTATION_CONFIRMATION_ERROR = "Participant secret rotation requires confir
 
 function resolveWindowsFilesystemAdapter(adapter) {
   const selected = adapter ?? null;
-  if (process.platform === "win32"
-      && (selected?.productionSafe !== true || selected?.pathWalkRaceSafe !== true)) {
+  if (selected?.productionSafe !== true || selected?.pathWalkRaceSafe !== true) {
     const error = new Error("Windows filesystem production policy is unavailable");
     error.code = "EXPORT_IDENTITY_WINDOWS_FILESYSTEM_POLICY_UNAVAILABLE";
     throw error;
@@ -44,37 +43,18 @@ function sameWindowsFileIdentity(left, right) {
 }
 
 export function defaultExportStateDirectory({
-  platform = process.platform,
   homeDirectory = homedir(),
   environment = process.env,
 } = {}) {
-  const platformPath = platform === "win32" ? win32 : posix;
-  if (platform === "darwin") {
-    return platformPath.join(
-      homeDirectory,
-      "Library",
-      "Application Support",
-      "app-usagemonitor",
-    );
-  }
-  if (platform === "win32") {
-    return platformPath.join(
-      environment.LOCALAPPDATA
-        || platformPath.join(homeDirectory, "AppData", "Local"),
-      "app-usagemonitor",
-    );
-  }
-  return platformPath.join(
-    environment.XDG_STATE_HOME
-      || platformPath.join(homeDirectory, ".local", "state"),
+  return win32.join(
+    environment.LOCALAPPDATA
+      || win32.join(homeDirectory, "AppData", "Local"),
     "app-usagemonitor",
   );
 }
 
 export function defaultExportSecretFile(options) {
-  const platform = options?.platform ?? process.platform;
-  const platformPath = platform === "win32" ? win32 : posix;
-  return platformPath.join(
+  return win32.join(
     defaultExportStateDirectory(options),
     "export-participant-secret",
   );
@@ -108,9 +88,6 @@ function assertOwnedRegularSecret(stats) {
   if (stats.size !== 44) throw new Error("Participant secret file must contain exactly 44 bytes");
   if (typeof process.getuid === "function" && typeof stats.uid === "number" && stats.uid !== process.getuid()) {
     throw new Error("Participant secret must be owned by the current user");
-  }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    throw new Error("Participant secret permissions must be owner-only");
   }
 }
 
@@ -192,9 +169,6 @@ async function prepareSecretDirectory(path, windowsFilesystemAdapter = null) {
   if (typeof process.getuid === "function" && typeof stats.uid === "number" && stats.uid !== process.getuid()) {
     throw new Error("Participant secret directory must be owned by the current user");
   }
-  if (process.platform !== "win32" && (stats.mode & 0o022) !== 0) {
-    throw new Error("Participant secret directory must not be group- or world-writable");
-  }
 }
 
 async function writeNewSecret(path, encoded, windowsFilesystemAdapter = null) {
@@ -238,9 +212,6 @@ function assertOwnedRegularControlFile(stats, expectedSize) {
   if (stats.size !== expectedSize) throw new Error("Participant secret control file has invalid content");
   if (typeof process.getuid === "function" && typeof stats.uid === "number" && stats.uid !== process.getuid()) {
     throw new Error("Participant secret control file must be owned by the current user");
-  }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    throw new Error("Participant secret control file permissions must be owner-only");
   }
 }
 
@@ -306,7 +277,7 @@ async function syncDirectory(directory) {
   try {
     await handle.sync();
   } catch (error) {
-    if (process.platform !== "win32" || !["EINVAL", "ENOTSUP", "EPERM"].includes(error.code)) throw error;
+    if (!["EINVAL", "ENOTSUP", "EPERM"].includes(error.code)) throw error;
   } finally {
     await handle.close();
   }

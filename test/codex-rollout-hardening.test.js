@@ -15,15 +15,8 @@ import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
-import {
-  lineageComponents,
-  rebuildLocalUnifiedIndex,
-} from "../src/local-unified-index-build.js";
-import { ingestLocalUnifiedIndexIncrement } from "../src/local-unified-index-ingest.js";
-import {
-  openLocalUnifiedIndex,
-  readUnifiedIndexGenerationDescriptor,
-} from "../src/local-unified-index.js";
+import { lineageComponents } from "../src/local-index-batching.js";
+import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
 import { withStableRolloutSource } from "../src/rollout-source-snapshot.js";
 import { createCodexLogSources } from "../src/providers/codex/log-sources.js";
 import { createLocalCodexLogPorts } from "../src/platform/local-codex-log-ports.js";
@@ -138,23 +131,34 @@ async function rolloutHome(contents) {
   return { root, source };
 }
 
+function storePath(root) {
+  return join(root, "index.sqlite");
+}
+
 function build(root, workerCount = 1) {
-  return rebuildLocalUnifiedIndex({
-    codexHome: root,
-    indexFile: join(root, "index.sqlite"),
-    secretFile: join(root, "salt"),
-    contractVersion: CONTRACT,
-    workerCount,
-  });
+  return refreshCodexHome(root, { workerCount });
 }
 
 function ingest(root) {
-  return ingestLocalUnifiedIndexIncrement({
-    codexHome: root,
-    indexFile: join(root, "index.sqlite"),
-    secretFile: join(root, "salt"),
-    contractVersion: CONTRACT,
-  });
+  return refreshCodexHome(root);
+}
+
+function storeEventCount(root) {
+  return withReadOnlyStore(storePath(root), (database) => countRows(database, "usage_event"));
+}
+
+function storeQuarantineCodes(root) {
+  return withReadOnlyStore(storePath(root), (database) => database.prepare(`
+    SELECT quarantine_code FROM source
+    WHERE quarantine_code IS NOT NULL ORDER BY quarantine_code`).all()
+    .map((row) => row.quarantine_code));
+}
+
+function quarantineRows(database) {
+  return database.prepare(`
+    SELECT quarantine_code, scanned_bytes FROM source
+    WHERE quarantine_code IS NOT NULL ORDER BY quarantine_code`).all()
+    .map((row) => ({ ...row }));
 }
 
 test("malformed accounting quarantines one rollout, persists a terminal cursor, and heals after repair", async () => {
@@ -168,33 +172,18 @@ test("malformed accounting quarantines one rollout, persists a terminal cursor, 
   ].join("\n"));
   try {
     const built = await build(root);
-    assert.equal(built.generation.status, "partial");
-    assert.equal(built.generation.blockReason, "codex_rollout_sources_quarantined");
-    assert.equal(built.generation.issueCounts.codex_rollout_content_invalid.sourceCount, 1);
-    assert.equal(built.usageEvents, 0);
-
-    let database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
+    assert.equal(built.sourcesQuarantined, 1);
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(countRows(database, "usage_event"), 0);
+      assert.deepEqual(quarantineRows(database), [{
+        quarantine_code: "codex_rollout_content_invalid",
+        scanned_bytes: 0,
+      }]);
     });
-    try {
-      assert.equal(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM usage_event",
-      ).get().count), 0);
-      const cursor = database.prepare(`
-        SELECT quarantine_code, scanned_bytes FROM source_cursor
-      `).get();
-      assert.equal(cursor.quarantine_code, "codex_rollout_content_invalid");
-      assert.equal(Number(cursor.scanned_bytes), 0);
-      assert.equal(database.prepare(
-        "SELECT status FROM generation_source",
-      ).get().status, "failed");
-    } finally {
-      database.close();
-    }
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.generation.status, "partial");
+    assert.equal(unchanged.sourcesQuarantined, 1);
 
     await writeFile(source, [
       sessionMeta(),
@@ -203,18 +192,11 @@ test("malformed accounting quarantines one rollout, persists a terminal cursor, 
       "",
     ].join("\n"), { mode: 0o600 });
     const repaired = await ingest(root);
-    assert.equal(repaired.generation.status, "complete");
-    assert.equal(repaired.totalUsageEvents, 1);
-    database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
+    assert.equal(repaired.sourcesQuarantined, 0);
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(countRows(database, "usage_event"), 1);
+      assert.deepEqual(quarantineRows(database), []);
     });
-    try {
-      assert.equal(database.prepare(
-        "SELECT quarantine_code FROM source_cursor",
-      ).get().quarantine_code, null);
-    } finally {
-      database.close();
-    }
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -252,40 +234,24 @@ test("a malformed quota window withholds only that observation and retains valid
   ].join("\n"));
   try {
     const built = await build(root);
-    assert.equal(built.generation.status, "complete");
-    assert.equal(built.generation.blockReason, null);
-    assert.equal(built.usageEvents, 2);
-
-    const database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
-    });
-    try {
-      assert.equal(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM usage_event",
-      ).get().count), 2);
-      assert.equal(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM quota_occurrence",
-      ).get().count), 1);
+    assert.equal(built.sourcesQuarantined, 0);
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(countRows(database, "usage_event"), 2);
+      assert.equal(countRows(database, "quota_occurrence"), 1);
       assert.equal(Number(database.prepare(`
         SELECT COALESCE(SUM(count), 0) AS count
         FROM source_diagnostic
         WHERE code = 'malformedRateLimitRecords'
       `).get().count), 1);
-      assert.equal(database.prepare(
-        "SELECT quarantine_code FROM source_cursor",
-      ).get().quarantine_code, null);
-      assert.equal(database.prepare(
-        "SELECT status FROM generation_source",
-      ).get().status, "complete");
-    } finally {
-      database.close();
-    }
+      assert.deepEqual(quarantineRows(database), []);
+    });
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.sourcesScanned, 0);
-    assert.equal(unchanged.totalUsageEvents, 2);
-    assert.equal(unchanged.generation.status, "complete");
+    assert.equal(unchanged.sourcesRescanned, 0);
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(countRows(database, "usage_event"), 2);
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -311,12 +277,9 @@ test("fractional token counters become a terminal content quarantine, not a SQLi
   ].join("\n"));
   try {
     const built = await build(root);
-    assert.equal(built.generation.status, "partial");
-    assert.equal(
-      built.generation.issueCounts.codex_rollout_content_invalid.sourceCount,
-      1,
-    );
-    assert.equal(built.usageEvents, 0);
+    assert.equal(built.sourcesQuarantined, 1);
+    assert.deepEqual(storeQuarantineCodes(root), ["codex_rollout_content_invalid"]);
+    assert.equal(storeEventCount(root), 0);
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
   } finally {
@@ -342,12 +305,9 @@ test("an explicitly malformed speed setting quarantines the source atomically", 
   ].join("\n"));
   try {
     const built = await build(root);
-    assert.equal(built.generation.status, "partial");
-    assert.equal(
-      built.generation.issueCounts.codex_rollout_content_invalid.sourceCount,
-      1,
-    );
-    assert.equal(built.usageEvents, 0);
+    assert.equal(built.sourcesQuarantined, 1);
+    assert.deepEqual(storeQuarantineCodes(root), ["codex_rollout_content_invalid"]);
+    assert.equal(storeEventCount(root), 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -373,24 +333,19 @@ test("an oversized token record without a complete counter prefix quarantines in
     "",
   ].join("\n"));
   try {
-    const built = await rebuildLocalUnifiedIndex({
-      codexHome: root,
-      indexFile: join(root, "index.sqlite"),
+    const built = await refreshCodexHome(root, {
+      indexFile: storePath(root),
       secretFile: join(root, "salt"),
-      contractVersion: CONTRACT,
       workerCount: 1,
       maximumLineBytes: 1_024,
     });
-    assert.equal(built.generation.status, "partial");
-    assert.equal(
-      built.generation.issueCounts.codex_rollout_content_invalid.sourceCount,
-      1,
-    );
-    assert.equal(built.usageEvents, 0);
+    assert.equal(built.sourcesQuarantined, 1);
+    assert.deepEqual(storeQuarantineCodes(root), ["codex_rollout_content_invalid"]);
+    assert.equal(storeEventCount(root), 0);
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.sourcesScanned, 0);
+    assert.equal(unchanged.sourcesRescanned, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -402,21 +357,18 @@ test("an unfinished JSONL tail never publishes facts, skips unchanged, and heals
   );
   try {
     const built = await build(root, 2);
-    assert.equal(built.generation.status, "partial");
-    assert.equal(
-      built.generation.issueCounts.codex_rollout_tail_incomplete.sourceCount,
-      1,
-    );
-    assert.equal(built.usageEvents, 0);
+    assert.equal(built.sourcesQuarantined, 1);
+    assert.deepEqual(storeQuarantineCodes(root), ["codex_rollout_tail_incomplete"]);
+    assert.equal(storeEventCount(root), 0);
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.totalUsageEvents, 0);
+    assert.equal(storeEventCount(root), 0);
 
     await appendFile(source, "\n");
     const repaired = await ingest(root);
-    assert.equal(repaired.generation.status, "complete");
-    assert.equal(repaired.totalUsageEvents, 1);
+    assert.equal(repaired.sourcesQuarantined, 0);
+    assert.equal(storeEventCount(root), 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -430,7 +382,8 @@ test("copied session metadata keeps the rollout's first thread identity canonica
     "",
   ].join("\n"));
   try {
-    assert.equal((await build(root)).usageEvents, 1);
+    assert.equal((await build(root)).sourcesQuarantined, 0);
+    assert.equal(storeEventCount(root), 1);
     await appendFile(source, [
       sessionMeta(CHILD_THREAD),
       turnContext(),
@@ -439,12 +392,12 @@ test("copied session metadata keeps the rollout's first thread identity canonica
     ].join("\n"));
 
     const ingested = await ingest(root);
-    assert.equal(ingested.generation.status, "complete");
-    assert.equal(ingested.totalUsageEvents, 2);
+    assert.equal(ingested.sourcesQuarantined, 0);
+    assert.equal(storeEventCount(root), 2);
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.sourcesScanned, 0);
+    assert.equal(unchanged.sourcesRescanned, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -636,18 +589,20 @@ test("a runtime quarantine remains a terminal historical gap after the source ro
     "",
   ].join("\n"));
   try {
-    assert.equal((await build(root)).generation.status, "partial");
+    assert.equal((await build(root)).sourcesQuarantined, 1);
     await rm(source);
 
     const rotated = await ingest(root);
-    assert.equal(rotated.generation.status, "partial");
-    assert.equal(rotated.generation.skippedSourceCount, 1);
-    assert.equal(rotated.totalUsageEvents, 0);
+    assert.equal(rotated.sourcesAbsent, 1);
+    assert.equal(storeEventCount(root), 0);
+    assert.deepEqual(storeQuarantineCodes(root), ["codex_rollout_content_invalid"]);
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(database.prepare("SELECT presence FROM source").get().presence, "absent");
+    });
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.generation.status, "partial");
-    assert.equal(unchanged.generation.skippedSourceCount, 1);
+    assert.deepEqual(storeQuarantineCodes(root), ["codex_rollout_content_invalid"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -677,46 +632,32 @@ test("a descendant of runtime-damaged history also gets a terminal lineage curso
     ].join("\n"), { mode: 0o600 });
 
     const built = await build(root);
-    assert.equal(built.generation.status, "partial");
-    assert.equal(built.generation.skippedSourceCount, 2);
-    assert.equal(
-      built.generation.issueCounts.codex_rollout_content_invalid.sourceCount,
-      1,
-    );
-    assert.equal(
-      built.generation.issueCounts.codex_rollout_lineage_invalid.sourceCount,
-      1,
-    );
-    const database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
-    });
-    try {
-      assert.deepEqual(database.prepare(`
-        SELECT quarantine_code FROM source_cursor ORDER BY quarantine_code
-      `).all().map((row) => row.quarantine_code), [
-        "codex_rollout_content_invalid",
-        "codex_rollout_lineage_invalid",
-      ]);
-    } finally {
-      database.close();
-    }
+    assert.equal(built.sourcesQuarantined, 2);
+    assert.deepEqual(storeQuarantineCodes(root), [
+      "codex_rollout_content_invalid",
+      "codex_rollout_lineage_invalid",
+    ]);
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.generation.skippedSourceCount, 2);
-    assert.equal(unchanged.sourcesScanned, 0);
+    assert.equal(unchanged.sourcesRescanned, 0);
 
     await appendFile(source, `${malformed}\n`);
     const stillDamaged = await ingest(root);
-    assert.equal(stillDamaged.rebuilt, undefined);
-    assert.equal(stillDamaged.generation.status, "partial");
-    assert.equal(stillDamaged.generation.skippedSourceCount, 2);
-    assert.equal(stillDamaged.sourcesScanned, 1);
-    assert.equal(stillDamaged.totalUsageEvents, 0);
+    assert.equal(stillDamaged.sourcesQuarantined, 2);
+    // A quarantined source is not counted as scanned bytes; the catalog's
+    // recorded size proves the changed parent was inspected again.
+    const damagedSize = (await stat(source)).size;
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(Number(database.prepare(
+        "SELECT size_bytes FROM source WHERE quarantine_code = 'codex_rollout_content_invalid'",
+      ).get().size_bytes), damagedSize);
+    });
+    assert.equal(storeEventCount(root), 0);
 
     const damagedUnchanged = await ingest(root);
     assert.equal(damagedUnchanged.unchanged, true);
-    assert.equal(damagedUnchanged.sourcesScanned, 0);
+    assert.equal(damagedUnchanged.sourcesRescanned, 0);
 
     await writeFile(source, [
       sessionMeta(),
@@ -725,15 +666,13 @@ test("a descendant of runtime-damaged history also gets a terminal lineage curso
       "",
     ].join("\n"), { mode: 0o600 });
     const repaired = await ingest(root);
-    assert.equal(repaired.rebuilt, undefined);
+    assert.equal(repaired.sourcesQuarantined, 0);
     assert.equal(repaired.sourcesRescanned, 2);
-    assert.equal(repaired.generation.status, "complete");
-    assert.equal(repaired.totalUsageEvents, 2);
+    assert.equal(storeEventCount(root), 2);
 
     const healed = await ingest(root);
     assert.equal(healed.unchanged, true);
-    assert.equal(healed.sourcesScanned, 0);
-    assert.equal(healed.generation.status, "complete");
+    assert.equal(healed.sourcesRescanned, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -747,7 +686,8 @@ test("a newly discovery-quarantined source cannot retain facts from an earlier g
     "",
   ].join("\n"));
   try {
-    assert.equal((await build(root)).usageEvents, 1);
+    assert.equal((await build(root)).sourcesQuarantined, 0);
+    assert.equal(storeEventCount(root), 1);
     const divergent = join(
       dirname(source),
       `rollout-2026-07-25T00-00-01-${THREAD}.jsonl`,
@@ -760,40 +700,23 @@ test("a newly discovery-quarantined source cannot retain facts from an earlier g
     ].join("\n"), { mode: 0o600 });
 
     const quarantined = await ingest(root);
-    assert.equal(quarantined.rebuilt, undefined);
-    assert.equal(quarantined.sourcesScanned, 0);
-    assert.equal(quarantined.generation.status, "partial");
-    assert.equal(
-      quarantined.generation.issueCounts
-        .codex_rollout_generation_ambiguous.sourceCount,
-      2,
-    );
-    assert.equal(quarantined.totalUsageEvents, 0);
-
-    const database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
-    });
-    try {
-      assert.equal(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM usage_event",
-      ).get().count), 0);
-      assert.equal(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM source_cursor",
-      ).get().count), 0);
-    } finally {
-      database.close();
-    }
+    // The divergent member claims the catalog row of the earlier generation,
+    // which is marked ambiguous; both members are rejected at discovery.
+    assert.equal(quarantined.discoverySourcesRejected, 2);
+    assert.equal(storeEventCount(root), 0);
+    assert.deepEqual(storeQuarantineCodes(root), [
+      "codex_rollout_generation_ambiguous",
+    ]);
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.generation.status, "partial");
 
     await rm(divergent);
     const healed = await ingest(root);
-    assert.equal(healed.rebuilt, undefined);
-    assert.equal(healed.sourcesScanned, 1);
-    assert.equal(healed.generation.status, "complete");
-    assert.equal(healed.totalUsageEvents, 1);
+    assert.equal(healed.discoverySourcesRejected, 0);
+    assert.equal(healed.unchanged, false);
+    assert.equal(storeEventCount(root), 1);
+    assert.deepEqual(storeQuarantineCodes(root), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -817,17 +740,11 @@ test("identity-damaged metadata clears state through the prior attested session"
       tokenCount(200),
       "",
     ].join("\n"), { mode: 0o600 });
-    assert.equal((await build(root)).usageEvents, 2);
-    let database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
+    assert.equal((await build(root)).sourcesQuarantined, 0);
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(countRows(database, "usage_event"), 2);
+      assert.ok(countRows(database, "lineage_snapshot") > 0);
     });
-    try {
-      assert.ok(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM lineage_snapshot",
-      ).get().count) > 0);
-    } finally {
-      database.close();
-    }
 
     // The canonical filename still attests THREAD, while the rewritten
     // metadata now claims a different logical owner.
@@ -838,22 +755,14 @@ test("identity-damaged metadata clears state through the prior attested session"
       "",
     ].join("\n"), { mode: 0o600 });
     const quarantined = await ingest(root);
-    assert.equal(quarantined.generation.status, "partial");
-    assert.equal(quarantined.totalUsageEvents, 0);
-
-    database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
+    assert.ok(quarantined.discoverySourcesRejected + quarantined.sourcesQuarantined >= 1);
+    assert.equal(storeEventCount(root), 0);
+    withReadOnlyStore(storePath(root), (database) => {
+      assert.equal(countRows(database, "lineage_snapshot"), 0);
+      assert.equal(Number(database.prepare(
+        "SELECT COUNT(*) AS n FROM source WHERE quarantine_code IS NULL AND scanned_bytes > 0",
+      ).get().n), 0);
     });
-    try {
-      assert.equal(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM source_cursor",
-      ).get().count), 0);
-      assert.equal(Number(database.prepare(
-        "SELECT COUNT(*) AS count FROM lineage_snapshot",
-      ).get().count), 0);
-    } finally {
-      database.close();
-    }
 
     await writeFile(source, [
       sessionMeta(),
@@ -862,8 +771,8 @@ test("identity-damaged metadata clears state through the prior attested session"
       "",
     ].join("\n"), { mode: 0o600 });
     const repaired = await ingest(root);
-    assert.equal(repaired.generation.status, "complete");
-    assert.equal(repaired.totalUsageEvents, 2);
+    assert.equal(repaired.sourcesQuarantined, 0);
+    assert.equal(storeEventCount(root), 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -880,15 +789,16 @@ test("distinct filename mismatches sharing one claimed ID terminate unchanged", 
       `rollout-2026-07-25T00-00-01-${THIRD_THREAD}.jsonl`,
     ), [sessionMeta(CHILD_THREAD), ""].join("\n"), { mode: 0o600 });
 
+    // Neither member is accepted, so neither gets a catalog row or facts.
     const built = await build(root);
-    assert.equal(built.generation.status, "partial");
-    assert.equal(built.generation.skippedSourceCount, 2);
-    assert.equal(built.generation.skippedThreadCount, 2);
+    assert.equal(built.skippedSourceCount, 2);
+    assert.deepEqual(storeQuarantineCodes(root), []);
+    assert.equal(storeEventCount(root), 0);
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.sourcesScanned, 0);
-    assert.equal(unchanged.generation.skippedThreadCount, 2);
+    assert.equal(unchanged.sourcesRescanned, 0);
+    assert.equal(unchanged.skippedSourceCount, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -911,25 +821,11 @@ test("divergent active/archive representations retain two failed source attestat
       "",
     ].join("\n"), { mode: 0o600 });
 
+    // Two representations of one generation: neither is accepted.
     const built = await build(root);
-    assert.equal(built.generation.status, "partial");
-    assert.equal(built.generation.skippedSourceCount, 2);
-    assert.equal(
-      built.generation.issueCounts
-        .codex_rollout_generation_ambiguous.sourceCount,
-      2,
-    );
-    const database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
-    });
-    try {
-      assert.equal(Number(database.prepare(`
-        SELECT COUNT(*) AS count FROM generation_source
-        WHERE generation_id = ? AND status = 'failed'
-      `).get(built.generation.id).count), 2);
-    } finally {
-      database.close();
-    }
+    assert.equal(built.skippedSourceCount, 2);
+    assert.deepEqual(storeQuarantineCodes(root), []);
+    assert.equal(storeEventCount(root), 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1321,7 +1217,8 @@ test("a deep new fork chain rescans required ancestors once and terminates", asy
     "",
   ].join("\n"));
   try {
-    assert.equal((await build(root)).usageEvents, 1);
+    assert.equal((await build(root)).sourcesQuarantined, 0);
+    assert.equal(storeEventCount(root), 1);
     let parentId = THREAD;
     for (let index = 1; index <= depth; index += 1) {
       const sessionId = `deep-session-${index}`;
@@ -1342,14 +1239,13 @@ test("a deep new fork chain rescans required ancestors once and terminates", asy
     }
 
     const advanced = await ingest(root);
-    assert.equal(advanced.rebuilt, undefined);
-    assert.equal(advanced.sourcesRescanned, depth + 1);
-    assert.equal(advanced.totalUsageEvents, depth + 1);
-    assert.equal(advanced.generation.status, "complete");
+    assert.equal(advanced.sourcesQuarantined, 0);
+    assert.equal(advanced.sourcesRescanned + advanced.sourcesNew, depth + 1);
+    assert.equal(storeEventCount(root), depth + 1);
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
-    assert.equal(unchanged.sourcesScanned, 0);
+    assert.equal(unchanged.sourcesRescanned, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -1385,13 +1281,11 @@ test("a logical parent cycle is quarantined instead of receiving arbitrary accou
       mode: 0o600,
     });
 
+    // Both members of the cycle are skipped at discovery; neither contributes.
     const result = await build(root);
-    assert.equal(result.generation.status, "partial");
-    assert.equal(
-      result.generation.issueCounts.codex_rollout_lineage_invalid.sourceCount,
-      2,
-    );
-    assert.equal(result.usageEvents, 0);
+    assert.equal(result.skippedSourceCount, 2);
+    assert.deepEqual(storeQuarantineCodes(root), []);
+    assert.equal(storeEventCount(root), 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

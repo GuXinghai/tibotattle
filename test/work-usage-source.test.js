@@ -14,19 +14,16 @@ import { join, posix, win32 } from "node:path";
 import { promisify } from "node:util";
 import test from "node:test";
 
-import { ingestLocalUnifiedIndexIncrement } from "../src/local-unified-index-ingest.js";
-import { rebuildLocalUnifiedIndex } from "../src/local-unified-index-build.js";
-import {
-  openLocalUnifiedIndex,
-  readUnifiedIndexGenerationDescriptor,
-} from "../src/local-unified-index.js";
-import { readLocalWorkUsageSnapshot } from "../src/local-work-usage-source.js";
-import { readLocalAllowanceMovement } from "../src/local-usage-explainer.js";
-import { extractRolloutWorkContexts } from "../src/local-unified-index-extract.js";
+import { refreshLocalIndex } from "../src/local-index-refresh.js";
+import { readLocalIndexWorkUsage } from "../src/local-index-work-usage.js";
+import { openLocalIndexStore } from "../src/local-index-store.js";
+import { createLocalIndexUsageExplainerReaders } from "../src/local-index-usage-explainer.js";
+import { extractRolloutWorkContexts } from "../src/local-index-extract.js";
 import { queryWorkUsageSnapshot } from "../src/reporting/index.js";
 
+const { readAllowance } = createLocalIndexUsageExplainerReaders();
+
 const execFileAsync = promisify(execFile);
-const CONTRACT = "usage-event-v0.2";
 const THREAD_ID = "11111111-1111-4111-8111-111111111111";
 
 function usage(input, output = 0) {
@@ -156,7 +153,6 @@ async function git(args, cwd) {
   });
 }
 
-
 async function modifySourceSameSize(path) {
   const bytes = await readFile(path);
   const marker = Buffer.from("gpt-5.6-sol");
@@ -244,11 +240,10 @@ async function makeFixture({ events, useCustomSecret = false }) {
   const buildOptions = {
     codexHome,
     indexFile,
-    contractVersion: CONTRACT,
     workerCount: 1,
   };
   if (secretFile !== null) buildOptions.secretFile = secretFile;
-  await rebuildLocalUnifiedIndex(buildOptions);
+  await refreshLocalIndex(buildOptions);
   return {
     root,
     codexHome,
@@ -259,6 +254,27 @@ async function makeFixture({ events, useCustomSecret = false }) {
     indexFile,
     secretFile,
   };
+}
+
+// One scope's work snapshot of [fromMs, toMs) from the v2 store. The scope is
+// the explicit one, else the first unavailable scope, else the first scope.
+async function readSnapshot({
+  indexFile, codexHome, secretFile = null, fromMs, toMs, scope = null,
+}) {
+  const database = openLocalIndexStore(indexFile, { readOnly: true });
+  try {
+    const result = await readLocalIndexWorkUsage({
+      database, indexFile, codexHome, secretFile, nowMs: toMs,
+      intervals: [{ id: "custom", fromMs, toMs }],
+    });
+    const period = result.periods.custom;
+    const selected = scope ?? period.scopes.find((s) => s.status === "unavailable")?.id
+      ?? period.scopes[0]?.id ?? "scope-0";
+    if (!period.snapshots[selected]) throw new Error("work_usage_scope_unavailable");
+    return period.snapshots[selected];
+  } finally {
+    database.close();
+  }
 }
 
 function interval(start, end) {
@@ -272,44 +288,6 @@ function query(result, grouping) {
     offset: 0,
     pageSize: 100,
   });
-}
-
-test("a missing unified index remains explicitly missing through the read-only adapter", async () => {
-  const root = await mkdtemp(join(tmpdir(), "work-usage-missing-index-"));
-  try {
-    const result = await readLocalWorkUsageSnapshot({
-      indexFile: join(root, "missing.sqlite"),
-      codexHome: root,
-      fromMs: 0,
-      toMs: 1,
-    });
-    assert.deepEqual(result, { status: "missing" });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-function markToolingOnlyPartial(indexFile) {
-  const database = openLocalUnifiedIndex(indexFile, { readOnly: false });
-  try {
-    database
-      .prepare(
-        `
-      UPDATE index_generation
-      SET status = 'partial', block_reason = 'tool_provenance_incomplete',
-          tool_provenance_complete = 0, usage_provenance_complete = 1
-      WHERE id = (SELECT CAST(value AS INTEGER) FROM meta
-                  WHERE key = 'current_generation_id')
-    `,
-      )
-      .run();
-    database
-      .prepare("UPDATE meta SET value = 'partial' WHERE key = 'status'")
-      .run();
-    return readUnifiedIndexGenerationDescriptor(database);
-  } finally {
-    database.close();
-  }
 }
 
 test("canonical source resolves main and linked worktree to one project and conserves 100/300", async () => {
@@ -333,7 +311,7 @@ test("canonical source resolves main and linked worktree to one project and cons
   try {
     const beforeRollout = await readFile(fixture.rolloutPath);
     const beforeIndex = await readFile(fixture.indexFile);
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:05.000Z"),
@@ -374,7 +352,6 @@ test("canonical source resolves main and linked worktree to one project and cons
   }
 });
 
-
 test("same-inode append growth leaves the indexed prefix attributable and excludes new usage", async () => {
   const fixture = await makeFixture({
     events: [{
@@ -385,11 +362,11 @@ test("same-inode append growth leaves the indexed prefix attributable and exclud
   });
   try {
     const beforeIndex = await readFile(fixture.indexFile);
-    const database = openLocalUnifiedIndex(fixture.indexFile, { readOnly: true });
+    const database = openLocalIndexStore(fixture.indexFile, { readOnly: true });
     let indexedBytes;
     try {
       indexedBytes = Number(database.prepare(
-        "SELECT scanned_bytes FROM source_cursor ORDER BY source_local LIMIT 1",
+        "SELECT scanned_bytes FROM source ORDER BY id LIMIT 1",
       ).get().scanned_bytes);
     } finally {
       database.close();
@@ -402,7 +379,7 @@ test("same-inode append growth leaves the indexed prefix attributable and exclud
     ].join("\n")}\n`);
     assert.ok((await readFile(fixture.rolloutPath)).length > indexedBytes);
 
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:06.000Z"),
@@ -426,7 +403,6 @@ test("same-inode append growth leaves the indexed prefix attributable and exclud
   }
 });
 
-
 test("quota-only token counts stay retained in the index without changing known work usage", async () => {
   const fixture = await makeFixture({
     events: [
@@ -449,7 +425,7 @@ test("quota-only token counts stay retained in the index without changing known 
   });
   try {
     const beforeIndex = await readFile(fixture.indexFile);
-    const database = openLocalUnifiedIndex(fixture.indexFile, { readOnly: true });
+    const database = openLocalIndexStore(fixture.indexFile, { readOnly: true });
     let quotaUsageRows;
     let quotaObservations;
     try {
@@ -465,7 +441,7 @@ test("quota-only token counts stay retained in the index without changing known 
     assert.equal(quotaUsageRows, 2);
     assert.ok(quotaObservations >= 2);
 
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:04.000Z"),
@@ -499,7 +475,7 @@ test("all-null token info with quota remains an unknown work event", async () =>
     ],
   });
   try {
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:03.000Z"),
@@ -518,46 +494,6 @@ test("all-null token info with quota remains an unknown work event", async () =>
     await rm(fixture.root, { recursive: true, force: true });
   }
 });
-
-test("missing or changed quota-only sources fail closed as unknown retained usage", async () => {
-  for (const mode of ["removed", "changed"]) {
-    const fixture = await makeFixture({
-      events: [
-        {
-          timestamp: "2026-08-24T00:00:01.000Z",
-          total: 100,
-          last: 100,
-        },
-        {
-          timestamp: "2026-08-24T00:00:02.000Z",
-          kind: "quota-only",
-        },
-      ],
-    });
-    try {
-      if (mode === "removed") await rm(fixture.rolloutPath);
-      else await modifySourceSameSize(fixture.rolloutPath);
-      const result = await readLocalWorkUsageSnapshot({
-        indexFile: fixture.indexFile,
-        codexHome: fixture.codexHome,
-        ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:03.000Z"),
-      });
-      assert.equal(result.status, "available", mode);
-      assert.equal(result.metadata.status, "partial", mode);
-      const projects = query(result, "project");
-      assert.equal(projects.totals.tokens, 100, mode);
-      assert.equal(projects.totals.events, 2, mode);
-      assert.equal(projects.totals.incompleteEvents, 1, mode);
-      assert.equal(projects.totals.unknownEvents, 1, mode);
-      assert.equal(projects.rows.length, 1, mode);
-      assert.equal(projects.rows[0].id, "unassigned", mode);
-      assert.equal(projects.rows[0].unknownEvents, 1, mode);
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  }
-});
-
 
 test("an exact repeated cumulative snapshot with quota is status-only, while growth remains usage", async () => {
   const fixture = await makeFixture({
@@ -583,7 +519,7 @@ test("an exact repeated cumulative snapshot with quota is status-only, while gro
   });
   try {
     const beforeIndex = await readFile(fixture.indexFile);
-    const database = openLocalUnifiedIndex(fixture.indexFile, { readOnly: true });
+    const database = openLocalIndexStore(fixture.indexFile, { readOnly: true });
     let usageRows;
     let quotaUsageRows;
     try {
@@ -599,7 +535,7 @@ test("an exact repeated cumulative snapshot with quota is status-only, while gro
     assert.equal(usageRows, 3);
     assert.equal(quotaUsageRows, 2);
 
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:04.000Z"),
@@ -629,7 +565,7 @@ test("a quota row used as the first cumulative baseline without last usage stays
     }],
   });
   try {
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:02.000Z"),
@@ -663,7 +599,7 @@ test("contradictory complete counters that canonicalize to all-null stay unknown
     ],
   });
   try {
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:03.000Z"),
@@ -677,42 +613,6 @@ test("contradictory complete counters that canonicalize to all-null stay unknown
     assert.equal(projects.rows.length, 1);
     assert.equal(projects.rows[0].tokens, 100);
     assert.equal(projects.rows[0].unknownEvents, 1);
-  } finally {
-    await rm(fixture.root, { recursive: true, force: true });
-  }
-});
-
-test("tooling-only partial generation retains complete known usage", async () => {
-  const fixture = await makeFixture({
-    events: [
-      {
-        timestamp: "2026-08-24T00:00:01.000Z",
-        total: 120,
-        last: 120,
-      },
-    ],
-  });
-  try {
-    const generation = markToolingOnlyPartial(fixture.indexFile);
-    assert.equal(generation.status, "partial");
-    assert.equal(generation.blockReason, "tool_provenance_incomplete");
-    assert.equal(generation.toolProvenanceComplete, false);
-    assert.equal(generation.usageProvenanceComplete, true);
-
-    const result = await readLocalWorkUsageSnapshot({
-      indexFile: fixture.indexFile,
-      codexHome: fixture.codexHome,
-      ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:02.000Z"),
-    });
-    assert.equal(result.status, "available");
-    assert.equal(result.generation.status, "partial");
-    assert.equal(result.generation.blockReason, "tool_provenance_incomplete");
-    assert.equal(result.generation.usageProvenanceComplete, true);
-    const projects = query(result, "project");
-    assert.equal(projects.totals.tokens, 120);
-    assert.equal(projects.totals.events, 1);
-    assert.equal(projects.rows[0].incompleteEvents, 0);
-    assert.equal(projects.rows[0].unknownEvents, 0);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
@@ -734,7 +634,7 @@ test("usage explainer reads compatible allowance movement from committed occurre
     ],
   });
   try {
-    const result = readLocalAllowanceMovement({
+    const result = readAllowance({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:05.000Z"),
@@ -748,7 +648,7 @@ test("usage explainer reads compatible allowance movement from committed occurre
     assert.equal(result.singleObservationCount, 0);
     assert.equal(result.nonMonotonicCount, 0);
     assert.equal(result.nextOffset, 1);
-    const second = readLocalAllowanceMovement({
+    const second = readAllowance({
       indexFile: fixture.indexFile,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:05.000Z"),
       offset: result.nextOffset,
@@ -805,7 +705,7 @@ test("allowance pages prioritize compatible movement and count unresolved classe
     ],
   });
   try {
-    const result = readLocalAllowanceMovement({
+    const result = readAllowance({
       indexFile: fixture.indexFile,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:05.000Z"),
       limit: 6,
@@ -855,8 +755,8 @@ test("source honors an existing custom salt and keeps account scope handles stab
       secretFile: fixture.secretFile,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:02.000Z"),
     };
-    const first = await readLocalWorkUsageSnapshot(request);
-    const second = await readLocalWorkUsageSnapshot({
+    const first = await readSnapshot(request);
+    const second = await readSnapshot({
       ...request,
       scope: first.scope,
     });
@@ -939,7 +839,7 @@ test("initial session and applied settings directories attribute usage without a
     { timestamp: "2026-08-24T00:00:02.000Z", total: 150, last: 30, context: "settings", cwd: "WORKTREE" },
   ] });
   try {
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile, codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:03.000Z"),
     });
@@ -961,53 +861,6 @@ test("initial session and applied settings directories attribute usage without a
   }
 });
 
-test("unknown, removed, and changed retained sources keep usage under Unassigned", async () => {
-  for (const mode of ["unknown", "removed", "changed"]) {
-    const fixture = await makeFixture({
-      events: [
-        {
-          timestamp: "2026-08-24T00:00:01.000Z",
-          total: 120,
-          last: 120,
-        },
-      ],
-    });
-    try {
-      let readHome = fixture.codexHome;
-      if (mode === "unknown") {
-        readHome = join(fixture.root, "unrelated-codex-home");
-        await mkdir(join(readHome, "sessions"), {
-          recursive: true,
-          mode: 0o700,
-        });
-      } else if (mode === "removed") {
-        await rm(fixture.rolloutPath);
-      } else {
-        await modifySourceSameSize(fixture.rolloutPath);
-      }
-      const result = await readLocalWorkUsageSnapshot({
-        indexFile: fixture.indexFile,
-        codexHome: readHome,
-        ...interval("2026-08-24T00:00:00.000Z", "2026-08-24T00:00:02.000Z"),
-      });
-      assert.equal(result.status, "available", mode);
-      assert.equal(result.metadata.status, "partial", mode);
-      assert.equal(result.metadata.inspectedSources, 0, mode);
-      assert.equal(result.metadata.indexedSources, 1, mode);
-      assert.deepEqual(result.display.projects, {}, mode);
-      assert.deepEqual(result.display.worktrees, {}, mode);
-      const projects = query(result, "project");
-      assert.equal(projects.totals.tokens, 120, mode);
-      assert.equal(projects.rows.length, 1, mode);
-      assert.equal(projects.rows[0].id, "unassigned", mode);
-      assert.equal(projects.rows[0].tokens, 120, mode);
-      assert.equal(projects.rows[0].unknownEvents, 0, mode);
-    } finally {
-      await rm(fixture.root, { recursive: true, force: true });
-    }
-  }
-});
-
 test("source query uses a half-open [fromMs, toMs) boundary", async () => {
   const fixture = await makeFixture({
     events: [
@@ -1017,7 +870,7 @@ test("source query uses a half-open [fromMs, toMs) boundary", async () => {
     ],
   });
   try {
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       indexFile: fixture.indexFile,
       codexHome: fixture.codexHome,
       ...interval("2026-08-24T00:00:01.000Z", "2026-08-24T00:00:03.000Z"),
@@ -1037,7 +890,7 @@ test("row enrichment preserves explicit worker ancestry using the shared local m
   const { DatabaseSync } = await import("node:sqlite");
   const { chmod } = await import("node:fs/promises");
   const { enrichWorkUsageRows } = await import(
-    "../src/local-work-usage-source.js"
+    "../src/work-usage-display.js"
   );
   const home = await mkdtemp(join(tmpdir(), "work-usage-names-"));
   const parent = "33333333-3333-4333-8333-333333333333";
@@ -1106,107 +959,22 @@ test("bounded collaboration ancestry follows nested workers, preserves absent ro
   } finally {await rm(home,{recursive:true,force:true});}
 });
 
-
-test("metadata reuse verifies source identity and observes repository changes afresh", async () => {
+test("project resolution observes repository changes afresh on every read", async () => {
   const fixture = await makeFixture({ events: [
     { timestamp: "2026-08-24T00:01:00Z", total: 100, last: 100 },
     { timestamp: "2026-08-24T00:02:00Z", kind: "quota-repeat", total: 100, last: 100 },
   ] });
-  const cache = new Map();
-  const options = { ...fixture, ...interval("2026-08-24T00:00:00Z", "2026-08-25T00:00:00Z"), workUsageMetadataCache: cache };
+  const options = { ...fixture, ...interval("2026-08-24T00:00:00Z", "2026-08-25T00:00:00Z") };
   try {
-    const cold = await readLocalWorkUsageSnapshot(options);
+    const cold = await readSnapshot(options);
     assert.equal(cold.status, "available");
-    assert.equal(cache.size, 1);
-    const saved = [...cache.values()][0];
-    assert.ok(saved.contexts.length);
-    assert.equal(saved.quotaOnly.length, 1);
-    const warm = await readLocalWorkUsageSnapshot(options);
-    assert.equal([...cache.values()][0], saved, "unchanged extraction is retained");
+    const warm = await readSnapshot(options);
     assert.deepEqual(query(warm, "project"), query(cold, "project"));
     await rename(join(fixture.repository, ".git"), join(fixture.repository, ".git-saved"));
-    const remapped = await readLocalWorkUsageSnapshot(options);
-    assert.equal([...cache.values()][0], saved);
+    const remapped = await readSnapshot(options);
     assert.equal(query(remapped, "project").totals.tokens, 100);
     assert.notEqual(query(remapped, "project").rows[0].id, query(cold, "project").rows[0].id,
       "fresh Git resolution cannot be replaced by a cached repository mapping");
-    await modifySourceSameSize(fixture.rolloutPath);
-    const changed = await readLocalWorkUsageSnapshot(options);
-    assert.equal(cache.size, 0, "failed source verification invalidates cached observations");
-    assert.equal(query(changed, "project").rows[0].id, "unassigned");
-    assert.ok(query(changed, "project").totals.unknownEvents > 0,
-      "stale quota classifications must not hide unknown facts");
-  } finally { await rm(fixture.root, { recursive: true, force: true }); }
-});
-
-
-test("metadata cache forgets sources that disappear from discovery", async () => {
-  const fixture = await makeFixture({ events: [
-    { timestamp: "2026-08-24T00:01:00Z", total: 100, last: 100 },
-  ] });
-  const cache = new Map();
-  const options = { ...fixture, ...interval("2026-08-24T00:00:00Z", "2026-08-25T00:00:00Z"), workUsageMetadataCache: cache };
-  try {
-    await readLocalWorkUsageSnapshot(options);
-    assert.equal(cache.size, 1);
-    await rm(fixture.rolloutPath);
-    const absent = await readLocalWorkUsageSnapshot(options);
-    assert.equal(cache.size, 0);
-    assert.equal(query(absent, "project").rows[0].id, "unassigned");
-    assert.equal(query(absent, "project").totals.tokens, 100);
-  } finally { await rm(fixture.root, { recursive: true, force: true }); }
-});
-
-
-test("metadata cache reuses an indexed prefix until a new generation admits appended context", async () => {
-  const fixture = await makeFixture({ events: [
-    { timestamp: "2026-08-24T00:01:00Z", total: 100, last: 100 },
-  ] });
-  const cache = new Map();
-  const options = { ...fixture, ...interval("2026-08-24T00:00:00Z", "2026-08-25T00:00:00Z"), workUsageMetadataCache: cache };
-  try {
-    const cold = await readLocalWorkUsageSnapshot(options);
-    const saved = [...cache.values()][0];
-    await appendFile(fixture.rolloutPath, [
-      turnContext("2026-08-24T00:02:00Z", fixture.worktree, 2),
-      tokenCount("2026-08-24T00:02:00Z", 300, 200),
-    ].map(line => JSON.stringify(line)).join("\n") + "\n");
-    const prefix = await readLocalWorkUsageSnapshot(options);
-    assert.equal([...cache.values()][0], saved);
-    assert.deepEqual(query(prefix, "worktree"), query(cold, "worktree"));
-    await ingestLocalUnifiedIndexIncrement({ indexFile: fixture.indexFile,
-      codexHome: fixture.codexHome, contractVersion: CONTRACT });
-    const advanced = await readLocalWorkUsageSnapshot(options);
-    assert.notEqual([...cache.values()][0], saved);
-    assert.equal(query(advanced, "project").totals.tokens, 300);
-    assert.equal(query(advanced, "project").rows.length, 1);
-    assert.equal(query(advanced, "worktree").rows.length, 2);
-    const independent = await readLocalWorkUsageSnapshot({ ...options, workUsageMetadataCache: null });
-    assert.deepEqual(query(advanced, "worktree"), query(independent, "worktree"));
-  } finally { await rm(fixture.root, { recursive: true, force: true }); }
-});
-
-
-test("oversized cache candidates fall back to streaming without changing accounting", async () => {
-  const fixture = await makeFixture({ events: [] });
-  const cache = new Map();
-  const options = { ...fixture, ...interval("2026-08-24T00:00:00Z", "2026-08-25T00:00:00Z"), workUsageMetadataCache: cache };
-  try {
-    // Repeated bounded cwd observations exceed the estimated 32 MiB admission
-    // budget, while remaining well below the extractor's semantic limits.
-    const cwd = "/" + "a".repeat(4095);
-    const lines = Array.from({ length: 4100 }, (_, i) =>
-      JSON.stringify(turnContext("2026-08-24T00:01:00Z", cwd, i)));
-    lines.push(JSON.stringify(tokenCount("2026-08-24T00:02:00Z", 100, 100)));
-    await appendFile(fixture.rolloutPath, lines.join("\n") + "\n");
-    await ingestLocalUnifiedIndexIncrement({ indexFile: fixture.indexFile,
-      codexHome: fixture.codexHome, contractVersion: CONTRACT });
-    const bounded = await readLocalWorkUsageSnapshot(options);
-    assert.equal(bounded.status, "available");
-    assert.equal(cache.size, 0);
-    assert.equal(query(bounded, "project").totals.tokens, 100);
-    const independent = await readLocalWorkUsageSnapshot({ ...options, workUsageMetadataCache: null });
-    assert.deepEqual(query(bounded, "project"), query(independent, "project"));
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 
@@ -1344,7 +1112,7 @@ test("canonical source groups unavailable non-project folders and conserves usag
     { timestamp: "2026-08-24T00:02:00Z", total: 400, last: 300, cwd: join(absentRoot, "second") },
   ] });
   try {
-    const result = await readLocalWorkUsageSnapshot({
+    const result = await readSnapshot({
       ...fixture,
       ...interval("2026-08-24T00:00:00Z", "2026-08-25T00:00:00Z"),
     });

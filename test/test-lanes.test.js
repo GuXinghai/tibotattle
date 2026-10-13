@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  MACOS_TRANSITION_TEST_FILES,
   mergeChangedPaths,
   parseTestLaneArguments,
   selectTestLanes,
@@ -11,18 +10,6 @@ import {
   PORTABLE_TEST_FILES,
   PORTABLE_TEST_GROUPS,
 } from "../scripts/portable-test-manifest.mjs";
-
-test("transition lane retains every incoming Sparkle contract target", () => {
-  assert.deepEqual(MACOS_TRANSITION_TEST_FILES, [
-    "test/macos-keychain-migration-artifact.test.js",
-    "test/macos-updater.test.js",
-    "test/electron-sparkle-transition.test.js",
-    "test/generate-sparkle-appcast-stable-feed.test.js",
-    "test/sparkle-signed-feed-validation.test.js",
-    "test/sparkle-remote-inspection.test.js",
-    "test/publish-sparkle-update.test.js",
-  ]);
-});
 
 test("portable manifest is explicit, unique, and excludes native release gates", () => {
   assert.equal(PORTABLE_TEST_FILES.length, new Set(PORTABLE_TEST_FILES).size);
@@ -107,7 +94,7 @@ test("test-lane selection narrows only paths with complete executable coverage",
     "test/macos-keychain-migration-artifact.test.js",
     "test/macos-updater.test.js",
   ]) {
-    assert.deepEqual(selectTestLanes([path]).lanes, ["macos-transition"], path);
+    assert.deepEqual(selectTestLanes([path]).lanes, ["full"], path);
   }
   assert.deepEqual(
     selectTestLanes(["scripts/electron-sparkle-transition.js"], { full: true }).lanes,

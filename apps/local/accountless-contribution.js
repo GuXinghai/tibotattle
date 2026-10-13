@@ -188,6 +188,10 @@ export function createLocalAccountlessContribution({
   readAccountMarkers, loadExistingAccountObservationSecret,
   runner = runAccountlessContributionSyncOnce, schedulerOptions = {},
   performanceOptions = null,
+  // The local index backend's contribution seams (localIndexBackend.contribution).
+  // Always supplied by the composition root; the accountless pass fails closed
+  // with a TypeError when they are absent.
+  contribution = null,
 } = {}) {
   const selectedMode = environment?.USAGE_MONITOR_ACCOUNTLESS_MODE;
   const production = selectedMode === "rehearsal-v1" ? false
@@ -245,7 +249,8 @@ export function createLocalAccountlessContribution({
       stateFile: join(stateRoot, "accountless-device-binding-v1.json"),
       progressFile: join(stateRoot, "private", "accountless-upload-progress-v1.json"),
       backend: bridge.backend, readPreference: bridge.readPreference, signal,
-      readAccountMarkers, loadExistingAccountObservationSecret }),
+      readAccountMarkers, loadExistingAccountObservationSecret,
+      contribution }),
     onStatus: (status) => { void bridge.reportStatus(status).catch(() => {}); },
   });
   if (performanceOptions !== null) {

@@ -4,12 +4,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  createUnifiedIndexWriter,
-  openLocalUnifiedIndex,
-  outcomeOrdinal,
-  reasoningEffortOrdinal,
-} from "../src/local-unified-index.js";
+import { reasoningEffortOrdinal } from "../src/codex-usage-vocabulary.js";
+import { createLocalIndexWriter, openLocalIndexStore } from "../src/local-index-store.js";
+import { createLocalIndexBackend } from "../src/local-index-backend.js";
 import {
   telemetryV1DayDigest,
   telemetryV1HistoryDigest,
@@ -37,52 +34,81 @@ function eventKey(index) {
   return key;
 }
 
+const SOURCE_LOCAL = Buffer.alloc(32, 0x0d);
+
 async function writeEvents(file, events, { create }) {
-  const database = openLocalUnifiedIndex(file, { readOnly: false, create });
-  const writer = createUnifiedIndexWriter(database, {
-    contractVersion: "telemetry-contribution-v0.1",
-  });
-  const accountScopeId = writer.internAccountScope({
-    status: "unavailable",
-    reason: "missing_account",
-    planType: null,
-    scopeLocal: null,
-  });
-  for (const event of events) {
-    writer.writeUsageEvent({
-      eventKey: event.eventKey,
-      observedAtMs: event.observedAtMs,
-      sessionLocal: SESSION_LOCAL,
-      accountScopeId,
-      modelId: writer.internModel("gpt-5.6-sol", "recognized"),
-      tierId: writer.internTier({
-        apiServiceTier: "unknown",
-        billingSurface: "chatgpt_subscription",
-        codexSpeedMode: "standard",
-        tierSource: "rollout_thread_settings",
-        providerTierRaw: "default",
-      }),
-      surfaceId: writer.internSurface({
-        agentScope: "root",
-        surface: "extension_or_ide",
-        threadSource: "rollout",
-        lineageDisposition: "standalone",
-      }),
-      quotaObservationId: null,
-      reasoningEffort: reasoningEffortOrdinal("medium"),
-      outcome: outcomeOrdinal("unknown"),
-      tokensInUncached: event.tokens ?? 100,
-      tokensInCacheRead: null,
-      tokensInCacheWrite: null,
-      tokensInCacheWrite5m: null,
-      tokensInCacheWrite1h: null,
-      tokensOutText: 1,
-      tokensOutReasoning: null,
-      tokensOutCombined: null,
-      totalInputContext: null,
+  const database = openLocalIndexStore(file, { create });
+  try {
+    const writer = createLocalIndexWriter(database);
+    writer.begin();
+    const sessionId = writer.internSession(SESSION_LOCAL);
+    const surfaceId = writer.internSurface({
+      agentScope: "root",
+      surface: "extension_or_ide",
+      threadSource: "rollout",
+      lineageDisposition: "standalone",
     });
+    const accountScopeId = writer.internAccountScope({
+      status: "unavailable",
+      reason: "missing_account",
+      planType: null,
+      scopeLocal: null,
+    });
+    const modelId = writer.internModel("gpt-5.6-sol", "recognized");
+    const tierId = writer.internTier({
+      apiServiceTier: "unknown",
+      billingSurface: "chatgpt_subscription",
+      codexSpeedMode: "standard",
+      tierSource: "rollout_thread_settings",
+      providerTierRaw: "default",
+    });
+    const { id: sourceId } = writer.registerSource({
+      sourceLocal: SOURCE_LOCAL,
+      sessionId,
+      surfaceId,
+      path: "synthetic-rollout",
+      rolloutKey: "synthetic-rollout",
+      sizeBytes: 1,
+      mtimeMs: dayMs(DAY_ONE),
+    });
+    writer.commitSourceState(sourceId, {
+      sessionId,
+      surfaceId,
+      path: "synthetic-rollout",
+      rolloutKey: "synthetic-rollout",
+      sizeBytes: 1,
+      mtimeMs: dayMs(DAY_ONE),
+      scannedBytes: 1_000_000,
+      diagnostics: {},
+    });
+    for (const event of events) {
+      writer.writeUsageEvent({
+        sourceId,
+        // The key is unique per event, so its low word is a unique byte offset.
+        sourceOffset: event.eventKey.readUInt32BE(28),
+        eventKey: event.eventKey,
+        observedAtMs: event.observedAtMs,
+        sessionId,
+        accountScopeId,
+        modelId,
+        tierId,
+        surfaceId,
+        quotaObservationId: null,
+        tierObservedAtMs: null,
+        reasoningEffort: reasoningEffortOrdinal("medium"),
+        tokensInUncached: event.tokens ?? 100,
+        tokensInCacheRead: null,
+        tokensInCacheWrite: null,
+        tokensOutText: 1,
+        tokensOutReasoning: null,
+        tokensOutCombined: null,
+        totalInputContext: null,
+      });
+    }
+    writer.commit({ kind: "refresh" });
+  } finally {
+    database.close();
   }
-  await writer.close({ integrityCheck: true, fsyncPath: null });
 }
 
 function response(value, status = 200, extraHeaders = {}) {
@@ -314,8 +340,13 @@ async function withIndex(run) {
   }
 }
 
+// The index seams, wired exactly as the composition root wires them.
+const { openIndex, createIndexReader } = createLocalIndexBackend({ indexFile: "unused-index.sqlite" }).contribution;
+
 function engineOptions(file, service, overrides = {}) {
   return {
+    openIndex,
+    createIndexReader,
     indexFile: file,
     origin: ORIGIN,
     backend: {},

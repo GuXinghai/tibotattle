@@ -156,16 +156,12 @@ test("platform mechanics do not import export, application, or legacy storage", 
   assert.match(ownerSource, /configuredRecoveryFileCloseFailpoint,\n      undefined,\n      \[\],/u);
   assert.doesNotMatch(ownerSource, /\[handle\],\n      "Local export storage recovery file close failed"/u);
 
-  const localReview = await source("local-review/cli.js");
-  assert.doesNotMatch(localReview, /from "\.\.\/src\/storage\.js"/u);
-  assert.match(localReview, /createLocalExportArtifactStorageContext/u);
 });
 
 test("frozen legacy-storage ledger matches the checked production graph", async () => {
   const result = await checkArchitectureBoundaries();
   assert.equal(result.ok, true);
   assert.deepEqual(result.directStorageCallers, [...LEGACY_STORAGE_DIRECT_IMPORTERS]);
-  assert.equal(LEGACY_STORAGE_DIRECT_IMPORTERS.includes("local-review/cli.js"), false);
 });
 
 test("lock handoff cleanup releases only its verified stale claim on both acquisition branches", async () => {

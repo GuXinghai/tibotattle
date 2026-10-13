@@ -1,7 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { chmodSync, constants, existsSync, lstatSync, realpathSync } from "node:fs";
 import { open } from "node:fs/promises";
-import { platform } from "node:os";
 import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { minimizeClaudeTranscriptCanonicalOccurrence } from "./claude-transcript-export-source.js";
@@ -81,7 +80,6 @@ function assertSafeFile(stats) {
   const uid = typeof process.getuid === "function" ? process.getuid() : null;
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
       || (uid !== null && stats.uid !== uid)
-      || (platform() !== "win32" && (stats.mode & 0o022) !== 0)
       || stats.size > MAXIMUM_SOURCE_BYTES) fail("source_unsafe");
 }
 

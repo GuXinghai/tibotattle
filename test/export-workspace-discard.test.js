@@ -687,34 +687,6 @@ test("CLI confirms workspace discard only through the dedicated discard token op
   } finally { await rm(value.root, { recursive: true, force: true }); }
 });
 
-test("local-review previews, confirms, and replays the fixed discard receipt without leaking paths", async () => {
-  const value = await fixture({ sidecars: ["journal"] });
-  try {
-    const command = resolve("local-review/cli.js");
-    const base = [command, "discard-export-workspace", "--workspace", value.workspace];
-    const preview = execFileSync(process.execPath, base, { cwd: resolve("."), encoding: "utf8" });
-    const token = preview.match(/Confirmation token: ([A-Z2-7]{16})/)?.[1];
-    assert.equal(typeof token, "string");
-    assert.equal(preview.includes(value.root), false);
-    const wrong = spawnSync(process.execPath, [...base, "--confirm-discard", "AAAAAAAAAAAAAAAA"], {
-      cwd: resolve("."), encoding: "utf8",
-    });
-    assert.notEqual(wrong.status, 0);
-    assert.equal(wrong.stderr.includes(value.root), false);
-    const completed = execFileSync(process.execPath, [...base, "--confirm-discard", token], {
-      cwd: resolve("."), encoding: "utf8",
-    });
-    assert.match(completed, /Local export workspace discard: complete/);
-    const replay = execFileSync(process.execPath, [
-      command, "recover-export-workspace-discard", "--workspace", value.workspace,
-    ], { cwd: resolve("."), encoding: "utf8" });
-    assert.match(replay, /Local export workspace discard recovery: complete/);
-    assert.equal(`${completed}\n${replay}`.includes(value.root), false);
-    await assertDiscarded(value);
-  } finally {
-    await rm(value.root, { recursive: true, force: true });
-  }
-});
 
 test("storage and lease failures surface only fixed content-free discard errors", async () => {
   const writeFailure = await fixture();

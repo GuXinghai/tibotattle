@@ -68,17 +68,11 @@ function currentUid() {
     : null;
 }
 
-function ownerMode(stats) {
-  return Number(stats.mode & 0o777n);
-}
-
 function assertDirectory(stats, failures, code) {
   const uid = currentUid();
   if (!stats.isDirectory()
       || stats.isSymbolicLink()
-      || (uid !== null && stats.uid !== uid)
-      || (process.platform !== "win32"
-        && ownerMode(stats) !== DIRECTORY_MODE)) {
+      || (uid !== null && stats.uid !== uid)) {
     failures.fail(code);
   }
 }
@@ -92,8 +86,7 @@ function assertFile(stats, maximumBytes, failures, code) {
       || size === null
       || size < 1
       || size > maximumBytes
-      || (uid !== null && stats.uid !== uid)
-      || (process.platform !== "win32" && ownerMode(stats) !== FILE_MODE)) {
+      || (uid !== null && stats.uid !== uid)) {
     failures.fail(code);
   }
   return size;

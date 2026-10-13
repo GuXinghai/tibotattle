@@ -3,7 +3,7 @@ import test from "node:test";
 
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "../src/export-identity-keychain.js";
+} from "../src/platform/credential-capabilities.js";
 import { selectProductionAccountObservationSecret } from "../src/account-observation-production.js";
 import { createProductionClaudeCallbackBackend } from "../src/claude-callback-capability.js";
 import { createProductionContributionDeviceBackend } from "../src/contribution-device-capability.js";

@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import test from "node:test";
 
 import { parseArgs, run } from "../src/cli.js";
+import {
+  defaultLocalCompanionStateRoot,
+  localCompanionStatePaths,
+} from "../src/local-installation-diagnostics.js";
 import {
   createLocalUsageExplainer,
   defaultLocalUsageExplainerPaths,
@@ -21,65 +25,72 @@ async function captureRun(argv, options) {
   return lines.join("\n");
 }
 
-test("default explainer discovery prefers the current production desktop index", () => {
-  const homeDirectory = "/Users/synthetic";
-  const electronIndex = join(
-    homeDirectory,
-    "Library",
-    "Application Support",
-    "TiboTattle",
-    "companion-state",
-    "local-unified-index-v1.sqlite",
-  );
-  const nativeIndex = join(
-    homeDirectory,
-    "Library",
-    "Application Support",
-    "Usage Monitor",
-    "local-unified-index-v1.sqlite",
-  );
+const READERS = Object.freeze({
+  readHealth: async () => ({ status: "unavailable" }),
+  readWorkUsage: async () => ({ status: "unavailable" }),
+  readAllowance: async () => ({ status: "unavailable" }),
+});
+
+test("default explainer discovery prefers the production store over the legacy root", () => {
+  const homeDirectory = resolve("synthetic-home");
+  const appData = resolve("synthetic-roaming");
+  const environment = { APPDATA: appData };
+  const electronStore = localCompanionStatePaths(
+    join(appData, "TiboTattle", "companion-state"),
+  ).localIndexStoreFile;
+  const legacyStore = localCompanionStatePaths(
+    defaultLocalCompanionStateRoot({ environment, homeDirectory }),
+  ).localIndexStoreFile;
+
   const electron = defaultLocalUsageExplainerPaths({
-    environment: {},
+    environment,
     homeDirectory,
-    platform: "darwin",
-    fileExists: (path) => path === electronIndex || path === nativeIndex,
+    fileExists: (path) => path === electronStore || path === legacyStore,
   });
   assert.equal(electron.sourceKind, "electron_production");
-  assert.equal(electron.indexFile, electronIndex);
+  assert.equal(electron.indexFile, electronStore);
 
-  const native = defaultLocalUsageExplainerPaths({
-    environment: {},
+  const legacy = defaultLocalUsageExplainerPaths({
+    environment,
     homeDirectory,
-    platform: "darwin",
-    fileExists: (path) => path === nativeIndex,
+    fileExists: (path) => path === legacyStore,
   });
-  assert.equal(native.sourceKind, "native_production");
-  assert.equal(native.indexFile, nativeIndex);
+  assert.equal(legacy.sourceKind, "legacy_cli");
+  assert.equal(legacy.indexFile, legacyStore);
+
+  // The retired unified-index file is not a store, so it never selects a source.
+  const retired = localCompanionStatePaths(
+    join(appData, "TiboTattle", "companion-state"),
+  ).unifiedIndexFile;
+  const none = defaultLocalUsageExplainerPaths({
+    environment,
+    homeDirectory,
+    fileExists: (path) => path === retired,
+  });
+  assert.equal(none.sourceKind, "electron_production");
+  assert.equal(none.indexFile, electronStore);
 
   const overrideRoot = join(homeDirectory, "explicit-state");
   const override = defaultLocalUsageExplainerPaths({
-    environment: { USAGE_MONITOR_STATE_ROOT: overrideRoot },
+    environment: { ...environment, USAGE_MONITOR_STATE_ROOT: overrideRoot },
     homeDirectory,
-    platform: "darwin",
     fileExists: () => false,
   });
   assert.equal(override.sourceKind, "environment_override");
   assert.equal(
     override.indexFile,
-    join(overrideRoot, "local-unified-index-v1.sqlite"),
+    join(overrideRoot, "local-index-store-v1.sqlite"),
   );
 });
 
 test("an explicit index bypasses invalid ambient state-root discovery", () => {
   assert.doesNotThrow(() => createLocalUsageExplainer({
     environment: { USAGE_MONITOR_STATE_ROOT: "relative-invalid-root" },
-    homeDirectory: "/Users/synthetic",
+    homeDirectory: resolve("synthetic-home"),
     indexFile: "/tmp/synthetic-index.sqlite",
     secretFile: "/tmp/synthetic-secret",
     codexHome: "/tmp/synthetic-codex",
-    readHealth: async () => ({ status: "unavailable" }),
-    readWorkUsage: async () => ({ status: "unavailable" }),
-    readAllowance: async () => ({ status: "unavailable" }),
+    localIndexReaders: READERS,
   }));
 });
 
@@ -155,11 +166,15 @@ test("CLI query emits exactly the structured service result", async () => {
     },
   });
   assert.deepEqual(JSON.parse(output), expected);
-  assert.deepEqual(calls, [
-    ["create", {
-      indexFile: "/tmp/synthetic-index.sqlite",
-      codexHome: "/tmp/synthetic-codex",
-    }],
+  const [[createdWith, creation], ...rest] = calls;
+  assert.equal(createdWith, "create");
+  const { localIndexReaders, ...explicit } = creation;
+  assert.deepEqual(explicit, {
+    indexFile: resolve("/tmp/synthetic-index.sqlite"),
+    codexHome: resolve("/tmp/synthetic-codex"),
+  });
+  assert.deepEqual(Object.keys(localIndexReaders).sort(), ["readAllowance", "readHealth", "readWorkUsage"]);
+  assert.deepEqual(rest, [
     ["query", {
       schemaVersion: USAGE_EXPLAINER_SCHEMA_VERSION,
       plan: "top_work",

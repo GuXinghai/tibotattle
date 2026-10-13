@@ -214,31 +214,20 @@ function splitIntoChunks(stream, day, records, parserVersions, fallbackParserVer
 }
 
 /**
- * A bounded reader over one open unified index connection. Reads are strictly
- * read-only; per-day queries stream off the observed-at index, and the
- * session dimension is grouped once via the session index. The reader carries
- * no device salt: `sessionUuid` is a stored column (raw, per the owner's
- * ruling), with the stable hex of the local join key as the deterministic
- * stand-in for sessions indexed before identity recording existed.
+ * The shipping index's rows, in the shapes the derivation consumes. A
+ * successor store supplies the same shapes from its own tables through
+ * `createTelemetryV1IndexReaderFromSource`, so the record rules (bounds,
+ * exclusions, ordering, digests) exist exactly once.
  *
- * The unified index is reached only through injected ports: the open database
- * handle plus the index's own row codecs — the outcome and reasoning-effort
- * ordinal decoders and the fallback parser stamp — supplied by the
- * composition root that owns the index module. The contribution owner never
- * reaches back into legacy flat source for them.
+ * A row source provides, for one open read-only connection:
+ *   usageRows(startMs, endMs)  ordered by (observed_at_ms, event_key)
+ *   quotaRows(startMs, endMs)  ordered by (observed_at_ms, limit_id, slot)
+ *   sessionFirsts()            ordered by (first_ms, session_local)
+ *   toolClassRows()            ordered by (session_local, tool_class) or null
+ *   sessionModelRows()         distinct (session_local, model_id)
+ *   days()                     UTC days with any usage or quota row
  */
-export function createTelemetryV1IndexReader(database, {
-  outcomeName,
-  reasoningEffortName,
-  fallbackParserVersion,
-} = {}) {
-  if (!database || typeof database.prepare !== "function"
-      || typeof outcomeName !== "function"
-      || typeof reasoningEffortName !== "function"
-      || typeof fallbackParserVersion !== "string"
-      || !PARSER_VERSION.test(fallbackParserVersion)) {
-    fail("index_unavailable");
-  }
+function createShippingIndexRowSource(database) {
   const identityAvailable = tableExists(database, "session_identity");
   const toolClassAvailable = tableExists(database, "tool_class_count");
   const identityJoin = identityAvailable
@@ -283,14 +272,14 @@ export function createTelemetryV1IndexReader(database, {
     FROM quota_observation
     WHERE observed_at_ms >= ? AND observed_at_ms < ?
     ORDER BY observed_at_ms, limit_id, slot`);
-  // One corpus-wide GROUP BY, cached across days. The previous per-day
-  // statement re-grouped every usage_event row (a string-keyed scan) for
-  // every derived day, which made a first full-history pass quadratic in
-  // corpus size and pinned the companion's event loop for its whole
-  // duration (observed live 2026-08-10: sqlite3BlobCompare dominating a
-  // 99%-CPU spin). The global ordering (first_ms, session_local) restricted
-  // to a day's range is exactly the order the per-day statement produced,
-  // so derived chunk digests are unchanged.
+  // One corpus-wide GROUP BY, cached by the caller across days. The previous
+  // per-day statement re-grouped every usage_event row (a string-keyed scan)
+  // for every derived day, which made a first full-history pass quadratic in
+  // corpus size and pinned the companion's event loop for its whole duration
+  // (observed live 2026-08-10: sqlite3BlobCompare dominating a 99%-CPU spin).
+  // The global ordering (first_ms, session_local) restricted to a day's range
+  // is exactly the order the per-day statement produced, so derived chunk
+  // digests are unchanged.
   const allSessionsStatement = database.prepare(`
     SELECT u.session_local AS session_local,
            MIN(u.observed_at_ms) AS first_ms,
@@ -299,35 +288,87 @@ export function createTelemetryV1IndexReader(database, {
     ${identityJoin}
     GROUP BY u.session_local
     ORDER BY first_ms, u.session_local`);
-  let sessionFirstsCache = null;
-  function sessionFirsts() {
-    sessionFirstsCache ??= allSessionsStatement.all();
-    return sessionFirstsCache;
-  }
-  // Same treatment for tool-class counts: one ordered scan into a map
-  // instead of one indexed-by-nothing lookup per session per day. Rows are
-  // pre-ordered by tool_class within each session, matching the order the
-  // per-session statement produced.
   const allToolClassStatement = toolClassAvailable
     ? database.prepare(`
       SELECT session_local, tool_class, count FROM tool_class_count
       ORDER BY session_local, tool_class`)
     : null;
-  // A session dimension record carries no model, so its provider is the one
-  // its own events agree on. A session spanning two vendors has no single
-  // honest answer, so it reports "unknown" rather than picking a winner.
-  // One ordered corpus-wide scan, same shape as the tool-class map below.
   const allSessionProviderStatement = database.prepare(`
     SELECT u.session_local AS session_local, m.model_id AS model_id
     FROM usage_event u
     JOIN model m ON m.id = u.model_id
     GROUP BY u.session_local, m.model_id
     ORDER BY u.session_local, m.model_id`);
+  const daysStatement = database.prepare(`
+    SELECT DISTINCT day FROM (
+      SELECT date(observed_at_ms / 1000, 'unixepoch') AS day FROM usage_event
+      UNION
+      SELECT date(observed_at_ms / 1000, 'unixepoch') AS day
+      FROM quota_observation
+    )
+    ORDER BY day`);
+  return Object.freeze({
+    usageRows: (startMs, endMs) => usageStatement.iterate(startMs, endMs),
+    quotaRows: (startMs, endMs) => quotaStatement.iterate(startMs, endMs),
+    sessionFirsts: () => allSessionsStatement.all(),
+    toolClassRows: () => (allToolClassStatement === null ? null : allToolClassStatement.all()),
+    sessionModelRows: () => allSessionProviderStatement.all(),
+    days: () => daysStatement.all().map((row) => row.day),
+  });
+}
+
+/**
+ * A bounded reader over one open unified index connection. Reads are strictly
+ * read-only; per-day queries stream off the observed-at index, and the
+ * session dimension is grouped once via the session index. The reader carries
+ * no device salt: `sessionUuid` is a stored column (raw, per the owner's
+ * ruling), with the stable hex of the local join key as the deterministic
+ * stand-in for sessions indexed before identity recording existed.
+ *
+ * The unified index is reached only through injected ports: the open database
+ * handle plus the index's own row codecs — the outcome and reasoning-effort
+ * ordinal decoders and the fallback parser stamp — supplied by the
+ * composition root that owns the index module. The contribution owner never
+ * reaches back into legacy flat source for them.
+ */
+export function createTelemetryV1IndexReader(database, ports = {}) {
+  if (!database || typeof database.prepare !== "function") fail("index_unavailable");
+  return createTelemetryV1IndexReaderFromSource(
+    createShippingIndexRowSource(database),
+    ports,
+  );
+}
+
+export function createTelemetryV1IndexReaderFromSource(source, {
+  outcomeName,
+  reasoningEffortName,
+  fallbackParserVersion,
+} = {}) {
+  if (!source || typeof source.usageRows !== "function"
+      || typeof source.quotaRows !== "function"
+      || typeof source.sessionFirsts !== "function"
+      || typeof source.toolClassRows !== "function"
+      || typeof source.sessionModelRows !== "function"
+      || typeof source.days !== "function"
+      || typeof outcomeName !== "function"
+      || typeof reasoningEffortName !== "function"
+      || typeof fallbackParserVersion !== "string"
+      || !PARSER_VERSION.test(fallbackParserVersion)) {
+    fail("index_unavailable");
+  }
+  let sessionFirstsCache = null;
+  function sessionFirsts() {
+    sessionFirstsCache ??= source.sessionFirsts();
+    return sessionFirstsCache;
+  }
+  // A session dimension record carries no model, so its provider is the one
+  // its own events agree on. A session spanning two vendors has no single
+  // honest answer, so it reports "unknown" rather than picking a winner.
   let sessionProviderCache = null;
   function providerBySession() {
     if (sessionProviderCache === null) {
       sessionProviderCache = new Map();
-      for (const row of allSessionProviderStatement.all()) {
+      for (const row of source.sessionModelRows()) {
         const key = sessionKey(row.session_local);
         const providers = sessionProviderCache.get(key);
         const provider = exportModelProvider(boundedToken(row.model_id));
@@ -348,32 +389,27 @@ export function createTelemetryV1IndexReader(database, {
       ? `s:${value}`
       : `b:${Buffer.from(value).toString("hex")}`;
   }
+  // Tool-class counts: one ordered scan into a map instead of one lookup per
+  // session per day. Rows are pre-ordered by tool_class within each session.
   let toolClassCache = null;
+  let toolClassAvailable = false;
   function toolClassBySession() {
     if (toolClassCache === null) {
       toolClassCache = new Map();
-      if (allToolClassStatement !== null) {
-        for (const row of allToolClassStatement.all()) {
-          const key = sessionKey(row.session_local);
-          const rows = toolClassCache.get(key);
-          if (rows === undefined) {
-            toolClassCache.set(key, [row]);
-          } else {
-            rows.push(row);
-          }
+      const rows = source.toolClassRows();
+      toolClassAvailable = rows !== null;
+      for (const row of rows ?? []) {
+        const key = sessionKey(row.session_local);
+        const entries = toolClassCache.get(key);
+        if (entries === undefined) {
+          toolClassCache.set(key, [row]);
+        } else {
+          entries.push(row);
         }
       }
     }
     return toolClassCache;
   }
-  const daysStatement = database.prepare(`
-    SELECT DISTINCT day FROM (
-      SELECT date(observed_at_ms / 1000, 'unixepoch') AS day FROM usage_event
-      UNION
-      SELECT date(observed_at_ms / 1000, 'unixepoch') AS day
-      FROM quota_observation
-    )
-    ORDER BY day`);
 
   function sessionUuidFor(row) {
     const stored = row.session_uuid;
@@ -391,7 +427,7 @@ export function createTelemetryV1IndexReader(database, {
     const records = [];
     const parserVersions = [];
     let excluded = 0;
-    for (const row of usageStatement.iterate(startMs, endMs)) {
+    for (const row of source.usageRows(startMs, endMs)) {
       const sessionUuid = sessionUuidFor(row);
       // Model identities are carried as bounded tokens, not against a closed
       // list. A transport allowlist here was a second copy of the reviewed
@@ -458,7 +494,7 @@ export function createTelemetryV1IndexReader(database, {
     const { startMs, endMs } = dayBounds(day);
     const records = [];
     let excluded = 0;
-    for (const row of quotaStatement.iterate(startMs, endMs)) {
+    for (const row of source.quotaRows(startMs, endMs)) {
       const limitId = boundedToken(row.limit_id);
       const slot = boundedToken(row.slot);
       const usedPercent = Number(row.used_percent);
@@ -517,8 +553,9 @@ export function createTelemetryV1IndexReader(database, {
       const toolClassCounts = {};
       let entries = 0;
       let invalid = false;
-      if (allToolClassStatement !== null) {
-        for (const tool of toolClassBySession().get(sessionKey(row.session_local)) ?? []) {
+      const toolClasses = toolClassBySession().get(sessionKey(row.session_local));
+      if (toolClassAvailable) {
+        for (const tool of toolClasses ?? []) {
           const count = Number(tool.count);
           if (typeof tool.tool_class !== "string"
               || !TOOL_CLASS_KEY.test(tool.tool_class)
@@ -557,9 +594,7 @@ export function createTelemetryV1IndexReader(database, {
 
   return Object.freeze({
     days() {
-      return daysStatement.all()
-        .map((row) => row.day)
-        .filter((day) => isUtcDay(day));
+      return source.days().filter((day) => isUtcDay(day));
     },
 
     /**

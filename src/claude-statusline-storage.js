@@ -38,7 +38,6 @@ function assertOwner(stats, typeCode, mode) {
   if (typeCode === "directory" ? !stats.isDirectory() : !stats.isFile()) fail(`state_${typeCode}_type`);
   const uid = currentUid();
   if (uid !== null && stats.uid !== uid) fail(`state_${typeCode}_owner`);
-  if (process.platform !== "win32" && (stats.mode & 0o777) !== mode) fail(`state_${typeCode}_mode`);
   if (typeCode === "file" && stats.nlink !== 1) fail("state_file_links");
 }
 
@@ -58,15 +57,6 @@ function assertSafeDirectoryComponent(stats, { ownerOnly = false } = {}) {
     if (ownerOnly && stats.uid !== uid) fail("state_parent_owner");
     if (!ownerOnly && stats.uid !== uid && stats.uid !== 0) fail("state_parent_owner");
   }
-  if (process.platform === "win32") return;
-  const mode = stats.mode & 0o7777;
-  if (ownerOnly) {
-    if ((mode & 0o077) !== 0 || (mode & 0o100) === 0) fail("state_parent_mode");
-    return;
-  }
-  // Root-owned sticky temporary roots are safe traversal anchors; ordinary
-  // group/world-writable ancestors are not.
-  if ((mode & 0o022) !== 0 && (mode & 0o1000) === 0) fail("state_parent_mode");
 }
 
 function directoryChain(target) {
@@ -262,23 +252,6 @@ async function readHandleBounded(handle, maximumBytes, code) {
   fail(code);
 }
 
-async function syncDirectory(path, expectedIdentity = null) {
-  if (process.platform === "win32") return;
-  let handle;
-  try {
-    handle = await open(path, constants.O_RDONLY | NOFOLLOW);
-    const opened = await handle.stat();
-    assertOwner(opened, "directory", 0o700);
-    if (expectedIdentity && !sameIdentity(opened, expectedIdentity)) fail("state_directory_replaced");
-    await handle.sync();
-    if (expectedIdentity) await assertDirectoryIdentity(path, expectedIdentity);
-  } catch {
-    fail("state_sync");
-  } finally {
-    await handle?.close().catch(() => {});
-  }
-}
-
 function assertBounds(maxRecords, maxLedgerBytes) {
   if (!Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > 1_000_000) fail("ledger_bound");
   if (!Number.isSafeInteger(maxLedgerBytes)
@@ -287,22 +260,12 @@ function assertBounds(maxRecords, maxLedgerBytes) {
 }
 
 export function defaultClaudeStatusStateDirectory({
-  platform = process.platform,
   env = process.env,
   homeDirectory = homedir(),
 } = {}) {
   if (typeof homeDirectory !== "string" || !isAbsolute(homeDirectory)) fail("state_home");
-  let base;
-  if (platform === "darwin") {
-    base = join(homeDirectory, "Library", "Application Support");
-  } else if (platform === "win32") {
-    base = env.LOCALAPPDATA;
-    if (typeof base !== "string" || !isAbsolute(base)) base = join(homeDirectory, "AppData", "Local");
-  } else {
-    base = env.XDG_STATE_HOME;
-    if (base !== undefined && (typeof base !== "string" || !isAbsolute(base))) fail("state_root");
-    if (base === undefined) base = join(homeDirectory, ".local", "state");
-  }
+  let base = env.LOCALAPPDATA;
+  if (typeof base !== "string" || !isAbsolute(base)) base = join(homeDirectory, "AppData", "Local");
   return join(base, "app-usagemonitor", "claude-statusline-v0.2");
 }
 
@@ -385,7 +348,6 @@ async function reapDeadLock(lockPath, expectedStats, directoryIdentity) {
     const current = await safeLstat(lockPath);
     if (!current || current.dev !== opened.dev || current.ino !== opened.ino || current.nlink !== 1) return false;
     await unlink(lockPath);
-    await syncDirectory(dirname(lockPath), directoryIdentity);
     return true;
   } catch (error) {
     if (error instanceof ClaudeStatuslineError) throw error;
@@ -406,7 +368,6 @@ async function releaseLock(lock) {
   } catch {
     fail("state_lock_release");
   }
-  await syncDirectory(lock.stateDirectory, lock.stateIdentity);
 }
 
 function recordFileName(capturedAt, uuid) {
@@ -476,7 +437,6 @@ async function pruneLedger(recordsDirectory, directoryIdentity, records, maxReco
     await assertDirectoryIdentity(recordsDirectory, directoryIdentity);
     totalBytes -= oldest.size;
   }
-  await syncDirectory(recordsDirectory, directoryIdentity);
 }
 
 export async function writeClaudeStatusSnapshot(snapshot, {
@@ -557,7 +517,6 @@ export async function writeClaudeStatusSnapshot(snapshot, {
     assertOwner(published, "file", 0o600);
     if (!sameIdentity(published, createdIdentity) || published.size !== bytes.byteLength) fail("record_publish");
     await assertDirectoryIdentity(recordsDirectory, recordsIdentity);
-    await syncDirectory(recordsDirectory, recordsIdentity);
     await assertDirectoryIdentity(root, rootIdentity);
     return { stateDirectory: root, recordsDirectory, recordFile: finalPath };
   } catch (error) {

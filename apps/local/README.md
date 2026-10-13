@@ -35,9 +35,9 @@ title fallback and uses a saved, unambiguous repository origin when Git cannot
 be launched because it is absent. An actual Git rejection remains non-project.
 These names and repository hints remain transient and local-only.
 Selected rollout-head reads use the same platform-aware metadata boundary, so
-valid paginated forks can resolve on Windows as on macOS. Both platforms run the
-shared native metadata contract; closed databases are read without creating
-source sidecars. Native Windows and packaged UI execution remain separate gates.
+valid paginated forks resolve through the shared native metadata contract. Closed
+databases are read without creating source sidecars. Packaged UI execution remains
+a separate gate.
 
 ## Run
 
@@ -105,7 +105,7 @@ has no social sign-in, consent or pairing controls; Electron uses its existing
 accountless sharing controller and persisted preference.
 
 Retired self-service `DELETE /api/v1/me` and private owner erasure are not
-participant-relay permissions. Legacy confirmed **Disconnect this Mac** uses
+participant-relay permissions. Legacy confirmed **Disconnect this device** uses
 `POST /api/local/contribution/device-disconnect` and the collector's fixed
 hosted device client; it does not widen the relay or delete hosted/local
 history. This describes the
@@ -117,10 +117,9 @@ not a verified installed release or hosted deployment.
 The Electron shell starts this loopback companion and displays the same local
 dashboard. Build a development package with `npm run package:electron:development`.
 The production release procedure and separate installed-app qualification are
-in the [macOS release runbook](../../docs/runbooks/macos-stable-release-runbook.md).
-The signed Electron app retains compatible native state and uses the ordinary
-Electron updater; native 0.1.18 installations receive the transition through
-their existing Sparkle feed. Neither path changes the local analysis boundary.
+in the [release qualification admission runbook](../../docs/runbooks/release-qualification-admission.md).
+The signed Windows app uses the Electron updater. Neither path changes the local
+analysis boundary.
 
 On first use:
 
@@ -200,40 +199,15 @@ accounting RSS ceiling. A violation becomes fixed
 `refresh_resource_limited`; the browser retains the useful headline or prior
 result and explains that deep analysis stopped at its safety limit.
 
-A separate archive-accounting SQLite index now makes all-history coverage
-explicit. Its first scheduled source parse is 128 MiB; later resumptions may
-schedule up to 1.5 GiB, examine 500,000 directory entries and 125,000 rollout
-files, and run for five minutes. It publishes owner-only, durable 128 MiB-or-smaller
-checkpoints while it works. The dashboard reports **scanning**, **partial**, or
-**complete** archive coverage, while its current cost controls remain
-explicitly labelled as a cached 31-day window. This first archive step is a
-coverage gate, not an all-time aggregate; it does not turn an incomplete
-archive prefix into an all-time cost total.
+Coverage is stored in the owner-only `local-index-store-v1.sqlite` file in the
+state root. That file name is stable; the schema version is recorded inside the
+store and described in the [local index schema reference](../../docs/reference/local-index-schema.md).
+Refresh discovers rollouts under `sessions` and `archived_sessions` and indexes each
+valid physical spend delta once. The dashboard reports coverage as **scanning**,
+**partial**, or **complete**. A missing, incompatible, unreadable, or unfinished store
+is never reported as complete coverage, and a display window is not a retention
+limit. Recovery procedures are in the [local index recovery runbook](../../docs/runbooks/local-index-recovery.md).
 
-Before it stages a new archive generation, the companion reserves free disk
-space for the existing index, the selected pass budget, and a 128 MiB safety
-margin. If that check cannot pass, the dashboard receives the fixed partial
-state `archive_disk_space`; it never starts an unsafe stage or calls coverage
-complete.
-
-The source-parse budget does not claim to meter every operating-system read:
-small source-identity and lineage preflight reads remain protected by the same
-source caps and five-minute deadline. A normal finalized JSONL source needs
-only a one-byte terminal-newline check before its already indexed prefix can
-be reused.
-
-Passive recursive discovery is abort-aware and capped at 500,000 directory
-entries and 125,000 rollout files per pass, so the foreground collector cannot
-block a qualifying archive scan merely because the older discovery guard was
-too small. Its byte ceiling also covers later files, appends, truncations, and
-reseeding. Reaching a bound preserves durable cursors and emits fixed
-content-free pause evidence. Its responsive recent-window byte, record-batch,
-and line-size boundaries remain, while records, cursors, dedupe, quota
-observations, accounting cache, and lock live together in one owner-only SQLite
-state database; these larger discovery caps are not an unbounded scan.
-Legacy JSON/JSONL retirement is serialized by an owner-only migration lease,
-requires strict valid bounded records, and does not report complete until every
-managed legacy artifact has been removed after a durable parity receipt.
 
 ### Codex rollout generations and integrity gaps
 
@@ -271,13 +245,12 @@ USAGE_MONITOR_PORT=8791 \
 node ./apps/local/server.js
 ```
 
-Mutable installed state is confined to the owner-only
-`~/Library/Application Support/Usage Monitor` directory. The neutral machine
-identity is intentional and remains stable across display-name changes. App
-resources stay inside the bundle. Development output is ad-hoc signed; current
-public releases are separately Developer ID signed, notarized, packaged, and
-qualified through the retained release gates. A source build never inherits
-those release claims.
+Mutable installed state is confined to the owner-only per-user application data
+directory of the signed-in Windows account. The neutral machine identity is
+intentional and remains stable across display-name changes. Installed application
+resources stay inside the app directory. A source build never inherits release
+signing or installer claims; those come only from the retained Windows release gates.
+
 
 ## Product and contribution boundary
 
@@ -324,7 +297,7 @@ The legacy contribution gates are:
 
 After those gates, the app may attempt one bounded update every six hours while
 it is open. The optional Login Item starts the normal app; no daemon,
-LaunchAgent, or separate background process continues after the app exits. The
+scheduled task, or separate background process continues after the app exits. The
 recurring range begins from an owner-only
 accepted-through watermark bound to the exact destination and contribution
 contract, includes a fixed one-hour overlap for replay-safe server
@@ -355,11 +328,11 @@ removes retryable, in-flight, or rejected work.
 
 The shared dashboard presents accountless sharing through Electron's existing
 bridge. It has no legacy social contribution or device-disconnect controls.
-The retained legacy **Disconnect this Mac** contract asks for confirmation, revokes this device's hosted
+The retained legacy **Disconnect this device** contract asks for confirmation, revokes this device's hosted
 authority, clears its local credential/binding, and pauses delivery. Previously
 hosted history, other devices, and local analysis remain. Browser sign-out is
 not device disconnect; private hosted erasure is an owner operation.
-Native troubleshooting-only local erase and targeted Keychain reset remain
+Native troubleshooting-only local erase and targeted Credential Manager reset remain
 under **Data & Diagnostics…** and are not contribution steps.
 
 The incremental controller persists `paused: true`,
@@ -392,8 +365,8 @@ canonical reference rather than retaining a partial route list here.
 ## Development identity override
 
 Production preparation uses the
-`app-usagemonitor.export-identity.v1` macOS Keychain item. It never falls back
-to a file when Keychain access fails.
+`app-usagemonitor.export-identity.v1` item in Windows Credential Manager. It never
+falls back to a file when Credential Manager access fails.
 
 For an isolated development journey only, the launcher accepts an explicit
 owner-only identity file when both fixed settings are present. Create a
@@ -422,11 +395,11 @@ node ./apps/local/server.js
 ```
 
 The launcher rejects a relative path, symlink, non-regular file, file not owned
-by the current user, any mode other than exactly `0600`, a missing opt-in, or a
+by the current user, any permission state that is not private to that user, a missing opt-in, or a
 simultaneous `APP_USAGEMONITOR_EXPORT_SECRET`. It validates this before
 listening. Browser responses expose only
 `development_file_override`, never the path or credential. The override is not
-an automatic recovery mechanism and does not establish production Keychain
+an automatic recovery mechanism and does not establish production Credential Manager
 acceptance. Keep the terminal open while testing; remove the specific temporary
 directory later only if losing that development identity's continuity is
 intentional.
@@ -444,7 +417,6 @@ authorization and can claim only that exact ready job.
 
 ```bash
 npm run product:local:test
-npm run product:macos:transition:test
 ```
 
 Run the disposable Worker/D1/R2 acceptance laboratory separately with:
@@ -464,7 +436,7 @@ portal to remain available for inspection. That command now starts this local
 companion on `http://127.0.0.1:8791/` and the backend Worker on
 `http://127.0.0.1:8792/` together. Open 8791; 8792 is backend-only.
 The companion still defaults to the real Codex home and production credential
-backend: isolated Worker storage does not isolate local sources or Keychain.
+backend: isolated Worker storage does not isolate local sources or Credential Manager.
 For backend-only inspection use `npm run product:backend:only`. A no-real-account
 browser fixture must separately isolate sources, state, credentials, refresh,
 and outbound requests. The standard lab is invite-only and the browser does

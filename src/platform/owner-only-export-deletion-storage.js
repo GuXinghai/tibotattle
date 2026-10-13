@@ -241,8 +241,7 @@ export function createOwnerOnlyExportDeletionStorage(configuration = {}) {
       await handle.sync();
       const stats = await handle.stat();
       if (!stats.isFile() || stats.nlink !== 1 || stats.size !== Buffer.byteLength(content, "utf8")
-          || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-          || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+          || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
         throw new Error("Owner-only deletion control validation failed");
       }
       await handle.close();
@@ -338,8 +337,7 @@ async function exists(path) {
 function assertOwnerFile(stats, maximumBytes = Number.MAX_SAFE_INTEGER) {
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
       || !Number.isSafeInteger(stats.size) || stats.size < 1 || stats.size > maximumBytes
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) fail("replacement");
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) fail("replacement");
 }
 
 async function readExactFile(path, maximumBytes = Number.MAX_SAFE_INTEGER) {
@@ -415,8 +413,7 @@ async function assertDirectoryIdentity(path, expected) {
   }
   if (!stats.isDirectory() || stats.isSymbolicLink()
       || Number(stats.dev) !== expected.device || Number(stats.ino) !== expected.inode
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) fail("replacement");
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) fail("replacement");
 }
 
 async function assertBoundDirectories(workspaceDirectory, outputDirectory, identities) {

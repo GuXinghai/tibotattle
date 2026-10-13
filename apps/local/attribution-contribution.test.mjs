@@ -8,13 +8,13 @@ import { incrementalContributionRequiredConsent } from "../../src/incremental-co
 import { runIncrementalContributionSyncOnce } from "../../src/contribution-incremental-sync.js";
 import { buildTelemetryContributionsFromBundle } from "../../src/contribution/index.js";
 import { localCompanionStatePaths } from "../../src/local-installation-diagnostics.js";
-import { beginUnifiedIndexGeneration, openLocalUnifiedIndex } from "../../src/local-unified-index.js";
+import { createLocalIndexWriter, openLocalIndexStore } from "../../src/local-index-store.js";
 import { CommunityClient, LocalCompanionClient } from "../web/public/data-client.js";
 import { startLocalCompanionServer } from "./server.js";
 import {
   ATTRIBUTION_FIXTURE_BINDING as binding, ATTRIBUTION_FIXTURE_START as start,
   writeAttributionFixture,
-} from "../../test/helpers/local-attribution-fixture.js";
+} from "../../test/helpers/local-index-attribution-fixture.js";
 import { createAttributionFixtureDevice, createAttributionFixtureService } from "../../test/helpers/attribution-transport-fixture.js";
 
 function legacyReview() {
@@ -50,7 +50,7 @@ async function fixture(t, { accepted = true, granted = false, staleSuccessorRepa
   await mkdir(join(codexHome, "sessions"), { recursive: true, mode: 0o700 });
   await mkdir(join(stateRoot, "private"), { recursive: true, mode: 0o700 });
   const paths = localCompanionStatePaths(stateRoot);
-  await writeAttributionFixture(paths.unifiedIndexFile);
+  await writeAttributionFixture(paths.localIndexStoreFile);
   const backend = await createAttributionFixtureDevice(paths.contributionDeviceStateFile);
   const service = createAttributionFixtureService({ accepted, granted, successor });
   await writeFile(paths.incrementalContributionSyncSettingsFile, JSON.stringify({
@@ -205,10 +205,13 @@ test("review capabilities are schema-specific and bind exact dictionary, destina
     const review = await local.reviewAttributionContribution();
     assert.equal((await post("incremental-approve", alteration(review))).status, 409);
   }
-  const database = openLocalUnifiedIndex(paths.unifiedIndexFile);
-  beginUnifiedIndexGeneration(database, { contractVersion: "usage-event-v0.2", receivedAtMs: start + 1,
-    discoveredSourceCount: 1, discoveredSourceBytes: 8192 });
-  database.close();
+  // A newer publication lands after the review: the approval must refuse the stale proof.
+  const database = openLocalIndexStore(paths.localIndexStoreFile);
+  try {
+    const writer = createLocalIndexWriter(database);
+    writer.begin();
+    writer.commit({ kind: "refresh", sourcesChanged: 0 });
+  } finally { database.close(); }
   assert.equal((await post("incremental-approve", { reviewToken: initial.reviewToken, consent: initial.consent,
     fieldInventoryDigest: initial.inventory.inventoryDigest })).status, 409);
   assert.equal((await local.incrementalContributionSyncStatus()).contractVersion, undefined);

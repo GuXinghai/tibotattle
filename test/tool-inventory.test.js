@@ -303,69 +303,13 @@ test("the checked-in inventory classifies every retained tool entry point and np
     true,
     formatToolInventoryReport(result),
   );
-  // 172 records / 173 executable paths: release-documentation, Codex contract,
-  // documentation governance, repository-layout, macOS bundle-version, and
-  // local index-recovery gates are reviewed repository operations invoked by
-  // CI, release runbooks, or supported internal product tooling.
-  // Keep these exact so any future executable still requires an ownership
-  // decision.
-  // Includes the restored Electron development packaging/verifier tools, the
-  // normal Linux and Windows package proofs, macOS page-parity QA, and the
-  // protected handover-feed publisher (which defaults to a local dry run), and
-  // the native-to-Electron collector reconciliation tool (which defaults to
-  // private-copy inspection).
-  // Includes the reviewed exact-output accounting child benchmark and eight
-  // protected PR94 qualification entrypoints/helpers; neither is a product API.
-  // Also includes the bounded Windows signing preflight/caller, the pinned
-  // Linux AppImage updater adapter proof, Windows native rebinding, the
-  // retained release helpers,
-  // publication reconciliation, admission reuse, and the main-branch
-  // purchased-credit drawdown analyzer. The five retained 0.1.21 release tools
-  // cover incoming Sparkle validation, three disposable Mac replacement/update
-  // journeys, and qualification of an already signed Windows installer.
-  // The final Linux AppImage qualifier binds the unchanged normal runtime
-  // journey to final package bytes without rebuilding or publishing them.
-  // The three final Linux tools admit exact package bytes and qualify the
-  // ordinary FUSE launcher and public-predecessor installed lifecycle.
-  // The prior five are the macOS credential qualification set: the fixture
-  // preparer, the credentials smoke, and the loopback/intake/PF-guard helpers.
-  // The temporary HTTP cache advisory guard is an owned, expiry-bound OSV gate.
-  // The Windows final-upgrade tool binds the public predecessor and final signed
-  // installer to one owned profile without qualifying automatic updater delivery.
-  // The two immutable Mac qualification transport tools have a closed object
-  // allowlist and an independently held artifact coordination owner.
-  // The historical Sol helper owns the retained-parser installed proof within
-  // the existing disposable Mac credential journey.
-  // The content-free Linux startup diagnostic helper and the separate exact-byte
-  // mount-only diagnostic each have an explicit owner; neither qualifies a release.
-  // The controlled AppArmor comparison helper owns exact-profile generation and
-  // cleanup without changing ordinary lifecycle qualification.
-  assert.equal(result.records, 172);
-  assert.equal(result.candidates.length, 173);
+  // 92 records / 93 executable paths: every retained tool is a reviewed
+  // Windows-only repository operation invoked by CI, release runbooks, or
+  // supported internal product tooling. Keep these exact so any future
+  // executable still requires an ownership decision.
+  assert.equal(result.records, 92);
+  assert.equal(result.candidates.length, 93);
   assert.ok(result.aliases >= 25);
-});
-
-test("the eight PR94 qualifier paths retain explicit ownership without product command aliases", async () => {
-  const inventory = JSON.parse(await readFile(join(REPOSITORY_ROOT, "tools/tool-inventory.json"), "utf8"));
-  const records = inventory.records.filter(({ canonicalPath }) => canonicalPath.includes("pr94"));
-  assert.deepEqual(records.map(({ canonicalPath }) => canonicalPath).sort(), [
-    "scripts/lib/pr94-analysis-worker.mjs",
-    "scripts/lib/pr94-calibration-evidence.mjs",
-    "scripts/lib/pr94-ledger-evidence.mjs",
-    "scripts/lib/pr94-population-evidence.mjs",
-    "scripts/lib/pr94-production-resource-worker.mjs",
-    "scripts/lib/pr94-receipt-validation.mjs",
-    "scripts/lib/pr94-revision-loader.mjs",
-    "scripts/qualify-pr94-attribution.mjs",
-  ]);
-  for (const record of records) {
-    assert.equal(record.classification, "reusable_benchmark");
-    assert.equal(record.owner, "local_analysis");
-    assert.equal(record.stableAlias, null);
-    assert.deepEqual(record.additionalAliases, []);
-    assert.equal(record.provenance, "docs/plans/2026-09-03-public-0.1.17-release.md");
-    assert.ok(record.callers.some((path) => path.startsWith("test/pr94-")));
-  }
 });
 
 test("the inventory names every static ESM caller of a classified tool", async () => {

@@ -510,7 +510,7 @@ test("the capability advertises the v1.0 contract only when configured with an e
   // Configured with an existing index: the exact contract string, which is
   // what unhides the dashboard's approve-once surface.
   await writeFile(
-    join(files.stateRoot, "local-unified-index-v1.sqlite"),
+    join(files.stateRoot, "local-index-store-v1.sqlite"),
     "stub",
     { mode: 0o600 },
   );
@@ -566,9 +566,6 @@ test("the status route reports bounded progress and never a path", async () => {
       schemaVersion: "local-incremental-contribution-sync-v1.0",
       status: "available",
       contractVersion: "telemetry-contribution-v1.0",
-      // No broker announcement in this fixture's environment, so the surface
-      // that can raise a Keychain dialog is still the pairing step.
-      keychainPrompt: "pairing",
       consent: {
         approved: true,
         current: true,

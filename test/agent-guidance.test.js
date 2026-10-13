@@ -223,37 +223,32 @@ test("agent guidance preserves owner erasure and restore after self-service reti
   assert.match(docs, /does not retire owner erasure, privacy-request\s+handling, retention disclosures, or deletion-safe restore/u);
 });
 
-test("agent guidance treats unexpected Keychain prompts as a release blocker without weakening security", async () => {
-  const [root, electron, scripts, runbook] = await Promise.all([
+test("agent guidance treats unexpected Windows credential prompts as a release blocker without weakening security", async () => {
+  const [root, electron, scripts, platform] = await Promise.all([
     readRepositoryFile("AGENTS.md"),
     readRepositoryFile("apps/electron/AGENTS.md"),
     readRepositoryFile("scripts/AGENTS.md"),
-    readRepositoryFile("docs/runbooks/macos-stable-release-runbook.md"),
+    readRepositoryFile("docs/reference/platform-support.md"),
   ]);
 
-  assert.match(root, /Unexpected Keychain security prompts block release/u);
+  assert.match(root, /Unexpected Windows credential prompts block release/u);
   assert.match(root, /never weaken protection to suppress prompts/u);
+  assert.match(platform, /Unexpected credential\s+prompts remain a release blocker/u);
+  assert.match(platform, /do not weaken credential protection/u);
   assert.match(electron, /Never reuse the retired native app's/u);
   assert.match(electron, /Never mutate or downgrade the native app's databases/u);
   assert.match(scripts, /never automate prompt approval or broaden key access/u);
-  assert.match(runbook, /Unexpected Keychain prompts block\s+release/u);
-  assert.match(runbook, /Signing-key access on the release machine is a separate owner provisioning\s+step/u);
-  assert.doesNotMatch(runbook, /choose \*\*Always Allow\*\*/u);
 });
 
-test("historical Keychain prompt advice points to the prompt-free contract before its original narrative", async () => {
-  const [historical, index] = await Promise.all([
-    readRepositoryFile("docs/design/2026-08-19-first-pairing-keychain-prompt.md"),
-    readRepositoryFile("docs/README.md"),
+test("agent guidance records Windows-only platform scope", async () => {
+  const [root, decision] = await Promise.all([
+    readRepositoryFile("AGENTS.md"),
+    readRepositoryFile("docs/decisions/2026-10-12-windows-only.md"),
   ]);
-  const boundary = historical.split("## Original investigation and implementation record")[0];
-  assert.match(boundary, /^status: superseded$/mu);
-  assert.match(boundary, /0\.1\.13 build 1015/u);
-  assert.match(boundary, /It is not current product or release guidance/u);
-  assert.match(boundary, /Automatic operation must be\s+noninteractive/u);
-  assert.match(boundary, /Cancel as the default/u);
-  assert.match(boundary, /Do not\s+follow the historical Always Allow recommendation, reset credentials/u);
-  assert.match(boundary, /silent-keychain-migration\.md/u);
-  assert.match(boundary, /macos-stable-release-runbook\.md#native-keychain-migration-gate/u);
-  assert.match(index, /\[Silent native Keychain migration\]\(\.\/decisions\/2026-08-31-silent-keychain-migration\.md\)/u);
+
+  assert.match(root, /supports Windows x64 only/u);
+  assert.match(root, /docs\/decisions\/2026-10-12-windows-only\.md/u);
+  assert.match(decision, /^status: accepted$/mu);
+  assert.match(decision, /TiboTattle supports Windows only\./u);
+  assert.doesNotMatch(root, /macOS|Keychain|Sparkle|AppImage|notariz/u);
 });

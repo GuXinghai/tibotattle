@@ -56,7 +56,7 @@ test("participant identity has one exact platform owner and legacy API", () => {
   }
 });
 
-test("legacy participant identity is implementation-free and local-review uses the platform facade", async () => {
+test("legacy participant identity is implementation-free", async () => {
   const legacySource = await readFile(
     resolve(REPOSITORY_ROOT, "src/export-identity.js"),
     "utf8",
@@ -66,19 +66,6 @@ test("legacy participant identity is implementation-free and local-review uses t
   assert.doesNotMatch(
     legacySource,
     /\b(?:class|const|function|let|var)\b|node:/u,
-  );
-
-  const localReviewSource = await readFile(
-    resolve(REPOSITORY_ROOT, "local-review/cli.js"),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    localReviewSource,
-    /src\/export-identity\.js/u,
-  );
-  assert.match(
-    localReviewSource,
-    /from "\.\.\/src\/platform\/local-review\.js";/u,
   );
 });
 
@@ -104,23 +91,4 @@ test("participant identity owner depends only on its exact Node runtime ports", 
     ],
   );
   assert.doesNotMatch(ownerSource, /windows-filesystem/u);
-});
-
-test("the exact participant identity migration allowance is removed", async () => {
-  const architecture = await readFile(
-    resolve(
-      REPOSITORY_ROOT,
-      "scripts/check-architecture-boundaries.mjs",
-    ),
-    "utf8",
-  );
-  const baseline = architecture.slice(
-    architecture.indexOf(
-      "const LOCAL_REVIEW_LEGACY_MIGRATION_TARGETS",
-    ),
-    architecture.indexOf(
-      "export const CURRENT_ARCHITECTURE_BOUNDARY_BASELINE",
-    ),
-  );
-  assert.doesNotMatch(baseline, /src\/export-identity\.js/u);
 });

@@ -5,22 +5,15 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import {
-  LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-  createUnifiedIndexWriter,
-  openLocalUnifiedIndex,
-  outcomeName,
-  outcomeOrdinal,
-  reasoningEffortName,
-  reasoningEffortOrdinal,
-} from "../src/local-unified-index.js";
+import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, outcomeName, reasoningEffortName, reasoningEffortOrdinal } from "../src/codex-usage-vocabulary.js";
+import { createLocalIndexBackend } from "../src/local-index-backend.js";
+import { createLocalIndexWriter, openLocalIndexStore } from "../src/local-index-store.js";
 import {
   MAX_TELEMETRY_V1_CHUNK_RECORDS,
   TELEMETRY_V1_CONTRIBUTION_SCHEMA_VERSION,
   TELEMETRY_V1_ENVELOPE_SCHEMA_VERSION,
   TelemetryV1ChunkError,
   buildTelemetryV1ChunkPlaintext,
-  createTelemetryV1IndexReader,
   planTelemetryV1Upload,
   telemetryV1CanonicalJson,
   telemetryV1ChunkDigest,
@@ -37,11 +30,15 @@ const DAY_TWO = "2026-08-02";
 const SESSION_A_UUID = "11111111-2222-4333-8444-555555555555";
 const SESSION_A_LOCAL = Buffer.alloc(32, 0x0a);
 const SESSION_B_LOCAL = Buffer.alloc(32, 0x0b);
+// Every fixture rollout is complete: its cursor covers all synthetic offsets.
+const SOURCE_BYTES = 1_000_000;
 
-// The same index-port composition the production sync engine performs: the
-// reader receives the unified index's row codecs by injection.
+// The v2 backend's contribution seams, composed as production composes them:
+// the store supplies the row source, the record rules stay with the owner.
+const contribution = createLocalIndexBackend({ indexFile: "unused-index.sqlite" }).contribution;
+
 function indexReader(database) {
-  return createTelemetryV1IndexReader(database, {
+  return contribution.createIndexReader(database, {
     outcomeName,
     reasoningEffortName,
     fallbackParserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
@@ -59,84 +56,122 @@ function eventKey(index) {
 }
 
 /**
- * Build a real unified index from typed rows, in a caller-chosen insertion
+ * Build a real local index store from typed rows, in a caller-chosen insertion
  * order, so determinism is proven against storage order rather than assumed.
+ * Each session is one rollout source, as the shipping index registers them.
  */
 async function buildIndex(file, { events, quotas = [], toolCounts = [] }) {
-  const database = openLocalUnifiedIndex(file, {
-    readOnly: false,
-    create: true,
-  });
-  const writer = createUnifiedIndexWriter(database, {
-    contractVersion: "telemetry-contribution-v0.1",
-  });
-  const accountScopeId = writer.internAccountScope({
-    status: "unavailable",
-    reason: "missing_account",
-    planType: null,
-    scopeLocal: null,
-  });
-  const defaultModelRowId = writer.internModel("gpt-5.6-sol", "recognized");
-  const modelRowIds = new Map([["gpt-5.6-sol", defaultModelRowId]]);
-  function modelRowId(name) {
-    if (name === undefined) return defaultModelRowId;
-    let id = modelRowIds.get(name);
-    if (id === undefined) {
-      id = writer.internModel(name, "recognized");
-      modelRowIds.set(name, id);
-    }
-    return id;
-  }
-  const tierId = writer.internTier({
-    apiServiceTier: "unknown",
-    billingSurface: "chatgpt_subscription",
-    codexSpeedMode: "standard",
-    tierSource: "rollout_thread_settings",
-    providerTierRaw: "default",
-  });
-  const surfaceId = writer.internSurface({
-    agentScope: "root",
-    surface: "extension_or_ide",
-    threadSource: "rollout",
-    lineageDisposition: "standalone",
-  });
-  writer.recordSessionIdentity(SESSION_A_LOCAL, SESSION_A_UUID);
-  // A filename-shaped fallback id must never be stored as identity.
-  assert.equal(
-    writer.recordSessionIdentity(
-      SESSION_B_LOCAL,
-      "rollout-2026-08-01T00-00-00-bbbb.jsonl",
-    ),
-    false,
-  );
-  for (const quota of quotas) writer.internQuota(quota);
-  for (const event of events) {
-    writer.writeUsageEvent({
-      eventKey: event.eventKey,
-      observedAtMs: event.observedAtMs,
-      sessionLocal: event.sessionLocal,
-      accountScopeId,
-      modelId: modelRowId(event.model),
-      tierId,
-      surfaceId,
-      quotaObservationId: null,
-      reasoningEffort: reasoningEffortOrdinal("medium"),
-      outcome: outcomeOrdinal("unknown"),
-      tokensInUncached: event.tokensInUncached ?? 100,
-      tokensInCacheRead: 200,
-      tokensInCacheWrite: null,
-      tokensInCacheWrite5m: null,
-      tokensInCacheWrite1h: null,
-      tokensOutText: 5,
-      tokensOutReasoning: 2,
-      tokensOutCombined: null,
-      totalInputContext: null,
+  const database = openLocalIndexStore(file, { create: true });
+  try {
+    const writer = createLocalIndexWriter(database);
+    writer.begin();
+    const accountScopeId = writer.internAccountScope({
+      status: "unavailable",
+      reason: "missing_account",
+      planType: null,
+      scopeLocal: null,
     });
+    const defaultModelRowId = writer.internModel("gpt-5.6-sol", "recognized");
+    const modelRowIds = new Map([["gpt-5.6-sol", defaultModelRowId]]);
+    function modelRowId(name) {
+      if (name === undefined) return defaultModelRowId;
+      let id = modelRowIds.get(name);
+      if (id === undefined) {
+        id = writer.internModel(name, "recognized");
+        modelRowIds.set(name, id);
+      }
+      return id;
+    }
+    const tierId = writer.internTier({
+      apiServiceTier: "unknown",
+      billingSurface: "chatgpt_subscription",
+      codexSpeedMode: "standard",
+      tierSource: "rollout_thread_settings",
+      providerTierRaw: "default",
+    });
+    const surfaceId = writer.internSurface({
+      agentScope: "root",
+      surface: "extension_or_ide",
+      threadSource: "rollout",
+      lineageDisposition: "standalone",
+    });
+    writer.internSession(SESSION_A_LOCAL, SESSION_A_UUID);
+    // A filename-shaped fallback id must never be stored as identity.
+    writer.internSession(SESSION_B_LOCAL, "rollout-2026-08-01T00-00-00-bbbb.jsonl");
+    const sessions = new Map();
+    function sessionFor(sessionLocal) {
+      const key = Buffer.from(sessionLocal).toString("hex");
+      let entry = sessions.get(key);
+      if (entry === undefined) {
+        const sessionId = writer.internSession(sessionLocal);
+        const path = `synthetic-rollout-${sessions.size}`;
+        const { id: sourceId } = writer.registerSource({
+          sourceLocal: Buffer.alloc(32, 0x40 + sessions.size),
+          sessionId,
+          surfaceId,
+          path,
+          rolloutKey: path,
+          sizeBytes: SOURCE_BYTES,
+          mtimeMs: dayMs(DAY_ONE),
+        });
+        writer.commitSourceState(sourceId, {
+          sessionId, surfaceId, path, rolloutKey: path,
+          sizeBytes: SOURCE_BYTES, mtimeMs: dayMs(DAY_ONE), scannedBytes: SOURCE_BYTES,
+          snapshotsPersisted: true, turnContextSeen: true,
+          carryModel: "gpt-5.6-sol", carryEffort: "high", diagnostics: {},
+        });
+        entry = { sessionId, sourceId, nextOffset: 1 };
+        sessions.set(key, entry);
+      }
+      return entry;
+    }
+    for (const quota of quotas) writer.internQuota(quota);
+    for (const event of events) {
+      const session = sessionFor(event.sessionLocal);
+      writer.writeUsageEvent({
+        sourceId: session.sourceId,
+        sourceOffset: session.nextOffset++,
+        observedAtMs: event.observedAtMs,
+        eventKey: event.eventKey,
+        sessionId: session.sessionId,
+        accountScopeId,
+        modelId: modelRowId(event.model),
+        tierId,
+        surfaceId,
+        quotaObservationId: null,
+        tierObservedAtMs: null,
+        reasoningEffort: reasoningEffortOrdinal("medium"),
+        tokensInUncached: event.tokensInUncached ?? 100,
+        tokensInCacheRead: 200,
+        tokensInCacheWrite: null,
+        tokensOutText: 5,
+        tokensOutReasoning: 2,
+        tokensOutCombined: null,
+        totalInputContext: null,
+      });
+    }
+    for (const tool of toolCounts) {
+      const session = sessionFor(tool.sessionLocal);
+      for (let index = 0; index < tool.count; index += 1) {
+        writer.writeToolFact({
+          sourceId: session.sourceId,
+          sourceOffset: session.nextOffset++,
+          toolOrdinal: 0,
+          eventKey: eventKey(0),
+          sessionId: session.sessionId,
+          observedAtMs: dayMs(DAY_ONE),
+          toolClass: tool.toolClass,
+          sourceKind: "response_item",
+        });
+      }
+    }
+    writer.commit({ kind: "cold" });
+  } catch (error) {
+    try { database.exec("ROLLBACK"); } catch { /* no transaction is open */ }
+    throw error;
+  } finally {
+    database.close();
   }
-  for (const tool of toolCounts) {
-    writer.addToolClassCount(tool.sessionLocal, tool.toolClass, tool.count);
-  }
-  await writer.close({ integrityCheck: true, fsyncPath: null });
 }
 
 function fixtureEvents() {
@@ -193,7 +228,7 @@ async function withFixtureIndex(run, { mutate = null, reversed = false } = {}) {
       toolCounts: fixtureToolCounts(),
     });
     if (mutate !== null) await mutate(file);
-    const database = openLocalUnifiedIndex(file, { readOnly: true });
+    const database = openLocalIndexStore(file, { readOnly: true });
     try {
       return await run(indexReader(database), file);
     } finally {
@@ -228,7 +263,7 @@ test("every model identity ships, with the provider derived from the reviewed re
         { sessionLocal: SESSION_A_LOCAL, toolClass: "mcp", count: 2 },
       ],
     });
-    const database = openLocalUnifiedIndex(file, { readOnly: true });
+    const database = openLocalIndexStore(file, { readOnly: true });
     try {
       const derived = indexReader(database).deriveDay(DAY_ONE);
       assert.equal(derived.excluded.usage, 0);
@@ -381,49 +416,52 @@ test("a changed day changes that day's digest and only that day's", async () => 
     reader.days().map((day) => reader.deriveDay(day))
   ), {
     mutate: async (file) => {
-      const database = openLocalUnifiedIndex(file, { readOnly: false });
-      const writer = createUnifiedIndexWriter(database, {
-        contractVersion: "telemetry-contribution-v0.1",
-      });
-      const accountScopeId = writer.internAccountScope({
-        status: "unavailable",
-        reason: "missing_account",
-        planType: null,
-        scopeLocal: null,
-      });
-      writer.writeUsageEvent({
-        eventKey: eventKey(99),
-        observedAtMs: dayMs(DAY_TWO, 9_000),
-        sessionLocal: SESSION_A_LOCAL,
-        accountScopeId,
-        modelId: writer.internModel("gpt-5.6-sol", "recognized"),
-        tierId: writer.internTier({
-          apiServiceTier: "unknown",
-          billingSurface: "chatgpt_subscription",
-          codexSpeedMode: "standard",
-          tierSource: "rollout_thread_settings",
-          providerTierRaw: "default",
-        }),
-        surfaceId: writer.internSurface({
-          agentScope: "root",
-          surface: "extension_or_ide",
-          threadSource: "rollout",
-          lineageDisposition: "standalone",
-        }),
-        quotaObservationId: null,
-        reasoningEffort: reasoningEffortOrdinal("medium"),
-        outcome: outcomeOrdinal("unknown"),
-        tokensInUncached: 7,
-        tokensInCacheRead: null,
-        tokensInCacheWrite: null,
-        tokensInCacheWrite5m: null,
-        tokensInCacheWrite1h: null,
-        tokensOutText: 1,
-        tokensOutReasoning: null,
-        tokensOutCombined: null,
-        totalInputContext: null,
-      });
-      await writer.close({ integrityCheck: true, fsyncPath: null });
+      const database = openLocalIndexStore(file);
+      try {
+        const writer = createLocalIndexWriter(database);
+        writer.begin();
+        const accountScopeId = writer.internAccountScope({
+          status: "unavailable",
+          reason: "missing_account",
+          planType: null,
+          scopeLocal: null,
+        });
+        const sessionId = writer.internSession(SESSION_A_LOCAL);
+        const { id: sourceId } = database.prepare("SELECT id FROM source WHERE session_id = ?").get(sessionId);
+        writer.writeUsageEvent({
+          sourceId: Number(sourceId),
+          sourceOffset: 10_000,
+          eventKey: eventKey(99),
+          observedAtMs: dayMs(DAY_TWO, 9_000),
+          sessionId,
+          accountScopeId,
+          modelId: writer.internModel("gpt-5.6-sol", "recognized"),
+          tierId: writer.internTier({
+            apiServiceTier: "unknown",
+            billingSurface: "chatgpt_subscription",
+            codexSpeedMode: "standard",
+            tierSource: "rollout_thread_settings",
+            providerTierRaw: "default",
+          }),
+          surfaceId: writer.internSurface({
+            agentScope: "root",
+            surface: "extension_or_ide",
+            threadSource: "rollout",
+            lineageDisposition: "standalone",
+          }),
+          quotaObservationId: null,
+          tierObservedAtMs: null,
+          reasoningEffort: reasoningEffortOrdinal("medium"),
+          tokensInUncached: 7,
+          tokensInCacheRead: null,
+          tokensInCacheWrite: null,
+          tokensOutText: 1,
+          tokensOutReasoning: null,
+          tokensOutCombined: null,
+          totalInputContext: null,
+        });
+        writer.commit({ kind: "refresh" });
+      } finally { database.close(); }
     },
   });
   assert.equal(before[0].dayDigest, after[0].dayDigest);
@@ -444,7 +482,7 @@ test("an over-full day splits into deterministic 200-record segments", async () 
       sessionLocal: SESSION_A_LOCAL,
     }));
     await buildIndex(file, { events });
-    const database = openLocalUnifiedIndex(file, { readOnly: true });
+    const database = openLocalIndexStore(file, { readOnly: true });
     try {
       const reader = indexReader(database);
       const derived = reader.deriveDay(DAY_ONE);

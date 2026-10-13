@@ -42,7 +42,6 @@ import {
 } from "./export-identity.js";
 import {
   renderParticipantIdentityBackendMode,
-  renderParticipantIdentityFileResidueState,
   renderParticipantIdentitySourceState,
   selectProductionParticipantIdentity,
 } from "./export-identity-production.js";
@@ -128,6 +127,7 @@ import {
   recoverOwnerOnlyPairTransactions,
   withOwnerOnlyFileLock,
 } from "./storage.js";
+import { localIndexUsageExplainerOptions } from "./local-index-usage-explainer.js";
 import { createLocalUsageExplainer } from "./local-usage-explainer.js";
 
 const {
@@ -653,6 +653,7 @@ export async function run(
     const explainer = createUsageExplainer({
       indexFile: args.indexFile,
       codexHome: args.codexHome,
+      ...localIndexUsageExplainerOptions(process.env),
     });
     const request = {
       schemaVersion: USAGE_EXPLAINER_SCHEMA_VERSION,
@@ -672,6 +673,7 @@ export async function run(
     const explainer = createUsageExplainer({
       indexFile: args.indexFile,
       codexHome: args.codexHome,
+      ...localIndexUsageExplainerOptions(process.env),
     });
     const result = await explainer.evidence({
       schemaVersion: USAGE_EXPLAINER_SCHEMA_VERSION,
@@ -1130,10 +1132,6 @@ export async function run(
       console.log(`Storage backend: ${renderParticipantIdentityBackendMode(identitySelection.mode)}`);
       console.log(`Identity source: ${renderParticipantIdentitySourceState(inspection)}`);
       console.log(`Rotatable: ${inspection.rotatable === true}`);
-      if (identitySelection.mode === "macos_keychain") {
-        console.log(`Owner-file secret residue: ${renderParticipantIdentityFileResidueState(inspection.ownerFileState)}`);
-        console.log(`Legacy-file secret residue: ${renderParticipantIdentityFileResidueState(inspection.legacyState)}`);
-      }
       console.log("No files changed; rerun with --confirm to break future export linkability");
       console.log("Network activity: none");
       return;
@@ -1142,10 +1140,6 @@ export async function run(
     console.log("Local export identity rotation: completed");
     console.log(`Storage backend: ${renderParticipantIdentityBackendMode(identitySelection.mode)}`);
     console.log(`Fallback retirement markers committed: ${rotated.ownerFileRetired === true || rotated.legacyRetired === true}`);
-    if (identitySelection.mode === "macos_keychain") {
-      console.log(`Retired secret files removed this operation: ${Number.isSafeInteger(rotated.secretFilesRemoved) ? rotated.secretFilesRemoved : 0}`);
-      console.log(`Retired secret files retained after operation: ${Number.isSafeInteger(rotated.secretFilesRetained) ? rotated.secretFilesRetained : 0}`);
-    }
     console.log("Future export pseudonyms changed: true");
     console.log("Existing bundles changed: false");
     console.log(`Secure storage erasure guaranteed: ${rotated.secureErasure}`);
@@ -1195,10 +1189,6 @@ export async function run(
       path: "PATH",
     }[binary.source] ?? "unknown source";
     const binaryLocation = {
-      system_bundled_cli: "system app CLI layout",
-      system_legacy_resource: "system app legacy layout",
-      user_bundled_cli: "user app CLI layout",
-      user_legacy_resource: "user app legacy layout",
       user_windows_cli: "user Windows desktop CLI",
     }[binary.location];
     const binaryDescription = binaryLocation ? `${binarySource}, ${binaryLocation}` : binarySource;

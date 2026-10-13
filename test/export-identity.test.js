@@ -90,18 +90,6 @@ test("export identity is stable, domain-separated, and does not reveal its subje
 
 test("export identity uses stable platform application-state paths", () => {
   assert.equal(
-    defaultExportStateDirectory({ platform: "darwin", homeDirectory: "/Users/example", environment: {} }),
-    "/Users/example/Library/Application Support/app-usagemonitor",
-  );
-  assert.equal(
-    defaultExportStateDirectory({ platform: "linux", homeDirectory: "/home/example", environment: {} }),
-    "/home/example/.local/state/app-usagemonitor",
-  );
-  assert.equal(
-    defaultExportStateDirectory({ platform: "linux", homeDirectory: "/home/example", environment: { XDG_STATE_HOME: "/state" } }),
-    "/state/app-usagemonitor",
-  );
-  assert.equal(
     defaultExportSecretFile({ platform: "win32", homeDirectory: "C:\\Users\\example", environment: { LOCALAPPDATA: "C:\\Local" } }),
     "C:\\Local\\app-usagemonitor\\export-participant-secret",
   );

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "./export-identity-keychain.js";
+} from "./credential-capabilities.js";
 import {
   isWindowsCredentialMutexContext,
   isWindowsCredentialMutexError,

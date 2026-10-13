@@ -296,7 +296,7 @@ test("the export public facade preserves the reviewed metadata APIs by identity"
 
 test("production consumers enter export metadata only through its public facade", async () => {
   const violations = [];
-  for (const root of ["apps", "local-review", "packages", "src"]) {
+  for (const root of ["apps", "packages", "src"]) {
     for (const file of await productionSourceFiles(
       resolve(REPOSITORY_ROOT, root),
     )) {

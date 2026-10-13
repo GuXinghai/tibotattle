@@ -23,7 +23,7 @@ import {
   removeContributionDeviceCapability,
   withContributionDeviceSecret,
 } from "../src/contribution-device-capability.js";
-import { writeAttributionFixture } from "./helpers/local-attribution-fixture.js";
+import { attributionFixtureSeams, writeAttributionFixture } from "./helpers/local-index-attribution-fixture.js";
 
 const acknowledgement = "RUN_SYNTHETIC_ACCOUNTLESS_STAGING_REHEARSAL_V1";
 const enabled = process.env.TIBOTATTLE_RUN_HOSTED_ACCOUNTLESS_REHEARSAL === "1"
@@ -261,6 +261,7 @@ test("synthetic hosted accountless client proof uses the one reviewed staging or
       generateSecret: () => Buffer.alloc(32, 31),
     }),
     indexFile,
+    contribution: attributionFixtureSeams(),
     maximumChunks: 20,
     maximumDurationMilliseconds: 60_000,
     origin,
@@ -323,6 +324,7 @@ test("synthetic hosted accountless client proof uses the one reviewed staging or
     backend,
     fetchImpl: async () => assert.fail("Opt-out must not issue network requests"),
     indexFile,
+    contribution: attributionFixtureSeams(),
     origin,
     readPreference: async () => syntheticPreference(origin, preferenceEnabled),
     rehearsal: true,

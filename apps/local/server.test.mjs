@@ -6,7 +6,6 @@ import {
   createServer as createHttpServer,
   request as httpRequest,
 } from "node:http";
-import { lstatSync } from "node:fs";
 import {
   chmod,
   lstat,
@@ -16,32 +15,14 @@ import {
   readdir,
   rm,
   symlink,
-  truncate,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { pathToFileURL } from "node:url";
 import {
   LOCAL_COMPANION_SCHEMA_VERSION,
 } from "../../src/local-companion-data.js";
-import {
-  readLocalUnifiedCompanionProjection,
-} from "../../src/local-unified-companion-source.js";
-import {
-  ingestLocalUnifiedIndexOffMain,
-} from "../../src/local-unified-index-off-main.js";
-import {
-  LEGACY_LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-  LOCAL_UNIFIED_INDEX_APPLICATION_ID,
-  LOCAL_UNIFIED_INDEX_MINIMUM_READER_USER_VERSION,
-  LOCAL_UNIFIED_INDEX_MINIMUM_WRITER_USER_VERSION,
-  LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-  LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-  LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION,
-  LOCAL_UNIFIED_INDEX_USER_VERSION,
-} from "../../src/local-unified-index.js";
+import { readLocalIndexProjection } from "../../src/local-index-backend.js";
 import {
   LocalContributionPreparationError,
 } from "../../src/local-contribution-preparation.js";
@@ -59,29 +40,25 @@ import {
 } from "../web/public/lib.js";
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "../../src/platform/export-identity-keychain.js";
+} from "../../src/platform/index.js";
 import {
   buildTelemetryContributionsFromBundle,
 } from "../../src/telemetry-contribution-builder.js";
 import {
   DESKTOP_SHELL_STATUS_SCHEMA_VERSION,
 } from "../../src/desktop-shell-status.js";
-import { TELEMETRY_SCHEMA_VERSION } from "@app-usagemonitor/telemetry-contract";
 import {
   PREVIEW_PRODUCT_BRAND,
   PRODUCT_BRAND,
   SEMANTIC_OPEN_TARGET_PLACEHOLDER,
 } from "../../config/product-brand.js";
 import {
-  configuredAccountingSourceMode,
   configuredSemanticOpenTarget,
   createCachedLocalUnifiedProjectionReader,
   createCentralOutboundFetch,
   createLocalCompanionServer,
-  LOCAL_COMPANION_INCREMENTAL_REFRESH_TIMEOUT_MS,
   LOCAL_STARTUP_DIAGNOSTIC_DETAILS,
   LOCAL_STARTUP_DIAGNOSTIC_STEPS,
-  localCompanionRefreshTimeoutForUnifiedIndex,
   resolveClaudeDesktopShadowConfiguration,
   startLocalCompanionServer,
 } from "./server.js";
@@ -93,475 +70,8 @@ const DEVELOPMENT_COVERAGE = Object.freeze({
 const REVIEW_JOB_ID = "11111111-1111-4111-8111-111111111111";
 const REVIEW_SHA256 = "a".repeat(64);
 
-function writeTimeoutClassifierIndex(indexFile, {
-  applicationId = LOCAL_UNIFIED_INDEX_APPLICATION_ID,
-  userVersion,
-  schemaVersion,
-  compatibility = null,
-}) {
-  const database = new DatabaseSync(indexFile);
-  try {
-    database.exec(`
-      PRAGMA application_id=${applicationId};
-      PRAGMA user_version=${userVersion};
-      CREATE TABLE meta(
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      ) STRICT, WITHOUT ROWID;
-    `);
-    database.prepare("INSERT INTO meta(key, value) VALUES (?, ?)")
-      .run("schema_version", schemaVersion);
-    if (compatibility !== null) {
-      const insert = database.prepare(
-        "INSERT INTO meta(key, value) VALUES (?, ?)",
-      );
-      for (const [key, value] of Object.entries(compatibility)) {
-        insert.run(key, value);
-      }
-    }
-  } finally {
-    database.close();
-  }
-}
 
-function writeParserUpgradeTimeoutIndex(indexFile, {
-  parserVersion = "unified-rollout-typed-v10",
-  parserContractVersion = TELEMETRY_SCHEMA_VERSION,
-  generation = {},
-  metadata = {},
-  compatibility = {
-    compatibility_format_user_version: String(LOCAL_UNIFIED_INDEX_USER_VERSION),
-    compatibility_minimum_reader_user_version:
-      String(LOCAL_UNIFIED_INDEX_MINIMUM_READER_USER_VERSION),
-    compatibility_minimum_writer_user_version:
-      String(LOCAL_UNIFIED_INDEX_MINIMUM_WRITER_USER_VERSION),
-  },
-} = {}) {
-  writeTimeoutClassifierIndex(indexFile, {
-    userVersion: LOCAL_UNIFIED_INDEX_USER_VERSION,
-    schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-    compatibility,
-  });
-  const database = new DatabaseSync(indexFile);
-  try {
-    const insertMeta = database.prepare("INSERT INTO meta(key, value) VALUES (?, ?)");
-    for (const [key, value] of Object.entries({
-      source_identity_version: LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION,
-      contract_version: TELEMETRY_SCHEMA_VERSION,
-      // Published ids are historically stored as SQLite numeric text too.
-      current_generation_id: "2.0",
-      ...metadata,
-    })) {
-      if (value !== undefined) insertMeta.run(key, value);
-    }
-    database.exec(`
-      CREATE TABLE parser_version(
-        id INTEGER PRIMARY KEY, parser_version TEXT NOT NULL,
-        contract_version TEXT NOT NULL) STRICT;
-      CREATE TABLE index_generation(
-        id INTEGER PRIMARY KEY, parser_version_id INTEGER NOT NULL,
-        contract_version TEXT NOT NULL, status TEXT NOT NULL, block_reason TEXT,
-        completed_at_ms INTEGER, discovery_complete INTEGER NOT NULL,
-        diagnostics_complete INTEGER NOT NULL, usage_provenance_complete INTEGER NOT NULL,
-        source_order_complete INTEGER NOT NULL, quota_provenance_complete INTEGER NOT NULL,
-        tool_provenance_complete INTEGER NOT NULL, skipped_source_count INTEGER NOT NULL) STRICT;
-    `);
-    const insertParser = database.prepare("INSERT INTO parser_version VALUES (?, ?, ?)");
-    insertParser.run(1, "unified-rollout-typed-v10", TELEMETRY_SCHEMA_VERSION);
-    insertParser.run(2, parserVersion, parserContractVersion);
-    const insertGeneration = database.prepare(`
-      INSERT INTO index_generation VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const defaults = {
-      contractVersion: TELEMETRY_SCHEMA_VERSION,
-      status: "complete",
-      blockReason: null,
-      completedAtMs: 1_000,
-      discoveryComplete: 1,
-      diagnosticsComplete: 1,
-      usageProvenanceComplete: 1,
-      sourceOrderComplete: 1,
-      quotaProvenanceComplete: 1,
-      toolProvenanceComplete: 1,
-      skippedSourceCount: 0,
-    };
-    for (const [id, selected] of [[1, defaults], [2, { ...defaults, ...generation }]]) {
-      insertGeneration.run(id, id, selected.contractVersion, selected.status,
-        selected.blockReason, selected.completedAtMs, selected.discoveryComplete,
-        selected.diagnosticsComplete, selected.usageProvenanceComplete,
-        selected.sourceOrderComplete, selected.quotaProvenanceComplete,
-        selected.toolProvenanceComplete, selected.skippedSourceCount);
-    }
-  } finally {
-    database.close();
-  }
-}
 
-test("refresh timeout classifier grants the cold window only to missing or proven migratable indexes", async () => {
-  const root = await mkdtemp(join(tmpdir(), "local-timeout-classifier-"));
-  const freshTimeoutMs = 14_400_000;
-  const incrementalTimeoutMs = LOCAL_COMPANION_INCREMENTAL_REFRESH_TIMEOUT_MS;
-  try {
-    const missing = join(root, "missing.sqlite");
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(missing),
-      freshTimeoutMs,
-    );
-
-    const fixtures = [
-      {
-        name: "schema8-v1.sqlite",
-        options: {
-          userVersion: 8,
-          schemaVersion: LEGACY_LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-        },
-        expected: freshTimeoutMs,
-      },
-      {
-        name: "schema9-v2.sqlite",
-        options: {
-          userVersion: 9,
-          schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-        },
-        expected: freshTimeoutMs,
-      },
-      {
-        name: "schema10-v2.sqlite",
-        options: {
-          userVersion: 10,
-          schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-          compatibility: {
-            compatibility_format_user_version: "10",
-            compatibility_minimum_reader_user_version: "10",
-            compatibility_minimum_writer_user_version: "10",
-          },
-        },
-        expected: freshTimeoutMs,
-      },
-      {
-        name: "current.sqlite",
-        options: {
-          userVersion: LOCAL_UNIFIED_INDEX_USER_VERSION,
-          schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-        },
-        expected: incrementalTimeoutMs,
-      },
-      {
-        name: "foreign.sqlite",
-        options: {
-          applicationId: 0x12345678,
-          userVersion: 9,
-          schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-        },
-        expected: incrementalTimeoutMs,
-      },
-      {
-        name: "newer.sqlite",
-        options: {
-          userVersion: LOCAL_UNIFIED_INDEX_USER_VERSION + 1,
-          schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-        },
-        expected: incrementalTimeoutMs,
-      },
-      {
-        name: "malformed-metadata.sqlite",
-        options: {
-          userVersion: 9,
-          schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-          compatibility: {
-            compatibility_format_user_version: "not-a-version",
-            compatibility_minimum_reader_user_version: "9",
-            compatibility_minimum_writer_user_version: "9",
-          },
-        },
-        expected: incrementalTimeoutMs,
-      },
-    ];
-    for (const fixture of fixtures) {
-      const indexFile = join(root, fixture.name);
-      writeTimeoutClassifierIndex(indexFile, fixture.options);
-      await chmod(indexFile, 0o600);
-      const beforeBytes = await readFile(indexFile);
-      const beforeNames = await readdir(root);
-      assert.equal(
-        localCompanionRefreshTimeoutForUnifiedIndex(indexFile),
-        fixture.expected,
-        fixture.name,
-      );
-      assert.deepEqual(await readFile(indexFile), beforeBytes, fixture.name);
-      assert.deepEqual(await readdir(root), beforeNames, fixture.name);
-    }
-
-    const corrupt = join(root, "corrupt.sqlite");
-    await writeFile(corrupt, Buffer.from("not a sqlite database", "utf8"), {
-      mode: 0o600,
-    });
-    const corruptBefore = await readFile(corrupt);
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(corrupt),
-      incrementalTimeoutMs,
-    );
-    assert.deepEqual(await readFile(corrupt), corruptBefore);
-
-    const unreadable = join(root, "unreadable.sqlite");
-    writeTimeoutClassifierIndex(unreadable, {
-      userVersion: 9,
-      schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-    });
-    await chmod(unreadable, 0o000);
-    const unreadableOptions = process.platform === "win32"
-      ? {
-        inspect(target) {
-          if (target === unreadable) {
-            const error = new Error("synthetic unreadable fixture");
-            error.code = "EACCES";
-            throw error;
-          }
-          return lstatSync(target);
-        },
-      }
-      : {};
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(unreadable, unreadableOptions),
-      incrementalTimeoutMs,
-    );
-
-    const directory = join(root, "directory.sqlite");
-    await mkdir(directory);
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(directory),
-      incrementalTimeoutMs,
-    );
-
-    const symlinkTarget = join(root, "symlink-target.sqlite");
-    writeTimeoutClassifierIndex(symlinkTarget, {
-      userVersion: 9,
-      schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-    });
-    await chmod(symlinkTarget, 0o600);
-    const linkedIndex = join(root, "linked.sqlite");
-    await symlink(symlinkTarget, linkedIndex);
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(linkedIndex),
-      incrementalTimeoutMs,
-    );
-
-    const sidecarIndex = join(root, "sidecar.sqlite");
-    writeTimeoutClassifierIndex(sidecarIndex, {
-      userVersion: 9,
-      schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-    });
-    await chmod(sidecarIndex, 0o600);
-    await writeFile(`${sidecarIndex}-wal`, "", { mode: 0o600 });
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(sidecarIndex),
-      incrementalTimeoutMs,
-    );
-
-    assert.throws(
-      () => localCompanionRefreshTimeoutForUnifiedIndex(missing, {
-        freshTimeoutMs: freshTimeoutMs + 1,
-      }),
-      /outside the refresh timeout bound/u,
-    );
-  } finally {
-    await rm(root, { recursive: true });
-  }
-});
-
-test("published v10 through v17 upgrades to v18 receive a cold deadline without extending current or uncertain state", async () => {
-  const root = await mkdtemp(join(tmpdir(), "local-timeout-parser-upgrade-"));
-  // Deliberately pin the target: another parser release must review its
-  // predecessor set, not silently keep passing a generic mismatch test.
-  assert.equal(LOCAL_UNIFIED_INDEX_PARSER_VERSION, "unified-rollout-typed-v19");
-  const fixtures = [
-    { name: "complete", cold: true },
-    { name: "quarantine-partial", cold: true, generation: {
-      status: "partial", blockReason: "codex_rollout_sources_quarantined", skippedSourceCount: 14,
-    } },
-    { name: "tool-partial", cold: true, generation: {
-      status: "partial", blockReason: "tool_provenance_incomplete", toolProvenanceComplete: 0,
-    } },
-    // Every fixture retains an older parser/generation row. Only publication
-    // provenance may select the deadline, so this stays an ordinary refresh.
-    { name: "current-with-old-history", parserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION },
-    { name: "future", parserVersion: "unified-rollout-typed-v20" },
-    { name: "unknown", parserVersion: "unknown-parser" },
-    { name: "empty", parserVersion: "" },
-    { name: "malformed-version", parserVersion: "unified-rollout-typed-v011" },
-    { name: "decorated-version", parserVersion: "unified-rollout-typed-v11 " },
-    { name: "partial-parser", parserVersion: "unified-rollout-typed-v10-partial" },
-    { name: "v11-partial-parser", parserVersion: "unified-rollout-typed-v11-partial" },
-    { name: "v12-partial-parser", parserVersion: "unified-rollout-typed-v12-partial" },
-    { name: "v14-partial-parser", parserVersion: "unified-rollout-typed-v14-partial" },
-    { name: "v13-partial-parser", parserVersion: "unified-rollout-typed-v13-partial" },
-    { name: "v15-partial-parser", parserVersion: "unified-rollout-typed-v15-partial" },
-    { name: "v16-partial-parser", parserVersion: "unified-rollout-typed-v16-partial" },
-    { name: "v17-partial-parser", parserVersion: "unified-rollout-typed-v17-partial" },
-    { name: "v17-assumed-parser", parserVersion: "unified-rollout-typed-v17-cache-write-zero" },
-    { name: "v17-parent-model-parser", parserVersion: "unified-rollout-typed-v17-parent-model" },
-    { name: "current-partial-parser", parserVersion: "unified-rollout-typed-v19-partial" },
-    { name: "current-assumed-parser", parserVersion: "unified-rollout-typed-v19-cache-write-zero" },
-    { name: "unreviewed-predecessor", parserVersion: "unified-rollout-typed-v9" },
-    { name: "missing-publication", metadata: { current_generation_id: undefined } },
-    { name: "unknown-publication", metadata: { current_generation_id: "99" } },
-    { name: "invalid-publication", metadata: { current_generation_id: "2.5" } },
-    { name: "in-progress", generation: { status: "in_progress", completedAtMs: null } },
-    { name: "failed", generation: { status: "failed" } },
-    { name: "unfinished", generation: { completedAtMs: null } },
-    { name: "unexpected-complete-reason", generation: { blockReason: "unexpected" } },
-    { name: "unknown-partial", generation: { status: "partial", blockReason: "unexpected" } },
-    { name: "empty-quarantine", generation: {
-      status: "partial", blockReason: "codex_rollout_sources_quarantined", skippedSourceCount: 0,
-    } },
-    { name: "contradictory-tools", generation: {
-      status: "partial", blockReason: "tool_provenance_incomplete", toolProvenanceComplete: 1,
-    } },
-    { name: "generation-contract", generation: { contractVersion: "unknown-contract" } },
-    { name: "parser-contract", parserContractVersion: "unknown-contract" },
-    { name: "metadata-contract", metadata: { contract_version: "unknown-contract" } },
-    { name: "source-identity", metadata: { source_identity_version: "unknown-identity" } },
-    { name: "absent-compatibility", compatibility: null },
-    { name: "unsupported-current-compatibility", compatibility: {
-      compatibility_format_user_version: String(LOCAL_UNIFIED_INDEX_USER_VERSION),
-      compatibility_minimum_reader_user_version: "9",
-      compatibility_minimum_writer_user_version: "9",
-    } },
-    ...["discoveryComplete", "diagnosticsComplete", "usageProvenanceComplete",
-      "sourceOrderComplete", "quotaProvenanceComplete", "toolProvenanceComplete"]
-      .map((key) => ({ name: `incomplete-${key}`, generation: { [key]: 0 } })),
-  ];
-  try {
-    for (const predecessor of [10, 11, 12, 13, 14, 15, 16, 17]) {
-      for (const fixture of fixtures) {
-        const name = `v${predecessor}-${fixture.name}`;
-        const indexFile = join(root, `${name}.sqlite`);
-        writeParserUpgradeTimeoutIndex(indexFile, {
-          parserVersion: `unified-rollout-typed-v${predecessor}`,
-          ...fixture,
-        });
-        await chmod(indexFile, 0o600);
-        const beforeBytes = await readFile(indexFile);
-        const beforeNames = await readdir(root);
-        assert.equal(localCompanionRefreshTimeoutForUnifiedIndex(indexFile),
-          fixture.cold === true ? 14_400_000 : LOCAL_COMPANION_INCREMENTAL_REFRESH_TIMEOUT_MS,
-          name);
-        assert.deepEqual(await readFile(indexFile), beforeBytes, name);
-        assert.deepEqual(await readdir(root), beforeNames, name);
-      }
-    }
-  } finally {
-    await rm(root, { recursive: true });
-  }
-});
-
-test("large legacy and parser-upgrade timeout classification never scans integrity or fact collections", async () => {
-  const root = await mkdtemp(join(tmpdir(), "local-timeout-large-index-"));
-  const indexFile = join(root, "schema9-large.sqlite");
-  const sparseSize = 800 * 1024 * 1024;
-  try {
-    writeTimeoutClassifierIndex(indexFile, {
-      userVersion: 9,
-      schemaVersion: LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-    });
-    await chmod(indexFile, 0o600);
-    await truncate(indexFile, sparseSize);
-    const before = await lstat(indexFile);
-    const beforeNames = await readdir(root);
-    let integrityScans = 0;
-    const openDatabase = (selectedFile) => {
-      const immutableUrl = pathToFileURL(selectedFile);
-      immutableUrl.searchParams.set("immutable", "1");
-      const database = new DatabaseSync(immutableUrl.href, {
-        readOnly: true,
-        timeout: 1_000,
-      });
-      return {
-        exec: (sql) => database.exec(sql),
-        prepare(sql) {
-          assert.doesNotMatch(sql, /\b(?:usage_event|generation_issue|source_cursor)\b/u);
-          if (/\bFROM meta\b/u.test(sql)) assert.match(sql, /\bWHERE key\b/u);
-          if (/\b(?:quick_check|integrity_check)\b/u.test(sql)) {
-            integrityScans += 1;
-            return {
-              all() {
-                Atomics.wait(
-                  new Int32Array(new SharedArrayBuffer(4)),
-                  0,
-                  0,
-                  750,
-                );
-                return [{ quick_check: "ok" }];
-              },
-            };
-          }
-          return database.prepare(sql);
-        },
-        close: () => database.close(),
-      };
-    };
-    const startedAt = performance.now();
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(indexFile, { openDatabase }),
-      14_400_000,
-    );
-    const elapsedMs = performance.now() - startedAt;
-    assert.equal(integrityScans, 0);
-    assert.equal(elapsedMs < 250, true, `classification took ${elapsedMs}ms`);
-    const after = await lstat(indexFile);
-    assert.equal(after.size, sparseSize);
-    assert.deepEqual(
-      {
-        dev: after.dev,
-        ino: after.ino,
-        size: after.size,
-        mtimeMs: after.mtimeMs,
-        ctimeMs: after.ctimeMs,
-      },
-      {
-        dev: before.dev,
-        ino: before.ino,
-        size: before.size,
-        mtimeMs: before.mtimeMs,
-        ctimeMs: before.ctimeMs,
-      },
-    );
-    assert.deepEqual(await readdir(root), beforeNames);
-
-    const parserIndex = join(root, "schema11-parser11-large.sqlite");
-    // Match the stable predecessor for RC3: v11, physical schema11,
-    // no skipped sources, and only incomplete historical tool provenance.
-    writeParserUpgradeTimeoutIndex(parserIndex, {
-      parserVersion: "unified-rollout-typed-v11",
-      generation: {
-        status: "partial",
-        blockReason: "tool_provenance_incomplete",
-        toolProvenanceComplete: 0,
-        skippedSourceCount: 0,
-      },
-    });
-    await chmod(parserIndex, 0o600);
-    await truncate(parserIndex, sparseSize);
-    const parserBefore = await lstat(parserIndex);
-    const parserNamesBefore = await readdir(root);
-    const parserStartedAt = performance.now();
-    assert.equal(
-      localCompanionRefreshTimeoutForUnifiedIndex(parserIndex, { openDatabase }),
-      14_400_000,
-    );
-    const parserElapsedMs = performance.now() - parserStartedAt;
-    assert.equal(integrityScans, 0);
-    assert.equal(parserElapsedMs < 250, true,
-      `parser classification took ${parserElapsedMs}ms`);
-    const parserAfter = await lstat(parserIndex);
-    for (const field of ["dev", "ino", "size", "mtimeMs", "ctimeMs"]) {
-      assert.equal(parserAfter[field], parserBefore[field], field);
-    }
-    assert.deepEqual(await readdir(root), parserNamesBefore);
-  } finally {
-    await rm(root, { recursive: true });
-  }
-});
 
 test("unchanged unified projections reuse only within exact generation, time, and baseline bounds", async () => {
   const generationA = `generation-v2-${"a".repeat(64)}`;
@@ -585,6 +95,7 @@ test("unchanged unified projections reuse only within exact generation, time, an
       validityChecks.push(options);
       return options.nowMs + 100;
     },
+    readGeneration: async () => selectedGeneration,
   });
   const options = (nowMs, baselines, mode = "full") => ({
     indexFile: "/private/index.sqlite",
@@ -884,77 +395,6 @@ async function fixture() {
   return { root, resourceRoot, stateRoot, codexHome, staticRoot };
 }
 
-function unifiedIndexRolloutFixture() {
-  const threadId = "11111111-1111-4111-8111-111111111111";
-  return [
-    {
-      timestamp: "2026-08-24T00:00:00.000Z",
-      type: "session_meta",
-      payload: {
-        id: threadId,
-        session_id: threadId,
-        thread_source: "user",
-        originator: "codex_cli_rs",
-      },
-    },
-    {
-      timestamp: "2026-08-24T00:00:01.000Z",
-      type: "turn_context",
-      payload: {
-        turn_id: "turn-1",
-        model: "gpt-5.6-sol",
-        effort: "high",
-      },
-    },
-    {
-      timestamp: "2026-08-24T00:00:02.000Z",
-      type: "event_msg",
-      payload: {
-        type: "token_count",
-        info: {
-          total_token_usage: {
-            input_tokens: 10,
-            output_tokens: 2,
-            total_tokens: 12,
-          },
-          last_token_usage: {
-            input_tokens: 10,
-            output_tokens: 2,
-            total_tokens: 12,
-          },
-        },
-      },
-    },
-  ].map((value) => JSON.stringify(value)).join("\n") + "\n";
-}
-
-test("production authority defaults unified and keeps legacy as explicit rollback", () => {
-  assert.equal(configuredAccountingSourceMode({}), "unified");
-  assert.equal(
-    configuredAccountingSourceMode({
-      USAGE_MONITOR_ACCOUNTING_SOURCE_MODE: "unified",
-    }),
-    "unified",
-  );
-  assert.equal(
-    configuredAccountingSourceMode({
-      USAGE_MONITOR_ACCOUNTING_SOURCE_MODE: "legacy",
-    }),
-    "legacy",
-  );
-  assert.throws(
-    () => configuredAccountingSourceMode({
-      USAGE_MONITOR_ACCOUNTING_SOURCE_MODE: "automatic",
-    }),
-    /must be legacy or unified/u,
-  );
-  assert.throws(
-    () => configuredAccountingSourceMode({
-      USAGE_MONITOR_ACCOUNTING_SOURCE_MODE: "",
-    }),
-    /must be legacy or unified/u,
-  );
-});
 
 function rawRequest({ port, path, method = "GET", headers = {}, body = "" }) {
   return new Promise((resolveRequest, rejectRequest) => {
@@ -2038,7 +1478,7 @@ test("startup snapshot defers unified history until an explicit full refresh", a
         if (options.mode === "full" && !fullRefreshRequested) {
           throw new Error("startup_must_not_build_full_projection");
         }
-        return readLocalUnifiedCompanionProjection(options);
+        return readLocalIndexProjection(options);
       },
       refreshRunner: async () => ({}),
       port: 0,
@@ -2969,122 +2409,6 @@ test("server exposes an authorized cancellation without reloading deep state", a
   }
 });
 
-test("Darwin loopback stays responsive and cancels a real off-main cold ingest without publication", {
-  skip: process.platform !== "darwin",
-  timeout: 15_000,
-}, async () => {
-  const files = await fixture();
-  const store = fakeStore();
-  const progressReached = deferred();
-  const releaseProgress = deferred();
-  const indexFile = join(files.stateRoot, "local-unified-index-v1.sqlite");
-  const secretFile = join(
-    files.stateRoot,
-    "local-unified-index-device-salt-v1",
-  );
-  const sessions = join(files.codexHome, "sessions", "2026", "08", "24");
-  const rolloutFile = join(
-    sessions,
-    "rollout-2026-08-24T00-00-00-11111111-1111-4111-8111-111111111111.jsonl",
-  );
-  let heldProgress = false;
-  let app;
-  try {
-    await mkdir(sessions, { recursive: true, mode: 0o700 });
-    await writeFile(rolloutFile, unifiedIndexRolloutFixture(), { mode: 0o600 });
-    app = await startLocalCompanionServer({
-      resourceRoot: files.resourceRoot,
-      stateRoot: files.stateRoot,
-      codexHome: files.codexHome,
-      staticRoot: files.staticRoot,
-      dataStore: store,
-      refreshRunner: ({ signal, onProgress }) => (
-        ingestLocalUnifiedIndexOffMain({
-          codexHome: files.codexHome,
-          indexFile,
-          secretFile,
-          contractVersion: TELEMETRY_SCHEMA_VERSION,
-          signal,
-          onProgress: async (progress) => {
-            await onProgress(progress);
-            if (heldProgress) return;
-            heldProgress = true;
-            progressReached.resolve();
-            await releaseProgress.promise;
-          },
-        })
-      ),
-      port: 0,
-    });
-    await app.snapshotReady;
-    const base = `http://127.0.0.1:${app.port}`;
-    const authorizedHeaders = {
-      "Content-Type": "application/json",
-      "X-Usage-Monitor-Local": "1",
-      Origin: base,
-    };
-    const started = await fetch(`${base}/api/local/refresh`, {
-      method: "POST",
-      headers: authorizedHeaders,
-      body: "{}",
-    });
-    assert.equal(started.status, 202);
-    await progressReached.promise;
-    await waitFor(async () => (await readdir(files.stateRoot))
-      .some((name) => name.startsWith(
-        "local-unified-index-v1.sqlite.building-",
-      )), 3_000);
-
-    const health = await fetch(`${base}/api/local/health`, {
-      signal: AbortSignal.timeout(1_000),
-    });
-    assert.equal(health.status, 200);
-    assert.equal((await health.json()).status, "ready");
-    const whileRunning = await fetch(`${base}/api/local/refresh`, {
-      signal: AbortSignal.timeout(1_000),
-    });
-    assert.equal(whileRunning.status, 200);
-    const runningPayload = await whileRunning.json();
-    assert.equal(runningPayload.refresh.status, "running");
-    assert.equal(runningPayload.refresh.progress.kind, "unified_index");
-    await assert.rejects(
-      lstat(indexFile),
-      (error) => error?.code === "ENOENT",
-    );
-
-    const cancelling = await fetch(`${base}/api/local/refresh/cancel`, {
-      method: "POST",
-      headers: authorizedHeaders,
-      body: "{}",
-    });
-    assert.equal(cancelling.status, 202);
-    assert.equal((await cancelling.json()).refresh.status, "cancelling");
-    await waitFor(async () => {
-      const payload = await fetch(`${base}/api/local/refresh`)
-        .then((response) => response.json());
-      return payload.refresh.status === "cancelled";
-    }, 5_000);
-    const terminal = await fetch(`${base}/api/local/refresh`)
-      .then((response) => response.json());
-    assert.equal(terminal.refresh.errorCode, "refresh_cancelled");
-    assert.equal(store.reloads, 0);
-    await assert.rejects(
-      lstat(indexFile),
-      (error) => error?.code === "ENOENT",
-    );
-    assert.deepEqual(
-      (await readdir(files.stateRoot)).filter((name) => (
-        name.startsWith("local-unified-index-v1.sqlite.building-")
-        || name.startsWith("local-unified-index-v1.sqlite.incremental-")
-      )),
-      [],
-    );
-  } finally {
-    releaseProgress.resolve();
-    await app?.close();
-    await rm(files.root, { recursive: true });
-  }
-});
 
 test("retired contribution preview is absent for every method", async () => {
   const files = await fixture();
@@ -4343,78 +3667,6 @@ for (const { label, thrown, routeCode } of [
   });
 }
 
-test("a declined legacy Keychain migration is preserved and never routed to reset", async () => {
-  const files = await fixture();
-  const privateCanary = "DO-NOT-LEAK-keychain-migration-declined";
-  const app = await startLocalCompanionServer({
-    resourceRoot: files.resourceRoot,
-    stateRoot: files.stateRoot,
-    codexHome: files.codexHome,
-    staticRoot: files.staticRoot,
-    dataStore: fakeStore(),
-    refreshRunner: async () => ({}),
-    contributionDevicePairingProvider: async () => {
-      const error = new Error(privateCanary);
-      error.code = "contribution_device_credential_migration_required";
-      throw error;
-    },
-    port: 0,
-  });
-  try {
-    const base = `http://127.0.0.1:${app.port}`;
-    const pairingCode =
-      "um_pair_00000000-0000-4000-8000-000000000000.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-    const client = new LocalCompanionClient({
-      fetchImpl: (url, options = {}) => fetch(`${base}${url}`, {
-        ...options,
-        headers: { ...options.headers, Origin: base },
-      }),
-    });
-    await assert.rejects(
-      client.pairContributionDevice(pairingCode),
-      (error) => error?.status === 409
-        && error?.code === "contribution_device_keychain_migration_required",
-    );
-
-    const response = await fetch(
-      `${base}/api/local/contribution/device-pair`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Usage-Monitor-Local": "1",
-          Origin: base,
-        },
-        body: JSON.stringify({ pairingCode }),
-      },
-    );
-    assert.equal(response.status, 409);
-    const body = await response.text();
-    assert.deepEqual(JSON.parse(body), {
-      schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
-      error: { code: "contribution_device_keychain_migration_required" },
-    });
-    assert.equal(body.includes(privateCanary), false);
-
-    const appSource = await readFile(
-      new URL("../web/public/app.js", import.meta.url),
-      "utf8",
-    );
-    const htmlSource = await readFile(
-      new URL("../web/public/index.html", import.meta.url),
-      "utf8",
-    );
-    assert.doesNotMatch(
-      appSource,
-      /contributionDeviceRecoveryIsRequired|renderContributionDeviceRecovery|reset-device-credential/u,
-    );
-    assert.doesNotMatch(htmlSource, /id="reset-device-credential"/u);
-    assert.match(htmlSource, /id="electron-accountless-sharing-enabled"/u);
-  } finally {
-    await app.close();
-    await rm(files.root, { recursive: true });
-  }
-});
 
 test("optional HTTPS central proxy exposes health only without leaking authority headers", async () => {
   const files = await fixture();

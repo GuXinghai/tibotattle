@@ -5,11 +5,9 @@ import {
 } from "./application/claude-callback-capability.js";
 import {
   ClaudeCallbackLifecycleError,
-  createClaudeCallbackLifecycleContext,
-} from "./platform/claude-callback-lifecycle.js";
-import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "./platform/export-identity-keychain.js";
+  createClaudeCallbackLifecycleContext,
+} from "./platform/index.js";
 
 const CAPABILITY_OPERATIONS =
   createClaudeCallbackCapabilityContext({

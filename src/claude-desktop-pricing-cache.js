@@ -105,8 +105,7 @@ function assertOwnerOnlyDirectory(path, { create = false } = {}) {
     fail("storage_unavailable");
   }
   if (!stats.isDirectory() || stats.isSymbolicLink()
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
     fail("storage_unsafe");
   }
 }
@@ -119,8 +118,7 @@ function assertOwnerOnlyDatabase(path) {
     fail("storage_unavailable");
   }
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
     fail("storage_unsafe");
   }
 }

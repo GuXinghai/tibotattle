@@ -12,15 +12,20 @@ import {
   TELEMETRY_PERFORMANCE_SUPPORTED_SPEED_METHODS,
 } from "../../src/application/index.js";
 import { createWorkUsageSnapshotStore } from "./work-usage-snapshots.js";
-import { enrichWorkUsageRows } from "../../src/local-work-usage-source.js";
+import { enrichWorkUsageRows } from "../../src/work-usage-display.js";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
-import { constants, lstatSync } from "node:fs";
-import { lstat, open, readFile, rename, stat, unlink } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  lstat,
+  open,
+  readFile,
+  rename,
+  unlink,
+} from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { DatabaseSync } from "node:sqlite";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import {
   LOCAL_COMPANION_REPORT_FILES,
   LOCAL_COMPANION_SCHEMA_VERSION,
@@ -30,46 +35,14 @@ import {
 import {
   resolveLocalLegacyReportReadPath,
 } from "../../src/local-legacy-report-storage.js";
-import {
-  refreshReplaySafeAccountingCache,
-} from "../../src/replay-safe-accounting-cache.js";
-import {
-  refreshLocalArchiveAccountingIndex,
-} from "../../src/local-archive-accounting-index.js";
-import {
-  ingestLocalUnifiedIndexOffMain,
-} from "../../src/local-unified-index-off-main.js";
-import {
-  createLocalUnifiedCompanionProjectionReader,
-} from "../../src/local-unified-companion-off-main.js";
-import {
-  LEGACY_LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-  LOCAL_UNIFIED_INDEX_APPLICATION_ID,
-  LOCAL_UNIFIED_INDEX_MINIMUM_READER_USER_VERSION,
-  LOCAL_UNIFIED_INDEX_MINIMUM_WRITER_USER_VERSION,
-  LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-  LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-  LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION,
-  LOCAL_UNIFIED_INDEX_USER_VERSION,
-  lstatPublishedLocalUnifiedIndex,
-  readLocalUnifiedIndexCompatibility,
-  readUnifiedIndexGenerationDescriptor,
-  resolveLocalUnifiedIndexFile,
-} from "../../src/local-unified-index.js";
-import {
-  readLocalUnifiedWindowBreakdown,
-} from "../../src/local-unified-window-breakdown.js";
+import { createLocalIndexBackend } from "../../src/local-index-backend.js";
 import {
   createModelPerformanceController,
 } from "./model-performance-controller.js";
 import {
-  buildLocalCacheDropThreadLinks,
-} from "../../src/local-cache-drop-thread-links.js";
-import {
   PERFORMANCE_FIELD_DICTIONARY_VERSION,
   PERFORMANCE_PRIVACY_CONTRACT_VERSION,
   PERFORMANCE_RECORD_SCHEMA_VERSION,
-  TELEMETRY_SCHEMA_VERSION,
 } from "@app-usagemonitor/telemetry-contract";
 import {
   acquireAutomaticContributionRetirementLock,
@@ -121,27 +94,17 @@ import {
   localContributionSyncQueue,
 } from "../../src/local-node-runtime.js";
 import {
-  CONTRIBUTION_DEVICE_KEYCHAIN_PROMPT_SURFACES,
-  contributionDeviceKeychainPromptSurface,
-  createAppBrokeredContributionDeviceBackend,
   createProductionContributionDeviceBackend,
-  migrateLegacyContributionDeviceCapability,
   readContributionDeviceCapability,
   removeContributionDeviceCapability,
   withContributionDeviceSecret,
 } from "../../src/contribution-device-capability.js";
-import { createTelemetryPerformanceEnvelope } from "../../src/platform/index.js";
-import { readJsonIfExists, writeJsonOwnerOnlyAtomic } from "../../src/storage.js";
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-  createExportIdentityKeychainBackend,
-  deleteExportIdentityKeychainItemByAttributes,
-} from "../../src/platform/export-identity-keychain.js";
-import {
-  contributionDeviceKeychainBrokerConfiguration,
-  createContributionDeviceKeychainBrokerTransport,
-  createMacOSKeychainBrokerBindingFromEnvironment,
-} from "../../src/contribution-device-keychain-broker.js";
+  createTelemetryPerformanceEnvelope,
+  createWindowsAccountObservationBrokerBackendFromEnvironment,
+} from "../../src/platform/index.js";
+import { readJsonIfExists, writeJsonOwnerOnlyAtomic } from "../../src/storage.js";
 import {
   claimContributionDevicePairing,
   disconnectContributionDevice as disconnectContributionDeviceRemotely,
@@ -176,13 +139,6 @@ import {
 import {
   selectProductionAccountObservationSecret,
 } from "../../src/account-observation-production.js";
-import {
-  createLinuxSecretServiceBrokerBackendFromEnvironment,
-} from "../../src/platform/linux-secret-service-broker.js";
-import {
-  createLinuxAccountObservationBrokerBackendFromEnvironment,
-  createWindowsAccountObservationBrokerBackendFromEnvironment,
-} from "../../src/platform/index.js";
 import {
   PREVIEW_PRODUCT_BRAND,
   PRODUCT_BRAND,
@@ -251,16 +207,10 @@ const PARTICIPANT_RELAY_TIMEOUT_MS = 15_000;
 // ping at startup pays that handshake off the hot path and seeds the outbound
 // connection pool before the user's first action.
 //
-// NOTE: the deeper "hold the warm connection for minutes between actions" half
-// of this fix wants a persistent dispatcher with a minutes-long
-// keepAliveTimeout, which on Node means an undici Agent. undici is deliberately
-// NOT added here: the macOS runtime is closed over an exact dependency
-// allowlist (test/macos-app-bundle.test.js) that undici is not part of, and
-// smuggling it in — statically or by a computed import — would break that
-// supply-chain closure. Extending the idle window is therefore left to an owner
-// decision (approve undici into the runtime allowlist) or to the Worker
-// emitting a long `Keep-Alive: timeout=` response header; the pre-warm below is
-// the dependency-free half that removes the measured cold handshake.
+// Holding the warm connection for minutes would need a persistent dispatcher
+// (an undici Agent), which the closed runtime dependency set does not include;
+// the pre-warm below is the dependency-free half that removes the measured
+// cold handshake.
 const CENTRAL_PREWARM_TIMEOUT_MS = 10_000;
 export const LOCAL_COMPANION_INCREMENTAL_REFRESH_TIMEOUT_MS = 5 * 60_000;
 const LOCAL_PERFORMANCE_REVIEW_SCHEMA_VERSION =
@@ -279,336 +229,12 @@ const MAX_ACTIVE_PERFORMANCE_REVIEWS = 8;
 const PERFORMANCE_DEVICE_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
-function ownerOnlyRegularUnifiedIndex(metadata) {
-  return metadata.isFile()
-    && !metadata.isSymbolicLink()
-    && metadata.nlink === 1
-    && (typeof process.getuid !== "function" || metadata.uid === process.getuid())
-    && (process.platform === "win32" || (metadata.mode & 0o077) === 0);
-}
 
-function unchangedUnifiedIndexTarget(before, after) {
-  return ownerOnlyRegularUnifiedIndex(before)
-    && ownerOnlyRegularUnifiedIndex(after)
-    && before.dev === after.dev
-    && before.ino === after.ino
-    && before.size === after.size
-    && before.mtimeMs === after.mtimeMs
-    && before.ctimeMs === after.ctimeMs;
-}
 
-function localUnifiedIndexHasSidecar(indexFile, inspect) {
-  for (const suffix of ["-wal", "-shm", "-journal"]) {
-    try {
-      inspect(`${indexFile}${suffix}`);
-      return true;
-    } catch (error) {
-      if (error?.code !== "ENOENT") return true;
-    }
-  }
-  return false;
-}
 
-// Callers pass the physical file from resolveLocalUnifiedIndexFile.
-function openImmutableLocalUnifiedIndex(indexFile) {
-  const immutableUrl = pathToFileURL(indexFile);
-  immutableUrl.searchParams.set("immutable", "1");
-  return new DatabaseSync(immutableUrl.href, {
-    readOnly: true,
-    timeout: 1_000,
-  });
-}
 
-const COLD_REFRESH_V19_PREDECESSOR_PARSERS = Object.freeze([
-  "unified-rollout-typed-v10",
-  "unified-rollout-typed-v11",
-  "unified-rollout-typed-v12",
-  "unified-rollout-typed-v13",
-  "unified-rollout-typed-v14",
-  "unified-rollout-typed-v15",
-  "unified-rollout-typed-v16",
-  "unified-rollout-typed-v17",
-  "unified-rollout-typed-v18",
-]);
 
-function publishedParserUpgradeNeedsColdRefresh(database, compatibility, schemaVersion) {
-  // This is a deadline decision, not permission to read or publish facts. The
-  // worker still validates the complete index. Only reviewed v10 through v18
-  // predecessors can receive the v19 rescan window. Their physical schema and
-  // immutable source identity remain compatible; v12 nullable counters and
-  // v13 ordinal-bearing compaction headers and v14 paginated setting boundaries
-  // and v15 historical parent-model fallback require reparsing present sources.
-  // v16 adds the explicitly approved missing-cache-write assumption with row provenance.
-  // v17 retains exact selected input/output totals without changing those assumptions.
-  // v18 fixes structural classification and increases the bounded line cap.
-  // v19 refreshes reviewed model identity without changing recorded usage.
-  // Keep the target pinned too: a future parser needs an explicit review and
-  // must not silently inherit this longer deadline for every mismatch.
-  if (LOCAL_UNIFIED_INDEX_PARSER_VERSION !== "unified-rollout-typed-v19"
-      || schemaVersion !== LOCAL_UNIFIED_INDEX_SCHEMA_VERSION
-      || !compatibility.metadataPresent
-      || compatibility.formatUserVersion !== LOCAL_UNIFIED_INDEX_USER_VERSION
-      || compatibility.minimumReaderUserVersion
-        !== LOCAL_UNIFIED_INDEX_MINIMUM_READER_USER_VERSION
-      || compatibility.minimumWriterUserVersion
-        !== LOCAL_UNIFIED_INDEX_MINIMUM_WRITER_USER_VERSION) {
-    return false;
-  }
-  const metadata = database.prepare("SELECT value FROM meta WHERE key = ?");
-  if (metadata.get("source_identity_version")?.value
-        !== LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION
-      || metadata.get("contract_version")?.value !== TELEMETRY_SCHEMA_VERSION) {
-    return false;
-  }
-  const generationId = Number(metadata.get("current_generation_id")?.value);
-  if (!Number.isSafeInteger(generationId) || generationId < 1) return false;
 
-  // Follow only the published generation, never a rotated source's older
-  // parser row. Fixed-key/primary-key reads avoid loading meta/issue collections
-  // or scanning facts on the HTTP thread. Terminal predicates mirror the
-  // ingestion worker's supported previous-generation states.
-  const generation = database.prepare(`
-    SELECT p.parser_version, p.contract_version AS parser_contract_version,
-           g.contract_version, g.completed_at_ms
-    FROM index_generation g JOIN parser_version p ON p.id = g.parser_version_id
-    WHERE g.id = ?
-      AND g.discovery_complete = 1 AND g.diagnostics_complete = 1
-      AND g.usage_provenance_complete = 1 AND g.source_order_complete = 1
-      AND g.quota_provenance_complete = 1
-      AND (
-        (g.status = 'complete' AND g.block_reason IS NULL
-          AND g.tool_provenance_complete = 1)
-        OR (g.status = 'partial'
-          AND g.block_reason = 'codex_rollout_sources_quarantined'
-          AND g.skipped_source_count > 0)
-        OR (g.status = 'partial'
-          AND g.block_reason = 'tool_provenance_incomplete'
-          AND g.tool_provenance_complete = 0)
-      )
-  `).get(generationId);
-  return COLD_REFRESH_V19_PREDECESSOR_PARSERS.includes(generation?.parser_version)
-    && generation.parser_contract_version === TELEMETRY_SCHEMA_VERSION
-    && generation.contract_version === TELEMETRY_SCHEMA_VERSION
-    && Number.isSafeInteger(generation.completed_at_ms)
-    && generation.completed_at_ms >= 0;
-}
-
-function inspectColdRefreshLocalUnifiedIndex(indexFile, inspect, openDatabase) {
-  let before;
-  try {
-    before = inspect(indexFile);
-  } catch {
-    return false;
-  }
-  if (!ownerOnlyRegularUnifiedIndex(before)
-      || localUnifiedIndexHasSidecar(indexFile, inspect)) {
-    return false;
-  }
-
-  let database;
-  let requiresColdRefresh = false;
-  try {
-    database = openDatabase(indexFile);
-    database.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;");
-    const compatibility = readLocalUnifiedIndexCompatibility(database);
-    if (compatibility.applicationId !== LOCAL_UNIFIED_INDEX_APPLICATION_ID
-        || !Number.isSafeInteger(compatibility.userVersion)
-        || compatibility.userVersion < 1
-        || compatibility.userVersion > LOCAL_UNIFIED_INDEX_USER_VERSION
-        || compatibility.metadataPartial
-        || compatibility.metadataMalformed
-        || (compatibility.metadataPresent && [
-          compatibility.formatUserVersion,
-          compatibility.minimumReaderUserVersion,
-          compatibility.minimumWriterUserVersion,
-        ].some((version) => !Number.isSafeInteger(version)
-          || version < 1
-          || version > LOCAL_UNIFIED_INDEX_USER_VERSION))) {
-      return false;
-    }
-    const schemaVersion = database.prepare(
-      "SELECT value FROM meta WHERE key = 'schema_version'",
-    ).get()?.value ?? null;
-    if (![LEGACY_LOCAL_UNIFIED_INDEX_SCHEMA_VERSION,
-      LOCAL_UNIFIED_INDEX_SCHEMA_VERSION].includes(schemaVersion)) {
-      return false;
-    }
-    // Deliberately do not run quick_check here. On an 800 MB retained index it
-    // scans the database synchronously before POST /refresh can answer, which
-    // also blocks health and cancellation. This main-thread selector proves
-    // only bounded compatibility metadata; the off-main ingestion worker owns
-    // full schema, integrity, migration, and publication validation.
-    requiresColdRefresh = compatibility.userVersion < LOCAL_UNIFIED_INDEX_USER_VERSION
-      || publishedParserUpgradeNeedsColdRefresh(database, compatibility, schemaVersion);
-  } catch {
-    requiresColdRefresh = false;
-  } finally {
-    try {
-      database?.close();
-    } catch {
-      requiresColdRefresh = false;
-    }
-  }
-  if (!requiresColdRefresh || localUnifiedIndexHasSidecar(indexFile, inspect)) {
-    return false;
-  }
-  try {
-    return unchangedUnifiedIndexTarget(before, inspect(indexFile));
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Select the refresh deadline from the index's actual state at the start of
- * each run. An exact missing target, read-only-proven migratable schema, or
- * supported published parser-upgrade rescan gets the bounded cold-build window.
- * Current-parser, future, clearly corrupt, foreign, or otherwise uncertain
- * state keeps the normal deadline.
- */
-export function localCompanionRefreshTimeoutForUnifiedIndex(
-  indexFile,
-  {
-    existingTimeoutMs = LOCAL_COMPANION_INCREMENTAL_REFRESH_TIMEOUT_MS,
-    freshTimeoutMs = LOCAL_COMPANION_FRESH_INDEX_REFRESH_TIMEOUT_MS,
-    inspect = lstatSync,
-    openDatabase = openImmutableLocalUnifiedIndex,
-  } = {},
-) {
-  if (typeof indexFile !== "string" || indexFile.length < 1) {
-    throw new TypeError("indexFile must be a non-empty string");
-  }
-  if (typeof inspect !== "function") {
-    throw new TypeError("inspect must be a function");
-  }
-  if (typeof openDatabase !== "function") {
-    throw new TypeError("openDatabase must be a function");
-  }
-  for (const [name, value] of Object.entries({
-    existingTimeoutMs,
-    freshTimeoutMs,
-  })) {
-    if (!Number.isSafeInteger(value)
-        || value < 1_000
-        || value > LOCAL_COMPANION_FRESH_INDEX_REFRESH_TIMEOUT_MS) {
-      throw new TypeError(`${name} is outside the refresh timeout bound`);
-    }
-  }
-  let resolvedIndexFile;
-  try {
-    resolvedIndexFile = resolveLocalUnifiedIndexFile(indexFile);
-    inspect(resolvedIndexFile);
-  } catch (error) {
-    return error?.code === "ENOENT" ? freshTimeoutMs : existingTimeoutMs;
-  }
-  return inspectColdRefreshLocalUnifiedIndex(
-    resolvedIndexFile,
-    inspect,
-    openDatabase,
-  )
-    ? freshTimeoutMs
-    : existingTimeoutMs;
-}
-
-const LOCAL_UNIFIED_PROJECTION_FUTURE_TOLERANCE_MS = 5 * 60_000;
-const LOCAL_UNIFIED_PROJECTION_PERIOD_MS = Object.freeze([
-  24 * 60 * 60_000,
-  7 * 24 * 60 * 60_000,
-  30 * 24 * 60 * 60_000,
-]);
-
-async function localUnifiedProjectionValidUntil({
-  indexFile: logicalIndexFile,
-  generationFingerprint,
-  nowMs,
-  includeWorkUsage = false,
-  inspect = lstat,
-  openDatabase = openImmutableLocalUnifiedIndex,
-} = {}) {
-  let before;
-  let database;
-  try {
-    // Every check below concerns the one publication current at the start.
-    const indexFile = resolveLocalUnifiedIndexFile(logicalIndexFile);
-    before = await inspect(indexFile);
-    if (!ownerOnlyRegularUnifiedIndex(before) || localUnifiedIndexHasSidecar(indexFile, lstatSync)) return nowMs;
-    database = openDatabase(indexFile);
-    database.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF;");
-    const generation = readUnifiedIndexGenerationDescriptor(database);
-    if (generation?.fingerprint !== generationFingerprint) return nowMs;
-    const boundaries = [];
-    for (const durationMs of LOCAL_UNIFIED_PROJECTION_PERIOD_MS) {
-      const rawObservedAt = database.prepare(`
-        SELECT MIN(observed_at_ms) AS observed_at_ms
-        FROM usage_event
-        WHERE observed_at_ms >= ?
-      `).get(nowMs - durationMs)?.observed_at_ms;
-      const observedAt = rawObservedAt === null || rawObservedAt === undefined
-        ? null
-        : Number(rawObservedAt);
-      if (Number.isSafeInteger(observedAt)) {
-        // Period membership uses >= at its lower bound, so the row expires on
-        // the first integer millisecond after this exact equality.
-        boundaries.push(observedAt + durationMs + 1);
-      }
-    }
-    for (const table of ["usage_event", "quota_observation"]) {
-      const rawObservedAt = database.prepare(`
-        SELECT MIN(observed_at_ms) AS observed_at_ms
-        FROM ${table}
-        WHERE observed_at_ms > ?
-      `).get(nowMs + LOCAL_UNIFIED_PROJECTION_FUTURE_TOLERANCE_MS)
-        ?.observed_at_ms;
-      const observedAt = rawObservedAt === null || rawObservedAt === undefined
-        ? null
-        : Number(rawObservedAt);
-      if (Number.isSafeInteger(observedAt)) {
-        boundaries.push(
-          observedAt - LOCAL_UNIFIED_PROJECTION_FUTURE_TOLERANCE_MS,
-        );
-      }
-    }
-    if (includeWorkUsage) {
-      const observedAt = database.prepare(`
-        SELECT MIN(observed_at_ms) AS observed_at_ms FROM usage_event
-        WHERE observed_at_ms >= ?
-      `).get(nowMs)?.observed_at_ms;
-      if (observedAt !== null && Number.isSafeInteger(observedAt)) {
-        boundaries.push(observedAt + 1);
-      }
-    }
-    const after = await inspect(indexFile);
-    if (!unchangedUnifiedIndexTarget(before, after) || localUnifiedIndexHasSidecar(indexFile, lstatSync)) return nowMs;
-    return boundaries.length === 0
-      ? Number.POSITIVE_INFINITY
-      : Math.min(...boundaries.filter((value) => value > nowMs));
-  } catch {
-    return nowMs;
-  } finally {
-    try {
-      database?.close();
-    } catch {
-      // A cache-validity failure simply forces the reviewed full reader.
-    }
-  }
-}
-
-async function currentUnifiedProjectionGeneration({ indexFile: logicalIndexFile }) {
-  let database;
-  try {
-    const indexFile = resolveLocalUnifiedIndexFile(logicalIndexFile);
-    const before = await lstat(indexFile);
-    if (!ownerOnlyRegularUnifiedIndex(before) || localUnifiedIndexHasSidecar(indexFile, lstatSync)) return null;
-    database = openImmutableLocalUnifiedIndex(indexFile);
-    const fingerprint = readUnifiedIndexGenerationDescriptor(database)?.fingerprint;
-    return unchangedUnifiedIndexTarget(before, await lstat(indexFile))
-      && !localUnifiedIndexHasSidecar(indexFile, lstatSync) ? fingerprint : null;
-  } catch {
-    return null;
-  } finally {
-    database?.close();
-  }
-}
 
 function projectionAborted() {
   const error = new Error("local_unified_companion_projection_aborted");
@@ -618,9 +244,9 @@ function projectionAborted() {
 
 /** Reuse cloneable accounting results, with one cancellable build per exact key. */
 export function createCachedLocalUnifiedProjectionReader({
-  reader = createLocalUnifiedCompanionProjectionReader(),
-  validUntil = localUnifiedProjectionValidUntil,
-  readGeneration = currentUnifiedProjectionGeneration,
+  reader,
+  validUntil,
+  readGeneration,
 } = {}) {
   for (const callback of [reader, validUntil, readGeneration]) {
     if (typeof callback !== "function") throw new TypeError("reader must be a function");
@@ -743,13 +369,6 @@ export function selectSharedWorkUsageSnapshot(projection, query) {
     throw error;
   }
   return { ...snapshot, fromMs: period.fromMs, toMs: period.toMs };
-}
-
-function createAppAwareKeychainBackend(environment) {
-  return createExportIdentityKeychainBackend({
-    loadBrokerBinding: () =>
-      createMacOSKeychainBrokerBindingFromEnvironment(environment),
-  });
 }
 
 /**
@@ -894,8 +513,6 @@ const HOSTED_SIGNIN_HANDOFF_PROVIDERS = new Set(["google", "apple"]);
 const MAX_RECENT_DIAGNOSTIC_REFERENCES = 5;
 const CONTRIBUTION_DEVICE_KEYCHAIN_CAPABILITY =
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice;
-const CONTRIBUTION_DEVICE_APP_KEYCHAIN_CAPABILITY =
-  EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDeviceApp;
 const MAX_CONTRIBUTION_DEVICE_STATE_BYTES = 512;
 
 function createLocalStartupDiagnosticReference() {
@@ -939,35 +556,10 @@ function resolveDevelopmentIdentityConfiguration({
         : "production_keychain",
     });
   }
-  if (typeof file !== "string"
-      || file.length < 1
-      || !isAbsolute(file)
-      || optIn !== "1"
-      || environmentExportSecretPresent) {
-    throw developmentIdentityConfigurationError();
-  }
-  let metadata;
-  try {
-    metadata = lstatSync(file);
-  } catch {
-    throw developmentIdentityConfigurationError();
-  }
-  const userId = typeof process.getuid === "function"
-    ? process.getuid()
-    : null;
-  if (!metadata.isFile()
-      || metadata.isSymbolicLink()
-      || metadata.nlink !== 1
-      || metadata.size !== 44
-      || !Number.isSafeInteger(userId)
-      || metadata.uid !== userId
-      || (metadata.mode & 0o7777) !== 0o600) {
-    throw developmentIdentityConfigurationError();
-  }
-  return Object.freeze({
-    explicitSecretFile: file,
-    mode: "development_file_override",
-  });
+  void optIn;
+  // Windows has no mode bits from which to prove a secret file owner-only, so
+  // the file override is refused rather than half-checked.
+  throw developmentIdentityConfigurationError();
 }
 
 const SESSION_COOKIE_NAME = "__Host-usage_monitor_session";
@@ -1098,11 +690,6 @@ function performanceInstant(value) {
     && new Date(value).toISOString() === value;
 }
 
-function performanceDay(value) {
-  return typeof value === "string"
-    && /^\d{4}-\d{2}-\d{2}$/u.test(value)
-    && performanceInstant(`${value}T00:00:00.000Z`);
-}
 
 function performanceOrigin(value) {
   if (typeof value !== "string") return false;
@@ -1202,75 +789,15 @@ function performanceReviewProjection({ reviewToken, grantDeviceId, destinationOr
 
 function contributionDeviceRecoveryRequired(error) {
   try {
-    // Every one of these means this Mac's own device credential is present-but-
-    // unusable (or its binding is half-there): the LOCAL half is broken and the
-    // cure is the local reset ceremony — an attribute delete plus binding-file
-    // removal that never needs to read the secret — followed by a fresh mint on
-    // the next approval. Mapping them all to the recovery code routes the user
-    // into renderContributionDeviceRecovery (the reset button) instead of a
-    // generic 502 pairing/sync failure that offers no path and re-hits the same
-    // unreadable item on every retry (a silent forever-loop).
-    //   credential_conflict     keychain secret and binding file disagree, or a
-    //                           secret exists with no binding (or vice-versa).
-    //   credential_locked /     a signed update re-signed the app and the old
-    //   credential_denied       item's ACL no longer grants the companion read
-    //                           access (observed live 2026-08-10). The v0.1.9+
-    //                           durable-requirement ACL prevents this for items
-    //                           minted from now on; this is the recovery net for
-    //                           any item minted by an earlier build, or if the
-    //                           durable ACL ever fails to hold across a re-sign.
-    //   credential_unavailable  the secret is unreadable/corrupt or a fresh
-    //                           mint's read-back did not match — reset+remint.
-    //   credential_missing      a binding file with no backing secret (a
-    //                           half-completed prior reset or an out-of-band
-    //                           Keychain deletion) — clearing the binding lets
-    //                           the next approval mint cleanly.
+    // Each of these means this device's credential is present but unusable, or
+    // its binding is half there: the LOCAL half is broken and the cure is the
+    // local reset ceremony, followed by a fresh mint on the next approval.
     const code = error?.code;
     return code === "contribution_device_credential_conflict"
       || code === "contribution_device_credential_locked"
       || code === "contribution_device_credential_denied"
       || code === "contribution_device_credential_unavailable"
       || code === "contribution_device_credential_missing";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * A locked login keychain, and nothing else.
- *
- * It shares the recovery family's 409 because uploads genuinely cannot
- * proceed, but it is the one member where NOTHING on this Mac is broken: the
- * credential and its binding are intact and become readable again the moment
- * the keychain is unlocked. Collapsing it into the generic recovery code told
- * the user their credential was leftover from an earlier install and offered a
- * destructive clear — a wrong diagnosis whose suggested cure forces a needless
- * re-pair. Keeping the cause distinguishable is what lets the dashboard say
- * "uploads are paused until you unlock it" instead.
- *
- * With SecKeychainSetUserInteractionAllowed(false) around every app-side
- * SecItem call, this is what a locked keychain reaches: errSecInteractionNotAllowed
- * → "locked" → KEYCHAIN_LOCKED over the broker → credential_locked. It arrives
- * promptly and rejects one broker request, so the channel is not poisoned and
- * the next pass after an unlock simply succeeds.
- */
-function contributionDeviceKeychainLocked(error) {
-  try {
-    return error?.code === "contribution_device_credential_locked";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * A legacy Keychain item that the signed app could not migrate because the
- * one permitted interactive read was declined. The broker leaves that item
- * untouched, so clearing or resetting it would destroy the rollback path.
- */
-function contributionDeviceKeychainMigrationRequired(error) {
-  try {
-    return error?.code ===
-      "contribution_device_credential_migration_required";
   } catch {
     return false;
   }
@@ -1435,39 +962,22 @@ export async function readRecentDiagnosticReferences({
 }
 
 /**
- * Clear this Mac's leftover contribution-device credential.
+ * Clear this device's leftover contribution-device credential.
  *
  * This is the narrow repair for the local faults that leave the ordinary
- * capability layer unable to read or replace the credential: a Keychain
- * secret whose binding state file is gone, an access control list a Sparkle
- * update no longer satisfies, or a capability backend that cannot even be
- * constructed. When the backend can read the secret, the exact-value delete
- * is kept; when it cannot — the exact disease this route cures — the
- * credential is deleted by its fixed attributes instead, which never needs
- * the secret (verified live 2026-08-10). Only local things are removed: the
- * this bundle's sealed contribution-device Keychain entries and the binding
- * state file (plus its pre-rename legacy twin, whose leftover
- * would otherwise wedge the next pairing). It contacts no network, revokes
- * no hosted device, and deletes no contributed metadata; the hosted side is
- * unaware of it.
+ * capability layer unable to read or replace the credential. When the backend
+ * can read the secret, the exact-value delete is kept; when it cannot, the
+ * caller's attribute delete runs, and without one nothing addressable remains.
+ * Only local things are removed: the credential and the binding state file. It
+ * contacts no network, revokes no hosted device, and deletes no contributed
+ * metadata.
  */
 async function resetContributionDeviceCredentialLocally({
   backend,
   stateFile,
-  legacyStateFile = null,
-  // Both storage generations are addressed: the app-minted
-  // `.app.v1` item and the companion-minted `.v1` item. Attribute deletes
-  // never decrypt, so clearing the generation that does not exist is a free
-  // "missing" rather than a prompt or a failure.
-  attributeDelete = () => {
-    const app = deleteExportIdentityKeychainItemByAttributes(
-      CONTRIBUTION_DEVICE_APP_KEYCHAIN_CAPABILITY,
-    );
-    const legacy = deleteExportIdentityKeychainItemByAttributes(
-      CONTRIBUTION_DEVICE_KEYCHAIN_CAPABILITY,
-    );
-    return app === "deleted" || legacy === "deleted" ? "deleted" : "missing";
-  },
+  // Without a readable backend there is no credential this process can
+  // address, so the default reports it missing.
+  attributeDelete = async () => "missing",
 }) {
   let stored = null;
   let expected = null;
@@ -1520,19 +1030,13 @@ async function resetContributionDeviceCredentialLocally({
     if (!current.isFile()
         || current.isSymbolicLink()
         || current.nlink !== 1
-        || current.size > MAX_CONTRIBUTION_DEVICE_STATE_BYTES
-        || (typeof process.getuid === "function"
-          && current.uid !== process.getuid())) {
+        || current.size > MAX_CONTRIBUTION_DEVICE_STATE_BYTES) {
       throw new Error("device binding state file is not owner-only");
     }
     await unlink(file);
     return "removed";
   };
-  let binding = await removeOwnerOnlyBindingFile(stateFile);
-  if (legacyStateFile !== null) {
-    const legacy = await removeOwnerOnlyBindingFile(legacyStateFile);
-    if (legacy === "removed") binding = "removed";
-  }
+  const binding = await removeOwnerOnlyBindingFile(stateFile);
   return Object.freeze({
     status: credential === "already_missing" && binding === "already_missing"
       ? "already_absent"
@@ -2056,7 +1560,7 @@ async function authorizeContributionDeviceDisconnect(request, response) {
     return false;
   }
   // This revokes a live remote bearer and then clears its exact local
-  // Keychain binding. It needs a distinct explicit confirmation from the
+  // binding. It needs a distinct explicit confirmation from the
   // local-only leftover-credential repair.
   if (Object.keys(value).join("\0") !== "confirm"
       || value.confirm !== "disconnect_this_mac") {
@@ -2544,9 +2048,8 @@ function unifiedIndexBusyError(error) {
 /**
  * A thrown contribution-device capability failure — the same family the sync
  * engine itself maps to its device_unavailable outcome. The wiring can hit
- * this family before the engine exists (constructing the Keychain backend,
- * or migrating the legacy binding file), so the same mapping must live here
- * too.
+ * this family before the engine exists (constructing the credential backend),
+ * so the same mapping must live here too.
  */
 function contributionDeviceCapabilityFailure(error) {
   try {
@@ -2561,7 +2064,7 @@ function contributionDeviceCapabilityFailure(error) {
  * The engine's own device_unavailable failure shape for a pass that never
  * ran: the controller pauses with the exact reason the dashboard's
  * re-approve repair path keys on, instead of walking an anonymous run_failed
- * retry ladder forever (observed live 2026-08-10, after a Sparkle update
+ * retry ladder forever (observed live 2026-08-10, after an update
  * left the credential unreadable). networkActivity is false — no counts were
  * measured, so the controller must not let these zeros overwrite the last
  * honest progress.
@@ -2592,21 +2095,10 @@ function deviceUnavailableIncrementalRunOutcome() {
  * The bounded status the dashboard's incremental surface reads: consent
  * state, cursor progress as day counts and the acknowledged watermark day,
  * pause reason as a fixed code. No path, no content, no identifier.
- *
- * `keychainPrompt` rides along because this is the projection the ceremony
- * already polls: it names where a macOS Keychain dialog is still reachable
- * ("pairing", "migration", "none") so the dashboard can withhold guidance from
- * the installs that can never see one. It is a fixed vocabulary, never a
- * path, an identifier, or a credential fact.
  */
 function incrementalSyncStatusProjection(value, {
   configured = false,
-  keychainPrompt = "pairing",
 } = {}) {
-  const promptSurface =
-    CONTRIBUTION_DEVICE_KEYCHAIN_PROMPT_SURFACES.includes(keychainPrompt)
-      ? keychainPrompt
-      : "pairing";
   const consent = value?.consent;
   const valid = value?.schemaVersion
       === "incremental-contribution-sync-status-v1.0"
@@ -2622,7 +2114,6 @@ function incrementalSyncStatusProjection(value, {
       : configured ? "unavailable" : "not_configured",
     contractVersion: valid && [TELEMETRY_V11_CONTRIBUTION_SCHEMA_VERSION, TELEMETRY_V12_CONTRIBUTION_SCHEMA_VERSION].includes(value.contractVersion)
       ? value.contractVersion : TELEMETRY_V1_CONTRIBUTION_SCHEMA_VERSION,
-    keychainPrompt: promptSurface,
     consent: { approved: false, current: false, consentedAt: null },
     paused: false,
     pausedReason: null,
@@ -3004,23 +2495,6 @@ export function resolveClaudeDesktopShadowConfiguration({
   });
 }
 
-// Accounting authority is a composition-root choice. The shipped default is
-// the generation-bound unified index; legacy remains an explicit rollback only.
-// Either mode is selected here and there is no implicit fallback between them.
-export function configuredAccountingSourceMode(environment) {
-  if (!environment || typeof environment !== "object"
-      || Array.isArray(environment)) {
-    throw new TypeError("environment must be an object");
-  }
-  const selected = environment.USAGE_MONITOR_ACCOUNTING_SOURCE_MODE ?? "unified";
-  if (!new Set(["legacy", "unified"]).has(selected)) {
-    throw new TypeError(
-      "USAGE_MONITOR_ACCOUNTING_SOURCE_MODE must be legacy or unified",
-    );
-  }
-  return selected;
-}
-
 function parentWatchdogConfigurationError() {
   const error = new TypeError(
     "Parent watchdog configuration is invalid",
@@ -3197,24 +2671,6 @@ export function createLocalCompanionServer(options = {}) {
     options.diagnosticsLogFile
       ?? join(installation.stateRoot, DIAGNOSTICS_LOG_FILE_NAME),
   );
-  const legacyContributionDeviceStateCandidate = accountlessProductionProfile
-    ? null
-    : Object.hasOwn(options, "legacyContributionDeviceStateFile")
-      ? options.legacyContributionDeviceStateFile
-      : process.platform === "darwin"
-          && !Object.hasOwn(options, "contributionDeviceBackendFactory")
-        ? join(
-          homeDirectory,
-          "Library",
-          "Application Support",
-          "app-usagemonitor",
-          "contribution-device-binding-v1.json",
-        )
-        : null;
-  const legacyContributionDeviceStateFile =
-    legacyContributionDeviceStateCandidate === null
-      ? null
-      : assertLocalAbsolutePath(legacyContributionDeviceStateCandidate);
   const preparedCandidate = accountlessProductionProfile
     ? null
     : Object.hasOwn(options, "preparedContributionDirectory")
@@ -3261,7 +2717,6 @@ export function createLocalCompanionServer(options = {}) {
     codexHome,
     contributionQueueFile,
     diagnosticsLogFile,
-    legacyContributionDeviceStateFile,
     preparedContributionDirectory,
     contributionPreparationOptions: selectedPreparationOptions,
     centralOrigin: accountlessProductionProfile ? null : options.centralOrigin,
@@ -3290,10 +2745,6 @@ function createPreparedLocalCompanionServer({
   diagnosticsLogFile,
   parentWatchdogPid,
   semanticOpenTarget,
-  // Explicit reversible authority switch. Unified is the normal authority;
-  // legacy is retained only for an explicit rollback selection.
-  accountingSourceMode =
-    configuredAccountingSourceMode(environment),
   // A declared speed baseline supplements missing per-turn/applied-settings
   // evidence. Only the configuration's top-level `service_tier` key is read;
   // each timestamped observation covers its established time interval and
@@ -3302,7 +2753,19 @@ function createPreparedLocalCompanionServer({
     ledgerFile: statePaths.codexSpeedBaselineFile,
     configFile: join(codexHome, "config.toml"),
   }),
-  sharedProjectionReader = createCachedLocalUnifiedProjectionReader(),
+  // The local index. A previous installation's index is read once, only for
+  // the ordinal map that keeps hosted identity continuous; its device salt is
+  // the same file.
+  localIndexBackend = createLocalIndexBackend({
+    indexFile: statePaths.localIndexStoreFile,
+    secretFile: statePaths.unifiedIndexSecretFile,
+    legacyIndexFile: statePaths.unifiedIndexFile,
+  }),
+  // The store every index consumer below reads.
+  unifiedStoreFile = localIndexBackend.indexFile,
+  sharedProjectionReader = createCachedLocalUnifiedProjectionReader(
+    localIndexBackend.projectionReader,
+  ),
   unifiedProjectionReader = async (options, controls) => {
     return sharedProjectionReader({ ...options, includeWorkUsage: true, codexHome }, {
       ...controls, selectProjection: projection => projection.companion ?? projection,
@@ -3317,12 +2780,8 @@ function createPreparedLocalCompanionServer({
     } = {}) => buildLocalCompanionSnapshot({
       root: resourceRoot,
       collectorStateFile: statePaths.collectorStateFile,
-      archiveIndexFile: accountingSourceMode === "legacy"
-        ? statePaths.archiveAccountingIndexFile
-        : null,
-      unifiedIndexFile: statePaths.unifiedIndexFile,
+      unifiedIndexFile: unifiedStoreFile,
       codexHome,
-      accountingSourceMode,
       unifiedProjectionMode: ["startup", "quick"].includes(purpose)
         ? "deferred"
         : "full",
@@ -3331,16 +2790,6 @@ function createPreparedLocalCompanionServer({
       signal,
       allowDevelopmentArtifactFallback:
         environment.USAGE_MONITOR_DEVELOPMENT_ARTIFACT_FALLBACK === "1",
-      includeDevelopmentSideChatEstimates:
-        environment.USAGE_MONITOR_DEVELOPMENT_SIDE_CHAT_ESTIMATES === "1",
-      developmentSideChatHistoricalGapDate:
-        environment.USAGE_MONITOR_DEVELOPMENT_SIDE_CHAT_BACKCAST_DATE ?? null,
-      developmentSideChatHistoricalGapTimeZone:
-        environment.USAGE_MONITOR_DEVELOPMENT_SIDE_CHAT_BACKCAST_TIME_ZONE
-          ?? "America/New_York",
-      developmentSideChatHistoricalGapAssumedSpeed:
-        environment.USAGE_MONITOR_DEVELOPMENT_SIDE_CHAT_BACKCAST_SPEED
-          ?? "fast",
       // Timestamped declared baselines. They fill only the turns the rollout
       // log left unobserved and that a reading actually covers; an observed
       // tier always wins, and an unreadable ledger is simply no coverage.
@@ -3352,22 +2801,18 @@ function createPreparedLocalCompanionServer({
   // test can drive the route's range validation and response shape without a
   // real index on disk; in production it reads the same index the snapshot
   // draws from, strictly read-only.
-  windowBreakdownProvider = ({ fromMs, toMs }) => readLocalUnifiedWindowBreakdown({
-    indexFile: statePaths.unifiedIndexFile,
-    fromMs,
-    toMs,
-  }),
+  windowBreakdownProvider = ({ fromMs, toMs }) => (
+    localIndexBackend.windowBreakdown({ fromMs, toMs })
+  ),
   modelPerformanceProvider = null,
   // Never enrich the persisted overview or report DTOs with names. This
   // optional, transient read resolves only rows from the attested snapshot.
-  cacheDropThreadLinksProvider = ({ overview }) => buildLocalCacheDropThreadLinks({
-    indexFile: statePaths.unifiedIndexFile,
-    codexHome,
-    overview,
-  }),
+  cacheDropThreadLinksProvider = ({ overview }) => (
+    localIndexBackend.cacheDropThreadLinks({ codexHome, overview })
+  ),
   workUsageBuild = async (query, controls) => sharedProjectionReader({
       mode: "full", nowMs: query.toMs, includeWorkUsage: true, exactWindow: query.exactWindow === true,
-      indexFile: statePaths.unifiedIndexFile, codexHome,
+      indexFile: unifiedStoreFile, codexHome,
       declaredSpeedBaselines: await codexSpeedBaseline.readWindows(),
     }, { ...controls, selectProjection: projection => selectSharedWorkUsageSnapshot(projection, query) }),
   workUsageEnrich = (query) => enrichWorkUsageRows({ ...query, codexHome }),
@@ -3399,41 +2844,18 @@ function createPreparedLocalCompanionServer({
         ? Object.freeze({ loadAccountObservationSecret: null })
         : selectProductionAccountObservationSecret({
           ...options,
-          createKeychainBackend: () =>
-            createAppAwareKeychainBackend(environment),
-          createLinuxBackend: () =>
-            createLinuxAccountObservationBrokerBackendFromEnvironment(environment),
           createWindowsBrokerBackend: () =>
             createWindowsAccountObservationBrokerBackendFromEnvironment(environment),
         })
     ),
-    refreshAccounting: refreshReplaySafeAccountingCache,
+    refreshAccounting: localIndexBackend.refreshAccounting,
     refreshClaudeUsageShadow: claudeShadowEnabled
       ? ({ signal }) => claudeShadowController.refresh({ signal })
       : null,
-    accountingSourceMode,
-    legacyAnalysisIndexFile: accountingSourceMode === "legacy"
-      ? statePaths.legacyAnalysisIndexFile
-      : null,
-    legacyAnalysisIndexSecretFile: accountingSourceMode === "legacy"
-      ? statePaths.legacyAnalysisIndexSecretFile
-      : null,
-    refreshArchiveIndex: accountingSourceMode === "legacy"
-      ? refreshLocalArchiveAccountingIndex
-      : null,
-    archiveIndexFile: accountingSourceMode === "legacy"
-      ? statePaths.archiveAccountingIndexFile
-      : null,
-    archiveIndexSecretFile: accountingSourceMode === "legacy"
-      ? statePaths.archiveAccountingIndexSecretFile
-      : null,
-    // Advance the unified index by its cursors on every foreground refresh:
-    // an ordinary pass reads only the bytes the rollout corpus grew.
-    refreshUnifiedIndex: (options) => ingestLocalUnifiedIndexOffMain({
-      ...options,
-      contractVersion: TELEMETRY_SCHEMA_VERSION,
-    }),
-    unifiedIndexFile: statePaths.unifiedIndexFile,
+    // Advance the index by its cursors on every foreground refresh: an
+    // ordinary pass reads only the bytes the rollout corpus grew.
+    refreshUnifiedIndex: localIndexBackend.refreshUnifiedIndex,
+    unifiedIndexFile: unifiedStoreFile,
     unifiedIndexSecretFile: statePaths.unifiedIndexSecretFile,
     recordCodexSpeedBaseline: async () => (
       (await codexSpeedBaseline.record()).windows
@@ -3448,64 +2870,27 @@ function createPreparedLocalCompanionServer({
       && environment.CODEX_HOME.length > 0,
   }),
   refreshTimeoutMs = LOCAL_COMPANION_INCREMENTAL_REFRESH_TIMEOUT_MS,
-  refreshTimeoutMsForRun = () => localCompanionRefreshTimeoutForUnifiedIndex(
-    statePaths.unifiedIndexFile,
-    { existingTimeoutMs: refreshTimeoutMs },
-  ),
+  refreshTimeoutMsForRun = () => localIndexBackend.refreshTimeoutMs({
+    existingTimeoutMs: refreshTimeoutMs,
+    freshTimeoutMs: LOCAL_COMPANION_FRESH_INDEX_REFRESH_TIMEOUT_MS,
+  }),
   centralOrigin = environment.USAGE_MONITOR_CENTRAL_ORIGIN ?? null,
   centralFetch = globalThis.fetch,
   contributionPreparationRunner = null,
   contributionPreparationOptions = {},
-  contributionPreparationCreateKeychainBackend = () =>
-    createAppAwareKeychainBackend(environment),
   developmentExportSecretFile =
     environment[DEVELOPMENT_IDENTITY_FILE_ENV] ?? null,
   developmentIdentityOptIn =
     environment[DEVELOPMENT_IDENTITY_OPT_IN_ENV] ?? null,
   contributionQueueFile,
-  legacyContributionDeviceStateFile = null,
   contributionSyncStatusProvider = () => inspectContributionSyncQueue({
     queueFile: contributionQueueFile,
   }),
   preparedContributionDirectory,
   contributionServiceOrigin = centralOrigin,
-  // When the signed app spawned this companion it hands over a Keychain
-  // broker channel (a socketpair end on the named descriptor): fresh
-  // contribution-device credentials are then minted and read by the app —
-  // the structural fix for the first-pairing Keychain dialog — while legacy
-  // items migrate through the signed app on their next protected read.
-  // Without the announcement (development, tests, Windows) the
-  // production keytar backend stays authoritative, exactly as before. The
-  // transport is shared across backend constructions: the channel is one
-  // kernel socketpair whose lifetime is the app's.
-  contributionDeviceBackendFactory = (() => {
-    // A malformed environment is rejected by the body's own validation; the
-    // selection here must not preempt that error with a different one.
-    const brokerConfiguration = environment && typeof environment === "object"
-        && !Array.isArray(environment)
-      ? contributionDeviceKeychainBrokerConfiguration(environment)
-      : null;
-    if (brokerConfiguration === null) {
-      return createProductionContributionDeviceBackend;
-    }
-    let brokerTransport = null;
-    return () => {
-      brokerTransport ??= createContributionDeviceKeychainBrokerTransport(
-        brokerConfiguration,
-      );
-      return createAppBrokeredContributionDeviceBackend({
-        transport: brokerTransport,
-      });
-    };
-  })(),
-  // Where a Keychain dialog is still reachable, resolved once. The legacy leg
-  // of the answer shells out to an attribute probe, and the ceremony polls the
-  // carrying route every four seconds, so this must not be recomputed per
-  // request. Nothing in brokered mode ever creates a legacy item, so one
-  // answer holds for the process; the migration that removes one only makes a
-  // conditional sentence redundant, never wrong.
-  contributionDeviceKeychainPromptProvider = () =>
-    contributionDeviceKeychainPromptSurface({ environment }),
+  // Windows production wiring supplies the credential manager backend through
+  // the composition root; without one the factory fails closed.
+  contributionDeviceBackendFactory = createProductionContributionDeviceBackend,
   contributionDevicePairingProvider = null,
   contributionDeviceCredentialResetRunner = null,
   contributionDeviceCredentialAttributeDelete = null,
@@ -3541,8 +2926,6 @@ function createPreparedLocalCompanionServer({
     }
     return selectProductionAccountObservationSecret({
       operationLockFile: statePaths.accountObservationLockFile,
-      createKeychainBackend: () => createAppAwareKeychainBackend(environment),
-      createLinuxBackend: () => createLinuxAccountObservationBrokerBackendFromEnvironment(environment),
       createWindowsBrokerBackend: () =>
         createWindowsAccountObservationBrokerBackendFromEnvironment(environment),
       createIfMissing: false,
@@ -3597,11 +2980,12 @@ function createPreparedLocalCompanionServer({
       && (!selectedAccountlessPrivateProfile
         || contributionQueueFile !== null
         || preparedContributionDirectory !== null
-        || legacyContributionDeviceStateFile !== null
         || centralOrigin !== null
         || contributionServiceOrigin !== null)) {
     throw new TypeError("Invalid accountless contribution configuration");
   }
+  // The contribution engine reads the store this composition selected.
+  const contributionIndexSeams = localIndexBackend.contribution;
   if ([incrementalContributionRunner, loadExistingAccountObservationSecret, readContributionAccountMarkers]
     .some((value) => typeof value !== "function")
       || [incrementalAttributionCapabilitiesProvider, incrementalAttributionReviewProvider, readAccountAttributionBinding]
@@ -3637,12 +3021,6 @@ function createPreparedLocalCompanionServer({
       || typeof contributionPreparationOptions !== "object"
       || Array.isArray(contributionPreparationOptions)) {
     throw new TypeError("contributionPreparationOptions must be an object");
-  }
-  if (contributionPreparationCreateKeychainBackend !== undefined
-      && typeof contributionPreparationCreateKeychainBackend !== "function") {
-    throw new TypeError(
-      "contributionPreparationCreateKeychainBackend must be a function",
-    );
   }
   const invalidSocialPerformanceOptions = socialPerformanceOptions !== undefined
     && (!socialPerformanceOptions
@@ -3703,13 +3081,6 @@ function createPreparedLocalCompanionServer({
       && typeof contributionServiceOrigin !== "string") {
     throw new TypeError("contributionServiceOrigin must be a string or null");
   }
-  if (legacyContributionDeviceStateFile !== null
-      && (typeof legacyContributionDeviceStateFile !== "string"
-        || !isAbsolute(legacyContributionDeviceStateFile))) {
-    throw new TypeError(
-      "legacyContributionDeviceStateFile must be an absolute path or null",
-    );
-  }
   if (typeof diagnosticsLogFile !== "string"
       || diagnosticsLogFile.length < 1
       || typeof clock !== "function"
@@ -3755,40 +3126,21 @@ function createPreparedLocalCompanionServer({
         directory: preparedContributionDirectory,
         queueFile: contributionQueueFile,
       }));
-  const createContributionDeviceBackend = async () => {
-    const backend = contributionDeviceBackendFactory();
-    if (legacyContributionDeviceStateFile !== null) {
-      await migrateLegacyContributionDeviceCapability({
-        backend,
-        legacyStateFile: legacyContributionDeviceStateFile,
-        stateFile: statePaths.contributionDeviceStateFile,
-        expectedOrigin: contributionServiceOrigin,
-      });
-    }
-    return backend;
-  };
-  // Keychain-free pairing evidence: the binding file is published the moment
-  // a credential is minted (at the legacy location until its lazy migration),
-  // so its presence answers "has this Mac ever paired" without touching the
-  // Keychain — this probe must never itself raise the macOS access prompt.
-  // Anything other than a clean absence counts as present, so approval keeps
-  // the immediate first attempt and the pass classifies the fault honestly.
+  const createContributionDeviceBackend = async () => (
+    contributionDeviceBackendFactory()
+  );
+  // Credential-free pairing evidence: the binding file is published the moment
+  // a credential is minted, so its presence answers "has this device ever
+  // paired" without reading the credential store. Anything other than a clean
+  // absence counts as present, so approval keeps the immediate first attempt
+  // and the pass classifies the fault honestly.
   const contributionDeviceBindingPresent = async () => {
-    const candidates = [
-      statePaths.contributionDeviceStateFile,
-      ...(legacyContributionDeviceStateFile === null
-        ? []
-        : [legacyContributionDeviceStateFile]),
-    ];
-    for (const candidate of candidates) {
-      try {
-        await lstat(candidate);
-        return true;
-      } catch (error) {
-        if (error?.code !== "ENOENT") return true;
-      }
+    try {
+      await lstat(statePaths.contributionDeviceStateFile);
+      return true;
+    } catch (error) {
+      return error?.code !== "ENOENT";
     }
-    return false;
   };
   const pairContributionDevice = accountlessProductionProfile
     ? null
@@ -3824,13 +3176,11 @@ function createPreparedLocalCompanionServer({
         }
         return paired;
       });
-  // Purely local repair: it needs at most the Keychain backend and the
-  // binding state files, never a contribution service origin, so it stays
+  // Purely local repair: it needs at most the credential backend and the
+  // binding state file, never a contribution service origin, so it stays
   // available even when no service is configured. The backend is best-effort
-  // here — when the capability layer itself is the fault (observed live
-  // 2026-08-10: the signed native binding failed its integrity pin, so even
-  // constructing the backend threw), the repair proceeds by attribute delete
-  // rather than refusing to run.
+  // here: when the capability layer itself is the fault, the repair proceeds
+  // by attribute delete rather than refusing to run.
   const resetContributionDeviceCredential = accountlessProductionProfile
     ? null
     :
@@ -3845,7 +3195,6 @@ function createPreparedLocalCompanionServer({
       return resetContributionDeviceCredentialLocally({
         backend,
         stateFile: statePaths.contributionDeviceStateFile,
-        legacyStateFile: legacyContributionDeviceStateFile,
         ...(contributionDeviceCredentialAttributeDelete === null
           ? {}
           : { attributeDelete: contributionDeviceCredentialAttributeDelete }),
@@ -3966,14 +3315,6 @@ function createPreparedLocalCompanionServer({
           explicitSecretFile,
           environmentSecret: environment[EXPORT_IDENTITY_ENV],
           appStateSecretFile: statePaths.exportParticipantSecretFile,
-          createLinuxBackend: () =>
-            createLinuxSecretServiceBrokerBackendFromEnvironment(environment),
-          ...(contributionPreparationCreateKeychainBackend === undefined
-            ? {}
-            : {
-              createKeychainBackend:
-                contributionPreparationCreateKeychainBackend,
-            }),
         })
       ),
   });
@@ -4019,27 +3360,6 @@ function createPreparedLocalCompanionServer({
           !== "function")) {
     throw new TypeError("incrementalContributionController is invalid");
   }
-  // Resolved on first use and then held: the provider's legacy leg spawns an
-  // attribute probe, and the route carrying this answer is polled every few
-  // seconds by the ceremony. An unusable provider reports the surface that
-  // keeps today's guidance on screen.
-  let resolvedKeychainPrompt = null;
-  function keychainPromptSurface() {
-    if (resolvedKeychainPrompt === null) {
-      let resolved;
-      try {
-        resolved = contributionDeviceKeychainPromptProvider();
-      } catch {
-        resolved = "pairing";
-      }
-      resolvedKeychainPrompt =
-        CONTRIBUTION_DEVICE_KEYCHAIN_PROMPT_SURFACES.includes(resolved)
-          ? resolved
-          : "pairing";
-    }
-    return resolvedKeychainPrompt;
-  }
-
   // The telemetry-contribution-v1.0 incremental sync, additive beside the
   // v0.1 prepared-set path. Configured only when a contribution service
   // origin exists; the health capability additionally requires the unified
@@ -4110,7 +3430,8 @@ function createPreparedLocalCompanionServer({
               return deviceUnavailableIncrementalRunOutcome();
             }
             return await incrementalContributionRunner({
-              indexFile: statePaths.unifiedIndexFile,
+              ...contributionIndexSeams,
+              indexFile: unifiedStoreFile,
               origin: contributionServiceOrigin,
               backend,
               stateFile: statePaths.contributionDeviceStateFile,
@@ -4136,9 +3457,9 @@ function createPreparedLocalCompanionServer({
               busy.retryable = true;
               throw busy;
             }
-            // 2026-08-10 (observed live): the Keychain capability failed
+            // 2026-08-10 (observed live): the credential capability failed
             // before the engine could shape it — the backend factory threw
-            // once a Sparkle update invalidated the audited binding — and
+            // once an update invalidated the audited binding — and
             // the controller looped anonymous run_failed retries against a
             // fault no retry can fix. The engine already owns the honest
             // state for exactly this family; hand it over as the
@@ -4207,7 +3528,7 @@ function createPreparedLocalCompanionServer({
       backend: await createContributionDeviceBackend(), stateFile: statePaths.contributionDeviceStateFile,
       fetchImpl: centralFetch, now: clock }));
   const readAttributionReview = incrementalAttributionReviewProvider ?? (async () =>
-    readIncrementalContributionV11Review({ indexFile: statePaths.unifiedIndexFile,
+    readIncrementalContributionV11Review({ ...contributionIndexSeams, indexFile: unifiedStoreFile,
       origin: contributionServiceOrigin, backend: await createContributionDeviceBackend(),
       stateFile: statePaths.contributionDeviceStateFile, fetchImpl: centralFetch, now: clock,
       readAccountMarkers: readContributionAccountMarkers, loadExistingAccountObservationSecret }));
@@ -4219,7 +3540,7 @@ function createPreparedLocalCompanionServer({
     } catch { return null; }
   };
   const readSuccessorReview = async () => readIncrementalContributionV12Review({
-    indexFile: statePaths.unifiedIndexFile, origin: contributionServiceOrigin,
+    ...contributionIndexSeams, indexFile: unifiedStoreFile, origin: contributionServiceOrigin,
     backend: await createContributionDeviceBackend(), stateFile: statePaths.contributionDeviceStateFile,
     fetchImpl: centralFetch, now: clock, readAccountMarkers: readContributionAccountMarkers,
     loadExistingAccountObservationSecret });
@@ -4267,7 +3588,7 @@ function createPreparedLocalCompanionServer({
   };
   const unifiedIndexPresent = async () => {
     try {
-      const metadata = await lstatPublishedLocalUnifiedIndex(statePaths.unifiedIndexFile);
+      const metadata = await lstat(unifiedStoreFile);
       return metadata.isFile() && !metadata.isSymbolicLink();
     } catch {
       return false;
@@ -4295,7 +3616,8 @@ function createPreparedLocalCompanionServer({
   let contributionRuntimeStart = null;
   let contributionRuntimeShutdown = null;
   const accountlessContribution = createLocalAccountlessContribution({
-    environment, stateRoot, indexFile: statePaths.unifiedIndexFile,
+    environment, stateRoot, indexFile: unifiedStoreFile,
+    contribution: localIndexBackend.contribution,
     channel: accountlessChannel,
     readAccountMarkers: readContributionAccountMarkers,
     loadExistingAccountObservationSecret,
@@ -4793,7 +4115,6 @@ function createPreparedLocalCompanionServer({
         queue: syncStatusProjection(null),
         incremental: incrementalSyncStatusProjection(null, {
           configured: false,
-          keychainPrompt: "none",
         }),
         configured: false,
         pairingObserved: false,
@@ -4838,7 +4159,6 @@ function createPreparedLocalCompanionServer({
       queue: syncStatusProjection(queueValue),
       incremental: incrementalSyncStatusProjection(incrementalValue, {
         configured: incrementalContribution !== null,
-        keychainPrompt: keychainPromptSurface(),
       }),
       configured: incrementalContribution !== null,
       pairingObserved,
@@ -4869,7 +4189,7 @@ function createPreparedLocalCompanionServer({
   const workUsage = createWorkUsageService({ build: workUsageBuild, enrich: workUsageEnrich,
     snapshotStore: createWorkUsageSnapshotStore({
       snapshotFile: join(stateRoot, "work-usage-snapshot.json"),
-      codexHome, indexFile: statePaths.unifiedIndexFile,
+      codexHome, indexFile: unifiedStoreFile,
     }),
   });
   let workUsageShutdown = null;
@@ -5386,7 +4706,6 @@ function createPreparedLocalCompanionServer({
         if (incrementalContribution === null) {
           send(response, 200, incrementalSyncStatusProjection(null, {
             configured: false,
-            keychainPrompt: keychainPromptSurface(),
           }));
           return;
         }
@@ -5398,7 +4717,6 @@ function createPreparedLocalCompanionServer({
         }
         const projected = incrementalSyncStatusProjection(status, {
           configured: true,
-          keychainPrompt: keychainPromptSurface(),
         });
         const upgradeVersion = await attributionUpgradeAvailable(status);
         if (upgradeVersion) {
@@ -5793,7 +5111,6 @@ function createPreparedLocalCompanionServer({
         }
         send(response, 200, incrementalSyncStatusProjection(status, {
           configured: true,
-          keychainPrompt: keychainPromptSurface(),
         }));
         return;
       }
@@ -5895,34 +5212,20 @@ function createPreparedLocalCompanionServer({
         } catch (error) {
           const recoveryRequired =
             contributionDeviceRecoveryRequired(error);
-          const migrationRequired =
-            contributionDeviceKeychainMigrationRequired(error);
-          // Three Keychain causes keep their own code because the reset
-          // ceremony is the wrong instruction for them. Migration-required
-          // means the old item was preserved after the one interactive read
-          // was declined. Denied is the one the
-          // user acted on directly — Deny (or cancel) in the macOS access
-          // dialog the mint's read-back raises — so the dashboard can say
-          // which dialog to answer differently. Locked is the one where
-          // nothing is broken at all: unlocking restores it, and offering a
-          // destructive clear instead would cost a needless re-pair. Every
-          // other recovery code still means the reset ceremony.
-          const keychainAccessDenied =
-            error?.code === "contribution_device_credential_denied";
-          const keychainLocked = contributionDeviceKeychainLocked(error);
+          // Denied and locked keep their own codes: the reset ceremony is the
+          // wrong instruction for them, and nothing is broken when the store
+          // is merely locked.
           let errorCode = "contribution_device_pairing_failed";
-          if (migrationRequired) {
-            errorCode = "contribution_device_keychain_migration_required";
-          } else if (recoveryRequired) {
-            errorCode = keychainAccessDenied
+          if (recoveryRequired) {
+            errorCode = error?.code === "contribution_device_credential_denied"
               ? "contribution_device_keychain_access_denied"
-              : keychainLocked
+              : error?.code === "contribution_device_credential_locked"
                 ? "contribution_device_keychain_locked"
                 : "contribution_device_recovery_required";
           }
           sendError(
             response,
-            recoveryRequired || migrationRequired ? 409 : 502,
+            recoveryRequired ? 409 : 502,
             errorCode,
           );
         } finally {

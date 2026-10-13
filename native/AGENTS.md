@@ -2,20 +2,10 @@
 
 Scope: all files under `native/`. Apply the repository root guidance first.
 
-## macOS Keychain adapter
-
-- For `macos-keychain/`, read its README and `apps/electron/AGENTS.md`.
-- Keep only the fixed logical credential capabilities. The signed Electron
-  main process owns the adapter; renderer input cannot select Keychain items.
-- Preserve existing credential bytes and ACLs. Locked, denied, unknown and
-  legacy-only items must never become proof of absence or a fresh identity.
-- Source compilation and injected tests must not access real Keychain items.
-  Signed, prompt-free native-to-Electron continuity is a separate release gate.
-
 ## Windows security boundary
 
-- Read `native/windows-filesystem/README.md` before changing the binding, loader,
-  manifest, or credential-mutex integration.
+- The only native adapter is `windows-filesystem/`. Read its README before
+  changing the binding, loader, manifest, or credential-mutex integration.
 - Keep the native module a small, content-free C N-API security adapter. JavaScript
   path checks are not substitutes for Windows handle, ACL, reparse-point, link,
   owner, and canonical-path validation.
@@ -39,8 +29,9 @@ Scope: all files under `native/`. Apply the repository root guidance first.
 - A sidecar hash detects mismatch; it is not source provenance or publisher
   authentication. Packaging/signing must authenticate exact final bytes
   separately.
-- Keep the binding Windows x64-only unless a new architecture receives its own
-  build, ABI, security, physical-runtime, packaging, and artifact-integrity proof.
+- Keep the binding Windows x64-only. A new architecture (for example ARM64)
+  needs its own build, ABI, security, physical-runtime, packaging, and
+  artifact-integrity proof.
 - Use protected owner-only DACLs and non-inheritable handles. Any service-account
   or broader-principal policy requires an explicit threat-model decision.
 - Never log private paths, SIDs, credentials, file bytes, or raw Windows error
@@ -49,8 +40,8 @@ Scope: all files under `native/`. Apply the repository root guidance first.
 ## Windows validation
 
 - Run portable JavaScript contract tests for loader/refusal behavior, but label
-  them partial. macOS, Linux, Wine, and cross-compilation do not qualify Windows
-  kernel behavior.
+  them partial. Wine, cross-compilation, and non-Windows hosts do not qualify
+  Windows kernel behavior.
 - Use the manual native Windows x64 workflow for authoritative build, binding,
   ACL/reparse/race, credential-mutex, and content-free audit qualification.
 - Rebuild the binary and manifest together with the pinned toolchain. Verify exact

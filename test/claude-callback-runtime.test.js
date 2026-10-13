@@ -9,7 +9,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runClaudeCallback } from "../src/claude-callback-runtime.js";
 import { readClaudeStatusSnapshots } from "../src/claude-statusline-storage.js";
-import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/export-identity-keychain.js";
+import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/platform/index.js";
 
 const CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym;
 const CAPTURED_AT = "2026-07-25T12:00:00.000Z";

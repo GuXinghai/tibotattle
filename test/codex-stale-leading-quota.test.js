@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
-import { createIndexedCodexLogScan } from "../src/local-analysis-index.js";
+import { refreshLocalIndex } from "../src/local-index-refresh.js";
+import { withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
 
 const { scanCodexLogEvents } = localCodexLogScanner;
 
@@ -103,6 +104,47 @@ async function codexHomeWith(rollouts) {
     );
   }
   return codexHome;
+}
+
+// The durable index's view of the same window: the quota readings it admits
+// and the leading readings it withheld, shaped like `collect`.
+async function collectIndexed(codexHome, indexFile) {
+  await refreshLocalIndex({
+    codexHome,
+    indexFile,
+    secretFile: join(dirname(indexFile), "salt"),
+    workerCount: 2,
+    startAt: START_AT,
+    endAt: END_AT,
+  });
+  return withReadOnlyStore(indexFile, (database) => {
+    const quota = database.prepare(`
+      SELECT observed_at_ms, slot, used_percent FROM quota_occurrence
+      WHERE admission = 'admitted' AND observed_at_ms >= ? AND observed_at_ms < ?`)
+      .all(Date.parse(START_AT), Date.parse(END_AT))
+      .map((row) => ({
+        timestamp: new Date(Number(row.observed_at_ms)).toISOString(),
+        slot: row.slot,
+        usedPercent: row.used_percent,
+      }));
+    const skipped = database.prepare(`
+      SELECT COALESCE(SUM(count), 0) AS n FROM source_diagnostic
+      WHERE code = 'contradictedLeadingSnapshotsSkipped'`).get().n;
+    return {
+      quota: quota.sort((left, right) => JSON.stringify(left)
+        .localeCompare(JSON.stringify(right))),
+      contradictedLeadingSnapshotsSkipped: Number(skipped),
+    };
+  });
+}
+
+// The fields the durable index can attest; usage and fork counters are the
+// streaming scan's own diagnostics.
+function indexedFields(scanned) {
+  return {
+    quota: scanned.quota,
+    contradictedLeadingSnapshotsSkipped: scanned.contradictedLeadingSnapshotsSkipped,
+  };
 }
 
 async function collect(scan, codexHome) {
@@ -346,17 +388,12 @@ test("a leading reading corroborated outside the requested interval is kept, in 
     "usage-monitor-stale-leading-quota-boundary-",
   ));
   try {
-    const indexedScan = createIndexedCodexLogScan({
-      indexFile: join(root, "local-analysis-index-v2.sqlite"),
-      secretFile: join(root, "local-analysis-index-secret-v2"),
-      workerCount: 2,
-      chunkBytes: 4 * 1024 * 1024,
-    });
+    const indexFile = join(root, "local-index-store-v1.sqlite");
     const streamed = await collect(scanCodexLogEvents, codexHome);
     assert.deepEqual(streamed.quota.map((row) => row.usedPercent), [32, 45]);
     assert.equal(streamed.contradictedLeadingSnapshotsSkipped, 0);
-    assert.deepEqual(await collect(indexedScan, codexHome), streamed);
-    assert.deepEqual(await collect(indexedScan, codexHome), streamed);
+    assert.deepEqual(await collectIndexed(codexHome, indexFile), indexedFields(streamed));
+    assert.deepEqual(await collectIndexed(codexHome, indexFile), indexedFields(streamed));
   } finally {
     await rm(codexHome, { recursive: true, force: true });
     await removeIndexedFixture(root);
@@ -370,19 +407,14 @@ test("the persistent index withholds the same stale reading as the streaming sca
     "usage-monitor-stale-leading-quota-index-",
   ));
   try {
-    const indexedScan = createIndexedCodexLogScan({
-      indexFile: join(root, "local-analysis-index-v2.sqlite"),
-      secretFile: join(root, "local-analysis-index-secret-v2"),
-      workerCount: 2,
-      chunkBytes: 4 * 1024 * 1024,
-    });
+    const indexFile = join(root, "local-index-store-v1.sqlite");
     const streamed = await collect(scanCodexLogEvents, codexHome);
-    const built = await collect(indexedScan, codexHome);
-    assert.deepEqual(built, streamed);
+    const built = await collectIndexed(codexHome, indexFile);
+    assert.deepEqual(built, indexedFields(streamed));
     assert.equal(built.contradictedLeadingSnapshotsSkipped, 1);
     // The withheld reading is not persisted, so replaying the committed index
     // cannot resurrect it either.
-    const replayed = await collect(indexedScan, codexHome);
+    const replayed = await collectIndexed(codexHome, indexFile);
     assert.deepEqual(replayed.quota, streamed.quota);
     assert.equal(
       replayed.quota.some((row) => (

@@ -8,6 +8,7 @@ import {
   readReplaySafeAccountingCache,
   refreshReplaySafeAccountingCache,
 } from "../src/replay-safe-accounting-cache.js";
+import { TEST_GENERATION, withResidentCalibration } from "./helpers/replay-safe-resident-calibration.js";
 
 const NOW = Date.parse("2026-08-03T12:45:00.000Z");
 const RESETS_AT = Math.floor(Date.parse("2026-08-10T12:00:00.000Z") / 1_000);
@@ -40,13 +41,23 @@ function snapshot({ timestamp, usedPercent, account = null, slot = "secondary" }
   };
 }
 
+// The build takes a unified scan and its calibration source, bound to one
+// generation. The resident seam supplies both from the scan's own facts.
+function unifiedScan(scanCallback) {
+  return withResidentCalibration(scanCallback);
+}
+
 function build(snapshots, now = NOW) {
+  const scan = unifiedScan(async ({ onRateLimitSnapshot }) => {
+    for (const row of snapshots) onRateLimitSnapshot(row);
+    return { diagnostics: {} };
+  });
   return buildReplaySafeAccountingCache({
     now: () => now,
-    scan: async ({ onRateLimitSnapshot }) => {
-      for (const row of snapshots) onRateLimitSnapshot(row);
-      return { diagnostics: {} };
-    },
+    scan,
+    calibrationSource: scan.calibrationSource,
+    sourceMode: "unified",
+    expectedGeneration: TEST_GENERATION,
   });
 }
 
@@ -86,22 +97,26 @@ test("refresh projects a safe account-scoped weekly pace ETA", async () => {
 test("owner-only refresh retains the safe pace card through cache validation", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-pace-cache-"));
   const stateFile = join(directory, "local-collector-state-v1.sqlite");
+  const scan = unifiedScan(async ({ onRateLimitSnapshot }) => {
+    onRateLimitSnapshot(snapshot({
+      timestamp: "2026-08-03T12:15:00.000Z",
+      usedPercent: 20,
+      account: "A",
+    }));
+    onRateLimitSnapshot(snapshot({
+      timestamp: "2026-08-03T12:30:00.000Z",
+      usedPercent: 30,
+      account: "A",
+    }));
+    return { diagnostics: {} };
+  });
   const written = await refreshReplaySafeAccountingCache({
     stateFile,
     now: () => NOW,
-    scan: async ({ onRateLimitSnapshot }) => {
-      onRateLimitSnapshot(snapshot({
-        timestamp: "2026-08-03T12:15:00.000Z",
-        usedPercent: 20,
-        account: "A",
-      }));
-      onRateLimitSnapshot(snapshot({
-        timestamp: "2026-08-03T12:30:00.000Z",
-        usedPercent: 30,
-        account: "A",
-      }));
-      return { diagnostics: {} };
-    },
+    scan,
+    calibrationSource: scan.calibrationSource,
+    sourceMode: "unified",
+    expectedGeneration: TEST_GENERATION,
   });
   const read = await readReplaySafeAccountingCache({ stateFile });
   assert.equal(read.status, "available");

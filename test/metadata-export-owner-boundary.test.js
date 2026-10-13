@@ -151,14 +151,13 @@ test("local Codex ports observe CODEX_HOME at each default-home call and reject 
   );
 });
 
-test("metadata owner directions stay runtime-neutral and local-review no longer reaches the flat exporter", async () => {
+test("metadata owner directions stay runtime-neutral", async () => {
   const source = async (relativePath) => readFile(resolve(REPOSITORY_ROOT, relativePath), "utf8");
-  const [safeRecords, checkpointState, application, platformPorts, localReview] = await Promise.all([
+  const [safeRecords, checkpointState, application, platformPorts] = await Promise.all([
     source("src/export/safe-records.js"),
     source("src/export/checkpoint-state.js"),
     source("src/application/local-metadata-export.js"),
     source("src/platform/local-codex-log-ports.js"),
-    source("local-review/cli.js"),
   ]);
   for (const sourceText of [safeRecords, checkpointState]) {
     assert.equal(sourceText.includes("node:"), false);
@@ -173,7 +172,6 @@ test("metadata owner directions stay runtime-neutral and local-review no longer 
   );
   assert.equal(platformPorts.includes("../export/"), false);
   assert.equal(platformPorts.includes("../application/"), false);
-  assert.equal(localReview.includes("../src/metadata-exporter.js"), false);
   assert.match(application, /safeRecords\.scanCodexSafeRecords\(\{[\s\S]*?signal,/u);
   assert.match(safeRecords, /signal = null,/u);
 });

@@ -77,13 +77,13 @@ test("default Windows audit path is fixed beneath the private state root", () =>
     }),
     "C:\\Users\\Ada\\AppData\\Local\\app-usagemonitor\\private\\windows-credential-operation-audit-v1.sqlite",
   );
-  assert.equal(
-    defaultWindowsCredentialOperationAuditFile({
+  assert.throws(
+    () => defaultWindowsCredentialOperationAuditFile({
       platform: "linux",
       homeDirectory: "/home/ada",
       environment: { XDG_STATE_HOME: "/home/ada/.state" },
     }),
-    "/home/ada/.state/app-usagemonitor/private/windows-credential-operation-audit-v1.sqlite",
+    (error) => error.code === "windows_credential_operation_audit_invalid_configuration",
   );
 });
 

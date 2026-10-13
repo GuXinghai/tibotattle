@@ -147,32 +147,17 @@ export function localCompanionStatePaths(stateRoot) {
     // legacy JSON/JSONL files are discovered privately by the migration code
     // and removed only after its parity receipt is durable.
     collectorStateFile: join(selected, "local-collector-state-v1.sqlite"),
-    // Dormant rollback-only state. Unified mode never reads or advances these
-    // files, but their exact locations remain stable for one reversible
-    // release so selecting legacy authority is explicit and diagnosable.
-    legacyAnalysisIndexFile: join(
-      selected,
-      "local-analysis-index-v2.sqlite",
-    ),
-    legacyAnalysisIndexSecretFile: join(
-      selected,
-      "local-analysis-index-secret-v2",
-    ),
-    archiveAccountingIndexFile: join(
-      selected,
-      "local-archive-accounting-index-v1.sqlite",
-    ),
-    archiveAccountingIndexSecretFile: join(
-      selected,
-      "local-archive-accounting-index-v1-secret",
-    ),
-    // The unified local index: the one store the dashboard's full-history
-    // periods and timelines read, advanced incrementally on refresh.
+    // The previous local index. It is read only for the ordinal map that keeps
+    // hosted identity continuous, and only until the v2 store holds its own.
     unifiedIndexFile: join(selected, "local-unified-index-v1.sqlite"),
     unifiedIndexSecretFile: join(
       selected,
       "local-unified-index-device-salt-v1",
     ),
+    // The local index: the one store the dashboard's full-history periods and
+    // timelines read, advanced incrementally on refresh. It shares the device
+    // salt above so hosted identity is continuous.
+    localIndexStoreFile: join(selected, "local-index-store-v1.sqlite"),
     // Reserved, provider-isolated paths for the opt-in development shadow.
     // Merely resolving installation paths never creates these files; the
     // installed companion leaves shadow usage disabled until a reviewed

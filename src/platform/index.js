@@ -81,17 +81,6 @@ export {
   windowsAccountObservationBrokerConfiguration,
 } from "./windows-account-observation-broker.js";
 export {
-  LINUX_ACCOUNT_OBSERVATION_BROKER_CAPABILITY,
-  LINUX_ACCOUNT_OBSERVATION_BROKER_INTEGRATION_STATUS,
-  LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
-  LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
-  LinuxAccountObservationBrokerError,
-  attachLinuxAccountObservationBrokerIpcServer,
-  createLinuxAccountObservationBrokerBackendFromEnvironment,
-  isLinuxAccountObservationBrokerBackend,
-  isLinuxAccountObservationBrokerIpcChannel,
-} from "./linux-account-observation-broker.js";
-export {
   assertWindowsQualificationResourceAuthority,
   createWindowsQualificationModeContext,
   isWindowsQualificationModeContext,
@@ -115,39 +104,9 @@ export {
   isWindowsQualificationProtectedStateStoreFor,
 } from "./windows-protected-state-store.js";
 export {
-  CONTRIBUTION_DEVICE_READER_CODE_IDENTIFIER,
-  CONTRIBUTION_DEVICE_READER_TEAM_IDENTIFIER,
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-  MACOS_APP_KEYCHAIN_CAPABILITIES,
   ExportIdentityKeychainError,
-  KEYTAR_DARWIN_ARM64_SHA256,
-  KEYTAR_SIGNING_CODE_IDENTIFIER,
-  KEYTAR_SIGNING_TEAM_IDENTIFIER,
-  contributionDeviceDurableAddArguments,
-  contributionDeviceReaderRequirement,
-  contributionDeviceReaderRequirementVerificationArguments,
-  createExportIdentityKeychainBackend,
-  deleteExportIdentityKeychainItemByAttributes,
-  exportIdentityKeychainAttributeDeleteArguments,
-  exportIdentityKeychainAttributeProbeArguments,
-  exportIdentityKeychainCapabilitiesForEnvironment,
-  exportIdentityKeychainItemPresenceByAttributes,
-  keytarSignedBindingRequirement,
-  keytarSignedBindingVerificationArguments,
-  loadExportIdentityKeychainBinding,
-} from "./export-identity-keychain.js";
-export {
-  MACOS_KEYCHAIN_BROKER_CAPABILITY_NAMES,
-  macOSKeychainBrokerCapabilityName,
-} from "./keychain-capabilities.js";
-// The contribution-device Keychain broker is deliberately absent: it lives at
-// src/contribution-device-keychain-broker.js with the other contribution
-// modules, not under this owner. This barrel is the reviewed platform-adapter
-// public API, and everything reachable through it is in the local-review
-// artifact's graph — which its source policy forbids any contribution-* module
-// from entering (scripts/build-local-review-artifact.js,
-// FORBIDDEN_SOURCE_BASENAMES). A platform-owned broker could only be reached
-// through here, so the owner boundary and the review boundary would fight.
+} from "./credential-capabilities.js";
 export {
   readOwnerOnlyLocalMetadataBundlePair,
   sha256Hex,

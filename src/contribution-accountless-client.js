@@ -848,6 +848,27 @@ async function negotiateAccountlessV12({ origin, backend, stateFile,
   });
 }
 
+const ACCOUNTLESS_INDEX_SEAMS = Object.freeze(["openIndex", "createV11Reader", "readPublication"]);
+
+// The accountless pass reads the local index only through the composition
+// root's contribution seams. Without them no chunk can be prepared, so the
+// pass refuses with a TypeError before it touches the network.
+function accountlessIndexSeams(contribution) {
+  if (!contribution || typeof contribution !== "object" || Array.isArray(contribution)
+      || ACCOUNTLESS_INDEX_SEAMS.some((name) => typeof contribution[name] !== "function")) {
+    const error = new TypeError("contribution seams are required: inject the local index backend's contribution seams from the composition root");
+    error.code = "contribution_seams_required";
+    throw error;
+  }
+  return Object.freeze(Object.fromEntries(
+    ACCOUNTLESS_INDEX_SEAMS.map((name) => [name, contribution[name]]),
+  ));
+}
+
+function incrementalSyncOverIndexSeams(seams) {
+  return (options) => runIncrementalContributionSyncOnce({ ...options, ...seams });
+}
+
 function configuredAccountlessSync(options) {
   if (!options || typeof options !== "object" || Array.isArray(options)
       || ["consent", "authorization", "approve", "approval"].some((key) => Object.hasOwn(options, key))) {
@@ -869,7 +890,10 @@ function configuredAccountlessSync(options) {
     enroll = enrollAccountlessContribution,
     claimOwnership = claimAccountlessContributionOwnership,
     renewOwnership = renewAccountlessContributionOwnership,
-    runIncrementalSync = runIncrementalContributionSyncOnce,
+    // Injected only by tests; production passes the index seams below instead.
+    runIncrementalSync: runIncrementalSyncOverride = undefined,
+    // The local index backend's contribution seams (localIndexBackend.contribution).
+    contribution = null,
     signal = undefined,
     requestTimeoutMilliseconds = DEFAULT_REQUEST_TIMEOUT_MILLISECONDS,
     maximumChunks = 500,
@@ -887,8 +911,9 @@ function configuredAccountlessSync(options) {
       || Array.isArray(backend) || typeof indexFile !== "string" || !indexFile
       || (stateFile !== undefined && (typeof stateFile !== "string" || !stateFile))
       || [fetchImpl, ensureCapability, withDeviceSecret, enroll, claimOwnership, renewOwnership,
-        runIncrementalSync, now, setTimeoutImpl, clearTimeoutImpl, readAccountMarkers,
+        now, setTimeoutImpl, clearTimeoutImpl, readAccountMarkers,
         loadExistingAccountObservationSecret].some((value) => typeof value !== "function")
+      || (runIncrementalSyncOverride !== undefined && typeof runIncrementalSyncOverride !== "function")
       || (onAttributionBinding !== null && typeof onAttributionBinding !== "function")
       || (progressFile !== null && (typeof progressFile !== "string" || !progressFile))
       || (progressStore !== undefined && (!progressStore || typeof progressStore.read !== "function"
@@ -904,6 +929,7 @@ function configuredAccountlessSync(options) {
   }
   const selectedOrigin = canonicalOrigin(origin);
   assertTransportDestination(laboratory, rehearsal, production, selectedOrigin);
+  const runIncrementalSync = runIncrementalSyncOverride ?? null;
   return Object.freeze({
     laboratory,
     rehearsal,
@@ -921,6 +947,7 @@ function configuredAccountlessSync(options) {
     claimOwnership,
     renewOwnership,
     runIncrementalSync,
+    contribution,
     signal,
     requestTimeoutMilliseconds,
     maximumChunks,
@@ -999,6 +1026,7 @@ export async function runAccountlessContributionSyncOnce(options = {}) {
     claimOwnership,
     renewOwnership,
     runIncrementalSync,
+    contribution,
     signal,
     requestTimeoutMilliseconds,
     maximumChunks,
@@ -1086,7 +1114,9 @@ export async function runAccountlessContributionSyncOnce(options = {}) {
     });
     assertSignalActive(signal);
     await readEligiblePreference(readPreference, origin);
-    const result = await runIncrementalSync({
+    // Fail closed before the first upload: no index seams, no pass.
+    const runSync = runIncrementalSync ?? incrementalSyncOverIndexSeams(accountlessIndexSeams(contribution));
+    const result = await runSync({
       laboratory,
       rehearsal,
       production,
@@ -1119,6 +1149,8 @@ export async function runAccountlessContributionSyncOnce(options = {}) {
       networkActivity: result.networkActivity === true || networkActivity,
     });
   } catch (error) {
+    // A missing index seam is a composition error, not a transient run failure.
+    if (error?.code === "contribution_seams_required") throw error;
     return accountlessRunFailure(error, { networkActivity, signal });
   }
 }

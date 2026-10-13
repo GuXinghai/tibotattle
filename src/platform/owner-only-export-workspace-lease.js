@@ -3,6 +3,7 @@ import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, realpath, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isProxy } from "node:util/types";
+import { syncDirectory } from "./owner-only-filesystem.js";
 
 function configurationFailure() {
   throw new TypeError("Owner-only export workspace lease configuration is invalid");
@@ -51,13 +52,11 @@ function fail(code) {
 function assertDirectory(stats) {
   if (!stats.isDirectory() || stats.isSymbolicLink()) fail("invalid");
   if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("invalid");
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) fail("invalid");
 }
 
 function assertLock(stats) {
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1 || stats.size < 1 || stats.size > 1024) fail("invalid");
   if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("invalid");
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) fail("invalid");
 }
 
 function processAlive(pid) {
@@ -67,15 +66,6 @@ function processAlive(pid) {
     return true;
   } catch (error) {
     return error.code !== "ESRCH";
-  }
-}
-
-async function syncDirectory(path) {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
   }
 }
 
@@ -110,7 +100,6 @@ async function removeExactLock(path, expected) {
 
 async function withExportWorkspaceLease(directory, callback, {
   create = true,
-  normalizePermissions = true,
 } = {}) {
   if (typeof callback !== "function") throw new TypeError("Workspace lease callback is required");
   const target = resolve(directory);
@@ -124,10 +113,6 @@ async function withExportWorkspaceLease(directory, callback, {
   }
   if (!initial.isDirectory() || initial.isSymbolicLink()
       || (typeof process.getuid === "function" && initial.uid !== process.getuid())) fail("invalid");
-  if (process.platform !== "win32" && (initial.mode & 0o077) !== 0) {
-    if (!normalizePermissions) fail("invalid");
-    await chmod(target, 0o700);
-  }
   const canonicalTarget = await realpath(target);
   const canonicalStats = await lstat(canonicalTarget);
   assertDirectory(canonicalStats);
@@ -177,7 +162,7 @@ async function withExportWorkspaceLease(directory, callback, {
 }
 
 async function withExistingExportWorkspaceLease(directory, callback) {
-  return withExportWorkspaceLease(directory, callback, { create: false, normalizePermissions: false });
+  return withExportWorkspaceLease(directory, callback, { create: false });
 }
 
   return Object.freeze({

@@ -602,8 +602,17 @@ export function createCodexLogSources({ filesystem, lineReader }) {
     signal = null,
     discoveryLimits = null,
     selectedRolloutNames = undefined,
+    // Optional. Called with a walked file's path and exact stat tuple; returns
+    // the inspection recorded for that exact state ({ lineage,
+    // compressionReason, size?, contentSha256? }) or null. A hit skips the
+    // header read and cold-source decode, so an unchanged corpus costs only
+    // the directory walk. Absent, discovery inspects every file as before.
+    inspectionCache = null,
   }) {
     if (!validAbortSignal(signal)) throw new TypeError("signal must be an AbortSignal or null");
+    if (inspectionCache !== null && typeof inspectionCache !== "function") {
+      throw new TypeError("inspectionCache must be a function or null");
+    }
     throwIfAborted(signal);
     if (selectedRolloutNames === undefined) {
       selectedRolloutNames = await filesystem.readSelectedRolloutNames(codexHome);
@@ -659,6 +668,29 @@ export function createCodexLogSources({ filesystem, lineReader }) {
       const compressed = info.path.endsWith(".jsonl.zst");
       let compressionReason = null;
       let inspection = null;
+      const known = inspectionCache === null ? null : inspectionCache(info);
+      if (known !== null && known !== undefined) {
+        return {
+          ...info,
+          ...(compressed ? {
+            physicalSize: info.size,
+            size: known.size,
+            contentSha256: known.contentSha256,
+          } : {}),
+          rolloutKey: key,
+          canonicalFilename: filename !== null,
+          compressed,
+          compressionReason: known.compressionReason ?? null,
+          threadId: filename?.threadId ?? known.lineage.sessionId ?? null,
+          rolloutId: filename?.rolloutId ?? null,
+          sourceIdentity: filename?.rolloutId ?? key,
+          replacement: filename?.replacement === true,
+          selectedHead: filename !== null
+            && selectedRolloutNames?.get(filename.threadId)
+              === sourceName(info.path),
+          lineage: known.lineage,
+        };
+      }
       if (compressed) {
         if (lineReader.supportsCompressedRollouts?.() !== true) {
           compressionReason = "codex_rollout_compression_unsupported";

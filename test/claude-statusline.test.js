@@ -251,18 +251,18 @@ test("standalone JSON Schema validates the normalized record and rejects extra p
   assertSafeError(() => validateClaudeStatusSnapshot(extra), "snapshot_shape");
 });
 
-test("default destination is an OS-stable application-state path", () => {
+test("default destination is the Windows application-state path", () => {
   assert.equal(
-    defaultClaudeStatusStateDirectory({ platform: "darwin", env: {}, homeDirectory: "/Users/tester" }),
-    "/Users/tester/Library/Application Support/app-usagemonitor/claude-statusline-v0.2",
+    defaultClaudeStatusStateDirectory({ env: { LOCALAPPDATA: "C:\\Users\\tester\\AppData\\Local" }, homeDirectory: "C:\\Users\\tester" }),
+    join("C:\\Users\\tester\\AppData\\Local", "app-usagemonitor", "claude-statusline-v0.2"),
   );
   assert.equal(
-    defaultClaudeStatusStateDirectory({ platform: "linux", env: { XDG_STATE_HOME: "/state" }, homeDirectory: "/home/tester" }),
-    "/state/app-usagemonitor/claude-statusline-v0.2",
+    defaultClaudeStatusStateDirectory({ env: {}, homeDirectory: "C:\\Users\\tester" }),
+    join("C:\\Users\\tester", "AppData", "Local", "app-usagemonitor", "claude-statusline-v0.2"),
   );
   assertSafeError(
-    () => defaultClaudeStatusStateDirectory({ platform: "linux", env: { XDG_STATE_HOME: CANARY }, homeDirectory: "/home/tester" }),
-    "state_root",
+    () => defaultClaudeStatusStateDirectory({ env: { LOCALAPPDATA: "relative" }, homeDirectory: "relative-home" }),
+    "state_home",
   );
 });
 
@@ -270,17 +270,17 @@ test("default application-state layout is created safely and rejects an aliased 
   await withFixture(async ({ root }) => {
     const home = join(root, "safe-home");
     await mkdir(home, { mode: 0o700 });
-    const stateDirectory = defaultClaudeStatusStateDirectory({ platform: "darwin", env: {}, homeDirectory: home });
+    const stateDirectory = defaultClaudeStatusStateDirectory({ env: { LOCALAPPDATA: join(home, "AppData", "Local") }, homeDirectory: home });
     await writeClaudeStatusSnapshot(snapshot(), { stateDirectory });
     assert.equal((await readClaudeStatusSnapshots({ stateDirectory })).length, 1);
   });
   await withFixture(async ({ root }) => {
     const home = join(root, "aliased-home");
-    const outside = join(root, "outside-library");
-    await mkdir(home, { mode: 0o700 });
+    const outside = join(root, "outside-local");
+    await mkdir(join(home, "AppData"), { recursive: true, mode: 0o700 });
     await mkdir(outside, { mode: 0o700 });
-    await symlink(outside, join(home, "Library"));
-    const stateDirectory = defaultClaudeStatusStateDirectory({ platform: "darwin", env: {}, homeDirectory: home });
+    await symlink(outside, join(home, "AppData", "Local"));
+    const stateDirectory = defaultClaudeStatusStateDirectory({ env: {}, homeDirectory: home });
     await assert.rejects(
       writeClaudeStatusSnapshot(snapshot(), { stateDirectory }),
       (error) => error.code === "state_parent_type",

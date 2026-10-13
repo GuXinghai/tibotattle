@@ -69,45 +69,6 @@ test("application policy is platform-opaque and consumers use reviewed facades",
   );
   assert.match(
     legacySource,
-    /from "\.\/platform\/export-identity-keychain\.js";/u,
-  );
-
-  const localReviewSource = await readFile(
-    resolve(REPOSITORY_ROOT, "local-review/cli.js"),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    localReviewSource,
-    /src\/claude-callback-capability\.js/u,
-  );
-  assert.match(
-    localReviewSource,
-    /createClaudeCallbackCapabilityContext/u,
-  );
-  assert.match(
-    localReviewSource,
-    /selectProductionClaudeCallbackBackend/u,
-  );
-});
-
-test("the exact local-review migration allowance is removed", async () => {
-  const architecture = await readFile(
-    resolve(
-      REPOSITORY_ROOT,
-      "scripts/check-architecture-boundaries.mjs",
-    ),
-    "utf8",
-  );
-  const baseline = architecture.slice(
-    architecture.indexOf(
-      "const LOCAL_REVIEW_LEGACY_MIGRATION_TARGETS",
-    ),
-    architecture.indexOf(
-      "export const CURRENT_ARCHITECTURE_BOUNDARY_BASELINE",
-    ),
-  );
-  assert.doesNotMatch(
-    baseline,
-    /src\/claude-callback-capability\.js/u,
+    /from "\.\/platform\/index\.js";/u,
   );
 });

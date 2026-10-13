@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "./export-identity-keychain.js";
+} from "./credential-capabilities.js";
 import {
   loadAuditedWindowsCredentialBinding,
 } from "./windows-credential-manager-probe.js";
@@ -225,7 +225,7 @@ function validateOperationLeaseContext(context) {
 /**
  * Create the Windows Credential Manager backend used by the four production
  * credential capabilities. The adapter deliberately has the same narrow
- * capability surface as the macOS Keychain backend: callers supply one of the
+ * capability surface as the shared credential contract: callers supply one of the
  * frozen capability objects above, never arbitrary service/account strings.
  *
  * This adapter does not claim compare-and-swap semantics. The participant,

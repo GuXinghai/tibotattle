@@ -59,7 +59,6 @@ async function resolveCodexBinary({
   accessFile = access,
   statFile = stat,
   platform = process.platform,
-  applicationsDir = "/Applications",
   lstatFile = lstat,
   readDirectory = readdir,
   resolvePath = realpath,
@@ -74,29 +73,6 @@ async function resolveCodexBinary({
     source: "environment_override",
     location: "explicit_override",
   }];
-  if (platform === "darwin") {
-    const installations = [{ directory: applicationsDir, location: "system" }];
-    if (typeof environment.HOME === "string" && isAbsolute(environment.HOME)) {
-      installations.push({ directory: join(environment.HOME, "Applications"), location: "user" });
-    }
-    for (const { app, source } of [
-      { app: "ChatGPT.app", source: "chatgpt_bundled" },
-      { app: "Codex.app", source: "codex_bundled" },
-    ]) {
-      for (const installation of installations) {
-        for (const { relativePath, layout } of [
-          { relativePath: "codex-cli/bin/codex", layout: "bundled_cli" },
-          { relativePath: "codex", layout: "legacy_resource" },
-        ]) {
-          candidates.push({
-            binary: join(installation.directory, app, "Contents", "Resources", relativePath),
-            source,
-            location: `${installation.location}_${layout}`,
-          });
-        }
-      }
-    }
-  }
   for (const candidate of candidates.filter((candidate) => (
     typeof candidate.binary === "string" && candidate.binary.length > 0
   ))) {
@@ -239,12 +215,11 @@ export async function inspectCodexBinary({
   accessFile = access,
   statFile = stat,
   platform = process.platform,
-  applicationsDir = "/Applications",
   readVersion = readCodexBinaryVersion,
   ...discoveryOptions
 } = {}) {
   const selected = await resolveCodexBinary({
-    environment, accessFile, statFile, platform, applicationsDir, readVersion, ...discoveryOptions,
+    environment, accessFile, statFile, platform, readVersion, ...discoveryOptions,
   });
   let version = selected.version ?? null;
   try {

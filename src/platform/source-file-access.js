@@ -1,5 +1,3 @@
-import { constants } from 'node:fs';
-import { open, lstat } from 'node:fs/promises';
 import { loadWindowsSourceReadBinding } from './windows-filesystem.js';
 
 const NATIVE_READ_BYTES = 64 * 1024;
@@ -9,18 +7,7 @@ const safe = (ok, code) => { if (!ok) throw new Error(code); };
 // details do not change buffer sizes or parser behavior in its consumers.
 export function createSourceFileAccess({ platform = process.platform,
   loadWindowsBinding = loadWindowsSourceReadBinding } = {}) {
-  if (platform !== 'win32') return Object.freeze({
-    async open(path) {
-      const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-      try {
-        const stat = await handle.stat();
-        safe(stat.isFile() && stat.uid === process.getuid(), 'unsafe_source');
-        return handle;
-      } catch (e) { await handle.close(); throw e; }
-    },
-    namedStat: path => lstat(path),
-  });
-
+  safe(platform === 'win32', 'unsupported_platform');
   const native = loadWindowsBinding();
   return Object.freeze({
     async open(path) {

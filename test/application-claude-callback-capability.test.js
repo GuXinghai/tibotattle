@@ -111,8 +111,8 @@ test("production backend selection is host- and port-driven", () => {
   const selected = backendFixture();
   assert.equal(
     selectProductionClaudeCallbackBackend({
-      platform: "darwin",
-      architecture: "arm64",
+      platform: "win32",
+      architecture: "x64",
       createBackend() {
         constructions += 1;
         return selected;
@@ -125,7 +125,7 @@ test("production backend selection is host- and port-driven", () => {
   assert.throws(
     () => selectProductionClaudeCallbackBackend({
       platform: "linux",
-      architecture: "arm64",
+      architecture: "x64",
       createBackend() {
         constructions += 1;
         return backendFixture();
@@ -140,8 +140,8 @@ test("production backend selection collapses hostile upstream errors", () => {
   const canary = "PRIVATE-CLAUDE-CALLBACK-UPSTREAM";
   assert.throws(
     () => selectProductionClaudeCallbackBackend({
-      platform: "darwin",
-      architecture: "arm64",
+      platform: "win32",
+      architecture: "x64",
       createBackend() {
         throw new Error(canary);
       },

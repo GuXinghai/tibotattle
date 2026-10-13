@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import * as application from "../src/application/index.js";
@@ -10,7 +10,6 @@ import * as platform from "../src/platform/index.js";
 import * as platformOwner from "../src/platform/local-export-source-ports.js";
 import { localExportSourcePipeline as pipeline } from
   "../src/local-node-runtime.js";
-import { runLocalReview } from "../local-review/cli.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const LEGACY = Object.freeze({
@@ -433,7 +432,6 @@ test("platform ports reject hostile configuration without evaluating traps", () 
 test("platform ports snapshot only required environment data and retain no caller environment", () => {
   const environment = {
     LOCALAPPDATA: "/local/app-data",
-    XDG_STATE_HOME: "/xdg/state",
     CODEX_HOME: "/codex/original",
   };
   let touched = 0;
@@ -450,16 +448,15 @@ test("platform ports snapshot only required environment data and retain no calle
   assert.equal(Object.hasOwn(ports, "environment"), false);
   assert.equal(
     ports.defaultClaudeStatusStateDirectory(),
-    "/xdg/state/app-usagemonitor/claude-statusline-v0.2",
+    join("/local/app-data", "app-usagemonitor", "claude-statusline-v0.2"),
   );
   assert.equal(ports.codexLogPorts.filesystem.defaultCodexHome(), "/codex/original");
 
-  environment.XDG_STATE_HOME = "/xdg/mutated";
   environment.LOCALAPPDATA = "/local/mutated";
   environment.CODEX_HOME = "/codex/mutated";
   assert.equal(
     ports.defaultClaudeStatusStateDirectory(),
-    "/xdg/state/app-usagemonitor/claude-statusline-v0.2",
+    join("/local/app-data", "app-usagemonitor", "claude-statusline-v0.2"),
   );
   assert.equal(ports.codexLogPorts.filesystem.defaultCodexHome(), "/codex/original");
   assert.equal(touched, 0);
@@ -477,7 +474,7 @@ test("platform ports reject nested environment Proxies and accessors without can
   );
   assert.equal(touched, 0);
 
-  for (const key of ["LOCALAPPDATA", "XDG_STATE_HOME", "CODEX_HOME"]) {
+  for (const key of ["LOCALAPPDATA", "CODEX_HOME"]) {
     const environment = {};
     Object.defineProperty(environment, key, {
       enumerable: true,
@@ -505,7 +502,7 @@ test("platform ports reject nested environment Proxies and accessors without can
   );
   assert.equal(touched, 0);
   const envAccessor = {};
-  Object.defineProperty(envAccessor, "XDG_STATE_HOME", {
+  Object.defineProperty(envAccessor, "LOCALAPPDATA", {
     enumerable: true,
     get() { touched += 1; throw new Error("PRIVATE_OPTION_ENVIRONMENT_ACCESSOR_CANARY"); },
   });
@@ -516,15 +513,11 @@ test("platform ports reject nested environment Proxies and accessors without can
   assert.equal(touched, 0);
 });
 
-test("owner dependency closure and local-review composition remain explicit", async () => {
+test("owner dependency closure remains explicit", async () => {
   const applicationSource = await readFile(resolve(ROOT, "src/application/export-sources/index.js"), "utf8");
   const platformSource = await readFile(resolve(ROOT, "src/platform/local-export-source-ports.js"), "utf8");
-  const localReviewSource = await readFile(resolve(ROOT, "local-review/cli.js"), "utf8");
   assert.doesNotMatch(applicationSource, /node:|\.\.\/\.\.\/platform|\.\.\/\.\.\/storage/u);
   assert.doesNotMatch(platformSource, /\.\.\/(?:application|export|providers)|\.\/\.\.\/storage/u);
-  assert.doesNotMatch(localReviewSource, /src\/export-set-controller\.js/u);
-  assert.match(localReviewSource, /createLocalExportSourcePipelineContext/u);
-  assert.match(localReviewSource, /createLocalExportSourcePorts/u);
 });
 
 test("local Node runtime imports without source discovery or local state", () => {
@@ -539,32 +532,4 @@ test("local Node runtime imports without source discovery or local state", () =>
   });
   assert.equal(imported.status, 0, imported.stderr);
   assert.equal(imported.stdout.trim(), "imported");
-});
-
-test("local-review accepts the composed controller as an explicit default seam", async () => {
-  const calls = [];
-  const originalLog = console.log;
-  console.log = () => {};
-  try {
-    await runLocalReview(["inspect-export-workspace", "--workspace", "/opaque/workspace"], {
-      exportSetController: {
-        async createLocalExportWorkspace() { throw new Error("not called"); },
-        async resumeLocalExportWorkspace() { throw new Error("not called"); },
-        async inspectLocalExportWorkspace(options) {
-          calls.push(options);
-          return {
-            poisoned: false,
-            scanComplete: true,
-            coveredAt: { startAt: "2026-07-01T00:00:00.000Z", endAt: "2026-07-02T00:00:00.000Z" },
-            sourceProviders: ["openai_codex"],
-            recordCounts: { usageEvents: 1, quotaSnapshots: 2, activityMarkers: 0 },
-            workspaceBytes: 123,
-          };
-        },
-      },
-    });
-  } finally {
-    console.log = originalLog;
-  }
-  assert.deepEqual(calls, [{ directory: "/opaque/workspace" }]);
 });

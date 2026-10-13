@@ -7,7 +7,7 @@ import {
 } from "./account-observation-broker-ipc.js";
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "./keychain-capabilities.js";
+} from "./credential-capabilities.js";
 
 export const WINDOWS_ACCOUNT_OBSERVATION_BROKER_INTEGRATION_STATUS = "dormant";
 export const WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV =
@@ -90,20 +90,16 @@ export function windowsAccountObservationBrokerConfiguration(environment = proce
   }
   let raw;
   let legacyFd;
-  let macBroker;
-  let linuxBroker;
   try {
     raw = environment[WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV];
     legacyFd = environment[LEGACY_FD_ENV];
-    macBroker = environment.USAGE_MONITOR_KEYCHAIN_BROKER_FD;
-    linuxBroker = environment.USAGE_MONITOR_LINUX_SECRET_SERVICE_BROKER_FD;
   } catch {
     fail("invalid_configuration");
   }
   if (raw === undefined || raw === null) return null;
   return Object.freeze({
     ipc: raw === WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER
-      && legacyFd === undefined && macBroker === undefined && linuxBroker === undefined,
+      && legacyFd === undefined,
   });
 }
 
@@ -143,8 +139,7 @@ export function createWindowsAccountObservationBrokerTransport({
 
 /**
  * Internal server adapter for the Electron-owned Windows broker wrapper. It
- * preserves the fixed schema and error class while sharing only transport
- * mechanics with the Linux observation wrapper.
+ * preserves the fixed schema and error class.
  */
 export function attachWindowsAccountObservationBrokerIpcServer({
   channel,

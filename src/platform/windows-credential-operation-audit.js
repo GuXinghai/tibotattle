@@ -9,7 +9,7 @@ import {
   readSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, isAbsolute, posix, win32 } from "node:path";
+import { dirname, isAbsolute, win32 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
 import {
@@ -126,13 +126,12 @@ function assertPath(value) {
   return value;
 }
 
-function assertPlatformPath(value, platform) {
-  const pathModule = platform === "win32" ? win32 : posix;
+function assertPlatformPath(value) {
   if (typeof value !== "string"
       || value.length < 1
       || value.length > MAXIMUM_PATH_LENGTH
       || value.includes("\0")
-      || !pathModule.isAbsolute(value)) {
+      || !win32.isAbsolute(value)) {
     fail("invalid_configuration");
   }
   return value;
@@ -190,8 +189,7 @@ function assertDirectory(path) {
   }
   if (!metadata.isDirectory()
       || metadata.isSymbolicLink()
-      || (typeof process.getuid === "function" && metadata.uid !== process.getuid())
-      || (process.platform !== "win32" && (metadata.mode & 0o077) !== 0)) {
+      || (typeof process.getuid === "function" && metadata.uid !== process.getuid())) {
     fail("unavailable");
   }
 }
@@ -207,8 +205,7 @@ function assertDatabaseFile(path, { allowMissing = false } = {}) {
   if (!metadata.isFile()
       || metadata.isSymbolicLink()
       || metadata.nlink !== 1
-      || (typeof process.getuid === "function" && metadata.uid !== process.getuid())
-      || (process.platform !== "win32" && (metadata.mode & 0o077) !== 0)) {
+      || (typeof process.getuid === "function" && metadata.uid !== process.getuid())) {
     fail("unavailable");
   }
   return metadata;
@@ -237,27 +234,7 @@ function assertNoSymlinkBoundary(path) {
 function syncFile(path) {
   let handle;
   try {
-    const flags = process.platform === "win32" ? constants.O_RDWR : constants.O_RDONLY;
-    handle = openSync(path, flags);
-    fsyncSync(handle);
-  } catch {
-    fail("unavailable");
-  } finally {
-    if (handle !== undefined) {
-      try {
-        closeSync(handle);
-      } catch {
-        fail("unavailable");
-      }
-    }
-  }
-}
-
-function syncDirectory(path) {
-  if (process.platform === "win32") return;
-  let handle;
-  try {
-    handle = openSync(dirname(path), constants.O_RDONLY);
+    handle = openSync(path, constants.O_RDWR);
     fsyncSync(handle);
   } catch {
     fail("unavailable");
@@ -416,7 +393,6 @@ function transaction(database, filePath, callback) {
       database.exec("COMMIT");
       syncFile(filePath);
       syncFile(`${filePath}-journal`);
-      syncDirectory(filePath);
       return result;
     } catch (error) {
       try {
@@ -649,8 +625,7 @@ export function defaultWindowsCredentialOperationAuditFile({
   stateRoot = null,
 } = {}) {
   try {
-    if (typeof platform !== "string"
-        || (platform !== "darwin" && platform !== "linux" && platform !== "win32")
+    if (platform !== "win32"
         || typeof homeDirectory !== "string"
         || !environment
         || typeof environment !== "object"
@@ -659,22 +634,13 @@ export function defaultWindowsCredentialOperationAuditFile({
     }
     let root = stateRoot;
     if (root === null) {
-      const path = platform === "win32" ? win32 : posix;
-      root = platform === "darwin"
-        ? path.join(homeDirectory, "Library", "Application Support", "app-usagemonitor")
-        : platform === "win32"
-          ? path.join(
-            environment.LOCALAPPDATA || path.join(homeDirectory, "AppData", "Local"),
-            "app-usagemonitor",
-          )
-          : path.join(
-            environment.XDG_STATE_HOME || path.join(homeDirectory, ".local", "state"),
-            "app-usagemonitor",
-          );
+      root = win32.join(
+        environment.LOCALAPPDATA || win32.join(homeDirectory, "AppData", "Local"),
+        "app-usagemonitor",
+      );
     }
-    assertPlatformPath(root, platform);
-    const pathModule = platform === "win32" ? win32 : posix;
-    return pathModule.join(root, "private", "windows-credential-operation-audit-v1.sqlite");
+    assertPlatformPath(root);
+    return win32.join(root, "private", "windows-credential-operation-audit-v1.sqlite");
   } catch (error) {
     if (isWindowsCredentialOperationAuditError(error)) throw error;
     fail("invalid_configuration");

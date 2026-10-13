@@ -403,17 +403,17 @@ export function newUsagePeriod(id, label, { includeSpark = true } = {}) {
   return period;
 }
 
-function addSpeedWeighting(crossing, projection) {
+function addSpeedWeighting(crossing, projection, weight = 1) {
   const speed = OBSERVED_SPEED_MODE_KEYS.includes(projection.speed)
     ? projection.speed : "unknown";
   const family = projection.fastModeFamily ?? "unsupported";
   const row = crossing[speed] ??= {};
   const cell = row[family] ??= { events: 0, apiPriceEquivalentUsd: 0 };
-  cell.events += 1;
+  cell.events += weight;
   cell.apiPriceEquivalentUsd += projection.apiPriceEquivalentUsd;
 }
 
-function addDeclaredSpeedWeighting(crossing, projection) {
+function addDeclaredSpeedWeighting(crossing, projection, weight = 1) {
   // Only a declaration that resolved to a real mode is recorded, and only for
   // events the log left unobserved; everything else is left unattributed.
   if (projection.declaredSpeed !== "standard"
@@ -422,7 +422,7 @@ function addDeclaredSpeedWeighting(crossing, projection) {
   const family = projection.fastModeFamily ?? "unsupported";
   const row = crossing[projection.declaredSpeed] ??= {};
   const cell = row[family] ??= { events: 0, apiPriceEquivalentUsd: 0 };
-  cell.events += 1;
+  cell.events += weight;
   cell.apiPriceEquivalentUsd += projection.apiPriceEquivalentUsd;
 }
 
@@ -459,20 +459,27 @@ export function safeSpeedWeighting(value) {
   return crossing;
 }
 
-function addDimension(dimension, key, projection) {
+function addDimension(dimension, key, projection, weight = 1) {
   const row = dimension[key] ?? dimension.unknown;
-  row.events += 1;
+  row.events += weight;
   row.totalTokens += projection.totalTokens;
   row.apiPriceEquivalentUsd += projection.apiPriceEquivalentUsd;
 }
 
-export function addUsageToPeriod(period, projection) {
+/**
+ * Fold one projection into a period. `weight` is the number of identical
+ * events the projection stands for: a rollup row is projected once with its
+ * summed quantities, so its counters advance by the row's event count while
+ * its quantities and money are added once. The default of 1 is the per-event
+ * path every collector caller has always used.
+ */
+export function addUsageToPeriod(period, projection, weight = 1) {
   if (projection === null) return;
   if (projection.isSpark) {
-    addUsageToPeriod(period.spark, { ...projection, isSpark: false });
+    addUsageToPeriod(period.spark, { ...projection, isSpark: false }, weight);
     return;
   }
-  period.events += 1;
+  period.events += weight;
   period.totalTokens += projection.totalTokens;
   addComponents(period.components, projection.components);
   addComponentCosts(
@@ -493,7 +500,7 @@ export function addUsageToPeriod(period, projection) {
     components: emptyComponents(),
     componentCosts: emptyComponentCosts(),
   };
-  modelSummary.events += 1;
+  modelSummary.events += weight;
   modelSummary.totalTokens += projection.totalTokens;
   modelSummary.apiPriceEquivalentUsd += projection.apiPriceEquivalentUsd;
   addComponents(modelSummary.components, projection.components);
@@ -523,28 +530,28 @@ export function addUsageToPeriod(period, projection) {
       pendingExactUsd.set(row, new ExactUsdSum());
       period.priceCardBreakdown[item.priceCardId] = row;
     }
-    row.events += item.events;
+    row.events += item.events * weight;
     pendingExactUsd.get(row).add(item.costUsd);
   }
-  addDimension(period.bySpeed, projection.speed, projection);
-  addSpeedWeighting(period.speedWeighting, projection);
-  addDeclaredSpeedWeighting(period.declaredSpeedWeighting, projection);
-  addDimension(period.byApiServiceTier, projection.apiServiceTier, projection);
-  addDimension(period.bySurface, projection.surface, projection);
-  addDimension(period.byAgentScope, projection.agentScope, projection);
-  addDimension(period.byLineage, projection.lineage, projection);
-  addDimension(period.byReasoningEffort, projection.reasoningEffort, projection);
+  addDimension(period.bySpeed, projection.speed, projection, weight);
+  addSpeedWeighting(period.speedWeighting, projection, weight);
+  addDeclaredSpeedWeighting(period.declaredSpeedWeighting, projection, weight);
+  addDimension(period.byApiServiceTier, projection.apiServiceTier, projection, weight);
+  addDimension(period.bySurface, projection.surface, projection, weight);
+  addDimension(period.byAgentScope, projection.agentScope, projection, weight);
+  addDimension(period.byLineage, projection.lineage, projection, weight);
+  addDimension(period.byReasoningEffort, projection.reasoningEffort, projection, weight);
   if (projection.accountAttribution === "attributed_pseudonymous") {
-    period.accountAttribution.attributedPseudonymousEvents += 1;
+    period.accountAttribution.attributedPseudonymousEvents += weight;
   } else {
-    period.accountAttribution.unattributedEvents += 1;
+    period.accountAttribution.unattributedEvents += weight;
   }
   if (projection.pricingCoverageStatus === "fully_priced") {
-    period.pricingCoverage.fullyPricedEvents += 1;
+    period.pricingCoverage.fullyPricedEvents += weight;
   } else if (projection.pricingCoverageStatus === "partially_priced") {
-    period.pricingCoverage.partiallyPricedEvents += 1;
+    period.pricingCoverage.partiallyPricedEvents += weight;
   }
-  else period.pricingCoverage.unpricedEvents += 1;
+  else period.pricingCoverage.unpricedEvents += weight;
 }
 
 function finalizeDimension(dimension) {
@@ -640,19 +647,19 @@ function newTimelineBucket(startMs) {
   };
 }
 
-export function addTimelineUsage(buckets, observedMs, projection) {
+export function addTimelineUsage(buckets, observedMs, projection, weight = 1) {
   if (projection === null) return;
   const startMs = Math.floor(observedMs / TIMELINE_BUCKET_MS) * TIMELINE_BUCKET_MS;
   const bucket = buckets.get(startMs) ?? newTimelineBucket(startMs);
-  bucket.usageEvents += 1;
+  bucket.usageEvents += weight;
   bucket.totalTokens += projection.totalTokens;
   bucket.apiPriceEquivalentUsd += projection.apiPriceEquivalentUsd;
-  addSpeedWeighting(bucket.speedWeighting, projection);
-  addDeclaredSpeedWeighting(bucket.declaredSpeedWeighting, projection);
+  addSpeedWeighting(bucket.speedWeighting, projection, weight);
+  addDeclaredSpeedWeighting(bucket.declaredSpeedWeighting, projection, weight);
   addComponents(bucket.components, projection.components);
-  if (projection.pricingCoverageStatus === "fully_priced") bucket.fullyPricedEvents += 1;
-  else if (projection.pricingCoverageStatus === "partially_priced") bucket.partiallyPricedEvents += 1;
-  else bucket.unpricedEvents += 1;
+  if (projection.pricingCoverageStatus === "fully_priced") bucket.fullyPricedEvents += weight;
+  else if (projection.pricingCoverageStatus === "partially_priced") bucket.partiallyPricedEvents += weight;
+  else bucket.unpricedEvents += weight;
   buckets.set(startMs, bucket);
 }
 

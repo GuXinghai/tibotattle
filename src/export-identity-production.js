@@ -4,7 +4,6 @@ import {
 import {
   assertWindowsProductionReadiness,
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-  createExportIdentityKeychainBackend,
   createWindowsProductionCapabilityBackend,
 } from "./platform/index.js";
 import {
@@ -29,8 +28,6 @@ export function selectProductionParticipantIdentity({
   platform = process.platform,
   architecture = process.arch,
   appStateSecretFile = defaultExportSecretFile(),
-  createKeychainBackend = createExportIdentityKeychainBackend,
-  createLinuxBackend = null,
   keychainCapability = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity,
   windowsReadiness = null,
   createWindowsBackend = null,
@@ -78,8 +75,6 @@ export function selectProductionParticipantIdentity({
     platform,
     architecture,
     appStateSecretFile,
-    createKeychainBackend,
-    createLinuxBackend,
     keychainCapability,
     allowedKeychainCapability:
       EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity,
@@ -87,9 +82,7 @@ export function selectProductionParticipantIdentity({
 }
 
 export function renderParticipantIdentityBackendMode(mode) {
-  if (mode === "macos_keychain") return "macos_keychain";
   if (mode === "windows_credential_manager") return "windows_credential_manager";
-  if (mode === "linux_secret_service_broker") return "linux_secret_service_broker";
   if (mode === "owner_file_override") return "owner_only_file_development_override";
   if (mode === "external_environment_override") return "external_environment_development_override";
   return "invalid";

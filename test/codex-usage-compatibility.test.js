@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
-import { extractRolloutUsage } from "../src/local-unified-index-extract.js";
-import { rebuildLocalUnifiedIndex } from "../src/local-unified-index-build.js";
-import { ingestLocalUnifiedIndexIncrement } from "../src/local-unified-index-ingest.js";
-import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, isLocalUnifiedIndexBoundaryParserVersion, openLocalUnifiedIndex, outcomeName, reasoningEffortName } from "../src/local-unified-index.js";
-import { createTelemetryV1IndexReader } from "../src/contribution/telemetry-v1-chunks.js";
+import { extractRolloutUsage } from "../src/local-index-extract.js";
+import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, OUTCOME_UNKNOWN, isLocalUnifiedIndexBoundaryParserVersion, outcomeName, reasoningEffortName } from "../src/codex-usage-vocabulary.js";
+import { openLocalIndexStore } from "../src/local-index-store.js";
+import { createLocalIndexTelemetryV1IndexReader } from "../src/local-index-contribution.js";
+import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
 import { createTelemetryV11Day } from "../src/contribution/index.js";
 import { usageProjection } from "../src/local-companion-usage-model.js";
 import { cumulativeSnapshotKey, normalizeTokenUsage } from "../src/providers/codex/logs.js";
@@ -31,23 +31,29 @@ async function fixture(lines) {
   return { root, path };
 }
 
+// The v2 store's parser label for a source last reparsed at `revision`.
+const parserAt = (revision) => `local-index-rollout-typed-v1+unified-rollout-typed-v` + revision;
+
 function rows(file) {
-  const database = openLocalUnifiedIndex(file, { readOnly: true });
-  try {
-    return database.prepare(`SELECT tokens_in_uncached, tokens_in_cache_read,
-      tokens_in_cache_write, tokens_out_text, tokens_out_reasoning
-      FROM usage_event ORDER BY observed_at_ms`).all().map((row) => ({ ...row }));
-  } finally { database.close(); }
+  return withReadOnlyStore(file, (database) => database.prepare(`SELECT tokens_in_uncached, tokens_in_cache_read,
+    tokens_in_cache_write, tokens_out_text, tokens_out_reasoning
+    FROM usage_event ORDER BY observed_at_ms`).all().map((row) => ({ ...row })));
 }
 
 function uploadedUsage(file) {
-  const database = openLocalUnifiedIndex(file, { readOnly: true });
-  try {
-    return createTelemetryV1IndexReader(database, { outcomeName, reasoningEffortName,
-      fallbackParserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION })
-      .deriveDay("2026-09-03").chunks.filter((chunk) => chunk.stream === "usage")
-      .flatMap((chunk) => chunk.records);
-  } finally { database.close(); }
+  return withReadOnlyStore(file, (database) => createLocalIndexTelemetryV1IndexReader(database, {
+    outcomeName, reasoningEffortName, outcomeUnknownOrdinal: OUTCOME_UNKNOWN,
+    parserVersionBase: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
+    fallbackParserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
+  }).deriveDay("2026-09-03").chunks.filter((chunk) => chunk.stream === "usage")
+    .flatMap((chunk) => chunk.records));
+}
+
+// Rewrites a store the way an older reparse left it: derived columns and the
+// source's parser label. Only tests write through this handle.
+function rewriteStore(file, statements) {
+  const database = openLocalIndexStore(file);
+  try { for (const statement of statements) database.exec(statement); } finally { database.close(); }
 }
 
 test("exact selected totals survive serial, worker, incremental and v1/v1.1 projection without duplicate output", async () => {
@@ -55,14 +61,13 @@ test("exact selected totals survive serial, worker, incremental and v1/v1.1 proj
   const second = { ...vector(250, 160), cache_write_input_tokens: 40,
     output_tokens: 30, reasoning_output_tokens: 10, total_tokens: 280 };
   const value = await fixture([count(1, first, first)]);
-  const options = { codexHome: value.root, secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2" };
   const incremental = join(value.root, "incremental.sqlite");
   try {
-    await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
+    await refreshCodexHome(value.root, { indexFile: incremental });
     // No last sample: the second selected usage must be the cumulative delta,
     // never the whole cumulative context or a reconstructed split sum.
     await appendFile(value.path, `${count(2, second, null)}\n`);
-    await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
+    await refreshCodexHome(value.root, { indexFile: incremental });
     const expected = uploadedUsage(incremental);
     assert.equal(expected.length, 2);
     assert.deepEqual(expected.map((event) => event.totalInputContextTokens), [100, 150]);
@@ -86,19 +91,18 @@ test("exact selected totals survive serial, worker, incremental and v1/v1.1 proj
 
     for (const workerCount of [1, 2]) {
       const indexFile = join(value.root, `full-${workerCount}.sqlite`);
-      await rebuildLocalUnifiedIndex({ ...options, indexFile, workerCount });
+      await refreshCodexHome(value.root, { indexFile, workerCount });
       assert.deepEqual(uploadedUsage(indexFile), expected);
     }
-    await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
+    await refreshCodexHome(value.root, { indexFile: incremental });
     assert.deepEqual(uploadedUsage(incremental), expected, "replay cannot add the combined alias twice");
 
-    const database = openLocalUnifiedIndex(incremental, { readOnly: false });
-    try {
-      database.exec("UPDATE usage_event SET total_input_context=NULL, tokens_out_combined=NULL");
-      database.exec("UPDATE parser_version SET parser_version='unified-rollout-typed-v15'");
-    } finally { database.close(); }
-    const refreshed = await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
-    assert.equal(refreshed.sourcesReparsedForParserVersion, 1);
+    rewriteStore(incremental, [
+      "UPDATE usage_event SET total_input_context=NULL, tokens_out_combined=NULL",
+      `UPDATE source SET parser_version='${parserAt(15)}'`,
+    ]);
+    const refreshed = await refreshCodexHome(value.root, { indexFile: incremental });
+    assert.equal(refreshed.sourcesRescanned, 1);
     assert.deepEqual(uploadedUsage(incremental), expected, "present v15 sources regain exact totals with stable event IDs");
   } finally { await rm(value.root, { recursive: true }); }
 });
@@ -118,8 +122,7 @@ test("raw totals stay independent of missing splits and contradictory evidence i
   const value = await fixture(samples.map((sample, index) => count(index + 1, null, sample)));
   try {
     const indexFile = join(value.root, "index.sqlite");
-    await rebuildLocalUnifiedIndex({ codexHome: value.root, indexFile, secretFile: join(value.root, "salt"),
-      contractVersion: "usage-event-v0.2", workerCount: 2 });
+    await refreshCodexHome(value.root, { indexFile, workerCount: 2 });
     const events = uploadedUsage(indexFile);
     // The total-only snapshot is not a usage row because it has no selected
     // input/output fields. The output-only row remains a fact, while the
@@ -136,27 +139,23 @@ test("raw totals stay independent of missing splits and contradictory evidence i
 test("rotated v15 sources preserve their recorded null totals and provenance", async () => {
   const value = await fixture([count(1, vector(100), vector(100))]);
   const indexFile = join(value.root, "index.sqlite");
-  const options = { codexHome: value.root, indexFile, secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2" };
   try {
-    await ingestLocalUnifiedIndexIncrement(options);
-    const database = openLocalUnifiedIndex(indexFile, { readOnly: false });
-    try {
-      database.exec("UPDATE usage_event SET total_input_context=NULL, tokens_out_combined=NULL");
-      database.exec("UPDATE parser_version SET parser_version='unified-rollout-typed-v15'");
-    } finally { database.close(); }
+    await refreshCodexHome(value.root, { indexFile });
+    rewriteStore(indexFile, [
+      "UPDATE usage_event SET total_input_context=NULL, tokens_out_combined=NULL",
+      `UPDATE source SET parser_version='${parserAt(15)}'`,
+    ]);
     await rm(value.path);
-    const refreshed = await ingestLocalUnifiedIndexIncrement(options);
-    assert.equal(refreshed.sourcesReparsedForParserVersion, 0);
+    const refreshed = await refreshCodexHome(value.root, { indexFile });
+    // The vanished source keeps its facts and its recorded label; nothing reparses.
+    assert.equal(refreshed.sourcesRescanned, 0);
+    assert.equal(refreshed.sourcesAbsent, 1);
     const events = uploadedUsage(indexFile);
     assert.equal(events.length, 1);
     assert.equal(events[0].totalInputContextTokens, null);
     assert.equal(events[0].components.outputCombinedTokens, null);
-    const retained = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    try {
-      assert.equal(retained.prepare(`SELECT p.parser_version FROM usage_event u
-        JOIN ingest_run r ON r.id=u.ingest_run_id JOIN parser_version p ON p.id=r.parser_version_id`)
-        .get().parser_version, "unified-rollout-typed-v15");
-    } finally { retained.close(); }
+    assert.equal(withReadOnlyStore(indexFile, (retained) => retained
+      .prepare("SELECT parser_version FROM source").get().parser_version), parserAt(15));
   } finally { await rm(value.root, { recursive: true }); }
 });
 
@@ -165,17 +164,15 @@ test("missing cache components remain null; explicit zero remains observed acros
   const first = count(1, sparse, sparse);
   const second = count(2, { ...vector(200), output_tokens: 20, total_tokens: 220 }, vector(100));
   const value = await fixture([first]);
-  const options = { codexHome: value.root, secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2" };
   const incremental = join(value.root, "incremental.sqlite");
   try {
-    await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
-    const cursorDb = openLocalUnifiedIndex(incremental, { readOnly: true });
-    try {
-      assert.equal(cursorDb.prepare("SELECT carry_total_cached FROM source_cursor").get().carry_total_cached, null);
-      assert.equal(cursorDb.prepare("SELECT carry_total_cache_write FROM source_cursor").get().carry_total_cache_write, null);
-    } finally { cursorDb.close(); }
+    await refreshCodexHome(value.root, { indexFile: incremental });
+    withReadOnlyStore(incremental, (cursorDb) => {
+      assert.equal(cursorDb.prepare("SELECT carry_total_cached FROM source").get().carry_total_cached, null);
+      assert.equal(cursorDb.prepare("SELECT carry_total_cache_write FROM source").get().carry_total_cache_write, null);
+    });
     await appendFile(value.path, `${second}\n`);
-    await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
+    await refreshCodexHome(value.root, { indexFile: incremental });
     const expected = [
       { tokens_in_uncached: null, tokens_in_cache_read: null, tokens_in_cache_write: null, tokens_out_text: 10, tokens_out_reasoning: 0 },
       { tokens_in_uncached: 100, tokens_in_cache_read: 0, tokens_in_cache_write: 0, tokens_out_text: 10, tokens_out_reasoning: 0 },
@@ -183,27 +180,24 @@ test("missing cache components remain null; explicit zero remains observed acros
     assert.deepEqual(rows(incremental), expected);
     for (const workerCount of [1, 2]) {
       const indexFile = join(value.root, `full-${workerCount}.sqlite`);
-      const rebuilt = await rebuildLocalUnifiedIndex({ ...options, indexFile, workerCount });
-      assert.equal(rebuilt.workerCount, workerCount);
+      await refreshCodexHome(value.root, { indexFile, workerCount });
       assert.deepEqual(rows(indexFile), expected);
     }
-    await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
+    await refreshCodexHome(value.root, { indexFile: incremental });
     assert.deepEqual(rows(incremental), expected, "replay is unchanged");
 
     // Reproduce the old zero-filled derived cache, then verify parser reparse
     // replaces only this derived evidence without deleting the database.
-    const poison = openLocalUnifiedIndex(incremental, { readOnly: false });
-    try {
-      poison.exec("UPDATE usage_event SET tokens_in_uncached=100, tokens_in_cache_read=0, tokens_in_cache_write=0");
-      poison.exec("UPDATE parser_version SET parser_version='unified-rollout-typed-v11'");
-    } finally { poison.close(); }
-    const refreshed = await ingestLocalUnifiedIndexIncrement({ ...options, indexFile: incremental });
-    assert.equal(refreshed.sourcesReparsedForParserVersion, 1);
+    rewriteStore(incremental, [
+      "UPDATE usage_event SET tokens_in_uncached=100, tokens_in_cache_read=0, tokens_in_cache_write=0",
+      `UPDATE source SET parser_version='${parserAt(11)}'`,
+    ]);
+    const refreshed = await refreshCodexHome(value.root, { indexFile: incremental });
+    assert.equal(refreshed.sourcesRescanned, 1);
     assert.deepEqual(rows(incremental), expected);
     assert.equal(LOCAL_UNIFIED_INDEX_PARSER_VERSION, "unified-rollout-typed-v19");
   } finally { await rm(value.root, { recursive: true }); }
 });
-
 test("unknown and inconsistent cache evidence stays null apart from the approved cache-write assumption", async () => {
   const bad = [
     { ...vector(100), cached_input_tokens: null },
@@ -298,33 +292,27 @@ test("thread and applied-turn tier evidence agrees across scanner, full and incr
     line(6, "turn_context", { model: "gpt-6-astra", service_tier: null }),
     count(7, vector(400), vector(100)),
   ].map((record) => record.replaceAll("2026-09-03", "2026-09-29")));
-  const options = { codexHome: value.root, secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2" };
   const expected = ["standard", "fast", "ultrafast", "unknown"];
-  const readModes = (file) => {
-    const db = openLocalUnifiedIndex(file, { readOnly: true });
-    try { return db.prepare(`SELECT codex_speed_mode, tier_source FROM usage_event
-      JOIN tier_semantics ON tier_semantics.id = usage_event.tier_id ORDER BY observed_at_ms`).all(); }
-    finally { db.close(); }
-  };
+  const readModes = (file) => withReadOnlyStore(file, (db) => db.prepare(`SELECT codex_speed_mode, tier_source FROM usage_event
+    JOIN tier_semantics ON tier_semantics.id = usage_event.tier_id ORDER BY observed_at_ms`).all());
   try {
     const events = [];
     await localCodexLogScanner.scanCodexLogEvents({ codexHome: value.root,
       startAt: "2026-09-03T00:00:00.000Z", endAt: "2026-09-30T00:00:00.000Z",
       onUsage: (event) => events.push(event) });
     assert.deepEqual(events.map((event) => event.tierSemantics.codexSpeedMode), expected);
-    for (const [name, build] of [["full", rebuildLocalUnifiedIndex], ["incremental", ingestLocalUnifiedIndexIncrement]]) {
+    for (const name of ["full", "incremental"]) {
       const indexFile = join(value.root, `${name}.sqlite`);
-      await build({ ...options, indexFile });
+      await refreshCodexHome(value.root, { indexFile });
       const modes = readModes(indexFile);
       assert.deepEqual(modes.map((row) => row.codex_speed_mode), expected);
       assert.deepEqual(modes.map((row) => row.tier_source), ["turn_override", "rollout_thread_settings", "turn_override", "turn_override"]);
-      await ingestLocalUnifiedIndexIncrement({ ...options, indexFile });
+      await refreshCodexHome(value.root, { indexFile });
       assert.deepEqual(readModes(indexFile), modes);
       assert.equal(rows(indexFile).length, 4);
     }
   } finally { await rm(value.root, { recursive: true }); }
 });
-
 test("model catalog repair reparses retained Sol 6.1 sources once without changing token evidence", async () => {
   const selected = vector(100, 90);
   const value = await fixture([
@@ -332,42 +320,37 @@ test("model catalog repair reparses retained Sol 6.1 sources once without changi
     count(1, selected, selected),
   ].map((record) => record.replaceAll("2026-09-03", "2026-09-29")));
   const indexFile = join(value.root, "index.sqlite");
-  const options = { codexHome: value.root, indexFile, secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2" };
   try {
-    await ingestLocalUnifiedIndexIncrement(options);
+    await refreshCodexHome(value.root, { indexFile });
     const initialTokens = rows(indexFile);
     // Reproduce the prior catalog's derived unknown model, preserving source
     // and occurrence identity. A price refresh alone cannot restore this id.
-    const previous = openLocalUnifiedIndex(indexFile);
-    try {
-      previous.prepare("INSERT OR IGNORE INTO model(model_id, recognition) VALUES ('unknown', 'unrecognized')").run();
-      previous.exec("UPDATE usage_event SET model_id = (SELECT id FROM model WHERE model_id = 'unknown')");
-      previous.exec("UPDATE parser_version SET parser_version = 'unified-rollout-typed-v18'");
-    } finally { previous.close(); }
-    const repaired = await ingestLocalUnifiedIndexIncrement(options);
-    assert.equal(repaired.sourcesReparsedForParserVersion, 1);
-    assert.equal(repaired.totalUsageEvents, 1);
+    rewriteStore(indexFile, [
+      "INSERT OR IGNORE INTO model(model_id, recognition) VALUES ('unknown', 'unrecognized')",
+      "UPDATE usage_event SET model_id = (SELECT id FROM model WHERE model_id = 'unknown')",
+      `UPDATE source SET parser_version = '${parserAt(18)}'`,
+    ]);
+    const repaired = await refreshCodexHome(value.root, { indexFile });
+    assert.equal(repaired.sourcesRescanned, 1);
     assert.deepEqual(rows(indexFile), initialTokens);
-    const current = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    try {
+    withReadOnlyStore(indexFile, (current) => {
       assert.deepEqual({ ...current.prepare(`SELECT model.model_id, recognition FROM model
         JOIN usage_event ON usage_event.model_id = model.id`).get() }, {
         model_id: "gpt-6.1-sol", recognition: "recognized",
       });
-    } finally { current.close(); }
+    });
     const projected = usageProjection({ observedAt: "2026-09-29T12:00:01.000Z", model: "gpt-6.1-sol",
       totalInputContextTokens: 100, components: { input_uncached_tokens: 10, input_cache_read_tokens: 90,
         input_cache_write_tokens: 0, output_text_tokens: 10, output_reasoning_tokens: 0, output_combined_tokens: 10 } });
     assert.equal(projected.model, "gpt-6.1-sol");
     assert.equal(projected.apiPriceEquivalentUsd, 0.000129);
-    const replay = await ingestLocalUnifiedIndexIncrement(options);
-    assert.equal(replay.sourcesReparsedForParserVersion, 0);
-    assert.equal(replay.insertedUsageEvents, 0);
-    assert.equal(replay.totalUsageEvents, 1);
+    const replay = await refreshCodexHome(value.root, { indexFile });
+    assert.equal(replay.sourcesRescanned, 0);
+    assert.equal(replay.unchanged, true);
+    withReadOnlyStore(indexFile, (db) => assert.equal(countRows(db, "usage_event"), 1));
     assert.deepEqual(rows(indexFile), initialTokens);
   } finally { await rm(value.root, { recursive: true }); }
 });
-
 test("v19 keeps reviewed historical boundary provenance and refuses unqualified variants", () => {
   for (const version of [15, 16, 17, 18, 19]) {
     for (const suffix of ["", "-partial", "-parent-model", "-parent-model-partial"]) {

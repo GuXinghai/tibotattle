@@ -21,19 +21,9 @@ import {
   buildLocalCompanionSnapshot,
   cacheSwitchAllowanceImpact,
 } from "../src/local-companion-data.js";
-import {
-  readLocalUnifiedCompanionProjection,
-} from "../src/local-unified-companion-source.js";
-import {
-  rebuildLocalUnifiedIndex,
-} from "../src/local-unified-index-build.js";
-import {
-  LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-  LOCAL_UNIFIED_INDEX_PARTIAL_PARSER_VERSION,
-  LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARSER_VERSION,
-  LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARTIAL_PARSER_VERSION,
-  reasoningEffortOrdinal,
-} from "../src/local-unified-index.js";
+import { readLocalIndexCompanionProjection } from "../src/local-index-companion-source.js";
+import { refreshLocalIndex } from "../src/local-index-refresh.js";
+import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, LOCAL_UNIFIED_INDEX_PARTIAL_PARSER_VERSION, LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARSER_VERSION, LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARTIAL_PARSER_VERSION, reasoningEffortOrdinal } from "../src/codex-usage-vocabulary.js";
 
 const NOW_MS = Date.parse("2026-08-08T12:00:00.000Z");
 
@@ -1110,14 +1100,14 @@ test("raw rollout facts flow through the existing index into the read-only impac
     ].join("\n")}\n`,
   );
   try {
-    const build = await rebuildLocalUnifiedIndex({
+    const build = await refreshLocalIndex({
       codexHome: root,
       indexFile,
       secretFile: join(root, "salt"),
-      contractVersion: "usage-event-v0.2",
+      workerCount: 1,
     });
     assert.equal(build.usageEvents, 6);
-    const projection = await readLocalUnifiedCompanionProjection({
+    const projection = await readLocalIndexCompanionProjection({
       indexFile,
       nowMs: NOW_MS,
     });
@@ -1186,13 +1176,14 @@ test("raw rollout facts flow through the existing index into the read-only impac
 });
 
 test("a missing unified index reports impact unavailable rather than zero", async () => {
-  const projection = await readLocalUnifiedCompanionProjection({
+  const projection = await readLocalIndexCompanionProjection({
     indexFile: join(tmpdir(), `missing-cache-switch-${process.pid}.sqlite`),
     nowMs: NOW_MS,
   });
   assert.equal(projection.status, "missing");
-  assert.equal(projection.cacheSwitchImpact.status, "unavailable");
-  assert.deepEqual(projection.cacheSwitchImpact.periods, []);
+  // The v2 envelope names no impact for a missing store; the companion maps
+  // that null to an explicit unavailable impact, never to zero.
+  assert.equal(projection.cacheSwitchImpact, null);
 });
 
 test("model continuity cohorts use full-period evidence, including warm returns absent from recent drops", () => {

@@ -4,12 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { extractRolloutUsage } from "../src/local-unified-index-extract.js";
+import { extractRolloutUsage } from "../src/local-index-extract.js";
 import {
   createHistoryBaseSeedResolver,
   createParentModelResolver,
   selectRolloutUsageSeed,
-} from "../src/local-unified-index-history.js";
+} from "../src/local-index-history.js";
 
 const timestamp = (second) => new Date(Date.UTC(2026, 8, 1, 0, 0, second)).toISOString();
 const at = (second) => Date.parse(timestamp(second));

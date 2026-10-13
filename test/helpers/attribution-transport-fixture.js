@@ -7,7 +7,7 @@ import {
 import { ensureContributionDeviceCapability } from "../../src/contribution-device-capability.js";
 import {
   ATTRIBUTION_FIXTURE_BINDING, ATTRIBUTION_FIXTURE_DAY, ATTRIBUTION_FIXTURE_DEVICE_ID, ATTRIBUTION_FIXTURE_START,
-} from "./local-attribution-fixture.js";
+} from "./local-index-attribution-fixture.js";
 
 const uuid = (value) => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const digest = (text) => createHash("sha256").update(text).digest("hex");

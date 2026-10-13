@@ -198,8 +198,7 @@ function countRecords(recordCounts) {
 function assertOwnerOnlyDirectory(stats) {
   if (!stats.isDirectory()
       || stats.isSymbolicLink()
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
     fail("workspace_invalid");
   }
 }

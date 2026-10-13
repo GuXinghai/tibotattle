@@ -12,12 +12,6 @@ const SHA256 = "a".repeat(64);
 const PUBLISHED_HOME = [
   "<!doctype html>",
   "<html><head>",
-  '<meta name="usage-monitor-installer-url" content="https://downloads.tibotattle.com/TiboTattle-1.2.3-macOS-arm64.dmg">',
-  '<meta name="usage-monitor-installer-version" content="1.2.3">',
-  `<meta name="usage-monitor-installer-sha256" content="${SHA256}">`,
-  '<meta name="usage-monitor-installer-bytes" content="48992442">',
-  '<meta name="usage-monitor-minimum-macos" content="14.0">',
-  '<meta name="usage-monitor-architectures" content="arm64">',
   '<meta name="usage-monitor-release-notes-url" content="https://tibotattle.com/docs.html">',
   '<meta name="usage-monitor-privacy-url" content="https://tibotattle.com/privacy.html">',
   '<meta name="usage-monitor-security-url" content="https://tibotattle.com/docs.html">',
@@ -32,16 +26,6 @@ const DAILY_PAYLOAD = Object.freeze({
   schemaVersion: "community-daily-read-v1.0",
   to: "2026-08-17",
 });
-
-const INTEL_META = [
-  '<meta name="usage-monitor-intel-installer-url" content="https://downloads.tibotattle.com/TiboTattle-1.2.3-macOS-x64.dmg">',
-  '<meta name="usage-monitor-intel-installer-version" content="1.2.3">',
-  `<meta name="usage-monitor-intel-installer-sha256" content="${"b".repeat(64)}">`,
-  '<meta name="usage-monitor-intel-installer-bytes" content="50000000">',
-  '<meta name="usage-monitor-intel-minimum-macos" content="14.0">',
-  '<meta name="usage-monitor-intel-architectures" content="x64">',
-].join("\n");
-const DUAL_HOME = PUBLISHED_HOME.replace("</head>", `${INTEL_META}</head>`);
 
 function publishedFetch(requests) {
   return async (input, options) => {
@@ -89,13 +73,9 @@ test("preview arguments accept only reviewed public loopback-preview settings", 
 });
 
 test("published release metadata stays display-safe and complete", () => {
+  // The published entry carries no native-installer slot; only the public
+  // site links are read back for display.
   assert.deepEqual(extractPublicReleaseMetadata(PUBLISHED_HOME), {
-    architectures: "arm64",
-    installerBytes: "48992442",
-    installerSha256: SHA256,
-    installerUrl: "https://downloads.tibotattle.com/TiboTattle-1.2.3-macOS-arm64.dmg",
-    installerVersion: "1.2.3",
-    minimumMacos: "14.0",
     privacyUrl: "https://tibotattle.com/privacy.html",
     releaseNotesUrl: "https://tibotattle.com/docs.html",
     securityUrl: "https://tibotattle.com/docs.html",
@@ -109,43 +89,19 @@ test("published release metadata stays display-safe and complete", () => {
   );
   assert.throws(
     () => extractPublicReleaseMetadata(
-      PUBLISHED_HOME.replace('content="1.2.3"', 'content="preview"'),
+      PUBLISHED_HOME.replace('name="usage-monitor-support-url"', 'data-usage-monitor-support-url'),
     ),
-    /installer version/u,
-  );
-  assert.throws(
-    () => extractPublicReleaseMetadata(
-      PUBLISHED_HOME.replace(
-        'name="usage-monitor-installer-url"',
-        'data-usage-monitor-installer-url',
-      ),
-    ),
-    /missing usage-monitor-installer-url/u,
+    /missing usage-monitor-support-url/u,
   );
 });
 
-test("Intel preview metadata is optional but must be complete and match the ARM release", async (t) => {
-  const metadata = extractPublicReleaseMetadata(DUAL_HOME);
-  assert.equal(metadata.intelInstaller.architectures, "x64");
-  assert.equal(metadata.intelInstaller.installerSha256, "b".repeat(64));
-  assert.equal(metadata.intelInstaller.installerVersion, metadata.installerVersion);
-  assert.equal(extractPublicReleaseMetadata(PUBLISHED_HOME).intelInstaller, undefined);
-  for (const invalid of [
-    DUAL_HOME.replace('name="usage-monitor-intel-installer-bytes"', 'name="missing-intel-bytes"'),
-    DUAL_HOME.replace('name="usage-monitor-intel-installer-version" content="1.2.3"', 'name="usage-monitor-intel-installer-version" content="1.2.4"'),
-    DUAL_HOME.replace('name="usage-monitor-intel-architectures" content="x64"', 'name="usage-monitor-intel-architectures" content="arm64"'),
-    DUAL_HOME.replace("TiboTattle-1.2.3-macOS-x64.dmg", "TiboTattle-1.2.3-macOS-arm64.dmg"),
-  ]) assert.throws(() => extractPublicReleaseMetadata(invalid));
-  const preview = await startPublicReleaseSitePreview({
-    fetchImpl: async () => new Response(DUAL_HOME, {
-      headers: { "content-type": "text/html; charset=utf-8" },
-    }),
-    upstream: "https://tibotattle.com",
-  });
-  t.after(() => preview.close());
-  const html = await (await fetch(preview.url)).text();
-  assert.ok(html.includes('name="usage-monitor-intel-architectures" content="x64"'));
-  assert.ok(html.includes(`name="usage-monitor-intel-installer-sha256" content="${"b".repeat(64)}"`));
+test("duplicate or unknown preview metadata cannot shadow a published site link", () => {
+  assert.throws(
+    () => extractPublicReleaseMetadata(
+      PUBLISHED_HOME.replace("</head>", '<meta name="usage-monitor-privacy-url" content="https://tibotattle.com/privacy.html"></head>'),
+    ),
+    /invalid usage-monitor-privacy-url metadata/u,
+  );
 });
 
 test("live-data preview serves only generated public output and its one aggregate read", async (t) => {
@@ -166,10 +122,13 @@ test("live-data preview serves only generated public output and its one aggregat
   assert.equal(homepage.headers.get("cache-control"), "no-store");
   const html = await homepage.text();
   assert.match(html, /What the Codex allowance is really worth\./u);
+  // Only the public site links are injected; the preview never claims an
+  // installer, which is published solely through the Electron Windows panel.
   assert.match(
     html,
-    /name="usage-monitor-installer-version" content="1\.2\.3"/u,
+    /name="usage-monitor-privacy-url" content="https:\/\/tibotattle\.com\/privacy\.html"/u,
   );
+  assert.doesNotMatch(html, /name="usage-monitor-installer-url" content="[^"]+"/u);
   assert.doesNotMatch(html, /app\.js/u);
 
   const daily = await fetch(

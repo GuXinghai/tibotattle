@@ -224,11 +224,6 @@ async function ensureOwnerDirectory(directory, { create = false } = {}) {
   }
   if (!stats.isDirectory() || stats.isSymbolicLink()) fail("directory");
   if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("directory");
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    await chmod(target, 0o700);
-    const corrected = await lstat(target);
-    if ((corrected.mode & 0o077) !== 0) fail("directory");
-  }
   const canonical = await realpath(target);
   return canonical;
 }
@@ -237,7 +232,6 @@ function assertDatabaseStats(stats) {
   if (!stats.isFile() || stats.isSymbolicLink()) fail("database_type");
   if (stats.nlink !== 1) fail("database_links");
   if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("database_owner");
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) fail("database_permissions");
 }
 
 async function precreateDatabase(path) {

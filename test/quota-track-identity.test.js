@@ -11,8 +11,8 @@ import {
   quotaWindowProjection,
   sampleQuotaTimelineByTrack,
 } from "../src/local-companion-usage-model.js";
-import { rebuildLocalUnifiedIndex } from "../src/local-unified-index-build.js";
-import { readLocalUnifiedCompanionProjection } from "../src/local-unified-companion-source.js";
+import { readLocalIndexCompanionProjection } from "../src/local-index-companion-source.js";
+import { refreshCodexHome } from "./helpers/local-index-rollout-store.js";
 
 // Quota track identity is (limit_id, duration): the provider's
 // primary/secondary slots are server-assigned UI roles, not identities.
@@ -411,13 +411,8 @@ test("the unified companion projection reads one continuous weekly quota series 
     );
 
     const indexFile = join(root, "index.sqlite");
-    await rebuildLocalUnifiedIndex({
-      codexHome: root,
-      indexFile,
-      secretFile: join(root, "salt"),
-      contractVersion: "usage-event-v0.2",
-    });
-    const projection = await readLocalUnifiedCompanionProjection({
+    await refreshCodexHome(root);
+    const projection = await readLocalIndexCompanionProjection({
       indexFile,
       nowMs: Date.parse("2026-07-25T00:05:00.000Z"),
     });

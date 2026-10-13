@@ -23,8 +23,8 @@ node ./scripts/build-windows-filesystem-manifest.mjs
 
 The resulting `build/Release/windows_filesystem.node` and its adjacent
 `windows_filesystem.node.manifest.json` are loaded only on native
-Windows x64 by `src/platform/windows-filesystem.js`. macOS, Linux, Windows
-ARM64, and missing/invalid bindings fail closed. The source contains a
+Windows x64 by `src/platform/windows-filesystem.js`. Windows ARM64 and
+missing/invalid bindings fail closed. The source contains a
 qualification-only accountless upload-credential backend, separate from the
 legacy Credential Manager capability boundary and its four logical IDs. It is
 not a selected production credential backend.
@@ -223,7 +223,7 @@ modified by this setup; the native reader still refuses a foreign owner.
 
 Projects & threads also uses these source leases for local display metadata.
 Selected rollout-head hints use the same leases, without reading titles, so
-paginated replacement histories and inline children resolve across platforms.
+paginated replacement histories and inline children resolve on Windows.
 The main SQLite database and existing sidecars remain leased through connection
 close. With no sidecars, an immutable read avoids creating coordination files
 and rejects main-file or sidecar-presence changes. Live WAL reads require both
@@ -234,6 +234,5 @@ same-owner process is outside the lease guarantee. Unsafe metadata retains the
 anonymous fallback. Native metadata tests and the packaged project/task journey
 are required in addition to model-performance qualification; see the
 [issue #208 plan](../../docs/plans/2026-09-22-windows-project-task-names.md).
-The shared `test/work-usage-platform-parity.test.js` runs identical metadata
-assertions against the real macOS and Windows adapters. A macOS result does not
-qualify the native Windows binding.
+The Windows metadata assertions run against the real native adapter; any
+non-native or simulated result does not qualify the native Windows binding.

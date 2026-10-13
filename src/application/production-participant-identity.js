@@ -6,16 +6,15 @@ function selectionError(code) {
   return error;
 }
 
+// Port-level selection for the participant identity secret. Concrete Windows
+// Credential Manager composition lives in src/export-identity-production.js,
+// which routes production Windows through its own readiness gate. This port
+// only admits the explicit development overrides; with no override it fails
+// closed without constructing any backend.
 export function selectProductionParticipantIdentity({
   explicitSecretFile = null,
   environmentSecret,
-  platform,
-  architecture,
   appStateSecretFile,
-  createKeychainBackend,
-  createLinuxBackend,
-  keychainCapability,
-  allowedKeychainCapability,
 } = {}) {
   if (environmentSecret && explicitSecretFile) {
     throw selectionError("EXPORT_IDENTITY_OVERRIDE_CONFLICT");
@@ -40,80 +39,5 @@ export function selectProductionParticipantIdentity({
       }),
     });
   }
-  // Linux has no implicit credential loader. Only the companion's explicitly
-  // injected, fixed-capability parent broker can supply this source-only path.
-  if (platform === "linux") {
-    if (architecture !== "x64" || typeof createLinuxBackend !== "function") {
-      throw selectionError("EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE");
-    }
-    if (allowedKeychainCapability === undefined || keychainCapability !== allowedKeychainCapability) {
-      throw selectionError("EXPORT_IDENTITY_PRODUCTION_BACKEND_INVALID");
-    }
-    let participantSecretBackend;
-    try {
-      participantSecretBackend = createLinuxBackend();
-      if (participantSecretBackend === null || typeof participantSecretBackend !== "object"
-          || ["read", "createIfMissing", "replaceExact", "deleteExact", "describe"].some(
-            (method) => typeof participantSecretBackend[method] !== "function")) {
-        throw new Error("Unavailable broker");
-      }
-    } catch {
-      throw selectionError("EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE");
-    }
-    return Object.freeze({
-      mode: "linux_secret_service_broker",
-      identityOptions: Object.freeze({
-        environmentSecret: null,
-        secretFile: appStateSecretFile,
-        participantSecretBackend,
-        participantSecretCapability: keychainCapability,
-      }),
-    });
-  }
-  // The native app injects the same capability-scoped broker on both macOS
-  // architectures. Legacy binding availability remains the adapter's concern.
-  if (platform !== "darwin"
-      || (architecture !== "arm64" && architecture !== "x64")) {
-    throw selectionError("EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE");
-  }
-  if (
-    typeof createKeychainBackend !== "function"
-    || allowedKeychainCapability === undefined
-    || keychainCapability !== allowedKeychainCapability
-  ) {
-    throw selectionError("EXPORT_IDENTITY_PRODUCTION_BACKEND_INVALID");
-  }
-
-  let participantSecretBackend;
-  try {
-    participantSecretBackend = createKeychainBackend();
-  } catch (upstream) {
-    let upstreamCode;
-    try {
-      upstreamCode = upstream?.code;
-    } catch {
-      // Hostile upstream errors are collapsed below.
-    }
-    const safeCodes = new Set([
-      "export_identity_keychain_unsupported_platform",
-      "export_identity_keychain_unsupported_architecture",
-      "export_identity_keychain_invalid_configuration",
-      "export_identity_keychain_binding_unavailable",
-      "export_identity_keychain_binding_integrity",
-    ]);
-    throw selectionError(
-      safeCodes.has(upstreamCode)
-        ? upstreamCode
-        : "EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE",
-    );
-  }
-  return Object.freeze({
-    mode: "macos_keychain",
-    identityOptions: Object.freeze({
-      environmentSecret: null,
-      secretFile: appStateSecretFile,
-      participantSecretBackend,
-      participantSecretCapability: keychainCapability,
-    }),
-  });
+  throw selectionError("EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE");
 }

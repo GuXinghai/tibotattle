@@ -5,9 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
-import { extractRolloutUsage } from "../src/local-unified-index-extract.js";
-import { rebuildLocalUnifiedIndex } from "../src/local-unified-index-build.js";
-import { openLocalUnifiedIndex } from "../src/local-unified-index.js";
+import { extractRolloutUsage } from "../src/local-index-extract.js";
+import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
 
 const { scanCodexLogEvents } = localCodexLogScanner;
 
@@ -227,17 +226,10 @@ test("both restatements derive identical charges from the pathological file", as
 test("a full index rebuild over the pathological file stores no phantom tokens", async () => {
   const { root } = await interleavedCorpus();
   try {
-    const result = await rebuildLocalUnifiedIndex({
-      codexHome: root,
-      indexFile: join(root, "index.sqlite"),
-      secretFile: join(root, "salt"),
-      contractVersion: "usage-event-v0.2",
-    });
-    assert.equal(result.usageEvents, LASTS.length);
-    const database = openLocalUnifiedIndex(join(root, "index.sqlite"), {
-      readOnly: true,
-    });
-    try {
+    const result = await refreshCodexHome(root);
+    assert.equal(result.sourcesQuarantined, 0);
+    withReadOnlyStore(join(root, "index.sqlite"), (database) => {
+      assert.equal(countRows(database, "usage_event"), LASTS.length);
       const totals = database.prepare(`
         SELECT SUM(tokens_in_uncached) AS iu, SUM(tokens_out_text) AS ot,
                MAX(tokens_in_uncached) AS max_iu
@@ -245,9 +237,7 @@ test("a full index rebuild over the pathological file stores no phantom tokens",
       assert.equal(Number(totals.iu), EXPECTED_INPUT);
       assert.equal(Number(totals.ot), EXPECTED_OUTPUT);
       assert.ok(Number(totals.max_iu) <= 138_000);
-    } finally {
-      database.close();
-    }
+    });
   } finally {
     await rm(root, { recursive: true });
   }

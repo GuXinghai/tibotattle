@@ -11,8 +11,8 @@ import {
   readDevelopmentAccountObservationSecretFile,
 } from "../src/account-observation-secret.js";
 import { selectProductionAccountObservationSecret } from "../src/account-observation-production.js";
-import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/export-identity-keychain.js";
 import {
+  EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_SCHEMA,
@@ -141,12 +141,6 @@ test("existing-only account loader never generates or creates an upload identity
     await assert.rejects(readFile(operationLockFile), { code: "ENOENT" });
     result?.fill(0);
   }
-  const selection = selectProductionAccountObservationSecret({
-    platform: "darwin", architecture: "arm64", createIfMissing: false,
-    operationLockFile: join(root, "production-operation.lock"),
-    createKeychainBackend: () => ({ async read() { return null; } }),
-  });
-  assert.equal(await selection.loadAccountObservationSecret(), null);
 });
 
 test("account observation operation lease rejects concurrent creation without persisting a secret", async () => {
@@ -495,67 +489,6 @@ test("locked and migration-required Keychain states remain distinct and content-
   }
 });
 
-for (const architecture of ["arm64", "x64"]) {
-  test(`macOS ${architecture} account selection preserves the observation secret and rejects export identity`, async () => {
-    const root = await mkdtemp(join(tmpdir(), "app-usagemonitor-account-production-"));
-    const backend = memoryBackend(Buffer.alloc(32, 74));
-    const prior = process.env.APP_USAGEMONITOR_ACCOUNT_HMAC_KEY;
-    process.env.APP_USAGEMONITOR_ACCOUNT_HMAC_KEY = "legacy-environment-canary";
-    try {
-      const selected = selectProductionAccountObservationSecret({
-        platform: "darwin",
-        architecture,
-        operationLockFile: join(root, "operation.lock"),
-        createKeychainBackend: () => backend,
-      });
-      assert.equal(selected.mode, "macos_keychain_account_observation");
-      assert.deepEqual(await selected.loadAccountObservationSecret(), Buffer.alloc(32, 74));
-      assert.equal(backend.calls.every(([, capability]) => capability === ACCOUNT_CAPABILITY), true);
-
-      assert.throws(
-        () => selectProductionAccountObservationSecret({
-          platform: "darwin",
-          architecture,
-          createKeychainBackend: () => backend,
-          keychainCapability: EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity,
-        }),
-        (error) => error.code === "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_INVALID",
-      );
-    } finally {
-      if (prior === undefined) delete process.env.APP_USAGEMONITOR_ACCOUNT_HMAC_KEY;
-      else process.env.APP_USAGEMONITOR_ACCOUNT_HMAC_KEY = prior;
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-}
-
-test("account selection rejects unknown macOS architectures before constructing a credential backend", () => {
-  for (const architecture of ["ia32", "x86_64", "arm", "", null]) {
-    let constructions = 0;
-    assert.throws(() => selectProductionAccountObservationSecret({
-      platform: "darwin",
-      architecture,
-      createKeychainBackend() { constructions += 1; },
-    }), { code: "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_UNAVAILABLE" });
-    assert.equal(constructions, 0);
-  }
-});
-
-test("Intel account selection preserves a broker failure without legacy or file fallback", () => {
-  let constructions = 0;
-  const canary = "PRIVATE-INTEL-BROKER-FAILURE";
-  assert.throws(() => selectProductionAccountObservationSecret({
-    platform: "darwin",
-    architecture: "x64",
-    createKeychainBackend() {
-      constructions += 1;
-      throw new Error(canary);
-    },
-  }), (error) => error.code === "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_UNAVAILABLE"
-    && !`${error.stack}\n${JSON.stringify(error)}`.includes(canary));
-  assert.equal(constructions, 1);
-});
-
 test("Windows x64 account-observation production selection remains fail closed", () => {
   let constructions = 0;
   assert.throws(
@@ -742,105 +675,8 @@ test("Windows parent IPC account selection refuses absent, malformed, and untrus
   }
 });
 
-test("Linux account selection preserves generic broker compatibility and read-only absence", async () => {
-  const root = await mkdtemp(join(tmpdir(), "linux-account-broker-selection-"));
-  const backend = { ...memoryBackend(Buffer.alloc(32, 81)),
-    replaceExact: async () => "replaced", deleteExact: async () => "deleted",
-    describe: () => ({ backend: "linux_secret_service_broker", status: "available" }) };
-  try {
-    const selection = selectProductionAccountObservationSecret({
-      platform: "linux", architecture: "x64", operationLockFile: join(root, "account.lock"),
-      createLinuxBackend: () => backend, createIfMissing: false,
-      createKeychainBackend: () => { throw new Error("Mac fallback must not run"); },
-    });
-    assert.equal(selection.mode, "linux_secret_service_broker_account_observation");
-    const observed = await selection.loadAccountObservationSecret();
-    assert.deepEqual(observed, Buffer.alloc(32, 81)); observed.fill(0);
-    assert.equal(backend.calls.every(([, capability]) => capability === ACCOUNT_CAPABILITY), true);
-    assert.equal(backend.calls.some(([operation]) => operation === "createIfMissing"), false);
-    const absent = { ...backend, read: async () => null,
-      createIfMissing: () => { throw new Error("Read-only selection cannot create"); } };
-    const readOnly = selectProductionAccountObservationSecret({
-      platform: "linux", architecture: "x64", operationLockFile: join(root, "absent.lock"),
-      createLinuxBackend: () => absent, createIfMissing: false,
-    });
-    assert.equal(await readOnly.loadAccountObservationSecret(), null);
-    const locked = selectProductionAccountObservationSecret({
-      platform: "linux", architecture: "x64", operationLockFile: join(root, "locked.lock"),
-      createLinuxBackend: () => ({ ...backend,
-        read: async () => { throw Object.assign(new Error("private native message"), { code: "linux_secret_service_broker_locked" }); },
-      }),
-    });
-    await assert.rejects(locked.loadAccountObservationSecret(), (error) =>
-      error.code === "account_observation_credential_locked" && !error.stack.includes("private native message"));
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
 
-test("Linux account selection accepts the narrow observation backend contract", async () => {
-  const root = await mkdtemp(join(tmpdir(), "linux-account-narrow-selection-"));
-  const narrow = memoryBackend();
-  const existingOnlyCalls = [];
-  const existingOnly = {
-    async read(capability) {
-      existingOnlyCalls.push(capability);
-      return Buffer.alloc(32, 82);
-    },
-  };
-  try {
-    const creating = selectProductionAccountObservationSecret({
-      platform: "linux", architecture: "x64", operationLockFile: join(root, "create.lock"),
-      createLinuxBackend: () => narrow,
-    });
-    const created = await creating.loadAccountObservationSecret();
-    assert.equal(created.byteLength, 32);
-    created.fill(0);
-    assert.deepEqual(narrow.calls.map(([operation, capability]) => [operation, capability]), [
-      ["read", ACCOUNT_CAPABILITY],
-      ["createIfMissing", ACCOUNT_CAPABILITY],
-      ["read", ACCOUNT_CAPABILITY],
-    ]);
 
-    const existingOnlySelection = selectProductionAccountObservationSecret({
-      platform: "linux", architecture: "x64", createIfMissing: false,
-      operationLockFile: join(root, "existing-only.lock"),
-      createLinuxBackend: () => existingOnly,
-    });
-    const existing = await existingOnlySelection.loadAccountObservationSecret();
-    assert.deepEqual(existing, Buffer.alloc(32, 82));
-    existing.fill(0);
-    assert.deepEqual(existingOnlyCalls, [ACCOUNT_CAPABILITY]);
-  } finally { await rm(root, { recursive: true, force: true }); }
-});
-
-test("Linux account selection refuses unsupported contracts, capabilities, and architectures before fallback", () => {
-  for (const createLinuxBackend of [
-    null,
-    () => null,
-    () => ({ get() {}, set() {}, delete() {} }),
-    () => ({ async read() { return null; } }),
-    () => ({ async createIfMissing() { return "created"; } }),
-    () => { throw new Error("private-native-detail"); },
-  ]) {
-    assert.throws(() => selectProductionAccountObservationSecret({
-      platform: "linux", architecture: "x64", createLinuxBackend,
-    }), (error) => error.code === "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_UNAVAILABLE"
-      && !error.stack.includes("private-native-detail"));
-  }
-  for (const keychainCapability of [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity, {}]) {
-    assert.throws(() => selectProductionAccountObservationSecret({
-      platform: "linux", architecture: "x64", keychainCapability,
-      createLinuxBackend: () => { throw new Error("Must refuse before construction"); },
-    }), { code: "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_INVALID" });
-  }
-  for (const architecture of ["arm64", "ia32", "x86_64", "", null]) {
-    let constructions = 0;
-    assert.throws(() => selectProductionAccountObservationSecret({
-      platform: "linux", architecture,
-      createLinuxBackend() { constructions += 1; return memoryBackend(); },
-    }), { code: "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_UNAVAILABLE" });
-    assert.equal(constructions, 0);
-  }
-});
 
 test("development account secret injection is explicit and returns disposable copies", async () => {
   const original = Buffer.alloc(32, 75);
@@ -887,7 +723,7 @@ test("doctor, register, capture, and collector CLI paths share the injected prod
     inspectCodexBinaryDiagnostic: async () => ({
       schemaVersion: "codex-binary-diagnostic-v0.2",
       source: "chatgpt_bundled",
-      location: "system_bundled_cli",
+      location: "user_windows_cli",
       versionStatus: "available",
       version: "0.149.1",
     }),
@@ -899,7 +735,7 @@ test("doctor, register, capture, and collector CLI paths share the injected prod
   console.log = (...values) => { lines.push(values.join(" ")); };
   try {
     await run(["doctor"], dependencies);
-    assert.match(lines.join("\n"), /Codex binary: ChatGPT bundled, system app CLI layout \(0\.149\.1\)/);
+    assert.match(lines.join("\n"), /Codex binary: ChatGPT bundled, user Windows desktop CLI \(0\.149\.1\)/);
     assert.match(lines.join("\n"), /Account scope: available/);
     assert.equal(lines.join("\n").includes("private.owner"), false);
     assert.equal(lines.join("\n").includes(secret.toString("base64url")), false);

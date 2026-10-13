@@ -10,9 +10,7 @@ import test from "node:test";
 
 import { createLocalCollectorRefreshRunner } from "../src/local-companion-refresh.js";
 import { runCollectorOnce } from "../src/passive-collector.js";
-import { ingestLocalUnifiedIndexOffMain } from "../src/local-unified-index-off-main.js";
-import { refreshReplaySafeAccountingCache } from "../src/replay-safe-accounting-cache.js";
-import { TELEMETRY_SCHEMA_VERSION } from "@app-usagemonitor/telemetry-contract";
+import { createLocalIndexBackend } from "../src/local-index-backend.js";
 
 import { startLocalCompanionServer } from "../apps/local/server.js";
 import { createProductionDistributionMetadata } from "../apps/electron/desktop-updater.js";
@@ -1660,11 +1658,15 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
     // Keep the real collector, index, accounting and restart path, but never
     // read the developer's Codex account or Keychain in this synthetic test.
     let quotaReads = 0;
+    const indexBackend = createLocalIndexBackend({
+      indexFile: installation.paths.localIndexStoreFile,
+      secretFile: installation.paths.unifiedIndexSecretFile,
+    });
     const createFixtureRefreshRunner = () => createLocalCollectorRefreshRunner({
       codexHome,
       stateFile: installation.paths.collectorStateFile,
       accountingSourceMode: "unified",
-      unifiedIndexFile: installation.paths.unifiedIndexFile,
+      unifiedIndexFile: installation.paths.localIndexStoreFile,
       unifiedIndexSecretFile: installation.paths.unifiedIndexSecretFile,
       selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
       runCollector: (options) => runCollectorOnce({
@@ -1692,11 +1694,8 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
           close() {},
         }),
       }),
-      refreshUnifiedIndex: (options) => ingestLocalUnifiedIndexOffMain({
-        ...options,
-        contractVersion: TELEMETRY_SCHEMA_VERSION,
-      }),
-      refreshAccounting: refreshReplaySafeAccountingCache,
+      refreshUnifiedIndex: indexBackend.refreshUnifiedIndex,
+      refreshAccounting: indexBackend.refreshAccounting,
     });
     const serverOptions = {
       port: 0,
@@ -1834,7 +1833,7 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
     assert.equal(quotaReads, 2);
   } finally {
     await app?.close();
-    await rm(root, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
   }
 });
 

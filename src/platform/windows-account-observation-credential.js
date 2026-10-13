@@ -2,7 +2,7 @@ import { win32 } from "node:path";
 
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "./export-identity-keychain.js";
+} from "./credential-capabilities.js";
 import {
   createWindowsCredentialManagerBackend,
   WindowsCredentialManagerError,

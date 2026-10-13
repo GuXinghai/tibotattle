@@ -77,8 +77,8 @@ export function selectProductionClaudeCallbackBackend({
   createBackend,
 } = {}) {
   if (
-    platform !== "darwin"
-    || architecture !== "arm64"
+    platform !== "win32"
+    || architecture !== "x64"
     || typeof createBackend !== "function"
   ) {
     fail("invalid_configuration");

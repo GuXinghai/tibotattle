@@ -202,8 +202,7 @@ function workspaceDiscardConfirmationToken(planToken) {
 
 function assertOwnerDirectory(stats) {
   if (!stats.isDirectory() || stats.isSymbolicLink()
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) fail("directory");
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) fail("directory");
 }
 
 async function inspectDirectory(path) {
@@ -234,7 +233,6 @@ function assertOwnerFile(stats, maximumBytes) {
   if (stats.nlink !== 1) fail("artifact_links");
   if (!Number.isSafeInteger(stats.size) || stats.size < 1 || stats.size > maximumBytes) fail("artifact_size");
   if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("artifact_owner");
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) fail("artifact_permissions");
 }
 
 async function inspectFile(path, maximumBytes) {

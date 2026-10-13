@@ -202,23 +202,6 @@ test("platform mechanics and flat modules respect the composition boundary", asy
   );
 });
 
-test("local-review uses reviewed verifier composition and debt is removed", async () => {
-  const localReview = await source("local-review/cli.js");
-  assert.doesNotMatch(localReview, /src\/export-set-verifier\.js/u);
-  assert.match(localReview, /createLocalExportSetVerificationContext/u);
-  assert.match(localReview, /createExportSetVerificationStorageContext/u);
-
-  const architecture = await source("scripts/check-architecture-boundaries.mjs");
-  const baselineStart = architecture.indexOf(
-    "const LOCAL_REVIEW_LEGACY_MIGRATION_TARGETS",
-  );
-  const baseline = architecture.slice(
-    baselineStart,
-    architecture.indexOf("]);", baselineStart) + 3,
-  );
-  assert.doesNotMatch(baseline, /src\/export-set-verifier\.js/u);
-  assert.equal((baseline.match(/"src\//gu) ?? []).length, 0);
-});
 
 test("schema validation collapses hostile getters to fixed diagnostics", () => {
   const canary = "/private/manifest/DO_NOT_EXPOSE";

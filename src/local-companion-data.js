@@ -5,7 +5,6 @@ import {
   CODEX_SPEED_MODE_DECLARATION,
   CODEX_SPEED_MODE_OBSERVABILITY,
   DEFAULT_UNRESOLVED_SPEED_SCENARIO,
-  FAST_MODE_ASSUMED_MULTIPLIER_SOURCE,
   FAST_MODE_MULTIPLIER_SOURCE,
   FAST_MODE_QUOTA_MULTIPLIERS,
   OPENAI_PRICE_EVIDENCE_START_DATE,
@@ -34,26 +33,17 @@ import {
   newUsagePeriod,
   safeSpeedWeighting,
 } from "./local-companion-usage-model.js";
-import {
-  defaultLocalUnifiedIndexPath,
-} from "./local-unified-index.js";
+import { defaultLocalUnifiedIndexPath } from "./local-device-salt.js";
 import {
   isAuthoritativeDashboardSnapshot,
   readAuthoritativeDashboardSnapshot,
   writeAuthoritativeDashboardSnapshot,
 } from "./local-authoritative-dashboard-snapshot.js";
-import {
-  readLocalUnifiedCompanionProjection,
-} from "./local-unified-companion-source.js";
+import { readLocalIndexProjection } from "./local-index-backend.js";
 import {
   decodePlanScopedTimelineRow,
   readReplaySafeAccountingCache,
 } from "./replay-safe-accounting-cache.js";
-import {
-  defaultLocalArchiveAccountingIndexPath,
-  inspectLocalArchiveAccountingIndex,
-  readLocalArchiveAccountingPeriod,
-} from "./local-archive-accounting-index.js";
 import {
   defaultLocalCollectorStatePath,
   prepareLocalCollectorState,
@@ -77,12 +67,6 @@ import {
 import {
   resolveLocalLegacyReportReadPath,
 } from "./local-legacy-report-storage.js";
-import {
-  collectHistoricalSideChatGapProbe,
-  collectSideChatEstimates,
-  unavailableHistoricalSideChatGapProbe,
-  unavailableSideChatEstimates,
-} from "./side-chat-estimates.js";
 
 export const LOCAL_COMPANION_SCHEMA_VERSION = "local-companion-v0.1";
 
@@ -911,14 +895,6 @@ function projectAllowanceCapacityScenario(container, scenario) {
   };
 }
 
-function comparableAllowanceCapacityCohort(left, right) {
-  return left !== null && right !== null
-    && left.qualifyingResets === right.qualifyingResets
-    && left.cohort.length === right.cohort.length
-    && left.cohort.every((resetIdentity, index) => (
-      resetIdentity === right.cohort[index]
-    ));
-}
 
 function projectAllowanceCapacity(container, sourceDescriptor = null, { staleCompatibility = false } = {}) {
   const standardBasis = codexPrimaryAllowanceBasis(
@@ -1862,98 +1838,6 @@ function fastModeGapStatus(coverage) {
   return coverage.unknownSharePercent > 50 ? "mostly_unknown" : "partial";
 }
 
-// Timeline rows keep their Standard-price amount for a separately labelled
-// accounting-only fallback. Whenever provider allowance is shown, consumers
-// use only this independently projected quota-weighted amount. The full speed
-// crossing stays server-side and an incomplete crossing fails closed.
-// Side-chat estimates are an explicitly development-only calibration overlay.
-// They never enter the exact usage periods or headline accounting totals. The
-// browser can therefore compare the adjusted residual with the same exact
-// ledger it already showed, without making an imputation look observed.
-function mergeCalibrationUsageTimeline(exactRows, estimatedRows) {
-  const buckets = new Map();
-  for (const row of [...exactRows, ...estimatedRows]) {
-    const key = `${row.startAt}|${row.endAt}`;
-    const bucket = buckets.get(key) ?? {
-      startAt: row.startAt,
-      endAt: row.endAt,
-      usageEvents: 0,
-      totalTokens: 0,
-      apiPriceEquivalentUsd: 0,
-      speedWeighting: safeSpeedWeighting(),
-      declaredSpeedWeighting: safeSpeedWeighting(),
-      components: emptyComponents(),
-      pricingCoverage: {
-        fullyPricedEvents: 0,
-        partiallyPricedEvents: 0,
-        unpricedEvents: 0,
-      },
-    };
-    bucket.usageEvents += row.usageEvents;
-    bucket.totalTokens += row.totalTokens;
-    bucket.apiPriceEquivalentUsd += row.apiPriceEquivalentUsd;
-    const rowSpeedWeighting = safeSpeedWeighting(row.speedWeighting);
-    const rowDeclaredSpeedWeighting = safeSpeedWeighting(
-      row.declaredSpeedWeighting,
-    );
-    for (const speed of Object.keys(bucket.speedWeighting)) {
-      for (const family of Object.keys(bucket.speedWeighting[speed])) {
-        const speedCell = rowSpeedWeighting[speed][family];
-        bucket.speedWeighting[speed][family].events += speedCell.events;
-        bucket.speedWeighting[speed][family].apiPriceEquivalentUsd +=
-          speedCell.apiPriceEquivalentUsd;
-        const declaredCell = rowDeclaredSpeedWeighting[speed][family];
-        bucket.declaredSpeedWeighting[speed][family].events +=
-          declaredCell.events;
-        bucket.declaredSpeedWeighting[speed][family]
-          .apiPriceEquivalentUsd += declaredCell.apiPriceEquivalentUsd;
-      }
-    }
-    for (const component of Object.keys(bucket.components)) {
-      bucket.components[component] += row.components?.[component] ?? 0;
-    }
-    for (const status of [
-      "fullyPricedEvents",
-      "partiallyPricedEvents",
-      "unpricedEvents",
-    ]) {
-      bucket.pricingCoverage[status] += row.pricingCoverage?.[status] ?? 0;
-    }
-    buckets.set(key, bucket);
-  }
-  return [...buckets.values()]
-    .sort((left, right) => Date.parse(left.startAt) - Date.parse(right.startAt))
-    .map((row) => ({
-      ...row,
-      apiPriceEquivalentUsd: Number(row.apiPriceEquivalentUsd.toFixed(12)),
-      speedWeighting: Object.fromEntries(
-        Object.entries(row.speedWeighting).map(([speed, families]) => [
-          speed,
-          Object.fromEntries(
-            Object.entries(families).map(([family, cell]) => [family, {
-              ...cell,
-              apiPriceEquivalentUsd: Number(
-                cell.apiPriceEquivalentUsd.toFixed(12),
-              ),
-            }]),
-          ),
-        ]),
-      ),
-      declaredSpeedWeighting: Object.fromEntries(
-        Object.entries(row.declaredSpeedWeighting).map(([speed, families]) => [
-          speed,
-          Object.fromEntries(
-            Object.entries(families).map(([family, cell]) => [family, {
-              ...cell,
-              apiPriceEquivalentUsd: Number(
-                cell.apiPriceEquivalentUsd.toFixed(12),
-              ),
-            }]),
-          ),
-        ]),
-      ),
-    }));
-}
 
 // Timeline rows keep their Standard-price amount for a separately labelled
 // accounting-only chart fallback. Whenever provider allowance is shown, the
@@ -2308,14 +2192,9 @@ function unifiedHistoryState({ cache, unified, cacheErrorCode, generationReady }
 export async function buildLocalCompanionSnapshot({
   root = process.cwd(),
   collectorStateFile = defaultLocalCollectorStatePath(root),
-  archiveIndexFile = defaultLocalArchiveAccountingIndexPath(root),
-  // The legacy default is a direct compatibility/test seam; production always
-  // passes its composition-root selection. Unified mode sources history from
-  // the generation-bound cache and never touches the old archive database.
-  accountingSourceMode = "legacy",
-  // The unified local index. When it is present the "All" period and the
-  // timelines draw from its whole fork-replay-suppressed history; when it is
-  // absent the snapshot says so and stays on the bounded recent window.
+  // The local index. When it is present the "All" period and the timelines
+  // draw from its whole fork-replay-suppressed history; when it is absent the
+  // snapshot says so and stays on the bounded recent window.
   unifiedIndexFile = defaultLocalUnifiedIndexPath(root),
   // Startup and the quick-result publication may defer the expensive
   // full-history projection. They still use the replay-safe accounting cache
@@ -2328,16 +2207,8 @@ export async function buildLocalCompanionSnapshot({
   // reading never reaches back before it happened, and an observed tier always
   // wins over it. An absent or unreadable ledger is simply no coverage.
   codexSpeedBaselines = [],
-  // Experimental owner-only side-chat estimation is opt-in so the shipped
-  // snapshot remains byte-for-byte on its exact accounting path by default.
   codexHome = undefined,
-  includeDevelopmentSideChatEstimates = false,
-  sideChatEstimateCollector = collectSideChatEstimates,
-  developmentSideChatHistoricalGapDate = null,
-  developmentSideChatHistoricalGapTimeZone = "America/New_York",
-  developmentSideChatHistoricalGapAssumedSpeed = "fast",
-  sideChatHistoricalGapCollector = collectHistoricalSideChatGapProbe,
-  unifiedProjectionReader = readLocalUnifiedCompanionProjection,
+  unifiedProjectionReader = readLocalIndexProjection,
   unifiedProjectionReuse = null,
   // The bounded collector read can synchronously traverse a large SQLite
   // state even when replay-safe accounting already supplies usage totals.
@@ -2349,9 +2220,6 @@ export async function buildLocalCompanionSnapshot({
 } = {}) {
   const nowMs = now();
   if (!Number.isFinite(nowMs)) throw new TypeError("now must return a finite epoch timestamp");
-  if (!["unified", "legacy"].includes(accountingSourceMode)) {
-    throw new TypeError("accountingSourceMode must be unified or legacy");
-  }
   // Make a legacy installation converge before any snapshot readers race to
   // inspect it. Once complete this is a cheap receipt check; it never revives
   // JSON as an active state backend.
@@ -2359,12 +2227,6 @@ export async function buildLocalCompanionSnapshot({
   const declaredSpeedBaselines = Array.isArray(codexSpeedBaselines)
     ? codexSpeedBaselines
     : [];
-  if (typeof includeDevelopmentSideChatEstimates !== "boolean") {
-    throw new TypeError("includeDevelopmentSideChatEstimates must be a boolean");
-  }
-  if (typeof sideChatEstimateCollector !== "function") {
-    throw new TypeError("sideChatEstimateCollector must be a function");
-  }
   if (typeof unifiedProjectionReader !== "function") {
     throw new TypeError("unifiedProjectionReader must be a function");
   }
@@ -2377,54 +2239,9 @@ export async function buildLocalCompanionSnapshot({
         || typeof signal.addEventListener !== "function")) {
     throw new TypeError("signal must be an AbortSignal or null");
   }
-  if (developmentSideChatHistoricalGapDate !== null
-      && (typeof developmentSideChatHistoricalGapDate !== "string"
-        || !/^\d{4}-\d{2}-\d{2}$/u.test(
-          developmentSideChatHistoricalGapDate,
-        ))) {
-    throw new TypeError(
-      "developmentSideChatHistoricalGapDate must be an ISO date or null",
-    );
-  }
-  if (developmentSideChatHistoricalGapTimeZone !== "America/New_York"
-      || developmentSideChatHistoricalGapAssumedSpeed !== "fast"
-      || typeof sideChatHistoricalGapCollector !== "function") {
-    throw new TypeError("Historical side-chat gap options are invalid");
-  }
-  const sideChatEstimatePromise = includeDevelopmentSideChatEstimates
-    ? Promise.resolve()
-      .then(() => sideChatEstimateCollector({
-        codexHome,
-        now: () => nowMs,
-        declaredSpeedBaselines,
-      }))
-      .catch(() => unavailableSideChatEstimates(
-        "side_chat_estimate_unavailable",
-      ))
-    : Promise.resolve(null);
-  const sideChatHistoricalGapPromise = includeDevelopmentSideChatEstimates
-      && developmentSideChatHistoricalGapDate !== null
-    ? Promise.resolve()
-      .then(() => sideChatHistoricalGapCollector({
-        unifiedIndexFile,
-        collectorStateFile,
-        date: developmentSideChatHistoricalGapDate,
-        timeZone: developmentSideChatHistoricalGapTimeZone,
-        assumedMissingSpeed: developmentSideChatHistoricalGapAssumedSpeed,
-        declaredSpeedBaselines,
-      }))
-      .catch(() => unavailableHistoricalSideChatGapProbe(
-        "side_chat_historical_gap_unavailable",
-        developmentSideChatHistoricalGapDate,
-      ))
-    : Promise.resolve(null);
   const [
     initialReplaySafeAccounting,
-    archiveCoverage,
-    archiveAccounting,
     unified,
-    retainedSideChatEstimates,
-    sideChatHistoricalGapProbe,
   ] = await Promise.all([
       readReplaySafeAccountingCache({
         stateFile: collectorStateFile,
@@ -2433,23 +2250,8 @@ export async function buildLocalCompanionSnapshot({
         // Unified authority is bound only after the parallel index projection
         // supplies its immutable generation below. This first read is merely a
         // cheap cache-presence probe; never label it as a bound unified read.
-        ...(accountingSourceMode === "legacy"
-          ? { sourceMode: "legacy" }
-          : {}),
-        ...(accountingSourceMode === "unified"
-          ? { contextBehavior: "source_native" }
-          : {}),
+        contextBehavior: "source_native",
       }),
-      accountingSourceMode === "legacy"
-        ? inspectLocalArchiveAccountingIndex({ indexFile: archiveIndexFile })
-        : Promise.resolve({
-          status: "dormant",
-          indexedSourceCount: 0,
-          sourceCount: 0,
-        }),
-      accountingSourceMode === "legacy"
-        ? readLocalArchiveAccountingPeriod({ indexFile: archiveIndexFile })
-        : Promise.resolve({ status: "unavailable", period: null }),
       unifiedProjectionReader(
         {
           indexFile: unifiedIndexFile,
@@ -2459,17 +2261,7 @@ export async function buildLocalCompanionSnapshot({
         },
         { signal, reuse: unifiedProjectionReuse },
       ),
-      sideChatEstimatePromise,
-      sideChatHistoricalGapPromise,
     ]);
-  const sideChatEstimates = retainedSideChatEstimates === null
-    ? null
-    : sideChatHistoricalGapProbe === null
-      ? retainedSideChatEstimates
-      : {
-        ...retainedSideChatEstimates,
-        historicalGapProbe: sideChatHistoricalGapProbe,
-      };
   const unifiedProjectionAvailable = unified.status === "available";
   const unifiedGenerationReady = unifiedProjectionAvailable
     && (unified.indexStatus === "complete"
@@ -2484,8 +2276,7 @@ export async function buildLocalCompanionSnapshot({
             && unified.generation.skippedThreadCount > 0))))
     && completeUnifiedGeneration(unified.generation);
   let replaySafeAccounting = initialReplaySafeAccounting;
-  if (accountingSourceMode === "unified"
-      && ["available", "stale"].includes(replaySafeAccounting.status)) {
+  if (["available", "stale"].includes(replaySafeAccounting.status)) {
     if (!unifiedGenerationReady) {
       replaySafeAccounting = {
         status: "unavailable",
@@ -2512,8 +2303,7 @@ export async function buildLocalCompanionSnapshot({
   )
     ? replaySafeAccounting.cache
     : null;
-  if (accountingSourceMode === "unified"
-      && replaySafeCache !== null
+  if (replaySafeCache !== null
       && (!Number.isSafeInteger(replaySafeCache.sourceDescriptor?.fallbackCount)
         || replaySafeCache.sourceDescriptor.fallbackCount !== 0)) {
     // A cache that cannot prove zero fallback use is not a valid unified
@@ -2525,28 +2315,19 @@ export async function buildLocalCompanionSnapshot({
     };
     replaySafeCache = null;
   }
-  // Legacy rollback mode may continue to use a readable pre-v2 unified file
-  // for broad display history. Unified authority requires the complete,
-  // attested generation above; a merely readable legacy file is insufficient.
-  const unifiedAvailable = unifiedProjectionAvailable
-    && (accountingSourceMode === "legacy" || unifiedGenerationReady);
-  const unifiedAuthorityPartial = accountingSourceMode === "unified"
-    && unifiedProjectionAvailable
+  // Authority requires the complete, attested generation above; a merely
+  // readable index is insufficient.
+  const unifiedAvailable = unifiedProjectionAvailable && unifiedGenerationReady;
+  const unifiedAuthorityPartial = unifiedProjectionAvailable
     && !unifiedGenerationReady;
-  const unifiedAccountingWithheld = accountingSourceMode === "unified"
-    && replaySafeCache === null
+  const unifiedAccountingWithheld = replaySafeCache === null
     && !unifiedAvailable;
-  const selectedHistory = accountingSourceMode === "unified"
-    ? unifiedHistoryState({
-      cache: replaySafeCache,
-      unified,
-      cacheErrorCode: replaySafeAccounting.errorCode,
-      generationReady: unifiedGenerationReady,
-    })
-    : {
-      accounting: archiveAccounting,
-      coverage: archiveCoverage,
-    };
+  const selectedHistory = unifiedHistoryState({
+    cache: replaySafeCache,
+    unified,
+    cacheErrorCode: replaySafeAccounting.errorCode,
+    generationReady: unifiedGenerationReady,
+  });
   const historyAccounting = selectedHistory.accounting;
   const historyCoverage = selectedHistory.coverage;
   if (typeof allowDevelopmentArtifactFallback !== "boolean") {
@@ -2562,10 +2343,7 @@ export async function buildLocalCompanionSnapshot({
       // re-summarizing 600k+ JSON rows here was the old startup cost, and the
       // raw collector projection also counts fork replay the owner has ruled
       // is not real spend.
-      summarizeUsageEvents:
-        accountingSourceMode !== "unified"
-        && replaySafeCache === null
-        && !unifiedAvailable,
+      summarizeUsageEvents: false,
       declaredSpeedBaselines,
     }, { signal }),
   ]);
@@ -2682,8 +2460,7 @@ export async function buildLocalCompanionSnapshot({
       },
   };
   const collectorLatestRecordAt = collector.latestRecordAt;
-  const unifiedLatestExportableMs = accountingSourceMode === "unified"
-      && unifiedAvailable
+  const unifiedLatestExportableMs = unifiedAvailable
       && typeof unified.latestExportableRecordAt === "string"
     ? Date.parse(unified.latestExportableRecordAt)
     : Number.NaN;
@@ -2735,7 +2512,7 @@ export async function buildLocalCompanionSnapshot({
   // collector ledger here would make cache/index freshness appear frozen.
   const latestExportableRecordAt = Number.isSafeInteger(unifiedLatestExportableMs)
     ? unifiedLatestExportableMs
-    : accountingSourceMode === "unified" && unifiedAvailable
+    : unifiedAvailable
       ? null
       : collector.latestExportableRecordAt;
   const accountingCoversKnownEvidence = Number.isFinite(accountingCoverageEndMs)
@@ -2830,20 +2607,8 @@ export async function buildLocalCompanionSnapshot({
       ? unified.timeline.usage
       : replaySafeCache?.timeline
         ?? collector.timeline.usage;
-  const calibrationUsageTimelineWithSpeed =
-    sideChatEstimates?.status === "available"
-      && sideChatEstimates.methodology?.includedInCalibrationTimeline === true
-    ? mergeCalibrationUsageTimeline(
-      exactUsageTimelineWithSpeed,
-      sideChatEstimates.timeline,
-    )
-    : exactUsageTimelineWithSpeed;
   const exactUsageTimeline = quotaWeightedUsageTimeline(
     exactUsageTimelineWithSpeed,
-    fastModeContext,
-  );
-  const calibrationUsageTimeline = quotaWeightedUsageTimeline(
-    calibrationUsageTimelineWithSpeed,
     fastModeContext,
   );
   const planScopedTimeline = projectPlanScopedUsageTimeline(
@@ -2856,15 +2621,13 @@ export async function buildLocalCompanionSnapshot({
       ? unified.timeline.coveredAt
       : replaySafeCache?.coveredAt
         ?? collector.timeline.coveredAt;
-  // What span the timelines honestly cover, and out of which source. When the
-  // unified index is absent this names the bound instead of hiding it.
+  // What span the timelines honestly cover, and out of which source. With no
+  // index and no cache the history is withheld, never a recent-window guess.
   const timelineSource = unifiedAvailable
     ? "unified_local_index"
     : replaySafeCache !== null
       ? "replay_safe_cache"
-      : unifiedAccountingWithheld
-        ? "insufficient_evidence"
-        : "recent_collector_window";
+      : "insufficient_evidence";
   const timelineHistory = unifiedAvailable
     ? {
       status: unified.indexStatus === "complete" ? "complete" : "partial",
@@ -2907,31 +2670,18 @@ export async function buildLocalCompanionSnapshot({
       boundedDays: RECENT_TIMELINE_DAYS,
       coveredAt: null,
     };
-  // Tool-class counts are durable typed facts in the unified index. Prefer
-  // them only in unified authority mode; legacy rollback keeps its collector
-  // projection exactly as before.
-  const tools = accountingSourceMode === "unified"
-    ? unifiedAvailable
-      ? unified.toolCoverageStatus === "partial"
-        ? unavailableToolClasses("typed_tool_history_partial")
-        : unified.tools
-      : unavailableToolClasses("unified_usage_projection_unavailable")
-    : collector.tools;
-  const exportableCoveredAt = accountingSourceMode === "unified"
-    ? unifiedAvailable
-      ? {
-        startAt: unified.coveredAt.startAt,
-        endAt: unified.latestExportableRecordAt ?? unified.coveredAt.endAt,
-      }
-      : { startAt: null, endAt: null }
-    : {
-      startAt: collector.firstExportableRecordAt === null
-        ? null
-        : new Date(collector.firstExportableRecordAt).toISOString(),
-      endAt: collector.latestExportableRecordAt === null
-        ? null
-        : new Date(collector.latestExportableRecordAt).toISOString(),
-    };
+  // Tool-class counts are durable typed facts in the index.
+  const tools = unifiedAvailable
+    ? unified.toolCoverageStatus === "partial"
+      ? unavailableToolClasses("typed_tool_history_partial")
+      : unified.tools
+    : unavailableToolClasses("unified_usage_projection_unavailable");
+  const exportableCoveredAt = unifiedAvailable
+    ? {
+      startAt: unified.coveredAt.startAt,
+      endAt: unified.latestExportableRecordAt ?? unified.coveredAt.endAt,
+    }
+    : { startAt: null, endAt: null };
   const pricedEvents = (displayUsage?.pricingCoverage.fullyPricedEvents ?? 0)
     + (displayUsage?.pricingCoverage.partiallyPricedEvents ?? 0);
   const pricingCoveragePercent = (displayUsage?.events ?? 0) === 0
@@ -3157,9 +2907,6 @@ export async function buildLocalCompanionSnapshot({
         coveredAt: timelineCoveredAt,
         allowanceWeightingEncoding: timelineAllowanceWeightingEncoding(),
         usage: exactUsageTimeline,
-        ...(includeDevelopmentSideChatEstimates
-          ? { calibrationUsage: calibrationUsageTimeline }
-          : {}),
         allowanceCapacity,
         planScoped: planScopedTimeline,
         quota: quotaTimeline,
@@ -3170,7 +2917,7 @@ export async function buildLocalCompanionSnapshot({
       },
       accounting: {
         projection: accountingProjection,
-        sourceMode: accountingSourceMode,
+        sourceMode: "unified",
         // Cache-drop rows come from the unified diagnostic projection, not the
         // optional replay-safe accounting cache. Bind local navigation to that
         // projection even while the separate accounting cache is unavailable.
@@ -3187,9 +2934,7 @@ export async function buildLocalCompanionSnapshot({
           accountingDescriptor?.coverageStatus ?? "unavailable",
         generation: accountingGeneration,
         generationFingerprint: accountingGenerationFingerprint,
-        generationMatched: accountingSourceMode === "unified"
-          ? accountingDescriptor?.generationMatched === true
-          : null,
+        generationMatched: accountingDescriptor?.generationMatched === true,
         fallbackCount: Number.isSafeInteger(accountingDescriptor?.fallbackCount)
           ? accountingDescriptor.fallbackCount
           : 0,
@@ -3244,9 +2989,6 @@ export async function buildLocalCompanionSnapshot({
         cacheSwitchImpact,
         cacheContinuityImpact,
         trayCacheSummary: projectTrayCacheSummary(cacheContinuityImpact),
-        ...(includeDevelopmentSideChatEstimates
-          ? { sideChatEstimates }
-          : {}),
         evidenceStartDate: OPENAI_PRICE_EVIDENCE_START_DATE,
         historyCoverage,
         historyPeriodStatus: historyAccounting.status,
@@ -3307,11 +3049,10 @@ export async function buildLocalCompanionSnapshot({
         lastScanAt: latestEvidenceAt,
       },
       pricing: {
-        accountingSourceMode,
+        accountingSourceMode: "unified",
         accountingGeneration,
-        accountingGenerationMatched: accountingSourceMode === "unified"
-          ? accountingDescriptor?.generationMatched === true
-          : null,
+        accountingGenerationMatched:
+          accountingDescriptor?.generationMatched === true,
         basis: "official_api_price_equivalent_not_subscription_allowance",
         totalCostUsd: displayUsage?.apiPriceEquivalentUsd ?? 0,
         spark: displayUsage?.spark ?? null,
@@ -3657,8 +3398,7 @@ const PROJECTION_SURFACES = Object.freeze([
 ]);
 
 // Resolve a registered path, or null if any segment is absent. Absence is not
-// emptiness: `calibrationUsage` exists only under the opt-in side-chat estimate
-// flag, and a surface the build deliberately omits must stay omitted rather
+// emptiness: a surface the build deliberately omits must stay omitted rather
 // than being conjured back from the previous snapshot.
 function surfaceParent(snapshot, path) {
   let node = snapshot;

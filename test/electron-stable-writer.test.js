@@ -30,14 +30,13 @@ async function fixture(run, { predecessors = false } = {}) {
     for (const target of STABLE_TARGETS) {
       await mkdir(join(root, target)); const spec = distribution.PRODUCTION_ELECTRON_TARGETS[target];
       const source = productionElectronCandidatePlan({ target, sourceRevision: proposal.sourceRevision, buildNumber: proposal.buildNumber, hostPlatform: spec.platform, hostArchitecture: spec.architecture });
-      const receipt = { ...source, ...(source.nativeHandoverHelper ? { nativeHandoverHelper: { ...source.nativeHandoverHelper, status: 'contract_ok' } } : {}), ...(source.nativeMacOSKeychainAdapter ? { nativeMacOSKeychainAdapter: { ...source.nativeMacOSKeychainAdapter, status: 'source_compiled_unsigned' } } : {}), status: 'production_source_staged', stagedManifest: 'app/package.json', runtimeManifest: 'app/electron-runtime-manifest.json' };
-      const names = target.startsWith('darwin-') ? ['zip','dmg'].flatMap(ext => [`TiboTattle-${RELEASE_VERSION}-mac-${spec.architecture}.${ext}`, `TiboTattle-${RELEASE_VERSION}-mac-${spec.architecture}.${ext}.blockmap`]) : [target === 'win32-x64' ? `TiboTattle-${RELEASE_VERSION}-Windows-x64.exe` : `TiboTattle-${RELEASE_VERSION}-linux-x86_64.AppImage`];
+      const receipt = { ...source, status: 'production_source_staged', stagedManifest: 'app/package.json', runtimeManifest: 'app/electron-runtime-manifest.json' };
+      const names = [`TiboTattle-${RELEASE_VERSION}-Windows-x64.exe`];
       const artifacts = []; for (const name of names) artifacts.push(await put(`${target}/${name}`, name));
       const files = names.filter(name => !name.endsWith('.blockmap')).map(name => ({ url: name, sha512: digest(name, 'sha512'), size: Buffer.byteLength(name) }));
-      const manifestName = target.startsWith('darwin-') ? 'latest-mac.yml' : target === 'win32-x64' ? 'latest.yml' : 'latest-linux.yml';
       proposal.targets.push({ target, sourceCandidate: await put(`${target}/source.json`, JSON.stringify(receipt)),
-        appUpdate: await put(`${target}/app-update.yml`, JSON.stringify({ provider: 'generic', url: spec.feedURL, updaterCacheDirName: 'cache', ...(target === 'win32-x64' ? { publisherName: 'Adam Allcock' } : {}) })),
-        manifest: await put(`${target}/${manifestName}`, JSON.stringify({ version: RELEASE_VERSION, files, path: files[0].url, sha512: files[0].sha512 })), artifacts,
+        appUpdate: await put(`${target}/app-update.yml`, JSON.stringify({ provider: 'generic', url: spec.feedURL, updaterCacheDirName: 'cache', publisherName: 'Adam Allcock' })),
+        manifest: await put(`${target}/latest.yml`,JSON.stringify({ version: RELEASE_VERSION, files, path: files[0].url, sha512: files[0].sha512 })), artifacts,
         predecessor: null, evidence: [await put(`${target}/evidence.json`, '{"synthetic":true}')] });
     }
     if (predecessors) for (const target of proposal.targets) {

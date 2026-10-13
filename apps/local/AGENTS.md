@@ -1,11 +1,11 @@
-# Local companion and unified-index guidance
+# Local companion and local index guidance
 
 Scope: all files under `apps/local/` and the local companion behavior they
 compose. Apply the repository root guidance first.
 
 ## Ownership and trust boundary
 
-- The companion and unified local index are the sole parsing, accounting, and
+- The companion and the local index store are the sole parsing, accounting, and
   local-reporting authority. Browser and native shells consume validated routes;
   they must not grow competing parsers, ledgers, or source scanners.
 - Bind to loopback only. Validate host, origin, method, content type, body size,
@@ -50,7 +50,7 @@ compose. Apply the repository root guidance first.
   must preserve versioned authorization, durable opt-out, legacy review/consent,
   retry and deletion guarantees.
 - Do not relay retired participant deletion or private owner-erasure requests.
-  Device disconnect revokes this Mac's authority and preserves hosted/local
+  Device disconnect revokes this device's authority and preserves hosted/local
   history; browser sign-out and local identity reset are different operations.
 - Persist disconnect intent as `device_disconnected` before revocation or
   credential cleanup. Preserve consent and measured progress/history, keep the
@@ -65,5 +65,5 @@ compose. Apply the repository root guidance first.
   progress changes. Use isolated synthetic state, not the user's live index.
 - Add restart and incompatible-state coverage for schema, generation, cache, or
   ingestion changes. A successful clean build alone is insufficient.
-- Native consumers require their own macOS validation; local browser success does
-  not qualify an embedded or installed native surface.
+- Native consumers require their own Windows installed-app validation; local
+  browser success does not qualify an embedded or installed native surface.

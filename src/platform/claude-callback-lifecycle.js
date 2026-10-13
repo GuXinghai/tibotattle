@@ -12,6 +12,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { isProxy } from "node:util/types";
+import { syncDirectory } from "./owner-only-filesystem.js";
 import { defaultExportStateDirectory } from "./participant-identity.js";
 
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
@@ -81,27 +82,16 @@ async function lstatIfExists(path) {
   }
 }
 
-async function syncDirectory(path) {
-  const handle = await open(path, "r");
-  try {
-    await handle.sync();
-  } finally {
-    await handle.close();
-  }
-}
-
-function assertOwnedDirectory(stats, code, { ownerOnly = false } = {}) {
+function assertOwnedDirectory(stats, code) {
   if (!stats?.isDirectory() || stats.isSymbolicLink()) fail(code);
   if (currentUid() !== null && stats.uid !== currentUid()) fail(code);
-  if (process.platform !== "win32"
-      && (ownerOnly ? (stats.mode & 0o777) !== 0o700 : (stats.mode & 0o022) !== 0)) fail(code);
 }
 
-async function assertCanonicalOwnedDirectory(path, code, options = {}) {
+async function assertCanonicalOwnedDirectory(path, code) {
   const target = resolve(path);
   const stats = await lstatIfExists(target);
   if (!stats) fail(code);
-  assertOwnedDirectory(stats, code, options);
+  assertOwnedDirectory(stats, code);
   let canonical;
   try {
     canonical = await realpath(target);
@@ -125,7 +115,7 @@ async function ensureLifecycleDirectory(path) {
       fail("state_directory");
     }
   }
-  await assertCanonicalOwnedDirectory(parent, "state_directory", { ownerOnly: true });
+  await assertCanonicalOwnedDirectory(parent, "state_directory");
   let created = false;
   try {
     await mkdir(target, { mode: 0o700 });
@@ -134,14 +124,13 @@ async function ensureLifecycleDirectory(path) {
     if (error?.code !== "EEXIST") fail("state_directory");
   }
   if (created) await chmod(target, 0o700).catch(() => fail("state_directory"));
-  return assertCanonicalOwnedDirectory(target, "state_directory", { ownerOnly: true });
+  return assertCanonicalOwnedDirectory(target, "state_directory");
 }
 
-function assertStrictFile(stats, { code, maximumBytes, allowEmpty = false, mode = 0o600 }) {
+function assertStrictFile(stats, { code, maximumBytes, allowEmpty = false }) {
   if (!stats?.isFile() || stats.isSymbolicLink()) fail(code);
   if (stats.nlink !== 1) fail(code);
   if (currentUid() !== null && stats.uid !== currentUid()) fail(code);
-  if (process.platform !== "win32" && (stats.mode & 0o777) !== mode) fail(code);
   if ((!allowEmpty && stats.size < 1) || stats.size > maximumBytes) fail(code);
 }
 
@@ -150,19 +139,18 @@ async function readStrictFile(path, {
   maximumBytes,
   allowMissing = false,
   allowEmpty = false,
-  mode = 0o600,
 }) {
   const pathStats = await lstatIfExists(path);
   if (!pathStats) {
     if (allowMissing) return null;
     fail(code);
   }
-  assertStrictFile(pathStats, { code, maximumBytes, allowEmpty, mode });
+  assertStrictFile(pathStats, { code, maximumBytes, allowEmpty });
   let handle;
   try {
     handle = await open(path, constants.O_RDONLY | NOFOLLOW);
     const opened = await handle.stat();
-    assertStrictFile(opened, { code, maximumBytes, allowEmpty, mode });
+    assertStrictFile(opened, { code, maximumBytes, allowEmpty });
     if (!sameIdentity(pathStats, opened) || pathStats.size !== opened.size) fail(code);
     const bytes = await handle.readFile();
     const after = await handle.stat();
@@ -328,7 +316,6 @@ async function readSettings(settingsFile) {
   if (!pathStats.isFile() || pathStats.isSymbolicLink()) fail("settings_type");
   if (pathStats.nlink !== 1) fail("settings_links");
   if (currentUid() !== null && pathStats.uid !== currentUid()) fail("settings_owner");
-  if (process.platform !== "win32" && (pathStats.mode & 0o022) !== 0) fail("settings_mode");
   if (pathStats.size < 2 || pathStats.size > MAX_SETTINGS_BYTES) fail("settings_size");
   let handle;
   try {
@@ -364,7 +351,7 @@ async function revalidateSettings(snapshot) {
     return;
   }
   if (!current || !sameIdentity(current, snapshot.stats) || current.size !== snapshot.stats.size
-      || current.nlink !== 1 || (process.platform !== "win32" && (current.mode & 0o022) !== 0)) {
+      || current.nlink !== 1) {
     fail("settings_replaced");
   }
 }
@@ -819,7 +806,7 @@ async function inspectClaudeCallbackLifecycle({
       }),
     };
   }
-  await assertCanonicalOwnedDirectory(lifecycleDirectory, "state_directory", { ownerOnly: true });
+  await assertCanonicalOwnedDirectory(lifecycleDirectory, "state_directory");
   const inspected = await inspectUnlocked({ directory: lifecycleDirectory, settingsFile, installedStatusLine });
   return { status: inspected.status, targetBinding: inspected.targetBinding };
 }
@@ -972,7 +959,7 @@ async function readClaudeCallbackRuntimeConfiguration({
   lifecycleDirectory = defaultClaudeCallbackLifecycleDirectory(),
   installedStatusLine = buildManagedClaudeStatusLine(),
 } = {}) {
-  await assertCanonicalOwnedDirectory(lifecycleDirectory, "runtime_state", { ownerOnly: true });
+  await assertCanonicalOwnedDirectory(lifecycleDirectory, "runtime_state");
   const state = await readLifecycleState(lifecycleDirectory);
   if (!state || !["install_prepared", "installed", "uninstall_prepared"].includes(state.phase)) {
     fail("runtime_state");

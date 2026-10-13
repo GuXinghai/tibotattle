@@ -65,21 +65,18 @@ function safeCount(value) {
 
 function ownerOnlyDirectory(stats) {
   return stats.isDirectory() && !stats.isSymbolicLink()
-    && (typeof process.getuid !== "function" || stats.uid === process.getuid())
-    && (process.platform === "win32" || (stats.mode & 0o077) === 0);
+    && (typeof process.getuid !== "function" || stats.uid === process.getuid());
 }
 
 function ownerOnlySecret(stats) {
   return stats.isFile() && !stats.isSymbolicLink() && stats.nlink === 1
     && stats.size === SECRET_BYTES
     && (typeof process.getuid !== "function" || stats.uid === process.getuid())
-    && (process.platform === "win32" || (stats.mode & 0o077) === 0);
 }
 
 function ownerOnlyRegularFile(stats) {
   return stats.isFile() && !stats.isSymbolicLink() && stats.nlink === 1
-    && (typeof process.getuid !== "function" || stats.uid === process.getuid())
-    && (process.platform === "win32" || (stats.mode & 0o077) === 0);
+    && (typeof process.getuid !== "function" || stats.uid === process.getuid());
 }
 
 function abortError() {

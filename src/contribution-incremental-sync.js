@@ -11,7 +11,6 @@ import {
 } from "./contribution-device-capability.js";
 import {
   buildTelemetryV1ChunkPlaintext,
-  createTelemetryV1IndexReader,
   planTelemetryV1Upload,
   telemetryV1HistoryDigest,
   telemetryV1RequiredConsent,
@@ -44,14 +43,7 @@ import {
   telemetryV11FieldInventory,
   telemetryV12FieldInventory,
 } from "./contribution/index.js";
-import { createLocalUnifiedTelemetryV11Reader } from "./local-unified-contribution-attribution.js";
-import {
-  LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-  openLocalUnifiedIndex,
-  outcomeName,
-  reasoningEffortName,
-  readUnifiedIndexGenerationDescriptor,
-} from "./local-unified-index.js";
+import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, outcomeName, reasoningEffortName } from "./codex-usage-vocabulary.js";
 
 // The telemetry-contribution-v1.0 sync engine: one bounded pass of the cursor
 // protocol. Maintained route and contract inventories live in
@@ -141,6 +133,14 @@ export class ContributionIncrementalSyncError extends Error {
 
 function fail(code) {
   throw new ContributionIncrementalSyncError(code);
+}
+
+// The index seams are injected by the composition root that owns the local
+// store. A missing seam is a wiring error, not a sync outcome, so it throws.
+function requireIndexSeam(name, value) {
+  if (typeof value !== "function") {
+    throw new TypeError(`${name} is required: inject the local index seam from the composition root`);
+  }
 }
 
 class PassFailure extends Error {
@@ -471,19 +471,6 @@ function accountlessUsageAuthorization(authorization, origin, laboratory, rehear
   return Object.freeze({ ...authorization });
 }
 
-function v11Publication(database) {
-  const descriptor = readUnifiedIndexGenerationDescriptor(database);
-  if (!descriptor || !["complete", "partial"].includes(descriptor.status)
-      || database.prepare("SELECT 1 FROM index_generation WHERE id > ? AND status = 'in_progress' LIMIT 1")
-        .get(descriptor.id)) interrupt("index_unavailable", { retryable: true });
-  return Object.freeze({
-    fingerprint: descriptor.fingerprint,
-    parserVersion: descriptor.parserVersion ?? LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-    dataVersion: database.prepare("PRAGMA data_version").get().data_version,
-    changes: database.prepare("SELECT total_changes() AS count").get().count,
-  });
-}
-
 // This is a private resumability journal, not authority to upload or a record
 // of acknowledged history. The domain runner revalidates its entire context
 // against fresh capabilities/predecessor before using this staged prefix.
@@ -556,10 +543,14 @@ async function createV11Preparation(database, {
   review = false,
   readAccountMarkers = async () => [],
   loadExistingAccountObservationSecret = async () => null,
+  // The store behind `database` supplies its own publication proof and
+  // attribution reader; the caller injects both.
+  createReader,
+  readPublication,
 } = {}) {
   const accountMarkers = await readAccountMarkers();
-  const publication = v11Publication(database);
-  const reader = createLocalUnifiedTelemetryV11Reader(database, {
+  const publication = readPublication(database);
+  const reader = createReader(database, {
     outcomeName, reasoningEffortName,
     fallbackParserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
     accountMarkers,
@@ -571,7 +562,7 @@ async function createV11Preparation(database, {
   let closed = false;
   const assertCurrent = () => {
     if (closed) interrupt("index_unavailable", { retryable: true });
-    const current = v11Publication(database);
+    const current = readPublication(database);
     if (current.fingerprint !== publication.fingerprint
         || current.dataVersion !== publication.dataVersion || current.changes !== publication.changes) {
       const error = new Error("Local contribution publication changed");
@@ -683,7 +674,8 @@ export async function runIncrementalContributionSyncOnce(options = {}) {
   const {
     indexFile, origin, backend, stateFile, consent, authorization = undefined, laboratory = undefined, rehearsal = false, production = false, signal, fetchImpl = globalThis.fetch,
     cryptoImpl = globalThis.crypto, withDeviceSecret = withContributionDeviceSecret,
-    openIndex = openLocalUnifiedIndex, maximumChunks = DEFAULT_MAXIMUM_CHUNKS_PER_PASS,
+    openIndex, maximumChunks = DEFAULT_MAXIMUM_CHUNKS_PER_PASS,
+    createV11Reader, readPublication,
     requestTimeoutMilliseconds = DEFAULT_REQUEST_TIMEOUT_MILLISECONDS,
     maximumDurationMilliseconds = 60_000, now = Date.now,
     createV11Envelope = createTelemetryV11Envelope,
@@ -694,6 +686,9 @@ export async function runIncrementalContributionSyncOnce(options = {}) {
     onAttributionBinding = null,
     progressStore = undefined, progressFile = null,
   } = options;
+  requireIndexSeam("openIndex", openIndex);
+  requireIndexSeam("createV11Reader", createV11Reader);
+  requireIndexSeam("readPublication", readPublication);
   const selectedOrigin = canonicalOrigin(origin);
   const createEnvelope = successor ? createV12Envelope : createV11Envelope;
   const runSync = successor ? runV12Sync : runV11Sync;
@@ -704,6 +699,7 @@ export async function runIncrementalContributionSyncOnce(options = {}) {
   if (hasAccountlessAuthorization && consent !== undefined) fail("authorization_invalid");
   if (typeof indexFile !== "string" || !indexFile || !backend || typeof backend !== "object"
       || [fetchImpl, withDeviceSecret, openIndex, now, createEnvelope, runSync,
+        createV11Reader, readPublication,
         readAccountMarkers, loadExistingAccountObservationSecret].some((value) => typeof value !== "function")
       || (onAttributionBinding !== null && typeof onAttributionBinding !== "function")
       || (progressFile !== null && (typeof progressFile !== "string" || !progressFile))
@@ -730,7 +726,10 @@ export async function runIncrementalContributionSyncOnce(options = {}) {
   };
   try {
     database = openIndex(indexFile, { readOnly: true });
-    preparation = await createV11Preparation(database, { readAccountMarkers, loadExistingAccountObservationSecret, successor });
+    preparation = await createV11Preparation(database, {
+      readAccountMarkers, loadExistingAccountObservationSecret, successor,
+      createReader: createV11Reader, readPublication,
+    });
     const progress = localV11ProgressStore({ file: progressFile ?? `${indexFile}.telemetry-${successor ? "v12" : "v11"}-progress.json`,
       preparation, signal, injected: progressStore, successor });
     return await withDeviceSecret({ backend,
@@ -800,10 +799,14 @@ export async function runIncrementalContributionSyncOnce(options = {}) {
 /** Read-only review material; its account binding stays inside the local service. */
 async function readIncrementalContributionReview({
   indexFile, origin, backend, stateFile, fetchImpl = globalThis.fetch,
-  withDeviceSecret = withContributionDeviceSecret, openIndex = openLocalUnifiedIndex,
+  withDeviceSecret = withContributionDeviceSecret, openIndex,
+  createV11Reader, readPublication,
   readAccountMarkers = async () => [], loadExistingAccountObservationSecret = async () => null,
   signal, now = Date.now,
 } = {}, successor = false) {
+  requireIndexSeam("openIndex", openIndex);
+  requireIndexSeam("createV11Reader", createV11Reader);
+  requireIndexSeam("readPublication", readPublication);
   const selectedOrigin = canonicalOrigin(origin);
   return withDeviceSecret({ backend, ...(stateFile === undefined ? {} : { stateFile }),
     expectedOrigin: selectedOrigin,
@@ -820,7 +823,10 @@ async function readIncrementalContributionReview({
           : capabilities.formats.some((format) => format.schemaVersion === TELEMETRY_V11_CONTRIBUTION_SCHEMA_VERSION
             && format.lifecycle === "accepted"))) return Object.freeze({ status: "unavailable" });
         database = openIndex(indexFile, { readOnly: true });
-        preparation = await createV11Preparation(database, { readAccountMarkers, loadExistingAccountObservationSecret, successor, review: true });
+        preparation = await createV11Preparation(database, {
+          readAccountMarkers, loadExistingAccountObservationSecret, successor, review: true,
+          createReader: createV11Reader, readPublication,
+        });
         const binding = Object.freeze({ destinationOrigin: capabilities.destinationOrigin,
           enrollmentNamespace: capabilities.enrollmentNamespace });
         const day = preparation.days.at(-1) ?? null;
@@ -881,17 +887,23 @@ async function runTelemetryV1SyncOnce({
   cryptoImpl = globalThis.crypto,
   withDeviceSecret = withContributionDeviceSecret,
   createEnvelope = createTelemetryV1Envelope,
-  openIndex = openLocalUnifiedIndex,
+  openIndex,
+  // Builds the chunk reader over the connection `openIndex` returned. The
+  // store supplies its own constructor over the same record rules.
+  createIndexReader,
   maximumChunks = DEFAULT_MAXIMUM_CHUNKS_PER_PASS,
   requestTimeoutMilliseconds = DEFAULT_REQUEST_TIMEOUT_MILLISECONDS,
   now = Date.now,
 } = {}) {
+  requireIndexSeam("openIndex", openIndex);
+  requireIndexSeam("createIndexReader", createIndexReader);
   if (typeof indexFile !== "string" || indexFile.length < 1
       || !backend || typeof backend !== "object"
       || typeof fetchImpl !== "function"
       || typeof withDeviceSecret !== "function"
       || typeof createEnvelope !== "function"
       || typeof openIndex !== "function"
+      || typeof createIndexReader !== "function"
       || typeof now !== "function"
       || !Number.isSafeInteger(maximumChunks)
       || maximumChunks < 1
@@ -992,10 +1004,9 @@ async function runTelemetryV1SyncOnce({
         retryable: true,
       }));
     }
-    // The reader's index ports are composed here, at the root that owns the
-    // unified index module: the contribution owner receives the row codecs by
-    // injection and never imports legacy flat source itself.
-    const reader = createTelemetryV1IndexReader(database, {
+    // The reader's index ports arrive injected from the composition root (the
+    // local index backend); this owner never imports the store itself.
+    const reader = createIndexReader(database, {
       outcomeName,
       reasoningEffortName,
       fallbackParserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION,

@@ -9,13 +9,8 @@ import { createAccountlessContributionScheduler } from "../src/application/index
 import { attachAccountlessParentChannel, createAccountlessChildChannel } from "../src/platform/index.js";
 import { ensureContributionDeviceCapability } from "../src/contribution-device-capability.js";
 import { createDesktopSharingCoordinator } from "../apps/electron/desktop-sharing.js";
-import { createDesktopMacOSAccountlessCredentialBackend } from "../apps/electron/desktop-macos-keychain.js";
 import { createCompanionSupervisor } from "../apps/electron/companion-supervisor.js";
 import { fileURLToPath } from "node:url";
-import {
-  MACOS_KEYCHAIN_ADAPTER_CAPABILITIES,
-  MACOS_KEYCHAIN_ADAPTER_CONTRACT_VERSION,
-} from "../native/macos-keychain/contract.js";
 
 const origin = "http://127.0.0.1:18765";
 const ready = { available: true, current: true, enabled: true,
@@ -490,77 +485,6 @@ test("credential recovery pauses scheduling without an automatic retry", async (
   assert.equal(scheduler.inspect().nextAttemptAt, null);
   assert.equal(clock.pending.size, 0);
   await scheduler.stop();
-});
-
-test("a locked macOS create crosses FD3 as retryable and schedules one bounded retry", async () => {
-  const calls = [];
-  const items = new Map();
-  const backend = createDesktopMacOSAccountlessCredentialBackend({
-    binding: {
-      capabilities: [...MACOS_KEYCHAIN_ADAPTER_CAPABILITIES],
-      contractVersion: MACOS_KEYCHAIN_ADAPTER_CONTRACT_VERSION,
-      identityStatus: () => "valid",
-      inspect: async () => "absent",
-      read: async () => ({ status: "absent", value: null }),
-      store: async () => assert.fail("accountless create must not use generic store"),
-      remove: async () => "absent",
-      createIfMissing: async (capability, value) => {
-        calls.push(["createIfMissing", capability]);
-        if (items.has(capability)) return "existing";
-        assert.equal(value.length, 32);
-        // Simulate the adapter's locked pre-mutation result.
-        return "locked";
-      },
-      deleteExact: async () => "missing",
-    },
-    legacyCredentialProbe: async () => "absent",
-  });
-  const { parent, child } = channels();
-  const host = attachAccountlessParentChannel({
-    channel: parent,
-    readPreference: async () => ready,
-    backend,
-  });
-  const client = createAccountlessChildChannel({ channel: child });
-  const clock = timers();
-  const states = [];
-  let observedError = null;
-  const scheduler = createAccountlessContributionScheduler({
-    origin,
-    readPreference: async () => ready,
-    runner: async () => {
-      const secret = Buffer.alloc(32, 31);
-      try {
-        return await client.backend.createIfMissing({}, secret);
-      } catch (error) {
-        observedError = { code: error?.code, retryable: error?.retryable };
-        throw error;
-      } finally {
-        secret.fill(0);
-      }
-    },
-    onStatus: (status) => states.push(status.state),
-    ...clock,
-  });
-  try {
-    scheduler.start();
-    await scheduler.runNow();
-    assert.deepEqual(calls, [["createIfMissing", "accountless_installation"]]);
-    assert.deepEqual(observedError, {
-      code: "contribution_device_credential_unavailable",
-      retryable: true,
-    });
-    assert.equal(items.has("accountless_installation"), false,
-      "a locked create must not rotate or create an identity");
-    assert.deepEqual(states, ["uploading", "retry_wait"]);
-    assert.equal(scheduler.inspect().state, "retry_wait");
-    assert.notEqual(scheduler.inspect().nextAttemptAt, null);
-    assert.ok([...clock.pending.values()].some((timer) => timer.delay === 60_000));
-  } finally {
-    await scheduler.stop();
-    client.dispose();
-    host.dispose();
-  }
 });
 
 test("shutdown settles even when an injected runner ignores cancellation", async () => {

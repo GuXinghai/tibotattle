@@ -12,7 +12,7 @@ import {
 } from "../src/platform/windows-credential-mutex.js";
 import { createWindowsCredentialOperationAuditStore } from "../src/platform/windows-credential-operation-audit.js";
 import { createWindowsCredentialOperationLeaseContext } from "../src/platform/windows-credential-operation-lease.js";
-import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/export-identity-keychain.js";
+import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/platform/credential-capabilities.js";
 
 const CHILD = fileURLToPath(new URL(
   "./fixtures/windows-credential-mutex-child.mjs",

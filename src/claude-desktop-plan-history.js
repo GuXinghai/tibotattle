@@ -158,8 +158,7 @@ export async function readClaudeDesktopPlanHistory(path, options = {}) {
     const currentUid = typeof process.getuid === "function" ? process.getuid() : null;
     if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1
         || before.size > maximumFileBytes
-        || (currentUid !== null && before.uid !== currentUid)
-        || (process.platform !== "win32" && (before.mode & 0o022) !== 0)) {
+        || (currentUid !== null && before.uid !== currentUid)) {
       fail("source_unsafe");
     }
     handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));

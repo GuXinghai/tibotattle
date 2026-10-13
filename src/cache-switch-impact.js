@@ -8,10 +8,7 @@ import {
   summarizeQuotaWeightedAccounting,
 } from "@app-usagemonitor/accounting";
 import { codexPrimaryAllowanceBasis } from "./codex-primary-allowance-basis.js";
-import {
-  isLocalUnifiedIndexBoundaryParserVersion,
-  reasoningEffortName,
-} from "./local-unified-index.js";
+import { isLocalUnifiedIndexBoundaryParserVersion, reasoningEffortName } from "./codex-usage-vocabulary.js";
 import {
   createAccountingPricer,
 } from "./replay-safe-accounting-cache.js";
@@ -835,6 +832,9 @@ export function analyzeCacheSwitchRows(rows, {
   nowMs = Date.now(),
   pricer = createAccountingPricer(),
   declaredSpeedBaselines = [],
+  // Which parser labels prove compaction and turn-context boundaries. The
+  // default is the shipping index's; another store passes its own.
+  boundaryParser = compactionAwareParser,
 } = {}) {
   if (!Number.isFinite(nowMs)) {
     throw new TypeError("nowMs must be a finite epoch timestamp");
@@ -864,8 +864,8 @@ export function analyzeCacheSwitchRows(rows, {
       addConfigurationChange(period.summary, proximate);
       addConfigurationChange(period.byChangeType[changeType], proximate);
     }
-    if (!compactionAwareParser(row.previous_parser_version)
-        || !compactionAwareParser(row.parser_version)) {
+    if (!boundaryParser(row.previous_parser_version)
+        || !boundaryParser(row.parser_version)) {
       for (const period of applicablePeriods) {
         period.summary.uncoveredConfigurationChanges += 1;
         period.byChangeType[changeType].uncoveredConfigurationChanges += 1;
@@ -939,6 +939,9 @@ export function analyzeCacheContinuityRows(rows, {
   nowMs = Date.now(),
   pricer = createAccountingPricer(),
   declaredSpeedBaselines = [],
+  // Which parser labels prove compaction and turn-context boundaries. The
+  // default is the shipping index's; another store passes its own.
+  boundaryParser = compactionAwareParser,
 } = {}) {
   if (!Number.isFinite(nowMs)) {
     throw new TypeError("nowMs must be a finite epoch timestamp");
@@ -996,8 +999,8 @@ export function analyzeCacheContinuityRows(rows, {
       cohort.byGapBand[gapBand.id].summary,
       cohort.byOutcomeBucket[outcomeBucket.id].summary,
     ]);
-    if (!compactionAwareParser(row.previous_parser_version)
-        || !compactionAwareParser(row.parser_version)) {
+    if (!boundaryParser(row.previous_parser_version)
+        || !boundaryParser(row.parser_version)) {
       for (const summary of targets) {
         addContinuityExclusion(summary, "uncoveredReturns");
       }
@@ -1275,14 +1278,33 @@ export function readCacheImpacts(database, {
   // could enter either lens. Holding that candidate set once avoids running
   // the expensive window scan twice while staying bounded in practice by
   // configuration changes and content-free turn/compaction boundaries.
-  const outputRows = statement.all(futureLimitMs);
+  return analyzeCacheImpactRows(statement.all(futureLimitMs), {
+    nowMs, pricer, declaredSpeedBaselines,
+  });
+}
+
+/**
+ * Both lenses over candidate rows already read from an index. `outputRows`
+ * carries the candidates (`ordering_coverage_gap = 0`) and one sentinel per
+ * session whose order could not be proven (`ordering_coverage_gap = 1`, at its
+ * latest instant). Each index schema supplies its own rows; the analysis is
+ * shared.
+ */
+export function analyzeCacheImpactRows(outputRows, {
+  nowMs = Date.now(),
+  pricer = createAccountingPricer(),
+  declaredSpeedBaselines = [],
+  boundaryParser = compactionAwareParser,
+} = {}) {
   const orderingCoverageGapTimes = outputRows
     .filter((row) => row.ordering_coverage_gap === 1)
     .map((row) => Number(row.observed_at_ms));
   const rows = outputRows.filter((row) => row.ordering_coverage_gap === 0);
   return {
     cacheSwitchImpact: applyOrderingCoverage(
-      analyzeCacheSwitchRows(rows, { nowMs, pricer, declaredSpeedBaselines }),
+      analyzeCacheSwitchRows(rows, {
+        nowMs, pricer, declaredSpeedBaselines, boundaryParser,
+      }),
       orderingCoverageGapTimes,
       nowMs,
     ),
@@ -1291,6 +1313,7 @@ export function readCacheImpacts(database, {
         nowMs,
         pricer,
         declaredSpeedBaselines,
+        boundaryParser,
       }),
       orderingCoverageGapTimes,
       nowMs,

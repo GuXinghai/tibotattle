@@ -499,11 +499,11 @@ test("platform owner is opaque and the flat module is a composition-only identit
   assert.match(legacySource, /ClaudeCallbackCapabilityError/u);
   assert.match(
     legacySource,
-    /from "\.\/platform\/claude-callback-lifecycle\.js";/u,
+    /from "\.\/platform\/index\.js";/u,
   );
   assert.match(
     legacySource,
-    /from "\.\/platform\/export-identity-keychain\.js";/u,
+    /ClaudeCallbackLifecycleError,\s*EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,\s*createClaudeCallbackLifecycleContext,/u,
   );
   assert.match(
     legacySource,
@@ -514,60 +514,4 @@ test("platform owner is opaque and the flat module is a composition-only identit
     /export const \{[\s\S]*\} = CLAUDE_CALLBACK_LIFECYCLE;/u,
   );
   assert.doesNotMatch(legacySource, /export (?:async )?function/u);
-});
-
-test("local-review composes the reviewed facades with the exact packaged runtime path", async () => {
-  const localReviewSource = await readFile(
-    resolve(REPOSITORY_ROOT, "local-review/cli.js"),
-    "utf8",
-  );
-  assert.doesNotMatch(
-    localReviewSource,
-    /src\/claude-callback-lifecycle\.js/u,
-  );
-  assert.match(localReviewSource, /src\/application\/local-review\.js/u);
-  assert.match(localReviewSource, /ClaudeCallbackCapabilityError/u);
-  assert.match(localReviewSource, /src\/platform\/local-review\.js/u);
-  assert.match(
-    localReviewSource,
-    /createClaudeCallbackLifecycleContext\(\{/u,
-  );
-  assert.match(
-    localReviewSource,
-    /new URL\("\.\.\/src\/claude-callback-runtime\.js", import\.meta\.url\)/u,
-  );
-
-  const runtimeScript = fileURLToPath(
-    new URL("../src/claude-callback-runtime.js", import.meta.url),
-  );
-  assert.equal(
-    legacy.buildManagedClaudeStatusLine({
-      nodeExecutable: "/safe/node",
-    }).command,
-    `'/safe/node' '${runtimeScript}'`,
-  );
-});
-
-test("the exact local-review lifecycle migration allowance is removed", async () => {
-  const architecture = await readFile(
-    resolve(
-      REPOSITORY_ROOT,
-      "scripts/check-architecture-boundaries.mjs",
-    ),
-    "utf8",
-  );
-  const baseline = architecture.slice(
-    architecture.indexOf(
-      "const LOCAL_REVIEW_LEGACY_MIGRATION_TARGETS",
-    ),
-    architecture.indexOf("export const LEGACY_STORAGE_DIRECT_IMPORTERS"),
-  );
-  assert.doesNotMatch(
-    baseline,
-    /src\/claude-callback-lifecycle\.js/u,
-  );
-  assert.deepEqual(
-    [...baseline.matchAll(/"(src\/[^"]+)"/gu)].map((match) => match[1]),
-    [],
-  );
 });

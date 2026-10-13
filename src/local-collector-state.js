@@ -838,51 +838,6 @@ export async function readLocalCollectorState({
   }
 }
 
-export async function recordLocalCollectorLegacyRefreshAttempt({
-  stateFile = defaultLocalCollectorStatePath(),
-  clock = () => Date.now(),
-} = {}) {
-  if (typeof stateFile !== "string" || stateFile.length < 1
-      || typeof clock !== "function") {
-    throw new TypeError("Local legacy refresh receipt request is invalid");
-  }
-  const nowMs = clock();
-  if (!Number.isFinite(nowMs)) {
-    throw new TypeError("clock must return a finite epoch timestamp");
-  }
-  const lastAttemptedAt = new Date(nowMs).toISOString();
-  await ensureDatabase(stateFile);
-  let database;
-  let receipt;
-  try {
-    database = openDatabase(stateFile, { readOnly: false });
-    receipt = transaction(database, () => {
-      const current = normalizeLegacyRefreshUse(
-        readMeta(database, "legacy_refresh_use"),
-      );
-      const attempts = Math.min(
-        LOCAL_COLLECTOR_LEGACY_REFRESH_USE_MAX,
-        current.attempts + 1,
-      );
-      const next = {
-        schemaVersion: LOCAL_COLLECTOR_LEGACY_REFRESH_USE_SCHEMA_VERSION,
-        sourceMode: "legacy",
-        attempts,
-        saturated: attempts === LOCAL_COLLECTOR_LEGACY_REFRESH_USE_MAX,
-        lastAttemptedAt,
-      };
-      writeMeta(database, "legacy_refresh_use", next);
-      return next;
-    });
-    database.exec("PRAGMA optimize");
-  } finally {
-    database?.close();
-  }
-  await chmod(stateFile, 0o600);
-  await syncStateFile(stateFile);
-  return receipt;
-}
-
 export async function readLocalCollectorLegacyRefreshUse({
   stateFile = defaultLocalCollectorStatePath(),
 } = {}) {

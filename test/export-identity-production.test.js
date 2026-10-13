@@ -7,7 +7,7 @@ import {
   renderParticipantIdentitySourceState,
   selectProductionParticipantIdentity,
 } from "../src/export-identity-production.js";
-import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/export-identity-keychain.js";
+import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/platform/index.js";
 
 function fakeBackend() {
   return Object.freeze({
@@ -15,35 +15,7 @@ function fakeBackend() {
     createIfMissing: async () => "created",
     replaceExact: async () => "replaced",
     deleteExact: async () => "deleted",
-    describe: async () => ({ backend: "macos_keychain", status: "available" }),
-  });
-}
-
-for (const architecture of ["arm64", "x64"]) {
-  test(`macOS ${architecture} production selection constructs only the injected Keychain route`, () => {
-    const backend = fakeBackend();
-    let constructions = 0;
-    const selected = selectProductionParticipantIdentity({
-      environmentSecret: null,
-      explicitSecretFile: null,
-      platform: "darwin",
-      architecture,
-      appStateSecretFile: "/fixed/app-state/export-secret",
-      createKeychainBackend() {
-        constructions += 1;
-        return backend;
-      },
-    });
-    assert.equal(constructions, 1);
-    assert.equal(selected.mode, "macos_keychain");
-    assert.equal(selected.identityOptions.environmentSecret, null);
-    assert.equal(selected.identityOptions.secretFile, "/fixed/app-state/export-secret");
-    assert.equal(selected.identityOptions.participantSecretBackend, backend);
-    assert.equal(
-      selected.identityOptions.participantSecretCapability,
-      EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity,
-    );
-    assert.equal(Object.hasOwn(selected.identityOptions, "legacySecretFile"), false);
+    describe: async () => ({ backend: "windows_credential_manager", status: "available" }),
   });
 }
 
@@ -65,53 +37,20 @@ test("Windows x64 export-identity production selection remains fail closed", () 
   assert.equal(constructions, 0);
 });
 
-test("Linux x64 participant selection uses only an explicit conditional broker and the export capability", () => {
-  const backend = fakeBackend();
-  const selected = selectProductionParticipantIdentity({
-    platform: "linux", architecture: "x64", environmentSecret: null,
-    createLinuxBackend: () => backend,
-    createKeychainBackend: () => { throw new Error("Mac fallback must not run"); },
-  });
-  assert.equal(selected.mode, "linux_secret_service_broker");
-  assert.equal(renderParticipantIdentityBackendMode(selected.mode), selected.mode);
-  assert.equal(selected.identityOptions.participantSecretBackend, backend);
-  assert.equal(selected.identityOptions.participantSecretCapability, EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity);
-  for (const createLinuxBackend of [null, () => null, () => ({ get() {}, set() {}, delete() {} }), () => { throw new Error("private-native-detail"); }]) {
-    assert.throws(() => selectProductionParticipantIdentity({
-      platform: "linux", architecture: "x64", environmentSecret: null, createLinuxBackend,
-    }), (error) => error.code === "EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE"
-      && !error.stack.includes("private-native-detail"));
-  }
-  for (const keychainCapability of [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation, {}]) {
-    assert.throws(() => selectProductionParticipantIdentity({
-      platform: "linux", architecture: "x64", environmentSecret: null, keychainCapability,
-      createLinuxBackend: () => { throw new Error("Must reject capability before construction"); },
-    }), { code: "EXPORT_IDENTITY_PRODUCTION_BACKEND_INVALID" });
-  }
-});
 
-test("Linux development overrides and unsupported architectures never construct the broker", () => {
-  const createLinuxBackend = () => { throw new Error("Must not construct"); };
-  assert.equal(selectProductionParticipantIdentity({ platform: "linux", architecture: "x64",
-    environmentSecret: "synthetic-override", createLinuxBackend }).mode, "external_environment_override");
-  assert.equal(selectProductionParticipantIdentity({ platform: "linux", architecture: "x64",
-    environmentSecret: null, explicitSecretFile: "/synthetic/identity", createLinuxBackend }).mode, "owner_file_override");
-  assert.throws(() => selectProductionParticipantIdentity({ platform: "linux", architecture: "arm64",
-    environmentSecret: null, createLinuxBackend }), { code: "EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE" });
-});
 
-test("explicit file and environment development overrides never construct or mix with Keychain", () => {
+test("explicit file and environment development overrides never construct a production backend", () => {
   let constructions = 0;
-  const createKeychainBackend = () => {
+  const createWindowsBackend = () => {
     constructions += 1;
     return fakeBackend();
   };
   const file = selectProductionParticipantIdentity({
     environmentSecret: null,
     explicitSecretFile: "/development/secret",
-    platform: "darwin",
-    architecture: "arm64",
-    createKeychainBackend,
+    platform: "win32",
+    architecture: "x64",
+    createWindowsBackend,
   });
   assert.deepEqual(file, {
     mode: "owner_file_override",
@@ -125,10 +64,10 @@ test("explicit file and environment development overrides never construct or mix
   const environment = selectProductionParticipantIdentity({
     environmentSecret: "external-secret-canary",
     explicitSecretFile: null,
-    platform: "darwin",
-    architecture: "arm64",
+    platform: "win32",
+    architecture: "x64",
     appStateSecretFile: "/fixed/app-state/export-secret",
-    createKeychainBackend,
+    createWindowsBackend,
   });
   assert.equal(environment.mode, "external_environment_override");
   assert.deepEqual(environment.identityOptions, {
@@ -142,7 +81,7 @@ test("explicit file and environment development overrides never construct or mix
     () => selectProductionParticipantIdentity({
       environmentSecret: "external-secret-canary",
       explicitSecretFile: "/development/secret",
-      createKeychainBackend,
+      createWindowsBackend,
     }),
     (error) => error.code === "EXPORT_IDENTITY_OVERRIDE_CONFLICT"
       && error.message === "Production participant identity backend selection failed",
@@ -163,52 +102,6 @@ test("unsupported production platforms fail closed unless a development override
   }
 });
 
-for (const architecture of ["arm64", "x64"]) {
-  test(`macOS ${architecture} backend construction errors are fixed and content-free`, () => {
-    const canary = "DO-NOT-LEAK-production-selector";
-    assert.throws(
-      () => selectProductionParticipantIdentity({
-        environmentSecret: null,
-        platform: "darwin",
-        architecture,
-        createKeychainBackend() { throw new Error(canary); },
-      }),
-      (error) => {
-        assert.equal(error.code, "EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE");
-        assert.equal(`${error.stack}\n${JSON.stringify(error)}`.includes(canary), false);
-        return true;
-      },
-    );
-  });
-}
-
-for (const architecture of ["arm64", "x64"]) {
-  test(`macOS ${architecture} production selection refuses account-observation or arbitrary Keychain capabilities`, () => {
-    let constructions = 0;
-    const createKeychainBackend = () => {
-      constructions += 1;
-      return fakeBackend();
-    };
-    for (const keychainCapability of [
-      EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation,
-      { service: "private-service", account: "private-account", secretPrefix: "private-prefix" },
-    ]) {
-      assert.throws(
-        () => selectProductionParticipantIdentity({
-          environmentSecret: null,
-          platform: "darwin",
-          architecture,
-          keychainCapability,
-          createKeychainBackend,
-        }),
-        (error) => error.code === "EXPORT_IDENTITY_PRODUCTION_BACKEND_INVALID"
-          && error.message === "Production participant identity backend selection failed",
-      );
-    }
-    assert.equal(constructions, 0);
-  });
-}
-
 test("CLI rotation preflight and confirmation use injected selection without disclosing backend details", async () => {
   const canaries = [
     "/private/app-state/secret",
@@ -217,7 +110,7 @@ test("CLI rotation preflight and confirmation use injected selection without dis
     "PRIVATE-SECRET",
   ];
   const identityOptions = Object.freeze({ opaque: "test-only-options" });
-  const selectParticipantIdentity = () => ({ mode: "macos_keychain", identityOptions });
+  const selectParticipantIdentity = () => ({ mode: "windows_credential_manager", identityOptions });
   const lines = [];
   const originalLog = console.log;
   console.log = (...values) => { lines.push(values.join(" ")); };
@@ -237,7 +130,7 @@ test("CLI rotation preflight and confirmation use injected selection without dis
     });
     assert.equal(inspectedOptions, identityOptions);
     assert.match(lines.join("\n"), /preflight: ready/);
-    assert.match(lines.join("\n"), /Storage backend: macos_keychain/);
+    assert.match(lines.join("\n"), /Storage backend: windows_credential_manager/);
     assert.match(lines.join("\n"), /Identity source: keychain/);
     assert.match(lines.join("\n"), /Rotatable: true/);
     for (const canary of canaries) assert.equal(lines.join("\n").includes(canary), false);
@@ -253,10 +146,8 @@ test("CLI rotation preflight and confirmation use injected selection without dis
     });
     assert.deepEqual(rotationOptions, { ...identityOptions, confirmRotation: true });
     assert.match(lines.join("\n"), /rotation: completed/);
-    assert.match(lines.join("\n"), /Storage backend: macos_keychain/);
+    assert.match(lines.join("\n"), /Storage backend: windows_credential_manager/);
     assert.match(lines.join("\n"), /Fallback retirement markers committed: true/);
-    assert.match(lines.join("\n"), /Retired secret files removed this operation: 1/);
-    assert.match(lines.join("\n"), /Retired secret files retained after operation: 0/);
     for (const canary of canaries) assert.equal(lines.join("\n").includes(canary), false);
   } finally {
     console.log = originalLog;
@@ -264,7 +155,7 @@ test("CLI rotation preflight and confirmation use injected selection without dis
 });
 
 test("CLI state renderers expose only closed source and backend vocabularies", () => {
-  assert.equal(renderParticipantIdentityBackendMode("macos_keychain"), "macos_keychain");
+  assert.equal(renderParticipantIdentityBackendMode("macos_keychain"), "invalid");
   assert.equal(renderParticipantIdentityBackendMode("windows_credential_manager"), "windows_credential_manager");
   assert.equal(renderParticipantIdentityBackendMode("PRIVATE"), "invalid");
   assert.equal(renderParticipantIdentitySourceState({ source: "environment" }), "external_override");

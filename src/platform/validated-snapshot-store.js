@@ -54,8 +54,7 @@ function ownerOnlyFile(metadata) {
     && metadata.isSymbolicLink() === false
     && (typeof process.getuid !== "function"
       || (typeof metadata.uid === "number"
-        && metadata.uid === process.getuid()))
-    && (process.platform === "win32" || (metadata.mode & 0o077) === 0);
+        && metadata.uid === process.getuid()));
 }
 
 function ownerOnlyDirectory(metadata) {
@@ -63,8 +62,7 @@ function ownerOnlyDirectory(metadata) {
     && metadata.isSymbolicLink() === false
     && (typeof process.getuid !== "function"
       || (typeof metadata.uid === "number"
-        && metadata.uid === process.getuid()))
-    && (process.platform === "win32" || (metadata.mode & 0o077) === 0);
+        && metadata.uid === process.getuid()));
 }
 
 function regexLiteral(value) {
@@ -89,9 +87,7 @@ function staleOwnedSnapshotTemporary(metadata, cutoffMs, maximumBytes) {
     && metadata.size <= maximumBytes
     && Number.isFinite(metadata.mtimeMs)
     && Number.isFinite(metadata.ctimeMs)
-    && Math.max(metadata.mtimeMs, metadata.ctimeMs) <= cutoffMs
-    && (process.platform === "win32"
-      || (metadata.mode & 0o777) === 0o600);
+    && Math.max(metadata.mtimeMs, metadata.ctimeMs) <= cutoffMs;
 }
 
 async function removeStaleSnapshotTemporary(path, cutoffMs, maximumBytes) {

@@ -11,8 +11,9 @@ import { runAccountlessContributionSyncOnce, renewAccountlessContributionOwnersh
 import { withContributionDeviceSecret } from "../src/contribution-device-capability.js";
 import {
   ATTRIBUTION_FIXTURE_DEVICE_ID,
+  attributionFixtureSeams,
   writeAttributionFixture,
-} from "./helpers/local-attribution-fixture.js";
+} from "./helpers/local-index-attribution-fixture.js";
 import { createAttributionFixtureDevice } from "./helpers/attribution-transport-fixture.js";
 
 const repositoryRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -318,6 +319,7 @@ test("accountless client reaches a migrated local Worker with renewal, replay, d
       backend,
       stateFile,
       indexFile,
+      contribution: attributionFixtureSeams(),
       fetchImpl,
       maximumChunks: 20,
       maximumDurationMilliseconds: 60_000,

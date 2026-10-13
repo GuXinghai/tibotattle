@@ -23,14 +23,11 @@ const DEFAULT_CLAUDE_STATUS_MAX_RECORDS = 20_000;
 const DEFAULT_CLAUDE_STATUS_MAX_LEDGER_BYTES = 32 * 1024 * 1024;
 const MAX_CLAUDE_STATUS_RECORD_BYTES = 4096;
 const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
-const CLAUDE_STATE_ENVIRONMENT_KEYS = Object.freeze(["LOCALAPPDATA", "XDG_STATE_HOME"]);
+const CLAUDE_STATE_ENVIRONMENT_KEYS = Object.freeze(["LOCALAPPDATA"]);
 const CODEX_ENVIRONMENT_KEYS = Object.freeze(["CODEX_HOME"]);
 
 export function localPlatformName() {
-  if (process.platform === "darwin") return "macos";
-  if (process.platform === "linux") return "linux";
-  if (process.platform === "win32") return "windows";
-  return "other";
+  return process.platform === "win32" ? "windows" : "other";
 }
 
 export const localIsProxy = isProxy;
@@ -121,7 +118,6 @@ export function createLocalExportSourcePorts(configuration = {}) {
     if (!stats.isDirectory() || stats.isSymbolicLink()) statusFail("state_directory_type");
     const uid = currentUid();
     if (uid !== null && stats.uid !== uid) statusFail("state_directory_owner");
-    if (platform !== "win32" && (stats.mode & 0o777) !== 0o700) statusFail("state_directory_mode");
   }
 
   function assertSafeDirectoryComponent(stats, ownerOnly) {
@@ -131,13 +127,6 @@ export function createLocalExportSourcePorts(configuration = {}) {
       if (ownerOnly ? stats.uid !== uid : stats.uid !== uid && stats.uid !== 0) {
         statusFail("state_parent_owner");
       }
-    }
-    if (platform === "win32") return;
-    const mode = stats.mode & 0o7777;
-    if (ownerOnly) {
-      if ((mode & 0o077) !== 0 || (mode & 0o100) === 0) statusFail("state_parent_mode");
-    } else if ((mode & 0o022) !== 0 && (mode & 0o1000) === 0) {
-      statusFail("state_parent_mode");
     }
   }
 
@@ -238,24 +227,14 @@ export function createLocalExportSourcePorts(configuration = {}) {
 
   function defaultClaudeStatusStateDirectory(options = {}) {
     if (!options || typeof options !== "object" || Array.isArray(options) || isProxy(options)) invalid();
-    const configuredPlatform = ownData(options, "platform", platform);
     const env = snapshotEnvironment(
       ownData(options, "env", environment),
       CLAUDE_STATE_ENVIRONMENT_KEYS,
     );
     const configuredHome = ownData(options, "homeDirectory", homeDirectory);
     if (typeof configuredHome !== "string" || !isAbsolute(configuredHome)) statusFail("state_home");
-    let base;
-    if (configuredPlatform === "darwin") {
-      base = join(configuredHome, "Library", "Application Support");
-    } else if (configuredPlatform === "win32") {
-      base = env.LOCALAPPDATA;
-      if (typeof base !== "string" || !isAbsolute(base)) base = join(configuredHome, "AppData", "Local");
-    } else {
-      base = env.XDG_STATE_HOME;
-      if (base !== undefined && (typeof base !== "string" || !isAbsolute(base))) statusFail("state_root");
-      if (base === undefined) base = join(configuredHome, ".local", "state");
-    }
+    let base = env.LOCALAPPDATA;
+    if (typeof base !== "string" || !isAbsolute(base)) base = join(configuredHome, "AppData", "Local");
     return join(base, "app-usagemonitor", "claude-statusline-v0.2");
   }
 

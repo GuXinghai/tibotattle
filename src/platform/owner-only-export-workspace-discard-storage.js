@@ -218,8 +218,7 @@ async function writeOwnerOnlyNoClobberDurable(path, content) {
     await handle.sync();
     const written = await handle.stat();
     if (!written.isFile() || written.nlink !== 1 || written.size !== Buffer.byteLength(content, "utf8")
-        || (typeof process.getuid === "function" && written.uid !== process.getuid())
-        || (process.platform !== "win32" && (written.mode & 0o077) !== 0)) throw new Error("invalid control");
+        || (typeof process.getuid === "function" && written.uid !== process.getuid())) throw new Error("invalid control");
     await handle.close(); handle = null;
     await syncDirectory(canonicalParent);
     durable = true;
@@ -244,8 +243,7 @@ async function exists(path) {
 function assertOwnerFile(stats, maximumBytes = Number.MAX_SAFE_INTEGER, allowedLinkCounts = [1]) {
   if (!stats.isFile() || stats.isSymbolicLink() || !allowedLinkCounts.includes(Number(stats.nlink))
       || !Number.isSafeInteger(stats.size) || stats.size < 1 || stats.size > maximumBytes
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) fail("replacement");
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) fail("replacement");
 }
 
 async function readExactFile(path, maximumBytes = Number.MAX_SAFE_INTEGER, {
@@ -428,8 +426,7 @@ async function quarantineThenUnlink(path, quarantinePath, expected, {
 
 function assertOwnerDirectory(stats) {
   if (!stats.isDirectory() || stats.isSymbolicLink()
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) fail("replacement");
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) fail("replacement");
 }
 
 async function assertDirectoryIdentityToken(directory, planToken, expectedToken) {

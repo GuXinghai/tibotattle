@@ -436,9 +436,7 @@ function sameResourceRoot(left, right) {
   try {
     const normalizedLeft = resolve(left);
     const normalizedRight = resolve(right);
-    return process.platform === "win32"
-      ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
-      : normalizedLeft === normalizedRight;
+    return normalizedLeft.toLowerCase() === normalizedRight.toLowerCase();
   } catch {
     return false;
   }
@@ -543,7 +541,7 @@ function invalidWindowsPathComponent(component) {
 
 /**
  * Normalize a Windows path without resolving it against the host platform.
- * This is important for portable contract tests on macOS and Linux: a
+ * This is important for portable contract tests run on non-Windows hosts: a
  * logical win32 context must still use Windows drive/path semantics.
  */
 function normalizeWindowsAbsolutePath(value, code = "invalid_path") {
@@ -718,18 +716,10 @@ function validateOptions(options) {
   if (testLane !== undefined && testLane !== WINDOWS_QUALIFICATION_MODE_TEST_LANE) {
     fail("invalid_environment");
   }
-  const configuredAccountingSourceMode = readOwn(
+  const accountingSourceMode = readOwn(
     options,
     "accountingSourceMode",
   );
-  const aliasedAccountingMode = readOwn(options, "accountingMode");
-  if (configuredAccountingSourceMode !== undefined
-      && aliasedAccountingMode !== undefined
-      && configuredAccountingSourceMode !== aliasedAccountingMode) {
-    fail("invalid_configuration");
-  }
-  const accountingSourceMode = configuredAccountingSourceMode
-    ?? aliasedAccountingMode;
   if (accountingSourceMode !== undefined
       && accountingSourceMode !== WINDOWS_QUALIFICATION_MODE_ACCOUNTING_SOURCE_MODE) {
     fail("accounting_mode");

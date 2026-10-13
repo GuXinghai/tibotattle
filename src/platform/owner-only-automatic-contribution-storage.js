@@ -83,8 +83,7 @@ function timestamp(value, failures) {
 function assertOwnerOnlyDirectory(stats, failures, code) {
   if (!stats.isDirectory()
       || stats.isSymbolicLink()
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
     failures.fail(code);
   }
 }
@@ -95,8 +94,7 @@ function assertOwnerOnlyFile(stats, maximumBytes, failures, code) {
       || stats.nlink !== 1
       || stats.size < 1
       || stats.size > maximumBytes
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
     failures.fail(code);
   }
 }

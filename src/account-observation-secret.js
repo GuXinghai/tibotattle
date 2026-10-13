@@ -61,8 +61,7 @@ async function invokeBackend(backend, method, ...args) {
     }
     if (code === "export_identity_keychain_locked"
         || code === "windows_credential_manager_locked"
-        || code === "windows_account_observation_broker_locked"
-        || code === "linux_secret_service_broker_locked") {
+        || code === "windows_account_observation_broker_locked") {
       fail("account_observation_credential_locked");
     }
     if (code === "export_identity_keychain_migration_required") {
@@ -86,9 +85,6 @@ function assertOwnerOnlyLock(stats) {
   if (typeof process.getuid === "function" && typeof stats.uid === "number" && stats.uid !== process.getuid()) {
     fail("account_observation_credential_unavailable");
   }
-  if (process.platform !== "win32" && (stats.mode & 0o777) !== 0o600) {
-    fail("account_observation_credential_unavailable");
-  }
 }
 
 async function prepareLockDirectory(path) {
@@ -99,17 +95,13 @@ async function prepareLockDirectory(path) {
   if (typeof process.getuid === "function" && typeof stats.uid === "number" && stats.uid !== process.getuid()) {
     fail("account_observation_credential_unavailable");
   }
-  if (process.platform !== "win32" && (stats.mode & 0o022) !== 0) {
-    fail("account_observation_credential_unavailable");
-  }
   return { directory, identity: { dev: stats.dev, ino: stats.ino } };
 }
 
 async function assertLockDirectory(directoryState) {
   const stats = await lstat(directoryState.directory);
   if (!stats.isDirectory() || stats.isSymbolicLink() || !sameIdentity(stats, directoryState.identity)
-      || (typeof process.getuid === "function" && typeof stats.uid === "number" && stats.uid !== process.getuid())
-      || (process.platform !== "win32" && (stats.mode & 0o022) !== 0)) {
+      || (typeof process.getuid === "function" && typeof stats.uid === "number" && stats.uid !== process.getuid())) {
     fail("account_observation_credential_unavailable");
   }
 }
@@ -117,18 +109,7 @@ async function assertLockDirectory(directoryState) {
 async function syncLockDirectory(directoryState) {
   await assertLockDirectory(directoryState);
   // Windows cannot open a directory for fsync. The lock file itself is
-  // flushed before this point; the unavailable directory-entry barrier is a
-  // POSIX-only durability primitive.
-  if (process.platform === "win32") return;
-  let handle;
-  try {
-    handle = await open(directoryState.directory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
-    await handle.sync();
-  } catch {
-    fail("account_observation_credential_unavailable");
-  } finally {
-    await handle?.close().catch(() => {});
-  }
+  // flushed before this point, so the directory-entry barrier is not applied.
 }
 
 function lockContent(processId, now) {

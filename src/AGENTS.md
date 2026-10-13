@@ -6,8 +6,8 @@ Scope: all files under `src/`. Apply the repository root guidance first.
 
 - `application/` orchestrates use cases and ports; it does not own concrete
   platform mechanisms.
-- `platform/` owns filesystem, process, Keychain/credential, and operating-system
-  adapters.
+- `platform/` owns filesystem, process, Windows Credential Manager/credential, and
+  operating-system adapters.
 - `providers/` owns untrusted provider parsing and normalization.
 - `contribution/`, `export/`, and `reporting/` own their domain contracts and
   expose reviewed entrypoints.
@@ -57,6 +57,6 @@ Treat that executable policy as a ratchet, not a list to relax.
   coverage when those failure modes are relevant.
 - Run the narrow affected Node test files while iterating, then
   `npm run architecture:check` and the applicable root or surface gate.
-- Changes to local unified-index schemas, cache formats, identity derivation,
+- Changes to local index store schemas, cache formats, identity derivation,
   export compatibility, or retained R7 inputs require explicit compatibility and
   recovery review before broader validation.

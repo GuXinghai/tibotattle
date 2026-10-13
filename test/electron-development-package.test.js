@@ -18,76 +18,24 @@ test("targeted diagnostic runs retain full push qualification and use the same r
   assert.match(workflow, /group: electron-development-packages-\$\{\{ github.ref \}\}-\$\{\{ inputs.qualification \|\| 'full' \}\}/u);
   assert.match(workflow, /cancel-in-progress: false/u);
   const jobs = [...workflow.matchAll(/^  ([a-z][a-z0-9-]+):\n    if: ([^\n]+)$/gmu)];
-  const all = ["darwin-arm64", "darwin-x64", "win32-x64", "win32-x64-normal-candidate", "win32-x64-nsis-lifecycle", "linux-x64"];
+  const all = ["win32-x64", "win32-x64-normal-candidate", "win32-x64-nsis-lifecycle"];
   assert.deepEqual(jobs.map(([, id]) => id), all);
   const selected = (eventName, qualification) => jobs.filter(([, , expression]) => {
     // These simple predicates use only syntax shared by JS and Actions.
     assert.match(expression, /^[a-zA-Z0-9_.' =!|\-]+$/u);
     return runInNewContext(expression, { github: { event_name: eventName }, inputs: { qualification } }, { timeout: 100 });
   }).map(([, id]) => id);
-  for (const qualification of [undefined, "full", "windows-runtime", "linux-runtime", "native-runtime"]) {
+  for (const qualification of [undefined, "full", "windows-runtime"]) {
     assert.deepEqual(selected("push", qualification), all, "pushes always require every job");
   }
   assert.deepEqual(selected("workflow_dispatch", "full"), all);
   assert.deepEqual(selected("workflow_dispatch", "windows-runtime"), ["win32-x64-normal-candidate"]);
-  assert.deepEqual(selected("workflow_dispatch", "linux-runtime"), ["linux-x64"]);
-  assert.deepEqual(selected("workflow_dispatch", "native-runtime"), ["win32-x64-normal-candidate", "linux-x64"]);
+  assert.deepEqual(selected("workflow_dispatch", "native-runtime"), [], "retired non-Windows lane selects nothing");
   assert.deepEqual(selected("workflow_dispatch", "unknown"), []);
   assert.match(workflow, /win32-x64-nsis-lifecycle:[\s\S]*?needs: win32-x64/u);
 });
 
-test("one development packaging contract covers the four actual target architectures", () => {
-  for (const [target, flag, packages] of [
-    ["darwin-arm64", "--mac", ["dmg", "zip"]],
-    ["darwin-x64", "--mac", ["dmg", "zip"]],
-    ["win32-x64", "--win", ["nsis", "zip"]],
-    ["linux-x64", "--linux", ["AppImage", "tar.gz"]],
-  ]) {
-    const plan = developmentPackagePlan({ target, sourceRevision, hostPlatform: "darwin", hostArchitecture: "arm64" });
-    assert.deepEqual(plan.builderArguments, [flag, ...packages, `--${target.split("-")[1]}`, "--publish", "never"]);
-    assert.equal(plan.stagingDirectory, `.release-build/electron-dev/${target}/app`);
-    assert.equal(plan.outputDirectory, `.release-build/electron-candidates/${sourceRevision}/${target}/distribution`);
-    assert.equal(plan.nativeHost, target === "darwin-arm64");
-    assert.equal(plan.signed, false);
-    assert.equal(plan.published, false);
-    assert.equal(plan.updaterEnabled, false);
-    assert.equal(plan.installedLifecycleQualified, false);
-    assert.equal(plan.packagingProfile, "development");
-    assert.equal(Object.hasOwn(plan, "accountlessHostedRehearsal"), false);
-  }
-  assert.equal(developmentPackagePlan({ target: "linux-x64", sourceRevision, hostPlatform: "darwin" }).buildHostAvailable, true);
-  assert.equal(developmentPackagePlan({ target: "darwin-x64", sourceRevision, hostPlatform: "linux" }).buildHostAvailable, false);
-  assert.equal(developmentPackagePlan({ target: "linux-x64", sourceRevision, hostPlatform: "linux", hostArchitecture: "arm64" }).nativeHost, false);
-});
 
-test("hosted scheduler rehearsal is an explicit unsigned arm64 directory package", () => {
-  const options = parseDevelopmentPackageArguments([
-    "--target", "darwin-arm64", "--format", "dir", "--accountless-hosted-rehearsal",
-  ]);
-  assert.equal(options.accountlessHostedRehearsal, true);
-  const plan = developmentPackagePlan({ ...options, sourceRevision });
-  assert.equal(plan.packagingProfile, "accountless-hosted-rehearsal");
-  assert.equal(plan.accountlessHostedRehearsal.sourceRevision, sourceRevision);
-  assert.equal(plan.accountlessHostedRehearsal.target, "darwin-arm64");
-  assert.deepEqual(plan.builderArguments, ["--mac", "dir", "--arm64", "--publish", "never"]);
-  assert.equal(plan.outputDirectory,
-    `.release-build/electron-candidates/${sourceRevision}/darwin-arm64/accountless-hosted-rehearsal`);
-  assert.equal(plan.signed, false);
-  assert.equal(plan.updaterEnabled, false);
-  for (const target of ["darwin-x64", "win32-x64", "linux-x64"]) {
-    assert.throws(() => parseDevelopmentPackageArguments([
-      "--target", target, "--format", "dir", "--accountless-hosted-rehearsal",
-    ]), /HOSTED_REHEARSAL_TARGET_OR_FORMAT_INVALID/u);
-  }
-  assert.throws(() => developmentPackagePlan({
-    target: "darwin-arm64", format: "distribution", sourceRevision,
-    accountlessHostedRehearsal: true,
-  }), /HOSTED_REHEARSAL_TARGET_OR_FORMAT_INVALID/u);
-  assert.throws(() => parseDevelopmentPackageArguments([
-    "--target", "darwin-arm64", "--format", "dir", "--accountless-hosted-rehearsal",
-    "--origin", "https://example.invalid",
-  ]), /ARGUMENT_INVALID/u);
-});
 
 test("package CLI refuses unknown targets, publication flags, duplicate selections and ambiguous native inputs", () => {
   for (const args of [
@@ -103,20 +51,21 @@ test("package CLI refuses unknown targets, publication flags, duplicate selectio
 });
 
 test("development builder cannot inherit signing, publishing or application credentials", () => {
-  const env = developmentBuildEnvironment({ PATH: "/safe/bin", HOME: "/safe/home", CSC_LINK: "private", WIN_CSC_LINK: "private", CSC_KEY_PASSWORD: "private", GH_TOKEN: "private", APPLE_ID: "private", APPLE_APP_SPECIFIC_PASSWORD: "private", APP_USAGEMONITOR_EXPORT_SECRET: "private", USAGE_MONITOR_CENTRAL_ORIGIN: "https://example.invalid", TIBOTATTLE_ELECTRON_TARGET: "win32-x64" }, "darwin-arm64");
+  const env = developmentBuildEnvironment({ PATH: "/safe/bin", HOME: "/safe/home", CSC_LINK: "private", WIN_CSC_LINK: "private", CSC_KEY_PASSWORD: "private", GH_TOKEN: "private", APPLE_ID: "private", APPLE_APP_SPECIFIC_PASSWORD: "private", APP_USAGEMONITOR_EXPORT_SECRET: "private", USAGE_MONITOR_CENTRAL_ORIGIN: "https://example.invalid", TIBOTATTLE_ELECTRON_TARGET: "win32-x64" }, "win32-x64");
   assert.deepEqual(Object.keys(env).sort(), ["CSC_IDENTITY_AUTO_DISCOVERY", "HOME", "PATH", "TIBOTATTLE_ELECTRON_TARGET", "TIBOTATTLE_ELECTRON_VERSION"]);
   assert.equal(env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
-  assert.equal(env.TIBOTATTLE_ELECTRON_TARGET, "darwin-arm64");
+  assert.equal(env.TIBOTATTLE_ELECTRON_TARGET, "win32-x64");
   assert.equal(JSON.stringify(env).includes("private"), false);
+  assert.throws(() => developmentBuildEnvironment({ PATH: "/safe/bin" }, "darwin-arm64"), /TARGET_OR_FORMAT_INVALID/u);
 });
 
 test("artifact machine verification rejects an incorrect or malformed executable", () => {
-  for (const [cpu, target] of [[0x0100000c, "darwin-arm64"], [0x01000007, "darwin-x64"]]) {
+  for (const cpu of [0x0100000c, 0x01000007]) {
     const header = Buffer.alloc(64); header.writeUInt32LE(0xfeedfacf); header.writeUInt32LE(cpu, 4);
-    assert.equal(executableArchitecture(header), target);
+    assert.throws(() => executableArchitecture(header), /EXECUTABLE_ARCHITECTURE/u);
   }
   const elf = Buffer.alloc(64); Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(elf); elf.writeUInt16LE(62, 18);
-  assert.equal(executableArchitecture(elf), "linux-x64");
+  assert.throws(() => executableArchitecture(elf), /EXECUTABLE_ARCHITECTURE/u);
   elf.writeUInt16LE(183, 18);
   assert.throws(() => executableArchitecture(elf), /EXECUTABLE_ARCHITECTURE/u);
   const pe = Buffer.alloc(256); pe.write("MZ"); pe.writeUInt32LE(128, 60); pe.write("PE\0\0", 128); pe.writeUInt16LE(0x8664, 132);
@@ -126,14 +75,14 @@ test("artifact machine verification rejects an incorrect or malformed executable
   for (const header of [Buffer.alloc(0), Buffer.from("arbitrary"), Buffer.alloc(64)]) assert.throws(() => executableArchitecture(header), /EXECUTABLE_ARCHITECTURE/u);
 });
 
-test("the development workflow builds each target on a static native runner without release authority", async () => {
+test("the development workflow builds Windows on a static native runner without release authority", async () => {
   const workflow = await readFile(new URL("../.github/workflows/electron-development-packages.yml", import.meta.url), "utf8");
   assert.match(workflow, /workflow_dispatch:/u);
   assert.match(workflow, /  push:\n    branches:\n      - codex\/unified-desktop-accountless\n/u);
   assert.match(workflow, /contents: read/u);
   assert.doesNotMatch(workflow, /pull_request_target|secrets\.|contents: write|id-token: write|--publish always/u);
   const jobs = workflow.split(/\n(?= {2}[a-z][a-z0-9-]+:\n)/u);
-  for (const [target, runner] of [["darwin-arm64", "macos-26"], ["darwin-x64", "macos-26-intel"], ["win32-x64", "windows-2025"], ["linux-x64", "ubuntu-24.04"]]) {
+  for (const [target, runner] of [["win32-x64", "windows-2025"]]) {
     const job = jobs.find((section) => section.startsWith(`  ${target}:\n`));
     assert.ok(job);
     assert.ok(job.includes(`runs-on: ${runner}\n`));
@@ -142,22 +91,10 @@ test("the development workflow builds each target on a static native runner with
   }
   assert.doesNotMatch(workflow, /Add the (?:Windows|Linux) development launch handoff/u,
     "handoff assembly belongs to the common local/CI packaging command");
-  assert.equal((workflow.match(/persist-credentials: false/gu) ?? []).length, 6);
-  assert.equal((workflow.match(/if-no-files-found: error/gu) ?? []).length, 7);
+  assert.equal((workflow.match(/persist-credentials: false/gu) ?? []).length, 3);
+  assert.equal((workflow.match(/if-no-files-found: error/gu) ?? []).length, 3);
   assert.match(workflow, /WINDOWS_BINDING_BUILD_FAILED/u);
-  assert.match(workflow, /LINUX_CREDENTIAL_MUTEX_NODE_GYP_UNAVAILABLE/u);
-  assert.match(workflow, /rebuild --directory native\/linux-credential-mutex/u);
-  assert.match(workflow, /stage-linux-credential-mutex-binding\.mjs/u);
-  assert.match(workflow, /build-linux-credential-mutex-manifest\.mjs/u);
-  assert.match(workflow, /qualify-linux-credential-mutex\.mjs/u);
-  assert.ok(
-    workflow.indexOf("stage-linux-credential-mutex-binding.mjs")
-      < workflow.indexOf("build-linux-credential-mutex-manifest.mjs"),
-  );
-  assert.ok(
-    workflow.indexOf("build-linux-credential-mutex-manifest.mjs")
-      < workflow.indexOf("qualify-linux-credential-mutex.mjs"),
-  );
+  assert.doesNotMatch(workflow, /darwin|macos|linux|ubuntu/iu, "development packaging is Windows-only");
 
   const windowsPackageJob = jobs.find((section) => section.startsWith("  win32-x64:\n"));
   const windowsLifecycleJob = jobs.find((section) => section.startsWith("  win32-x64-nsis-lifecycle:\n"));
@@ -208,44 +145,6 @@ test("the development workflow builds each target on a static native runner with
   assert.doesNotMatch(windowsLifecycleJob, /smoke-electron-windows-accountless\.mjs/u);
 });
 
-test("the Linux normal candidate stays on the runner and executes only in the isolated GUI container", async () => {
-  const workflow = await readFile(new URL("../.github/workflows/electron-development-packages.yml", import.meta.url), "utf8");
-  const linux = workflow.slice(workflow.indexOf("\n  linux-x64:\n"));
-  assert.match(linux, /package-electron-production\.mjs --target linux-x64/u);
-  const preparation = linux.match(/node scripts\/package-electron-production\.mjs ([\s\S]*?)\n {10}export/u);
-  assert.ok(preparation, "normal candidate preparation command exists");
-  const environment = { GITHUB_SHA: sourceRevision, GITHUB_RUN_ID: "34238600250", GITHUB_RUN_NUMBER: "1234" };
-  const argumentsForPreparation = preparation[1].replace(/\\\r?\n/gu, " ").trim().split(/\s+/u).map((argument) => {
-    const variable = argument.match(/^"\$([A-Z_]+)"$/u);
-    if (!variable) return argument;
-    assert.ok(Object.hasOwn(environment, variable[1]), "only known workflow values are expanded");
-    return environment[variable[1]];
-  });
-  const parsed = parseProductionCandidateArguments(argumentsForPreparation);
-  assert.equal(parsed.target, "linux-x64");
-  assert.equal(parsed.sourceRevision, sourceRevision);
-  assert.equal(parsed.buildNumber, environment.GITHUB_RUN_NUMBER);
-  assert.match(linux, /export TIBOTATTLE_ELECTRON_BUILD_NUMBER="\$GITHUB_RUN_NUMBER"/u);
-  assert.match(linux, /--linux dir --x64 --publish never/u);
-  const execution = linux.slice(linux.indexOf("- name: Exercise normal packaged Linux startup"),
-    linux.indexOf("- name: Exercise a genuine AppImage update and automatic restart in isolation"));
-  assert.match(execution, /--cap-add=SYS_ADMIN --network none/u);
-  assert.match(execution, /--entrypoint xvfb-run/u);
-  assert.match(execution, /-nolisten tcp/u);
-  assert.equal((execution.match(/rw,noexec,nosuid/gu) ?? []).length, 2);
-  assert.match(execution, /node scripts\/smoke-electron-linux-packaged\.mjs/u);
-  assert.doesNotMatch(execution, /ELECTRON_RUN_AS_NODE|--no-sandbox|--privileged|--volume|--mount|--network host/u);
-  const upload = linux.slice(linux.indexOf("- name: Retain only the Linux normal-candidate receipt"));
-  const smallReceipt = upload.slice(0, upload.indexOf("- name: Retain verified development packages and receipts"));
-  assert.match(smallReceipt, /name: electron-linux-normal-candidate-\$\{\{ github\.sha \}\}/u);
-  assert.match(smallReceipt, /^ {10}path: \.release-build\/electron-candidates\/\$\{\{ github\.sha \}\}\/linux-x64\/distribution\/normal-packaged-smoke\.json$/mu);
-  assert.match(smallReceipt, /!cancelled\(\).*hashFiles\(format\(/u);
-  assert.doesNotMatch(upload, /electron-production/u, "production candidates are not authorized for artifact upload");
-  const dockerfile = await readFile(new URL("../containers/electron-linux-packaged/Dockerfile", import.meta.url), "utf8");
-  assert.match(dockerfile, /COPY test\/fixtures\/linux-packaged-codex\/codex \/opt\/tibotattle-linux-packaged-smoke\/bin\/codex/u);
-  assert.match(dockerfile, /chmod 4755 .*\/linux-unpacked\/chrome-sandbox/u);
-  assert.match(dockerfile, /USER node\nENTRYPOINT/u);
-});
 
 test("normal Windows CI keeps unsigned candidate bytes private and preserves the release configuration", async () => {
   const workflow = await readFile(new URL("../.github/workflows/electron-development-packages.yml", import.meta.url), "utf8");
@@ -318,11 +217,11 @@ test("normal Windows CI keeps unsigned candidate bytes private and preserves the
 });
 
 test("common packaging assembles usable, hashed handoffs without a source checkout", async () => {
-  for (const target of ["darwin-arm64", "darwin-x64", "win32-x64", "linux-x64"]) {
+  for (const target of ["win32-x64"]) {
     const outputDirectory = await mkdtemp(join(tmpdir(), "electron-development-handoff-"));
     try {
       const files = await writeDevelopmentHandoff({ target, outputDirectory });
-      assert.equal(files.length, target.startsWith("darwin-") ? 1 : 3);
+      assert.equal(files.length, 3);
       for (const file of files) {
         const bytes = await readFile(join(outputDirectory, file.file));
         assert.equal(bytes.length, file.bytes);
@@ -333,44 +232,13 @@ test("common packaging assembles usable, hashed handoffs without a source checko
       }
       const readme = await readFile(join(outputDirectory, "DEVELOPMENT-TESTING.txt"), "utf8");
       assert.match(readme, /hosted accountless uploads remain unavailable/u);
-      if (!target.startsWith("darwin-")) {
-        assert.match(readme, /No separate Node\.js installation or source checkout is needed/u);
-        const wrapper = files.find(({ file }) => /\.(?:cmd|sh)$/u.test(file));
-        const source = await readFile(join(outputDirectory, wrapper.file), "utf8");
-        assert.match(source, /ELECTRON_RUN_AS_NODE=1/u);
-        assert.doesNotMatch(source, /SOURCE_CHECKOUT|%SOURCE%|source checkout.*required/iu);
-      }
+      assert.match(readme, /No separate Node\.js installation or source checkout is needed/u);
+      const wrapper = files.find(({ file }) => /\.cmd$/u.test(file));
+      const source = await readFile(join(outputDirectory, wrapper.file), "utf8");
+      assert.match(source, /ELECTRON_RUN_AS_NODE=1/u);
+      assert.doesNotMatch(source, /SOURCE_CHECKOUT|%SOURCE%|source checkout.*required/iu);
       await assert.rejects(writeDevelopmentHandoff({ target, outputDirectory }), { code: "EEXIST" });
       assert.equal(await readFile(join(outputDirectory, "DEVELOPMENT-TESTING.txt"), "utf8"), readme);
     } finally { await rm(outputDirectory, { recursive: true, force: true }); }
-  }
-});
-
-test("Linux native qualification outputs leave the source inventory unchanged", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "electron-native-build-ignore-"));
-  const git = (...args) => execFileSync("git", args, { cwd: directory, encoding: "utf8" });
-  try {
-    git("init", "--quiet", "--template=");
-    await writeFile(join(directory, ".gitignore"), await readFile(new URL("../.gitignore", import.meta.url)));
-    const source = "native/linux-credential-mutex/linux-credential-mutex.cc";
-    await mkdir(join(directory, "native/linux-credential-mutex"), { recursive: true });
-    await writeFile(join(directory, source), "// synthetic qualification source\n");
-    const before = git("status", "--porcelain", "--untracked-files=all");
-    assert.ok(before.includes(source), "native source changes must remain visible to the clean-source gate");
-
-    for (const build of [
-      "native/linux-credential-mutex/build/Release",
-      "native/linux-credential-mutex/build/qualification",
-    ]) {
-      await mkdir(join(directory, build), { recursive: true });
-      for (const name of ["linux_credential_mutex.node", "linux_credential_mutex.node.manifest.json"]) {
-        await writeFile(join(directory, build, name), "synthetic build output\n");
-        assert.equal(git("check-ignore", "--", `${build}/${name}`).trim(), `${build}/${name}`);
-      }
-    }
-    assert.equal(git("status", "--porcelain", "--untracked-files=all"), before,
-      "building, staging, and manifesting the native binding must not dirty the packager's source inventory");
-  } finally {
-    await rm(directory, { recursive: true, force: true });
   }
 });

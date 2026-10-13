@@ -11,7 +11,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, posix, relative } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import {
   LOCAL_ONBOARDING_SCHEMA_VERSION,
   MAXIMUM_OBSERVED_ROLLOUT_FILES,
@@ -60,40 +60,12 @@ test("installation roots separate immutable resources from owner-only state", as
       assert.equal(metadata.mode & 0o777, 0o700);
     }
     assert.equal(defaultLocalCompanionStateRoot({
-      platform: "linux",
-      homeDirectory: "/portable-home",
+      homeDirectory: "C:\\Users\\example",
       environment: {},
-    }), posix.join(
-      "/portable-home",
-      ".local",
-      "state",
-      "app-usagemonitor",
-    ));
+    }), "C:\\Users\\example\\AppData\\Local\\app-usagemonitor");
   } finally {
     await rm(files.root, { recursive: true });
   }
-});
-
-test("legacy accounting rollback paths stay explicit and state-scoped", () => {
-  const stateRoot = join(tmpdir(), "local-installation-explicit-state");
-  const paths = localCompanionStatePaths(stateRoot);
-
-  assert.equal(
-    paths.legacyAnalysisIndexFile,
-    join(stateRoot, "local-analysis-index-v2.sqlite"),
-  );
-  assert.equal(
-    paths.legacyAnalysisIndexSecretFile,
-    join(stateRoot, "local-analysis-index-secret-v2"),
-  );
-  assert.equal(
-    paths.archiveAccountingIndexFile,
-    join(stateRoot, "local-archive-accounting-index-v1.sqlite"),
-  );
-  assert.equal(
-    paths.archiveAccountingIndexSecretFile,
-    join(stateRoot, "local-archive-accounting-index-v1-secret"),
-  );
 });
 
 test("last-authoritative dashboard state stays inside the owner-only private root", () => {

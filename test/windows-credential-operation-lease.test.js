@@ -6,7 +6,7 @@ import test from "node:test";
 
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "../src/export-identity-keychain.js";
+} from "../src/platform/credential-capabilities.js";
 import {
   WINDOWS_CREDENTIAL_CAPABILITY_OWNERS,
   WindowsCredentialOperationLeaseError,

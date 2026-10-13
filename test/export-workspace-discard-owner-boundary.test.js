@@ -113,7 +113,7 @@ async function directoryBytes(directory) {
   ]));
 }
 
-test("workspace discard keeps its legacy bindings while local-review enters reviewed owners", async () => {
+test("workspace discard keeps its legacy bindings", async () => {
   assert.deepEqual(Object.keys(legacyPreflight).sort(), [
     "EXPORT_WORKSPACE_DISCARD_COMMIT_MARKER_BASENAME",
     "EXPORT_WORKSPACE_DISCARD_JOURNAL_BASENAME",
@@ -131,9 +131,6 @@ test("workspace discard keeps its legacy bindings while local-review enters revi
     "discardLocalExportWorkspace",
     "recoverLocalExportWorkspaceDiscard",
   ]);
-  const localReview = await readFile(resolve("local-review/cli.js"), "utf8");
-  assert.equal(localReview.includes("../src/export-workspace-discard.js"), false);
-  assert.equal(localReview.includes("../src/export-workspace-discard-executor.js"), false);
   assert.equal(legacyPreflight.ExportWorkspaceDiscardError,
     localExportWorkspaceDiscard.ExportWorkspaceDiscardError);
   assert.equal(legacyPreflight.buildLocalExportWorkspaceDiscardPlan,

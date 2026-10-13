@@ -26,7 +26,7 @@ import { codexTierObservation, normalizeProviderTier } from "./tier-normalizatio
 // counters reset mid-file; charging the inter-stream swing as a delta
 // materialized ~378 phantom events totaling 13.02B tokens in one session,
 // while `last_token_usage` stayed honest (125k-240k per turn) throughout.
-// Restated in src/local-unified-index-extract.js; keep the two identical.
+// Restated in src/local-index-extract.js; keep the two identical.
 export const CUMULATIVE_DELTA_VS_LAST_TOLERANCE_TOKENS = 16;
 
 export function createCodexLogParser({ lineReader, createSha256 }) {

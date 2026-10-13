@@ -8,25 +8,19 @@ import {
 import {
   checkDeploymentEndpointConsumers,
   ELECTRON_RUNTIME_PATH,
-  MACOS_RELEASE_CORE_PATH,
-  SPARKLE_PUBLISHER_PATH,
   validateDeploymentEndpointConsumers,
-  validateWorkerSparkleReleaseContract,
-  validateWorkerSparkleAppcastGuard,
   validateWorkerDeploymentEndpoints,
   validateWorkerDeploymentEndpointGates,
-  WORKER_SPARKLE_RELEASE_CONTRACT_PATH,
   WORKER_TYPES_PATH,
 } from "../apps/worker/scripts/check-deployment-endpoints.mjs";
 
 test("reviewed deployment endpoint manifest is internally coherent", () => {
-  assert.equal(
-    DEPLOYMENT_ENDPOINTS.sparkle.appcastURL,
-    `${DEPLOYMENT_ENDPOINTS.sparkle.origin}/appcast.xml`,
-  );
-  assert.equal(
-    DEPLOYMENT_ENDPOINTS.sparkle.previewAppcastURL,
-    `${DEPLOYMENT_ENDPOINTS.sparkle.origin}/preview/appcast.xml`,
+  assert.deepEqual(
+    DEPLOYMENT_ENDPOINTS.sparkle,
+    {
+      origin: "https://updates.tibotattle.com",
+      r2Bucket: "tibotattle-updates",
+    },
   );
   assert.deepEqual(
     DEPLOYMENT_ENDPOINTS.public.routeHosts,
@@ -158,20 +152,7 @@ test("Worker deployment scripts run the endpoint check before deployment", () =>
 test("checked-in deployment endpoint consumers match the reviewed manifest", async () => {
   const checked = await checkDeploymentEndpointConsumers();
   assert.equal(checked.publicOrigin, DEPLOYMENT_ENDPOINTS.public.origin);
-  assert.equal(checked.appcastURL, DEPLOYMENT_ENDPOINTS.sparkle.appcastURL);
-  assert.equal(
-    checked.previewAppcastURL,
-    DEPLOYMENT_ENDPOINTS.sparkle.previewAppcastURL,
-  );
   assert.equal(checked.r2Bucket, DEPLOYMENT_ENDPOINTS.sparkle.r2Bucket);
-  assert.deepEqual(checked.workerSparkleReleaseContract, {
-    channel: "stable",
-    appcastURL: DEPLOYMENT_ENDPOINTS.sparkle.appcastURL,
-    appcastObjectKey: "appcast.xml",
-    guardRoute: "/api/v1/internal/release/appcast",
-    objectPrefix: "releases",
-    r2Bucket: DEPLOYMENT_ENDPOINTS.sparkle.r2Bucket,
-  });
   assert.deepEqual(checked.worker.routeHosts, [
     ...DEPLOYMENT_ENDPOINTS.public.routeHosts,
     DEPLOYMENT_ENDPOINTS.admin.host,
@@ -188,14 +169,12 @@ test("checked-in deployment endpoint consumers match the reviewed manifest", asy
 });
 
 test("Electron runtime endpoint drift fails the deployment consumer check", async () => {
-  const [electronRuntimeSource, macOSReleaseSource, publisherSource, workerTypes] =
+  const [electronRuntimeSource, workerTypes] =
     await Promise.all([
       ELECTRON_RUNTIME_PATH,
-      MACOS_RELEASE_CORE_PATH,
-      SPARKLE_PUBLISHER_PATH,
       WORKER_TYPES_PATH,
     ].map((path) => readFile(path, "utf8")));
-  const input = { electronRuntimeSource, macOSReleaseSource, publisherSource, workerTypes };
+  const input = { electronRuntimeSource, workerTypes };
   assert.doesNotThrow(() => validateDeploymentEndpointConsumers(input));
   assert.throws(() => validateDeploymentEndpointConsumers({
     ...input,
@@ -203,57 +182,4 @@ test("Electron runtime endpoint drift fails the deployment consumer check", asyn
       "DEPLOYMENT_ENDPOINTS.public.origin", "https://other.example.test",
     ),
   }), { code: "DEPLOYMENT_ENDPOINTS_MISMATCH" });
-});
-
-test("Worker Sparkle release contract rejects drift from canonical manifests", async () => {
-  const contract = JSON.parse(
-    await readFile(WORKER_SPARKLE_RELEASE_CONTRACT_PATH, "utf8"),
-  );
-  assert.doesNotThrow(() => validateWorkerSparkleReleaseContract(contract));
-  contract.objectPrefix = "different-prefix";
-  assert.throws(
-    () => validateWorkerSparkleReleaseContract(contract),
-    { code: "DEPLOYMENT_ENDPOINTS_MISMATCH" },
-  );
-});
-
-test("enabled Sparkle guard requires reviewed bindings and the nonce schema", () => {
-  const configuration = {
-    vars: { SPARKLE_APPCAST_GUARD_MODE: "enabled" },
-    r2_buckets: [{
-      binding: "SPARKLE_RELEASES",
-      bucket_name: DEPLOYMENT_ENDPOINTS.sparkle.r2Bucket,
-    }],
-    d1_databases: [{
-      binding: "USAGE_MONITOR_DB",
-      migrations_dir: "migrations",
-    }],
-  };
-  const migration = `
-    CREATE TABLE IF NOT EXISTS sparkle_appcast_guard_nonces (
-      nonce TEXT PRIMARY KEY NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_sparkle_appcast_guard_nonces_expires_at
-      ON sparkle_appcast_guard_nonces(expires_at);
-  `;
-  assert.doesNotThrow(() => validateWorkerSparkleAppcastGuard(
-    configuration,
-    migration,
-  ));
-  configuration.r2_buckets[0].bucket_name = "wrong-reviewed-bucket";
-  assert.throws(
-    () => validateWorkerSparkleAppcastGuard(configuration, migration),
-    { code: "DEPLOYMENT_ENDPOINTS_MISMATCH" },
-  );
-  configuration.r2_buckets[0].bucket_name = DEPLOYMENT_ENDPOINTS.sparkle.r2Bucket;
-  assert.throws(
-    () => validateWorkerSparkleAppcastGuard(configuration, ""),
-    { code: "DEPLOYMENT_ENDPOINTS_MISMATCH" },
-  );
-  delete configuration.r2_buckets;
-  assert.throws(
-    () => validateWorkerSparkleAppcastGuard(configuration, migration),
-    { code: "DEPLOYMENT_ENDPOINTS_MISMATCH" },
-  );
 });

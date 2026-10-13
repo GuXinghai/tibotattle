@@ -2,8 +2,10 @@ import test from "node:test";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rebuildLocalUnifiedIndex } from "../../src/local-unified-index-build.js";
-import { openLocalUnifiedIndex, readUnifiedIndexGenerationDescriptor } from "../../src/local-unified-index.js";
+import { refreshLocalIndex } from "../../src/local-index-refresh.js";
+import { readLocalIndexCompanionProjection } from "../../src/local-index-companion-source.js";
+import { createLocalIndexBackend } from "../../src/local-index-backend.js";
+import { openLocalIndexStore } from "../../src/local-index-store.js";
 import assert from "node:assert/strict";
 import { createCachedLocalUnifiedProjectionReader, selectSharedWorkUsageSnapshot } from "./server.js";
 import { createWorkUsageService } from "../../src/application/work-usage.js";
@@ -165,18 +167,24 @@ test("real index cache validity expires exactly at work admission and lower-boun
     ];
     await writeFile(join(root, "sessions", `rollout-2026-09-01T12-00-00-${id}.jsonl`), rows.map(JSON.stringify).join("\n") + "\n");
     const indexFile = join(root, "index.sqlite");
-    await rebuildLocalUnifiedIndex({ codexHome: root, indexFile, contractVersion: "work-cache-boundary-v1", workerCount: 1 });
-    const database = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    const descriptor = readUnifiedIndexGenerationDescriptor(database);
+    await refreshLocalIndex({ codexHome: root, indexFile, workerCount: 1 });
+    // The generation descriptor the companion projection publishes for this store.
+    const descriptor = (await readLocalIndexCompanionProjection({ indexFile, nowMs: observedAt, codexHome: root })).generation;
+    assert.ok(descriptor);
+    const database = openLocalIndexStore(indexFile, { readOnly: true });
     assert.equal(database.prepare("SELECT COUNT(*) AS n FROM usage_event").get().n, 1);
     database.close();
     let reads = 0;
-    const reader = createCachedLocalUnifiedProjectionReader({ reader: async o => {
-      reads++;
-      const result = combined(o.nowMs);
-      result.companion.generation = descriptor;
-      return result;
-    } });
+    // The composition root's own validity and generation callbacks over this store.
+    const reader = createCachedLocalUnifiedProjectionReader({
+      ...createLocalIndexBackend({ indexFile }).projectionReader,
+      reader: async o => {
+        reads++;
+        const result = combined(o.nowMs);
+        result.companion.generation = descriptor;
+        return result;
+      },
+    });
     const request = time => ({ ...options(time), indexFile, codexHome: root });
     const boundary = observedAt < now ? now + 1 : observedAt + 1;
     await reader(request(now));

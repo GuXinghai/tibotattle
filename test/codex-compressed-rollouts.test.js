@@ -17,9 +17,7 @@ import {
 import { createLocalCodexLogScanner } from "../src/application/local-codex-log-scanner.js";
 import { forEachRolloutLine } from "../src/rollout-line-reader.js";
 import { withStableRolloutSource } from "../src/rollout-source-snapshot.js";
-import { rebuildLocalUnifiedIndex } from "../src/local-unified-index-build.js";
-import { ingestLocalUnifiedIndexIncrement } from "../src/local-unified-index-ingest.js";
-import { openLocalUnifiedIndex } from "../src/local-unified-index.js";
+import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
 import { createCodexExportSourcePlan, openVerifiedCodexExportSource,
   verifyCodexExportSourcePlan } from "../src/export-source-plan.js";
 import { discoverCollectorRollouts, ingestRolloutUpdates } from "../src/passive-collector.js";
@@ -134,22 +132,23 @@ nativeTest("compressed paginated parents and children use uncompressed history c
   assert.equal(events.length, 2);
   const snapshots = [];
   for (const workerCount of [1, 2]) {
-    const indexFile = join(value.root, `index-${workerCount}.sqlite`);
-    await rebuildLocalUnifiedIndex({ codexHome: value.root, indexFile,
-      secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2", workerCount });
-    const db = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    try {
-      snapshots.push(db.prepare("SELECT tokens_in_uncached, tokens_in_cache_read FROM usage_event ORDER BY tokens_in_uncached").all());
-      assert.equal(db.prepare("SELECT COUNT(*) AS n FROM usage_event").get().n, 2);
-      assert.deepEqual(db.prepare("SELECT size_bytes, scanned_bytes FROM source_cursor ORDER BY size_bytes").all()
-        .map((row) => [row.size_bytes, row.scanned_bytes]),
+    const codexHome = join(value.root, `home-${workerCount}`);
+    await mkdir(join(codexHome, "sessions"), { recursive: true });
+    await compressed(join(codexHome, "sessions", name(A)), parent);
+    await compressed(join(codexHome, "sessions", name(B)), child);
+    const indexFile = join(codexHome, "index.sqlite");
+    await refreshCodexHome(codexHome, { indexFile, workerCount });
+    withReadOnlyStore(indexFile, (db) => {
+      snapshots.push(db.prepare("SELECT tokens_in_uncached, tokens_in_cache_read FROM usage_event ORDER BY tokens_in_uncached").all()
+        .map((row) => ({ ...row })));
+      assert.equal(countRows(db, "usage_event"), 2);
+      assert.deepEqual(db.prepare("SELECT size_bytes, scanned_bytes FROM source ORDER BY size_bytes").all()
+        .map((row) => [Number(row.size_bytes), Number(row.scanned_bytes)]),
       [Buffer.byteLength(parent), Buffer.byteLength(child)].sort((a, b) => a - b).map((size) => [size, size]));
-    } finally { db.close(); }
-    await ingestLocalUnifiedIndexIncrement({ codexHome: value.root, indexFile,
-      secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2" });
-    const replayed = openLocalUnifiedIndex(indexFile, { readOnly: true });
-    try { assert.equal(replayed.prepare("SELECT COUNT(*) AS n FROM usage_event").get().n, 2); }
-    finally { replayed.close(); }
+    });
+    const replay = await refreshCodexHome(codexHome, { indexFile, workerCount });
+    assert.equal(replay.unchanged, true);
+    withReadOnlyStore(indexFile, (db) => assert.equal(countRows(db, "usage_event"), 2));
   }
   assert.deepEqual(snapshots[0], snapshots[1]);
 });
@@ -175,16 +174,13 @@ nativeTest("compressed/plain representation transitions rescan without replay ov
   const text = jsonl([meta(A), context(), tokens(100)]);
   const plain = value.path(A, ".jsonl");
   await writeFile(plain, text);
-  const options = { codexHome: value.root, indexFile: join(value.root, "index.sqlite"),
-    secretFile: join(value.root, "salt"), contractVersion: "usage-event-v0.2" };
-  await rebuildLocalUnifiedIndex({ ...options, workerCount: 1 });
+  const options = { codexHome: value.root, indexFile: join(value.root, "index.sqlite"), workerCount: 1 };
+  await refreshCodexHome(value.root, options);
   await compressed(value.path(A), text);
   await rename(plain, join(value.root, "retained-plain-source"));
-  await ingestLocalUnifiedIndexIncrement(options);
-  await ingestLocalUnifiedIndexIncrement(options);
-  const db = openLocalUnifiedIndex(options.indexFile, { readOnly: true });
-  try { assert.equal(db.prepare("SELECT COUNT(*) AS n FROM usage_event").get().n, 1); }
-  finally { db.close(); }
+  await refreshCodexHome(value.root, options);
+  await refreshCodexHome(value.root, options);
+  withReadOnlyStore(options.indexFile, (db) => assert.equal(countRows(db, "usage_event"), 1));
 });
 
 nativeTest("malformed frames, incomplete frames, and incomplete JSONL tails quarantine affected lineage only", async (t) => {

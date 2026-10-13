@@ -36,7 +36,6 @@ export async function runClaudeStatusline({
   stdin,
   stdout = process.stdout,
   env = process.env,
-  platform = process.platform,
   homeDirectory,
   stateDirectory,
   loadSessionSecret = null,
@@ -62,7 +61,6 @@ export async function runClaudeStatusline({
     const selectedStateDirectory = stateDirectory
       ?? env.USAGEMONITOR_CLAUDE_STATE_DIR
       ?? defaultClaudeStatusStateDirectory({
-        platform,
         env,
         homeDirectory,
       });

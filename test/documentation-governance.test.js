@@ -482,7 +482,7 @@ test("package, preflight, and CI all execute the full documentation gate", async
   assert.match(workflow, /run: npm run docs:check/u);
   assert.match(
     workflow,
-    /node --test[\s\S]*test\/api-surface-reference\.test\.js[\s\S]*test\/cli-reference\.test\.js[\s\S]*test\/public-documentation-contract\.test\.js[\s\S]*test\/macos-localization\.test\.js/u,
+    /node --test[\s\S]*test\/api-surface-reference\.test\.js[\s\S]*test\/cli-reference\.test\.js[\s\S]*test\/public-documentation-contract\.test\.js/u,
   );
   assert.match(releaseWorkflow, /fetch-depth: 0/u);
   assert.match(releaseWorkflow, /name: Check documentation governance\n\s+run: npm run docs:check/u);

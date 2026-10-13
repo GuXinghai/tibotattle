@@ -9,7 +9,7 @@ import {
   removeClaudeCallbackCapability,
   rotateClaudeCallbackCapability,
 } from "../src/claude-callback-capability.js";
-import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/export-identity-keychain.js";
+import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/platform/index.js";
 
 const CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym;
 const CANARY = "PRIVATE_CALLBACK_SECRET_CANARY";

@@ -1,27 +1,7 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { localCodexLogScanner } from "./local-node-runtime.js";
-import {
-  defaultLocalUnifiedIndexPath,
-  lstatPublishedLocalUnifiedIndex,
-  openLocalUnifiedIndex,
-  readUnifiedIndexGenerationDescriptor,
-} from "./local-unified-index.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
-import {
-  createIndexedCodexLogScan,
-  defaultLocalAnalysisIndexSecretPath,
-} from "./local-analysis-index.js";
-import {
-  canonicalInstant,
-  createLocalUnifiedAccountingSource,
-  createLocalUnifiedUsageAttributionReader,
-  precomputeLocalUnifiedUsageAttribution,
-} from "./local-unified-accounting-source.js";
 import {
   CODEX_TRANSITION_DERIVATION_CEILINGS,
   deriveCodexTransitionSeriesCooperatively,
@@ -150,7 +130,6 @@ import {
 // context as zero or reusing a short-context plan above a model's threshold.
 export const REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION =
   "local-replay-safe-accounting-v0.18";
-const { scanCodexLogEvents } = localCodexLogScanner;
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
   "codex-primary-allowance-capacity-v0.1";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
@@ -232,26 +211,21 @@ const ACCOUNT_SCOPE_ID_PATTERN = /^openai-account:v1:[A-Za-z0-9_-]{43}$/u;
 const ACCOUNT_TRACK_ID_PATTERN = /^account-track:v1:[a-f0-9]{64}$/u;
 const MAX_RETAINED_TRANSITION_BYTES = 320 * 1024 * 1024;
 // ---------------------------------------------------------------------------
-// The accounting rebuild's memory policy. Three numbers, only two of them set
-// by hand:
+// The accounting rebuild's memory policy. Two numbers, set by hand:
 //
-//   MAX_ACCOUNTING_RSS_BYTES                absolute whole-process RSS target
-//   ACCOUNTING_RSS_DELTA_BUDGET_BYTES       what one pass may ADD over its
-//                                           own start-of-build baseline
-//   ACCOUNTING_REBUILD_CHILD_OLD_SPACE_MIB  DERIVED from the first
+//   MAX_ACCOUNTING_RSS_BYTES          absolute whole-process RSS target
+//   ACCOUNTING_RSS_DELTA_BUDGET_BYTES what one pass may ADD over its own
+//                                     start-of-build baseline
 //
 // A pass runs under min(MAX_ACCOUNTING_RSS_BYTES,
-// baselineRss + ACCOUNTING_RSS_DELTA_BUDGET_BYTES), so the two hand-set
-// numbers only mean anything together: raising the absolute while leaving the
-// delta behind moves nothing at all off a clean baseline, and raising the
-// delta alone can never pass the absolute. Change them as a PAIR, and read
-// ACCOUNTING_REBUILD_CHILD_OLD_SPACE_MIB before changing either — the derived
-// cap is what keeps a miss an honest deferral rather than a SIGABRT.
+// baselineRss + ACCOUNTING_RSS_DELTA_BUDGET_BYTES), so the two only mean
+// anything together: raising the absolute while leaving the delta behind moves
+// nothing at all off a clean baseline, and raising the delta alone can never
+// pass the absolute. Change them as a PAIR.
 //
-// All three describe the REBUILD, which since #38 runs in a short-lived child.
-// The resident companion's archive projection is a separate process situation
-// and has a separate pair, MAX_ARCHIVE_ACCOUNTING_RSS_BYTES and
-// ARCHIVE_ACCOUNTING_RSS_DELTA_BUDGET_BYTES, further down. Nothing here is a
+// The rebuild runs in process (the companion's own process). The resident
+// companion's archive projection has a separate pair, MAX_ARCHIVE_ACCOUNTING_RSS_BYTES
+// and ARCHIVE_ACCOUNTING_RSS_DELTA_BUDGET_BYTES, further down. Nothing here is a
 // default for anything there; that inheritance is the bug they exist to close.
 // ---------------------------------------------------------------------------
 // Absolute whole-process RSS TARGET for one accounting rebuild. It is a
@@ -278,8 +252,8 @@ const MAX_RETAINED_TRANSITION_BYTES = 320 * 1024 * 1024;
 // need and therefore could not be what was failing. The real corpus is 4,886
 // sources, 128.5 GB indexed, 572,089 all-time events, and it does not behave
 // like that model. Dogfood build 1020 — which already carries BOTH the
-// rebuild's move into an isolated child (#38) and the child heap cap derived
-// from this constant (#45) — still deferred at 2026-08-20T15:02Z: refresh
+// rebuild's move into an isolated child (#38), since retired, and the child heap
+// cap derived from this constant (#45) — still deferred at 2026-08-20T15:02Z: refresh
 // status "succeeded", accountingRebuildDeferred {status: "deferred", reason:
 // "accounting_transition_rss_limit_exceeded", retained: true, consecutive: 1},
 // and accounting.historyCoverage stuck at "partial" /
@@ -292,8 +266,8 @@ const MAX_RETAINED_TRANSITION_BYTES = 320 * 1024 * 1024;
 // one live sampling attempt landed inside the post-deferral backoff, so no
 // rebuild ran during it and it measured nothing. The number is therefore set
 // for HEADROOM rather than fitted to a peak — deliberately, because that is
-// the cheaper error in both directions. The rebuild child is short-lived and
-// returns every byte to the OS when it exits, so ceiling headroom that goes
+// the cheaper error in both directions. A rebuild is a bounded pass whose
+// transient growth is returned to the OS afterwards, so ceiling headroom that goes
 // unused costs literally nothing; a ceiling trimmed to a measured peak buys a
 // fresh diagnosis cycle the first time the corpus grows past it, and this
 // corpus grows every day. The guard is not being removed — a runaway still
@@ -301,19 +275,11 @@ const MAX_RETAINED_TRANSITION_BYTES = 320 * 1024 * 1024;
 // ordinary large install, so that what fires is a defect and not a big
 // history.
 //
-// Two consequences to know before touching this number:
-//   - ACCOUNTING_REBUILD_CHILD_OLD_SPACE_MIB is DERIVED from it and must stay
-//     derived. That derivation is what keeps the RSS guard reading before V8
-//     aborts, so a miss arrives as a typed deferral instead of a SIGABRT the
-//     parent can only report as accounting_rebuild_subprocess_failed.
-//   - its reach STOPS at the rebuild. Until 2026-08-20 it was also the
-//     default ceiling for buildReplaySafeAccountingPeriod, so raising it
-//     here silently loosened the archive projection the RESIDENT companion
-//     runs by the same 4 GiB — the opposite of what #38 moved the rebuild
-//     into a child to achieve. That path now resolves its own ceiling from
-//     MAX_ARCHIVE_ACCOUNTING_RSS_BYTES below, and a regression pins that it
-//     does not follow this constant. Headroom is free in a process that
-//     exits; it is not free in one that stays.
+// Consequence to know before touching this number: its reach STOPS at the
+// rebuild. The archive projection that the resident companion runs resolves
+// its own ceiling from MAX_ARCHIVE_ACCOUNTING_RSS_BYTES below, and must not
+// follow this constant: headroom is cheap in a rebuild, not in a resident
+// process.
 const MAX_ACCOUNTING_RSS_BYTES = Math.floor(6 * 1024 * 1024 * 1024);
 // What one accounting rebuild may itself ADD to process RSS over the baseline
 // captured at build start. The effective ceiling is
@@ -325,12 +291,12 @@ const MAX_ACCOUNTING_RSS_BYTES = Math.floor(6 * 1024 * 1024 * 1024);
 // miss was structural, not a real leak.
 //
 // 5.25 GiB (2026-08-20, owner directive), moved in lockstep with the absolute
-// target above because since the rebuild became a child THIS is the number
-// that actually binds. Off the child's clean ~60 MB baseline the effective
+// target above because the rebuild runs in process and THIS is the number that
+// actually binds from a clean baseline. Off a ~60 MB baseline the effective
 // ceiling is baseline + delta and never the absolute, so the previous 1.25 GiB
-// delta pinned every child at ~1.31 GiB however high the absolute went —
+// delta pinned every rebuild at ~1.31 GiB however high the absolute went —
 // which is precisely why build 1020 kept deferring under a 2 GiB absolute that
-// looked like ample room. At 5.25 GiB the child's effective ceiling is
+// looked like ample room. At 5.25 GiB the effective ceiling is
 // ~5.31 GiB, and MAX_ACCOUNTING_RSS_BYTES becomes what binds only above a
 // ~768 MiB baseline (6 - 5.25 GiB), i.e. for an in-process build off a fat
 // companion — which is the arm it was always meant to police.
@@ -371,64 +337,6 @@ const ACCOUNTING_READER_PASSTHROUGH_CODES = new Set([
   "accounting_unified_history_unavailable",
 ]);
 const ACCOUNTING_RSS_CHECK_INTERVAL = 2_048;
-// The production rebuild runs in a short-lived child process (2026-08-19).
-// The streaming corpus (#33) bounded per-batch residency, but two residuals
-// still starved the in-process rebuild at real scale: the derived transition
-// series legitimately accumulates across batches (~100-200 MB over multi-year
-// history), and the RSS guard measures the WHOLE process — a companion that
-// idles near 1.9 GiB after indexing an ~80 GB corpus reached the then-current
-// 2 GiB absolute target with no headroom for ANY rebuild growth, so every
-// attempt deferred and the cost surface stayed empty (dogfood 0.1.13,
-// 2026-08-19: accounting_rebuild_deferred at 23:21:26Z and 23:39:15Z on the
-// streamed code). Isolation was necessary but, as build 1020 later showed, not
-// on its own sufficient — see MAX_ACCOUNTING_RSS_BYTES for the 2026-08-20
-// raise it did not remove the need for. A child starts from a clean ~60 MB
-// baseline, the same guard polices the CHILD's own RSS — which is the guard's
-// actual purpose, keeping the resident menu-bar app sane, now served even
-// better because the parent never grows at all — and exit returns every
-// rebuild byte to the OS instead of fossilizing the next attempt's baseline.
-const ACCOUNTING_REBUILD_ISOLATION_MODES = Object.freeze([
-  "auto",
-  "subprocess",
-  "in_process",
-]);
-const ACCOUNTING_REBUILD_CHILD_ENTRY = fileURLToPath(
-  new URL("./replay-safe-accounting-rebuild-child.js", import.meta.url),
-);
-// V8 old-space cap for the rebuild child, DERIVED from the absolute accounting
-// target so the two can never drift apart.
-//
-// The ordering is the whole point. The child's effective RSS ceiling is
-// min(MAX_ACCOUNTING_RSS_BYTES, childBaseline + ACCOUNTING_RSS_DELTA_BUDGET_BYTES),
-// which is <= MAX_ACCOUNTING_RSS_BYTES for ANY baseline; whole-process RSS in
-// turn always exceeds the JS heap. Pinning the cap AT the absolute target
-// therefore guarantees the RSS guard trips FIRST, and the guard's trip is a
-// soft budget miss (accounting_transition_rss_limit_exceeded) that
-// refreshReplaySafeAccountingCache defers with the prior cache retained and
-// served. A cap BELOW the effective ceiling inverts that: V8 aborts the child
-// before the guard can read, and the parent — which cannot distinguish a
-// heap-cap abort from any other death — reports the opaque
-// accounting_rebuild_subprocess_failed instead. Same deferral for the user,
-// but the honest reason is lost, and the fail-closed path is reached by crash
-// rather than by measurement. The earlier fixed 1 GiB cap sat below a ~1.3 GiB
-// effective ceiling and had exactly that inversion latent in it.
-//
-// This is a ceiling, not a reservation: V8 grows old space on demand, so a
-// larger cap costs nothing until the pass actually needs it, and the child
-// exits within one rebuild and hands every page back to the OS. That is what
-// makes the derivation free to follow MAX_ACCOUNTING_RSS_BYTES up to 6 GiB
-// (2026-08-20) without asking anything of a machine that never needs it: a
-// child that peaks at a few hundred MiB is charged for a few hundred MiB,
-// exactly as it was under the previous 2 GiB derivation. What the raise buys
-// is that the guard, not V8, is still the thing that stops a pass which does
-// climb — synthetic runs at 572,000 events showed a ~123 MiB lazy-GC swing
-// between a 512 MiB cap and an unbounded one (consistent with the
-// 147-354 MiB swing measured in #33), so collection behaviour does not depend
-// on pinning the cap low, while a cap below the ceiling would silently convert
-// every real overflow into an abort the parent cannot explain.
-const ACCOUNTING_REBUILD_CHILD_OLD_SPACE_MIB = Math.ceil(
-  MAX_ACCOUNTING_RSS_BYTES / (1024 * 1024),
-);
 // ---------------------------------------------------------------------------
 // The ARCHIVE projection's own ceiling, deliberately NOT the rebuild's.
 //
@@ -438,10 +346,9 @@ const ACCOUNTING_REBUILD_CHILD_OLD_SPACE_MIB = Math.ceil(
 //   - the rebuild calls it as a sub-build and NAMES its own ceiling (the
 //     effective target it already computed), so it is unaffected by anything
 //     here and must stay that way;
-//   - refreshLocalArchiveAccountingIndex (src/local-archive-accounting-index.js)
-//     names nothing, and runs inside the RESIDENT menu-bar companion.
-// A ceiling sized for a short-lived child that hands every page back to the OS
-// on exit is the wrong ceiling for a process the user leaves running all day.
+//   - the resident companion's archive projection names nothing, and runs
+//     inside a process the user leaves running all day.
+// A ceiling sized for one rebuild pass is the wrong ceiling for that process.
 // The 2 -> 6 GiB rebuild raise reached this path only because the default was
 // never chosen; that is the defect these two constants close.
 //
@@ -500,7 +407,6 @@ const MAX_ARCHIVE_ACCOUNTING_RSS_BYTES = Math.floor(3 * 1024 * 1024 * 1024);
 export const REPLAY_SAFE_ACCOUNTING_MEMORY_POLICY = Object.freeze({
   maximumRssBytes: MAX_ACCOUNTING_RSS_BYTES,
   rssDeltaBudgetBytes: ACCOUNTING_RSS_DELTA_BUDGET_BYTES,
-  rebuildChildOldSpaceMib: ACCOUNTING_REBUILD_CHILD_OLD_SPACE_MIB,
   // The resident archive projection's ceiling, carried here so a regression
   // can pin that it is SEPARATE from the rebuild's rather than trusting the
   // two to stay apart by accident. Every field above describes a process that
@@ -508,26 +414,6 @@ export const REPLAY_SAFE_ACCOUNTING_MEMORY_POLICY = Object.freeze({
   archiveMaximumRssBytes: MAX_ARCHIVE_ACCOUNTING_RSS_BYTES,
   archiveRssDeltaBudgetBytes: ARCHIVE_ACCOUNTING_RSS_DELTA_BUDGET_BYTES,
 });
-// SIGTERM asks the child to unwind through its own abort checks (typed abort
-// envelope); a child that cannot unwind inside this grace is killed hard. The
-// value only bounds teardown after an abort — never the build itself.
-const ACCOUNTING_REBUILD_CHILD_KILL_GRACE_MS = 5_000;
-// The stdout envelope is one small JSON line. A child that prints more than
-// this is not speaking the protocol, and the read stops charging memory for
-// its output at this bound.
-const ACCOUNTING_REBUILD_ENVELOPE_LIMIT_BYTES = 64 * 1024;
-// The child and SQLite writer use the same compact representation. Keep the
-// transport bound aligned so a valid durable cache can cross the process
-// boundary; refuse oversized files before buffering them in the parent.
-const ACCOUNTING_REBUILD_RESULT_LIMIT_BYTES = MAX_CACHE_BYTES;
-export const REPLAY_SAFE_ACCOUNTING_REBUILD_REQUEST_VERSION =
-  "replay-safe-accounting-rebuild-request-v1";
-// This scanner runs inside the same process that immediately expands the
-// full-history calibration corpus. Four extraction workers preserve useful
-// parallelism without leaving ten V8 worker heaps resident for that second
-// phase. The general analysis-index and unified-index worker policies remain
-// unchanged.
-const DEFAULT_ACCOUNTING_INDEX_WORKERS = 4;
 const COMPACT_USAGE_RETAINED_BYTES = 352;
 const COMPACT_SNAPSHOT_RETAINED_BYTES = 192;
 // Exact typed-buffer storage: two Float64 stamp columns, then Uint8 +
@@ -568,6 +454,41 @@ const LINEAGE = new Set(["standalone", "forked", "parent_linked", "unknown"]);
 const QUOTA_PLANS = new Set(TELEMETRY_PLAN_TYPES);
 const QUOTA_SLOTS = new Set(["primary", "secondary"]);
 
+// The exact shape Date#toISOString produces for years 0000 through 9999. A
+// string of this shape whose fields are in range is the unique canonical
+// representation of its instant; anything else takes the round trip below.
+// Copied from the retired unified accounting source, which this module no
+// longer imports.
+const CANONICAL_INSTANT_SHAPE =
+  /^(d{4})-(d{2})-(d{2})T(d{2}):(d{2}):(d{2}).d{3}Z$/u;
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function daysInMonth(year, month) {
+  if (month !== 2) return DAYS_IN_MONTH[month - 1];
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0 ? 29 : 28;
+}
+
+function canonicalInstant(value) {
+  if (typeof value !== "string") return null;
+  const shape = CANONICAL_INSTANT_SHAPE.exec(value);
+  if (shape !== null) {
+    const month = Number(shape[2]);
+    const day = Number(shape[3]);
+    return month >= 1 && month <= 12
+      && day >= 1 && day <= daysInMonth(Number(shape[1]), month)
+      && Number(shape[4]) <= 23
+      && Number(shape[5]) <= 59
+      && Number(shape[6]) <= 59
+      ? value
+      : null;
+  }
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp)
+      && new Date(timestamp).toISOString() === value
+    ? value
+    : null;
+}
+
 function fixedError(code, name = "Error") {
   const error = new Error(code);
   error.name = name;
@@ -575,10 +496,13 @@ function fixedError(code, name = "Error") {
   return error;
 }
 
-function normalizeAccountingSourceMode(value, { defaultValue = "legacy" } = {}) {
-  const selected = value ?? defaultValue;
-  if (!REPLAY_SAFE_ACCOUNTING_SOURCE_MODES.includes(selected)) {
-    throw new TypeError("sourceMode must be unified or legacy");
+// The shipping store is the only accounting source. A caller that names any
+// other mode is refused here; a stored cache that names one is reported as a
+// source-mode mismatch by the reader rather than served.
+function normalizeAccountingSourceMode(value) {
+  const selected = value ?? "unified";
+  if (selected !== "unified") {
+    throw new TypeError("sourceMode must be unified");
   }
   return selected;
 }
@@ -977,32 +901,6 @@ function isAccountingBudgetMiss(error) {
     && ACCOUNTING_BUDGET_MISS_CODES.has(error.code);
 }
 
-// A budget miss that records nothing is unfalsifiable after the fact. Six days
-// of accounting_transition_rss_limit_exceeded deferrals were undiagnosable
-// because the note carried the CODE and not the three quantities the guard
-// actually compared, so every retrospective explanation — a too-small ceiling,
-// a leaking parent, an unbounded slice — stayed equally consistent with the
-// evidence and equally unprovable. Two such explanations were argued and both
-// were wrong.
-//
-// Rounded MiB integers only: content-free by construction, bounded in size,
-// and safe for the diagnostics trail and a pasted user report alike.
-// The parent's re-validation of whatever the rebuild child reported. Same
-// closed shape as the child's own bounding, applied again on receipt so the
-// boundary never has to trust the far side.
-function boundedSubprocessMeasurements(value) {
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    return null;
-  }
-  const bounded = {};
-  for (const key of ["baselineRssMib", "observedRssMib", "ceilingRssMib"]) {
-    const measurement = value[key];
-    bounded[key] = Number.isSafeInteger(measurement) && measurement >= 0
-      ? measurement
-      : null;
-  }
-  return bounded;
-}
 
 function attachBudgetMissMeasurements(error, {
   baselineRssBytes,
@@ -2998,11 +2896,9 @@ const CALIBRATION_BATCH_USAGE_BUDGET = 50_000;
 async function deriveBoundedWeeklyCalibrationSeries({
   startAt,
   endAt,
-  // Exactly one usage source: the windowed path passes its resident compact
-  // rows; the unified path passes a streaming corpus handle so at most one
-  // batch slice of priced rows is ever resident at a time.
-  rawUsageEvents = null,
-  usageCorpus = null,
+  // The streaming corpus handle, so at most one batch slice of priced rows is
+  // ever resident at a time.
+  usageCorpus,
   rateLimitSnapshots,
   diagnostics,
   signal,
@@ -3010,14 +2906,10 @@ async function deriveBoundedWeeklyCalibrationSeries({
   planAttributionIndex,
   limits = DEFAULT_TRANSITION_RESOURCE_LIMITS,
 }) {
-  if ((rawUsageEvents === null) === (usageCorpus === null)) {
-    throw new TypeError(
-      "deriveBoundedWeeklyCalibrationSeries requires exactly one usage source",
-    );
+  if (usageCorpus === null || typeof usageCorpus !== "object") {
+    throw new TypeError("deriveBoundedWeeklyCalibrationSeries requires a usage corpus");
   }
-  const usageEventCount = usageCorpus === null
-    ? rawUsageEvents.length
-    : usageCorpus.count;
+  const usageEventCount = usageCorpus.count;
   const readUsageSlice = async (low, high) => (
     low >= high
       ? []
@@ -3102,8 +2994,8 @@ async function deriveBoundedWeeklyCalibrationSeries({
     // reset stamp took a usage slice running from the very first row of the
     // corpus to its own last observation. On a large history that is the
     // entire corpus in a single derivation, which defeats
-    // CALIBRATION_BATCH_USAGE_BUDGET completely and is why an isolated child
-    // with a multi-gigabyte ceiling still deferred with
+    // CALIBRATION_BATCH_USAGE_BUDGET completely and is why a rebuild with a
+    // multi-gigabyte ceiling still deferred with
     // accounting_transition_rss_limit_exceeded: the working set was never
     // bounded at all, so no ceiling could have been large enough.
     //
@@ -3138,9 +3030,7 @@ async function deriveBoundedWeeklyCalibrationSeries({
 
   if (totalTransitions <= CALIBRATION_BATCH_TRANSITION_BUDGET
       && usageEventCount <= batchUsageBudget) {
-    const usage = usageCorpus === null
-      ? rawUsageEvents
-      : await readUsageSlice(0, usageEventCount);
+    const usage = await readUsageSlice(0, usageEventCount);
     const series = await derive(usage, rateLimitSnapshots);
     return {
       transitions: series.transitions,
@@ -3155,26 +3045,7 @@ async function deriveBoundedWeeklyCalibrationSeries({
   // changes nothing. The streaming corpus arrives already ordered and stamped,
   // so it supplies the timestamp list directly and each batch's rows are read
   // off the index on demand instead of being sliced out of a resident copy.
-  let sortedUsage = null;
-  let sortedMs;
-  if (usageCorpus === null) {
-    const stamped = [];
-    for (let index = 0; index < rawUsageEvents.length; index += 1) {
-      if (index % 8_192 === 0) {
-        throwIfAborted(signal);
-        resourceCheck?.();
-        await cooperativeYield();
-      }
-      const observedMs = Date.parse(rawUsageEvents[index]?.[0]);
-      if (Number.isFinite(observedMs)) stamped.push([observedMs, index]);
-    }
-    stamped.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
-    sortedUsage = stamped.map(([, index]) => rawUsageEvents[index]);
-    sortedMs = stamped.map(([observedMs]) => observedMs);
-    stamped.length = 0;
-  } else {
-    sortedMs = usageCorpus.usageMs;
-  }
+  const sortedMs = usageCorpus.usageMs;
 
   const orderedGroups = [...groups.values()].sort((left, right) => (
     left.sliceStartMs - right.sliceStartMs
@@ -3224,16 +3095,13 @@ async function deriveBoundedWeeklyCalibrationSeries({
       ? 0
       : firstIndexAtLeast(sortedMs, batch.sliceStartMs);
     const high = firstIndexAbove(sortedMs, batch.sliceEndMs);
-    const usageSlice = usageCorpus === null
-      ? sortedUsage.slice(low, high)
-      : await readUsageSlice(low, high);
+    const usageSlice = await readUsageSlice(low, high);
     const snapshotSlice = [];
     for (const group of batch.groups) snapshotSlice.push(...group.rows);
     const series = await derive(usageSlice, snapshotSlice);
     transitions.push(...series.transitions);
     deduplicatedSnapshotCount += series.deduplicatedSnapshotCount;
   }
-  if (rawUsageEvents !== null) rawUsageEvents.length = 0;
   rateLimitSnapshots.length = 0;
   transitions.sort((left, right) => left.eventTime.localeCompare(right.eventTime)
     || left.resetIdentity.localeCompare(right.resetIdentity)
@@ -3264,65 +3132,9 @@ function compositionFitFailureReason(error) {
     : "unknown";
 }
 
-/**
- * Fit the composition-aware per-model $/pp vector from the SAME compact
- * corpus the weekly calibration derivation is about to consume. Runs BEFORE
- * `deriveBoundedWeeklyCalibrationSeries` because that call destroys its input
- * arrays; this one only reads them.
- *
- * Compact encodings (see transitionUsageProjection /
- * weeklyRateLimitProjection): usage [0]=ISO timestamp, [1]=model,
- * [10]=costUsd; snapshot [1]=timestampMs, [3]=planType,
- * [7]=resetsAt seconds, [8]=usedPercent.
- *
- * Memory: the usage corpus is folded straight into per-(grain-bin, model)
- * cost sums in ONE streaming pass — the recent-mix accumulation shares that
- * pass — so peak extra memory is O(bins), never a second O(events) corpus
- * copy (a full-history corpus of ~487k compact rows previously materialized
- * ~487k intermediate objects here and pushed the process over the accounting
- * RSS ceiling). The kernel consumes one aggregated row per (bin, model);
- * bin starts are grain-aligned, so the kernel's own `Math.floor` binning is
- * idempotent on them and its design matrix is exactly what the per-event
- * corpus produced.
- *
- * Never throws for corpus reasons: a thin or collinear corpus degrades to a
- * typed non-fitted status inside the kernel, and the caller stores whatever
- * status came back. Resource pressure and aborts DO throw — the streaming
- * loops check the signal and the RSS guard on the same
- * ACCOUNTING_RSS_CHECK_INTERVAL cadence as every other build phase.
- *
- * Exported for tests only (streaming-vs-per-event equivalence and metering
- * cadence); production callers stay on buildReplaySafeAccountingCache.
- */
-export async function fitCompositionFromCompactCorpus({
-  rawUsageEvents,
-  weeklyRateLimitSnapshots,
-  endMs,
-  signal = null,
-  checkRuntimeMemory = () => {},
-  planAttributionIndex = null,
-  selectedPlanType = null,
-  declaredSpeedBaselines = [],
-}) {
-  return fitCompositionFromCorpusStream({
-    forEachUsageRow: async (consume) => {
-      for (const row of rawUsageEvents) await consume(row);
-    },
-    weeklyRateLimitSnapshots,
-    endMs,
-    signal,
-    checkRuntimeMemory,
-    planAttributionIndex,
-    selectedPlanType,
-    declaredSpeedBaselines,
-  });
-}
-
-// The fold behind fitCompositionFromCompactCorpus, taking the usage corpus as
-// a row visitor instead of a resident array. The unified path streams rows
-// straight off the index through this — the corpus is never resident — while
-// the windowed path drives it from its in-memory array; both fold in the same
-// order with the same cadence, so the fit is identical either way.
+// The composition fit, taking the usage corpus as a row visitor so the corpus
+// is never resident. It folds rows in the same order with the same cadence as
+// the per-event fold it replaced.
 async function fitCompositionFromCorpusStream({
   forEachUsageRow,
   weeklyRateLimitSnapshots,
@@ -3564,765 +3376,16 @@ async function fitCompositionFromCorpusStream({
   };
 }
 
-/**
- * Cheap usability probe for the unified calibration corpus, run BEFORE the
- * scan so the scan can skip retaining its own window-bounded transition
- * inputs. The corpus itself is materialized only AFTER the scan finishes:
- * holding both the corpus and the scan's working set at once measured past
- * the accounting RSS ceiling on the real dev corpus, while sequencing them
- * keeps the peak to whichever is larger.
- */
-async function probeUnifiedCalibrationCorpus(indexFile) {
-  let metadata;
-  try {
-    metadata = await lstatPublishedLocalUnifiedIndex(indexFile);
-  } catch {
-    return false;
-  }
-  if (!metadata.isFile() || metadata.isSymbolicLink()) return false;
-  let database;
-  try {
-    database = openLocalUnifiedIndex(indexFile, { readOnly: true });
-  } catch {
-    return false;
-  }
-  try {
-    const hasUsage = database.prepare(
-      "SELECT 1 AS present FROM usage_event LIMIT 1",
-    ).get()?.present === 1;
-    const hasAllowanceQuota = database.prepare(`
-      SELECT 1 AS present FROM quota_observation
-      WHERE limit_id = 'codex' AND duration_mins IN (?, ?)
-        AND used_percent IS NOT NULL AND resets_at_ms IS NOT NULL
-      LIMIT 1`).get(
-      FIVE_HOUR_WINDOW_MINUTES,
-      WEEKLY_WINDOW_MINUTES,
-    )?.present === 1;
-    return hasUsage && hasAllowanceQuota;
-  } catch {
-    return false;
-  } finally {
-    database.close();
-  }
-}
-
-function sameIndexFileIdentity(before, after) {
-  const canCompareIdentity = [
-    before?.dev,
-    before?.ino,
-    after?.dev,
-    after?.ino,
-  ].every((value) => value !== undefined && value !== null);
-  return !canCompareIdentity
-    || (before.dev === after.dev && before.ino === after.ino);
-}
-
-function publishedUnifiedGenerationTokens(database) {
-  const descriptor = readUnifiedIndexGenerationDescriptor(database);
-  if (descriptor === null) return [];
-  return [
-    generationIdMetaToken(descriptor.id),
-    generationToken(descriptor.fingerprint),
-  ].filter((token) => token !== null);
-}
-
-/**
- * The full-history weekly-calibration corpus, opened as a streaming source
- * over the unified local index in the same compact pre-priced encoding the
- * windowed scan retains.
- *
- * This is what removes the calibration's data window: `usage_event` and
- * `quota_observation` have no lower time bound, so the corpus spans everything
- * ever indexed. The transition miner's input ceiling applies per reset batch,
- * never to the complete historical corpus. Typed metadata and quota snapshots
- * retain their byte/count budgets, and the RSS guard remains authoritative.
- * A budget miss defers the complete rebuild rather than truncating history.
- *
- * Residency: the priced compact rows are NEVER all resident at once. A full
- * corpus at the 750k ceiling measured ~635 real bytes per materialized row —
- * ~454 MB of RSS against the 256 B/row the byte meter charges — and holding
- * it was what pushed a large-corpus companion over the accounting RSS ceiling
- * on every rebuild attempt: each deferred pass restarted from scratch against
- * the same corpus and the same fossilized baseline, so the rebuild never
- * landed (live 0.1.13 incident, 2026-08-19). The open pass therefore retains
- * only a thin (observedMs, rowid) stamp per retained row (~16 bytes), and the
- * fit and the batched derivation re-read priced rows off the index on demand
- * — the fit as one streaming fold, the derivation one bounded batch slice at
- * a time — so peak corpus residency is O(batch), not O(history).
- *
- * Quota rows are collapsed to the first and last observation of each
- * unchanged (window, percent) run before retention. The miner derives a
- * transition only where the displayed percent changes between consecutive
- * observations of one window, so this collapse is transition-lossless while
- * shrinking hundreds of thousands of repeated readings to the boundaries the
- * calibration actually uses. The collapsed snapshots stay resident (they are
- * the bounded, high-value rows); only the usage corpus streams.
- *
- * Open failures degrade to `null` — the caller then fails the build closed,
- * because the pre-scan probe already promised this corpus — except aborts and
- * the build's own resource-guard errors, which propagate. The returned source
- * holds its read handle open until `finish()` (which re-verifies the
- * generation and the file identity, exactly the checks the one-shot reader
- * ran at its end) or `dispose()` on an error path.
- */
-async function openUnifiedIndexCalibrationCorpus({
-  indexFile,
-  endMs,
-  limits,
-  declaredSpeedBaselines,
-  signal,
-  checkRuntimeMemory,
-  expectedGeneration = null,
-  allowLegacyUnpublished = false,
-}) {
-  let metadata;
-  try {
-    metadata = await lstatPublishedLocalUnifiedIndex(indexFile);
-  } catch {
-    return null;
-  }
-  if (!metadata.isFile() || metadata.isSymbolicLink()) return null;
-  let database;
-  try {
-    database = openLocalUnifiedIndex(indexFile, { readOnly: true });
-  } catch {
-    return null;
-  }
-  let closed = false;
-  const dispose = () => {
-    if (closed) return;
-    closed = true;
-    try {
-      database.close();
-    } catch {
-      // A close failure cannot make the read-only handle more open.
-    }
-  };
-  const descriptor = readUnifiedIndexGenerationDescriptor(database);
-  const generationId = descriptor?.id ?? null;
-  // Publication membership is not a SQLite snapshot. A writer can replace an
-  // earlier offset or append facts while the last published descriptor stays
-  // unchanged. Fence the entire multi-pass read, not just its initial row count.
-  const dataVersion = Number(database.prepare("PRAGMA data_version").get()?.data_version);
-  const verifyGeneration = () => {
-    if (!Number.isSafeInteger(dataVersion)
-        || Number(database.prepare("PRAGMA data_version").get()?.data_version) !== dataVersion) {
-      throw fixedError("accounting_unified_generation_mismatch");
-    }
-    if (generationId !== null) {
-      const current = readUnifiedIndexGenerationDescriptor(database);
-      const inProgress = database.prepare(`SELECT 1 FROM index_generation
-        WHERE id > ? AND status = 'in_progress' LIMIT 1`).get(generationId);
-      if (current?.id !== generationId || current?.fingerprint !== descriptor.fingerprint
-          || inProgress !== undefined) {
-        throw fixedError("accounting_unified_generation_mismatch");
-      }
-    }
-    if (expectedGeneration !== null && expectedGeneration !== undefined
-        && (expectedGenerationTokens(expectedGeneration).length === 0
-          || !generationMatchesExpected(expectedGeneration, publishedUnifiedGenerationTokens(database)))) {
-      throw fixedError("accounting_unified_generation_mismatch");
-    }
-  };
-  const usageGraceMs = endMs + 5 * 60_000;
-  if (generationId === null && !allowLegacyUnpublished) {
-    dispose();
-    return null;
-  }
-  // Bound inside the fenced open pass below, once the generation's complete
-  // fact sets are proven: the reader is handed a one-pass precomputation of
-  // its per-row lookups so the projection streams issue no point queries.
-  let attributionReader = null;
-  let attributionPrecompute = null;
-  // Attribution memo, keyed by retained position. A row's attribution is a
-  // pure function of the immutable generation this handle is fenced to, and
-  // the derivation re-reads every retained row at least once after the fit
-  // has already projected it; each of those re-reads paid the reader's
-  // membership lookup plus up to three point queries again. Remember the
-  // result on first projection in thin typed columns (~14 bytes per retained
-  // row, allocated once the retained count is known) and replay it on every
-  // later projection of the same position. Only the reader's closed
-  // vocabulary is memoized; anything else is re-derived each time.
-  const ATTRIBUTION_BASES = ["unavailable", "same_record", "conflicted"];
-  const INTERVAL_BASES = [
-    "unavailable",
-    "previous_session_record",
-    "previous_source_record",
-  ];
-  let memoBasis = null;
-  let memoPlan = null;
-  let memoIntervalMs = null;
-  let memoIntervalBasis = null;
-  const memoPlanTable = [];
-  const memoPlanIndex = new Map();
-  let attributionReads = 0;
-  let projectedRows = 0;
-  const attributionAt = (row, position) => {
-    if (attributionReader === null) return {};
-    if (memoBasis !== null && position !== undefined
-        && memoBasis[position] !== 0) {
-      const planIndex = memoPlan[position];
-      const intervalMs = memoIntervalMs[position];
-      return {
-        planAttribution: {
-          basis: ATTRIBUTION_BASES[memoBasis[position] - 1],
-          planType: planIndex < 0 ? null : memoPlanTable[planIndex],
-          planVariant: null,
-        },
-        usageIntervalStartedAt: Number.isNaN(intervalMs)
-          ? null
-          : new Date(intervalMs).toISOString(),
-        usageIntervalBasis: INTERVAL_BASES[memoIntervalBasis[position]],
-      };
-    }
-    attributionReads += 1;
-    const result = attributionReader.read(row);
-    if (memoBasis === null || position === undefined) return result;
-    const basisIndex = ATTRIBUTION_BASES.indexOf(result.planAttribution?.basis);
-    const intervalBasisIndex = INTERVAL_BASES.indexOf(result.usageIntervalBasis);
-    const planType = result.planAttribution?.planType ?? null;
-    const intervalMs = result.usageIntervalStartedAt === null
-      ? Number.NaN
-      : Date.parse(result.usageIntervalStartedAt);
-    if (basisIndex === -1 || intervalBasisIndex === -1
-        || result.planAttribution?.planVariant !== null
-        || (planType !== null && typeof planType !== "string")
-        || (result.usageIntervalStartedAt !== null
-          && (!Number.isSafeInteger(intervalMs)
-            || new Date(intervalMs).toISOString()
-              !== result.usageIntervalStartedAt))) {
-      return result;
-    }
-    let planIndex = -1;
-    if (planType !== null) {
-      planIndex = memoPlanIndex.get(planType) ?? -1;
-      if (planIndex === -1) {
-        planIndex = memoPlanTable.push(planType) - 1;
-        memoPlanIndex.set(planType, planIndex);
-      }
-    }
-    memoBasis[position] = basisIndex + 1;
-    memoPlan[position] = planIndex;
-    memoIntervalMs[position] = intervalMs;
-    memoIntervalBasis[position] = intervalBasisIndex;
-    return result;
-  };
-  const planEvidence = calibrationPlanEvidence({ ordered: true, maximum: limits.weeklySnapshots });
-  const price = createAccountingPricer();
-  // Shared row-count cadence across every read this source performs (the open
-  // pass and the later re-read streams continue one counter), matching the
-  // one-shot reader's single `processed` counter.
-  let processed = 0;
-  const cadence = async () => {
-    processed += 1;
-    if (processed % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
-      throwIfAborted(signal);
-      checkRuntimeMemory();
-      await cooperativeYield();
-    }
-  };
-  const nullableTokenValue = (value) => (
-    value !== null && value !== undefined
-      && Number.isSafeInteger(Number(value)) && Number(value) >= 0
-      ? Number(value)
-      : null
-  );
-  const tokenValue = (value) => nullableTokenValue(value) ?? 0;
-  // Mirrors exactly the rows the priced projection below retains, without
-  // paying for pricing: eventProjection returns null only for an all-zero
-  // component total, and Spark rows are excluded from the calibration corpus.
-  // The discovery pass and the re-read streams share this predicate, so they
-  // can never disagree about which rows the corpus contains.
-  const retainedByLightFilter = (row) => {
-    if (!Number.isSafeInteger(Number(row.observed_at_ms))) return false;
-    const anyTokens = tokenValue(row.tokens_in_uncached) > 0
-      || tokenValue(row.tokens_in_cache_read) > 0
-      || tokenValue(row.tokens_in_cache_write) > 0
-      || tokenValue(row.tokens_out_text) > 0
-      || tokenValue(row.tokens_out_reasoning) > 0
-      || tokenValue(row.tokens_out_combined) > 0;
-    return anyTokens && safeModel(row.model_id) !== SPARK_MODEL;
-  };
-  // The priced compact projection, identical to the windowed scan's retention
-  // shape. Returns null for exactly the rows retainedByLightFilter refuses.
-  const projectUsageRow = (row, position) => {
-    const observedMs = Number(row.observed_at_ms);
-    if (!Number.isSafeInteger(observedMs)) return null;
-    // Refuse the rows the discovery pass refused (zero-token, Spark) BEFORE
-    // deriving attribution: the memo is keyed by retained position, and a
-    // refused row would otherwise be derived and remembered under the
-    // position of the retained row that follows it.
-    if (!retainedByLightFilter(row)) return null;
-    projectedRows += 1;
-    const rawEvent = {
-      timestamp: new Date(observedMs).toISOString(),
-      ...attributionAt(row, position),
-      model: row.model_id,
-      // NULL means "the record did not report a total"; it must stay
-      // absent so the pricer can infer from complete observed inputs, or
-      // withhold conditional prices when those inputs are unavailable.
-      ...(row.total_input_context === null
-        ? {}
-        : { totalInputContextTokens: Number(row.total_input_context) }),
-      components: {
-        input_uncached_tokens: nullableTokenValue(row.tokens_in_uncached),
-        input_cache_read_tokens: nullableTokenValue(row.tokens_in_cache_read),
-        input_cache_write_tokens: nullableTokenValue(row.tokens_in_cache_write),
-        output_text_tokens: nullableTokenValue(row.tokens_out_text),
-        output_reasoning_tokens: nullableTokenValue(row.tokens_out_reasoning),
-        output_combined_tokens: nullableTokenValue(row.tokens_out_combined),
-      },
-      tierSemantics: {
-        codexSpeedMode: row.codex_speed_mode,
-        apiServiceTier: row.api_service_tier,
-      },
-    };
-    const event = eventProjection(rawEvent, price);
-    // The calibration corpus mirrors the scan retention exactly: no
-    // zero-token rows, and no separately metered Spark rows.
-    if (event === null || event.isSpark) return null;
-    event.declaredSpeed = event.speed === "unknown"
-      ? declaredSpeedModeAt(declaredSpeedBaselines, observedMs) ?? "unknown"
-      : "unknown";
-    return transitionUsageProjection(rawEvent, event);
-  };
-  const USAGE_COLUMNS = `
-      SELECT u.rowid AS row_id,
-             u.source_local AS source_local,
-             u.source_offset AS source_offset,
-             u.source_ordinal AS source_ordinal,
-             u.session_local AS session_local,
-             u.observed_at_ms AS observed_at_ms,
-             m.model_id AS model_id,
-             t.codex_speed_mode AS codex_speed_mode,
-             t.api_service_tier AS api_service_tier,
-             u.tokens_in_uncached AS tokens_in_uncached,
-             u.tokens_in_cache_read AS tokens_in_cache_read,
-             u.tokens_in_cache_write AS tokens_in_cache_write,
-             u.tokens_out_text AS tokens_out_text,
-             u.tokens_out_reasoning AS tokens_out_reasoning,
-             u.tokens_out_combined AS tokens_out_combined,
-             u.total_input_context AS total_input_context
-      FROM usage_event u
-      JOIN model m ON m.id = u.model_id
-      JOIN tier_semantics t ON t.id = u.tier_id`;
-  try {
-    verifyGeneration();
-    if (generationId !== null) {
-      // Count the complete physical fact sets once, before display/fit filters.
-      // Extra unpublished facts cannot be made safe by marking their attribution
-      // unknown: they must not enter the published quantity numerator at all.
-      for (const [table, declaredCount] of [
-        ["usage_event", descriptor.usageEvents],
-        ["quota_occurrence", descriptor.quotaOccurrences],
-      ]) {
-        const counts = database.prepare(`SELECT COUNT(*) AS total,
-          COALESCE(SUM(CASE WHEN gs.source_local IS NULL THEN 1 ELSE 0 END), 0) AS unproven
-          FROM ${table} f LEFT JOIN generation_source gs
-            ON gs.generation_id = ? AND gs.source_local = f.source_local
-            AND gs.source_ordinal = f.source_ordinal
-            AND f.source_offset >= 0 AND f.source_offset <= gs.scanned_bytes
-            AND gs.status IN ('skipped', 'touched', 'resumed', 'rescanned', 'complete')
-            AND gs.diagnostics_complete = 1`).get(generationId);
-        if (Number(counts.total) !== declaredCount || Number(counts.unproven) !== 0) {
-          throw fixedError("accounting_unified_generation_mismatch");
-        }
-      }
-      verifyGeneration();
-      // One ordered pass replaces the reader's per-row point queries for the
-      // whole generation with dense live-row columns, preflighted against
-      // the existing retained-byte budget and runtime headroom. Every walk
-      // yields/checks cancellation and RSS; an oversized optimization falls
-      // back to the authoritative point queries without excluding history.
-      try {
-        attributionPrecompute = await precomputeLocalUnifiedUsageAttribution({
-          database,
-          generationId,
-          maximumRetainedBytes: limits.retainedBytes,
-          signal,
-          checkRuntimeMemory,
-        });
-      } catch (error) {
-        // A reservation for OPTIONAL arrays/dictionary is not required by
-        // the point-query reader. Decline only that planned allocation;
-        // actual RSS failures, invalid samples, cancellation and provenance
-        // failures still propagate through the normal build policy.
-        if (error?.code !== "accounting_transition_memory_budget_exceeded"
-            || error?.name === "AbortError") throw error;
-        attributionPrecompute = null;
-      }
-      attributionReader = createLocalUnifiedUsageAttributionReader({
-        database,
-        generationId,
-        precomputed: attributionPrecompute,
-      });
-      throwIfAborted(signal);
-      checkRuntimeMemory();
-      verifyGeneration();
-    }
-    const usageCount = Number(database.prepare(
-      "SELECT COUNT(*) AS c FROM usage_event WHERE observed_at_ms <= ?",
-    ).get(usageGraceMs)?.c ?? 0);
-    if (usageCount === 0) {
-      dispose();
-      return null;
-    }
-    // The corpus streams decoded rows in reset-sized batches. The miner's
-    // per-call row ceiling is not a history-retention rule. Keep every date,
-    // bound exact typed-buffer residency before allocation, and fail closed
-    // on budget pressure instead of silently deleting the oldest evidence.
-    const stampBytes = usageCount * STREAMED_USAGE_STAMP_BYTES;
-    if (!Number.isSafeInteger(stampBytes) || stampBytes > limits.retainedBytes) {
-      throw fixedError("accounting_transition_memory_budget_exceeded");
-    }
-    checkRuntimeMemory(stampBytes);
-    const stampedMs = new Float64Array(usageCount);
-    const stampedRowid = new Float64Array(usageCount);
-    // The timestamp index already orders ties by SQLite rowid. Keyset pages
-    // avoid a resident JS sort/index array and never use OFFSET pagination.
-    const usageStatement = database.prepare(`${USAGE_COLUMNS}
-      WHERE (u.observed_at_ms, u.rowid) > (?, ?) AND +u.observed_at_ms <= ?
-      ORDER BY u.observed_at_ms, u.rowid
-      LIMIT ${UNIFIED_CALIBRATION_READ_BATCH_ROWS}`);
-    let afterMs = -1;
-    let afterRowId = -1;
-    let retainedUsageEvents = 0;
-    for (;;) {
-      const batch = usageStatement.all(afterMs, afterRowId, usageGraceMs);
-      if (batch.length === 0) break;
-      for (const row of batch) {
-        await cadence();
-        if (!retainedByLightFilter(row)) continue;
-        if (retainedUsageEvents >= usageCount) {
-          throw fixedError("accounting_unified_generation_changed");
-        }
-        stampedMs[retainedUsageEvents] = Number(row.observed_at_ms);
-        stampedRowid[retainedUsageEvents] = Number(row.row_id);
-        retainedUsageEvents += 1;
-      }
-      afterMs = Number(batch.at(-1).observed_at_ms);
-      afterRowId = Number(batch.at(-1).row_id);
-      if (batch.length < UNIFIED_CALIBRATION_READ_BATCH_ROWS) break;
-    }
-    if (retainedUsageEvents === 0) {
-      dispose();
-      return null;
-    }
-    const usageMs = stampedMs.subarray(0, retainedUsageEvents);
-    const usageRowid = stampedRowid.subarray(0, retainedUsageEvents);
-    const firstUsageMs = usageMs[0];
-    const memoBytes = retainedUsageEvents * STREAMED_USAGE_MEMO_BYTES;
-    if (stampBytes + memoBytes > limits.retainedBytes) {
-      throw fixedError("accounting_transition_memory_budget_exceeded");
-    }
-    checkRuntimeMemory(memoBytes);
-    memoBasis = new Uint8Array(retainedUsageEvents);
-    memoPlan = new Int32Array(retainedUsageEvents);
-    memoIntervalMs = new Float64Array(retainedUsageEvents);
-    memoIntervalBasis = new Uint8Array(retainedUsageEvents);
-    const usageMetadataBytes = stampedMs.byteLength + stampedRowid.byteLength
-      + memoBasis.byteLength + memoPlan.byteLength + memoIntervalMs.byteLength
-      + memoIntervalBasis.byteLength;
-    throwIfAborted(signal);
-    checkRuntimeMemory();
-
-    const snapshotLowerMs = -1;
-    const snapshotStatement = generationId === null
-      // Explicit legacy/unpublished fixture/import mode only. Production
-      // schema-11 reads MUST use occurrences; a canonical winner can belong
-      // to a different source/plan at the same time.
-      ? database.prepare(`SELECT observed_at_ms, slot, plan_type, used_percent,
-          resets_at_ms, duration_mins, 'openai_codex' AS provider
-        FROM quota_observation WHERE limit_id = 'codex'
-          AND observed_at_ms >= ? AND observed_at_ms <= ?
-        ORDER BY observed_at_ms, id`)
-      : database.prepare(`SELECT q.observed_at_ms, q.slot, q.plan_type, q.used_percent,
-          q.resets_at_ms, q.duration_mins, q.provider
-        FROM quota_occurrence q
-        JOIN generation_source gs ON gs.generation_id = ?
-          AND gs.source_local = q.source_local AND gs.source_ordinal = q.source_ordinal
-          AND q.source_offset >= 0 AND q.source_offset <= gs.scanned_bytes
-          AND gs.status IN ('skipped', 'touched', 'resumed', 'rescanned', 'complete')
-          AND gs.diagnostics_complete = 1
-        WHERE q.limit_id = 'codex' AND q.admission = 'admitted'
-          AND q.observed_at_ms >= ? AND q.observed_at_ms <= ?
-        ORDER BY q.observed_at_ms, q.id`);
-    const weeklyRateLimitSnapshots = [];
-    let firstSnapshotMs = null;
-    const groupRuns = new Map();
-    let lastObservedPlan = null;
-    // Incremental reservation for every snapshot row the collapse decides to
-    // retain, mirroring reserveTransitionInput on the windowed path: bytes,
-    // snapshot count, and combined count are all checked BEFORE the row is
-    // materialized, so the retained corpus can never sit fully resident past
-    // `limits` with the refusal still ahead of it. Once tripped, the read
-    // stops consuming the snapshot stream entirely and reports the corpus
-    // unusable (null -> the caller's typed
-    // accounting_calibration_corpus_unavailable).
-    const retainedUsageBytes = usageMetadataBytes;
-    let retainedInputBudgetExceeded = false;
-    const reserveSnapshotRetention = () => {
-      const retainedSnapshots = weeklyRateLimitSnapshots.length + 1;
-      if (retainedSnapshots > limits.weeklySnapshots
-          || retainedUsageBytes
-            + retainedSnapshots * COMPACT_SNAPSHOT_RETAINED_BYTES
-            > limits.retainedBytes) {
-        retainedInputBudgetExceeded = true;
-        return false;
-      }
-      return true;
-    };
-    const emit = (pending) => {
-      if (!reserveSnapshotRetention()) return;
-      weeklyRateLimitSnapshots.push(weeklyRateLimitProjection({
-        timestamp: new Date(pending.observedMs).toISOString(),
-        timestampMs: pending.observedMs,
-        window: {
-          provider: "openai_codex",
-          planType: pending.planType,
-          limitId: "codex",
-          slot: pending.slot,
-          windowDurationMins: pending.durationMins,
-          resetsAt: pending.resetsAtSec,
-          usedPercent: pending.usedPercent,
-        },
-      }));
-    };
-    for (const row of snapshotStatement.iterate(...(generationId === null
-      ? [snapshotLowerMs, endMs] : [generationId, snapshotLowerMs, endMs]))) {
-      // Stop reading the stream the moment retention refused a row: every
-      // later row would either be refused too or misrepresent a corpus that
-      // is already over budget as complete. (Break rather than return: the
-      // handle cannot close while this statement iterator is live, and every
-      // later reservation attempt fails the same monotone budget check.)
-      if (retainedInputBudgetExceeded) break;
-      await cadence();
-      const observedMs = Number(row.observed_at_ms);
-      planEvidence.observe({
-        timestampMs: observedMs,
-        window: { provider: row.provider, limitId: "codex", planType: row.plan_type },
-      });
-      if (typeof row.plan_type === "string" && row.plan_type !== "unknown") {
-        if (lastObservedPlan !== null && row.plan_type !== lastObservedPlan) {
-          for (const run of groupRuns.values()) if (run.pending) emit(run.pending);
-          groupRuns.clear();
-        }
-        lastObservedPlan = row.plan_type;
-      }
-      const durationMins = Number(row.duration_mins);
-      if (!ALLOWANCE_HISTORY_WINDOW_MINUTES.has(durationMins)
-          || row.resets_at_ms === null || row.used_percent === null) continue;
-      const resetsAtSec = Math.floor(Number(row.resets_at_ms) / 1_000);
-      const usedPercent = Number(row.used_percent);
-      if (!Number.isSafeInteger(observedMs)
-          || !Number.isSafeInteger(resetsAtSec)
-          || resetsAtSec <= 0
-          || !Number.isFinite(usedPercent)) continue;
-      if (firstSnapshotMs === null) firstSnapshotMs = observedMs;
-      const projected = {
-        observedMs,
-        slot: row.slot,
-        planType: typeof row.plan_type === "string" && row.plan_type.length > 0
-          ? row.plan_type
-          : "unknown",
-        durationMins,
-        usedPercent,
-        resetsAtSec,
-      };
-      // Slot is a UI role, not identity: a run of identical displayed states
-      // that crosses the server-side slot flip is still one run of the same
-      // (limit, duration, reset) window.
-      const groupKey = `${projected.planType}\0${durationMins}\0${resetsAtSec}`;
-      const run = groupRuns.get(groupKey);
-      if (run !== undefined && run.usedPercent === usedPercent) {
-        // Same displayed state as the previous observation of this window:
-        // remember it as the run's pending last row, emit it only when the
-        // state changes or the stream ends.
-        run.pending = projected;
-        continue;
-      }
-      if (run?.pending) emit(run.pending);
-      emit(projected);
-      groupRuns.set(groupKey, { usedPercent, pending: null });
-    }
-    for (const run of groupRuns.values()) {
-      if (run.pending) emit(run.pending);
-    }
-    if (retainedInputBudgetExceeded || weeklyRateLimitSnapshots.length === 0) {
-      dispose();
-      return null;
-    }
-    if (weeklyRateLimitSnapshots.length > limits.weeklySnapshots
-        || usageMetadataBytes
-          + weeklyRateLimitSnapshots.length * COMPACT_SNAPSHOT_RETAINED_BYTES
-          > limits.retainedBytes) {
-      dispose();
-      return null;
-    }
-    throwIfAborted(signal);
-    checkRuntimeMemory();
-    const coveredStartMs = firstSnapshotMs === null
-      ? firstUsageMs
-      : Math.min(firstUsageMs, firstSnapshotMs);
-    verifyGeneration();
-    let openMetadata;
-    try {
-      openMetadata = await lstatPublishedLocalUnifiedIndex(indexFile);
-    } catch {
-      throw fixedError("accounting_unified_generation_changed");
-    }
-    if (!sameIndexFileIdentity(metadata, openMetadata)) {
-      throw fixedError("accounting_unified_generation_changed");
-    }
-
-    // Keyset re-read over the retained (observedMs, rowid) range. The first
-    // page is inclusive of the range start; continuations resume strictly
-    // after the last row served. Rows the discovery pass refused are refused
-    // again here by the shared predicate, so a range stream yields exactly
-    // the retained rows between its bounds — verified by count below, which
-    // turns any mid-build index mutation into a typed refusal instead of a
-    // silently drifted corpus.
-    const firstPageStatement = database.prepare(`${USAGE_COLUMNS}
-      WHERE (u.observed_at_ms, u.rowid) >= (?, ?)
-        AND (u.observed_at_ms, u.rowid) <= (?, ?)
-      ORDER BY u.observed_at_ms, u.rowid
-      LIMIT ${UNIFIED_CALIBRATION_READ_BATCH_ROWS}`);
-    const nextPageStatement = database.prepare(`${USAGE_COLUMNS}
-      WHERE (u.observed_at_ms, u.rowid) > (?, ?)
-        AND (u.observed_at_ms, u.rowid) <= (?, ?)
-      ORDER BY u.observed_at_ms, u.rowid
-      LIMIT ${UNIFIED_CALIBRATION_READ_BATCH_ROWS}`);
-    const streamProjectedRange = async (low, high, consume) => {
-      if (closed) {
-        throw fixedError("accounting_calibration_corpus_unavailable");
-      }
-      verifyGeneration();
-      const endBoundMs = usageMs[high - 1];
-      const endBoundRowid = usageRowid[high - 1];
-      let cursorMs = usageMs[low];
-      let cursorRowid = usageRowid[low];
-      let statement = firstPageStatement;
-      let served = 0;
-      try {
-        for (;;) {
-          const batch = statement.all(
-            cursorMs,
-            cursorRowid,
-            endBoundMs,
-            endBoundRowid,
-          );
-          if (batch.length === 0) break;
-          for (const row of batch) {
-            await cadence();
-            // `low + served` is this row's retained position: the stream
-            // yields exactly the retained rows between its bounds in retained
-            // order, and projectUsageRow returns null for precisely the rows
-            // the discovery pass refused (verified by the count below).
-            const projected = projectUsageRow(row, low + served);
-            if (projected === null) continue;
-            served += 1;
-            await consume(projected);
-          }
-          const last = batch.at(-1);
-          cursorMs = Number(last.observed_at_ms);
-          cursorRowid = Number(last.row_id);
-          statement = nextPageStatement;
-          if (batch.length < UNIFIED_CALIBRATION_READ_BATCH_ROWS) break;
-        }
-      } catch (error) {
-        if (error?.name === "AbortError"
-            || (typeof error?.code === "string"
-              && error.code.startsWith("accounting_"))) {
-          throw error;
-        }
-        // A raw read failure after open degrades to the same typed refusal
-        // the one-shot reader's caller raised, never a bare SQLite error.
-        throw fixedError("accounting_calibration_corpus_unavailable");
-      }
-      if (served !== high - low) {
-        throw fixedError("accounting_unified_generation_changed");
-      }
-      verifyGeneration();
-    };
-    return {
-      coveredAt: {
-        startAt: new Date(coveredStartMs).toISOString(),
-        endAt: new Date(endMs).toISOString(),
-      },
-      retainedUsageEvents,
-      usageMetadataCapacity: usageCount,
-      usageMetadataBytes,
-      weeklyRateLimitSnapshots,
-      planAttribution: planEvidence.finish(),
-      usageMs,
-      // Content-free work counters for structural regression tests: how many
-      // rows the re-read streams projected and how many attribution reads
-      // the memo let through. Counts only, never rows. (The snapshot count is
-      // captured now because the derivation consumes that array in place.)
-      metrics: ((retainedWeeklySnapshots) => () => ({
-        retainedUsageEvents,
-        weeklySnapshots: retainedWeeklySnapshots,
-        projectedRows,
-        attributionReads,
-        attributionPrecomputeUsed: attributionPrecompute !== null,
-        attributionPrecomputeRows: attributionPrecompute?.retainedRows ?? 0,
-        attributionPrecomputeBytes: attributionPrecompute?.retainedBytes ?? 0,
-      }))(weeklyRateLimitSnapshots.length),
-      readUsageSlice: async (low, high) => {
-        if (!Number.isSafeInteger(low) || !Number.isSafeInteger(high)
-            || low < 0 || high > retainedUsageEvents || low >= high) {
-          throw new TypeError("Calibration usage slice bounds are invalid");
-        }
-        if (high - low > limits.usageEvents) {
-          throw fixedError("accounting_transition_derivation_limit_exceeded");
-        }
-        checkRuntimeMemory((high - low) * COMPACT_USAGE_RETAINED_BYTES);
-        const rows = [];
-        await streamProjectedRange(low, high, (row) => rows.push(row));
-        return rows;
-      },
-      forEachRetainedUsage: async (consume) => {
-        await streamProjectedRange(0, retainedUsageEvents, consume);
-      },
-      finish: async () => {
-        if (closed) return;
-        try {
-          verifyGeneration();
-          let finalMetadata;
-          try {
-            finalMetadata = await lstatPublishedLocalUnifiedIndex(indexFile);
-          } catch {
-            throw fixedError("accounting_unified_generation_changed");
-          }
-          if (!sameIndexFileIdentity(metadata, finalMetadata)) {
-            throw fixedError("accounting_unified_generation_changed");
-          }
-        } finally {
-          dispose();
-        }
-      },
-      dispose,
-    };
-  } catch (error) {
-    dispose();
-    if (error?.name === "AbortError") {
-      throw fixedError("accounting_refresh_aborted", "AbortError");
-    }
-    if (typeof error?.code === "string" && error.code.startsWith("accounting_")) {
-      throw error;
-    }
-    return null;
-  }
-}
-
 export async function buildReplaySafeAccountingCache({
   codexHome = join(homedir(), ".codex"),
   now = () => Date.now(),
   windowDays = DEFAULT_WINDOW_DAYS,
-  // Direct builders historically accepted an injected raw scanner. Keep that
-  // characterization seam usable, while refreshReplaySafeAccountingCache
-  // selects the unified reader explicitly for production.
+  // The store's committed facts, as a scan with the contract of the unified
+  // accounting reader (see src/local-index-accounting-cache.js).
   scan = null,
+  // The full-history calibration corpus source. Only `open` is consumed here;
+  // its null result fails the build closed.
+  calibrationSource = null,
   sourceMode = null,
   expectedGeneration = null,
   contextBehavior = DEFAULT_ACCOUNTING_CONTEXT_BEHAVIOR,
@@ -4331,22 +3394,21 @@ export async function buildReplaySafeAccountingCache({
   // it was actually observed over, so a reading can never reach back before it
   // happened. An absent or unreadable ledger is simply no coverage.
   declaredSpeedBaselines = [],
-  // The unified local index. When present and readable, the weekly
-  // calibration transition corpus is read from it — the full indexed history,
-  // with no time window at all — and the scan-window corpus becomes the
-  // fallback for machines that do not have the index yet.
-  unifiedIndexFile = null,
   transitionResourceLimits: requestedTransitionResourceLimits = null,
   rss = () => process.memoryUsage().rss,
   maximumRssBytes = MAX_ACCOUNTING_RSS_BYTES,
-  // In-process characterization seam: receives the unified calibration
-  // corpus's content-free work counters (row and attribution-read counts)
-  // once the corpus has been fully consumed. Functions cannot cross the
-  // rebuild child's boundary, so a caller that sets this stays in process.
+  // In-process characterization seam: receives the calibration corpus's
+  // content-free work counters (row and attribution-read counts) once the
+  // corpus has been fully consumed.
   onCalibrationCorpusMetrics = null,
 } = {}) {
-  if (scan === null && (sourceMode === null || sourceMode === undefined)) {
+  if (typeof scan !== "function") {
     throw fixedError("accounting_source_required");
+  }
+  if (calibrationSource === null
+      || typeof calibrationSource !== "object"
+      || typeof calibrationSource.open !== "function") {
+    throw fixedError("accounting_calibration_source_required");
   }
   if (onCalibrationCorpusMetrics !== null
       && typeof onCalibrationCorpusMetrics !== "function") {
@@ -4354,8 +3416,7 @@ export async function buildReplaySafeAccountingCache({
   }
   const selectedSourceMode = normalizeAccountingSourceMode(sourceMode);
   const selectedContextBehavior = normalizeContextBehavior(contextBehavior);
-  if (selectedSourceMode === "unified"
-      && (expectedGeneration === null || expectedGeneration === undefined)) {
+  if (expectedGeneration === null || expectedGeneration === undefined) {
     throw fixedError("accounting_unified_generation_required");
   }
   if (expectedGeneration !== null
@@ -4363,26 +3424,11 @@ export async function buildReplaySafeAccountingCache({
       && expectedGenerationTokens(expectedGeneration).length === 0) {
     throw new TypeError("expectedGeneration is invalid");
   }
-  const selectedUnifiedIndexFile = unifiedIndexFile
-    ?? (selectedSourceMode === "unified"
-      ? defaultLocalUnifiedIndexPath()
-      : null);
-  const effectiveScan = scan ?? (selectedSourceMode === "unified"
-    ? createLocalUnifiedAccountingSource({
-      indexFile: selectedUnifiedIndexFile,
-      requireComplete: true,
-      expectedGeneration,
-      contextBehavior: selectedContextBehavior,
-    })
-    : scanCodexLogEvents);
   const endMs = now();
   if (!Number.isFinite(endMs)
       || !Number.isSafeInteger(windowDays)
       || windowDays < MINIMUM_WINDOW_DAYS
       || windowDays > MAXIMUM_WINDOW_DAYS
-      || (unifiedIndexFile !== null
-        && (typeof unifiedIndexFile !== "string" || unifiedIndexFile.length < 1))
-      || typeof effectiveScan !== "function"
       || !validAbortSignal(signal)
       || typeof rss !== "function"
       || !Number.isSafeInteger(maximumRssBytes)
@@ -4435,7 +3481,7 @@ export async function buildReplaySafeAccountingCache({
   // only tighten the transition-path target, never contradict it. Which side
   // wins depends on the baseline and is deliberately not assumed. Since the
   // 2026-08-20 raise the export policy's 1.5 GiB is the lower one for every
-  // baseline under 1.5 GiB — the rebuild child's clean baseline included — so
+  // baseline under 1.5 GiB — a clean rebuild baseline included — so
   // the scan phase is now clamped by the export policy while the transition
   // path runs at the full ~5.31 GiB effective ceiling. That asymmetry is
   // intentional rather than overlooked: every observed deferral, build 1020's
@@ -4458,15 +3504,6 @@ export async function buildReplaySafeAccountingCache({
     requestedTransitionResourceLimits,
   );
   throwIfAborted(signal);
-  // Whether the unified index can supply the full-history calibration corpus.
-  // Probed before the scan so the scan skips retaining its own window-bounded
-  // transition inputs; the corpus itself is materialized only after the scan,
-  // keeping the two working sets sequential rather than resident together. A
-  // missing or unusable index degrades to the windowed corpus here; it never
-  // fails the build.
-  const useUnifiedCalibration = selectedUnifiedIndexFile !== null
-    && await probeUnifiedCalibrationCorpus(selectedUnifiedIndexFile);
-  const retainWindowedCalibrationInputs = !useUnifiedCalibration;
   throwIfAborted(signal);
   const startMs = endMs - windowDays * 24 * 60 * 60 * 1_000;
   const starts = {
@@ -4486,47 +3523,14 @@ export async function buildReplaySafeAccountingCache({
   const weeklyQuotaTimelineBuckets = new Map();
   const sparkQuotaTimelineBuckets = new Map();
   const weeklyPaceSnapshots = [];
-  const rawUsageEvents = [];
-  const weeklyRateLimitSnapshots = [];
-  const windowedPlanEvidence = calibrationPlanEvidence({ maximum: limits.weeklySnapshots });
-  let retainedSparkUsageEvents = 0;
-  let retainedSparkSnapshotInputs = 0;
   const price = createAccountingPricer();
-  let retainedTransitionBytes = 0;
-  let retainedTransitionInputs = 0;
-  // When the unified index supplies the calibration corpus, the scan retains
-  // no transition inputs of its own; this counter only preserves the periodic
-  // RSS check cadence the reserve path would otherwise provide.
-  let unretainedCalibrationInputs = 0;
-  const observeUnretainedCalibrationInput = () => {
-    unretainedCalibrationInputs += 1;
-    if (unretainedCalibrationInputs % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
-      checkRuntimeMemory();
-    }
-  };
-  const reserveTransitionInput = (kind) => {
-    const usageCount = rawUsageEvents.length + retainedSparkUsageEvents;
-    const snapshotCount = weeklyRateLimitSnapshots.length
-      + retainedSparkSnapshotInputs;
-    const combinedCount = usageCount + snapshotCount;
-    if (kind === "usage" && usageCount >= limits.usageEvents) {
-      throw fixedError("accounting_transition_usage_limit_exceeded");
-    }
-    if (kind === "snapshot" && snapshotCount >= limits.weeklySnapshots) {
-      throw fixedError("accounting_transition_snapshot_limit_exceeded");
-    }
-    if (combinedCount >= limits.combinedInputs) {
-      throw fixedError("accounting_transition_input_limit_exceeded");
-    }
-    const retainedBytes = kind === "usage"
-      ? COMPACT_USAGE_RETAINED_BYTES
-      : COMPACT_SNAPSHOT_RETAINED_BYTES;
-    if (retainedTransitionBytes + retainedBytes > limits.retainedBytes) {
-      throw fixedError("accounting_transition_memory_budget_exceeded");
-    }
-    retainedTransitionBytes += retainedBytes;
-    retainedTransitionInputs += 1;
-    if (retainedTransitionInputs % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
+  // The scan retains no transition inputs: the full-history calibration corpus
+  // is streamed from calibrationSource after the scan. This counter preserves
+  // the periodic RSS check cadence over the scanned rows.
+  let scannedRows = 0;
+  const observeScannedRow = () => {
+    scannedRows += 1;
+    if (scannedRows % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
       checkRuntimeMemory();
     }
   };
@@ -4538,9 +3542,7 @@ export async function buildReplaySafeAccountingCache({
   // not report `indexedHistory` falls back to the separate full-history read
   // below. The accumulation mirrors buildReplaySafeAccountingPeriod exactly,
   // metered at the same ceiling with the archive's HARD failure policy.
-  const historyPeriod = selectedSourceMode === "unified"
-    ? newPeriod("history", "Indexed history")
-    : null;
+  const historyPeriod = newPeriod("history", "Indexed history");
   let historyAcceptedEvents = 0;
   let historyStarted = false;
   const checkHistoryRuntimeMemory = () => {
@@ -4578,20 +3580,13 @@ export async function buildReplaySafeAccountingCache({
   let scanned;
   let unifiedCoverage = null;
   try {
-    scanned = await effectiveScan({
+    scanned = await scan({
       startAt: new Date(startMs).toISOString(),
       endAt: new Date(endMs).toISOString(),
       codexHome,
       resourceGuard: scanResourceGuard,
       signal,
-      // Per-row plan attribution is consumed only by the compact calibration
-      // rows this pass retains on the windowed-fallback path. When the unified
-      // corpus supplies calibration, the streaming corpus derives attribution
-      // itself and this pass is a pure aggregate consumer.
-      usageAttribution: retainWindowedCalibrationInputs ? "required" : "none",
-      ...(historyPeriod === null
-        ? {}
-        : { indexedHistory: { onUsage: historyOnUsage } }),
+      indexedHistory: { onUsage: historyOnUsage },
       onUsage: (rawEvent) => {
         throwIfAborted(signal);
         const observedAt = canonicalInstant(rawEvent?.timestamp);
@@ -4612,21 +3607,13 @@ export async function buildReplaySafeAccountingCache({
             configurable: true,
           });
         }
-        if (retainWindowedCalibrationInputs) {
-          reserveTransitionInput("usage");
-        } else {
-          observeUnretainedCalibrationInput();
-        }
+        observeScannedRow();
         if (event.isSpark) {
-          if (retainWindowedCalibrationInputs) retainedSparkUsageEvents += 1;
           for (const [id, period] of periods) {
             if (observedMs >= starts[id]) addEvent(period, event);
           }
           addTimelineEvent(sparkTimeline, event);
           return;
-        }
-        if (retainWindowedCalibrationInputs) {
-          rawUsageEvents.push(transitionUsageProjection(rawEvent, event));
         }
         for (const [id, period] of periods) {
           if (observedMs >= starts[id]) addEvent(period, event);
@@ -4643,19 +3630,13 @@ export async function buildReplaySafeAccountingCache({
         if (!Number.isFinite(observedMs)
             || observedMs < startMs
             || observedMs > endMs) return;
-        if (retainWindowedCalibrationInputs) windowedPlanEvidence.observe(snapshot);
         // Rows keep the observed limit id: consumers filter the series with
         // SPARK_QUOTA_LIMIT_IDS.includes(row.limitId), same as the unified
         // and collector paths.
         if (SPARK_QUOTA_LIMIT_IDS.includes(window?.limitId)
             && window.provider === "openai_codex"
             && isValidQuotaWindowDuration(window.windowDurationMins)) {
-          if (retainWindowedCalibrationInputs) {
-            reserveTransitionInput("snapshot");
-            retainedSparkSnapshotInputs += 1;
-          } else {
-            observeUnretainedCalibrationInput();
-          }
+          observeScannedRow();
           retainQuotaTimeline(
             sparkQuotaTimelineBuckets,
             snapshot,
@@ -4667,12 +3648,7 @@ export async function buildReplaySafeAccountingCache({
             && ALLOWANCE_HISTORY_WINDOW_MINUTES.has(
               window.windowDurationMins,
             )) {
-          if (retainWindowedCalibrationInputs) {
-            reserveTransitionInput("snapshot");
-            weeklyRateLimitSnapshots.push(weeklyRateLimitProjection(snapshot));
-          } else {
-            observeUnretainedCalibrationInput();
-          }
+          observeScannedRow();
           // The existing quota timeline and pace forecast remain seven-day
           // contracts. Five-hour rows feed only the duration-keyed history.
           if (window.windowDurationMins === WEEKLY_WINDOW_MINUTES) {
@@ -4687,21 +3663,15 @@ export async function buildReplaySafeAccountingCache({
         }
       },
     });
-    if (selectedSourceMode === "unified") {
-      unifiedCoverage = normalizeUnifiedCoverage(scanned, expectedGeneration);
-    }
+    unifiedCoverage = normalizeUnifiedCoverage(scanned, expectedGeneration);
   } catch (error) {
     const bounded = accountingScanResourceError(error);
     if (bounded !== null) throw bounded;
-    if (selectedSourceMode === "unified") {
-      if (error?.name === "AbortError"
-          || error?.code === "accounting_refresh_aborted") {
-        const aborted = fixedError("accounting_refresh_aborted", "AbortError");
-        throw aborted;
-      }
-      throw mapUnifiedReaderError(error) ?? error;
+    if (error?.name === "AbortError"
+        || error?.code === "accounting_refresh_aborted") {
+      throw fixedError("accounting_refresh_aborted", "AbortError");
     }
-    throw error;
+    throw mapUnifiedReaderError(error) ?? error;
   }
   throwIfAborted(signal);
   // Do not let the subsequent windowed/transition check convert an archive
@@ -4709,18 +3679,16 @@ export async function buildReplaySafeAccountingCache({
   if (scanned?.indexedHistory?.status === "available") checkHistoryRuntimeMemory();
   checkRuntimeMemory();
   let history = historyUnavailable(
-    selectedSourceMode === "unified"
-      ? "accounting_unified_history_unavailable"
-      : "accounting_history_unavailable",
+    "accounting_unified_history_unavailable",
     unifiedCoverage?.coveredAt ?? null,
     unifiedCoverage?.generation ?? null,
     unifiedCoverage?.generationFingerprint ?? null,
   );
-  if (selectedSourceMode === "unified" && unifiedCoverage !== null) {
+  if (unifiedCoverage !== null) {
     const fusedHistory = scanned?.indexedHistory;
     let historyScanned = null;
     const historyScan = async (scanOptions) => {
-      historyScanned = await effectiveScan(scanOptions);
+      historyScanned = await scan(scanOptions);
       return historyScanned;
     };
     try {
@@ -4807,50 +3775,33 @@ export async function buildReplaySafeAccountingCache({
       );
     }
   }
-  let calibrationCorpus = null;
-  if (useUnifiedCalibration) {
-    calibrationCorpus = await openUnifiedIndexCalibrationCorpus({
-      indexFile: selectedUnifiedIndexFile,
-      endMs,
-      limits,
-      declaredSpeedBaselines: baselines,
-      signal,
-      checkRuntimeMemory,
-      allowLegacyUnpublished: selectedSourceMode === "legacy",
-      ...(selectedSourceMode === "unified"
-        ? { expectedGeneration: unifiedCoverage?.generation ?? null }
-        : {}),
-    });
-    // The probe accepted this index, so the scan retained no windowed
-    // fallback corpus. If the full read then fails, the only honest outputs
-    // are a typed failure or a calibration falsely labelled complete-but-
-    // empty; fail closed, and the next refresh re-probes from scratch.
-    if (calibrationCorpus === null) {
-      throw fixedError("accounting_calibration_corpus_unavailable");
-    }
+  // The full-history calibration corpus. Without it the only honest outputs
+  // are a typed failure or a calibration falsely labelled complete-but-empty;
+  // fail closed, and the next refresh reopens it from scratch.
+  const calibrationCorpus = await calibrationSource.open({
+    endMs,
+    limits,
+    declaredSpeedBaselines: baselines,
+    signal,
+    checkRuntimeMemory,
+    expectedGeneration: unifiedCoverage?.generation ?? null,
+  });
+  if (calibrationCorpus === null) {
+    throw fixedError("accounting_calibration_corpus_unavailable");
   }
   let composition = null;
   let planScopedTimelineDraft = null;
   let compositionFitFailure = null;
   let transitionSeries;
-  const retainedUsageEvents = retainWindowedCalibrationInputs
-    ? rawUsageEvents.length + retainedSparkUsageEvents
-    : calibrationCorpus.retainedUsageEvents;
-  const retainedWeeklySnapshots = retainWindowedCalibrationInputs
-    ? weeklyRateLimitSnapshots.length + retainedSparkSnapshotInputs
-    : calibrationCorpus.weeklyRateLimitSnapshots.length;
-  const calibrationRetainedBytes = retainWindowedCalibrationInputs
-    ? retainedTransitionBytes
-    : calibrationCorpus.usageMetadataBytes
-      + retainedWeeklySnapshots * COMPACT_SNAPSHOT_RETAINED_BYTES;
+  const retainedUsageEvents = calibrationCorpus.retainedUsageEvents;
+  const retainedWeeklySnapshots = calibrationCorpus.weeklyRateLimitSnapshots.length;
+  const calibrationRetainedBytes = calibrationCorpus.usageMetadataBytes
+    + retainedWeeklySnapshots * COMPACT_SNAPSHOT_RETAINED_BYTES;
   const calibrationCoveredAt = {
-    startAt: retainWindowedCalibrationInputs
-      ? new Date(startMs).toISOString()
-      : calibrationCorpus.coveredAt.startAt,
+    startAt: calibrationCorpus.coveredAt.startAt,
     endAt: new Date(endMs).toISOString(),
   };
-  const calibrationAttribution = retainWindowedCalibrationInputs
-    ? windowedPlanEvidence.finish() : calibrationCorpus.planAttribution;
+  const calibrationAttribution = calibrationCorpus.planAttribution;
   try {
     // The composition fit reads the same compact corpus the derivation below
     // will consume, so it must run first. It is strictly optional enrichment:
@@ -4861,27 +3812,16 @@ export async function buildReplaySafeAccountingCache({
     // dies here re-runs the same doomed pass on every scheduler tick while the
     // on-disk cache stays a rejected older artifact.
     try {
-      const compositionResult = retainWindowedCalibrationInputs
-        ? await fitCompositionFromCompactCorpus({
-          rawUsageEvents,
-          weeklyRateLimitSnapshots,
-          endMs,
-          signal,
-          checkRuntimeMemory,
-          planAttributionIndex: calibrationAttribution.index,
-          selectedPlanType: calibrationAttribution.summary.latestPlanType,
-          declaredSpeedBaselines: baselines,
-        })
-        : await fitCompositionFromCorpusStream({
-          forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
-          weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
-          endMs,
-          signal,
-          checkRuntimeMemory,
-          planAttributionIndex: calibrationAttribution.index,
-          selectedPlanType: calibrationAttribution.summary.latestPlanType,
-          declaredSpeedBaselines: baselines,
-        });
+      const compositionResult = await fitCompositionFromCorpusStream({
+        forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
+        weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
+        endMs,
+        signal,
+        checkRuntimeMemory,
+        planAttributionIndex: calibrationAttribution.index,
+        selectedPlanType: calibrationAttribution.summary.latestPlanType,
+        declaredSpeedBaselines: baselines,
+      });
       ({ planScopedTimeline: planScopedTimelineDraft, ...composition } =
         compositionResult);
     } catch (error) {
@@ -4896,24 +3836,15 @@ export async function buildReplaySafeAccountingCache({
       transitionSeries = await deriveBoundedWeeklyCalibrationSeries({
         startAt: calibrationCoveredAt.startAt,
         endAt: calibrationCoveredAt.endAt,
-        ...(retainWindowedCalibrationInputs
-          ? { rawUsageEvents }
-          : {
-            usageCorpus: {
-              count: calibrationCorpus.retainedUsageEvents,
-              usageMs: calibrationCorpus.usageMs,
-              readSlice: calibrationCorpus.readUsageSlice,
-            },
-          }),
-        rateLimitSnapshots: retainWindowedCalibrationInputs
-          ? weeklyRateLimitSnapshots
-          : calibrationCorpus.weeklyRateLimitSnapshots,
-        // The scan diagnostics describe the windowed raw-log pass; the unified
-        // corpus was fork-replay-suppressed at ingest, so its transitions do
-        // not restate scan-level counts as their own.
-        diagnostics: retainWindowedCalibrationInputs
-          ? scanned?.diagnostics ?? {}
-          : {},
+        usageCorpus: {
+          count: calibrationCorpus.retainedUsageEvents,
+          usageMs: calibrationCorpus.usageMs,
+          readSlice: calibrationCorpus.readUsageSlice,
+        },
+        rateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
+        // The calibration corpus was fork-replay-suppressed at ingest, so its
+        // transitions do not restate scan-level counts as their own.
+        diagnostics: {},
         signal,
         resourceCheck: checkRuntimeMemory,
         planAttributionIndex: calibrationAttribution.index,
@@ -4939,15 +3870,13 @@ export async function buildReplaySafeAccountingCache({
     // slices were read off is still the generation the build is bound to, and
     // release the read handle. The one-shot reader ran the same checks at its
     // end; streaming widens the window they cover, not their meaning.
-    if (calibrationCorpus !== null) {
-      const corpusMetrics = calibrationCorpus.metrics();
-      await calibrationCorpus.finish();
-      if (onCalibrationCorpusMetrics !== null) {
-        onCalibrationCorpusMetrics(corpusMetrics);
-      }
+    const corpusMetrics = calibrationCorpus.metrics();
+    await calibrationCorpus.finish();
+    if (onCalibrationCorpusMetrics !== null) {
+      onCalibrationCorpusMetrics(corpusMetrics);
     }
   } catch (error) {
-    calibrationCorpus?.dispose();
+    calibrationCorpus.dispose();
     throw error;
   }
   const weeklyCalibrationDataset = {
@@ -5054,8 +3983,7 @@ export async function buildReplaySafeAccountingCache({
       scanned,
       coverage: unifiedCoverage?.coverage ?? null,
       generation: unifiedCoverage?.generation ?? null,
-      generationMatched: selectedSourceMode === "unified"
-        && expectedGeneration !== null
+      generationMatched: expectedGeneration !== null
         && expectedGeneration !== undefined,
     }),
     history,
@@ -5077,19 +4005,12 @@ export async function buildReplaySafeAccountingCache({
     fiveHourAllowanceCalibration,
     weeklyCalibrationInput: {
       status: "complete",
-      encoding: retainWindowedCalibrationInputs
-        ? "accounting_compact_v3" : "accounting_streamed_v1",
-      ...(!retainWindowedCalibrationInputs ? {
-        usageMetadataCapacity: calibrationCorpus.usageMetadataCapacity,
-        usageMetadataBytes: calibrationCorpus.usageMetadataBytes,
-      } : {}),
-      // Which corpus fed the calibration: the whole unified index when it is
-      // present, the scan window only as the fallback. `coveredAt` states the
-      // span that corpus actually reaches, so a reader can tell full history
-      // from a bounded window instead of guessing.
-      source: retainWindowedCalibrationInputs
-        ? "windowed_scan"
-        : "unified_index",
+      encoding: "accounting_streamed_v1",
+      usageMetadataCapacity: calibrationCorpus.usageMetadataCapacity,
+      usageMetadataBytes: calibrationCorpus.usageMetadataBytes,
+      // Which corpus fed the calibration: the whole indexed history.
+      // `coveredAt` states the span that corpus actually reaches.
+      source: "unified_index",
       coveredAt: calibrationCoveredAt,
       retainedUsageEvents,
       retainedWeeklySnapshots,
@@ -5105,260 +4026,15 @@ export async function buildReplaySafeAccountingCache({
   return cache;
 }
 
-// Everything the child may not say: an envelope whose error code fails the
-// bounded pattern is treated as no envelope at all, so arbitrary child text
-// can never become a refresh classification.
-const SUBPROCESS_FAILURE_CODE_PATTERN = /^[a-z0-9_]{1,64}$/u;
-const SUBPROCESS_SHA256_PATTERN = /^[a-f0-9]{64}$/u;
-
-// The child inherits almost nothing. TMPDIR is the one ordinary passthrough:
-// inside the sandboxed macOS app it names the container's writable temp root,
-// which SQLite may need for spill files. The packaged Electron executable also
-// needs its exact node-mode switch to run the child entrypoint. Deliberately
-// absent: NODE_OPTIONS (nothing may override the child's pinned old-space cap
-// or preload code into the rebuild), HOME (every path the child touches arrives
-// resolved in the request), and PATH (the child execs nothing).
-export function minimalRebuildChildEnvironment(environment = process.env) {
-  const selected = {};
-  if (typeof environment?.TMPDIR === "string" && environment.TMPDIR.length > 0) {
-    selected.TMPDIR = environment.TMPDIR;
-  }
-  if (environment?.ELECTRON_RUN_AS_NODE === "1") {
-    selected.ELECTRON_RUN_AS_NODE = "1";
-  }
-  return selected;
-}
-
-function parseRebuildChildEnvelope(stdoutText) {
-  const line = stdoutText.split("\n").filter((part) => part.length > 0).at(-1);
-  if (line === undefined) return null;
-  let value;
-  try {
-    value = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  if (value.status === "ok"
-      && Number.isSafeInteger(value.resultBytes)
-      && value.resultBytes >= 2
-      && value.resultBytes <= ACCOUNTING_REBUILD_RESULT_LIMIT_BYTES
-      && typeof value.resultSha256 === "string"
-      && SUBPROCESS_SHA256_PATTERN.test(value.resultSha256)) {
-    return { status: "ok", resultBytes: value.resultBytes, resultSha256: value.resultSha256 };
-  }
-  if (value.status === "error"
-      && typeof value.code === "string"
-      && SUBPROCESS_FAILURE_CODE_PATTERN.test(value.code)
-      && ["Error", "AbortError"].includes(value.name)) {
-    // Re-validated here rather than trusted: the child's numbers are only
-    // admitted as the closed three-key MiB shape, and anything else becomes
-    // null. Without carrying these the isolated path — the production one —
-    // would report every budget miss with no quantities at all.
-    const measurements = boundedSubprocessMeasurements(value.measurements);
-    return {
-      status: "error",
-      code: value.code,
-      name: value.name,
-      measurements,
-    };
-  }
-  return null;
-}
-
-/**
- * Runs one accounting rebuild in a short-lived child of the packaged Node
- * runtime (process.execPath — the same binary serving the companion) and
- * returns the parsed cache artifact. The request already carries every input
- * resolved and serializable; the child re-verifies the unified generation and
- * index file identity itself at corpus open and finish, exactly as the
- * in-process build does, so the process boundary adds transport integrity
- * (byte count + SHA-256 over the result file, then full artifact validation
- * in the caller) rather than replacing any verification.
- *
- * Error surface, by construction:
- * - a typed build failure inside the child crosses back as the SAME fixed
- *   code the in-process build would have thrown, so the caller's existing
- *   budget-miss/passthrough classification is untouched;
- * - an abort — ours via SIGTERM on the caller's signal, or the child's own
- *   graceful abort — is always the AbortError-shaped
- *   accounting_refresh_aborted the in-process path throws;
- * - a child that dies without a well-formed envelope (OOM kill, crash, spawn
- *   failure, transport mismatch) becomes the single fixed code
- *   accounting_rebuild_subprocess_failed, which the refresh wrapper defers
- *   exactly like a memory-budget miss: the prior cache is retained and served,
- *   and the scheduler's backoff prevents a crash loop.
- */
-async function buildReplaySafeAccountingCacheInSubprocess({
-  request,
-  signal = null,
-  entry = ACCOUNTING_REBUILD_CHILD_ENTRY,
-}) {
-  throwIfAborted(signal);
-  const workDirectory = await mkdtemp(
-    join(tmpdir(), "usage-monitor-accounting-rebuild-"),
-  );
-  try {
-    const requestFile = join(workDirectory, "rebuild-request-v1.json");
-    const resultFile = join(workDirectory, "rebuild-result-v1.json");
-    await writeFile(requestFile, `${JSON.stringify(request)}\n`, {
-      mode: 0o600,
-      flag: "wx",
-    });
-    const closed = await new Promise((resolveClosed) => {
-      let settled = false;
-      const settle = (outcome) => {
-        if (settled) return;
-        settled = true;
-        resolveClosed(outcome);
-      };
-      let child;
-      try {
-        child = spawn(process.execPath, [
-          `--max-old-space-size=${ACCOUNTING_REBUILD_CHILD_OLD_SPACE_MIB}`,
-          entry,
-          requestFile,
-          resultFile,
-        ], {
-          cwd: workDirectory,
-          env: minimalRebuildChildEnvironment(),
-          // stdin stays piped and open for the child's whole life — its close
-          // is the child's parent-death watchdog. stderr is dropped: child
-          // failures classify by envelope and exit status only, so no crash
-          // text (which may embed paths) can reach a surface.
-          stdio: ["pipe", "pipe", "ignore"],
-        });
-      } catch {
-        settle({ code: null, killSignal: null, stdoutText: "", protocolBroken: true });
-        return;
-      }
-      let stdoutText = "";
-      let protocolBroken = false;
-      let killTimer = null;
-      const onAbort = () => {
-        try {
-          child.kill("SIGTERM");
-        } catch {
-          // Already exited; the close handler settles the outcome.
-        }
-        killTimer = setTimeout(() => {
-          try {
-            child.kill("SIGKILL");
-          } catch {
-            // Already exited.
-          }
-        }, ACCOUNTING_REBUILD_CHILD_KILL_GRACE_MS);
-        killTimer.unref?.();
-      };
-      if (signal !== null) {
-        if (signal.aborted) onAbort();
-        else signal.addEventListener("abort", onAbort, { once: true });
-      }
-      child.stdout.setEncoding("utf8");
-      child.stdout.on("data", (chunk) => {
-        if (protocolBroken) return;
-        stdoutText += chunk;
-        if (stdoutText.length > ACCOUNTING_REBUILD_ENVELOPE_LIMIT_BYTES) {
-          protocolBroken = true;
-          stdoutText = "";
-        }
-      });
-      child.once("error", () => {
-        // Spawn/kill failures may arrive without a later close event; settle
-        // as protocol breakage and let close (if it still fires) be ignored.
-        signal?.removeEventListener?.("abort", onAbort);
-        if (killTimer !== null) clearTimeout(killTimer);
-        settle({ code: null, killSignal: null, stdoutText: "", protocolBroken: true });
-      });
-      child.once("close", (code, killSignal) => {
-        signal?.removeEventListener?.("abort", onAbort);
-        if (killTimer !== null) clearTimeout(killTimer);
-        settle({ code, killSignal, stdoutText, protocolBroken });
-      });
-    });
-    const envelope = closed.protocolBroken
-      ? null
-      : parseRebuildChildEnvelope(closed.stdoutText);
-    if (envelope?.status === "ok"
-        && closed.code === 0
-        && closed.killSignal === null) {
-      let payload;
-      try {
-        const metadata = await lstat(resultFile);
-        if (!metadata.isFile() || metadata.size !== envelope.resultBytes
-            || metadata.size > ACCOUNTING_REBUILD_RESULT_LIMIT_BYTES) {
-          throw fixedError("accounting_rebuild_subprocess_failed");
-        }
-        payload = await readFile(resultFile);
-      } catch {
-        throw fixedError("accounting_rebuild_subprocess_failed");
-      }
-      if (payload.byteLength !== envelope.resultBytes
-          || createHash("sha256").update(payload).digest("hex")
-            !== envelope.resultSha256) {
-        throw fixedError("accounting_rebuild_subprocess_failed");
-      }
-      let cache;
-      try {
-        cache = JSON.parse(payload.toString("utf8"));
-      } catch {
-        throw fixedError("accounting_rebuild_subprocess_failed");
-      }
-      if (!cache || typeof cache !== "object" || Array.isArray(cache)) {
-        throw fixedError("accounting_rebuild_subprocess_failed");
-      }
-      // Mirror the in-process build's final abort gate: work that finished
-      // after an abort landed is still discarded before publication.
-      throwIfAborted(signal);
-      return cache;
-    }
-    if (envelope?.status === "error") {
-      if (envelope.name === "AbortError"
-          || envelope.code === "accounting_refresh_aborted") {
-        const aborted = fixedError("accounting_refresh_aborted");
-        aborted.name = "AbortError";
-        throw aborted;
-      }
-      // Restate the child's typed failure AND whatever quantities it metered,
-      // so an isolated miss is as diagnosable as an in-process one. Absent or
-      // malformed measurements were already normalized to null on receipt.
-      const restated = fixedError(envelope.code);
-      if (envelope.measurements !== null
-          && envelope.measurements !== undefined) {
-        restated.measurements = Object.freeze({ ...envelope.measurements });
-      }
-      throw restated;
-    }
-    // No usable envelope. If the caller aborted, the death is OURS (SIGTERM/
-    // SIGKILL) and the honest outcome is the abort; otherwise the child died
-    // on its own and the caller fails closed to the deferral path.
-    throwIfAborted(signal);
-    throw fixedError("accounting_rebuild_subprocess_failed");
-  } finally {
-    try {
-      await rm(workDirectory, { recursive: true, force: true });
-    } catch {
-      // Cleanup failure must never mask the rebuild outcome; the directory
-      // holds only this pass's private request/result pair.
-    }
-  }
-}
-
 export async function refreshReplaySafeAccountingCache({
   stateFile = null,
   // A JSON cache is no longer a supported durable target. Keeping this
   // explicit catch prevents a stale caller from silently writing SQLite bytes
   // to a misleading .json path.
   cacheFile = undefined,
-  indexFile = null,
-  indexSecretFile = null,
-  scan = null,
   sourceMode = null,
-  unifiedIndexFile = null,
   expectedGeneration = null,
   contextBehavior = null,
-  indexWorkerCount,
-  indexChunkBytes,
   // Optional, layer-local hook fired when a rebuild misses its memory budget
   // and is DEFERRED rather than failed. Receives only a bounded descriptor
   // ({ reason, retained }); its own errors never affect the refresh. The
@@ -5367,20 +4043,11 @@ export async function refreshReplaySafeAccountingCache({
   // this hook is a convenience for a caller that wants the signal inline
   // without inspecting the return shape.
   onAccountingRebuildDeferred = null,
-  // Where the rebuild executes. "auto" (the default) runs production-shaped
-  // calls — no injected scan, no injected rss meter — in a short-lived child
-  // process whose clean baseline restores the guard's headroom (see the
-  // isolation rationale on ACCOUNTING_REBUILD_ISOLATION_MODES above), and
-  // keeps every characterization call with injected function seams on the
-  // in-process build, since functions cannot cross a process boundary.
-  // "in_process" forces the old execution for a caller that must observe the
-  // build inside its own process; "subprocess" asserts isolation and refuses
-  // un-serializable seams instead of silently degrading.
-  rebuildIsolation = null,
-  // Characterization seam for the child entrypoint (crash/protocol tests
-  // substitute a misbehaving child). Production always uses the reviewed
-  // sibling module.
-  rebuildSubprocessEntry = null,
+  // Builds the cache in process in place of buildReplaySafeAccountingCache,
+  // with the options that builder would have received (scan, calibrationSource,
+  // windowDays, ...). The refresh around it — deferral on a budget miss,
+  // validation, size ceiling, atomic publication — is unchanged.
+  buildCache = null,
   ...options
 } = {}) {
   if (cacheFile !== undefined) {
@@ -5390,189 +4057,36 @@ export async function refreshReplaySafeAccountingCache({
       && typeof onAccountingRebuildDeferred !== "function") {
     throw new TypeError("onAccountingRebuildDeferred must be a function or null");
   }
-  const selectedRebuildIsolation = rebuildIsolation ?? "auto";
-  if (!ACCOUNTING_REBUILD_ISOLATION_MODES.includes(selectedRebuildIsolation)) {
-    throw new TypeError(
-      "rebuildIsolation must be auto, subprocess, or in_process",
-    );
-  }
-  if (rebuildSubprocessEntry !== null
-      && (typeof rebuildSubprocessEntry !== "string"
-        || !isAbsolute(rebuildSubprocessEntry))) {
-    throw new TypeError(
-      "rebuildSubprocessEntry must be an absolute path or null",
-    );
+  if (buildCache !== null && typeof buildCache !== "function") {
+    throw new TypeError("buildCache must be a function or null");
   }
   const selectedStateFile = stateFile ?? defaultReplaySafeAccountingCachePath();
-  const selectedSourceMode = normalizeAccountingSourceMode(
-    sourceMode,
-    { defaultValue: scan === null ? "unified" : "legacy" },
-  );
-  const selectedContextBehavior = normalizeContextBehavior(
-    contextBehavior,
-  );
+  const selectedSourceMode = normalizeAccountingSourceMode(sourceMode);
+  const selectedContextBehavior = normalizeContextBehavior(contextBehavior);
   if (expectedGeneration !== null
       && expectedGeneration !== undefined
       && expectedGenerationTokens(expectedGeneration).length === 0) {
     throw new TypeError("expectedGeneration is invalid");
   }
-  if (selectedSourceMode === "unified"
-      && (expectedGeneration === null || expectedGeneration === undefined)) {
+  if (expectedGeneration === null || expectedGeneration === undefined) {
     throw fixedError("accounting_unified_generation_required");
   }
-  const selectedUnifiedIndexFile = unifiedIndexFile
-    ?? resolve(dirname(selectedStateFile), "local-unified-index-v1.sqlite");
-  const selectedIndexFile = indexFile ?? resolve(
-    dirname(selectedStateFile),
-    "local-analysis-index-v2.sqlite",
-  );
-  const selectedIndexSecretFile = indexSecretFile
-    ?? defaultLocalAnalysisIndexSecretPath(selectedIndexFile);
-  if (typeof selectedStateFile !== "string" || selectedStateFile.length < 1
-      || typeof selectedUnifiedIndexFile !== "string"
-      || selectedUnifiedIndexFile.length < 1
-      || typeof selectedIndexFile !== "string" || selectedIndexFile.length < 1) {
-    throw new TypeError("Replay-safe SQLite state paths are invalid");
+  if (typeof selectedStateFile !== "string" || selectedStateFile.length < 1) {
+    throw new TypeError("Replay-safe SQLite state path is invalid");
   }
-  if (scan !== null && typeof scan !== "function") {
-    throw new TypeError("scan must be a function or null");
-  }
-  const effectiveScan = scan ?? (selectedSourceMode === "unified"
-    ? createLocalUnifiedAccountingSource({
-      indexFile: selectedUnifiedIndexFile,
-      requireComplete: true,
-      expectedGeneration,
-      contextBehavior: selectedContextBehavior,
-    })
-    : createIndexedCodexLogScan({
-      indexFile: selectedIndexFile,
-      secretFile: selectedIndexSecretFile,
-      workerCount: indexWorkerCount ?? DEFAULT_ACCOUNTING_INDEX_WORKERS,
-      ...(indexChunkBytes === undefined
-        ? {}
-        : { chunkBytes: indexChunkBytes }),
-    }));
-  // An injected scanner or rss meter is a function and cannot cross a process
-  // boundary; those characterization calls stay on the in-process build under
-  // "auto". Everything a production call carries is serializable, so the
-  // production paths (unified reader, legacy indexed scan) are reconstructed
-  // inside the child by value.
-  const subprocessEligible = scan === null
-    && !Object.hasOwn(options, "rss")
-    && !Object.hasOwn(options, "onCalibrationCorpusMetrics");
-  if (selectedRebuildIsolation === "subprocess" && !subprocessEligible) {
-    throw new TypeError(
-      "rebuildIsolation subprocess cannot carry injected scan, rss or metrics seams",
-    );
-  }
-  const rebuildInSubprocess = selectedRebuildIsolation === "subprocess"
-    || (selectedRebuildIsolation === "auto" && subprocessEligible);
-  let subprocessRequest = null;
-  if (rebuildInSubprocess) {
-    // Resolve and validate the request the child will replay, mirroring the
-    // option validation the in-process build performs, so an invalid option
-    // stays a synchronous TypeError here rather than surfacing as a child
-    // failure. The clock is sampled exactly once — the same single call the
-    // in-process build makes for endMs — and crosses as a number.
-    const nowFunction = options.now ?? (() => Date.now());
-    const selectedWindowDays = options.windowDays ?? DEFAULT_WINDOW_DAYS;
-    const selectedCodexHome = options.codexHome ?? join(homedir(), ".codex");
-    const selectedMaximumRssBytes = options.maximumRssBytes
-      ?? MAX_ACCOUNTING_RSS_BYTES;
-    if (typeof nowFunction !== "function"
-        || !Number.isSafeInteger(selectedWindowDays)
-        || selectedWindowDays < MINIMUM_WINDOW_DAYS
-        || selectedWindowDays > MAXIMUM_WINDOW_DAYS
-        || typeof selectedCodexHome !== "string"
-        || selectedCodexHome.length < 1
-        || !validAbortSignal(options.signal ?? null)
-        || !Number.isSafeInteger(selectedMaximumRssBytes)
-        || selectedMaximumRssBytes < 1) {
-      throw new TypeError("Replay-safe accounting options are invalid");
-    }
-    const nowMs = nowFunction();
-    if (!Number.isFinite(nowMs)) {
-      throw new TypeError("Replay-safe accounting options are invalid");
-    }
-    if (selectedSourceMode === "legacy") {
-      const requestedWorkerCount = indexWorkerCount
-        ?? DEFAULT_ACCOUNTING_INDEX_WORKERS;
-      if (!Number.isSafeInteger(requestedWorkerCount)
-          || requestedWorkerCount < 1
-          || (indexChunkBytes !== undefined
-            && !Number.isSafeInteger(indexChunkBytes))) {
-        throw new TypeError("Replay-safe accounting options are invalid");
-      }
-    }
-    // Throws the same TypeErrors the in-process build would for a malformed
-    // limits object; the child then re-normalizes the identical value.
-    transitionResourceLimits(options.transitionResourceLimits ?? null);
-    subprocessRequest = {
-      version: REPLAY_SAFE_ACCOUNTING_REBUILD_REQUEST_VERSION,
-      nowMs,
-      windowDays: selectedWindowDays,
-      codexHome: selectedCodexHome,
-      sourceMode: selectedSourceMode,
-      contextBehavior: selectedContextBehavior,
-      expectedGeneration: expectedGeneration ?? null,
-      unifiedIndexFile: selectedSourceMode === "unified"
-        ? selectedUnifiedIndexFile
-        : unifiedIndexFile,
-      legacyIndexFile: selectedSourceMode === "legacy"
-        ? selectedIndexFile
-        : null,
-      legacyIndexSecretFile: selectedSourceMode === "legacy"
-        ? selectedIndexSecretFile
-        : null,
-      legacyIndexWorkerCount: selectedSourceMode === "legacy"
-        ? indexWorkerCount ?? DEFAULT_ACCOUNTING_INDEX_WORKERS
-        : null,
-      legacyIndexChunkBytes: selectedSourceMode === "legacy"
-          && indexChunkBytes !== undefined
-        ? indexChunkBytes
-        : null,
-      declaredSpeedBaselines: Array.isArray(options.declaredSpeedBaselines)
-        ? options.declaredSpeedBaselines
-        : [],
-      transitionResourceLimits: options.transitionResourceLimits ?? null,
-      maximumRssBytes: selectedMaximumRssBytes,
-    };
-  }
-  // Converge legacy state before spending a potentially substantial raw-log
-  // scan. A live old JSON collector or an unverified parity mismatch must
+  // Converge legacy state before spending a potentially substantial index
+  // read. A live old JSON collector or an unverified parity mismatch must
   // fail before we derive a cache that cannot be committed safely.
   await prepareLocalCollectorState({ stateFile: selectedStateFile });
   let cache;
   try {
-    cache = rebuildInSubprocess
-      ? await buildReplaySafeAccountingCacheInSubprocess({
-        request: subprocessRequest,
-        signal: options.signal ?? null,
-        ...(rebuildSubprocessEntry === null
-          ? {}
-          : { entry: rebuildSubprocessEntry }),
-      })
-      : await buildReplaySafeAccountingCache({
-        ...options,
-        scan: effectiveScan,
-        sourceMode: selectedSourceMode,
-        contextBehavior: selectedContextBehavior,
-        expectedGeneration,
-        unifiedIndexFile: selectedSourceMode === "unified"
-          ? selectedUnifiedIndexFile
-          : unifiedIndexFile,
-      });
+    cache = await (buildCache ?? buildReplaySafeAccountingCache)({
+      ...options,
+      sourceMode: selectedSourceMode,
+      contextBehavior: selectedContextBehavior,
+      expectedGeneration,
+    });
   } catch (error) {
-    // A child that died without a typed refusal joins the memory-budget
-    // misses on the deferral path: the failure is overwhelmingly a memory
-    // event (V8 heap-cap abort, OS OOM kill) and the deferral is the fail-
-    // closed behavior the incident taught — retain the prior cache, back
-    // off, surface the streak — never a crash loop and never a blanked
-    // dashboard.
-    if (!isAccountingBudgetMiss(error)
-        && error?.code !== "accounting_rebuild_subprocess_failed") {
-      throw error;
-    }
     // The rebuild missed its memory budget. Per owner directive the budget is
     // a TARGET, never a hard dashboard-blanker: the whole refresh must NOT
     // fail and the last good on-disk cache must survive untouched. Control
@@ -5581,6 +4095,7 @@ export async function refreshReplaySafeAccountingCache({
     // card that already ran stay authoritative. This mirrors the
     // composition-fit fail-soft (composition:null -> median fallback), widened
     // from one sub-artifact to the whole accounting artifact.
+    if (!isAccountingBudgetMiss(error)) throw error;
     let retainedCache = null;
     try {
       const stored = await readReplaySafeAccountingCache({
@@ -5626,10 +4141,10 @@ export async function refreshReplaySafeAccountingCache({
   if (Buffer.byteLength(serializeLocalCollectorAccountingCache(cache)) > MAX_CACHE_BYTES) {
     throw fixedError("cache_invalid_size");
   }
-  // A timeout/cancel can arrive after the isolated child has returned a valid
-  // artifact but before its atomic publication. Recheck at the final durable
-  // boundary so a run already reported as stopped cannot replace the retained
-  // cache behind that terminal state.
+  // A timeout/cancel can arrive after the build has returned a valid artifact
+  // but before its atomic publication. Recheck at the final durable boundary
+  // so a run already reported as stopped cannot replace the retained cache
+  // behind that terminal state.
   throwIfAborted(options.signal ?? null);
   await writeLocalCollectorAccountingCache({
     stateFile: selectedStateFile,
@@ -6616,6 +5131,13 @@ export async function readReplaySafeAccountingCache({
     };
   }
   const descriptor = parsed.sourceDescriptor;
+  if (descriptor.mode !== "unified") {
+    return {
+      status: "unavailable",
+      errorCode: "cache_source_mode_mismatch",
+      cache: null,
+    };
+  }
   if (sourceMode !== null
       && sourceMode !== undefined
       && descriptor.mode !== sourceMode) {
@@ -6684,3 +5206,40 @@ export function assertReplaySafeAccountingCache(value) {
   if (!validCache(value)) throw fixedError("cache_invalid");
   return value;
 }
+
+// The calibration pieces the local index store's corpus opener composes with.
+// A transitional seam: when the shipping index is removed the calibration code
+// moves to its own module and this object goes away.
+export const REPLAY_SAFE_CALIBRATION_INTERNALS = Object.freeze({
+  ACCOUNTING_RSS_CHECK_INTERVAL,
+  ALLOWANCE_CAPACITY_SCHEMA_VERSION,
+  ALLOWANCE_HISTORY_WINDOW_MINUTES,
+  ALLOWANCE_SCENARIO_CANDIDATES,
+  COMPACT_SNAPSHOT_RETAINED_BYTES,
+  COMPACT_USAGE_RETAINED_BYTES,
+  FIVE_HOUR_WINDOW_MINUTES,
+  PARSER_VERSION,
+  PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION,
+  SPARK_MODEL,
+  STREAMED_USAGE_MEMO_BYTES,
+  STREAMED_USAGE_STAMP_BYTES,
+  UNIFIED_CALIBRATION_READ_BATCH_ROWS,
+  calibrationCohortId,
+  calibrationPlanEvidence,
+  codexPrimaryAllowanceBasis,
+  compositionFitFailureReason,
+  cooperativeYield,
+  createAccountingPricer,
+  declaredSpeedModeAt,
+  deriveBoundedWeeklyCalibrationSeries,
+  eventProjection,
+  fitCompositionFromCorpusStream,
+  fixedError,
+  planScopedTimelineReceipt,
+  projectBoundedWeeklyCalibrationSummary,
+  safeModel,
+  throwIfAborted,
+  transitionResourceLimits,
+  transitionUsageProjection,
+  weeklyRateLimitProjection,
+});

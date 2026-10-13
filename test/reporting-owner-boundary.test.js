@@ -74,7 +74,6 @@ const REPORTING_CALLERS = Object.freeze([
   "src/application/work-usage.js",
   "src/cli.js",
   "src/local-companion-data.js",
-  "src/local-work-usage-source.js",
   "src/minimization-ablation.js",
   "src/replay-safe-accounting-cache.js",
   "test/monitoring-quality.test.js",

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { deflateSync } from 'node:zlib';
-import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
+import { cp, mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readElectronSitePublication, readPublishedElectronSiteRelease, renderElectronSiteDocumentation, renderElectronSiteDownloads } from '../scripts/lib/electron-public-site.mjs';
@@ -12,6 +12,8 @@ import { RELEASE_EVIDENCE_SCHEMA_VERSION } from '../config/release-evidence.js';
 import { buildPublicReleaseSite, parseArgs } from '../scripts/build-public-release-site.js';
 
 const hash = b => createHash('sha256').update(b).digest('hex');
+const WINDOWS_TARGET = 'win32-x64';
+const WINDOWS_NAME = version => `TiboTattle-${version}-Windows-x64.exe`;
 // Synthetic PNG/JPEG bytes only; no rendered or hand-copied card enters the repository.
 function crc32(bytes) {
   let crc = 0xffffffff;
@@ -28,16 +30,15 @@ function grayscalePng(width, height) {
   return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), pngChunk('IHDR', ihdr),
     pngChunk('IDAT', deflateSync(Buffer.alloc((width + 1) * height))), pngChunk('IEND', Buffer.alloc(0))]);
 }
-const SOURCE_SOCIAL_ALT = 'The TiboTattle homepage: the community-fitted seven-day Codex allowance in API-equivalent dollars, with its plausible range and daily history, beside the macOS download';
+// The exact source-owned alt text of the community template's card.
+const SOURCE_SOCIAL_ALT = 'The TiboTattle homepage: the community-fitted seven-day Codex allowance in API-equivalent dollars, with its plausible range and daily history, beside the Windows download';
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(),'electron-site-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const origin='https://updates.tibotattle.com', targets=[];
-  for (const target of ['darwin-arm64','darwin-x64','win32-x64','linux-x64']) {
-    await mkdir(join(root,target));
-    const name=target.startsWith('darwin-') ? `TiboTattle-0.1.20-mac-${target.slice(7)}.dmg` : target==='win32-x64' ? 'TiboTattle-0.1.20-Windows-x64.exe' : 'TiboTattle-0.1.20-linux-x86_64.AppImage';
-    const object=async name=>{const bytes=Buffer.from('synthetic '+name);await writeFile(join(root,target,name),bytes);return {objectKey:`electron/stable/${target}/${name}`,localPath:`${target}/${name}`,sha256:hash(bytes),bytes:bytes.length};};
-    targets.push({target,feedURL:`${origin}/electron/stable/${target}`,artifacts:[await object(name)],feed:await object('latest.yml')});
-  }
+  await mkdir(join(root,WINDOWS_TARGET));
+  const name=WINDOWS_NAME('0.1.20');
+  const object=async name=>{const bytes=Buffer.from('synthetic '+name);await writeFile(join(root,WINDOWS_TARGET,name),bytes);return {objectKey:`electron/stable/${WINDOWS_TARGET}/${name}`,localPath:`${WINDOWS_TARGET}/${name}`,sha256:hash(bytes),bytes:bytes.length};};
+  targets.push({target:WINDOWS_TARGET,feedURL:`${origin}/electron/stable/${WINDOWS_TARGET}`,artifacts:[await object(name)],feed:await object('latest.yml')});
   const plan={schemaVersion:'tibotattle-electron-stable-publication-plan-v1',origin,version:'0.1.20',buildNumber:'2026091002',sourceRevision:'1'.repeat(40),status:'local_bytes_bound',published:false,targets};
   const planPath=join(root,'plan.json');await writeFile(planPath,JSON.stringify(plan));
   return {root,plan,planPath,options:{planPath,artifactRoot:root,approvedPlanSha256:identityDigest(plan)}};
@@ -48,53 +49,38 @@ async function publishedFixture(t) {
   const version = '0.1.20', tag = `v${version}`, commit = '1'.repeat(40);
   const repository = 'https://github.com/adamallcock/tibotattle';
   const source = { version, tag, commit, repository };
-  const specs = [
-    ['linux', 'x64', 'appimage', `TiboTattle-${version}-linux-x86_64.AppImage`],
-    ['macos', 'arm64', 'dmg', `TiboTattle-${version}-mac-arm64.dmg`],
-    ['macos', 'x64', 'dmg', `TiboTattle-${version}-mac-x64.dmg`],
-    ['windows', 'x64', 'exe', `TiboTattle-${version}-Windows-x64.exe`],
-  ];
-  const artifacts = specs.map(([platform, architecture, format, fileName]) => {
-    const bytes = Buffer.byteLength(fileName);
-    const sha256 = hash(Buffer.from(fileName));
-    return { platform, channel: 'direct', architecture, format, version,
-      distribution: 'github-release',
-      downloadUrl: `${repository}/releases/download/${tag}/${fileName}`,
-      fileName, bytes, sha256, source, store: null, sbom: null, provenance: null,
-      build: { sourceManifestSha256: '2'.repeat(64), unsignedPayloadSha256: '3'.repeat(64) },
-      nativeTrust: platform === 'macos'
-        ? { signerIdentity: 'Developer ID Application: Test (ABCDE12345)', teamId: 'ABCDE12345' }
-        : platform === 'windows' ? { publisher: 'Test', certificateSha256: '4'.repeat(64) }
-          : { scheme: 'none' },
-      assurances: platform === 'macos'
-        ? { cleanInstallSmokePassed: true, developerIdSigned: true, gatekeeperAssessmentPassed: true,
-          hardenedRuntime: true, notarizationAccepted: true, ticketStapled: true }
-        : platform === 'windows' ? { authenticodeSigned: true, cleanInstallSmokePassed: true, timestamped: true }
-          : { artifactIntegrityVerified: true, cleanInstallSmokePassed: true },
-      updater: { enabled: false, mechanism: 'none', metadata: null } };
-  });
+  const fileName = WINDOWS_NAME(version);
+  const bytes = Buffer.byteLength(fileName);
+  const artifacts = [{ platform: 'windows', channel: 'direct', architecture: 'x64', format: 'exe', version,
+    distribution: 'github-release',
+    downloadUrl: `${repository}/releases/download/${tag}/${fileName}`,
+    fileName, bytes, sha256: hash(Buffer.from(fileName)), source, store: null, sbom: null, provenance: null,
+    build: { sourceManifestSha256: '2'.repeat(64), unsignedPayloadSha256: '3'.repeat(64) },
+    nativeTrust: { publisher: 'Test', certificateSha256: '4'.repeat(64) },
+    assurances: { authenticodeSigned: true, cleanInstallSmokePassed: true, timestamped: true },
+    updater: { enabled: false, mechanism: 'none', metadata: null } }];
   const manifest = { schemaVersion: RELEASE_EVIDENCE_SCHEMA_VERSION, product: { name: 'TiboTattle' },
     version, tag, commit, repository, artifacts };
   validateCanonicalManifest(manifest);
   const manifestPath = join(root, 'release-manifest.json');
-  const writeManifest = async () => { const bytes = Buffer.from(`${JSON.stringify(manifest)}\n`);
-    await writeFile(manifestPath, bytes); return hash(bytes); };
+  const writeManifest = async () => { const serialized = Buffer.from(`${JSON.stringify(manifest)}\n`);
+    await writeFile(manifestPath, serialized); return hash(serialized); };
   const approvedManifestSha256 = await writeManifest();
   return { root, manifest, manifestPath, writeManifest,
     options: { manifestPath, approvedManifestSha256, buildNumber: '2026091002' } };
 }
 
-test('published release intake pins canonical evidence and verifies all four remote installer bytes', async t => {
+test('published release intake pins canonical evidence and verifies the remote Windows installer bytes', async t => {
   const f = await publishedFixture(t); const calls = [];
   const release = await readPublishedElectronSiteRelease({ ...f.options,
     verifyPublishedInstaller: async value => { calls.push(value); return { bytes: value.expectedBytes, sha256: value.expectedSha256 }; } });
-  assert.deepEqual(release.downloads.map(item => item.target), ['darwin-arm64', 'darwin-x64', 'win32-x64', 'linux-x64']);
-  assert.equal(calls.length, 4);
+  assert.deepEqual(release.downloads.map(item => item.target), [WINDOWS_TARGET]);
+  assert.equal(calls.length, 1);
   assert.deepEqual(release.verificationScope, ['pinned-release-manifest', 'published-installer-bytes']);
   assert.equal(release.publishedInstallersVerified, true);
   await assert.rejects(readPublishedElectronSiteRelease({ ...f.options, approvedManifestSha256: '0'.repeat(64),
     verifyPublishedInstaller: async () => assert.fail('bad pin must fail first') }), /exact reviewed/u);
-  f.manifest.artifacts[0].downloadUrl = 'https://example.net/other.AppImage';
+  f.manifest.artifacts[0].downloadUrl = 'https://example.net/other.exe';
   const changedDigest = await f.writeManifest();
   await assert.rejects(readPublishedElectronSiteRelease({ ...f.options, approvedManifestSha256: changedDigest,
     verifyPublishedInstaller: async () => assert.fail('foreign URL must fail first') }));
@@ -117,20 +103,20 @@ test('published release intake cannot qualify a preview or combine publication m
   let calls = 0;
   await buildPublicReleaseSite(args, { verifyPublishedInstaller: async value => { calls++;
     return { bytes: value.expectedBytes, sha256: value.expectedSha256, published: false }; } });
-  assert.equal(calls, 4);
+  assert.equal(calls, 1);
   const manifest = JSON.parse(await readFile(join(args.output, 'release-site-manifest.json'), 'utf8'));
   assert.equal(manifest.electronRelease.publishedInstallersVerified, false);
   assert.deepEqual(manifest.electronRelease.verificationScope, ['pinned-release-manifest']);
-  await assert.rejects(buildPublicReleaseSite({ ...args, electronPublicationPlan: f.manifestPath }), /excludes native installer inputs/u);
+  await assert.rejects(buildPublicReleaseSite({ ...args, electronPublicationPlan: f.manifestPath }), /requires all three explicit inputs/u);
   const linkPath = join(f.root, 'release-link.json');
   await symlink(f.manifestPath, linkPath);
   await assert.rejects(readPublishedElectronSiteRelease({ ...f.options, manifestPath: linkPath,
     verifyPublishedInstaller: async () => assert.fail('symlink must fail before fetch') }), /exact reviewed/u);
 });
-test('Electron intake binds the reviewed identity and all target bytes before exposing exact downloads',async t=>{
+test('Electron intake binds the reviewed identity and the target bytes before exposing the exact download',async t=>{
   const f=await fixture(t), calls=[];const release=await readElectronSitePublication({...f.options,verifyPublishedInstaller:async value=>{calls.push(value);return {bytes:value.expectedBytes,sha256:value.expectedSha256};}});
-  assert.equal(calls.length,4);assert.equal(release.downloads.length,4);
-  for (const call of calls) assert.match(call.installerUrl,/^https:\/\/github.com\/adamallcock\/tibotattle\/releases\/download\/v0\.1\.20\/TiboTattle-/u);assert.match(release.downloads[1].url,/mac-x64.dmg$/u);
+  assert.equal(calls.length,1);assert.equal(release.downloads.length,1);
+  for (const call of calls) assert.match(call.installerUrl,/^https:\/\/github.com\/adamallcock\/tibotattle\/releases\/download\/v0\.1\.20\/TiboTattle-0\.1\.20-Windows-x64\.exe$/u);
   await assert.rejects(readElectronSitePublication({...f.options,approvedPlanSha256:'0'.repeat(64)}),/exact reviewed/u);
   await writeFile(join(f.root,f.plan.targets[0].artifacts[0].localPath),'modified');
   await assert.rejects(readElectronSitePublication({...f.options,verifyPublishedInstaller:async()=>assert.fail('must not GET tampered artifact')}),/exact reviewed/u);
@@ -141,49 +127,34 @@ test('Electron intake refuses foreign feed and symlink artifacts before a downlo
   const g=await fixture(t);const path=join(g.root,g.plan.targets[0].artifacts[0].localPath);await rm(path);await symlink(g.planPath,path);
   await assert.rejects(readElectronSitePublication({...g.options,verifyPublishedInstaller:async()=>{}}),/exact reviewed/u);
 });
-test('actual public generator renders four targets and automatic native replacement, keeps aliases and updates docs without dashboard assets',async t=>{
+test('a macOS or Linux artifact in the reviewed plan is refused, not rendered',async t=>{
+  const f=await fixture(t);
+  f.plan.targets[0].target='darwin-arm64';await writeFile(f.planPath,JSON.stringify(f.plan));
+  await assert.rejects(readElectronSitePublication({...f.options,approvedPlanSha256:identityDigest(f.plan),verifyPublishedInstaller:async()=>{}}),/exact reviewed/u);
+});
+test('actual public generator renders the Windows installer, keeps automatic replacement and updates docs without dashboard assets',async t=>{
   const f=await fixture(t);const social=join(f.root,'social.png');await writeFile(social,await readFile(new URL('../apps/web/public/tibotattle-icon.png',import.meta.url)));
   const output=join(f.root,'output'); // Root contains output, but output never contains any intake file.
   const args={output,siteUrl:'https://tibotattle.com/',releaseNotesUrl:'https://github.com/adamallcock/tibotattle/releases/tag/v0.1.20',privacyUrl:'https://tibotattle.com/privacy',securityUrl:'https://tibotattle.com/docs',supportUrl:'https://github.com/adamallcock/tibotattle/issues',socialImage:social,electronPublicationPlan:f.planPath,electronPublicationRoot:f.root,electronApprovedPlanSha256:f.options.approvedPlanSha256};
   let calls=0;await buildPublicReleaseSite(args,{verifyPublishedInstaller:async value=>{calls++;return {bytes:value.expectedBytes,sha256:value.expectedSha256,published:false};}});
-  assert.equal(calls,4);const html=await readFile(join(output,'index.html'),'utf8');
-  assert.equal((html.match(/data-electron-download=/gu)||[]).length,4);
+  assert.equal(calls,1);const html=await readFile(join(output,'index.html'),'utf8');
+  assert.equal((html.match(/data-electron-download=/gu)||[]).length,1);
   assert.doesNotMatch(html,/electron-handover|Updating an existing Mac installation|Download size| bytes<\/p>/u);
-  assert.equal((html.match(/class="installer-checksum-copy electron-checksum-copy"/gu)||[]).length,4);
-  assert.equal((html.match(/href="https:\/\/github.com\/adamallcock\/tibotattle\/releases\/download\/v0\.1\.20\//gu)||[]).length,4);
+  assert.equal((html.match(/class="installer-checksum-copy electron-checksum-copy"/gu)||[]).length,1);
+  assert.equal((html.match(/href="https:\/\/github.com\/adamallcock\/tibotattle\/releases\/download\/v0\.1\.20\//gu)||[]).length,1);
   assert.doesNotMatch(html,/href="https:\/\/updates\.tibotattle\.com\/electron/);
   assert.doesNotMatch(html,/native-app|Keep the old app|install native 0\.1\.18/u);
-  assert.equal((html.match(/private desktop app for macOS, Windows and Linux/gu)||[]).length,3);
+  assert.equal((html.match(/private desktop app for Windows/gu)||[]).length,3);
+  assert.doesNotMatch(html,/macOS|Mac app|Homebrew|brew install|\.dmg\b|AppImage|apple\.svg|data-platform-panel="(?:macos|linux)"|platform-panel-(?:macos|linux)/u);
   assert.match(html,/<meta property="og:image:width" content="1024">/u);
   assert.match(html,/<meta property="og:image:height" content="1024">/u);
   assert.match(html,/<meta name="twitter:card" content="summary">/u);
   assert.match(html,/<meta property="og:image:alt" content="TiboTattle logo">/u);assert.doesNotMatch(html,/Your existing data and credentials are preserved/u);
   assert.doesNotMatch(html,/not available yet|src="\.\/app.js"/u);
-  assert.equal((html.match(/brew install --cask adamallcock\/tap\/tibotattle/gu)||[]).length,2);
-  for (const platform of ['windows','linux']) {
-    const panel=html.match(new RegExp(`<section\\b[^>]*data-platform-panel="${platform}"[^>]*>[\\s\\S]*?<\\/section>`,'u'))[0];
-    assert.doesNotMatch(panel,/homebrew-|brew install/u);
-  }
   assert.equal(await readFile(join(output,'community.html'),'utf8'),html);
   const privacy=await readFile(join(output,'privacy.html'),'utf8');assert.match(privacy,/<body[^>]*data-i18n-root/u);assert.match(privacy,/<script type="module" src="\.\/localization\.js"><\/script>/u);assert.match(privacy,/data-i18n="community\.privacy\.sample"/u);
-  const docs=await readFile(join(output,'docs.html'),'utf8');assert.match(docs,/<body[^>]*data-i18n-root/u);assert.match(docs,/<script type="module" src="\.\/localization\.js"><\/script>/u);assert.match(docs,/Electron downloads are available/u);assert.match(docs,/automatically transfers retained history and settings/u);assert.match(docs,/In native Mac version 0\.1\.18, choose Check for Updates to install the Electron app/u);assert.doesNotMatch(docs,/Signed releases use the Sparkle feed|local-first Mac app/);assert.doesNotMatch(docs,/macOS is the currently available lane/u);
-  const manifest=JSON.parse(await readFile(join(output,'release-site-manifest.json'),'utf8'));assert.equal(manifest.electronRelease.downloads.length,4);assert.equal(manifest.electronRelease.publishedInstallersVerified,false);assert.doesNotMatch(JSON.stringify(manifest.electronRelease.verificationScope),/published-installer/u);assert.equal(manifest.installer,undefined);
-  await assert.rejects(buildPublicReleaseSite({...args,installerUrl:'https://tibotattle.com/a.dmg'}),/excludes native/u);
-});
-test('verified Electron Mac panels retain the existing visible Homebrew actions and copy wiring', async t => {
-  const f=await fixture(t);
-  const release=await readElectronSitePublication({...f.options,verifyPublishedInstaller:async value=>({bytes:value.expectedBytes,sha256:value.expectedSha256})});
-  const source=await readFile(new URL('../apps/web/public/community.html',import.meta.url),'utf8');
-  for (const published of [true,false]) {
-    const html=renderElectronSiteDownloads(source,{...release,publishedInstallersVerified:published});
-    for (const prefix of ['','intel-']) {
-      const opening=html.match(new RegExp(`<div\\b[^>]*id="${prefix}homebrew-install"[^>]*>`,'u'))[0];
-      assert.equal(/\s+hidden(?=[\s>])/u.test(opening),!published);
-      assert.match(html,new RegExp(`id="${prefix}homebrew-install-command"[^>]*>brew install --cask adamallcock/tap/tibotattle<\\/code>`,'u'));
-      assert.match(html,new RegExp(`id="${prefix}homebrew-copy-button"[\\s\\S]*?aria-describedby="${prefix}homebrew-copy-status"`,'u'));
-    }
-  }
-  assert.throws(()=>renderElectronSiteDownloads(source.replace('id="intel-homebrew-install"','id="missing-homebrew-install"'),release),/Missing exact Homebrew install action/u);
+  const docs=await readFile(join(output,'docs.html'),'utf8');assert.match(docs,/<body[^>]*data-i18n-root/u);assert.match(docs,/<script type="module" src="\.\/localization\.js"><\/script>/u);assert.match(docs,/Electron downloads are available for Windows 10 or later on x64/u);assert.match(docs,/automatically transfers retained history and settings/u);assert.doesNotMatch(docs,/Signed releases use the Sparkle feed|local-first Mac app|native Mac version|macOS|Linux/u);
+  const manifest=JSON.parse(await readFile(join(output,'release-site-manifest.json'),'utf8'));assert.equal(manifest.electronRelease.downloads.length,1);assert.equal(manifest.electronRelease.publishedInstallersVerified,false);assert.doesNotMatch(JSON.stringify(manifest.electronRelease.verificationScope),/published-installer/u);assert.equal(manifest.installer,undefined);
 });
 test('CLI accepts only explicit complete Electron intake flags',()=>{
   const args=parseArgs(['--electron-publication-plan','/plan.json','--electron-publication-root','/root','--electron-approved-plan-sha256','a'.repeat(64)]);
@@ -206,6 +177,19 @@ test('Electron Privacy localization preserves all source content and uses only t
     'privacy sections and content must not receive the Docs-specific rewrites');
   for (const key of ['sample', 'smallSample', 'publicationRules']) assert.ok(rendered.includes(`data-i18n="community.privacy.${key}"`));
   assert.equal(renderElectronSiteDocumentation('<body><p>Unrelated resource</p></body>'), '<body><p>Unrelated resource</p></body>');
+});
+
+test('Electron renderer replaces only the Windows panel and refuses a retired macOS or Linux panel', async () => {
+  const source = await readFile(new URL('../apps/web/public/community.html', import.meta.url), 'utf8');
+  const release = { version: '0.1.20', publishedInstallersVerified: false, downloads: [{ target: WINDOWS_TARGET,
+    url: `https://github.com/adamallcock/tibotattle/releases/download/v0.1.20/${WINDOWS_NAME('0.1.20')}`,
+    bytes: 1, sha256: 'a'.repeat(64) }] };
+  const html = renderElectronSiteDownloads(source, release);
+  assert.match(html, /<section\b[^>]*\bid="platform-panel-windows"[^>]*\baria-label="Windows download"/u);
+  assert.equal((html.match(/<section\b/gu) ?? []).length, (source.match(/<section\b/gu) ?? []).length);
+  assert.match(html, /data-i18n="electron\.site\.download\.windows"/u);
+  assert.throws(() => renderElectronSiteDownloads(source.replace('</head>',
+    '<section id="platform-panel-macos"></section></head>'), release), /exact reviewed/u);
 });
 
 async function electronSiteArgs(f, socialBytes) {
@@ -232,7 +216,7 @@ test('Electron mode keeps the large card for a rendered 1200x630 homepage previe
   // The rendered card pictures this page, so it keeps the source-owned alt text.
   assert.match(html, new RegExp(`<meta property="og:image:alt" content="${SOURCE_SOCIAL_ALT}">`, 'u'));
   assert.doesNotMatch(html, /og:image:alt" content="TiboTattle logo"/u);
-  assert.equal((html.match(/data-electron-download=/gu) || []).length, 4);
+  assert.equal((html.match(/data-electron-download=/gu) || []).length, 1);
   assert.deepEqual(await readFile(join(args.output, 'social-preview.png')), grayscalePng(1200, 630));
   const manifest = JSON.parse(await readFile(join(args.output, 'release-site-manifest.json'), 'utf8'));
   assert.equal(manifest.site.socialPreview.width, 1200);
@@ -253,4 +237,18 @@ test('Electron mode refuses any social image that is neither the brand icon nor 
   // A square image that is not the reviewed icon still fails the byte pin.
   await assert.rejects(buildPublicReleaseSite(await electronSiteArgs(f, grayscalePng(1024, 1024)), { verifyPublishedInstaller }),
     /Electron social preview must match the reviewed public brand icon/u);
+});
+
+test('release-site build rejects a source mutation after Electron provenance capture', async t => {
+  const f = await fixture(t);
+  const sourceRoot = await mkdtemp(join(tmpdir(), 'electron-site-source-'));
+  t.after(() => rm(sourceRoot, { recursive: true, force: true }));
+  const source = join(sourceRoot, 'public');
+  await cp(new URL('../apps/web/public/', import.meta.url), source, { recursive: true });
+  const args = { ...(await electronSiteArgs(f, grayscalePng(1200, 630))), source };
+  await assert.rejects(buildPublicReleaseSite(args, { verifyPublishedInstaller: async value => {
+    await writeFile(join(source, 'community.js'), 'export const changedAfterCapture = true;\n');
+    return { bytes: value.expectedBytes, sha256: value.expectedSha256, published: false };
+  } }), /source changed after provenance capture/u);
+  await assert.rejects(readFile(join(args.output, 'release-site-manifest.json')), { code: 'ENOENT' });
 });

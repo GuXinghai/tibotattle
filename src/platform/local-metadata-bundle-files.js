@@ -61,9 +61,6 @@ function assertOwnerOnlyRegular(
   ) {
     failures.fail(`${label}_owner`);
   }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    failures.fail(`${label}_permissions`);
-  }
 }
 
 function assertOwnerControlledDirectory(stats, failures) {
@@ -75,9 +72,6 @@ function assertOwnerControlledDirectory(stats, failures) {
     && stats.uid !== process.getuid()
   ) {
     failures.fail("parent_directory_owner");
-  }
-  if (process.platform !== "win32" && (stats.mode & 0o022) !== 0) {
-    failures.fail("parent_directory_permissions");
   }
 }
 

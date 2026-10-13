@@ -12,11 +12,11 @@ import {
   ACCOUNTLESS_UPLOAD_OWNER_TELEMETRY_SCHEMA_VERSION,
   runTelemetryV11Sync,
 } from "../src/contribution/index.js";
-import { beginUnifiedIndexGeneration, openLocalUnifiedIndex } from "../src/local-unified-index.js";
+import { createLocalIndexWriter, LOCAL_INDEX_STORE_USER_VERSION, openLocalIndexStore } from "../src/local-index-store.js";
 import {
   ATTRIBUTION_FIXTURE_BINDING as binding, ATTRIBUTION_FIXTURE_START as start,
-  attributionFixtureMarker, writeAttributionFixture,
-} from "./helpers/local-attribution-fixture.js";
+  attributionFixtureMarker, attributionFixtureSeams, writeAttributionFixture,
+} from "./helpers/local-index-attribution-fixture.js";
 import { createAttributionFixtureDevice, createAttributionFixtureService } from "./helpers/attribution-transport-fixture.js";
 
 async function fixture(t, { plans, accepted = true, granted = true, fromDay, throughDay } = {}) {
@@ -27,7 +27,7 @@ async function fixture(t, { plans, accepted = true, granted = true, fromDay, thr
   await writeAttributionFixture(indexFile, { plans });
   const backend = await createAttributionFixtureDevice(stateFile);
   const service = createAttributionFixtureService({ accepted, granted, fromDay, throughDay });
-  const options = { indexFile, stateFile, backend, origin: binding.destinationOrigin,
+  const options = { ...attributionFixtureSeams(), indexFile, stateFile, backend, origin: binding.destinationOrigin,
     consent: { ...telemetryV11RequiredConsent(), destinationOrigin: binding.destinationOrigin },
     fetchImpl: service.fetchImpl, createV11Envelope: service.createEnvelope, now: () => start,
     loadExistingAccountObservationSecret: async () => { assert.fail("Historical plans must not read an account root"); },
@@ -120,8 +120,8 @@ test("real local hydration and public runner activate mixed-plan history without
     && row.accountPlanAttribution.planEraId === null && /^[0-9a-f]{64}$/u.test(row.eventId)));
   assert.equal(service.calls.some((call) => call.path.includes("device-telemetry-consents")), false);
   assert.doesNotMatch(JSON.stringify(records()), /sourceLocal|source_local|sourceOffset|source_offset|scopeId|enrollmentNamespace|\/Users\//u);
-  const database = openLocalUnifiedIndex(options.indexFile, { readOnly: true });
-  assert.equal(database.prepare("PRAGMA user_version").get().user_version, 11);
+  const database = openLocalIndexStore(options.indexFile, { readOnly: true });
+  assert.equal(database.prepare("PRAGMA user_version").get().user_version, LOCAL_INDEX_STORE_USER_VERSION);
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM usage_event").get().count, 2);
   database.close();
 });
@@ -469,9 +469,11 @@ test("a writer starting after staging prevents activation and never erases commi
       const response = await service.fetchImpl(url, request);
       if (!mutated && new URL(url).pathname === "/api/v1/contributions") {
         mutated = true;
-        const database = openLocalUnifiedIndex(options.indexFile);
-        beginUnifiedIndexGeneration(database, { contractVersion: "usage-event-v0.2", receivedAtMs: start + 1,
-          discoveredSourceCount: 1, discoveredSourceBytes: 8192 });
+        // A committed writer after staging moves the publication identity.
+        const database = openLocalIndexStore(options.indexFile);
+        const writer = createLocalIndexWriter(database);
+        writer.begin();
+        writer.commit({ kind: "refresh" });
         database.close();
       }
       return response;
@@ -483,7 +485,7 @@ test("a writer starting after staging prevents activation and never erases commi
   assert.equal(result.daysSynced, 0);
   assert.equal(service.active(), null);
   assert.equal(service.calls.some((call) => call.path.endsWith("domain-activate")), false);
-  const database = openLocalUnifiedIndex(options.indexFile, { readOnly: true });
+  const database = openLocalIndexStore(options.indexFile, { readOnly: true });
   assert.equal(database.prepare("SELECT COUNT(*) AS count FROM usage_event").get().count, 2);
   database.close();
 });

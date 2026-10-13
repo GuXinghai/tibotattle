@@ -5,79 +5,53 @@ import {
   selectProductionParticipantIdentity,
 } from "../src/application/index.js";
 
-const EXPORT_CAPABILITY = Object.freeze({ name: "export-identity" });
-const ACCOUNT_CAPABILITY = Object.freeze({ name: "account-observation" });
-
 function baseOptions(overrides = {}) {
   return {
     environmentSecret: null,
     explicitSecretFile: null,
-    platform: "darwin",
-    architecture: "arm64",
     appStateSecretFile: "/fixed/app-state/export-secret",
-    createKeychainBackend: () => Object.freeze({ kind: "fixture" }),
-    keychainCapability: EXPORT_CAPABILITY,
-    allowedKeychainCapability: EXPORT_CAPABILITY,
     ...overrides,
   };
 }
 
-test("application identity selection is runtime-neutral and port-driven", () => {
-  const selected = selectProductionParticipantIdentity(baseOptions());
-  assert.equal(selected.mode, "macos_keychain");
+test("application identity selection without an override fails closed", () => {
+  assert.throws(
+    () => selectProductionParticipantIdentity(baseOptions()),
+    (error) => error.code === "EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE",
+  );
+});
+
+test("identity overrides are selected without any native backend", () => {
+  const selected = selectProductionParticipantIdentity(baseOptions({
+    explicitSecretFile: "/development/secret",
+  }));
+  assert.equal(selected.mode, "owner_file_override");
+  assert.equal(selected.identityOptions.secretFile, "/development/secret");
+  assert.equal(selected.identityOptions.participantSecretBackend, undefined);
+  assert.equal(selected.identityOptions.participantSecretCapability, undefined);
+});
+
+test("environment override keeps the app state secret file path", () => {
+  const selected = selectProductionParticipantIdentity(baseOptions({
+    environmentSecret: "development-only-secret",
+  }));
+  assert.equal(selected.mode, "external_environment_override");
   assert.equal(
     selected.identityOptions.secretFile,
     "/fixed/app-state/export-secret",
   );
   assert.equal(
-    selected.identityOptions.participantSecretCapability,
-    EXPORT_CAPABILITY,
+    selected.identityOptions.environmentSecret,
+    "development-only-secret",
   );
-  assert.equal(selected.identityOptions.participantSecretBackend.kind, "fixture");
 });
 
-test("application identity selection keeps Windows production unavailable", () => {
-  let constructions = 0;
-  assert.throws(() => selectProductionParticipantIdentity(baseOptions({
-    platform: "win32",
-    architecture: "x64",
-    createKeychainBackend() {
-      constructions += 1;
-      return { kind: "fixture" };
-    },
-  })), (error) => error.code === "EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE");
-  assert.equal(constructions, 0);
-});
-
-test("identity overrides win before native backend construction", () => {
-  let constructions = 0;
-  const selected = selectProductionParticipantIdentity(baseOptions({
-    explicitSecretFile: "/development/secret",
-    createKeychainBackend: () => {
-      constructions += 1;
-      return {};
-    },
-  }));
-  assert.equal(selected.mode, "owner_file_override");
-  assert.equal(constructions, 0);
-});
-
-test("identity selection rejects wrong capabilities and collapses backend errors", () => {
+test("conflicting identity overrides fail closed", () => {
   assert.throws(
     () => selectProductionParticipantIdentity(baseOptions({
-      keychainCapability: ACCOUNT_CAPABILITY,
+      environmentSecret: "development-only-secret",
+      explicitSecretFile: "/development/secret",
     })),
-    (error) => error.code === "EXPORT_IDENTITY_PRODUCTION_BACKEND_INVALID",
-  );
-  const canary = "PRIVATE-UPSTREAM-KEYCHAIN-ERROR";
-  assert.throws(
-    () => selectProductionParticipantIdentity(baseOptions({
-      createKeychainBackend() {
-        throw new Error(canary);
-      },
-    })),
-    (error) => error.code
-      === "EXPORT_IDENTITY_PRODUCTION_BACKEND_UNAVAILABLE"
-      && !`${error.stack}\n${JSON.stringify(error)}`.includes(canary),
+    (error) => error.code === "EXPORT_IDENTITY_OVERRIDE_CONFLICT",
   );
 });

@@ -24,9 +24,8 @@ async function classifySource(path, kind) {
   try {
     const stats = await lstat(path);
     const expectedKind = kind === "directory" ? stats.isDirectory() : stats.isFile();
-    const unsafePermissions = process.platform !== "win32" && (stats.mode & 0o022) !== 0;
     const unsafeLinks = stats.isSymbolicLink() || (kind === "file" && stats.nlink !== 1);
-    return expectedKind && ownerMatches(stats) && !unsafePermissions && !unsafeLinks
+    return expectedKind && ownerMatches(stats) && !unsafeLinks
       ? "available"
       : "unsafe";
   } catch (error) {

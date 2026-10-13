@@ -115,8 +115,7 @@ function assertOwnerOnlyDirectory(path) {
     fail("state_parent");
   }
   const uid = currentUid();
-  if (!stats.isDirectory() || stats.isSymbolicLink() || (uid !== null && stats.uid !== uid)
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+  if (!stats.isDirectory() || stats.isSymbolicLink() || (uid !== null && stats.uid !== uid)) {
     fail("state_parent");
   }
 }
@@ -131,8 +130,7 @@ function assertOwnerOnlyFile(path, { missingAllowed = false } = {}) {
   }
   const uid = currentUid();
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
-      || (uid !== null && stats.uid !== uid)
-      || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+      || (uid !== null && stats.uid !== uid)) {
     fail("state_file");
   }
   return stats;
@@ -368,8 +366,7 @@ function validatePhysicalArtifacts(scope, { protectedPaths = [] } = {}) {
     if (stats) {
       const uid = currentUid();
       if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
-          || (uid !== null && stats.uid !== uid)
-          || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+          || (uid !== null && stats.uid !== uid)) {
         fail("artifact_path");
       }
     }
@@ -459,8 +456,7 @@ function deletePhysicalArtifacts(artifacts) {
       }
       const uid = currentUid();
       if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
-          || (uid !== null && stats.uid !== uid)
-          || (process.platform !== "win32" && (stats.mode & 0o077) !== 0)) {
+          || (uid !== null && stats.uid !== uid)) {
         physicalFailed += 1;
         continue;
       }
