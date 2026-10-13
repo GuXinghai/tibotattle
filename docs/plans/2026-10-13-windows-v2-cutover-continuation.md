@@ -245,6 +245,46 @@ product validation or publication is implied.
 
 ### Outstanding release boundaries
 
+### Preservation-only cleanup (2026-10-13, starts at `4ec0a34e`)
+
+- `0eed7dc9` removes whole-profile migration and retired-runtime differential
+  from release requirements. The one-time ordinal seed and unread archive
+  safeguards remain because they protect identity and missing-source evidence.
+- `2fcc7460` removes executable physical schema 4 workspace compatibility and
+  descriptor v0.4 acceptance. A populated synthetic old workspace is refused
+  with its complete database bytes unchanged; future-schema refusal also passes
+  (targeted 2/2). Earlier safe plan/checkpoint identity validation and committed
+  deletion recovery remain evidence-preservation boundaries, not old backends.
+- `ed187a64` removes legacy accounting source-mode validation and the explicit
+  `legacy_zero` adapter. Current default behavior was already source-native;
+  the removed direct-call path could substitute zero for unknown context. A
+  synthetic v2 scan distinguishes missing context from an observed zero and
+  refuses the deprecated option. Cache generation/refusal check passes. The
+  fixture's initial rowid error was corrected to use the actual WITHOUT ROWID
+  primary key; it was not a product defect.
+- `acaad3a3` stops reading/refusing the rebuildable dashboard snapshot during
+  continuity copy. Its condition cannot block original salt/opt-out preservation
+  (targeted 1/1). No original caches, archives, evidence or credentials are
+  deleted. The redesign plan now agrees with the implemented fail-closed rule:
+  unreadable legacy identity evidence never authorizes fresh ordinals.
+
+Final lightweight maintenance preflight passes 20/20; architecture remains
+611 production files/2424 imports/zero approved debt. No root/Worker full suite
+was repeated, and no new Worker production change was justified. Static review
+confirms the 16-owner test's timer includes all enrollment and 32 separate
+computations before either publication. Production graph work selects one
+owner-day/metric per advance and passes remaining-query/deadline bounds from
+the runtime. This is evidence against equating the whole-fixture timeout with a
+publication regression, not runtime qualification or permission to relax it.
+
+The release work now prioritizes actual v2 evidence/identity preservation,
+privacy and replay boundaries, native ACL/reparse qualification, and the exact
+installed/signed artifact. Whole-profile parity and old derived-cache readers
+are excluded. Optional provider credentials and hosted deployment remain
+separate qualification boundaries. Publication remains unauthorized.
+
+### Required release qualification
+
 Owner clarification (2026-10-13): v2 release does not require a complete old
 profile migration, old-runtime differential, or continued execution of old
 formats. Preserve only irreproducible accumulated evidence, identity/ordinal
