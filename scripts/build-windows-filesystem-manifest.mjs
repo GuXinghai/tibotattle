@@ -22,6 +22,7 @@ import {
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
   WINDOWS_SOURCE_READ_CONTRACT, WINDOWS_SOURCE_READ_METHODS, WINDOWS_SOURCE_READ_APPROVED,
   WINDOWS_RELEASE_OPERATION_CONTRACT, WINDOWS_RELEASE_OPERATION_METHODS,
+  WINDOWS_LEGACY_STATE_READ_CONTRACT, WINDOWS_LEGACY_STATE_READ_METHODS,
 } from "../src/platform/windows-filesystem.js";
 
 const require = createRequire(import.meta.url);
@@ -94,6 +95,11 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
   }
   const hasSourceRead = native.sourceReadContractVersion !== undefined;
   const hasReleaseOperation = native.protectedDirectoryGuardContractVersion !== undefined;
+  const hasLegacyStateRead = native.legacyStateReadContractVersion !== undefined;
+  if (hasLegacyStateRead && (native.legacyStateReadContractVersion !== WINDOWS_LEGACY_STATE_READ_CONTRACT
+      || !WINDOWS_LEGACY_STATE_READ_METHODS.every(name => typeof native[name] === 'function'))) {
+    throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_LEGACY_STATE_READ');
+  }
   if (hasReleaseOperation && (native.protectedDirectoryGuardContractVersion !== 'windows-protected-directory-guard-v1'
       || !WINDOWS_RELEASE_OPERATION_METHODS.every(name => typeof native[name] === 'function'))) {
     throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_RELEASE_OPERATION');
@@ -103,6 +109,9 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
     throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_SOURCE_READ');
   }
   return Object.freeze({
+    ...(hasLegacyStateRead ? { legacyStateRead: {
+      contractVersion: WINDOWS_LEGACY_STATE_READ_CONTRACT, approved: true,
+    } } : {}),
     ...(hasReleaseOperation ? { releaseOperation: {
       contractVersion: WINDOWS_RELEASE_OPERATION_CONTRACT, approved: true,
     } } : {}),

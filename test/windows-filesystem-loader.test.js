@@ -24,6 +24,7 @@ import {
   loadWindowsFilesystemBinding,
   loadWindowsSourceReadBinding,
   loadWindowsReleaseOperationBinding, WINDOWS_RELEASE_OPERATION_METHODS,
+  loadWindowsLegacyStateReadBinding, WINDOWS_LEGACY_STATE_READ_METHODS,
   WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../src/platform/windows-filesystem.js";
@@ -45,6 +46,28 @@ const IDENTITY = Object.freeze({
   linkCount: 1,
 });
 const BINDING_BYTES = Buffer.from("reviewed native binding bytes", "utf8");
+
+test('legacy copy loader refuses absent, edited and incomplete native capabilities', () => {
+  const native = binding({ protectedDirectoryGuardContractVersion: 'windows-protected-directory-guard-v1',
+    legacyStateReadContractVersion: 'windows-legacy-state-read-v1',
+    ...Object.fromEntries([...WINDOWS_RELEASE_OPERATION_METHODS, ...WINDOWS_LEGACY_STATE_READ_METHODS].map(name => [name, () => {}])) });
+  const sidecar = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: native });
+  const options = { platform: 'win32', architecture: 'x64',
+    bindingPath: 'C:\\checkout\\native\\windows-filesystem\\build\\Release\\windows_filesystem.node',
+    readManifest: () => JSON.stringify(sidecar), readBindingBytes: () => BINDING_BYTES, requireBinding: () => native };
+  assert.equal(loadWindowsLegacyStateReadBinding(options), native);
+  assert.throws(() => loadWindowsLegacyStateReadBinding({ ...options, readManifest: () => JSON.stringify(manifest()) }),
+    { code: 'WINDOWS_FILESYSTEM_LEGACY_STATE_READ_UNQUALIFIED' });
+  for (const name of WINDOWS_LEGACY_STATE_READ_METHODS) {
+    assert.throws(() => loadWindowsLegacyStateReadBinding({ ...options, requireBinding: () => ({ ...native, [name]: undefined }) }),
+      { code: 'WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH' });
+  }
+  for (const legacyStateRead of [{ ...sidecar.legacyStateRead, approved: false },
+    { ...sidecar.legacyStateRead, extra: true }, { ...sidecar.legacyStateRead, contractVersion: 'future' }]) {
+    assert.throws(() => loadWindowsLegacyStateReadBinding({ ...options, readManifest: () => JSON.stringify({ ...sidecar, legacyStateRead }) }),
+      { code: 'WINDOWS_FILESYSTEM_INVALID_MANIFEST' });
+  }
+});
 
 test('release storage loader binds approval and the complete guard surface to verified bytes', () => {
   const native = binding({ protectedDirectoryGuardContractVersion: 'windows-protected-directory-guard-v1',

@@ -65,6 +65,13 @@ export const WINDOWS_RELEASE_OPERATION_METHODS = Object.freeze([
   'replaceProtectedChild', 'deleteProtectedChild',
   'acquireProtectedChildGuard',
 ]);
+export const WINDOWS_LEGACY_STATE_READ_CONTRACT = 'windows-legacy-state-read-v1';
+export const WINDOWS_LEGACY_STATE_READ_METHODS = Object.freeze([
+  'openLegacyStateFile', 'acquireLegacyStateDirectoryGuard', 'releaseProtectedDirectoryGuard',
+  'statSourceFile', 'readSourceFile', 'closeSourceFile',
+  'copyLegacyStateFile',
+  'legacyStateRootsDisjoint',
+]);
 
 const MANIFEST_KEYS = Object.freeze([
   "schemaVersion",
@@ -153,7 +160,13 @@ function assertBindingManifest(manifest) {
   const sourceRead = manifest.sourceRead;
   const hasReleaseOperation = Object.hasOwn(manifest, 'releaseOperation');
   const releaseOperation = manifest.releaseOperation;
-  const valid = manifestKeys.length === MANIFEST_KEYS.length + (hasSourceRead ? 1 : 0) + (hasReleaseOperation ? 1 : 0)
+  const hasLegacyStateRead = Object.hasOwn(manifest, 'legacyStateRead');
+  const legacyStateRead = manifest.legacyStateRead;
+  const valid = manifestKeys.length === MANIFEST_KEYS.length + (hasSourceRead ? 1 : 0)
+    + (hasReleaseOperation ? 1 : 0) + (hasLegacyStateRead ? 1 : 0)
+    && (!hasLegacyStateRead || (legacyStateRead !== null && typeof legacyStateRead === 'object'
+      && !Array.isArray(legacyStateRead) && Object.keys(legacyStateRead).sort().join(',') === 'approved,contractVersion'
+      && legacyStateRead.contractVersion === WINDOWS_LEGACY_STATE_READ_CONTRACT && legacyStateRead.approved === true))
     && (!hasReleaseOperation || (releaseOperation !== null && typeof releaseOperation === 'object'
       && !Array.isArray(releaseOperation) && Object.keys(releaseOperation).sort().join(',') === 'approved,contractVersion'
       && releaseOperation.contractVersion === WINDOWS_RELEASE_OPERATION_CONTRACT
@@ -305,6 +318,10 @@ function verifyBindingIntegrity({
       || !WINDOWS_RELEASE_OPERATION_METHODS.every(name => typeof binding[name] === 'function'))) {
     throw failure('MANIFEST_BINDING_MISMATCH');
   }
+  if (manifest.legacyStateRead && (binding.legacyStateReadContractVersion !== WINDOWS_LEGACY_STATE_READ_CONTRACT
+      || !WINDOWS_LEGACY_STATE_READ_METHODS.every(name => typeof binding[name] === 'function'))) {
+    throw failure('MANIFEST_BINDING_MISMATCH');
+  }
   return Object.freeze({ binding, manifest });
 }
 
@@ -373,6 +390,15 @@ export function loadWindowsReleaseOperationBinding(options = {}) {
   if (manifest.releaseOperation?.approved !== true
       || manifest.approvedPolicy.credentialAuditFileGuardSafe !== true) {
     throw failure('RELEASE_OPERATION_UNQUALIFIED');
+  }
+  return binding;
+}
+
+export function loadWindowsLegacyStateReadBinding(options = {}) {
+  const { binding, manifest } = loadVerifiedWindowsFilesystemBinding(options);
+  if (manifest.legacyStateRead?.approved !== true
+      || manifest.releaseOperation?.approved !== true) {
+    throw failure('LEGACY_STATE_READ_UNQUALIFIED');
   }
   return binding;
 }

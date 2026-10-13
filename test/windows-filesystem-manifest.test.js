@@ -13,9 +13,21 @@ import {
   buildWindowsFilesystemBindingManifest,
   createWindowsFilesystemBindingManifest,
 } from "../scripts/build-windows-filesystem-manifest.mjs";
-import { WINDOWS_RELEASE_OPERATION_METHODS } from "../src/platform/windows-filesystem.js";
+import { WINDOWS_RELEASE_OPERATION_METHODS, WINDOWS_LEGACY_STATE_READ_METHODS } from "../src/platform/windows-filesystem.js";
 
 const BYTES = Buffer.from("reviewed native bytes", "utf8");
+
+test('legacy copy manifest binds all frozen read and streaming copy methods', () => {
+  const extension = { legacyStateReadContractVersion: 'windows-legacy-state-read-v1',
+    ...Object.fromEntries(WINDOWS_LEGACY_STATE_READ_METHODS.map(name => [name, () => {}])) };
+  const result = createWindowsFilesystemBindingManifest({ bytes: BYTES, binding: binding(extension) });
+  assert.deepEqual(result.legacyStateRead, { contractVersion: 'windows-legacy-state-read-v1', approved: true });
+  assert.equal(result.approvedPolicy.productionSafe, false);
+  for (const name of WINDOWS_LEGACY_STATE_READ_METHODS) {
+    assert.throws(() => createWindowsFilesystemBindingManifest({ bytes: BYTES,
+      binding: binding({ ...extension, [name]: undefined }) }), { code: 'WINDOWS_FILESYSTEM_MANIFEST_INVALID_LEGACY_STATE_READ' });
+  }
+});
 
 test("release storage extension requires the complete narrow native lifecycle", () => {
   const extension = Object.fromEntries(WINDOWS_RELEASE_OPERATION_METHODS.map(name => [name, () => {}]));

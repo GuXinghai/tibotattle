@@ -914,7 +914,7 @@ bool OpenRelativeComponents(
             access,
             shareMode,
             disposition,
-            options.extraOptions | typeOption,
+            (final ? options.extraOptions : 0) | typeOption,
             securityDescriptor,
             &next,
             &information,
@@ -2328,6 +2328,8 @@ struct CredentialAuditFileGuard {
   bool active = false;
   bool sourceFile = false;
   bool directoryGuard = false;
+  bool legacyDirectory = false;
+  bool frozenSource = false;
 };
 
 std::array<CredentialAuditFileGuard*, 64> gCredentialAuditFileGuards{};
@@ -2513,7 +2515,7 @@ napi_value ReleaseCredentialAuditFileGuardCallback(
 // and root-bound child operations cannot be redirected by a directory rename.
 // Ordinary inherited ancestor ACLs are accepted; only the private root must
 // have the exact current-owner protected DACL.
-napi_value AcquireProtectedDirectoryGuardCallback(napi_env env, napi_callback_info info) {
+napi_value AcquireDirectoryGuard(napi_env env, napi_callback_info info, bool legacyRead) {
   std::vector<napi_value> arguments;
   std::wstring path;
   if (!GetArguments(env, info, &arguments, 1)
@@ -2534,10 +2536,16 @@ napi_value AcquireProtectedDirectoryGuardCallback(napi_env env, napi_callback_in
       || missing || opened.final == INVALID_HANDLE_VALUE) return ThrowFailure(env, failure);
   HandleIdentity identity;
   SecuritySnapshot security;
-  if (!ValidateSecurity(opened.final, true, &failure, &identity, &security)
-      || !ResolveFinalPath(opened.final, &parsed)) return ThrowFailure(env, failure);
-  if (security.denyAce || security.ownerAllowAceCount != 1
-      || security.ownerAllowMask != FILE_ALL_ACCESS) {
+  if (legacyRead) {
+    if (!GetIdentity(opened.final, &identity) || !ReadSecurity(opened.final, &security)
+        || !identity.directory || identity.linkCount != 1 || !security.ownerMatches
+        || security.nullDacl) return ThrowFailure(env, SecurityPolicy("legacy_state_root_security"));
+  } else if (!ValidateSecurity(opened.final, true, &failure, &identity, &security)) {
+    return ThrowFailure(env, failure);
+  }
+  if (!ResolveFinalPath(opened.final, &parsed)) return ThrowFailure(env, OperationFailed());
+  if (!legacyRead && (security.denyAce || security.ownerAllowAceCount != 1
+      || security.ownerAllowMask != FILE_ALL_ACCESS)) {
     return ThrowFailure(env, SecurityPolicy("protected_directory_guard_security"));
   }
   auto* guard = new (std::nothrow) CredentialAuditFileGuard;
@@ -2548,6 +2556,7 @@ napi_value AcquireProtectedDirectoryGuardCallback(napi_env env, napi_callback_in
   opened.final = INVALID_HANDLE_VALUE;
   guard->active = true;
   guard->directoryGuard = true;
+  guard->legacyDirectory = legacyRead;
   {
     const std::lock_guard<std::mutex> lock(gCredentialAuditFileGuardsMutex);
     if (!RegisterCredentialAuditFileGuard(guard)) {
@@ -2565,6 +2574,53 @@ napi_value AcquireProtectedDirectoryGuardCallback(napi_env env, napi_callback_in
   napi_create_object(env, &result);
   napi_set_named_property(env, result, "guard", external);
   napi_set_named_property(env, result, "identity", IdentityValue(env, identity));
+  return result;
+}
+
+napi_value AcquireProtectedDirectoryGuardCallback(napi_env env, napi_callback_info info) {
+  return AcquireDirectoryGuard(env, info, false);
+}
+
+napi_value AcquireLegacyStateDirectoryGuardCallback(napi_env env, napi_callback_info info) {
+  return AcquireDirectoryGuard(env, info, true);
+}
+
+// Compare held native identities rather than path spelling (including 8.3
+// aliases). Neither root may contain the other; no absolute path is returned.
+napi_value LegacyStateRootsDisjointCallback(napi_env env, napi_callback_info info) {
+  std::vector<napi_value> arguments;
+  void *sourceData = nullptr, *destinationData = nullptr;
+  if (!GetArguments(env, info, &arguments, 2)
+      || napi_get_value_external(env, arguments[0], &sourceData) != napi_ok
+      || napi_get_value_external(env, arguments[1], &destinationData) != napi_ok
+      || sourceData == nullptr || destinationData == nullptr) {
+    return ThrowFailure(env, CredentialAuditGuardForeign());
+  }
+  const std::lock_guard<std::mutex> lock(gCredentialAuditFileGuardsMutex);
+  auto* source = static_cast<CredentialAuditFileGuard*>(sourceData);
+  auto* destination = static_cast<CredentialAuditFileGuard*>(destinationData);
+  if (!IsIssuedCredentialAuditFileGuard(source) || !IsIssuedCredentialAuditFileGuard(destination)
+      || !source->active || !destination->active || !source->directoryGuard
+      || !source->legacyDirectory || !destination->directoryGuard || destination->legacyDirectory
+      || source->handles.empty() || destination->handles.empty()) {
+    return ThrowFailure(env, CredentialAuditGuardForeign());
+  }
+  HandleIdentity sourceIdentity, destinationIdentity;
+  if (!GetIdentity(source->handles.back(), &sourceIdentity)
+      || !GetIdentity(destination->handles.back(), &destinationIdentity)) return ThrowFailure(env, OperationFailed());
+  bool disjoint = true;
+  for (HANDLE handle : destination->handles) {
+    HandleIdentity current;
+    if (!GetIdentity(handle, &current)) return ThrowFailure(env, OperationFailed());
+    if (EqualIdentity(current, sourceIdentity)) disjoint = false;
+  }
+  for (HANDLE handle : source->handles) {
+    HandleIdentity current;
+    if (!GetIdentity(handle, &current)) return ThrowFailure(env, OperationFailed());
+    if (EqualIdentity(current, destinationIdentity)) disjoint = false;
+  }
+  napi_value result;
+  napi_get_boolean(env, disjoint, &result);
   return result;
 }
 
@@ -2656,7 +2712,7 @@ napi_value AcquireProtectedChildGuardCallback(napi_env env, napi_callback_info i
 // Source logs belong to Codex: authenticate the owner without changing their
 // inherited ACLs. Keep every ancestor and the file open without delete sharing
 // until the lease closes. Reads use this handle, never a path-based reopen.
-napi_value OpenSourceFileCallback(napi_env env, napi_callback_info info) {
+napi_value OpenSourceFile(napi_env env, napi_callback_info info, bool frozen) {
   std::vector<napi_value> arguments;
   std::wstring path;
   if (!GetArguments(env, info, &arguments, 1) || !GetString(env, arguments[0], &path))
@@ -2668,7 +2724,7 @@ napi_value OpenSourceFileCallback(napi_env env, napi_callback_info info) {
   options.finalDirectoryKnown = true;
   options.finalDirectory = false;
   options.access = GENERIC_READ | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
-  options.shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  options.shareMode = frozen ? FILE_SHARE_READ : FILE_SHARE_READ | FILE_SHARE_WRITE;
   options.protectedAncestorDepth = (std::numeric_limits<std::size_t>::max)();
   options.protectedAncestorShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
   RelativeHandles opened;
@@ -2679,7 +2735,8 @@ napi_value OpenSourceFileCallback(napi_env env, napi_callback_info info) {
   SecuritySnapshot security;
   if (!GetIdentity(opened.final, &identity) || !ReadSecurity(opened.final, &security)
       || !ResolveFinalPath(opened.final, &parsed)) return ThrowFailure(env, OperationFailed());
-  if (identity.directory || identity.linkCount != 1 || !security.ownerMatches)
+  if (identity.directory || identity.linkCount != 1 || !security.ownerMatches
+      || (frozen && security.nullDacl))
     return ThrowFailure(env, SecurityPolicy("source_file_security"));
   auto* guard = new (std::nothrow) CredentialAuditFileGuard;
   if (guard == nullptr) return ThrowFailure(env, OperationFailed());
@@ -2687,6 +2744,7 @@ napi_value OpenSourceFileCallback(napi_env env, napi_callback_info info) {
   guard->handles.push_back(opened.releaseFinal());
   guard->active = true;
   guard->sourceFile = true;
+  guard->frozenSource = frozen;
   {
     const std::lock_guard<std::mutex> lock(gCredentialAuditFileGuardsMutex);
     if (!RegisterCredentialAuditFileGuard(guard)) {
@@ -2701,6 +2759,16 @@ napi_value OpenSourceFileCallback(napi_env env, napi_callback_info info) {
     return ThrowFailure(env, OperationFailed());
   }
   return external;
+}
+
+napi_value OpenSourceFileCallback(napi_env env, napi_callback_info info) {
+  return OpenSourceFile(env, info, false);
+}
+
+// Explicit legacy-state copy only: an existing writer makes acquisition fail;
+// later writers, deletion and replacement are refused until this lease closes.
+napi_value OpenLegacyStateFileCallback(napi_env env, napi_callback_info info) {
+  return OpenSourceFile(env, info, true);
 }
 
 // Callers hold gCredentialAuditFileGuardsMutex while using the returned handle.
@@ -2783,6 +2851,96 @@ napi_value CloseSourceFileCallback(napi_env env, napi_callback_info info) {
     if (SourceFileGuard(env, arguments[0]) == nullptr) return ThrowFailure(env, CredentialAuditGuardForeign());
   }
   return ReleaseCredentialAuditFileGuardCallback(env, info);
+}
+
+// Copy only a frozen, current-owner source. All I/O is bounded to two 64 KiB
+// buffers. An incomplete new destination is delete-pending on the exact handle,
+// so process death removes it; success clears that flag only after readback.
+napi_value CopyLegacyStateFileCallback(napi_env env, napi_callback_info info) {
+  std::vector<napi_value> arguments;
+  std::wstring rootPath, childPath;
+  HandleIdentity expectedRoot;
+  if (!GetArguments(env, info, &arguments, 4)
+      || !GetString(env, arguments[1], &rootPath)
+      || !ParseExpectedIdentity(env, arguments[2], &expectedRoot)
+      || !GetString(env, arguments[3], &childPath)) return ThrowFailure(env, InvalidConfiguration());
+  const std::lock_guard<std::mutex> lock(gCredentialAuditFileGuardsMutex);
+  auto* sourceGuard = SourceFileGuard(env, arguments[0]);
+  if (sourceGuard == nullptr || !sourceGuard->frozenSource) return ThrowFailure(env, CredentialAuditGuardForeign());
+  HANDLE source = sourceGuard->handles.back();
+  FILE_STANDARD_INFO sourceInfo{};
+  if (!GetFileInformationByHandleEx(source, FileStandardInfo, &sourceInfo, sizeof(sourceInfo))) {
+    return ThrowFailure(env, OperationFailed());
+  }
+  if (sourceInfo.EndOfFile.QuadPart < 0 || sourceInfo.EndOfFile.QuadPart > 1073741824LL) {
+    return ThrowFailure(env, TooLarge());
+  }
+  OwnerOnlySecurityResources security;
+  if (!security.initialize()) return ThrowFailure(env, OperationFailed());
+  Failure failure = OperationFailed();
+  OpenRelativeOptions options;
+  options.finalDirectoryKnown = true;
+  options.finalDirectory = false;
+  options.access = GENERIC_READ | GENERIC_WRITE | DELETE | READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+  options.shareMode = FILE_SHARE_READ;
+  options.disposition = kFileCreate;
+  options.extraOptions = 0x00001000; // FILE_DELETE_ON_CLOSE, from initial creation.
+  options.ownerOnlyOnCreate = true;
+  options.securityDescriptor = security.attributes.lpSecurityDescriptor;
+  ScopedHandle root;
+  ParsedRelativePath parsed;
+  RelativeHandles opened;
+  if (!OpenRootBoundChild(rootPath, expectedRoot, childPath, options, &root, &parsed, &opened, &failure)) {
+    return ThrowFailure(env, failure);
+  }
+  HANDLE destination = opened.final;
+  HandleIdentity targetIdentity;
+  if (!SetOwnerOnlyDacl(destination) || !ValidateSecurity(destination, false, &failure, &targetIdentity)) {
+    return ThrowFailure(env, OperationFailed());
+  }
+  std::array<BYTE, 65536> bytes{}, verify{};
+  const auto finish = [&](const Failure& category) {
+    SecureZeroMemory(bytes.data(), bytes.size());
+    SecureZeroMemory(verify.data(), verify.size());
+    return ThrowFailure(env, category);
+  };
+  LARGE_INTEGER zero{};
+  if (!SetFilePointerEx(source, zero, nullptr, FILE_BEGIN)) return finish(OperationFailed());
+  LONGLONG copied = 0;
+  while (copied < sourceInfo.EndOfFile.QuadPart) {
+    DWORD count = 0, written = 0;
+    const DWORD requested = static_cast<DWORD>(std::min<LONGLONG>(bytes.size(), sourceInfo.EndOfFile.QuadPart - copied));
+    if (!ReadFile(source, bytes.data(), requested, &count, nullptr) || count != requested
+        || !WriteFile(destination, bytes.data(), count, &written, nullptr) || written != count) {
+      return finish(OperationFailed());
+    }
+    copied += count;
+  }
+  if (!FlushFileBuffers(destination)
+      || !SetFilePointerEx(source, zero, nullptr, FILE_BEGIN)
+      || !SetFilePointerEx(destination, zero, nullptr, FILE_BEGIN)) return finish(OperationFailed());
+  copied = 0;
+  while (copied < sourceInfo.EndOfFile.QuadPart) {
+    DWORD count = 0, checked = 0;
+    const DWORD requested = static_cast<DWORD>(std::min<LONGLONG>(bytes.size(), sourceInfo.EndOfFile.QuadPart - copied));
+    if (!ReadFile(source, bytes.data(), requested, &count, nullptr) || count != requested
+        || !ReadFile(destination, verify.data(), requested, &checked, nullptr) || checked != count
+        || std::memcmp(bytes.data(), verify.data(), count) != 0) return finish(OperationFailed());
+    copied += count;
+  }
+  FILE_DISPOSITION_INFO_EX retain{};
+  // These Windows 10 ABI constants are hidden by the binding's older generic
+  // SDK target. An older kernel refuses this narrow copy operation safely.
+  retain.Flags = 0x00000008; // FILE_DISPOSITION_ON_CLOSE, without DELETE.
+  if (!SetFileInformationByHandle(destination, static_cast<FILE_INFO_BY_HANDLE_CLASS>(21), &retain, sizeof(retain))
+      || !ValidateSecurity(destination, false, &failure, &targetIdentity)
+      || !FlushFileBuffers(destination)) {
+    MarkHandleForDeletion(destination);
+    return finish(OperationFailed());
+  }
+  SecureZeroMemory(bytes.data(), bytes.size());
+  SecureZeroMemory(verify.data(), verify.size());
+  return IdentityValue(env, targetIdentity);
 }
 
 enum class CredentialMutexLeaseKind {
@@ -3201,6 +3359,13 @@ NAPI_MODULE_INIT() {
       "releaseAccountlessInstallationCredentialMutex",
       ReleaseAccountlessInstallationCredentialMutexCallback);
   DefineMethod(env, exports, "openSourceFile", OpenSourceFileCallback);
+  DefineMethod(env, exports, "openLegacyStateFile", OpenLegacyStateFileCallback);
+  DefineMethod(env, exports, "copyLegacyStateFile", CopyLegacyStateFileCallback);
+  DefineMethod(env, exports, "acquireLegacyStateDirectoryGuard", AcquireLegacyStateDirectoryGuardCallback);
+  DefineMethod(env, exports, "legacyStateRootsDisjoint", LegacyStateRootsDisjointCallback);
+  napi_value legacyStateVersion;
+  napi_create_string_utf8(env, "windows-legacy-state-read-v1", NAPI_AUTO_LENGTH, &legacyStateVersion);
+  napi_set_named_property(env, exports, "legacyStateReadContractVersion", legacyStateVersion);
   DefineMethod(env, exports, "statSourceFile", StatSourceFileCallback);
   DefineMethod(env, exports, "readSourceFile", ReadSourceFileCallback);
   DefineMethod(env, exports, "closeSourceFile", CloseSourceFileCallback);

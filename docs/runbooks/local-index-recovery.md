@@ -7,6 +7,13 @@ status: maintained
 
 # Local index recovery
 
+For inherited Windows ACL state, the explicit
+[continuity-copy tool](./2026-10-13-windows-legacy-acl-copy.md) preserves a fixed
+bundle into a separate protected root without changing original ACLs, salt or
+sharing choices. Its partial destination must not be activated as a whole
+profile. Unsupported archives and open database sidecars require a separate
+preservation plan.
+
 Use this runbook when the local index store will not open, a refresh keeps
 failing, the audit reports drift, or the store file is missing or damaged. The
 store is derived from the Codex rollouts, but three kinds of state in it or next

@@ -40,6 +40,7 @@ an informal archive.
 | Schemas | [Schema and contract lifecycle](./reference/schema-contracts.md) | Canonical owners, mirrors, generators, versioning, and retirement |
 | Local index | [Local index store schema](./reference/local-index-schema.md) | v2 store identifiers, tables, source cursors, incremental refresh, rollup and audit contracts, and fail-closed open rules |
 | Local recovery | [Local index recovery](./runbooks/local-index-recovery.md) | Preservation-first diagnosis, copy-first rehearsal, the audit, and what cannot be rebuilt from rollouts; never relabel or destroy the only store |
+| Legacy Windows ACL recovery | [Windows legacy ACL continuity copy](./runbooks/2026-10-13-windows-legacy-acl-copy.md) | Explicit frozen-source, copy-only bounded continuity bundle; original profile remains authoritative and profile activation stays blocked |
 | Platform support | [Platform support and qualification](./reference/platform-support.md) | Windows is the only supported platform; released artifact assurances and qualification gates are Windows-only |
 | Production | [Production service operations](./runbooks/production-operations.md) | Read-only observation, deploy/migration gates, private owner erasure, containment, rollback, and recovery boundaries |
 | Telemetry activation | [Protected telemetry runtime activation](./runbooks/2026-09-22-telemetry-runtime-activation.md) | Migration, reconciliation, deploy, post-deploy verification, and owner-only independent usage/performance activation |

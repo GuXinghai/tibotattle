@@ -202,6 +202,23 @@ gates.
 
 ## Shared source handles (pending native qualification)
 
+The optional `windows-legacy-state-read-v1` capability adds frozen current-owner
+source handles and directory guards for the explicit continuity-copy tool.
+Inherited source DACLs remain unchanged. Frozen handles deny write/delete
+sharing, and native ancestor identities reject aliased or contained roots.
+Destination creation is no-clobber and protected owner-only, with bounded
+64 KiB copy/readback buffers. Delete-on-close applies from creation to the final
+new file only; intermediate directories are opened without that disposition.
+After flush and complete byte verification, `FileDispositionInfoEx` clears the
+on-close deletion. Unsupported kernels refuse the operation. Ordinary
+`FileDispositionInfo.Delete = FALSE` cannot cancel creation-time delete-on-close;
+see [Microsoft's API contract](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_disposition_info).
+Synthetic child-process termination verifies absence or a complete retained
+payload. This narrow capability does not enable general production/path-walk
+flags or qualify installed artifacts. Follow the
+[continuity-copy runbook](../../docs/runbooks/2026-10-13-windows-legacy-acl-copy.md);
+the copied bundle must not be activated as a whole profile.
+
 The `windows-source-read-v1` extension supplies `openSourceFile(path)`,
 `statSourceFile(lease)`, `readSourceFile(lease, offset, length)` and
 `closeSourceFile(lease)`. It accepts ordinary inherited source ACLs only when the

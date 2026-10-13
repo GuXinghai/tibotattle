@@ -1,4 +1,8 @@
 export { createSourceFileAccess } from './source-file-access.js';
+export {
+  copyWindowsLegacyState, classifyWindowsLegacyStateMigrationFailure,
+  WINDOWS_LEGACY_STATE_FILES, WINDOWS_LEGACY_STATE_MIGRATION_CONTRACT,
+} from './windows-legacy-state-migration.js';
 export { spawnWindowsCommand, terminateWindowsCommand } from './windows-command.js';
 export {
   attachAccountlessParentChannel,
@@ -57,6 +61,7 @@ export {
   isWindowsFilesystemAdapter,
   isWindowsFilesystemIdentity,
   loadWindowsReleaseOperationBinding,
+  loadWindowsLegacyStateReadBinding,
 } from "./windows-filesystem.js";
 export { configureGuardedSqliteConnection } from "./windows-protected-sqlite.js";
 export {

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   link,
+  open,
   mkdtemp,
   rename,
   rm,
@@ -16,6 +17,7 @@ import test from "node:test";
 import {
   createWindowsFilesystemAdapter,
   loadWindowsFilesystemBinding,
+  loadWindowsLegacyStateReadBinding,
 } from "../src/platform/windows-filesystem.js";
 import { createWindowsCredentialAuditFileGuardContext } from "../src/platform/windows-credential-audit-file-guard.js";
 import { createWindowsCredentialOperationAuditStore } from "../src/platform/windows-credential-operation-audit.js";
@@ -30,6 +32,58 @@ import { createParser, digest, METHOD, MAX_STATE_BYTES } from '../src/providers/
 
 const NATIVE_WINDOWS = process.platform === "win32" && process.arch === "x64";
 const NATIVE_SKIP = NATIVE_WINDOWS ? false : "native Windows x64 only";
+
+test('legacy frozen copy preserves large bytes and refuses writers, links and clobber', { skip: NATIVE_SKIP },
+  async () => withSyntheticRoot(async ({ root, adapter }) => {
+    const native = loadWindowsLegacyStateReadBinding();
+    const sourceRoot = join(root, 'legacy');
+    const source = join(sourceRoot, 'state.bin');
+    adapter.ensureDirectory(sourceRoot);
+    assert.equal(spawnSync('icacls.exe', [sourceRoot, '/inheritance:e'], { stdio: 'pipe', windowsHide: true }).status, 0);
+    const bytes = Buffer.alloc(2 * 1024 * 1024 + 7, 0x5a);
+    await writeSyntheticOwnedSource(source, 'synthetic\n');
+    await writeFile(source, bytes);
+    const destination = join(root, 'protected');
+    adapter.ensureDirectory(destination);
+    const rootGuard = native.acquireLegacyStateDirectoryGuard(sourceRoot);
+    const targetGuard = native.acquireProtectedDirectoryGuard(destination);
+    let frozen, ordinary;
+    try {
+      assert.equal(native.legacyStateRootsDisjoint(rootGuard.guard, targetGuard.guard), true);
+      const sameRoot = native.acquireLegacyStateDirectoryGuard(destination);
+      try { assert.equal(native.legacyStateRootsDisjoint(sameRoot.guard, targetGuard.guard), false); }
+      finally { native.releaseProtectedDirectoryGuard(sameRoot.guard); }
+      const writer = await open(source, 'r+');
+      try { assert.throws(() => native.openLegacyStateFile(source)); }
+      finally { await writer.close(); }
+      frozen = native.openLegacyStateFile(source);
+      await assert.rejects(writeFile(source, 'replacement'));
+      await assert.rejects(rename(sourceRoot, `${sourceRoot}-moved`));
+      const copied = native.copyLegacyStateFile(frozen, destination, targetGuard.identity, 'state.bin');
+      assert.equal(native.inspectProtectedChild(destination, targetGuard.identity, 'state.bin').daclProtected, true);
+      const resultLease = native.openLegacyStateFile(join(destination, 'state.bin'));
+      try {
+        const stat = native.statSourceFile(resultLease);
+        assert.equal(stat.ino, copied.fileId);
+        assert.equal(stat.size, bytes.length);
+        for (let offset = 0; offset < bytes.length; offset += 65536) {
+          assert.deepEqual(native.readSourceFile(resultLease, offset, Math.min(65536, bytes.length - offset)),
+            bytes.subarray(offset, Math.min(offset + 65536, bytes.length)));
+        }
+      } finally { native.closeSourceFile(resultLease); }
+      assert.throws(() => native.copyLegacyStateFile(frozen, destination, targetGuard.identity, 'state.bin'));
+      ordinary = native.openSourceFile(source);
+      assert.throws(() => native.copyLegacyStateFile(ordinary, destination, targetGuard.identity, 'ordinary.bin'),
+        { code: 'WINDOWS_FILESYSTEM_CREDENTIAL_AUDIT_GUARD_FOREIGN' });
+    } finally {
+      if (ordinary) native.closeSourceFile(ordinary);
+      if (frozen) native.closeSourceFile(frozen);
+      native.releaseProtectedDirectoryGuard(targetGuard.guard);
+      native.releaseProtectedDirectoryGuard(rootGuard.guard);
+    }
+    await link(source, join(sourceRoot, 'linked.bin'));
+    assert.throws(() => native.openLegacyStateFile(source), { code: 'WINDOWS_FILESYSTEM_SECURITY_POLICY' });
+  }));
 
 async function withSyntheticRoot(run) {
   const parent = await mkdtemp(join(tmpdir(), "tibotattle-windows-security-"));
