@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createHash, createHmac } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, opendir, realpath } from "node:fs/promises";
+import { lstat as nodeLstat, open as nodeOpen, opendir, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { isProxy } from "node:util/types";
@@ -18,6 +18,12 @@ import {
   deriveSessionScopeId,
   deriveSnapshotObservationId,
 } from "./participant-identity.js";
+
+import { exactLstat, exactOpen } from "./exact-filesystem-stats.js";
+const lstat = nodeLstat;
+const open = nodeOpen;
+const exactSourceLstat = (path) => exactLstat(path, nodeLstat);
+const exactSourceOpen = (path, flags) => exactOpen(path, flags, nodeOpen);
 
 const DEFAULT_CLAUDE_STATUS_MAX_RECORDS = 20_000;
 const DEFAULT_CLAUDE_STATUS_MAX_LEDGER_BYTES = 32 * 1024 * 1024;
@@ -91,8 +97,8 @@ function exportDirectoryIdentity(stats) {
 }
 
 function matchesExportDirectoryIdentity(stats, expected) {
-  return stats.dev === expected?.device
-    && stats.ino === expected?.inode
+  return String(stats.dev) === String(expected?.device)
+    && String(stats.ino) === String(expected?.inode)
     && Math.trunc(stats.birthtimeMs) === expected?.birthtimeMs;
 }
 
@@ -132,7 +138,7 @@ export function createLocalExportSourcePorts(configuration = {}) {
 
   async function safeLstat(path, code = "state_directory_missing") {
     try {
-      return await lstat(path);
+      return await exactSourceLstat(path);
     } catch {
       statusFail(code);
     }
@@ -159,7 +165,7 @@ export function createLocalExportSourcePorts(configuration = {}) {
     assertOwnerDirectory(before);
     let handle;
     try {
-      handle = await open(path, constants.O_RDONLY | NOFOLLOW);
+      handle = await exactSourceOpen(path, constants.O_RDONLY | NOFOLLOW);
       const opened = await handle.stat();
       assertOwnerDirectory(opened);
       if (opened.dev !== before.dev || opened.ino !== before.ino
@@ -267,6 +273,8 @@ export function createLocalExportSourcePorts(configuration = {}) {
     joinPath: join,
     lstat,
     open,
+    exactSourceLstat,
+    exactSourceOpen,
     openDirectory: opendir,
     platform,
     readBoundedUtf8LineEntries,

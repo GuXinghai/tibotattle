@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, realpath } from "node:fs/promises";
+import { lstat as nodeLstat, open as nodeOpen, realpath } from "node:fs/promises";
 import { dirname, parse, resolve } from "node:path";
 import { isProxy } from "node:util/types";
 import { readBoundedDirectoryEntries } from "./bounded-directory-reader.js";
+
+import { exactLstat, exactOpen } from "./exact-filesystem-stats.js";
+const lstat = (path) => exactLstat(path, nodeLstat);
+const open = (path, flags, mode) => exactOpen(path, flags, nodeOpen, mode);
 
 function invalid() { throw new TypeError("Owner-only export deletion preflight configuration is invalid"); }
 function ownFunction(configuration, key) {
@@ -46,7 +50,7 @@ export function createOwnerOnlyExportDeletionPreflightInspector(configuration = 
     return Object.freeze(value);
   }
   function directoryStats(stats) {
-    return Object.freeze({ dev: Number(stats.dev), ino: Number(stats.ino) });
+    return Object.freeze({ dev: stats.dev, ino: stats.ino });
   }
   function sameStats(left, right) {
     return left.dev === right.dev && left.ino === right.ino && left.size === right.size
@@ -102,7 +106,7 @@ export function createOwnerOnlyExportDeletionPreflightInspector(configuration = 
       const digest = createHash("sha256"); const buffer = Buffer.allocUnsafe(64 * 1024); let position = 0;
       while (position < opened.size) { const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, opened.size - position), position); if (bytesRead < 1) fail("artifact_changed"); digest.update(buffer.subarray(0, bytesRead)); position += bytesRead; }
       const after = await handle.stat(); if (!sameStats(opened, after)) fail("artifact_changed");
-      return Object.freeze({ device: Number(after.dev), inode: Number(after.ino), fileType: "regular_file", linkCount: 1, byteSize: Number(after.size), sha256: digest.digest("hex") });
+      return Object.freeze({ device: after.dev, inode: after.ino, fileType: "regular_file", linkCount: 1, byteSize: Number(after.size), sha256: digest.digest("hex") });
     } catch (error) { rethrowTrustedOrFail(error, "artifact_read"); }
     finally { await handle?.close().catch(() => {}); }
   }

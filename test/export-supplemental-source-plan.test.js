@@ -1,7 +1,8 @@
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportCompatibilityTuple } from "../src/export-contract.js";
@@ -213,7 +214,7 @@ async function completeCodexSource(workspace, source) {
 test("supplemental plans are strict, deterministic, and resource-accountable", async () => {
   const plan = supplementalPlan();
   assert.deepEqual(summarizeSupplementalSourcePlan(plan), {
-    schemaVersion: "supplemental-export-source-plan-v1",
+    schemaVersion: "supplemental-export-source-plan-v2",
     supplementalSourcePlanSha256: plan.supplementalSourcePlanSha256,
     sourceCount: 2,
     sourceFiles: 3,
@@ -486,4 +487,59 @@ test("opening revalidates the descriptor-bound supplemental plan exactly", async
     workspace?.close();
     await rm(value.root, { recursive: true, force: true });
   }
+});
+
+test("retained physical v4 workspaces resume safe numeric identities without schema relabeling", async () => {
+  const value = await fixture();
+  let source; let legacy; let reopened;
+  try {
+    const current = await createExportWorkspace({ directory: value.workspace, descriptor: value.descriptor,
+      sourcePlan: value.sourcePlan, supplementalSourcePlan: value.supplemental,
+      supplementalPrivatePlans: value.supplementalPrivatePlans });
+    current.close();
+    const legacyDirectory = join(value.root, "legacy-workspace");
+    await mkdir(legacyDirectory, { mode: 0o700 });
+    source = new DatabaseSync(join(value.workspace, "workspace.sqlite3"), { readOnly: true });
+    legacy = new DatabaseSync(join(legacyDirectory, "workspace.sqlite3"));
+    legacy.exec(await readFile(new URL("./fixtures/export-workspace-v4-schema.sql", import.meta.url), "utf8"));
+    legacy.exec("PRAGMA foreign_keys=OFF");
+    for (const { name } of source.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()) {
+      assert.match(name, /^[a-z_]+$/);
+      for (const row of source.prepare(`SELECT * FROM ${name}`).all()) {
+        const columns = Object.keys(row); assert.ok(columns.every(key => /^[a-z][a-z0-9_]*$/.test(key)));
+        const data = columns.map(key => row[key]);
+        if (name === "workspace_meta" && row.key === "descriptor") {
+          const descriptor = JSON.parse(row.value_json);
+          descriptor.workspaceVersion = "usage-export-workspace-v0.4";
+          descriptor.supplementalSourcePlan.schemaVersion = "supplemental-export-source-plan-v1";
+          data[columns.indexOf("value_json")] = stableJson(descriptor);
+        }
+        legacy.prepare(`INSERT INTO ${name} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`).run(...data);
+      }
+    }
+    legacy.close(); legacy = null; source.close(); source = null;
+    reopened = await openExportWorkspace({ directory: legacyDirectory });
+    assert.equal(reopened.getDescriptor().workspaceVersion, "usage-export-workspace-v0.4");
+    const retained = reopened.loadSupplementalSourcePlan();
+    assert.equal(retained.schemaVersion, "supplemental-export-source-plan-v1");
+    assert.deepEqual(retained.sources, value.supplemental.sources);
+    assert.equal(retained.supplementalSourcePlanSha256, value.supplemental.supplementalSourcePlanSha256);
+    assert.deepEqual(reopened.loadSourcePlan().sources.map(({ ordinal, sourceKey, prefixBytes, prefixSha256 }) => ({ ordinal, sourceKey, prefixBytes, prefixSha256 })), value.sourcePlan.sources.map(({ ordinal, sourceKey, prefixBytes, prefixSha256 }) => ({ ordinal, sourceKey, prefixBytes, prefixSha256 })));
+    reopened.close(); reopened = null;
+    legacy = new DatabaseSync(join(legacyDirectory, "workspace.sqlite3"), { readOnly: true });
+    assert.equal(legacy.prepare("PRAGMA user_version").get().user_version, 4);
+  } finally { reopened?.close(); source?.close(); legacy?.close(); await rm(value.root, { recursive: true, force: true }); }
+});
+
+test("future workspace schemas are refused before writable pragmas alter the original database", async () => {
+  const root = await mkdtemp(join(tmpdir(), "export-workspace-future-"));
+  try {
+    const databaseFile = join(root, "workspace.sqlite3");
+    const database = new DatabaseSync(databaseFile);
+    database.exec("PRAGMA journal_mode=WAL; PRAGMA application_id=1431522612; PRAGMA user_version=6; CREATE TABLE future_identity(value TEXT) STRICT;");
+    database.close();
+    const before = createHash("sha256").update(await readFile(databaseFile)).digest("hex");
+    await assert.rejects(openExportWorkspace({ directory: root }), error => error.code === "export_workspace_schema");
+    assert.equal(createHash("sha256").update(await readFile(databaseFile)).digest("hex"), before);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

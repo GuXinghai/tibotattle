@@ -49,6 +49,8 @@ const SOURCE_PORT_FUNCTION_KEYS = Object.freeze([
   "joinPath",
   "lstat",
   "open",
+  "exactSourceLstat",
+  "exactSourceOpen",
   "openDirectory",
   "readBoundedUtf8LineEntries",
   "realpath",

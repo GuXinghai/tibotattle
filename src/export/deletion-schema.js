@@ -9,8 +9,9 @@ export const EXPORT_DELETION_PLAN_VERSION = "local-export-deletion-plan-v0.1";
 export const EXPORT_DELETION_PREFLIGHT_VERSION = "usage-export-deletion-preflight-v0.1";
 export const EXPORT_DELETION_JOURNAL_VERSION_V0_1 = "usage-export-deletion-journal-v0.1";
 export const EXPORT_DELETION_JOURNAL_VERSION_V0_2 = "usage-export-deletion-journal-v0.2";
-export const EXPORT_DELETION_JOURNAL_VERSION = EXPORT_DELETION_JOURNAL_VERSION_V0_2;
-export const EXPORT_DELETION_COMMIT_MARKER_VERSION = "usage-export-deletion-commit-marker-v0.1";
+export const EXPORT_DELETION_JOURNAL_VERSION_V0_3 = "usage-export-deletion-journal-v0.3";
+export const EXPORT_DELETION_JOURNAL_VERSION = EXPORT_DELETION_JOURNAL_VERSION_V0_3;
+export const EXPORT_DELETION_COMMIT_MARKER_VERSION = "usage-export-deletion-commit-marker-v0.2";
 export const EXPORT_DELETION_RECEIPT_VERSION = "usage-export-deletion-receipt-v0.1";
 export const EXPORT_DELETION_ORDER_VERSION = "manifest-bundles-workspace-receipts-v1";
 export const EXPORT_DELETION_CONFIRMATION_TOKEN_PATTERN = "^[A-Z2-7]{12,24}$";
@@ -31,7 +32,8 @@ const schemaUrls = Object.freeze({
   preflight: new URL("../../schemas/export-deletion-v0.1/preflight-summary.schema.json", import.meta.url),
   journalV0_1: new URL("../../schemas/export-deletion-v0.1/journal.schema.json", import.meta.url),
   journalV0_2: new URL("../../schemas/export-deletion-v0.2/journal.schema.json", import.meta.url),
-  commitMarker: new URL("../../schemas/export-deletion-v0.1/commit-marker.schema.json", import.meta.url),
+  journalV0_3: new URL("../../schemas/export-deletion-v0.3/journal.schema.json", import.meta.url),
+  commitMarker: new URL("../../schemas/export-deletion-v0.3/commit-marker.schema.json", import.meta.url),
   receipt: new URL("../../schemas/export-deletion-v0.1/receipt.schema.json", import.meta.url),
 });
 
@@ -42,15 +44,19 @@ function schemaDigest(url) {
 export const EXPORT_DELETION_PREFLIGHT_SCHEMA_SHA256 = schemaDigest(schemaUrls.preflight);
 export const EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_1 = schemaDigest(schemaUrls.journalV0_1);
 export const EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_2 = schemaDigest(schemaUrls.journalV0_2);
-export const EXPORT_DELETION_JOURNAL_SCHEMA_SHA256 = EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_2;
+export const EXPORT_DELETION_JOURNAL_SCHEMA_SHA256 = schemaDigest(schemaUrls.journalV0_3);
 export const EXPORT_DELETION_COMMIT_MARKER_SCHEMA_SHA256 = schemaDigest(schemaUrls.commitMarker);
+export const EXPORT_DELETION_COMMIT_MARKER_SCHEMA_SHA256_V0_1 = schemaDigest(new URL("../../schemas/export-deletion-v0.1/commit-marker.schema.json", import.meta.url));
 export const EXPORT_DELETION_RECEIPT_SCHEMA_SHA256 = schemaDigest(schemaUrls.receipt);
 
 const require = createRequire(import.meta.url);
 const preflightSchema = require("../../schemas/export-deletion-v0.1/preflight-summary.schema.json");
 const journalSchemaV0_1 = require("../../schemas/export-deletion-v0.1/journal.schema.json");
 const journalSchemaV0_2 = require("../../schemas/export-deletion-v0.2/journal.schema.json");
-const commitMarkerSchema = require("../../schemas/export-deletion-v0.1/commit-marker.schema.json");
+const journalSchemaV0_3 = require("../../schemas/export-deletion-v0.3/journal.schema.json");
+const commitMarkerSchema = require("../../schemas/export-deletion-v0.3/commit-marker.schema.json");
+const legacyCommitMarkerSchema = require("../../schemas/export-deletion-v0.1/commit-marker.schema.json");
+const legacyCommitMarkerValidator = ajv => ajv.compile(legacyCommitMarkerSchema);
 const receiptSchema = require("../../schemas/export-deletion-v0.1/receipt.schema.json");
 
 const ajv = new Ajv({ allErrors: true, strict: true });
@@ -58,8 +64,10 @@ const validatePreflightSchema = ajv.compile(preflightSchema);
 const validateJournalSchemaByVersion = new Map([
   [EXPORT_DELETION_JOURNAL_VERSION_V0_1, ajv.compile(journalSchemaV0_1)],
   [EXPORT_DELETION_JOURNAL_VERSION_V0_2, ajv.compile(journalSchemaV0_2)],
+  [EXPORT_DELETION_JOURNAL_VERSION_V0_3, ajv.compile(journalSchemaV0_3)],
 ]);
 const validateCommitMarkerSchema = ajv.compile(commitMarkerSchema);
+const validateLegacyCommitMarkerSchema = legacyCommitMarkerValidator(ajv);
 const validateReceiptSchema = ajv.compile(receiptSchema);
 
 function invariant(path, name) {
@@ -141,6 +149,12 @@ function contiguousChunkIndexes(rows) {
 
 function journalSemanticErrors(journal) {
   const errors = [];
+  if (journal.schemaVersion === EXPORT_DELETION_JOURNAL_VERSION_V0_3) {
+    for (const [name, identity] of Object.entries(journal.directoryIdentities)) {
+      for (const field of ["device", "inode"]) if (BigInt(identity[field]) > 18446744073709551615n || (field === "inode" && identity[field] === "0")) errors.push(invariant(`/directoryIdentities/${name}/${field}`, "exact-u64-identity"));
+    }
+    for (const [index, row] of journal.inventory.entries()) for (const field of ["device", "inode"]) if (BigInt(row[field]) > 18446744073709551615n || (field === "inode" && row[field] === "0")) errors.push(invariant(`/inventory/${index}/${field}`, "exact-u64-identity"));
+  }
   const rows = journal.inventory;
   const counts = journal.inventoryCounts;
   const seenRoles = new Set();
@@ -219,7 +233,12 @@ export function validateExportDeletionJournal(value) {
 }
 
 export function validateExportDeletionCommitMarker(value) {
-  return validationResult(validateCommitMarkerSchema, value);
+  return validationResult(value?.schemaVersion === "usage-export-deletion-commit-marker-v0.1" ? validateLegacyCommitMarkerSchema : validateCommitMarkerSchema, value, (marker) => {
+    if (marker.schemaVersion !== EXPORT_DELETION_COMMIT_MARKER_VERSION) return [];
+    const errors = [];
+    for (const [name, identity] of Object.entries(marker.directoryIdentities)) for (const field of ["device", "inode"]) if (BigInt(identity[field]) > 18446744073709551615n || (field === "inode" && identity[field] === "0")) errors.push(invariant(`/directoryIdentities/${name}/${field}`, "exact-u64-identity"));
+    return errors;
+  });
 }
 
 export function validateExportDeletionReceipt(value) {
@@ -253,9 +272,10 @@ export function assertValidExportDeletionReceipt(value) {
 
 export {
   preflightSchema as exportDeletionPreflightSchema,
-  journalSchemaV0_2 as exportDeletionJournalSchema,
+  journalSchemaV0_3 as exportDeletionJournalSchema,
   journalSchemaV0_1 as exportDeletionJournalSchemaV0_1,
   journalSchemaV0_2 as exportDeletionJournalSchemaV0_2,
   commitMarkerSchema as exportDeletionCommitMarkerSchema,
+  legacyCommitMarkerSchema as exportDeletionCommitMarkerSchemaV0_1,
   receiptSchema as exportDeletionReceiptSchema,
 };

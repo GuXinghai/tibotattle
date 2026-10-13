@@ -1,3 +1,4 @@
+import { validFilesystemId, sameFilesystemId } from "./source-validation.js";
 import {
   ExportResourceLimitError,
 } from "../../export/index.js";
@@ -17,16 +18,17 @@ const {
   fsConstants: constants,
   inspectClaudeStatusLedgerDirectoriesForExport,
   joinPath: join,
-  lstat,
+  exactSourceLstat: lstat,
   MAX_CLAUDE_STATUS_RECORD_BYTES,
-  open,
+  exactSourceOpen: open,
   openDirectory: opendir,
   platform,
   revalidateClaudeStatusLedgerDirectoriesForExport,
   validateClaudeStatusSnapshot,
 } = configuration;
 
-const CLAUDE_STATUS_LEDGER_SOURCE_PLAN_VERSION = "claude-status-ledger-export-source-plan-v0.1";
+const CLAUDE_STATUS_LEDGER_SOURCE_PLAN_VERSION = "claude-status-ledger-export-source-plan-v0.2";
+const LEGACY_SOURCE_PLAN_VERSION = "claude-status-ledger-export-source-plan-v0.1";
 const CLAUDE_STATUS_LEDGER_SOURCE_CURSOR_VERSION = "claude-status-ledger-export-cursor-v0.1";
 const CLAUDE_STATUS_LEDGER_OCCURRENCE_VERSION = "claude-ledger-occurrence-v0.1";
 
@@ -149,8 +151,8 @@ function safeIdentity(stats) {
 }
 
 function identityMatches(stats, expected) {
-  return stats.dev === expected.device
-    && stats.ino === expected.inode
+  return sameFilesystemId(stats.dev, expected.device)
+    && sameFilesystemId(stats.ino, expected.inode)
     && Math.trunc(stats.birthtimeMs) === expected.birthtimeMs;
 }
 
@@ -299,7 +301,7 @@ async function readCanonicalRecord(boundary, record, {
 
 function inventoryMaterial(plan) {
   return {
-    schemaVersion: CLAUDE_STATUS_LEDGER_SOURCE_PLAN_VERSION,
+    schemaVersion: plan.schemaVersion,
     startAt: plan.startAt,
     endAt: plan.endAt,
     rootIdentity: plan.rootIdentity,
@@ -321,18 +323,18 @@ function sourceKey(secret, plan) {
   });
 }
 
-function validateIdentity(value) {
+function validateIdentity(value, legacy) {
   return exactKeys(value, IDENTITY_KEYS)
-    && IDENTITY_KEYS.every((key) => Number.isSafeInteger(value[key]) && value[key] >= 0);
+    && validFilesystemId(value.device, legacy) && validFilesystemId(value.inode, legacy) && Number.isSafeInteger(value.birthtimeMs) && value.birthtimeMs >= 0;
 }
 
 function validatePlan(plan, secret) {
   if (!exactKeys(plan, PLAN_KEYS)
-      || plan.schemaVersion !== CLAUDE_STATUS_LEDGER_SOURCE_PLAN_VERSION
+      || ![CLAUDE_STATUS_LEDGER_SOURCE_PLAN_VERSION, LEGACY_SOURCE_PLAN_VERSION].includes(plan.schemaVersion)
       || !canonicalIso(plan.startAt) || !canonicalIso(plan.endAt)
       || Date.parse(plan.endAt) < Date.parse(plan.startAt)
       || typeof plan.stateDirectory !== "string" || plan.stateDirectory.length < 1 || plan.stateDirectory.length > 4096
-      || !validateIdentity(plan.rootIdentity) || !validateIdentity(plan.recordsDirectoryIdentity)
+      || !validateIdentity(plan.rootIdentity, plan.schemaVersion === LEGACY_SOURCE_PLAN_VERSION) || !validateIdentity(plan.recordsDirectoryIdentity, plan.schemaVersion === LEGACY_SOURCE_PLAN_VERSION)
       || !Array.isArray(plan.records)
       || !Number.isSafeInteger(plan.recordCount) || plan.recordCount < 0 || plan.recordCount !== plan.records.length
       || !Number.isSafeInteger(plan.totalBytes) || plan.totalBytes < 0
@@ -343,8 +345,8 @@ function validatePlan(plan, secret) {
   for (const record of plan.records) {
     if (!exactKeys(record, RECORD_KEYS)
         || !RECORD_NAME.test(record.name ?? "")
-        || !Number.isSafeInteger(record.device) || record.device < 0
-        || !Number.isSafeInteger(record.inode) || record.inode < 0
+        || !validFilesystemId(record.device, plan.schemaVersion === LEGACY_SOURCE_PLAN_VERSION)
+        || !validFilesystemId(record.inode, plan.schemaVersion === LEGACY_SOURCE_PLAN_VERSION)
         || !Number.isSafeInteger(record.birthtimeMs) || record.birthtimeMs < 0
         || !Number.isSafeInteger(record.size) || record.size < 2 || record.size > MAX_CLAUDE_STATUS_RECORD_BYTES
         || !SHA256_PATTERN.test(record.sha256 ?? "")
@@ -522,7 +524,7 @@ async function verifyClaudeStatusLedgerExportSourcePlan(plan, {
   const normalizedSecret = normalizeSecret(secret);
   await verifySelectedRecords(plan, normalizedSecret, { resourceGuard, failpoint });
   return {
-    schemaVersion: CLAUDE_STATUS_LEDGER_SOURCE_PLAN_VERSION,
+    schemaVersion: plan.schemaVersion,
     sourceKey: plan.sourceKey,
     sourceFiles: plan.recordCount,
     sourceBytes: plan.totalBytes,

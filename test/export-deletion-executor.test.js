@@ -18,7 +18,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   localExportSetMaterialization,
   localExportSetVerification,
@@ -32,7 +32,7 @@ import {
   exportSetChunkBasenames,
 } from "../src/export-set-schema.js";
 import { decompressExportBytes } from "../src/export-compression.js";
-import { EXPORT_DELETION_JOURNAL_VERSION_V0_1, EXPORT_DELETION_JOURNAL_VERSION_V0_2 } from "../src/export/index.js";
+import { EXPORT_DELETION_JOURNAL_VERSION_V0_1, EXPORT_DELETION_JOURNAL_VERSION_V0_2, EXPORT_DELETION_JOURNAL_VERSION_V0_3 } from "../src/export/index.js";
 import { buildLocalExportDeletionPlan, planLocalExportDeletion } from "../src/export-deletion.js";
 import {
   deleteLocalExport,
@@ -383,7 +383,9 @@ test("SIGKILL recovery is monotonic across commit, each artifact class, receipt,
         stage,
         role,
         target ? String(target.ordinal) : "",
+        "ack-crash",
       ], {
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
         cwd: resolve("."),
         encoding: "utf8",
         timeout: 30_000,
@@ -392,7 +394,9 @@ test("SIGKILL recovery is monotonic across commit, each artifact class, receipt,
         // the strict empty-stderr assertion remains a content-leak check.
         env: { ...process.env, NODE_NO_WARNINGS: "1" },
       });
-      assert.equal(child.signal, "SIGKILL", `${stage}/${role}: ${child.stderr}`);
+      assert.equal(child.output[3], "crash\n", "selected failpoint must acknowledge immediately before forced termination");
+      if (process.platform === "win32") { assert.equal(child.signal, null); assert.equal(child.status, 1); }
+      else assert.equal(child.signal, "SIGKILL", `${stage}/${role}: ${child.stderr}`);
       assert.equal(child.stdout, "");
       assert.equal(child.stderr, "");
       const receipt = await recoverLocalExportDeletion({
@@ -422,7 +426,7 @@ test("SIGKILL recovery covers an authenticated closed SQLite sidecar", async () 
 
     const sidecarPath = join(value.workspace, "workspace.sqlite3-journal");
     await writeFile(sidecarPath, "closed-sqlite-sidecar", { mode: 0o600 });
-    const sidecarStats = await stat(sidecarPath);
+    const sidecarStats = await stat(sidecarPath, { bigint: true });
     const sidecarBytes = await readFile(sidecarPath);
     const journalPath = join(value.output, ".app-usagemonitor-deletion-journal.json");
     const markerPath = join(value.output, ".app-usagemonitor-deletion-commit.json");
@@ -432,8 +436,8 @@ test("SIGKILL recovery covers an authenticated closed SQLite sidecar", async () 
       ordinal: insertAt,
       role: "workspace_sqlite_journal",
       chunkIndex: null,
-      device: Number(sidecarStats.dev),
-      inode: Number(sidecarStats.ino),
+      device: sidecarStats.dev.toString(10),
+      inode: sidecarStats.ino.toString(10),
       fileType: "regular_file",
       linkCount: 1,
       byteSize: sidecarBytes.length,
@@ -461,8 +465,12 @@ test("SIGKILL recovery covers an authenticated closed SQLite sidecar", async () 
       "after_inventory_unlink",
       sidecarRow.role,
       String(sidecarRow.ordinal),
-    ], { cwd: resolve("."), encoding: "utf8", timeout: 30_000 });
-    assert.equal(child.signal, "SIGKILL", child.stderr);
+      "ack-crash",
+    ], { stdio: ["ignore", "pipe", "pipe", "pipe"], cwd: resolve("."), encoding: "utf8", timeout: 30_000, env: { ...process.env, NODE_NO_WARNINGS: "1" } });
+    assert.equal(child.output[3], "crash\n", "sidecar failpoint must be reached");
+    assert.equal(child.stdout, ""); assert.equal(child.stderr, "");
+    if (process.platform === "win32") { assert.equal(child.signal, null); assert.equal(child.status, 1); }
+    else assert.equal(child.signal, "SIGKILL", child.stderr);
     const receipt = await recoverLocalExportDeletion({
       workspaceDirectory: value.workspace,
       outputDirectory: value.output,
@@ -485,7 +493,7 @@ test("atomic quarantine preserves a replacement introduced at the move boundary"
       outputDirectory: value.output,
       confirmationToken: plan.confirmationToken,
       async moveFile(source, destination) {
-        if (!swapped && source.endsWith(`/${exportSetChunkBasenames(0).bundle}`)) {
+        if (!swapped && basename(source) === exportSetChunkBasenames(0).bundle) {
           swapped = true;
           await unlink(source);
           await writeFile(source, "replacement survives quarantine", { mode: 0o600 });
@@ -776,7 +784,7 @@ test("current deletion planner verifies and removes retained v0.1 and v0.2 sets 
       assert.equal(verification.schemaVersion, manifestVersion);
       assert.equal(verification.verdict, "passed");
       const plan = await buildLocalExportDeletionPlan({ workspaceDirectory: value.workspace, outputDirectory: value.output });
-      assert.equal(plan.journal.schemaVersion, EXPORT_DELETION_JOURNAL_VERSION_V0_2);
+      assert.equal(plan.journal.schemaVersion, EXPORT_DELETION_JOURNAL_VERSION_V0_3);
       assert.equal(plan.journal.exportSetManifestVersion, manifestVersion);
       const receipt = await deleteLocalExport({
         workspaceDirectory: value.workspace, outputDirectory: value.output,
@@ -803,6 +811,15 @@ test("recovery validates and retains committed v0.1 journal bytes for both retai
       const journalPath = join(value.output, ".app-usagemonitor-deletion-journal.json");
       const markerPath = join(value.output, ".app-usagemonitor-deletion-commit.json");
       const journal = JSON.parse(await readFile(journalPath, "utf8"));
+      const identities = [...Object.values(journal.directoryIdentities), ...journal.inventory];
+      if (identities.some((identity) => BigInt(identity.device) > BigInt(Number.MAX_SAFE_INTEGER) || BigInt(identity.inode) > BigInt(Number.MAX_SAFE_INTEGER))) {
+        journal.schemaVersion = EXPORT_DELETION_JOURNAL_VERSION_V0_1;
+        await writeFile(journalPath, stableJson(journal), { mode: 0o600 });
+        await assert.rejects(recoverLocalExportDeletion(options), (error) => error.code === "export_deletion_execute_journal_invalid");
+        assert.equal((await stat(join(value.workspace, "workspace.sqlite3"))).isFile(), true);
+        continue;
+      }
+      for (const identity of identities) { identity.device = Number(identity.device); identity.inode = Number(identity.inode); }
       journal.schemaVersion = EXPORT_DELETION_JOURNAL_VERSION_V0_1;
       const { planSha256: ignored, ...journalCore } = journal;
       journal.planSha256 = createHash("sha256").update(stableJson({
@@ -810,6 +827,8 @@ test("recovery validates and retains committed v0.1 journal bytes for both retai
       })).digest("hex");
       const text = stableJson(journal);
       const marker = JSON.parse(await readFile(markerPath, "utf8"));
+      marker.schemaVersion = "usage-export-deletion-commit-marker-v0.1";
+      marker.directoryIdentities = journal.directoryIdentities;
       marker.planSha256 = journal.planSha256;
       marker.journalSha256 = createHash("sha256").update(text).digest("hex");
       await writeFile(journalPath, text, { mode: 0o600 });

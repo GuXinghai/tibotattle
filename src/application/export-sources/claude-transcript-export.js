@@ -1,3 +1,4 @@
+import { validFilesystemId, sameFilesystemId } from "./source-validation.js";
 import { ExportResourceLimitError, stableJson } from "../../export/index.js";
 import { safeCount, validSha256 } from "./source-validation.js";
 import { parseClaudeTranscriptRecord } from "./claude-transcript-record.js";
@@ -15,8 +16,8 @@ const {
   defaultHomeDirectory,
   fsConstants: constants,
   joinPath: join,
-  lstat,
-  open,
+  exactSourceLstat: lstat,
+  exactSourceOpen: open,
   openDirectory: opendir,
   platform,
   readBoundedUtf8LineEntries,
@@ -25,7 +26,8 @@ const {
   safeExportModelDeclaration,
 } = configuration;
 
-const CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION = "claude-transcript-export-source-plan-v0.2";
+const CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION = "claude-transcript-export-source-plan-v0.3";
+const LEGACY_SOURCE_PLAN_VERSION = "claude-transcript-export-source-plan-v0.2";
 const CLAUDE_TRANSCRIPT_SOURCE_CURSOR_VERSION = "claude-transcript-export-cursor-v0.2";
 const CLAUDE_TRANSCRIPT_USAGE_CANDIDATE_VERSION = "claude-transcript-usage-candidate-v0.2";
 const CLAUDE_TRANSCRIPT_PLAN_CHECKPOINT_VERSION = "claude-transcript-plan-checkpoint-v0.1";
@@ -95,7 +97,7 @@ function assertSafeFile(stats) {
 }
 
 function sameIdentity(stats, source) {
-  return stats.dev === source.device && stats.ino === source.inode
+  return sameFilesystemId(stats.dev, source.device) && sameFilesystemId(stats.ino, source.inode)
     && Math.trunc(stats.birthtimeMs) === source.birthtimeMs;
 }
 
@@ -151,10 +153,11 @@ async function hashPrefix(handle, bytes, resourceGuard) {
   return digest.digest("hex");
 }
 
+function identityKeyValue(value) { const number = Number(value); return Number.isSafeInteger(number) && number >= 0 ? number : value; }
 function sourceKey(secret, path, stats) {
   return createHmac("sha256", secret)
     .update("app-usagemonitor/claude-transcript-source/v1\0", "utf8")
-    .update(stableJson({ path, device: stats.dev, inode: stats.ino, birthtimeMs: Math.trunc(stats.birthtimeMs) }))
+    .update(stableJson({ path, device: identityKeyValue(stats.dev), inode: identityKeyValue(stats.ino), birthtimeMs: Math.trunc(stats.birthtimeMs) }))
     .digest("hex");
 }
 
@@ -211,7 +214,7 @@ async function discoverJsonl(root, resourceGuard) {
 
 function assertPlan(plan, secret) {
   if (!plan || typeof plan !== "object" || Array.isArray(plan)
-      || plan.schemaVersion !== CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION
+      || ![CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION, LEGACY_SOURCE_PLAN_VERSION].includes(plan.schemaVersion)
       || !canonicalIso(plan.startAt) || !canonicalIso(plan.endAt)
       || Date.parse(plan.endAt) < Date.parse(plan.startAt)
       || typeof plan.rootDirectory !== "string" || !Array.isArray(plan.sources)
@@ -220,7 +223,7 @@ function assertPlan(plan, secret) {
   let total = 0;
   for (const [ordinal, source] of plan.sources.entries()) {
     if (!source || source.ordinal !== ordinal || typeof source.path !== "string"
-        || !validSha256(source.sourceKey) || !safeCount(source.device) || !safeCount(source.inode)
+        || !validSha256(source.sourceKey) || !validFilesystemId(source.device, plan.schemaVersion === LEGACY_SOURCE_PLAN_VERSION) || !validFilesystemId(source.inode, plan.schemaVersion === LEGACY_SOURCE_PLAN_VERSION)
         || !safeCount(source.birthtimeMs) || !safeCount(source.prefixBytes)
         || !safeCount(source.prefixLineCount)
         || ((source.prefixBytes === 0) !== (source.prefixLineCount === 0))
@@ -722,7 +725,7 @@ function createClaudeTranscriptExportPlanCheckpoint(plan, { secret } = {}) {
     assertPlan(plan, key);
     return Object.freeze({
       schemaVersion: CLAUDE_TRANSCRIPT_PLAN_CHECKPOINT_VERSION,
-      sourcePlanVersion: CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION,
+      sourcePlanVersion: plan.schemaVersion,
       startAt: plan.startAt,
       endAt: plan.endAt,
       sources: Object.freeze(publicPlanRows(plan.sources).map((source) => Object.freeze({
@@ -746,7 +749,7 @@ async function restoreClaudeTranscriptExportSourcePlan(checkpoint, {
 } = {}) {
   if (!checkpoint || typeof checkpoint !== "object" || Array.isArray(checkpoint)
       || checkpoint.schemaVersion !== CLAUDE_TRANSCRIPT_PLAN_CHECKPOINT_VERSION
-      || checkpoint.sourcePlanVersion !== CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION
+      || ![CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION, LEGACY_SOURCE_PLAN_VERSION].includes(checkpoint.sourcePlanVersion)
       || !Array.isArray(checkpoint.sources) || !Array.isArray(selectedSourcePaths)
       || checkpoint.sources.length !== selectedSourcePaths.length) fail("plan_invalid");
   const key = normalizeSecret(secret);
@@ -784,7 +787,7 @@ async function restoreClaudeTranscriptExportSourcePlan(checkpoint, {
     }));
     if (sources.some((source) => typeof source.path !== "string")) fail("source_changed");
     const plan = {
-      schemaVersion: CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION,
+      schemaVersion: checkpoint.sourcePlanVersion,
       startAt: checkpoint.startAt,
       endAt: checkpoint.endAt,
       rootDirectory: root,
@@ -812,7 +815,7 @@ async function restoreClaudeTranscriptExportSourcePlan(checkpoint, {
 function sliceTrustedClaudeTranscriptExportSourcePlan(plan, selected) {
   const source = { ...selected, ordinal: 0 };
   return {
-    schemaVersion: CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION,
+    schemaVersion: plan.schemaVersion,
     startAt: plan.startAt,
     endAt: plan.endAt,
     rootDirectory: plan.rootDirectory,

@@ -1,7 +1,8 @@
+import { writeSync } from "node:fs";
 import { deleteLocalExport, recoverLocalExportDeletion } from "../src/export-deletion-executor.js";
 
 const [
-  , , action, workspaceDirectory, outputDirectory, confirmationToken, targetStage, targetRole = "", targetOrdinal = "",
+  , , action, workspaceDirectory, outputDirectory, confirmationToken, targetStage, targetRole = "", targetOrdinal = "", crashAcknowledgement = "",
 ] = process.argv;
 
 const options = {
@@ -11,6 +12,7 @@ const options = {
     if (stage === targetStage
         && (!targetRole || detail?.role === targetRole)
         && (!targetOrdinal || detail?.ordinal === Number(targetOrdinal))) {
+      if (crashAcknowledgement === "ack-crash") writeSync(3, "crash\n");
       process.kill(process.pid, "SIGKILL");
     }
   },

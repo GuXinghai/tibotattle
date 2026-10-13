@@ -90,6 +90,7 @@ function usageRecord(id = "a", tokens = 10) {
 test("workspace persists strict safe records without bypassing checkpoint completion", async () => {
   const value = await fixture();
   let workspace;
+  let resumed;
   try {
     workspace = await createExportWorkspace({
       directory: value.workspace,
@@ -107,7 +108,7 @@ test("workspace persists strict safe records without bypassing checkpoint comple
     workspace.close();
     workspace = null;
 
-    const resumed = await openExportWorkspace({ directory: value.workspace, expectedDescriptor: value.descriptor });
+    resumed = await openExportWorkspace({ directory: value.workspace, expectedDescriptor: value.descriptor });
     assert.deepEqual(resumed.counts(), { usageEvents: 1, quotaSnapshots: 0, activityMarkers: 0 });
     assert.deepEqual(resumed.diagnostics(), [{ code: "malformed_lines", count: 2 }]);
     assert.deepEqual(resumed.scanDiagnostics(), {
@@ -119,7 +120,9 @@ test("workspace persists strict safe records without bypassing checkpoint comple
     const databaseBytes = await readFile(resumed.databaseFile);
     assert.equal(databaseBytes.includes(Buffer.from("PRIVATE_PROMPT")), false);
     resumed.close();
+    resumed = null;
   } finally {
+    resumed?.close();
     workspace?.close();
     await rm(value.root, { recursive: true, force: true });
   }

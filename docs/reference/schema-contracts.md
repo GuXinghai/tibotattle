@@ -26,7 +26,7 @@ versioning, and retirement rules.
 | Public model identity mirror | `packages/telemetry-contract/src/model-catalog.js` only | `apps/web/public/model-catalog.generated.js`; excludes telemetry and admin-history contracts | `npm run telemetry:browser:check` and browser parity/public-asset isolation tests |
 | Reviewed model identities and admin history | `packages/telemetry-contract/src/model-catalog.js` and `admin-model-history.js` | Public package exports and the telemetry browser mirror; closed export/upload model enums checked against the catalog | Catalog tests, `npm run telemetry:check`, browser and upload mirror checks |
 | Export set v0.1/v0.2/v0.3 | `schemas/export-set-v0.1/`, `schemas/export-set-v0.2/` and `schemas/export-set-v0.3/` | None; controllers/verifiers consume the schemas. | Export schema/controller tests |
-| Export deletion | `schemas/export-deletion-v0.1/` and `schemas/export-deletion-v0.2/journal.schema.json` | v0.2 journal admits the current manifest; retained preflight, commit marker and receipt stay v0.1. | Export deletion tests |
+| Export deletion | `schemas/export-deletion-v0.1/`, `schemas/export-deletion-v0.2/journal.schema.json`, and `schemas/export-deletion-v0.3/` | New journal v0.3 and commit marker v0.2 bind exact unsigned decimal filesystem IDs. Older journals/markers retain immutable validators; preflight and receipt stay v0.1. | Export deletion tests |
 | Workspace discard v0.1 | `schemas/export-workspace-discard-v0.1/` | Journal, preflight, commit marker, and receipt are one transaction family. | Workspace discard tests |
 | Product synthetic v0.1 | `schemas/product-synthetic-v0.1/` | Contribution and encrypted envelope schemas. | Worker/local acceptance tests |
 | Provider accounting snapshot | `schemas/provider-accounting-snapshot-v0.1.schema.json` | None. | Accounting/export tests |
@@ -59,7 +59,7 @@ The root schema families are grouped as follows:
 | `telemetry-contribution-v1.1/` | 8 | Generated attribution, usage, quota, session, chunk, envelope, day-manifest and complete-domain-manifest contracts. |
 | `telemetry-contribution-v1.2/` | 8 | Independently authorized successor with nullable continuity and non-additive cache-write TTL detail; hosted runtime starts staged. |
 | `telemetry-performance-v1/` | 2 | Independent staged daily measurement and histogram contracts; not a v1.2 usage stream. |
-| `export-deletion-v0.1/`, `export-deletion-v0.2/` | 5 | Recoverable deletion preflight/commit/receipt and both immutable journal versions. |
+| `export-deletion-v0.1/`, `export-deletion-v0.2/`, `export-deletion-v0.3/` | 7 | Recoverable deletion preflight/commit/receipt and immutable journal versions. |
 | `export-workspace-discard-v0.1/` | 4 | Recoverable workspace-discard preflight/journal/commit/receipt. |
 | `export-set-v0.1/`, `export-set-v0.2/`, `export-set-v0.3/` | 3 | Versioned export-set manifests. |
 | `product-synthetic-v0.1/` | 2 | Synthetic contribution and encrypted envelope. |
@@ -194,8 +194,8 @@ rewriting it only when its manifest and receipt validate and every field other
 than the version-specific manifest header exactly matches the recomputed set.
 Incomplete compressed output resumes to v0.3; plain v0.1 rematerialization still
 fails closed rather than mixing representations. New deletion plans use journal
-v0.2, which explicitly admits the three supported manifest versions. Committed
-v0.1 deletion journals retain their original validator and canonical hash checks,
+v0.3, which explicitly admits the three supported manifest versions and exact
+filesystem identities. Committed v0.1/v0.2 deletion journals retain their original validator and canonical hash checks,
 so recovery does not restamp or reinterpret their bytes. Unknown versions fail
 closed. This local-only transition does not change hosted contribution contracts
 or qualify the protected R7 release evidence.
@@ -376,3 +376,30 @@ manifest and artifact directory; the bare package script deliberately refuses
 to guess them. R7 regeneration is intentionally absent from this routine list:
 it reads environment-specific private evidence and remains a protected owner
 workflow.
+
+### Exact local filesystem identities
+
+New Claude transcript source plans v0.3, Claude status ledger source plans v0.2,
+and collector source plans v0.2 serialize `device` and `inode` as canonical
+unsigned decimal strings, bounded to 64 bits. The platform reads these values
+from BigInt stats before conversion of unrelated bounded numeric metadata.
+Legacy plan versions continue to validate only safe integer identities; unsafe
+Number values cannot be repaired by rounding. Checkpoint restoration and slicing
+preserve the original plan version and digest. Existing safe numeric transcript
+source-key material remains unchanged; new exact identities are explicit in the
+new plan version. Account/session pseudonym derivation and secrets are unchanged.
+
+Supplemental source plan v2 carries these exact file-prefix bindings. Export
+workspace v0.5 uses physical schema 5 and `ANY` identity columns with tagged
+`u64:` strings to prevent SQLite numeric affinity from coercing decimal IDs.
+Existing physical schema 4 retains its exact schema fingerprint and can resume
+its v1 supplemental plans without migration or schema relabeling. New readers
+accept both exact fingerprints; old readers refuse schema 5. The source-plan
+columns and recorded source ordinals are unchanged.
+
+Deletion journal v0.3 and commit marker v0.2 carry the same exact representation,
+with immutable earlier schemas retained. Fresh planning never rewrites existing
+committed controls. Recovery validates original canonical bytes and hashes and
+compares exact identities; a mismatched replacement remains undeleted. This
+identity contract does not itself qualify owner ACLs, no-follow/reparse protection,
+native handle-bound deletion, installation, signing, or release artifacts.

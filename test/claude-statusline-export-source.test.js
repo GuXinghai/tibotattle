@@ -105,7 +105,7 @@ test("freezes an inclusive interval-bound sorted inventory and emits only safe r
 
   const verified = await verifyClaudeStatusLedgerExportSourcePlan(plan, { secret: SECRET });
   assert.deepEqual(verified, {
-    schemaVersion: "claude-status-ledger-export-source-plan-v0.1",
+    schemaVersion: "claude-status-ledger-export-source-plan-v0.2",
     sourceKey: plan.sourceKey,
     sourceFiles: 2,
     sourceBytes: plan.totalBytes,

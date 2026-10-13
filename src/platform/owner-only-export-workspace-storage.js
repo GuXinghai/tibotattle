@@ -135,10 +135,14 @@ export function createOwnerOnlyExportWorkspaceStorageContext(configuration = {})
     sourceCheckpointBatchSha256,
     supplementalSourceCheckpointBatchSha256,
   } = contract;
+function filesystemIdentity(value) { return (Number.isSafeInteger(value) && value >= 0) || (typeof value === "string" && /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) <= 18446744073709551615n); }
+function encodeFilesystemIdentity(value) { return typeof value === "string" ? `u64:${value}` : value; }
+function decodeFilesystemIdentity(value) { if (typeof value === "string" && value.startsWith("u64:")) { const id = value.slice(4); if (!filesystemIdentity(id)) fail("schema"); return id; } if (!Number.isSafeInteger(value) || value < 0) fail("schema"); return value; }
 const DATABASE_NAME = EXPORT_WORKSPACE_DATABASE_BASENAME;
 const EXPORT_WORKSPACE_APPLICATION_ID = 0x55534d34;
-const EXPORT_WORKSPACE_USER_VERSION = 4;
-const EXPORT_WORKSPACE_SCHEMA_SHA256 = "48c81568f3da4d9587ed52946b295b0d81a9b2a75b93e1153c19b0eb4032917b";
+const EXPORT_WORKSPACE_USER_VERSION = 5;
+const LEGACY_WORKSPACE_SCHEMA_SHA256 = "48c81568f3da4d9587ed52946b295b0d81a9b2a75b93e1153c19b0eb4032917b";
+const EXPORT_WORKSPACE_SCHEMA_SHA256 = "5dcbc93efec12938bb336cc2465bab962d74ce49a6b12bdb2e9e22eae9456652";
 const DEFAULT_CRASH_RECOVERY_RESERVATION_MS = 5_000;
 const OCCURRENCE_KINDS = new Set(["usage_event", "tool_call"]);
 const SNAPSHOT_KINDS = new Set(["cumulative_usage", "tool_call"]);
@@ -391,8 +395,8 @@ function initializeSchema(database) {
       source_key TEXT NOT NULL UNIQUE CHECK(length(source_key) = 64),
       kind TEXT NOT NULL CHECK(kind IN ('codex_collector_ledger', 'claude_status_snapshot', 'claude_transcript_jsonl')),
       binding_kind TEXT NOT NULL CHECK(binding_kind IN ('file_prefix', 'frozen_inventory')),
-      device INTEGER,
-      inode INTEGER,
+      device ANY,
+      inode ANY,
       birthtime_ms INTEGER,
       prefix_bytes INTEGER,
       prefix_sha256 TEXT,
@@ -480,7 +484,7 @@ function validateWorkspaceSchema(database) {
   try {
     const applicationId = Number(database.prepare("PRAGMA application_id").get().application_id);
     const userVersion = Number(database.prepare("PRAGMA user_version").get().user_version);
-    if (applicationId !== EXPORT_WORKSPACE_APPLICATION_ID || userVersion !== EXPORT_WORKSPACE_USER_VERSION) fail("schema");
+    if (applicationId !== EXPORT_WORKSPACE_APPLICATION_ID || ![4, EXPORT_WORKSPACE_USER_VERSION].includes(userVersion)) fail("schema");
     const tables = [...database.prepare(`
       SELECT name FROM sqlite_schema
       WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
@@ -504,10 +508,10 @@ function validateWorkspaceSchema(database) {
       sql: row.sql,
     }));
     const schemaSha256 = createHash("sha256")
-      .update("app-usagemonitor/export-workspace-schema/v4\0")
+      .update(`app-usagemonitor/export-workspace-schema/v${userVersion}\0`)
       .update(stableJson(schemaRows))
       .digest("hex");
-    if (schemaSha256 !== EXPORT_WORKSPACE_SCHEMA_SHA256) fail("schema");
+    if (schemaSha256 !== (userVersion === 4 ? LEGACY_WORKSPACE_SCHEMA_SHA256 : EXPORT_WORKSPACE_SCHEMA_SHA256)) fail("schema");
     const executableSchemaObjects = [...database.prepare(`
       SELECT type, name FROM sqlite_schema
       WHERE type IN ('trigger', 'view')
@@ -727,8 +731,8 @@ function buildWorkspaceApi(database, directory, {
     const binding = row.binding_kind === "file_prefix"
       ? {
         kind: "file_prefix",
-        device: Number(row.device),
-        inode: Number(row.inode),
+        device: decodeFilesystemIdentity(row.device),
+        inode: decodeFilesystemIdentity(row.inode),
         birthtimeMs: Number(row.birthtime_ms),
         prefixBytes: Number(row.prefix_bytes),
         prefixSha256: row.prefix_sha256,
@@ -744,7 +748,7 @@ function buildWorkspaceApi(database, directory, {
     if (!binding || !validSha256(row.source_key)
         || (row.last_batch_sha256 !== null && !validSha256(row.last_batch_sha256))) fail("schema");
     if ((binding.kind === "file_prefix"
-        && (!safeCount(binding.device) || !safeCount(binding.inode) || !safeCount(binding.birthtimeMs)
+        && (!filesystemIdentity(binding.device) || !filesystemIdentity(binding.inode) || !safeCount(binding.birthtimeMs)
           || !safeCount(binding.prefixBytes) || !validSha256(binding.prefixSha256)))
       || (binding.kind === "frozen_inventory"
         && (!safeCount(binding.inventoryEntries) || !safeCount(binding.inventoryBytes)
@@ -824,8 +828,8 @@ function buildWorkspaceApi(database, directory, {
         parserVersion: row.parser_version,
         binding: row.binding_kind === "file_prefix" ? {
           kind: "file_prefix",
-          device: Number(row.device),
-          inode: Number(row.inode),
+          device: decodeFilesystemIdentity(row.device),
+          inode: decodeFilesystemIdentity(row.inode),
           birthtimeMs: Number(row.birthtime_ms),
           prefixBytes: Number(row.prefix_bytes),
           prefixSha256: row.prefix_sha256,
@@ -840,7 +844,7 @@ function buildWorkspaceApi(database, directory, {
       let plan;
       try {
         plan = normalizeSupplementalSourcePlan({
-          schemaVersion: EXPORT_SUPPLEMENTAL_SOURCE_PLAN_VERSION,
+          schemaVersion: descriptor.supplementalSourcePlan.schemaVersion,
           supplementalSourcePlanSha256: descriptor.supplementalSourcePlan.supplementalSourcePlanSha256,
           sources,
         });
@@ -1579,7 +1583,7 @@ function buildWorkspaceApi(database, directory, {
     async status() {
       const totals = database.prepare("SELECT COUNT(*) AS count, COALESCE(SUM(record_bytes), 0) AS bytes FROM safe_records").get();
       return {
-        workspaceVersion: EXPORT_WORKSPACE_VERSION,
+        workspaceVersion: this.getDescriptor().workspaceVersion,
         scanComplete: this.isScanComplete(),
         poisoned: this.isPoisoned(),
         recordCounts: this.counts(),
@@ -1681,8 +1685,8 @@ async function createExportWorkspace({
           source.sourceKey,
           source.kind,
           source.binding.kind,
-          isFilePrefix ? source.binding.device : null,
-          isFilePrefix ? source.binding.inode : null,
+          isFilePrefix ? encodeFilesystemIdentity(source.binding.device) : null,
+          isFilePrefix ? encodeFilesystemIdentity(source.binding.inode) : null,
           isFilePrefix ? source.binding.birthtimeMs : null,
           isFilePrefix ? source.binding.prefixBytes : null,
           isFilePrefix ? source.binding.prefixSha256 : null,
@@ -1734,8 +1738,11 @@ async function openExportWorkspace({
   const databaseFile = join(workspaceDirectory, DATABASE_NAME);
   const before = await inspectExistingDatabase(databaseFile);
   const DatabaseSync = await loadSqlite();
+  const reader = new DatabaseSync(databaseFile, { readOnly: true });
+  try { validateWorkspaceSchema(reader); } finally { reader.close(); }
   const database = new DatabaseSync(databaseFile, { readOnly: false });
   try {
+    validateWorkspaceSchema(database);
     configureDatabase(database);
     validateWorkspaceSchema(database);
     const after = await lstat(databaseFile);

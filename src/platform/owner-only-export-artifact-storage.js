@@ -3,9 +3,9 @@ import { constants } from "node:fs";
 import {
   chmod,
   link,
-  lstat,
+  lstat as nodeLstat,
   mkdir,
-  open,
+  open as nodeOpen,
   readlink,
   realpath,
   rename,
@@ -19,9 +19,13 @@ import { isProxy } from "node:util/types";
 import { readBoundedDirectoryEntries } from "./bounded-directory-reader.js";
 import {
   assertOwnerControlledDirectory,
-  lstatIfExists,
   syncDirectory,
 } from "./owner-only-filesystem.js";
+
+import { exactLstat, exactOpen } from "./exact-filesystem-stats.js";
+const lstat = (path) => exactLstat(path, nodeLstat);
+const open = (path, flags, mode) => exactOpen(path, flags, nodeOpen, mode);
+async function lstatIfExists(path) { try { return await lstat(path); } catch (error) { if (error.code === "ENOENT") return null; throw error; } }
 
 const REFLECT_APPLY = Reflect.apply;
 

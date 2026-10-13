@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, realpath, unlink } from "node:fs/promises";
+import { chmod, lstat as nodeLstat, mkdir, open as nodeOpen, realpath, unlink } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isProxy } from "node:util/types";
 import { syncDirectory } from "./owner-only-filesystem.js";
+
+import { exactLstat, exactOpen } from "./exact-filesystem-stats.js";
+const lstat = (path) => exactLstat(path, nodeLstat);
+const open = (path, flags, mode) => exactOpen(path, flags, nodeOpen, mode);
 
 function configurationFailure() {
   throw new TypeError("Owner-only export workspace lease configuration is invalid");

@@ -471,12 +471,12 @@ async function buildLocalExportDeletionPlan(options) {
     exportSetManifestVersion: manifest.schemaVersion,
     directoryIdentities: {
       workspace: {
-        device: Number(workspaceDirectoryInfo.stats.dev),
-        inode: Number(workspaceDirectoryInfo.stats.ino),
+        device: workspaceDirectoryInfo.stats.dev,
+        inode: workspaceDirectoryInfo.stats.ino,
       },
       output: {
-        device: Number(outputDirectoryInfo.stats.dev),
-        inode: Number(outputDirectoryInfo.stats.ino),
+        device: outputDirectoryInfo.stats.dev,
+        inode: outputDirectoryInfo.stats.ino,
       },
     },
     state: "prepared",

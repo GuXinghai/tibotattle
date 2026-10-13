@@ -84,7 +84,7 @@ export function createExportWorkspaceContract(configuration = {}) {
   const EXPORT_SOURCE_PLAN_VERSION = ownString(ownValue(configuration, "EXPORT_SOURCE_PLAN_VERSION"), isProxy);
   const EXPORT_SUPPLEMENTAL_SOURCE_PLAN_VERSION = ownString(ownValue(configuration, "EXPORT_SUPPLEMENTAL_SOURCE_PLAN_VERSION"), isProxy);
 
-  const EXPORT_WORKSPACE_VERSION = "usage-export-workspace-v0.4";
+  const EXPORT_WORKSPACE_VERSION = "usage-export-workspace-v0.5";
   const DEFAULT_EXPORT_WORKSPACE_MAXIMUM_BYTES = DEFAULT_EXPORT_RESOURCE_LIMITS.maximumWorkspaceBytes;
   const DEFAULT_EXPORT_WORKSPACE_BATCH_RECORDS = DEFAULT_EXPORT_RESOURCE_LIMITS.maximumSqliteBatchRecords;
   const EXPORT_WORKSPACE_DATABASE_BASENAME = "workspace.sqlite3";
@@ -131,13 +131,13 @@ export function createExportWorkspaceContract(configuration = {}) {
   }
   function validSupplementalSourcePlanSummary(value) {
     return exactKeys(value, ["schemaVersion", "supplementalSourcePlanSha256", "sourceCount", "sourceFiles", "sourceBytes"])
-      && value.schemaVersion === EXPORT_SUPPLEMENTAL_SOURCE_PLAN_VERSION
+      && [EXPORT_SUPPLEMENTAL_SOURCE_PLAN_VERSION, "supplemental-export-source-plan-v1"].includes(value.schemaVersion)
       && validSha256(value.supplementalSourcePlanSha256)
       && safeCount(value.sourceCount) && safeCount(value.sourceFiles) && safeCount(value.sourceBytes);
   }
   function assertDescriptor(descriptor) {
     if (!descriptor || typeof descriptor !== "object" || Array.isArray(descriptor)
-        || descriptor.workspaceVersion !== EXPORT_WORKSPACE_VERSION
+        || ![EXPORT_WORKSPACE_VERSION, "usage-export-workspace-v0.4"].includes(descriptor.workspaceVersion)
         || descriptor.resourcePolicyVersion !== EXPORT_RESOURCE_POLICY_VERSION
         || !validDescriptorResourceLimits(descriptor.resourceLimits)
         || typeof descriptor.participantId !== "string" || !/^participant:v1:[a-f0-9]{64}$/.test(descriptor.participantId)

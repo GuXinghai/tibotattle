@@ -7,3 +7,12 @@ export function validSha256(value) {
 export function safeCount(value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
+
+export function validFilesystemId(value, legacy = false) {
+  return legacy ? safeCount(value) : typeof value === "string"
+    && /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) <= 18446744073709551615n;
+}
+export function sameFilesystemId(actual, expected) {
+  return validFilesystemId(expected, typeof expected === "number")
+    && String(actual) === String(expected);
+}

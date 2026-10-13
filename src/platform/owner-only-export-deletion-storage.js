@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat, open, rename, unlink } from "node:fs/promises";
+import { lstat as nodeLstat, open as nodeOpen, rename, unlink } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isProxy } from "node:util/types";
 
@@ -10,6 +10,10 @@ import {
 } from "./owner-only-filesystem.js";
 import { createOwnerOnlyExportArtifactStorageContext } from "./owner-only-export-artifact-storage.js";
 import { readBoundedDirectoryEntries as readBoundedDirectoryEntriesImpl } from "./bounded-directory-reader.js";
+
+import { exactLstat, exactOpen } from "./exact-filesystem-stats.js";
+const lstat = (path) => exactLstat(path, nodeLstat);
+const open = (path, flags, mode) => exactOpen(path, flags, nodeOpen, mode);
 
 function invalidConfiguration() {
   throw new TypeError("Owner-only export deletion configuration is invalid");
@@ -313,11 +317,12 @@ function runtimeOwnValue(object, key) {
   return descriptor.value;
 }
 
+function validExactId(value) { return typeof value === "string" && /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) <= 18446744073709551615n; }
 function normalizeLeaseIdentity(stats) {
-  const device = Number(runtimeOwnValue(stats, "dev"));
-  const inode = Number(runtimeOwnValue(stats, "ino"));
-  if (!Number.isSafeInteger(device) || device < 0 || !Number.isSafeInteger(inode) || inode < 0) fail("replacement");
-  return Object.freeze({ device, inode });
+  const device = runtimeOwnValue(stats, "dev");
+  const inode = runtimeOwnValue(stats, "ino");
+  if (!(validExactId(device) || (Number.isSafeInteger(device) && device >= 0)) || !(validExactId(inode) || (Number.isSafeInteger(inode) && inode > 0))) fail("replacement");
+  return Object.freeze({ device: String(device), inode: String(inode) });
 }
 
 function sha256(value) {
@@ -412,7 +417,7 @@ async function assertDirectoryIdentity(path, expected) {
     fail("replacement");
   }
   if (!stats.isDirectory() || stats.isSymbolicLink()
-      || Number(stats.dev) !== expected.device || Number(stats.ino) !== expected.inode
+      || String(stats.dev) !== String(expected.device) || String(stats.ino) !== String(expected.inode)
       || (typeof process.getuid === "function" && stats.uid !== process.getuid())) fail("replacement");
 }
 
@@ -438,8 +443,8 @@ async function assertReceiptOnlyCompletionState(workspaceDirectory, outputDirect
 
 function evidenceMatches(artifact, expected) {
   const stats = expected.stats ?? expected;
-  return Number(artifact.stats.dev) === Number(stats.dev ?? expected.device)
-    && Number(artifact.stats.ino) === Number(stats.ino ?? expected.inode)
+  return String(artifact.stats.dev) === String(stats.dev ?? expected.device)
+    && String(artifact.stats.ino) === String(stats.ino ?? expected.inode)
     && artifact.stats.nlink === Number(stats.nlink ?? expected.linkCount)
     && artifact.stats.size === Number(stats.size ?? expected.byteSize)
     && artifact.sha256 === expected.sha256;
@@ -746,10 +751,13 @@ async function deleteLocalExport(options) {
         allowLeaseControls: true,
       }), "replacement");
     if (plan.summary.confirmationToken !== confirmationToken) fail("confirmation");
-    if (stableJson(plan.journal.directoryIdentities) !== stableJson(directoryIdentities)) fail("replacement");
+    for (const name of ["workspace", "output"]) {
+      const expected = plan.journal.directoryIdentities[name]; const actual = directoryIdentities[name];
+      if (String(expected.device) !== actual.device || String(expected.inode) !== actual.inode) fail("replacement");
+    }
     const journalText = stableJson(plan.journal);
     const markerValue = {
-      schemaVersion: EXPORT_DELETION_COMMIT_MARKER_VERSION,
+      schemaVersion: plan.journal.schemaVersion === "usage-export-deletion-journal-v0.3" ? EXPORT_DELETION_COMMIT_MARKER_VERSION : "usage-export-deletion-commit-marker-v0.1",
       planVersion: EXPORT_DELETION_PLAN_VERSION,
       deletionOrderVersion: plan.journal.deletionOrderVersion,
       state: "committed",

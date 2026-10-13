@@ -73,7 +73,7 @@ function codexCollectorWorkspaceSourceKey(sourcePlanSha256) {
 
 function sourcePlanDigest(plan) {
   const material = JSON.stringify({
-    schemaVersion: CODEX_COLLECTOR_SOURCE_PLAN_VERSION,
+    schemaVersion: plan.schemaVersion,
     startAt: plan.startAt,
     endAt: plan.endAt,
     path: plan.path,
@@ -288,7 +288,8 @@ async function resolveCodexCollectorWorkspaceSource({
   }
   const initialCursor = cursorFromJson(source.initialCursorJson);
   const collectorPlan = {
-    schemaVersion: CODEX_COLLECTOR_SOURCE_PLAN_VERSION,
+    schemaVersion: typeof source.binding.device === "number" && typeof source.binding.inode === "number"
+      ? "codex-collector-export-source-plan-v0.1" : CODEX_COLLECTOR_SOURCE_PLAN_VERSION,
     startAt: descriptor.coveredAt.startAt,
     endAt: descriptor.coveredAt.endAt,
     path: resolve(collectorPath),

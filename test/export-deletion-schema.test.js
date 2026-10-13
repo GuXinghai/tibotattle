@@ -9,6 +9,7 @@ import {
   assertValidExportDeletionPreflight,
   assertValidExportDeletionReceipt,
   EXPORT_DELETION_COMMIT_MARKER_SCHEMA_SHA256,
+  EXPORT_DELETION_COMMIT_MARKER_SCHEMA_SHA256_V0_1,
   EXPORT_DELETION_COMMIT_MARKER_VERSION,
   EXPORT_DELETION_CONFIRMATION_TOKEN_PATTERN,
   EXPORT_DELETION_INVENTORY_ROLES,
@@ -18,6 +19,7 @@ import {
   EXPORT_DELETION_JOURNAL_VERSION,
   EXPORT_DELETION_JOURNAL_VERSION_V0_1,
   EXPORT_DELETION_JOURNAL_VERSION_V0_2,
+  EXPORT_DELETION_JOURNAL_VERSION_V0_3,
   EXPORT_DELETION_ORDER_VERSION,
   EXPORT_DELETION_PLAN_VERSION,
   EXPORT_DELETION_PREFLIGHT_SCHEMA_SHA256,
@@ -25,6 +27,7 @@ import {
   EXPORT_DELETION_RECEIPT_SCHEMA_SHA256,
   EXPORT_DELETION_RECEIPT_VERSION,
   exportDeletionCommitMarkerSchema,
+  exportDeletionCommitMarkerSchemaV0_1,
   exportDeletionJournalSchema,
   exportDeletionJournalSchemaV0_1,
   exportDeletionJournalSchemaV0_2,
@@ -67,8 +70,8 @@ function inventoryRow(role, ordinal, chunkIndex = null) {
     ordinal,
     role,
     chunkIndex,
-    device: 44,
-    inode: 1000 + ordinal,
+    device: "44",
+    inode: String(1000 + ordinal),
     fileType: "regular_file",
     linkCount: 1,
     byteSize: 10 + ordinal,
@@ -92,8 +95,8 @@ function journal(chunkCount = 2, sidecars = []) {
     deletionOrderVersion: EXPORT_DELETION_ORDER_VERSION,
     exportSetManifestVersion: "usage-export-set-manifest-v0.3",
     directoryIdentities: {
-      workspace: { device: 44, inode: 900 },
-      output: { device: 44, inode: 901 },
+      workspace: { device: "44", inode: "900" },
+      output: { device: "44", inode: "901" },
     },
     state: "prepared",
     planSha256: "a".repeat(64),
@@ -117,8 +120,8 @@ function commitMarker() {
     deletionOrderVersion: EXPORT_DELETION_ORDER_VERSION,
     state: "committed",
     directoryIdentities: {
-      workspace: { device: 44, inode: 900 },
-      output: { device: 44, inode: 901 },
+      workspace: { device: "44", inode: "900" },
+      output: { device: "44", inode: "901" },
     },
     planSha256: "a".repeat(64),
     journalSha256: "b".repeat(64),
@@ -148,7 +151,7 @@ test("deletion v0.1 schemas are immutable and inventory bounds track the export-
   const contracts = [
     ["preflight-summary.schema.json", exportDeletionPreflightSchema, EXPORT_DELETION_PREFLIGHT_SCHEMA_SHA256],
     ["journal.schema.json", exportDeletionJournalSchemaV0_1, EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_1],
-    ["commit-marker.schema.json", exportDeletionCommitMarkerSchema, EXPORT_DELETION_COMMIT_MARKER_SCHEMA_SHA256],
+    ["commit-marker.schema.json", exportDeletionCommitMarkerSchemaV0_1, EXPORT_DELETION_COMMIT_MARKER_SCHEMA_SHA256_V0_1],
     ["receipt.schema.json", exportDeletionReceiptSchema, EXPORT_DELETION_RECEIPT_SCHEMA_SHA256],
   ];
   for (const [basename, schema, expectedDigest] of contracts) {
@@ -315,9 +318,9 @@ test("commit marker and final receipt cannot claim transport, network use, or se
 
 
 test("deletion journal v0.2 has a distinct schema and retains the unchanged v0.1 validator", async () => {
-  assert.equal(EXPORT_DELETION_JOURNAL_VERSION, EXPORT_DELETION_JOURNAL_VERSION_V0_2);
-  assert.equal(EXPORT_DELETION_JOURNAL_SCHEMA_SHA256, EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_2);
-  assert.equal(exportDeletionJournalSchema, exportDeletionJournalSchemaV0_2);
+  assert.equal(EXPORT_DELETION_JOURNAL_VERSION, EXPORT_DELETION_JOURNAL_VERSION_V0_3);
+  assert.notEqual(EXPORT_DELETION_JOURNAL_SCHEMA_SHA256, EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_2);
+  assert.notEqual(exportDeletionJournalSchema, exportDeletionJournalSchemaV0_2);
   assert.equal(EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_1, "8088522cbfa5083cb9766721bdbdd9b8f39685d7eade2a3f6b6b6c79f256dd68");
   const bytes = await readFile(new URL("../schemas/export-deletion-v0.2/journal.schema.json", import.meta.url));
   assert.equal(createHash("sha256").update(bytes).digest("hex"), EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_2);
@@ -335,13 +338,27 @@ test("journal dispatch preserves old bounds and admits only the reviewed manifes
       "usage-export-set-manifest-v0.1", "usage-export-set-manifest-v0.2", "usage-export-set-manifest-v0.3",
     ]) {
       const value = { ...journal(), schemaVersion, exportSetManifestVersion };
+      for (const identity of [...Object.values(value.directoryIdentities), ...value.inventory]) { identity.device = Number(identity.device); identity.inode = Number(identity.inode); }
       assert.equal(validateExportDeletionJournal(value).valid,
         schemaVersion === EXPORT_DELETION_JOURNAL_VERSION_V0_2 || !exportSetManifestVersion.endsWith("v0.3"));
     }
     const value = { ...journal(), schemaVersion, exportSetManifestVersion: "usage-export-set-manifest-v0.4" };
     assert.equal(validateExportDeletionJournal(value).valid, false);
   }
-  for (const schemaVersion of [null, "usage-export-deletion-journal-v0.3", "unknown-v0.2"]) {
+  for (const schemaVersion of [null, "usage-export-deletion-journal-v0.4", "unknown-v0.2"]) {
     assert.equal(validateExportDeletionJournal({ ...journal(), schemaVersion }).valid, false);
+  }
+});
+
+test("exact deletion identities distinguish adjacent unsafe integers and reject noncanonical or overflow IDs", () => {
+  const value = journal();
+  value.inventory[0].inode = "9007199254740992";
+  value.inventory[1].inode = "9007199254740993";
+  assert.equal(validateExportDeletionJournal(value).valid, true);
+  for (const invalid of [9007199254740992, "01", "+1", "1.0", "0", "18446744073709551616", "99999999999999999999"]) {
+    const changed = structuredClone(value); changed.inventory[0].inode = invalid;
+    assert.equal(validateExportDeletionJournal(changed).valid, false);
+    const marker = commitMarker(); marker.directoryIdentities.workspace.inode = invalid;
+    assert.equal(validateExportDeletionCommitMarker(marker).valid, false);
   }
 });
