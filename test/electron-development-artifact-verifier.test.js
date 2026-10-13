@@ -42,7 +42,6 @@ const SHELL_FILES = [
   "apps/electron/desktop-command.js",
   "apps/electron/desktop-contract.js",
   "apps/electron/desktop-contribution-credential.js",
-  "apps/electron/desktop-crash-capture.js",
   "apps/electron/desktop-startup-diagnostics.js",
   "apps/electron/desktop-codex-roots.js",
   "apps/electron/desktop-deep-links.js",
@@ -362,6 +361,27 @@ test("accepts the approved optional source-read sidecar while retaining old side
     const result = await verify(fixture, "win32-x64");
     assert.equal(result.status, FIXED_STATUS.verified);
   });
+});
+
+test("verifies closed release-operation and legacy-read extensions without enabling production", async () => {
+  const extensions = {
+    releaseOperation: { approved: true, contractVersion: "windows-release-operation-storage-v1" },
+    legacyStateRead: { approved: true, contractVersion: "windows-legacy-state-read-v1" },
+  };
+  await withFixture("win32-x64", { bindingManifestMutation: sidecar => Object.assign(sidecar, extensions) }, async fixture => {
+    assert.equal((await verify(fixture, "win32-x64")).status, FIXED_STATUS.verified);
+    assert.equal(fixture.bindingManifest.approvedPolicy.productionSafe, false);
+    assert.equal(fixture.bindingManifest.approvedPolicy.pathWalkRaceSafe, false);
+  });
+  for (const name of Object.keys(extensions)) {
+    for (const patch of [{ approved: false }, { contractVersion: "unknown-v1" }, { extra: true }]) {
+      await withFixture("win32-x64", { bindingManifestMutation: sidecar => {
+        sidecar[name] = { ...extensions[name], ...patch };
+      } }, async fixture => {
+        await assert.rejects(verify(fixture, "win32-x64"), error => error.code === FIXED_STATUS.bindingInvalid);
+      });
+    }
+  }
 });
 
 test("round-trips every Windows ASAR list entry through native lookups", {

@@ -41,6 +41,8 @@ import {
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
   WINDOWS_SOURCE_READ_APPROVED,
   WINDOWS_SOURCE_READ_CONTRACT,
+  WINDOWS_RELEASE_OPERATION_CONTRACT,
+  WINDOWS_LEGACY_STATE_READ_CONTRACT,
 } from "../src/platform/windows-filesystem.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
@@ -71,7 +73,6 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/desktop-command.js",
   "apps/electron/desktop-contract.js",
   "apps/electron/desktop-contribution-credential.js",
-  "apps/electron/desktop-crash-capture.js",
   "apps/electron/desktop-startup-diagnostics.js",
   "apps/electron/desktop-codex-roots.js",
   "apps/electron/desktop-deep-links.js",
@@ -607,14 +608,17 @@ function validateNativeManifestShape(value) {
   const exactBooleanShape = (candidate, keys) =>
     exactObjectKeys(candidate, keys)
       && keys.every((key) => typeof candidate[key] === "boolean");
-  const hasSourceRead = Object.hasOwn(value, "sourceRead");
-  const manifestKeys = hasSourceRead
-    ? [...WINDOWS_NATIVE_MANIFEST_KEYS, "sourceRead"]
-    : WINDOWS_NATIVE_MANIFEST_KEYS;
+  const extensions = [
+    ["sourceRead", WINDOWS_SOURCE_READ_CONTRACT, WINDOWS_SOURCE_READ_APPROVED],
+    ["releaseOperation", WINDOWS_RELEASE_OPERATION_CONTRACT, true],
+    ["legacyStateRead", WINDOWS_LEGACY_STATE_READ_CONTRACT, true],
+  ];
+  const manifestKeys = [...WINDOWS_NATIVE_MANIFEST_KEYS,
+    ...extensions.filter(([name]) => Object.hasOwn(value, name)).map(([name]) => name)];
   if (!exactObjectKeys(value, manifestKeys)
-      || (hasSourceRead && (!exactObjectKeys(value.sourceRead, WINDOWS_SOURCE_READ_MANIFEST_KEYS)
-        || value.sourceRead.contractVersion !== WINDOWS_SOURCE_READ_CONTRACT
-        || value.sourceRead.approved !== WINDOWS_SOURCE_READ_APPROVED))
+      || extensions.some(([name, contract, approved]) => Object.hasOwn(value, name)
+        && (!exactObjectKeys(value[name], WINDOWS_SOURCE_READ_MANIFEST_KEYS)
+          || value[name].contractVersion !== contract || value[name].approved !== approved))
       || value.schemaVersion !== WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION
       || value.bindingFile !== "windows_filesystem.node"
       || value.platform !== "win32"
