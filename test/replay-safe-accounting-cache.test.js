@@ -306,17 +306,12 @@ test("cache reads invalidate when the unified generation no longer matches", asy
       crashSafeGenerationPublication: true,
     },
   });
-  const contextInvalidated = await readReplaySafeAccountingCacheImpl({
+  await assert.rejects(readReplaySafeAccountingCacheImpl({
     stateFile,
     sourceMode: "unified",
     expectedGeneration: "generation-test-1",
     contextBehavior: "legacy_zero",
-  });
-  assert.deepEqual(contextInvalidated, {
-    status: "unavailable",
-    errorCode: "cache_context_behavior_mismatch",
-    cache: null,
-  });
+  }), /contextBehavior is invalid/);
   const invalidated = await readReplaySafeAccountingCacheImpl({
     stateFile,
     sourceMode: "unified",

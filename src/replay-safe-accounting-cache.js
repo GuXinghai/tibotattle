@@ -142,11 +142,9 @@ const ALLOWANCE_SCENARIO_CANDIDATES = Object.freeze({
 
 export const REPLAY_SAFE_ACCOUNTING_SOURCE_MODES = Object.freeze([
   "unified",
-  "legacy",
 ]);
 
 export const REPLAY_SAFE_ACCOUNTING_CONTEXT_BEHAVIORS = Object.freeze([
-  "legacy_zero",
   "source_native",
 ]);
 

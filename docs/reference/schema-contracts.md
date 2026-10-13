@@ -159,8 +159,8 @@ input total is usable only when its component observations are complete; known
 explicit context, including observed zero, remains authoritative. The memoized
 pricer derives context thresholds from the reviewed public cards and falls back
 to the full ledger for incomplete evidence. Old materialization is withheld for
-rebuild; an explicitly requested `legacy_zero` compatibility adapter retains its
-original meaning rather than becoming the current default. This does not
+rebuild; the retired `legacy_zero` adapter and legacy source mode are refused.
+Missing input context cannot become observed zero. This does not
 rewrite stored source observations or alter retained price-card evidence.
 
 A version change includes:

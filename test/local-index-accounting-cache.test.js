@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { test } from "node:test";
+import { DatabaseSync } from "node:sqlite";
 
 import {
   buildLocalIndexAccountingCache,
+  createLocalIndexAccountingScan,
   refreshLocalIndexAccountingCache,
 } from "../src/local-index-accounting-cache.js";
 import { readLocalIndexCompanionProjection } from "../src/local-index-companion-source.js";
@@ -17,6 +19,25 @@ import { createWorkspace } from "./helpers/local-index-facts.js";
 
 const END_MS = Date.parse("2026-09-01T00:00:00.000Z");
 const NOW_MS = END_MS + 3_600_000;
+
+test("v2 context preserves unknown and observed zero while refusing legacy zero substitution", async () => {
+  assert.throws(() => createLocalIndexAccountingScan({ indexFile: "synthetic.sqlite", contextBehavior: "legacy_zero" }), /source_native/);
+  const workspace = createWorkspace({ files: 1, events: 4, days: 1 });
+  try {
+    const indexFile = join(workspace.state, "v2.sqlite");
+    await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile, secretFile: workspace.secretFile, workerCount: 1 });
+    const database = new DatabaseSync(indexFile);
+    try {
+      database.exec("UPDATE usage_event SET total_input_context = NULL");
+      database.exec("UPDATE usage_event SET total_input_context = 0 WHERE event_key = (SELECT event_key FROM usage_event ORDER BY event_key LIMIT 1)");
+    } finally { database.close(); }
+    const rows = [];
+    await createLocalIndexAccountingScan({ indexFile })({ startAt: "2026-08-01T00:00:00.000Z", endAt: "2026-09-02T00:00:00.000Z", onUsage: row => { rows.push(row); } });
+    assert.ok(rows.some(row => row.totalInputContextTokens === 0));
+    assert.ok(rows.some(row => !Object.hasOwn(row, "totalInputContextTokens")));
+    assert.equal(rows.filter(row => row.totalInputContextTokens === 0).length, 1);
+  } finally { workspace.cleanup(); }
+});
 
 test("the v2 cache is bound to the generation the companion projection names", async () => {
   const workspace = createWorkspace({ variety: true, files: 24, events: 900, days: 8, seed: 31 });

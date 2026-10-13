@@ -133,6 +133,9 @@ export function createLocalIndexAccountingScan({
   if (typeof indexFile !== "string" || indexFile.length < 1) {
     throw new TypeError("indexFile must be a non-empty string");
   }
+  if (contextBehavior !== "source_native") {
+    throw new TypeError("contextBehavior must be source_native");
+  }
   return async function scanLocalIndex({
     startAt,
     endAt,
@@ -241,8 +244,8 @@ export function createLocalIndexAccountingScan({
               lineageDisposition: row.lineage_disposition,
             },
           };
-          if (totalInputContext !== null || contextBehavior === "legacy_zero") {
-            usage.totalInputContextTokens = totalInputContext ?? 0;
+          if (totalInputContext !== null) {
+            usage.totalInputContextTokens = totalInputContext;
           }
           const sourceOffset = nonNegative(row.source_offset);
           const sourceOrdinal = nullableNonNegative(row.source_ordinal);

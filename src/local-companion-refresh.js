@@ -1305,9 +1305,7 @@ function publicRefreshResult(result, now = Date.now()) {
         : {}),
       readerVersion: safeGenerationToken(result.accounting.readerVersion),
       compatibilityBehavior:
-        ["legacy_zero", "source_native"].includes(
-          result.accounting.compatibilityBehavior,
-        )
+        result.accounting.compatibilityBehavior === "source_native"
           ? result.accounting.compatibilityBehavior
           : null,
       coverageStatus: ["complete", "partial"].includes(
