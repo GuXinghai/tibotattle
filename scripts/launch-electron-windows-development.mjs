@@ -609,6 +609,11 @@ export async function runWindowsDevelopmentLaunch({
 }
 
 if (resolve(process.argv[1] ?? "") === SCRIPT_FILE) {
+  // The downloaded wrapper runs this helper in Electron's Node mode. Its
+  // archive virtualization makes lstat(app.asar) look like a directory; this
+  // helper verifies the physical package. The separately spawned app retains
+  // normal ASAR behavior, since this process flag is not an environment value.
+  if (process.versions.electron) process.noAsar = true;
   try {
     const options = parseWindowsDevelopmentLaunchArguments();
     if (options.help) {
