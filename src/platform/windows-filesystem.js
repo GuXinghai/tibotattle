@@ -58,6 +58,13 @@ export const WINDOWS_SOURCE_READ_METHODS = Object.freeze([
 // Narrow source-read capability, independent of unrelated filesystem writes.
 // The exact native binding and manifest must still verify at runtime.
 export const WINDOWS_SOURCE_READ_APPROVED = true;
+export const WINDOWS_RELEASE_OPERATION_CONTRACT = 'windows-release-operation-storage-v1';
+export const WINDOWS_RELEASE_OPERATION_METHODS = Object.freeze([
+  'acquireProtectedDirectoryGuard', 'releaseProtectedDirectoryGuard',
+  'inspectProtectedChild', 'readProtectedChild', 'createProtectedChild',
+  'replaceProtectedChild', 'deleteProtectedChild',
+  'acquireProtectedChildGuard',
+]);
 
 const MANIFEST_KEYS = Object.freeze([
   "schemaVersion",
@@ -144,7 +151,13 @@ function assertBindingManifest(manifest) {
   const manifestKeys = Object.keys(manifest);
   const hasSourceRead = Object.hasOwn(manifest, 'sourceRead');
   const sourceRead = manifest.sourceRead;
-  const valid = manifestKeys.length === MANIFEST_KEYS.length + (hasSourceRead ? 1 : 0)
+  const hasReleaseOperation = Object.hasOwn(manifest, 'releaseOperation');
+  const releaseOperation = manifest.releaseOperation;
+  const valid = manifestKeys.length === MANIFEST_KEYS.length + (hasSourceRead ? 1 : 0) + (hasReleaseOperation ? 1 : 0)
+    && (!hasReleaseOperation || (releaseOperation !== null && typeof releaseOperation === 'object'
+      && !Array.isArray(releaseOperation) && Object.keys(releaseOperation).sort().join(',') === 'approved,contractVersion'
+      && releaseOperation.contractVersion === WINDOWS_RELEASE_OPERATION_CONTRACT
+      && releaseOperation.approved === true))
     && (!hasSourceRead || (sourceRead !== null && typeof sourceRead === 'object'
       && !Array.isArray(sourceRead) && Object.keys(sourceRead).sort().join(',') === 'approved,contractVersion'
       && sourceRead.contractVersion === WINDOWS_SOURCE_READ_CONTRACT
@@ -288,6 +301,10 @@ function verifyBindingIntegrity({
       || !WINDOWS_SOURCE_READ_METHODS.every(name => typeof binding[name] === 'function'))) {
     throw failure('MANIFEST_BINDING_MISMATCH');
   }
+  if (manifest.releaseOperation && (binding.protectedDirectoryGuardContractVersion !== 'windows-protected-directory-guard-v1'
+      || !WINDOWS_RELEASE_OPERATION_METHODS.every(name => typeof binding[name] === 'function'))) {
+    throw failure('MANIFEST_BINDING_MISMATCH');
+  }
   return Object.freeze({ binding, manifest });
 }
 
@@ -345,6 +362,17 @@ export function loadWindowsSourceReadBinding(options = {}) {
   if (manifest.sourceRead?.approved !== true
       || manifest.approvedPolicy.credentialAuditFileGuardSafe !== true) {
     throw failure('SOURCE_READ_UNQUALIFIED');
+  }
+  return binding;
+}
+
+// A narrow local release-tooling boundary. General production selectors stay
+// disabled; installed provenance and publication qualification are separate.
+export function loadWindowsReleaseOperationBinding(options = {}) {
+  const { binding, manifest } = loadVerifiedWindowsFilesystemBinding(options);
+  if (manifest.releaseOperation?.approved !== true
+      || manifest.approvedPolicy.credentialAuditFileGuardSafe !== true) {
+    throw failure('RELEASE_OPERATION_UNQUALIFIED');
   }
   return binding;
 }

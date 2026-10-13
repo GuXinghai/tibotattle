@@ -94,6 +94,26 @@ step fails.
   held root handle. Child input is parsed again natively, so a JavaScript path
   check cannot redirect the operation. The read variant rejects a file larger
   than `maximumBytes` before allocating the returned byte vector.
+- `acquireProtectedDirectoryGuard(root)` returns an opaque guard and the
+  authenticated root identity under `windows-protected-directory-guard-v1`.
+  The root must have exactly one current-owner full-access allow ACE, a protected
+  DACL, and no deny ACE. All resolved ancestors and the root remain open without
+  delete sharing until `releaseProtectedDirectoryGuard(guard)`; the guard uses
+  the bounded 64-slot native registry. This pins the root name for cooperating
+  release-operation writers while existing protected-child methods bind each
+  mutation to its identity. It does not lock child names against a hostile
+  same-owner process. Atomic replacements flush the replacement handle both
+  before and after the rename. SQLite mutex and journal guards remain separate
+  and must close only after the SQLite connection. These narrow capabilities do
+  not enable the general production/path-walk policies or prove installed or
+  signed-release qualification.
+- `acquireProtectedChildGuard(root, rootIdentity, child)` pins a single-link
+  regular file beneath that authenticated root with the exact owner-only DACL.
+  It permits SQLite reads and writes while denying deletion and replacement;
+  release uses `releaseCredentialAuditFileGuard(guard)`. Unlike the legacy
+  path-based audit guard, it requires only the private root, leaving an ordinary
+  artifact parent unchanged. Retain the directory guard across creation,
+  connection, crash recovery, the exclusive mutex, and connection close.
 - `acquireCredentialMutex(capabilityId)` accepts only one of four fixed numeric
   capability IDs, derives a per-user `Local\` kernel-object name from the
   current SID, applies and revalidates a protected owner-only DACL, and performs

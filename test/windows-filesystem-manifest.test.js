@@ -13,8 +13,26 @@ import {
   buildWindowsFilesystemBindingManifest,
   createWindowsFilesystemBindingManifest,
 } from "../scripts/build-windows-filesystem-manifest.mjs";
+import { WINDOWS_RELEASE_OPERATION_METHODS } from "../src/platform/windows-filesystem.js";
 
 const BYTES = Buffer.from("reviewed native bytes", "utf8");
+
+test("release storage extension requires the complete narrow native lifecycle", () => {
+  const extension = Object.fromEntries(WINDOWS_RELEASE_OPERATION_METHODS.map(name => [name, () => {}]));
+  extension.protectedDirectoryGuardContractVersion = 'windows-protected-directory-guard-v1';
+  const result = createWindowsFilesystemBindingManifest({ bytes: BYTES, binding: binding(extension) });
+  assert.deepEqual(result.releaseOperation, { contractVersion: 'windows-release-operation-storage-v1', approved: true });
+  assert.equal(result.approvedPolicy.productionSafe, false);
+  assert.equal(result.approvedPolicy.pathWalkRaceSafe, false);
+  for (const name of WINDOWS_RELEASE_OPERATION_METHODS) {
+    assert.throws(() => createWindowsFilesystemBindingManifest({ bytes: BYTES,
+      binding: binding({ ...extension, [name]: undefined }),
+    }), { code: 'WINDOWS_FILESYSTEM_MANIFEST_INVALID_RELEASE_OPERATION' });
+  }
+  assert.throws(() => createWindowsFilesystemBindingManifest({ bytes: BYTES,
+    binding: binding({ ...extension, protectedDirectoryGuardContractVersion: 'future' }),
+  }), { code: 'WINDOWS_FILESYSTEM_MANIFEST_INVALID_RELEASE_OPERATION' });
+});
 const IDENTITY = Object.freeze({
   volumeSerialNumber: "0000000000000001",
   fileId: "00112233445566778899aabbccddeeff",

@@ -23,6 +23,7 @@ import {
   isWindowsFilesystemNotFound,
   loadWindowsFilesystemBinding,
   loadWindowsSourceReadBinding,
+  loadWindowsReleaseOperationBinding, WINDOWS_RELEASE_OPERATION_METHODS,
   WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../src/platform/windows-filesystem.js";
@@ -44,6 +45,31 @@ const IDENTITY = Object.freeze({
   linkCount: 1,
 });
 const BINDING_BYTES = Buffer.from("reviewed native binding bytes", "utf8");
+
+test('release storage loader binds approval and the complete guard surface to verified bytes', () => {
+  const native = binding({ protectedDirectoryGuardContractVersion: 'windows-protected-directory-guard-v1',
+    ...Object.fromEntries(WINDOWS_RELEASE_OPERATION_METHODS.map(name => [name, () => {}])),
+  });
+  const sidecar = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: native });
+  const options = { platform: 'win32', architecture: 'x64',
+    bindingPath: 'C:\\checkout\\native\\windows-filesystem\\build\\Release\\windows_filesystem.node',
+    readManifest: () => JSON.stringify(sidecar), readBindingBytes: () => BINDING_BYTES,
+    requireBinding: () => native,
+  };
+  assert.equal(loadWindowsReleaseOperationBinding(options), native);
+  assert.equal(sidecar.approvedPolicy.productionSafe, false);
+  assert.throws(() => loadWindowsReleaseOperationBinding({ ...options, readManifest: () => JSON.stringify(manifest()) }),
+    { code: 'WINDOWS_FILESYSTEM_RELEASE_OPERATION_UNQUALIFIED' });
+  for (const name of WINDOWS_RELEASE_OPERATION_METHODS) {
+    assert.throws(() => loadWindowsReleaseOperationBinding({ ...options, requireBinding: () => ({ ...native, [name]: undefined }) }),
+      { code: 'WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH' });
+  }
+  for (const releaseOperation of [{ ...sidecar.releaseOperation, approved: false },
+    { ...sidecar.releaseOperation, extra: true }, { ...sidecar.releaseOperation, contractVersion: 'future' }]) {
+    assert.throws(() => loadWindowsReleaseOperationBinding({ ...options,
+      readManifest: () => JSON.stringify({ ...sidecar, releaseOperation }) }), { code: 'WINDOWS_FILESYSTEM_INVALID_MANIFEST' });
+  }
+});
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");

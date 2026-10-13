@@ -55,7 +55,9 @@ export {
   createWindowsFilesystemAdapter,
   isWindowsFilesystemAdapter,
   isWindowsFilesystemIdentity,
+  loadWindowsReleaseOperationBinding,
 } from "./windows-filesystem.js";
+export { configureGuardedSqliteConnection } from "./windows-protected-sqlite.js";
 export {
   windowsNativeUnsignedContentDigest,
 } from "./windows-native-unsigned-content.js";

@@ -306,6 +306,49 @@ test("native adapter keeps hostile path failures fixed and content-free", {
   );
 }));
 
+test("native protected directory lease pins root and ancestors through atomic replacement", {
+  skip: NATIVE_SKIP,
+}, () => withSyntheticRoot(async ({ adapter, root }) => {
+  const identity = adapter.ensureDirectory(root);
+  const binding = loadWindowsFilesystemBinding();
+  assert.equal(binding.protectedDirectoryGuardContractVersion, "windows-protected-directory-guard-v1");
+  const lease = binding.acquireProtectedDirectoryGuard(root);
+  assert.deepEqual(lease.identity, identity);
+  try {
+    await assert.rejects(rename(root, `${root}-replacement`), error => ["EPERM", "EACCES", "EBUSY"].includes(error.code));
+    await assert.rejects(rename(join(root, ".."), `${join(root, "..")}-replacement`), error => ["EPERM", "EACCES", "EBUSY"].includes(error.code));
+    const initial = binding.createProtectedChild(root, identity, "operation.json", Buffer.from("old"));
+    const next = binding.replaceProtectedChild(root, identity, "operation.json", initial, Buffer.from("new"));
+    assert.deepEqual(binding.readProtectedChild(root, identity, "operation.json", 3), {
+      data: Buffer.from("new"), identity: next,
+    });
+    const locked = binding.createProtectedChild(root, identity, "mutex.sqlite", Buffer.alloc(0));
+    const fileLease = binding.acquireProtectedChildGuard(root, identity, "mutex.sqlite");
+    assert.deepEqual(fileLease.identity, locked);
+    try {
+      await assert.rejects(rename(join(root, "mutex.sqlite"), join(root, "moved.sqlite")),
+        error => ["EPERM", "EACCES", "EBUSY"].includes(error.code));
+      assert.throws(() => binding.releaseProtectedDirectoryGuard(fileLease.guard),
+        fixedNativeError("WINDOWS_FILESYSTEM_CREDENTIAL_AUDIT_GUARD_FOREIGN"));
+    } finally { binding.releaseCredentialAuditFileGuard(fileLease.guard); }
+    assert.throws(() => binding.releaseProtectedDirectoryGuard({}), fixedNativeError("WINDOWS_FILESYSTEM_CREDENTIAL_AUDIT_GUARD_FOREIGN"));
+  } finally {
+    binding.releaseProtectedDirectoryGuard(lease.guard);
+  }
+  assert.throws(() => binding.releaseProtectedDirectoryGuard(lease.guard), fixedNativeError("WINDOWS_FILESYSTEM_CREDENTIAL_AUDIT_GUARD_FOREIGN"));
+  await rename(root, `${root}-replacement`);
+}));
+
+test("native protected directory lease refuses inherited ACL roots", {
+  skip: NATIVE_SKIP,
+}, async () => {
+  const root = await mkdtemp(join(tmpdir(), "tibotattle-unprotected-operation-"));
+  try {
+    assert.throws(() => loadWindowsFilesystemBinding().acquireProtectedDirectoryGuard(root),
+      fixedNativeError("WINDOWS_FILESYSTEM_SECURITY_POLICY"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("native adapter rejects reserved and traversal path components", {
   skip: NATIVE_SKIP,
 }, () => withSyntheticRoot(({ adapter, root }) => {
@@ -416,6 +459,10 @@ test("native source handle holds its name, bounds reads and rejects links and fo
   adapter.createFile(protectedFile, Buffer.alloc(0));
   const protectedLease = native.acquireCredentialAuditFileGuard(protectedFile);
   try {
+    // Qualify the native guard alone: an open SQLite connection could otherwise
+    // mask an ineffective metadata-only sharing handle.
+    await assert.rejects(rename(protectedFile, `${protectedFile}.moved`));
+    await assert.rejects(rm(protectedFile));
     assert.throws(() => native.closeSourceFile(protectedLease.guard));
     assert.throws(() => native.readSourceFile(protectedLease.guard, 0, 1));
   } finally { native.releaseCredentialAuditFileGuard(protectedLease.guard); }

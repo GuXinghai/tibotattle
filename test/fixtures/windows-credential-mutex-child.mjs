@@ -3,7 +3,7 @@ import { isMainThread, parentPort, workerData } from "node:worker_threads";
 import { createWindowsCredentialMutexContext } from "../../src/platform/windows-credential-mutex.js";
 import { createWindowsCredentialOperationAuditStore } from "../../src/platform/windows-credential-operation-audit.js";
 import { createWindowsCredentialOperationLeaseContext } from "../../src/platform/windows-credential-operation-lease.js";
-import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../../src/export-identity-keychain.js";
+import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../../src/platform/index.js";
 
 const capabilityId = isMainThread
   ? Number.parseInt(process.argv[2] ?? "", 10)

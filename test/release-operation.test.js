@@ -1,11 +1,27 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { link, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { durablePrivateJson, identityDigest, openOperation, readOperation } from "../scripts/lib/release-operation.mjs";
+import { loadWindowsReleaseOperationBinding } from "../src/platform/index.js";
+
+function assertPrivate(path, directory = false) {
+  const facts = loadWindowsReleaseOperationBinding().inspectPath(path);
+  assert.equal(facts.ownerMatches, true);
+  assert.equal(facts.daclProtected, true);
+  assert.equal(facts.nonOwnerAllow, false);
+  assert.equal(facts.broadAccess, false);
+  assert.equal(facts.isReparsePoint, false);
+  assert.equal(facts.isDirectory, directory);
+  assert.equal(facts.identity.linkCount, 1);
+}
+function grantEveryoneRead(path) {
+  execFileSync('icacls.exe', [path, '/grant', '*S-1-1-0:(R)'], { stdio: 'pipe' });
+}
 
 async function fixture(t) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "release-operation-test-")));
@@ -23,8 +39,8 @@ test("operation binds canonical inputs and preserves isolated durable state", as
     await operation.save({ phase: "prepared" });
     operation.record.state.phase = "not saved";
     assert.equal((await readOperation(f.directory)).state.phase, "prepared");
-    assert.equal((await lstat(f.directory)).mode & 0o777, 0o700);
-    for (const name of ["operation.json", "mutex.sqlite"]) assert.equal((await lstat(join(f.directory, name))).mode & 0o777, 0o600);
+    assertPrivate(f.directory, true);
+    for (const name of ["operation.json", "mutex.sqlite", "mutex.sqlite-journal"]) assertPrivate(join(f.directory, name));
     assert.equal((await readFile(join(f.directory, "operation.json"), "utf8")).includes('"source":"synthetic"'), false);
   } finally { operation.close(); }
   await assert.rejects(openOperation(f), { code: "RELEASE_OPERATION_EXISTS_USE_RESUME" });
@@ -35,12 +51,30 @@ test("operation binds canonical inputs and preserves isolated durable state", as
   resumed.close();
 });
 
+test("operation pins root and mutex names and refuses a substituted receipt", async (t) => {
+  const f = await fixture(t);
+  const operation = await openOperation(f);
+  try {
+    await operation.save({ phase: 'original' });
+    await assert.rejects(rename(f.directory, `${f.directory}-moved`));
+    await assert.rejects(rename(join(f.directory, 'mutex.sqlite'), join(f.directory, 'mutex-moved.sqlite')));
+    await assert.rejects(durablePrivateJson(join(f.directory, 'operation.json'), {}), { code: 'RELEASE_OPERATION_BUSY' });
+    const record = operation.record;
+    const path = join(f.directory, 'operation.json');
+    await rm(path);
+    loadWindowsReleaseOperationBinding().createFile(path, Buffer.from(JSON.stringify(record)));
+    await assert.rejects(operation.save({ phase: 'overwrite-substitute' }), { code: 'RELEASE_OPERATION_FILE_UNSAFE' });
+    assert.equal((await readOperation(f.directory)).state.phase, 'original');
+  } finally { operation.close(); }
+  operation.close();
+  await assert.rejects(operation.save({}), { code: 'RELEASE_OPERATION_CLOSED' });
+});
+
 test("operation refuses unsafe directory, symlink journal and hardlink journal", async (t) => {
   const f = await fixture(t);
-  await mkdir(f.directory, { mode: 0o755 });
-  await chmod(f.directory, 0o755);
+  await mkdir(f.directory);
   await assert.rejects(openOperation(f), { code: "RELEASE_OPERATION_DIRECTORY_UNSAFE" });
-  await chmod(f.directory, 0o700);
+  await rm(f.directory, { recursive: true });
   const operation = await openOperation(f);
   operation.close();
   const path = join(f.directory, "operation.json");
@@ -66,9 +100,10 @@ test("operation rejects malformed, oversized and nonprivate records", async (t) 
   await writeFile(path, "{");
   await assert.rejects(readOperation(f.directory), { code: "RELEASE_OPERATION_INVALID" });
   await writeFile(path, original);
-  await chmod(path, 0o644);
+  grantEveryoneRead(path);
   await assert.rejects(readOperation(f.directory), { code: "RELEASE_OPERATION_FILE_UNSAFE" });
-  await chmod(path, 0o600);
+  await rm(path);
+  loadWindowsReleaseOperationBinding().createFile(path, original);
   await assert.rejects(durablePrivateJson(path, { payload: "x".repeat(1024 * 1024) }), { code: "RELEASE_OPERATION_TOO_LARGE" });
   assert.deepEqual(await readFile(path), original);
   await writeFile(path, "x".repeat(1024 * 1024 + 1));

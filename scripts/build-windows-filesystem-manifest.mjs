@@ -21,6 +21,7 @@ import {
   WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
   WINDOWS_SOURCE_READ_CONTRACT, WINDOWS_SOURCE_READ_METHODS, WINDOWS_SOURCE_READ_APPROVED,
+  WINDOWS_RELEASE_OPERATION_CONTRACT, WINDOWS_RELEASE_OPERATION_METHODS,
 } from "../src/platform/windows-filesystem.js";
 
 const require = createRequire(import.meta.url);
@@ -92,11 +93,19 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
     throw failure("WINDOWS_FILESYSTEM_MANIFEST_NATIVE_CLAIM_UNREVIEWED");
   }
   const hasSourceRead = native.sourceReadContractVersion !== undefined;
+  const hasReleaseOperation = native.protectedDirectoryGuardContractVersion !== undefined;
+  if (hasReleaseOperation && (native.protectedDirectoryGuardContractVersion !== 'windows-protected-directory-guard-v1'
+      || !WINDOWS_RELEASE_OPERATION_METHODS.every(name => typeof native[name] === 'function'))) {
+    throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_RELEASE_OPERATION');
+  }
   if (hasSourceRead && (native.sourceReadContractVersion !== WINDOWS_SOURCE_READ_CONTRACT
       || !WINDOWS_SOURCE_READ_METHODS.every(name => typeof native[name] === 'function'))) {
     throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_SOURCE_READ');
   }
   return Object.freeze({
+    ...(hasReleaseOperation ? { releaseOperation: {
+      contractVersion: WINDOWS_RELEASE_OPERATION_CONTRACT, approved: true,
+    } } : {}),
     ...(hasSourceRead ? { sourceRead: {
       contractVersion: WINDOWS_SOURCE_READ_CONTRACT, approved: WINDOWS_SOURCE_READ_APPROVED,
     } } : {}),

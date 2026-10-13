@@ -19,6 +19,12 @@ const CHILD = fileURLToPath(new URL(
   import.meta.url,
 ));
 
+function assertNoChildDiagnostics(stderr) {
+  // Node 22 emits this fixed warning on importing node:sqlite. Preserve the
+  // rejection of every other diagnostic, including additional warning text.
+  assert.match(stderr, /^(?:\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n)?$/u);
+}
+
 function runChild(capabilityId) {
   return spawnSync(process.execPath, [CHILD, String(capabilityId)], {
     encoding: "utf8",
@@ -67,12 +73,12 @@ test("native named mutex serializes separate Windows processes per capability", 
     const contended = runChild(0);
     assert.equal(contended.status, 2);
     assert.equal(contended.stdout.trim(), "WINDOWS_CREDENTIAL_MUTEX_CHILD_CONTENDED");
-    assert.equal(contended.stderr, "");
+    assertNoChildDiagnostics(contended.stderr);
 
     const independent = runChild(1);
     assert.equal(independent.status, 0);
     assert.equal(independent.stdout.trim(), "WINDOWS_CREDENTIAL_MUTEX_CHILD_ACQUIRED");
-    assert.equal(independent.stderr, "");
+    assertNoChildDiagnostics(independent.stderr);
   } finally {
     context.release(lease);
   }
@@ -80,7 +86,7 @@ test("native named mutex serializes separate Windows processes per capability", 
   const reacquired = runChild(0);
   assert.equal(reacquired.status, 0);
   assert.equal(reacquired.stdout.trim(), "WINDOWS_CREDENTIAL_MUTEX_CHILD_ACQUIRED");
-  assert.equal(reacquired.stderr, "");
+  assertNoChildDiagnostics(reacquired.stderr);
 });
 
 test("native mutex registry remains safe across Node worker threads", {
@@ -149,7 +155,7 @@ test("native lease recovers a durable prepared row after abrupt process terminat
     });
     assert.equal(crashed.status, 17);
     assert.equal(crashed.stdout.trim(), "WINDOWS_CREDENTIAL_MUTEX_CHILD_PREPARED");
-    assert.equal(crashed.stderr, "");
+    assertNoChildDiagnostics(crashed.stderr);
 
     const auditStore = createWindowsCredentialOperationAuditStore({ filePath });
     const leaseContext = createWindowsCredentialOperationLeaseContext({

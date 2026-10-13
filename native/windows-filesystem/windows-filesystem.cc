@@ -1574,6 +1574,10 @@ bool ReplaceOpenFile(
     *target = INVALID_HANDLE_VALUE;
     success = RenameHandleRelative(replacement, parent, targetName, failure);
     renamed = success;
+    if (success && !FlushFileBuffers(replacement)) {
+      *failure = FromLastError();
+      success = false;
+    }
   }
   if (success) {
     // The replacement handle remains valid after rename. Verify both content
@@ -2323,6 +2327,7 @@ struct CredentialAuditFileGuard {
   std::vector<HANDLE> handles;
   bool active = false;
   bool sourceFile = false;
+  bool directoryGuard = false;
 };
 
 std::array<CredentialAuditFileGuard*, 64> gCredentialAuditFileGuards{};
@@ -2390,7 +2395,7 @@ napi_value AcquireCredentialAuditFileGuardCallback(
   OpenRelativeOptions options;
   options.finalDirectoryKnown = true;
   options.finalDirectory = false;
-  options.access = READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+  options.access = FILE_READ_DATA | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
   options.shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
   options.protectedAncestorDepth = 2;
   options.protectedAncestorShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
@@ -2501,6 +2506,151 @@ napi_value ReleaseCredentialAuditFileGuardCallback(
   napi_value undefined;
   napi_get_undefined(env, &undefined);
   return undefined;
+}
+
+// Pin the authenticated operation root and its entire resolved ancestor chain.
+// No held component permits delete sharing, so later path-based SQLite opens
+// and root-bound child operations cannot be redirected by a directory rename.
+// Ordinary inherited ancestor ACLs are accepted; only the private root must
+// have the exact current-owner protected DACL.
+napi_value AcquireProtectedDirectoryGuardCallback(napi_env env, napi_callback_info info) {
+  std::vector<napi_value> arguments;
+  std::wstring path;
+  if (!GetArguments(env, info, &arguments, 1)
+      || !GetString(env, arguments[0], &path)) return ThrowFailure(env, InvalidConfiguration());
+  Failure failure = OperationFailed();
+  ParsedPath parsed;
+  if (!ParseAndValidatePath(path, false, &parsed, &failure)) return ThrowFailure(env, failure);
+  RelativeHandles opened;
+  OpenRelativeOptions options;
+  options.finalDirectoryKnown = true;
+  options.finalDirectory = true;
+  options.access = kDirectoryTraversalAccess;
+  options.shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  options.protectedAncestorDepth = parsed.components.size();
+  options.protectedAncestorShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  bool missing = false;
+  if (!OpenRelativePath(parsed, options, &opened, &missing, &failure)
+      || missing || opened.final == INVALID_HANDLE_VALUE) return ThrowFailure(env, failure);
+  HandleIdentity identity;
+  SecuritySnapshot security;
+  if (!ValidateSecurity(opened.final, true, &failure, &identity, &security)
+      || !ResolveFinalPath(opened.final, &parsed)) return ThrowFailure(env, failure);
+  if (security.denyAce || security.ownerAllowAceCount != 1
+      || security.ownerAllowMask != FILE_ALL_ACCESS) {
+    return ThrowFailure(env, SecurityPolicy("protected_directory_guard_security"));
+  }
+  auto* guard = new (std::nothrow) CredentialAuditFileGuard;
+  if (guard == nullptr) return ThrowFailure(env, OperationFailed());
+  guard->handles = std::move(opened.parents);
+  opened.parents.clear();
+  guard->handles.push_back(opened.final);
+  opened.final = INVALID_HANDLE_VALUE;
+  guard->active = true;
+  guard->directoryGuard = true;
+  {
+    const std::lock_guard<std::mutex> lock(gCredentialAuditFileGuardsMutex);
+    if (!RegisterCredentialAuditFileGuard(guard)) {
+      for (HANDLE handle : guard->handles) CloseHandle(handle);
+      delete guard;
+      return ThrowFailure(env, OperationFailed());
+    }
+  }
+  napi_value external;
+  if (napi_create_external(env, guard, FinalizeCredentialAuditFileGuard, nullptr, &external) != napi_ok) {
+    FinalizeCredentialAuditFileGuard(env, guard, nullptr);
+    return ThrowFailure(env, OperationFailed());
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  napi_set_named_property(env, result, "guard", external);
+  napi_set_named_property(env, result, "identity", IdentityValue(env, identity));
+  return result;
+}
+
+napi_value ReleaseProtectedDirectoryGuardCallback(napi_env env, napi_callback_info info) {
+  std::vector<napi_value> arguments;
+  void* data = nullptr;
+  if (!GetArguments(env, info, &arguments, 1)
+      || napi_get_value_external(env, arguments[0], &data) != napi_ok || data == nullptr) {
+    return ThrowFailure(env, CredentialAuditGuardForeign());
+  }
+  {
+    const std::lock_guard<std::mutex> lock(gCredentialAuditFileGuardsMutex);
+    auto* guard = static_cast<CredentialAuditFileGuard*>(data);
+    if (!IsIssuedCredentialAuditFileGuard(guard) || !guard->active || !guard->directoryGuard) {
+      return ThrowFailure(env, CredentialAuditGuardForeign());
+    }
+  }
+  return ReleaseCredentialAuditFileGuardCallback(env, info);
+}
+
+// Unlike the legacy audit guard this root-bound form requires one authenticated
+// private root, not an additional owner-protected artifact parent. The caller
+// retains a directory guard while SQLite holds this file guard.
+napi_value AcquireProtectedChildGuardCallback(napi_env env, napi_callback_info info) {
+  std::vector<napi_value> arguments;
+  std::wstring rootPath;
+  std::wstring childPath;
+  HandleIdentity expectedRoot;
+  if (!GetArguments(env, info, &arguments, 3)
+      || !GetString(env, arguments[0], &rootPath)
+      || !ParseExpectedIdentity(env, arguments[1], &expectedRoot)
+      || !GetString(env, arguments[2], &childPath)) return ThrowFailure(env, InvalidConfiguration());
+  Failure failure = OperationFailed();
+  OpenRelativeOptions options;
+  options.finalDirectoryKnown = true;
+  options.finalDirectory = false;
+  options.access = FILE_READ_DATA | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+  options.shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  options.protectedAncestorDepth = 4096;
+  ScopedHandle root;
+  ParsedRelativePath parsed;
+  RelativeHandles opened;
+  if (!OpenRootBoundChild(rootPath, expectedRoot, childPath, options, &root, &parsed, &opened, &failure)) {
+    return ThrowFailure(env, failure);
+  }
+  SecuritySnapshot rootSecurity;
+  if (!ValidateSecurity(root.handle, true, &failure, nullptr, &rootSecurity)
+      || rootSecurity.denyAce || rootSecurity.ownerAllowAceCount != 1
+      || rootSecurity.ownerAllowMask != FILE_ALL_ACCESS) {
+    if (failure.code == OperationFailed().code) failure = SecurityPolicy("protected_child_root_security");
+    return ThrowFailure(env, failure);
+  }
+  HandleIdentity identity;
+  SecuritySnapshot security;
+  if (!ValidateSecurity(opened.final, false, &failure, &identity, &security)
+      || security.denyAce || security.ownerAllowAceCount != 1
+      || security.ownerAllowMask != FILE_ALL_ACCESS) {
+    if (failure.code == OperationFailed().code) failure = SecurityPolicy("protected_child_guard_security");
+    return ThrowFailure(env, failure);
+  }
+  auto* guard = new (std::nothrow) CredentialAuditFileGuard;
+  if (guard == nullptr) return ThrowFailure(env, OperationFailed());
+  guard->handles = std::move(opened.parents);
+  opened.parents.clear();
+  guard->handles.push_back(root.release());
+  guard->handles.push_back(opened.final);
+  opened.final = INVALID_HANDLE_VALUE;
+  guard->active = true;
+  {
+    const std::lock_guard<std::mutex> lock(gCredentialAuditFileGuardsMutex);
+    if (!RegisterCredentialAuditFileGuard(guard)) {
+      for (HANDLE handle : guard->handles) CloseHandle(handle);
+      delete guard;
+      return ThrowFailure(env, OperationFailed());
+    }
+  }
+  napi_value external;
+  if (napi_create_external(env, guard, FinalizeCredentialAuditFileGuard, nullptr, &external) != napi_ok) {
+    FinalizeCredentialAuditFileGuard(env, guard, nullptr);
+    return ThrowFailure(env, OperationFailed());
+  }
+  napi_value result;
+  napi_create_object(env, &result);
+  napi_set_named_property(env, result, "guard", external);
+  napi_set_named_property(env, result, "identity", IdentityValue(env, identity));
+  return result;
 }
 
 // Source logs belong to Codex: authenticate the owner without changing their
@@ -3054,6 +3204,12 @@ NAPI_MODULE_INIT() {
   DefineMethod(env, exports, "statSourceFile", StatSourceFileCallback);
   DefineMethod(env, exports, "readSourceFile", ReadSourceFileCallback);
   DefineMethod(env, exports, "closeSourceFile", CloseSourceFileCallback);
+  DefineMethod(env, exports, "acquireProtectedDirectoryGuard", AcquireProtectedDirectoryGuardCallback);
+  DefineMethod(env, exports, "releaseProtectedDirectoryGuard", ReleaseProtectedDirectoryGuardCallback);
+  DefineMethod(env, exports, "acquireProtectedChildGuard", AcquireProtectedChildGuardCallback);
+  napi_value directoryGuardVersion;
+  napi_create_string_utf8(env, "windows-protected-directory-guard-v1", NAPI_AUTO_LENGTH, &directoryGuardVersion);
+  napi_set_named_property(env, exports, "protectedDirectoryGuardContractVersion", directoryGuardVersion);
   napi_value sourceVersion;
   napi_create_string_utf8(env, "windows-source-read-v1", NAPI_AUTO_LENGTH, &sourceVersion);
   napi_set_named_property(env, exports, "sourceReadContractVersion", sourceVersion);

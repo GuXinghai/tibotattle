@@ -14,6 +14,28 @@ for local evidence admission. Neither grants publication authority.
 The production coordination and recovery policy below remains in force for
 current deployment operations.
 
+## Local Windows operation storage
+
+Local operation receipts use the narrow `windows-release-operation-storage-v1`
+native capability, checked against the exact binding bytes and its sidecar.
+Missing or older capability manifests refuse; Node mode bits are not ACL proof.
+The operation root must already be owner-private or be newly provisioned with
+the protected current-owner DACL. Existing inherited or broader ACLs refuse
+without repair. Keep operation storage on a local drive.
+
+Native guards hold the root and its ancestors against rename and pin the
+single-link SQLite mutex and rollback journal until connection close. SQLite
+EXCLUSIVE ownership serializes cooperating processes across Windows sessions;
+PERSIST recovery invalidates the protected hot journal in place. Receipts are
+bounded, root-relative, flushed and atomically replaced against their recorded
+identity. A failed save does not advance in-memory state. Process death releases
+the OS guards and SQLite mutex while retaining the last durable receipt.
+
+This is cooperative operation ownership, not protection from a hostile process
+acting as the same Windows owner and bypassing the mutex. Generic native
+production/path-walk flags remain disabled. Native test evidence does not
+qualify installed, signed or published artifacts, nor authorize publication.
+
 ## Production ownership and recovery
 
 Both production entrypoints use the exact reviewed predecessor and a fixed
