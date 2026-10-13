@@ -237,6 +237,38 @@ async function buildBaseFixture() {
   };
 }
 
+test("historical v1 platform manifests remain schema-readable but cannot qualify a current release", async () => {
+  const fixture = await buildBaseFixture();
+  try {
+    const schema = JSON.parse(await readFile(new URL(
+      "../schemas/release-evidence-v1/manifest.schema.json", import.meta.url,
+    ), "utf8"));
+    const validate = new Ajv2020({ strict: false }).compile(schema);
+    const current = await generateReleaseEvidence({ descriptor: fixture.input, baseDir: fixture.root });
+    for (const platform of ["macos", "linux"]) {
+      const historical = structuredClone(current);
+      const artifact = historical.artifacts[0];
+      artifact.platform = platform;
+      artifact.nativeTrust = platform === "macos"
+        ? { signerIdentity: "Synthetic historical signer", teamId: "ABCDEFGHIJ" }
+        : { scheme: "none" };
+      artifact.assurances = platform === "macos"
+        ? { cleanInstallSmokePassed: true, developerIdSigned: true, hardenedRuntime: true,
+          notarizationAccepted: true, ticketStapled: true, gatekeeperAssessmentPassed: true }
+        : { cleanInstallSmokePassed: true, artifactIntegrityVerified: true };
+      assert.equal(validate(historical), true, JSON.stringify(validate.errors));
+      await assertCode("RELEASE_EVIDENCE_PLATFORM_INVALID", () =>
+        validateReleaseEvidenceManifest(historical, { artifactRoot: fixture.root }));
+      const descriptor = structuredClone(fixture.input);
+      descriptor.artifacts[0].platform = platform;
+      await assertCode("RELEASE_EVIDENCE_PLATFORM_INVALID", () =>
+        generateReleaseEvidence({ descriptor, baseDir: fixture.root }));
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
 async function assertCode(code, callback) {
   await assert.rejects(callback, (error) => {
     assert.ok(error instanceof ReleaseEvidenceError);
@@ -245,7 +277,7 @@ async function assertCode(code, callback) {
   });
 }
 
-test("published JSON Schema stays aligned with the v1 runtime vocabulary", async () => {
+test("published JSON Schema preserves v1 compatibility and contains current Windows vocabulary", async () => {
   const schema = JSON.parse(await readFile(new URL(
     "../schemas/release-evidence-v1/manifest.schema.json",
     import.meta.url,
@@ -273,14 +305,13 @@ test("published JSON Schema stays aligned with the v1 runtime vocabulary", async
       .properties.predicateType.const,
     "https://slsa.dev/provenance/v1",
   );
-  assert.deepEqual(schema.$defs.artifact.properties.platform.enum, ["windows"]);
+  assert.deepEqual(schema.$defs.artifact.properties.platform.enum, ["macos", "windows", "linux"]);
   assert.ok(schema.$defs.artifact.required.includes("nativeTrust"));
   assert.ok(schema.$defs.artifact.required.includes("build"));
-  assert.deepEqual(
-    Object.keys(schema.$defs.assurances.properties).sort(),
-    [...new Set(Object.values(RELEASE_EVIDENCE_ALLOWED_PLATFORM_ASSURANCES)
-      .flatMap((channels) => Object.values(channels).flat()))].sort(),
-  );
+  for (const assurance of Object.values(RELEASE_EVIDENCE_ALLOWED_PLATFORM_ASSURANCES)
+    .flatMap((channels) => Object.values(channels).flat())) {
+    assert.ok(Object.hasOwn(schema.$defs.assurances.properties, assurance));
+  }
   assert.deepEqual(
     schema.$defs.artifact.required,
     [

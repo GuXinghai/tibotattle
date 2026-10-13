@@ -40,6 +40,11 @@ macOS and Linux are not supported platforms.
 - Optional hosted contribution: content-free, pseudonymous, accountless by
   default, with durable opt-outs and owner-only erasure.
 - Read-only handling of the user's original Codex data.
+- Published release-evidence v1 structural compatibility for historical
+  artifacts (owner-confirmed 2026-10-13). The published schema retains its
+  historical platform and trust shapes; current generation and artifact
+  qualification still reject non-Windows releases. Changing product support
+  does not retroactively change the published manifest contract.
 
 ## Superseded records
 

@@ -54,7 +54,7 @@ only when this artifact's v1 manifest entry publishes non-null provenance and
 is no source-to-binary claim to verify. Never infer one from the source tree,
 plan, or checksum.
 
-For a published cross-platform release, the GitHub release is canonical for
+For a published v1 release, the GitHub release is canonical for
 `release-manifest.json`, any non-null SPDX SBOM, and any non-null artifact-named
 provenance or SBOM-attestation bundles. The website exposes availability and
 the installer digest; its `release-site-manifest.json` is not a replacement for
@@ -117,6 +117,11 @@ npm run release:evidence:validate -- \
 
 The `gh release download` step is the only network operation in this sequence;
 the `release:evidence:validate` command reads the fresh directory only.
+
+Current artifact validation qualifies Windows subjects only. The published v1
+JSON Schema retains historical macOS and Linux shapes for structural reading;
+that compatibility does not restore platform support or qualify those artifacts
+with current tooling. See [schema compatibility](./reference/schema-contracts.md#ownership-map).
 
 For releases published after repository release immutability was enabled,
 these checks verify the immutable release and that the local file is one of

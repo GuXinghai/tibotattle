@@ -1,5 +1,5 @@
 ---
-title: Cross-platform release publication
+title: Windows release publication
 date: 2026-08-18
 type: runbook
 status: maintained
@@ -7,8 +7,9 @@ status: maintained
 
 # Release publication runbook (Windows)
 
-This runbook defines the common evidence and publication order for Windows. It is an activation contract, not a claim that every
-platform is currently released. The release manifest is the source of truth:
+This runbook defines the evidence and publication order for Windows x64 under
+the [Windows-only decision](../decisions/2026-10-12-windows-only.md). It is an
+activation contract, not proof of a current release. The release manifest is the source of truth:
 if a platform, architecture, format, channel, digest, or required native
 assurance is absent, that subject is not an official TiboTattle release. Every
 official artifact has a v1 manifest entry. Its `sbom` and `provenance` fields
@@ -101,7 +102,7 @@ availability and installer digest.
 ## 2. Native finalizer contracts
 
 The common manifest does not replace native signing or installation checks.
-Each platform finalizer must finish every byte-changing operation before
+The Windows finalizer must finish every byte-changing operation before
 attestation or digest generation.
 
 | Subject | Native final bytes | Required direct assurances | Current status |
@@ -137,7 +138,7 @@ permissions:
   artifact-metadata: write
 ~~~
 
-Use GitHub-hosted native runners for the platform being finalized. Do not run
+Use GitHub-hosted Windows x64 runners for finalization. Do not run
 untrusted pull-request code in a signing/attestation job. Production actions
 and reusable workflows must be pinned to full commit SHAs; the repository
 policy check is scripts/check-release-workflow-policy.mjs.
@@ -192,7 +193,7 @@ provenance.
 
 ## 4. Final-byte order
 
-Run the stages in this order for every native platform. Steps 6–8 are required
+Run the stages in this order for each Windows subject. Steps 6–8 are required
 only for an artifact claiming the attested v1 profile/path; a
 native/checksum-only artifact records explicit `null` evidence instead and may
 skip those attestation steps.

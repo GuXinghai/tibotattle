@@ -40,6 +40,14 @@ and contract-status records. They are policy state, not JSON Schema mirrors.
 `config/windows-compatibility-ledger.json` are compatibility ledgers with their
 own source-derived checks.
 
+The published release-evidence v1 JSON Schema preserves historical macOS and
+Linux platform, trust, assurance and Store shapes so earlier manifests remain
+structurally readable. This is a compatibility boundary, not current platform
+support. Current generation and artifact qualification use the Windows-only
+policy in `config/release-evidence.js`; both reject non-Windows subjects. The
+[Windows-only decision](../decisions/2026-10-12-windows-only.md) governs supported
+releases. Schema acceptance alone never qualifies an artifact for publication.
+
 ## Root schema inventory
 
 The root schema families are grouped as follows:
