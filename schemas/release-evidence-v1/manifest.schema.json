@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://tibotattle.com/schemas/release-evidence-v1/manifest.schema.json",
-  "title": "TiboTattle cross-platform release evidence manifest",
-  "description": "Structural form of the offline release-evidence contract. The Node policy validator additionally checks local file bytes, source equality, final Store delivery, canonical ordering, duplicate subjects, and cross-field identity.",
+  "title": "TiboTattle Windows release evidence manifest",
+  "description": "Structural form of the offline Windows release-evidence contract. The Node policy validator additionally checks local file bytes, source equality, final Store delivery, canonical ordering, duplicate subjects, and cross-field identity.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "product", "version", "tag", "commit", "repository", "artifacts"],
@@ -114,37 +114,14 @@
       "additionalProperties": false,
       "properties": {
         "cleanInstallSmokePassed": { "type": "boolean" },
-        "developerIdSigned": { "type": "boolean" },
-        "hardenedRuntime": { "type": "boolean" },
-        "notarizationAccepted": { "type": "boolean" },
-        "ticketStapled": { "type": "boolean" },
-        "gatekeeperAssessmentPassed": { "type": "boolean" },
-        "appNotarizationAccepted": { "type": "boolean" },
-        "appTicketStapled": { "type": "boolean" },
-        "dmgNotarizationAccepted": { "type": "boolean" },
-        "dmgTicketStapled": { "type": "boolean" },
-        "dmgGatekeeperAssessmentPassed": { "type": "boolean" },
-        "cleanProfileSmokePassed": { "type": "boolean" },
-        "sparkleFeedSigned": { "type": "boolean" },
         "authenticodeSigned": { "type": "boolean" },
         "timestamped": { "type": "boolean" },
         "installerSignatureVerified": { "type": "boolean" },
         "smartScreenReputationObserved": { "type": "boolean" },
-        "artifactIntegrityVerified": { "type": "boolean" },
-        "packageSignatureVerified": { "type": "boolean" },
-        "repositoryMetadataSigned": { "type": "boolean" },
         "storePublisherVerified": { "type": "boolean" },
         "storeBuildVerified": { "type": "boolean" },
         "storeSignatureVerified": { "type": "boolean" },
         "storeSubmissionAccepted": { "type": "boolean" }
-      }
-    },
-    "macDirectTrust": {
-      "type": "object", "additionalProperties": false,
-      "required": ["signerIdentity", "teamId"],
-      "properties": {
-        "signerIdentity": { "type": "string", "minLength": 1, "maxLength": 512 },
-        "teamId": { "type": "string", "pattern": "^[A-Z0-9]{10}$" }
       }
     },
     "windowsDirectTrust": {
@@ -156,14 +133,6 @@
         "timestampAuthority": { "type": "string", "minLength": 1, "maxLength": 512 }
       }
     },
-    "linuxDirectTrust": {
-      "type": "object", "additionalProperties": false,
-      "required": ["scheme"],
-      "properties": {
-        "scheme": { "enum": ["none", "appimage-detached", "apt-repository", "rpm-repository"] },
-        "keyFingerprint": { "type": "string", "pattern": "^[A-Fa-f0-9]{40,64}$" }
-      }
-    },
     "storeTrust": {
       "type": "object", "additionalProperties": false,
       "required": ["provider", "publisher", "listing"],
@@ -173,17 +142,8 @@
         "listing": { "type": "string", "pattern": "^https://[a-z0-9.-]+(?::[0-9]{1,5})?(?:/[^?#]*)?$" }
       }
     },
-    "macStoreListing": {
-      "type": "string", "pattern": "^https://apps\\.apple\\.com(?::[0-9]{1,5})?(?:/[^?#]*)?$"
-    },
     "microsoftStoreListing": {
       "type": "string", "pattern": "^https://apps\\.microsoft\\.com(?::[0-9]{1,5})?(?:/[^?#]*)?$"
-    },
-    "flathubListing": {
-      "type": "string", "pattern": "^https://flathub\\.org(?::[0-9]{1,5})?(?:/[^?#]*)?$"
-    },
-    "snapListing": {
-      "type": "string", "pattern": "^https://snapcraft\\.io(?::[0-9]{1,5})?(?:/[^?#]*)?$"
     },
     "build": {
       "type": "object", "additionalProperties": false,
@@ -277,7 +237,7 @@
       "additionalProperties": false,
       "required": ["platform", "channel", "architecture", "format", "version", "distribution", "downloadUrl", "fileName", "bytes", "sha256", "source", "nativeTrust", "build", "sbom", "provenance", "assurances", "store", "updater"],
       "properties": {
-        "platform": { "enum": ["macos", "windows", "linux"] },
+        "platform": { "enum": ["windows"] },
         "channel": { "enum": ["direct", "store"] },
         "architecture": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
         "format": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,31}$" },
@@ -290,9 +250,7 @@
         "source": { "$ref": "#/$defs/source" },
         "nativeTrust": {
           "oneOf": [
-            { "$ref": "#/$defs/macDirectTrust" },
             { "$ref": "#/$defs/windowsDirectTrust" },
-            { "$ref": "#/$defs/linuxDirectTrust" },
             { "$ref": "#/$defs/storeTrust" }
           ]
         },
@@ -324,109 +282,45 @@
         {
           "if": { "properties": { "build": { "type": "object", "required": ["finalArtifactSha256"] } }, "required": ["build"] },
           "then": {
-            "properties": { "channel": { "const": "direct" }, "updater": { "properties": { "enabled": { "const": true }, "mechanism": { "const": "electron-updater" } } } },
-            "oneOf": [
-              { "properties": { "platform": { "const": "macos" }, "architecture": { "enum": ["arm64", "x64"] } } },
-              { "properties": { "platform": { "enum": ["windows", "linux"] }, "architecture": { "const": "x64" } } }
-            ]
+            "properties": {
+              "channel": { "const": "direct" },
+              "architecture": { "const": "x64" },
+              "updater": { "properties": { "enabled": { "const": true }, "mechanism": { "const": "electron-updater" } } }
+            }
           }
         },
         {
           "if": { "required": ["cleanInstallAcceptance"] },
           "then": {
-            "properties": { "channel": { "const": "direct" }, "assurances": { "properties": { "cleanInstallSmokePassed": { "const": false } } } },
-            "oneOf": [
-              { "properties": { "platform": { "const": "macos" }, "architecture": { "enum": ["arm64", "x64"] } } },
-              { "properties": { "platform": { "enum": ["windows", "linux"] }, "architecture": { "const": "x64" } } }
-            ]
+            "properties": {
+              "channel": { "const": "direct" },
+              "architecture": { "const": "x64" },
+              "assurances": { "properties": { "cleanInstallSmokePassed": { "const": false } } }
+            }
           },
           "else": { "properties": { "assurances": { "properties": { "cleanInstallSmokePassed": { "const": true } } } } }
         },
         {
-          "if": { "properties": { "platform": { "const": "macos" }, "channel": { "const": "direct" } }, "required": ["platform", "channel"] },
-          "then": {
-            "properties": {
-              "nativeTrust": { "$ref": "#/$defs/macDirectTrust" },
-              "build": { "$ref": "#/$defs/build" },
-              "store": { "type": "null" },
-              "distribution": { "not": { "enum": ["mac-app-store", "microsoft-store", "flathub", "snap", "apt", "rpm"] } },
-              "assurances": { "required": ["cleanInstallSmokePassed", "developerIdSigned", "hardenedRuntime", "notarizationAccepted", "ticketStapled", "gatekeeperAssessmentPassed"], "properties": { "cleanInstallSmokePassed": { "type": "boolean" }, "developerIdSigned": { "const": true }, "hardenedRuntime": { "const": true }, "notarizationAccepted": { "const": true }, "ticketStapled": { "const": true }, "gatekeeperAssessmentPassed": { "const": true } } },
-              "updater": { "properties": { "mechanism": { "enum": ["sparkle", "electron-updater", "none"] } } }
-            }
-          }
-        },
-        {
-          "if": { "properties": { "platform": { "const": "windows" }, "channel": { "const": "direct" } }, "required": ["platform", "channel"] },
+          "if": { "properties": { "channel": { "const": "direct" } }, "required": ["channel"] },
           "then": {
             "properties": {
               "nativeTrust": { "$ref": "#/$defs/windowsDirectTrust" },
               "build": { "$ref": "#/$defs/build" },
               "store": { "type": "null" },
-              "distribution": { "not": { "enum": ["mac-app-store", "microsoft-store", "flathub", "snap", "apt", "rpm"] } },
+              "distribution": { "not": { "enum": ["microsoft-store"] } },
               "assurances": { "required": ["cleanInstallSmokePassed", "authenticodeSigned", "timestamped"], "properties": { "cleanInstallSmokePassed": { "type": "boolean" }, "authenticodeSigned": { "const": true }, "timestamped": { "const": true } } },
               "updater": { "properties": { "mechanism": { "enum": ["electron-updater", "none"] } } }
             }
           }
         },
         {
-          "if": { "properties": { "platform": { "const": "linux" }, "channel": { "const": "direct" } }, "required": ["platform", "channel"] },
-          "then": {
-            "properties": {
-              "nativeTrust": { "$ref": "#/$defs/linuxDirectTrust" },
-              "build": { "$ref": "#/$defs/build" },
-              "store": { "type": "null" },
-              "distribution": { "not": { "enum": ["mac-app-store", "microsoft-store", "flathub", "snap", "apt", "rpm"] } },
-              "assurances": { "required": ["cleanInstallSmokePassed", "artifactIntegrityVerified"], "properties": { "cleanInstallSmokePassed": { "type": "boolean" }, "artifactIntegrityVerified": { "const": true } } },
-              "updater": { "properties": { "mechanism": { "enum": ["electron-updater", "none"] } } }
-            }
-          }
-        },
-        {
-          "if": { "properties": { "platform": { "const": "macos" }, "channel": { "const": "store" } }, "required": ["platform", "channel"] },
-          "then": {
-            "properties": {
-              "nativeTrust": { "allOf": [{ "$ref": "#/$defs/storeTrust" }, { "properties": { "provider": { "const": "mac-app-store" }, "listing": { "$ref": "#/$defs/macStoreListing" } } }] },
-              "build": { "type": "null" },
-              "store": { "allOf": [{ "$ref": "#/$defs/store" }, { "properties": { "provider": { "const": "mac-app-store" }, "listing": { "$ref": "#/$defs/macStoreListing" } } }] },
-              "distribution": { "const": "mac-app-store" },
-              "assurances": { "required": ["storePublisherVerified", "storeBuildVerified", "storeSignatureVerified"], "properties": { "storePublisherVerified": { "const": true }, "storeBuildVerified": { "const": true }, "storeSignatureVerified": { "const": true } } },
-              "updater": { "properties": { "enabled": { "const": false }, "mechanism": { "const": "store-managed" }, "metadata": { "type": "null" } } }
-            }
-          }
-        },
-        {
-          "if": { "properties": { "platform": { "const": "windows" }, "channel": { "const": "store" } }, "required": ["platform", "channel"] },
+          "if": { "properties": { "channel": { "const": "store" } }, "required": ["channel"] },
           "then": {
             "properties": {
               "nativeTrust": { "allOf": [{ "$ref": "#/$defs/storeTrust" }, { "properties": { "provider": { "const": "microsoft-store" }, "listing": { "$ref": "#/$defs/microsoftStoreListing" } } }] },
               "build": { "type": "null" },
               "store": { "allOf": [{ "$ref": "#/$defs/store" }, { "properties": { "provider": { "const": "microsoft-store" }, "listing": { "$ref": "#/$defs/microsoftStoreListing" } } }] },
               "distribution": { "const": "microsoft-store" },
-              "assurances": { "required": ["storePublisherVerified", "storeBuildVerified", "storeSignatureVerified"], "properties": { "storePublisherVerified": { "const": true }, "storeBuildVerified": { "const": true }, "storeSignatureVerified": { "const": true } } },
-              "updater": { "properties": { "enabled": { "const": false }, "mechanism": { "const": "store-managed" }, "metadata": { "type": "null" } } }
-            }
-          }
-        },
-        {
-          "if": { "properties": { "platform": { "const": "linux" }, "channel": { "const": "store" } }, "required": ["platform", "channel"] },
-          "then": {
-            "properties": {
-              "nativeTrust": {
-                "oneOf": [
-                  { "allOf": [{ "$ref": "#/$defs/storeTrust" }, { "properties": { "provider": { "const": "flathub" }, "listing": { "$ref": "#/$defs/flathubListing" } } }] },
-                  { "allOf": [{ "$ref": "#/$defs/storeTrust" }, { "properties": { "provider": { "const": "snap" }, "listing": { "$ref": "#/$defs/snapListing" } } }] },
-                  { "allOf": [{ "$ref": "#/$defs/storeTrust" }, { "properties": { "provider": { "enum": ["apt", "rpm"] } } }] }
-                ]
-              },
-              "build": { "type": "null" },
-              "store": {
-                "oneOf": [
-                  { "allOf": [{ "$ref": "#/$defs/store" }, { "properties": { "provider": { "const": "flathub" }, "listing": { "$ref": "#/$defs/flathubListing" } } }] },
-                  { "allOf": [{ "$ref": "#/$defs/store" }, { "properties": { "provider": { "const": "snap" }, "listing": { "$ref": "#/$defs/snapListing" } } }] },
-                  { "allOf": [{ "$ref": "#/$defs/store" }, { "properties": { "provider": { "enum": ["apt", "rpm"] } } }] }
-                ]
-              },
-              "distribution": { "enum": ["flathub", "snap", "apt", "rpm"] },
               "assurances": { "required": ["storePublisherVerified", "storeBuildVerified", "storeSignatureVerified"], "properties": { "storePublisherVerified": { "const": true }, "storeBuildVerified": { "const": true }, "storeSignatureVerified": { "const": true } } },
               "updater": { "properties": { "enabled": { "const": false }, "mechanism": { "const": "store-managed" }, "metadata": { "type": "null" } } }
             }

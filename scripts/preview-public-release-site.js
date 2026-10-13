@@ -57,19 +57,6 @@ const ROUTE_FILES = new Map([
   ["/privacy/", "privacy.html"],
 ]);
 const METADATA_FIELDS = Object.freeze([
-  "usage-monitor-installer-url",
-  "usage-monitor-installer-version",
-  "usage-monitor-installer-sha256",
-  "usage-monitor-installer-bytes",
-  "usage-monitor-minimum-macos",
-  "usage-monitor-installer-architectures",
-  "usage-monitor-architectures",
-  "usage-monitor-intel-installer-url",
-  "usage-monitor-intel-installer-version",
-  "usage-monitor-intel-installer-sha256",
-  "usage-monitor-intel-installer-bytes",
-  "usage-monitor-intel-minimum-macos",
-  "usage-monitor-intel-architectures",
   "usage-monitor-release-notes-url",
   "usage-monitor-privacy-url",
   "usage-monitor-security-url",
@@ -108,7 +95,7 @@ function rejectedPublicHostname(hostname) {
     || normalized.endsWith(".test");
 }
 
-function publicHttpsUrl(raw, label, { requireOrigin = false, dmg = false } = {}) {
+function publicHttpsUrl(raw, label, { requireOrigin = false } = {}) {
   if (typeof raw !== "string" || raw !== raw.trim()) {
     throw new TypeError(`${label} must be a public HTTPS URL`);
   }
@@ -132,9 +119,6 @@ function publicHttpsUrl(raw, label, { requireOrigin = false, dmg = false } = {})
   }
   if (requireOrigin && selected.pathname !== "/") {
     throw new TypeError(`${label} must be an HTTPS origin with no path`);
-  }
-  if (dmg && !selected.pathname.toLowerCase().endsWith(".dmg")) {
-    throw new TypeError(`${label} must end in .dmg`);
   }
   return selected;
 }
@@ -229,42 +213,6 @@ function requiredMeta(values, name) {
   return value;
 }
 
-function verifiedArchitecture(value) {
-  if (!/^(?:arm64|x86_64)(?:,(?:arm64|x86_64))?$/u.test(value)) {
-    throw new TypeError("Published homepage has an invalid installer architecture");
-  }
-  const architectures = value.split(",");
-  if (new Set(architectures).size !== architectures.length) {
-    throw new TypeError("Published homepage has duplicate installer architectures");
-  }
-  return value;
-}
-
-function optionalIntelMetadata(values, version) {
-  const names = METADATA_FIELDS.filter((name) => name.startsWith("usage-monitor-intel-"));
-  if (!names.some((name) => values.has(name))) return null;
-  const metadata = Object.fromEntries(names.map((name) => [name, requiredMeta(values, name)]));
-  const intelVersion = metadata["usage-monitor-intel-installer-version"];
-  const installerUrl = publicHttpsUrl(metadata["usage-monitor-intel-installer-url"],
-    "Published Intel installer URL", { dmg: true });
-  const installerSha256 = metadata["usage-monitor-intel-installer-sha256"];
-  const installerBytes = metadata["usage-monitor-intel-installer-bytes"];
-  const minimumMacos = metadata["usage-monitor-intel-minimum-macos"];
-  if (intelVersion !== version
-      || installerUrl.pathname.split("/").at(-1) !== `TiboTattle-${version}-macOS-x64.dmg`
-      || metadata["usage-monitor-intel-architectures"] !== "x64"
-      || !/^[a-f0-9]{64}$/u.test(installerSha256)
-      || !/^[1-9][0-9]{0,15}$/u.test(installerBytes)
-      || !Number.isSafeInteger(Number(installerBytes))
-      || !/^(?:1[0-9]|[2-9][0-9])\.(?:0|[1-9][0-9]?)(?:\.(?:0|[1-9][0-9]?))?$/u.test(minimumMacos)) {
-    throw new TypeError("Published Intel installer metadata is invalid or does not match the release");
-  }
-  return Object.freeze({
-    installerUrl: installerUrl.href, installerVersion: intelVersion,
-    installerSha256, installerBytes, minimumMacos, architectures: "x64",
-  });
-}
-
 /**
  * Extract the display metadata from an already-public page. The result is
  * intentionally only a preview input: it does not verify the installer
@@ -272,48 +220,7 @@ function optionalIntelMetadata(values, version) {
  */
 export function extractPublicReleaseMetadata(html) {
   const values = metaValues(html);
-  const installerUrl = publicHttpsUrl(
-    requiredMeta(values, "usage-monitor-installer-url"),
-    "Published installer URL",
-    { dmg: true },
-  ).href;
-  const installerVersion = requiredMeta(
-    values,
-    "usage-monitor-installer-version",
-  );
-  if (!/^[0-9]+(?:\.[0-9]+){2,3}$/u.test(installerVersion)) {
-    throw new TypeError("Published homepage has an invalid installer version");
-  }
-  const installerSha256 = requiredMeta(values, "usage-monitor-installer-sha256");
-  if (!/^[a-f0-9]{64}$/u.test(installerSha256)) {
-    throw new TypeError("Published homepage has an invalid installer SHA-256");
-  }
-  const installerBytes = requiredMeta(values, "usage-monitor-installer-bytes");
-  if (!/^[1-9][0-9]{0,15}$/u.test(installerBytes)
-      || !Number.isSafeInteger(Number(installerBytes))) {
-    throw new TypeError("Published homepage has an invalid installer byte count");
-  }
-  const minimumMacos = requiredMeta(values, "usage-monitor-minimum-macos");
-  if (!/^(?:1[0-9]|[2-9][0-9])\.(?:0|[1-9][0-9]?)(?:\.(?:0|[1-9][0-9]?))?$/u
-    .test(minimumMacos)) {
-    throw new TypeError("Published homepage has an invalid minimum macOS version");
-  }
-  // The older public metadata name appears only for backwards-compatible
-  // previews; newly generated pages use the second name.
-  const architectures = values.get("usage-monitor-architectures")
-    ?? values.get("usage-monitor-installer-architectures");
-  if (!architectures) {
-    throw new TypeError("Published homepage is missing installer architecture metadata");
-  }
-  const intelInstaller = optionalIntelMetadata(values, installerVersion);
   return Object.freeze({
-    ...(intelInstaller ? { intelInstaller } : {}),
-    architectures: verifiedArchitecture(architectures),
-    installerBytes,
-    installerSha256,
-    installerUrl,
-    installerVersion,
-    minimumMacos,
     privacyUrl: publicHttpsUrl(
       requiredMeta(values, "usage-monitor-privacy-url"),
       "Published privacy URL",
@@ -343,26 +250,12 @@ function fallbackSiteMetadata(upstream) {
 }
 
 function metadataTags(metadata) {
-  const values = [
-    ["usage-monitor-installer-url", metadata.installerUrl],
-    ["usage-monitor-installer-version", metadata.installerVersion],
-    ["usage-monitor-installer-sha256", metadata.installerSha256],
-    ["usage-monitor-installer-bytes", metadata.installerBytes],
-    ["usage-monitor-minimum-macos", metadata.minimumMacos],
-    ["usage-monitor-architectures", metadata.architectures],
+  return [
     ["usage-monitor-release-notes-url", metadata.releaseNotesUrl],
     ["usage-monitor-privacy-url", metadata.privacyUrl],
     ["usage-monitor-security-url", metadata.securityUrl],
     ["usage-monitor-support-url", metadata.supportUrl],
-  ];
-  if (metadata.intelInstaller) {
-    for (const [name, key] of [
-      ["installer-url", "installerUrl"], ["installer-version", "installerVersion"],
-      ["installer-sha256", "installerSha256"], ["installer-bytes", "installerBytes"],
-      ["minimum-macos", "minimumMacos"], ["architectures", "architectures"],
-    ]) values.push([`usage-monitor-intel-${name}`, metadata.intelInstaller[key]]);
-  }
-  return values.map(([name, value]) =>
+  ].map(([name, value]) =>
     `<meta name="${name}" content="${htmlAttribute(value)}">`).join("\n");
 }
 

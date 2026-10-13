@@ -2,8 +2,8 @@
  * Reviewed production endpoint manifest.
  *
  * This is intentionally the sole source for reviewed deployment identifiers.
- * Consumers which cannot import JavaScript (for example Wrangler JSONC and
- * native Swift) are checked by `apps/worker/scripts/check-deployment-endpoints.mjs`.
+ * Consumers which cannot import JavaScript (for example Wrangler JSONC) are
+ * checked by `apps/worker/scripts/check-deployment-endpoints.mjs`.
  */
 export const DEPLOYMENT_ENDPOINTS_SCHEMA_VERSION =
   "tibotattle-deployment-endpoints-v0.1";
@@ -46,7 +46,7 @@ const stagingOrigin = `https://${stagingWorkerName}.adamallcock.workers.dev`;
 const publicOriginURL = canonicalHttpsOrigin(publicOrigin, "public origin");
 const sparkleUpdateOriginURL = canonicalHttpsOrigin(
   sparkleUpdateOrigin,
-  "Sparkle update origin",
+  "update origin",
 );
 const stagingOriginURL = canonicalHttpsOrigin(stagingOrigin, "staging origin");
 // The owner-only operations hostname. It is served by the same Worker but is
@@ -70,18 +70,10 @@ export const DEPLOYMENT_ENDPOINTS = Object.freeze({
     ]),
   }),
   schemaVersion: DEPLOYMENT_ENDPOINTS_SCHEMA_VERSION,
+  // The Windows Electron update feed is served from this origin and bucket.
+  // The key name is retained for the existing publication and check scripts.
   sparkle: Object.freeze({
-    appcastURL: new URL("/appcast.xml", sparkleUpdateOriginURL).href,
     origin: sparkleUpdateOriginURL.origin,
-    intelAppcastURL: new URL("/intel/appcast.xml", sparkleUpdateOriginURL).href,
-    intelPreviewAppcastURL: new URL("/preview/intel/appcast.xml", sparkleUpdateOriginURL).href,
-    // Preview is a separately identified client and must never consume the
-    // stable appcast. Keeping the dedicated path in the reviewed endpoint
-    // manifest prevents the native build and deployment checks from drifting.
-    previewAppcastURL: new URL(
-      "/preview/appcast.xml",
-      sparkleUpdateOriginURL,
-    ).href,
     r2Bucket: "tibotattle-updates",
   }),
   // This is a fixed nonproduction Worker hostname observed from the account's
@@ -108,7 +100,7 @@ export function assertDeploymentEndpoints(
   );
   const reviewedSparkleOrigin = canonicalHttpsOrigin(
     endpoints.sparkle?.origin,
-    "Sparkle update origin",
+    "update origin",
   );
   const reviewedStagingOrigin = canonicalHttpsOrigin(
     endpoints.staging?.origin,
@@ -129,29 +121,11 @@ export function assertDeploymentEndpoints(
       "admin host must be the admin subdomain of the public origin",
     );
   }
-  if (endpoints.sparkle?.appcastURL
-      !== new URL("/appcast.xml", reviewedSparkleOrigin).href) {
-    throw new TypeError("Sparkle appcast URL must be derived from its origin");
-  }
-  if (endpoints.sparkle?.previewAppcastURL
-      !== new URL("/preview/appcast.xml", reviewedSparkleOrigin).href) {
-    throw new TypeError(
-      "Sparkle preview appcast URL must be derived from its origin",
-    );
-  }
-  for (const [field, path] of [
-    ["intelAppcastURL", "/intel/appcast.xml"],
-    ["intelPreviewAppcastURL", "/preview/intel/appcast.xml"],
-  ]) {
-    if (endpoints.sparkle?.[field] !== new URL(path, reviewedSparkleOrigin).href) {
-      throw new TypeError("Sparkle Intel appcast URL must match its reviewed path");
-    }
-  }
   if (typeof endpoints.sparkle?.r2Bucket !== "string"
       || !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/u.test(
         endpoints.sparkle.r2Bucket,
       )) {
-    throw new TypeError("Sparkle R2 bucket must be a valid reviewed bucket name");
+    throw new TypeError("update R2 bucket must be a valid reviewed bucket name");
   }
   if (endpoints.staging?.workerName !== stagingWorkerName
       || reviewedStagingOrigin.origin !== stagingOriginURL.origin

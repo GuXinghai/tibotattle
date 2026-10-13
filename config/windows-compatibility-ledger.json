@@ -4,7 +4,7 @@
   "entries": [
     {
       "file": "apps/local/server.test.mjs",
-      "win32BranchCount": 4,
+      "win32BranchCount": 3,
       "classification": "posix-only-assertion",
       "followUp": "Replace omitted owner-mode and development identity assertions with Windows ACL contract tests; the unreadable fixture uses a synthetic EACCES inspector on Windows."
     },
@@ -73,18 +73,6 @@
       "win32BranchCount": 2,
       "classification": "windows-equivalent-needed",
       "followUp": "Add a native Windows abrupt-process-termination SQLite recovery fixture."
-    },
-    {
-      "file": "test/local-companion-data.test.js",
-      "win32BranchCount": 1,
-      "classification": "windows-equivalent-needed",
-      "followUp": "Replace the POSIX open-SQLite rename race with native Windows handle-sharing and replacement qualification."
-    },
-    {
-      "file": "test/local-companion-refresh.test.js",
-      "win32BranchCount": 1,
-      "classification": "posix-only-assertion",
-      "followUp": "Keep interactive macOS development identity QA in its macOS lane; qualify Windows account observation through native credentials."
     },
     {
       "file": "test/local-contribution-preparation.test.js",

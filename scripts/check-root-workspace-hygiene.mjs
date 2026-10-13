@@ -17,7 +17,6 @@ const DEFAULT_REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
  */
 export const ROOT_WORKSPACE_POLICY = Object.freeze({
   files: Object.freeze([
-    ".dockerignore",
     ".gitattributes",
     ".gitignore",
     ".gitleaksignore",
@@ -42,19 +41,16 @@ export const ROOT_WORKSPACE_POLICY = Object.freeze({
     ".github",
     "apps",
     "config",
-    "containers",
     "contracts",
     "docs",
     "experiments",
     "generated",
-    "local-review",
     "native",
     "packages",
     // Repository-scoped Codex plugin source is reviewed product structure.
     "plugins",
-    // Per-version release notes. The macOS stable release runbook requires a
-    // release-notes/X.Y.Z.md for every version, so this is deliberate project
-    // structure rather than a generated report.
+    // Per-version release notes are required for every Windows release, so
+    // this is deliberate project structure rather than a generated report.
     "release-notes",
     "schemas",
     "scripts",

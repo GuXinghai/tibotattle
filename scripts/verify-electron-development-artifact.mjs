@@ -35,22 +35,13 @@ import {
   ELECTRON_KEYTAR_PREBUILD_SHA256,
   ELECTRON_TARGETS,
 } from "./build-electron-runtime.mjs";
-import {
-  ELECTRON_BUILDER_PACKAGE_PROFILES,
-  transformElectronBuilderPackageJsonBytes,
-  validateAccountlessHostedRehearsalMetadata,
-} from "./lib/electron-builder-package-json.mjs";
+import { transformElectronBuilderPackageJsonBytes } from "./lib/electron-builder-package-json.mjs";
 import {
   WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
   WINDOWS_SOURCE_READ_APPROVED,
   WINDOWS_SOURCE_READ_CONTRACT,
 } from "../src/platform/windows-filesystem.js";
-import {
-  LINUX_CREDENTIAL_MUTEX_BINDING_RELATIVE_PATH as LINUX_BINDING_PATH,
-  LINUX_CREDENTIAL_MUTEX_BINDING_MANIFEST_RELATIVE_PATH as LINUX_MANIFEST_PATH,
-  validateLinuxCredentialMutexBindingManifest,
-} from "../src/platform/linux-credential-mutex.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const require = createRequire(import.meta.url);
@@ -74,9 +65,7 @@ const TARGETS = Object.freeze(Object.fromEntries(
 ));
 export const ELECTRON_SHELL_FILES = Object.freeze([
   "config/electron-production-distribution.cjs",
-  "config/macos-bundle-version-plan.cjs",
   "config/deployment-endpoints.js",
-  "native/macos-keychain/contract.js",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
   "apps/electron/desktop-command.js",
@@ -94,26 +83,17 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/desktop-hosted-signin.js",
   "apps/electron/desktop-recovery-settings.js",
   "apps/electron/desktop-ipc.js",
-  "apps/electron/desktop-keychain-broker.js",
-  "apps/electron/desktop-linux-secret-service-broker.js",
-  "apps/electron/desktop-linux-account-observation-broker.js",
-  "apps/electron/desktop-linux-accountless-credential.js",
-  "apps/electron/desktop-linux-secret-service.js",
   "apps/electron/desktop-windows-account-observation-broker.js",
   "apps/electron/desktop-windows-account-observation-qualification.js",
   "apps/electron/desktop-owned-downloads.js",
   "apps/electron/desktop-menu.js",
   "apps/electron/desktop-lifecycle.js",
-  "apps/electron/desktop-macos-keychain.js",
   "apps/electron/desktop-secure-storage-readiness.js",
-  "apps/electron/desktop-native-migration.js",
-  "apps/electron/desktop-native-migration-macos.js",
   "apps/electron/desktop-notification-coordinator.js",
   "apps/electron/desktop-notification-delivery.js",
   "apps/electron/desktop-notification-policy.js",
   "apps/electron/desktop-windows-notification-identity.js",
   "apps/electron/desktop-platform-services.js",
-  "apps/electron/linux-autostart.js",
   "apps/electron/desktop-runtime.js",
   "apps/electron/desktop-settings-backends.js",
   "apps/electron/desktop-settings-store.js",
@@ -128,10 +108,6 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/desktop-update-preferences.js",
   "apps/electron/desktop-updater.js",
   "apps/electron/errors.js",
-  "apps/electron/linux-qualification.js",
-  "apps/electron/linux-secret-service-qualification-smoke-child.mjs",
-  "apps/electron/linux-account-observation-qualification-smoke-child.mjs",
-  "apps/electron/linux-secret-service-qualification-smoke.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
   "apps/electron/platform-gate.js",
@@ -145,17 +121,7 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/windows-account-observation-qualification-smoke-child.mjs",
   "apps/electron/windows-account-observation-qualification-smoke.js",
   "apps/electron/windows-qualification.js",
-  "scripts/diagnose-desktop-crash.mjs",
   "src/desktop-shell-status.js",
-  "src/platform/linux-account-observation-credential.js",
-  "src/platform/linux-account-observation-broker.js",
-  "src/platform/linux-accountless-installation-credential.js",
-  "src/platform/linux-credential-mutex.js",
-  "src/platform/linux-credential-mutation-lease.js",
-  "src/platform/linux-credential-state.js",
-  "src/platform/linux-secret-service-broker.js",
-  "src/platform/linux-secret-service-binding.js",
-  "src/platform/linux-secret-service.js",
   "src/platform/windows-accountless-installation-credential.js",
   "src/platform/windows-credential-manager-probe.js",
   "src/platform/windows-native-unsigned-content.js",
@@ -177,7 +143,6 @@ const INVENTORY_KINDS = new Set([
   "workspace_dependency",
   "third_party_dependency",
   "windows_native_binding",
-  "linux_native_binding",
   "runtime_metadata",
 ]);
 const READ_ONLY_FLAG = fileSystemConstants.O_RDONLY ?? 0;
@@ -240,7 +205,6 @@ export const FIXED_STATUS = Object.freeze({
   inventoryMismatch: "ELECTRON_DEVELOPMENT_ARTIFACT_INVENTORY_MISMATCH",
   nativeInventoryInvalid: "ELECTRON_DEVELOPMENT_ARTIFACT_NATIVE_INVENTORY_INVALID",
   bindingInvalid: "ELECTRON_DEVELOPMENT_ARTIFACT_WINDOWS_BINDING_INVALID",
-  linuxBindingInvalid: "ELECTRON_DEVELOPMENT_ARTIFACT_LINUX_BINDING_INVALID",
 });
 
 const KNOWN_STATUSES = new Set(Object.values(FIXED_STATUS));
@@ -381,13 +345,6 @@ async function assertNoSymlinkPathComponents(path, status) {
       continue;
     }
     if (metadata.isSymbolicLink()) {
-      // macOS exposes /var as a compatibility symlink to /private/var.
-      if (process.platform === "darwin"
-          && current === "/var"
-          && await realpath(current) === "/private/var") {
-        current = dirname(current);
-        continue;
-      }
       fail(status);
     }
     if (!metadata.isDirectory() && current !== selected) fail(status);
@@ -953,7 +910,6 @@ function expectedNativePaths(target) {
   return new Set([
     targetSpec.keytar,
     ...(target === "win32-x64" ? [WINDOWS_BINDING_PATH] : []),
-    ...(target === "linux-x64" ? [LINUX_BINDING_PATH] : []),
   ]);
 }
 
@@ -973,9 +929,8 @@ function validateTargetKeytar({ target, staged }) {
   }
 }
 
-// Windows reads its sidecar through virtual ASAR. Linux requires both the
-// native module and adjacent sidecar as physical files for its pinned-descriptor
-// manifest checks. No other unpacked resources are admitted.
+// Windows reads its sidecar through virtual ASAR. No other unpacked resources
+// are admitted.
 function validateNativeBoundary({
   target,
   staged,
@@ -985,16 +940,7 @@ function validateNativeBoundary({
   manifest,
 }) {
   const expected = expectedNativePaths(target);
-  const expectedUnpacked = new Set([
-    ...expected,
-    ...(target === "linux-x64" ? [LINUX_MANIFEST_PATH] : []),
-  ]);
-  const linuxPair = new Set([LINUX_BINDING_PATH, LINUX_MANIFEST_PATH]);
-  if (staged.runtimeRows.some(({ path, kind }) =>
-    (kind === "linux_native_binding" && (target !== "linux-x64" || !linuxPair.has(path)))
-      || (target !== "linux-x64" && linuxPair.has(path)))) {
-    fail(FIXED_STATUS.nativeInventoryInvalid);
-  }
+  const expectedUnpacked = new Set(expected);
   const stagedNative = staged.runtimeRows
     .filter(({ path }) => path.toLowerCase().endsWith(".node"))
     .map(({ path }) => path);
@@ -1050,33 +996,6 @@ function validateNativeBoundary({
       fail(FIXED_STATUS.bindingInvalid);
     }
   }
-}
-
-async function validateLinuxBinding({ appPath, staged }) {
-  const paths = [LINUX_BINDING_PATH, LINUX_MANIFEST_PATH];
-  const captured = [];
-  for (const path of paths) {
-    const row = staged.rowMap.get(path);
-    const declared = staged.runtimeRows.find((entry) => entry.path === path);
-    if (!row || declared?.kind !== "linux_native_binding") fail(FIXED_STATUS.linuxBindingInvalid);
-    const bytes = await readRegularFile(
-      join(appPath, ...path.split("/")), FIXED_STATUS.linuxBindingInvalid, appPath,
-    );
-    if (bytes.byteLength !== row.bytes || sha256(bytes) !== row.sha256) {
-      fail(FIXED_STATUS.linuxBindingInvalid);
-    }
-    captured.push(bytes);
-  }
-  let sidecar;
-  try {
-    sidecar = validateLinuxCredentialMutexBindingManifest(
-      JSON.parse(captured[1].toString("utf8")),
-    );
-  } catch { fail(FIXED_STATUS.linuxBindingInvalid); }
-  if (sidecar.bytes !== captured[0].byteLength || sidecar.sha256 !== sha256(captured[0])) {
-    fail(FIXED_STATUS.linuxBindingInvalid);
-  }
-  return Object.freeze({ bytes: sidecar.bytes, sha256: sidecar.sha256 });
 }
 
 async function validateWindowsBinding({ appPath, staged }) {
@@ -1137,29 +1056,8 @@ async function compareArtifactToStaged({
         || value.version !== staged.manifest.releaseVersion) {
       fail(status);
     }
-    const hasDistribution = Object.hasOwn(value, "tibotattleDistribution");
-    const hasHostedRehearsal = Object.hasOwn(
-      value,
-      "tibotattleAccountlessHostedRehearsal",
-    );
-    if (packageJsonOptions.profile === "development") {
-      if (hasDistribution || hasHostedRehearsal) fail(status);
-      return;
-    }
-    if (hasDistribution || !hasHostedRehearsal) fail(status);
-    let selected;
-    try {
-      selected = validateAccountlessHostedRehearsalMetadata(
-        value.tibotattleAccountlessHostedRehearsal,
-      );
-    } catch {
-      fail(status);
-    }
-    if (JSON.stringify(selected) !== JSON.stringify(
-      packageJsonOptions.hostedRehearsalMetadata,
-    )) {
-      fail(status);
-    }
+    // The development artifact carries no distribution authority.
+    if (Object.hasOwn(value, "tibotattleDistribution")) fail(status);
   };
   const stagedPackageJsonBytes = await readRegularFile(
     join(appPath, "package.json"),
@@ -1205,7 +1103,7 @@ async function compareArtifactToStaged({
 }
 
 function summarizeBinding(target, binding) {
-  if (target !== WINDOWS_TARGET && target !== "linux-x64") {
+  if (target !== WINDOWS_TARGET) {
     return Object.freeze({ status: "not_applicable", bytes: 0, sha256: "0".repeat(64) });
   }
   return Object.freeze({
@@ -1226,29 +1124,9 @@ export async function verifyElectronDevelopmentArtifact({
   asarPath,
   unpackedPath,
   packagingProfile = "development",
-  hostedRehearsalMetadata,
 } = {}) {
   if (!Object.hasOwn(TARGETS, target)) fail(FIXED_STATUS.targetInvalid);
-  if (typeof packagingProfile !== "string"
-      || !Object.hasOwn(ELECTRON_BUILDER_PACKAGE_PROFILES, packagingProfile)
-      || !["development", "accountless-hosted-rehearsal"].includes(packagingProfile)) {
-    fail(FIXED_STATUS.inputInvalid);
-  }
-  let selectedHostedRehearsalMetadata;
-  if (packagingProfile === "accountless-hosted-rehearsal") {
-    try {
-      selectedHostedRehearsalMetadata = validateAccountlessHostedRehearsalMetadata(
-        hostedRehearsalMetadata,
-      );
-    } catch {
-      fail(FIXED_STATUS.inputInvalid);
-    }
-    if (target !== selectedHostedRehearsalMetadata.target) {
-      fail(FIXED_STATUS.targetInvalid);
-    }
-  } else if (hostedRehearsalMetadata !== undefined) {
-    fail(FIXED_STATUS.inputInvalid);
-  }
+  if (packagingProfile !== "development") fail(FIXED_STATUS.inputInvalid);
   const selectedAppPath = normalizeInputPath(appPath);
   const selectedAsarPath = normalizeInputPath(asarPath);
   const selectedUnpackedPath = normalizeInputPath(unpackedPath);
@@ -1262,9 +1140,7 @@ export async function verifyElectronDevelopmentArtifact({
     const unpacked = await walkFiles(selectedUnpackedPath);
     const binding = target === WINDOWS_TARGET
       ? await validateWindowsBinding({ appPath: selectedAppPath, staged })
-      : target === "linux-x64"
-        ? await validateLinuxBinding({ appPath: selectedAppPath, staged })
-        : null;
+      : null;
     validateTargetKeytar({ target, staged });
     validateNativeBoundary({
       target,
@@ -1283,8 +1159,6 @@ export async function verifyElectronDevelopmentArtifact({
       packageJsonOptions: {
         packageVersion: staged.manifest.releaseVersion,
         profile: packagingProfile,
-        ...(selectedHostedRehearsalMetadata === undefined
-          ? {} : { hostedRehearsalMetadata: selectedHostedRehearsalMetadata }),
       },
     });
     return Object.freeze({

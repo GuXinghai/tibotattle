@@ -7,7 +7,7 @@ import { chmod, copyFile, lstat, mkdtemp, readFile, realpath, rm } from 'node:fs
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prepareElectronStablePublication, verifyElectronStableReadback, readElectronStablePublicObject } from './prepare-electron-stable-publication.mjs';
-import { hashPublicationFile } from './reconcile-release-publication.mjs';
+import { hashPublicationFile } from './lib/publication-file-digest.mjs';
 import { checkReleaseNotes } from './check-release-notes.mjs';
 import { identityDigest, openOperation } from './lib/release-operation.mjs';
 import { DEPLOYMENT_ENDPOINTS } from '../config/deployment-endpoints.js';
@@ -63,7 +63,7 @@ export function createElectronStableR2Transport({ temporaryDirectory, spawn = sp
     },
     async delete(bucket, key) {
       const target = targetForKey(bucket, key);
-      const name = target.startsWith('darwin-') ? 'latest-mac.yml' : target === 'linux-x64' ? 'latest-linux.yml' : 'latest.yml';
+      const name = 'latest.yml';
       if (key !== `electron/stable/${target}/${name}`) fail('R2_DELETE_TARGET_INVALID');
       const result = run(['r2', 'object', 'delete', `${bucket}/${key}`, '--remote']);
       if (result.error || result.status !== 0) fail('R2_WRITE_UNKNOWN');
@@ -157,7 +157,7 @@ export async function publishElectronStableFeed({ artifactRoot, proposal, operat
     }
     const result = await verifyElectronStableReadback(plan, { phase: phase === 'publish' ? 'published' : 'rollback', readObject: readPublicObject });
     await owned(); state.readback = result; state.status = 'completed'; await save();
-    return { status: 'completed', phase, sourceRevision: plan.sourceRevision, targets: 4, coordinationReleased: false };
+    return { status: 'completed', phase, sourceRevision: plan.sourceRevision, targets: plan.targets.length, coordinationReleased: false };
   } catch (error) {
     if (state) { state.status = state.intent === null ? 'failed_known' : 'unknown'; state.failureCode = closedError(error); await save().catch(() => {}); }
     throw error;

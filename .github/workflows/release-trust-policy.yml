@@ -8,15 +8,8 @@ on:
       - "config/release-evidence.js"
       - "release-notes/**"
       - "scripts/check-release-notes.mjs"
-      - "scripts/lib/electron-macos-qualification-identity.mjs"
-      - "scripts/smoke-electron-macos-credentials.mjs"
-      - "scripts/lib/macos-historical-sol-qualification.mjs"
-      - "test/smoke-electron-macos-credentials.test.mjs"
-      - "test/macos-historical-sol-qualification.test.mjs"
       - "tools/tool-inventory.json"
       - "test/tool-inventory.test.js"
-      - "scripts/macos-bundle-version.js"
-      - "config/macos-bundle-version-plan.cjs"
       - "config/electron-production-distribution.cjs"
       - "schemas/release-evidence-v1/**"
       - "scripts/check-release-workflow-policy.mjs"
@@ -24,17 +17,11 @@ on:
       - "scripts/release-evidence.js"
       - "scripts/release-evidence-*.js"
       - "scripts/generate-release-evidence.js"
-      - "scripts/macos-release-core.js"
       - "scripts/build-public-release-site.js"
       - "scripts/validate-release-sbom.mjs"
       - "tools/operations/validate-documentation.mjs"
       - "test/documentation-governance.test.js"
       - "test/release-*.test.js"
-      - "test/electron-macos-qualification-identity.test.mjs"
-      - "test/electron-sparkle-transition.test.js"
-      - "test/macos-keychain-migration-artifact.test.js"
-      - "test/sparkle-remote-inspection.test.js"
-      - "scripts/lib/sparkle-remote-inspection.mjs"
       - "test/public-release-site.test.js"
       - "README.md"
       - "SECURITY.md"
@@ -52,15 +39,8 @@ on:
       - "config/release-evidence.js"
       - "release-notes/**"
       - "scripts/check-release-notes.mjs"
-      - "scripts/lib/electron-macos-qualification-identity.mjs"
-      - "scripts/smoke-electron-macos-credentials.mjs"
-      - "scripts/lib/macos-historical-sol-qualification.mjs"
-      - "test/smoke-electron-macos-credentials.test.mjs"
-      - "test/macos-historical-sol-qualification.test.mjs"
       - "tools/tool-inventory.json"
       - "test/tool-inventory.test.js"
-      - "scripts/macos-bundle-version.js"
-      - "config/macos-bundle-version-plan.cjs"
       - "config/electron-production-distribution.cjs"
       - "schemas/release-evidence-v1/**"
       - "scripts/check-release-workflow-policy.mjs"
@@ -68,17 +48,11 @@ on:
       - "scripts/release-evidence.js"
       - "scripts/release-evidence-*.js"
       - "scripts/generate-release-evidence.js"
-      - "scripts/macos-release-core.js"
       - "scripts/build-public-release-site.js"
       - "scripts/validate-release-sbom.mjs"
       - "tools/operations/validate-documentation.mjs"
       - "test/documentation-governance.test.js"
       - "test/release-*.test.js"
-      - "test/electron-macos-qualification-identity.test.mjs"
-      - "test/electron-sparkle-transition.test.js"
-      - "test/macos-keychain-migration-artifact.test.js"
-      - "test/sparkle-remote-inspection.test.js"
-      - "scripts/lib/sparkle-remote-inspection.mjs"
       - "test/public-release-site.test.js"
       - "README.md"
       - "SECURITY.md"
@@ -99,8 +73,11 @@ concurrency:
 jobs:
   policy:
     name: Release evidence and workflow policy
-    runs-on: ubuntu-24.04
+    runs-on: windows-2025
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Check out the selected revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -134,14 +111,11 @@ jobs:
         if: github.event_name != 'pull_request'
         run: node ./scripts/check-release-notes.mjs
 
-      - name: Test future-release Mac qualification admission
-        run: node --test test/electron-macos-qualification-identity.test.mjs
-
       - name: Check qualification dependency boundaries
         run: npm run architecture:check
 
-      - name: Test signed Mac historical repair and credential qualification
-        run: node --test --test-concurrency=1 test/macos-historical-sol-qualification.test.mjs test/smoke-electron-macos-credentials.test.mjs test/tool-inventory.test.js
+      - name: Test tool inventory contract
+        run: node --test test/tool-inventory.test.js
 
       - name: Check the checked-in Codex contract
         run: npm run codex:contract:check

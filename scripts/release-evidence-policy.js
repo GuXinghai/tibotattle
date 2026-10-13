@@ -237,8 +237,7 @@ export function normalizeCleanInstallAcceptance(value, { platform, channel, arch
   const label = "cleanInstallAcceptance";
   assertPlainObject(value, "RELEASE_EVIDENCE_ACCEPTANCE_INVALID", label);
   assertAllowedKeys(value, ["status", "reason", "sourceCommit"], label, "RELEASE_EVIDENCE_ACCEPTANCE_INVALID");
-  assert(channel === "direct" && ((platform === "macos" && ["arm64", "x64"].includes(architecture))
-    || (["windows", "linux"].includes(platform) && architecture === "x64")),
+  assert(channel === "direct" && platform === "windows" && architecture === "x64",
   "RELEASE_EVIDENCE_ACCEPTANCE_INVALID", "acceptance requires a supported direct target");
   assert(["owner_accepted", "pending"].includes(value.status), "RELEASE_EVIDENCE_ACCEPTANCE_INVALID", "acceptance status is invalid");
   assertSafeText(value.reason, "RELEASE_EVIDENCE_ACCEPTANCE_INVALID", "acceptance reason", { maximumBytes: 512 });
@@ -454,63 +453,22 @@ export function normalizeNativeTrust({ value, platform, channel, store, label })
       listing,
     };
   }
-  if (platform === "macos") {
-    assertAllowedKeys(trust, ["signerIdentity", "teamId"], label,
-      "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID");
-    return {
-      signerIdentity: assertSafeText(trust.signerIdentity,
-        "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID", `${label}.signerIdentity`, {
-          maximumBytes: 512,
-        }),
-      teamId: assertSafeText(trust.teamId,
-        "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID", `${label}.teamId`, {
-          pattern: /^[A-Z0-9]{10}$/u,
-          maximumBytes: 10,
-        }),
-    };
-  }
-  if (platform === "windows") {
-    assertAllowedKeys(trust, ["publisher", "certificateSha256", "timestampAuthority"], label,
-      "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID");
-    const result = {
-      publisher: assertSafeText(trust.publisher,
-        "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID", `${label}.publisher`, {
-          maximumBytes: 512,
-        }),
-      certificateSha256: assertSha256(trust.certificateSha256, `${label}.certificateSha256`),
-    };
-    if (trust.timestampAuthority !== undefined) {
-      result.timestampAuthority = assertSafeText(trust.timestampAuthority,
-        "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID", `${label}.timestampAuthority`, {
-          maximumBytes: 512,
-        });
-    }
-    return result;
-  }
-  assertAllowedKeys(trust, ["scheme", "keyFingerprint"], label,
+  assertAllowedKeys(trust, ["publisher", "certificateSha256", "timestampAuthority"], label,
     "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID");
-  const scheme = assertSafeText(trust.scheme, "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID",
-    `${label}.scheme`, {
-      pattern: /^[a-z][a-z0-9-]{1,63}$/u,
-      maximumBytes: 64,
-    });
-  assert(["none", "appimage-detached", "apt-repository", "rpm-repository"].includes(scheme),
-    "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID",
-    `${label}.scheme is not supported for Linux direct artifacts`);
-  if (scheme === "none") {
-    assert(trust.keyFingerprint === undefined,
-      "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID",
-      `${label}.keyFingerprint is not valid when scheme is none`);
-    return { scheme };
-  }
-  return {
-    scheme,
-    keyFingerprint: assertSafeText(trust.keyFingerprint,
-      "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID", `${label}.keyFingerprint`, {
-        pattern: /^[A-Fa-f0-9]{40,64}$/u,
-        maximumBytes: 64,
-      }).toUpperCase(),
+  const result = {
+    publisher: assertSafeText(trust.publisher,
+      "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID", `${label}.publisher`, {
+        maximumBytes: 512,
+      }),
+    certificateSha256: assertSha256(trust.certificateSha256, `${label}.certificateSha256`),
   };
+  if (trust.timestampAuthority !== undefined) {
+    result.timestampAuthority = assertSafeText(trust.timestampAuthority,
+      "RELEASE_EVIDENCE_NATIVE_TRUST_INVALID", `${label}.timestampAuthority`, {
+        maximumBytes: 512,
+      });
+  }
+  return result;
 }
 
 export function normalizeBuild(value, channel, label, finalArtifactSha256 = undefined, electronTarget = undefined) {
@@ -522,8 +480,7 @@ export function normalizeBuild(value, channel, label, finalArtifactSha256 = unde
   const build = assertPlainObject(value, "RELEASE_EVIDENCE_BUILD_INVALID", label);
   if (Object.hasOwn(build, "finalArtifactSha256")) {
     assert(channel === "direct" && electronTarget?.updater?.enabled === true && electronTarget.updater.mechanism === "electron-updater"
-      && ((electronTarget.platform === "macos" && ["arm64", "x64"].includes(electronTarget.architecture))
-        || (["windows", "linux"].includes(electronTarget.platform) && electronTarget.architecture === "x64")),
+      && electronTarget.platform === "windows" && electronTarget.architecture === "x64",
     "RELEASE_EVIDENCE_BUILD_INVALID", "final build evidence requires a supported direct Electron updater target");
     assertAllowedKeys(build, ["sourceManifestSha256", "finalArtifactSha256"], label, "RELEASE_EVIDENCE_BUILD_INVALID");
     assert(build.finalArtifactSha256 === finalArtifactSha256, "RELEASE_EVIDENCE_BUILD_INVALID", "final build evidence must bind the exact final artifact");

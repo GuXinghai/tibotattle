@@ -6,8 +6,8 @@
  * it does not download Electron, sign an artifact, build a native binding, or
  * make a Windows production-safety claim.
  *
- * The source closure is deliberately shared with the existing macOS packager
- * so a new local companion import cannot silently escape this boundary.  The
+ * The source closure is reviewed here so a new local companion import cannot
+ * silently escape this boundary.  The
  * output manifest contains only relative paths, byte counts, and SHA-256
  * digests; it never records a checkout path, account value, or file contents.
  */
@@ -63,17 +63,10 @@ import {
 import {
   canonicalElectronBuilderPackageJsonBytes,
   ELECTRON_BUILDER_PACKAGE_PROFILES,
-  validateAccountlessHostedRehearsalMetadata,
-  validateAccountlessSignedStagingRehearsalMetadata,
   validateProductionDistributionMetadata,
 } from "./lib/electron-builder-package-json.mjs";
 import { extractEsmImports } from "./lib/esm-imports.mjs";
 import { RELEASE_VERSION } from "../config/release-manifest.js";
-import {
-  LINUX_CREDENTIAL_MUTEX_BINDING_RELATIVE_PATH,
-  LINUX_CREDENTIAL_MUTEX_BINDING_MANIFEST_RELATIVE_PATH,
-  validateLinuxCredentialMutexBindingManifest,
-} from "../src/platform/linux-credential-mutex.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
@@ -82,7 +75,7 @@ const MANIFEST_SCHEMA = "usage-monitor-electron-runtime-v0.1";
 const MAXIMUM_BINDING_BYTES = 64 * 1024 * 1024;
 const MAXIMUM_MANIFEST_BYTES = 1 * 1024 * 1024;
 const DEFAULT_PACKAGING_PROFILE = "development";
-const DEFAULT_TARGET = "darwin-arm64";
+const DEFAULT_TARGET = "win32-x64";
 // Importing a freshly copied closure on Windows can exceed ten seconds even
 // when the Node process starts immediately. Keep the import check bounded and
 // fail closed, while allowing the Windows build host time to read the closure.
@@ -90,61 +83,32 @@ const STAGED_ELECTRON_MODULE_LINKAGE_TIMEOUT_MS = process.platform === "win32" ?
 const ELECTRON_RUNTIME_ONLY_DYNAMIC_IMPORTS = new Set([
   "electron",
 ]);
-const DARWIN_ARM64_TARGET = "darwin-arm64";
-const DARWIN_X64_TARGET = "darwin-x64";
 const WINDOWS_X64_TARGET = "win32-x64";
-const LINUX_X64_TARGET = "linux-x64";
 const WINDOWS_PLATFORM = "win32";
 const TARGET_SPECS = Object.freeze({
-  [DARWIN_ARM64_TARGET]: Object.freeze({
-    platform: "darwin",
-    architecture: "arm64",
-    keytarArchitecture: "darwin-arm64",
-  }),
-  [DARWIN_X64_TARGET]: Object.freeze({
-    platform: "darwin",
-    architecture: "x64",
-    keytarArchitecture: "darwin-x64",
-  }),
   [WINDOWS_X64_TARGET]: Object.freeze({
     platform: "win32",
     architecture: "x64",
     keytarArchitecture: "win32-x64",
   }),
-  [LINUX_X64_TARGET]: Object.freeze({
-    platform: "linux",
-    architecture: "x64",
-    keytarArchitecture: "linux-x64",
-  }),
 });
 const TARGET_ALIASES = Object.freeze({
-  darwin: DARWIN_ARM64_TARGET,
-  macos: DARWIN_ARM64_TARGET,
-  macOS: DARWIN_ARM64_TARGET,
-  "darwin-arm64": DARWIN_ARM64_TARGET,
-  "darwin-x64": DARWIN_X64_TARGET,
   windows: WINDOWS_X64_TARGET,
   win: WINDOWS_X64_TARGET,
   win32: WINDOWS_X64_TARGET,
   "win32-x64": WINDOWS_X64_TARGET,
-  linux: LINUX_X64_TARGET,
-  "linux-x64": LINUX_X64_TARGET,
 });
 export const ELECTRON_TARGETS = TARGET_SPECS;
-// Electron still owns this reviewed cross-platform credential binding. The
-// native macOS app retired Keytar in PR #81, so its packager is deliberately
-// no longer the authority for this dependency. Preserve the previously
-// reviewed full-tree pin; a version match alone cannot authenticate bytes.
+// Electron still owns this reviewed Windows credential binding. Preserve the
+// previously reviewed full-tree pin; a version match alone cannot authenticate
+// bytes.
 export const ELECTRON_KEYTAR_PACKAGE_PIN = Object.freeze({
   name: "@github/keytar",
   version: "7.10.6",
   treeDigest: "0a09b62fbf597c176747009631e671c0625530132a471b6a1aa47153edf131be",
 });
 export const ELECTRON_KEYTAR_PREBUILD_SHA256 = Object.freeze({
-  "darwin-arm64": "855c21e1e702967230bd87f600d04c311b77f29150f3372d547e72882c58de6a",
-  "darwin-x64": "5ce10f1f83f917fb555ff2ba43a80cab0f215d266cfdbd9bce5d6affa61c8aa1",
   "win32-x64": "b82625e7c713fd20b5cb57993e073076c87660652202893fad39d874d77169fc",
-  "linux-x64": "e7894a1e1001764de29ff08d3dae418ccbaaf78889c5673d367e05df1682fc7c",
 });
 // electron-updater shares the Electron-shell dependency closure in every
 // profile. Development still cannot activate it: production metadata and the
@@ -181,15 +145,12 @@ const NATIVE_PATH_MODULE = Object.freeze({
 });
 export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "config/electron-production-distribution.cjs",
-  "config/macos-bundle-version-plan.cjs",
   "config/deployment-endpoints.js",
-  "native/macos-keychain/contract.js",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
   "apps/electron/desktop-command.js",
   "apps/electron/desktop-contract.js",
   "apps/electron/desktop-contribution-credential.js",
-  "apps/electron/desktop-crash-capture.js",
   "apps/electron/desktop-startup-diagnostics.js",
   "apps/electron/desktop-codex-roots.js",
   "apps/electron/desktop-deep-links.js",
@@ -201,20 +162,12 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "apps/electron/desktop-hosted-signin.js",
   "apps/electron/desktop-recovery-settings.js",
   "apps/electron/desktop-ipc.js",
-  "apps/electron/desktop-keychain-broker.js",
-  "apps/electron/desktop-linux-secret-service-broker.js",
-  "apps/electron/desktop-linux-account-observation-broker.js",
-  "apps/electron/desktop-linux-accountless-credential.js",
-  "apps/electron/desktop-linux-secret-service.js",
   "apps/electron/desktop-windows-account-observation-broker.js",
   "apps/electron/desktop-windows-account-observation-qualification.js",
   "apps/electron/desktop-owned-downloads.js",
   "apps/electron/desktop-menu.js",
   "apps/electron/desktop-lifecycle.js",
-  "apps/electron/desktop-macos-keychain.js",
   "apps/electron/desktop-secure-storage-readiness.js",
-  "apps/electron/desktop-native-migration.js",
-  "apps/electron/desktop-native-migration-macos.js",
   "apps/electron/desktop-notification-coordinator.js",
   "apps/electron/desktop-notification-delivery.js",
   "apps/electron/desktop-notification-policy.js",
@@ -234,11 +187,6 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "apps/electron/desktop-update-preferences.js",
   "apps/electron/desktop-updater.js",
   "apps/electron/errors.js",
-  "apps/electron/linux-autostart.js",
-  "apps/electron/linux-qualification.js",
-  "apps/electron/linux-secret-service-qualification-smoke-child.mjs",
-  "apps/electron/linux-account-observation-qualification-smoke-child.mjs",
-  "apps/electron/linux-secret-service-qualification-smoke.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
   "apps/electron/platform-gate.js",
@@ -252,17 +200,7 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "apps/electron/windows-account-observation-qualification-smoke-child.mjs",
   "apps/electron/windows-account-observation-qualification-smoke.js",
   "apps/electron/windows-qualification.js",
-  "scripts/diagnose-desktop-crash.mjs",
   "src/desktop-shell-status.js",
-  "src/platform/linux-account-observation-credential.js",
-  "src/platform/linux-account-observation-broker.js",
-  "src/platform/linux-accountless-installation-credential.js",
-  "src/platform/linux-credential-mutex.js",
-  "src/platform/linux-credential-mutation-lease.js",
-  "src/platform/linux-credential-state.js",
-  "src/platform/linux-secret-service-broker.js",
-  "src/platform/linux-secret-service-binding.js",
-  "src/platform/linux-secret-service.js",
   "src/platform/windows-accountless-installation-credential.js",
   "src/platform/windows-credential-manager-probe.js",
   "src/platform/windows-native-unsigned-content.js",
@@ -324,7 +262,6 @@ const FORBIDDEN_PREFIXES = Object.freeze([
   ".usage-monitor/",
   "docs/",
   "exports/",
-  "local-review/",
   "test/",
   "tests/",
 ]);
@@ -349,7 +286,6 @@ const WEB_FILE_KIND = "dashboard_asset";
 const WORKSPACE_PACKAGE_KIND = "workspace_dependency";
 const THIRD_PARTY_KIND = "third_party_dependency";
 const NATIVE_KIND = "windows_native_binding";
-const LINUX_NATIVE_KIND = "linux_native_binding";
 const METADATA_KIND = "runtime_metadata";
 const INVENTORY_KINDS = new Set([
   SOURCE_FILE_KIND,
@@ -358,7 +294,6 @@ const INVENTORY_KINDS = new Set([
   WORKSPACE_PACKAGE_KIND,
   THIRD_PARTY_KIND,
   NATIVE_KIND,
-  LINUX_NATIVE_KIND,
   METADATA_KIND,
 ]);
 
@@ -404,8 +339,8 @@ function normalizePackagingProfile(value = DEFAULT_PACKAGING_PROFILE) {
   return value;
 }
 
-function normalizePackageVersion(value = RELEASE_VERSION, distributionMetadata) {
-  const expectedVersion = distributionMetadata?.semanticVersion ?? RELEASE_VERSION;
+function normalizePackageVersion(value = RELEASE_VERSION) {
+  const expectedVersion = RELEASE_VERSION;
   if (typeof value !== "string" || value !== expectedVersion) {
     fail("INVALID_PACKAGE_VERSION", "Electron packaging version does not match the reviewed release");
   }
@@ -442,12 +377,6 @@ async function assertNoSymlinkPathComponents(path, label = "path") {
       continue;
     }
     if (metadata.isSymbolicLink()) {
-      if (process.platform === "darwin"
-          && current === "/var"
-          && await realpath(current) === "/private/var") {
-        current = dirname(current);
-        continue;
-      }
       fail("SYMLINK_PATH", `${label} contains a symbolic link: ${current}`);
     }
     if (!metadata.isDirectory() && current !== selected) {
@@ -506,10 +435,7 @@ function assertReviewedRuntimePath(relativePath, label = "runtime path") {
   if (new Set(["package-lock.json", "pnpm-lock.yaml", ".npmrc"]).has(folded)
       || (folded.startsWith("native/windows-filesystem/build/")
         && folded !== WINDOWS_BINDING_RELATIVE_PATH.toLowerCase()
-        && folded !== WINDOWS_MANIFEST_RELATIVE_PATH.toLowerCase())
-      || (folded.startsWith("native/linux-credential-mutex/build/")
-        && folded !== LINUX_CREDENTIAL_MUTEX_BINDING_RELATIVE_PATH
-        && folded !== LINUX_CREDENTIAL_MUTEX_BINDING_MANIFEST_RELATIVE_PATH)) {
+        && folded !== WINDOWS_MANIFEST_RELATIVE_PATH.toLowerCase())) {
     fail("FORBIDDEN_SOURCE", `${label} is not a runtime input: ${selected}`);
   }
   return selected;
@@ -992,10 +918,7 @@ async function stagePackageFiles({
         packageJsonOptions,
       ),
       /\.node$/u.test(relativeFile)
-        // ShipIt must remove quarantine from the extracted, signed macOS app.
-        // Its update account owns this closed native-module set, so retain no
-        // group/other write while allowing that installation-time operation.
-        ? (targetSpec.platform === "darwin" ? 0o755 : 0o555)
+        ? 0o555
         : 0o444,
     );
     staged.push({ kind: THIRD_PARTY_KIND, path: relativePath });
@@ -1281,7 +1204,7 @@ async function inspectWindowsBindingPair({
   const relativeBinding = WINDOWS_BINDING_RELATIVE_PATH;
   const relativeManifest = WINDOWS_MANIFEST_RELATIVE_PATH;
   // The caller may provide a temporary native build outside this checkout for
-  // packaging rehearsal. Only the fixed destination names enter the output
+  // packaging. Only the fixed destination names enter the output
   // manifest, so the source path is never disclosed.
   return Object.freeze({
     included: true,
@@ -1314,35 +1237,6 @@ async function stageWindowsBinding({ stagingRoot, pair }) {
   ];
 }
 
-async function stageLinuxBinding({ stagingRoot, bindingPath, manifestPath }) {
-  const binding = await captureRegularFile(bindingPath, "Linux binding", {
-    maximumBytes: MAXIMUM_BINDING_BYTES,
-  });
-  const sidecar = await captureRegularFile(manifestPath, "Linux binding manifest", {
-    maximumBytes: 64 * 1024,
-  });
-  let manifest;
-  try {
-    manifest = validateLinuxCredentialMutexBindingManifest(
-      JSON.parse(sidecar.bytes.toString("utf8")),
-    );
-  } catch {
-    fail("LINUX_BINDING_MANIFEST", "Linux binding manifest is invalid");
-  }
-  if (manifest.bytes !== binding.byteLength || manifest.sha256 !== binding.sha256) {
-    fail("LINUX_BINDING_MANIFEST", "Linux binding manifest does not match its binding");
-  }
-  await writeCapturedFile(
-    outputPath(stagingRoot, LINUX_CREDENTIAL_MUTEX_BINDING_RELATIVE_PATH),
-    binding.bytes,
-    0o555,
-  );
-  await writeCapturedFile(
-    outputPath(stagingRoot, LINUX_CREDENTIAL_MUTEX_BINDING_MANIFEST_RELATIVE_PATH),
-    sidecar.bytes,
-  );
-}
-
 async function collectInventory(stagingRoot) {
   const files = await walkFiles(stagingRoot);
   const rows = [];
@@ -1360,8 +1254,6 @@ async function collectInventory(stagingRoot) {
     if (path === "package.json") kind = METADATA_KIND;
     if (path === WINDOWS_BINDING_RELATIVE_PATH
         || path === WINDOWS_MANIFEST_RELATIVE_PATH) kind = NATIVE_KIND;
-    if (path === LINUX_CREDENTIAL_MUTEX_BINDING_RELATIVE_PATH
-        || path === LINUX_CREDENTIAL_MUTEX_BINDING_MANIFEST_RELATIVE_PATH) kind = LINUX_NATIVE_KIND;
     rows.push({
       bytes: captured.byteLength,
       kind,
@@ -1621,14 +1513,10 @@ export async function buildElectronRuntime({
   replace = false,
   windowsBindingPath,
   windowsManifestPath,
-  linuxBindingPath,
-  linuxManifestPath,
   includeElectronShell = false,
   packagingProfile = DEFAULT_PACKAGING_PROFILE,
   packageVersion = RELEASE_VERSION,
   distributionMetadata,
-  hostedRehearsalMetadata,
-  signedStagingRehearsalMetadata,
 } = {}) {
   if (typeof includeElectronShell !== "boolean") {
     fail("INVALID_SHELL_MODE", "includeElectronShell must be a boolean");
@@ -1637,7 +1525,7 @@ export async function buildElectronRuntime({
   const selectedTargetSpec = TARGET_SPECS[selectedTarget];
   const selectedPackagingProfile = normalizePackagingProfile(packagingProfile);
   // The production profile is paired with the protected Windows release
-  // config: it may never silently label a companion-only or macOS tree.
+  // config: it may never silently label a companion-only tree.
   if (selectedPackagingProfile === "windows-production"
       && (selectedTarget !== WINDOWS_X64_TARGET || !includeElectronShell)) {
     fail(
@@ -1646,8 +1534,6 @@ export async function buildElectronRuntime({
     );
   }
   let selectedDistributionMetadata;
-  let selectedHostedRehearsalMetadata;
-  let selectedSignedStagingRehearsalMetadata;
   if (selectedPackagingProfile === "production") {
     if (!includeElectronShell) {
       fail(
@@ -1667,66 +1553,11 @@ export async function buildElectronRuntime({
   } else if (distributionMetadata !== undefined) {
     fail("PRODUCTION_DISTRIBUTION", "Distribution metadata requires the production profile");
   }
-  if (selectedPackagingProfile === "accountless-hosted-rehearsal") {
-    if (!includeElectronShell || selectedTarget !== DARWIN_ARM64_TARGET) {
-      fail(
-        "PACKAGING_PROFILE_TARGET",
-        "The hosted accountless rehearsal requires a Darwin arm64 Electron shell build",
-      );
-    }
-    try {
-      selectedHostedRehearsalMetadata = validateAccountlessHostedRehearsalMetadata(
-        hostedRehearsalMetadata,
-      );
-    } catch {
-      fail("HOSTED_REHEARSAL_METADATA", "Hosted accountless rehearsal metadata is invalid");
-    }
-    if (selectedHostedRehearsalMetadata.target !== selectedTarget) {
-      fail("HOSTED_REHEARSAL_METADATA", "Hosted accountless rehearsal target does not match staging");
-    }
-  } else if (hostedRehearsalMetadata !== undefined) {
-    fail("HOSTED_REHEARSAL_METADATA", "Hosted rehearsal metadata requires its selected profile");
-  }
-  if (selectedPackagingProfile === "accountless-signed-staging-rehearsal") {
-    if (!includeElectronShell || selectedTarget !== DARWIN_ARM64_TARGET) {
-      fail(
-        "PACKAGING_PROFILE_TARGET",
-        "The signed accountless staging rehearsal requires a Darwin arm64 Electron shell build",
-      );
-    }
-    try {
-      selectedSignedStagingRehearsalMetadata = validateAccountlessSignedStagingRehearsalMetadata(
-        signedStagingRehearsalMetadata,
-      );
-    } catch {
-      fail("SIGNED_STAGING_REHEARSAL_METADATA", "Signed staging rehearsal metadata is invalid");
-    }
-    if (selectedSignedStagingRehearsalMetadata.target !== selectedTarget) {
-      fail("SIGNED_STAGING_REHEARSAL_METADATA", "Signed staging rehearsal target does not match staging");
-    }
-  } else if (signedStagingRehearsalMetadata !== undefined) {
-    fail(
-      "SIGNED_STAGING_REHEARSAL_METADATA",
-      "Signed staging rehearsal metadata requires its selected profile",
-    );
-  }
-  const selectedPackageVersion = normalizePackageVersion(
-    packageVersion,
-    selectedDistributionMetadata,
-  );
+  const selectedPackageVersion = normalizePackageVersion(packageVersion);
   const packageJsonOptions = includeElectronShell
     ? Object.freeze({
       ...(selectedDistributionMetadata
         ? { distributionMetadata: selectedDistributionMetadata }
-        : {}),
-      ...(selectedDistributionMetadata?.semanticVersion !== undefined
-        ? { sourceReleaseVersion: RELEASE_VERSION }
-        : {}),
-      ...(selectedHostedRehearsalMetadata
-        ? { hostedRehearsalMetadata: selectedHostedRehearsalMetadata }
-        : {}),
-      ...(selectedSignedStagingRehearsalMetadata
-        ? { signedStagingRehearsalMetadata: selectedSignedStagingRehearsalMetadata }
         : {}),
       packageVersion: selectedPackageVersion,
       profile: selectedPackagingProfile,
@@ -1735,10 +1566,6 @@ export async function buildElectronRuntime({
   if (selectedTarget !== WINDOWS_X64_TARGET
       && (windowsBindingPath || windowsManifestPath)) {
     fail("WINDOWS_BINDING_TARGET", "Windows binding arguments require the Windows target");
-  }
-  if ((selectedTarget !== LINUX_X64_TARGET || !includeElectronShell)
-      && (linuxBindingPath || linuxManifestPath)) {
-    fail("LINUX_BINDING_TARGET", "Linux binding arguments require the Linux shell target");
   }
   const destination = await validateOutputDestination(output, REPOSITORY_ROOT, replace);
   if (destination.existed) {
@@ -1875,15 +1702,6 @@ export async function buildElectronRuntime({
       });
     }
 
-    if (includeElectronShell && selectedTarget === LINUX_X64_TARGET) {
-      const bindingPath = resolve(linuxBindingPath
-        ?? join(REPOSITORY_ROOT, LINUX_CREDENTIAL_MUTEX_BINDING_RELATIVE_PATH));
-      await stageLinuxBinding({
-        stagingRoot: temporaryRoot,
-        bindingPath,
-        manifestPath: resolve(linuxManifestPath ?? `${bindingPath}.manifest.json`),
-      });
-    }
     if (includeElectronShell) await assertStagedElectronShellNodeLinkage(temporaryRoot);
 
     const inventory = await collectInventory(temporaryRoot);

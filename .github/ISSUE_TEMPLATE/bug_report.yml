@@ -31,8 +31,8 @@ body:
     id: operating-system
     attributes:
       label: Operating system and exact build
-      description: On macOS, include both ProductVersion and BuildVersion from `sw_vers`.
-      placeholder: macOS 26.4 (BuildVersion 25E...)
+      description: Include the Windows edition and build number (for example from `winver`).
+      placeholder: Windows 11 Home 10.0.26200
     validations:
       required: true
   - type: dropdown
@@ -40,11 +40,7 @@ body:
     attributes:
       label: Architecture
       options:
-        - Apple silicon (arm64)
-        - Intel Mac (x64)
         - Windows (x64)
-        - Linux (x64)
-        - Linux (arm64)
         - Other / not sure
     validations:
       required: true

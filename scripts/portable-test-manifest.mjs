@@ -124,9 +124,8 @@ export const PORTABLE_TEST_FILES = Object.freeze([
   ...new Set(Object.values(PORTABLE_TEST_GROUPS).flat()),
 ]);
 
-// These files still prove useful POSIX contracts in the macOS/Linux portable
-// lane, but running them on Windows would pretend Unix mode bits are an ACL
-// substitute. Keep every deferral explicit and reviewable until issue #3 owns
+// These files still prove useful POSIX contracts, but running them on Windows
+// would pretend Unix mode bits are an ACL substitute. Keep every deferral explicit and reviewable until issue #3 owns
 // the corresponding Windows security implementation.
 export const WINDOWS_DEFERRED_TESTS = Object.freeze([
   Object.freeze({

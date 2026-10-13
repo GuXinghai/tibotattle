@@ -36,11 +36,11 @@ jobs:
   registration:
     if: github.event_name == 'push'
     name: Register manual Windows signer
-    runs-on: ubuntu-24.04
+    runs-on: windows-2025
     timeout-minutes: 5
     steps:
       - name: Record registration only
-        run: printf '%s\n' 'WINDOWS_SIGNING_WORKFLOW_REGISTERED'
+        run: Write-Output 'WINDOWS_SIGNING_WORKFLOW_REGISTERED'
   sign:
     if: github.event_name == 'workflow_dispatch'
     name: Sign exact Windows x64 candidate

@@ -37,28 +37,22 @@ function fixedFailure(error) {
     : "prospective transition build failed";
 }
 
-function assertOwnerOnlySourceStats(stats) {
+function assertSingleLinkSourceStats(stats) {
   if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) {
     throw new Error("prospective source must be a single-link regular file");
   }
   if (stats.size > MAXIMUM_SOURCE_BYTES) {
     throw new Error("prospective source exceeds the bounded size policy");
   }
-  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
-    throw new Error("prospective source must be owned by the current user");
-  }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
-    throw new Error("prospective source must be owner-only");
-  }
 }
 
-async function openOwnerOnlySource(path) {
+async function openSingleLinkSource(path) {
   const pathStats = await lstat(path);
-  assertOwnerOnlySourceStats(pathStats);
+  assertSingleLinkSourceStats(pathStats);
   const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
     const descriptorStats = await handle.stat();
-    assertOwnerOnlySourceStats(descriptorStats);
+    assertSingleLinkSourceStats(descriptorStats);
     if (pathStats.dev !== descriptorStats.dev || pathStats.ino !== descriptorStats.ino) {
       throw new Error("prospective source changed while it was being opened");
     }
@@ -70,7 +64,7 @@ async function openOwnerOnlySource(path) {
 }
 
 async function readCollectorRecords(path) {
-  const source = await openOwnerOnlySource(path);
+  const source = await openSingleLinkSource(path);
   const records = [];
   let lineCount = 0;
   try {
@@ -94,7 +88,7 @@ async function readCollectorRecords(path) {
       }
     }
     const after = await source.handle.stat();
-    assertOwnerOnlySourceStats(after);
+    assertSingleLinkSourceStats(after);
     if (after.dev !== source.stats.dev
         || after.ino !== source.stats.ino
         || after.size !== source.stats.size

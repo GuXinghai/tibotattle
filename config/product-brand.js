@@ -10,16 +10,12 @@ const configuredProductBrand = {
   appOpenHost: "open",
   appOpenURL: "usagemonitor://open",
   stateDirectoryName: "Usage Monitor",
-  // Stable Keychain attributes are an installed-data compatibility contract.
-  // Do not rename either value: existing installs already own these items.
-  keychainNamespace: "app-usagemonitor",
-  keychainAccount: "installation",
   monitoredAppDisplayName: "Codex",
   monitoredAppBundleIdentifier: "com.openai.codex",
 };
 
 // Preview builds must never be able to replace or migrate stable application
-// state. Keep every macOS registration and storage boundary distinct while
+// state. Keep every registration and storage boundary distinct while
 // retaining the same monitored Codex application identity.
 const configuredPreviewProductBrand = {
   ...configuredProductBrand,
@@ -29,8 +25,6 @@ const configuredPreviewProductBrand = {
   appOpenScheme: "usagemonitor-preview",
   appOpenURL: "usagemonitor-preview://open",
   stateDirectoryName: "Usage Monitor Preview",
-  keychainNamespace: "app-usagemonitor.preview",
-  keychainAccount: "preview-installation",
 };
 
 export const SEMANTIC_OPEN_TARGET_PLACEHOLDER =
@@ -81,16 +75,6 @@ function validateProductBrand(productBrand) {
     /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u,
   );
   validateStateDirectoryName(productBrand.stateDirectoryName);
-  requireText(
-    "keychainNamespace",
-    productBrand.keychainNamespace,
-    /^[a-z][a-z0-9.-]{0,79}$/u,
-  );
-  requireText(
-    "keychainAccount",
-    productBrand.keychainAccount,
-    /^[a-z][a-z0-9.-]{0,79}$/u,
-  );
   requireText(
     "monitoredAppDisplayName",
     productBrand.monitoredAppDisplayName,

@@ -1,6 +1,8 @@
 # Repository script guidance
 
 Scope: all files under `scripts/`. Apply the repository root guidance first.
+TiboTattle supports Windows x64 only ([decision](../docs/decisions/2026-10-12-windows-only.md));
+scripts must not add macOS, Linux, Sparkle, AppImage, Keychain, or Secret Service paths.
 
 ## Tooling boundary
 
@@ -18,10 +20,10 @@ Scope: all files under `scripts/`. Apply the repository root guidance first.
   fsync/atomic rename, journals, and recovery where partial execution matters.
 - Keep output bounded and content-free. Never print secret values, private paths,
   raw session data, identities, signing material, or payload rows.
-- Routine build, test, and dry-run modes must not request Keychain passwords or
-  touch real credentials. Keep signing-key provisioning an explicit owner step;
-  never automate prompt approval or broaden key access to unblock a build.
-  Apply the macOS Electron migration and credential gates in `apps/electron/AGENTS.md`.
+- Routine build, test, and dry-run modes must not request Windows credential
+  prompts or touch real credentials. Keep signing-key provisioning an explicit
+  owner step; never automate prompt approval or broaden key access to unblock a
+  build.
 
 ## Generators and builds
 
@@ -34,17 +36,15 @@ Scope: all files under `scripts/`. Apply the repository root guidance first.
 - Keep developer, test, preview, candidate, release, and publication profiles
   distinct. Build scripts must refuse incompatible runtimes, identities, channels,
   endpoints, entitlements, or output paths.
-- Public-release-site builds must explicitly exclude local dashboard/runtime
-  assets and expose only claims supported by the selected release manifest.
 - A release script should produce exact local evidence before any external
   publication and must never hide a missing signing, provenance, SBOM, previous
   version, or live verification gate.
 
 ## Protected operations
 
-- Deployment, remote migration, signing, notarization, app installation, appcast
-  or website publication, release creation, store submission, live experiments,
-  and R7 regeneration require explicit authorization and their current runbook.
+- Deployment, remote migration, signing, installation, update-feed or website
+  publication, release creation, store submission, live experiments, and R7
+  regeneration require explicit authorization and their current runbook.
 - Do not combine an authorized local build or dry run with a protected follow-on
   action. Stop at the authorized gate and report exact outputs.
 - Recovery operates only on a journal it can bind to the exact interrupted
@@ -52,17 +52,16 @@ Scope: all files under `scripts/`. Apply the repository root guidance first.
 
 ## Validation
 
-- macOS packaging and smoke commands that launch an Electron or app GUI need
-  WindowServer access from the start. Run those native checks in a permitted
-  execution context, or stop before launch and report the environment gap;
-  do not use an expected AppKit abort as a capability probe.
+- Windows packaging and smoke commands that launch an Electron or app GUI need
+  an interactive desktop from the start. Run those native checks in a permitted
+  execution context, or stop before launch and report the environment gap.
 - Add unit tests for argument parsing, refusal paths, path safety, interruption,
   recovery, deterministic output, and dry-run/mutation separation.
 - Run `node --check` and the narrow owning tests while iterating. Run
   `npm run test:preflight` for layout/docs tooling and
   `npm run architecture:check` when dependency scanning or boundaries change.
-- Use the owning surface gate for build/release tooling. Changes to macOS
-  Electron packaging or transition, Worker deployment, release trust, or the
-  public site require those exact gates; `npm test` alone is insufficient.
+- Use the owning surface gate for build/release tooling. Changes to Windows
+  Electron packaging, Worker deployment, release trust, or the public site require
+  those exact gates; `npm test` alone is insufficient.
 - Test only safe modes unless the user explicitly authorizes the exact external
   or destructive operation. State protected or unavailable validation separately.

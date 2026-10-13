@@ -76,11 +76,20 @@ export async function writeI18nBrowserMirror({
     await handle.close();
     handle = null;
     await rename(temporaryFile, outputFile);
-    const directoryHandle = await open(dirname(outputFile), "r");
-    try {
-      await directoryHandle.sync();
-    } finally {
-      await directoryHandle.close();
+    // Windows cannot open a directory for a handle sync; the rename above is
+    // already atomic there, so this durability step is best effort.
+    const directoryHandle = await open(dirname(outputFile), "r").catch(
+      (error) => {
+        if (error.code === "EPERM" || error.code === "EISDIR") return null;
+        throw error;
+      },
+    );
+    if (directoryHandle !== null) {
+      try {
+        await directoryHandle.sync();
+      } finally {
+        await directoryHandle.close();
+      }
     }
   } finally {
     if (handle !== null) await handle.close().catch(() => {});

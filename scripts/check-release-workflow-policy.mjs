@@ -27,12 +27,6 @@ const GITHUB_HOSTED_RUNNER_LABELS = new Set([
   "windows-2025-vs2026",
   "windows-11-arm",
   "windows-11-vs2026-arm",
-  "macos-latest",
-  "macos-14",
-  "macos-15",
-  "macos-26",
-  "macos-15-intel",
-  "macos-26-intel",
 ]);
 const WORKFLOW_EXTENSIONS = new Set([".yml", ".yaml"]);
 
@@ -307,7 +301,7 @@ export function inspectWorkflowSource(source, { path = "workflow.yml" } = {}) {
       } else if (value.includes("${{")) {
         failures.push(`${path}:${lineNumber}: runner selector must be a static GitHub-hosted label`);
       } else if (invalidLabel !== undefined || labels.length !== 1) {
-        failures.push(`${path}:${lineNumber}: runner selector must be one static ubuntu-/windows-/macos- GitHub-hosted label`);
+        failures.push(`${path}:${lineNumber}: runner selector must be one static ubuntu-/windows- GitHub-hosted label`);
       }
     }
   }

@@ -63,26 +63,6 @@ const SBOM_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
 // Keep this table in lockstep with the release asset names and update it only
 // from the official release page/checksum manifest.
 export const SYFT_RELEASE_ASSETS = Object.freeze({
-  darwin_arm64: Object.freeze({
-    fileName: "syft_1.51.0_darwin_arm64.tar.gz",
-    sha256: "4f37f4c7fefce0a68e4cf71ba3f5f9829a99e65d89b29f7ee41b8c2c10ea8c59",
-    archive: "tar.gz",
-  }),
-  darwin_x64: Object.freeze({
-    fileName: "syft_1.51.0_darwin_amd64.tar.gz",
-    sha256: "cddf9a044145caf0a1a3194d00d1dd51a1666f4814f2919cdb4768a0c062ad95",
-    archive: "tar.gz",
-  }),
-  linux_arm64: Object.freeze({
-    fileName: "syft_1.51.0_linux_arm64.tar.gz",
-    sha256: "6c0466811541ea03add5213a60a1562f0851e4c0b0ecfdee1a694a9455285900",
-    archive: "tar.gz",
-  }),
-  linux_x64: Object.freeze({
-    fileName: "syft_1.51.0_linux_amd64.tar.gz",
-    sha256: "2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f",
-    archive: "tar.gz",
-  }),
   win32_arm64: Object.freeze({
     fileName: "syft_1.51.0_windows_arm64.zip",
     sha256: "3fd075e644e67d1a9ae63fbc67991c510fc623030a67b93f5de9e2fd2da5d3c2",

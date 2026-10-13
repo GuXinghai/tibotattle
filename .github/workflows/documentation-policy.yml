@@ -8,7 +8,6 @@ on:
       - "apps/**"
       - "config/**"
       - "generated/**"
-      - "local-review/**"
       - "native/**"
       - "packages/**"
       - "release-notes/**"
@@ -29,7 +28,6 @@ on:
       - "apps/**"
       - "config/**"
       - "generated/**"
-      - "local-review/**"
       - "native/**"
       - "packages/**"
       - "release-notes/**"
@@ -53,8 +51,11 @@ concurrency:
 jobs:
   policy:
     name: Validate current documentation
-    runs-on: ubuntu-24.04
+    runs-on: windows-2025
     timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
     steps:
       - name: Check out the selected revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,4 +85,4 @@ jobs:
         run: node --test test/documentation-governance.test.js test/agent-guidance.test.js
 
       - name: Test source-to-documentation parity
-        run: node --test test/api-surface-reference.test.js test/cli-reference.test.js test/public-documentation-contract.test.js test/macos-localization.test.js
+        run: node --test test/api-surface-reference.test.js test/cli-reference.test.js test/public-documentation-contract.test.js

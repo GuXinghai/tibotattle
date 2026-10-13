@@ -69,26 +69,6 @@ const PINNED_GH_OIDC_ISSUER = "https://token.actions.githubusercontent.com";
 const MAX_GH_ARCHIVE_BYTES = 128 * 1024 * 1024;
 const GH_ARCHIVE_DOWNLOAD_TIMEOUT_MS = 120_000;
 const GH_RELEASE_ARCHIVES = Object.freeze({
-  "linux-x64": Object.freeze({
-    archive: "gh_2.96.0_linux_amd64.tar.gz",
-    sha256: "83d5c2ccad5498f58bf6368acb1ab32588cf43ab3a4b1c301bf36328b1c8bd60",
-    format: "tar.gz",
-  }),
-  "linux-arm64": Object.freeze({
-    archive: "gh_2.96.0_linux_arm64.tar.gz",
-    sha256: "06f86ec7103d41993b76cd78072f43595c34aaa56506d971d9860e67140bf909",
-    format: "tar.gz",
-  }),
-  "darwin-x64": Object.freeze({
-    archive: "gh_2.96.0_macOS_amd64.zip",
-    sha256: "4bd449df9ad639391bc62b8032546f0fe9edcd8526e06682a4f88abd8c5d163c",
-    format: "zip",
-  }),
-  "darwin-arm64": Object.freeze({
-    archive: "gh_2.96.0_macOS_arm64.zip",
-    sha256: "f23a0c37d963aacc3bed703ccbd59b41c5ca22101fab7f00eb2b7cad23aba463",
-    format: "zip",
-  }),
   "win32-x64": Object.freeze({
     archive: "gh_2.96.0_windows_amd64.zip",
     sha256: "c2d6acc935cd2f00e2144d7e036d5cd82e6b6bd5594e8c75aa75ef2a4ed6aac3",
@@ -170,7 +150,7 @@ function sameStagingName(left, right) {
   // GitHub's macOS and Windows runners normally use case-insensitive
   // volumes. Reject a case-only collision up front so the private staging
   // copy cannot depend on the runner's filesystem behavior.
-  if (process.platform === "darwin" || process.platform === "win32") {
+  if (process.platform === "win32") {
     return left.toLowerCase() === right.toLowerCase();
   }
   return left === right;

@@ -30,21 +30,12 @@ import {
   collectWebModuleGraph,
 } from "./lib/runtime-closure.mjs";
 import {
-  validateMacOSDMG,
-  validateMacOSSignedReleaseArtifact,
-} from "./macos-release-core.js";
-import {
-  RELEASE_EVIDENCE_PLATFORM_ASSURANCES,
   RELEASE_EVIDENCE_MAX_MANIFEST_BYTES,
-  RELEASE_EVIDENCE_SCHEMA_VERSION,
 } from "../config/release-evidence.js";
 import {
   digestRegularFile,
-  readJsonFile,
   readTextFile,
-  validateReleaseEvidenceManifest,
 } from "./release-evidence.js";
-import { PRODUCT_BRAND } from "../config/product-brand.js";
 import {
   createPublicReleaseSourceProvenance,
   PUBLIC_RELEASE_MANIFEST_SCHEMA,
@@ -60,7 +51,7 @@ const PUBLIC_FALLBACK_ROUTE_FILENAME = "404.html";
 const SITE_ENTRY_MODULE_BASENAME = "community.js";
 /**
  * The public site is built from the community entry, not from the dashboard
- * entry. The dashboard is the Mac app's own interface: every control in it
+ * entry. The dashboard is the Windows app's own interface: every control in it
  * needs the loopback companion, so publishing it puts dead controls on a page
  * that can never make them work.
  */
@@ -103,32 +94,24 @@ const APP_ONLY_SOURCE_BASENAMES = Object.freeze([
 const MAXIMUM_SOCIAL_PREVIEW_BYTES = 10 * 1024 * 1024;
 const INSTALLER_FETCH_TIMEOUT_MS = 120_000;
 const MAXIMUM_INSTALLER_REDIRECTS = 5;
-const INSTALLER_META = Object.freeze({
-  "usage-monitor-installer-url": "installerUrl",
-  "usage-monitor-installer-version": "installerVersion",
-  "usage-monitor-installer-sha256": "installerSha256",
-  "usage-monitor-installer-bytes": "installerBytes",
-  "usage-monitor-minimum-macos": "minimumMacos",
-  "usage-monitor-architectures": "architecturesText",
-});
+// Native-installer slots of the Windows web templates. Electron publication
+// carries its own verified Windows panel, so these slots are always emptied
+// and removed from the release output; the installer card then reports that
+// no native download is published.
+const UNUSED_INSTALLER_META_NAMES = Object.freeze([
+  "usage-monitor-installer-url",
+  "usage-monitor-installer-version",
+  "usage-monitor-installer-sha256",
+  "usage-monitor-installer-bytes",
+  "usage-monitor-minimum-windows",
+  "usage-monitor-architectures",
+]);
 const SITE_META = Object.freeze({
   "usage-monitor-release-notes-url": "releaseNotesUrl",
   "usage-monitor-privacy-url": "privacyUrl",
   "usage-monitor-security-url": "securityUrl",
   "usage-monitor-support-url": "supportUrl",
 });
-const INSTALLER_OPTION_KEYS = Object.freeze([
-  "installerPath",
-  "installerReleaseManifest",
-  "installerUrl",
-  "installerVersion",
-  "installerSha256",
-  "minimumMacos",
-  "architectures",
-]);
-const INTEL_INSTALLER_OPTION_KEYS = Object.freeze([
-  "intelInstallerPath", "intelInstallerUrl", "intelMinimumMacos",
-]);
 const PUBLIC_ROUTE_MARKERS = Object.freeze([
   "./app.js",
   "/app.js",
@@ -205,12 +188,6 @@ const REQUIRED_STATIC_SOCIAL_TAGS = Object.freeze([
   '<meta property="og:image:height" content="630">',
   '<meta name="twitter:card" content="summary_large_image">',
 ]);
-const RELEASE_ARCHITECTURE = "arm64";
-const RELEASE_PRODUCT_NAME = PRODUCT_BRAND.displayName;
-const RELEASE_SOURCE_REPOSITORY =
-  "https://github.com/adamallcock/tibotattle";
-const RELEASE_EVIDENCE_MACOS_NATIVE_ASSURANCES =
-  RELEASE_EVIDENCE_PLATFORM_ASSURANCES.macos.direct;
 
 function releaseEvidenceErrorMessage(error) {
   return error instanceof Error ? error.message : String(error);
@@ -227,16 +204,6 @@ function usage() {
     "    --security-url https://approved.example/security \\",
     "    --support-url https://approved.example/support \\",
     "    --social-image /absolute/path/to/1200x630.png \\",
-    "    [--installer-release-manifest /absolute/path/to/UsageMonitor.dmg.release.json \\",
-    "     --installer-path /absolute/path/to/UsageMonitor.dmg \\",
-    "     --installer-url https://downloads.approved.example/UsageMonitor.dmg \\",
-    "     --installer-version 1.2.3 \\",
-    "     --installer-sha256 <64 lowercase hex> \\",
-    "     --minimum-macos 14.0 --architectures arm64]",
-    "    [--intel-installer-path /absolute/path/to/TiboTattle-1.2.3-macOS-x64.dmg \\",
-    "     --intel-installer-url https://downloads.approved.example/TiboTattle-1.2.3-macOS-x64.dmg \\",
-    "     --intel-minimum-macos 14.0]",
-    "    Intel requires the same canonical cross-platform release manifest as Apple silicon.",
     "    [--electron-publication-plan /absolute/plan.json --electron-publication-root /absolute/artifacts",
     "     --electron-approved-plan-sha256 <reviewed identityDigest(plan)>]",
     "    [--electron-published-manifest /absolute/release-manifest.json",
@@ -245,7 +212,7 @@ function usage() {
     "    --social-image is the og:image/twitter:image. Use a rendered 1200x630 homepage",
     "    card from `npm run product:social-preview`; Electron mode also accepts an exact",
     "    copy of the 1024x1024 public brand icon, which downgrades to a summary card.",
-    "    Electron mode excludes native installer arguments; final trust is separately reviewed.",
+    "    Electron publication is the only release-artifact path; final trust is separately reviewed.",
     "    [--replace]",
   ].join("\n");
 }
@@ -262,16 +229,6 @@ export function parseArgs(argv) {
     "--electron-published-build-number": "electronPublishedBuildNumber",
     "--source": "source",
     "--site-url": "siteUrl",
-    "--installer-path": "installerPath",
-    "--installer-release-manifest": "installerReleaseManifest",
-    "--installer-url": "installerUrl",
-    "--installer-version": "installerVersion",
-    "--installer-sha256": "installerSha256",
-    "--minimum-macos": "minimumMacos",
-    "--architectures": "architectures",
-    "--intel-installer-path": "intelInstallerPath",
-    "--intel-installer-url": "intelInstallerUrl",
-    "--intel-minimum-macos": "intelMinimumMacos",
     "--release-notes-url": "releaseNotesUrl",
     "--privacy-url": "privacyUrl",
     "--security-url": "securityUrl",
@@ -382,10 +339,10 @@ function validatedPublishedInstallerUrl(raw, base = undefined) {
 }
 
 /**
- * A local DMG and its signed release manifest are necessary but insufficient:
- * the public URL must serve those exact bytes before the landing page may call
- * it a signed installer. Stream and hash the remote artifact rather than
- * trusting a content-length, a filename, or a caller-provided URL.
+ * A local installer and its signed release evidence are necessary but
+ * insufficient: the public URL must serve those exact bytes before the landing
+ * page may call it a signed installer. Stream and hash the remote artifact
+ * rather than trusting a content-length, a filename, or a caller-provided URL.
  */
 export async function verifyPublishedInstallerRemote({
   installerUrl,
@@ -475,18 +432,6 @@ export async function verifyPublishedInstallerRemote({
   }
 }
 
-function normalizedArchitectures(raw) {
-  if (typeof raw !== "string" || raw.length === 0) {
-    throw new TypeError("Architectures are required");
-  }
-  if (raw !== RELEASE_ARCHITECTURE) {
-    throw new TypeError(
-      "Architectures must be exactly arm64; Intel and universal releases are not supported",
-    );
-  }
-  return [RELEASE_ARCHITECTURE];
-}
-
 function validateInputs(args) {
   if (args === null || typeof args !== "object" || Array.isArray(args)) {
     throw new TypeError(`Release-site build options are required\n${usage()}`);
@@ -503,50 +448,20 @@ function validateInputs(args) {
   if (required.some((key) => !args[key])) {
     throw new TypeError(`Site metadata and artifact paths are incomplete\n${usage()}`);
   }
-  const installerConfigured = INSTALLER_OPTION_KEYS.some((key) => {
-    const value = args[key];
-    return value !== undefined && value !== null && value !== "";
-  });
   const electronKeys = ['electronPublicationPlan', 'electronPublicationRoot', 'electronApprovedPlanSha256'];
   const electronConfigured = electronKeys.some(key => args[key] !== undefined);
   const publishedKeys = ['electronPublishedManifest', 'electronPublishedManifestSha256', 'electronPublishedBuildNumber'];
   const publishedConfigured = publishedKeys.some(key => args[key] !== undefined);
-  if (electronConfigured && (electronKeys.some(key => !args[key]) || installerConfigured
-      || publishedConfigured
-      || INTEL_INSTALLER_OPTION_KEYS.some(key => args[key])
+  if (electronConfigured && (electronKeys.some(key => !args[key]) || publishedConfigured
       || !isAbsolute(args.electronPublicationPlan) || !isAbsolute(args.electronPublicationRoot)
       || !/^[a-f0-9]{64}$/u.test(args.electronApprovedPlanSha256))) {
-    throw new TypeError('Electron publication requires all three explicit inputs and excludes native installer inputs');
+    throw new TypeError('Electron publication requires all three explicit inputs');
   }
-  if (publishedConfigured && (publishedKeys.some(key => !args[key]) || installerConfigured
-      || INTEL_INSTALLER_OPTION_KEYS.some(key => args[key])
+  if (publishedConfigured && (publishedKeys.some(key => !args[key])
       || !isAbsolute(args.electronPublishedManifest)
       || !/^[a-f0-9]{64}$/u.test(args.electronPublishedManifestSha256)
       || !/^\d{10}$/u.test(args.electronPublishedBuildNumber))) {
-    throw new TypeError('Published Electron release requires all three explicit inputs and excludes native installer inputs');
-  }
-  const intelInstallerConfigured = INTEL_INSTALLER_OPTION_KEYS.some((key) =>
-    args[key] !== undefined && args[key] !== null && args[key] !== "");
-  if (intelInstallerConfigured && (!installerConfigured
-      || INTEL_INSTALLER_OPTION_KEYS.some((key) => !args[key]))) {
-    throw new TypeError("Intel installer metadata requires the Apple silicon release and complete Intel artifact metadata");
-  }
-  if (intelInstallerConfigured && (!isAbsolute(args.intelInstallerPath)
-      || !/^(?:1[0-9]|[2-9][0-9])\.(?:0|[1-9][0-9]?)(?:\.(?:0|[1-9][0-9]?))?$/u.test(args.intelMinimumMacos))) {
-    throw new TypeError("Intel installer path must be absolute and minimum macOS must be canonical");
-  }
-  const requiredInstallerMetadata = [
-    "installerReleaseManifest",
-    "installerUrl",
-    "installerVersion",
-    "minimumMacos",
-    "architectures",
-  ];
-  if (installerConfigured
-      && requiredInstallerMetadata.some((key) => !args[key])) {
-    throw new TypeError(
-      `Installer metadata requires an exact signed macOS release manifest and complete metadata\n${usage()}`,
-    );
+    throw new TypeError('Published Electron release requires all three explicit inputs');
   }
   if (!isAbsolute(args.output) || !isAbsolute(args.socialImage)) {
     throw new TypeError(
@@ -555,22 +470,11 @@ function validateInputs(args) {
   }
   const source = resolve(args.source ?? DEFAULT_SOURCE);
   const output = resolve(args.output);
-  const installerPath = args.installerPath ? resolve(args.installerPath) : null;
-  const installerReleaseManifest = args.installerReleaseManifest
-    ? resolve(args.installerReleaseManifest)
-    : null;
   const socialImage = resolve(args.socialImage);
-  const intelInstaller = intelInstallerConfigured ? {
-    installerPath: resolve(args.intelInstallerPath),
-    installerUrl: validatedPublicHttpsUrl(args.intelInstallerUrl, "Intel installer URL", { requiredSuffix: ".dmg" }),
-    installerVersion: args.installerVersion,
-    minimumMacos: args.intelMinimumMacos,
-    architectures: ["x64"],
-    architecturesText: "x64",
-  } : null;
-  const releaseInputs = [installerPath, installerReleaseManifest, intelInstaller?.installerPath,
+  const releaseInputs = [
     ...(electronConfigured ? [args.electronPublicationPlan, args.electronPublicationRoot] : []),
-    ...(publishedConfigured ? [args.electronPublishedManifest] : [])].filter(Boolean);
+    ...(publishedConfigured ? [args.electronPublishedManifest] : []),
+  ].filter(Boolean);
   if (output === source
       || output === REPOSITORY_ROOT
       || output === homedir()
@@ -595,11 +499,9 @@ function validateInputs(args) {
   const siteUrl = validatedPublicHttpsUrl(args.siteUrl, "Site URL", {
     requireTrailingSlash: true,
   });
-  const options = {
+  return {
     source,
     output,
-    installerPath,
-    installerReleaseManifest,
     socialImage,
     siteUrl,
     socialImageUrl: new URL(SOCIAL_PREVIEW_FILENAME, siteUrl).href,
@@ -611,46 +513,11 @@ function validateInputs(args) {
     securityUrl: validatedPublicHttpsUrl(args.securityUrl, "Security URL"),
     supportUrl: validatedPublicHttpsUrl(args.supportUrl, "Support URL"),
     replace: args.replace,
-    installerConfigured,
     electronPublication: electronConfigured ? { planPath: args.electronPublicationPlan,
       artifactRoot: args.electronPublicationRoot, approvedPlanSha256: args.electronApprovedPlanSha256 } : null,
     electronPublishedRelease: publishedConfigured ? { manifestPath: args.electronPublishedManifest,
       approvedManifestSha256: args.electronPublishedManifestSha256,
       buildNumber: args.electronPublishedBuildNumber } : null,
-    intelInstaller,
-  };
-  if (!installerConfigured) return options;
-
-  if (args.installerPath && !isAbsolute(args.installerPath)) {
-    throw new TypeError("--installer-path must be an absolute path when supplied");
-  }
-  if (!isAbsolute(args.installerReleaseManifest)) {
-    throw new TypeError("--installer-release-manifest must be an absolute path");
-  }
-  if (!/^[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$/u.test(args.installerVersion)) {
-    throw new TypeError("Installer version must be a numeric three- or four-part version");
-  }
-  if (args.installerSha256 !== undefined
-      && !/^[a-f0-9]{64}$/u.test(args.installerSha256)) {
-    throw new TypeError("Installer SHA-256 must be exactly 64 lowercase hexadecimal characters");
-  }
-  if (!/^(?:1[0-9]|[2-9][0-9])\.(?:0|[1-9][0-9]?)(?:\.(?:0|[1-9][0-9]?))?$/u
-    .test(args.minimumMacos)) {
-    throw new TypeError("Minimum macOS must be a canonical version such as 14.0");
-  }
-  const architectures = normalizedArchitectures(args.architectures);
-  return {
-    ...options,
-    installerUrl: validatedPublicHttpsUrl(
-      args.installerUrl,
-      "Installer URL",
-      { requiredSuffix: ".dmg" },
-    ),
-    installerVersion: args.installerVersion,
-    installerSha256: args.installerSha256 ?? null,
-    minimumMacos: args.minimumMacos,
-    architectures,
-    architecturesText: architectures.join(","),
   };
 }
 
@@ -666,11 +533,9 @@ async function pathExists(path) {
 
 /**
  * Resolve the path boundaries used by a site build before any source copy or
- * replacement. macOS exposes /var as a compatibility symlink to /private/var;
- * that one system alias is permitted, while an operator-supplied symlinked
- * root or ancestor is rejected. The returned canonical path is used only for
- * containment checks; the original path remains the I/O spelling so /var
- * callers continue to work.
+ * replacement. A symlinked root or ancestor is rejected. The returned canonical
+ * path is used only for containment checks; the original path remains the I/O
+ * spelling.
  */
 async function canonicalReleasePath(path, label, {
   directory = false,
@@ -709,9 +574,8 @@ async function canonicalReleasePath(path, label, {
         }
       }
     }
-    // /var is the only expected system alias on macOS. All other symlinked
-    // components make lexical containment checks unreliable.
-    if (metadata.isSymbolicLink() && current !== "/var") {
+    // Any symlinked component makes lexical containment checks unreliable.
+    if (metadata.isSymbolicLink()) {
       throw new TypeError(`${label} must not traverse a symbolic link`);
     }
     if (index === components.length - 1
@@ -755,24 +619,13 @@ async function assertReleaseSitePathBoundaries(options) {
     options.socialImage,
     "Social preview",
   );
-  const installerPath = options.installerPath === null
-    ? null
-    : await canonicalReleasePath(options.installerPath, "Installer artifact");
-  const installerManifest = options.installerReleaseManifest === null
-    ? null
-    : await canonicalReleasePath(
-      options.installerReleaseManifest,
-      "Installer release manifest",
-    );
-  const intelInstallerPath = options.intelInstaller === null ? null
-    : await canonicalReleasePath(options.intelInstaller.installerPath, "Intel installer artifact");
   const electronInputs = options.electronPublication ? [
     await canonicalReleasePath(options.electronPublication.planPath, 'Electron publication plan'),
     await canonicalReleasePath(options.electronPublication.artifactRoot, 'Electron artifact root', { directory: true }),
   ] : options.electronPublishedRelease ? [
     await canonicalReleasePath(options.electronPublishedRelease.manifestPath, 'Published Electron release manifest'),
   ] : [];
-  const releaseInputs = [installerPath, installerManifest, intelInstallerPath, ...electronInputs].filter(Boolean);
+  const releaseInputs = [...electronInputs].filter(Boolean);
   if (output === source
       || isWithin(output, source)
       || isWithin(source, output)
@@ -985,26 +838,12 @@ function injectReleaseMetadata(html, values, canonicalUrl) {
       `empty ${name} meta tag`,
     );
   }
-  for (const [name, valueKey] of Object.entries(INSTALLER_META)) {
-    const token = `<meta name="${name}" content="">`;
+  for (const name of UNUSED_INSTALLER_META_NAMES) {
     output = replaceExactlyOnce(
       output,
-      token,
-      values.installerConfigured
-        ? `<meta name="${name}" content="${htmlAttribute(values[valueKey])}">`
-        : "",
-      values.installerConfigured
-        ? `empty ${name} meta tag`
-        : `empty ${name} no-installer metadata slot`,
-    );
-    const intelName = name.replace("usage-monitor-", "usage-monitor-intel-");
-    output = replaceExactlyOnce(
-      output,
-      `<meta name="${intelName}" content="">`,
-      values.intelInstaller
-        ? `<meta name="${intelName}" content="${htmlAttribute(values.intelInstaller[valueKey])}">`
-        : "",
-      `empty ${intelName} meta tag`,
+      `<meta name="${name}" content="">`,
+      "",
+      `empty ${name} no-installer metadata slot`,
     );
   }
   for (const token of REQUIRED_STATIC_SOCIAL_TAGS) {
@@ -1179,7 +1018,7 @@ function assertNoForbiddenPublicReferences(contents, label, errorType = Error) {
  * Select the exact public closure, rather than copying the mixed web source
  * directory. HTML and CSS references are constrained locally; JavaScript is
  * resolved through the same static module-graph checker used by the sealed
- * macOS client. This makes both accidental app-client imports and symlink
+ * desktop client. This makes both accidental app-client imports and symlink
  * escapes release-time failures.
  */
 function renderAuxiliaryPublicHtml(sourceHtml, electronRelease = null) {
@@ -1238,21 +1077,6 @@ async function collectPublicSourceFiles({ source, sourceHtml }) {
   }
   return [...files].sort((left, right) =>
     relative(source, left).localeCompare(relative(source, right)));
-}
-
-async function digestInstallerFile(path) {
-  try {
-    const digest = await digestRegularFile(path, "Installer artifact");
-    return {
-      path: digest.path,
-      bytes: digest.bytes,
-      sha256: digest.sha256,
-    };
-  } catch (error) {
-    throw new TypeError(
-      `Installer artifact could not be read: ${releaseEvidenceErrorMessage(error)}`,
-    );
-  }
 }
 
 async function verifyPublishedSourceClosure({
@@ -1338,193 +1162,9 @@ async function verifyPublishedSourceClosure({
   }
 }
 
-async function readReleaseManifestJson(path) {
-  let value;
-  try {
-    value = (await readJsonFile(
-      path,
-      "release-manifest.json",
-      RELEASE_EVIDENCE_MAX_MANIFEST_BYTES,
-    )).value;
-  } catch (error) {
-    // Preserve the legacy validator's established diagnostics for old
-    // receipts and malformed inputs. New evidence manifests are selected by
-    // schemaVersion below and validated by their canonical validator.
-    if (error?.code === "RELEASE_EVIDENCE_JSON_INVALID") return null;
-    throw new TypeError(
-      `Installer release manifest could not be read: ${releaseEvidenceErrorMessage(error)}`,
-    );
-  }
-  if (value?.schemaVersion !== RELEASE_EVIDENCE_SCHEMA_VERSION) return null;
-  await validateReleaseEvidenceManifest(value, {
-    artifactRoot: dirname(path),
-    manifestPath: path,
-  });
-  return value;
-}
-
-function assertMacOSReleaseEvidenceTrust(artifact) {
-  for (const assurance of RELEASE_EVIDENCE_MACOS_NATIVE_ASSURANCES) {
-    if (artifact.assurances?.[assurance] !== true) {
-      throw new TypeError(
-        `Cross-platform release manifest is missing required macOS assurance: ${assurance}`,
-      );
-    }
-  }
-  const signerIdentity = artifact.nativeTrust?.signerIdentity;
-  const teamId = artifact.nativeTrust?.teamId;
-  if (typeof signerIdentity !== "string"
-      || !/^Developer ID Application:\s*\S/u.test(signerIdentity)
-      || typeof teamId !== "string"
-      || !/^[A-Z0-9]{10}$/u.test(teamId)) {
-    throw new TypeError(
-      "Cross-platform release manifest does not identify a valid macOS Developer ID signer",
-    );
-  }
-}
-
-function assertMacOSNativeValidationMatches(artifact, validation) {
-  const authority = validation?.developerIdAuthority;
-  const teamIdentifier = validation?.teamIdentifier;
-  if (typeof authority !== "string"
-      || typeof teamIdentifier !== "string"
-      || artifact.nativeTrust?.signerIdentity !== authority
-      || artifact.nativeTrust?.teamId !== teamIdentifier) {
-    throw new TypeError(
-      "macOS native validation does not match the cross-platform release signer",
-    );
-  }
-}
-
-function installerUrlFileName(installerUrl) {
-  let pathname;
-  try {
-    pathname = new URL(installerUrl).pathname;
-    return decodeURIComponent(pathname.split("/").at(-1) ?? "");
-  } catch {
-    throw new TypeError("Installer URL contains an invalid encoded artifact name");
-  }
-}
-
-async function validateCrossPlatformReleaseArtifact({
-  releaseManifestPath,
-  releaseManifest: suppliedReleaseManifest = null,
-  artifactPath,
-  installerUrl,
-  installerVersion,
-  installerSha256,
-  validateArtifact,
-  architecture = "arm64",
-  minimumMacos = null,
-  requireSourceMatch = false,
-}) {
-  if (artifactPath === null) {
-    throw new TypeError(
-      "Cross-platform release manifests require an explicit local installer artifact",
-    );
-  }
-  const releaseManifest = suppliedReleaseManifest
-    ?? await readReleaseManifestJson(releaseManifestPath);
-  if (releaseManifest === null) {
-    throw new TypeError("Expected a cross-platform release evidence manifest");
-  }
-  if (releaseManifest.product?.name !== RELEASE_PRODUCT_NAME
-      || releaseManifest.repository !== RELEASE_SOURCE_REPOSITORY
-      || releaseManifest.tag !== `v${installerVersion}`) {
-    throw new TypeError(
-      "Cross-platform release manifest is not the exact TiboTattle tagged release",
-    );
-  }
-  const candidates = releaseManifest.artifacts.filter((artifact) =>
-    artifact.platform === "macos"
-      && artifact.channel === "direct"
-      && artifact.architecture === architecture
-      && artifact.format === "dmg");
-  if (candidates.length !== 1) {
-    throw new TypeError(
-      `Cross-platform release manifest must contain exactly one macOS direct ${architecture} DMG (found ${candidates.length})`,
-    );
-  }
-  const selected = candidates[0];
-  if (architecture === "x64" && selected.fileName !== `TiboTattle-${installerVersion}-macOS-x64.dmg`) {
-    throw new TypeError("Intel release artifact must use the canonical macOS-x64 DMG filename");
-  }
-  if (releaseManifest.version !== installerVersion
-      || selected.version !== installerVersion) {
-    throw new TypeError(
-      "Installer version does not match the cross-platform release manifest",
-    );
-  }
-  if (selected.fileName !== installerUrlFileName(installerUrl)
-      || selected.downloadUrl !== installerUrl) {
-    throw new TypeError(
-      "Installer URL does not match the canonical cross-platform release artifact",
-    );
-  }
-  const localArtifact = await digestInstallerFile(artifactPath);
-  if (localArtifact.bytes !== selected.bytes
-      || localArtifact.sha256 !== selected.sha256) {
-    throw new TypeError(
-      "Installer artifact does not match the cross-platform release manifest",
-    );
-  }
-  if (installerSha256 !== null && installerSha256 !== localArtifact.sha256) {
-    throw new TypeError(
-      "Installer SHA-256 does not match the cross-platform release manifest",
-    );
-  }
-  assertMacOSReleaseEvidenceTrust(selected);
-  const nativeValidation = await validateArtifact(localArtifact.path, {
-    architecture,
-    expectedShortVersion: installerVersion,
-    production: true,
-  });
-  assertMacOSNativeValidationMatches(selected, nativeValidation);
-  if (architecture === "x64" || requireSourceMatch) {
-    if (nativeValidation.architecture !== architecture
-        || nativeValidation.minimumMacos !== minimumMacos
-        || nativeValidation.source?.commit !== releaseManifest.commit
-        || nativeValidation.source?.tag !== releaseManifest.tag) {
-      throw new TypeError("macOS native architecture, minimum OS, or source does not match the release metadata");
-    }
-  }
-  const finalArtifact = await digestInstallerFile(localArtifact.path);
-  if (finalArtifact.bytes !== selected.bytes
-      || finalArtifact.sha256 !== selected.sha256) {
-    throw new TypeError(
-      "Installer artifact changed after native validation",
-    );
-  }
-  return Object.freeze({
-    artifact: Object.freeze(finalArtifact),
-    manifest: Object.freeze({
-      schemaVersion: releaseManifest.schemaVersion,
-      version: releaseManifest.version,
-      tag: releaseManifest.tag,
-      commit: releaseManifest.commit,
-      repository: releaseManifest.repository,
-      application: Object.freeze({ shortVersion: releaseManifest.version }),
-      artifact: Object.freeze({
-        fileName: selected.fileName,
-        bytes: selected.bytes,
-        sha256: selected.sha256,
-      }),
-      evidencePresence: Object.freeze({
-        sbom: selected.sbom !== null,
-        provenance: selected.provenance !== null,
-        sbomAttestation: selected.sbom?.attestation != null,
-      }),
-    }),
-  });
-}
-
 export async function buildPublicReleaseSite(rawArgs, {
-  validateInstallerArtifact = validateMacOSDMG,
   verifyPublishedInstaller = verifyPublishedInstallerRemote,
 } = {}) {
-  if (typeof validateInstallerArtifact !== "function") {
-    throw new TypeError("validateInstallerArtifact must be a function");
-  }
   if (typeof verifyPublishedInstaller !== "function") {
     throw new TypeError("verifyPublishedInstaller must be a function");
   }
@@ -1585,93 +1225,6 @@ export async function buildPublicReleaseSite(rawArgs, {
     : options.electronPublishedRelease
       ? await readPublishedElectronSiteRelease({ ...options.electronPublishedRelease, verifyPublishedInstaller })
       : null;
-  let installerEvidence = null;
-  let intelInstallerEvidence = null;
-  if (options.installerConfigured) {
-    // The platform-neutral v1 manifest is the forward path.  A receipt that
-    // does not carry that exact schema is deliberately handed to the legacy
-    // macOS validator so existing v0.1.12 web-only rebuilds keep working.
-    const releaseManifest = await readReleaseManifestJson(
-      options.installerReleaseManifest,
-    );
-    if (options.intelInstaller !== null && releaseManifest === null) {
-      throw new TypeError("Intel requires one canonical cross-platform release manifest for both architectures");
-    }
-    installerEvidence = releaseManifest === null
-      ? await validateMacOSSignedReleaseArtifact({
-        releaseManifestPath: options.installerReleaseManifest,
-        artifactPath: options.installerPath,
-        validateArtifact: validateInstallerArtifact,
-      })
-      : await validateCrossPlatformReleaseArtifact({
-        releaseManifestPath: options.installerReleaseManifest,
-        releaseManifest,
-        artifactPath: options.installerPath,
-        installerUrl: options.installerUrl,
-        installerVersion: options.installerVersion,
-        installerSha256: options.installerSha256,
-        validateArtifact: validateInstallerArtifact,
-        minimumMacos: options.minimumMacos,
-        requireSourceMatch: options.intelInstaller !== null,
-      });
-    const releaseVersion = installerEvidence.manifest.application.shortVersion;
-    if (releaseVersion !== options.installerVersion) {
-      throw new TypeError(
-        "Installer version does not match the signed macOS release manifest",
-      );
-    }
-    if (!/(?:^|[-_.])arm64(?:[-_.]|$)/u.test(
-      installerEvidence.manifest.artifact.fileName,
-    )) {
-      throw new TypeError(
-        "Signed macOS release artifact must be the supported arm64 DMG",
-      );
-    }
-    const installerURL = new URL(options.installerUrl);
-    let installerURLFileName;
-    try {
-      installerURLFileName = decodeURIComponent(
-        installerURL.pathname.split("/").at(-1) ?? "",
-      );
-    } catch {
-      throw new TypeError("Installer URL contains an invalid encoded artifact name");
-    }
-    if (installerURLFileName !== installerEvidence.manifest.artifact.fileName) {
-      throw new TypeError(
-        "Installer URL artifact name does not match the signed macOS release manifest",
-      );
-    }
-    if (options.installerSha256 !== null
-        && options.installerSha256 !== installerEvidence.artifact.sha256) {
-      throw new TypeError(
-        "Installer SHA-256 does not match the signed macOS release manifest",
-      );
-    }
-    await verifyPublishedInstaller({
-      expectedBytes: installerEvidence.artifact.bytes,
-      expectedSha256: installerEvidence.artifact.sha256,
-      installerUrl: options.installerUrl,
-    });
-    if (options.intelInstaller !== null) {
-      const intel = options.intelInstaller;
-      intelInstallerEvidence = await validateCrossPlatformReleaseArtifact({
-        releaseManifestPath: options.installerReleaseManifest,
-        releaseManifest,
-        artifactPath: intel.installerPath,
-        installerUrl: intel.installerUrl,
-        installerVersion: intel.installerVersion,
-        installerSha256: null,
-        architecture: "x64",
-        minimumMacos: intel.minimumMacos,
-        validateArtifact: validateInstallerArtifact,
-      });
-      await verifyPublishedInstaller({
-        expectedBytes: intelInstallerEvidence.artifact.bytes,
-        expectedSha256: intelInstallerEvidence.artifact.sha256,
-        installerUrl: intel.installerUrl,
-      });
-    }
-  }
   const socialStats = await regularFile(
     options.socialImage,
     "Social preview",
@@ -1688,13 +1241,6 @@ export async function buildPublicReleaseSite(rawArgs, {
     ...options,
     electronRelease,
     socialBrandIconCard: socialDimensions.brandIcon,
-    installerBytes: installerEvidence?.artifact.bytes ?? null,
-    installerSha256: installerEvidence?.artifact.sha256 ?? null,
-    intelInstaller: intelInstallerEvidence ? {
-      ...options.intelInstaller,
-      installerBytes: intelInstallerEvidence.artifact.bytes,
-      installerSha256: intelInstallerEvidence.artifact.sha256,
-    } : null,
   };
   let releaseHtml = injectReleaseMetadata(
     sourceHtml,
@@ -1855,50 +1401,6 @@ export async function buildPublicReleaseSite(rawArgs, {
         canonicalUrls: canonicalPageUrls,
       },
     },
-    ...(installerEvidence
-      ? {
-        installer: {
-          url: options.installerUrl,
-          version: options.installerVersion,
-          sha256: installerEvidence.artifact.sha256,
-          bytes: installerEvidence.artifact.bytes,
-          minimumMacos: options.minimumMacos,
-          architectures: options.architectures,
-          ...(installerEvidence.manifest.schemaVersion === RELEASE_EVIDENCE_SCHEMA_VERSION
-            ? { artifactAndNativeTrustVerified: true }
-            : { verifiedSignedReleaseEvidence: true }),
-          releaseEvidence: {
-            schemaVersion: installerEvidence.manifest.schemaVersion,
-            verificationScope: installerEvidence.manifest.schemaVersion === RELEASE_EVIDENCE_SCHEMA_VERSION
-              ? ["artifact-bytes", "native-platform-trust"]
-              : ["signed-release-manifest", "native-platform-trust"],
-            ...(installerEvidence.manifest.schemaVersion === RELEASE_EVIDENCE_SCHEMA_VERSION
-              ? {
-                evidenceDeclared: installerEvidence.manifest.evidencePresence,
-                attestationVerificationPerformedBySiteBuild: false,
-              }
-              : {}),
-          },
-        },
-      }
-      : {}),
-    ...(intelInstallerEvidence ? {
-      intelInstaller: {
-        url: options.intelInstaller.installerUrl,
-        version: options.intelInstaller.installerVersion,
-        sha256: intelInstallerEvidence.artifact.sha256,
-        bytes: intelInstallerEvidence.artifact.bytes,
-        minimumMacos: options.intelInstaller.minimumMacos,
-        architectures: ["x64"],
-        artifactAndNativeTrustVerified: true,
-        releaseEvidence: {
-          schemaVersion: intelInstallerEvidence.manifest.schemaVersion,
-          verificationScope: ["artifact-bytes", "native-platform-trust", "architecture", "minimum-macos", "tagged-source"],
-          evidenceDeclared: intelInstallerEvidence.manifest.evidencePresence,
-          attestationVerificationPerformedBySiteBuild: false,
-        },
-      },
-    } : {}),
     files,
   };
   await writeFile(
@@ -1937,21 +1439,9 @@ export async function buildPublicReleaseSite(rawArgs, {
       throw new Error(`Release output retained empty ${name} metadata`);
     }
   }
-  if (installerEvidence) {
-    for (const name of Object.keys(INSTALLER_META)) {
-      if (verifiedHtml.includes(`<meta name="${name}" content="">`)) {
-        throw new Error(`Release output retained empty ${name} metadata`);
-      }
-    }
-  } else if (Object.keys(INSTALLER_META).some((name) =>
-    verifiedHtml.includes(`<meta name="${name}"`))) {
-    throw new Error("No-installer release output retained installer metadata");
-  }
-  for (const name of Object.keys(INSTALLER_META)) {
-    const intelName = name.replace("usage-monitor-", "usage-monitor-intel-");
-    if (verifiedHtml.includes(`<meta name="${intelName}" content="">`)
-        || (!intelInstallerEvidence && verifiedHtml.includes(`<meta name="${intelName}"`))) {
-      throw new Error("Release output retained unverified Intel installer metadata");
+  for (const name of UNUSED_INSTALLER_META_NAMES) {
+    if (verifiedHtml.includes(`<meta name="${name}"`)) {
+      throw new Error("Release output retained unused installer metadata");
     }
   }
   for (const token of [
@@ -1973,8 +1463,6 @@ export async function buildPublicReleaseSite(rawArgs, {
   return {
     output: options.output,
     site: manifest.site,
-    installer: manifest.installer ?? null,
-    intelInstaller: manifest.intelInstaller ?? null,
     source: manifest.source,
     fileCount: manifest.files.length + 1,
   };

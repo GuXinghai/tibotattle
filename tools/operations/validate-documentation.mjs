@@ -66,7 +66,6 @@ const SOURCE_REFERENCE_ROOTS = Object.freeze([
   "apps/",
   "config/",
   "generated/",
-  "local-review/",
   "native/",
   "packages/",
   "schemas/",
@@ -510,8 +509,7 @@ function isSourceReferencePath(path) {
   }
   const extension = posix.extname(path).toLowerCase();
   return SOURCE_REFERENCE_EXTENSIONS.has(extension)
-    || basename(path) === "CODEOWNERS"
-    || basename(path) === "Dockerfile";
+    || basename(path) === "CODEOWNERS";
 }
 
 async function trackedSourceReferenceFiles(root) {

@@ -24,11 +24,7 @@ import {
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
-const DEFAULT_TARGET = "darwin-arm64";
-export const DEFAULT_ELECTRON_APP_OUTPUT = resolve(
-  REPOSITORY_ROOT,
-  ".release-build/electron-dev/darwin-arm64/app",
-);
+const DEFAULT_TARGET = "win32-x64";
 export const DEFAULT_WINDOWS_ELECTRON_APP_OUTPUT = resolve(
   REPOSITORY_ROOT,
   ".release-build/electron-dev/win32-x64/app",
@@ -98,8 +94,6 @@ export async function buildElectronApp({
   replace = false,
   windowsBindingPath,
   windowsManifestPath,
-  linuxBindingPath,
-  linuxManifestPath,
   packagingProfile,
   packageVersion,
   distributionMetadata,
@@ -117,7 +111,7 @@ export async function buildElectronApp({
   return buildElectronRuntime({
     output: output ?? (selectedTarget === WINDOWS_TARGET
       ? DEFAULT_WINDOWS_ELECTRON_APP_OUTPUT
-      : ELECTRON_APP_OUTPUTS[selectedTarget] ?? DEFAULT_ELECTRON_APP_OUTPUT),
+      : ELECTRON_APP_OUTPUTS[selectedTarget]),
     target: selectedTarget,
     replace,
     includeElectronShell: true,
@@ -126,8 +120,6 @@ export async function buildElectronApp({
     distributionMetadata,
     hostedRehearsalMetadata,
     signedStagingRehearsalMetadata,
-    linuxBindingPath,
-    linuxManifestPath,
     ...(windowsInputs ?? {}),
   });
 }
@@ -176,7 +168,7 @@ export function parseElectronAppArguments(argv) {
     ...parsed,
     output: parsed.output ?? (parsed.target === WINDOWS_TARGET
       ? DEFAULT_WINDOWS_ELECTRON_APP_OUTPUT
-      : ELECTRON_APP_OUTPUTS[parsed.target] ?? DEFAULT_ELECTRON_APP_OUTPUT),
+      : ELECTRON_APP_OUTPUTS[parsed.target]),
   });
 }
 

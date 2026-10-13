@@ -307,7 +307,6 @@ export function assertAllowedFirstPartyPath(path, {
     ".usage-monitor/",
     "docs/",
     "exports/",
-    "local-review/",
     "test/",
   ];
   if (forbiddenPrefixes.some((prefix) => selected.startsWith(prefix))) {

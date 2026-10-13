@@ -9,11 +9,6 @@ const APPLICATION_DEFINITIONS = [
     ],
   },
   {
-    name: "local-review",
-    root: "local-review",
-    allowedPackages: [],
-  },
-  {
     name: "web",
     root: "apps/web",
     allowedPackages: [],
@@ -31,7 +26,6 @@ const APPLICATION_DEFINITIONS = [
 const NON_APPLICATION_CONTAINERS = new Set([
   "assets",
   "benchmark",
-  "containers",
   "docs",
   "native",
   "packages",

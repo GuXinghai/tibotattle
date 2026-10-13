@@ -19,8 +19,8 @@ const SMALL = 128 * 1024;
 const fail = (code) => { throw Object.assign(new Error(`ELECTRON_STABLE_PUBLICATION_${code}`), { code: `ELECTRON_STABLE_PUBLICATION_${code}` }); };
 const exact = (v, keys) => v && Object.getPrototypeOf(v) === Object.prototype && Reflect.ownKeys(v).length === keys.length && keys.every(k => Object.hasOwn(v, k));
 const leaf = v => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,180}$/u.test(v);
-const feedName = target => target.startsWith('darwin-') ? 'latest-mac.yml' : target === 'linux-x64' ? 'latest-linux.yml' : 'latest.yml';
-const mime = name => name.endsWith('.yml') ? 'application/yaml' : name.endsWith('.zip') ? 'application/zip' : name.endsWith('.dmg') ? 'application/x-apple-diskimage' : 'application/octet-stream';
+const feedName = () => 'latest.yml';
+const mime = name => name.endsWith('.yml') ? 'application/yaml' : name.endsWith('.zip') ? 'application/zip' : 'application/octet-stream';
 const older = (left, right) => {
   const a = left.split('.').map(BigInt), b = right.split('.').map(BigInt);
   for (let i = 0; i < 3; i++) { if (a[i] < b[i]) return true; if (a[i] > b[i]) return false; }
@@ -60,14 +60,10 @@ function validateManifest(manifest, version, artifacts, target) {
       || Object.hasOwn(manifest, 'packages') || new Set(manifest.files.map(f => f?.url)).size !== artifacts.length) fail('MANIFEST_INVALID');
   for (const entry of manifest.files) {
     const artifact = artifacts.find(a => a.name === entry?.url);
-    if (target === 'linux-x64' && (!entry || typeof entry !== 'object' || Array.isArray(entry)
-        || Object.keys(entry).some(key => !['url', 'sha512', 'size', 'blockMapSize'].includes(key))
-        || (Object.hasOwn(entry, 'blockMapSize') && (!Number.isSafeInteger(entry.blockMapSize)
-          || entry.blockMapSize <= 0 || entry.blockMapSize > (artifact?.bytes ?? 0) - 4)))) fail('MANIFEST_INVALID');
     if (!artifact || entry.sha512 !== artifact.sha512 || (Object.hasOwn(entry, 'size') && entry.size !== artifact.bytes)) fail('MANIFEST_BYTES_MISMATCH');
   }
   const primary = artifacts.find(a => a.name === manifest.path);
-  const extension = target.startsWith('darwin-') ? '.zip' : target === 'linux-x64' ? '.AppImage' : '.exe';
+  const extension = '.exe';
   if (!primary?.name.endsWith(extension) || manifest.sha512 !== primary.sha512) fail('MANIFEST_PRIMARY_INVALID');
 }
 
@@ -76,7 +72,7 @@ export async function prepareElectronStablePublication({ artifactRoot, proposal 
   if (!exact(proposal, ['schemaVersion', 'sourceRevision', 'version', 'buildNumber', 'targets'])
       || proposal.schemaVersion !== 'tibotattle-electron-stable-publication-v1'
       || !/^[a-f0-9]{40}$/u.test(proposal.sourceRevision) || !distribution.PRODUCTION_ELECTRON_RELEASE_VERSION_PATTERN.test(proposal.version)
-      || !Array.isArray(proposal.targets) || proposal.targets.length !== 4
+      || !Array.isArray(proposal.targets) || proposal.targets.length !== STABLE_TARGETS.length
       || proposal.targets.map(t => t.target).sort().join() !== [...STABLE_TARGETS].sort().join()) fail('PROPOSAL_INVALID');
   const targets = [];
   for (const input of proposal.targets) {
@@ -88,8 +84,7 @@ export async function prepareElectronStablePublication({ artifactRoot, proposal 
     try { expected = productionElectronCandidatePlan({ target: input.target, sourceRevision: proposal.sourceRevision,
       buildNumber: proposal.buildNumber, hostPlatform: source.host?.platform, hostArchitecture: source.host?.architecture }); }
     catch { fail('SOURCE_INVALID'); }
-    const staged = { ...expected, ...(expected.nativeHandoverHelper ? { nativeHandoverHelper: { ...expected.nativeHandoverHelper, status: 'contract_ok' } } : {}),
-      ...(expected.nativeMacOSKeychainAdapter ? { nativeMacOSKeychainAdapter: { ...expected.nativeMacOSKeychainAdapter, status: 'source_compiled_unsigned' } } : {}),
+    const staged = { ...expected,
       status: 'production_source_staged', stagedManifest: 'app/package.json', runtimeManifest: 'app/electron-runtime-manifest.json' };
     if (!isDeepStrictEqual(source, staged) || source.version !== proposal.version) fail('SOURCE_INVALID');
     const feedURL = distribution.PRODUCTION_ELECTRON_TARGETS[input.target].feedURL;
@@ -98,18 +93,16 @@ export async function prepareElectronStablePublication({ artifactRoot, proposal 
         || Object.keys(appUpdate).some(k => !['provider', 'url', 'updaterCacheDirName', 'publisherName'].includes(k))) fail('APP_UPDATE_INVALID');
     const artifacts = [];
     for (const spec of input.artifacts) artifacts.push(await file(root, spec));
-    const names = input.target.startsWith('darwin-')
-      ? ['dmg', 'zip'].flatMap(ext => [`TiboTattle-${proposal.version}-mac-${input.target.slice(7)}.${ext}`, `TiboTattle-${proposal.version}-mac-${input.target.slice(7)}.${ext}.blockmap`])
-      : [input.target === 'win32-x64' ? `TiboTattle-${proposal.version}-Windows-x64.exe` : `TiboTattle-${proposal.version}-linux-x86_64.AppImage`];
+    const names = [`TiboTattle-${proposal.version}-Windows-x64.exe`];
     const actual = artifacts.map(a => a.name).sort();
-    const allowed = input.target === 'win32-x64' && actual.length === 2 ? [...names, `${names[0]}.blockmap`] : names;
+    const allowed = actual.length === 2 ? [...names, `${names[0]}.blockmap`] : names;
     if (actual.join() !== allowed.sort().join()) fail('ARTIFACT_SET_INVALID');
     const manifestFile = await file(root, input.manifest, SMALL, true);
     if (manifestFile.name !== feedName(input.target)) fail('FEED_NAME_INVALID');
     const manifest = parseWindowsUpdaterYaml(manifestFile.contents);
     const primaryArtifacts = artifacts.filter(a => !a.name.endsWith('.blockmap'));
     validateManifest(manifest, proposal.version, primaryArtifacts, input.target);
-    if (input.target === 'win32-x64') validateWindowsUpdateArtifactMetadata({ manifest, appUpdate, installer: primaryArtifacts[0], version: proposal.version });
+    validateWindowsUpdateArtifactMetadata({ manifest, appUpdate, installer: primaryArtifacts[0], version: proposal.version });
     const evidence = [];
     for (const spec of input.evidence) { const bound = await file(root, spec, 1024 * 1024); evidence.push({ sha256: bound.sha256, bytes: bound.bytes }); }
     let predecessor = null;
@@ -119,9 +112,7 @@ export async function prepareElectronStablePublication({ artifactRoot, proposal 
       if (!distribution.PRODUCTION_ELECTRON_RELEASE_VERSION_PATTERN.test(parsed.version ?? '') || !older(parsed.version, proposal.version)
           || !Array.isArray(parsed.files) || parsed.files.length < 1 || parsed.files.some(f => !leaf(f?.url) || !/^[A-Za-z0-9+/]{86}==$/u.test(f?.sha512 ?? '')) || !leaf(parsed.path)
           || parsed.sha512 !== parsed.files.find(f => f.url === parsed.path)?.sha512 || Object.hasOwn(parsed, 'packages')) fail('PREDECESSOR_INVALID');
-      const previousNames = input.target.startsWith('darwin-')
-        ? ['zip', 'dmg'].map(ext => `TiboTattle-${parsed.version}-mac-${input.target.slice(7)}.${ext}`)
-        : [input.target === 'win32-x64' ? `TiboTattle-${parsed.version}-Windows-x64.exe` : `TiboTattle-${parsed.version}-linux-x86_64.AppImage`];
+      const previousNames = [`TiboTattle-${parsed.version}-Windows-x64.exe`];
       if (parsed.path !== previousNames[0] || parsed.files.map(f => f.url).sort().join() !== [...previousNames].sort().join()) fail('PREDECESSOR_INVALID');
       predecessor = { sha256: old.sha256, bytes: old.bytes, localPath: input.predecessor.path };
     }
@@ -201,7 +192,7 @@ export async function recordElectronStableReadback({ artifactRoot, proposal, ope
   try {
     const result = await verifyElectronStableReadback(plan, { phase, readObject });
     await operation.save({ ...operation.record.state, readbacks: { ...operation.record.state.readbacks, [phase]: result } });
-    return { status: 'readback_verified', phase, targets: 4, uploadPerformed: false };
+    return { status: 'readback_verified', phase, targets: STABLE_TARGETS.length, uploadPerformed: false };
   } finally { operation.close(); }
 }
 
@@ -209,7 +200,7 @@ export async function recordElectronStablePreparation({ artifactRoot, proposal, 
   const plan = await prepareElectronStablePublication({ artifactRoot, proposal });
   const operation = await openOperation({ directory: operationDirectory, kind: 'publication', binding: { schema: plan.schemaVersion, proposal: plan.proposalSha256 } });
   try { await operation.save({ stage: 'prepared_only', plan }); } finally { operation.close(); }
-  return { status: plan.status, sourceRevision: plan.sourceRevision, targets: 4, published: false };
+  return { status: plan.status, sourceRevision: plan.sourceRevision, targets: STABLE_TARGETS.length, published: false };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

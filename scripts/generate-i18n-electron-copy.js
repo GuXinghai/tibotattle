@@ -118,9 +118,9 @@ function validateOwnership({ sharedKeys, overlay, overrides }, catalogs) {
   const shared = new Set(sharedKeys);
   const overlayKeys = Object.keys(overlay);
   const overrideKeys = Object.keys(overrides);
-  assert.equal(shared.size + overlayKeys.length + overrideKeys.length, 154,
-    "desktop localization ownership must retain all 132 entries");
-  assert.equal(new Set([...sharedKeys, ...overlayKeys, ...overrideKeys]).size, 154,
+  assert.equal(shared.size + overlayKeys.length + overrideKeys.length, 151,
+    "desktop localization ownership must retain all 151 entries");
+  assert.equal(new Set([...sharedKeys, ...overlayKeys, ...overrideKeys]).size, 151,
     "desktop localization ownership must not overlap");
   assert.deepEqual(overrideKeys, [...OVERRIDE_KEYS].sort(), "named desktop overrides changed");
   for (const key of sharedKeys) {
@@ -341,13 +341,9 @@ export async function writeI18nElectronCopy({
     await handle.sync();
     await handle.close();
     handle = null;
+    // Windows cannot fsync a directory handle (EPERM); the atomic rename is the
+    // publication boundary for this Windows-only generated file.
     await rename(temporaryFile, outputFile);
-    const directoryHandle = await open(dirname(outputFile), "r");
-    try {
-      await directoryHandle.sync();
-    } finally {
-      await directoryHandle.close();
-    }
   } finally {
     if (handle !== null) await handle.close().catch(() => {});
     await unlink(temporaryFile).catch((error) => {

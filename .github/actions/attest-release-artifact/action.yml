@@ -4,8 +4,8 @@ description: >-
   artifact and SBOM attestations without uploading artifact/SBOM bytes or
   publishing a release.
 
-# This action is intentionally local and composable. Each native platform
-# finalizer must invoke it only after signing, packaging, timestamping, and all
+# This action is intentionally local and composable. The Windows finalizer
+# must invoke it only after signing, packaging, timestamping, and all
 # other operations that can change the final subject bytes are complete.
 #
 # The caller, not this action, owns the permission boundary. A caller must
@@ -23,8 +23,8 @@ description: >-
 # the staged subject and the original input are rehashed before and after
 # cryptographic `gh attestation verify --bundle` checks. This action only
 # preserves verified bundles; it never uploads bytes or publishes a release.
-# Verification uses an official GitHub CLI 2.96.0 archive whose platform-
-# specific SHA-256 is pinned in scripts/release-attestation-evidence.mjs. The
+# Verification uses an official GitHub CLI 2.96.0 Windows archive whose
+# SHA-256 is pinned in scripts/release-attestation-evidence.mjs. The
 # action does not trust a preinstalled runner `gh` binary.
 #
 # The release descriptor is checked for an exact artifact/SBOM association and
@@ -33,7 +33,7 @@ description: >-
 # contains the verified bundle metadata and is ready for
 # scripts/generate-release-evidence.js with the emitted base-directory output;
 # callers do not hand-author signer, predicate, builder, run, or runner fields.
-# The canonical cross-platform manifest is generated only after these steps.
+# The canonical release manifest is generated only after these steps.
 
 inputs:
   artifact-path:

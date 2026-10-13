@@ -48,12 +48,12 @@ import {
 } from "./launch-electron-windows-development.mjs";
 import {
   classifyAutomaticStartupRefreshReceipt,
-  createLinuxCompanionProcessDiagnostics,
-  createLinuxDashboardFailureDiagnostics,
-  ELECTRON_LINUX_SMOKE_STARTUP_REFRESH_ERROR_CODES,
-  validateLinuxCompanionProcessDiagnostics,
-  validateLinuxDashboardFailureDiagnostic,
-} from "./smoke-electron-linux.mjs";
+  createCompanionProcessDiagnostics,
+  createDashboardFailureDiagnostics,
+  ELECTRON_SMOKE_STARTUP_REFRESH_ERROR_CODES,
+  validateCompanionProcessDiagnostics,
+  validateDashboardFailureDiagnostic,
+} from "./lib/electron-smoke-diagnostics.mjs";
 import {
   assertWindowsProcessTreeExited,
   buildWindowsExactExecutableProcessQueryArguments,
@@ -1909,8 +1909,8 @@ export function createWindowsNormalCandidateStartupStderrObserver(stream) {
  * readers; this observer has no lifecycle or renderer effect.
  */
 export function createWindowsNormalCandidateProductFailureDiagnostics(stream) {
-  const companion = createLinuxCompanionProcessDiagnostics();
-  const dashboard = createLinuxDashboardFailureDiagnostics();
+  const companion = createCompanionProcessDiagnostics();
+  const dashboard = createDashboardFailureDiagnostics();
   if (stream === null || typeof stream !== "object" || typeof stream.on !== "function") {
     return Object.freeze({
       snapshot: () => Object.freeze({ companionProcessDiagnostics: null, dashboardLoadFailure: null }),
@@ -1928,8 +1928,8 @@ export function createWindowsNormalCandidateProductFailureDiagnostics(stream) {
   stream.on("data", onData);
   return Object.freeze({
     snapshot: () => Object.freeze({
-      companionProcessDiagnostics: validateLinuxCompanionProcessDiagnostics(companion.snapshot()),
-      dashboardLoadFailure: validateLinuxDashboardFailureDiagnostic(dashboard.snapshot()),
+      companionProcessDiagnostics: validateCompanionProcessDiagnostics(companion.snapshot()),
+      dashboardLoadFailure: validateDashboardFailureDiagnostic(dashboard.snapshot()),
     }),
     dispose: () => {
       try { stream.off?.("data", onData) ?? stream.removeListener?.("data", onData); } catch {}
@@ -2510,7 +2510,7 @@ const STARTUP_COMPLETION_CLASSIFIER_REASONS = new Set([
   "none", "duplicate", "invalid_receipt", "changed_receipt", "degraded_invalid", "failed", "cancelled", "other",
 ]);
 const STARTUP_COMPLETION_FAILED_STEPS = new Set([
-  "none", "collector", "accounting", "archive_index", "unified_index", "assemble", "other",
+  "none", "collector", "accounting", "unified_index", "assemble", "other",
 ]);
 const STARTUP_COMPLETION_CONTROLLER_ERRORS = new Set([
   "none", "refresh_failed", "refresh_resource_limited", "refresh_timed_out", "refresh_cancelled",
@@ -2584,12 +2584,12 @@ const STARTUP_COMPLETION_DEGRADED_CONTRACT_CHECKS = Object.freeze([
   "accounting_diagnostics_available",
 ]);
 const STARTUP_COMPLETION_CLASSIFIER_REASON_BY_ERROR_CODE = new Map([
-  [ELECTRON_LINUX_SMOKE_STARTUP_REFRESH_ERROR_CODES.duplicate, "duplicate"],
-  [ELECTRON_LINUX_SMOKE_STARTUP_REFRESH_ERROR_CODES.invalidReceipt, "invalid_receipt"],
-  [ELECTRON_LINUX_SMOKE_STARTUP_REFRESH_ERROR_CODES.changedReceipt, "changed_receipt"],
-  [ELECTRON_LINUX_SMOKE_STARTUP_REFRESH_ERROR_CODES.degradedInvalid, "degraded_invalid"],
-  [ELECTRON_LINUX_SMOKE_STARTUP_REFRESH_ERROR_CODES.failed, "failed"],
-  [ELECTRON_LINUX_SMOKE_STARTUP_REFRESH_ERROR_CODES.cancelled, "cancelled"],
+  [ELECTRON_SMOKE_STARTUP_REFRESH_ERROR_CODES.duplicate, "duplicate"],
+  [ELECTRON_SMOKE_STARTUP_REFRESH_ERROR_CODES.invalidReceipt, "invalid_receipt"],
+  [ELECTRON_SMOKE_STARTUP_REFRESH_ERROR_CODES.changedReceipt, "changed_receipt"],
+  [ELECTRON_SMOKE_STARTUP_REFRESH_ERROR_CODES.degradedInvalid, "degraded_invalid"],
+  [ELECTRON_SMOKE_STARTUP_REFRESH_ERROR_CODES.failed, "failed"],
+  [ELECTRON_SMOKE_STARTUP_REFRESH_ERROR_CODES.cancelled, "cancelled"],
 ]);
 
 function startupCompletionRequestCount(requestCount) {
@@ -3477,10 +3477,10 @@ export async function launchAndRenderCandidate({
       if (error?.code === `${PREFIX}DASHBOARD_UNAVAILABLE`) {
         const diagnostics = productFailureDiagnostics?.snapshot?.()
           ?? { companionProcessDiagnostics: null, dashboardLoadFailure: null };
-        error.startupCompanionProcessDiagnostics = validateLinuxCompanionProcessDiagnostics(
+        error.startupCompanionProcessDiagnostics = validateCompanionProcessDiagnostics(
           diagnostics.companionProcessDiagnostics,
         );
-        error.startupDashboardLoadFailure = validateLinuxDashboardFailureDiagnostic(
+        error.startupDashboardLoadFailure = validateDashboardFailureDiagnostic(
           diagnostics.dashboardLoadFailure,
         );
       }
@@ -3701,13 +3701,13 @@ function candidateReceipt({
     ...(normalizeStartupCdpNativeDiagnostic(startupCdpNativeDiagnostic) === null ? {} : {
       startupCdpNativeDiagnostic: normalizeStartupCdpNativeDiagnostic(startupCdpNativeDiagnostic),
     }),
-    ...(validateLinuxCompanionProcessDiagnostics(startupCompanionProcessDiagnostics) === null ? {} : {
+    ...(validateCompanionProcessDiagnostics(startupCompanionProcessDiagnostics) === null ? {} : {
       startupCompanionProcessDiagnostics:
-        validateLinuxCompanionProcessDiagnostics(startupCompanionProcessDiagnostics),
+        validateCompanionProcessDiagnostics(startupCompanionProcessDiagnostics),
     }),
-    ...(validateLinuxDashboardFailureDiagnostic(startupDashboardLoadFailure) === null ? {} : {
+    ...(validateDashboardFailureDiagnostic(startupDashboardLoadFailure) === null ? {} : {
       startupDashboardLoadFailure:
-        validateLinuxDashboardFailureDiagnostic(startupDashboardLoadFailure),
+        validateDashboardFailureDiagnostic(startupDashboardLoadFailure),
     }),
     ...(normalizeStartupCompletionDiagnostic(startupCompletionDiagnostic) === null ? {} : {
       startupCompletionDiagnostic: normalizeStartupCompletionDiagnostic(startupCompletionDiagnostic),
@@ -3843,10 +3843,10 @@ export async function runWindowsNormalCandidateSmoke(options, {
     startupCdpNativeDetail = normalizeStartupCdpNativeDiagnostic(
       error?.startupCdpNativeDiagnostic,
     );
-    startupCompanionProcessDiagnostics = validateLinuxCompanionProcessDiagnostics(
+    startupCompanionProcessDiagnostics = validateCompanionProcessDiagnostics(
       error?.startupCompanionProcessDiagnostics,
     );
-    startupDashboardLoadFailure = validateLinuxDashboardFailureDiagnostic(
+    startupDashboardLoadFailure = validateDashboardFailureDiagnostic(
       error?.startupDashboardLoadFailure,
     );
     startupCompletionDiagnostic = normalizeStartupCompletionDiagnostic(

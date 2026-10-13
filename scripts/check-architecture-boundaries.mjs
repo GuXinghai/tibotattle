@@ -92,20 +92,12 @@ const REVIEWED_SOURCE_OWNER_PUBLIC_ENTRYPOINTS = new Set([
   "src/export/workspace-runtime.js",
   "src/export/set-materialization-runtime.js",
   "src/platform/index.js",
-  "src/platform/linux-accountless-installation-credential.js",
-  "src/platform/linux-account-observation-credential.js",
-  "src/platform/linux-credential-mutation-lease.js",
-  "src/platform/linux-credential-state.js",
-  "src/platform/linux-secret-service.js",
-  "src/platform/linux-secret-service-broker.js",
   "src/platform/windows-accountless-installation-credential.js",
   // Fixed main-process qualification facade; keep its native manager closure
   // out of the shared index used by portable/local-only client exports.
   "src/platform/windows-account-observation-credential.js",
   "src/platform/windows-credential-manager-probe.js",
   "src/platform/claude-callback-lifecycle.js",
-  "src/platform/export-identity-keychain.js",
-  "src/platform/local-review.js",
   "src/platform/owner-only-prepared-contribution-storage.js",
   "src/platform/telemetry-envelope.js",
   "src/platform/telemetry-v1-envelope.js",
@@ -217,12 +209,6 @@ export const ARCHITECTURE_BOUNDARY_CATEGORIES = Object.freeze({
     remediation:
       "Use the reviewed replacement package or owner public facade; do not recreate a compatibility forwarder at the retired path.",
   }),
-  local_review_legacy_source_dependency: Object.freeze({
-    description:
-      "The distributable local-review app must not add direct dependencies on flat legacy root source.",
-    remediation:
-      "Route the operation through the reviewed application or platform facade and remove the exact migration-baseline edge.",
-  }),
   legacy_storage_direct_caller: Object.freeze({
     description:
       "The remaining direct callers of legacy storage must match the frozen migration ledger exactly.",
@@ -301,8 +287,8 @@ export const ARCHITECTURE_BOUNDARY_CATEGORIES = Object.freeze({
  * Exact, temporary allowances for dependency debt that predates this ratchet.
  * Globs are intentionally unsupported. Unused entries are diagnostic rather
  * than fatal so a concurrent cleanup can land before its allowance is removed.
+ * The distributable local-review app has been removed, so no edges remain.
  */
-const LOCAL_REVIEW_LEGACY_MIGRATION_TARGETS = Object.freeze([]);
 
 /**
  * Deliberately explicit compatibility ledger for the source callers which
@@ -378,17 +364,7 @@ const RETIRED_PRODUCTION_TREE_PATH_SET = new Set(
   RETIRED_PRODUCTION_TREE_PATHS,
 );
 
-export const CURRENT_ARCHITECTURE_BOUNDARY_BASELINE = Object.freeze(
-  LOCAL_REVIEW_LEGACY_MIGRATION_TARGETS.map((target) => Object.freeze({
-    category: "local_review_legacy_source_dependency",
-    importer: "local-review/cli.js",
-    rationale:
-      "This exact local-review CLI dependency predates the distributable-app architecture ratchet.",
-    removeWhen:
-      "Remove this exact edge when the CLI operation is migrated through a reviewed owned-source facade.",
-    target,
-  })),
-);
+export const CURRENT_ARCHITECTURE_BOUNDARY_BASELINE = Object.freeze([]);
 
 function portablePath(value) {
   return value.split(sep).join("/");
@@ -498,12 +474,8 @@ function sourceOwnerDependencyDirectionViolation(importer, target) {
     if (importerLocation.appName === "web") {
       return destinationLocation.kind === "src";
     }
-    if (importerLocation.appName === "macos"
-        && OWNED_SOURCE_OWNER_KINDS.has(destinationOwner.kind)) {
-      return true;
-    }
     if (
-      new Set(["local", "local-review"]).has(importerLocation.appName)
+      importerLocation.appName === "local"
       && OWNED_SOURCE_OWNER_KINDS.has(destinationOwner.kind)
     ) {
       return !(
@@ -899,14 +871,6 @@ function violationCategory(importer, target) {
   const source = sourceLocation(importer);
   const destination = sourceLocation(target);
 
-  if (
-    source.kind === "app"
-    && source.appName === "local-review"
-    && destination.kind === "src"
-    && sourceOwner(target).kind === "legacy"
-  ) {
-    return "local_review_legacy_source_dependency";
-  }
   if (
     PRODUCT_SOURCE_KINDS.has(source.kind)
     && destination.kind === "tooling"

@@ -42,10 +42,10 @@ permissions:
 jobs:
   registration:
     if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
+    runs-on: windows-2025
     timeout-minutes: 2
     steps:
-      - run: printf '%s\n' 'WINDOWS_INSTALLER_DIAGNOSTIC_REGISTERED'
+      - run: Write-Output 'WINDOWS_INSTALLER_DIAGNOSTIC_REGISTERED'
   diagnose:
     if: github.event_name == 'workflow_dispatch'
     runs-on: windows-2025

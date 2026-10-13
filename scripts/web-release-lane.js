@@ -71,7 +71,6 @@ const MODEL_CATALOG_ROW_PATTERN =
   /^ {2}\["[a-z0-9][a-z0-9.-]*", "[^"\\]*"(?:, "[a-z][a-z_]*", (?:"[a-z0-9][a-z0-9.-]*"|null))?\],$/u;
 
 const PUBLIC_RELEASE_SOURCE_BASENAMES = new Set([
-  "apple.svg",
   "cache-reuse-matrix.css",
   "cache-reuse-matrix.js",
   "community-data.js",
@@ -139,7 +138,6 @@ const WEB_RELEASE_TOOLING_PATHS = new Set([
   "apps/web/test/feature-insights.test.mjs",
   "docs/runbooks/2026-08-17-web-only-release.md",
   "docs/runbooks/2026-08-17-public-site-local-preview.md",
-  "docs/runbooks/macos-stable-release-runbook.md",
   "test/localization-system.test.js",
   "test/public-release-site-preview.test.js",
   "test/public-release-site.test.js",
@@ -808,15 +806,6 @@ export async function writeWebReleaseReceipt({
       manifestPath: WEB_RELEASE_MANIFEST_PATH,
       manifestSha256: site.manifestSha256,
       source: site.manifest.source,
-      ...(site.manifest.installer
-        ? {
-          installer: {
-            url: site.manifest.installer.url,
-            version: site.manifest.installer.version,
-            sha256: site.manifest.installer.sha256,
-          },
-        }
-        : {}),
     },
   };
   await mkdir(dirname(target), { recursive: true, mode: 0o755 });

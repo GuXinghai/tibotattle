@@ -5,18 +5,17 @@
 ## Verification gates
 
 <!-- Check each gate you ran. If one is not runnable on your platform
-     (installed Mac upgrade tests require signed artifacts and both architectures), say so
+     (installed Windows upgrade tests require signed artifacts), say so
      instead of leaving it unchecked silently. -->
 
 - [ ] `npm test`
 - [ ] `npm run docs:check`
 - [ ] `npm run codex:contract:check`
 - [ ] `npm run product:worker:check`
-- [ ] `npm run product:macos:transition:test`
 - [ ] `npm run architecture:check`
 - [ ] `npm run check` (or the environment-blocked lanes are named below)
 
-**Platform tested:** <!-- e.g. macOS 15 arm64, Node v26.2.0 -->
+**Platform tested:** <!-- e.g. Windows 11 x64, Node v26.2.0 -->
 
 ## Content attestation
 

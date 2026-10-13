@@ -18,13 +18,23 @@ Scope: all files under `.github/`. Apply the repository root guidance first.
 - Do not use `pull_request_target`, privileged checkout, artifact reuse, or cache
   sharing to bypass the fork trust boundary.
 
+## Windows-only scope
+
+- TiboTattle supports Windows x64 only. Hosted jobs run on the pinned Windows
+  image (`windows-2025`) and composite actions target Windows artifacts. Do not
+  add macOS or Linux runners, matrices, packaging, signing, or artifact lanes
+  without an explicit product decision and matching documentation.
+- Release trust is Windows-only: Authenticode signing, Windows installer
+  qualification, and attestation of the Windows artifact are the only release
+  evidence paths.
+
 ## Release evidence
 
 - Keep build, finalization, checksum, SBOM, attestation, provenance, signature,
   publication, and deployment as distinct jobs and claims. Bind evidence to the
   exact final bytes it names.
-- A generated SBOM or attestation is not release publication, platform signing,
-  notarization, installer qualification, or live availability.
+- A generated SBOM or attestation is not release publication, code signing,
+  installer qualification, or live availability.
 - Preserve nullable release-evidence semantics. Missing evidence stays null and
   must not be replaced by an unverified path, placeholder, or earlier artifact.
 - Keep artifact names, subjects, digests, retention, and handoff explicit. Reject
