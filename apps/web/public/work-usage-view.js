@@ -562,7 +562,8 @@ export function mountWorkUsageView(options = {}) {
     statusKey = key;
     statusValues = values;
     const messageKey = key === "error" ? "error" : key;
-    message.textContent = key === "waiting"
+    message.hidden = key === "snapshot";
+    message.textContent = key === "snapshot" ? "" : key === "waiting"
       ? reportTranslate("waiting")
       : sharedReporting && key === "missing"
         ? reportTranslate("unavailable")
@@ -814,12 +815,10 @@ export function mountWorkUsageView(options = {}) {
   });
   cancel.hidden = true;
   const body = el("div", "work-usage-body");
-  const eyebrow = el("p", "annotation", tr("local"));
   const actions = el("div", "dashboard-actions work-usage-actions");
   actions.append(message, cancel);
   root.replaceChildren(
     heading,
-    eyebrow,
     toolbar,
     actions,
     body,
@@ -1911,7 +1910,6 @@ export function mountWorkUsageView(options = {}) {
   documentRef.addEventListener?.("visibilitychange", visibilityChanged);
   windowRef.addEventListener("pageshow", visibilityChanged);
   function relocalize() {
-    eyebrow.textContent = tr("local");
     title.textContent = tr("title");
     headingText.lastChild.textContent = tr("subtitle");
     period.setAttribute("aria-label", tr("period"));

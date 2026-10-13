@@ -1685,7 +1685,8 @@ test("shared reporting waits for its bound, hides local period controls, and sen
   assert.equal(calls[0].period, "24h");
   assert.equal(calls[0].endAt, window.endAt);
   assert.equal(findMounted(root, node => node.dataset?.evidence === "period").length, 0, "shared header owns the period");
-  assert.ok(root.textContent.includes(mountedTranslator("workUsage.snapshot", { date: formatLocal(NOW) })), "the report timestamp remains available");
+  assert.ok(!root.textContent.includes(mountedTranslator("workUsage.snapshot", { date: formatLocal(NOW) })), "the shared period does not need a report timestamp");
+  assert.ok(!root.textContent.includes(mountedTranslator("workUsage.local")));
   assert.doesNotMatch(root.textContent, /Mapping observed/u);
   assert.doesNotMatch(root.textContent, /Current allowance and sharing preferences are not affected/u);
   view.destroy();
@@ -1713,7 +1714,7 @@ test("an available shared-period search with no rows is empty rather than unavai
     assert.equal(state.dataset.state, "empty");
     assert.equal(findMounted(root, node => node.tagName === "TABLE").length, 0);
     assert.equal(findMounted(root, node => node.classList.contains("work-usage-summary")).length, 0);
-    assert.ok(root.textContent.includes(mountedTranslator("workUsage.snapshot", { date: formatLocal(NOW) })));
+    assert.ok(!root.textContent.includes(mountedTranslator("workUsage.snapshot", { date: formatLocal(NOW) })));
     assert.equal(findMounted(root, node => node.dataset?.evidence === "token-coverage").length, 0);
     assert.doesNotMatch(root.textContent, /Mapping observed/u);
     const clearSearch = findMounted(state, node => node.tagName === "BUTTON")[0];
