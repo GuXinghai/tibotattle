@@ -8,6 +8,14 @@ import {
   checkI18nBrowserMirror,
 } from "../../../scripts/generate-i18n-browser-mirror.js";
 import * as browser from "../public/i18n.generated.js";
+import { translate } from "../public/localization.js";
+
+test("dashboard notice details resolve through the runtime browser translator", () => {
+  for (const locale of canonical.SUPPORTED_LOCALES) {
+    assert.equal(translate("dashboard.notice.details", {}, locale),
+      canonical.CATALOGS[locale]["dashboard.notice.details"]);
+  }
+});
 
 test("the browser i18n mirror is current and exposes the canonical contract", async () => {
   assert.equal(await checkI18nBrowserMirror(), true);
