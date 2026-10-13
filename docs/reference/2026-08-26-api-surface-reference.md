@@ -622,8 +622,11 @@ evidence; it does not become provider-authoritative billing data.
 TiboTattle's managed Claude status-line callback accepts the bounded Claude
 status payload on stdin and emits one display line on stdout. If the person had
 an existing status command, the lifecycle configuration can invoke that exact
-command through `/bin/sh -c`, replay the same input to it, accept at most 8 KiB
-of output, and wait at most 1.5 seconds. A successful prior command is preserved
+command through the fixed Windows system `cmd.exe` with AutoRun and delayed
+expansion disabled, replay the same input to it and accept at most 8 KiB of
+output. Execution has a 1.5-second deadline, followed by at most one second of
+owned-process-tree termination. Generated executable paths reject command and
+variable-expansion delimiters. A successful prior command is preserved
 when TiboTattle's monitor fails. This is a compatibility subprocess boundary,
 not an Anthropic network call.
 

@@ -133,8 +133,16 @@ test("Claude callback lifecycle owner, context, and legacy APIs are exact", () =
     nodeExecutable: "/safe/node",
   }), {
     type: "command",
-    command: "'/safe/node' '/safe/claude-callback-runtime.js'",
+    command: '"/safe/node" "/safe/claude-callback-runtime.js"',
   });
+  const spaced = context.buildManagedClaudeStatusLine({
+    nodeExecutable: "C:\\Program Files\\Node\\node.exe",
+    runtimeScript: "C:\\Tibo Tattle\\claude-callback-runtime.js",
+  });
+  assert.equal(spaced.command, '"C:\\Program Files\\Node\\node.exe" "C:\\Tibo Tattle\\claude-callback-runtime.js"');
+  for (const nodeExecutable of ['C:\\private%PATH%\\node.exe', 'C:\\private!PATH!\\node.exe', 'C:\\private"\\node.exe', 'C:\\private\n\\node.exe']) {
+    assert.throws(() => context.buildManagedClaudeStatusLine({ nodeExecutable }), fixedConfigurationError);
+  }
 });
 
 test("lifecycle context rejects incomplete capability ports and runtime configuration", () => {

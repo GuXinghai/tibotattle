@@ -132,7 +132,7 @@ test("install composes a supported existing command, stores private state, and u
     })), { status: "installed", capability: "created" });
     const installed = await readSettings(value.settingsFile);
     assert.deepEqual(installed.statusLine, value.installedStatusLine);
-    assert.equal(installed.statusLine.command, "'/safe/node' '/safe/runtime.js'");
+    assert.equal(installed.statusLine.command, '"/safe/node" "/safe/runtime.js"');
     assert.equal(JSON.stringify(installed).includes(Buffer.alloc(32, 1).toString("base64url")), false);
     assert.equal(installed.theme, "dark");
     assert.equal((await lstat(value.lifecycleDirectory)).mode & 0o777, 0o700);

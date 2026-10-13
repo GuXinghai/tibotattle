@@ -1,4 +1,5 @@
 export { createSourceFileAccess } from './source-file-access.js';
+export { spawnWindowsCommand, terminateWindowsCommand } from './windows-command.js';
 export {
   attachAccountlessParentChannel,
   createAccountlessChildChannel,

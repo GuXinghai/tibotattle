@@ -5,15 +5,21 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { EventEmitter } from "node:events";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { runClaudeCallback } from "../src/claude-callback-runtime.js";
 import { readClaudeStatusSnapshots } from "../src/claude-statusline-storage.js";
-import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/platform/index.js";
+import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES, spawnWindowsCommand, terminateWindowsCommand } from "../src/platform/index.js";
 
 const CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym;
 const CAPTURED_AT = "2026-07-25T12:00:00.000Z";
 const HERE = dirname(fileURLToPath(import.meta.url));
+function nodeCommand(script) {
+  assert.equal(script.includes('"'), false);
+  return `"${process.execPath}" -e "${script}"`;
+}
+const EXISTING_COMMAND = nodeCommand("process.stdin.resume();process.stdin.on('end',()=>process.stdout.write('existing status'))");
+const BYTE_COMMAND = nodeCommand("let bytes=0;process.stdin.on('data',c=>bytes+=c.length);process.stdin.on('end',()=>process.stdout.write('existing bytes='+bytes))");
 
 function payload() {
   return Buffer.from(JSON.stringify({
@@ -66,7 +72,7 @@ test("runtime fans identical bounded input to the existing command and private c
       stateDirectory,
       backend: backend(),
       readRuntimeConfiguration: async () => ({
-        previousCommand: "node -e \"process.stdin.resume();process.stdin.on('end',()=>process.stdout.write('existing status'))\"",
+        previousCommand: EXISTING_COMMAND,
       }),
       capturedAt: CAPTURED_AT,
     });
@@ -94,7 +100,7 @@ test("existing output remains visible when Keychain is locked", async () => {
     stdout: output.sink,
     stderr: diagnostic.sink,
     backend: locked,
-    readRuntimeConfiguration: async () => ({ previousCommand: "printf 'existing status'" }),
+    readRuntimeConfiguration: async () => ({ previousCommand: EXISTING_COMMAND }),
     capturedAt: CAPTURED_AT,
   });
   assert.deepEqual(result, {
@@ -121,7 +127,7 @@ test("legacy Keychain migration reports the restart-required Claude code", async
     stderr: diagnostic.sink,
     backend: migrationRequired,
     readRuntimeConfiguration: async () => ({
-      previousCommand: "printf 'existing status'",
+      previousCommand: EXISTING_COMMAND,
     }),
     capturedAt: CAPTURED_AT,
   });
@@ -149,7 +155,7 @@ test("malformed callback input preserves existing output and zeroizes leased sec
     stdout: output.sink,
     stderr: diagnostic.sink,
     backend: selected,
-    readRuntimeConfiguration: async () => ({ previousCommand: "printf 'existing status'" }),
+    readRuntimeConfiguration: async () => ({ previousCommand: EXISTING_COMMAND }),
     capturedAt: CAPTURED_AT,
   });
   assert.deepEqual(result, { status: "existing_status_only", monitorErrorCode: "input_json" });
@@ -175,7 +181,7 @@ test("oversized input is streamed completely to the existing command with bounde
     stderr: diagnostic.sink,
     backend: selected,
     readRuntimeConfiguration: async () => ({
-      previousCommand: "bytes=$(wc -c | tr -d ' '); printf 'existing bytes=%s' \"$bytes\"",
+      previousCommand: BYTE_COMMAND,
     }),
     capturedAt: CAPTURED_AT,
   });
@@ -200,7 +206,7 @@ test("input stream errors preserve the prior command's partial-stream behavior a
     stderr: diagnostic.sink,
     backend: backend(),
     readRuntimeConfiguration: async () => ({
-      previousCommand: "bytes=$(wc -c | tr -d ' '); printf 'existing bytes=%s' \"$bytes\"",
+      previousCommand: BYTE_COMMAND,
     }),
     capturedAt: CAPTURED_AT,
   });
@@ -240,7 +246,104 @@ test("existing-only fallback exits zero so Claude can retain the prior status ou
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, `existing bytes=${oversized.byteLength}`);
-  assert.equal(result.stderr, "Claude monitor unavailable [input_too_large]\n");
+  const stderr = result.stderr.replace(/^\(node:\d+\) ExperimentalWarning: SQLite is an experimental feature and might change at any time\r?\n\(Use `node --trace-warnings \.\.\.` to show where the warning was created\)\r?\n/, "");
+  assert.equal(stderr, "Claude monitor unavailable [input_too_large]\n");
+});
+
+test("Windows command composition pins the system shell and disables startup hooks", () => {
+  const command = EXISTING_COMMAND;
+  const value = {};
+  const child = spawnWindowsCommand(command, { env: value, stdio: ["pipe", "pipe", "ignore"] }, (file, args, options) => {
+    assert.equal(file.toLowerCase(), join(process.env.SystemRoot, "System32", "cmd.exe").toLowerCase());
+    assert.deepEqual(args, ["/d", "/v:off", "/s", "/c", `"${command}"`]);
+    assert.equal(options.env, value);
+    assert.equal(options.windowsHide, true);
+    assert.equal(options.windowsVerbatimArguments, true);
+    return value;
+  });
+  assert.equal(child, value);
+  assert.throws(() => spawnWindowsCommand("private\0command"), /windows_command_unavailable/);
+});
+
+test("oversized prior output is discarded and monitor failures stay redacted", async () => {
+  const output = outputSink();
+  const diagnostic = outputSink();
+  const locked = backend();
+  locked.read = async () => {
+    const error = new Error("PRIVATE-UPSTREAM");
+    error.code = "export_identity_keychain_locked";
+    throw error;
+  };
+  await assert.rejects(runClaudeCallback({
+    stdin: Readable.from([payload()]), stdout: output.sink, stderr: diagnostic.sink,
+    backend: locked,
+    readRuntimeConfiguration: async () => ({
+      previousCommand: nodeCommand("process.stdin.resume();process.stdin.on('end',()=>process.stdout.write('x'.repeat(8193)))"),
+    }),
+  }), error => error.code === "claude_callback_credential_locked");
+  assert.equal(output.value(), "");
+  assert.equal(diagnostic.value(), "");
+});
+
+test("Windows termination stops only the owned shell and its synthetic descendants", async () => {
+  assert.equal(await terminateWindowsCommand({ pid: process.pid, exitCode: null, signalCode: null }), false);
+  const script = "const cp=require('node:child_process');const leaf=cp.spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});process.stdout.write(process.pid+','+leaf.pid+'\\n');setInterval(()=>{},1000)";
+  const child = spawnWindowsCommand(nodeCommand(script), { stdio: ["pipe", "pipe", "ignore"] });
+  const pids = await new Promise((resolve, reject) => {
+    let text = "";
+    const timer = setTimeout(() => reject(new Error("synthetic_process_start_timeout")), 5000);
+    child.once("error", reject);
+    child.stdout.on("data", chunk => {
+      text += chunk.toString();
+      if (!text.includes("\n")) return;
+      clearTimeout(timer);
+      resolve(text.trim().split(",").map(Number));
+    });
+  });
+  try {
+    assert.equal(await terminateWindowsCommand(child), true);
+    for (const pid of pids) {
+      assert.throws(() => process.kill(pid, 0), error => error.code === "ESRCH");
+    }
+    assert.equal(await terminateWindowsCommand(child), false);
+  } finally {
+    await terminateWindowsCommand(child);
+    for (const pid of pids) {
+      try { process.kill(pid, "SIGKILL"); } catch { /* Synthetic children already terminated. */ }
+    }
+  }
+});
+
+test("a stalled prior command reaches its deadline and terminates its Windows child", async () => {
+  const locked = backend();
+  locked.read = async () => {
+    const error = new Error("PRIVATE-UPSTREAM");
+    error.code = "export_identity_keychain_locked";
+    throw error;
+  };
+  let ownedPid = null;
+  const output = outputSink();
+  try {
+    await assert.rejects(runClaudeCallback({
+      stdin: Readable.from([payload()]), stdout: output.sink, stderr: outputSink().sink,
+      backend: locked,
+      readRuntimeConfiguration: async () => ({
+        previousCommand: nodeCommand("process.stdout.write(process.pid+'\\n');process.stdin.resume();setInterval(()=>{},1000)"),
+      }),
+      spawnCommand(file, args, options) {
+        const child = spawn(file, args, options);
+        child.stdout.once("data", chunk => { ownedPid = Number(chunk.toString().trim()); });
+        return child;
+      },
+    }), error => error.code === "claude_callback_credential_locked");
+    assert.ok(Number.isSafeInteger(ownedPid) && ownedPid > 0);
+    assert.throws(() => process.kill(ownedPid, 0), error => error.code === "ESRCH");
+    assert.equal(output.value(), "");
+  } finally {
+    if (ownedPid !== null) {
+      try { process.kill(ownedPid, "SIGKILL"); } catch { /* Owned synthetic child already terminated. */ }
+    }
+  }
 });
 
 test("duplicate overlapping invocations serialize without losing records", async () => {

@@ -13,6 +13,7 @@ import {
   readClaudeCallbackCapability,
 } from "./claude-callback-capability.js";
 import { readClaudeCallbackRuntimeConfiguration } from "./claude-callback-lifecycle.js";
+import { spawnWindowsCommand, terminateWindowsCommand } from "./platform/index.js";
 
 const MAX_COEXISTING_OUTPUT_BYTES = 8 * 1024;
 const COEXISTING_TIMEOUT_MILLISECONDS = 1_500;
@@ -39,6 +40,7 @@ function createCoexistingInvocation(command, {
   let settled = false;
   let outputBytes = 0;
   let timer = null;
+  let terminating = false;
   const outputChunks = [];
   let resolveResult;
   const result = new Promise((resolve) => { resolveResult = resolve; });
@@ -59,17 +61,22 @@ function createCoexistingInvocation(command, {
   const armTimer = () => {
     if (settled || timer !== null) return;
     timer = setTimeout(() => {
-      child.kill("SIGKILL");
-      child.stdin.destroy();
-      finish("failed");
+      stop();
     }, timeoutMilliseconds);
     timer.unref?.();
   };
+  const stop = () => {
+    if (terminating || settled) return;
+    terminating = true;
+    acceptingInput = false;
+    child.stdin.destroy();
+    terminateWindowsCommand(child).finally(() => finish("failed"));
+  };
   try {
-    child = spawnCommand("/bin/sh", ["-c", command], {
+    child = spawnWindowsCommand(command, {
       env,
       stdio: ["pipe", "pipe", "ignore"],
-    });
+    }, spawnCommand);
   } catch {
     finish("failed");
   }
@@ -77,19 +84,17 @@ function createCoexistingInvocation(command, {
     child.on("error", () => finish("failed"));
     child.stdout.on("error", () => finish("failed"));
     child.stdout.on("data", (chunk) => {
-      if (settled) return;
+      if (settled || terminating) return;
       const buffer = Buffer.from(chunk);
       if (buffer.byteLength > MAX_COEXISTING_OUTPUT_BYTES - outputBytes) {
         buffer.fill(0);
-        child.kill("SIGKILL");
-        child.stdin.destroy();
-        finish("failed");
+        stop();
         return;
       }
       outputBytes += buffer.byteLength;
       outputChunks.push(buffer);
     });
-    child.on("close", (code) => finish(code === 0 ? "ok" : "failed"));
+    child.on("close", (code) => { if (!terminating) finish(code === 0 ? "ok" : "failed"); });
     child.stdin.on("error", () => { acceptingInput = false; });
   }
   return Object.freeze({

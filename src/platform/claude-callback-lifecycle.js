@@ -423,10 +423,12 @@ function settingsTargetIdentity(settings) {
 }
 
 function shellQuote(value) {
-  if (typeof value !== "string" || value.length < 1 || value.length > 4096 || value.includes("\0")) {
+  // CMD expands environment variables even inside double quotes. Refuse
+  // expansion/quote delimiters rather than minting a different executable path.
+  if (typeof value !== "string" || value.length < 1 || value.length > 4096 || /[\0\r\n"%!]/.test(value)) {
     fail("invalid_configuration");
   }
-  return `'${value.replaceAll("'", `'"'"'`)}'`;
+  return `"${value}"`;
 }
 
 export function createClaudeCallbackLifecycleContext(configuration = {}) {
