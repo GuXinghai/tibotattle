@@ -1970,10 +1970,11 @@ function projectionUnavailableCopyKey(data) {
 }
 
 function renderPricing(data) {
-  $("#cost-partial").hidden = !(Array.isArray(data?.warnings) && data.warnings.some(
-    message => evidenceWarningLocalization(message)?.key === "dashboard.warning.unknownModel",
-  ));
   const selected = data.reportingWindow ? accountingPeriod(data) : null;
+  const coverage = selected?.pricingCoverage ?? data.accounting?.pricingCoverage;
+  $("#cost-partial").hidden = !(finite(coverage?.partiallyPricedEvents, 0) > 0
+    || finite(coverage?.unpricedEvents, 0) > 0
+    || (!coverage && finite(data.accounting?.unknownModelEvents, 0) > 0));
   if (data.reportingWindow && selected === null) {
     $("#cost-partial").hidden = true;
     setRawText($("#cost-period"), t("reporting.unavailable"));
