@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import test from "node:test";
+import {
+  createProtectedFixtureDirectory, writeInitialProtectedFixtureFile,
+} from "../../test/helpers/windows-owner-only-fixture.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -74,8 +77,9 @@ async function fixture(t, { initialSyncState = null, readHostedCapability } = {}
   ]);
   const syncStatePath = join(stateRoot, "private", "social-performance-sync-state-v1.json");
   if (initialSyncState !== null) {
-    await mkdir(join(stateRoot, "private"), { recursive: true, mode: 0o700 });
-    await writeFile(syncStatePath, JSON.stringify(initialSyncState), { mode: 0o600 });
+    createProtectedFixtureDirectory(stateRoot);
+    createProtectedFixtureDirectory(join(stateRoot, "private"));
+    writeInitialProtectedFixtureFile(syncStatePath, JSON.stringify(initialSyncState));
   }
   let hostedAvailable = false;
   const startApp = () => startLocalCompanionServer({

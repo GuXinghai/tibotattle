@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  createProtectedFixtureDirectory, writeInitialProtectedFixtureFile,
+} from "../../test/helpers/windows-owner-only-fixture.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LOCAL_COMPANION_SCHEMA_VERSION } from "../../src/local-companion-data.js";
@@ -36,9 +39,10 @@ async function fixture(t, { bindingPresent = true } = {}) {
   const apps = new Set();
   await mkdir(staticRoot, { recursive: true });
   await mkdir(join(codexHome, "sessions"), { recursive: true, mode: 0o700 });
-  await mkdir(join(stateRoot, "private"), { recursive: true, mode: 0o700 });
-  await writeFile(settingsFile, JSON.stringify(initialSettings()), { mode: 0o600 });
-  if (bindingPresent) await writeFile(join(stateRoot, "contribution-device-binding-v1.json"), "{}", { mode: 0o600 });
+  createProtectedFixtureDirectory(stateRoot);
+  createProtectedFixtureDirectory(join(stateRoot, "private"));
+  writeInitialProtectedFixtureFile(settingsFile, JSON.stringify(initialSettings()));
+  if (bindingPresent) writeInitialProtectedFixtureFile(join(stateRoot, "contribution-device-binding-v1.json"), "{}");
   t.after(async () => { await Promise.all([...apps].map((app) => app.close())); await rm(root, { recursive: true }); });
   return { settingsFile, stateRoot,
     async settings() { return JSON.parse(await readFile(settingsFile, "utf8")); },

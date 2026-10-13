@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import {
+  createProtectedFixtureDirectory, writeInitialProtectedFixtureFile,
+} from "../../test/helpers/windows-owner-only-fixture.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { telemetryV11RequiredConsent } from "@app-usagemonitor/telemetry-contract";
@@ -48,12 +51,13 @@ async function fixture(t, { accepted = true, granted = false, staleSuccessorRepa
   const codexHome = join(root, "codex");
   await mkdir(staticRoot, { recursive: true });
   await mkdir(join(codexHome, "sessions"), { recursive: true, mode: 0o700 });
-  await mkdir(join(stateRoot, "private"), { recursive: true, mode: 0o700 });
+  createProtectedFixtureDirectory(stateRoot);
+  createProtectedFixtureDirectory(join(stateRoot, "private"));
   const paths = localCompanionStatePaths(stateRoot);
   await writeAttributionFixture(paths.localIndexStoreFile);
   const backend = await createAttributionFixtureDevice(paths.contributionDeviceStateFile);
   const service = createAttributionFixtureService({ accepted, granted, successor });
-  await writeFile(paths.incrementalContributionSyncSettingsFile, JSON.stringify({
+  writeInitialProtectedFixtureFile(paths.incrementalContributionSyncSettingsFile, JSON.stringify({
     schemaVersion: "incremental-contribution-sync-settings-v1.0",
     consent: { ...(staleSuccessorRepair
       ? { ...telemetryV11RequiredConsent(), destinationOrigin: "https://previous.telemetry.example" }
@@ -61,7 +65,7 @@ async function fixture(t, { accepted = true, granted = false, staleSuccessorRepa
       consentedAt: "2026-08-01T00:00:00.000Z" },
     paused: true, pausedReason: staleSuccessorRepair ? "device_repair_required" : "device_unavailable", retryCount: 0, lastAttemptAt: null,
     lastOutcome: null, nextAttemptAt: null, progress: null,
-  }), { mode: 0o600 });
+  }));
   const app = await startLocalCompanionServer({
     environment: {}, resourceRoot, staticRoot, stateRoot, codexHome, port: 0,
     centralOrigin: binding.destinationOrigin, centralFetch: service.fetchImpl,

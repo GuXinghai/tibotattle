@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import {
+  createProtectedFixtureDirectory, writeInitialProtectedFixtureFile,
+} from "../../test/helpers/windows-owner-only-fixture.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DEPLOYMENT_ENDPOINTS } from "../../config/deployment-endpoints.js";
@@ -95,15 +98,15 @@ test("companion detaches its private channel even if scheduler cleanup fails", a
 test("accountless performance scheduler obtains its own grant, backfills seven days plus today, and stops on opt-out", async (t) => {
   const root = await mkdtemp(join(tmpdir(), "accountless-performance-composition-"));
   const stateRoot = join(root, "state");
-  await mkdir(stateRoot, { recursive: true, mode: 0o700 });
+  createProtectedFixtureDirectory(stateRoot);
   t.after(() => rm(root, { recursive: true, force: true }));
   const deviceId = "11111111-1111-4111-8111-111111111111";
-  await writeFile(join(stateRoot, "accountless-device-binding-v1.json"), `${JSON.stringify({
+  writeInitialProtectedFixtureFile(join(stateRoot, "accountless-device-binding-v1.json"), `${JSON.stringify({
     schemaVersion: "contribution-device-binding-v1",
     origin,
     deviceId,
     createdAt: "2026-09-21T00:00:00.000Z",
-  })}\n`, { mode: 0o600 });
+  })}\n`);
   const parent = new EventEmitter();
   const child = new EventEmitter();
   for (const [from, to] of [[parent, child], [child, parent]]) {

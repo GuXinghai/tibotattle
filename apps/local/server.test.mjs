@@ -17,6 +17,9 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import {
+  createProtectedFixtureDirectory, writeInitialProtectedFixtureFile,
+} from "../../test/helpers/windows-owner-only-fixture.js";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -339,6 +342,7 @@ async function fixture() {
   const stateRoot = join(root, "state");
   const codexHome = join(root, "home", ".codex");
   const staticRoot = join(resourceRoot, "public");
+  createProtectedFixtureDirectory(stateRoot);
   await mkdir(staticRoot, { recursive: true });
   await mkdir(join(codexHome, "sessions"), {
     recursive: true,
@@ -968,8 +972,8 @@ test("startup retires legacy automatic contribution state to an idempotent conte
   const legacyCanary = "legacy-consent-must-not-survive";
   let first;
   let restarted;
-  await mkdir(privateRoot, { recursive: true, mode: 0o700 });
-  await writeFile(
+  createProtectedFixtureDirectory(privateRoot);
+  writeInitialProtectedFixtureFile(
     settingsFile,
     JSON.stringify({
       schemaVersion: "automatic-contribution-settings-v0.4",
@@ -977,7 +981,6 @@ test("startup retires legacy automatic contribution state to an idempotent conte
       consent: legacyCanary,
       destinationOrigin: "https://legacy.invalid",
     }),
-    { mode: 0o600 },
   );
   try {
     first = await startLocalCompanionServer({
