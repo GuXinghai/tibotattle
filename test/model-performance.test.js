@@ -172,7 +172,14 @@ test('history scan progress is explicit and fails closed', () => {
 });
 test('controller is lazy, coalesces reads, retains good snapshots on failure, and cancels', async () => {
   class FakeWorker extends EventEmitter {
-    unref() {} postMessage(message) { assert.equal(message.type, 'stop'); queueMicrotask(() => this.emit('exit', 0)); }
+    referenced = true;
+    unref() { this.referenced = false; }
+    ref() { this.referenced = true; }
+    postMessage(message) {
+      assert.equal(message.type, 'stop');
+      assert.equal(this.referenced, true, 'shutdown retains the worker until exit');
+      queueMicrotask(() => this.emit('exit', 0));
+    }
   }
   let made = 0, worker;
   const c = createModelPerformanceController({ directory: 'unused', codexHome: 'unused', platform: 'darwin',

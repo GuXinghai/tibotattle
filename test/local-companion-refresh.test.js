@@ -677,19 +677,7 @@ test("local refresh bounds the headline collector pass and returns only safe pro
 test("local refresh routes collector, credential lock, and accounting writes beneath explicit state", async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-state-"));
   const paths = localCompanionStatePaths(stateRoot);
-  assert.equal(paths.claudeDesktopShadowCanonicalFile.startsWith(stateRoot), true);
-  assert.equal(paths.claudeDesktopShadowLedgerFile.startsWith(stateRoot), true);
-  assert.equal(paths.claudeDesktopShadowStateFile.startsWith(stateRoot), true);
-  assert.equal(paths.claudeDesktopShadowSecretFile.startsWith(stateRoot), true);
-  assert.equal(paths.claudeDesktopPricingCacheFile.startsWith(stateRoot), true);
-  assert.equal("claudeDesktopQuotaStateFile" in paths, false);
-  assert.equal("claudeDesktopQuotaSecretFile" in paths, false);
-  assert.equal(new Set([
-    paths.claudeDesktopShadowCanonicalFile,
-    paths.claudeDesktopShadowLedgerFile,
-    paths.claudeDesktopShadowStateFile,
-    paths.claudeDesktopPricingCacheFile,
-  ]).size, 4);
+  assert.equal(Object.keys(paths).some((name) => name.startsWith("claudeDesktop")), false);
   let collectorOptions;
   let selectionOptions;
   try {
@@ -3702,6 +3690,12 @@ test("refresh controller exposes only allowlisted unified-index failure codes", 
       "local_unified_index_publication_busy",
       "local_unified_index_publication_timed_out",
       "local_unified_index_publication_failed",
+      "local_index_maintenance_failed",
+      "local_index_maintenance_cancelled",
+      "local_index_maintenance_deferred",
+      "local_index_secret_invalid",
+      "local_index_secret_unavailable",
+      "local_unified_index_legacy_ordinals_unavailable",
       "codex_rollout_source_changed",
     ].map((input) => ({ input, expected: input })),
     {
@@ -4171,77 +4165,18 @@ test("local refresh performs no retired Claude quota I/O", async () => {
   assert.equal(Object.hasOwn(result, "claudeQuota"), false);
 });
 
-test("Claude usage shadow runs independently without becoming a public refresh field", async () => {
-  let releaseCollector;
-  const collectorGate = new Promise((resolve) => { releaseCollector = resolve; });
-  let markShadowStarted;
-  const shadowStarted = new Promise((resolve) => { markShadowStarted = resolve; });
-  let shadowOptions;
+test("retired Claude Desktop shadow callback cannot run or enrich refresh results", async () => {
+  let invoked = false;
   const runner = createLocalCollectorRefreshRunner({
     selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
-    runCollector: async () => {
-      await collectorGate;
-      return {
-        rolloutRecordsWritten: 0,
-        filesDiscovered: 0,
-        refresh: { attempted: false, recordWritten: false, errorCode: null },
-      };
-    },
-    refreshClaudeUsageShadow: async (options) => {
-      shadowOptions = options;
-      markShadowStarted();
-      return {
-        status: "completed",
-        privateCanary: "/Users/private/.claude/projects/secret.jsonl",
-      };
-    },
+    runCollector: async () => ({ rolloutRecordsWritten: 1, filesDiscovered: 1, refresh: { attempted: true, recordWritten: true, errorCode: null } }),
+    refreshClaudeUsageShadow: async () => { invoked = true; throw new Error("Retired callback must not run"); },
   });
-
-  const running = runner();
-  await shadowStarted;
-  assert.deepEqual(Object.keys(shadowOptions), ["signal"]);
-  releaseCollector();
-  const result = await running;
-  assert.equal(Object.hasOwn(result, "claudeShadow"), false);
-  assert.equal(JSON.stringify(result).includes("privateCanary"), false);
-  assert.equal(JSON.stringify(result).includes("secret.jsonl"), false);
-});
-
-test("Claude usage shadow failure is contained and abort releases a non-cooperating callback", async () => {
-  const baseOptions = {
-    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
-    runCollector: async () => ({
-      rolloutRecordsWritten: 1,
-      filesDiscovered: 1,
-      refresh: { attempted: true, recordWritten: true, errorCode: null },
-    }),
-  };
-  const failed = createLocalCollectorRefreshRunner({
-    ...baseOptions,
-    refreshClaudeUsageShadow: async () => {
-      throw new Error("private shadow failure");
-    },
-  });
-  assert.equal((await failed()).rolloutRecordsWritten, 1);
-
-  const controller = new AbortController();
-  let markStarted;
-  const started = new Promise((resolve) => { markStarted = resolve; });
-  const hanging = createLocalCollectorRefreshRunner({
-    ...baseOptions,
-    refreshClaudeUsageShadow: async () => {
-      markStarted();
-      return new Promise(() => {});
-    },
-  });
-  const running = hanging({ signal: controller.signal });
-  await started;
-  controller.abort();
-  const result = await running;
+  const result = await runner();
   assert.equal(result.rolloutRecordsWritten, 1);
+  assert.equal(invoked, false);
   assert.equal(Object.hasOwn(result, "claudeShadow"), false);
 });
-
 
 test("quick polling omits reset details only after a successful startup read; detailed refreshes retain them", async () => {
   const optionsSeen = [];

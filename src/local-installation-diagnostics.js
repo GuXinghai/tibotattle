@@ -158,30 +158,6 @@ export function localCompanionStatePaths(stateRoot) {
     // timelines read, advanced incrementally on refresh. It shares the device
     // salt above so hosted identity is continuous.
     localIndexStoreFile: join(selected, "local-index-store-v1.sqlite"),
-    // Reserved, provider-isolated paths for the opt-in development shadow.
-    // Merely resolving installation paths never creates these files; the
-    // installed companion leaves shadow usage disabled until a reviewed
-    // caller explicitly enables it.
-    claudeDesktopShadowCanonicalFile: join(
-      selected,
-      "claude-desktop-shadow-canonical-v1.sqlite",
-    ),
-    claudeDesktopShadowLedgerFile: join(
-      selected,
-      "claude-desktop-shadow-ledger-v1.sqlite",
-    ),
-    claudeDesktopShadowStateFile: join(
-      selected,
-      "claude-desktop-shadow-state-v1.sqlite",
-    ),
-    claudeDesktopShadowSecretFile: join(
-      selected,
-      "claude-desktop-shadow-state-v1-secret",
-    ),
-    claudeDesktopPricingCacheFile: join(
-      selected,
-      "claude-desktop-pricing-cache-v1.sqlite",
-    ),
     accountObservationLockFile: join(
       selected,
       "account-observation-operation.lock",

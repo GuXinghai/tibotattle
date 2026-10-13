@@ -113,6 +113,8 @@ export function createModelPerformanceController({ directory, codexHome,
     if (stopping) return stopping;
     const old = worker; worker = null;
     if (!old) return;
+    // An accepted close must keep the worker alive until exit or forced stop.
+    old.ref?.();
     stopping = new Promise(resolve => {
       const timer = setTimeout(() => { void old.terminate().then(resolve, resolve); }, 2000);
       timer.unref?.();
@@ -239,7 +241,8 @@ export function createModelPerformanceController({ directory, codexHome,
           performanceWaiters.delete(requestId);
           reject(new Error('model_performance_unavailable'));
         }, 20_000);
-        timer.unref?.();
+        // This explicit request owns a bounded response deadline. Keep it
+        // referenced until settlement, even when background workers are idle.
         performanceWaiters.set(requestId, { resolve, reject, timer });
         current.postMessage({ type: 'performance-day', requestId, day, provider, nowEpoch });
       });

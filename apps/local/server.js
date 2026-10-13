@@ -88,9 +88,6 @@ import {
   createTerminalRefreshFailureRecorder,
 } from "../../src/local-companion-refresh.js";
 import {
-  createClaudeDesktopShadowController,
-} from "../../src/claude-desktop-shadow-controller.js";
-import {
   localContributionSyncQueue,
 } from "../../src/local-node-runtime.js";
 import {
@@ -2456,45 +2453,6 @@ function configuredHomeDirectory(environment) {
   return fallback;
 }
 
-/**
- * Resolve the Claude roots independently from the installed dashboard
- * resources.  `CLAUDE_CONFIG_DIR` is a provider path configuration, not a
- * feature toggle; shadow collection remains controlled only by the explicit
- * programmatic `claudeShadowEnabled` option below.  Claude Code exposes
- * `CLAUDE_PROJECT_DIR` to its own hooks; the longer directory spelling is
- * accepted as a companion-launcher override for callers that do not inherit
- * the hook environment.
- */
-export function resolveClaudeDesktopShadowConfiguration({
-  options = {},
-  environment = process.env,
-  fallbackProjectDirectory = process.cwd(),
-} = {}) {
-  if (!options || typeof options !== "object" || Array.isArray(options)
-      || !environment || typeof environment !== "object"
-      || Array.isArray(environment)) {
-    throw new TypeError("Claude shadow path configuration is invalid");
-  }
-  const configCandidate = Object.hasOwn(options, "claudeConfigDirectory")
-    ? options.claudeConfigDirectory
-    : Object.hasOwn(environment, "CLAUDE_CONFIG_DIR")
-      ? environment.CLAUDE_CONFIG_DIR
-      : undefined;
-  const projectCandidate = Object.hasOwn(options, "claudeProjectDirectory")
-    ? options.claudeProjectDirectory
-    : Object.hasOwn(environment, "CLAUDE_PROJECT_DIR")
-      ? environment.CLAUDE_PROJECT_DIR
-      : Object.hasOwn(environment, "CLAUDE_PROJECT_DIRECTORY")
-        ? environment.CLAUDE_PROJECT_DIRECTORY
-        : fallbackProjectDirectory;
-  return Object.freeze({
-    claudeConfigDirectory: configCandidate === undefined
-      ? undefined
-      : assertLocalAbsolutePath(configCandidate),
-    claudeProjectDirectory: assertLocalAbsolutePath(projectCandidate),
-  });
-}
-
 function parentWatchdogConfigurationError() {
   const error = new TypeError(
     "Parent watchdog configuration is invalid",
@@ -2615,25 +2573,6 @@ export function createLocalCompanionServer(options = {}) {
   const semanticOpenTarget = configuredSemanticOpenTarget(environment);
   const parentWatchdogPid = configuredParentWatchdogPid(environment);
   const homeDirectory = configuredHomeDirectory(environment);
-  // A malformed provider path must not make the ordinary disabled companion
-  // fail before it can serve Codex. Resolve and validate Claude roots only
-  // for the explicit programmatic shadow opt-in; the disabled controller can
-  // safely carry the raw values without reading or touching them.
-  const claudeShadowConfiguration = options.claudeShadowEnabled === true
-    ? resolveClaudeDesktopShadowConfiguration({
-      options,
-      environment,
-    })
-    : Object.freeze({
-      claudeConfigDirectory: Object.hasOwn(options, "claudeConfigDirectory")
-        ? options.claudeConfigDirectory
-        : environment.CLAUDE_CONFIG_DIR,
-      claudeProjectDirectory: Object.hasOwn(options, "claudeProjectDirectory")
-        ? options.claudeProjectDirectory
-        : environment.CLAUDE_PROJECT_DIR
-          ?? environment.CLAUDE_PROJECT_DIRECTORY
-          ?? process.cwd(),
-    });
   const resourceRoot = options.resourceRoot
     ?? environment.USAGE_MONITOR_RESOURCE_ROOT
     ?? options.root
@@ -2726,7 +2665,6 @@ export function createLocalCompanionServer(options = {}) {
     parentWatchdogPid,
     homeDirectory,
     semanticOpenTarget,
-    ...claudeShadowConfiguration,
   });
 }
 
@@ -2740,8 +2678,6 @@ function createPreparedLocalCompanionServer({
   staticRoot,
   codexHome,
   homeDirectory,
-  claudeConfigDirectory,
-  claudeProjectDirectory,
   diagnosticsLogFile,
   parentWatchdogPid,
   semanticOpenTarget,
@@ -2816,18 +2752,6 @@ function createPreparedLocalCompanionServer({
       declaredSpeedBaselines: await codexSpeedBaseline.readWindows(),
     }, { ...controls, selectProjection: projection => selectSharedWorkUsageSnapshot(projection, query) }),
   workUsageEnrich = (query) => enrichWorkUsageRows({ ...query, codexHome }),
-  // This is a programmatic, development-only gate: no environment variable,
-  // settings control, route, or UI surface enables Claude usage collection.
-  // A caller must explicitly opt into the production-shaped local shadow.
-  claudeShadowEnabled = false,
-  claudeShadowControllerFactory = createClaudeDesktopShadowController,
-  claudeShadowController = claudeShadowControllerFactory({
-    enabled: claudeShadowEnabled,
-    stateRoot,
-    homeDirectory,
-    projectDirectory: claudeProjectDirectory,
-    claudeConfigDirectory,
-  }),
   readAccountAttributionBinding = null,
   refreshRunner = createLocalCollectorRefreshRunner({
     codexHome,
@@ -2849,9 +2773,6 @@ function createPreparedLocalCompanionServer({
         })
     ),
     refreshAccounting: localIndexBackend.refreshAccounting,
-    refreshClaudeUsageShadow: claudeShadowEnabled
-      ? ({ signal }) => claudeShadowController.refresh({ signal })
-      : null,
     // Advance the index by its cursors on every foreground refresh: an
     // ordinary pass reads only the bytes the rollout corpus grew.
     refreshUnifiedIndex: localIndexBackend.refreshUnifiedIndex,
@@ -3004,12 +2925,6 @@ function createPreparedLocalCompanionServer({
   if (modelPerformanceProvider !== null
       && typeof modelPerformanceProvider !== "function") {
     throw new TypeError("modelPerformanceProvider must be a function");
-  }
-  if (typeof claudeShadowEnabled !== "boolean"
-      || typeof claudeShadowControllerFactory !== "function"
-      || !claudeShadowController
-      || typeof claudeShadowController.refresh !== "function") {
-    throw new TypeError("Claude shadow controller configuration is invalid");
   }
   if (contributionPreparationRunner !== null
       && typeof contributionPreparationRunner !== "function") {
@@ -4194,6 +4109,11 @@ function createPreparedLocalCompanionServer({
   });
   let workUsageShutdown = null;
   const closeWorkUsage = () => workUsageShutdown ??= workUsage.close();
+  let projectionShutdown = null;
+  const closeProjectionReader = () => projectionShutdown ??= Promise.resolve()
+    .then(() => sharedProjectionReader.close?.());
+  let shutdownRequested = false;
+  const beginShutdown = () => { shutdownRequested = true; };
   const server = createServer(async (request, response) => {
     try {
       if (!isLoopbackPeer(request)) {
@@ -4202,6 +4122,14 @@ function createPreparedLocalCompanionServer({
       }
       if (!allowedHostHeader(server, request.headers.host)) {
         sendError(response, 403, "host_not_allowed");
+        return;
+      }
+      if (shutdownRequested) {
+        if (request.method !== "GET" && !sameOrigin(request)) {
+          sendError(response, 403, "shutdown_not_authorized");
+          return;
+        }
+        sendError(response, 503, "server_shutting_down");
         return;
       }
       let url;
@@ -5564,7 +5492,7 @@ function createPreparedLocalCompanionServer({
 
   server.on("close", () => {
     void closeWorkUsage().catch(() => onError("work_usage_shutdown_failed"));
-    void Promise.resolve(sharedProjectionReader.close?.()).catch(() => onError("local_projection_shutdown_failed"));
+    void closeProjectionReader().catch(() => onError("local_projection_shutdown_failed"));
   });
 
   return {
@@ -5588,6 +5516,8 @@ function createPreparedLocalCompanionServer({
     shutdownContributionRuntime,
     closeModelPerformance,
     closeWorkUsage,
+    closeProjectionReader,
+    beginShutdown,
   };
 }
 
@@ -5650,20 +5580,31 @@ export async function startLocalCompanionServer({
   // the real production service with Node's own fetch, and it never blocks
   // readiness.
   void app.centralOutbound?.warmUp().catch(() => {});
+  let closePromise = null;
   return {
     ...app,
     host,
     port: actualPort(app.server),
     snapshotReady,
-    close: async () => {
+    close: () => closePromise ??= (async () => {
+      app.beginShutdown();
       parentWatchdog.stop();
-      await closeHttpServer(app.server);
-      await Promise.all([
-        app.closeModelPerformance(),
-        app.closeWorkUsage(),
+      // Keep the listener referenced while workers drain: their shutdown
+      // polling timers are unrefed and cannot keep the process alive alone.
+      // Stop contribution producers before closing their timing reader.
+      const results = await Promise.allSettled([
         app.shutdownContributionRuntime(),
+        app.closeWorkUsage(),
       ]);
-    },
+      results.push(...await Promise.allSettled([
+        app.closeModelPerformance(),
+        app.closeProjectionReader(),
+      ]));
+      // A producer failure must not leave the listening socket behind.
+      await closeHttpServer(app.server);
+      const failure = results.find((result) => result.status === "rejected");
+      if (failure) throw failure.reason;
+    })(),
   };
 }
 

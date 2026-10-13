@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { createModelPerformanceController } from "./model-performance-controller.js";
 import { modelPerformanceSourceScope } from "./model-performance-snapshots.js";
 import { createParser, digest, METHOD, MAX_STATE_BYTES, INFERENCE_TIMING_PARSER_VERSION } from "../../src/providers/codex/logs.js";
-import { openTimingStore, ingestTimingFile, readTimingRows } from "../../src/platform/index.js";
+import { openTimingStore, ingestTimingFile, readTimingRows, createWindowsFilesystemAdapter } from "../../src/platform/index.js";
 
 const BASE = Date.parse("2026-09-01T12:00:00.000Z");
 const DAY = "2026-09-01";
@@ -219,7 +219,9 @@ test("unavailable parser-repair sources retain stale measurements and explicit m
   t.after(() => rm(root, { recursive: true, force: true }));
   const codexHome = join(root, "codex"), directory = join(root, "timing");
   await mkdir(join(codexHome, "sessions"), { recursive: true, mode: 0o700 });
-  await mkdir(directory, { mode: 0o700 });
+  // The real Windows store requires a native owner-protected timing root;
+  // Node mode bits do not establish its DACL or owner.
+  createWindowsFilesystemAdapter().ensureDirectory(directory);
   const source = join(root, "synthetic-retained.jsonl");
   await writeFile(source, lines([
     record(0, "session_meta", { id: "synthetic-retained-session" }),

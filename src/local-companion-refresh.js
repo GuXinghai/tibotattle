@@ -112,6 +112,12 @@ const UNIFIED_INDEX_PUBLIC_ERROR_CODES = new Set([
   "local_unified_index_publication_busy",
   "local_unified_index_publication_timed_out",
   "local_unified_index_publication_failed",
+  "local_index_maintenance_failed",
+  "local_index_maintenance_cancelled",
+  "local_index_maintenance_deferred",
+  "local_index_secret_invalid",
+  "local_index_secret_unavailable",
+  "local_unified_index_legacy_ordinals_unavailable",
   "codex_rollout_compression_unsupported",
   "codex_rollout_filename_identity_mismatch",
   "codex_rollout_generation_ambiguous",
@@ -711,34 +717,6 @@ function terminalRefreshProgress(value) {
   return value?.kind === ACCOUNTING_PROGRESS_KIND ? null : value;
 }
 
-// The Claude usage shadow is deliberately an internal side effect: it runs
-// beside the production refresh when explicitly injected, but contributes no
-// field to the loopback response and therefore cannot become an accidental UI
-// or upload contract. Abort releases the foreground refresh even if an
-// injected test callback is non-cooperative; the real controller propagates
-// the same signal through inventory, canonicalization, ledger, and pricing.
-function runClaudeUsageShadowRefresh(refreshClaudeUsageShadow, signal) {
-  if (refreshClaudeUsageShadow === null) return Promise.resolve();
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = () => {
-      if (settled) return;
-      settled = true;
-      signal?.removeEventListener?.("abort", abort);
-      resolve();
-    };
-    const abort = () => finish();
-    if (signal?.aborted === true) {
-      finish();
-      return;
-    }
-    signal?.addEventListener?.("abort", abort, { once: true });
-    Promise.resolve()
-      .then(() => refreshClaudeUsageShadow({ signal }))
-      .then(finish, finish);
-  });
-}
-
 export function createLocalCollectorRefreshRunner({
   codexHome = join(homedir(), ".codex"),
   stateFile = null,
@@ -748,10 +726,6 @@ export function createLocalCollectorRefreshRunner({
   runCollector = runCollectorOnce,
   readAccountingCache = readReplaySafeAccountingCache,
   refreshAccounting = null,
-  // Disabled unless an explicit production-shaped shadow controller is
-  // injected. Its result is intentionally not part of the public refresh
-  // projection; only its provider-isolated local stores are advanced.
-  refreshClaudeUsageShadow = null,
   // Cursor-based incremental advance of the local index. An ordinary
   // pass reads only the bytes the rollout corpus grew since the last one, so
   // it is safe to run on every foreground refresh.
@@ -779,10 +753,6 @@ export function createLocalCollectorRefreshRunner({
   }
   if (refreshAccounting !== null && typeof refreshAccounting !== "function") {
     throw new TypeError("refreshAccounting must be a function or null");
-  }
-  if (refreshClaudeUsageShadow !== null
-      && typeof refreshClaudeUsageShadow !== "function") {
-    throw new TypeError("refreshClaudeUsageShadow must be a function or null");
   }
   if (refreshUnifiedIndex !== null && typeof refreshUnifiedIndex !== "function") {
     throw new TypeError("refreshUnifiedIndex must be a function or null");
@@ -862,10 +832,6 @@ export function createLocalCollectorRefreshRunner({
         declaredSpeedBaselines = [];
       }
     }
-    const claudeUsageShadowPromise = runClaudeUsageShadowRefresh(
-      refreshClaudeUsageShadow,
-      signal,
-    );
     let selection = { loadAccountObservationSecret: null };
     try {
       selection = selectAccountObservationSecret(
@@ -1164,7 +1130,6 @@ export function createLocalCollectorRefreshRunner({
       clock(),
     );
     refreshStep = "assemble";
-    await claudeUsageShadowPromise;
     const unifiedCollectorPauseSoftened = unifiedAccountingReady
       && accounting !== null;
     if (collectorResourceLimitDeferred && !unifiedCollectorPauseSoftened) {
