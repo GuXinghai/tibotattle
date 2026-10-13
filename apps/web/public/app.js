@@ -926,7 +926,7 @@ function renderConnectionNotice() {
     titleFn = null,
   } = visibleConnectionNotice;
   const notice = $("#connection-notice");
-  notice.className = `notice notice-${kind}`;
+  notice.className = `refresh-notice notice-${kind}`;
   if (titleFn) {
     setRawText($("#connection-title"), titleFn());
   } else if (titleKey) {
@@ -948,6 +948,7 @@ function renderConnectionNotice() {
 
 function hideConnectionNotice() {
   visibleConnectionNotice = null;
+  $("#connection-notice").open = false;
   $("#connection-notice").hidden = true;
 }
 
@@ -11748,6 +11749,16 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     }
   });
   dialog.addEventListener("close", restore);
+  const refreshNotice = documentRef.querySelector("#connection-notice");
+  documentRef.addEventListener("click", event => {
+    if (refreshNotice?.open && !refreshNotice.contains(event.target)) refreshNotice.open = false;
+  });
+  documentRef.addEventListener("keydown", event => {
+    if (event.key === "Escape" && refreshNotice?.open) {
+      refreshNotice.open = false;
+      refreshNotice.querySelector("summary").focus({ preventScroll: true });
+    }
+  });
   documentRef.addEventListener("focusin", event => {
     focusedViewButton = event.target.dataset?.dashboardView ? event.target : null;
   });

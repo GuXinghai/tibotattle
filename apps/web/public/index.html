@@ -94,6 +94,16 @@
         </label>
         <p class="sr-only" data-language-announcement role="status" aria-live="polite" aria-atomic="true"></p>
         <span class="history-index-badge" id="history-index-badge" hidden></span>
+        <details class="refresh-notice notice-warning" id="connection-notice" hidden>
+          <summary><strong id="connection-title" role="status"></strong><span data-i18n="dashboard.notice.details">[Details]</span></summary>
+          <div class="refresh-notice-content">
+            <p id="connection-copy"></p>
+            <div class="notice-actions">
+              <button class="button button-quiet" id="connection-check" type="button">Check again</button>
+              <button class="button button-quiet" id="demo-button" type="button">Explore labeled demo</button>
+            </div>
+          </div>
+        </details>
         <span class="state-pill state-connecting" id="global-state">
           <span class="state-dot" aria-hidden="true"></span>
           Connecting
@@ -174,19 +184,6 @@
         </div>
       </div>
 
-      <div class="notice notice-warning" id="connection-notice" role="status" hidden>
-        <div>
-          <strong id="connection-title">Can't reach the local app</strong>
-          <p id="connection-copy">
-            Open TiboTattle and use the window it opens. Nothing on this page
-            is your real usage.
-          </p>
-        </div>
-        <div class="notice-actions">
-          <button class="button button-quiet" id="connection-check" type="button">Check again</button>
-          <button class="button button-quiet" id="demo-button" type="button">Explore labeled demo</button>
-        </div>
-      </div>
 
       <section
         class="notice notice-info electron-sharing-notice"
