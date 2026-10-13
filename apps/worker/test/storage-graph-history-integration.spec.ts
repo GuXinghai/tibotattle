@@ -87,10 +87,22 @@ function unavailableCheckpointOwner(database:D1Database,onUnavailable?:()=>Promi
  return new Proxy(database,{get(value,key){if(key==='prepare')return(sql:string)=>statement(value.prepare(sql),sql);
   const member=Reflect.get(value,key);return typeof member==='function'?member.bind(value):member;}});
 }
-function loseFirstCheckpointBatchResponse(database:D1Database){let losses=0;
+function loseFirstCheckpointPromotionResponse(database:D1Database){let losses=0;
+ const promotions=new WeakSet<object>();
  return {database:new Proxy(database,{get(value,key){
+  if(key==='prepare')return(sql:string)=>{
+   const wrap=(statement:D1PreparedStatement):D1PreparedStatement=>{
+    const result=new Proxy(statement,{get(inner,member){
+     if(member==='bind')return(...args:unknown[])=>wrap(inner.bind(...args));
+     const field=Reflect.get(inner,member);return typeof field==='function'?field.bind(inner):field;
+    }});
+    if(sql.includes('INSERT INTO analytics_history_checkpoint_heads'))promotions.add(result);
+    return result;
+   };
+   return wrap(value.prepare(sql));
+  };
   if(key==='batch')return async(statements:D1PreparedStatement[])=>{const result=await value.batch(statements);
-   if(losses++===0)throw new Error('synthetic committed checkpoint response loss');return result;};
+   if(statements.some(statement=>promotions.has(statement))&&losses++===0)throw new Error('synthetic committed checkpoint response loss');return result;};
   const member=Reflect.get(value,key);return typeof member==='function'?member.bind(value):member;}}),losses:()=>losses};
 }
 function checkpointForKey(key:StorageHistoryKey):StorageV1HistoryCheckpoint{
@@ -228,7 +240,7 @@ it('saves current-fit progress acquired at the work deadline inside the outer de
 
 it('resumes from a page promoted before its response was lost',async()=>{
  const owner=await fixture(),scope=await captureStorageGraphScope(source(),{owner,day,metric:'fits',sourceId,sourceNamespace:namespace});
- const lost=loseFirstCheckpointBatchResponse(target());
+ const lost=loseFirstCheckpointPromotionResponse(target());
  await expect(computeStorageGraphResult({...bindings(),target:lost.database},scope))
   .rejects.toMatchObject({message:'STORAGE_GRAPH_OPERATION_UNAVAILABLE',stage:'graph_checkpoint_save',reason:'application'});
  expect(lost.losses()).toBe(1);

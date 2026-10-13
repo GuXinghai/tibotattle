@@ -312,6 +312,10 @@ Never discard existing files as part of compatibility-code removal.
   publication functions take tens of milliseconds and retain their original
   assertions in an independent diagnostic. This is not a pass of the original
   gate or deployed-runtime qualification. No publication regression is established.
+  The [checkpoint optimization](../reports/2026-10-13-worker-checkpoint-round-trips.md)
+  reduces the matched cold workload from 2,976 to 2,496 D1 calls while retaining
+  authority, exact-head CAS, erasure and response-loss recovery. It is scoped
+  source evidence; the original whole-workflow gate was not retried for green.
   The captured-cohort, daily-storage and three typed-v1.1 cases passed focused
   checks recorded above. Their earlier full-suite timeouts are diagnostic
   history, not additional confirmed release defects. Assertions and deadlines
