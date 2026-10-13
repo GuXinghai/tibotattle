@@ -4,21 +4,17 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { constants } from "node:fs";
 import {
   lstat,
-  mkdir,
-  open,
-  realpath,
-  unlink,
 } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { defaultExportStateDirectory } from "./export-identity.js";
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
   assertWindowsProductionReadiness,
   createWindowsProductionCapabilityBackend,
-  syncDirectory,
+  createWindowsFilesystemAdapter,
+  createWindowsProtectedStateStore,
 } from "./platform/index.js";
 
 const SECRET_BYTES = 32;
@@ -184,93 +180,34 @@ function parseState(bytes) {
   return Object.freeze(state);
 }
 
-function sameIdentity(left, right) {
-  return left && right && left.dev === right.dev && left.ino === right.ino;
-}
-
-function assertOwnerOnlyDirectory(stats) {
-  if (!stats.isDirectory() || stats.isSymbolicLink()
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
-    fail("state_unavailable");
-  }
-}
-
-function assertOwnerOnlyState(stats) {
-  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1
-      || stats.size < 1 || stats.size > MAXIMUM_STATE_BYTES
-      || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
-    fail("state_invalid");
-  }
-}
-
-async function prepareStateDirectory(stateFile) {
-  if (typeof stateFile !== "string" || stateFile.length < 1 || stateFile.length > 4096) {
-    fail("invalid_configuration");
-  }
-  const directory = dirname(stateFile);
-  try {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const pathStats = await lstat(directory);
-    assertOwnerOnlyDirectory(pathStats);
-    const canonical = await realpath(directory);
-    const canonicalStats = await lstat(canonical);
-    assertOwnerOnlyDirectory(canonicalStats);
-    if (!sameIdentity(pathStats, canonicalStats)) fail("state_unavailable");
-    return canonical;
-  } catch (error) {
-    if (error instanceof ContributionDeviceCapabilityError) throw error;
-    fail("state_unavailable");
-  }
-}
-
 async function inspectState(stateFile) {
   if (typeof stateFile !== "string" || stateFile.length < 1 || stateFile.length > 4096) {
     fail("invalid_configuration");
   }
-  let directory;
-  try {
-    directory = await realpath(dirname(stateFile));
-    assertOwnerOnlyDirectory(await lstat(directory));
-  } catch (error) {
-    if (error?.code === "ENOENT") return null;
-    if (error instanceof ContributionDeviceCapabilityError) throw error;
-    fail("state_unavailable");
-  }
-  const target = join(directory, basename(stateFile));
-  let pathStats;
-  try {
-    pathStats = await lstat(target);
-  } catch (error) {
+  try { await lstat(dirname(resolve(stateFile))); }
+  catch (error) {
     if (error?.code === "ENOENT") return null;
     fail("state_unavailable");
   }
-  assertOwnerOnlyState(pathStats);
-  let handle;
-  let bytes = null;
+  const store = protectedStateStore(stateFile);
+  let nativeBytes;
   try {
-    handle = await open(target, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const opened = await handle.stat();
-    assertOwnerOnlyState(opened);
-    if (!sameIdentity(pathStats, opened)) fail("state_invalid");
-    bytes = await handle.readFile();
-    const after = await handle.stat();
-    if (!sameIdentity(opened, after) || after.nlink !== 1
-        || after.size !== bytes.byteLength || after.mtimeMs !== opened.mtimeMs) {
-      fail("state_invalid");
-    }
-    return Object.freeze({
-      state: parseState(bytes),
-      target,
-      directory,
-      identity: Object.freeze({ dev: opened.dev, ino: opened.ino }),
-    });
+    const result = store.read(basename(stateFile));
+    nativeBytes = result.data;
+    return Object.freeze({ state: parseState(nativeBytes), store,
+      name: basename(stateFile), identity: result.identity });
   } catch (error) {
+    if (error?.code === "windows_protected_state_store_missing") return null;
     if (error instanceof ContributionDeviceCapabilityError) throw error;
-    fail("state_unavailable");
-  } finally {
-    bytes?.fill(0);
-    await handle?.close().catch(() => {});
-  }
+    fail("state_invalid");
+  } finally { nativeBytes?.fill(0); }
+}
+
+function protectedStateStore(stateFile) {
+  try {
+    return createWindowsProtectedStateStore({ adapter: createWindowsFilesystemAdapter(),
+      rootPath: dirname(resolve(stateFile)), maxBytes: MAXIMUM_STATE_BYTES });
+  } catch { fail("state_unavailable"); }
 }
 
 async function readState(stateFile) {
@@ -278,74 +215,30 @@ async function readState(stateFile) {
 }
 
 async function writeNewState(stateFile, content) {
-  const directory = await prepareStateDirectory(stateFile);
-  const target = join(directory, basename(stateFile));
-  let handle;
-  let identity = null;
+  const store = protectedStateStore(stateFile);
+  const name = basename(stateFile);
+  const bytes = Buffer.from(content, "utf8");
   try {
-    handle = await open(
-      target,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
-      0o600,
-    );
-    await handle.chmod(0o600);
-    await handle.writeFile(content, "utf8");
-    await handle.sync();
-    const written = await handle.stat();
-    assertOwnerOnlyState(written);
-    if (written.size !== Buffer.byteLength(content)) fail("state_unavailable");
-    identity = Object.freeze({ dev: written.dev, ino: written.ino });
-    await handle.close();
-    handle = null;
-    const published = await lstat(target);
-    assertOwnerOnlyState(published);
-    if (!sameIdentity(identity, published)) fail("state_unavailable");
-    await syncDirectory(directory);
-    return Object.freeze({ target, directory, identity });
+    const created = store.create(name, bytes);
+    return Object.freeze({ store, name, identity: created.identity });
   } catch (error) {
-    await handle?.close().catch(() => {});
-    if (identity !== null) {
-      try {
-        const current = await lstat(target);
-        if (sameIdentity(current, identity)) {
-          assertOwnerOnlyState(current);
-          await unlink(target);
-          await syncDirectory(directory);
-        }
-      } catch (cleanupError) {
-        if (cleanupError?.code !== "ENOENT") fail("state_unavailable");
-      }
-    }
-    if (error?.code === "EEXIST") fail("credential_conflict");
-    if (error instanceof ContributionDeviceCapabilityError) throw error;
+    if (error?.code === "windows_protected_state_store_already_exists") fail("credential_conflict");
     fail("state_unavailable");
-  }
+  } finally { bytes.fill(0); }
 }
 
 async function removeCreatedState(publication) {
-  try {
-    const current = await lstat(publication.target);
-    if (!sameIdentity(current, publication.identity)) return;
-    assertOwnerOnlyState(current);
-    await unlink(publication.target);
-    await syncDirectory(publication.directory);
-  } catch (error) {
-    if (error?.code !== "ENOENT") fail("state_unavailable");
+  try { publication.store.delete(publication.name, publication.identity); }
+  catch (error) {
+    if (["missing", "identity_mismatch"].some((code) =>
+      error?.code === `windows_protected_state_store_${code}`)) return;
+    fail("state_unavailable");
   }
 }
 
 async function removeInspectedState(inspection) {
-  try {
-    const current = await lstat(inspection.target);
-    assertOwnerOnlyState(current);
-    if (!sameIdentity(current, inspection.identity)) fail("state_invalid");
-    await unlink(inspection.target);
-    await syncDirectory(inspection.directory);
-  } catch (error) {
-    if (error?.code === "ENOENT") fail("state_invalid");
-    if (error instanceof ContributionDeviceCapabilityError) throw error;
-    fail("state_unavailable");
-  }
+  try { inspection.store.delete(inspection.name, inspection.identity); }
+  catch { fail("state_invalid"); }
 }
 
 function hashSecret(deviceId, secret) {

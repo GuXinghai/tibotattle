@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createWindowsFilesystemAdapter } from "../src/platform/index.js";
+import { assertWindowsOwnerOnly, grantSyntheticEveryoneRead } from "./helpers/windows-owner-only-fixture.js";
 import { telemetryV11RequiredConsent } from "@app-usagemonitor/telemetry-contract";
 import { readIncrementalContributionV11Review, runIncrementalContributionSyncOnce } from "../src/contribution-incremental-sync.js";
 import {
@@ -20,8 +22,10 @@ import {
 import { createAttributionFixtureDevice, createAttributionFixtureService } from "./helpers/attribution-transport-fixture.js";
 
 async function fixture(t, { plans, accepted = true, granted = true, fromDay, throughDay } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "v11-local-sync-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const parent = await mkdtemp(join(tmpdir(), "v11-local-sync-"));
+  const directory = join(parent, "private");
+  createWindowsFilesystemAdapter().ensureDirectory(directory);
+  t.after(() => rm(parent, { recursive: true, force: true }));
   const indexFile = join(directory, "index.sqlite");
   const stateFile = join(directory, "device.json");
   await writeAttributionFixture(indexFile, { plans });
@@ -167,7 +171,7 @@ test("private staged progress survives a new public runner invocation and comple
   const journal = JSON.parse(journalText);
   assert.ok(journal.days.length > 0 && journal.days.length <= first.stagedDays);
   assert.ok(first.stagedDays - journal.days.length <= 1, "only the last ready day can lose its journal write at the budget boundary");
-  assert.equal((await stat(journalFile)).mode & 0o777, 0o600);
+  assertWindowsOwnerOnly(journalFile);
   assert.doesNotMatch(journalText, /sourceLocal|enrollmentNamespace|deviceId|accountTrackId|scopeId|um_device|secret|\/private\//u);
   const calls = service.calls.length;
   // This creates a new SQLite connection, hydration reader and storage adapter;
@@ -430,7 +434,7 @@ test("staged metadata cannot traverse a symlink or accept unclosed private field
   const publicFile = await fixture(t);
   const publicJournal = `${publicFile.options.indexFile}.telemetry-v11-progress.json`;
   await writeFile(publicJournal, "null", { mode: 0o600 });
-  await chmod(publicJournal, 0o644);
+  grantSyntheticEveryoneRead(publicJournal);
   const unsafe = await runIncrementalContributionSyncOnce(publicFile.options);
   assert.equal(unsafe.failure.code, "index_unavailable");
   assert.equal(publicFile.service.active(), null);

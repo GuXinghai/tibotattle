@@ -146,6 +146,13 @@ The app owns its per-user state root under Electron's user-data directory
 | Diagnostics log | Fixed error/status codes and opaque support references. | Bounded, content-free local diagnostics only. |
 | Chromium website data | Loopback dashboard session/local storage and short-lived hosted web session state. | Cleared by **Erase local data**; provider pages use the system browser. |
 
+Windows contribution device bindings, automatic settings/progress/instance locks
+and renewal state use native root-bound reads and atomic writes with protected
+current-owner DACLs. Existing inherited or broader ACL state is rejected without
+rewriting its ACL or credential identity. A failed read is unavailable evidence,
+not a fresh-install sharing choice. Migration/recovery of older ACL state and
+installed-artifact acceptance remain separate release gates.
+
 The derived accounting cache inside collector state uses compact JSON with a
 128 MiB publication and child-result transport ceiling. Existing pretty-printed
 caches remain readable without migration; observation values, source records,

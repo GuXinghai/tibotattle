@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createWindowsFilesystemAdapter } from "../src/platform/index.js";
 import { telemetryV12RequiredConsent } from "@app-usagemonitor/telemetry-contract";
 import { readIncrementalContributionV12Review, runIncrementalContributionSyncOnce } from "../src/contribution-incremental-sync.js";
 import { ATTRIBUTION_FIXTURE_BINDING as binding, ATTRIBUTION_FIXTURE_START as start,
@@ -10,8 +11,10 @@ import { ATTRIBUTION_FIXTURE_BINDING as binding, ATTRIBUTION_FIXTURE_START as st
 import { createAttributionFixtureDevice, createAttributionFixtureService } from "./helpers/attribution-transport-fixture.js";
 
 async function fixture(t, serviceOptions = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "v12-local-sync-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const parent = await mkdtemp(join(tmpdir(), "v12-local-sync-"));
+  const directory = join(parent, "private");
+  createWindowsFilesystemAdapter().ensureDirectory(directory);
+  t.after(() => rm(parent, { recursive: true, force: true }));
   const indexFile = join(directory, "index.sqlite");
   const stateFile = join(directory, "device.json");
   await writeAttributionFixture(indexFile, { boundaryFlags: [1, 3] });

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { createWindowsFilesystemAdapter } from "../../src/platform/index.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -16,7 +17,7 @@ export function createWorkspace(options = {}) {
   const root = mkdtempSync(join(tmpdir(), "local-index-refresh-"));
   const codexHome = join(root, "codex-home");
   const state = join(root, "state");
-  mkdirSync(state, { mode: 0o700 });
+  createWindowsFilesystemAdapter().ensureDirectory(state);
   const receipt = generateSyntheticCodexCorpus(codexHome, {
     seed: 7, files: 60, events: 2_400, days: 12, fillerBytesPerEvent: 160,
     endAt: "2026-09-01T00:00:00.000Z", ...options,

@@ -1,12 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  chmod,
   mkdir,
   mkdtemp,
   readFile,
   rm,
-  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -23,6 +21,8 @@ import {
   withContributionDeviceSecret,
 } from "../src/contribution-device-capability.js";
 import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/platform/index.js";
+
+import { assertWindowsOwnerOnly, grantSyntheticEveryoneRead } from "./helpers/windows-owner-only-fixture.js";
 
 const CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice;
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
@@ -143,7 +143,7 @@ test("device capability creates a UUID locally and stores only the 32-byte secre
     assert.equal(Object.isFrozen(result), true);
     assert.equal(Object.hasOwn(result, "secret"), false);
     assert.deepEqual(backend.current(), Buffer.alloc(32, 37));
-    assert.equal((await stat(stateFile)).mode & 0o777, 0o600);
+    assertWindowsOwnerOnly(stateFile);
     const state = await readFile(stateFile, "utf8");
     assert.equal(state, '{"schemaVersion":"contribution-device-binding-v1","origin":"https://usage.example","deviceId":"11111111-1111-4111-8111-111111111111","createdAt":"2026-07-26T12:00:00.000Z"}\n');
     assert.equal(state.includes(Buffer.alloc(32, 37).toString("base64url")), false);
@@ -293,7 +293,7 @@ test("local removal requires confirmed remote revocation and exact device identi
       fixedError("remote_revocation_required"),
     );
     assert.deepEqual(backend.current(), Buffer.alloc(32, 23));
-    assert.equal((await stat(stateFile)).mode & 0o777, 0o600);
+    assertWindowsOwnerOnly(stateFile);
 
     await assert.rejects(
       removeContributionDeviceCapability({
@@ -370,7 +370,7 @@ test("locked, denied, malformed, and partial states fail closed with fixed conte
       readContributionDeviceCapability({ backend: memoryBackend(), stateFile }),
       fixedError("credential_missing"),
     );
-    await chmod(stateFile, 0o644);
+    grantSyntheticEveryoneRead(stateFile);
     await assert.rejects(
       readContributionDeviceCapability({ backend: memoryBackend(Buffer.alloc(32, 2)), stateFile }),
       fixedError("state_invalid"),

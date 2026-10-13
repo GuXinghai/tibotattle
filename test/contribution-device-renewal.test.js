@@ -1,17 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   ContributionDeviceRenewalError,
   DEFAULT_RENEWAL_LEAD_MILLISECONDS,
+  defaultContributionDeviceRenewalStateFile,
   contributionDeviceCredentialRenewalDue,
   readContributionDeviceRenewalState,
   renewContributionDeviceCredentialIfDue,
   writeContributionDeviceRenewalState,
 } from "../src/contribution-device-renewal.js";
+
+import { createWindowsFilesystemAdapter } from "../src/platform/index.js";
+import { assertWindowsOwnerOnly } from "./helpers/windows-owner-only-fixture.js";
 
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
 const OTHER_DEVICE_ID = "22222222-2222-4222-8222-222222222222";
@@ -19,10 +23,16 @@ const DAY = 24 * 60 * 60 * 1_000;
 const EXPIRES_AT = "2026-09-10T00:00:00.000Z";
 const EXPIRES_EPOCH = Date.parse(EXPIRES_AT);
 
+test("renewal default entrypoint selects its fixed file without filesystem mutation", () => {
+  assert.match(defaultContributionDeviceRenewalStateFile(), /contribution-device-renewal-v1\.json$/u);
+});
+
 async function fixture(run) {
   const root = await mkdtemp(join(tmpdir(), "usage-monitor-device-renewal-"));
   try {
-    await run({ root, stateFile: join(root, "renewal.json") });
+    const privateRoot = join(root, "private");
+    createWindowsFilesystemAdapter().ensureDirectory(privateRoot);
+    await run({ root: privateRoot, stateFile: join(privateRoot, "renewal.json") });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -68,7 +78,7 @@ test("renewal state round-trips as an owner-only file and tolerates corruption",
       deviceId: DEVICE_ID,
       expiresAt: EXPIRES_AT,
     });
-    assert.equal((await stat(stateFile)).mode & 0o777, 0o600);
+    assertWindowsOwnerOnly(stateFile);
     assert.deepEqual(await readContributionDeviceRenewalState(stateFile), {
       deviceId: DEVICE_ID,
       expiresAt: EXPIRES_AT,

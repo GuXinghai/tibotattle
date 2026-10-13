@@ -9,6 +9,9 @@ import { createIncrementalContributionSyncController } from "../../src/increment
 import { LOCAL_COMPANION_SCHEMA_VERSION } from "../../src/local-companion-data.js";
 import { startLocalCompanionServer } from "./server.js";
 
+import { createWindowsFilesystemAdapter } from "../../src/platform/index.js";
+import { assertWindowsOwnerOnly, grantSyntheticEveryoneRead } from "../../test/helpers/windows-owner-only-fixture.js";
+
 const DEVICE_ID = "11111111-1111-4111-8111-111111111111";
 const PAIRING_CODE = `um_pair_${DEVICE_ID}.${"A".repeat(43)}`;
 const DISCONNECT_RECEIPT = Object.freeze({
@@ -16,6 +19,30 @@ const DISCONNECT_RECEIPT = Object.freeze({
   deliveryPaused: true,
   localCredential: "deleted",
   localBinding: "removed",
+});
+
+test("unsafe persisted disconnect intent cannot rearm delivery or begin revocation", async (t) => {
+  const files = await fixture(t);
+  const previous = { ...initialSettings("https://usage.example"), pausedReason: "device_disconnected" };
+  createWindowsFilesystemAdapter().createFile(files.settingsFile, Buffer.from(JSON.stringify(previous)));
+  const before = await readFile(files.settingsFile);
+  grantSyntheticEveryoneRead(files.settingsFile);
+  let runs = 0;
+  let revocations = 0;
+  const controller = createIncrementalContributionSyncController({
+    settingsFile: files.settingsFile, destinationOrigin: "https://usage.example",
+    runner: async () => { runs += 1; throw new Error("Unexpected delivery"); },
+    setTimeoutImpl: () => ({ unref() {} }), clearTimeoutImpl: () => {},
+  });
+  const app = await files.start({ incrementalContributionController: controller,
+    contributionDeviceDisconnectRunner: async () => { revocations += 1; return DISCONNECT_RECEIPT; },
+  });
+  assert.equal((await controller.inspect()).settingsAvailable, false);
+  await controller.runDue();
+  assert.equal(runs, 0);
+  await assertError(await disconnect(app.base), 409, "settings_unavailable");
+  assert.equal(revocations, 0);
+  assert.deepEqual(await readFile(files.settingsFile), before);
 });
 
 function initialSettings(origin) {
@@ -90,7 +117,7 @@ async function fixture(t) {
   });
   await mkdir(staticRoot, { recursive: true });
   await mkdir(join(codexHome, "sessions"), { recursive: true, mode: 0o700 });
-  await mkdir(join(stateRoot, "private"), { recursive: true, mode: 0o700 });
+  createWindowsFilesystemAdapter().ensureDirectory(join(stateRoot, "private"));
   return {
     stateRoot,
     settingsFile: join(stateRoot, "private", "incremental-contribution-sync-v1.json"),
@@ -311,7 +338,7 @@ test("a real settings file stays disconnected across companion restart until exp
   const files = await fixture(t);
   const origin = "https://usage.example";
   const previous = initialSettings(origin);
-  await writeFile(files.settingsFile, JSON.stringify(previous), { mode: 0o600 });
+  createWindowsFilesystemAdapter().createFile(files.settingsFile, Buffer.from(JSON.stringify(previous)));
   let runs = 0;
   const runnerEntered = Promise.withResolvers();
   const newController = () => createIncrementalContributionSyncController({
@@ -341,7 +368,7 @@ test("a real settings file stays disconnected across companion restart until exp
   assert.equal((await disconnect(app.base)).status, 200);
   const paused = { ...previous, pausedReason: "device_disconnected" };
   assert.deepEqual(JSON.parse(await readFile(files.settingsFile, "utf8")), paused);
-  assert.equal((await lstat(files.settingsFile)).mode & 0o777, 0o600);
+  assertWindowsOwnerOnly(files.settingsFile);
   await app.close();
   controller = newController();
   app = await files.start({
@@ -390,8 +417,8 @@ test("the real disconnector preserves retry state and pauses both queues after r
     schemaVersion: "contribution-device-binding-v1", origin, deviceId: DEVICE_ID,
     createdAt: "2026-08-03T00:00:00.000Z",
   })}\n`;
-  await writeFile(bindingFile, binding, { mode: 0o600 });
-  await writeFile(files.settingsFile, JSON.stringify(previous), { mode: 0o600 });
+  createWindowsFilesystemAdapter().createFile(bindingFile, Buffer.from(binding));
+  createWindowsFilesystemAdapter().createFile(files.settingsFile, Buffer.from(JSON.stringify(previous)));
   let stored = Buffer.alloc(32, 7);
   const backend = {
     async read() { return stored === null ? null : Buffer.from(stored); },

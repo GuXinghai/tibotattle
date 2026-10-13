@@ -1,8 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  chmod,
-  lstat,
   mkdtemp,
   readFile,
   rm,
@@ -10,7 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import {
   AUTOMATIC_CONTRIBUTION_RETIREMENT_SCHEMA_VERSION,
@@ -19,11 +17,15 @@ import {
   retireAutomaticContributionState,
 } from "../src/automatic-contribution-retirement.js";
 
+import { createWindowsFilesystemAdapter } from "../src/platform/index.js";
+import { assertWindowsOwnerOnly, grantSyntheticEveryoneRead } from "./helpers/windows-owner-only-fixture.js";
+
 const RETIRED_AT = "2026-08-27T12:00:00.000Z";
 
 async function ownerRoot() {
-  const root = await mkdtemp(join(tmpdir(), "automatic-retirement-"));
-  await chmod(root, 0o700);
+  const parent = await mkdtemp(join(tmpdir(), "automatic-retirement-"));
+  const root = join(parent, "private");
+  createWindowsFilesystemAdapter().ensureDirectory(root);
   return root;
 }
 
@@ -53,7 +55,7 @@ test("automatic retirement writes one atomic content-free downgrade tombstone", 
       priorState: "absent",
       networkActivity: false,
     });
-    assert.equal((await lstat(settingsFile)).mode & 0o777, 0o600);
+    assertWindowsOwnerOnly(settingsFile);
     assert.equal(await readFile(queueFile, "utf8"), "queue-must-survive");
     assert.equal(await readFile(preparedFile, "utf8"), "prepared-must-survive");
 
@@ -71,7 +73,7 @@ test("automatic retirement writes one atomic content-free downgrade tombstone", 
       "the tombstone must remain outside every retired scheduler schema",
     );
   } finally {
-    await rm(root, { recursive: true });
+    await rm(dirname(root), { recursive: true });
   }
 });
 
@@ -84,11 +86,8 @@ test("automatic retirement records only coarse legacy state", async () => {
     const root = await ownerRoot();
     const settingsFile = join(root, "automatic-settings.json");
     try {
-      await writeFile(
-        settingsFile,
-        typeof source === "string" ? source : JSON.stringify(source),
-        { mode: 0o600 },
-      );
+      createWindowsFilesystemAdapter().createFile(settingsFile, Buffer.from(
+        typeof source === "string" ? source : JSON.stringify(source)));
       const result = await retireAutomaticContributionState({
         settingsFile,
         now: () => new Date(RETIRED_AT),
@@ -98,22 +97,20 @@ test("automatic retirement records only coarse legacy state", async () => {
       assert.equal(serialized.includes("consent"), false);
       assert.equal(serialized.includes("destination"), false);
     } finally {
-      await rm(root, { recursive: true });
+      await rm(dirname(root), { recursive: true });
     }
   }
 });
 
 test("automatic retirement refuses unsafe files without replacing them", async (t) => {
-  if (process.platform === "win32") {
-    return t.skip("POSIX owner-mode and symlink assertions");
-  }
-  for (const unsafe of ["mode", "symlink"]) {
+  for (const unsafe of ["acl", "symlink"]) {
     const root = await ownerRoot();
     const settingsFile = join(root, "automatic-settings.json");
     const target = join(root, "target.json");
     try {
-      if (unsafe === "mode") {
-        await writeFile(settingsFile, "unsafe-mode", { mode: 0o644 });
+      if (unsafe === "acl") {
+        createWindowsFilesystemAdapter().createFile(settingsFile, Buffer.from("unsafe-mode"));
+        grantSyntheticEveryoneRead(settingsFile);
       } else {
         await writeFile(target, "symlink-target", { mode: 0o600 });
         await symlink(target, settingsFile);
@@ -124,11 +121,11 @@ test("automatic retirement refuses unsafe files without replacing them", async (
           && error.code === "automatic_contribution_retirement_settings_unavailable",
       );
       assert.equal(
-        await readFile(unsafe === "mode" ? settingsFile : target, "utf8"),
-        unsafe === "mode" ? "unsafe-mode" : "symlink-target",
+        await readFile(unsafe === "acl" ? settingsFile : target, "utf8"),
+        unsafe === "acl" ? "unsafe-mode" : "symlink-target",
       );
     } finally {
-      await rm(root, { recursive: true });
+      await rm(dirname(root), { recursive: true });
     }
   }
 });

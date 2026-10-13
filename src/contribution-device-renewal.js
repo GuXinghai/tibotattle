@@ -1,9 +1,11 @@
-import { constants } from "node:fs";
-import { mkdir, open, rename, unlink } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
-
+import { join } from "node:path";
+import { createOwnerOnlyAutomaticContributionStorageContext } from "./platform/index.js";
 import { defaultExportStateDirectory } from "./export-identity.js";
 import { renewContributionDeviceCredential } from "./contribution-device-client.js";
+
+const renewalStorage = createOwnerOnlyAutomaticContributionStorageContext({
+  createError: () => new ContributionDeviceRenewalError("state_unavailable"),
+});
 
 // Companion half of the sign-in-once auto-renewal (section 2 of
 // docs/design/2026-08-11-sign-in-once-durability.md). The 30-day device
@@ -83,20 +85,11 @@ function canonicalRenewalState({ deviceId, expiresAt }) {
  */
 export async function readContributionDeviceRenewalState(stateFile) {
   if (typeof stateFile !== "string" || stateFile.length < 1) fail("invalid_configuration");
-  let handle;
   let text;
   try {
-    handle = await open(stateFile, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const stats = await handle.stat();
-    if (!stats.isFile() || stats.size < 1 || stats.size > MAXIMUM_STATE_BYTES) {
-      return null;
-    }
-    text = (await handle.readFile()).toString("utf8");
-  } catch {
-    return null;
-  } finally {
-    await handle?.close().catch(() => {});
-  }
+    text = await renewalStorage.readSettingsText({ settingsFile: stateFile, maximumBytes: MAXIMUM_STATE_BYTES });
+    if (text === null) return null;
+  } catch { return null; }
   let parsed;
   try {
     parsed = JSON.parse(text);
@@ -120,29 +113,11 @@ export async function writeContributionDeviceRenewalState(stateFile, { deviceId,
     fail("invalid_configuration");
   }
   const content = canonicalRenewalState({ deviceId, expiresAt });
-  const directory = dirname(stateFile);
-  const temporary = join(directory, `.${basename(stateFile)}.${process.pid}.tmp`);
-  let handle;
   try {
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    handle = await open(
-      temporary,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0),
-      0o600,
-    );
-    await handle.chmod(0o600);
-    await handle.writeFile(content, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temporary, stateFile);
+    await renewalStorage.writeSettingsText({ settingsFile: stateFile, text: content,
+      maximumBytes: MAXIMUM_STATE_BYTES });
     return Object.freeze({ deviceId, expiresAt });
-  } catch {
-    fail("state_unavailable");
-  } finally {
-    await handle?.close().catch(() => {});
-    await unlink(temporary).catch(() => {});
-  }
+  } catch { fail("state_unavailable"); }
 }
 
 /**

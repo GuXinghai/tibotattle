@@ -7,7 +7,8 @@ import {
   CONTRIBUTION_PREFERENCE_SCHEMA_VERSION,
   createLocalContributionPreference,
 } from "../src/application/index.js";
-import { createOwnerOnlyAutomaticContributionStorageContext } from "../src/platform/index.js";
+import { createWindowsFilesystemAdapter, createOwnerOnlyAutomaticContributionStorageContext } from "../src/platform/index.js";
+import { grantSyntheticEveryoneRead } from "./helpers/windows-owner-only-fixture.js";
 
 const START = "2026-09-04T12:00:00.000Z";
 const DAY = 24 * 60 * 60 * 1_000;
@@ -19,6 +20,26 @@ const OPTIONS = {
   defaultEnabled: true,
   now: () => new Date(START),
 };
+
+test("unsafe persisted opt-out cannot become a fresh-install default-on preference", async (t) => {
+  const parent = await mkdtemp(join(tmpdir(), "preference-unsafe-opt-out-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const root = join(parent, "private");
+  createWindowsFilesystemAdapter().ensureDirectory(root);
+  const settingsFile = join(root, "preference.json");
+  const storage = createOwnerOnlyAutomaticContributionStorageContext({
+    createError: (code) => Object.assign(new Error("storage unavailable"), { code }),
+  });
+  await create(storage, { settingsFile }).setEnabled(false);
+  const before = await readFile(settingsFile);
+  grantSyntheticEveryoneRead(settingsFile);
+  const preference = create(storage, { settingsFile, installationState: "fresh", defaultEnabled: true });
+  const result = await preference.initialize();
+  assert.equal(result.available, false);
+  assert.equal(result.enabled, false);
+  await assert.rejects(preference.setEnabled(true));
+  assert.deepEqual(await readFile(settingsFile), before);
+});
 
 function memoryStorage(initial = null) {
   let text = initial;
@@ -290,7 +311,9 @@ test("a failed write never grants authority and poisons further mutations", asyn
 
 test("owner-only settings adapter preserves opt-out across a real restart and refuses corrupt state", async () => {
   const directory = await mkdtemp(join(tmpdir(), "tibotattle-preference-"));
-  const settingsFile = join(directory, "preference.json");
+  const privateDirectory = join(directory, "private");
+  createWindowsFilesystemAdapter().ensureDirectory(privateDirectory);
+  const settingsFile = join(privateDirectory, "preference.json");
   const storage = createOwnerOnlyAutomaticContributionStorageContext({
     createError: (code) => Object.assign(new Error("storage unavailable"), { code }),
   });
