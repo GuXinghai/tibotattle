@@ -7,6 +7,11 @@ status: complete
 
 # Claude Desktop durable ledger decision
 
+> **Superseded 2026-10-13:** the Windows-only cutover retires this prototype
+> and its source, tests, fixtures, and benchmark tooling. This record preserves
+> dated audit evidence; retired paths below are historical references. See the
+> [retirement decision](../decisions/2026-10-13-claude-desktop-shadow-retirement.md).
+
 > **Current boundary (source `52399658`, reviewed 2026-08-27):** this record
 > preserves the provider-isolated prototype decision and its measured evidence;
 > it does not describe a shipping Claude product surface. PR #78 retired the
@@ -35,14 +40,14 @@ never default to Claude, and the compatibility rule must not be used to hide an
 unclassified new row.
 
 The Phase 0 implementation is
-[`src/claude-desktop-ledger-prototype.js`](../../src/claude-desktop-ledger-prototype.js).
+`src/claude-desktop-ledger-prototype.js`.
 It proves the lifecycle contract but is not yet wired into the installed application.
 At this decision's snapshot, an experimental local-companion quota-state path and
 closed quota route had also been implemented. Those integration files and the route
 were later retired. The remaining
-[`src/claude-desktop-plan-history.js`](../../src/claude-desktop-plan-history.js) reader
+`src/claude-desktop-plan-history.js` reader
 is used by prototype and benchmark code, not by the installed refresh. Separately,
-[`src/claude-desktop-pricing.js`](../../src/claude-desktop-pricing.js) prices a rich
+`src/claude-desktop-pricing.js` prices a rich
 canonical winner through the existing registry and is exercised by the prototype
 ledger/incremental path with a separate replay-safe summary cache. It has no production
 server call site or installed consumer. Quota ingestion must not be inferred from

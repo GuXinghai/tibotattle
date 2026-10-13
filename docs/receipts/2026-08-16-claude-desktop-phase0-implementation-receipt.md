@@ -7,6 +7,11 @@ status: historical-evidence
 
 # Claude Desktop Phase 0 preparation implementation receipt
 
+> **Superseded 2026-10-13:** the Windows-only cutover retires this prototype
+> and its source, tests, fixtures, and benchmark tooling. This record preserves
+> dated audit evidence; retired paths below are historical references. See the
+> [retirement decision](../decisions/2026-10-13-claude-desktop-shadow-retirement.md).
+
 > **Point-in-time evidence, not current product behavior.** PR #78 later
 > removed the shipping Claude plan-history refresh, quota-state store, and
 > `/api/local/claude/quota` route recorded below. The separately installed

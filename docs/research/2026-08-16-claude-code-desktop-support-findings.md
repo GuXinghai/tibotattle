@@ -7,6 +7,11 @@ status: historical-evidence
 
 # Claude Code Desktop support findings
 
+> **Superseded 2026-10-13:** the Windows-only cutover retires this prototype
+> and its source, tests, fixtures, and benchmark tooling. This record preserves
+> dated audit evidence; retired paths below are historical references. See the
+> [retirement decision](../decisions/2026-10-13-claude-desktop-shadow-retirement.md).
+
 > **Point-in-time research, not a shipping-source contract.** The passive
 > source findings below explain the experiment, but current installed refresh
 > no longer reads Claude plan history or transcript trees. Use the maintained

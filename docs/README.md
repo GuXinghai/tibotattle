@@ -16,6 +16,7 @@ an informal archive.
 | Area | Authority | Boundary |
 |---|---|---|
 | Platform scope | [Windows-only platform support](./decisions/2026-10-12-windows-only.md) | Accepted product decision: TiboTattle supports Windows only; earlier macOS and Linux platform records are superseded and removed |
+| Claude Desktop prototype retirement | [Shadow prototype retirement](./decisions/2026-10-13-claude-desktop-shadow-retirement.md) | Accepted Windows-only source retirement; generic provider and hosted contracts remain, existing local prototype state is preserved |
 | 0.1.19 patches | [Model attribution and labels](./plans/2026-09-06-v0.1.19-model-attribution-and-labels.md) | Prepared model-inheritance and display patches; private history conservation verified, release pending |
 | Status | [Current product and release status](./current-status.md) | Commit- and date-stamped source, live-service, published-release, updater, and support snapshot; reverify before relying on it later |
 | User help | [User guide](./user-guide.md) | Installation, first run, uncertainty, refresh/recovery, optional contribution, data, updates, and support |

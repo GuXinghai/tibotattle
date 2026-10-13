@@ -124,8 +124,6 @@ projects them through owned adapters:
 |---|---|---|
 | Codex rollout JSONL and associated local log sources under the selected `CODEX_HOME` | [`src/providers/codex/logs.js`](../../src/providers/codex/logs.js) plus the bounded unified-index ingestion pipeline | Read-only, no-follow and identity/change checks; minimized typed events only |
 | `codex app-server` account and rate-limit JSONL protocol | [`src/providers/codex/account.js`](../../src/providers/codex/account.js) | Local stdio subprocess; account identifiers are sanitized or HMAC-scoped |
-| `~/Library/Application Support/Claude/claude-code-sessions` and `~/.claude/projects` | [`src/claude-desktop-source-inventory.js`](../../src/claude-desktop-source-inventory.js) and transcript export owner | Bounded, symlink-refusing local inventory; content is minimized before derived storage |
-| Claude plan history and local databases used by the disabled shadow qualification lane | [`src/claude-desktop-shadow-controller.js`](../../src/claude-desktop-shadow-controller.js) and its closed source/readiness owners | Local-only, hard-disabled in the shipping product; no loopback quota route or production refresh state |
 | Claude status-line stdin | [`src/claude-callback-runtime.js`](../../src/claude-callback-runtime.js) | Bounded local callback stream; no Anthropic endpoint |
 | Windows Credential Manager entries | Owned native Credential Manager adapter | Fixed service/account attributes and app/binding authority |
 
@@ -144,6 +142,12 @@ unexpected query strings. Responses are `no-store`; the server emits no CORS
 permission. Non-`GET` local mutations require the same origin and the fixed
 `X-Usage-Monitor-Local: 1` header; handlers that accept bodies additionally
 enforce their closed JSON shape and byte ceiling.
+
+During explicit shutdown the companion fences new work synchronously and
+returns `503 server_shutting_down` for valid requests while its owned workers
+drain. Loopback and Host checks remain active; a foreign-origin mutation is
+still refused with `403`. Repeated close calls share one cleanup promise, and
+cleanup failure still closes the listener before propagating the failure.
 
 `GET /api/local/timeline/window-breakdown` accepts only `from` and `to` as
 bounded base-ten safe integers. `GET /api/local/model-performance` requires
@@ -589,10 +593,12 @@ disconnects, and authentication failures are collapsed into fixed local error
 classes before the dashboard sees a projection.
 
 This is a local Codex subprocess contract, **not** a call to the OpenAI API.
-Likewise, Claude Desktop support reads allowlisted local application-support,
-status-line, and transcript sources and does **not** call the Anthropic API.
-The former shipping quota refresh/state/loopback chain has been retired; the
-separate hard-disabled shadow qualification lane remains local-only.
+The separate Claude status-line callback does **not** call the Anthropic API.
+Claude Desktop shadow qualification and its quota refresh/state/loopback chain
+have been retired under the Windows-only platform decision. The
+standalone managed callback requires explicit Windows credential readiness and
+adapter injection; its CLI/runtime defaults currently fail closed without that
+composition.
 Price-document URLs stored in the accounting registry are evidence provenance,
 not runtime billing or inference endpoints.
 
@@ -720,7 +726,7 @@ defines these as the only reviewed public entries into owned root-source areas:
 | Application | [`src/application/index.js`](../../src/application/index.js), [`claude-callback-capability.js`](../../src/application/claude-callback-capability.js), [`local-review.js`](../../src/application/local-review.js), [`local-contribution-preparation.js`](../../src/application/local-contribution-preparation.js), [`local-incremental-contribution-sync.js`](../../src/application/local-incremental-contribution-sync.js), [`local-prepared-contribution.js`](../../src/application/local-prepared-contribution.js) |
 | Contribution | [`src/contribution/index.js`](../../src/contribution/index.js), [`telemetry-v1-chunks.js`](../../src/contribution/telemetry-v1-chunks.js) |
 | Export | [`src/export/bundle-verification.js`](../../src/export/bundle-verification.js), [`canonical-json.js`](../../src/export/canonical-json.js), [`index.js`](../../src/export/index.js), [`workspace-runtime.js`](../../src/export/workspace-runtime.js), [`set-materialization-runtime.js`](../../src/export/set-materialization-runtime.js) |
-| Platform | [`src/platform/index.js`](../../src/platform/index.js), [`claude-callback-lifecycle.js`](../../src/platform/claude-callback-lifecycle.js), `local-review.js`, [`owner-only-prepared-contribution-storage.js`](../../src/platform/owner-only-prepared-contribution-storage.js), [`telemetry-envelope.js`](../../src/platform/telemetry-envelope.js), [`telemetry-v1-envelope.js`](../../src/platform/telemetry-v1-envelope.js) |
+| Platform | [`src/platform/index.js`](../../src/platform/index.js), [`windows-accountless-installation-credential.js`](../../src/platform/windows-accountless-installation-credential.js), [`windows-account-observation-credential.js`](../../src/platform/windows-account-observation-credential.js), [`windows-credential-manager-probe.js`](../../src/platform/windows-credential-manager-probe.js), [`claude-callback-lifecycle.js`](../../src/platform/claude-callback-lifecycle.js), [`owner-only-prepared-contribution-storage.js`](../../src/platform/owner-only-prepared-contribution-storage.js), [`telemetry-envelope.js`](../../src/platform/telemetry-envelope.js), [`telemetry-v1-envelope.js`](../../src/platform/telemetry-v1-envelope.js) |
 | Providers | [`src/providers/claude/statusline.js`](../../src/providers/claude/statusline.js), [`src/providers/codex/account.js`](../../src/providers/codex/account.js), [`src/providers/codex/logs.js`](../../src/providers/codex/logs.js) |
 | Reporting | [`src/reporting/index.js`](../../src/reporting/index.js) |
 
@@ -783,7 +789,6 @@ The owned local SQLite surfaces are:
 |---|---|
 | Local evidence and accounting | [`local-collector-state.js`](../../src/local-collector-state.js), `local-unified-index.js`, `local-analysis-index.js`, and its private `local-analysis-extract-worker.js` shard writer |
 | Model performance timing | [`inference-timing-store.js`](../../src/platform/inference-timing-store.js): owner-only `inference-timing-v2/source-<Codex-home digest>/timing-experiment.sqlite` below the companion state root; method and SQLite user version 2, maximum 256 MiB; additive `tool-free-v1/timing-experiment.sqlite` within that source directory uses version 3 and its own 256 MiB cap, preserving the original store |
-| Claude shadow pipeline | [`claude-desktop-incremental-canonicalizer.js`](../../src/claude-desktop-incremental-canonicalizer.js), [`claude-desktop-ledger-prototype.js`](../../src/claude-desktop-ledger-prototype.js), [`claude-desktop-pricing-cache.js`](../../src/claude-desktop-pricing-cache.js), [`claude-desktop-shadow-store.js`](../../src/claude-desktop-shadow-store.js) |
 | Contribution and export | [`local-contribution-sync-queue-storage.js`](../../src/platform/local-contribution-sync-queue-storage.js), [`owner-only-export-workspace-storage.js`](../../src/platform/owner-only-export-workspace-storage.js), [`export-set-verification-storage.js`](../../src/platform/export-set-verification-storage.js) |
 | Windows qualification | [`windows-credential-operation-audit.js`](../../src/platform/windows-credential-operation-audit.js), a bounded local audit store rather than a shipping credential backend |
 
@@ -823,7 +828,7 @@ spread across callers:
 |---|---|
 | `runcost/browser` | [`@app-usagemonitor/accounting`](../../packages/accounting/index.js) compiles pinned price cards and performs exact API-price-equivalent calculation |
 | `ccusage` CLI JSON | [`src/ccusage.js`](../../src/ccusage.js) provides a bounded diagnostic cross-check subprocess |
-| `@github/keytar` native binding | Retained for standalone CLI and local-review compatibility; the packaged companion runtime's reachable export-identity, account-observation, and contribution-device capabilities use the native broker above. The broker protocol also reserves the closed `claude_session_pseudonym` mapping, while the currently standalone Claude callback retains keytar. |
+| `@github/keytar` Windows x64 native binding | [`src/platform/windows-credential-manager-probe.js`](../../src/platform/windows-credential-manager-probe.js) loads the audited binding for a disposable qualification probe. Packaged companion credentials use the native broker above. The separate Claude callback capability requires explicit Windows readiness and backend composition; it has no keytar production fallback. |
 | Ajv | Owned schema modules compile and enforce persisted export, accounting, synthetic, and R7 JSON schemas |
 | `oauth4webapi` | [`apps/worker/src/identity-oidc.ts`](../../apps/worker/src/identity-oidc.ts) owns pinned-provider ID-token verification and claim projection |
 | `jsonc-parser` | [`apps/worker/src/strict-json.ts`](../../apps/worker/src/strict-json.ts) enforces strict JSON intake, including duplicate-key refusal; owner scripts also parse reviewed JSONC configuration |
