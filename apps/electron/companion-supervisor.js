@@ -1,9 +1,6 @@
 import { spawn as nodeSpawn } from "node:child_process";
-import { posix } from "node:path";
 
 import {
-  LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
-  LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
 } from "../../src/platform/index.js";
@@ -64,8 +61,6 @@ const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "PROCESSOR_ARCHITEW6432",
   "TEMP",
   "TMP",
-  "TMPDIR",
-  "XDG_STATE_HOME",
   "LANG",
   "LC_ALL",
   "TZ",
@@ -111,42 +106,11 @@ function disposeCredentialBroker(broker) {
   try { broker?.dispose?.(); } catch { /* Child teardown must still complete. */ }
 }
 
-function companionEnvironment(environment, parentPid, credentialBrokerKind = null, platform = process.platform) {
+function companionEnvironment(environment, parentPid, credentialBrokerKind = null) {
   const selected = {};
   for (const key of COMPANION_ENVIRONMENT_KEYS) {
-    const value = environmentValue(environment, key, platform);
+    const value = environmentValue(environment, key);
     if (value !== undefined) selected[key] = value;
-  }
-  // Only the explicit local Mac QA lane can select a private identity file.
-  // Never pass secret bytes or silently fall back to Keychain on a broken pair.
-  if (selected.USAGE_MONITOR_TEST_LANE === "macos-electron-local-qa-v1") {
-    const file = environmentProperty(environment, "USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE", platform);
-    const accountFile = environmentProperty(environment, "USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE", platform);
-    const enabled = environmentProperty(environment, "USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY", platform);
-    if (file !== undefined || enabled !== undefined || accountFile !== undefined) {
-      if (typeof file !== "string" || !file.startsWith("/") || file.includes("\0")
-          || enabled !== "1"
-          || environmentProperty(environment, "USAGE_MONITOR_CENTRAL_ORIGIN", platform)
-          || environmentProperty(environment, "APP_USAGEMONITOR_EXPORT_SECRET", platform) !== undefined) {
-        throw shellError("electron_configuration_invalid");
-      }
-      selected.USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE = file;
-      selected.USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY = "1";
-      if (accountFile !== undefined) {
-        // These are Darwin paths even when a contract test runs on Windows.
-        if (platform !== "darwin" || typeof accountFile !== "string"
-            || !posix.isAbsolute(accountFile) || accountFile.includes("\0")
-            || posix.resolve(accountFile) !== accountFile || posix.resolve(file) !== file
-            || posix.basename(file) !== "export-identity" || posix.basename(posix.dirname(file)) !== "identity"
-            || accountFile !== posix.join(posix.dirname(file), "account-observation-development")
-            || environmentProperty(environment, "USAGE_MONITOR_ACCOUNTLESS_ORIGIN", platform)
-            || environmentProperty(environment, "USAGE_MONITOR_ACCOUNTLESS_MODE", platform)
-            || credentialBrokerKind !== null) {
-          throw shellError("electron_configuration_invalid");
-        }
-        selected.USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE = accountFile;
-      }
-    }
   }
   // The child is a Node companion launched by Electron, never another GUI.
   selected.ELECTRON_RUN_AS_NODE = "1";
@@ -154,36 +118,20 @@ function companionEnvironment(environment, parentPid, credentialBrokerKind = nul
   selected.USAGE_MONITOR_PARENT_PID = String(parentPid);
   // Only an explicitly composed parent broker can announce this descriptor.
   // An inherited native-app FD is never accepted from the launch environment.
-  if (credentialBrokerKind === "macos_keychain") {
-    selected.USAGE_MONITOR_KEYCHAIN_BROKER_FD = "4";
-  }
-  if (credentialBrokerKind === "linux_secret_service") {
-    selected.USAGE_MONITOR_LINUX_SECRET_SERVICE_BROKER_FD = "4";
-  }
   if (credentialBrokerKind === "windows_account_observation") {
     selected[WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV] =
       WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER;
   }
-  if (credentialBrokerKind === "linux_account_observation") {
-    selected[LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV] =
-      LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER;
-  }
   return selected;
 }
 
-function environmentValue(environment, key, platform) {
-  const candidates = environmentCandidates(environment, key, platform);
+function environmentValue(environment, key) {
+  const candidates = environmentCandidates(environment, key);
   const stringCandidate = candidates.find((name) => typeof environment[name] === "string");
   return stringCandidate === undefined ? undefined : environment[stringCandidate];
 }
 
-function environmentProperty(environment, key, platform) {
-  const candidates = environmentCandidates(environment, key, platform);
-  return candidates.length > 0 ? environment[candidates[0]] : undefined;
-}
-
-function environmentCandidates(environment, key, platform) {
-  if (platform !== "win32") return Object.hasOwn(environment, key) ? [key] : [];
+function environmentCandidates(environment, key) {
   // Windows treats environment variable names without regard to case, while
   // callers and tests can still supply a plain object containing both PATH
   // and Path. Prefer the canonical allowlist spelling, then use a stable
@@ -207,7 +155,6 @@ export function createCompanionSupervisor({
   args = [],
   cwd,
   environment = process.env,
-  platform = process.platform,
   startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
   shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS,
   parentPid = process.pid,
@@ -216,10 +163,7 @@ export function createCompanionSupervisor({
   setTimer = setTimeout,
   clearTimer = clearTimeout,
   attachPrivateChannel,
-  attachCredentialBroker,
-  attachLinuxSecretServiceBroker,
   attachWindowsAccountObservationBroker,
-  attachLinuxAccountObservationBroker,
 } = {}) {
   if (typeof spawnChild !== "function") throw new TypeError("spawnChild is required");
   if (typeof command !== "string" || command.length === 0) {
@@ -234,25 +178,9 @@ export function createCompanionSupervisor({
   if (attachPrivateChannel !== undefined && typeof attachPrivateChannel !== "function") {
     throw new TypeError("private channel factory is invalid");
   }
-  if (attachCredentialBroker !== undefined && typeof attachCredentialBroker !== "function") {
-    throw new TypeError("credential broker factory is invalid");
-  }
-  if (attachLinuxSecretServiceBroker !== undefined
-      && typeof attachLinuxSecretServiceBroker !== "function") {
-    throw new TypeError("Linux Secret Service broker factory is invalid");
-  }
   if (attachWindowsAccountObservationBroker !== undefined
       && typeof attachWindowsAccountObservationBroker !== "function") {
     throw new TypeError("Windows account-observation broker factory is invalid");
-  }
-  if (attachLinuxAccountObservationBroker !== undefined
-      && typeof attachLinuxAccountObservationBroker !== "function") {
-    throw new TypeError("Linux account-observation broker factory is invalid");
-  }
-  if ([attachCredentialBroker, attachLinuxSecretServiceBroker,
-    attachWindowsAccountObservationBroker, attachLinuxAccountObservationBroker]
-    .filter((factory) => factory !== undefined).length > 1) {
-    throw new TypeError("credential broker factories are mutually exclusive");
   }
   assertTimeout(startupTimeoutMs, "startupTimeoutMs");
   assertTimeout(shutdownTimeoutMs, "shutdownTimeoutMs");
@@ -276,15 +204,11 @@ export function createCompanionSupervisor({
   let privateChannel = null;
   let credentialBroker = null;
   let activeChildLifecycleObservation = null;
-  const selectedCredentialBroker = attachCredentialBroker ?? attachLinuxSecretServiceBroker;
-  const selectedAccountObservationBroker = attachWindowsAccountObservationBroker
-    ?? attachLinuxAccountObservationBroker;
+  const selectedAccountObservationBroker = attachWindowsAccountObservationBroker;
   const requiresNodeIpc = attachPrivateChannel !== undefined
     || selectedAccountObservationBroker !== undefined;
-  const credentialBrokerKind = attachCredentialBroker !== undefined ? "macos_keychain"
-    : attachLinuxSecretServiceBroker !== undefined ? "linux_secret_service"
-      : attachWindowsAccountObservationBroker !== undefined ? "windows_account_observation"
-        : attachLinuxAccountObservationBroker !== undefined ? "linux_account_observation" : null;
+  const credentialBrokerKind = selectedAccountObservationBroker !== undefined
+    ? "windows_account_observation" : null;
 
   function stateSnapshot() {
     return Object.freeze({
@@ -464,14 +388,11 @@ export function createCompanionSupervisor({
       try {
         currentChild = spawnChild(command, [...args], {
           cwd,
-          env: companionEnvironment(environment, parentPid, credentialBrokerKind, platform),
-          // Fixed Windows/Linux observation and accountless messages share
-          // one inherited Node IPC channel with distinct closed schemas.
-          // macOS and legacy Linux qualification retain their FD4 pipes.
-          stdio: selectedCredentialBroker
-            ? ["ignore", "pipe", "pipe", attachPrivateChannel ? "ipc" : "ignore", "pipe"]
-            : (attachPrivateChannel || selectedAccountObservationBroker)
-              ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
+          env: companionEnvironment(environment, parentPid, credentialBrokerKind),
+          // Fixed Windows observation and accountless messages share one
+          // inherited Node IPC channel with distinct closed schemas.
+          stdio: (attachPrivateChannel || selectedAccountObservationBroker)
+            ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
           windowsHide: true,
         });
       } catch {
@@ -490,13 +411,6 @@ export function createCompanionSupervisor({
         return;
       }
       try {
-        if (selectedCredentialBroker) {
-          currentCredentialBroker = selectedCredentialBroker(currentChild.stdio?.[4]);
-          if (typeof currentCredentialBroker?.dispose !== "function") {
-            throw new TypeError("credential broker is invalid");
-          }
-          credentialBroker = currentCredentialBroker;
-        }
         if (selectedAccountObservationBroker) {
           currentCredentialBroker = selectedAccountObservationBroker(currentChild);
           if (typeof currentCredentialBroker?.dispose !== "function") {

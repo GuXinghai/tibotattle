@@ -59,7 +59,6 @@ export function createDesktopTrayTemplate({
   statusLabel,
   locale = "system",
   systemLocales = defaultSystemLocales(),
-  platform = process.platform,
   now = Date.now(),
 } = {}) {
   if (typeof appName !== "string" || appName.trim().length === 0) {
@@ -116,7 +115,6 @@ export function createDesktopTrayTemplate({
     );
   }
 
-  const macOS = platform === "darwin";
   const headerSubLabel = projectedStatus.status === "analyzing"
     ? projectedStatus.label
     : projectedStatus.evidenceLabel;
@@ -144,10 +142,8 @@ export function createDesktopTrayTemplate({
           click: boundedActions.refresh,
           accelerator: "CmdOrCtrl+R",
         };
-  // Electron maps `sublabel` to AppKit's native secondary line. Keep the
-  // second disabled item as a hidden compatibility row so older injected
-  // callers/tests that inspect the fallback shape remain safe; it is visible
-  // on Windows/Linux where sublabel is not a supported native presentation.
+  // Windows has no native secondary line for the header, so the status text
+  // stays in a second disabled row.
   const template = [
     {
       label: projectedStatus.selectionLabel ? `${appName} · ${projectedStatus.selectionLabel}` : desktopText("electron.tray.allowanceTitle", {
@@ -155,12 +151,10 @@ export function createDesktopTrayTemplate({
         allowance: projectedStatus.selectionLabel ?? projectedStatus.compactTitle,
       }, textOptions),
       enabled: false,
-      ...(macOS ? { sublabel: headerSubLabel } : {}),
     },
     {
       label: headerSubLabel,
       enabled: false,
-      ...(macOS ? { visible: false } : {}),
     },
   ];
   for (const window of projectedStatus.windows ?? []) {
@@ -348,25 +342,12 @@ function templateSourceFromBitmap(nativeImage, bitmap) {
   return null;
 }
 
-function markTemplateImage(image) {
-  if (image === undefined || image === null || typeof image !== "object") return image;
-  if (typeof image.setTemplateImage === "function") {
-    try {
-      image.setTemplateImage(true);
-    } catch {
-      return null;
-    }
-  }
-  return image;
-}
-
 /**
  * Build the exact 16pt tray mark with distinct 1x and Retina bitmaps.
  *
  * Resizing a 64px source directly to a 16px scale-1 NativeImage leaves
- * AppKit no 2x backing to select, so macOS enlarges that one representation
- * on a Retina menu bar.  Use Electron's representation API to retain the
- * same reviewed mark at both physical sizes.  The source remains the
+ * Windows no 2x backing to select for a scaled taskbar.  Use Electron's
+ * representation API to retain the same reviewed mark at both physical sizes.  The source remains the
  * PNG-decoded 64px alpha template above; this helper never draws new art.
  */
 function highDensityTemplateImage(nativeImage, source) {
@@ -640,25 +621,22 @@ function composeNativeTrayGlyph(baseSource, descriptor) {
   return output;
 }
 
-function dynamicTemplateImage(nativeImage, baseSource, descriptor, platform) {
+function dynamicTemplateImage(nativeImage, baseSource, descriptor) {
   const bitmap = composeNativeTrayGlyph(baseSource, descriptor);
   if (bitmap === null) return null;
-  if (platform !== "darwin") {
-    // A dark backing keeps the white glyph and meters readable on both light
-    // and dark system trays that do not support template-image recoloring.
-    for (let offset = 0; offset < bitmap.length; offset += 4) {
-      const alpha = bitmap[offset + 3] / 255;
-      for (let channel = 0; channel < 3; channel++) bitmap[offset + channel] = Math.round(36 + 219 * alpha);
-      bitmap[offset + 3] = 255;
-    }
+  // A dark backing keeps the white glyph and meters readable on both light
+  // and dark system trays.
+  for (let offset = 0; offset < bitmap.length; offset += 4) {
+    const alpha = bitmap[offset + 3] / 255;
+    for (let channel = 0; channel < 3; channel++) bitmap[offset + channel] = Math.round(36 + 219 * alpha);
+    bitmap[offset + 3] = 255;
   }
   const source = templateSourceFromBitmap(nativeImage, bitmap);
   if (source === null) return null;
-  const image = finalizeTemplateSource(nativeImage, source);
-  return platform === "darwin" ? markTemplateImage(image) : image;
+  return finalizeTemplateSource(nativeImage, source);
 }
 
-function desktopTrayAsset({ nativeImage, resourceRoot, platform, icon }) {
+function desktopTrayAsset({ nativeImage, resourceRoot, icon }) {
   if (icon !== undefined) return { baseSource: null, fallback: icon };
   if (typeof nativeImage?.createFromPath !== "function") return { baseSource: null, fallback: undefined };
   if (typeof resourceRoot !== "string" || !isAbsolute(resourceRoot)) {
@@ -734,7 +712,7 @@ function desktopTrayAsset({ nativeImage, resourceRoot, platform, icon }) {
 }
 
 /**
- * Create a bounded dynamic macOS tray-image resolver.
+ * Create a bounded dynamic tray-image resolver.
  *
  * It loads and extracts the trusted brand asset once. Each status change may
  * compose a new 16pt template glyph, but the last semantic state and image
@@ -745,10 +723,9 @@ export function createDesktopTrayIconFactory(options = {}) {
   const {
     nativeImage,
     resourceRoot,
-    platform = process.platform,
     icon,
   } = options;
-  const asset = desktopTrayAsset({ nativeImage, resourceRoot, platform, icon });
+  const asset = desktopTrayAsset({ nativeImage, resourceRoot, icon });
   let lastKey = null;
   let lastIcon;
   let fallbackResolved = false;
@@ -757,24 +734,17 @@ export function createDesktopTrayIconFactory(options = {}) {
   function resolveFallback() {
     if (!fallbackResolved) {
       fallbackResolved = true;
-      if (platform !== "darwin") {
-        fallback = resizeTemplate(asset.fallback) ?? asset.fallback;
-      } else {
-        fallback = asset.baseSource === null
-          ? markTemplateImage(asset.fallback)
-          : markTemplateImage(finalizeTemplateSource(nativeImage, asset.baseSource))
-            ?? markTemplateImage(asset.fallback);
-      }
+      fallback = resizeTemplate(asset.fallback) ?? asset.fallback;
     }
     return fallback;
   }
 
   function resolve(trayStatus, projectionOptions = {}) {
-    if (asset.baseSource === null || (platform !== "darwin" && projectionOptions.preferences === undefined)) return resolveFallback();
+    if (asset.baseSource === null || projectionOptions.preferences === undefined) return resolveFallback();
     const descriptor = trayGlyphDescriptor(trayStatus, projectionOptions);
     const key = trayGlyphKey(descriptor);
     if (key === lastKey) return lastIcon;
-    const next = dynamicTemplateImage(nativeImage, asset.baseSource, descriptor, platform)
+    const next = dynamicTemplateImage(nativeImage, asset.baseSource, descriptor)
       ?? resolveFallback();
     lastKey = key;
     lastIcon = next;
@@ -796,14 +766,12 @@ export function createDesktopTrayIconFactory(options = {}) {
 export function resolveDesktopTrayIcon({
   nativeImage,
   resourceRoot,
-  platform = process.platform,
   icon,
   trayStatus,
 } = {}) {
   return createDesktopTrayIconFactory({
     nativeImage,
     resourceRoot,
-    platform,
     icon,
   }).resolve(trayStatus);
 }

@@ -1,5 +1,5 @@
 import { isAbsolute, join, resolve } from "node:path";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import distribution from "../../config/electron-production-distribution.cjs";
 import { DEPLOYMENT_ENDPOINTS } from "../../config/deployment-endpoints.js";
 
@@ -17,10 +17,7 @@ import {
   createDesktopPlatformServices,
   validateDesktopCodexHome,
 } from "./desktop-platform-services.js";
-import {
-  createPosixDesktopSettingsBackend,
-  createWindowsDesktopSettingsBackend,
-} from "./desktop-settings-backends.js";
+import { createWindowsDesktopSettingsBackend } from "./desktop-settings-backends.js";
 import { createDesktopSettingsStore } from "./desktop-settings-store.js";
 import { DESKTOP_APPEARANCES } from "./desktop-contract.js";
 import {
@@ -42,7 +39,6 @@ import { createDesktopRecoverySettingsAction } from "./desktop-recovery-settings
 import { createDesktopOwnedDownloadRegistry } from "./desktop-owned-downloads.js";
 import { createDesktopSharingBackend, createDesktopSharingCoordinator } from "./desktop-sharing.js";
 import {
-  createDesktopContributionCredentialBackend,
   createDesktopContributionCredentialLegacyProbe,
   createDesktopContributionCredentialLegacyRecoveryBackend,
 } from "./desktop-contribution-credential.js";
@@ -57,15 +53,7 @@ import { createDesktopNotificationDelivery } from "./desktop-notification-delive
 import { prepareWindowsNotificationIdentity } from "./desktop-windows-notification-identity.js";
 import { shellError } from "./errors.js";
 import {
-  awaitDesktopSecureStorageOperation,
-  classifyDesktopSecureStorageFailure,
-  createDesktopSecureStorageDialog,
-  createDesktopSecureStorageFailure,
-  normalizeDesktopSecureStorageFailureReason,
-} from "./desktop-secure-storage-readiness.js";
-import {
   createProductionDesktopUpdater,
-  PRODUCTION_ELECTRON_CHANNEL,
   validateProductionDistributionMetadata,
 } from "./desktop-updater.js";
 import { createDesktopUpdatePreferences, createDesktopUpdatePreferencesBackend } from "./desktop-update-preferences.js";
@@ -76,67 +64,6 @@ import {
 } from "../../src/platform/index.js";
 
 const DESKTOP_SETTINGS_DIRECTORY = "desktop-settings";
-const ACCOUNTLESS_HOSTED_REHEARSAL_DIRECTORY = "accountless-hosted-rehearsal-v1";
-const ACCOUNTLESS_SIGNED_STAGING_REHEARSAL_DIRECTORY =
-  "accountless-signed-staging-rehearsal-v1";
-const ACCOUNTLESS_HOSTED_REHEARSAL_METADATA_KEYS = Object.freeze([
-  "appId",
-  "channel",
-  "credentialStorage",
-  "origin",
-  "schemaVersion",
-  "sourceRevision",
-  "target",
-]);
-const ACCOUNTLESS_SIGNED_STAGING_REHEARSAL_METADATA_KEYS = Object.freeze([
-  "appId",
-  "channel",
-  "contributionPolicy",
-  "credentialStorage",
-  "executionProfile",
-  "expectedTestUID",
-  "expectedTestUsername",
-  "origin",
-  "schemaVersion",
-  "sourceRevision",
-  "target",
-  "updater",
-]);
-const ACCOUNTLESS_HOSTED_REHEARSAL_ENVIRONMENT_KEYS = Object.freeze([
-  "CODEX_BIN",
-  "CODEX_HOME",
-  "CODEX_THREAD_ID",
-  "CLAUDE_CONFIG_DIR",
-  "CLAUDE_PROJECT_DIR",
-  "CLAUDE_PROJECT_DIRECTORY",
-  "HOME",
-  "USERPROFILE",
-  "USAGE_MONITOR_ACCOUNTING_SOURCE_MODE",
-  "USAGE_MONITOR_ACCOUNTLESS_MODE",
-  "USAGE_MONITOR_ACCOUNTLESS_ORIGIN",
-  "USAGE_MONITOR_CENTRAL_ORIGIN",
-  "USAGE_MONITOR_CONTRIBUTION_QUEUE_FILE",
-  "USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE",
-  "USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE",
-  "USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY",
-  "USAGE_MONITOR_PREPARED_DIRECTORY",
-  "USAGE_MONITOR_RESOURCE_ROOT",
-  "USAGE_MONITOR_STATE_ROOT",
-  "USAGE_MONITOR_TEST_LANE",
-  "XDG_CACHE_HOME",
-  "XDG_CONFIG_HOME",
-  "XDG_DATA_HOME",
-  "XDG_RUNTIME_DIR",
-  "XDG_STATE_HOME",
-]);
-const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40}$/u;
-const GITHUB_HOSTED_MACOS_ARM64_ENVIRONMENT = Object.freeze({
-  GITHUB_ACTIONS: "true",
-  RUNNER_ARCH: "ARM64",
-  RUNNER_ENVIRONMENT: "github-hosted",
-  RUNNER_OS: "macOS",
-});
-
 const SETTINGS_CODEX_ROOT_ACTIONS = new Set([
   "getCodexHomesForSettings",
   "chooseCodexHome",
@@ -155,238 +82,12 @@ function assertObject(value, label) {
   return value;
 }
 
-async function requestDesktopSecureStorageRecovery(dialog, reason, textOptions) {
-  const response = await dialog?.showMessageBox?.(
-    createDesktopSecureStorageDialog(reason, textOptions),
-  );
-  return response?.response === 1 ? "retry" : "quit";
-}
-
-async function preflightAccountlessCredential(backend) {
-  let credential = null;
-  try {
-    credential = await awaitDesktopSecureStorageOperation(() => backend.read(), {
-      disposeLateResult(value) {
-        value?.fill?.(0);
-      },
-    });
-    if (credential === null) return;
-    if (!Buffer.isBuffer(credential) || credential.length !== 32) {
-      throw createDesktopSecureStorageFailure("credential_invalid");
-    }
-  } finally {
-    credential?.fill?.(0);
-  }
-}
-
-function hasExactKeys(value, keys) {
-  return value !== null
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && Reflect.ownKeys(value).length === keys.length
-    && keys.every((key) => Object.hasOwn(value, key));
-}
-
-/**
- * The staged package itself is the only authority that may select this
- * private hosted rehearsal. Renderer settings and launch environment values
- * cannot supply an origin, storage mode, target, or profile identity.
- */
-export function validateAccountlessHostedRehearsalMetadata(value, {
-  platform = process.platform,
-  architecture = process.arch,
-} = {}) {
-  if (platform !== "darwin" || architecture !== "arm64"
-      || !hasExactKeys(value, ACCOUNTLESS_HOSTED_REHEARSAL_METADATA_KEYS)
-      || value.appId !== distribution.ACCOUNTLESS_HOSTED_REHEARSAL_APP_ID
-      || value.channel !== distribution.ACCOUNTLESS_HOSTED_REHEARSAL_CHANNEL
-      || value.credentialStorage
-        !== distribution.ACCOUNTLESS_HOSTED_REHEARSAL_CREDENTIAL_STORAGE
-      || value.origin !== DEPLOYMENT_ENDPOINTS.staging.origin
-      || value.schemaVersion
-        !== distribution.ACCOUNTLESS_HOSTED_REHEARSAL_SCHEMA_VERSION
-      || typeof value.sourceRevision !== "string"
-      || !SOURCE_REVISION_PATTERN.test(value.sourceRevision)
-      || value.target !== distribution.ACCOUNTLESS_HOSTED_REHEARSAL_TARGET) {
-    throw new TypeError("accountless hosted rehearsal metadata is invalid");
-  }
-  return Object.freeze({
-    appId: distribution.ACCOUNTLESS_HOSTED_REHEARSAL_APP_ID,
-    channel: distribution.ACCOUNTLESS_HOSTED_REHEARSAL_CHANNEL,
-    credentialStorage: distribution.ACCOUNTLESS_HOSTED_REHEARSAL_CREDENTIAL_STORAGE,
-    origin: DEPLOYMENT_ENDPOINTS.staging.origin,
-    schemaVersion: distribution.ACCOUNTLESS_HOSTED_REHEARSAL_SCHEMA_VERSION,
-    sourceRevision: value.sourceRevision,
-    target: distribution.ACCOUNTLESS_HOSTED_REHEARSAL_TARGET,
-  });
-}
-
-/** Validate the exact signed package marker before it can select native credentials. */
-export function validateAccountlessSignedStagingRehearsalMetadata(value, {
-  platform = process.platform,
-  architecture = process.arch,
-} = {}) {
-  const selection = distribution.accountlessSignedStagingRehearsalForTarget({
-    target: value?.target,
-    expectedTestUID: value?.expectedTestUID,
-    expectedTestUsername: value?.expectedTestUsername,
-  });
-  if (platform !== "darwin" || architecture !== "arm64"
-      || !hasExactKeys(value, ACCOUNTLESS_SIGNED_STAGING_REHEARSAL_METADATA_KEYS)
-      || selection === null
-      || value.appId !== selection.appId
-      || value.channel !== selection.channel
-      || value.contributionPolicy !== selection.contributionPolicy
-      || value.credentialStorage !== selection.credentialStorage
-      || value.executionProfile !== selection.executionProfile
-      || value.origin !== DEPLOYMENT_ENDPOINTS.staging.origin
-      || value.schemaVersion !== selection.schemaVersion
-      || typeof value.sourceRevision !== "string"
-      || !SOURCE_REVISION_PATTERN.test(value.sourceRevision)
-      || value.target !== selection.target
-      || value.updater !== "disabled") {
-    throw new TypeError("accountless signed staging rehearsal metadata is invalid");
-  }
-  return Object.freeze({
-    appId: selection.appId,
-    channel: selection.channel,
-    contributionPolicy: selection.contributionPolicy,
-    credentialStorage: selection.credentialStorage,
-    executionProfile: selection.executionProfile,
-    expectedTestUID: selection.expectedTestUID,
-    expectedTestUsername: selection.expectedTestUsername,
-    origin: DEPLOYMENT_ENDPOINTS.staging.origin,
-    schemaVersion: selection.schemaVersion,
-    sourceRevision: value.sourceRevision,
-    target: selection.target,
-    updater: "disabled",
-  });
-}
-
-function assertAccountlessSignedStagingAccountContext({
-  selection,
-  environment,
-  getuid,
-  getUserInfo,
-} = {}) {
-  if (selection === null || typeof selection !== "object"
-      || selection.executionProfile
-        !== distribution.ACCOUNTLESS_SIGNED_STAGING_REHEARSAL_EXECUTION_PROFILE
-      || environment === null || typeof environment !== "object"
-      || Array.isArray(environment)
-      || Object.entries(GITHUB_HOSTED_MACOS_ARM64_ENVIRONMENT)
-        .some(([key, value]) => environment[key] !== value)
-      || typeof getuid !== "function" || typeof getUserInfo !== "function") {
-    throw shellError("electron_configuration_invalid");
-  }
-  let operatingUID;
-  let operatingAccount;
-  try {
-    operatingUID = getuid();
-    operatingAccount = getUserInfo();
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  if (!Number.isSafeInteger(operatingUID)
-      || operatingAccount === null || typeof operatingAccount !== "object"
-      || Array.isArray(operatingAccount)
-      || !Number.isSafeInteger(operatingAccount.uid)
-      || typeof operatingAccount.username !== "string"
-      || operatingUID !== selection.expectedTestUID
-      || operatingAccount.uid !== operatingUID
-      || operatingAccount.username !== selection.expectedTestUsername) {
-    throw shellError("electron_configuration_invalid");
-  }
-  return Object.freeze({
-    executionProfile: selection.executionProfile,
-    expectedTestUID: selection.expectedTestUID,
-    expectedTestUsername: selection.expectedTestUsername,
-  });
-}
-
-/**
- * Reject an accountless signed staging package before it can create its native
- * handover or credential backend. The OS supplies both account fields; HOME,
- * USER, and other inherited launcher values are never consulted.
- */
-export function assertAccountlessSignedStagingOperatingAccount({
-  metadata,
-  environment = process.env,
-  getuid = typeof process.getuid === "function" ? process.getuid.bind(process) : undefined,
-  getUserInfo = userInfo,
-  platform = process.platform,
-  architecture = process.arch,
-} = {}) {
-  if (metadata === null || metadata === undefined) return null;
-  let selection;
-  try {
-    selection = validateAccountlessSignedStagingRehearsalMetadata(metadata, {
-      platform,
-      architecture,
-    });
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  return assertAccountlessSignedStagingAccountContext({
-    selection,
-    environment,
-    getuid,
-    getUserInfo,
-  });
-}
-
 function userDataPath(app) {
   const selected = app?.getPath?.("userData");
   if (typeof selected !== "string" || selected.length === 0) {
     throw new TypeError("Electron userData path is unavailable");
   }
   return resolve(selected);
-}
-
-function createAccountlessRehearsalPaths(app, directory) {
-  const rootPath = join(userDataPath(app), directory);
-  const syntheticHome = join(rootPath, "synthetic-home");
-  return Object.freeze({
-    codexHome: join(syntheticHome, ".codex"),
-    profileRoot: rootPath,
-    settingsRoot: join(rootPath, DESKTOP_SETTINGS_DIRECTORY),
-    stateRoot: join(rootPath, "companion-state"),
-    syntheticClaudeConfig: join(syntheticHome, ".claude"),
-    syntheticHome,
-    syntheticProject: join(syntheticHome, "project"),
-    xdgCacheHome: join(rootPath, "xdg-cache"),
-    xdgConfigHome: join(rootPath, "xdg-config"),
-    xdgDataHome: join(rootPath, "xdg-data"),
-    xdgRuntimeDirectory: join(rootPath, "xdg-runtime"),
-    xdgStateHome: join(rootPath, "xdg-state"),
-  });
-}
-
-function accountlessRehearsalEnvironment({ environment, paths, resourceRoot }) {
-  const selected = { ...environment };
-  for (const key of ACCOUNTLESS_HOSTED_REHEARSAL_ENVIRONMENT_KEYS) delete selected[key];
-  // This profile owns every root used by the companion. In particular, a
-  // future explicit Claude shadow selection cannot inherit a user config or
-  // project root through the child environment.
-  selected.HOME = paths.syntheticHome;
-  selected.USERPROFILE = paths.syntheticHome;
-  selected.CODEX_HOME = paths.codexHome;
-  selected.CLAUDE_CONFIG_DIR = paths.syntheticClaudeConfig;
-  selected.CLAUDE_PROJECT_DIR = paths.syntheticProject;
-  selected.CLAUDE_PROJECT_DIRECTORY = paths.syntheticProject;
-  selected.USAGE_MONITOR_ACCOUNTING_SOURCE_MODE = "unified";
-  selected.USAGE_MONITOR_STATE_ROOT = paths.stateRoot;
-  // This root identifies only reviewed packaged static/runtime assets. It is
-  // supplied by main.js after resolving the bundle, never inherited from a
-  // caller's environment or renderer setting.
-  selected.USAGE_MONITOR_RESOURCE_ROOT = resourceRoot;
-  selected.XDG_CACHE_HOME = paths.xdgCacheHome;
-  selected.XDG_CONFIG_HOME = paths.xdgConfigHome;
-  selected.XDG_DATA_HOME = paths.xdgDataHome;
-  selected.XDG_RUNTIME_DIR = paths.xdgRuntimeDirectory;
-  selected.XDG_STATE_HOME = paths.xdgStateHome;
-  return selected;
 }
 
 function electronSystemLocales(app) {
@@ -437,11 +138,8 @@ function childEnvironmentWithStateRoot({ app, environment }) {
   return selected;
 }
 
-function runtimeHomeDirectory({ platform, environment }) {
-  const preferredKeys = platform === "win32"
-    ? ["USERPROFILE", "HOME"]
-    : ["HOME", "USERPROFILE"];
-  for (const key of preferredKeys) {
+function runtimeHomeDirectory({ environment }) {
+  for (const key of ["USERPROFILE", "HOME"]) {
     const value = environment[key];
     if (typeof value === "string" && value.length > 0) return value;
   }
@@ -453,17 +151,11 @@ function isWindowsCodexPath(value) {
     && (/^[A-Za-z]:[\\/]/u.test(value) || /^\\\\/u.test(value));
 }
 
-function isPlatformCodexPath(value, platform) {
+function isPlatformCodexPath(value) {
   if (!isAbsoluteCodexPath(value)) return false;
-  if (platform === "win32") {
-    // The lexical root model is deliberately cross-platform, but a child on
-    // Windows must never receive a POSIX spelling that the Win32 APIs would
-    // reinterpret as relative/current-drive state.
-    return isWindowsCodexPath(value);
-  }
-  // Conversely, do not reinterpret a drive/UNC path on macOS or Linux. The
-  // native picker and the companion must agree on the host path grammar.
-  return value.startsWith("/") && !isWindowsCodexPath(value);
+  // A child on Windows must never receive a POSIX spelling that the Win32 APIs
+  // would reinterpret as relative/current-drive state.
+  return isWindowsCodexPath(value);
 }
 
 function assertNoWindowsTestOverrides({
@@ -511,7 +203,6 @@ function electronNotificationConstructor(runtime) {
 
 function createNotificationPolicyBackend({
   app,
-  platform,
   notificationBackend,
   rootPath,
   windowsProtectedStateStore,
@@ -527,33 +218,25 @@ function createNotificationPolicyBackend({
   }
   const selectedRootPath = rootPath ?? join(userDataPath(app), DESKTOP_SETTINGS_DIRECTORY);
   const codec = createDesktopNotificationPolicyCodec();
-  if (platform === "win32") {
-    // The qualified and exact stable-candidate Windows lanes must use the
-    // branded protected store for every desktop record. There is no ordinary
-    // Node filesystem fallback.
-    if ((qualificationContext === null || qualificationContext === undefined)
-        && windowsNormalCandidate !== true) {
-      throw shellError("windows_readiness_unavailable");
-    }
-    const adapter = createWindowsFilesystemAdapter({
-      platform: "win32",
-      architecture,
-    });
-    const protectedStore = windowsProtectedStateStore ?? createWindowsProtectedStateStore({
-      adapter,
-      rootPath: selectedRootPath,
-    });
-    return createWindowsDesktopSettingsBackend({
-      platform: "win32",
-      windowsProtectedStateStore: protectedStore,
-      childName: DESKTOP_NOTIFICATION_POLICY_FILE_NAME,
-      codec,
-    });
+  // The qualified and exact stable-candidate Windows lanes must use the
+  // branded protected store for every desktop record. There is no ordinary
+  // Node filesystem fallback.
+  if ((qualificationContext === null || qualificationContext === undefined)
+      && windowsNormalCandidate !== true) {
+    throw shellError("windows_readiness_unavailable");
   }
-  return createPosixDesktopSettingsBackend({
-    platform,
+  const adapter = createWindowsFilesystemAdapter({
+    platform: "win32",
+    architecture,
+  });
+  const protectedStore = windowsProtectedStateStore ?? createWindowsProtectedStateStore({
+    adapter,
     rootPath: selectedRootPath,
-    filename: DESKTOP_NOTIFICATION_POLICY_FILE_NAME,
+  });
+  return createWindowsDesktopSettingsBackend({
+    platform: "win32",
+    windowsProtectedStateStore: protectedStore,
+    childName: DESKTOP_NOTIFICATION_POLICY_FILE_NAME,
     codec,
   });
 }
@@ -634,7 +317,6 @@ function runtimePlatformServices({
 
 function createSettingsBackend({
   app,
-  platform,
   settingsBackend,
   rootPath,
   windowsProtectedStateStore,
@@ -644,32 +326,26 @@ function createSettingsBackend({
 } = {}) {
   if (settingsBackend !== undefined) return settingsBackend;
   const selectedRootPath = rootPath ?? join(userDataPath(app), DESKTOP_SETTINGS_DIRECTORY);
-  if (platform === "win32") {
-    // Windows never falls back to Node filesystem state. The repository's
-    // branded adapter and protected store are the only accepted backend.
-    if ((qualificationContext === null || qualificationContext === undefined)
-        && windowsNormalCandidate !== true) {
-      // The platform gate normally prevents this branch. Keeping the check
-      // explicit prevents a future caller from silently enabling an unqualified
-      // Windows desktop state path.
-      throw shellError("windows_readiness_unavailable");
-    }
-    const adapter = createWindowsFilesystemAdapter({
-      platform: "win32",
-      architecture,
-    });
-    const protectedStore = windowsProtectedStateStore ?? createWindowsProtectedStateStore({
-      adapter,
-      rootPath: selectedRootPath,
-    });
-    return createWindowsDesktopSettingsBackend({
-      platform: "win32",
-      windowsProtectedStateStore: protectedStore,
-    });
+  // Windows never falls back to Node filesystem state. The repository's
+  // branded adapter and protected store are the only accepted backend.
+  if ((qualificationContext === null || qualificationContext === undefined)
+      && windowsNormalCandidate !== true) {
+    // The platform gate normally prevents this branch. Keeping the check
+    // explicit prevents a future caller from silently enabling an unqualified
+    // Windows desktop state path.
+    throw shellError("windows_readiness_unavailable");
   }
-  return createPosixDesktopSettingsBackend({
-    platform,
+  const adapter = createWindowsFilesystemAdapter({
+    platform: "win32",
+    architecture,
+  });
+  const protectedStore = windowsProtectedStateStore ?? createWindowsProtectedStateStore({
+    adapter,
     rootPath: selectedRootPath,
+  });
+  return createWindowsDesktopSettingsBackend({
+    platform: "win32",
+    windowsProtectedStateStore: protectedStore,
   });
 }
 
@@ -707,18 +383,12 @@ export async function launchDesktopRuntime({
   firstRunReceiptBackend,
   ownedDownloadsRegistry,
   automaticRefreshCadence,
-  crashCapture = null,
   argv,
   accountlessLaboratory,
   accountlessProduction,
-  accountlessHostedRehearsal,
-  accountlessSignedStagingRehearsal,
   productionDistribution,
-  prepareNativeHandover,
   onStartupPhase,
   onStartupStop,
-  getuid = typeof process.getuid === "function" ? process.getuid.bind(process) : undefined,
-  getUserInfo = userInfo,
   loadProductionUpdater = () => import("electron-updater"),
 } = {}) {
   assertObject(runtime, "runtime");
@@ -763,146 +433,25 @@ export async function launchDesktopRuntime({
         || sharingBackend === undefined || sharingInstallationState === undefined
         || qualificationContext !== null) throw shellError("electron_configuration_invalid");
   }
-  const accountlessProductionUsesMacNativeCredential = accountlessProduction !== undefined
-    && platform === "darwin";
-  const accountlessProductionUsesLinuxNativeCredential = accountlessProduction !== undefined
-    && platform === "linux";
-  const accountlessProductionUsesWindowsNativeCredential = accountlessProduction !== undefined
-    && platform === "win32";
   if (accountlessProduction !== undefined && (
     accountlessProduction === null || typeof accountlessProduction !== "object"
       || Array.isArray(accountlessProduction)
-      || Object.keys(accountlessProduction).sort().join(",") !== (
-        accountlessProductionUsesMacNativeCredential
-          ? "createMacOSCredentialBackend,origin,policyVersion"
-          : accountlessProductionUsesLinuxNativeCredential
-            ? "createLinuxCredentialBackend,origin,policyVersion"
-            : accountlessProductionUsesWindowsNativeCredential
-              ? "createWindowsCredentialBackend,origin,policyVersion"
-              : "origin,policyVersion")
-      || (accountlessProductionUsesMacNativeCredential
-        && typeof accountlessProduction.createMacOSCredentialBackend !== "function")
-      || (accountlessProductionUsesLinuxNativeCredential
-        && typeof accountlessProduction.createLinuxCredentialBackend !== "function")
-      || (accountlessProductionUsesWindowsNativeCredential
-        && typeof accountlessProduction.createWindowsCredentialBackend !== "function")
+      || Object.keys(accountlessProduction).sort().join(",")
+        !== "createWindowsCredentialBackend,origin,policyVersion"
+      || typeof accountlessProduction.createWindowsCredentialBackend !== "function"
       || accountlessProduction.origin !== DEPLOYMENT_ENDPOINTS.public.origin
       || accountlessProduction.policyVersion !== "accountless-opt-out-v1"
       || accountlessLaboratory !== undefined || app.isPackaged !== true
       || app.getName?.() !== "TiboTattle"
       || environment.USAGE_MONITOR_TEST_LANE !== undefined
       || qualificationContext !== null)) throw shellError("electron_configuration_invalid");
-  let selectedAccountlessSignedStagingRehearsal;
-  if (accountlessSignedStagingRehearsal !== undefined) {
-    const selection = distribution.accountlessSignedStagingRehearsalForTarget({
-      target: distribution.ACCOUNTLESS_SIGNED_STAGING_REHEARSAL_TARGET,
-      expectedTestUID: accountlessSignedStagingRehearsal?.expectedTestUID,
-      expectedTestUsername: accountlessSignedStagingRehearsal?.expectedTestUsername,
-    });
-    if (selection === null
-        || accountlessSignedStagingRehearsal === null
-        || typeof accountlessSignedStagingRehearsal !== "object"
-        || Array.isArray(accountlessSignedStagingRehearsal)
-        || Object.getOwnPropertySymbols(accountlessSignedStagingRehearsal).length !== 0
-        || Object.keys(accountlessSignedStagingRehearsal).sort().join(",")
-          !== "createMacOSCredentialBackend,executionProfile,expectedTestUID,expectedTestUsername,origin,policyVersion"
-        || typeof accountlessSignedStagingRehearsal.createMacOSCredentialBackend !== "function"
-        || accountlessSignedStagingRehearsal.executionProfile !== selection?.executionProfile
-        || accountlessSignedStagingRehearsal.origin !== DEPLOYMENT_ENDPOINTS.staging.origin
-        || accountlessSignedStagingRehearsal.policyVersion !== "accountless-opt-out-v1"
-        || platform !== "darwin" || architecture !== "arm64"
-        || accountlessLaboratory !== undefined || accountlessProduction !== undefined
-        || accountlessHostedRehearsal !== undefined || productionDistribution !== undefined
-        || app.isPackaged !== true || app.getName?.() !== "TiboTattle"
-        || environment.USAGE_MONITOR_TEST_LANE !== undefined
-        || qualificationContext !== null
-        || platformServices !== undefined
-        || settingsBackend !== undefined
-        || settingsStore !== undefined
-        || notificationBackend !== undefined
-        || sharingBackend !== undefined
-        || sharingInstallationState !== undefined
-        || firstRunReceiptBackend !== undefined
-        || ownedDownloadsRegistry !== undefined
-        || automaticRefreshCadence !== undefined
-        || argv !== undefined
-        || typeof prepareNativeHandover !== "function"
-        || typeof getuid !== "function" || typeof getUserInfo !== "function") {
-      throw shellError("electron_configuration_invalid");
-    }
-    try {
-      assertAccountlessSignedStagingAccountContext({
-        selection,
-        environment,
-        getuid,
-        getUserInfo,
-      });
-    } catch {
-      throw shellError("electron_configuration_invalid");
-    }
-    selectedAccountlessSignedStagingRehearsal = Object.freeze({
-      createMacOSCredentialBackend:
-        accountlessSignedStagingRehearsal.createMacOSCredentialBackend,
-      executionProfile: selection.executionProfile,
-      expectedTestUID: selection.expectedTestUID,
-      expectedTestUsername: selection.expectedTestUsername,
-      origin: DEPLOYMENT_ENDPOINTS.staging.origin,
-      policyVersion: selection.contributionPolicy,
-    });
-  }
-  let selectedAccountlessHostedRehearsal;
-  if (accountlessHostedRehearsal !== undefined) {
-    try {
-      selectedAccountlessHostedRehearsal = validateAccountlessHostedRehearsalMetadata(
-        accountlessHostedRehearsal,
-        { platform, architecture },
-      );
-    } catch {
-      throw shellError("electron_configuration_invalid");
-    }
-    if (accountlessLaboratory !== undefined
-        || accountlessProduction !== undefined
-        || accountlessSignedStagingRehearsal !== undefined
-        || productionDistribution !== undefined
-        || prepareNativeHandover !== undefined
-        || qualificationContext !== null
-        || app.isPackaged !== true
-        || app.getName?.() !== "TiboTattle Dev"
-        || platformServices !== undefined
-        || settingsBackend !== undefined
-        || settingsStore !== undefined
-        || notificationBackend !== undefined
-        || sharingBackend !== undefined
-        || sharingInstallationState !== undefined
-        || firstRunReceiptBackend !== undefined
-        || ownedDownloadsRegistry !== undefined
-        || automaticRefreshCadence !== undefined
-        || argv !== undefined) {
-      throw shellError("electron_configuration_invalid");
-    }
-  }
   const accountlessEnabled = accountlessLaboratory !== undefined
-    || accountlessProduction !== undefined
-    || selectedAccountlessSignedStagingRehearsal !== undefined
-    || selectedAccountlessHostedRehearsal !== undefined;
-  const accountlessNativeCredential = accountlessProduction
-    ?? selectedAccountlessSignedStagingRehearsal;
-  const accountlessNativeCredentialUsesMac = accountlessNativeCredential !== undefined
-    && platform === "darwin";
-  const accountlessNativeCredentialUsesLinux = accountlessNativeCredential !== undefined
-    && platform === "linux";
-  const accountlessNativeCredentialUsesWindows = accountlessNativeCredential !== undefined
-    && platform === "win32";
+    || accountlessProduction !== undefined;
   if (productionDistribution !== undefined) {
-    const distribution = validateProductionDistributionMetadata(productionDistribution, {
+    validateProductionDistributionMetadata(productionDistribution, {
       platform,
       architecture,
     });
-    if (distribution.channel !== PRODUCTION_ELECTRON_CHANNEL
-        && (accountlessProduction !== undefined
-          || selectedAccountlessSignedStagingRehearsal !== undefined)) {
-      throw shellError("electron_configuration_invalid");
-    }
     if (app.isPackaged !== true || app.getName?.() !== "TiboTattle"
         || environment.USAGE_MONITOR_TEST_LANE !== undefined
         || qualificationContext !== null || platformServices !== undefined
@@ -916,12 +465,6 @@ export async function launchDesktopRuntime({
   // candidate without changing the native sidecar's own safety claims.
   const windowsNormalCandidate = platform === "win32"
     && productionDistribution !== undefined;
-  if (prepareNativeHandover !== undefined && (typeof prepareNativeHandover !== "function"
-      || (productionDistribution === undefined
-        && selectedAccountlessSignedStagingRehearsal === undefined)
-      || platform !== "darwin")) {
-    throw shellError("electron_configuration_invalid");
-  }
   assertObject(supervisorOptions, "supervisorOptions");
   assertObject(lifecycleOptions, "lifecycleOptions");
   assertNoWindowsTestOverrides({
@@ -945,20 +488,7 @@ export async function launchDesktopRuntime({
   if (typeof runtime.BrowserWindow !== "function") {
     throw new TypeError("BrowserWindow is required");
   }
-  const selectedAccountlessRehearsal = selectedAccountlessHostedRehearsal
-    ?? selectedAccountlessSignedStagingRehearsal;
-  const accountlessRehearsalPaths = selectedAccountlessRehearsal === undefined
-    ? null
-    : createAccountlessRehearsalPaths(app, selectedAccountlessHostedRehearsal === undefined
-      ? ACCOUNTLESS_SIGNED_STAGING_REHEARSAL_DIRECTORY
-      : ACCOUNTLESS_HOSTED_REHEARSAL_DIRECTORY);
-  const runtimeEnvironment = accountlessRehearsalPaths === null
-    ? environment
-    : accountlessRehearsalEnvironment({
-      environment,
-      paths: accountlessRehearsalPaths,
-      resourceRoot: paths.resourceRoot,
-    });
+  const runtimeEnvironment = environment;
   const childEnvironment = childEnvironmentWithStateRoot({
     app,
     environment: runtimeEnvironment,
@@ -967,8 +497,7 @@ export async function launchDesktopRuntime({
     childEnvironment.USAGE_MONITOR_STATE_ROOT = join(userDataPath(app), "companion-state");
     delete childEnvironment.USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE;
   }
-  const sharingDestinationOrigin = selectedAccountlessRehearsal?.origin
-    ?? accountlessProduction?.origin ?? accountlessLaboratory?.origin
+  const sharingDestinationOrigin = accountlessProduction?.origin ?? accountlessLaboratory?.origin
     ?? childEnvironment.USAGE_MONITOR_CENTRAL_ORIGIN
     ?? DEPLOYMENT_ENDPOINTS.public.origin;
   // Never run the legacy scheduler beside the installation policy. The
@@ -985,16 +514,6 @@ export async function launchDesktopRuntime({
     delete childEnvironment.USAGE_MONITOR_PREPARED_DIRECTORY;
     childEnvironment.USAGE_MONITOR_ACCOUNTLESS_ORIGIN = accountlessProduction.origin;
     childEnvironment.USAGE_MONITOR_ACCOUNTLESS_MODE = "production-v1";
-  }
-  if (selectedAccountlessRehearsal) {
-    // The package marker selects the one reviewed nonproduction endpoint. No
-    // renderer or inherited environment value can alter the scheduler mode,
-    // destination, queue, or state root.
-    delete childEnvironment.USAGE_MONITOR_CONTRIBUTION_QUEUE_FILE;
-    delete childEnvironment.USAGE_MONITOR_PREPARED_DIRECTORY;
-    childEnvironment.USAGE_MONITOR_ACCOUNTLESS_ORIGIN =
-      selectedAccountlessRehearsal.origin;
-    childEnvironment.USAGE_MONITOR_ACCOUNTLESS_MODE = "rehearsal-v1";
   }
   let sharingCoordinator;
   let installationCredentialBackend;
@@ -1020,7 +539,6 @@ export async function launchDesktopRuntime({
     args: companionArgs,
     cwd: paths.companionCwd,
     environment: childEnvironment,
-    platform,
     attachPrivateChannel: accountlessEnabled ? (channel) => attachAccountlessParentChannel({
       channel,
       readPreference: () => sharingCoordinator.readAuthorization(),
@@ -1033,18 +551,11 @@ export async function launchDesktopRuntime({
     runtime,
     app,
     platform,
-    homeDirectory: runtimeHomeDirectory({ platform, environment: runtimeEnvironment }),
+    homeDirectory: runtimeHomeDirectory({ environment: runtimeEnvironment }),
     environment: runtimeEnvironment,
     getUpdater: () => updater,
   });
-  const services = accountlessRehearsalPaths === null
-    ? selectedPlatformServices
-    : Object.freeze({
-      ...selectedPlatformServices,
-      // Renderer settings must not pick a host directory for the compiled
-      // rehearsal. The default root is the profile's synthetic CODEX_HOME.
-      chooseCodexHome: async () => null,
-    });
+  const services = selectedPlatformServices;
   const requestedDesktopSystemLocales = lifecycleOptions.desktopSystemLocales;
   const firstRunLocale = lifecycleOptions.desktopLocale ?? "system";
   const deepLinkQueue = createDesktopDeepLinkQueue();
@@ -1054,8 +565,7 @@ export async function launchDesktopRuntime({
 
   // This lock and the app-link listeners are intentionally established before
   // Electron readiness and before first-run/settings work. A secondary
-  // process therefore cannot open a companion of its own, and macOS can
-  // deliver `open-url` while the primary app is still starting.
+  // process therefore cannot open a companion of its own, .
   const singleInstanceLockAcquired = typeof app.requestSingleInstanceLock === "function"
     ? app.requestSingleInstanceLock()
     : true;
@@ -1101,22 +611,15 @@ export async function launchDesktopRuntime({
     dispatchPendingDeepLinks();
     return accepted.length;
   };
-  const onOpenURL = (event, value) => {
-    event?.preventDefault?.();
-    deepLinkQueue.enqueue(value);
-    dispatchPendingDeepLinks();
-  };
   const onSecondInstance = (_event, commandLine) => {
     acceptDeepLinkArgv(commandLine);
   };
-  if (platform === "darwin") app.on("open-url", onOpenURL);
   app.on("second-instance", onSecondInstance);
   deepLinkIntakeCleanup = () => {
-    app.off?.("open-url", onOpenURL);
     app.off?.("second-instance", onSecondInstance);
     deepLinkIntakeCleanup = () => {};
   };
-  if (platform !== "darwin") acceptDeepLinkArgv(argv ?? process.argv);
+  acceptDeepLinkArgv(argv ?? process.argv);
   // Electron's native dialog must be shown only after the app is ready. This
   // does not start the companion, register a login item, or enable updates.
   await markStartupPhase("app_ready");
@@ -1124,91 +627,22 @@ export async function launchDesktopRuntime({
   const desktopSystemLocales = requestedDesktopSystemLocales
     ?? electronSystemLocales(app);
   const startupTextOptions = { locale: firstRunLocale, systemLocales: desktopSystemLocales };
-  if (prepareNativeHandover !== undefined) {
-    await markStartupPhase("native_handover");
-    while (true) {
-      let handover;
-      try {
-        handover = await prepareNativeHandover({
-          homeDirectory: runtimeHomeDirectory({
-            platform,
-            environment: runtimeEnvironment,
-          }),
-        });
-      } catch {
-        handover = { status: "migration_blocked" };
-      }
-      if (["no_legacy_state", "migrated", "already_migrated"].includes(
-        handover?.status,
-      )) break;
-      const credentialPreflightBlocked =
-        handover?.status === "credential_preflight_blocked";
-      if (credentialPreflightBlocked) {
-        const reason = normalizeDesktopSecureStorageFailureReason(handover?.reason);
-        if (await requestDesktopSecureStorageRecovery(runtime.dialog, reason, startupTextOptions) === "retry") {
-          continue;
-        }
-        deepLinkIntakeCleanup();
-        await stopStartup(`secure_storage_${reason}`);
-        app.quit?.();
-        return Object.freeze({
-          status: "native_handover_blocked",
-          secureStorageReason: reason,
-          firstRun: null,
-          lifecycle: null,
-          supervisor: null,
-          controller: null,
-          settingsStore: null,
-          settingsBackend: null,
-          ipc: createNoopIpcInstallation(),
-          childEnvironment: null,
-        });
-      }
-      await runtime.dialog?.showMessageBox?.({
-        type: "warning",
-        title: desktopText("electron.handover.failure.title", {}, startupTextOptions),
-        message: desktopText("electron.handover.failure.message", {}, startupTextOptions),
-        detail: desktopText("electron.handover.failure.detail", {}, startupTextOptions)
-          + (["TRANSFER_IDENTITY", "TRANSFER_NATIVE_APPLICATION", "TRANSFER_LOGIN_ITEM_UNREGISTER",
-            "TRANSFER_LOGIN_ITEM_STATUS", "TRANSFER_LOGIN_ITEM_REQUIRES_APPROVAL", "TRANSFER_LOGIN_ITEM_NOT_FOUND",
-            "TRANSFER_LOGIN_ITEM_STATUS_UNKNOWN", "TRANSFER_NATIVE_WRITER", "TRANSFER_OTHER_SAME_IDENTITY_RUNNING",
-            "TRANSFER_PREFERENCES", "TRANSFER_INVALID_REQUEST", "TRANSFER_UNKNOWN"].includes(handover?.supportCode)
-            ? ` ${desktopText("electron.recovery.supportCode", { code: handover.supportCode }, startupTextOptions)}` : ""),
-        buttons: [desktopText("electron.recovery.quit", {}, startupTextOptions)], defaultId: 0, cancelId: 0, noLink: true,
-      });
-      deepLinkIntakeCleanup();
-      await stopStartup("native_handover_blocked");
-      app.quit?.();
-      return Object.freeze({ status: "native_handover_blocked", firstRun: null,
-        lifecycle: null, supervisor: null, controller: null, settingsStore: null,
-        settingsBackend: null, ipc: createNoopIpcInstallation(), childEnvironment: null });
-    }
-  }
-  const settingsRootPath = accountlessRehearsalPaths?.settingsRoot
-    ?? join(userDataPath(app), DESKTOP_SETTINGS_DIRECTORY);
+  const settingsRootPath = join(userDataPath(app), DESKTOP_SETTINGS_DIRECTORY);
   const injectedSettings = settingsBackend !== undefined || settingsStore !== undefined
     || firstRunReceiptBackend !== undefined;
-  const homeDirectory = runtimeHomeDirectory({
+  const homeDirectory = runtimeHomeDirectory({ environment: runtimeEnvironment });
+  const legacyStateRoots = [defaultExportStateDirectory({
     platform,
+    homeDirectory,
     environment: runtimeEnvironment,
-  });
-  const legacyStateRoots = accountlessRehearsalPaths === null
-    ? [defaultExportStateDirectory({
-      platform,
-      homeDirectory,
-      environment: runtimeEnvironment,
-    })]
-    : [];
-  if (accountlessRehearsalPaths === null && platform === "darwin") {
-    legacyStateRoots.push(join(homeDirectory, "Library", "Application Support", "Usage Monitor"));
-  }
+  })];
   // Establish provenance before the first-run receipt or settings create a new
   // managed marker. Injected test backends never inspect real profile state.
   await markStartupPhase("installation_state");
   const installationState = sharingInstallationState ?? (injectedSettings
     ? "unknown"
     : await classifyDesktopSharingInstallation({
-      profileRoot: accountlessRehearsalPaths?.profileRoot ?? userDataPath(app),
+      profileRoot: userDataPath(app),
       stateRoot: childEnvironment.USAGE_MONITOR_STATE_ROOT, legacyStateRoots }));
   const needsWindowsProtectedStateStore = platform === "win32"
     && (qualificationContext !== null
@@ -1225,62 +659,49 @@ export async function launchDesktopRuntime({
       rootPath: settingsRootPath,
     })
     : null;
-  // Production macOS, Linux, and the exact Windows candidate use a
-  // main-process native adapter. The explicit factory requirement prevents a
-  // fallback to Electron safeStorage before a reviewed native route is
-  // selected.
+  // The exact Windows candidate uses a main-process native adapter. The
+  // explicit factory requirement prevents a fallback to Electron safeStorage
+  // before a reviewed native route is selected.
   // Do not call Electron safeStorage there: its asynchronous availability probe
   // can initialize a platform credential provider. Existing encrypted records
   // are inspected without decrypting or changing them so a prior installation
   // stops for explicit recovery instead of rotating identity.
-  if (accountlessEnabled) {
-    if (accountlessNativeCredentialUsesMac
-        || accountlessNativeCredentialUsesLinux
-        || accountlessNativeCredentialUsesWindows) {
-      const legacyCredentialProbe = createDesktopContributionCredentialLegacyProbe({
-        platform,
-        rootPath: settingsRootPath,
-        windowsProtectedStateStore,
-      });
-      const nativeBackend = accountlessNativeCredential[
-        accountlessNativeCredentialUsesMac
-          ? "createMacOSCredentialBackend"
-          : accountlessNativeCredentialUsesLinux
-            ? "createLinuxCredentialBackend"
-            : "createWindowsCredentialBackend"
-      ]({
-        legacyCredentialProbe: legacyCredentialProbe.inspect,
-        ...(accountlessNativeCredentialUsesWindows
-          ? { rootPath: settingsRootPath }
-          : {}),
-      });
-      if (!nativeBackend
-          || typeof nativeBackend !== "object"
-          || ["read", "createIfMissing", "deleteExact"].some(
-            (operation) => typeof nativeBackend[operation] !== "function",
-          )) {
-        throw shellError("electron_configuration_invalid");
-      }
-      // macOS owns this recovery check within its signed adapter. Linux and
-      // Windows keep the equivalent metadata-only boundary in this generic
-      // main-process wrapper until their reviewed native backends are selected
-      // by an entrypoint.
-      installationCredentialBackend = (accountlessNativeCredentialUsesLinux
-        || accountlessNativeCredentialUsesWindows)
-        ? createDesktopContributionCredentialLegacyRecoveryBackend({
-          backend: nativeBackend,
-          legacyCredentialProbe: legacyCredentialProbe.inspect,
-        })
-        : nativeBackend;
-    } else {
-      installationCredentialBackend = accountlessLaboratory?.backend
-        ?? createDesktopContributionCredentialBackend({
-          safeStorage: runtime.safeStorage,
-          platform,
-          rootPath: settingsRootPath,
-          windowsProtectedStateStore,
-        });
+  if (accountlessProduction !== undefined) {
+    // Injected settings backends never inspect real profile state, so an
+    // injected composition has no protected store to read the old record from.
+    const legacyCredentialProbe = createDesktopContributionCredentialLegacyProbe({
+      platform,
+      rootPath: settingsRootPath,
+      windowsProtectedStateStore,
+      ...(windowsProtectedStateStore === null && injectedSettings
+        ? { storage: { load: async () => null } }
+        : {}),
+    });
+    const nativeBackend = accountlessProduction.createWindowsCredentialBackend({
+      legacyCredentialProbe: legacyCredentialProbe.inspect,
+      rootPath: settingsRootPath,
+    });
+    if (!nativeBackend
+        || typeof nativeBackend !== "object"
+        || ["read", "createIfMissing", "deleteExact"].some(
+          (operation) => typeof nativeBackend[operation] !== "function",
+        )) {
+      throw shellError("electron_configuration_invalid");
     }
+    // Windows keeps the metadata-only recovery boundary in this main-process
+    // wrapper until its reviewed native backend is selected by an entrypoint.
+    installationCredentialBackend = createDesktopContributionCredentialLegacyRecoveryBackend({
+      backend: nativeBackend,
+      legacyCredentialProbe: legacyCredentialProbe.inspect,
+    });
+  } else if (accountlessEnabled) {
+    // Windows accountless identity is deliberately absent from any generic
+    // path. It must be composed through the reviewed native factory, or by the
+    // test-only loopback laboratory with an explicit backend.
+    if (accountlessLaboratory?.backend === undefined) {
+      throw new TypeError("Windows accountless credential requires a native factory");
+    }
+    installationCredentialBackend = accountlessLaboratory.backend;
   }
   const firstRunBackend = firstRunReceiptBackend
     ?? createDesktopFirstRunReceiptBackend({
@@ -1298,8 +719,7 @@ export async function launchDesktopRuntime({
     },
     locale: firstRunLocale,
     systemLocales: desktopSystemLocales,
-    production: productionDistribution !== undefined
-      || selectedAccountlessSignedStagingRehearsal !== undefined,
+    production: productionDistribution !== undefined,
   });
   if (firstRun.status !== "acknowledged") {
     deepLinkIntakeCleanup();
@@ -1335,35 +755,6 @@ export async function launchDesktopRuntime({
       updateTransport() {}, dispose() {} };
   }
   await markStartupPhase("secure_storage");
-  if (accountlessNativeCredentialUsesMac && initialSharingSnapshot?.enabled === true) {
-    while (true) {
-      try {
-        await preflightAccountlessCredential(installationCredentialBackend);
-        break;
-      } catch (error) {
-        const reason = classifyDesktopSecureStorageFailure(error);
-        if (await requestDesktopSecureStorageRecovery(runtime.dialog, reason, startupTextOptions) === "retry") {
-          continue;
-        }
-        deepLinkIntakeCleanup();
-        sharingCoordinator.dispose();
-        await stopStartup(`secure_storage_${reason}`);
-        app.quit?.();
-        return Object.freeze({
-          status: "secure_storage_blocked",
-          secureStorageReason: reason,
-          firstRun,
-          lifecycle: null,
-          supervisor: null,
-          controller: null,
-          settingsStore: null,
-          settingsBackend: null,
-          ipc: createNoopIpcInstallation(),
-          childEnvironment: null,
-        });
-      }
-    }
-  }
   await markStartupPhase("runtime_services");
   const runtimeOwnedDownloadsRegistry = await createRuntimeOwnedDownloadsRegistry({
     app,
@@ -1373,7 +764,7 @@ export async function launchDesktopRuntime({
   });
   const validateCodexHome = typeof services.validateCodexHome === "function"
     ? services.validateCodexHome
-    : (path) => validateDesktopCodexHome(path, { platform });
+    : (path) => validateDesktopCodexHome(path);
   const backend = settingsStore === undefined
     ? createSettingsBackend({
       app,
@@ -1388,7 +779,7 @@ export async function launchDesktopRuntime({
     : null;
   const runtimeAutomaticRefreshCadence = automaticRefreshCadence
     ?? (!injectedSettings
-      && (platform !== "win32" || windowsProtectedStateStore !== null)
+      && windowsProtectedStateStore !== null
       ? createDesktopAutomaticRefreshCadence({
         backend: createDesktopAutomaticRefreshCadenceBackend({
           platform,
@@ -1471,25 +862,10 @@ export async function launchDesktopRuntime({
       locale: activeDesktopLocale,
       systemLocales: desktopSystemLocales,
     };
-    const capture = crashCapture === null ? null : await crashCapture.get();
     const detail = `${await collectDesktopDiagnostics()}\n`
-      + `crash_capture_available: ${capture?.available === true}\n`
-      + `crash_capture_next_launch: ${platform !== "darwin" ? "unsupported"
-        : capture?.available !== true ? "unavailable" : capture.enabled}\n`
-      + `crash_capture_active_this_launch: ${capture?.active === true}\n`
       + "crash_report_upload: false\n";
-    const captureAction = capture?.available === true
-      ? desktopText(capture.enabled
-        ? "electron.diagnostics.disableCapture" : "electron.diagnostics.enableCapture", {}, textOptions)
-      : null;
-    const openCrashFolder = platform === "darwin"
-      && capture !== null
-      && typeof runtime.shell?.openPath === "function";
-    const actions = ["copy", ...(captureAction === null ? [] : ["capture"]),
-      ...(openCrashFolder ? ["folder"] : []), "support", "done"];
-    const buttons = actions.map((action) => action === "capture" ? captureAction
-      : desktopText(`electron.diagnostics.${action === "folder" ? "openCrashFolder"
-        : action === "support" ? "prepareSupportIssue" : action}`, {}, textOptions));
+    const actions = ["copy", "support", "done"];
+    const buttons = actions.map((action) => desktopText(`electron.diagnostics.${action === "support" ? "prepareSupportIssue" : action}`, {}, textOptions));
     const response = await runtime.dialog.showMessageBox({
       type: "info",
       title: desktopText("electron.diagnostics.title", {}, textOptions),
@@ -1501,24 +877,10 @@ export async function launchDesktopRuntime({
       noLink: true,
     });
     const action = actions[response?.response] ?? "done";
-    if (action === "capture") {
-      const next = await crashCapture.setEnabled(!capture.enabled);
-      return Object.freeze({ status: next.enabled === capture.enabled
-        ? "capture_preference_unavailable" : "capture_changed_next_launch" });
-    }
-    if (action === "folder") {
-      try {
-        const error = await runtime.shell.openPath(app.getPath("crashDumps"));
-        return Object.freeze({ status: error === ""
-          ? "crash_folder_opened" : "crash_folder_unavailable" });
-      } catch {
-        return Object.freeze({ status: "crash_folder_unavailable" });
-      }
-    }
     if (action === "support") {
       const url = new URL("https://github.com/adamallcock/tibotattle/issues/new");
       url.searchParams.set("title", "TiboTattle doctor report");
-      url.searchParams.set("body", `Please describe what happened and review this report before submitting. Do not attach raw crash dumps or unreviewed Apple reports.\n\n\`\`\`text\n${detail}\`\`\``);
+      url.searchParams.set("body", `Please describe what happened and review this report before submitting. Do not attach raw crash dumps or unreviewed crash reports.\n\n\`\`\`text\n${detail}\`\`\``);
       if (url.href.length > 4096 || typeof runtime.shell?.openExternal !== "function") {
         return Object.freeze({ status: "support_unavailable" });
       }
@@ -1600,14 +962,11 @@ export async function launchDesktopRuntime({
   }
 
   function assignCodexHome(home) {
-    if (accountlessRehearsalPaths !== null && home.mode !== "default") {
-      throw shellError("desktop_codex_roots_invalid");
-    }
     if (home.mode === "custom") {
       childEnvironment.CODEX_HOME = home.path;
     } else {
       childEnvironment.CODEX_HOME = services.defaultCodexHome
-        ?? join(runtimeHomeDirectory({ platform, environment: runtimeEnvironment }), ".codex");
+        ?? join(runtimeHomeDirectory({ environment: runtimeEnvironment }), ".codex");
     }
   }
 
@@ -1626,27 +985,12 @@ export async function launchDesktopRuntime({
       ({ rootId }) => rootId === selected.primaryRootId,
     );
     if (!primary) throw shellError("desktop_codex_roots_invalid");
-    if (accountlessRehearsalPaths !== null && (
-      selected.activityRoots.length !== 1
-      || primary.kind !== "default"
-    )) {
-      // This package can rehearse the real scheduler only from its compiled
-      // synthetic source. A saved UI choice may make the private test profile
-      // unusable, but it can never redirect a companion to host history.
-      throw shellError("desktop_codex_roots_invalid");
-    }
     let primaryPath = primary.kind === "default"
       ? services.defaultCodexHome
-        ?? join(runtimeHomeDirectory({ platform, environment: runtimeEnvironment }), ".codex")
+        ?? join(runtimeHomeDirectory({ environment: runtimeEnvironment }), ".codex")
       : primary.path;
-    if (typeof primaryPath !== "string" || !isPlatformCodexPath(primaryPath, platform)) {
+    if (typeof primaryPath !== "string" || !isPlatformCodexPath(primaryPath)) {
       throw shellError("desktop_codex_roots_invalid");
-    }
-    // Tests can compose a Win32 runtime on a POSIX host. Do not run a
-    // Windows drive/UNC spelling through the host's node:path resolver; the
-    // real Windows process already treats it as absolute.
-    if (platform !== "win32" && !isWindowsCodexPath(primaryPath)) {
-      primaryPath = resolve(primaryPath);
     }
     try {
       normalizeCodexPathForComparison(primaryPath);
@@ -1700,7 +1044,6 @@ export async function launchDesktopRuntime({
     sharingCoordinator,
     settingsStore: store,
     platformServices: services,
-    desktopPlatform: platform,
     desktopSystemLocales,
     notificationCoordinator,
     notificationDelivery,
@@ -1927,9 +1270,9 @@ export async function launchDesktopRuntime({
     await lifecycle.start();
     if (productionDistribution !== undefined) {
       await markStartupPhase("updater");
-      // Electron's built-in autoUpdater has no supported Linux implementation
-      // and lacks electron-updater's explicit download contract on every
-      // platform. The selected package consistently uses the pinned updater.
+      // Electron's built-in autoUpdater lacks electron-updater's explicit
+      // download contract, so the selected package consistently uses the
+      // pinned updater.
       const updaterModule = await loadProductionUpdater();
       const autoUpdater = updaterModule?.autoUpdater ?? updaterModule?.default?.autoUpdater;
       updater = createProductionDesktopUpdater({

@@ -25,27 +25,10 @@ export function assertElectronPlatformGate({
   productionDistribution = null,
   environment = {},
 } = {}) {
-  if (platform === "linux"
-      && productionDistribution !== null && productionDistribution !== undefined) {
-    try {
-      if (architecture !== "x64" || qualificationContext !== null
-          || environment?.USAGE_MONITOR_TEST_LANE !== undefined) {
-        throw new Error("Mixed Linux candidate selection");
-      }
-      validateProductionDistributionMetadata(productionDistribution, {
-        platform,
-        architecture,
-      });
-    } catch {
-      throw shellError("linux_readiness_unavailable");
-    }
-  }
+  // TiboTattle's desktop shell is Windows-only. Any other host fails closed
+  // before a companion, state root, notification, or credential path exists.
   if (platform !== "win32") {
-    return Object.freeze({
-      platform,
-      architecture,
-      windowsProductionReady: false,
-    });
+    throw shellError("unsupported_platform");
   }
   if (productionDistribution !== null && productionDistribution !== undefined) {
     try {

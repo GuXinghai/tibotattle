@@ -417,9 +417,7 @@ function readExactStagedManifest() {
   if (!isPlainRecord(manifest)
       || manifest.name !== "app-usagemonitor"
       || manifest.version !== RELEASE_INPUTS.packageVersion
-      || !sameJson(manifest.tibotattleDistribution, expectedDistribution)
-      || Object.hasOwn(manifest, "tibotattleAccountlessHostedRehearsal")
-      || Object.hasOwn(manifest, "tibotattleAccountlessSignedStagingRehearsal")) {
+      || !sameJson(manifest.tibotattleDistribution, expectedDistribution)) {
     fail();
   }
   return Object.freeze(expectedDistribution);
@@ -449,10 +447,6 @@ function createWindowsStagingFileClosure() {
         "apps/web/public/**",
         "config/**",
         "contracts/**",
-        // main.js imports the cross-platform credential facade before the
-        // platform gate selects a native adapter. This is JavaScript-only;
-        // the macOS native resource remains excluded from Windows packages.
-        "native/macos-keychain/contract.js",
         "native/windows-filesystem/build/Release/windows_filesystem.node",
         "native/windows-filesystem/build/Release/windows_filesystem.node.manifest.json",
         "schemas/**",

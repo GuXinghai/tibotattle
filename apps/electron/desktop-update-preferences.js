@@ -1,7 +1,4 @@
-import {
-  createPosixDesktopSettingsBackend,
-  createWindowsDesktopSettingsBackend,
-} from "./desktop-settings-backends.js";
+import { createWindowsDesktopSettingsBackend } from "./desktop-settings-backends.js";
 
 export const DESKTOP_UPDATE_PREFERENCES_SCHEMA_VERSION =
   "tibotattle-electron-update-preferences-v1";
@@ -209,14 +206,9 @@ export function createDesktopUpdatePreferencesBackend({
     maximumBytes: MAXIMUM_BYTES,
     codec: DESKTOP_UPDATE_PREFERENCES_CODEC,
   };
-  return platform === "win32"
-    ? createWindowsDesktopSettingsBackend({
-      ...options,
-      childName: DESKTOP_UPDATE_PREFERENCES_FILE_NAME,
-      windowsProtectedStateStore,
-    })
-    : createPosixDesktopSettingsBackend({
-      ...options,
-      filename: DESKTOP_UPDATE_PREFERENCES_FILE_NAME,
-    });
+  return createWindowsDesktopSettingsBackend({
+    ...options,
+    childName: DESKTOP_UPDATE_PREFERENCES_FILE_NAME,
+    windowsProtectedStateStore,
+  });
 }

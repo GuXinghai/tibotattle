@@ -366,7 +366,6 @@ export function createDesktopTrayPopover({
   origin,
   tray,
   screen,
-  platform = process.platform,
   model,
   onAction,
   windowOptions = {},
@@ -419,8 +418,7 @@ export function createDesktopTrayPopover({
       const spaceBelow = workArea === null
         ? Number.POSITIVE_INFINITY
         : (workArea.y + workArea.height) - (selectedBounds.y + selectedBounds.height);
-      const above = platform !== "darwin"
-        && (spaceBelow < height + POPOVER_OFFSET || spaceAbove > spaceBelow);
+      const above = spaceBelow < height + POPOVER_OFFSET || spaceAbove > spaceBelow;
       const anchoredY = above
         ? selectedBounds.y - height - POPOVER_OFFSET
         : selectedBounds.y + selectedBounds.height + POPOVER_OFFSET;
@@ -505,10 +503,6 @@ export function createDesktopTrayPopover({
       },
       focusable: true,
     };
-    // A macOS nonactivating panel can leave the previous app focused, so no
-    // focus-loss event arrives when the user clicks back outside the popup.
-    // A normal frameless window follows the existing blur-dismissal contract.
-    if (platform === "darwin") delete options.type;
     try {
       window = new BrowserWindow(options);
     } catch {

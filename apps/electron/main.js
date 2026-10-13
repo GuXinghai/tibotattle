@@ -1,46 +1,17 @@
-import { dirname, join, resolve } from "node:path";
-import {
-  chmod,
-  lstat,
-  mkdir,
-  readFile,
-} from "node:fs/promises";
-import { userInfo } from "node:os";
+import { dirname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { DEPLOYMENT_ENDPOINTS } from "../../config/deployment-endpoints.js";
-import {
-  assertAccountlessSignedStagingOperatingAccount,
-  launchDesktopRuntime,
-  validateAccountlessHostedRehearsalMetadata,
-  validateAccountlessSignedStagingRehearsalMetadata,
-} from "./desktop-runtime.js";
+import { launchDesktopRuntime } from "./desktop-runtime.js";
 import { createDesktopTrayIconFactory } from "./desktop-tray.js";
-import {
-  createDesktopCrashCapture,
-  createDesktopCrashCaptureBackend,
-} from "./desktop-crash-capture.js";
 import { createDesktopStartupDiagnostics } from "./desktop-startup-diagnostics.js";
-import {
-  PRODUCTION_ELECTRON_CHANNEL,
-  validateProductionDistributionMetadata,
-} from "./desktop-updater.js";
-import { runProductionNativeMacHandover } from "./desktop-native-migration-macos.js";
-import { attachDesktopKeychainBroker } from "./desktop-keychain-broker.js";
-import { loadDesktopMacOSCredentialBackends } from "./desktop-macos-keychain.js";
-import {
-  classifyDesktopSecureStorageFailure,
-  isDesktopSecureStorageFailure,
-} from "./desktop-secure-storage-readiness.js";
-import {
-  createLinuxProductionCredentialHandover,
-  createLinuxQualificationAccountObservationHandover,
-} from "./desktop-linux-secret-service.js";
+import { validateProductionDistributionMetadata } from "./desktop-updater.js";
+import { ELECTRON_ENTRY_FAILURE_DIAGNOSTIC, shellError } from "./errors.js";
+import { assertElectronPlatformGate } from "./platform-gate.js";
 import {
   createWindowsNormalCandidateCredentialHandover,
 } from "./desktop-windows-accountless-credential.js";
-import { ELECTRON_ENTRY_FAILURE_DIAGNOSTIC, shellError } from "./errors.js";
-import { assertElectronPlatformGate } from "./platform-gate.js";
 import {
   createWindowsElectronQualificationContext,
   WINDOWS_ELECTRON_QUALIFICATION_MARKER,
@@ -65,12 +36,6 @@ export const ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX =
   "TIBOTATTLE_ELECTRON_COMPANION_PROCESS ";
 export const ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX =
   "TIBOTATTLE_ELECTRON_DASHBOARD_FAILURE ";
-export const MACOS_ELECTRON_LOCAL_QA_TEST_LANE =
-  "macos-electron-local-qa-v1";
-const MACOS_ELECTRON_SMOKE_OBSERVE_MESSAGE_TYPE =
-  "tibotattle-macos-smoke-observe-v1";
-const MACOS_ELECTRON_SMOKE_STATE_MESSAGE_TYPE =
-  "tibotattle-macos-smoke-state-v1";
 const ELECTRON_SHELL_BOOTSTRAP = Symbol("electron-shell-bootstrap");
 const WINDOWS_ELECTRON_SMOKE_CONTROL = "windows-v1";
 const WINDOWS_ELECTRON_SMOKE_MESSAGE_TYPE = "windows-electron-smoke-v1";
@@ -81,8 +46,6 @@ const WINDOWS_ELECTRON_SMOKE_QUIT_MESSAGE = "quit-v1";
 const WINDOWS_ELECTRON_SMOKE_ACCEPTED_STATUS = "accepted-v1";
 const WINDOWS_ELECTRON_SMOKE_PASSED_STATUS = "passed-v1";
 const WINDOWS_ELECTRON_SMOKE_FAILED_STATUS = "failed-v1";
-const ACCOUNTLESS_SIGNED_STAGING_PROFILE_DIRECTORY =
-  "TiboTattle Signed Staging Rehearsal";
 const WINDOWS_ELECTRON_SMOKE_COMMANDS = new Set([
   "status-v1",
   "tray-show-v1",
@@ -148,182 +111,16 @@ export async function readProductionDistribution({
       throw new Error("Invalid packaged manifest");
     }
     const manifest = JSON.parse(bytes.toString("utf8"));
-    const hasSignedStagingRehearsal = Object.hasOwn(
-      manifest,
-      "tibotattleAccountlessSignedStagingRehearsal",
-    );
     if (!Object.hasOwn(manifest, "tibotattleDistribution")) {
-      if (hasSignedStagingRehearsal) return null;
       throw new Error("Missing production distribution metadata");
     }
-    if (hasSignedStagingRehearsal
-        || Object.hasOwn(manifest, "tibotattleAccountlessHostedRehearsal")) {
-      throw new Error("Mixed packaged authority markers");
-    }
-    const distribution = validateProductionDistributionMetadata(manifest.tibotattleDistribution, {
+    return validateProductionDistributionMetadata(manifest.tibotattleDistribution, {
       platform,
       architecture,
     });
-    if (distribution.channel !== PRODUCTION_ELECTRON_CHANNEL
-        && manifest.version !== distribution.semanticVersion) {
-      throw new Error("Rehearsal manifest version does not match its distribution metadata");
-    }
-    return distribution;
   } catch {
     throw shellError("electron_configuration_invalid");
   }
-}
-
-/**
- * Read the separate unsigned Dev-package selection for the private hosted
- * scheduler rehearsal. A normal development app has no field and cannot be
- * enabled by an environment variable or renderer input.
- */
-export async function readAccountlessHostedRehearsal({
-  app,
-  platform = process.platform,
-  architecture = process.arch,
-  readManifest = readFile,
-} = {}) {
-  if (!isPackagedElectronApp(app) || app.getName?.() !== "TiboTattle Dev") return null;
-  const appPath = packagedAppPath(app);
-  if (appPath === null) throw shellError("electron_configuration_invalid");
-  try {
-    const bytes = await readManifest(resolve(appPath, "package.json"));
-    if (!Buffer.isBuffer(bytes) || bytes.length > 1_048_576) {
-      throw new Error("Invalid packaged manifest");
-    }
-    const manifest = JSON.parse(bytes.toString("utf8"));
-    if (!Object.hasOwn(manifest, "tibotattleAccountlessHostedRehearsal")) return null;
-    if (Object.hasOwn(manifest, "tibotattleDistribution")
-        || Object.hasOwn(manifest, "tibotattleAccountlessSignedStagingRehearsal")) {
-      throw new Error("Hosted rehearsal manifest carries production metadata");
-    }
-    return validateAccountlessHostedRehearsalMetadata(
-      manifest.tibotattleAccountlessHostedRehearsal,
-      { platform, architecture },
-    );
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-}
-
-/**
- * Read the one signed, native-credential staging rehearsal marker. It has the
- * normal app identity but cannot carry a distribution/updater or Dev marker.
- */
-export async function readAccountlessSignedStagingRehearsal({
-  app,
-  platform = process.platform,
-  architecture = process.arch,
-  readManifest = readFile,
-} = {}) {
-  if (!isPackagedElectronApp(app) || app.getName?.() !== "TiboTattle") return null;
-  const appPath = packagedAppPath(app);
-  if (appPath === null) throw shellError("electron_configuration_invalid");
-  try {
-    const bytes = await readManifest(resolve(appPath, "package.json"));
-    if (!Buffer.isBuffer(bytes) || bytes.length > 1_048_576) {
-      throw new Error("Invalid packaged manifest");
-    }
-    const manifest = JSON.parse(bytes.toString("utf8"));
-    if (!Object.hasOwn(manifest, "tibotattleAccountlessSignedStagingRehearsal")) return null;
-    if (Object.hasOwn(manifest, "tibotattleDistribution")
-        || Object.hasOwn(manifest, "tibotattleAccountlessHostedRehearsal")) {
-      throw new Error("Signed staging manifest carries incompatible metadata");
-    }
-    return validateAccountlessSignedStagingRehearsalMetadata(
-      manifest.tibotattleAccountlessSignedStagingRehearsal,
-      { platform, architecture },
-    );
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-}
-
-/**
- * Keep Chromium's own state outside the normal production profile. The
- * package marker is the sole selector; inherited environment values never
- * choose this path. The directory is created before either Electron path is
- * changed because `app.setPath` rejects a missing directory.
- */
-async function configureAccountlessSignedStagingProfile(app, metadata, {
-  expectedOwnerUid,
-} = {}) {
-  if (metadata === null) return null;
-  if (typeof app?.getPath !== "function" || typeof app?.setPath !== "function") {
-    throw shellError("electron_configuration_invalid");
-  }
-  try {
-    if (typeof app.isReady === "function" && app.isReady() === true) {
-      throw shellError("electron_configuration_invalid");
-    }
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  let rawAppData;
-  try {
-    rawAppData = app.getPath("appData");
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  if (typeof rawAppData !== "string" || rawAppData.length === 0) {
-    throw shellError("electron_configuration_invalid");
-  }
-  const appData = resolve(rawAppData);
-  const profile = join(appData, ACCOUNTLESS_SIGNED_STAGING_PROFILE_DIRECTORY);
-  if (dirname(profile) !== appData) throw shellError("electron_configuration_invalid");
-  let appDataStats;
-  try {
-    appDataStats = await lstat(appData);
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  if (appDataStats.isSymbolicLink() || !appDataStats.isDirectory()) {
-    throw shellError("electron_configuration_invalid");
-  }
-  let profileStats;
-  try {
-    await mkdir(profile, { recursive: true, mode: 0o700 });
-    profileStats = await lstat(profile);
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  if (profileStats.isSymbolicLink() || !profileStats.isDirectory()) {
-    throw shellError("electron_configuration_invalid");
-  }
-  const hasExpectedOwner = process.platform !== "darwin"
-    || (Number.isSafeInteger(expectedOwnerUid)
-      && Number.isSafeInteger(profileStats.uid)
-      && profileStats.uid === expectedOwnerUid);
-  if (!hasExpectedOwner) throw shellError("electron_configuration_invalid");
-  try {
-    await chmod(profile, 0o700);
-    profileStats = await lstat(profile);
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  // Signed staging is macOS-only; Windows' chmod/lstat surface does not
-  // expose POSIX directory bits for the injected cross-platform tests.
-  const hasPrivateMode = process.platform === "win32"
-    || (profileStats.mode & 0o777) === 0o700;
-  const hasFinalExpectedOwner = process.platform !== "darwin"
-    || (Number.isSafeInteger(expectedOwnerUid)
-      && Number.isSafeInteger(profileStats.uid)
-      && profileStats.uid === expectedOwnerUid);
-  if (profileStats.isSymbolicLink()
-      || !profileStats.isDirectory()
-      || !hasPrivateMode
-      || !hasFinalExpectedOwner) {
-    throw shellError("electron_configuration_invalid");
-  }
-  try {
-    app.setPath("userData", profile);
-    app.setPath("sessionData", profile);
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-  return profile;
 }
 
 function packagedResourcesPath(app, appPath, resourcesPath) {
@@ -340,18 +137,10 @@ export function companionEnvironment({
   app,
   environment,
   qualificationContext,
-  platform = process.platform,
 }) {
   if (!isPackagedElectronApp(app)
       || qualificationContext !== null) {
     return environment;
-  }
-  if (platform === "darwin"
-      && environment.USAGE_MONITOR_TEST_LANE
-        === MACOS_ELECTRON_LOCAL_QA_TEST_LANE) {
-    const selected = { ...environment };
-    delete selected.USAGE_MONITOR_CENTRAL_ORIGIN;
-    return selected;
   }
   return {
     ...environment,
@@ -454,73 +243,6 @@ function isDashboardFailureEvent(value) {
       || value.reason === "launch-failed"
       || value.reason === "integrity-failure"
       || value.reason === "unknown");
-}
-
-/**
- * Emit only fixed companion process lifecycle facts for the exact Linux
- * normal-candidate smoke control. This observer neither changes child
- * supervision nor exposes a renderer, loopback, or general test interface.
- */
-export function createLinuxSmokeCompanionProcessObserver({
-  environment = process.env,
-  platform = process.platform,
-  architecture = process.arch,
-  writeDiagnostic = process.stderr?.write?.bind(process.stderr),
-} = {}) {
-  if (environment === null || typeof environment !== "object"
-      || platform !== "linux"
-      || architecture !== "x64"
-      || environment.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL !== ELECTRON_SMOKE_CONTROL
-      || Object.hasOwn(environment, "USAGE_MONITOR_TEST_LANE")
-      || typeof writeDiagnostic !== "function") {
-    return undefined;
-  }
-  return (event) => {
-    if (!isCompanionProcessLifecycleEvent(event)) return;
-    const value = {
-      event: event.event,
-      phase: event.phase,
-      outcome: event.outcome,
-    };
-    try {
-      writeDiagnostic(`${ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX}${JSON.stringify(value)}\n`);
-    } catch {
-      // Diagnostic delivery must never affect the normal desktop lifecycle.
-    }
-  };
-}
-
-/**
- * Emit closed dashboard load failures from the exact Linux normal-candidate
- * smoke control. The lifecycle reports at most one failure for a given
- * dashboard window and remains solely responsible for recovery and shutdown.
- */
-export function createLinuxSmokeDashboardFailureObserver({
-  environment = process.env,
-  platform = process.platform,
-  architecture = process.arch,
-  writeDiagnostic = process.stderr?.write?.bind(process.stderr),
-} = {}) {
-  if (environment === null || typeof environment !== "object"
-      || platform !== "linux"
-      || architecture !== "x64"
-      || environment.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL !== ELECTRON_SMOKE_CONTROL
-      || Object.hasOwn(environment, "USAGE_MONITOR_TEST_LANE")
-      || typeof writeDiagnostic !== "function") {
-    return undefined;
-  }
-  return (event) => {
-    if (!isDashboardFailureEvent(event)) return;
-    const value = {
-      stage: event.stage,
-      reason: event.reason,
-    };
-    try {
-      writeDiagnostic(`${ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX}${JSON.stringify(value)}\n`);
-    } catch {
-      // Diagnostic delivery must never affect the normal desktop lifecycle.
-    }
-  };
 }
 
 /**
@@ -643,66 +365,6 @@ function windowsSmokeCredentialMessage(operation, status) {
     operation,
     status,
   });
-}
-
-/**
- * Observe only native BrowserWindow visibility for the exact local macOS
- * smoke lane. This parent-process IPC seam intentionally accepts a single
- * fixed request and emits two lifecycle-derived booleans. It is never exposed
- * to a renderer, preload bridge, loopback route, or production environment.
- */
-export function installMacosSmokeObservation(lifecycle, {
-  environment = process.env,
-  messageSource = process,
-  sendMessage = null,
-  platform = process.platform,
-} = {}) {
-  if (platform !== "darwin"
-      || environment.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL !== ELECTRON_SMOKE_CONTROL
-      || environment.USAGE_MONITOR_TEST_LANE !== MACOS_ELECTRON_LOCAL_QA_TEST_LANE
-      || typeof messageSource?.on !== "function"
-      || messageSource?.connected !== true
-      || typeof messageSource?.send !== "function") {
-    return () => {};
-  }
-  const sendControlMessage = sendMessage ?? messageSource.send;
-  if (typeof sendControlMessage !== "function") return () => {};
-  let active = true;
-  const sendState = () => {
-    if (!active) return;
-    const state = lifecycle?.state ?? {};
-    const message = Object.freeze({
-      type: MACOS_ELECTRON_SMOKE_STATE_MESSAGE_TYPE,
-      windowVisible: state.windowVisible === true,
-      settingsWindowVisible: state.settingsWindowVisible === true,
-    });
-    try {
-      sendControlMessage.call(messageSource, message, () => {});
-    } catch {
-      // A closed smoke parent channel must never change normal app behavior.
-    }
-  };
-  const onMessage = (message) => {
-    if (!active
-        || message === null
-        || typeof message !== "object"
-        || Array.isArray(message)
-        || Reflect.ownKeys(message).length !== 1
-        || message.type !== MACOS_ELECTRON_SMOKE_OBSERVE_MESSAGE_TYPE) {
-      return;
-    }
-    sendState();
-  };
-  const onDisconnect = () => cleanup();
-  const cleanup = () => {
-    if (!active) return;
-    active = false;
-    messageSource.off?.("message", onMessage);
-    messageSource.off?.("disconnect", onDisconnect);
-  };
-  messageSource.on("message", onMessage);
-  messageSource.on("disconnect", onDisconnect);
-  return cleanup;
 }
 
 /**
@@ -987,94 +649,18 @@ export function installWindowsSmokeControlForTest(lifecycle, {
   });
 }
 
-/** Resolve credential continuity before any predecessor or state mutation. */
-export function createProductionMacCredentialHandover({
-  app,
-  resourcesPath,
-  credentialBrokerEnabled = true,
-  loadBackend = loadDesktopMacOSCredentialBackends,
-  runHandover = runProductionNativeMacHandover,
-} = {}) {
-  if (credentialBrokerEnabled !== true && credentialBrokerEnabled !== false) {
-    throw new TypeError("credential broker selection is invalid");
-  }
-  let brokerBackend = null;
-  let createAccountlessCredentialBackend = null;
-  return Object.freeze({
-    async prepareNativeHandover({ homeDirectory }) {
-      brokerBackend = null;
-      createAccountlessCredentialBackend = null;
-      let selected;
-      try {
-        selected = await loadBackend({
-          app,
-          resourcesPath,
-          ...(credentialBrokerEnabled ? {} : { preflightBroker: false }),
-        });
-      } catch (error) {
-        if (isDesktopSecureStorageFailure(error)) {
-          return Object.freeze({
-            status: "credential_preflight_blocked",
-            reason: classifyDesktopSecureStorageFailure(error),
-          });
-        }
-        throw error;
-      }
-      const handover = await runHandover({ electronApp: app, resourcesPath, homeDirectory });
-      if (["no_legacy_state", "migrated", "already_migrated"].includes(handover?.status)) {
-        brokerBackend = credentialBrokerEnabled ? selected?.broker ?? selected : null;
-        createAccountlessCredentialBackend = typeof selected?.createAccountlessCredentialBackend === "function"
-          ? selected.createAccountlessCredentialBackend.bind(selected)
-          : null;
-      }
-      return handover;
-    },
-    attachCredentialBroker(stream) {
-      if (brokerBackend === null) throw shellError("electron_configuration_invalid");
-      return attachDesktopKeychainBroker({ stream, backend: brokerBackend });
-    },
-    createAccountlessCredentialBackend(options) {
-      if (createAccountlessCredentialBackend === null) {
-        throw shellError("electron_configuration_invalid");
-      }
-      return createAccountlessCredentialBackend(options);
-    },
-  });
-}
-
-/**
- * Qualification-only main-process wiring.  Normal Electron entry never
- * supplies this context. The packaged credential smoke exercises this same
- * narrow parent/child route under ELECTRON_RUN_AS_NODE on an isolated bus.
- */
-export function createLinuxQualificationSupervisorOptions({
-  linuxQualificationContext = null,
-} = {}) {
-  if (linuxQualificationContext === null) return Object.freeze({});
-  try {
-    return createLinuxQualificationAccountObservationHandover({
-      qualificationContext: linuxQualificationContext,
-    });
-  } catch {
-    throw shellError("electron_configuration_invalid");
-  }
-}
-
 /**
  * Resolve package authority and complete the one pre-ready Electron setup.
  * Electron's ESM main loader can emit `ready` while an unawaited async launch
- * continues, so the signed staging profile must be prepared in an awaited
- * bootstrap phase before the normal lifecycle composition starts.
+ * continues, so this bootstrap phase is awaited before the normal lifecycle
+ * composition starts.
  */
 async function prepareElectronShellBootstrap({
   electron,
-  environment = process.env,
   platform = process.platform,
   architecture = process.arch,
   onStartupPhase,
   startStartupDiagnostics,
-  getuid = typeof process.getuid === "function" ? process.getuid.bind(process) : undefined,
-  getUserInfo = userInfo,
 } = {}) {
   const runtime = electron ?? await import("electron");
   const app = runtime?.app;
@@ -1088,37 +674,10 @@ async function prepareElectronShellBootstrap({
       // Startup diagnostics are observational and never control startup.
     }
   };
-  // Read and validate every package marker before constructing any companion
-  // or platform service. This also preserves the existing mixed-marker gate.
+  // Read and validate the package marker before constructing any companion or
+  // platform service.
   await markStartupPhase("package_metadata");
   const productionDistribution = await readProductionDistribution({ app, platform, architecture });
-  const accountlessHostedRehearsal = await readAccountlessHostedRehearsal({ app, platform, architecture });
-  const accountlessSignedStagingRehearsal = await readAccountlessSignedStagingRehearsal({
-    app,
-    platform,
-    architecture,
-  });
-  if (accountlessSignedStagingRehearsal !== null
-      && environment.USAGE_MONITOR_TEST_LANE !== undefined) {
-    throw shellError("electron_configuration_invalid");
-  }
-  // This guard intentionally precedes the profile redirect and macOS handover
-  // factory. An artifact outside its package-bound OS account and runner
-  // profile cannot read, create, or migrate credential material.
-  const accountContext = assertAccountlessSignedStagingOperatingAccount({
-    metadata: accountlessSignedStagingRehearsal,
-    environment,
-    getuid,
-    getUserInfo,
-    platform,
-    architecture,
-  });
-  await markStartupPhase("profile_selection");
-  const signedStagingProfile = await configureAccountlessSignedStagingProfile(
-    app,
-    accountlessSignedStagingRehearsal,
-    { expectedOwnerUid: accountContext?.expectedTestUID },
-  );
   try {
     if (typeof startStartupDiagnostics === "function") {
       await startStartupDiagnostics();
@@ -1126,31 +685,11 @@ async function prepareElectronShellBootstrap({
   } catch {
     // Startup diagnostics are observational and never control startup.
   }
-  await markStartupPhase("crash_capture");
-  let crashCapture = null;
-  if (platform === "darwin" && typeof runtime.crashReporter?.start === "function") {
-    try {
-      const backend = createDesktopCrashCaptureBackend({
-        platform,
-        rootPath: join(app.getPath("userData"), "desktop-settings"),
-      });
-      crashCapture = createDesktopCrashCapture({ backend, crashReporter: runtime.crashReporter });
-      await crashCapture.initialize();
-    } catch {
-      // Crash capture is optional. A malformed or unavailable preference must
-      // never prevent the ordinary desktop launch or enable native dumps.
-      crashCapture = null;
-    }
-  }
   return Object.freeze({
     [ELECTRON_SHELL_BOOTSTRAP]: true,
-    accountlessHostedRehearsal,
-    accountlessSignedStagingRehearsal,
     app,
-    crashCapture,
     productionDistribution,
     runtime,
-    signedStagingProfile,
   });
 }
 
@@ -1172,10 +711,6 @@ export async function launchElectronShell({
   firstRunReceiptBackend,
   ownedDownloadsRegistry,
   notificationBackend,
-  linuxQualificationContext = null,
-  getuid = typeof process.getuid === "function" ? process.getuid.bind(process) : undefined,
-  getUserInfo = userInfo,
-  createMacCredentialHandover = createProductionMacCredentialHandover,
   emitFailureDiagnostic = false,
   writeDiagnostic,
   startupPreparation = null,
@@ -1207,13 +742,10 @@ export async function launchElectronShell({
     });
     const preparation = startupPreparation ?? await prepareElectronShellBootstrap({
       electron: runtime,
-      environment,
       platform,
       architecture,
       onStartupPhase: (phase) => markStartupDiagnostics(startupDiagnostics, phase),
       startStartupDiagnostics: () => writeStartupDiagnostics(startupDiagnostics, "start"),
-      getuid,
-      getUserInfo,
     });
     if (preparation?.[ELECTRON_SHELL_BOOTSTRAP] !== true
         || preparation.runtime !== runtime
@@ -1221,18 +753,13 @@ export async function launchElectronShell({
       throw shellError("electron_configuration_invalid");
     }
     await writeStartupDiagnostics(startupDiagnostics, "start");
-    const {
-      accountlessHostedRehearsal,
-      accountlessSignedStagingRehearsal,
-      crashCapture,
-      productionDistribution,
-    } = preparation;
+    const { productionDistribution } = preparation;
     await markStartupDiagnostics(startupDiagnostics, "platform_gate");
     assertElectronPlatformGate({
       platform,
       architecture,
       environment,
-      qualificationContext: qualificationContext ?? linuxQualificationContext,
+      qualificationContext,
       productionDistribution,
     });
     await markStartupDiagnostics(startupDiagnostics, "runtime_paths");
@@ -1245,69 +772,29 @@ export async function launchElectronShell({
     // A local-QA launch must never inherit production sending or updating.
     const productionEnabled = productionDistribution !== null
       && environment.USAGE_MONITOR_TEST_LANE === undefined;
-    const accountlessSignedStagingEnabled = accountlessSignedStagingRehearsal !== null;
-    // Native-to-Electron handover fixtures retain the signed migration/FD4
-    // path without enabling accountless FD3 uploads. Exact stable candidates
-    // select their fixed native adapters; installed lifecycle and release
-    // evidence remain separate from this source selection.
-    const accountlessProductionEnabled = productionEnabled
-      && productionDistribution.channel === PRODUCTION_ELECTRON_CHANNEL;
-    const linuxQualificationSupervisorOptions =
-      createLinuxQualificationSupervisorOptions({ linuxQualificationContext });
-    const linuxSmokeCompanionProcessObserver = createLinuxSmokeCompanionProcessObserver({
-      environment,
-      platform: process.platform,
-      architecture: process.arch,
-      writeDiagnostic,
-    });
-    const linuxSmokeDashboardFailureObserver = createLinuxSmokeDashboardFailureObserver({
-      environment,
-      platform: process.platform,
-      architecture: process.arch,
-      writeDiagnostic,
-    });
-    const windowsNormalCandidateCompanionProcessObserver =
+    // Exact stable Windows candidates select the fixed native adapter. Qualification
+    // and installed lifecycle evidence remain separate from this source selection.
+    const accountlessProductionEnabled = productionEnabled;
+    const normalCandidateCompanionProcessObserver =
       createWindowsNormalCandidateCompanionProcessObserver({
         environment,
         platform: process.platform,
         architecture: process.arch,
         writeDiagnostic,
       });
-    const windowsNormalCandidateDashboardFailureObserver =
+    const normalCandidateDashboardFailureObserver =
       createWindowsNormalCandidateDashboardFailureObserver({
         environment,
         platform: process.platform,
         architecture: process.arch,
         writeDiagnostic,
       });
-    const normalCandidateCompanionProcessObserver = linuxSmokeCompanionProcessObserver
-      ?? windowsNormalCandidateCompanionProcessObserver;
-    const normalCandidateDashboardFailureObserver = linuxSmokeDashboardFailureObserver
-      ?? windowsNormalCandidateDashboardFailureObserver;
-    // readProductionDistribution has already validated the package-local
-    // target against this process. Keep the fixed Linux handover dormant for
-    // every development, rehearsal, test-lane, non-x64, and non-stable path.
-    const linuxProductionCredentialHandover = accountlessProductionEnabled
-      && platform === "linux"
-      && architecture === "x64"
-      && productionDistribution.target === "linux-x64"
-      ? createLinuxProductionCredentialHandover() : null;
     const windowsNormalCandidateCredentialHandover = accountlessProductionEnabled
       && platform === "win32"
       && architecture === "x64"
       && productionDistribution.target === "win32-x64"
       ? createWindowsNormalCandidateCredentialHandover() : null;
     await markStartupDiagnostics(startupDiagnostics, "credential_wiring");
-    // Signed staging retains the verified native handover and its main-process
-    // FD3 factory, but it never gives the companion the normal FD4 broker or
-    // reads normal broker services during startup.
-    const macCredentialHandover = (productionEnabled || accountlessSignedStagingEnabled)
-      && platform === "darwin"
-      ? createMacCredentialHandover({
-        app,
-        resourcesPath: packagedResourcesPath(app, packagedAppPath(app), resourcesPath),
-        credentialBrokerEnabled: productionEnabled,
-      }) : null;
     const trayIconFactory = createDesktopTrayIconFactory({
       nativeImage: runtime.nativeImage,
       resourceRoot: paths.resourceRoot,
@@ -1325,30 +812,21 @@ export async function launchElectronShell({
         preloadPath: resolve(MODULE_DIRECTORY, "preload.cjs"),
       },
       environment: {
-        ...companionEnvironment({ app, environment, qualificationContext, platform }),
+        ...companionEnvironment({ app, environment, qualificationContext }),
         USAGE_MONITOR_RESOURCE_ROOT: paths.resourceRoot,
       },
       supervisorOptions: {
         ...supervisorOptions,
-        ...linuxQualificationSupervisorOptions,
         ...(normalCandidateCompanionProcessObserver === undefined ? {} : {
           onChildLifecycleEvent: normalCandidateCompanionProcessObserver,
-        }),
-        ...(linuxProductionCredentialHandover === null ? {} : {
-          attachLinuxAccountObservationBroker:
-            linuxProductionCredentialHandover.attachLinuxAccountObservationBroker,
         }),
         ...(windowsNormalCandidateCredentialHandover === null ? {} : {
           attachWindowsAccountObservationBroker:
             windowsNormalCandidateCredentialHandover.attachWindowsAccountObservationBroker,
         }),
-        ...(macCredentialHandover === null || !productionEnabled ? {} : {
-          attachCredentialBroker: macCredentialHandover.attachCredentialBroker,
-        }),
       },
       lifecycleOptions: {
-        appName: productionDistribution !== null || accountlessSignedStagingRehearsal !== null
-          || !isPackagedElectronApp(app)
+        appName: productionDistribution !== null || !isPackagedElectronApp(app)
           ? "TiboTattle" : "TiboTattle Dev",
         ...lifecycleOptions,
         ...(normalCandidateDashboardFailureObserver === undefined ? {} : {
@@ -1361,39 +839,17 @@ export async function launchElectronShell({
       qualificationContext,
       platform,
       architecture,
-      crashCapture,
       productionDistribution: productionEnabled ? productionDistribution : undefined,
-      prepareNativeHandover: macCredentialHandover?.prepareNativeHandover,
       onStartupPhase: (phase) => markStartupDiagnostics(startupDiagnostics, phase),
       onStartupStop: (code) => writeStartupDiagnostics(startupDiagnostics, "stop", code),
       accountlessProduction: accountlessProductionEnabled ? {
         origin: DEPLOYMENT_ENDPOINTS.public.origin,
         policyVersion: productionDistribution.contributionPolicy,
-        ...(macCredentialHandover === null ? {} : {
-          createMacOSCredentialBackend:
-            macCredentialHandover.createAccountlessCredentialBackend,
-        }),
-        ...(linuxProductionCredentialHandover === null ? {} : {
-          createLinuxCredentialBackend:
-            linuxProductionCredentialHandover.createAccountlessCredentialBackend,
-        }),
         ...(windowsNormalCandidateCredentialHandover === null ? {} : {
           createWindowsCredentialBackend:
             windowsNormalCandidateCredentialHandover.createAccountlessCredentialBackend,
         }),
       } : undefined,
-      accountlessHostedRehearsal: accountlessHostedRehearsal ?? undefined,
-      accountlessSignedStagingRehearsal: accountlessSignedStagingEnabled ? {
-        executionProfile: accountlessSignedStagingRehearsal.executionProfile,
-        expectedTestUID: accountlessSignedStagingRehearsal.expectedTestUID,
-        expectedTestUsername: accountlessSignedStagingRehearsal.expectedTestUsername,
-        origin: accountlessSignedStagingRehearsal.origin,
-        policyVersion: accountlessSignedStagingRehearsal.contributionPolicy,
-        createMacOSCredentialBackend:
-          macCredentialHandover?.createAccountlessCredentialBackend,
-      } : undefined,
-      getuid,
-      getUserInfo,
     });
     installWindowsSmokeControl(desktop.lifecycle, {
       environment,
@@ -1401,10 +857,7 @@ export async function launchElectronShell({
       qualificationContext,
     });
     if (desktop.lifecycle === null) {
-      const stop = desktop.secureStorageReason === undefined
-        ? desktop.status
-        : `secure_storage_${desktop.secureStorageReason}`;
-      await writeStartupDiagnostics(startupDiagnostics, "stop", stop);
+      await writeStartupDiagnostics(startupDiagnostics, "stop", desktop.status);
     } else {
       await writeStartupDiagnostics(startupDiagnostics, "complete");
     }
@@ -1449,29 +902,7 @@ if (process.versions.electron) {
       emitFailureDiagnostic: true,
     })
       .then((lifecycle) => {
-        if (lifecycle !== null) installMacosSmokeObservation(lifecycle);
         if (lifecycle !== null) installWindowsNormalCandidateQuitControl(lifecycle);
-        // The Linux GUI smoke needs a deterministic way to exercise the same
-        // main-process shutdown path as the tray's Quit action. Keep that
-        // control test-only, opt-in, and out of the renderer/preload boundary.
-        // SIGUSR2 is not installed on Windows, so this cannot become a Windows
-        // production contract by accident.
-        if (lifecycle !== null
-            && process.platform !== "win32"
-            && process.env.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL === ELECTRON_SMOKE_CONTROL) {
-          // This signal is installed only for the explicit local smoke lane. It
-          // asks the lifecycle to open the validated loopback popup route, so
-          // the harness can inspect the real tray renderer without accepting a
-          // renderer-controlled URL or exposing a production command.
-          process.once("SIGUSR1", () => {
-            lifecycle.showTrayPopover?.();
-          });
-          process.once("SIGUSR2", () => {
-            void lifecycle.requestQuit().catch(() => {
-              process.exitCode = 1;
-            });
-          });
-        }
       })
       .catch(() => {
         process.exitCode = 1;

@@ -29,7 +29,7 @@ test("startup diagnostics persist one owner-only content-free failure record", a
   const diagnostics = createDesktopStartupDiagnostics({
     app: { getVersion: () => "0.1.24" },
     rootPath,
-    platform: "darwin",
+    platform: "win32",
     architecture: "arm64",
     now: clock("2026-09-22T14:00:00.000Z", "2026-09-22T14:00:01.000Z"),
   });
@@ -47,7 +47,7 @@ test("startup diagnostics persist one owner-only content-free failure record", a
     phase: "native_handover",
     outcome: "failed",
     code: "secure_storage_locked",
-    platform: "darwin",
+    platform: "win32",
     architecture: "arm64",
     version: "0.1.24",
   });

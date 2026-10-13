@@ -237,7 +237,7 @@ test("popover controller lazily positions, updates, routes, and destroys a trust
     pageURL: POPOVER_PAGE_URL,
     origin: POPOVER_ORIGIN,
     tray,
-    platform: "darwin",
+    platform: "win32",
     model: createDesktopTrayPopoverModel({ trayStatus: status("unavailable") }),
     onAction: (value) => actions.push(value),
   });
@@ -336,7 +336,7 @@ test("native close releases listeners without reading a destroyed window and all
       preloadPath: await preloadFixture(),
       pageURL: POPOVER_PAGE_URL,
       origin: POPOVER_ORIGIN,
-      platform: "darwin",
+      platform: "win32",
       model: createDesktopTrayPopoverModel({ trayStatus: status("unavailable") }),
       onAction: () => {},
     });
@@ -396,7 +396,7 @@ test("a failed initial load is discarded so reopening retries the route", async 
       preloadPath,
       pageURL: POPOVER_PAGE_URL,
       origin: POPOVER_ORIGIN,
-      platform: "darwin",
+      platform: "win32",
       model: createDesktopTrayPopoverModel({ trayStatus: status("unavailable") }),
       onAction: () => {},
     });
@@ -430,7 +430,7 @@ test("content height fits the popup without reopening it and restores after a sm
     origin: POPOVER_ORIGIN,
     tray: { getBounds: () => ({ x: 500, y: 0, width: 40, height: 24 }) },
     screen: { getDisplayMatching: () => ({ workArea: area }) },
-    platform: "darwin",
+    platform: "win32",
     onAction: () => {},
   });
   popover.show();

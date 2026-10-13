@@ -20,7 +20,6 @@ import {
   validateDesktopSettingsSnapshot,
 } from "../desktop-contract.js";
 import {
-  createPosixDesktopSettingsBackend,
   createWindowsDesktopSettingsBackend,
   DESKTOP_SETTINGS_BACKEND_MAX_BYTES,
   DESKTOP_SETTINGS_FILE_NAME,
@@ -279,188 +278,12 @@ function createWindowsStoreFixture() {
   return { calls, entries, store };
 }
 
-test("POSIX backend returns missing for a fresh root and persists valid snapshots", {
-  skip: POSIX_TEST_SKIP,
-}, async () => {
-  await temporaryRoot(async (parent) => {
-    const root = join(parent, "state");
-    const backend = createPosixDesktopSettingsBackend({ rootPath: root });
-    assert.equal(await backend.load(), null);
-    const saved = await backend.save(snapshot({ language: "es" }));
-    assert.equal(saved.language, "es");
-    const reloaded = await createPosixDesktopSettingsBackend({ rootPath: root }).load();
-    assert.deepEqual(reloaded, saved);
-    assert.equal((await lstat(root)).mode & 0o777, 0o700);
-    assert.equal((await lstat(join(root, SETTINGS_FILE))).mode & 0o777, 0o600);
-  });
-});
 
-test("POSIX backend marks legacy decode and the store atomically rewrites v3", {
-  skip: POSIX_TEST_SKIP,
-}, async () => {
-  await temporaryRoot(async (parent) => {
-    const root = join(parent, "state");
-    await fs.mkdir(root, { mode: 0o700 });
-    const path = join(root, SETTINGS_FILE);
-    await writeFile(path, `${JSON.stringify(legacySnapshot())}\n`, { mode: 0o600 });
 
-    const backend = createPosixDesktopSettingsBackend({ rootPath: root });
-    const decoded = await backend.load();
-    assert.equal(decoded.schemaVersion, "tibotattle-desktop-settings-v3");
-    assert.equal(decoded[DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER], true);
-    assert.equal(Object.keys(decoded).includes("codexHome"), false);
 
-    const store = createDesktopSettingsStore({ backend });
-    const projection = await store.getSettings();
-    assert.equal(projection.schemaVersion, "tibotattle-desktop-settings-v3");
-    const persisted = JSON.parse(await readFile(path, "utf8"));
-    assert.equal(persisted.schemaVersion, "tibotattle-desktop-settings-v3");
-    assert.equal(Object.hasOwn(persisted, "codexHomes"), true);
-    assert.equal(Object.hasOwn(persisted, "codexHome"), false);
-  });
-});
 
-test("POSIX backend rejects unsafe roots, files, symlinks, and hard links", {
-  skip: POSIX_TEST_SKIP,
-}, async () => {
-  await temporaryRoot(async (parent) => {
-    const root = join(parent, "state");
-    const backend = createPosixDesktopSettingsBackend({ rootPath: root });
-    await backend.save(snapshot());
-    await chmod(root, 0o755);
-    await assert.rejects(backend.load(), (error) => error.code
-      === "desktop_settings_backend_unsafe_state");
 
-    await chmod(root, 0o700);
-    await chmod(join(root, SETTINGS_FILE), 0o644);
-    await assert.rejects(backend.load(), (error) => error.code
-      === "desktop_settings_backend_unsafe_state");
-    await chmod(join(root, SETTINGS_FILE), 0o600);
-    await link(join(root, SETTINGS_FILE), join(root, "hard-link.json"));
-    await assert.rejects(backend.load(), (error) => error.code
-      === "desktop_settings_backend_unsafe_state");
-    await fs.unlink(join(root, "hard-link.json"));
 
-    const outside = join(parent, "outside.json");
-    await writeFile(outside, JSON.stringify(snapshot()), { mode: 0o600 });
-    await fs.unlink(join(root, SETTINGS_FILE));
-    await symlink(outside, join(root, SETTINGS_FILE));
-    await assert.rejects(backend.load(), (error) => error.code
-      === "desktop_settings_backend_unsafe_state");
-
-    const realRoot = join(parent, "real-state");
-    await fs.mkdir(realRoot, { mode: 0o700 });
-    const symlinkRoot = join(parent, "linked-state");
-    await symlink(realRoot, symlinkRoot);
-    await assert.rejects(
-      createPosixDesktopSettingsBackend({ rootPath: symlinkRoot }).load(),
-      (error) => error.code === "desktop_settings_backend_unsafe_state",
-    );
-  });
-});
-
-test("POSIX backend rejects corrupt and oversized content without repairing it", {
-  skip: POSIX_TEST_SKIP,
-}, async () => {
-  await temporaryRoot(async (parent) => {
-    const root = join(parent, "state");
-    await fs.mkdir(root, { mode: 0o700 });
-    const path = join(root, SETTINGS_FILE);
-    await writeFile(path, "not-json", { mode: 0o600 });
-    await assert.rejects(
-      createPosixDesktopSettingsBackend({ rootPath: root }).load(),
-      (error) => error.code === "desktop_settings_backend_corrupt",
-    );
-    assert.equal(await readFile(path, "utf8"), "not-json");
-
-    await writeFile(path, Buffer.alloc(DESKTOP_SETTINGS_BACKEND_MAX_BYTES + 1, 65), {
-      mode: 0o600,
-    });
-    await assert.rejects(
-      createPosixDesktopSettingsBackend({ rootPath: root }).load(),
-      (error) => error.code === "desktop_settings_backend_too_large",
-    );
-  });
-});
-
-test("POSIX replacement failure retains the last committed bytes", {
-  skip: POSIX_TEST_SKIP,
-}, async () => {
-  await temporaryRoot(async (parent) => {
-    const root = join(parent, "state");
-    let failRename = false;
-    const failingFs = {
-      ...fs,
-      async rename(...args) {
-        if (failRename) {
-          const error = new Error("rename failed");
-          error.code = "EIO";
-          throw error;
-        }
-        return fs.rename(...args);
-      },
-    };
-    const backend = createPosixDesktopSettingsBackend({ rootPath: root, fs: failingFs });
-    const oldSnapshot = snapshot({ language: "en" });
-    const nextSnapshot = snapshot({ language: "es" });
-    await backend.save(oldSnapshot);
-    failRename = true;
-    await assert.rejects(backend.save(nextSnapshot), (error) => error.code
-      === "desktop_settings_backend_unavailable");
-    assert.deepEqual(
-      await createPosixDesktopSettingsBackend({ rootPath: root }).load(),
-      oldSnapshot,
-    );
-  });
-});
-
-test("POSIX post-rename failure reconciles to the published bytes", {
-  skip: POSIX_TEST_SKIP,
-}, async () => {
-  await temporaryRoot(async (parent) => {
-    const root = join(parent, "state");
-    let failSync = false;
-    const backend = createPosixDesktopSettingsBackend({
-      rootPath: root,
-      syncDirectory: async () => {
-        if (failSync) {
-          const error = new Error("directory sync failed after publication");
-          error.code = "EIO";
-          throw error;
-        }
-      },
-    });
-    const oldSnapshot = snapshot({ language: "en" });
-    const nextSnapshot = snapshot({ language: "es" });
-    await backend.save(oldSnapshot);
-    failSync = true;
-    assert.deepEqual(await backend.save(nextSnapshot), nextSnapshot);
-    assert.deepEqual(await backend.load(), nextSnapshot);
-  });
-});
-
-test("POSIX staging is no-clobber when a deterministic stage name already exists", {
-  skip: POSIX_TEST_SKIP,
-}, async () => {
-  await temporaryRoot(async (parent) => {
-    const root = join(parent, "state");
-    const backend = createPosixDesktopSettingsBackend({
-      rootPath: root,
-      idFactory: () => "collision",
-    });
-    const oldSnapshot = snapshot({ language: "en" });
-    await backend.save(oldSnapshot);
-    const stage = join(
-      root,
-      `.${DESKTOP_SETTINGS_STAGE_PREFIX.slice(1)}.${SETTINGS_FILE}.collision.tmp`,
-    );
-    await writeFile(stage, "foreign-stage", { mode: 0o600 });
-    await assert.rejects(backend.save(snapshot({ language: "es" })), (error) => error.code
-      === "desktop_settings_backend_write_failed");
-    assert.equal(await readFile(stage, "utf8"), "foreign-stage");
-    assert.deepEqual(await backend.load(), oldSnapshot);
-  });
-});
 
 test("Windows backend creates, reloads, and identity-replaces only its fixed child", async () => {
   const fixture = createWindowsStoreFixture();
@@ -503,26 +326,6 @@ test("Windows backend rejects unbranded stores before any filesystem fallback", 
       },
     }),
     (error) => error.code === "desktop_settings_backend_store_invalid",
-  );
-  assert.deepEqual(calls, []);
-});
-
-test("POSIX backend rejects win32 before touching a filesystem fallback", () => {
-  const calls = [];
-  assert.throws(
-    () => createPosixDesktopSettingsBackend({
-      platform: "win32",
-      rootPath: "/tmp/tibotattle-desktop-settings",
-      fs: {
-        chmod: () => calls.push("chmod"),
-        lstat: () => calls.push("lstat"),
-        mkdir: () => calls.push("mkdir"),
-        open: () => calls.push("open"),
-        rename: () => calls.push("rename"),
-        unlink: () => calls.push("unlink"),
-      },
-    }),
-    (error) => error.code === "desktop_settings_backend_unsupported_platform",
   );
   assert.deepEqual(calls, []);
 });

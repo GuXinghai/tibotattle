@@ -23,9 +23,15 @@ const PROFILE_MARKERS = Object.freeze([
   Object.freeze({ relativePath: "desktop-settings/accountless-sharing-v1.json", sharing: true }),
 ]);
 
-const STATE_MARKERS = Object.freeze([
+// The local index store is the current state marker. The previous unified
+// index is retained as a marker only because it is read for the ordinal map
+// that keeps hosted identity continuous, until the v2 store holds its own.
+const TOP_LEVEL_STATE_MARKERS = Object.freeze([
+  Object.freeze({ relativePath: "local-index-store-v1.sqlite", sharing: false }),
   Object.freeze({ relativePath: "local-unified-index-v1.sqlite", sharing: false }),
   Object.freeze({ relativePath: "local-collector-state-v1.sqlite", sharing: false }),
+]);
+const PRIVATE_STATE_MARKERS = Object.freeze([
   Object.freeze({ relativePath: "private/automatic-contribution-v0.1.json", sharing: true }),
   Object.freeze({ relativePath: "private/incremental-contribution-sync-v1.json", sharing: true }),
 ]);
@@ -146,13 +152,13 @@ async function inspectStateRoot(root, inspectPath, uid) {
     return { rootStatus, markers: emptyMarkers() };
   }
 
-  const topLevel = await inspectMarkers(root, STATE_MARKERS.slice(0, 2), inspectPath, uid);
+  const topLevel = await inspectMarkers(root, TOP_LEVEL_STATE_MARKERS, inspectPath, uid);
   if (topLevel === UNKNOWN) return UNKNOWN;
   const privatePath = join(root, "private");
   const privateStatus = await inspectDirectory(privatePath, inspectPath, uid);
   if (privateStatus === UNKNOWN) return UNKNOWN;
   const privateMarkers = privateStatus === PRESENT
-    ? await inspectMarkers(root, STATE_MARKERS.slice(2), inspectPath, uid)
+    ? await inspectMarkers(root, PRIVATE_STATE_MARKERS, inspectPath, uid)
     : emptyMarkers();
   if (privateMarkers === UNKNOWN) return UNKNOWN;
   return {

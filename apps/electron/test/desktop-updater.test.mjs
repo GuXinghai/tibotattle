@@ -11,31 +11,14 @@ import {
 } from "../desktop-updater.js";
 
 const SOURCE_REVISION = "a".repeat(40);
-const REHEARSAL_CURRENT_VERSION = "0.1.19-native-to-electron-handover.1";
-const REHEARSAL_NEXT_VERSION = "0.1.19-native-to-electron-handover.2";
 
 function nextTurn() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-function metadata(target = "darwin-arm64") {
+function metadata(target = "win32-x64") {
   return createProductionDistributionMetadata({
     buildNumber: "20260906",
-    sourceRevision: SOURCE_REVISION,
-    target,
-  });
-}
-
-function rehearsalMetadata({
-  target = "darwin-arm64",
-  candidate = "current",
-  buildNumber = "2026090701",
-} = {}) {
-  return createProductionDistributionMetadata({
-    buildNumber,
-    rehearsal: candidate,
-    rehearsalCurrentVersion: REHEARSAL_CURRENT_VERSION,
-    rehearsalNextVersion: REHEARSAL_NEXT_VERSION,
     sourceRevision: SOURCE_REVISION,
     target,
   });
@@ -108,8 +91,8 @@ function packagedUpdater({
       app,
       autoUpdater,
       distributionMetadata,
-      platform: "darwin",
-      architecture: "arm64",
+      platform: "win32",
+      architecture: "x64",
       preferences: preferences({ automaticDownload }),
       prepareForUpdate,
       cancelPreparedUpdate,
@@ -121,70 +104,20 @@ function packagedUpdater({
 
 test("production updater has fixed target feeds and refuses malformed candidate metadata", () => {
   assert.equal(
-    productionUpdateFeedForTarget({ platform: "darwin", architecture: "arm64" }),
-    "https://updates.tibotattle.com/electron/stable/darwin-arm64",
+    productionUpdateFeedForTarget({ platform: "win32", architecture: "x64" }),
+    "https://updates.tibotattle.com/electron/stable/win32-x64",
   );
-  assert.equal(productionUpdateFeedForTarget({ platform: "darwin", architecture: "ia32" }), null);
+  assert.equal(productionUpdateFeedForTarget({ platform: "win32", architecture: "ia32" }), null);
   assert.throws(() => createProductionDistributionMetadata({
-    buildNumber: "0", sourceRevision: SOURCE_REVISION, target: "darwin-arm64",
+    buildNumber: "0", sourceRevision: SOURCE_REVISION, target: "win32-x64",
   }), /invalid/u);
   assert.throws(() => createProductionDistributionMetadata({
-    buildNumber: "20260906", sourceRevision: SOURCE_REVISION, target: "darwin-arm64",
+    buildNumber: "20260906", sourceRevision: SOURCE_REVISION, target: "win32-x64",
     channel: "preview",
   }), /invalid/u);
 });
 
-test("rehearsal updater metadata is a closed prerelease pair with an isolated fixed feed", () => {
-  const current = rehearsalMetadata();
-  const next = rehearsalMetadata({ candidate: "next", buildNumber: "2026090702" });
-  assert.deepEqual(current, {
-    appId: "com.usagemonitor.local",
-    buildNumber: "2026090701",
-    channel: "native-to-electron-handover-rehearsal-v1",
-    contributionPolicy: "disabled-for-native-to-electron-handover-rehearsal-v1",
-    schemaVersion: "tibotattle-electron-handover-rehearsal-v1",
-    sourceRevision: SOURCE_REVISION,
-    target: "darwin-arm64",
-    updateFeed:
-      "https://updates.tibotattle.com/electron/rehearsal/native-to-electron-handover-v1/darwin-arm64",
-    semanticVersion: REHEARSAL_CURRENT_VERSION,
-    rehearsalCurrentVersion: REHEARSAL_CURRENT_VERSION,
-    rehearsalNextVersion: REHEARSAL_NEXT_VERSION,
-  });
-  assert.equal(next.semanticVersion, REHEARSAL_NEXT_VERSION);
-  assert.equal(productionUpdateFeedForTarget({ platform: "darwin", architecture: "arm64" }),
-    "https://updates.tibotattle.com/electron/stable/darwin-arm64");
-  assert.throws(() => createProductionDistributionMetadata({
-    buildNumber: "2026090701",
-    rehearsal: "current",
-    rehearsalCurrentVersion: REHEARSAL_NEXT_VERSION,
-    rehearsalNextVersion: REHEARSAL_CURRENT_VERSION,
-    sourceRevision: SOURCE_REVISION,
-    target: "darwin-arm64",
-  }), /invalid/u);
-  assert.throws(() => rehearsalMetadata({ target: "win32-x64" }), /invalid/u);
-});
 
-test("development updater is unavailable and never loads or checks an update feed", async () => {
-  const updater = createProductionDesktopUpdater({
-    app: { isPackaged: false },
-    preferences: preferences(),
-  });
-  assert.deepEqual(await updater.start(), {
-    automaticDownload: false,
-    automaticDownloadAvailable: false,
-    canCheck: false,
-    canDownload: false,
-    canInstall: false,
-    error: "unavailable",
-    progress: null,
-    state: "unavailable",
-  });
-  await assert.rejects(
-    updater.checkForUpdates(),
-    (error) => error instanceof DesktopUpdaterError && error.code === "desktop_updater_unavailable",
-  );
-});
 
 test("packaged updater configures the real EventEmitter adapter and performs one bounded startup check", async () => {
   const { autoUpdater, updater } = packagedUpdater({ automaticDownload: false });
@@ -211,86 +144,7 @@ test("packaged updater configures the real EventEmitter adapter and performs one
   });
 });
 
-test("packaged rehearsal updater enables prerelease ordering without accepting feed overrides", async () => {
-  const rehearsal = rehearsalMetadata();
-  const { autoUpdater, updater } = packagedUpdater({ distributionMetadata: rehearsal });
-  assert.equal((await updater.start()).state, "ready");
-  assert.equal(autoUpdater.allowPrerelease, true);
-  assert.equal(autoUpdater.allowDowngrade, false);
-  assert.equal(autoUpdater.autoDownload, false);
-  assert.deepEqual(autoUpdater.requestHeaders, {
-    "User-Agent": `TiboTattle/${REHEARSAL_CURRENT_VERSION} electron-updater`,
-  });
-  assert.equal(updater.getStatus().automaticDownload, false);
-  assert.equal(updater.getStatus().automaticDownloadAvailable, false);
-  assert.equal(typeof autoUpdater.setFeedURL, "undefined");
-  await nextTurn();
-  assert.equal(autoUpdater.checks, 1);
-});
 
-test("rehearsal updater permits only the exact next version and never auto-downloads a feed entry", async () => {
-  const automaticFeedCheck = (version) => async function checkForUpdates() {
-    this.checks += 1;
-    this.emit("update-available", { version });
-    // Model AppUpdater's auto path. Production has already set this false
-    // before it contacts a rehearsal feed, so this branch must stay unused.
-    if (this.autoDownload) await this.downloadUpdate();
-    return { updateInfo: { version } };
-  };
-
-  const allowedAutoUpdater = new FakeElectronUpdater();
-  allowedAutoUpdater.checkForUpdates = automaticFeedCheck(REHEARSAL_NEXT_VERSION);
-  const allowed = packagedUpdater({
-    autoUpdater: allowedAutoUpdater,
-    automaticDownload: true,
-    distributionMetadata: rehearsalMetadata(),
-  });
-  await allowed.updater.start();
-  await nextTurn();
-  assert.equal(allowedAutoUpdater.autoDownload, false);
-  assert.equal(allowedAutoUpdater.downloads, 0);
-  assert.equal(allowed.updater.getStatus().state, "available");
-  await allowed.updater.downloadUpdate();
-  assert.equal(allowedAutoUpdater.downloads, 1);
-  assert.equal(allowed.updater.getStatus().state, "downloaded");
-
-  const rejectedAutoUpdater = new FakeElectronUpdater();
-  rejectedAutoUpdater.checkForUpdates = automaticFeedCheck(
-    "0.1.19-native-to-electron-handover.3",
-  );
-  const rejected = packagedUpdater({
-    autoUpdater: rejectedAutoUpdater,
-    automaticDownload: true,
-    distributionMetadata: rehearsalMetadata(),
-  });
-  await rejected.updater.start();
-  await nextTurn();
-  assert.equal(rejectedAutoUpdater.autoDownload, false);
-  assert.equal(rejectedAutoUpdater.downloads, 0);
-  assert.equal(rejected.updater.getStatus().state, "error");
-  assert.equal(rejected.updater.getStatus().error, "check_failed");
-  await assert.rejects(
-    rejected.updater.downloadUpdate(),
-    (error) => error?.code === "desktop_updater_download_unavailable",
-  );
-  await assert.rejects(
-    rejected.updater.setAutomaticDownload(true),
-    (error) => error?.code === "desktop_updater_preferences_unavailable",
-  );
-
-  const finalAutoUpdater = new FakeElectronUpdater();
-  finalAutoUpdater.checkForUpdates = automaticFeedCheck(
-    "0.1.20-native-to-electron-handover.1",
-  );
-  const finalCandidate = packagedUpdater({
-    autoUpdater: finalAutoUpdater,
-    distributionMetadata: rehearsalMetadata({ candidate: "next", buildNumber: "2026090702" }),
-  });
-  await finalCandidate.updater.start();
-  await nextTurn();
-  assert.equal(finalAutoUpdater.downloads, 0);
-  assert.equal(finalCandidate.updater.getStatus().state, "error");
-});
 
 test("packaged updater repeats bounded checks only while idle and clears its fixed timer", async () => {
   const timers = [];

@@ -1,5 +1,4 @@
 import {
-  createPosixDesktopSettingsBackend,
   createWindowsDesktopSettingsBackend,
   DesktopSettingsBackendError,
   DESKTOP_SETTINGS_BACKEND_MAX_BYTES,
@@ -111,28 +110,18 @@ function assertOptions(options) {
 /**
  * Create the protected sibling record used by the first-run gate.
  *
- * POSIX hosts use the same owner-only atomic backend as desktop settings. The
- * Windows path accepts only the repository-branded protected state store and
- * therefore has no Node filesystem fallback.
+ * The Windows path accepts only the repository-branded protected state store
+ * and therefore has no Node filesystem fallback.
  */
 export function createDesktopFirstRunReceiptBackend(options = {}) {
   const configuration = assertOptions(options);
   const platform = configuration.platform ?? process.platform;
   const maximumBytes = configuration.maximumBytes
     ?? DESKTOP_SETTINGS_BACKEND_MAX_BYTES;
-  if (platform === "win32") {
-    return createWindowsDesktopSettingsBackend({
-      ...configuration,
-      platform,
-      childName: DESKTOP_FIRST_RUN_RECEIPT_FILE_NAME,
-      maximumBytes,
-      codec: RECEIPT_CODEC,
-    });
-  }
-  return createPosixDesktopSettingsBackend({
+  return createWindowsDesktopSettingsBackend({
     ...configuration,
     platform,
-    filename: DESKTOP_FIRST_RUN_RECEIPT_FILE_NAME,
+    childName: DESKTOP_FIRST_RUN_RECEIPT_FILE_NAME,
     maximumBytes,
     codec: RECEIPT_CODEC,
   });

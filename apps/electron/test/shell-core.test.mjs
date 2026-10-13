@@ -37,22 +37,13 @@ import {
   installWindowsSmokeControl,
   installWindowsSmokeControlForTest,
   launchElectronShell,
-  createLinuxSmokeCompanionProcessObserver,
-  createLinuxSmokeDashboardFailureObserver,
   createWindowsNormalCandidateCompanionProcessObserver,
   createWindowsNormalCandidateDashboardFailureObserver,
-  readAccountlessHostedRehearsal,
-  readAccountlessSignedStagingRehearsal,
   readProductionDistribution,
   ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX,
   ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX,
-  MACOS_ELECTRON_LOCAL_QA_TEST_LANE,
 } from "../main.js";
 import { createProductionDistributionMetadata } from "../desktop-updater.js";
-import {
-  createAccountlessHostedRehearsalMetadata,
-  createAccountlessSignedStagingRehearsalMetadata,
-} from "../../../scripts/lib/electron-builder-package-json.mjs";
 import {
   ELECTRON_ENTRY_FAILURE_DIAGNOSTIC,
   ElectronShellError,
@@ -88,10 +79,6 @@ import {
   createWindowsFilesystemAdapter,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../../../src/platform/windows-filesystem.js";
-import {
-  LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
-  LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
-} from "../../../src/platform/linux-account-observation-broker.js";
 import {
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
@@ -569,96 +556,6 @@ class RuntimeChild extends FakeChild {
   }
 }
 
-const SIGNED_STAGING_SOURCE_REVISION = "d".repeat(40);
-
-function githubHostedMacOSArm64Environment(overrides = {}) {
-  return {
-    GITHUB_ACTIONS: "true",
-    RUNNER_ARCH: "ARM64",
-    RUNNER_ENVIRONMENT: "github-hosted",
-    RUNNER_OS: "macOS",
-    ...overrides,
-  };
-}
-
-async function createSignedStagingShellFixture(t) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-signed-staging-shell-"));
-  const resourcesPath = join(root, "TiboTattle.app", "Contents", "Resources");
-  const appPath = join(resourcesPath, "app.asar");
-  const appData = join(root, "app-data");
-  const userData = join(appData, "TiboTattle");
-  const signedStagingUserData = join(
-    appData,
-    "TiboTattle Signed Staging Rehearsal",
-  );
-  const metadata = createAccountlessSignedStagingRehearsalMetadata({
-    expectedTestUID: 501,
-    expectedTestUsername: "ci-runner",
-    sourceRevision: SIGNED_STAGING_SOURCE_REVISION,
-  });
-  await Promise.all([
-    mkdir(appPath, { recursive: true }),
-    mkdir(userData, { recursive: true }),
-  ]);
-  await writeFile(join(appPath, "package.json"), `${JSON.stringify({
-    name: "tibotattle",
-    tibotattleAccountlessSignedStagingRehearsal: metadata,
-    version: "0.1.19",
-  })}\n`, "utf8");
-  t.after(() => rm(root, { recursive: true, force: true }));
-
-  const app = new RuntimeApp();
-  app.isPackaged = true;
-  app.getAppPath = () => appPath;
-  app.getName = () => "TiboTattle";
-  app.getVersion = () => "0.1.19";
-  const paths = new Map([
-    ["appData", appData],
-    ["sessionData", userData],
-    ["userData", userData],
-  ]);
-  const events = [];
-  const whenReady = app.whenReady.bind(app);
-  app.whenReady = async () => {
-    events.push("whenReady");
-    return whenReady();
-  };
-  app.getPath = (name) => paths.get(name) ?? join(root, name);
-  app.setPath = (name, value) => {
-    events.push(`setPath:${name}`);
-    paths.set(name, value);
-  };
-  return {
-    app,
-    appData,
-    events,
-    metadata,
-    paths,
-    resourcesPath,
-    root,
-    signedStagingUserData,
-    userData,
-  };
-}
-
-function signedStagingElectronRuntime(app) {
-  return {
-    app,
-    BrowserWindow: RuntimeWindow,
-    Tray: FakeTray,
-    Menu: { buildFromTemplate: (template) => ({ template }) },
-    dialog: {
-      showMessageBox: async () => ({ response: 0 }),
-      showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
-    },
-    nativeImage: {
-      createFromPath: () => ({
-        isEmpty: () => false,
-        resize: () => ({ isEmpty: () => false, setTemplateImage() {} }),
-      }),
-    },
-  };
-}
 
 function runtimePlatformServices() {
   return {
@@ -770,7 +667,7 @@ async function launchSharingRuntimeFixture({
     },
     sharingBackend,
     sharingInstallationState,
-    platform: "darwin",
+    platform: "win32",
     supervisorOptions: {
       spawnChild(_command, args, options) {
         spawnCalls.push({ args: [...args], options });
@@ -1044,187 +941,6 @@ test("loopback session admits only the dashboard same-origin Blob download", () 
   dashboardInstall.remove();
 });
 
-test("companion supervisor restricts file identity selection to complete local Mac QA inputs", async () => {
-  const pair = {
-    USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY: "1",
-    USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "/private/fixture/export-identity",
-  };
-  for (const lane of [undefined, "windows-electron-smoke", "macos-electron-local-qa-v1"]) {
-    const child = new FakeChild();
-    let selected;
-    const supervisor = createCompanionSupervisor({
-      environment: { ...pair, USAGE_MONITOR_TEST_LANE: lane },
-      spawnChild(_command, _args, { env }) { selected = env; return child; },
-    });
-    const ready = supervisor.start();
-    child.stdout.emit("data", Buffer.from("USAGE_MONITOR_READY http://127.0.0.1:4545/\n"));
-    await ready;
-    const allowed = lane === "macos-electron-local-qa-v1";
-    assert.equal(selected.USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY, allowed ? "1" : undefined);
-    assert.equal(selected.USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE,
-      allowed ? pair.USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE : undefined);
-    const stopped = supervisor.stop();
-    child.emit("exit", 0, null);
-    await stopped;
-  }
-  for (const patch of [
-    { USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY: undefined },
-    { USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY: "0" },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: undefined },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "relative" },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "/invalid\0file" },
-    { USAGE_MONITOR_CENTRAL_ORIGIN: "https://example.invalid" },
-    { APP_USAGEMONITOR_EXPORT_SECRET: "must-not-escape" },
-  ]) {
-    let spawned = false;
-    const supervisor = createCompanionSupervisor({
-      environment: { ...pair, USAGE_MONITOR_TEST_LANE: "macos-electron-local-qa-v1", ...patch },
-      spawnChild() { spawned = true; return new FakeChild(); },
-    });
-    await assert.rejects(supervisor.start());
-    assert.equal(spawned, false);
-    assert.equal(supervisor.state.state, "stopped");
-  }
-});
-
-for (const [platformName, factoryName, markerKey, markerValue, otherMarkerKey] of [
-  ["Windows", "attachWindowsAccountObservationBroker", WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
-    WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER, LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV],
-  ["Linux", "attachLinuxAccountObservationBroker", LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
-    LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER, WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV],
-]) {
-  test(`companion supervisor announces only its composed ${platformName} observation IPC and keeps accountless traffic separate`, async () => {
-    for (const withPrivateChannel of [false, true]) {
-      const child = new FakeChild();
-      let selected;
-      let observationDisposed = false;
-      let privateDisposed = false;
-      let privateInvalidated = false;
-      const attachments = [];
-      const supervisor = createCompanionSupervisor({
-        environment: {
-          [WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV]: "hostile",
-          [LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV]: "hostile",
-          USAGE_MONITOR_WINDOWS_ACCOUNT_OBSERVATION_BROKER_FD: "99",
-          USAGE_MONITOR_KEYCHAIN_BROKER_FD: "98",
-          USAGE_MONITOR_LINUX_SECRET_SERVICE_BROKER_FD: "97",
-        },
-        spawnChild(_command, _args, options) { selected = options; return child; },
-        [factoryName](channel) {
-          attachments.push(["observation", channel]);
-          assert.equal(channel, child);
-          return { dispose() { observationDisposed = true; } };
-        },
-        ...(withPrivateChannel ? {
-          attachPrivateChannel(channel) {
-            attachments.push(["accountless", channel]);
-            assert.equal(channel, child);
-            return {
-              invalidate() { privateInvalidated = true; },
-              dispose() { privateDisposed = true; },
-            };
-          },
-        } : {}),
-      });
-      const started = supervisor.start();
-      child.stdout.emit("data", Buffer.from("USAGE_MONITOR_READY http://127.0.0.1:4545/\n"));
-      await started;
-      assert.deepEqual(selected.stdio, ["ignore", "pipe", "pipe", "ipc"]);
-      assert.equal(selected.env[markerKey], markerValue);
-      assert.equal(selected.env[otherMarkerKey], undefined);
-      assert.equal(selected.env.USAGE_MONITOR_WINDOWS_ACCOUNT_OBSERVATION_BROKER_FD, undefined);
-      assert.equal(selected.env.USAGE_MONITOR_KEYCHAIN_BROKER_FD, undefined);
-      assert.equal(selected.env.USAGE_MONITOR_LINUX_SECRET_SERVICE_BROKER_FD, undefined);
-      assert.deepEqual(attachments.map(([kind, channel]) => [kind, channel === child]),
-        withPrivateChannel
-          ? [["observation", true], ["accountless", true]]
-          : [["observation", true]]);
-      const stopped = supervisor.stop();
-      child.emit("exit", 0, null);
-      await stopped;
-      assert.equal(observationDisposed, true);
-      assert.equal(privateDisposed, withPrivateChannel);
-      assert.equal(privateInvalidated, withPrivateChannel);
-    }
-  });
-
-  test(`companion supervisor refuses a pre-disconnected ${platformName} IPC child before broker construction`, async () => {
-    const child = new FakeChild();
-    child.connected = false;
-    child.exitCode = null;
-    child.signalCode = null;
-    child.kill = (signal) => {
-      child.kills.push(signal);
-      queueMicrotask(() => child.emit("exit", null, signal));
-      return true;
-    };
-    let brokerConstructed = false;
-    const supervisor = createCompanionSupervisor({
-      spawnChild() { return child; },
-      [factoryName]() {
-        brokerConstructed = true;
-        return { dispose() {} };
-      },
-    });
-    await assert.rejects(supervisor.start(), errorCode("companion_exit_before_ready"));
-    assert.equal(brokerConstructed, false);
-    assert.deepEqual(child.kills, ["SIGKILL"]);
-    assert.equal(supervisor.state.state, "stopped");
-  });
-}
-
-test("companion supervisor refuses an exited FD4-only child before broker construction", async () => {
-  const child = new FakeChild();
-  child.connected = false;
-  child.exitCode = 0;
-  child.signalCode = null;
-  let brokerConstructed = false;
-  const supervisor = createCompanionSupervisor({
-    spawnChild() { return child; },
-    attachLinuxSecretServiceBroker() {
-      brokerConstructed = true;
-      return { dispose() {} };
-    },
-  });
-  await assert.rejects(supervisor.start(), errorCode("companion_exit_before_ready"));
-  assert.equal(brokerConstructed, false);
-  assert.deepEqual(child.kills, []);
-  assert.equal(supervisor.state.state, "stopped");
-});
-
-test("companion supervisor accepts FD4-only macOS and Linux brokers without Node IPC", async () => {
-  for (const [factoryName, marker] of [
-    ["attachCredentialBroker", "USAGE_MONITOR_KEYCHAIN_BROKER_FD"],
-    ["attachLinuxSecretServiceBroker", "USAGE_MONITOR_LINUX_SECRET_SERVICE_BROKER_FD"],
-  ]) {
-    const child = new FakeChild();
-    const fd4 = new EventEmitter();
-    child.connected = false;
-    child.exitCode = null;
-    child.signalCode = null;
-    child.stdio = [null, child.stdout, child.stderr, null, fd4];
-    let selected;
-    let attached = null;
-    let disposed = false;
-    const supervisor = createCompanionSupervisor({
-      spawnChild(_command, _args, options) { selected = options; return child; },
-      [factoryName](stream) {
-        attached = stream;
-        return { dispose() { disposed = true; } };
-      },
-    });
-    const started = supervisor.start();
-    child.stdout.emit("data", Buffer.from("USAGE_MONITOR_READY http://127.0.0.1:4545/\n"));
-    await started;
-    assert.equal(attached, fd4);
-    assert.deepEqual(selected.stdio, ["ignore", "pipe", "pipe", "ignore", "pipe"]);
-    assert.equal(selected.env[marker], "4");
-    const stopped = supervisor.stop();
-    child.emit("exit", 0, null);
-    await stopped;
-    assert.equal(disposed, true);
-  }
-});
 
 test("companion supervisor starts a live plain child without Node IPC", async (t) => {
   const childSource = [
@@ -1254,39 +970,6 @@ test("companion supervisor starts a live plain child without Node IPC", async (t
   assert.equal(supervisor.state.state, "stopped");
 });
 
-test("companion supervisor rejects competing credential factories and ambient channel authority", async () => {
-  const factory = () => ({ dispose() {} });
-  const factories = ["attachCredentialBroker", "attachLinuxSecretServiceBroker",
-    "attachWindowsAccountObservationBroker", "attachLinuxAccountObservationBroker"];
-  for (const selected of factories) {
-    for (const other of factories.filter((name) => name !== selected)) {
-      assert.throws(() => createCompanionSupervisor({
-        [other]: factory, [selected]: factory,
-      }), /mutually exclusive/u);
-    }
-    assert.throws(() => createCompanionSupervisor({ [selected]: {} }), /factory is invalid/u);
-  }
-  const child = new FakeChild();
-  let selected;
-  const supervisor = createCompanionSupervisor({
-    environment: {
-      USAGE_MONITOR_WINDOWS_ACCOUNT_OBSERVATION_BROKER_FD: "4",
-      [WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV]: "1",
-      [LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV]: "1",
-    },
-    spawnChild(_command, _args, options) { selected = options; return child; },
-  });
-  const started = supervisor.start();
-  child.stdout.emit("data", Buffer.from("USAGE_MONITOR_READY http://127.0.0.1:4545/\n"));
-  await started;
-  assert.equal(selected.env.USAGE_MONITOR_WINDOWS_ACCOUNT_OBSERVATION_BROKER_FD, undefined);
-  assert.equal(selected.env[WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV], undefined);
-  assert.equal(selected.env[LINUX_ACCOUNT_OBSERVATION_BROKER_IPC_ENV], undefined);
-  assert.deepEqual(selected.stdio, ["ignore", "pipe", "pipe"]);
-  const stopped = supervisor.stop();
-  child.emit("exit", 0, null);
-  await stopped;
-});
 
 test("companion supervisor owns one child, injects a parent contract, and strips child output", async () => {
   const child = new FakeChild();
@@ -1359,42 +1042,10 @@ test("companion supervisor owns one child, injects a parent contract, and strips
   assert.equal(supervisor.state.hasChild, false);
 });
 
-test("packaged macOS local QA withholds the production central origin", () => {
-  const app = { isPackaged: true };
-  const production = companionEnvironment({
-    app,
-    environment: { USAGE_MONITOR_CENTRAL_ORIGIN: "http://127.0.0.1:8792" },
-    qualificationContext: null,
-    platform: "darwin",
-  });
-  assert.equal(production.USAGE_MONITOR_CENTRAL_ORIGIN, "https://tibotattle.com");
-
-  const qaEnvironment = {
-    USAGE_MONITOR_CENTRAL_ORIGIN: "http://127.0.0.1:8792",
-    USAGE_MONITOR_TEST_LANE: MACOS_ELECTRON_LOCAL_QA_TEST_LANE,
-  };
-  const qa = companionEnvironment({
-    app,
-    environment: qaEnvironment,
-    qualificationContext: null,
-    platform: "darwin",
-  });
-  assert.equal(qa.USAGE_MONITOR_CENTRAL_ORIGIN, undefined);
-  assert.equal(qa.USAGE_MONITOR_TEST_LANE, MACOS_ELECTRON_LOCAL_QA_TEST_LANE);
-  assert.equal(qaEnvironment.USAGE_MONITOR_CENTRAL_ORIGIN, "http://127.0.0.1:8792");
-
-  const nonMac = companionEnvironment({
-    app,
-    environment: qaEnvironment,
-    qualificationContext: null,
-    platform: "linux",
-  });
-  assert.equal(nonMac.USAGE_MONITOR_CENTRAL_ORIGIN, "https://tibotattle.com");
-});
 
 test("production policy reads only the final packaged app manifest and validates its target", async () => {
   const metadata = createProductionDistributionMetadata({
-    target: "darwin-arm64", sourceRevision: "a".repeat(40), buildNumber: "20260906",
+    target: "win32-x64", sourceRevision: "a".repeat(40), buildNumber: "20260906",
   });
   const packagedAppPath = join(tmpdir(), "tibotattle-policy-fixture", "app.asar");
   const paths = [];
@@ -1404,13 +1055,13 @@ test("production policy reads only the final packaged app manifest and validates
     paths.push(path);
     return Buffer.from(JSON.stringify({ tibotattleDistribution: metadata }));
   };
-  assert.deepEqual(await readProductionDistribution({ app, platform: "darwin",
-    architecture: "arm64", readManifest }), metadata);
+  assert.deepEqual(await readProductionDistribution({ app, platform: "win32",
+    architecture: "x64", readManifest }), metadata);
   assert.deepEqual(paths, [join(packagedAppPath, "package.json")]);
-  await assert.rejects(readProductionDistribution({ app, platform: "darwin",
-    architecture: "x64", readManifest }), errorCode("electron_configuration_invalid"));
+  await assert.rejects(readProductionDistribution({ app, platform: "win32",
+    architecture: "arm64", readManifest }), errorCode("electron_configuration_invalid"));
   for (const value of [{}, { tibotattleDistribution: { ...metadata, updateFeed: "https://example.test" } }]) {
-    await assert.rejects(readProductionDistribution({ app, platform: "darwin", architecture: "arm64",
+    await assert.rejects(readProductionDistribution({ app, platform: "win32", architecture: "x64",
       readManifest: async () => Buffer.from(JSON.stringify(value)) }),
     errorCode("electron_configuration_invalid"));
   }
@@ -1420,145 +1071,8 @@ test("production policy reads only the final packaged app manifest and validates
   }
 });
 
-test("hosted rehearsal policy reads only its exact packaged Dev manifest", async () => {
-  const metadata = createAccountlessHostedRehearsalMetadata({
-    sourceRevision: "c".repeat(40),
-  });
-  const packagedAppPath = join(tmpdir(), "tibotattle-hosted-rehearsal-fixture", "app.asar");
-  const paths = [];
-  const app = {
-    isPackaged: true,
-    getName: () => "TiboTattle Dev",
-    getAppPath: () => packagedAppPath,
-  };
-  const readManifest = async (path) => {
-    paths.push(path);
-    return Buffer.from(JSON.stringify({
-      tibotattleAccountlessHostedRehearsal: metadata,
-    }));
-  };
-  assert.deepEqual(await readAccountlessHostedRehearsal({
-    app, platform: "darwin", architecture: "arm64", readManifest,
-  }), metadata);
-  assert.deepEqual(paths, [join(packagedAppPath, "package.json")]);
-  assert.equal(await readAccountlessHostedRehearsal({
-    app, platform: "darwin", architecture: "arm64",
-    readManifest: async () => Buffer.from("{}"),
-  }), null);
-  for (const manifest of [
-    { tibotattleAccountlessHostedRehearsal: { ...metadata, origin: "https://unreviewed.example" } },
-    { tibotattleAccountlessHostedRehearsal: metadata, tibotattleDistribution: {} },
-  ]) {
-    await assert.rejects(readAccountlessHostedRehearsal({
-      app, platform: "darwin", architecture: "arm64",
-      readManifest: async () => Buffer.from(JSON.stringify(manifest)),
-    }), errorCode("electron_configuration_invalid"));
-  }
-  await assert.rejects(readAccountlessHostedRehearsal({
-    app, platform: "darwin", architecture: "x64", readManifest,
-  }), errorCode("electron_configuration_invalid"));
-  for (const candidate of [
-    { ...app, isPackaged: false },
-    { ...app, getName: () => "TiboTattle" },
-  ]) {
-    assert.equal(await readAccountlessHostedRehearsal({
-      app: candidate,
-      readManifest: () => { throw new Error("ordinary app must not read rehearsal metadata"); },
-    }), null);
-  }
-});
 
-test("signed staging policy reads only its exact packaged TiboTattle manifest", async () => {
-  const metadata = createAccountlessSignedStagingRehearsalMetadata({
-    expectedTestUID: 501,
-    expectedTestUsername: "ci-runner",
-    sourceRevision: "d".repeat(40),
-  });
-  const packagedAppPath = join(tmpdir(), "tibotattle-signed-staging-fixture", "app.asar");
-  const paths = [];
-  const app = {
-    isPackaged: true,
-    getName: () => "TiboTattle",
-    getAppPath: () => packagedAppPath,
-  };
-  const readManifest = async (path) => {
-    paths.push(path);
-    return Buffer.from(JSON.stringify({
-      tibotattleAccountlessSignedStagingRehearsal: metadata,
-    }));
-  };
-  assert.deepEqual(await readAccountlessSignedStagingRehearsal({
-    app, platform: "darwin", architecture: "arm64", readManifest,
-  }), metadata);
-  assert.deepEqual(paths, [join(packagedAppPath, "package.json")]);
-  assert.equal(await readAccountlessSignedStagingRehearsal({
-    app, platform: "darwin", architecture: "arm64",
-    readManifest: async () => Buffer.from("{}"),
-  }), null);
-  for (const manifest of [
-    { tibotattleAccountlessSignedStagingRehearsal: {
-      ...metadata, executionProfile: "self-hosted-macos-v1",
-    } },
-    { tibotattleAccountlessSignedStagingRehearsal: metadata, tibotattleDistribution: {} },
-    { tibotattleAccountlessSignedStagingRehearsal: metadata,
-      tibotattleAccountlessHostedRehearsal: {} },
-  ]) {
-    await assert.rejects(readAccountlessSignedStagingRehearsal({
-      app, platform: "darwin", architecture: "arm64",
-      readManifest: async () => Buffer.from(JSON.stringify(manifest)),
-    }), errorCode("electron_configuration_invalid"));
-  }
-  await assert.rejects(readAccountlessSignedStagingRehearsal({
-    app, platform: "darwin", architecture: "x64", readManifest,
-  }), errorCode("electron_configuration_invalid"));
-  for (const candidate of [
-    { ...app, isPackaged: false },
-    { ...app, getName: () => "TiboTattle Dev" },
-  ]) {
-    assert.equal(await readAccountlessSignedStagingRehearsal({
-      app: candidate,
-      readManifest: () => { throw new Error("wrong app must not read staging marker"); },
-    }), null);
-  }
-});
 
-test("handover rehearsal policy binds its selected semantic version to the packaged manifest", async () => {
-  const metadata = createProductionDistributionMetadata({
-    target: "darwin-arm64",
-    sourceRevision: "b".repeat(40),
-    buildNumber: "20260907",
-    rehearsal: "current",
-    rehearsalCurrentVersion: "0.1.19-native-to-electron-handover.1",
-    rehearsalNextVersion: "0.1.19-native-to-electron-handover.2",
-  });
-  const app = {
-    isPackaged: true,
-    getName: () => "TiboTattle",
-    getAppPath: () => "/Applications/TiboTattle.app/Contents/Resources/app.asar",
-  };
-  const readManifest = async () => Buffer.from(JSON.stringify({
-    version: metadata.semanticVersion,
-    tibotattleDistribution: metadata,
-  }));
-  assert.deepEqual(await readProductionDistribution({
-    app,
-    platform: "darwin",
-    architecture: "arm64",
-    readManifest,
-  }), metadata);
-
-  for (const version of [undefined, "0.1.18", "0.1.20"]) {
-    await assert.rejects(readProductionDistribution({
-      app,
-      platform: "darwin",
-      architecture: "arm64",
-      readManifest: async () => Buffer.from(JSON.stringify({
-        ...(version === undefined ? {} : { version }),
-        tibotattleDistribution: metadata,
-      })),
-    }), errorCode("electron_configuration_invalid"));
-  }
-});
 
 test("companion supervisor fails closed on malformed readiness and bounded startup timeout", async () => {
   const malformedChild = new FakeChild();
@@ -1713,98 +1227,7 @@ test("companion lifecycle observer marks quiet owned shutdown and cannot alter i
   assert.equal(throwingSupervisor.state.state, "stopped");
 });
 
-test("Linux companion lifecycle diagnostic is scoped to the normal quit smoke marker", () => {
-  const writes = [];
-  const observer = createLinuxSmokeCompanionProcessObserver({
-    environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" },
-    platform: "linux",
-    architecture: "x64",
-    writeDiagnostic(value) { writes.push(value); },
-  });
-  assert.equal(typeof observer, "function");
-  observer({ event: "started", phase: "starting", outcome: null });
-  observer({ event: "exited", phase: "ready", outcome: "signal_segv" });
-  observer({ event: "exited", phase: "ready", outcome: "not-closed" });
-  observer({ event: "started", phase: "starting", outcome: null, private: "must-not-write" });
-  assert.deepEqual(writes, [
-    `${ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX}{"event":"started","phase":"starting","outcome":null}\n`,
-    `${ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX}{"event":"exited","phase":"ready","outcome":"signal_segv"}\n`,
-  ]);
 
-  for (const options of [
-    { environment: {} },
-    { environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "other-v1" } },
-    {
-      environment: {
-        USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1",
-        USAGE_MONITOR_TEST_LANE: undefined,
-      },
-    },
-    { environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" }, platform: "darwin" },
-    { environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" }, architecture: "arm64" },
-  ]) {
-    const blocked = createLinuxSmokeCompanionProcessObserver({
-      platform: "linux",
-      architecture: "x64",
-      writeDiagnostic(value) { writes.push(value); },
-      ...options,
-    });
-    assert.equal(blocked, undefined);
-  }
-  assert.equal(writes.length, 2, "ordinary and non-Linux launches remain quiet");
-});
-
-test("Linux dashboard failure diagnostic is scoped to the normal quit smoke marker", () => {
-  const writes = [];
-  const observer = createLinuxSmokeDashboardFailureObserver({
-    environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" },
-    platform: "linux",
-    architecture: "x64",
-    writeDiagnostic(value) { writes.push(value); },
-  });
-  assert.equal(typeof observer, "function");
-  observer({ stage: "load_url", reason: null });
-  observer({ stage: "did_fail_load", reason: -2 });
-  observer({ stage: "render_process_gone", reason: "crashed" });
-  observer({ stage: "did_fail_load", reason: 0 });
-  observer({ stage: "render_process_gone", reason: "private renderer detail" });
-  observer({ stage: "load_url", reason: null, private: "must-not-write" });
-  assert.deepEqual(writes, [
-    `${ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX}{"stage":"load_url","reason":null}\n`,
-    `${ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX}{"stage":"did_fail_load","reason":-2}\n`,
-    `${ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX}{"stage":"render_process_gone","reason":"crashed"}\n`,
-  ]);
-
-  const throwingObserver = createLinuxSmokeDashboardFailureObserver({
-    environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" },
-    platform: "linux",
-    architecture: "x64",
-    writeDiagnostic() { throw new Error("synthetic diagnostic failure"); },
-  });
-  assert.doesNotThrow(() => throwingObserver({ stage: "load_url", reason: null }));
-
-  for (const options of [
-    { environment: {} },
-    { environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "other-v1" } },
-    {
-      environment: {
-        USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1",
-        USAGE_MONITOR_TEST_LANE: undefined,
-      },
-    },
-    { environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" }, platform: "darwin" },
-    { environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" }, architecture: "arm64" },
-  ]) {
-    const blocked = createLinuxSmokeDashboardFailureObserver({
-      platform: "linux",
-      architecture: "x64",
-      writeDiagnostic(value) { writes.push(value); },
-      ...options,
-    });
-    assert.equal(blocked, undefined);
-  }
-  assert.equal(writes.length, 3, "ordinary and non-Linux launches remain quiet");
-});
 
 test("Windows normal candidate diagnostics exclude qualification and test lanes", () => {
   const writes = [];
@@ -1850,17 +1273,6 @@ test("Windows normal candidate diagnostics exclude qualification and test lanes"
   assert.equal(createWindowsNormalCandidateCompanionProcessObserver({ ...options, architecture: "arm64" }), undefined);
 });
 
-test("platform gate leaves macOS/Linux available and refuses unqualified Windows readiness", () => {
-  assert.deepEqual(assertElectronPlatformGate({ platform: "darwin", architecture: "arm64" }), {
-    platform: "darwin",
-    architecture: "arm64",
-    windowsProductionReady: false,
-  });
-  assert.throws(
-    () => assertElectronPlatformGate({ platform: "win32", architecture: "x64" }),
-    errorCode("windows_readiness_unavailable"),
-  );
-});
 
 test("Windows qualification context accepts the generated unqualified binding manifest", async () => {
   await withWindowsQualificationFixture(async ({ context, bindingManifest }) => {
@@ -2813,56 +2225,6 @@ test("desktop lifecycle opens only its current validated dashboard origin", asyn
   await lifecycle.requestQuit();
 });
 
-test("desktop lifecycle restores the macOS application before reopening a hidden dashboard", async () => {
-  const app = new FakeApp();
-  const windows = [];
-  const trays = [];
-  const supervisor = {
-    setUnexpectedExitHandler() {},
-    async start() {
-      return { origin: "http://127.0.0.1:4021" };
-    },
-    async stop() {},
-  };
-  const lifecycle = createDesktopLifecycle({
-    app,
-    platform: "darwin",
-    BrowserWindow: class extends FakeWindow {
-      constructor(options) {
-        super(options);
-        windows.push(this);
-      }
-    },
-    Tray: class extends FakeTray {
-      constructor(icon) {
-        super(icon);
-        trays.push(this);
-      }
-    },
-    Menu: { buildFromTemplate: (template) => ({ template }) },
-    icon: "empty-icon",
-    preloadPath: "/private/preload.cjs",
-    supervisor,
-  });
-
-  await lifecycle.start();
-  const dashboard = dashboardWindowsForTest(windows)[0];
-  dashboard.emit("ready-to-show");
-  dashboard.emit("close", { preventDefault() {} });
-  assert.equal(dashboard.visible, false);
-  assert.equal(app.showCalls, 1, "initial ready-to-show reveals the macOS app");
-  assert.deepEqual(app.focusCalls, [{ steal: true }]);
-
-  const openItem = trays[0].menu.template.find((item) => item.label === "Open TiboTattle");
-  assert.equal(typeof openItem?.click, "function");
-  openItem.click();
-  assert.equal(app.showCalls, 2, "tray reopen restores application-level hidden state");
-  assert.deepEqual(app.focusCalls, [{ steal: true }, { steal: true }]);
-  assert.equal(dashboard.visible, true);
-  assert.equal(lifecycle.state.windowVisible, true);
-
-  await lifecycle.dispose();
-});
 
 test("desktop lifecycle leaves macOS app reveal and focus APIs unused on Windows", async () => {
   const app = new FakeApp();
@@ -3673,7 +3035,7 @@ test("desktop lifecycle owns a bounded Settings window and authorizes only its t
         applicationMenus.push(menu);
       },
     },
-    platform: "darwin",
+    platform: "win32",
     icon: "empty-icon",
     preloadPath: "/private/preload.cjs",
     supervisor,
@@ -4173,53 +3535,16 @@ test("Electron entry still quits when its fixed diagnostic and native alert fail
   assert.equal(app.quitCalls, 1);
 });
 
-test("signed staging rejects a wrong operating account and hostile test lane before native factory creation", async (t) => {
-  for (const [name, environment, getUserInfo] of [
-    ["wrong account", githubHostedMacOSArm64Environment({
-      HOME: "/host/home",
-      PATH: "/usr/bin:/bin",
-    }), () => ({ uid: 501, username: "builder" })],
-    ["inherited test lane", githubHostedMacOSArm64Environment({
-      HOME: "/host/home",
-      PATH: "/usr/bin:/bin",
-      USAGE_MONITOR_TEST_LANE: "hostile-lane",
-    }), () => ({ uid: 501, username: "ci-runner" })],
-  ]) {
-    const fixture = await createSignedStagingShellFixture(t);
-    let nativeFactoryCalls = 0;
-    await assert.rejects(launchElectronShell({
-      electron: { app: fixture.app },
-      environment,
-      platform: "darwin",
-      architecture: "arm64",
-      getuid: () => 501,
-      getUserInfo,
-      createMacCredentialHandover() {
-        nativeFactoryCalls += 1;
-        return assert.fail("rejected signed staging must not create a native handover");
-      },
-    }), errorCode("electron_configuration_invalid"), name);
-    assert.equal(nativeFactoryCalls, 0, name);
-    assert.equal(fixture.app.readyCalls, 0, name);
-    assert.deepEqual(fixture.events, [], name);
-  }
-});
 
 test("stable and Dev packages leave Electron profile paths unchanged", async (t) => {
   const stableDistribution = createProductionDistributionMetadata({
-    target: "darwin-arm64",
+    target: "win32-x64",
     sourceRevision: "e".repeat(40),
     buildNumber: "20260908",
   });
-  for (const [name, appName, manifest, createMacCredentialHandover] of [
-    ["stable", "TiboTattle", { tibotattleDistribution: stableDistribution }, () => ({
-      async prepareNativeHandover() { return { status: "no_legacy_state" }; },
-      attachCredentialBroker() {},
-      createAccountlessCredentialBackend() {
-        return { read: async () => null, createIfMissing: async () => "created", deleteExact: async () => "missing" };
-      },
-    })],
-    ["Dev", "TiboTattle Dev", {}, undefined],
+  for (const [name, appName, manifest] of [
+    ["stable", "TiboTattle", { tibotattleDistribution: stableDistribution }],
+    ["Dev", "TiboTattle Dev", {}],
   ]) {
     const root = await mkdtemp(join(tmpdir(), "tibotattle-ordinary-shell-"));
     const appPath = join(root, "TiboTattle.app", "Contents", "Resources", "app.asar");
@@ -4251,195 +3576,16 @@ test("stable and Dev packages leave Electron profile paths unchanged", async (t)
     app.whenReady = async () => { throw new Error(`${name} readiness sentinel`); };
 
     await assert.rejects(launchElectronShell({
-      electron: signedStagingElectronRuntime(app),
+      electron: { app, dialog: { showErrorBox() {} } },
       environment: {},
-      platform: "darwin",
-      architecture: "arm64",
+      platform: "win32",
+      architecture: "x64",
       resourcesPath: join(root, "TiboTattle.app", "Contents", "Resources"),
-      ...(createMacCredentialHandover === undefined ? {} : { createMacCredentialHandover }),
     }), new RegExp(`${name} readiness sentinel`, "u"));
     assert.deepEqual(setPathCalls, [], name);
     assert.equal(paths.get("userData"), userData, name);
     assert.equal(paths.get("sessionData"), userData, name);
   }
-});
-
-test(process.platform === "win32"
-  ? "signed staging simulation refuses Windows storage before a companion can start"
-  : "signed staging composes only the accountless native adapter and scrubs hostile child authority", async (t) => {
-  RuntimeWindow.instances = [];
-  const fixture = await createSignedStagingShellFixture(t);
-  const child = new RuntimeChild();
-  const spawnCalls = [];
-  let factoryOptions = null;
-  let handoverCalls = 0;
-  let brokerCalls = 0;
-  let accountlessFactoryCalls = 0;
-  const nativeBackend = Object.freeze({
-    read: async () => null,
-    createIfMissing: async () => "created",
-    deleteExact: async () => "missing",
-  });
-  const environment = githubHostedMacOSArm64Environment({
-    CODEX_HOME: "/host/.codex",
-    HOME: "/host/home",
-    NODE_OPTIONS: "--require=/host/unsafe.js",
-    PATH: "/usr/bin:/bin",
-    USAGE_MONITOR_CENTRAL_ORIGIN: "https://hostile.example",
-    USAGE_MONITOR_CONTRIBUTION_QUEUE_FILE: "/host/queue",
-    USAGE_MONITOR_KEYCHAIN_BROKER_FD: "99",
-    USAGE_MONITOR_PREPARED_DIRECTORY: "/host/prepared",
-    USERPROFILE: "/host/profile",
-  });
-  let nativeFactoryEvent = null;
-  const runtime = signedStagingElectronRuntime(fixture.app);
-  const dialogs = [];
-  runtime.dialog.showMessageBox = async (options) => {
-    dialogs.push(options);
-    return { response: 0 };
-  };
-  const launch = launchElectronShell({
-    electron: runtime,
-    environment,
-    platform: "darwin",
-    architecture: "arm64",
-    getuid: () => 501,
-    getUserInfo: () => ({ uid: 501, username: "ci-runner" }),
-    resourcesPath: fixture.resourcesPath,
-    createMacCredentialHandover(options) {
-      fixture.events.push("nativeFactory");
-      nativeFactoryEvent = fixture.events.length - 1;
-      factoryOptions = options;
-      return {
-        async prepareNativeHandover({ homeDirectory }) {
-          handoverCalls += 1;
-          assert.equal(homeDirectory, join(
-            fixture.signedStagingUserData,
-            "accountless-signed-staging-rehearsal-v1",
-            "synthetic-home",
-          ));
-          return { status: "no_legacy_state" };
-        },
-        attachCredentialBroker() {
-          brokerCalls += 1;
-          throw new Error("signed staging must not compose FD4");
-        },
-        createAccountlessCredentialBackend({ legacyCredentialProbe }) {
-          accountlessFactoryCalls += 1;
-          assert.equal(typeof legacyCredentialProbe, "function");
-          return nativeBackend;
-        },
-      };
-    },
-    supervisorOptions: {
-      spawnChild(_command, _args, options) {
-        spawnCalls.push(options);
-        queueMicrotask(() => {
-          child.stdout.emit("data", Buffer.from("USAGE_MONITOR_READY http://127.0.0.1:4941/\n"));
-        });
-        return child;
-      },
-      startupTimeoutMs: 1_000,
-      shutdownTimeoutMs: 1_000,
-    },
-  });
-  const lifecycle = await withTestTimeout(launch, "signed staging shell launch timed out");
-  assert.deepEqual(factoryOptions, {
-    app: fixture.app,
-    resourcesPath: fixture.resourcesPath,
-    credentialBrokerEnabled: false,
-  });
-  assert.equal(handoverCalls, 1);
-  assert.equal(accountlessFactoryCalls, 1);
-  assert.equal(brokerCalls, 0);
-  if (process.platform === "win32") {
-    // This test injects Darwin package policy but deliberately uses the host's
-    // real filesystem. Windows cannot provide the POSIX protected first-run
-    // store, so that gate must refuse before spawn. Do not relax its mode/owner
-    // checks to make an emulated Mac launch succeed on Windows.
-    assert.equal(lifecycle, null);
-    assert.equal(spawnCalls.length, 0);
-    assert.deepEqual(dialogs.map(({ type }) => type), ["info", "error"]);
-    assert.equal(fixture.app.quitCalls, 1);
-    assert.equal(brokerCalls, 0);
-    assert.equal(fixture.paths.get("userData"), fixture.signedStagingUserData);
-    assert.equal(fixture.paths.get("sessionData"), fixture.signedStagingUserData);
-    return;
-  }
-  assert.equal(spawnCalls.length, 1);
-  assert.deepEqual(fixture.events.slice(0, 2), [
-    "setPath:userData",
-    "setPath:sessionData",
-  ]);
-  const signedStagingProfileStats = await lstat(fixture.signedStagingUserData);
-  assert.equal(signedStagingProfileStats.isDirectory(), true);
-  if (process.platform !== "win32") {
-    assert.equal(signedStagingProfileStats.mode & 0o777, 0o700);
-  }
-  assert.equal(fixture.paths.get("userData"), fixture.signedStagingUserData);
-  assert.equal(fixture.paths.get("sessionData"), fixture.signedStagingUserData);
-  assert.ok(nativeFactoryEvent !== null);
-  assert.ok(fixture.events.indexOf("setPath:userData") < nativeFactoryEvent);
-  assert.ok(fixture.events.indexOf("setPath:sessionData") < nativeFactoryEvent);
-  assert.ok(fixture.events.indexOf("setPath:userData") < fixture.events.indexOf("whenReady"));
-  assert.ok(fixture.events.indexOf("setPath:sessionData") < fixture.events.indexOf("whenReady"));
-  assert.deepEqual(spawnCalls[0].stdio, ["ignore", "pipe", "pipe", "ipc"]);
-  const childEnvironment = spawnCalls[0].env;
-  assert.equal(childEnvironment.HOME, join(
-    fixture.signedStagingUserData,
-    "accountless-signed-staging-rehearsal-v1",
-    "synthetic-home",
- ));
-  assert.equal(childEnvironment.CODEX_HOME, join(
-    fixture.signedStagingUserData,
-    "accountless-signed-staging-rehearsal-v1",
-    "synthetic-home",
-    ".codex",
- ));
-  assert.equal(childEnvironment.USAGE_MONITOR_STATE_ROOT, join(
-    fixture.signedStagingUserData,
-    "accountless-signed-staging-rehearsal-v1",
-    "companion-state",
- ));
-  assert.equal(childEnvironment.USAGE_MONITOR_ACCOUNTLESS_MODE, "rehearsal-v1");
-  assert.equal(childEnvironment.USAGE_MONITOR_ACCOUNTLESS_ORIGIN, fixture.metadata.origin);
-  for (const key of [
-    "NODE_OPTIONS",
-    "USAGE_MONITOR_CENTRAL_ORIGIN",
-    "USAGE_MONITOR_CONTRIBUTION_QUEUE_FILE",
-    "USAGE_MONITOR_KEYCHAIN_BROKER_FD",
-    "USAGE_MONITOR_PREPARED_DIRECTORY",
-    "USAGE_MONITOR_TEST_LANE",
-  ]) assert.equal(childEnvironment[key], undefined, key);
-  const dispose = lifecycle.dispose();
-  child.emit("exit", 0, null);
-  await dispose;
-});
-
-test("signed staging refuses a profile symlink before setting Electron paths", {
-  // Creating directory symlinks needs an extra Windows privilege that the
-  // ordinary cross-platform shell lane intentionally does not require.
-  skip: process.platform === "win32",
-}, async (t) => {
-  const fixture = await createSignedStagingShellFixture(t);
-  await symlink(fixture.userData, fixture.signedStagingUserData, "dir");
-  let nativeFactoryCalls = 0;
-  await assert.rejects(launchElectronShell({
-    electron: signedStagingElectronRuntime(fixture.app),
-    environment: githubHostedMacOSArm64Environment(),
-    platform: "darwin",
-    architecture: "arm64",
-    getuid: () => 501,
-    getUserInfo: () => ({ uid: 501, username: "ci-runner" }),
-    resourcesPath: fixture.resourcesPath,
-    createMacCredentialHandover() {
-      nativeFactoryCalls += 1;
-      return assert.fail("a symlinked staging profile must fail before native setup");
-    },
-  }), errorCode("electron_configuration_invalid"));
-  assert.equal(nativeFactoryCalls, 0);
-  assert.deepEqual(fixture.events, []);
-  assert.equal((await lstat(fixture.signedStagingUserData)).isSymbolicLink(), true);
 });
 
 test("packaged Electron composition keeps the companion in app.asar and uses physical Resources as cwd", async () => {
@@ -5049,16 +4195,6 @@ test("preload exposes platform-qualified one-shot startup gates and rejects host
     assert.deepEqual(smoke.calls, [], "the gate carries no IPC or private data");
   }
 
-  const macSmoke = runPreload({
-    platform: "darwin",
-    control: "quit-v1",
-    lexicalProcess: true,
-  });
-  assert.deepEqual(Object.keys(macSmoke.exposed), [
-    "__TIBOTATTLE_ELECTRON_MACOS_SMOKE__",
-    "tibotattleDesktop",
-  ]);
-  await assertSmokeGate(macSmoke, "__TIBOTATTLE_ELECTRON_MACOS_SMOKE__");
 
   const windowsSmoke = runPreload({
     platform: "win32",
@@ -5085,8 +4221,8 @@ test("preload exposes platform-qualified one-shot startup gates and rejects host
   await assertSmokeGate(windowsNormalSmoke, "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__");
 
   for (const options of [
-    { platform: "linux", control: "quit-v1" },
-    { platform: "linux", control: "windows-v1" },
+    { platform: "win32", control: "quit-v1" },
+    { platform: "win32", control: "windows-v1" },
     { platform: "win32", control: "windows-v1" },
     { platform: "win32", control: undefined },
     {
@@ -5111,16 +4247,11 @@ test("preload exposes platform-qualified one-shot startup gates and rejects host
       control: "windows-v1",
       testLane: "windows-electron-smoke",
     },
-    { platform: "darwin", control: "other" },
-    { platform: "darwin", control: "windows-v1" },
-    { platform: "darwin", control: undefined },
+    { platform: "win32", control: "other" },
+    { platform: "win32", control: "windows-v1" },
+    { platform: "win32", control: undefined },
   ]) {
     const unqualified = runPreload({ ...options, lexicalProcess: true });
-    assert.equal(
-      Object.hasOwn(unqualified.exposed, "__TIBOTATTLE_ELECTRON_MACOS_SMOKE__"),
-      false,
-      JSON.stringify(options),
-    );
     assert.equal(
       Object.hasOwn(unqualified.exposed, "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__"),
       false,
@@ -5266,61 +4397,4 @@ test("dashboard minimum width fits smaller display work areas", async () => {
   assert.equal(dashboard.options.minWidth, 800);
   assert.equal(dashboard.options.width, 800);
   await lifecycle.requestQuit();
-});
-
-
-test("companion supervisor confines prospective development account keys to explicit private macOS QA", async () => {
-  const pair = {
-    USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY: "1",
-    USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "/private/fixture/identity/export-identity",
-    USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "/private/fixture/identity/account-observation-development",
-  };
-  for (const lane of [undefined, "windows-electron-smoke", "macos-electron-local-qa-v1"]) {
-    const child = new FakeChild();
-    let selected;
-    const supervisor = createCompanionSupervisor({
-      platform: "darwin",
-      environment: { ...pair, USAGE_MONITOR_TEST_LANE: lane },
-      spawnChild(_command, _args, { env }) { selected = env; return child; },
-    });
-    const ready = supervisor.start();
-    child.stdout.emit("data", Buffer.from("USAGE_MONITOR_READY http://127.0.0.1:4545/\n"));
-    await ready;
-    assert.equal(selected.USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE,
-      lane === "macos-electron-local-qa-v1" ? pair.USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE : undefined);
-    const stopped = supervisor.stop();
-    child.emit("exit", 0, null);
-    await stopped;
-  }
-  for (const patch of [
-    { platform: "linux" },
-    { platform: "win32" },
-    { USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY: undefined },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: undefined },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "relative" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "/private/fixture/identity/export-identity" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "/private/other/identity/account-observation-development" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "/private/fixture/identity/./account-observation-development" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "/private/fixture/identity/../identity/account-observation-development" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "/private/fixture/identity//account-observation-development" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "/private/fixture/identity/account-observation-development/" },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "/private/fixture/identity/./export-identity" },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "/private/fixture/identity/../identity/export-identity" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "C:/private/fixture/identity/account-observation-development" },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "C:/private/fixture/identity/export-identity" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "\\\\server\\share\\identity\\account-observation-development" },
-    { USAGE_MONITOR_DEVELOPMENT_EXPORT_SECRET_FILE: "\\\\server\\share\\identity\\export-identity" },
-    { USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE: "//server/share/identity/account-observation-development" },
-    { USAGE_MONITOR_ACCOUNTLESS_ORIGIN: "https://example.invalid" },
-    { USAGE_MONITOR_ACCOUNTLESS_MODE: "production-v1" },
-  ]) {
-    let spawned = false;
-    const supervisor = createCompanionSupervisor({
-      platform: patch.platform ?? "darwin",
-      environment: { ...pair, USAGE_MONITOR_TEST_LANE: "macos-electron-local-qa-v1", ...patch },
-      spawnChild() { spawned = true; return new FakeChild(); },
-    });
-    await assert.rejects(supervisor.start(), { code: "electron_shell_companion_spawn_failed" });
-    assert.equal(spawned, false);
-  }
 });

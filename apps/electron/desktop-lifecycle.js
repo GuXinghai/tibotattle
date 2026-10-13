@@ -370,16 +370,7 @@ export function createDesktopLifecycle({
 
   function showApplicationWindow(target) {
     if (!target || target.isDestroyed?.()) return false;
-    // macOS can hide the application as a whole when its last window is
-    // closed or when the status item is used.  BrowserWindow.show() alone
-    // does not undo that application-level hidden state; app.show() is the
-    // supported counterpart.  app.focus({ steal: true }) is needed as well:
-    // app.show() makes the layer visible but does not make the status-item
-    // application frontmost.  Both calls are restricted to macOS; optional
-    // invocation keeps dependency-injected and older runtimes fail-safe.
-    if (platform === "darwin") app.show?.();
     target.show?.();
-    if (platform === "darwin") app.focus?.({ steal: true });
     target.focus?.();
     return true;
   }
@@ -389,10 +380,6 @@ export function createDesktopLifecycle({
       return showApplicationWindow(window);
     }
     if (!recovery?.window || recovery.window.isDestroyed?.()) return false;
-    if (platform === "darwin") {
-      app.show?.();
-      app.focus?.({ steal: true });
-    }
     recovery.show?.();
     return true;
   }
@@ -774,7 +761,6 @@ export function createDesktopLifecycle({
         origin: ready.origin,
         tray,
         screen,
-        platform,
         model: currentTrayPopoverModel(),
         onAction: invokeTrayPopoverAction,
         windowOptions: trayPopoverWindowOptions,
@@ -1229,24 +1215,16 @@ export function createDesktopLifecycle({
     return true;
   }
 
-  function usesExplicitTrayContextMenu() {
-    return platform === "darwin" && typeof tray?.popUpContextMenu === "function";
-  }
-
   function updateTrayContextMenu(template) {
     trayContextMenu = Menu?.buildFromTemplate?.(template) ?? null;
-    // An attached AppKit tray menu opens on primary click as well. Keeping it
-    // attached while toggling our BrowserWindow stacks both surfaces. Own its
-    // secondary-click presentation explicitly on macOS; other desktops retain
-    // their native context-menu integration.
     trayContextMenu?.on?.("menu-will-show", () => trayPopover?.hide?.());
-    tray.setContextMenu?.(usesExplicitTrayContextMenu() ? null : trayContextMenu);
+    tray.setContextMenu?.(trayContextMenu);
   }
 
   function showTrayContextMenu() {
     trayPopover?.hide?.();
     if (trayContextMenu === null) return false;
-    if (platform !== "linux" && typeof tray?.popUpContextMenu === "function") {
+    if (typeof tray?.popUpContextMenu === "function") {
       tray.popUpContextMenu(trayContextMenu);
       return true;
     }
@@ -1276,21 +1254,16 @@ export function createDesktopLifecycle({
     });
     updateTrayContextMenu(template);
     const projected = projectConfiguredTray();
-    tray.setTitle?.(platform === "darwin" ? projected.compactTitle : "");
+    tray.setTitle?.("");
     tray.setToolTip?.([appName, projected.label, projected.selectionLabel, projected.evidenceLabel].filter(Boolean).join(" · "));
     tray.on?.("click", (event, bounds) => {
-      if (usesExplicitTrayContextMenu() && event?.ctrlKey === true) {
-        showTrayContextMenu();
-        return;
-      }
-      if (usesExplicitTrayContextMenu()) tray.closeContextMenu?.();
       const selectedPopover = trayPopover ?? createTrayPopover();
       if (selectedPopover?.toggle(bounds) === true) return;
       invokeTrayCommand("toggle");
     });
+    // Windows keeps its native context menu; the right-click only dismisses the popover.
     tray.on?.("right-click", () => {
-      if (usesExplicitTrayContextMenu()) showTrayContextMenu();
-      else trayPopover?.hide?.();
+      trayPopover?.hide?.();
     });
     return tray;
   }
@@ -1333,7 +1306,7 @@ export function createDesktopLifecycle({
       });
       updateTrayContextMenu(template);
       const projected = projectConfiguredTray();
-      tray.setTitle?.(platform === "darwin" ? projected.compactTitle : "");
+      tray.setTitle?.("");
     tray.setToolTip?.([appName, projected.label, projected.selectionLabel, projected.evidenceLabel].filter(Boolean).join(" · "));
       trayPopover?.setModel(currentTrayPopoverModel());
     }

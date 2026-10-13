@@ -8,7 +8,7 @@
  * wake the existing app so that the page can poll its already-owned handoff.
  *
  * Keep this module independent of Electron.  The main process can feed it
- * macOS `open-url` values, Windows second-instance argv, and Linux argv while
+ * Windows second-instance argv, and launch argv while
  * tests exercise the exact same parser and queue.
  */
 

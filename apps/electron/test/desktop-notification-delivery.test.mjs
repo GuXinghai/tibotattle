@@ -102,7 +102,7 @@ test("packaged delivery maps each semantic output to complete localized copy", (
     const delivery = createDesktopNotificationDelivery({
       Notification: fake.Notification,
       app: PACKAGED_APP,
-      platform: "darwin",
+      platform: "win32",
       locale,
     });
     assert.deepEqual(delivery.status(), { status: "ready" });
@@ -118,7 +118,7 @@ test("packaged delivery maps each semantic output to complete localized copy", (
   const resetDelivery = createDesktopNotificationDelivery({
     Notification: resetFake.Notification,
     app: PACKAGED_APP,
-    platform: "darwin",
+    platform: "win32",
     locale: "en-US",
   });
   assert.deepEqual(resetDelivery.deliver({ key: DESKTOP_NOTIFICATION_KEYS.RESET }), {
@@ -131,28 +131,13 @@ test("packaged delivery maps each semantic output to complete localized copy", (
   assert.equal(resetFake.state.showCalls, 1);
 });
 
-test("delivery is at most one native notification per accepted policy output", () => {
-  const fake = fakeNotification();
-  const delivery = createDesktopNotificationDelivery({
-    Notification: fake.Notification,
-    app: PACKAGED_APP,
-    platform: "darwin",
-  });
-  assert.deepEqual(delivery.deliver({
-    key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD,
-    thresholdPercent: 90,
-  }), { status: "delivered" });
-  assert.equal(fake.state.constructorCalls.length, 1);
-  assert.equal(fake.state.showCalls, 1);
-  assert.equal(fake.state.supportCalls, 1);
-});
 
 test("development and Windows identity gates do not claim delivery", () => {
   const development = fakeNotification();
   const developmentDelivery = createDesktopNotificationDelivery({
     Notification: development.Notification,
     app: { isPackaged: false },
-    platform: "darwin",
+    platform: "win32",
   });
   assert.deepEqual(developmentDelivery.status(), { status: "not_packaged" });
   assert.deepEqual(developmentDelivery.deliver({ key: DESKTOP_NOTIFICATION_KEYS.RESET }), {
@@ -188,50 +173,13 @@ test("development and Windows identity gates do not claim delivery", () => {
   assert.equal(configured.state.showCalls, 1);
 });
 
-test("native support probes and failures become fixed statuses", () => {
-  const unsupported = fakeNotification({ supported: false });
-  const unsupportedDelivery = createDesktopNotificationDelivery({
-    Notification: unsupported.Notification,
-    app: PACKAGED_APP,
-    platform: "darwin",
-  });
-  assert.deepEqual(unsupportedDelivery.status(), { status: "unsupported" });
-  assert.deepEqual(unsupportedDelivery.deliver({ key: DESKTOP_NOTIFICATION_KEYS.RESET }), {
-    status: "unsupported",
-  });
-  assert.equal(unsupported.state.showCalls, 0);
-
-  const capabilityError = fakeNotification({ supportError: new Error("native probe") });
-  const capabilityErrorDelivery = createDesktopNotificationDelivery({
-    Notification: capabilityError.Notification,
-    app: PACKAGED_APP,
-    platform: "darwin",
-  });
-  assert.deepEqual(capabilityErrorDelivery.status(), { status: "capability_error" });
-  assert.deepEqual(capabilityErrorDelivery.deliver({ key: DESKTOP_NOTIFICATION_KEYS.RESET }), {
-    status: "capability_error",
-  });
-
-  for (const option of ["constructError", "showError"]) {
-    const fake = fakeNotification({ [option]: new Error(option) });
-    const delivery = createDesktopNotificationDelivery({
-      Notification: fake.Notification,
-      app: PACKAGED_APP,
-      platform: "darwin",
-    });
-    assert.deepEqual(delivery.deliver({
-      key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD,
-      thresholdPercent: 90,
-    }), { status: "native_error" });
-  }
-});
 
 test("invalid semantic input is rejected before capability or native delivery", () => {
   const fake = fakeNotification();
   const delivery = createDesktopNotificationDelivery({
     Notification: fake.Notification,
     app: PACKAGED_APP,
-    platform: "darwin",
+    platform: "win32",
   });
   assert.throws(() => delivery.deliver({
     key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD,
@@ -241,31 +189,4 @@ test("invalid semantic input is rejected before capability or native delivery", 
   assert.equal(fake.state.supportCalls, 0);
   assert.equal(fake.state.constructorCalls.length, 0);
   assert.equal(fake.state.showCalls, 0);
-});
-
-
-test("test delivery uses the native adapter with fixed localized copy and unchanged gates", () => {
-  for (const [locale, title] of [
-    ["en-US", "TiboTattle test notification"],
-    ["zh-Hans", "TiboTattle 测试通知"],
-    ["es", "Notificación de prueba de TiboTattle"],
-  ]) {
-    const { Notification, state } = fakeNotification();
-    const delivery = createDesktopNotificationDelivery({ Notification, app: PACKAGED_APP, platform: "linux", locale });
-    assert.deepEqual(delivery.sendTest(), { status: "delivered" });
-    assert.equal(state.constructorCalls[0].title, title);
-    assert.equal(state.showCalls, 1);
-    assert.throws(() => delivery.sendTest({ body: "arbitrary" }), TypeError);
-    assert.equal(state.showCalls, 1);
-  }
-  for (const [app, platform, expected] of [
-    [{ isPackaged: false }, "linux", "not_packaged"],
-    [PACKAGED_APP, "win32", "windows_identity_unavailable"],
-  ]) {
-    const { Notification, state } = fakeNotification();
-    assert.equal(createDesktopNotificationDelivery({ Notification, app, platform }).sendTest().status, expected);
-    assert.equal(state.showCalls, 0);
-  }
-  const { Notification } = fakeNotification({ showError: new Error("native failure") });
-  assert.equal(createDesktopNotificationDelivery({ Notification, app: PACKAGED_APP, platform: "darwin" }).sendTest().status, "native_error");
 });

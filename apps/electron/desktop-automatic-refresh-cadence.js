@@ -1,9 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import {
-  createPosixDesktopSettingsBackend,
-  createWindowsDesktopSettingsBackend,
-} from "./desktop-settings-backends.js";
+import { createWindowsDesktopSettingsBackend } from "./desktop-settings-backends.js";
 
 export const DESKTOP_AUTOMATIC_REFRESH_CADENCE_SCHEMA_VERSION =
   "tibotattle-electron-automatic-refresh-cadence-v1";
@@ -366,14 +363,9 @@ export function createDesktopAutomaticRefreshCadenceBackend({
     maximumBytes: MAXIMUM_BYTES,
     codec: DESKTOP_AUTOMATIC_REFRESH_CADENCE_CODEC,
   };
-  return platform === "win32"
-    ? createWindowsDesktopSettingsBackend({
-      ...options,
-      childName: DESKTOP_AUTOMATIC_REFRESH_CADENCE_FILE_NAME,
-      windowsProtectedStateStore,
-    })
-    : createPosixDesktopSettingsBackend({
-      ...options,
-      filename: DESKTOP_AUTOMATIC_REFRESH_CADENCE_FILE_NAME,
-    });
+  return createWindowsDesktopSettingsBackend({
+    ...options,
+    childName: DESKTOP_AUTOMATIC_REFRESH_CADENCE_FILE_NAME,
+    windowsProtectedStateStore,
+  });
 }

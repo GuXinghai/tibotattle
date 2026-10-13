@@ -5,7 +5,7 @@ import {
 } from "./desktop-contract.js";
 
 const DIAGNOSTICS_SCHEMA_VERSION = "tibotattle-electron-diagnostics-v2";
-const PLATFORMS = new Set(["darwin", "win32", "linux"]);
+const PLATFORMS = new Set(["win32"]);
 const ARCHITECTURES = new Set(["arm64", "x64", "ia32", "arm"]);
 const LOGIN_STATUSES = new Set([
   "enabled",

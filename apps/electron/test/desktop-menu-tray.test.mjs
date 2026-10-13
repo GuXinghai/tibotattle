@@ -60,63 +60,10 @@ test("missing usage refresh is a no-op and cannot invoke the separate retry acti
   assert.deepEqual(calls, ["retry"]);
 });
 
-test("application menu maps all desktop commands to the injected action interface", () => {
+
+test("Windows menus use conventional File and Help entries", () => {
   const { actions, calls } = actionRecorder();
-  const template = createMenuFixture({
-    appName: "TiboTattle Dev",
-    platform: "darwin",
-    actions,
-  });
-  assert.deepEqual(template.map(({ label }) => label), [
-    "TiboTattle Dev",
-    "Edit",
-    "View",
-    "Window",
-  ]);
-
-  const application = template[0].submenu;
-  item(application, "About TiboTattle Dev").click();
-  item(application, "Settings…").click();
-  item(application, "Quit TiboTattle Dev").click();
-  assert.deepEqual(calls, ["about", "settings", "quit"]);
-  assert.equal(item(application, "Settings…").accelerator, "CmdOrCtrl+,");
-  assert.equal(item(application, "Quit TiboTattle Dev").accelerator, "CmdOrCtrl+Q");
-
-  const edit = template.find(({ label }) => label === "Edit").submenu;
-  assert.deepEqual(edit.map(({ role }) => role), ["copy", "selectAll"]);
-
-  const view = template.find(({ label }) => label === "View").submenu;
-  item(view, "Update Local Usage").click();
-  item(view, "Weekly Allowance").click();
-  item(view, "Usage Timeline").click();
-  item(view, "Usage and Costs").click();
-  item(view, "Projects and Threads").click();
-  item(view, "Toggle Sidebar").click();
-  item(view, "Show TiboTattle Dev").click();
-  item(view, "Focus TiboTattle Dev").click();
-  assert.deepEqual(calls, [
-    "about",
-    "settings",
-    "quit",
-    "refresh",
-    "weekly",
-    "timeline",
-    "accounting",
-    "projects",
-    "toggleSidebar",
-    "show",
-    "focus",
-  ]);
-  assert.equal(item(view, "Update Local Usage").accelerator, "CmdOrCtrl+R");
-  assert.equal(item(view, "Toggle Sidebar").accelerator, "CmdOrCtrl+Shift+S");
-
-  const windowMenu = template.find(({ label }) => label === "Window").submenu;
-  assert.deepEqual(windowMenu.map(({ role }) => role), ["minimize", "zoom", "front"]);
-});
-
-test("Windows and Linux menus use conventional File and Help entries", () => {
-  const { actions, calls } = actionRecorder();
-  for (const platform of ["win32", "linux"]) {
+  for (const platform of ["win32"]) {
     const template = createMenuFixture({
       appName: "TiboTattle Dev",
       platform,
@@ -268,23 +215,6 @@ test("tray menu exposes truthful status and shared action callbacks", () => {
   assert.equal(item(template, "Quit TiboTattle Dev").accelerator, "CmdOrCtrl+Q");
 });
 
-test("macOS tray header uses a native secondary line and other platforms use the fallback row", () => {
-  const mac = createTrayFixture({
-    appName: "TiboTattle Dev",
-    platform: "darwin",
-  });
-  assert.equal(mac[0].sublabel, STATUS_PLACEHOLDER);
-  assert.equal(mac[0].enabled, false);
-  assert.equal(mac[1].visible, false);
-
-  const windows = createTrayFixture({
-    appName: "TiboTattle Dev",
-    platform: "win32",
-  });
-  assert.equal(windows[0].sublabel, undefined);
-  assert.equal(windows[1].label, STATUS_PLACEHOLDER);
-  assert.equal(windows[1].visible, undefined);
-});
 
 test("tray check-for-updates is enabled only for an injected bounded capability", () => {
   const calls = [];
@@ -339,253 +269,9 @@ function nativeImageFixture({
   };
 }
 
-test("tray icon resolution loads the fixed packaged asset and sizes it for macOS", () => {
-  const fixture = nativeImageFixture();
-  const result = resolveDesktopTrayIcon({
-    nativeImage: fixture.nativeImage,
-    resourceRoot: "/trusted/app.asar",
-    platform: "darwin",
-  });
-  assert.equal(result, fixture.resized);
-  assert.deepEqual(fixture.calls.createFromPath, [
-    join("/trusted/app.asar", TRAY_ICON_RELATIVE_PATH),
-  ]);
-  assert.deepEqual(fixture.calls.crop, [{
-    x: Math.floor(1_024 * TRAY_TEMPLATE_CROP_INSET_RATIO),
-    y: Math.floor(1_024 * TRAY_TEMPLATE_CROP_INSET_RATIO),
-    width: Math.round(1_024 * TRAY_TEMPLATE_CROP_SIZE_RATIO),
-    height: Math.round(1_024 * TRAY_TEMPLATE_CROP_SIZE_RATIO),
-  }]);
-  assert.deepEqual(fixture.calls.resize, [{
-    width: 64,
-    height: 64,
-    quality: "best",
-  }]);
-  assert.deepEqual(fixture.calls.template, [true]);
-});
 
-test("macOS tray icon removes the app plate and keeps only a template mark", () => {
-  const bitmap = Buffer.alloc(64 * 64 * 4);
-  // One bright app-mark pixel and one dark plate pixel in BGRA order.
-  bitmap.set([240, 245, 250, 255], 0);
-  bitmap.set([40, 70, 35, 255], 4);
-  const calls = { templateBitmap: null, template: [] };
-  const finalImage = {
-    isEmpty: () => false,
-    setTemplateImage: (value) => calls.template.push(value),
-  };
-  const templateSource = {
-    resize: () => finalImage,
-  };
-  const workingImage = {
-    isEmpty: () => false,
-    toBitmap: () => bitmap,
-    setTemplateImage() {},
-  };
-  const source = {
-    isEmpty: () => false,
-    resize: () => workingImage,
-  };
-  const result = resolveDesktopTrayIcon({
-    nativeImage: {
-      createFromPath: () => source,
-      createFromBitmap: (value, options) => {
-        calls.templateBitmap = { value: Buffer.from(value), options };
-        return templateSource;
-      },
-    },
-    resourceRoot: "/trusted/app",
-    platform: "darwin",
-  });
-  assert.equal(result, finalImage);
-  assert.equal(calls.templateBitmap.value[3], 255);
-  assert.equal(calls.templateBitmap.value[7], 0);
-  assert.deepEqual(calls.templateBitmap.options, {
-    width: 64,
-    height: 64,
-    scaleFactor: 1,
-  });
-  assert.deepEqual(calls.template, [true]);
-});
 
-test("macOS tray icon falls back to a PNG decoder when raw bitmap construction is rejected", () => {
-  const bitmap = Buffer.alloc(64 * 64 * 4);
-  bitmap.set([240, 245, 250, 255], 0);
-  bitmap.set([40, 70, 35, 255], 4);
-  const calls = { bitmap: 0, png: null, template: [] };
-  const finalImage = {
-    isEmpty: () => false,
-    setTemplateImage: (value) => calls.template.push(value),
-  };
-  const source = {
-    isEmpty: () => false,
-    resize: () => ({
-      isEmpty: () => false,
-      toBitmap: () => bitmap,
-    }),
-  };
-  const result = resolveDesktopTrayIcon({
-    nativeImage: {
-      createFromPath: () => source,
-      createFromBitmap: () => {
-        calls.bitmap += 1;
-        throw new Error("platform bitmap constructor rejected bytes");
-      },
-      createFromBuffer: (value) => {
-        calls.png = Buffer.from(value);
-        return {
-          resize: () => finalImage,
-        };
-      },
-    },
-    resourceRoot: "/trusted/app",
-    platform: "darwin",
-  });
-  assert.equal(result, finalImage);
-  assert.equal(calls.bitmap, 0);
-  assert.deepEqual([...calls.png.subarray(0, 8)], [
-    137, 80, 78, 71, 13, 10, 26, 10,
-  ]);
-  assert.deepEqual(calls.template, [true]);
-});
 
-test("macOS dynamic tray glyph preserves the native meter states at 1x and Retina", () => {
-  const bitmap = Buffer.alloc(64 * 64 * 4);
-  bitmap.set([240, 245, 250, 255], 0);
-  const calls = {
-    bitmaps: [],
-    representations: [],
-    representationResize: [],
-    templates: [],
-  };
-  const opaqueBird = Buffer.alloc(60 * 50 * 4, 0xff);
-  const representation = (options) => ({
-    isEmpty: () => false,
-    toBitmap: () => Buffer.alloc(options.width * options.height * 4, 0xff),
-  });
-  const baseSource = {
-    resize: (options) => {
-      calls.representationResize.push(options);
-      assert.deepEqual(options, { width: 60, height: 50, quality: "best" });
-      return { isEmpty: () => false, toBitmap: () => opaqueBird };
-    },
-  };
-  const glyphSource = {
-    resize: (options) => {
-      calls.representationResize.push(options);
-      return representation(options);
-    },
-  };
-  const source = {
-    isEmpty: () => false,
-    resize: () => ({
-      isEmpty: () => false,
-      toBitmap: () => bitmap,
-    }),
-  };
-  const factory = createDesktopTrayIconFactory({
-    nativeImage: {
-      createFromPath: () => source,
-      createFromBitmap: (value) => {
-        calls.bitmaps.push(Buffer.from(value));
-        return calls.bitmaps.length === 1 ? baseSource : glyphSource;
-      },
-      createEmpty: () => {
-        const template = {
-          isEmpty: () => false,
-          addRepresentation: (options) => {
-            calls.representations.push({
-              ...options,
-              buffer: Buffer.from(options.buffer),
-            });
-          },
-          setTemplateImage: (value) => calls.templates.push(value),
-        };
-        return template;
-      },
-    },
-    resourceRoot: "/trusted/app",
-    platform: "darwin",
-  });
-
-  const freshZero = factory.resolve({
-    status: "fresh",
-    allowance: { source: "direct", window: "seven_day", remainingPercent: 0 },
-    notificationEvidence: null,
-  });
-  assert.equal(calls.bitmaps.length, 2, "extract once, then compose the live glyph");
-  assert.equal(factory.resolve({
-    status: "fresh",
-    allowance: { source: "direct", window: "seven_day", remainingPercent: 0 },
-    notificationEvidence: null,
-  }), freshZero, "unchanged status reuses the prior NativeImage");
-  assert.equal(calls.bitmaps.length, 2, "unchanged polls do not decode or resize the asset");
-
-  const alphaAt = (glyph, x, y) => glyph[(y * 64 + x) * 4 + 3];
-  const liveGlyph = calls.bitmaps[1];
-  assert.equal(alphaAt(liveGlyph, 2, 4), 255, "bird begins at native x=0.5pt, y=2.5pt");
-  assert.equal(alphaAt(liveGlyph, 0, 0), 0, "the 16pt canvas has no app plate");
-  assert.ok(alphaAt(liveGlyph, 32, 59) > 0, "0% retains the live meter track");
-  assert.ok(alphaAt(liveGlyph, 32, 59) < 255, "0% is not rendered as a full meter");
-
-  factory.resolve({
-    status: "fresh",
-    allowance: { source: "direct", window: "seven_day", remainingPercent: 50 },
-    notificationEvidence: null,
-  });
-  const halfGlyph = calls.bitmaps[2];
-  assert.equal(alphaAt(halfGlyph, 20, 59), 255, "live allowance fills the lower meter");
-  assert.ok(alphaAt(halfGlyph, 50, 59) < 255, "live allowance leaves its remaining track visible");
-
-  factory.resolve({
-    status: "analyzing",
-    allowance: { source: "direct", window: "seven_day", remainingPercent: 0 },
-    notificationEvidence: null,
-  });
-  const analyzingGlyph = calls.bitmaps[3];
-  assert.equal(alphaAt(analyzingGlyph, 32, 59), 255, "analyzing uses the native center dot");
-  assert.ok(alphaAt(analyzingGlyph, 26, 59) < 255, "analyzing leaves the meter track visible");
-
-  factory.resolve({
-    status: "stale",
-    allowance: null,
-    notificationEvidence: null,
-  });
-  const staleGlyph = calls.bitmaps[4];
-  assert.ok(alphaAt(staleGlyph, 6, 59) > 0, "stale uses a meter outline");
-  assert.equal(alphaAt(staleGlyph, 32, 59), 0, "stale does not imply a remaining percentage");
-
-  assert.deepEqual(calls.representationResize, [
-    { width: 60, height: 50, quality: "best" },
-    { width: 16, height: 16, quality: "best" },
-    { width: 32, height: 32, quality: "best" },
-    { width: 60, height: 50, quality: "best" },
-    { width: 16, height: 16, quality: "best" },
-    { width: 32, height: 32, quality: "best" },
-    { width: 60, height: 50, quality: "best" },
-    { width: 16, height: 16, quality: "best" },
-    { width: 32, height: 32, quality: "best" },
-    { width: 60, height: 50, quality: "best" },
-    { width: 16, height: 16, quality: "best" },
-    { width: 32, height: 32, quality: "best" },
-  ]);
-  assert.deepEqual(calls.representations.map((representation) => ({
-    scaleFactor: representation.scaleFactor,
-    width: representation.width,
-    height: representation.height,
-    byteLength: representation.buffer.byteLength,
-  })), [
-    { scaleFactor: 1, width: 16, height: 16, byteLength: 16 * 16 * 4 },
-    { scaleFactor: 2, width: 32, height: 32, byteLength: 32 * 32 * 4 },
-    { scaleFactor: 1, width: 16, height: 16, byteLength: 16 * 16 * 4 },
-    { scaleFactor: 2, width: 32, height: 32, byteLength: 32 * 32 * 4 },
-    { scaleFactor: 1, width: 16, height: 16, byteLength: 16 * 16 * 4 },
-    { scaleFactor: 2, width: 32, height: 32, byteLength: 32 * 32 * 4 },
-    { scaleFactor: 1, width: 16, height: 16, byteLength: 16 * 16 * 4 },
-    { scaleFactor: 2, width: 32, height: 32, byteLength: 32 * 32 * 4 },
-  ]);
-  assert.deepEqual(calls.templates, [true, true, true, true]);
-});
 
 test("real packaged bird asset produces a sparse template, not a white plate", async () => {
   const { readFile } = await import("node:fs/promises");
@@ -709,7 +395,7 @@ test("tray icon resolution fails closed for missing, empty, and invalid images",
   assert.equal(resolveDesktopTrayIcon({
     nativeImage: emptySource.nativeImage,
     resourceRoot: "/trusted/app",
-    platform: "linux",
+    platform: "win32",
   }), undefined);
   assert.deepEqual(emptySource.calls.resize, []);
 
@@ -717,7 +403,7 @@ test("tray icon resolution fails closed for missing, empty, and invalid images",
   assert.equal(resolveDesktopTrayIcon({
     nativeImage: emptyResized.nativeImage,
     resourceRoot: "/trusted/app",
-    platform: "linux",
+    platform: "win32",
   }), undefined);
 
   assert.equal(resolveDesktopTrayIcon({

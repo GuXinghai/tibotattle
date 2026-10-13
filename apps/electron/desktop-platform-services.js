@@ -14,7 +14,6 @@ import { DESKTOP_LANGUAGES } from "./desktop-contract.js";
 import { desktopText } from "./desktop-menu.js";
 import { validateHostedSignInAuthorizeUrl } from "./desktop-hosted-signin.js";
 import { parseCodexThreadURL } from "./loopback-policy.js";
-import { createLinuxAutostartOwner } from "./linux-autostart.js";
 
 const EXTERNAL_URLS = Object.freeze({
   website: "https://tibotattle.com",
@@ -23,10 +22,6 @@ const EXTERNAL_URLS = Object.freeze({
 });
 
 const SYSTEM_SETTINGS_URLS = Object.freeze({
-  darwin: Object.freeze({
-    startup: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension",
-    notifications: "x-apple.systempreferences:com.apple.Notifications-Settings.extension",
-  }),
   win32: Object.freeze({
     startup: "ms-settings:startupapps",
     notifications: "ms-settings:notifications",
@@ -77,17 +72,6 @@ function loginDetail(status, textOptions = {}) {
 
 function notificationDetail(textOptions = {}) {
   return desktopText("electron.settings.notifications.permissionStatus", {}, textOptions);
-}
-
-function normalizeMacLoginItem(settings) {
-  const status = settings?.status;
-  if (status === "requires-approval") return "needs-approval";
-  if (status === "enabled" && settings?.openAtLogin === true) return "enabled";
-  // A missing ServiceManagement entry does not establish the user's startup
-  // preference. Preserve that uncertainty instead of presenting an opt-out.
-  if (status === "not-found") return "unavailable";
-  if (status === "not-registered" && settings?.openAtLogin === false) return "disabled";
-  return "error";
 }
 
 function normalizeWindowsLoginItem(settings) {
@@ -243,16 +227,14 @@ function assertShell(shell) {
 /**
  * Validate a renderer-independent directory selected by Electron's native
  * picker. The canonical path is resolved only in the main process and must be
- * a stable, readable, real directory. POSIX additionally requires current-user
- * ownership; Windows selection is paired with the repository's native state
- * protections for writes, while this path remains a read-only Codex source.
+ * a stable, readable, real directory. Windows selection is paired with the
+ * repository's native state protections for writes, while this path remains a
+ * read-only Codex source.
  */
 export async function validateDesktopCodexHome(path, {
-  platform = process.platform,
   lstatPath = lstat,
   realpathPath = realpath,
   accessPath = access,
-  currentUid = typeof process.getuid === "function" ? process.getuid() : null,
 } = {}) {
   if (typeof path !== "string" || path.length === 0 || path.includes("\0")
       || !isAbsolute(path)) {
@@ -273,10 +255,6 @@ export async function validateDesktopCodexHome(path, {
     resolvedStats = await lstatPath(canonical);
     if (!resolvedStats.isDirectory() || resolvedStats.isSymbolicLink()) {
       throw fixedFailure("desktop_codex_home_invalid");
-    }
-    if (platform !== "win32" && currentUid !== null
-        && (requested.uid !== currentUid || resolvedStats.uid !== currentUid)) {
-      throw fixedFailure("desktop_codex_home_not_owned");
     }
     await accessPath(canonical, fileSystemConstants.R_OK);
   } catch (error) {
@@ -300,17 +278,15 @@ export function createDesktopPlatformServices({
   platform = process.platform,
   homeDirectory = homedir(),
   environment = process.env,
-  linuxAutostartOwner,
-  linuxExecutablePath = environment.APPIMAGE || process.execPath,
   locale = "system",
   systemLocales,
   getUpdater = () => null,
-  validateCodexHome = (path) => validateDesktopCodexHome(path, { platform }),
+  validateCodexHome = (path) => validateDesktopCodexHome(path),
 } = {}) {
   if (!app || typeof app !== "object") throw new TypeError("app is required");
   assertDialog(dialog);
   assertShell(shell);
-  if (!["darwin", "win32", "linux"].includes(platform)) {
+  if (platform !== "win32") {
     throw new TypeError("platform is unsupported");
   }
   if (typeof homeDirectory !== "string" || !isAbsolute(homeDirectory)) {
@@ -325,19 +301,6 @@ export function createDesktopPlatformServices({
 
   const defaultCodexHome = resolve(join(homeDirectory, ".codex"));
   const textOptions = { locale, systemLocales };
-  let autostartOwner = linuxAutostartOwner ?? null;
-  if (platform === "linux" && linuxAutostartOwner === undefined && app.isPackaged === true) {
-    try {
-      autostartOwner = createLinuxAutostartOwner({
-        platform,
-        configRoot: environment.XDG_CONFIG_HOME ?? join(homeDirectory, ".config"),
-        executablePath: linuxExecutablePath,
-      });
-    } catch {
-      // An invalid XDG root or executable disables the control without
-      // exposing a private path through the settings bridge.
-    }
-  }
 
   function loginResult(status, canSet) {
     return Object.freeze({ status, canSet, detail: loginDetail(status, textOptions) });
@@ -382,23 +345,7 @@ export function createDesktopPlatformServices({
   }
 
   async function loginItemStatus() {
-    if (platform === "linux") {
-      if (app.isPackaged !== true || autostartOwner === null) {
-        return loginResult("unavailable", false);
-      }
-      try {
-        const observed = await autostartOwner.status();
-        if ((observed?.status === "enabled" || observed?.status === "disabled")
-            && observed.canSet === true) {
-          return loginResult(observed.status, true);
-        }
-        return loginResult(observed?.status === "error" ? "error" : "unavailable", false);
-      } catch {
-        return loginResult("error", false);
-      }
-    }
     const canSet = app.isPackaged === true
-      && (platform === "darwin" || platform === "win32")
       && typeof app.getLoginItemSettings === "function"
       && typeof app.setLoginItemSettings === "function";
     if (!canSet) {
@@ -407,9 +354,7 @@ export function createDesktopPlatformServices({
     }
     try {
       const settings = app.getLoginItemSettings();
-      const status = platform === "darwin"
-        ? normalizeMacLoginItem(settings)
-        : normalizeWindowsLoginItem(settings);
+      const status = normalizeWindowsLoginItem(settings);
       return loginResult(status, true);
     } catch {
       const status = "error";
@@ -421,17 +366,6 @@ export function createDesktopPlatformServices({
     if (typeof enabled !== "boolean") throw new TypeError("enabled is required");
     const before = await loginItemStatus();
     if (!before.canSet) return before;
-    if (platform === "linux") {
-      try {
-        await (enabled ? autostartOwner.enable() : autostartOwner.disable());
-      } catch {
-        return loginResult("error", false);
-      }
-      const after = await loginItemStatus();
-      return after.status === (enabled ? "enabled" : "disabled")
-        ? after
-        : loginResult("error", false);
-    }
     try {
       app.setLoginItemSettings({ openAtLogin: enabled });
     } catch {
@@ -447,7 +381,7 @@ export function createDesktopPlatformServices({
 
   function notificationStatus() {
     // Electron's main process can establish whether desktop notifications are
-    // supported, but macOS authorization belongs to the BrowserWindow's
+    // supported, but operating-system authorization belongs to the BrowserWindow's
     // Notification API. The Settings page requests it from a user gesture and
     // reports the resulting granted/denied state. Do not present the absence
     // of a main-process permission query as an operating-system denial.

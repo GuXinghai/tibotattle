@@ -140,7 +140,7 @@ export function createDesktopStartupDiagnostics({
         phase,
         outcome,
         code,
-        platform: ["darwin", "win32", "linux"].includes(platform) ? platform : "unknown",
+        platform: platform === "win32" ? platform : "unknown",
         architecture: ["arm64", "x64", "ia32", "arm"].includes(architecture)
           ? architecture : "unknown",
         version,

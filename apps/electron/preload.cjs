@@ -16,10 +16,7 @@ const marker = Object.freeze({
 const IPC_CHANNEL = "tibotattle:desktop:v1";
 const COMMAND_CHANNEL = "tibotattle:desktop-command:v1";
 const BRIDGE_VERSION = "v1";
-const MACOS_SMOKE_CONTROL_ENV = "USAGE_MONITOR_ELECTRON_SMOKE_CONTROL";
-const MACOS_SMOKE_CONTROL = "quit-v1";
-const MACOS_SMOKE_BRIDGE_NAME = "__TIBOTATTLE_ELECTRON_MACOS_SMOKE__";
-const MACOS_SMOKE_BRIDGE_VERSION = "v1";
+const WINDOWS_SMOKE_CONTROL_ENV = "USAGE_MONITOR_ELECTRON_SMOKE_CONTROL";
 const WINDOWS_SMOKE_CONTROL = "windows-v1";
 const WINDOWS_NORMAL_SMOKE_CONTROL = "quit-v1";
 const WINDOWS_SMOKE_BRIDGE_NAME = "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__";
@@ -443,19 +440,14 @@ function installQualifiedSmokeBridge() {
   // Electron's sandboxed preload exposes `process` as a preload binding, but
   // does not guarantee it is an own property of globalThis. Keep the opt-in
   // gate available in that runtime without weakening its platform/control
-  // checks or exposing anything to production renderers. Windows uses the
-  // same renderer observation barrier, but with its own exact platform,
-  // control, and bridge name. The two branches are deliberately explicit so
-  // a control intended for one qualification lane can never expose the other
-  // lane's bridge.
+  // checks or exposing anything to production renderers. Each Windows lane has
+  // its own exact control and bridge name, so a control intended for one lane
+  // can never expose another lane's bridge.
   const processRef = typeof process !== "undefined" ? process : null;
-  const control = processRef?.env?.[MACOS_SMOKE_CONTROL_ENV];
+  const control = processRef?.env?.[WINDOWS_SMOKE_CONTROL_ENV];
   let bridgeName;
   let bridgeVersion;
-  if (processRef?.platform === "darwin" && control === MACOS_SMOKE_CONTROL) {
-    bridgeName = MACOS_SMOKE_BRIDGE_NAME;
-    bridgeVersion = MACOS_SMOKE_BRIDGE_VERSION;
-  } else if (processRef?.platform === "win32"
+  if (processRef?.platform === "win32"
       && control === WINDOWS_SMOKE_CONTROL
       && processRef?.env?.[WINDOWS_QUALIFICATION_ENV] === WINDOWS_QUALIFICATION_MARKER
       && processRef?.env?.[WINDOWS_TEST_LANE_ENV] === WINDOWS_TEST_LANE) {

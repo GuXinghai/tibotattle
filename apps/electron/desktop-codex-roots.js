@@ -8,7 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
  * This module contains the pure, filesystem-free part of that model.  The
  * platform layer is responsible for choosing and checking a path.  Keeping
  * path checks here lexical means the same persisted record can be validated
- * on macOS and Windows without pretending that validation proves reachability.
+ * on Windows without pretending that validation proves reachability.
  */
 
 export const DESKTOP_CODEX_ROOT_MAX = 8;
@@ -115,7 +115,7 @@ function looksLikeWindowsPath(value) {
 /**
  * Check an absolute path without using node:path.  The settings model is
  * loaded on one host and may be inspected by a test double for another host,
- * so host-native `isAbsolute` would reject valid Windows values on macOS.
+ * so host-native `isAbsolute` would reject valid Windows values on other hosts.
  */
 export function isAbsoluteCodexPath(value) {
   if (typeof value !== "string"

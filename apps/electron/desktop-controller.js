@@ -330,7 +330,6 @@ export function createDesktopController({
   sharingCoordinator,
   settingsStore,
   platformServices,
-  desktopPlatform = process.platform,
   desktopSystemLocales = [],
   notificationCoordinator,
   notificationDelivery,
@@ -853,13 +852,13 @@ export function createDesktopController({
         refreshIntervalSeconds: settings.refreshIntervalSeconds,
         startAtLogin: Object.freeze({
           ...login,
-          canOpenSettings: desktopPlatform === "darwin" || desktopPlatform === "win32",
+          canOpenSettings: true,
         }),
         sidebarCollapsed: settings.sidebarCollapsed,
         notifications: notificationSnapshot(settings),
         tray: settings.tray ?? DESKTOP_TRAY_UPGRADE_DEFAULTS,
         traySettingsStatus: store.traySettingsStatus ?? "current",
-        trayCapabilities: Object.freeze({ title: desktopPlatform === "darwin" }),
+        trayCapabilities: Object.freeze({ title: false }),
       }),
       about: platform.about(),
     });

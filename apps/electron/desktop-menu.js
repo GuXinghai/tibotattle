@@ -99,8 +99,8 @@ function actionItem(label, action, options = {}) {
 }
 
 /**
- * Build the cross-platform application menu.  Electron expands
- * CmdOrCtrl accelerators to Command on macOS and Control elsewhere.
+ * Build the Windows application menu.  Electron expands CmdOrCtrl
+ * accelerators to Control.
  */
 export function createDesktopMenuTemplate({
   appName = "TiboTattle",
@@ -110,39 +110,24 @@ export function createDesktopMenuTemplate({
   systemLocales = defaultSystemLocales(),
 } = {}) {
   assertAppName(appName);
-  if (platform !== "darwin" && platform !== "win32" && platform !== "linux") {
+  if (platform !== "win32") {
     throw new TypeError("platform is unsupported");
   }
   const boundedActions = createDesktopActionInterface(actions);
   const textOptions = { locale, systemLocales };
-  const platformMenu = platform === "darwin"
-    ? {
-      label: appName,
-      submenu: [
-        actionItem(desktopText("electron.menu.about", { appName }, textOptions), boundedActions.about),
-        { type: "separator" },
-        actionItem(desktopText("electron.menu.settings", {}, textOptions), boundedActions.settings, {
-          accelerator: "CmdOrCtrl+,",
-        }),
-        { type: "separator" },
-        actionItem(desktopText("electron.menu.quit", { appName }, textOptions), boundedActions.quit, {
-          accelerator: "CmdOrCtrl+Q",
-        }),
-      ],
-    }
-    : {
-      label: desktopText("electron.menu.file", {}, textOptions),
-      submenu: [
-        actionItem(desktopText("electron.menu.open", {}, textOptions), boundedActions.show),
-        actionItem(desktopText("electron.menu.settings", {}, textOptions), boundedActions.settings, {
-          accelerator: "CmdOrCtrl+,",
-        }),
-        { type: "separator" },
-        actionItem(desktopText("electron.menu.exit", {}, textOptions), boundedActions.quit, {
-          accelerator: "CmdOrCtrl+Q",
-        }),
-      ],
-    };
+  const platformMenu = {
+    label: desktopText("electron.menu.file", {}, textOptions),
+    submenu: [
+      actionItem(desktopText("electron.menu.open", {}, textOptions), boundedActions.show),
+      actionItem(desktopText("electron.menu.settings", {}, textOptions), boundedActions.settings, {
+        accelerator: "CmdOrCtrl+,",
+      }),
+      { type: "separator" },
+      actionItem(desktopText("electron.menu.exit", {}, textOptions), boundedActions.quit, {
+        accelerator: "CmdOrCtrl+Q",
+      }),
+    ],
+  };
   const commonMenus = [
     platformMenu,
     {
@@ -179,14 +164,12 @@ export function createDesktopMenuTemplate({
       ],
     },
   ];
-  if (platform !== "darwin") {
-    commonMenus.push({
-      label: desktopText("electron.menu.help", {}, textOptions),
-      submenu: [
-        actionItem(desktopText("electron.menu.about", { appName }, textOptions), boundedActions.about),
-      ],
-    });
-  }
+  commonMenus.push({
+    label: desktopText("electron.menu.help", {}, textOptions),
+    submenu: [
+      actionItem(desktopText("electron.menu.about", { appName }, textOptions), boundedActions.about),
+    ],
+  });
   return commonMenus;
 }
 

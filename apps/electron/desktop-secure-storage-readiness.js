@@ -14,10 +14,6 @@ const FAILURE_REASON_SET = new Set(FAILURE_REASONS);
 const MAX_OPERATION_TIMEOUT_MS = 15_000;
 
 const ERROR_CODE_REASONS = new Map([
-  ["KEYCHAIN_LOCKED", "locked"],
-  ["KEYCHAIN_DENIED", "denied"],
-  ["KEYCHAIN_MIGRATION_REQUIRED", "migration_required"],
-  ["KEYCHAIN_CREDENTIAL_INVALID", "credential_invalid"],
   ["broker_timeout", "timeout"],
   ["adapter_integrity_failed", "adapter_integrity_failed"],
   ["broker_unavailable", "security_unavailable"],

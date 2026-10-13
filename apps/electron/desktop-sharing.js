@@ -1,6 +1,5 @@
 import { createLocalContributionPreference } from "../../src/application/index.js";
 import {
-  createPosixDesktopSettingsBackend,
   createWindowsDesktopSettingsBackend,
 } from "./desktop-settings-backends.js";
 
@@ -43,10 +42,8 @@ export function createDesktopSharingBackend({
   windowsProtectedStateStore,
 } = {}) {
   const options = { platform, rootPath, maximumBytes: MAXIMUM_BYTES, codec: CODEC };
-  return platform === "win32"
-    ? createWindowsDesktopSettingsBackend({ ...options, windowsProtectedStateStore,
-      childName: DESKTOP_SHARING_FILE_NAME })
-    : createPosixDesktopSettingsBackend({ ...options, filename: DESKTOP_SHARING_FILE_NAME });
+  return createWindowsDesktopSettingsBackend({ ...options, windowsProtectedStateStore,
+    childName: DESKTOP_SHARING_FILE_NAME });
 }
 
 export function createDesktopSharingCoordinator({

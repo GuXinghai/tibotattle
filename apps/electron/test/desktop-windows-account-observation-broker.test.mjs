@@ -13,7 +13,7 @@ import {
 } from "../../../src/account-observation-secret.js";
 import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
-} from "../../../src/export-identity-keychain.js";
+} from "../../../src/platform/index.js";
 import {
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_INTEGRATION_STATUS as CHILD_INTEGRATION_STATUS,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
@@ -221,8 +221,6 @@ test("Windows account-observation IPC is dormant, exact, and unavailable without
   }
   for (const collision of [
     "USAGE_MONITOR_WINDOWS_ACCOUNT_OBSERVATION_BROKER_FD",
-    "USAGE_MONITOR_KEYCHAIN_BROKER_FD",
-    "USAGE_MONITOR_LINUX_SECRET_SERVICE_BROKER_FD",
   ]) {
     assert.deepEqual(windowsAccountObservationBrokerConfiguration({
       [WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV]: WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,

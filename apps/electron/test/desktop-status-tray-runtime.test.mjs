@@ -95,7 +95,7 @@ function fixture({
   fetchImpl,
   onDesktopStatus,
   createTrayIcon,
-  platform = "darwin",
+  platform = "win32",
   visualTray = false,
 } = {}) {
   const app = new FakeApp();
@@ -227,31 +227,6 @@ test("lifecycle forwards a current analyzing overview allowance without notifica
   await fixtureValue.lifecycle.dispose();
 });
 
-test("lifecycle updates the macOS image only when a dynamic tray state changes", async () => {
-  const icons = Object.freeze({
-    starting: Object.freeze({ name: "starting" }),
-    fresh: Object.freeze({ name: "fresh" }),
-  });
-  const resolved = [];
-  const fixtureValue = fixture({
-    fetchImpl: async (url) => jsonResponse(status(), url),
-    createTrayIcon: (trayStatus) => {
-      resolved.push(trayStatus.status);
-      return trayStatus.status === "fresh" ? icons.fresh : icons.starting;
-    },
-  });
-
-  await fixtureValue.lifecycle.start();
-  const tray = fixtureValue.trays[0];
-  await waitFor(() => tray.menu.template[0].label === "TiboTattle · Five-hour allowance: 74% remaining");
-  assert.equal(tray.initialIcon, icons.starting);
-  assert.deepEqual(tray.images, [icons.fresh]);
-  assert.ok(resolved.includes("fresh"));
-
-  assert.equal(fixtureValue.lifecycle.setDesktopLanguage("zh-Hans"), true);
-  assert.deepEqual(tray.images, [icons.fresh], "locale-only refresh keeps the cached image");
-  await fixtureValue.lifecycle.dispose();
-});
 
 test("lifecycle stops status polling at recovery and restarts it for bounded retries", async () => {
   const requested = [];
@@ -277,77 +252,8 @@ test("lifecycle stops status polling at recovery and restarts it for bounded ret
   assert.equal(fixtureValue.app.quitCalls, 1);
 });
 
-test("lifecycle keeps the compact title Darwin-only", async () => {
-  for (const platform of ["win32", "linux"]) {
-    const fixtureValue = fixture({
-      platform,
-      fetchImpl: async (url) => jsonResponse(status(), url),
-    });
-    await fixtureValue.lifecycle.start();
-    await waitFor(() => fixtureValue.trays[0].menu.template[0].label === "TiboTattle · Five-hour allowance: 74% remaining");
-    // Non-Darwin platforms receive only the existing empty-title clear. They
-    // must never receive the numeric compact title intended for macOS.
-    assert.ok(fixtureValue.trays[0].titles.length > 0);
-    assert.ok(fixtureValue.trays[0].titles.every((value) => value === ""));
-    await fixtureValue.lifecycle.dispose();
-  }
-});
 
-test("macOS primary and secondary tray clicks cannot present both surfaces", async (t) => {
-  const f = fixture({ visualTray: true, fetchImpl: async (url) => jsonResponse(status(), url) });
-  t.after(() => f.lifecycle.dispose());
-  await f.lifecycle.start();
-  const tray = f.trays[0];
-  // A non-null attached menu lets AppKit show it on the same primary click
-  // that opens the BrowserWindow. This is the reported two-overlay defect.
-  assert.equal(tray.menu, null);
-  tray.emit("click", {});
-  const popup = f.windows.find((window) => window.url?.endsWith("/electron-tray-popup.html"));
-  await waitFor(() => popup?.isVisible());
-  assert.equal(tray.presentedMenus.length, 0);
 
-  tray.emit("right-click", {});
-  assert.equal(popup.isVisible(), false);
-  assert.equal(tray.presentedMenus.length, 1);
-  assert.ok(tray.presentedMenus[0].template.some((item) => item.label === "Settings…"));
-
-  tray.emit("click", {});
-  await waitFor(() => popup.isVisible());
-  tray.emit("click", { ctrlKey: true });
-  assert.equal(popup.isVisible(), false);
-  assert.equal(tray.presentedMenus.length, 2);
-
-  // Language/status refresh must update the explicit menu without silently
-  // reattaching it and bringing back the overlap on the next click.
-  f.lifecycle.setDesktopLanguage("zh-Hans");
-  assert.equal(tray.menu, null);
-  tray.emit("right-click", {});
-  assert.notEqual(tray.presentedMenus[2], tray.presentedMenus[1]);
-  assert.ok(tray.presentedMenus[2].template.some((item) => item.label === "设置…"));
-
-  tray.emit("click", {});
-  await waitFor(() => popup.isVisible());
-  popup.webContents.emit("ipc-message", {
-    sender: popup.webContents,
-    senderFrame: popup.webContents.mainFrame,
-  }, TRAY_POPOVER_ACTION_CHANNEL, "more");
-  assert.equal(popup.isVisible(), false);
-  assert.equal(tray.presentedMenus.length, 4);
-});
-
-test("opening the context menu cancels a pending visual tray load", async (t) => {
-  const f = fixture({ visualTray: true, fetchImpl: async (url) => jsonResponse(status(), url) });
-  t.after(() => f.lifecycle.dispose());
-  await f.lifecycle.start();
-  const tray = f.trays[0];
-  tray.emit("click", {});
-  tray.emit("right-click", {});
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  const popup = f.windows.find((window) => window.url?.endsWith("/electron-tray-popup.html"));
-  assert.ok(popup);
-  assert.equal(popup.isVisible(), false);
-  assert.equal(tray.presentedMenus.length, 1);
-});
 
 test("a native Windows menu presentation dismisses the visual tray first", async (t) => {
   const f = fixture({ platform: "win32", visualTray: true, fetchImpl: async (url) => jsonResponse(status(), url) });

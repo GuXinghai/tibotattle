@@ -279,13 +279,13 @@ test("POSIX receipt backend uses the owner-only atomic sibling store", {
   try {
     const root = join(parent, "state");
     const backend = createDesktopFirstRunReceiptBackend({
-      platform: "darwin",
+      platform: "win32",
       rootPath: root,
     });
     assert.equal(await backend.load(), null);
     await backend.save(receipt());
     assert.deepEqual(
-      await createDesktopFirstRunReceiptBackend({ platform: "darwin", rootPath: root }).load(),
+      await createDesktopFirstRunReceiptBackend({ platform: "win32", rootPath: root }).load(),
       receipt(),
     );
     assert.equal((await lstat(root)).mode & 0o777, 0o700);

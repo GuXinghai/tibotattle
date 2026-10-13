@@ -8,7 +8,7 @@ import {
 
 test("desktop diagnostics reduce runtime state to content-free enums and booleans", () => {
   const record = createDesktopDiagnostics({
-    platform: "darwin",
+    platform: "win32",
     architecture: "arm64",
     version: "0.1.16",
     build: "release-abc123",
@@ -97,7 +97,7 @@ test("desktop diagnostics fail closed when a caller tampers with privacy guarant
 });
 
 test("desktop diagnostics reject injected top-level and nested fields", () => {
-  const record = createDesktopDiagnostics({ platform: "darwin", architecture: "arm64" });
+  const record = createDesktopDiagnostics({ platform: "win32", architecture: "arm64" });
   const injections = [
     {
       ...record,
@@ -138,7 +138,7 @@ test("desktop diagnostics reject injected top-level and nested fields", () => {
 });
 
 test("desktop diagnostics reject non-plain records and invalid allowlisted values", () => {
-  const record = createDesktopDiagnostics({ platform: "linux", architecture: "x64" });
+  const record = createDesktopDiagnostics({ platform: "win32", architecture: "x64" });
   assert.throws(
     () => formatDesktopDiagnostics(Object.assign(Object.create({ inherited: true }), record)),
     TypeError,
@@ -167,7 +167,7 @@ test("desktop diagnostics reject non-plain records and invalid allowlisted value
 });
 
 test("desktop diagnostics reject coercible label objects before serialization", () => {
-  const record = createDesktopDiagnostics({ platform: "darwin", architecture: "arm64" });
+  const record = createDesktopDiagnostics({ platform: "win32", architecture: "arm64" });
   const injectedText = "/Users/adam/private-codex?credential=secret";
   let toJsonCalls = 0;
   const forgedLabel = {

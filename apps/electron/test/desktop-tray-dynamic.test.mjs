@@ -189,36 +189,6 @@ test("fresh direct evidence projects compact title, evidence age, and quota lane
   assert.equal(sevenDay[2].label, "七天配额：已过 57% · 已用 88% · 3d 0h 后重置");
 });
 
-test("analyzing tray keeps a live percentage and labels the second line as analyzing", () => {
-  const template = createTrayFixture({
-    appName: "TiboTattle Dev",
-    platform: "darwin",
-    now: Date.parse("2026-08-22T12:04:00.000Z"),
-    trayStatus: {
-      status: "analyzing",
-      allowance: { source: "direct", window: "five_hour", remainingPercent: 73.6 },
-      notificationEvidence: {
-        schemaVersion: "tibotattle-notification-evidence-v2",
-        status: "fresh_provider_observation",
-        provider: "openai_codex",
-        source: "app_server_read",
-        freshness: "fresh",
-        observedAt: "2026-08-22T12:00:00.000Z",
-        continuityKey: "a".repeat(43),
-        windows: [{
-          lane: "primary",
-          usedPercent: 26.4,
-          durationMinutes: 300,
-          resetAt: "2026-08-22T15:00:00.000Z",
-          resetProofKind: "provider_reported_schedule_only",
-        }],
-      },
-    },
-  });
-  assert.equal(template[0].label, "TiboTattle Dev · 74% allowance");
-  assert.equal(template[0].sublabel, "Analyzing");
-  assert.equal(template[1].visible, false);
-});
 
 test("allowance evidence never leaks into non-refreshing non-fresh tray states", () => {
   for (const status of ["starting", "stale", "unavailable"]) {

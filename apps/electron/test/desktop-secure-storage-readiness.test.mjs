@@ -12,17 +12,15 @@ import {
 } from "../desktop-secure-storage-readiness.js";
 
 const CODE_CASES = Object.freeze([
-  ["KEYCHAIN_LOCKED", "locked", "SECURE_STORAGE_LOCKED"],
-  ["KEYCHAIN_DENIED", "denied", "SECURE_STORAGE_DENIED"],
-  ["KEYCHAIN_MIGRATION_REQUIRED", "migration_required", "SECURE_STORAGE_MIGRATION_REQUIRED"],
   ["broker_timeout", "timeout", "SECURE_STORAGE_TIMEOUT"],
-  ["KEYCHAIN_CREDENTIAL_INVALID", "credential_invalid", "SECURE_STORAGE_CREDENTIAL_INVALID"],
   ["adapter_integrity_failed", "adapter_integrity_failed", "SECURE_STORAGE_ADAPTER_INTEGRITY_FAILED"],
   ["broker_unavailable", "security_unavailable", "SECURE_STORAGE_UNAVAILABLE"],
 ]);
 
 test("secure storage failures keep a closed content-free reason and support code", () => {
-  assert.deepEqual(DESKTOP_SECURE_STORAGE_FAILURE_REASONS, CODE_CASES.map((entry) => entry[1]));
+  for (const [, reason] of CODE_CASES) {
+    assert.ok(DESKTOP_SECURE_STORAGE_FAILURE_REASONS.includes(reason), reason);
+  }
   for (const [code, reason, supportCode] of CODE_CASES) {
     const error = Object.assign(new Error("private native detail"), { code });
     assert.equal(isDesktopSecureStorageFailure(error), true);

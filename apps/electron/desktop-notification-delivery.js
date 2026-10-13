@@ -124,7 +124,7 @@ function assertOptions(options) {
 }
 
 function assertPlatform(value) {
-  if (!new Set(["darwin", "win32", "linux"]).has(value)) {
+  if (value !== "win32") {
     throw new TypeError("notification delivery platform is unsupported");
   }
   return value;
