@@ -154,6 +154,8 @@ test("ordinals are seeded from the previous index only while the store is empty"
     // The previous index is read only through its ordinal map, injected below.
     const legacy = join(workspace.state, "legacy.sqlite");
     writeFileSync(legacy, "");
+    // An existing installation's identity is required for ordinal carry.
+    writeFileSync(workspace.secretFile, Buffer.alloc(32, 43), { mode: 0o600 });
     const legacyOrdinals = new Map([["ab".repeat(32), 7]]);
     const readOrdinalMap = () => ({ ordinalSeed: legacyOrdinals });
     const indexFile = join(workspace.state, "v2.sqlite");

@@ -97,13 +97,16 @@ The salt is the root of every local join key and of every hosted pseudonym.
 - It must be the file in the same directory as the store, 32 to 256 bytes, and a
   single-link regular file. Symbolic links and multi-link files are refused.
 - If the store has sources and the salt is missing, stop. Do not run a refresh.
-  A refresh creates a new salt when the file is absent. Every local join key and
-  every hosted pseudonym would then change. Restore the salt from the preserved
-  copy or from a backup.
+  Current refresh refuses missing or malformed salts before opening existing
+  identity-bearing state writable. Legacy cutover also requires the original
+  salt before v2 creation. Restore the salt from the preserved copy or a backup;
+  do not create a replacement.
 - If no salt exists anywhere and the store has sources, the identity change is an
   owner decision, not a recovery step. Record it and stop.
-- A store with no sources is a first-run state. The companion creates the salt
-  then.
+- Salt creation is allowed only for fresh/empty identity state with no published
+  commit, registered sources, carried ordinal map or legacy index. A different
+  valid-length salt cannot be recognized automatically; verify the preserved
+  salt's checksum before rehearsal.
 
 ## 5. Inspect the copy read-only
 
@@ -150,8 +153,9 @@ console.log(backend.audit());
 - `status: "audited"` with `consistent: true` means the rollups, work rollups and
   cache-impact pairs match the committed facts at `commitSeq`.
 - `consistent: false` with non-zero `rollup`, `work` or `pairing` means drift.
-  Keep the copy. Record the counts and `commitSeq`. Do not patch the tables. No
-  shipped command repairs them yet.
+  Keep the copy. Record the counts and `commitSeq`. Do not patch the tables
+  manually. The backend's next first/daily completed refresh runs off-thread
+  atomic repair from committed facts; rehearse that path on the copy first.
 - `status: "unavailable"` means the file is missing or cannot be read.
 
 ## 7. Rehearse on the copy
@@ -162,6 +166,9 @@ store:
 1. Create the backend with the copy's store path and copied salt, then call
    `backend.refreshUnifiedIndex({ codexHome })`. The refresh reads only new and
    changed sources. Absent sources keep their facts.
+   Before returning the generation, the first completed refresh audits the
+   derived tables in a worker and repairs drift atomically from committed facts.
+   A repair advances `commit_seq` with a `verify` commit; a clean audit does not.
 2. Run the audit again.
 3. Compare before and after: source count, `presence` counts, usage event count,
    earliest and latest `observed_at_ms`, quota observation count and quarantine
@@ -169,6 +176,9 @@ store:
 
 A `publication_busy` result means the write-ahead log reached its hard limit,
 usually because a long-lived reader is pinning it. Close other readers and retry.
+`local_index_maintenance_deferred` similarly preserves the store when there is
+not enough WAL/disk headroom for a derived-table rebuild. Do not delete sidecars
+to force it through. Release readers and retry; the unsuccessful audit stays due.
 
 To re-verify every closed segment against its stored digest, which catches an
 edit inside already-verified bytes, call `refreshLocalIndex` from

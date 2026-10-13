@@ -14,6 +14,7 @@ import {
   withReadSnapshot,
 } from "./local-index-store.js";
 import { readLocalIndexWorkUsage } from "./local-index-work-usage.js";
+import { LOCAL_UNIFIED_INDEX_PARSER_VERSION } from "./codex-usage-vocabulary.js";
 
 // The companion's unified projection, read from the v2 local index store.
 //
@@ -200,7 +201,9 @@ export function readLocalIndexPublication(database) {
   }
   return Object.freeze({
     fingerprint: identity.fingerprint,
-    parserVersion: LOCAL_INDEX_PARSER_VERSION,
+    // The hosted contract names the extractor, not the local storage format.
+    // The compound v2 store stamp remains in the publication fingerprint.
+    parserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
     dataVersion: database.prepare("PRAGMA data_version").get().data_version,
     changes: database.prepare("SELECT total_changes() AS count").get().count,
   });

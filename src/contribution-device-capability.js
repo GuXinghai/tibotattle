@@ -18,6 +18,7 @@ import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
   assertWindowsProductionReadiness,
   createWindowsProductionCapabilityBackend,
+  syncDirectory,
 } from "./platform/index.js";
 
 const SECRET_BYTES = 32;
@@ -219,18 +220,6 @@ async function prepareStateDirectory(stateFile) {
   } catch (error) {
     if (error instanceof ContributionDeviceCapabilityError) throw error;
     fail("state_unavailable");
-  }
-}
-
-async function syncDirectory(directory) {
-  let handle;
-  try {
-    handle = await open(directory, constants.O_RDONLY | (constants.O_DIRECTORY ?? 0));
-    await handle.sync();
-  } catch {
-    fail("state_unavailable");
-  } finally {
-    await handle?.close().catch(() => {});
   }
 }
 

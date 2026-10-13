@@ -1,5 +1,5 @@
 import { availableParallelism } from "node:os";
-import { statSync, statfsSync } from "node:fs";
+import { lstatSync, statSync, statfsSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
@@ -31,6 +31,7 @@ import {
 import { withStableRolloutSource } from "./rollout-source-snapshot.js";
 import {
   localDigest,
+  readExistingDeviceSalt,
   readOrCreateDeviceSalt,
   sessionLocal,
   snapshotLocal,
@@ -43,6 +44,7 @@ import {
   createLocalIndexWriter,
   loadCatalog,
   openLocalIndexStore,
+  readCommitSeq,
   reasoningEffortOrdinal,
 } from "./local-index-store.js";
 import {
@@ -499,7 +501,7 @@ export const LOCAL_INDEX_WAL_LIMITS = Object.freeze({
   freeDiskFraction: 0.1,
 });
 
-function effectiveHardLimit(indexFile, limits) {
+export function localIndexWalHardLimit(indexFile, limits = LOCAL_INDEX_WAL_LIMITS) {
   let hard = limits.hardBytes;
   if (typeof limits.freeDiskFraction === "number") {
     try {
@@ -533,6 +535,7 @@ export async function refreshLocalIndex({
   signal = null,
   discoveryLimits = null,
   ordinalSeed = null,
+  requireExistingDeviceSalt = false,
   verify = null,
   walLimits = LOCAL_INDEX_WAL_LIMITS,
   discover = discoverCodexRolloutInfos,
@@ -552,11 +555,28 @@ export async function refreshLocalIndex({
       && (!Number.isSafeInteger(workerCount) || workerCount < 1 || workerCount > MAXIMUM_WORKERS)) {
     throw new TypeError(`workerCount must be null or between 1 and ${MAXIMUM_WORKERS}`);
   }
+  if (typeof requireExistingDeviceSalt !== "boolean") {
+    throw new TypeError("requireExistingDeviceSalt must be a boolean");
+  }
   const startedAt = performance.now();
   const resolvedIndexFile = resolve(indexFile);
-  const deviceSalt = await readOrCreateDeviceSalt(
-    secretFile ?? defaultLocalIndexSecretFile(resolvedIndexFile),
-  );
+  let existingIdentity = requireExistingDeviceSalt || (ordinalSeed !== null && ordinalSeed.size > 0);
+  // Inspect existing state read-only before permitting salt creation. Opening
+  // it writable first could recover facts or reconcile rollups under a lost
+  // identity. An incompatible/unreadable file must also fail without minting.
+  let present = false;
+  try { lstatSync(resolvedIndexFile); present = true; }
+  catch (error) { if (error?.code !== "ENOENT") throw fixedError("local_index_unavailable"); }
+  if (present) {
+    const prior = openLocalIndexStore(resolvedIndexFile, { readOnly: true });
+    try {
+      existingIdentity ||= readCommitSeq(prior) > 0
+        || prior.prepare("SELECT 1 AS present FROM source LIMIT 1").get()?.present === 1;
+    } finally { prior.close(); }
+  }
+  const saltFile = secretFile ?? defaultLocalIndexSecretFile(resolvedIndexFile);
+  const deviceSalt = await (existingIdentity
+    ? readExistingDeviceSalt(saltFile) : readOrCreateDeviceSalt(saltFile));
   const database = openLocalIndexStore(resolvedIndexFile, { create: true });
   const writer = createLocalIndexWriter(database);
   try {
@@ -611,7 +631,7 @@ async function runRefresh({
 }) {
   let deferred = null;
   let walBytesPeak = 0;
-  const walHardBytes = effectiveHardLimit(indexFile, walLimits);
+  const walHardBytes = localIndexWalHardLimit(indexFile, walLimits);
   // Checked before each write transaction of the scan; see LOCAL_INDEX_WAL_LIMITS.
   function walPressure() {
     if (deferred !== null) return true;

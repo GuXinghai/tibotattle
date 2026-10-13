@@ -13,6 +13,7 @@ import {
   createLocalIndexTelemetryV1IndexReader,
 } from "./local-index-contribution.js";
 import { readLegacyOrdinalMap } from "./local-index-cutover.js";
+import { maintainLocalIndex } from "./local-index-maintenance.js";
 import { refreshLocalIndex } from "./local-index-refresh.js";
 import { auditPairing } from "./local-index-pairing.js";
 import { auditRollups } from "./local-index-rollup.js";
@@ -95,18 +96,34 @@ export function createLocalIndexBackend({
   workerCount = null,
   refresh = refreshLocalIndex,
   readOrdinalMap = readLegacyOrdinalMap,
+  maintenance = maintainLocalIndex,
   now = () => Date.now(),
 } = {}) {
   if (typeof indexFile !== "string" || indexFile.length < 1) {
     throw new TypeError("indexFile must be a non-empty string");
   }
-  for (const [name, value] of [["refresh", refresh], ["readOrdinalMap", readOrdinalMap], ["now", now]]) {
+  for (const [name, value] of [["refresh", refresh], ["readOrdinalMap", readOrdinalMap], ["maintenance", maintenance], ["now", now]]) {
     if (typeof value !== "function") throw new TypeError(`${name} must be a function`);
   }
 
   // The descriptor needs one full report read; it is reused for as long as the
   // store's publication identity does not move.
   let described = null;
+  const maintainedAt = new Map();
+  const maintenanceRuns = new Map();
+  async function maintainIfDue(file, signal) {
+    const last = maintainedAt.get(file);
+    if (last !== undefined && now() >= last && now() - last < 86_400_000) return null;
+    if (maintenanceRuns.has(file)) return maintenanceRuns.get(file);
+    const run = (async () => {
+      const result = await maintenance({ indexFile: file, signal });
+      if (result?.consistent !== true) throw fixedError("local_index_maintenance_failed");
+      maintainedAt.set(file, now());
+      return result;
+    })();
+    maintenanceRuns.set(file, run);
+    try { return await run; } finally { maintenanceRuns.delete(file); }
+  }
 
   async function describeCurrentGeneration(file) {
     const identity = readLocalIndexGenerationIdentity({ indexFile: file });
@@ -151,19 +168,23 @@ export function createLocalIndexBackend({
       workerCount,
       signal,
       ordinalSeed: legacyOrdinalSeed(file),
+      requireExistingDeviceSalt: legacyIndexFile !== null && existsSync(legacyIndexFile),
       ...(onProgress === null ? {} : { onProgress }),
     });
     // A deferred refresh stopped under write-ahead-log pressure. Everything it
     // committed is valid, but it did not reach the end of the corpus, so it
     // is not a publication accounting may treat as complete.
     if (result.status !== "refreshed") throw fixedError("local_unified_index_publication_busy");
+    // First completed refresh in every process (including after a crash), then
+    // daily at this idle ingestion boundary. Never run on a report read path.
+    const maintenanceResult = await maintainIfDue(file, signal);
     const generation = await describeCurrentGeneration(file);
     if (generation === null) throw fixedError("local_unified_index_generation_invalid");
     const scanned = count(result.sourcesResumed) + count(result.sourcesRescanned)
       + count(result.sourcesNew);
     return {
       status: "ingested",
-      unchanged: result.unchanged === true,
+      unchanged: result.unchanged === true && maintenanceResult?.status !== "repaired",
       generation,
       sources: count(result.sources),
       sourcesSkipped: count(result.sourcesSkipped),

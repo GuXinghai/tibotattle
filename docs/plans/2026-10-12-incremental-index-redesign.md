@@ -1247,8 +1247,14 @@ Done in the working tree:
 
 Open at closure (each is a gate, not a claim of completion):
 
-- (d) Audit scheduling and repair (section 14).
-- (e) C2 for the v1.1/v1.2 engine (section 7.5, environment gap).
+- (d) Audit scheduling and repair is now implemented in the continuation
+  working tree; source tests are recorded in the
+  [continuation plan](2026-10-13-windows-v2-cutover-continuation.md).
+- (e) The continuation now drives both v1.1/v1.2 engines with synthetic device
+  capabilities and persistent journals: carried legacy ordinals, reversed
+  discovery, zero replay uploads and append-only affected-day uploads. This
+  is v2 engine replay evidence, not a new retired-v1 runtime differential or
+  real Credential Manager/hosted acceptance; see the continuation plan.
 - (f) Installed-artifact, signed-release, updater and hosted-deployment gates
   are separate and not proven by this change.
 
@@ -1259,8 +1265,12 @@ Open at closure (each is a gate, not a claim of completion):
   only because the map is carried (7.5). If v1 is absent or unreadable the ids
   regenerate once. Gate C2 is met for the v1.0 engine and for v1.1/v1.2 at the
   level of day manifest digests; driving the v1.1/v1.2 engine itself is open,
-  because its device-capability fixture fails on this Windows machine at HEAD
-  (7.5).
+  because its device-capability fixture failed on this Windows machine at that
+  closure (7.5). The continuation corrects Windows directory-sync handling
+  and the telemetry publication parser label, and drives both successor
+  engines with actual synthetic device leases and persistent progress. The
+  historical manifest comparison and new engine replay are distinct evidence;
+  a retired-v1 runtime differential and real hosted acceptance are not claimed.
 - **Parser stamps.** v2 stamps every row with the extractor's current parser
   version and rebuilds the per-row suffix from event flags, so a source that is
   present is always at the current revision, as it is in v1 after a reparse.
@@ -1289,8 +1299,12 @@ Open at closure (each is a gate, not a claim of completion):
   `auditWorkRollups`, `auditPairing`, and a rebuild for each derived table)
   and tests that call them after every mutation of the fuzz sequence;
   the backend exposes one read-only `audit()` over them (one read snapshot,
-  counts only), and nothing schedules it or repairs on mismatch. That remains
-  open at closure (Phase 3 gap d). An independent review of the triggers found the
+  counts only). The continuation backend now schedules a separate worker on
+  first process refresh and daily thereafter at a completed ingestion boundary;
+  it rechecks drift under the writer lock, rebuilds derived tables from committed
+  facts and publishes one atomic `verify` commit. Cancellation/failure rolls
+  back and remains due. This closes the source implementation gap (d), with
+  installed qualification still separate. An independent review of the triggers found the
   one defect worth recording: the pairing tables have no insert trigger, and a
   rescan rewrote facts under the standing cursor, which left them short (12 of
   54 candidate rows and 109 of 500 positive counts after four same-size edits;

@@ -83,6 +83,42 @@ async function fixture(run) {
   }
 }
 
+test("Windows device state survives create, replay, lease and confirmed removal without directory fsync", async () => {
+  await fixture(async ({ stateFile }) => {
+    const backend = memoryBackend();
+    const options = { backend, stateFile, origin: ORIGIN,
+      generateDeviceId: () => DEVICE_ID, generateSecret: () => Buffer.alloc(32, 29) };
+    const created = await ensureContributionDeviceCapability(options);
+    assert.equal(created.status, "created");
+    const published = await readFile(stateFile, "utf8");
+    const reused = await ensureContributionDeviceCapability({ ...options,
+      generateDeviceId: () => assert.fail("Replay must preserve device identity"),
+      generateSecret: () => assert.fail("Replay must preserve protected secret"),
+    });
+    assert.deepEqual(reused, { ...created, status: "existing" });
+    assert.equal(await readFile(stateFile, "utf8"), published);
+    assert.equal(published.includes(Buffer.alloc(32, 29).toString("base64url")), false);
+    let leased;
+    const result = await withContributionDeviceSecret({ backend, stateFile, expectedOrigin: ORIGIN,
+      operation: async (secret, device) => {
+        leased = secret;
+        assert.equal(device.deviceId, DEVICE_ID);
+        assert.deepEqual(secret, Buffer.alloc(32, 29));
+        return "synthetic-operation-complete";
+      },
+    });
+    assert.equal(result, "synthetic-operation-complete");
+    assert.deepEqual(leased, Buffer.alloc(32), "lease clears the buffer after callback");
+    await assert.rejects(removeContributionDeviceCapability({ backend, stateFile,
+      confirmDeviceId: DEVICE_ID, remoteRevocationConfirmed: false }), fixedError("remote_revocation_required"));
+    assert.equal(await readFile(stateFile, "utf8"), published);
+    assert.equal((await removeContributionDeviceCapability({ backend, stateFile, expectedOrigin: ORIGIN,
+      confirmDeviceId: DEVICE_ID, remoteRevocationConfirmed: true })).status, "removed");
+    assert.equal(backend.current(), null);
+    await assert.rejects(readFile(stateFile), { code: "ENOENT" });
+  });
+});
+
 test("device capability creates a UUID locally and stores only the 32-byte secret in Keychain", async () => {
   await fixture(async ({ stateFile }) => {
     const backend = memoryBackend();

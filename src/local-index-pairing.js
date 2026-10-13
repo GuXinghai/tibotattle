@@ -183,7 +183,8 @@ export function auditPairing(database) {
     return difference("temp.pairing_candidate_audit", "cache_candidate", candidate)
       + difference("cache_candidate", "temp.pairing_candidate_audit", candidate)
       + difference("temp.pairing_positive_audit", stored, positive)
-      + difference(stored, "temp.pairing_positive_audit", positive);
+      + difference(stored, "temp.pairing_positive_audit", positive)
+      + Number(database.prepare("SELECT COUNT(*) AS n FROM session_positive WHERE events <= 0").get().n);
   } finally {
     database.exec("DROP TABLE IF EXISTS temp.pairing_candidate_audit");
     database.exec("DROP TABLE IF EXISTS temp.pairing_positive_audit");
