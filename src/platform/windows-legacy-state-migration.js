@@ -120,7 +120,7 @@ export function copyWindowsLegacyState({ sourceRoot, destinationRoot, binding,
       fail('unsupported_state');
     }
     for (const name of ['local-unified-index-v1.sqlite.current', 'activity-markers-v0.1.jsonl',
-      'private/authoritative-dashboard-snapshot-v1.json', 'private/codex-speed-baseline-v0.1.json']) {
+      'private/codex-speed-baseline-v0.1.json']) {
       let unsupported;
       try { unsupported = binding.openLegacyStateFile(win32.join(source, name)); }
       catch (error) { if (absent(error)) continue; throw error; }

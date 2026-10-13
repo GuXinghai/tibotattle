@@ -70,6 +70,18 @@ test('native root aliases or containment refuse before any destination write', (
   assert.equal(context.held.size, 0);
 });
 
+test('a rebuildable dashboard snapshot cannot block identity and opt-out preservation', () => {
+  const context = fixture();
+  const open = context.binding.openLegacyStateFile;
+  context.binding.openLegacyStateFile = path => {
+    assert.equal(path.endsWith('authoritative-dashboard-snapshot-v1.json'), false, 'obsolete cache is not read or migrated');
+    return open(path);
+  };
+  assert.equal(run(context, { mode: 'copy' }).status, 'copied');
+  assert.deepEqual(context.target.get(saltName).data, context.source.get(saltName).data);
+  assert.equal(JSON.parse(context.target.get(optOutName).data).enabled, false);
+});
+
 test('copy refuses existing target, stale source identity, missing salt and malformed journal', () => {
   let context = fixture(); context.targetFile(saltName, Buffer.alloc(32));
   assert.throws(() => run(context, { mode: 'copy' }), category('destination_exists'));

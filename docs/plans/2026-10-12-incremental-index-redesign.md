@@ -1262,8 +1262,9 @@ Open at closure (each is a gate, not a claim of completion):
 
 - **Hosted continuity depends on the carried ordinal map (Option A).** `eventId`
   and every ordinal-free input reproduce; v11/v12 quota observation ids do
-  only because the map is carried (7.5). If v1 is absent or unreadable the ids
-  regenerate once. Gate C2 is met for the v1.0 engine and for v1.1/v1.2 at the
+  only because the map is carried (7.5). An unreadable existing v1 fails closed;
+  it never authorizes regenerated ordinals. Fresh ordinals are established only
+  when no prior identity evidence exists. Gate C2 is met for the v1.0 engine and for v1.1/v1.2 at the
   level of day manifest digests; driving the v1.1/v1.2 engine itself is open,
   because its device-capability fixture failed on this Windows machine at that
   closure (7.5). The continuation corrects Windows directory-sync handling

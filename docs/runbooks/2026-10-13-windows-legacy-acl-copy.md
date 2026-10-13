@@ -33,10 +33,13 @@ stays off. Index presence requires its original salt; a credential record
 requires its matching journal. Missing identities are never reminted.
 
 The tool refuses prepared spools, review archives, pointer-selected retired
-indexes, activity markers, saved dashboard snapshots and speed baselines. Those
-profiles require a separate preservation plan; the tool must not silently omit
-them. Other caches and export workspaces are outside the fixed bundle, which is
-why it cannot authorize a whole-profile switch. No original files are deleted.
+indexes, activity markers and speed baselines because they may contain
+irreproducible evidence or identity metadata outside this fixed bundle. Preserve
+those originals separately; their presence does not require keeping an old
+runtime. Rebuildable dashboard snapshots are neither read nor migrated and do
+not block copying identity or opt-out. Other caches and export workspaces are
+outside the fixed bundle. Whole-profile migration is not a v2 release gate.
+No original files are deleted.
 
 Each database is limited to 256 MiB and the bundle to 1 GiB. Other records are
 limited to 1 MiB, with stricter secret formats. These are admission ceilings,
