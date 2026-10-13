@@ -114,7 +114,13 @@ cancel a database statement already in progress. `scheduled_graph_admission`
 separates the earlier phase durations from the new graph window; existing phase `elapsedMs` fields still
 measure total invocation time. Verify checkpoint changes and publication times,
 not merely a successful maintenance event. Calculation yields durable progress
-when it cannot finish. Migration 0054 replaces the current lane's
+when it cannot finish. Checkpoint saves observe owner authority and the expected
+head in one read snapshot, then batch stage insertion with bounded verification
+reads. Part metadata remains fenced by the active stage. Payload writes keep
+their authority triggers and exact-head CAS; resumed reads still finish with a
+live head/authority fence. Response loss must replay the exact generation,
+never bypass these checks or clear a checkpoint to obtain progress.
+Migration 0054 replaces the current lane's
 whole-account polling and four-attempt cap with an indexed, coalescing dirty
 queue. Claiming moves an account to the back before work begins; revision,
 window and lease checks make completion restart-safe. The actual remaining

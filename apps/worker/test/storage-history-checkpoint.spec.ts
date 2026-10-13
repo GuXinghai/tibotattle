@@ -53,6 +53,45 @@ function countRoundTrips(db:D1Database){
  return {database,counts};
 }
 describe('private paged historical checkpoint store',()=>{
+ it('saves a cold checkpoint in four round trips and loads it in three without changing its exact bytes',async()=>{
+  const value=checkpoint(),observed=countRoundTrips(target());
+  const saved=await save({target:observed.database,key,checkpoint:value,expectedHead:null});
+  expect(saved.status).toBe('saved');if(saved.status!=='saved')throw new Error('expected saved');
+  expect(observed.counts).toEqual({reads:2,batches:2});
+  const reader=countRoundTrips(target());
+  expect(await load({target:reader.database,key})).toEqual({status:'ready',headDigest:saved.headDigest,partCount:saved.totalParts,checkpoint:value});
+  expect(reader.counts).toEqual({reads:3,batches:0});
+ });
+ it('recovers a committed metadata batch response loss without exposing a partial head',async()=>{
+  const value=checkpoint();
+  const lost=batchAdapter(async statements=>{await target().batch(statements);throw new Error('synthetic metadata response loss');});
+  await expect(save({target:lost,key,checkpoint:value,expectedHead:null})).rejects.toThrow('metadata response loss');
+  expect(await target().prepare('SELECT count(*) n FROM analytics_history_checkpoint_stages').first('n')).toBe(1);
+  expect(await load({target:target(),key})).toEqual({status:'absent'});
+  const head=await drain(value);expect(await read()).toMatchObject({headDigest:head,checkpoint:value});
+ });
+ it('rolls back metadata insertion when a statement in its verification batch fails',async()=>{
+  const broken=batchAdapter(async statements=>target().batch([...statements,
+   target().prepare('INSERT INTO analytics_history_checkpoint_heads(key_digest,generation,retired) VALUES(?,NULL,2)').bind('synthetic-batch-failure')]));
+  await expect(save({target:broken,key,checkpoint:checkpoint(),expectedHead:null})).rejects.toThrow();
+  expect(await target().prepare('SELECT count(*) n FROM analytics_history_checkpoint_stages').first('n')).toBe(0);
+  expect(await load({target:target(),key})).toEqual({status:'absent'});
+ });
+ it.each(['withdrawal','competing promotion'])('fences %s after metadata verification and before payload/head CAS',async kind=>{
+  const old=await drain(checkpoint());let batches=0,winner=old;
+  const raced=batchAdapter(async<T>(statements:D1PreparedStatement[])=>{
+   if(++batches===2){
+    if(kind==='withdrawal')await target().prepare("UPDATE analytics_owner_state SET state='withdrawn',revision=2,authority_epoch=2").run();
+    else winner=await drain(checkpoint(2),old);
+   }
+   return target().batch<T>(statements);
+  });
+  await expect(save({target:raced,key,checkpoint:checkpoint(1),expectedHead:old})).rejects.toThrow();
+  expect(await target().prepare('SELECT generation FROM analytics_history_checkpoint_heads WHERE key_digest=?')
+   .bind(await storageHistoryKeyDigest(key)).first('generation')).toBe(winner);
+  if(kind==='withdrawal')expect(await load({target:target(),key})).toEqual({status:'absent',headDigest:old});
+  else expect(await read()).toMatchObject({headDigest:winner,checkpoint:checkpoint(2)});
+ });
  it('roundtrips v1.1 acquisition, compact usage, and shared-result generations under a distinct exact key',async()=>{
   const identity:V11QuotaAcquisitionIdentity={participantId:'synthetic-v11-participant',inputFingerprint:'e'.repeat(64),
    sourceMethodVersion:'synthetic-v11-reader-1',observedAtCutoff:'2026-05-28T00:00:00.000Z',
@@ -230,10 +269,10 @@ describe('private paged historical checkpoint store',()=>{
   const observed=countRoundTrips(target());let cursor:StorageHistoryLoadCursor|undefined,pages=0;
   for(let i=0;i<200;i++){
    const before=observed.counts.reads,result=await load({target:observed.database,key,cursor,maxParts:4});pages++;
-   if(result.status==='deferred'){expect(observed.counts.reads-before).toBe(cursor?1:3);cursor=result.cursor;continue;}
+   if(result.status==='deferred'){expect(observed.counts.reads-before).toBe(cursor?1:2);cursor=result.cursor;continue;}
    expect(result).toEqual({status:'ready',headDigest:head,partCount,checkpoint:large});expect(observed.counts.reads-before).toBe(2);break;
   }
-  expect(pages).toBe(Math.ceil((partCount!)/4));expect(observed.counts.reads).toBe(pages+3);expect(observed.counts.batches).toBe(0);
+  expect(pages).toBe(Math.ceil((partCount!)/4));expect(observed.counts.reads).toBe(pages+2);expect(observed.counts.batches).toBe(0);
   expect((await load({target:target(),key,maxParts:32})).status).toBe(partCount!>32?'deferred':'ready');
   await expect(load({target:target(),key,maxParts:33})).rejects.toThrow('CHECKPOINT_UNAVAILABLE');
  });
@@ -289,7 +328,11 @@ describe('private paged historical checkpoint store',()=>{
   await expect(save({target:target(),key,checkpoint:checkpoint(1),expectedHead:oldHead})).rejects.toThrow('CHECKPOINT_UNAVAILABLE');
  });
  it('converges after committed response loss and rolls back a failed part page',async()=>{
-  const large=checkpoint(18000,true),lost=batchAdapter(async statements=>{await target().batch(statements);throw new Error('synthetic lost response');});
+  let batches=0;
+  const large=checkpoint(18000,true),lost=batchAdapter(async<T>(statements:D1PreparedStatement[])=>{
+   const result=await target().batch<T>(statements);
+   // The first batch establishes/verifies metadata; the second writes parts.
+   if(++batches===2)throw new Error('synthetic lost response');return result;});
   await expect(save({target:lost,key,checkpoint:large,expectedHead:null,maxWrites:4})).rejects.toThrow('lost response');
   const retained=await target().prepare('SELECT count(*) n FROM analytics_history_checkpoint_parts').first<number>('n');expect(retained).toBe(2);
   await target().prepare("CREATE TRIGGER synthetic_checkpoint_failure BEFORE INSERT ON analytics_history_checkpoint_parts WHEN NEW.part_index=3 BEGIN SELECT RAISE(ABORT,'synthetic'); END").run();

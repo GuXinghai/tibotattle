@@ -250,23 +250,37 @@ export async function saveStorageHistoryCheckpoint(input:{target:D1Database;key:
    ||cursor.present.some(i=>!Number.isSafeInteger(i)||i<0||i>=f.parts.length))throw fail();
   generation=cursor.generation;for(const i of cursor.present)present.add(i);
  }else{
-  const owner=await target.prepare("SELECT revision,authority_epoch FROM analytics_owner_state WHERE source_id=? AND owner_digest=? AND state='active'").bind(key.sourceId,key.ownerDigest).first<{revision:number;authority_epoch:number}>();
+  // Owner authority and the expected head are observed in one read snapshot.
+  // The stage insert and final head CAS still independently fence later races.
+  const owner=await target.prepare(`SELECT o.revision,o.authority_epoch,
+   h.generation AS head_generation,h.retired AS head_retired FROM analytics_owner_state o
+   LEFT JOIN analytics_history_checkpoint_heads h ON h.key_digest=?
+   WHERE o.source_id=? AND o.owner_digest=? AND o.state='active'`)
+   .bind(id,key.sourceId,key.ownerDigest).first<{revision:number;authority_epoch:number;head_generation:string|null;head_retired:number|null}>();
   if(!owner)throw fail();
   generation=await sha256Hex(canonicalJson({key,expectedHead:expected,authorityEpoch:owner.authority_epoch,control:f.control,manifest:f.manifest}));
-  const head=await current(target,id);if(head?.retired)throw fail();
-  if(head?.generation===generation)return {status:'saved' as const,headDigest:generation,totalParts:f.parts.length};
-  if((head?.generation??null)!==expected)throw fail();
-  await target.prepare(`INSERT INTO analytics_history_checkpoint_stages
+  if(owner.head_retired)throw fail();
+  if(owner.head_generation===generation)return {status:'saved' as const,headDigest:generation,totalParts:f.parts.length};
+  if(owner.head_generation!==expected)throw fail();
+  // D1 batch keeps the insert and its bounded verification reads together.
+  // Retained-part metadata is readable only while the exact stage is active.
+  const [,stageResult,retainedResult]=await target.batch([
+   target.prepare(`INSERT INTO analytics_history_checkpoint_stages
   (key_digest,generation,source_id,owner_digest,day,dependency_digest,source_namespace,method,expected_head,owner_revision,authority_epoch,control_json,manifest_json,part_count)
   SELECT ?,?,?,?,?,?,?,?,?,o.revision,o.authority_epoch,?,?,? FROM analytics_owner_state o
   WHERE o.source_id=? AND o.owner_digest=? AND o.state='active' AND o.authority_epoch=?
   AND NOT EXISTS(SELECT 1 FROM analytics_history_checkpoint_heads h WHERE h.key_digest=? AND (h.retired=1 OR h.generation IS NOT ?))
   ON CONFLICT(key_digest,generation) DO NOTHING`).bind(id,generation,key.sourceId,key.ownerDigest,key.day,key.dependencyDigest,key.sourceNamespace,key.method,expected,
-  f.control,manifest,f.parts.length,key.sourceId,key.ownerDigest,owner.authority_epoch,id,expected).run();
-  const stage=await target.prepare(`SELECT s.* FROM analytics_history_checkpoint_stages s WHERE s.key_digest=? AND s.generation=? AND ${ACTIVE}`).bind(id,generation).first<Stage>();
+  f.control,manifest,f.parts.length,key.sourceId,key.ownerDigest,owner.authority_epoch,id,expected),
+   target.prepare(`SELECT s.* FROM analytics_history_checkpoint_stages s WHERE s.key_digest=? AND s.generation=? AND ${ACTIVE}`).bind(id,generation),
+   target.prepare(`SELECT part_index,sha256,payload_bytes FROM analytics_history_checkpoint_parts
+    WHERE key_digest=? AND generation=? AND EXISTS(SELECT 1 FROM analytics_history_checkpoint_stages s
+     WHERE s.key_digest=? AND s.generation=? AND ${ACTIVE}) ORDER BY part_index LIMIT 1025`)
+    .bind(id,generation,id,generation),
+  ]);
+  const stage=stageResult!.results[0] as Stage|undefined;
   if(!stage||stage.control_json!==f.control||stage.manifest_json!==manifest||stage.expected_head!==expected)throw fail();
-  const retained=(await target.prepare('SELECT part_index,sha256,payload_bytes FROM analytics_history_checkpoint_parts WHERE key_digest=? AND generation=? ORDER BY part_index LIMIT 1025')
-  .bind(id,generation).all<{part_index:number;sha256:string;payload_bytes:number}>()).results;
+  const retained=retainedResult!.results as unknown as {part_index:number;sha256:string;payload_bytes:number}[];
   for(const row of retained){const wanted=f.manifest[row.part_index];
   if(!wanted||wanted.sha256!==row.sha256||wanted.bytes!==row.payload_bytes)throw fail();present.add(row.part_index);}
  }
@@ -301,12 +315,16 @@ export async function loadStorageHistoryCheckpoint(input:{target:D1Database;key:
   if(cursor.stage.generation!==cursor.generation)throw fail();
   generation=cursor.generation;stage=cursor.stage;
  }else{
-  const head=await current(target,id);
-  if(!head?.generation||head.retired)return {status:'absent' as const};
-  const row=await target.prepare(`SELECT s.* FROM analytics_history_checkpoint_stages s WHERE s.key_digest=? AND s.generation=? AND ${ACTIVE}`)
-  .bind(id,head.generation).first<Stage>();if(!row)return {status:'absent' as const,headDigest:head.generation};
-  if(cursor&&cursor.generation!==head.generation)throw fail();
-  generation=head.generation;stage=row;
+  // Preserve the head even when its stage is no longer eligible, without
+  // exposing stage bytes for a retired or inactive authority.
+  const row=await target.prepare(`SELECT h.generation AS head_generation,h.retired AS head_retired,s.*
+   FROM analytics_history_checkpoint_heads h LEFT JOIN analytics_history_checkpoint_stages s
+   ON s.key_digest=h.key_digest AND s.generation=h.generation AND h.retired=0 AND ${ACTIVE}
+   WHERE h.key_digest=?`).bind(id).first<Stage&{head_generation:string|null;head_retired:number}>();
+  if(!row?.head_generation||row.head_retired)return {status:'absent' as const};
+  if(!row.generation)return {status:'absent' as const,headDigest:row.head_generation};
+  if(cursor&&cursor.generation!==row.head_generation)throw fail();
+  generation=row.head_generation;stage=row;
  }
  const parts=cursor?[...cursor.parts]:[],manifest=parse(stage.manifest_json) as Part[];
  if(!Array.isArray(manifest)||manifest.length!==stage.part_count||manifest.length>1024||parts.length>manifest.length)throw fail();

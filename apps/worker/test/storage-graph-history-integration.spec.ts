@@ -82,7 +82,7 @@ function observeDirectAttempts(database:D1Database,failFirst:boolean){let attemp
 function unavailableCheckpointOwner(database:D1Database,onUnavailable?:()=>Promise<void>):D1Database{
  const statement=(inner:D1PreparedStatement,sql:string):D1PreparedStatement=>new Proxy(inner,{get(value,key){
   if(key==='bind')return(...args:unknown[])=>statement(value.bind(...args),sql);
-  if(key==='first'&&sql.includes('SELECT revision,authority_epoch FROM analytics_owner_state'))return async()=>{await onUnavailable?.();return null;};
+  if(key==='first'&&sql.includes('FROM analytics_owner_state o')&&sql.includes('AS head_generation'))return async()=>{await onUnavailable?.();return null;};
   const member=Reflect.get(value,key);return typeof member==='function'?member.bind(value):member;}});
  return new Proxy(database,{get(value,key){if(key==='prepare')return(sql:string)=>statement(value.prepare(sql),sql);
   const member=Reflect.get(value,key);return typeof member==='function'?member.bind(value):member;}});
