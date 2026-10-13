@@ -1,22 +1,22 @@
 # Contributing to TiboTattle
 
 Thanks for your interest in improving TiboTattle. This repository is the
-source of truth for the local macOS app, the browser dashboard, and the
+source of truth for the local Windows app, the browser dashboard, and the
 optional hosted contribution service. Contributions are welcome, but the
 project's privacy boundaries and verification gates are non-negotiable, so
 please read this page before opening an issue or pull request.
 
 ## Developer prerequisites
 
-Just installing the app? Use the [installation instructions](README.md#install-macos-apple-silicon-or-intel)
-for Apple silicon or Intel Macs. The published app bundles its runtime and does
-not require the development tools below.
+Just installing the app? Use the [installation instructions](README.md#install-windows-x64)
+for Windows x64. The published app bundles its runtime and does not require the
+development tools below.
 
 - **Node.js ≥ 22.13** for repository tooling and tests.
 - **pnpm 11** (the repository sets `packageManager: pnpm@11.9.0`).
-- **macOS and Xcode command-line tools** for packaging or installed-app
+- **A supported Windows x64 host** for packaging or installed-app
   qualification. Follow the pinned release host requirements in the
-  [macOS release runbook](docs/runbooks/macos-stable-release-runbook.md).
+  release runbooks.
 
 ## Developer setup
 
@@ -32,9 +32,9 @@ npm --prefix apps/worker ci
 
 The authoritative complete repository gate is `npm run check`. It composes
 root tests with architecture, Codex-contract, tool-inventory, documentation,
-schema-mirror, UI, release-site, local companion, Worker, incoming
-Sparkle transition, and local-review runtime checks. Installed-app qualification
-requires separate macOS hosts and signed artifacts;
+schema-mirror, UI, release-site, local companion, and Worker
+and local-review runtime checks. Installed-app qualification
+requires separate Windows hosts and signed artifacts;
 report an environment-blocked lane explicitly.
 
 Use focused gates while iterating, then run the broadest applicable set before
@@ -45,7 +45,6 @@ npm test                       # core suite (serial by design)
 npm run codex:contract:check   # checked-in Codex plan/name contract parity
 npm run docs:check             # maintained docs, links, status, and current authority
 npm run product:worker:check   # hosted-service worker checks
-npm run product:macos:transition:test  # incoming Sparkle-to-Electron contracts
 npm run architecture:check     # ownership/boundary enforcement
 ```
 

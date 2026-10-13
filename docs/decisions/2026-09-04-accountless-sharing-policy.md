@@ -98,7 +98,7 @@ enrollment-only ledger is not upload authority; authenticated upload ownership,
 revocation and renewal require an additive implementation before collection can
 be activated in a distributed build.
 
-The [desktop convergence plan](../plans/2026-09-04-desktop-convergence.md) owns
+The desktop convergence plan owns
 implementation and evidence. Publication, production settings, remote database
 migrations, signing and installed replacement remain separate operations.
 Update first-run copy, Settings and public privacy disclosures before activation.

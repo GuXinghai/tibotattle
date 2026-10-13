@@ -4,9 +4,8 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 
 ## Use progressive disclosure
 
-- Apply this file to every task in the repository.
-- Before changing a scoped area, read the nearest scoped `AGENTS.md`, even when
-  the client did not load descendant instructions automatically.
+- Apply this file to every task. Before changing a scoped area, read its nearest
+  scoped `AGENTS.md`, even when the client did not load descendant instructions.
 - Read only the references relevant to the task. Do not preload the documentation
   tree, large runbooks, or generated artifacts.
 - For unlisted paths, use this root file plus nearby code, manifests, tests, and READMEs.
@@ -21,10 +20,8 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 | Contribution projection or prepared sets | `src/contribution/AGENTS.md` |
 | Local companion, dashboard API, or unified index | `apps/local/AGENTS.md` |
 | Browser dashboard or public web UI | `apps/web/AGENTS.md` |
-| Electron macOS bundles, updater, migration, or signing | `apps/electron/AGENTS.md` |
-| Electron desktop lifecycle, IPC, settings, or shell integration | `apps/electron/AGENTS.md` |
+| Electron desktop lifecycle, IPC, settings, shell integration, installer, updater, migration, or signing | `apps/electron/AGENTS.md` |
 | Hosted Worker, D1/R2, auth, or deployment | `apps/worker/AGENTS.md` |
-| Standalone local-review CLI, artifact, install, or deletion | `local-review/AGENTS.md` |
 | Exact accounting or price semantics | `packages/accounting/AGENTS.md` |
 | Pseudonym derivation or identity continuity | `packages/identity-core/AGENTS.md` |
 | Quota calibration, rolling windows, or forecasts | `packages/quota-analysis/AGENTS.md` |
@@ -42,14 +39,16 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 Changing an invariant requires an explicit product decision, matching tests,
 and updated authoritative documentation.
 
+- TiboTattle supports Windows x64 only ([decision](docs/decisions/2026-10-12-windows-only.md)); changing platform scope needs a new decision, tests, and docs.
 - Local analysis must work offline, and local HTTP services bind only to loopback.
-- Unexpected Keychain security prompts block release. Routine access must be
-  non-interactive; never weaken protection to suppress prompts. Follow
+- Unexpected Windows credential prompts block release. Credential Manager access
+  must be non-interactive; never weaken protection to suppress prompts. Follow
   `apps/electron/AGENTS.md` for migration, explicit recovery, and proof.
-- Prompts, responses, raw commands, credentials, private paths/filenames, raw
-  account IDs and session content must not enter derived artifacts, fixtures,
-  logs, diagnostics, issues, commits, or PRs. Opt-in Crashpad dumps and explicit
-  owner-only raw crash exports are sole local exceptions; never project/upload them (`docs/decisions/2026-09-21-opt-in-crash-doctor.md`).
+- Prompts, responses, raw commands, credentials, raw account IDs and session
+  content must not enter derived artifacts, fixtures, logs, diagnostics, issues,
+  commits, or PRs. Private paths/filenames live only in the owner-only local
+  index and never leave it (`docs/decisions/2026-10-12-local-index-v2-and-local-paths.md`).
+  Native crash dumps and raw crash reports are never projected or uploaded (`docs/decisions/2026-09-21-opt-in-crash-doctor.md`).
 - Hosted contribution is optional, content-free and pseudonymous. Follow the
   accountless Electron defaults and transition in
   `docs/decisions/2026-09-04-accountless-sharing-policy.md`; preserve durable
@@ -134,8 +133,8 @@ and updated authoritative documentation.
 - Use pnpm for the root workspace. The Worker app has an independent npm
   lockfile. Do not mix lockfile ownership.
 - Root tooling requires Node.js 22.13 or newer. Production Electron candidate
-  preparation requires exactly Node.js 26.2.0; macOS packaging and installed
-  checks require their supported Mac target and GUI context. Unsupported
+  preparation requires exactly Node.js 26.2.0; Windows packaging and installed
+  checks require a supported Windows x64 host and GUI context. Unsupported
   environments must fail honestly rather than produce partial proof.
 - Run the smallest meaningful validation first, then broaden according to impact.
   Direct test-file execution is preferred while iterating.
@@ -144,8 +143,8 @@ and updated authoritative documentation.
   `npm run test:changed -- --base <review-base>` when a trustworthy base exists.
 - Use `npm test` for broad root/shared behavior and `npm run check` only when the
   complete cross-surface gate is justified and its platform prerequisites exist.
-- Use the owning package or surface gate for scoped changes. The macOS and Worker
-  files define their retained gates.
+- Use the owning package or surface gate for scoped changes. The Electron and
+  Worker files define their retained gates.
 - Tests are serial where configured. Do not weaken assertions, exclusions,
   timeouts, privacy checks, or platform gates to obtain green output.
 - For user-facing changes, inspect the rendered target with real-system data.
@@ -161,9 +160,8 @@ and updated authoritative documentation.
   into system application locations, submit to stores, send messages, or change
   external resources without explicit authorization for that outcome.
 - Treat production and staging writes, live load tests, real-account experiments,
-  R7 regeneration, signing, notarization, updater publication, and website
-  publication as protected operations. A dry run is not authorization for a
-  write.
+  R7 regeneration, signing, updater publication, and website
+  publication as protected operations; a dry run is not authorization to write.
 - Never print, commit, or document secrets. Keep credentials in their designed
   local secret store and preserve redaction in failures and diagnostics.
 - Never use real private session data in tests. Use synthetic, minimal, content-free

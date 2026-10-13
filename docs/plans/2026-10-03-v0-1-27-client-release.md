@@ -7,6 +7,10 @@ status: in-progress
 
 # TiboTattle 0.1.27 client release qualification
 
+> **Platform scope (2026-10-12):** TiboTattle supports Windows x64 only. The macOS
+> and Linux items in this plan are withdrawn; see the
+> [Windows-only decision](../decisions/2026-10-12-windows-only.md).
+
 ## Scope and authorization
 
 The user asked on October 3 to work through the remaining 0.1.27 items and ask
@@ -70,7 +74,7 @@ must use the reviewed generator and exact hash-pinned Node 24.14.0/26.2.0 pair.
 
 ## Current authority and progress
 
-Follow [macOS candidate qualification](../runbooks/macos-stable-release-runbook.md),
+Follow macOS candidate qualification,
 [R7 maintenance](../runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md)
 and [cross-platform publication](../runbooks/2026-08-18-cross-platform-release-publication.md).
 The October 3 readiness review identified provisional `promax`, stale R7

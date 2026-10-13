@@ -74,7 +74,7 @@ match the new policy before a build that sends automatically is distributed.
 | Codex rollout metadata | Selected Codex home, normally `~/.codex/sessions` and `~/.codex/archived_sessions` | Bounded record headers and allowlisted metadata from `turn_context`, `token_count`, `thread_settings_applied`, quota/accounting, tool-outcome, lineage, and compaction-boundary records. | Typed usage/quota/tool facts, timestamps, model/speed/reasoning/outcome enums, local HMAC join keys, source cursors, coverage and diagnostic codes. | Local filesystem only. | App **Erase local data** removes TiboTattle's projection, not Codex source files. |
 | Codex configuration | `~/.codex/config.toml` | Only the top-level `service_tier` baseline used when a rollout has not yet recorded an observed speed. | Timestamped declared speed-baseline windows. An observed rollout value always wins. | Local filesystem only. | Local erase removes the derived baseline ledger; it never edits Codex config. |
 | Codex selected-rollout store | `~/.codex/state_5.sqlite` | Read-only `threads.id` and `threads.rollout_path`, after owner/file/path validation, to select the physical head of a logical thread. | Only the validated selected rollout filename mapping needed during ingest. | Local filesystem only. | Local erase removes derived selection state; it never edits Codex SQLite. |
-| Codex account/quota service | Local `codex app-server` subprocess using `account/read`, `account/rateLimits/read`, `account/usage/read`, and bounded update notifications | Current plan/account scope, quota windows, resets, credits-presence flags, and provider usage projection. | Sanitized quota/account observations and Keychain-HMAC account scope. No Codex authentication token is copied. | TiboTattle talks to a local subprocess. If Codex itself cannot refresh its account evidence offline, TiboTattle records the source as unavailable/stale rather than inventing continuity. | Local erase removes observations; identity reset separately rotates the Keychain pseudonym. |
+| Codex account/quota service | Local `codex app-server` subprocess using `account/read`, `account/rateLimits/read`, `account/usage/read`, and bounded update notifications | Current plan/account scope, quota windows, resets, credits-presence flags, and provider usage projection. | Sanitized quota/account observations and local-HMAC account scope. No Codex authentication token is copied. | TiboTattle talks to a local subprocess. If Codex itself cannot refresh its account evidence offline, TiboTattle records the source as unavailable/stale rather than inventing continuity. | Local erase removes observations; identity reset separately rotates the Credential Manager pseudonym. |
 The normal installed refresh does **not** read Claude Desktop quota history,
 Claude prompt transcripts, Claude project files, or Gemini artifacts. Claude
 prototype and benchmark readers remain in the source tree for development
@@ -87,7 +87,7 @@ allowlisted metadata projection. It creates no decoded transcript files and
 never edits the source tree. The physical filename remains private; durable
 cursors refer to logical uncompressed byte offsets. Unsupported runtimes or
 damaged histories produce explicit partial coverage. See the
-[compressed-history contract](./unified-index-schema.md#compressed-codex-histories)
+[compressed-history contract](./local-index-schema.md#compressed-codex-histories)
 for runtime and resource limits.
 
 ## Optional local integrations
@@ -130,12 +130,13 @@ adapter is qualified. These are source behavior, not installed-release proof.
 
 ## Installed local state
 
-The macOS app owns `~/Library/Application Support/Usage Monitor` with
-owner-only permissions. Important entries include:
+The app owns its per-user state root under Electron's user-data directory
+(normally under `%APPDATA%`) with owner-only permissions. Important entries include:
 
 | State | Purpose | Retention behavior |
 | --- | --- | --- |
-| `local-unified-index-v1.sqlite` plus device salt | Canonical replay-safe Codex usage/quota/tool projection and source provenance. | Accumulates locally; the 30-day UI horizon is not retention. |
+| `local-index-store-v1.sqlite` (with its `-wal` and `-shm` sidecars) plus the device salt `local-unified-index-device-salt-v1` in the same directory | Canonical replay-safe Codex usage/quota/tool projection, source provenance, and the owner-only local rollout paths and working directories that the [v2 decision](../decisions/2026-10-12-local-index-v2-and-local-paths.md) allows. Paths never leave the machine. The salt anchors every local join key and hosted pseudonym. | Accumulates locally; the 30-day UI horizon is not retention. Rollout sources are never modified. Facts of rollouts that have since left disk are kept, not deleted by absence. The salt is never regenerated. |
+| `local-unified-index-v1.sqlite` (retired previous index, if present) | Previous physical index. The app does not read it except for the one-time ordinal seed while the v2 store has no sources, and it is not a current contract. | Kept until its retirement is assessed and an owner-authorized, receipt-backed deletion removes it. It holds facts of any rollout that has left disk, and such a file is retained as an unread archive. |
 | `inference-timing-v2/model-performance-snapshot.json` | At most twelve rolling period/mode and twelve exact-window completed timing projections, fixed model IDs and numeric bins; 4 MiB owner-only, schema/digest-checked v5 envelope bound to the configured Codex source. | Uses the same atomic snapshot transport as Overview. Earlier mixed-mode receipts are preserved and refused until mode-separated reconstruction produces a v5 replacement. Unknown and mixed-mode turns are excluded from all selectable modes. Restored measurements keep their observation date while background scanning runs or fails; incomplete scans cannot replace them. First result saves immediately, then hourly, with latest completed results flushed on clean shutdown. |
 | `inference-timing-v2/source-<Codex-home digest>/timing-experiment.sqlite` (development source) | Separate owner-only timing sidecar: one row per completed turn, counts/durations/coverage, local HMAC keys, source cursors and bounded pending state. No raw content or IDs. | Maximum 256 MiB per selected source; parser method 2 and SQLite user version 4. The forward migration retains existing TPS/TTFT, adds nullable completion/mode fields and source revision counters, and fences older writers. The legacy unscoped sidecar is preserved without reading or migrating its unknown source provenance; first use rebuilds measurements from retained source logs. Incompatible stores, including version 1, are preserved and refused. Display periods do not delete evidence or migrate the accounting index. |
 | `inference-timing-v2/source-<Codex-home digest>/tool-free-v1/timing-experiment.sqlite` (development source) | Independent supplement for reconciled single-response turns without tools, plus its own source cursors and bounded scalar pending state. Shares the original private timing correlation key for local joins only. | Maximum 256 MiB; parser method 3 and SQLite user version 5. Its forward migration preserves previous supplement measurements and fences older writers; the original primary store remains separate. An incompatible or unavailable supplement does not hide original measurements. |
@@ -143,9 +144,7 @@ owner-only permissions. Important entries include:
 | `private/` settings/handoff state | Automatic/incremental contribution settings, bounded OAuth restart handle, fast-mode preference, and speed baselines. | Settings persist; the OAuth handle expires and is bounded. |
 | Prepared contribution/review directories and queue | Exact local review, delivery, retry, and audit state. | Retained for replay-safe completion, explicit cleanup, or local erase. |
 | Diagnostics log | Fixed error/status codes and opaque support references. | Bounded, content-free local diagnostics only. |
-| Electron crash capture (macOS opt-in) | Native Crashpad dumps under Electron's user-data directory, separate from the content-free doctor report. Dumps may contain process memory and private data. | Off by default; stored locally only after an explicit preference change and subsequent launch. TiboTattle does not upload or automatically erase dumps. |
-| Offline private crash-evidence export (explicit CLI action) | Bounded copies of matching Apple crash reports and local companion diagnostic log generations; Crashpad dumps only with a second explicit flag. Originals can contain private paths, text, and process memory. | New owner-only directory chosen by the user, outside the source checkout. No automatic upload, issue attachment, or deletion of originals; a private handoff requires a separate owner decision. |
-| WebKit website data | Loopback dashboard session/local storage and short-lived hosted web session state. | Cleared by **Erase local data**; provider pages use the system browser. |
+| Chromium website data | Loopback dashboard session/local storage and short-lived hosted web session state. | Cleared by **Erase local data**; provider pages use the system browser. |
 
 The derived accounting cache inside collector state uses compact JSON with a
 128 MiB publication and child-result transport ceiling. Existing pretty-printed
@@ -160,7 +159,7 @@ The standalone CLI/developer default uses the platform-specific
 `Usage Monitor` state root. Documentation and support instructions must not
 conflate those locations.
 
-## Keychain and credential state
+## Credential Manager and credential state
 
 TiboTattle keeps separate credential capabilities for:
 
@@ -169,22 +168,12 @@ TiboTattle keeps separate credential capabilities for:
 - the paired contribution-device credential.
 
 The optional managed Claude callback has its own standalone CLI/local-review
-pseudonym capability. It is not exposed by the native app.
+pseudonym capability. It is not exposed by the desktop app.
 
-These installed-app capabilities are served to the companion through the signed
-native Keychain broker. A content-free binding/renewal record lives under Application
-Support; it is not the credential. Keys are intentionally separate so one
-identity namespace cannot be joined to another by accident.
-
-The [silent native migration decision](../decisions/2026-08-31-silent-keychain-migration.md)
-records the retired AppKit shell's compatibility helper for existing legacy
-keys. That helper authenticated its native parent, accepted fixed capabilities,
-and passed the unchanged value over a private descriptor for app-owned storage
-and exact readback. The legacy recovery copy was retained during migration.
-Automatic attempts could not open a Keychain prompt; the older shell's separate,
-explained approval could allow an interactive read. Its explicit credential
-reset and synthetic qualification are historical native evidence, not current
-Electron recovery controls or installed-upgrade proof.
+These installed-app capabilities are stored in Windows Credential Manager through
+the noninteractive native adapter. A content-free binding/renewal record lives under
+the app's user-data state root; it is not the credential. Keys are intentionally
+separate so one identity namespace cannot be joined to another by accident.
 
 Current Electron has no credential migration approval entrypoint. Its
 noninteractive adapter preserves a legacy credential and blocks the affected
@@ -194,14 +183,14 @@ support with that code. Preserve the legacy credential and app data; do not
 delete or reset credentials or app data. Retry only repeats the silent readiness
 check, and reinstalling this release does not perform a credential migration.
 
-The Electron macOS production source serves the four legacy broker capabilities
+The Electron production source serves the four legacy broker capabilities
 through its signed main process and the inherited FD4 channel. A fifth,
 separate installation credential supports accountless sharing. Its native
 capability cannot be selected through FD4: the main process exposes only the
 closed accountless operations over the owned companion's private FD3 channel.
 Secret bytes never enter renderer IPC, local HTTP responses or diagnostics.
 
-That accountless credential uses the noninteractive native Keychain adapter,
+That accountless credential uses the noninteractive native Credential Manager adapter,
 with create-if-missing and exact-value deletion as its only mutations. Existing
 encrypted Electron credential files are inspected without decryption. A present
 legacy ciphertext requires explicit recovery and is preserved; an unreadable
@@ -211,9 +200,10 @@ and synthetic-test contracts; signed installation continuity and prompt-free
 first use still require qualification on the actual candidate.
 
 **Reset identity and device** is a separate two-step action from local data
-erase. It removes the selected local Keychain capabilities and associated app
-state; it does not represent hosted participant deletion. A locked Keychain is
-a temporary availability condition, not evidence of a corrupt credential.
+erase. It removes the selected local Credential Manager capabilities and associated app
+state; it does not represent hosted participant deletion. An unavailable
+Credential Manager entry is a temporary availability condition, not evidence of a
+corrupt credential.
 
 ## Optional hosted contribution
 
@@ -333,9 +323,8 @@ reconciliation. Opt-out stops future uploads and retains accepted history.
 | --- | --- | --- |
 | `https://tibotattle.com` | Public community reads, hosted identity/session, optional contribution, participant export, device disconnect, app compatibility/preflight. | Route-specific closed requests; contribution requires consent and one-use/device authority. No self-service hosted deletion. |
 | `https://admin.tibotattle.com` | Owner operations only, including explicitly targeted participant erasure. | Cloudflare Access owner assertion and bounded admin reads/actions with CSRF on mutations. The app is not an admin client. |
-| `https://updates.tibotattle.com/appcast.xml` | Sparkle update checks. | Standard update request metadata; the signed appcast declares the artifact. |
 | Legacy Google or Apple identity endpoints | A legacy client starts hosted sign-in in the system browser; the shared dashboard has no sign-in controls. | Provider-controlled sign-in. The provider callback goes to TiboTattle's Worker, not loopback. |
-| Artifact URL from the verified appcast | User/automatic updater downloads an update. | Standard artifact request; signature, length, and digest/provenance gates remain separate. |
+| Artifact URL from the verified update feed | User/automatic updater downloads an update. | Standard artifact request; signature, length, and digest/provenance gates remain separate. |
 
 The loopback companion is not a general proxy. It forwards only fixed routes
 and bounded headers listed in [`api-surface.md`](./api-surface.md).
@@ -393,19 +382,18 @@ about applicable privacy rights or how a particular request should be resolved.
 
 | Action | Removes | Does not remove |
 | --- | --- | --- |
-| **Erase local data** | Moves the installed app's Application Support state root to Trash and clears TiboTattle WebKit data. | Provider source files, Keychain capabilities, or hosted data. |
-| **Reset identity and device** | Reviewed TiboTattle Keychain capabilities plus their associated local binding/app state. | General local analysis state unless the reset contract explicitly reports it; hosted contribution records. |
-| **Disconnect this Mac** (legacy backend contract) | Hosted authority for this device plus its local device credential/binding; pauses delivery. | Other devices, hosted participant data, or local analysis. |
+| **Erase local data** | Moves the installed app's user-data state root to the operating-system trash, including the local index store, its device salt and collector state, and clears TiboTattle website data. | Provider source files, Credential Manager capabilities, or hosted data. |
+| **Reset identity and device** | Reviewed TiboTattle Credential Manager capabilities plus their associated local binding/app state. | General local analysis state unless the reset contract explicitly reports it; hosted contribution records. |
+| **Device disconnect** (legacy backend contract) | Hosted authority for this device plus its local device credential/binding; pauses delivery. | Other devices, hosted participant data, or local analysis. |
 | Private owner participant erasure | Hosted participant/account, contribution, session, and device state through the protected pipeline; affected aggregates are withdrawn/rebuilt. | Local analysis, provider source files, retained safeguards/audit, or immutable withdrawn aggregate revisions. |
-| Ordinary app/Homebrew uninstall | Application binaries. | By design, local state and Keychain survive ordinary uninstall. |
-| Homebrew `--zap` | Declared app Application Support/cache/WebKit/preferences. | `~/.codex`, Keychain identities, or previously hosted data. |
+| Ordinary app uninstall | Application binaries. | By design, local state and Credential Manager entries survive ordinary uninstall. |
 
 Use the app's explicit controls before uninstall when the intent includes
 local cleanup. Electron's saved sharing-off choice stops accountless delivery;
 the shared dashboard no longer offers legacy device disconnect. These controls
 cannot perform private owner erasure.
 Do not manually delete the only local index as a repair technique; follow
-[`../runbooks/unified-index-recovery.md`](../runbooks/unified-index-recovery.md).
+[`../runbooks/local-index-recovery.md`](../runbooks/local-index-recovery.md).
 
 ## Coverage and uncertainty
 
@@ -421,7 +409,7 @@ Do not manually delete the only local index as a repair technique; follow
 
 ## Updating this inventory
 
-Any shipping source reader, subprocess RPC, local store, Keychain item, network
+Any shipping source reader, subprocess RPC, local store, Credential Manager entry, network
 destination, contribution field, retention constant, or erase/uninstall
 behavior must update this file, the public privacy page, localized first-run
 and refresh disclosure, and source-backed privacy tests in the same change.
@@ -456,7 +444,10 @@ never reach the browser, index, export or telemetry. Folders without identifiabl
 repositories share Non-project tasks; missing source context stays Unassigned.
 Display labels and
 basenames are transient display decoration. No raw path, name or project handle
-is written to the index, exports, diagnostics, contributions or browser storage.
+is written to exports, diagnostics, contributions or browser storage. The
+owner-only local index store holds working directories and rollout paths, as the
+[v2 decision](../decisions/2026-10-12-local-index-v2-and-local-paths.md) allows;
+they never leave the machine. Raw repository origins are not stored there.
 Explicit collaboration parent links are read in a bounded local metadata pass
 to group subworkers into primary-thread families. Cycles and unresolved ancestry
 remain separate; names and title policy are independent of this grouping.

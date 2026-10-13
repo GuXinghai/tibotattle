@@ -142,7 +142,7 @@ were stopped after inspection.
   before claiming applied-update support or real-history performance.
 - Complete the normal release versioning, CI, signed/notarized artifact, native
   install/upgrade, Login Item, updater/download and public release checks under
-  the [release runbook](../runbooks/macos-stable-release-runbook.md).
+  the release runbook.
 
 No push, hosted deployment, production migration, model request, public release,
 installed-app replacement, protected R7 regeneration or production signing was

@@ -11,7 +11,7 @@ status: complete
 
 The public TiboTattle site must clearly describe the product, show the
 privacy-safe community snapshot that is actually supported, and provide the
-Mac-app download path. It must not serve the local personal dashboard or call
+Windows download path. It must not serve the local personal dashboard or call
 aggregate activity a community seven-day allowance estimate.
 
 The current public aggregate contains clipped and rounded activity totals. It
@@ -65,18 +65,18 @@ asset entrypoint. Public root, fallback, and static asset staging must exclude
 the local dashboard, administrative files, local-only controls, and all
 personal-data routes.
 
-A download is not a generic file link. Until an approved signed macOS release
-manifest proves the exact DMG's size, SHA-256, Developer ID, notarization,
-stapling, Gatekeeper, and clean-profile assurances, the public build must
+A download is not a generic file link. Until an approved signed Windows release
+manifest proves the exact installer's size, SHA-256, Authenticode signature,
+and clean-profile assurances, the public build must
 render a clear unavailable-download state. A no-installer community release is
 valid; a file paired only with caller-supplied metadata is not.
 
 ## Acceptance criteria
 
-- A first-time visitor immediately understands that TiboTattle is a Mac app,
+- A first-time visitor immediately understands that TiboTattle is a Windows app,
   what the public snapshot does and does not show, and how to download it.
 - No public URL resolves to the local dashboard or claims to read a visitor’s
-  Mac.
+  computer.
 - The generated public release tree is manifest-verified by every deployable
   Worker environment, not merely by the production staging command.
 - Unavailable/suppressed community and installer states are fail-closed and

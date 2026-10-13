@@ -60,7 +60,7 @@ changed no receipts. The subsequent approved reset implementation and complete
 fresh evidence supersede the blocker; prior artifacts do not qualify new code.
 
 Use the [R7 runbook](../runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md)
-and [macOS release runbook](../runbooks/macos-stable-release-runbook.md).
+and macOS release runbook.
 Raw histories stay local and never become fixtures or committed output.
 Only generated, closed aggregate receipts are candidates for Git.
 

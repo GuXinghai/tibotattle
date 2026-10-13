@@ -50,15 +50,16 @@ Scope: all files under `docs/`. Apply the repository root guidance first.
   A source review does not prove a live service; a browser capture does not prove
   a native app; a release manifest with null evidence fields does not prove the
   omitted evidence.
-- Keep source merge, CI, artifact build, signing, notarization, publication,
+- Keep source merge, CI, artifact build, signing, publication,
   updater availability, installed state, and public deployment as distinct steps.
 - Mark owner-only, credential-gated, hardware-gated, or destructive steps rather
   than writing them as routine agent actions.
 - Retiring self-service controls does not retire owner erasure, privacy-request
   handling, retention disclosures, or deletion-safe restore. Keep those boundaries
   truthful without inventing a contact channel, deadline, or legal conclusion.
-- Preserve the distinction between supported, experimentally qualified,
-  source-compatible, planned, and untested platforms.
+- TiboTattle supports Windows x64 only ([decision](decisions/2026-10-12-windows-only.md)).
+  Do not describe macOS or Linux as supported, planned, or qualified; keep Windows
+  source, installed, updater, and release evidence separate.
 
 ## Maintenance and validation
 

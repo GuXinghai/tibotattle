@@ -118,7 +118,7 @@ tighter ceilings; absolute input maxima are 1,000 accounts and one million
 records per telemetry table. Seeding streams statements instead of constructing
 an unbounded in-memory SQL document.
 
-On macOS or Linux, the local CLI runs the exact current Node executable in an isolated process
+The local CLI runs the exact current Node executable in an isolated process
 group, passing the plan privately over standard input. An **external watchdog**
 terminates the group at the wall-clock ceiling even if SQLite is blocked, and
 samples its resident memory every 250 ms. Sustained inability to observe memory

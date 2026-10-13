@@ -9,11 +9,16 @@ observation_date: 2026-09-27
 
 # Current product and release status
 
+**Platform scope (2026-10-12): Windows x64 only**, under the
+[Windows-only decision](./decisions/2026-10-12-windows-only.md). The macOS and
+Linux targets published with 0.1.26 are no longer supported; their evidence
+below is historical and does not describe a current support or update path.
+
 [TiboTattle 0.1.26](https://github.com/adamallcock/tibotattle/releases/tag/v0.1.26)
-is the published Electron release for macOS Apple silicon, macOS Intel, Windows
-x64 and Linux x64. The installers, updater feeds, Homebrew cask and public
-website have been published. Their qualification remains platform-specific;
-the [platform authority](./reference/platform-support.md) names the limits.
+was the published Electron release for macOS Apple silicon, macOS Intel, Windows
+x64 and Linux x64 at the observation date. The Windows installer and public
+website were published. Its qualification remains platform-specific; the
+[platform authority](./reference/platform-support.md) names the limits.
 
 ## Signed release
 
@@ -21,40 +26,22 @@ The immutable GitHub release was published on **2026-09-27 at 21:02:49 UTC**.
 Its 20 assets and [canonical release manifest](https://github.com/adamallcock/tibotattle/releases/download/v0.1.26/release-manifest.json)
 were read back and hash-verified. The manifest SHA-256 is
 `be65a83f8c1f060b7c5cf6141b6332c02df730dc1a2aac696442e4e433c123cc`;
-all four installers bind to tagged source
+the published installers bind to tagged source
 `acfc385c95b49b8e1040cedfa857659b49a61d8d`, merged to main in
 [PR #238](https://github.com/adamallcock/tibotattle/pull/238).
-The Mac bundle version is `1034`, distinct from build number `2026092701`.
 The manifest leaves SBOM and provenance fields null.
 
 | Published target | Exact final-artifact evidence | Remaining boundary |
 |---|---|---|
-| macOS 14+ Apple silicon | Developer ID signed, hardened, notarized, stapled and Gatekeeper-verified DMG; [clean install](https://github.com/adamallcock/tibotattle/actions/runs/36349376027) and [production Sparkle upgrade](https://github.com/adamallcock/tibotattle/actions/runs/36350924405) passed | Full credential-failure matrix is not qualified |
-| macOS 14+ Intel | Separate signed, notarized and stapled DMG; [clean install](https://github.com/adamallcock/tibotattle/actions/runs/36349377398) and [production Sparkle upgrade](https://github.com/adamallcock/tibotattle/actions/runs/36350929763) passed | Existing-credential upgrade was not exercised on Intel; full failure matrix is not qualified |
 | Windows x64 | Authenticode signed and timestamped installer; [hosted signed installed journey](https://github.com/adamallcock/tibotattle/actions/runs/36347063769) passed | Existing-install upgrade and every physical desktop integration are not qualified |
-| Linux x64 AppImage | Exact published hash and [hosted extracted-app runtime](https://github.com/adamallcock/tibotattle/actions/runs/36347037857) passed | Physical desktop launch, AppImage/FUSE mounting and replacement were not tested; owner accepted publication with `cleanInstallSmokePassed: false` |
 
-The signed Apple silicon existing-Keychain-credential upgrades passed from both
-[0.1.24](https://github.com/adamallcock/tibotattle/actions/runs/36349405714)
-and [0.1.20](https://github.com/adamallcock/tibotattle/actions/runs/36349407322),
-including modern, invalid and locked cases in those runs. These receipts close
-the earlier 0.1.25 credential-continuity gap for their named scenarios, not the
-entire failure matrix. The separate production Electron updater also replaced
-0.1.20 with 0.1.26 on
-[Apple silicon](https://github.com/adamallcock/tibotattle/actions/runs/36351718654)
-and [Intel](https://github.com/adamallcock/tibotattle/actions/runs/36351723582),
-preserving rows, settings, salt and opt-out through relaunch and restart.
-
-All four stable Electron feeds and both native Sparkle feeds advertise 0.1.26
-with exact public readback. The
-[first-party Homebrew update](https://github.com/adamallcock/homebrew-tap/actions/runs/36351745490)
-passed; its 0.1.26 cask hashes match the published Mac DMGs. Feed metadata,
-installed updater runs and cask resolution are distinct evidence.
+Feed metadata, installed updater runs and distribution channels are distinct
+evidence; the Windows installer evidence above does not establish any updater
+replacement.
 
 ## Hosted and website boundary
 
-The [public website](https://tibotattle.com/) serves the 0.1.26 four-platform
-download page. Its [site manifest](https://tibotattle.com/release-site-manifest.json)
+The [public website](https://tibotattle.com/) serves the 0.1.26 download page. Its [site manifest](https://tibotattle.com/release-site-manifest.json)
 has SHA-256
 `676ddc42654eb4a44bffd59c3b45862f430a6e9e266f4211dc7610eaeac47c1c`.
 The 2026-09-27 website-only follow-up put localized navigation on a full row at

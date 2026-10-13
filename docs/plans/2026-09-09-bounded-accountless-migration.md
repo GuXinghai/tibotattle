@@ -109,7 +109,7 @@ explicitly open in source.
 - **Signed fresh-install contributions:** the actual introduction, default-on
   enrollment/upload, credential reuse after restart and persistent opt-out pass
   in the isolated staging journey. The
-  [release plan](./2026-09-05-electron-release-readiness.md) identifies its signed
+  release plan identifies its signed
   artifact and server-side ownership/deduplication evidence.
 - **Hosted database feasibility:** committed source `79d6bb19` passed all 108
   disposable checks in 130,990 ms. The manifest digest is

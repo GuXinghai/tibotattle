@@ -65,7 +65,7 @@ The token vector includes cache writes. Budget units are not serialized.
 
 Current readers ignore the new record type: provider
 [parser](../../src/providers/codex/log-parser.js), unified
-[extractor](../../src/local-unified-index-extract.js),
+[extractor](../../src/local-index-extract.js),
 [passive collector](../../src/passive-collector.js), and
 [checkpoint adapter](../../src/application/export-sources/codex-checkpoint.js).
 This is additive compatibility today, not proof of lost legacy usage.
@@ -111,7 +111,7 @@ explicit installed-client/log qualification gate.
   relationship to a settings change. Never hide a real Astra cache drop.
 - Its global Max/Ultra equivalence at line 181 is no longer a defensible universal
   rule. Update it alongside the mirrored browser validator and
-  [thread-link resolver](../../src/local-cache-drop-thread-links.js), using
+  `thread-link resolver`, using
   reviewed model/mode semantics. Cache compatibility and equal effective
   configuration are different concepts.
 - The index already preserves all six raw effort labels with stable ordinals;

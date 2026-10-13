@@ -18,7 +18,7 @@ combined readiness claim.
 
 ```mermaid
 flowchart LR
-  subgraph Mac[Installed macOS app]
+  subgraph Desktop[Installed Windows app]
     Native[Native shell]
     Local[Loopback companion]
     Index[(Owner-only local state)]
@@ -29,7 +29,7 @@ flowchart LR
   end
 
   Codex[Codex sessions, config, state DB, app-server] --> Local
-  Keychain[macOS Keychain] <--> Native
+  Keychain[Windows Credential Manager] <--> Native
   Local -. explicit contribution / public reads .-> Worker[Cloudflare Worker]
   Browser[System browser] --> Providers[Google / Apple]
   Providers --> Worker
@@ -37,7 +37,7 @@ flowchart LR
   Worker --> R2[(R2 quarantine + update assets)]
   Worker --> DO[Durable Object ingress budget]
   Worker --> Assets[Static website assets]
-  Native --> Appcast[updates.tibotattle.com appcast]
+  Native --> Appcast[updates.tibotattle.com update feed]
   Appcast --> R2
 ```
 
@@ -52,8 +52,8 @@ navigation allowlist.
 | `src/` | Local/domain ingestion, accounting, identity, exports, contribution preparation, and durable state contracts. | UI composition, deployments, or native OS presentation. |
 | `apps/local/` | Loopback HTTP composition, refresh lifecycle, dashboard projections, and fixed relays. | Arbitrary proxying or hosted persistence. |
 | `apps/web/` | Shared dashboard/static public UI and browser localization. | Local filesystem or platform credential access. |
-| `apps/electron/` | Cross-platform shell lifecycle, exact preload/IPC bridge, tray popup, settings, updater, macOS Keychain and predecessor migration, and automatic-refresh cadence. | Local analysis, provider parsing, or arbitrary renderer commands. |
-| `apps/worker/` | Public website, identity, participant/session/device lifecycle, ingestion, aggregates, admin operations, D1/R2/DO composition. | Local source discovery or private Mac state. |
+| `apps/electron/` | Shell lifecycle, exact preload/IPC bridge, tray popup, settings, updater, Windows Credential Manager access, and automatic-refresh cadence. | Local analysis, provider parsing, or arbitrary renderer commands. |
+| `apps/worker/` | Public website, identity, participant/session/device lifecycle, ingestion, aggregates, admin operations, D1/R2/DO composition. | Local source discovery or private desktop state. |
 | `packages/` | Runtime-neutral accounting, quota, identity, localization, and telemetry public APIs. | App-to-app imports or platform-specific side effects. |
 | `scripts/` and `tools/` | Build, validation, release, migration, and operator entrypoints. | Runtime product dependencies. |
 | `native/windows-filesystem/` | Narrow Windows filesystem/credential qualification boundary. | A supported Windows product claim. |
@@ -73,8 +73,8 @@ consumers, independently of this presentation change.
 
 ## Local trust boundary
 
-The installed app creates an owner-only state root at
-`~/Library/Application Support/Usage Monitor`. The native shell passes that
+The installed app creates an owner-only state root under its Electron user-data
+directory (normally under `%APPDATA%`). The native shell passes that
 exact absolute path to the companion. Standalone developer/CLI use defaults to
 the platform-specific `app-usagemonitor` state directory unless explicitly
 configured; this distinction is intentional and must be named in instructions.
@@ -89,7 +89,7 @@ The companion:
 - publishes staged index/snapshot changes atomically so cancellation or failure
   leaves the previous good state readable.
 
-The WKWebView admits only its current loopback origin, `about:`, and bounded
+The embedded dashboard view admits only its current loopback origin, `about:`, and bounded
 blob downloads. Provider identity pages open in the system browser. Native/web
 bridge messages use a closed vocabulary documented in
 [`api-surface.md`](./api-surface.md).
@@ -164,13 +164,13 @@ Do not collapse these identities:
 | Identity | Location | Purpose |
 | --- | --- | --- |
 | Local session and source keys | Owner-only local SQLite/files | Replay-safe joins and deduplication on one machine. |
-| Export participant secret | Keychain in the installed Mac app | Rotatable pseudonyms for explicitly reviewed exports. |
-| Account observation secret | Keychain | Pseudonymous current account/quota attribution. |
+| Export participant secret | Windows Credential Manager in the installed app | Rotatable pseudonyms for explicitly reviewed exports. |
+| Account observation secret | Windows Credential Manager | Pseudonymous current account/quota attribution. |
 | Hosted participant/session | D1 plus secure cookie | Website account, export, and device management; no self-service hosted erasure. |
-| Hosted device credential | Keychain plus content-free local binding; digest/state in D1 | Consent-bound incremental upload authority. |
+| Hosted device credential | Windows Credential Manager plus content-free local binding; digest/state in D1 | Consent-bound incremental upload authority. |
 | Upload authorization | Short-lived D1 record | One-use contribution delivery. |
 | Admin identity | Cloudflare Access assertion plus configured owner email | Owner-only operations host, including explicitly confirmed participant erasure with admin CSRF. |
-| Release credential | Owner-controlled secret/Keychain profile | Appcast/update publication only. |
+| Release credential | Owner-controlled secret profile | Update-feed publication only. |
 
 Raw account identifiers and credentials do not enter contribution payloads,
 diagnostics, public aggregates, or documentation.
@@ -205,7 +205,7 @@ contract. The shared dashboard no longer presents its controls:
 2. Enrollment creates or reattaches the participant after explicit consent and
    configured admission controls.
 3. Device pairing creates a short-lived claim. The native app stores the
-   claimed credential in Keychain and retains only a content-free binding file.
+   claimed credential in Windows Credential Manager and retains only a content-free binding file.
 4. Legacy clients show an exact local contribution preview before first approval.
 5. Each upload uses a one-use authorization, closed JSON Schema validation,
    encryption, idempotency/deduplication, ingress budgets, and staged D1/R2
@@ -304,7 +304,7 @@ hosted activation nor installed-client operation.
 | Primary D1 | Identities, sessions, devices, upload authorizations, contribution metadata/derived records, aggregates, controls, admin audit. | Schema migrations are ordered and production application is protected. |
 | Deletion-ledger D1 | Tombstones that suppress restore replay after participant deletion. | A restore is unsafe until ledger replay/readiness passes. |
 | Quarantine R2 | Encrypted/raw contribution object lifecycle and reconciliation. | Database/object registration is journaled; orphan and referenced objects are distinguished. Age-based deletion is currently disabled in shipped source. |
-| Update R2 | Stable appcast and release assets behind the reviewed update origin. | Publication uses digest/size/signature/nonce checks and is separate from Worker deployment. |
+| Update R2 | Stable update feed and release assets behind the reviewed update origin. | Publication uses digest/size/signature/nonce checks and is separate from Worker deployment. |
 | Upload ingress Durable Object | Shared concurrency and start-rate admission. | It protects expensive body reads/processing; it is not participant storage. |
 | Static assets | Public website and application UI assets. | Unknown API routes never fall through to the SPA. |
 
@@ -315,9 +315,9 @@ These are independent:
 1. source and unit tests;
 2. local/browser rendering;
 3. native app and installed-state behavior;
-4. signed/notarized artifact evidence;
+4. signed artifact evidence;
 5. GitHub release publication;
-6. appcast/update publication;
+6. update-feed publication;
 7. Worker deployment and migrations;
 8. live endpoint checks; and
 9. physical platform qualification.

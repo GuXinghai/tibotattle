@@ -8,9 +8,7 @@ status: maintained
 # Production operation ownership and recovery
 
 The native app release doctor and finalization journal have been retired with
-the native builder. Use the read-only
-[publication reconciler](./release-publication-reconciliation.md) for release
-surface status and [early qualification](./release-qualification-admission.md)
+the native builder. Use [early qualification](./release-qualification-admission.md)
 for local evidence admission. Neither grants publication authority.
 
 The production coordination and recovery policy below remains in force for
@@ -46,5 +44,4 @@ A proven pre-mutation failure with no held/uncertain lock can use a new explicit
 operation directory after review, retaining the failed record for diagnosis.
 
 The conditional Git update contract follows [Git's explicit expected-value
-lease semantics](https://git-scm.com/docs/git-push). Apple submission continuation
-uses [notarytool submission IDs and status](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).
+lease semantics](https://git-scm.com/docs/git-push).

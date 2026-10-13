@@ -13,17 +13,14 @@ schema gates, private owner erasure, incident containment, and recovery. It does
 not authorize credentials, remote writes, migrations, releases, or updater
 publication; those remain explicit owner operations.
 
-The Sparkle artifact/publication sequence is separate and remains governed by
-the [macOS stable release runbook](./macos-stable-release-runbook.md).
-
+The artifact and publication sequence is governed by the release runbooks.
 For a release containing schema changes, use
 [release migration admission and rehearsal](./release-migration-rehearsal.md)
 before expensive candidate qualification: observe the deployed prefix and test
 the pending migrations on populated synthetic data. Its local receipt neither
 authorizes remote writes nor replaces the live schema and recovery checks below.
-For release-site coordination with GitHub, architecture feeds and Homebrew, use
-[publication reconciliation](./release-publication-reconciliation.md); it delegates
-website writes to this runbook's existing guarded deployment path.
+For release-site coordination with GitHub, use the release runbooks; website writes
+remain behind this runbook's existing guarded deployment path.
 
 
 ## Temporary migration liveness
@@ -53,7 +50,7 @@ without applying them; never substitute its health receipt for migration proof.
 | Deletion ledger | Separate `DELETION_LEDGER` D1 binding and migration ledger |
 | Encrypted/quarantined objects | Production `QUARANTINE` R2 binding with explicit deletion/reconciliation and deletion-safe restore rules; automatic age-based deletion is disabled in this source snapshot |
 | Upload admission | `UPLOAD_INGRESS_BUDGET` Durable Object plus explicit rate-limit bindings |
-| Updates | Separate `SPARKLE_RELEASES` R2 binding and `updates.tibotattle.com`; the owner-only atomic guard is the only appcast writer |
+| Updates | The Worker has no update-feed binding. The Windows Electron feed lives in the reviewed `tibotattle-updates` R2 bucket behind `updates.tibotattle.com`, written only by the owner-run Electron stable publication scripts |
 | Scheduled work | Production cron each minute; code must keep work replay-safe and bounded |
 
 The exact binding names, routes, required secret names, controls, and limits live
@@ -279,7 +276,7 @@ without `observedTotals` show totals as unavailable. Unknown versions mean the
 request lacked a usable `TiboTattle/<version>` token, not that the client uses the
 latest feed version. Address reach can overlap between rows and OS totals, and a latest-GitHub-tag match does not establish that
 each platform is on its own current feed version. GitHub download counters cover
-macOS DMG assets only, not Windows/Linux adoption or completed installations.
+published installer assets only, not completed installations.
 
 Cloudflare's sampled results carry `≈`; distinct addresses represent the returned
 sample, not an extrapolated device census. A query row cap adds `+`. Incomplete
@@ -353,7 +350,8 @@ Start without credentials or mutations:
 4. For admin-only symptoms, confirm the request is on the admin hostname and
    distinguish Access refusal, Worker owner refusal, missing optional analytics,
    and application errors. Never move admin routes onto the public host.
-5. For updater symptoms, inspect the public appcast and immutable enclosure
+5. For updater symptoms, inspect the public Windows feed
+   (`electron/stable/win32-x64/latest.yml`) and the immutable installer
    separately; do not infer updater state from Worker health.
 
 Do not log credentials, cookies, Access assertions, raw participant identifiers,
@@ -833,7 +831,7 @@ npm run production:deploy -- --confirm DEPLOY_PRODUCTION \
 ```
 
 Capture the structured result. Success means the wrapper observed its named
-pre/post conditions; it is not a release, appcast publication, identity-flow,
+pre/post conditions; it is not a release, update-feed publication, identity-flow,
 participant-deletion, or admin-UI end-to-end receipt. Compare the health
 `deployment.sourceCommit` with the intended commit and probe the affected route.
 
@@ -977,7 +975,7 @@ Classify before mutating:
 | Public availability or bad deploy | Preserve health/error evidence; assess a source rollback through the same protected deploy path |
 | Privacy, authorization, abuse, or cost risk | Stop or narrow the affected collection stage using the production control mechanism; preserve the control revision and reason |
 | Data integrity or schema mismatch | Stop dependent writes, preserve the original state, inspect ledgers/backups, and rehearse forward recovery on a copy |
-| Updater publication risk | Stop the atomic appcast publication path; do not overwrite or hand-edit signed feed bytes |
+| Updater publication risk | Stop the Electron stable feed publication path; do not overwrite or hand-edit signed feed bytes |
 | Admin-only failure | Keep public/admin host segregation intact; diagnose Access, owner pin, optional analytics, and route behavior separately |
 
 The checked-in `collection-control.mjs` command is intentionally local-only and
@@ -1362,9 +1360,8 @@ typed cutover is not a database rollback.
   repair; an untouched older checkout's
   migration gate rejects the newer ledger. Do not reverse the schema to make
   that old checkout deployable.
-- Do not roll back appcast bytes by ordinary R2 overwrite. The signed feed,
-  immutable enclosure, version ordering, and atomic guard are one release
-  contract.
+- Do not roll back feed bytes by ordinary R2 overwrite. The signed Windows
+  feed, immutable installer, and version ordering are one release contract.
 
 ## Closeout evidence
 

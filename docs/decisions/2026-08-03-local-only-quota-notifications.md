@@ -9,10 +9,10 @@ status: complete
 
 ## Decision
 
-TiboTattle may offer native macOS allowance notifications only as an explicit,
+TiboTattle may offer native Windows allowance notifications only as an explicit,
 local-only opt-in. The feature is evaluated only after the app's existing
-foreground refresh reaches a terminal state. It adds no daemon, Login Item,
-LaunchAgent, privileged helper, independent timer, network poller, upload, or
+foreground refresh reaches a terminal state. It adds no daemon, startup item,
+privileged helper, independent timer, network poller, upload, or
 remote notification identity.
 
 The sole eligible input is a newly completed, direct Codex app-server
@@ -34,7 +34,7 @@ check can only suppress an alert; it is never itself an alert trigger.
 ```text
 off
   -> user enables in Settings
-  -> ask macOS only if authorization is not determined and has not already
+  -> ask the operating system only if authorization is not determined and has not already
      been requested
   -> authorized or provisional authorization
   -> await fresh direct provider observation
@@ -65,7 +65,7 @@ truthfully suppressed for this source. The app does not schedule an alert at
 ## Settings, permission, and defaults
 
 Notifications start off. Turning the switch on is the only action that may ask
-macOS for notification authorization. The first opt-in applies conservative
+the operating system for notification authorization. The first opt-in applies conservative
 defaults: usage alerts at 80% and 90% consumed. Settings exposes usage alerts
 off, 90% only, or 80% and 90%. It also visibly shows the new-window control as
 unavailable while the current provider receipt supplies only a reset schedule;
@@ -112,8 +112,8 @@ handled. A reset transition wins over threshold evaluation for its new window.
 
 The implementation is covered by deterministic injected evidence-provider and
 notification-center adapters. Automated tests use fakes only and never submit a
-real macOS notification. Human release verification still needs one explicit
-macOS permission/Settings exercise with a controlled fresh provider refresh.
+real Windows notification. Human release verification still needs one explicit
+Windows notification-settings exercise with a controlled fresh provider refresh.
 
 ## 2026-08-19 Spark coexistence amendment
 

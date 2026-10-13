@@ -10,7 +10,7 @@ status: in-progress
 The owner explicitly directed release after unlocking the Mac and accepting
 the unavailable disposable-profile and physical Intel tests. This replaces the
 earlier publication hold for the desktop release. The
-[release-specific waiver](../decisions/2026-09-05-release-0-1-18-manual-qualification-waiver.md)
+release-specific waiver
 records missing evidence honestly; no manual-v2 receipt is fabricated and no
 data-integrity, native-signature, updater or unexpected-Keychain-prompt guard
 is waived. Both macOS 14+ architectures are in scope. Stable build `1026`
@@ -20,7 +20,7 @@ must have new bytes from the final clean annotated `v0.1.18` source.
 
 - Branch `codex/release-0.1.18`, based on requested `origin/main` at `9e1c3333`;
   prior evidence HEAD `ce80f5f26650ce489e678e9ee2ff2adbb36fbedf`.
-- [Signed RC3](../receipts/2026-09-04-macos-combined-rc3-signed-candidates.md)
+- Signed RC3
   uses common source `7701debf44e046ac9f25bb74f7214532e32c5c5d`, dogfood
   build `1025.2`, exact independent ARM/Intel final-byte and RC2 replacement
   checks. RC1/RC2, verified runtimes and full pre-upgrade app/state backup remain
@@ -34,7 +34,7 @@ must have new bytes from the final clean annotated `v0.1.18` source.
   Actual working-profile launch now succeeds; its direct companion exposes one
   loopback listener and reports a ready snapshot. Native-menu detailed refresh
   completed at 03:58 UTC with exact-generation replay-safe accounting; the
-  [installed-runtime receipt](../receipts/2026-09-05-macos-rc3-installed-runtime.md)
+  installed-runtime receipt
   records the distinct stopped-state preservation proof. Normal relaunch is
   observed. No automatic Keychain prompt has been observed during these operations.
 - Official Astra model/pricing and Codex credit pages were fetched again on

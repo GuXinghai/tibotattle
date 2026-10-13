@@ -59,8 +59,7 @@ completeness is unknown, then query only the evidence needed for the question.
 The default period is `7d` and the default page limit is `10`.
 
 On desktop installations, default discovery selects the first present index
-in this closed order: current Electron production state, retained native macOS
-state where applicable, then the legacy CLI state. `coverage.sourceKind` names
+in this closed order: current Electron production state, then the legacy CLI state. `coverage.sourceKind` names
 the selected class without revealing its path. An explicit
 `USAGE_MONITOR_STATE_ROOT` or `--index-file` remains authoritative.
 

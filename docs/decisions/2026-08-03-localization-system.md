@@ -31,7 +31,11 @@ cohort.
 
 ## Architecture
 
-### Native macOS shell
+### Native macOS shell (removed)
+
+The AppKit shell described here was removed with macOS support under the
+[Windows-only decision](./2026-10-12-windows-only.md). Its catalog rules are
+historical.
 
 `apps/macos/Sources/Localization.swift` owns a closed `Key` inventory and a
 small resolver. It reads `en.lproj`, `zh-Hans.lproj`, and `es.lproj` standard

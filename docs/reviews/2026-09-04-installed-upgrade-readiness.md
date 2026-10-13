@@ -10,7 +10,7 @@ status: in-progress
 The owner authorized replacing the installed app with a signed candidate while
 preserving data and a rollback copy, and asked to continue to the publication
 decision point. Publication remains held until actual release gates pass.
-The [signed RC2 receipt](../receipts/2026-09-04-macos-combined-rc2-signed-candidates.md)
+The signed RC2 receipt
 remains immutable historical evidence; upgrade timeout and paginated-setting
 regressions require corrected source and fresh RC3 bytes before qualification.
 
@@ -233,7 +233,7 @@ Documentation and both pinned-runtime R7 freshness checks also pass.
 
 - Fresh signed ARM/Intel RC3 `1025.2` now passes exact-artifact and replacement
   checks on common clean `7701debf` and its new local annotated tag; see the
-  [RC3 receipt](../receipts/2026-09-04-macos-combined-rc3-signed-candidates.md).
+  RC3 receipt.
   RC1/RC2 remain unchanged; stable remains `1026`.
 - The authorized Finder replacement installed the final signed ARM app and
   production installed-artifact validation passes. Full original state,

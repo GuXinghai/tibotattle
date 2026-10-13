@@ -30,7 +30,7 @@ implementation base before coding; do not implement against the older checkout.
 | Existing owner | Verified capability | Reuse or extension |
 |---|---|---|
 | `src/local-unified-index.js` | Typed token components, `session_local`, source order, account scope and published generations; parser v15 distinguishes logical thread from physical rollout | Sole usage fact source; thread identity must survive pagination and resume |
-| `src/local-unified-index-extract.js` and ingest/build modules | Incremental, replay-safe extraction; `cwd` and `workspace_roots` are deliberately excluded | Extend metadata projection only after the project-attribution boundary is accepted |
+| `src/local-index-extract.js` and ingest/build modules | Incremental, replay-safe extraction; `cwd` and `workspace_roots` are deliberately excluded | Extend metadata projection only after the project-attribution boundary is accepted |
 | `src/local-companion-usage-model.js` | Shared token aggregation and usage projection | Reuse component arithmetic; preserve missing-component coverage alongside its numeric totals |
 | `src/replay-safe-accounting-cache.js` and `packages/accounting` | Shared event-time pricing and price coverage | Reuse the existing pricer; no new price registry or subscription-cost estimate |
 | `src/platform/local-codex-thread-store.js` | Bounded read-only local names and explicit worker parent metadata | Reuse `readCodexLocalThreadMetadata` for visible rows; never select `threads.title`, which can contain an initial prompt |

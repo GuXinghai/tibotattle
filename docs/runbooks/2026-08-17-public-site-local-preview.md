@@ -81,7 +81,7 @@ generator and that its generated HTML/CSS/JS renders locally. In default mode
 it also makes it easy to compare that generated source with the current public
 release metadata and aggregate series.
 
-It does **not** prove that a candidate DMG is signed, notarized, available at
+It does **not** prove that a candidate installer is Authenticode-signed, available at
 the shown URL, or matches its displayed digest; it does not deploy or upload
 anything; and it does not prove the live website has the checked-out source.
 Those remain separate release and deployed-site checks. Treat the remote

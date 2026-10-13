@@ -14,14 +14,6 @@ these commands. Command coverage is checked against `src/cli.js` by
 `test/cli-reference.test.js`; the CLI's own usage output remains the authority
 for exact flags.
 
-The separate `npm run diagnose:desktop-crash -- --hours 72` source command is a
-read-only macOS support tool for an app that will not open. It does not run
-Electron or the `usage-monitor doctor` command. See [support](../../SUPPORT.md)
-for its privacy boundary, `--verbose` option, direct Node `--json` invocation,
-and separate `--export-private` local evidence action. Electron packages also
-carry this script in `Resources/app.asar/scripts/`; invoking it with the packaged
-executable under `ELECTRON_RUN_AS_NODE=1` bypasses the desktop main process.
-
 Commands operate on local files unless a documented `--origin` or explicit
 live-experiment flag is supplied. Paths can contain sensitive derived evidence:
 keep them out of commits, issues, logs, and documentation.
@@ -58,7 +50,7 @@ pagination fields without opening the index. `period_drivers` compares equal
 adjacent windows and therefore does not accept `all`.
 
 Default discovery uses a closed production-first order: Electron companion
-state, retained native macOS state where applicable, then legacy CLI state.
+state, then legacy CLI state.
 `coverage.sourceKind` reports which class was selected without exposing a local
 path. `USAGE_MONITOR_STATE_ROOT` overrides discovery and `--index-file` is an
 explicit development/recovery override; the corresponding device-salt file
@@ -147,7 +139,7 @@ operation should be inferred from a local queue command. See the
 | `plan-collector-retention` | Plan what a retention cutoff would remove. | Read-only plan; it does not delete retained evidence. |
 
 Display horizons are not retention policy. No collector command in this list
-authorizes wiping Application Support or deleting the unified index.
+authorizes wiping AppData or deleting the unified index.
 
 ## Experiments and release evidence
 

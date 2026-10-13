@@ -36,7 +36,10 @@ remains accountable for release wording, validation, signing, and publication.
 
 ## [Unreleased]
 
-No unreleased changes.
+- TiboTattle supports Windows x64 only. macOS and Linux desktop support,
+  installers, updaters, credential stores, and qualification paths are removed
+  under the [Windows-only platform decision](./docs/decisions/2026-10-12-windows-only.md).
+  Earlier macOS and Linux release notes and evidence remain as historical records.
 
 ## [0.1.27](./release-notes/0.1.27.md) - 2026-10-05
 
@@ -242,7 +245,7 @@ preserve the published release wording.
   ([issue #93](https://github.com/adamallcock/tibotattle/issues/93)). The owner
   explicitly accepted the unavailable disposable-profile/manual and physical
   Intel qualification for this release only; reported tester success is not
-  a formal receipt. See the [release-specific waiver](./docs/decisions/2026-09-05-release-0-1-18-manual-qualification-waiver.md).
+  a formal receipt. See the release-specific waiver.
 
 Final artifact trust, data preservation, updater integrity and unexpected
 Keychain prompts remain non-waived gates. This release does not add Windows,

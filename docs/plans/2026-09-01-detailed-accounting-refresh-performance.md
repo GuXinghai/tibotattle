@@ -15,7 +15,7 @@ on the pre-RC9 baseline; it does not qualify the integrated source or a release.
 The owner subsequently approved integrating those changes with RC9, repairing
 resource-guard regressions, and simplifying the manual refresh controls.
 The current execution record is the
-[optimized RC9 integration amendment](./2026-08-30-native-dogfood-integration.md#optimized-rc9-integration--2026-09-03).
+optimized RC9 integration amendment.
 
 PR #94's formal account/plan-attribution empirical gate remains **OPEN / NOT
 RUN** unless its separately reviewed cross-revision comparator and sanitizer
@@ -29,7 +29,7 @@ and mixed-plan corrections missing from the original performance receipt.
 The candidate belongs to `codex/release-0.1.17-optimized`; record its exact
 clean revision in the new comparison receipt before qualifying it.
 
-The protected [`benchmark-detailed-accounting.mjs`](../../scripts/benchmark-detailed-accounting.mjs)
+The protected `benchmark-detailed-accounting.mjs`
 runner compares the unmodified production accounting child from two clean
 revisions against one immutable owner-only index copy and a pinned clock.
 It requires `--allow-private-index-benchmark`, explicit baseline/candidate
@@ -116,7 +116,7 @@ generation/fingerprint checks. Those are safety controls, not optional
 overhead.
 
 The reusable aggregate benchmark is
-[`scripts/benchmark-local-index-retirement.mjs`](../../scripts/benchmark-local-index-retirement.mjs).
+`scripts/benchmark-local-index-retirement.mjs`.
 It reports useful counts, wall times, disk bytes, generation fingerprints,
 cache behavior, and phase-boundary RSS. It is not yet a complete performance
 receipt: it does not report true peak RSS or child CPU, and its legacy comparison
@@ -136,7 +136,7 @@ the UI simply failed to render richer progress.
 The first source audit found three high-confidence candidates that should be
 measured before attempting incremental accounting:
 
-- [`createLocalUnifiedAccountingSource`](../../src/local-unified-accounting-source.js)
+- `createLocalUnifiedAccountingSource`
   constructs a usage-attribution reader whenever a usage callback is present.
   That reader performs membership, same-record plan, source-predecessor, and
   often session-predecessor SQLite queries for each usage row. The initial

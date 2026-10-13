@@ -10,7 +10,7 @@ status: historical-release-evidence
 This preparation history is retained for its RC2/RC3 qualification and recovery
 evidence. Its earlier authorization holds describe their recorded moments, not
 the current decision: the owner subsequently authorized publication under the
-[0.1.18-only waiver](../decisions/2026-09-05-release-0-1-18-manual-qualification-waiver.md)
+0.1.18-only waiver
 and separately approved production migrations `0042`–`0045` and the Worker update.
 Continue through the [2026-09-05 execution plan](./2026-09-05-public-0-1-18-release.md).
 
@@ -25,7 +25,7 @@ Local preparation was completed on source
 `dc2d0d32a1e82f5b037b0a7094a37c1d4bfdef76`. The owner then approved combined
 ARM/Intel RC2 tagging, signing and Apple notarization without installation or
 publication, and subsequently authorized publication only if ready. Both
-signed RC2 candidates now pass the [exact artifact and replacement checks](../receipts/2026-09-04-macos-combined-rc2-signed-candidates.md)
+signed RC2 candidates now pass the exact artifact and replacement checks
 from clean frozen source `4ea16586d83c72d0a4af506b102a267251f45a2b`.
 The local annotated RC2 tag exists; no push, installation, stable finalization or
 publication occurred. Installed-runtime, hardware and remote gates remain open,
@@ -158,7 +158,7 @@ before-signing baselines without a claim about an unavailable earlier hash.
 Both RC3 DMGs have now been finalized from clean `7701debf` under a new local
 annotated RC3 source tag. Signing, notarization, exact final-artifact validation
 and both same-architecture RC2-to-RC3 replacement checks pass; the
-[RC3 receipt](../receipts/2026-09-04-macos-combined-rc3-signed-candidates.md)
+RC3 receipt
 binds the bytes. The final ARM app was Finder-installed with the verified full
 rollback copy preserved and passes production installed-artifact validation.
 The Mac locked before normal launch; the UI refused to proceed and a process
@@ -248,7 +248,7 @@ created local RC2 tag has not been pushed; no exact-head hosted CI claim is made
 
 ## Protected continuation and evidence gates
 
-The canonical [macOS runbook](../runbooks/macos-stable-release-runbook.md)
+The canonical macOS runbook
 requires explicit operation/target authority. `--prepare-candidate` continues
 into Developer ID signing and Apple submission; it is not a dry run. Obtain
 explicit permission before that credentialed operation. The owner supplied

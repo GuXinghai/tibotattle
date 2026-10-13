@@ -73,8 +73,8 @@ Then run the generator without a short foreground timeout:
 
 ```bash
 node scripts/regenerate-r7-release-evidence.js \
-  --node24 "/absolute/path/to/node-v24.14.0-darwin-arm64/bin/node" \
-  --node26 "/absolute/path/to/node-v26.2.0-darwin-arm64/bin/node" \
+  --node24 "/absolute/path/to/node-v24.14.0-win-x64/node.exe" \
+  --node26 "/absolute/path/to/node-v26.2.0-win-x64/node.exe" \
   --start-at 2026-06-24T09:00:00.000Z \
   --end-at 2026-07-25T09:00:00.000Z \
   --replace

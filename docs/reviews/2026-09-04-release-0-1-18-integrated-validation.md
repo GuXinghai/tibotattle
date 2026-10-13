@@ -139,7 +139,7 @@ from `de386d31`, with disabled updater and no configured central service:
   separate empty temporary profiles with loopback readiness and clean shutdown.
   No real Keychain access, Login Item registration or system installation occurred.
 
-The earlier [signed Intel tester candidate](../receipts/2026-09-03-macos-intel-signed-candidate.md)
+The earlier signed Intel tester candidate
 is build 1025 from `18c7065b`, not from the combined source. It stays intact and
 must not be represented as including Astra. Final ARM/Intel release artifacts
 need a common newly frozen source and fresh artifact-specific verification.
@@ -172,11 +172,11 @@ and `output/playwright/release-0.1.18/`. These are not public release artifacts.
    release blocker; do not expand this release into resource-limit redesign.
 2. Qualify physical Intel/macOS 14 behavior, provider discovery, silent Keychain
    handling, consented uploads and installed update/replacement behavior. The
-   [Intel plan](../plans/2026-09-03-macos-intel-release.md) retains the hardware
+   Intel plan retains the hardware
    and tester checklist; Rosetta is supplementary evidence only.
 3. Freeze a common final source and reviewed build allocation, obtain explicit
    signing/notarization authority, and produce new combined ARM/Intel artifacts.
-   Follow the [macOS release runbook](../runbooks/macos-stable-release-runbook.md)
+   Follow the macOS release runbook
    for CI, installation, updater, release, website and Homebrew gates. Do not
    silently reuse the earlier tester's artifact identity or advertise Intel
    Homebrew support.

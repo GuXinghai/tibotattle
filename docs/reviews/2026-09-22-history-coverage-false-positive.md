@@ -66,7 +66,7 @@ positive. It does not qualify accounting totals or lineage replay in isolation.
 ## Repair boundary
 
 The relevant owners are `src/platform/rollout-line-reader.js`,
-`src/local-unified-index-extract.js` (`relevant`, `accountingMarker`, partial-line
+`src/local-index-extract.js` (`relevant`, `accountingMarker`, partial-line
 handling, and `rolloutContentQuarantineReason`), and
 `src/local-unified-index-ingest.js` (`dependencyUnavailable`).
 

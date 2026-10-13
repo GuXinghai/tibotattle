@@ -66,8 +66,8 @@ or replay suppression.
   composition-aware vector into retained report evidence.
 - [Expected-line construction](../../src/simple-quota-gradient.js) applies the
   vector and pool-saturation rules.
-- [Unified-index ingestion](../../src/local-unified-index-ingest.js) and
-  [extraction](../../src/local-unified-index-extract.js) implement
+- `Unified-index ingestion` and
+  [extraction](../../src/local-index-extract.js) implement
   lineage-scoped tier seeding.
 - [Dashboard rendering](../../apps/web/public/app.js) displays per-model rates
   and explicit saturated states.

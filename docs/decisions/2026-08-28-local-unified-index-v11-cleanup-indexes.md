@@ -98,6 +98,6 @@ otherwise unchanged.
 
 ## Related documents
 
-- [Local state schema and macOS release-channel isolation](./2026-08-27-local-state-schema-and-release-channel-isolation.md)
-- [Local unified-index recovery](../runbooks/unified-index-recovery.md)
-- [macOS stable release runbook](../runbooks/macos-stable-release-runbook.md)
+- Local state schema and macOS release-channel isolation
+- [Local unified-index recovery](../runbooks/local-index-recovery.md)
+- macOS stable release runbook

@@ -7,8 +7,8 @@ status: maintained
 
 # Web-only production release lane
 
-Use this lane for a generated public-site change that must not carry a macOS
-client, Worker-runtime, migration, dependency, or configuration change. It
+Use this lane for a generated public-site change that must not carry a client
+ Worker-runtime, migration, dependency, or configuration change. It
 reuses the already-published signed installer and does not create a client
 version bump.
 
@@ -33,8 +33,7 @@ deployed source commit cannot be established, stop and reconstruct that release
 evidence before attempting a web-only deployment.
 
 Create a clean, isolated candidate worktree from that commit. Apply only the
-reviewed public-site changes, run the focused checks, and commit them. Do not
-include a macOS app bump, Worker runtime change, migration, lockfile,
+reviewed public-site changes, run the focused checks, and commit them. Do not include a client installer bump, Worker runtime change, migration, lockfile,
 dependency update, or Wrangler configuration change.
 
 `scripts/web-release-lane.js` permits these candidate paths only:
@@ -156,15 +155,15 @@ candidate; the lane says so rather than skipping the proof.
 ## 2. Reuse the existing installer evidence
 
 The site builder still verifies the live HTTPS installer bytes against the
-signed release manifest. Supply the already-published DMG and its matching
+signed release manifest. Supply the already-published Windows installer and its matching
 `.release.json` from the release archive; do not rebuild, sign, upload, tag, or
-bump the macOS app. The social image must be an approved, absolute-path
+bump the app. The social image must be an approved, absolute-path
 1200×630 PNG outside `.release-build/public-release-site`.
 
 ```bash
 DEPLOYED_SOURCE_COMMIT="<full deployed source SHA>"
-RELEASED_DMG_PATH="/absolute/path/to/TiboTattle-X.Y.Z-macOS-arm64.dmg"
-RELEASED_RELEASE_MANIFEST_PATH="${RELEASED_DMG_PATH}.release.json"
+RELEASED_INSTALLER_PATH="/absolute/path/to/TiboTattle-X.Y.Z-Windows-x64.exe"
+RELEASED_RELEASE_MANIFEST_PATH="${RELEASED_INSTALLER_PATH}.release.json"
 SOCIAL_IMAGE_PATH="/absolute/path/to/approved-1200x630.png"
 
 npm run product:web-release:prepare -- \
@@ -173,12 +172,12 @@ npm run product:web-release:prepare -- \
   --replace-receipt -- \
   --output "$PWD/.release-build/public-release-site" --replace \
   --site-url "https://tibotattle.com/" \
-  --installer-path "$RELEASED_DMG_PATH" \
+  --installer-path "$RELEASED_INSTALLER_PATH" \
   --installer-release-manifest "$RELEASED_RELEASE_MANIFEST_PATH" \
-  --installer-url "https://github.com/adamallcock/tibotattle/releases/download/vX.Y.Z/TiboTattle-X.Y.Z-macOS-arm64.dmg" \
+  --installer-url "https://github.com/adamallcock/tibotattle/releases/download/vX.Y.Z/TiboTattle-X.Y.Z-Windows-x64.exe" \
   --installer-version X.Y.Z \
   --installer-sha256 "<SHA-256 recorded in the signed release manifest>" \
-  --minimum-macos 14.0 --architectures arm64 \
+  --architectures x64 \
   --release-notes-url "https://tibotattle.com/docs.html" \
   --privacy-url "https://tibotattle.com/privacy.html" \
   --security-url "https://tibotattle.com/docs.html" \
@@ -322,7 +321,7 @@ input under the public source or inside the generated output.
 The site intake consumes that approved plan independently of the website
 checkout's package version. It verifies the stable origin, four targets, exact
 installer names, and every bound local artifact/feed byte, then verifies each
-public installer over HTTPS. It does not package, sign, notarize, publish feeds,
+public installer over HTTPS. It does not package, sign, publish feeds,
 or reperform the separate native-trust/source review. The public site manifest
 records only download metadata and verification scope, never the private plan
 or its local paths. Native 0.1.18 generation remains unchanged.
@@ -335,12 +334,8 @@ updater transport; never use its object URLs for manual website downloads.
 
 The download section uses compact platform buttons, requirements, a discreet
 checksum-copy control and accurate platform trust descriptions. It shows no
-file size or migration procedure. Docs explains normal Mac replacement and
-automatic retained-state transfer for 0.1.20 or later. The 0.1.21 docs also
-describe native 0.1.18 Check for Updates; publish those instructions only after
-the signed native journey passes and its stable Sparkle feeds are activated.
-Keep the Homebrew shortcut absent until the tap points
-to a qualified automatic-replacement release, rather than the older native app.
+file size or migration procedure. Docs describe the Windows installer and update instructions only to the extent
+the installed Windows qualification in the platform authority supports.
 
 A test-injected verifier may explicitly return `published: false` for a local
 preview using the frozen local bytes. Such output displays a preview warning

@@ -38,7 +38,7 @@ also process- and thread-local and could not see other readers.
 ## Design
 
 See "Generation and publication" in
-[the schema reference](../reference/unified-index-schema.md). Publication first
+[the schema reference](../reference/local-index-schema.md). Publication first
 attempts the existing rename, so uncontended publications, POSIX, and every
 existing consumer keep the single-file layout. Only a Windows sharing refusal
 switches to snapshots, after which later publications stay snapshots. All

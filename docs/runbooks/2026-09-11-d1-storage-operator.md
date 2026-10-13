@@ -142,8 +142,7 @@ typed target. An already-typed or diverged source is not implicitly accepted;
 its journal/incarnation and retained erasure epochs need explicit reconciliation.
 No code resets or advances those epochs merely to fit the restore fixture.
 
-The directory must be new, canonical (use `/private/tmp`, not its `/tmp` alias
-on macOS), owner-private and unlinked. The rehearsal uses synthetic source data
+The directory must be new, canonical, owner-private and unlinked. The rehearsal uses synthetic source data
 and real local D1 batches. It preserves the source, copies authority/receipts and
 typed evidence in bounded pages, adopts exact original IDs and digests, performs
 independent second-pass verification, installs the full final role, and completes

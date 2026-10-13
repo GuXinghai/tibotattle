@@ -5,10 +5,9 @@ type: runbook
 status: maintained
 ---
 
-# Cross-platform release publication runbook
+# Release publication runbook (Windows)
 
-This runbook defines the common evidence and publication order for macOS,
-Windows, and Linux. It is an activation contract, not a claim that every
+This runbook defines the common evidence and publication order for Windows. It is an activation contract, not a claim that every
 platform is currently released. The release manifest is the source of truth:
 if a platform, architecture, format, channel, digest, or required native
 assurance is absent, that subject is not an official TiboTattle release. Every
@@ -18,11 +17,7 @@ are present but may be `null`; when `sbom` is an object, its required
 that the corresponding evidence was not published, not that the artifact is
 unofficial.
 
-The macOS operator sequence is in
-[macos-stable-release-runbook.md](./macos-stable-release-runbook.md). The
-independent user checks are in [verify-release.md](../verify-release.md), and
-the design decision is in
-[2026-08-18-cross-platform-release-trust.md](../decisions/2026-08-18-cross-platform-release-trust.md).
+The independent user checks are in [verify-release.md](../verify-release.md).
 
 ---
 
@@ -50,7 +45,7 @@ source commit, canonical HTTPS repository URL, and at least one artifact.
 Each artifact identifies:
 
 - channel: direct or store;
-- platform: macos, windows, or linux;
+- platform: windows;
 - architecture and format;
 - final filename, byte count, and SHA-256;
 - `sbom`: an SPDX JSON SBOM whose subject SHA-256 is the final artifact digest,
@@ -72,14 +67,6 @@ cryptographically verified by the trusted hosted finalizer—is the **attested
 v1 profile/path**. A native/checksum-only artifact may publish with explicit
 `null` evidence and may claim only the native/checksum assurances it actually
 carries. It must not imply source-to-binary provenance.
-
-For a two-architecture macOS release, supply separate `arm64` and `x64` DMG
-entries from the same version, tag and commit. Each needs its own native
-assurances and artifact-specific metadata filenames. Both final subjects must
-be attached before GitHub publication makes the release immutable. Missing
-Intel evidence must not be inferred from the ARM entry or presented as a
-supported website download. The [macOS runbook](./macos-stable-release-runbook.md#separate-apple-silicon-and-intel-candidates)
-defines architecture routing and the first Intel feed bootstrap boundary.
 
 The generator re-hashes supplied files and fails closed on path traversal,
 symlinks, duplicate subjects, digest drift, source mismatch, invalid SPDX
@@ -119,12 +106,8 @@ attestation or digest generation.
 
 | Subject | Native final bytes | Required direct assurances | Current status |
 | --- | --- | --- | --- |
-| macOS direct | Developer ID-signed, notarized, stapled DMG; arm64 and any later architecture as separate subjects | cleanInstallSmokePassed, developerIdSigned, hardenedRuntime, notarizationAccepted, ticketStapled, gatekeeperAssessmentPassed | Electron 0.1.22 is published for arm64 and x64; every successor needs distinct artifact and publication evidence |
-| macOS Store | Final App Store-delivered subject retrieved and hash-verified after acceptance, with a `store-delivery-receipt-v1` receipt | storePublisherVerified, storeBuildVerified, storeSignatureVerified; receipt binds provider/listing/source/final filename/bytes/SHA-256 and states `deliveryState: final`, `uploadCandidate: false` | Separate Store subject; never equate its bytes with the DMG or an upload candidate |
 | Windows direct | One selected native x64 installer/package, after signing nested executables and final package | cleanInstallSmokePassed, authenticodeSigned, timestamped | Signed Electron 0.1.22 x64 installer is published; successor qualification and signing remain separate gates |
 | Windows Store | Final Microsoft Store-delivered subject retrieved and hash-verified after acceptance, with a `store-delivery-receipt-v1` receipt | storePublisherVerified, storeBuildVerified, storeSignatureVerified; receipt binds provider/listing/source/final filename/bytes/SHA-256 and states `deliveryState: final`, `uploadCandidate: false` | Future separate subject; never describe the upload candidate as delivered |
-| Linux direct | Native x86_64 AppImage or a package from a real signed repository | cleanInstallSmokePassed, artifactIntegrityVerified, plus distribution-specific detached/repository evidence where applicable | Electron 0.1.22 x64 AppImage is published with owner-accepted physical limits; its clean-install assurance remains false |
-| Linux Store/repository | Final Flathub, Snap, APT, or RPM-delivered subject retrieved and hash-verified, with a `store-delivery-receipt-v1` receipt | storePublisherVerified, storeBuildVerified, storeSignatureVerified; receipt binds provider/listing/source/final filename/bytes/SHA-256 and states `deliveryState: final`, `uploadCandidate: false` | Future separate subject; a loose package or upload candidate is not repository evidence |
 
 The current repository's assurance vocabulary and allowed Store providers live in
 config/release-evidence.js. Do not invent a new assurance key in a release
@@ -132,9 +115,8 @@ descriptor without updating that checked-in contract and its tests.
 
 Direct and Store subjects are never interchangeable:
 
-- A website, GitHub release, or Homebrew DMG is a direct subject.
-- Mac App Store, Microsoft Store, Flathub, Snap, APT, and RPM outputs are
-  separate store/repository subjects.
+- A website or GitHub release installer is a direct subject.
+- A Microsoft Store output is a separate store subject.
 - A Store may rebuild or re-sign an upload. Its digest, provenance, native
   acceptance, delivery receipt, and updater metadata must have their own
   manifest entry. The receipt itself is included in the manifest metadata and
@@ -201,15 +183,12 @@ creates a claim on its own, uploads an artifact, publishes a release, or signs
 local bytes. If the action or checked-in evidence interface is missing, the
 finalizer must stop.
 
-A local macOS build can produce a valid signed/notarized DMG but cannot honestly
+A local build can produce a valid signed installer but cannot honestly
 produce a GitHub Actions build attestation for that local checkout. Until the
 protected native finalizer has run the pinned action against the exact final
 bytes, the release may carry native signing and checksum evidence only, with
 explicit `null` evidence fields; it must not claim GitHub source/build
-provenance. The sanitized `.dmg.release.json`
-receipt is a separate Sparkle updater input: the publisher intentionally places
-it under a content-addressed R2 key, but that narrow publication does not make
-it the canonical cross-platform manifest or a general public evidence file.
+provenance.
 
 ## 4. Final-byte order
 
@@ -220,12 +199,12 @@ skip those attestation steps.
 
 1. Finalize the reviewed release notes and dated changelog before freezing the
    source, then start from a clean checkout at the exact protected annotated
-   version tag. The macOS runbook explains the pre-tag documentation/CI order.
+   version tag.
 2. Build on the native controlled runner with the committed lockfile.
 3. Run native tests and clean install/upgrade/uninstall checks.
 4. Complete all byte-changing operations: package, sign nested binaries,
-   sign the final installer, timestamp, notarize, staple, compress, or produce
-   repository metadata as appropriate.
+   sign the final installer, timestamp, compress, or produce metadata as
+   appropriate.
 5. Freeze the final subject bytes. Record the file path and digest. Any
    mutation after this point invalidates every later evidence item.
 6. For the attested v1 profile/path, produce the SPDX SBOM for that exact
@@ -247,8 +226,7 @@ skip those attestation steps.
     draft; the fresh `gh release download` check runs after publication below.
 12. Publish the draft, read back its immutable state, then run gh release verify
     and gh release verify-asset for the release and every uploaded asset.
-13. Only after those post-publication checks pass, publish Sparkle/R2, Homebrew,
-    website, Store, and updater metadata.
+13. Only after those post-publication checks pass, publish the website, Store, and updater metadata.
 
 Release documentation has two explicit check scopes. Pull-request CI runs
 `node scripts/check-release-notes.mjs --reachable-tags` against complete Git
@@ -274,8 +252,7 @@ or evidence need to change.
 
 The public asset set for a direct subject always includes the final platform
 artifact, `release-manifest.json`, `SHA256SUMS`, and `verify-release.md`. When
-`updater.enabled` is true, also include its exact metadata file; macOS Sparkle
-uses `appcast.xml`. Its checksum entry must have a corresponding uploaded asset.
+`updater.enabled` is true, also include its exact metadata file. Its checksum entry must have a corresponding uploaded asset.
 Include
 the following only when the artifact's manifest fields are non-null:
 
@@ -298,11 +275,7 @@ listing, or a receipt whose `deliveryState` is not `final` and
 `uploadCandidate` is not `false`.
 
 Do not publish release-evidence-input.json when it contains local paths or
-operator-only fields. The sanitized macOS `*.dmg.release.json` is a special
-case: pass it only to the guarded Sparkle publisher, which intentionally stores
-it as a content-addressed updater receipt in R2. Do not copy that receipt into
-general GitHub evidence or the website. Never publish credentials, signing
-logs, raw local paths, or whole staging directories.
+operator-only fields.
 
 Create and upload a draft. Before staging it, run
 `node scripts/check-release-notes.mjs`; the package version, stable tags,
@@ -330,8 +303,6 @@ gh release create "$TAG" --repo "$REPO" --verify-tag --draft \
 gh release upload "$TAG" --repo "$REPO" \
   "$ARTIFACT" \
   "$RELEASE_MANIFEST" "$SHA256SUMS" "$VERIFY_GUIDE"
-# For a macOS direct subject with Sparkle enabled, also upload the exact feed:
-gh release upload "$TAG" --repo "$REPO" "<staging-directory>/appcast.xml"
 ~~~
 
 For the attested v1 profile/path, produce and verify the final SPDX file and
@@ -349,8 +320,6 @@ SBOM_BUNDLE="$EVIDENCE_DIRECTORY/$ARTIFACT_NAME.sbom.bundle.json"
 gh release upload "$TAG" --repo "$REPO" \
   "$ARTIFACT" "$SPDX" "$PROVENANCE_BUNDLE" "$SBOM_BUNDLE" \
   "$RELEASE_MANIFEST" "$SHA256SUMS" "$VERIFY_GUIDE"
-# For a macOS direct subject with Sparkle enabled, also upload the exact feed:
-gh release upload "$TAG" --repo "$REPO" "<staging-directory>/appcast.xml"
 ~~~
 
 Before publication, validate the exact draft staging directory locally. This
@@ -460,86 +429,6 @@ release is not immutable, the repository setting is not active, or a release
 asset differs from the manifest, stop all downstream publication.
 
 ## 6. Platform activation gates
-
-### macOS
-
-The Electron production builder and its reviewed finalization flow must finish
-Developer ID signing, hardened runtime, Apple notarization, ticket stapling,
-Gatekeeper assessment, and clean installation before freezing each DMG. The
-[macOS runbook](./macos-stable-release-runbook.md) owns both architectures,
-installed update qualification, and the two incoming native Sparkle feeds.
-The protected GitHub finalizer needs the permissions above, pinned actions,
-protected environments, exact-tag checks, and draft-to-published verification
-before claiming hosted source/build provenance for the exact final bytes.
-
-#### Private Electron native-handover rehearsal
-
-The Electron path uses
-[`scripts/package-electron-production.mjs`](../../scripts/package-electron-production.mjs)
-and its fixed production builder configuration. This private rehearsal proves specific
-candidate operations, not stable release or platform support. Complete each
-step for both `darwin-arm64` and `darwin-x64` and for the explicitly approved
-ordered pair of prerelease versions. Never infer a build number or allocate a
-new version from an earlier receipt.
-
-1. Freeze and verify the selected source, locked dependencies and Node 26.2.0
-   runtime. Prepare the current/next source candidates with the approved
-   build numbers. Verify the resulting `production-source-candidate.json`
-   against that source and the staged package/runtime closure. The receipt
-   carries the exact builder configuration, argument list, environment and
-   target; it is a plan for signing, not a signing receipt.
-2. For an explicitly authorized signing/notarization operation, run the pinned
-   builder from that frozen repository with the receipt's exact environment,
-   configuration and arguments, including `--publish never`. Use only the
-   approved signing identity and pre-provisioned notary profile through the
-   existing local credential mechanism. Do not log their values or broaden
-   Keychain access. The maintained `mac.sign` hook orders helpers before each
-   app's plist-named main executable and retains the pinned builder's normal
-   signing options, timestamping, strict verification and retry path.
-3. Require app notarization and stapling **before** the builder seals its ZIP
-   and DMG. The pinned builder accepts the pre-provisioned notary profile via
-   its existing `APPLE_KEYCHAIN_PROFILE` input; it otherwise may warn and skip
-   notarization, so a successful builder exit alone cannot pass this gate.
-   Independently verify the app signature and staple. Preserve the original
-   updater manifest and blockmaps until final metadata binding below; the ZIP
-   must contain the already-finalized app and remain byte-for-byte unchanged.
-4. Sign, submit and staple the outer DMG under the same concrete approval.
-   Require strict signature verification and Gatekeeper's DMG assessment with
-   `--type open --context context:primary-signature`. Check the app inside a
-   read-only mounted DMG and extracted ZIP: exact bundle ID, semantic version,
-   numeric build, designated requirement, signature, staple and native
-   architecture. `x64` maps to the Mach-O architecture name `x86_64`.
-5. After every byte-changing trust operation completes, invoke
-   `node scripts/finalize-electron-macos-update-metadata.mjs --candidate-receipt <candidate>/production-source-candidate.json`.
-   It operates only on the receipt's sibling `artifacts` directory, keeps
-   no-clobber copies of the original manifest/DMG blockmap, regenerates the
-   final DMG blockmap and rebinds the fixed transport manifest. Rehash every
-   installer/archive against the returned metadata receipt. That receipt
-   proves final-byte metadata binding only; retain the separate signature,
-   notarization, Gatekeeper and enclosed-app checks alongside it.
-   If the operation is interrupted after its durable journal was written,
-   invoke the separate recovery mode:
-   `node scripts/finalize-electron-macos-update-metadata.mjs --recover-pre-finalization --candidate-receipt <candidate>/production-source-candidate.json`.
-   Recovery requires the exact candidate, unchanged payloads and ZIP blockmap,
-   intact original sidecars, and current sidecars matching their recorded pre-
-   or post-finalization bytes. It restores the original sidecars before removing
-   the interrupted-operation journal; then rerun normal finalization. A live
-   owner, completed final receipt, missing or unverifiable journal, or uncertain
-   recovery claim is a refusal, not permission to delete locks or guess prior
-   state. A crash before the journal exists requires separate exact-target
-   investigation; this recovery mode intentionally cannot repair it.
-6. Keep the resulting private installers and content-free verification
-   receipts together. Installation/replacement, native credential continuity,
-   exact-next-version download and update, feed publication, and public release
-   each require their own concrete authorization and evidence. Neither these
-   local checks nor the unsigned development workflow establishes hosted build
-   provenance or permits a stable support claim.
-
-The logical channel `native-to-electron-handover-rehearsal-v1` uses the fixed
-transport manifest `native-to-electron-handover-mac.yml` under the target's
-isolated rehearsal feed. Do not substitute `latest-mac.yml` or a stable feed.
-The first candidate allows only a manual request for its exact named
-successor; hosted uploads remain disabled for both candidates.
 
 ### Windows
 
@@ -667,90 +556,6 @@ Run it **before** producing the final installer; a previously built installer
 cannot acquire rebound native bytes by changing its staging directory. The
 signing caller is not yet an end-to-end native-signing/final-installer verifier.
 
-### Linux
-
-Do not publish a loose AppImage, DEB, or RPM as a universally trusted Linux
-release. First qualify a native x86_64 AppImage or a real signed package
-repository, including credential/key storage, process/file access, clean
-install, update/no-update, and uninstall behavior. Add detached signature or
-repository metadata as the selected distribution requires. Flathub and Snap
-are separate `store` channel subjects.
-
-The selected direct Linux updater path is AppImage. It does not require a new
-detached-signing service merely to exercise updates. The pinned updater must
-still verify downloaded bytes from the selected feed, replace the correct
-installed image, restart, and preserve settings and sharing choice. DEB/RPM
-package-manager updates are a distinct delivery path.
-
-The bounded adapter qualification is:
-
-```sh
-node scripts/smoke-electron-linux-appimage-updater.mjs --self-test --receipt <new-receipt.json>
-```
-
-It exercises the pinned AppImage updater through a loopback feed using synthetic
-executables, a disposable profile and cache, checksum-verified download, and a
-replacement/relaunch marker. The receipt explicitly excludes real-product
-execution, real AppImage/FUSE integration, desktop notifications and production
-credentials. It refuses real-product execution mode. Run it on Linux; a skip
-on another operating system is not Linux evidence. Retain the native packaged
-startup/credential/cold-restart receipts separately from this adapter receipt.
-
-The final Linux production-package workflow also qualifies the application
-extracted from its exact AppImage. `qualify-electron-linux-final-appimage.mjs`
-checks the final package receipt and original source stage before extraction,
-then binds the existing normal packaged startup, refresh, credential-service,
-settings/opt-out and cold-restart smoke to those extracted ASAR/executable bytes.
-The native amd64 test uses the existing disposable Secret Service and Xvfb
-runtime with external networking disabled. Retain `final-image-preparation.json`,
-`normal-packaged-smoke.json` and `final-image-runtime.json` with the final package;
-missing, failed or differently bound smoke evidence refuses final qualification.
-This proves the extracted application's runtime only. AppImage mounting/launcher
-integration, physical desktop behavior and replacement of the older public
-release remain separate observations; the receipt explicitly leaves them open.
-
-The separate manual `electron-linux-final-qualification.yml` lane consumes the
-already built final package; it never rebuilds a private current/next pair. Its
-closed intake binds the reviewed runner revision, frozen application revision,
-unchanged `production-source-candidate.json`, successful production packaging
-run, package-receipt digest, final AppImage size/digest, and executable/ASAR
-digests. The application revision must be an ancestor of the runner, with the
-same package version. For 0.1.27 the predecessor is the immutable public
-[0.1.26 release](https://github.com/adamallcock/tibotattle/releases/tag/v0.1.26);
-its manifest and AppImage digests are pinned in
-`scripts/lib/linux-final-artifact-intake.mjs`. Earlier owner acceptance is not
-reused for the new bytes.
-
-Dispatch `mode=plan` first with the reviewed intake. Both modes install the
-locked verifier dependencies; plan stops before artifact downloads or application
-execution. `mode=execute` also requires
-`RUN_DISPOSABLE_FINAL_LINUX_LIFECYCLE`. The owning preparation entrypoint is
-`scripts/qualify-electron-linux-installed-lifecycle.mjs` (`--preflight`,
-`--acquire`, then `--prepare`); downloads require the workflow's read-only token.
-It rejects other workflow sources, incomplete runs, unexpected ZIP members,
-links, changed receipts and different artifact bytes. Extraction establishes
-comparison hashes only and is never counted as installed execution.
-
-The native x64 job requires `/dev/fuse`, the scoped `SYS_ADMIN` capability and
-FUSE device, an ordinary AppImage launcher, enabled Chromium sandbox, Xvfb and
-an isolated Secret Service. There is no extract-and-run fallback, external
-network, host profile mount, system credential access, signing or publication.
-`scripts/smoke-electron-linux-final-lifecycle.mjs` binds kernel FUSE mounts,
-process start identities, running executable and ASAR hashes to the installed
-image. It observes a fresh synthetic profile, local refresh and credential
-access, rejection of an intentionally mismatched feed checksum without replacing
-the predecessor, the public predecessor's real Settings download/install/restart,
-exact-byte replacement, settings/opt-out/source and credential continuity,
-cold restart, no-update behavior, owned uninstall and process/mount cleanup.
-The fixed production feed URL is served only inside the network-none container.
-
-Retain the pair and `installed-lifecycle.json` with the package receipts. Only a
-passing run with all lifecycle assertions supports `cleanInstallSmokePassed`;
-missing FUSE, failed sandbox or incomplete cleanup is a failed gate. The receipt
-keeps `physicalDesktop: not_qualified`, and the isolated feed does not prove
-production updater publication. Review that scope when preparing release
-assurances; do not broaden it into a physical-desktop claim.
-
 ### Stores and updater channels
 
 Store submissions must record their own provider/listing, publisher/build/
@@ -761,9 +566,7 @@ filename, bytes, and SHA-256, and must state `subjectKind: store-retrieved`,
 `deliveryState: final`, and `uploadCandidate: false`. The manifest records the
 receipt metadata and `SHA256SUMS` includes the receipt filename and digest. A
 Store entry may describe only that delivered subject, never the upload
-candidate. Homebrew checks the direct DMG URL and SHA-256 but does not establish
-source provenance. Sparkle, Windows update metadata, and Linux repository
-indices are separate signed/update subjects.
+candidate. The Windows update metadata is a separate signed/update subject.
 
 ## 7. Fail-closed checklist
 
@@ -771,7 +574,7 @@ Stop before publication if any of these are true:
 
 - the checkout is dirty, the source tag is not exact/annotated, or the commit
   is not the reviewed release commit;
-- the final artifact changed after signing, timestamping, notarization, or
+- the final artifact changed after signing, timestamping, or
   attestation;
 - a manifest field claims non-null SBOM, `sbom.attestation`, or provenance
   evidence but its asset is missing, malformed, or bound to a different subject
@@ -780,11 +583,10 @@ Stop before publication if any of these are true:
   direct/store mix-up, unsafe path, or incomplete native assurances;
 - the native runner, signer workflow, action revision, or permissions are not
   the protected values;
-- Windows/Linux tests or package signing are not complete for the claimed
-  subject;
+- Windows tests or package signing are not complete for the claimed subject;
 - draft assets were not downloaded and revalidated from a fresh directory;
 - the published release is not immutable or gh release verify/verify-asset fails;
-- the downstream feed, website, Homebrew, or Store subject has not been
+- the downstream feed, website, or Store subject has not been
   updated from the verified final bytes.
 
 A checksum proves integrity of downloaded bytes. A native signature proves a
@@ -796,53 +598,28 @@ the user-facing explanation and commands.
 
 ## Normal Electron stable feed preparation
 
-An Electron cutover also has an incoming native update obligation. Follow the
-[native Sparkle transition procedure](macos-stable-release-runbook.md#native-sparkle-to-electron-transition)
-before activation. The writer below intentionally leaves both native appcasts
-unchanged; a green Electron feed publication does not complete that obligation.
-Publish the exact GitHub assets first, then coordinate both native appcasts,
-the four Electron feeds, Homebrew and the website. Verify both native and
-Electron installed update paths against their real production feeds afterwards.
+The Windows Electron feed is published from one reviewed source candidate. Its
+protected publisher and its verification phases are:
 
-Website manual download buttons use the canonical GitHub release asset URLs.
-The updates host remains the transport for installed updaters. Keep all four
-buttons compact, retain unobtrusive checksum controls, and derive version,
-platform, minimum OS and native trust claims from the final manifest. Only Mac
-artifacts can be described as Developer ID signed and Apple notarized. Verify
-the rendered desktop/mobile and translated pages after deployment, as well as
-live bytes and social metadata. Homebrew must resolve the same Mac installer
-digests before its installation command is shown.
-
-`scripts/prepare-electron-stable-publication.mjs` prepares a local, journaled
-four-target publication contract. It does not upload, sign, deploy, create a
-release or change any feed. Its optional public verification mode performs only
-bounded, no-redirect HTTPS GETs. Native trust and source provenance remain separate
-reviewed gates; merely supplying an evidence file does not establish either.
-
-Use one final source, stable version and build across `darwin-arm64`,
-`darwin-x64`, `win32-x64` and `linux-x64`. The normal source-candidate receipt must
-match the existing production planner. The Mac metadata finalizer above also
-accepts that ordinary receipt: it selects `latest-mac.yml` and the fixed stable
-feed. Rehearsal receipts retain their existing transport name and recovery rules.
-The two manifest kinds cannot coexist in one finalization directory.
-
-The input JSON is closed: `schemaVersion` is
-`tibotattle-electron-stable-publication-v1`, followed by `sourceRevision`,
-`version`, `buildNumber` and `targets`. Each target contains exactly `target`,
-`sourceCandidate`, `appUpdate`, `manifest`, `artifacts`, `predecessor` and
-`evidence`. Every file reference contains `path` relative to the artifact root,
-`sha256` and `bytes`. `artifacts` and `evidence` are arrays; `predecessor` is either
-an exact saved older stable manifest or null for a separately verified absent
-feed. Retain original evidence files; this planner checks their bytes, not their
-native trust claims. Use the app-update configuration extracted from the verified
-final package, not a separately invented configuration.
-
-Required final artifacts are both Mac ZIP/DMG pairs and their two blockmaps,
-Windows NSIS EXE (plus its blockmap if emitted), and the Linux AppImage. Their
-existing final `latest-mac.yml`, `latest.yml` and `latest-linux.yml` must bind
-those exact bytes. Windows configuration also retains its exact publisher gate.
-No absent installer, stale signature or rehearsal build can be replaced by a
-synthetic fixture to prepare an actual release.
+1. `scripts/prepare-electron-stable-publication.mjs` prepares a local,
+   journaled `win32-x64` publication contract with exact object keys, MIME
+   types, cache policies, hashes, and saved predecessors. It does not upload,
+   sign, deploy, create a release, or change any feed. Its public verification
+   mode performs only bounded, no-redirect HTTPS GETs.
+2. The input is a closed JSON proposal: `schemaVersion`
+   `tibotattle-electron-stable-publication-v1`, `sourceRevision`, `version`,
+   `buildNumber`, and one `win32-x64` target. Every file reference contains a
+   `path` relative to the artifact root, `sha256`, and `bytes`. The predecessor
+   is an exact saved older stable manifest, or null for a separately verified
+   absent feed. Use the app-update configuration extracted from the verified
+   final package.
+3. Required final artifacts are the Windows NSIS EXE (and its blockmap, if
+   emitted) and the exact `latest.yml` that binds those bytes. The publication
+   contract verifies predecessors, creates or verifies immutable artifacts,
+   verifies all artifact bytes, rechecks each predecessor immediately before its
+   feed replacement, and then verifies the published feed. No absent installer,
+   stale signature, or rehearsal build may be substituted to prepare an actual
+   release.
 
 ```sh
 node scripts/prepare-electron-stable-publication.mjs \
@@ -850,19 +627,11 @@ node scripts/prepare-electron-stable-publication.mjs \
   --operation-directory <new-private-operation>
 ```
 
-The resulting private operation journal records exact target-scoped object keys,
-MIME types, cache policies and hashes. The publication contract is: verify saved
-predecessors; create or verify immutable artifacts; verify all artifact bytes;
-recheck each exact predecessor immediately before its feed replacement; then
-verify all feeds. R2 CLI writes lack compare-and-swap, so a separately approved
-writer must have exclusive operator control and retain partial-operation evidence.
-This preparation tool has no writer or automatic retry; the separate explicit
-writer below consumes its exact reviewed plan. Native `appcast.xml`,
-`intel/appcast.xml`, preview/rehearsal routes and all previous installers remain
-untouched. Website/download publication is a separate existing release gate.
-
-After an independently authorized publication, or before it to verify the saved
-predecessors, use the same inputs and existing operation directory:
+R2 CLI writes lack compare-and-swap, so a separately approved writer must have
+exclusive operator control and retain partial-operation evidence. The preparation
+tool has no writer or automatic retry. After an independently authorized
+publication, verify the saved predecessors and the published feed with the same
+inputs and the existing operation directory:
 
 ```sh
 node scripts/prepare-electron-stable-publication.mjs \
@@ -872,14 +641,13 @@ node scripts/prepare-electron-stable-publication.mjs \
 ```
 
 `predecessor`, `published` and `rollback` are the only verification phases.
-Verification never performs a write. A rollback contract restores only the exact
-saved predecessor feed, or removes only the exact newly published feed when the
-previous state was absent; it preserves all installer objects. Before any rollback
-write, verify the feed still has this operation's proposed bytes and stop on drift.
-A restored feed controls discovery only: it does not downgrade installed apps or
-reverse schema migration. The rollback readback checks exact predecessor bytes
-(or a definitive 404); authentication errors and redirects never mean absence.
-
+Verification never performs a write. A rollback restores only the exact saved
+predecessor feed, or removes only the exact newly published feed when the
+previous state was absent; it preserves all installer objects. Before any
+rollback write, verify the feed still has this operation's proposed bytes and
+stop on drift. A restored feed controls discovery only: it does not downgrade
+installed apps or reverse schema migration. Authentication errors and redirects
+never mean absence.
 
 ### Separate coordination for immutable qualification artifacts
 
@@ -892,112 +660,6 @@ and `planSha256`. It shares the production lock's compare-and-swap acquisition,
 ownership checks and uncertain-response handling, without reading or changing
 the production ref. Neither lock expires, steals ownership or accepts an
 arbitrary destination ref.
-
-The initial scope is native test DMGs and signed test appcasts under an exact
-source/build/artifact-digest namespace. The writer must bind its complete object
-allowlist and hashes to that plan, prove it is disjoint from any concurrent
-production operation, refuse existing different bytes and verify uploaded bytes.
-Uncertain writes retain the exact owner and operation journal for reconciliation.
-The lock coordinates participating writers; it does not supply conditional R2
-creation or fence legacy and external writers. Merely holding it does not prove
-immutable path admission or authorize publication.
-
-`scripts/publish-macos-qualification-artifacts.mjs` is the separate closed
-writer for the macOS qualification namespace. Its default `--plan` mode is
-local and read-only. A reviewed proposal binds the exact runner and source
-candidate, complete object set and hashes, and the concurrent production
-operation's object keys for an explicit disjointness check. Native trust
-inspection and approval of those concrete bytes remain separate prerequisites.
-
-The closed proposal schema is `tibotattle-macos-qualification-artifacts-v1`.
-It contains `identity` (the same eight fields admitted by the empty-profile
-lane), the unchanged `sourceCandidate`, `fixtureOperationId` (null without a
-fixture), `objects`, and `productionObjectKeys`. Each object contains exactly
-`family`, `localPath` relative to the artifact root, `sha256`, and `bytes`. An
-empty production key set needs the operator's verified no-overlap basis; it is
-not an inference that no production operation exists.
-
-The only admitted objects are the candidate DMG and optional signed test
-`appcast.xml` under its exact source/bundle/DMG-digest prefix, and the credential
-lane's optional sealed fixture ZIP under its exact runner/operation/archive-digest
-prefix. Object names, MIME types and cache policies are derived from those closed
-families. Arbitrary keys, stable feeds, production appcasts and deletions are not
-accepted. Optional appcasts must pass the existing signed-feed validator against
-the exact DMG; fixture archives retain the existing closed file inventory.
-
-`--prepare` reserves a new private operation inside `.release-build`, snapshots
-and verifies all local bytes before remote I/O, and retains the exact plan.
-Explicit `--publish` requires its approved digest, confirmation and the held
-immutable artifact owner. Before remote I/O, the writer verifies the parentless
-commit, empty tree and closed owner record, whose `id` matches the operation,
-`sourceCommit` names the **candidate source**, and `planSha256` binds that exact
-plan. The separately admitted runner may be a reviewed descendant. The tool
-never acquires, steals or releases the remote lock.
-
-```sh
-node scripts/publish-macos-qualification-artifacts.mjs --plan \
-  --artifact-root <verified-artifacts> --proposal <proposal.json>
-node scripts/publish-macos-qualification-artifacts.mjs --prepare \
-  --artifact-root <verified-artifacts> --proposal <proposal.json> \
-  --operation-directory <new-private-operation>
-```
-
-After exact-plan review and owner acquisition, the explicit writer is:
-
-```sh
-node scripts/publish-macos-qualification-artifacts.mjs --publish \
-  --artifact-root <verified-artifacts> --proposal <proposal.json> \
-  --operation-directory <existing-private-operation> \
-  --approved-plan-sha256 <reviewed-plan-digest> --coordination-owner <held-owner> \
-  --confirm PUBLISH_IMMUTABLE_MAC_QUALIFICATION_ARTIFACTS
-```
-
-Use the plan digest returned by preparation and the owner bound to its operation
-ID. The pinned Wrangler R2
-[streaming object commands](https://developers.cloudflare.com/workers/wrangler/commands/r2/)
-remain the transport; credentials stay in the existing secret store.
-
-The writer checks authoritative R2 state, refuses existing different bytes,
-records durable intent before each upload, and checks authoritative and public
-readback. Interrupted or uncertain writes require explicit GET-only
-`--reconcile --operation-directory <existing-private-operation>
---approved-plan-sha256 <reviewed-plan-digest> --coordination-owner <held-owner>`.
-Reconciliation reads the retained plan and snapshots, so moved original artifacts
-or unrelated working-tree edits cannot block that read-only recovery. It still
-verifies the historical candidate/runner identities and exact held owner. A
-resumed publication is permitted only after successful reconciliation and fresh
-clean-source/local-input validation. Preserve the journal and owner until the completed result has
-been reviewed. This publishes qualification inputs only and does not qualify
-a native installation, updater journey or stable release.
-
-A separately reviewed GitHub-only release operation may use the same artifact
-coordination factory for an exact new-version draft, its complete allowlisted
-asset set, and finalization as an immutable release. Its closed plan must also
-explicitly name promotion to GitHub's `latest` release: that is a mutable
-discovery change, not an immutable object upload. Bind the source/tag, notes,
-canonical manifest/checksums and a retained final admission review before draft
-creation. That review binds the completed source, installed/native and required
-live-hosted evidence to their exact receipt and artifact identities. There is no
-aggregate final-admission validator: use the existing gate-specific validators
-and review the remaining evidence explicitly. Early synthetic admission and
-canonical manifest validation alone do not establish final release readiness.
-Then verify every downloaded draft and published asset. Require
-immutable finalization and fresh `latest` identity readback before releasing the
-artifact owner. Pending qualification or owner acceptance still blocks this
-operation; accepted limits must remain explicit in the manifest and review.
-
-This GitHub-only scope does not call the full publication reconciler or require
-a fabricated website receipt. It must retain a separate exact journal, refuse
-conflicting or extra assets, and never overwrite/delete assets or blindly repeat
-an uncertain mutation. An existing Homebrew workflow that polls GitHub `latest`
-may update its cask after this promotion, even without a manual tap dispatch.
-
-Native and Electron stable feeds, direct Homebrew mutation, website deployment,
-Worker changes and migrations retain their existing coordination contracts.
-In particular, native stable appcast replacement still requires the canonical
-Worker-hosted atomic guard; maintenance responses cannot be bypassed with an
-ordinary R2 write. This helper does not qualify an installed app or imply that
-stable updater discovery, hosted APIs or the public website have been updated.
 
 ### Explicit stable writes and rollback
 

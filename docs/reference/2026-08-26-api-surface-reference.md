@@ -43,14 +43,14 @@ Those remain separate verification gates in the relevant runbooks.
 | Local report pages | Browser → fixed loopback report allowlist | 4 `GET` paths |
 | Central public relay | Loopback companion → configured hosted origin | 1 fixed `GET` path |
 | Participant relay | Loopback companion → configured hosted origin | 11 paths, 11 method/path operations |
-| Hosted Worker API | Internet/native collector → Cloudflare Worker | 50 API paths, 53 method/path operations |
+| Hosted Worker API | Internet/native collector → Cloudflare Worker | 49 API paths, 52 method/path operations |
 | Deliberate negative Worker route | Internet → fixed non-API interception | 1 always-`404` path |
-| Native/browser bridge | WKWebView ↔ macOS shell | 4 message handlers, 4 DOM events, 1 fixed URL scheme |
+| Native/browser bridge | Electron preload/IPC ↔ desktop shell | 4 message handlers, 4 DOM events, 1 fixed URL scheme |
 | Process protocols | Native shell, Codex plugin, companion, analysis owners ↔ child/worker | 11 explicit runtime protocol families |
 | Cloudflare service bindings | Worker → platform-managed resources | 3 D1 bindings, 3 production R2 bindings, 1 Durable Object, 8 rate limiters, 1 assets binding, 1 cron schedule |
 | Reviewed code APIs | App/source owners → reusable modules | 5 workspace packages and 24 reviewed source-owner entrypoints |
 | JSON/wire contracts | Collectors, exports, release tooling, hosted intake | Closed versioned families, including generated staged v1.1 and frozen code-defined telemetry v1.0; see schema lifecycle inventory |
-| Storage schema APIs | Hosted and local persistence owners | Ordered hosted SQL migrations, local SQLite schemas, and object/Keychain contracts; attribution adds hosted 0043–0045 without relabeling local schema 11 |
+| Storage schema APIs | Hosted and local persistence owners | Ordered hosted SQL migrations, local SQLite schemas, and object/Credential Manager contracts; attribution adds hosted 0043–0045 without relabeling local schema 11 |
 
 The route counts are checked against the source allowlists by
 [`test/api-surface-reference.test.js`](../../test/api-surface-reference.test.js).
@@ -61,13 +61,13 @@ The route counts are checked against the source allowlists by
 flowchart LR
   Person[Person]
 
-  subgraph Mac[Local Mac — personal-data boundary]
-    Native[macOS shell<br/>AppKit + WKWebView]
+  subgraph Desktop[Local Windows app — personal-data boundary]
+    Native[Desktop shell<br/>Electron]
     Web[Dashboard document]
     Local[Loopback companion<br/>127.0.0.1 : ephemeral]
     Evidence[(Local Codex evidence)]
     Codex[Codex app-server<br/>JSONL over stdio]
-    Keychain[macOS Keychain<br/>closed capability broker v2]
+    Keychain[Windows Credential Manager<br/>closed capability broker]
   end
 
   subgraph Cloudflare[TiboTattle hosted boundary — optional]
@@ -86,7 +86,7 @@ flowchart LR
     GitHub[GitHub Releases REST]
   end
 
-  Updates[Sparkle appcast and artifacts]
+  Updates[Signed update feed and artifacts]
 
   Person --> Native
   Native <--> |fixed WebKit bridge| Web
@@ -105,11 +105,10 @@ flowchart LR
   Worker --> |owner-only verification| Access
   Worker --> |optional owner metrics| Analytics
   Worker --> |optional release history| GitHub
-  Native --> |Sparkle HTTPS reads| Updates
-  Worker --> |guarded atomic appcast write| Updates
+  Native --> |update HTTPS reads| Updates
 ```
 
-The most important architectural distinction is the line around the local Mac:
+The most important architectural distinction is the line around the local Windows app:
 ordinary monitoring reads local evidence and needs no hosted account. Only an
 explicit contribution flow crosses into the hosted boundary, and its relays
 use exact path and authority allowlists rather than behaving as general
@@ -128,7 +127,7 @@ projects them through owned adapters:
 | `~/Library/Application Support/Claude/claude-code-sessions` and `~/.claude/projects` | [`src/claude-desktop-source-inventory.js`](../../src/claude-desktop-source-inventory.js) and transcript export owner | Bounded, symlink-refusing local inventory; content is minimized before derived storage |
 | Claude plan history and local databases used by the disabled shadow qualification lane | [`src/claude-desktop-shadow-controller.js`](../../src/claude-desktop-shadow-controller.js) and its closed source/readiness owners | Local-only, hard-disabled in the shipping product; no loopback quota route or production refresh state |
 | Claude status-line stdin | [`src/claude-callback-runtime.js`](../../src/claude-callback-runtime.js) | Bounded local callback stream; no Anthropic endpoint |
-| macOS Keychain items | Native Security framework and owned Keychain adapters | Fixed service/account attributes and app/binding authority |
+| Windows Credential Manager entries | Owned native Credential Manager adapter | Fixed service/account attributes and app/binding authority |
 
 Absent or unsupported fields stay absent/unknown in the projection; a parser
 does not fabricate provider continuity merely to keep a chart full.
@@ -344,8 +343,6 @@ Authority vocabulary:
   principal; the contribution request does not use the session cookie.
 - **Admin** — admin hostname, verified Cloudflare Access assertion, pinned
   owner identity; mutations add admin CSRF and revision controls.
-- **Operator** — separate timestamped, nonce- and digest-bound appcast write
-  token; it is not a participant or admin credential.
 - **None** — no authority is accepted because the path is deliberately retired
   and always returns `404`.
 
@@ -359,7 +356,6 @@ Authority vocabulary:
 | `POST` | `/api/v1/accountless/enrollment` | Accountless enrollment | Record one bounded, versioned enrollment-only installation row when the separately configured enrollment gate is enabled; exact replays are idempotent and no participant, session, pairing, device credential, upload authority, or community eligibility is created |
 | `POST` | `/api/v1/accountless/ownership` | Accountless ownership | Prove the active enrolled device secret, then atomically create one installation owner, credential and versioned v1.1 upload authorization, or return the same existing receipt when accountless ownership is enabled; reject ambient sessions and revoked/expired enrollment without creating social consent or public-fit eligibility |
 | `POST` | `/api/v1/accountless/renewal` | Accountless ownership | Renew the same authenticated installation graph within seven days of expiry or after an offline period; preserve identity and accepted receipts, and refuse revoked, erased, policy-mismatched or inconsistent state |
-| `POST` | `/api/v1/internal/release/appcast` | Operator | Validate and atomically publish the exact Sparkle appcast object |
 | `POST` | `/api/v1/identity/google/start` | Handoff | Create state, binding, PKCE material, and a Google authorization URL |
 | `GET` | `/api/v1/identity/google/callback` | Handoff | State-bound Google OAuth callback and server-side token exchange |
 | `POST` | `/api/v1/identity/google/result` | Handoff | Deliver the bounded one-time Google identity proof to its initiator |
@@ -453,7 +449,7 @@ sequenceDiagram
   participant Local as Local companion relay
   participant Worker as Hosted Worker
   participant IdP as Google or Apple
-  participant Keychain as macOS Keychain
+  participant Keychain as Windows Credential Manager
   participant Store as D1 / R2 / upload budget
 
   Person->>UI: Choose Google or Apple
@@ -496,7 +492,7 @@ identity boundary as a substitute.
 
 **Configuration:**
 [`apps/worker/wrangler.jsonc`](../../apps/worker/wrangler.jsonc) and
-[`apps/worker/wrangler.dogfood.jsonc`](../../apps/worker/wrangler.dogfood.jsonc).
+`apps/worker/wrangler.dogfood.jsonc`.
 
 These are APIs provided directly to Worker code as capabilities, not public
 HTTP endpoints. Cloudflare describes a binding as permission and API together;
@@ -507,7 +503,7 @@ no Cloudflare resource credential is exposed to the Worker for these calls.
 | `USAGE_MONITOR_DB` (D1) | Sessions, identities, contributions, aggregates, maintenance state, admin caches | Primary mutable service metadata |
 | `DELETION_LEDGER` (D1) | Separate deletion/audit ledger | Segregated deletion evidence |
 | `QUARANTINE` (R2) | Encrypted contribution object quarantine and reconciliation | Payload objects; production and non-production buckets are distinct |
-| `SPARKLE_RELEASES` (R2, production) | Exact appcast and signed update artifacts | Release objects; guarded writer only |
+| `SPARKLE_RELEASES` (R2, production) | Signed Windows update artifacts and feeds | Release objects; release publisher only |
 | `UPLOAD_INGRESS_BUDGET` (Durable Object) | Global token-bucket and concurrent-upload leases | Stores opaque short-lived lease IDs and content-free denial counters |
 | Eight rate-limit bindings | Enrollment, recovery, per-client, public reads, upload authorization/principal/request/client | Route-class abuse controls |
 | `ASSETS` via `ASSETS.fetch(request)` | Manifest-verified public/admin static output | Non-API fallback after exact route classification |
@@ -534,11 +530,6 @@ Worker RPC methods: `acquire(policy)`, `renew(leaseId, policy)`,
 Worker-to-Durable-Object RPC; the returned lease identifier is never a public
 participant capability.
 
-The separate dogfood Worker exposes only the guarded
-`POST /api/v1/internal/release/appcast` contract on its configured guard host,
-with its own D1 replay ledger and R2 bucket. It does not inherit the participant
-or community route registry.
-
 ## 5. Native, browser, and child-process APIs
 
 ### Electron shell ↔ loopback companion
@@ -558,35 +549,6 @@ origins or process commands. The registered `usagemonitor://open` deep link is
 an app wake-up signal, not an OAuth-code transport; the canonical outbound
 `codex://threads/<UUID>` target remains separately validated.
 
-### macOS credential and predecessor migration protocols
-
-**Sources of truth:**
-[`apps/electron/desktop-macos-keychain.js`](../../apps/electron/desktop-macos-keychain.js),
-[`apps/electron/desktop-keychain-broker.js`](../../apps/electron/desktop-keychain-broker.js),
-[`src/contribution-device-keychain-broker.js`](../../src/contribution-device-keychain-broker.js),
-[`apps/electron/desktop-native-migration.js`](../../apps/electron/desktop-native-migration.js),
-and the signed
-[`NativeElectronHandoverHelper.swift`](../../apps/electron/native/NativeElectronHandoverHelper.swift).
-
-The signed Electron main process owns the reviewed macOS credential adapter
-and companion broker pipe. The wire selects closed logical capabilities; it
-never accepts arbitrary Keychain service/account names. An announced failed
-broker cannot silently fall back to an unrelated credential implementation.
-Existing native data and settings are imported through a private, journaled,
-no-clobber handover. The Swift helper authenticates its signed enclosing app,
-uses a fixed protocol, and cannot reset credentials or enable sharing. Unknown
-or newer data schemas preserve the predecessor state and stop startup.
-The [handover runbook](../runbooks/2026-09-07-macos-native-to-electron-handover.md)
-describes the recovery and exact signed-artifact gate.
-
-Native 0.1.18 still consumes `/appcast.xml` on Apple silicon and
-`/intel/appcast.xml` on Intel. Those incoming Sparkle transport contracts are
-owned by [`scripts/generate-sparkle-appcast.js`](../../scripts/generate-sparkle-appcast.js),
-[`scripts/publish-sparkle-update.js`](../../scripts/publish-sparkle-update.js),
-and the signed Electron transition validator. Electron-to-Electron updates use
-the separate Electron updater feeds. The old AppKit shell, WKWebView bridge and
-native Keychain broker are no longer source-owned APIs in this checkout.
-
 ### Codex plugin MCP and installed-agent protocols
 
 **Sources of truth:**
@@ -595,12 +557,9 @@ native Keychain broker are no longer source-owned APIs in this checkout.
 and [`apps/local/agent-cli.js`](../../apps/local/agent-cli.js).
 
 The Codex host starts the plugin's dependency-free local MCP server over stdio.
-It exposes six closed tools: status, plan discovery, one usage query, one
-evidence lookup, install planning, and confirmed installation. MCP input lines
-are bounded to 128 KiB. Analysis tools are read-only and offline; only install
-planning reads the public GitHub release manifest and Homebrew cask. The install
-tool is separately marked destructive and requires a single-use, expiring token
-bound to the exact release, source commit, artifact size and architecture SHA.
+It exposes four closed read-only tools: status, plan discovery, one usage query,
+and one evidence lookup. MCP input lines are bounded to 128 KiB. The tools are
+read-only and offline. Plugin-driven installation is not provided.
 
 For analysis, the plugin locates only reviewed TiboTattle application bundles,
 selects the highest semantic version when system and user installations coexist,
@@ -645,7 +604,7 @@ The diagnostic cross-check resolves the pinned `ccusage` package entrypoint and
 spawns it with the closed command shape `codex daily --since <day> --until
 <day> --timezone <zone> --json`, optionally adding `--offline`. Standard input
 is ignored, stdout must be one JSON report, stderr is retained only as a bounded
-failure detail, and the private Keychain-broker descriptor announcement is
+failure detail, and the private credential-broker descriptor announcement is
 removed from the child environment. The resulting summary is comparison
 evidence; it does not become provider-authoritative billing data.
 
@@ -669,29 +628,20 @@ module facades, but their message shapes are security- and resource-relevant:
 
 | Owner / source | Input boundary | Output boundary |
 |---|---|---|
-| [Replay-safe accounting rebuild child](../../src/replay-safe-accounting-rebuild-child.js) | Two owner-private temporary paths on argv: versioned JSON request and exclusive result target; parent-held stdin is the death watchdog | Canonical result file plus one bounded stdout envelope containing status and either byte count/SHA-256 or a fixed error code |
+| `Replay-safe accounting rebuild child` | Two owner-private temporary paths on argv: versioned JSON request and exclusive result target; parent-held stdin is the death watchdog | Canonical result file plus one bounded stdout envelope containing status and either byte count/SHA-256 or a fixed error code |
 | [Model performance worker](../../apps/local/model-performance-worker.js) | Fixed private state and Codex-home anchors, then bounded reporting-window requests or a `stop` message; starts only through a recent timing-page reader | Bounded timing aggregate snapshots for four periods across three speed modes and at most twelve pinned windows, or a fixed unavailable indication; original timing and independent tool-free supplement, no accounting/contribution data flow |
-| [Unified-index worker](../../src/local-unified-index-worker.js) | `workerData` with bounded lineage components, source paths/sizes, and maximum line bytes | Typed `batch` messages containing minimized events/boundaries/tools/snapshot keys, or one content-free `failed` code |
-| [Local-analysis extraction worker](../../src/local-analysis-extract-worker.js) | `workerData` with an owner-private shard path and bounded source byte-range tasks | One `{ok: true, result}` aggregate or `{ok: false, code}` fixed failure |
+| `Unified-index worker` | `workerData` with bounded lineage components, source paths/sizes, and maximum line bytes | Typed `batch` messages containing minimized events/boundaries/tools/snapshot keys, or one content-free `failed` code |
+| `Local-analysis extraction worker` | `workerData` with an owner-private shard path and bounded source byte-range tasks | One `{ok: true, result}` aggregate or `{ok: false, code}` fixed failure |
 
 The parent compositions in
 [`src/replay-safe-accounting-cache.js`](../../src/replay-safe-accounting-cache.js),
-[`src/local-unified-index-build.js`](../../src/local-unified-index-build.js),
-and [`src/local-analysis-index.js`](../../src/local-analysis-index.js) impose
+`src/local-unified-index-build.js`,
+and `src/local-analysis-index.js` impose
 resource limits, abort/termination behavior, and independent output
 validation. R7 qualification workers, controlled experiment workloads, release
 helpers, and test-fixture crash workers are owner/development tooling rather
 than application runtime APIs and remain under their owning scripts and
 runbooks.
-
-### Apple platform APIs
-
-Electron composes macOS login-item, notification, Keychain, signature and
-installed-updater behavior through its reviewed platform adapters. The retained
-Swift handover helper uses AppKit to authenticate and coordinate with a
-same-identity predecessor. Pinned Sparkle tools sign the incoming native
-appcasts; the Electron application uses its own updater after transition.
-Qualification is artifact- and architecture-specific.
 
 ## 6. Reviewed internal module APIs
 
@@ -770,7 +720,7 @@ defines these as the only reviewed public entries into owned root-source areas:
 | Application | [`src/application/index.js`](../../src/application/index.js), [`claude-callback-capability.js`](../../src/application/claude-callback-capability.js), [`local-review.js`](../../src/application/local-review.js), [`local-contribution-preparation.js`](../../src/application/local-contribution-preparation.js), [`local-incremental-contribution-sync.js`](../../src/application/local-incremental-contribution-sync.js), [`local-prepared-contribution.js`](../../src/application/local-prepared-contribution.js) |
 | Contribution | [`src/contribution/index.js`](../../src/contribution/index.js), [`telemetry-v1-chunks.js`](../../src/contribution/telemetry-v1-chunks.js) |
 | Export | [`src/export/bundle-verification.js`](../../src/export/bundle-verification.js), [`canonical-json.js`](../../src/export/canonical-json.js), [`index.js`](../../src/export/index.js), [`workspace-runtime.js`](../../src/export/workspace-runtime.js), [`set-materialization-runtime.js`](../../src/export/set-materialization-runtime.js) |
-| Platform | [`src/platform/index.js`](../../src/platform/index.js), [`claude-callback-lifecycle.js`](../../src/platform/claude-callback-lifecycle.js), [`export-identity-keychain.js`](../../src/platform/export-identity-keychain.js), [`local-review.js`](../../src/platform/local-review.js), [`owner-only-prepared-contribution-storage.js`](../../src/platform/owner-only-prepared-contribution-storage.js), [`telemetry-envelope.js`](../../src/platform/telemetry-envelope.js), [`telemetry-v1-envelope.js`](../../src/platform/telemetry-v1-envelope.js) |
+| Platform | [`src/platform/index.js`](../../src/platform/index.js), [`claude-callback-lifecycle.js`](../../src/platform/claude-callback-lifecycle.js), `local-review.js`, [`owner-only-prepared-contribution-storage.js`](../../src/platform/owner-only-prepared-contribution-storage.js), [`telemetry-envelope.js`](../../src/platform/telemetry-envelope.js), [`telemetry-v1-envelope.js`](../../src/platform/telemetry-v1-envelope.js) |
 | Providers | [`src/providers/claude/statusline.js`](../../src/providers/claude/statusline.js), [`src/providers/codex/account.js`](../../src/providers/codex/account.js), [`src/providers/codex/logs.js`](../../src/providers/codex/logs.js) |
 | Reporting | [`src/reporting/index.js`](../../src/reporting/index.js) |
 
@@ -822,16 +772,16 @@ is not treated as permission for arbitrary cross-owner queries.
 |---|---|---|
 | Hosted primary D1 | [`apps/worker/migrations`](../../apps/worker/migrations) — 48 ordered SQL migrations | Participant/session/device state, contribution metadata, aggregate revisions, retention/reconciliation, controls, and admin caches |
 | Hosted deletion-ledger D1 | [`apps/worker/deletion-ledger-migrations`](../../apps/worker/deletion-ledger-migrations) — 2 ordered SQL migrations | Deletion tombstones and identity re-enrollment cooldowns, segregated from the primary store |
-| Dogfood guard D1 | [`apps/worker/dogfood-update-guard-migrations`](../../apps/worker/dogfood-update-guard-migrations) — 1 SQL migration | Appcast operator nonce replay ledger only |
+| Dogfood guard D1 | [`apps/worker/dogfood-update-guard-migrations`](../../apps/worker/dogfood-update-guard-migrations) — 1 SQL migration | Retired nonce replay ledger kept only as shipped migration history |
 | Hosted `QUARANTINE` R2 | Worker quarantine/reconciliation owners | Encrypted contribution objects addressed by fixed stored keys and reconciled against accepted metadata |
-| Hosted `SPARKLE_RELEASES` R2 | [`sparkle-appcast-guard.ts`](../../apps/worker/src/sparkle-appcast-guard.ts) plus the stable/dogfood release contracts | Fixed appcast object and signed release objects; no participant route can write them |
-| macOS Keychain | Native protocol-v2 broker and reviewed platform adapters | Four fixed logical capabilities; app-owned `.app.v1` items are not enumerable through the broker, and legacy migration is fail-closed |
+| Hosted `SPARKLE_RELEASES` R2 | The stable release contract and the release publisher | Signed Windows release objects and feeds; no participant route can write them |
+| Windows Credential Manager | Native credential broker and reviewed platform adapters | Four fixed logical capabilities; app-owned items are not enumerable through the broker, and legacy migration is fail-closed |
 
 The owned local SQLite surfaces are:
 
 | Domain | Storage owners |
 |---|---|
-| Local evidence and accounting | [`local-collector-state.js`](../../src/local-collector-state.js), [`local-unified-index.js`](../../src/local-unified-index.js), [`local-analysis-index.js`](../../src/local-analysis-index.js), and its private [`local-analysis-extract-worker.js`](../../src/local-analysis-extract-worker.js) shard writer |
+| Local evidence and accounting | [`local-collector-state.js`](../../src/local-collector-state.js), `local-unified-index.js`, `local-analysis-index.js`, and its private `local-analysis-extract-worker.js` shard writer |
 | Model performance timing | [`inference-timing-store.js`](../../src/platform/inference-timing-store.js): owner-only `inference-timing-v2/source-<Codex-home digest>/timing-experiment.sqlite` below the companion state root; method and SQLite user version 2, maximum 256 MiB; additive `tool-free-v1/timing-experiment.sqlite` within that source directory uses version 3 and its own 256 MiB cap, preserving the original store |
 | Claude shadow pipeline | [`claude-desktop-incremental-canonicalizer.js`](../../src/claude-desktop-incremental-canonicalizer.js), [`claude-desktop-ledger-prototype.js`](../../src/claude-desktop-ledger-prototype.js), [`claude-desktop-pricing-cache.js`](../../src/claude-desktop-pricing-cache.js), [`claude-desktop-shadow-store.js`](../../src/claude-desktop-shadow-store.js) |
 | Contribution and export | [`local-contribution-sync-queue-storage.js`](../../src/platform/local-contribution-sync-queue-storage.js), [`owner-only-export-workspace-storage.js`](../../src/platform/owner-only-export-workspace-storage.js), [`export-set-verification-storage.js`](../../src/platform/export-set-verification-storage.js) |
@@ -873,7 +823,7 @@ spread across callers:
 |---|---|
 | `runcost/browser` | [`@app-usagemonitor/accounting`](../../packages/accounting/index.js) compiles pinned price cards and performs exact API-price-equivalent calculation |
 | `ccusage` CLI JSON | [`src/ccusage.js`](../../src/ccusage.js) provides a bounded diagnostic cross-check subprocess |
-| `@github/keytar` native binding | [`src/platform/export-identity-keychain.js`](../../src/platform/export-identity-keychain.js) retains the adapter for standalone CLI and local-review compatibility; it is excluded from the packaged macOS companion runtime, whose reachable export-identity, account-observation, and contribution-device capabilities use the native broker above. The broker protocol also reserves the closed `claude_session_pseudonym` mapping, while the currently standalone Claude callback retains keytar. |
+| `@github/keytar` native binding | Retained for standalone CLI and local-review compatibility; the packaged companion runtime's reachable export-identity, account-observation, and contribution-device capabilities use the native broker above. The broker protocol also reserves the closed `claude_session_pseudonym` mapping, while the currently standalone Claude callback retains keytar. |
 | Ajv | Owned schema modules compile and enforce persisted export, accounting, synthetic, and R7 JSON schemas |
 | `oauth4webapi` | [`apps/worker/src/identity-oidc.ts`](../../apps/worker/src/identity-oidc.ts) owns pinned-provider ID-token verification and claim projection |
 | `jsonc-parser` | [`apps/worker/src/strict-json.ts`](../../apps/worker/src/strict-json.ts) enforces strict JSON intake, including duplicate-key refusal; owner scripts also parse reviewed JSONC configuration |
@@ -892,7 +842,6 @@ surface, are the relevant application APIs.
 | Cloudflare Access JWKS | Worker verifies the admin Access assertion from the configured team-domain certs endpoint | Owner-only admin request | [JWT validation](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/) |
 | Cloudflare Analytics GraphQL | Optional bounded seven-day distribution read from `POST https://api.cloudflare.com/client/v4/graphql`; source addresses are reduced to counts in transient memory | Owner-only admin overview read | [Analytics GraphQL](https://developers.cloudflare.com/analytics/graphql-api/) |
 | GitHub Releases REST | Optional public or token-authenticated release/asset inventory under `/repos/adamallcock/tibotattle/releases`; a complete read is snapshotted atomically and partial reads do not replace prior evidence | Owner-only sync/maintenance, then cached overview read | [Releases endpoints](https://docs.github.com/en/rest/releases/releases) |
-| Sparkle appcast protocol | Native app reads the signed stable/dogfood appcast and artifacts; guarded Worker writes the exact feed object | Distribution runtime | [Sparkle documentation](https://sparkle-project.org/documentation/) |
 
 ### Configured TiboTattle origins
 
@@ -903,9 +852,6 @@ These values are source configuration, **not a live-availability claim**:
 | `https://tibotattle.com` | Canonical production Worker API and public assets |
 | `https://www.tibotattle.com` | Production alias, canonicalized by the Worker |
 | `https://admin.tibotattle.com` | Owner-only Worker UI and `/api/v1/admin/*`, behind Cloudflare Access |
-| `https://updates.tibotattle.com/appcast.xml` | Stable Sparkle appcast in the production release bucket |
-| `https://dogfood-release.tibotattle.com` | Separate dogfood appcast-guard Worker |
-| `https://dogfood-updates.tibotattle.com/internal-dogfood/appcast.xml` | Internal-dogfood Sparkle feed |
 
 Staging uses a platform-assigned development origin and the loopback companion
 chooses an ephemeral port; neither has a second hard-coded public origin in
@@ -926,22 +872,20 @@ Exact identity-provider endpoints pinned in source are:
 | GitHub | `https://api.github.com/repos/adamallcock/tibotattle/releases` | Optional release history, with bounded asset pagination |
 
 Release automation also uses GitHub Actions/releases and attestations,
-Cloudflare Wrangler/R2 operations, Apple's `codesign`, `notarytool`, `stapler`
-and Gatekeeper interfaces, the pinned Sparkle tool archive, Homebrew, and a
+Cloudflare Wrangler/R2 operations, Windows Authenticode signing interfaces, and a
 pinned Syft release. Those are build and publication APIs, not application
-runtime dependencies. Their exact order and protected-operation gates live in
-the [macOS stable release runbook](../runbooks/macos-stable-release-runbook.md)
-and [cross-platform publication runbook](../runbooks/2026-08-18-cross-platform-release-publication.md).
+runtime dependencies. Their exact order and protected-operation gates live in the
+[cross-platform publication runbook](../runbooks/2026-08-18-cross-platform-release-publication.md).
 
 ## Security properties that span APIs
 
 | Property | Where it is enforced |
 |---|---|
 | Exact routing | Local `API_ROUTES`, report allowlist, two relay policies, and the Worker route registry |
-| Authority separation | Session, device bearer, one-use Upload authorization, admin Access, and appcast operator token are non-substitutable |
+| Authority separation | Session, device bearer, one-use Upload authorization, and admin Access are non-substitutable |
 | Origin discipline | Loopback mutation header + same-origin checks; hosted same-origin/CSRF checks; provider callbacks use state rather than pretending to be same-origin |
 | Bounded I/O | Closed bodies, request/response ceilings, timeouts, limited export exception, fixed pagination and date windows |
-| Replay safety | One-use identity/pairing/upload capabilities, idempotent queue state, nonce/digest-bound appcast writes, deletion ledger |
+| Replay safety | One-use identity/pairing/upload capabilities, idempotent queue state, deletion ledger |
 | Privacy minimization | Raw local logs stay local; broker paths and diagnostic bridges use fixed vocabularies; hosted intake validates content-free schemas |
 | Fail-closed degradation | Unknown API routes are `404`; unready dependencies are explicit; missing admin integrations do not invent zeros |
 

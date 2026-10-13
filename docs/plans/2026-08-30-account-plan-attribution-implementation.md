@@ -161,7 +161,7 @@ resolve their implementation ambiguities.
 | Boundary | Retained tests |
 | --- | --- |
 | Plan eras, quantity coverage, single-plan numerical preservation | [Pure attribution](../../test/plan-attribution.test.js), [transition miner](../../test/transition-plan-attribution.test.js), [weekly selection and diagnostic distributions](../../test/weekly-calibration.test.js) |
-| Published occurrence membership and unchanged/restarted source reads | [Unified reader](../../test/local-unified-accounting-source.test.js), [attribution projection](../../test/local-unified-contribution-attribution.test.js), [bounded full-corpus stream](../../test/replay-safe-accounting-corpus-stream.test.js) |
+| Published occurrence membership and unchanged/restarted source reads | `Unified reader`, `attribution projection`, `bounded full-corpus stream` |
 | Plan-selected local UI and reviewed opt-in | [Plan selection](../../apps/web/test/allowance-plan-selection.test.mjs), [browser consent](../../apps/web/test/attribution-contribution.test.mjs), [local HTTP composition](../../apps/local/attribution-contribution.test.mjs) |
 | Closed contracts, root continuity, replay and interrupted transfer | [Successor contracts](../../test/contribution-v11-contract.test.js), [real local dispatcher](../../test/contribution-v11-local-sync.test.js), [resumable transport](../../test/contribution-v11-sync.test.js), [pairing client recovery](../../test/contribution-device-repair.test.js) |
 | Pairing/renewal races, crash recovery and manual/background bypass | [Real local HTTP repair lifecycle](../../apps/local/device-repair.test.mjs), [controller and companion routes](../../test/contribution-v1-companion-routes.test.js) |

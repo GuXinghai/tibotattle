@@ -16,8 +16,7 @@ which delegates analysis to the existing local usage explainer.
 The public 0.1.23 release includes the agent protocol v1 source contract.
 The plugin checks the installed application's protocol handshake before using
 it; a version number alone does not establish compatibility. Version 0.1.22
-remains incompatible, and `tibotattle_install_plan` refuses to offer it as a
-solution. A successor must pass its own packaged and installed protocol checks.
+remains incompatible. A successor must pass its own packaged and installed protocol checks.
 
 ## Agent data flow
 
@@ -42,27 +41,18 @@ experiments; TiboTattle does not embed or call an LLM.
 | `tibotattle_list_plans` | Read the live plan, pagination and claim contract. |
 | `tibotattle_explain_usage` | Run one bounded plan; pass `nextCursor` unchanged to page. |
 | `tibotattle_get_evidence` | Resolve one opaque evidence selector. |
-| `tibotattle_install_plan` | Read the latest stable GitHub manifest and Homebrew cask, then prepare an exact expiring plan. |
-| `tibotattle_install` | After explicit confirmation, consume the plan token once and install or upgrade the matching cask. |
 
-The first five tools are read-only. Release lookup is the only network activity
-among them. The install tool is separately marked write/destructive and cannot
-run without the unchanged, single-use token returned by an unexpired plan.
-Before Homebrew runs, the cask version and architecture-specific checksum must
-still match the confirmed canonical release manifest. Afterward, the plugin
-requires the installed app version and protocol handshake to match the plan.
+The tools above are read-only. Release lookup is the only network activity among
+them. The plugin does not install or upgrade the app. Plugin-to-app discovery is
+limited to the Windows x64 installation; other platforms receive an explicit
+unsupported result rather than an inferred path or generic command execution
+capability.
 
-Plugin-to-app discovery and automatic installation are intentionally macOS-only
-in protocol v1. Other platforms receive an explicit unsupported result before
-installation discovery or release lookup rather than an inferred path or generic
-command execution capability.
-
-When both `/Applications/TiboTattle.app` and the per-user Applications copy are
-present, the plugin verifies both bundle versions and selects the latest semantic
-version before checking agent compatibility. It never falls back to an older app
-merely because that copy exposes the protocol. Equal versions retain
-system-before-user precedence. Status reports the number of detected
-installations without returning their filesystem paths.
+When more than one installed copy of the app is present, the plugin verifies each
+installed version and selects the latest semantic version before checking agent
+compatibility. It never falls back to an older app merely because that copy
+exposes the protocol. Status reports the number of detected installations without
+returning their filesystem paths.
 
 ## Installed Electron protocol v1
 
@@ -72,12 +62,13 @@ of four commands: `status`, `explain-usage-plans`, `explain-usage`, or
 cursor and opaque selector options required by the explainer. It does not expose
 arbitrary SQL, filesystem paths, shell commands, refresh, settings or upload.
 
-For maintainers, a production macOS status probe has this exact shape:
+For maintainers, a production Windows status probe has this shape, where the
+placeholders are the installed executable and its packaged `app.asar`:
 
 ```text
 ELECTRON_RUN_AS_NODE=1 \
-  /Applications/TiboTattle.app/Contents/MacOS/TiboTattle \
-  /Applications/TiboTattle.app/Contents/Resources/app.asar/apps/local/server.js \
+  "<installed TiboTattle executable>" \
+  "<installed app.asar>/apps/local/server.js" \
   --agent-protocol 1 status
 ```
 

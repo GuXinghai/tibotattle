@@ -23,7 +23,7 @@ Inspection reads inputs and existing records only. `run` writes private local
 evidence under `.release-build/qualification` and runs tests only if required.
 `--cache <directory>` selects owner-controlled local storage; `--timeout-ms`
 may lower the default 180,000 ms ceiling. Keep this outside published artifacts.
-No remote operations, Keychain access, R7 generation or signing occur.
+No remote operations, Credential Manager access, R7 generation or signing occur.
 
 ## Reuse contract
 

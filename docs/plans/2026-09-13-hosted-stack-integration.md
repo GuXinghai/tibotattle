@@ -15,7 +15,7 @@ drafts. Follow the [documentation index](../README.md),
 [current release status](../current-status.md),
 [production operations](../runbooks/production-operations.md),
 [migration rehearsal](../runbooks/release-migration-rehearsal.md) and
-[publication reconciliation](../runbooks/release-publication-reconciliation.md)
+publication reconciliation
 for their respective gates.
 
 ## Dependency and evidence snapshot

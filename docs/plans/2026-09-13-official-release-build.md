@@ -20,7 +20,7 @@ installation, update or publication.
 - Marketing and shared contract package version: `0.1.23`.
 - Both Mac architectures reserve stable `CFBundleVersion` `1030`, following
   `0.1.22` / `1029`. The
-  [allocation decision](../decisions/2026-09-11-electron-macos-bundle-version-allocation.md)
+  allocation decision
   distinguishes bundle ordering from artifact provenance.
 - Application source `1ca31a45753fae709cc30d6a91b599e96b0367ee` passed all six jobs
   in the [official development workflow](https://github.com/adamallcock/tibotattle/actions/runs/34801384672):

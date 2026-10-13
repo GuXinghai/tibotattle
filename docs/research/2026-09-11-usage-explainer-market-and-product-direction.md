@@ -77,8 +77,8 @@ Source inspected at `841ee0c934e23ee7a5a4704a51f74f9959f5c581`; unrelated checko
 
 | Existing boundary | Implication for the next layer |
 |---|---|
-| [Unified index](../reference/unified-index-schema.md), [extractor](../../src/local-unified-index-extract.js) | Usage, quota, order, boundaries, lineage and coverage already have owned representations. Reuse these. |
-| [Window breakdown](../../src/local-unified-window-breakdown.js), [local API](../reference/api-surface.md) | Bounded interval/model accounting exists. It is a building block for “what happened in this interval?” |
+| [Unified index](../reference/local-index-schema.md), [extractor](../../src/local-index-extract.js) | Usage, quota, order, boundaries, lineage and coverage already have owned representations. Reuse these. |
+| `Window breakdown`, [local API](../reference/api-surface.md) | Bounded interval/model accounting exists. It is a building block for “what happened in this interval?” |
 | [Cache analysis](../../src/cache-switch-impact.js) | Already separates observed drops, coverage and compaction confounds. Extend the discipline to other explanations. |
 | [Tool normalization](../../src/providers/codex/log-normalization.js) | Retains fixed categories/source kinds, not raw commands, results or a full behavioral transcript. Exact tool-result byte/token ancestry and semantic retry analysis are not supplied by this projection. |
 | [Existing CLI](../reference/cli-reference.md), [CLI source](../../src/cli.js) | Research/report/export commands exist. No dedicated bounded coaching/evidence query contract was established by this inspection. |

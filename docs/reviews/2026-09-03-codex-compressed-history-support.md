@@ -11,7 +11,7 @@ This records source and synthetic-runtime validation on the uncommitted
 `codex/release-0.1.18` worktree, based on `9e1c3333`, using Node 26.2.0. It is
 not installed-app, real-history performance, signed-release, or deployment
 qualification. The maintained contract is the
-[unified index reference](../reference/unified-index-schema.md#compressed-codex-histories).
+[unified index reference](../reference/local-index-schema.md).
 
 ## Implemented scope
 

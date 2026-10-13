@@ -26,7 +26,7 @@ separate gates. No production deletion or deployment is authorized by this work.
   reading or mutating participant state. Previously retired per-contribution
   deletion stays retired. Health reports `participantDeletion: false` and keeps
   `deletionSafeRestoreReplay: true`.
-- The dashboard offers **Disconnect this Mac**, with explicit confirmation,
+- The dashboard offers a device disconnect action, with explicit confirmation,
   through the existing local device-disconnect contract. It stops this device's
   delivery without deleting hosted history or local analysis. Signing out is
   not a substitute for disconnecting the device.
@@ -69,7 +69,7 @@ separate gates. No production deletion or deployment is authorized by this work.
 
 Validation covers Worker routes/storage, local upload scheduling and relay,
 browser controls/localization, local HTTP fixtures, and maintained docs. It
-does not exercise production data, real sign-in, the user's Keychain, an
+does not exercise production data, real sign-in, the user's Windows Credential Manager, an
 installed native build, release signing, or deployment.
 
 ### Results summary

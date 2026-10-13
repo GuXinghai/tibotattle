@@ -11,7 +11,7 @@ status: proposed
 sharing for fresh Electron installations, a three-notice transition for existing
 installations without a prior choice, and persistent opt-out. The accepted
 [sharing policy](../decisions/2026-09-04-accountless-sharing-policy.md) and
-[convergence plan](../plans/2026-09-04-desktop-convergence.md) supersede the
+convergence plan supersede the
 initial recommendation below. The research is retained as evidence and options,
 not as the current implementation authority.
 
@@ -32,7 +32,7 @@ independently of that mechanism; this document changes neither setting.
 
 This is research and a proposed workstream, not a change to defaults,
 credentials, collection, retention or production. It complements the
-[desktop convergence plan](../plans/2026-09-04-desktop-convergence.md) without
+desktop convergence plan without
 putting a new enrollment design on the desktop migration's critical path.
 
 ## Evidence boundary

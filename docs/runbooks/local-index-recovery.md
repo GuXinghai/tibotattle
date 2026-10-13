@@ -1,244 +1,244 @@
 ---
-title: Unified Index Preservation and Recovery
-date: 2026-08-27
+title: Local Index Recovery
+date: 2026-10-12
 type: runbook
 status: maintained
 ---
 
-# Unified index preservation and recovery
+# Local index recovery
 
-Use this runbook for `local_unified_index_schema_invalid`, integrity failures,
-an app that can no longer open its index, or a suspected interrupted migration.
-It is preservation-first: recovery must never destroy the only copy of facts
-whose rollout source may already have rotated away.
+Use this runbook when the local index store will not open, a refresh keeps
+failing, the audit reports drift, or the store file is missing or damaged. The
+store is derived from the Codex rollouts, but three kinds of state in it or next
+to it cannot be rebuilt from rollouts. Preserve first, rehearse on a copy, and
+change nothing in place.
+
+The store's schema and invariants are in
+[the local index store schema](../reference/local-index-schema.md). The
+storage boundary for paths is in
+[the v2 decision](../decisions/2026-10-12-local-index-v2-and-local-paths.md).
 
 ## Hard prohibitions
 
 Do not:
 
-- edit `PRAGMA user_version` or `meta.schema_version` to make a reader accept a
-  file;
-- delete, truncate, vacuum, or rebuild over the only index;
-- wipe Application Support or use **Erase local data** as diagnosis;
-- open a newer index with an older app/reader in writable mode;
-- copy only the database while losing its device salt and surrounding
-  provenance; or
-- assume a visible 30-day chart is the retention horizon.
+- edit `application_id`, `user_version`, `meta.family` or `meta.parser_version`
+  to make a reader accept a file;
+- delete, truncate, vacuum or overwrite the live store, its `-wal` or `-shm`
+  sidecars, or the device salt;
+- use **Erase local data** or **Reset identity and device** as a diagnosis or
+  repair;
+- open a store whose `user_version` is above 4 with a build that does not know
+  that version, or open any store writable with an older build;
+- copy the store without its sidecars, or copy it without the device salt;
+- hand-edit `usage_rollup`, `work_rollup`, `cache_candidate` or
+  `session_positive` to make the audit pass;
+- look for a rebuild script: there is none. The store is rebuilt from the
+  original Codex data by the refresh itself, never by a hand-run script;
+- delete the retired `local-unified-index-v1.sqlite` as a repair. Its deletion
+  has its own gate (section 9).
 
-If an exact destructive replacement is eventually needed, it requires a
-separate reviewed decision after the copy and candidate are verified.
+## 1. Locations on Windows
 
-## 1. Freeze the writer
+| Item | Location | Notes |
+| --- | --- | --- |
+| Installed app state root | `%APPDATA%\TiboTattle\companion-state` | Electron user-data directory plus `companion-state`. |
+| Standalone CLI state root | `%LOCALAPPDATA%\app-usagemonitor` | The CLI uses this root when the installed store is absent. `USAGE_MONITOR_STATE_ROOT` overrides both and is authoritative. |
+| Store | `local-index-store-v1.sqlite`, with `-wal` and `-shm` while open | The store. |
+| Device salt | `local-unified-index-device-salt-v1` | Same directory as the store. |
+| Collector state | `local-collector-state-v1.sqlite` | Not index data, same root. |
+| Retired v1 file | `local-unified-index-v1.sqlite` | Read only by the one-time ordinal seed and the retirement check. |
+| Codex rollouts | `%CODEX_HOME%` or `%USERPROFILE%\.codex`, under `sessions` and `archived_sessions` | Source of truth. Never modify. |
 
-Quit TiboTattle and confirm no companion or rebuild process still owns the
-state root. Do not kill a process while it is publishing unless it is truly
-stuck; the normal cancellation path preserves completed checkpoints.
+Resolve the exact root from the failing runtime before touching files. Never
+guess between the installed and CLI roots.
 
-For an installed app, the expected state root is:
+## 2. Classify the symptom
 
-```text
-~/Library/Application Support/Usage Monitor
-```
+| Code or observation | Meaning | First action |
+| --- | --- | --- |
+| `local_index_family_mismatch` | Wrong `application_id` or family, or a `user_version` below 4. Not a store this build can open. | Preserve. Find where the file came from before anything else. Do not relabel. |
+| `local_index_newer_version` | `user_version` above 4. Written by a newer build. | Install the newer compatible build. Do not open it with this build. |
+| `local_index_file_invalid` | Not a single-link regular file, a symbolic link, or an unsafe directory. | Check ownership and links. Do not chmod, replace or recreate the file. |
+| `local_index_unavailable` | The file cannot be opened or stat'ed. | Check that the file exists, is not locked by another process, and that the disk has space. |
+| `local_index_journal_mode_refused` | WAL mode could not be set. | Confirm the store sits on a local volume. |
+| `local_index_secret_unavailable`, `local_index_secret_invalid` | The device salt is missing, unreadable or malformed. | Stop. Read section 4 before running anything that writes. |
+| `local_unified_index_publication_busy` | A refresh stopped at the write-ahead log hard limit, or a long reader is pinning the log. | Close other readers and retry. Committed facts are valid and resume from their cursor. |
+| `local_unified_index_legacy_ordinals_unavailable` | The store has no sources and the retired v1 file named by the seed cannot be read. | Keep the v1 file. Read section 8 before any new store is built. |
+| `local_unified_index_generation_invalid` | A refresh committed, but the companion could not describe the result. | Run the audit (section 6) and read `commit_log`. |
+| Audit `consistent: false` | Derived tables disagree with the committed facts. | Preserve a copy. Do not patch in place (section 6). |
+| Source `quarantine_code` set | One source's facts are withheld. This is a source problem, not a database fault. | Inspect `source_diagnostic` for that source. Retained facts stay. |
 
-Standalone developer/CLI runs may use a configured root or the platform
-`app-usagemonitor` default. Resolve the exact path from the failing runtime;
-never guess between them.
+## 3. Freeze and preserve
 
-## 2. Preserve the exact state
+1. Quit TiboTattle completely and confirm that no companion or refresh process
+   remains (Task Manager). Do not kill a process that is publishing unless it is
+   stuck; a normal shutdown keeps committed sources.
+2. Create a new recovery directory inside the state root, for example
+   `%APPDATA%\TiboTattle\companion-state\recovery-YYYYMMDD-HHMMSS`. It must not
+   exist yet. Do not reuse another recovery directory.
+3. Copy, without moving or editing the originals:
+   - `local-index-store-v1.sqlite`, and `-wal` and `-shm` if they exist;
+   - `local-unified-index-device-salt-v1`;
+   - `local-collector-state-v1.sqlite`;
+   - `local-unified-index-v1.sqlite` if it exists (for the retirement check).
 
-Create a new owner-only sibling recovery directory inside the live index/state
-directory. Copy, without moving or modifying the originals:
+   Copy the sidecars together with the main file. A copy of the main file alone
+   is not a copy of the store while a non-empty `-wal` exists.
+4. Record the TiboTattle version and source commit, the file sizes and mtimes,
+   and SHA-256 digests (`Get-FileHash -Algorithm SHA256`). Keep the record in the
+   recovery directory. Do not put paths, digests or account data into a public
+   issue.
 
-- `local-unified-index-v1.sqlite`;
-- `local-unified-index-device-salt-v1`;
-- `local-collector-state-v1.sqlite`;
-- relevant fixed-code diagnostics; and
-- the app version, source commit (if a source checkout), state-root path, file
-  sizes, mtimes, and SHA-256 digests.
+## 4. Check the device salt first
 
-If SQLite sidecars exist while every writer is stopped, preserve them too.
-Keep private paths/digests in the local recovery record, not a public issue.
+The salt is the root of every local join key and of every hosted pseudonym.
 
-## 3. Inspect the copy only
+- It must be the file in the same directory as the store, 32 to 256 bytes, and a
+  single-link regular file. Symbolic links and multi-link files are refused.
+- If the store has sources and the salt is missing, stop. Do not run a refresh.
+  A refresh creates a new salt when the file is absent. Every local join key and
+  every hosted pseudonym would then change. Restore the salt from the preserved
+  copy or from a backup.
+- If no salt exists anywhere and the store has sources, the identity change is an
+  owner decision, not a recovery step. Record it and stop.
+- A store with no sources is a first-run state. The companion creates the salt
+  then.
 
-Run SQLite checks against the copied database:
+## 5. Inspect the copy read-only
+
+Open only the copy, with a read-only SQLite client such as Node's `node:sqlite`
+opened with `readOnly: true`. Run:
 
 ```sql
 PRAGMA query_only = ON;
 PRAGMA quick_check;
-PRAGMA application_id;
-PRAGMA user_version;
-SELECT value FROM meta WHERE key = 'schema_version';
-SELECT value FROM meta WHERE key = 'status';
+PRAGMA application_id;                       -- expect 1431128370
+PRAGMA user_version;                         -- expect 4
+SELECT key, value FROM meta
+  WHERE key IN ('family', 'parser_version', 'rollup_basis');
+  -- family: local-index-store
+  -- parser_version: local-index-rollout-typed-v1+unified-rollout-typed-v19
+SELECT commit_seq FROM store_state;
+SELECT seq, committed_at_ms, kind, sources_changed
+  FROM commit_log ORDER BY seq DESC LIMIT 5;
+SELECT presence, COUNT(*) FROM source GROUP BY presence;
+SELECT COUNT(*) FROM source WHERE quarantine_code IS NOT NULL;
 ```
 
-Record exact output. `quick_check = ok` proves page-level consistency, not
-semantic compatibility or complete source coverage.
+Record the exact output. `quick_check = ok` proves page-level consistency. It
+does not prove that the derived tables match the facts (section 6) or that every
+rollout is covered.
 
-Compare the copy with the current constants in `src/local-unified-index.js`:
+## 6. Audit the copy
 
-- schema family `local-unified-index-v2`;
-- `user_version` 11;
-- parser `unified-rollout-typed-v18`; and
-- source identity `codex-immutable-rollout-v1`.
+The audit is a backend function, not a command. From the checkout, with Node
+22.13 or newer:
 
-A physical schema-11 index can still need older-parser sources reparsed under
-v18. Still-present sources are rescanned; facts whose sources have rotated away
-retain their original parser provenance. Parser v12 preserves missing counters
-as unknown rather than zero, and v13 recognizes ordinal-bearing compaction
-headers. Parser v14 prevents paginated resets or unknown physical-base settings
-from inheriting a logical parent's later model, effort or speed. Parser v15
-adds the reviewed model-only fallback for paginated forks without an exact
-history base. Parser v16 records the explicit missing-cache-write-zero assumption
-with per-row provenance. Parser v17 restores exact selected input/output totals in the
-existing nullable total columns, while contradictory totals remain unknown and
-missing cache-write TTL is never inferred. None of these changes reconstructs
-missing splits or changes replay, order, boundary, or cache-retention
-semantics. Only the explicit physical history boundary or the segment's own
-observations/cursor can supply paginated carried settings. Missing evidence
-remains unknown.
-Descendants also stop tier and replay-snapshot inheritance at the selected
-paginated history. A retired physical export remains counted but cannot replace
-the explicitly resolved logical head, regardless of scan order. Ambiguous heads
-do not supply inherited state.
-Parser v15 restores a model-only assumption for a fork without an exact base:
-use the parent's declaration at/before the usage and child-creation boundary,
-then let explicit child selections override it. Per-row `-parent-model` parser
-variants preserve this inferred provenance. It does not inherit tier, effort,
-counters or replay state; the safeguards above still apply to those fields.
+```js
+import { createLocalIndexBackend } from "./src/local-index-backend.js";
 
-Parser v18 fixes false quarantine caused by accounting markers nested inside
-unrelated oversized records and raises the default line cap to 512 KiB. It
-classifies the outer record envelope instead of searching arbitrary nested
-content. Genuine malformed or ambiguous accounting remains unavailable.
-Rehearse against an owner-only copy first: refresh must reprocess unchanged
-quarantined parents and reconsider dependent children, publish only completed
-replacement results, and preserve totals across restart and repeat refresh.
-Present source fingerprints must actually be processed before receiving v18
-provenance; absent historical sources keep their existing stamps. Do not edit
-parser metadata to force recovery, reset accepted hosted facts, or rewrite timing
-stores. A successful local rehearsal is not proof of an installed app update.
+const backend = createLocalIndexBackend({
+  indexFile: "<absolute path to the copied store>",
+  secretFile: "<absolute path to the copied salt>",
+});
+console.log(backend.audit());
+```
 
-These interpretation changes do not change the physical schema or the
-`codex-immutable-rollout-v1` source-identity contract; never relabel retained
-facts to the new parser.
+`audit()` opens the store read-only, reads one snapshot and returns counts:
 
-The companion grants the bounded four-hour cold-refresh deadline only to the
-reviewed published v10/v11/v12/v13/v14/v15/v16/v17-to-v18 parser transitions. The target is pinned
-to v18; a future parser must review its predecessor set explicitly. Physical
-schema, reader/writer compatibility, source identity, and telemetry contracts
-must match, and the published generation must be complete or one of the
-already supported quarantine/tool-provenance partial states. Only the current
-publication selects the budget: rotated sources' older parser rows do not
-extend an ordinary refresh. Current, unknown, malformed, future, and otherwise
-uncertain parser evidence retains the five-minute deadline.
+- `status: "audited"` with `consistent: true` means the rollups, work rollups and
+  cache-impact pairs match the committed facts at `commitSeq`.
+- `consistent: false` with non-zero `rollup`, `work` or `pairing` means drift.
+  Keep the copy. Record the counts and `commitSeq`. Do not patch the tables. No
+  shipped command repairs them yet.
+- `status: "unavailable"` means the file is missing or cannot be read.
 
-An absent index or a proven supported older physical schema also qualifies
-for the bounded four-hour cold-refresh deadline. This replaces the former
-parser-only v10-to-v11 deadline exception, not the historical physical-schema
-migration rules. Missing, unknown, or inconsistent provenance must not be
-relabelled to obtain that budget. If a rescan cannot finish inside its actual
-bound, preserve state and resolve the qualification gap instead of repeatedly
-restarting it.
+## 7. Rehearse on the copy
 
-A current-parser index can also require a full accounting rebuild after the
-current cache fails its authoritative schema, generation, context, or reuse
-check. The runner emits the fixed accounting-work marker only immediately before
-that rebuild; the controller then applies the same four-hour total deadline.
-Do not infer this state from displayed retained figures, edit cache metadata, or
-retry a five-minute failure in a loop: accounting has no durable mid-build
-checkpoint, so an interrupted rebuild restarts from its retained source state.
+Rehearse every step on the copy first. Refresh only the copy, never the live
+store:
 
-Index publication and accounting completion are separate stages. If a refresh
-times out after publishing, inspect its published generation and accounting
-receipt separately: valid indexed tokens do not establish that the new
-accounting projection finished. Preserve the index and allow the old run to
-settle before requesting a normal incremental refresh. A low processed-file
-count can mean most sources were reused, not that the whole corpus is being
-rescanned. Once indexing returns, the UI reports accounting calculation without
-retaining the scan's file counter; only the terminal refresh receipt establishes
-success.
+1. Create the backend with the copy's store path and copied salt, then call
+   `backend.refreshUnifiedIndex({ codexHome })`. The refresh reads only new and
+   changed sources. Absent sources keep their facts.
+2. Run the audit again.
+3. Compare before and after: source count, `presence` counts, usage event count,
+   earliest and latest `observed_at_ms`, quota observation count and quarantine
+   count.
 
-## 4. Classify before acting
+A `publication_busy` result means the write-ahead log reached its hard limit,
+usually because a long-lived reader is pinning it. Close other readers and retry.
 
-| Observation | Classification | Next action |
+To re-verify every closed segment against its stored digest, which catches an
+edit inside already-verified bytes, call `refreshLocalIndex` from
+`src/local-index-refresh.js` with `verify: { force: true }` against the copy. The
+backend does not pass that option. The check reads every closed segment, so it
+is slow.
+
+## 8. Rebuild from source (last resort)
+
+Use this only when the store cannot be read or repaired, the copy cannot be made
+consistent, and the rollouts still exist. It is an identity-changing action.
+
+A rebuild creates a new, empty store in a new recovery directory with the
+preserved salt. It re-reads every rollout that still exists. It cannot restore:
+
+- **Facts of absent sources.** Rollouts that have rotated away exist only in the
+  old store. Count them from the copy with `presence = 'absent'` before any
+  rebuild, and report them as unavailable, never as zero.
+- **The original source ordinals.** Hosted quota observation identifiers depend
+  on `source.source_ordinal`. A new store assigns fresh ordinals, which changes
+  every v11 and v12 quota identifier once and re-uploads each day with quota data
+  (the plan's section 7.5). The only seed in the code is the retired v1 file, read
+  while the new store has no sources. A v2 store cannot seed another v2 store.
+  Do not rebuild from empty without explicit owner authorization.
+
+If that authorization exists, create the rebuilt store path under the recovery
+directory, create a backend for it with the preserved salt, call
+`refreshUnifiedIndex({ codexHome })`, audit it, and compare its counts with the
+copy.
+
+Replacing the live store with a rebuilt store is not a supported operation in
+this build. No apply command exists. Do not copy a candidate over the live file.
+That step needs a reviewed change and the owner's authorization.
+
+## 9. Keep these, and never delete them as a repair
+
+| Item | Why it matters | Handling |
 | --- | --- | --- |
-| Integrity passes; version is newer than this reader | Reader downgrade/mismatch | Install or build the newer compatible reader. Do not change the database. |
-| Integrity passes; version 1-9 and legacy family is recognized | Supported forward migration | Rehearse the current reader against a second copy, then inspect generation/coverage before considering live recovery. |
-| Integrity passes; version/family/application id is unexpected | Wrong file, unsupported format, or metadata corruption | Preserve and escalate. Do not relabel. |
-| Integrity fails | Physical corruption | Preserve original and all sidecars; attempt extraction or rebuild only into separate candidates. |
-| Schema opens but generation is partial/incomplete | Source/provenance problem | Inspect generation issues and retained last-good facts; do not equate it with database corruption. |
-| App opens an older copy but current live file fails | Likely forward incompatibility or publication/migration issue | Keep both; compare versions and generation descriptors without overwriting either. |
+| Device salt | Anchors local joins and hosted pseudonyms. | Keep. Never regenerate. Back it up with the store. |
+| `source.source_ordinal` values in the live store | Hosted quota identifiers depend on them, and a rebuild cannot restore them. | Keep the store. |
+| Facts of absent sources | Their rollouts are gone. The store is the only copy. | Keep. Never delete by absence. |
+| `local-collector-state-v1.sqlite` | Quota snapshots and checkpoints come from live polls. | Keep. Outside the index. |
+| Retired `local-unified-index-v1.sqlite` | Its facts are the only copy of any source absent from the new store. | Keep until section 10 says it is retirable and the owner authorizes deletion. |
 
-## 5. Dry-run the copy-first recovery paths
+Rebuildable from rollouts that still exist: the rollups, the cache-impact pairs,
+the source cursor and digest state, and all other facts.
 
-The maintained recovery command is a prepare/apply workflow. Choose a new
-owner-only recovery directory directly inside the live index directory; it must
-not already exist. Start with the non-writing path check:
+## 10. The retired v1 file
 
-```bash
-npm run index:rebuild -- \
-  --index "/absolute/path/to/Usage Monitor/local-unified-index-v1.sqlite" \
-  --recovery-dir "/absolute/path/to/Usage Monitor/recovery-YYYYMMDD-HHMMSS" \
-  --codex-home "/absolute/path/to/the/selected/codex-home" \
-  --workers 1 \
-  --dry-run
-```
+The app does not read `local-unified-index-v1.sqlite`, except for the one-time
+ordinal seed while the store has no sources. Whether the file can be retired is
+decided by `assessLegacyIndexRetirement({ legacyIndexFile, indexFile })` in
+`src/local-index-cutover.js`. It is read-only and returns counts only:
 
-Dry-run validates exact path topology and arguments without creating the
-recovery directory. Review every printed path and the generated apply-command
-shape. Unknown, duplicate, missing, and mode-incompatible options fail before
-source or destination access.
+- `absentSources` and `absentEvents`: sources in the v1 file that are not in the
+  store, and their events;
+- `shortfallSources` and `shortfallEvents`: sources whose store count is lower
+  than the v1 count;
+- `retirable`: true only when both source counts are zero.
 
-## 6. Prepare and inspect a separate candidate
+Keep the file when `retirable` is false, and record the counts. Deleting it is a
+separate, receipt-backed owner action, and no code in this build performs it. An
+unreadable file is never treated as retirable.
 
-Run the same command without `--dry-run`. Preparation does not replace or open
-the live index writable. It refuses WAL or live SQLite sidecars, validates the
-existing device salt without repairing it, creates a consistent backup and
-private salt copy, rebuilds a separate candidate, and verifies schema,
-compatibility, generation, counts, `quick_check`, and foreign keys.
+## 11. Close out
 
-The immutable owner-only `receipt.json` binds the live source, backup, salt,
-candidate, generation, counts, paths, sizes, and SHA-256 identities. A rebuild
-can reconstruct only sources that still exist, so compare candidate and backup
-for earliest/latest usage and quota timestamps, usage/quota/tool counts,
-source coverage, skipped reasons, and any facts whose rollout has rotated away.
-Do not apply a candidate with an unexplained loss or quarantine.
-
-## 7. Apply only the reviewed receipt
-
-Replacement is a separate explicit operation. Keep the app stopped and use the
-exact `applyCommand` emitted by preparation:
-
-```bash
-npm run index:rebuild -- --apply \
-  --index "/absolute/path/to/Usage Monitor/local-unified-index-v1.sqlite" \
-  --candidate "/absolute/path/to/Usage Monitor/recovery-YYYYMMDD-HHMMSS/candidate.sqlite" \
-  --receipt "/absolute/path/to/Usage Monitor/recovery-YYYYMMDD-HHMMSS/receipt.json" \
-  --confirm-index "/absolute/path/to/Usage Monitor/local-unified-index-v1.sqlite" \
-  --confirm-app-stopped
-```
-
-Apply revalidates every receipt-bound identity, creates and validates an exact
-`pre-publish-live.sqlite` rollback copy, acquires the recovery and SQLite writer
-locks, then atomically replaces the live index. It never auto-removes an
-existing recovery lock. If it reports
-`local_unified_index_recovery_publication_state_uncertain`, keep the app stopped
-and preserve the live file, sidecars exactly as found, receipt, backup, and
-pre-publish copy; do not retry or delete anything.
-
-## 8. Validate and close with a private receipt
-
-Relaunch the compatible app, run an explicit refresh, and verify generation,
-usage, quota, tools, timeline, weekly, and accounting coverage against the
-reviewed receipt. Missing evidence must remain unavailable rather than zero.
-Retain both rollback copies, the private salt copy, and `receipt.json` through
-an agreed observation period; cleanup or rollback requires separate explicit
-authorization.
-
-Record the failure code, versions, integrity result, preserved digests, actions,
-candidate receipt, comparison, post-restart result, and remaining gaps. Redact
-usernames, home paths, account identities, and private evidence from public
-issues. If the cause was a schema or runbook mismatch, update
-[`../reference/unified-index-schema.md`](../reference/unified-index-schema.md),
-the relevant tests, and this runbook together.
+Record the failure code, TiboTattle version and source commit, the preserved
+file names and digests, the audit output, the rehearsal comparison, the actions
+taken and the remaining gaps. Keep home paths, usernames, account identities and
+private evidence out of public issues. If the cause was a mismatch between the
+documentation and the code, update
+[the store schema reference](../reference/local-index-schema.md), the relevant
+tests and this runbook in the same change.

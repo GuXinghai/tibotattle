@@ -42,7 +42,7 @@ its unfinished changes are preserved. No merge, release or installed-app change.
 - `src/local-unified-index.js`: internal identity-preserving half-open fact port.
 - `src/reporting/work-usage.js`: shared per-event token selection, exact cost
   accumulation, disjoint contribution cells and deterministic grouped queries.
-- `src/local-work-usage-source.js`: read-only composition over the index and
+- `src/work-usage-display.js`: read-only composition over the index and
   existing source mechanisms, scope-qualified identity and visible-row enrichment.
 - `src/application/work-usage.js`: validated query lifecycle, cancellation,
   coalescing, expiring snapshots and opaque cursors.

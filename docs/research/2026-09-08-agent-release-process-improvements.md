@@ -40,7 +40,7 @@ Recommended order:
 This is a research and implementation proposal. None of the proposed commands,
 schemas, approval records or new automation below has been implemented or
 authorized to publish by this report. Current operating authority remains the
-[macOS release runbook](../runbooks/macos-stable-release-runbook.md) and
+macOS release runbook and
 [production runbook](../runbooks/production-operations.md).
 
 ## Evidence and scope
@@ -498,10 +498,10 @@ accessed on 2026-09-08.
 [^2]: [Source 2](../reviews/2026-09-04-installed-upgrade-readiness.md). See the annotated source list below.
 [^3]: [Source 3](../plans/2026-09-05-public-0-1-18-release.md). See the annotated source list below.
 [^4]: [Source 4](../reviews/2026-09-04-paginated-export-qualification.md). See the annotated source list below.
-[^5]: [Source 5](../../scripts/macos-release-core.js). See the annotated source list below.
-[^6]: [Source 6](../../scripts/regenerate-r7-release-evidence.js). See the annotated source list below.
+[^5]: `Source 5`. See the annotated source list below.
+[^6]: `Source 6`. See the annotated source list below.
 [^7]: [Source 7](../../scripts/test-lanes.mjs). See the annotated source list below.
-[^8]: [Source 8](../../scripts/publish-sparkle-update.js). See the annotated source list below.
+[^8]: Source 8. See the annotated source list below.
 [^9]: [Source 9](../../.github/workflows/release-trust-policy.yml). See the annotated source list below.
 [^10]: [Source 10](../../apps/worker/scripts/production-deploy.mjs). See the annotated source list below.
 [^11]: [Source 11](../current-status.md). See the annotated source list below.
@@ -531,7 +531,7 @@ accessed on 2026-09-08.
    restrictions in `scripts/web-release-lane.js`.
 8. Sparkle publisher, `scripts/publish-sparkle-update.js:1526–1553`,
    `2401–2444`, `2538–2610`; cross-surface order in the
-   [macOS runbook](../runbooks/macos-stable-release-runbook.md), lines 816–852.
+   macOS runbook, lines 816–852.
 9. Release trust workflow and `scripts/check-release-workflow-policy.mjs:301–310`.
 10. Production wrapper, `apps/worker/scripts/production-deploy.mjs:652–700`,
     `880–1090`, `1204–1207`; exact-source operational check in

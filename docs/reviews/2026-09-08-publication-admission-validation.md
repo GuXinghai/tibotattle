@@ -13,7 +13,7 @@ Recommendations 1–3 were pushed and read back
 at `1b0f2f04c8a67c2df2277005372b779e38edb27d`. This is tooling validation,
 not approval of a release candidate or a fully green repository release gate.
 
-Maintained interfaces: [publication reconciliation](../runbooks/release-publication-reconciliation.md),
+Maintained interfaces: publication reconciliation,
 [early admission](../runbooks/release-qualification-admission.md), and
 [migration rehearsal](../runbooks/release-migration-rehearsal.md).
 The [implementation plan](../plans/2026-09-08-agent-release-tooling.md) defines

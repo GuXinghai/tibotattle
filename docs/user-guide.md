@@ -12,30 +12,17 @@ cost, quota windows, and trends. Local analysis works without an account and
 keeps session content on your device. Optional community contribution is a separate,
 content-free, consented feature.
 
-See [platform support](./reference/platform-support.md) for the current macOS,
-Windows x64 and Linux x86_64 distribution matrix and its qualification limits.
-Choose the artifact for your platform from the published release manifest.
-The Mac installation steps below apply to macOS 14 or later on Apple silicon
-and Intel.
+TiboTattle supports Windows x64 only. See [platform support](./reference/platform-support.md)
+for the current distribution and its qualification limits.
 
 ## Install and first launch
 
-With [Homebrew](https://brew.sh/) installed, use the same command on either Mac
-architecture; the cask selects the matching signed, notarized installer:
+Download the Windows x64 installer from [tibotattle.com](https://tibotattle.com/#download)
+or the [latest GitHub release](https://github.com/adamallcock/tibotattle/releases/latest),
+then run it. For checksum and signature checks, follow [verify-release.md](./verify-release.md).
 
-```bash
-brew install --cask adamallcock/tap/tibotattle
-```
-
-Alternatively, choose the Apple silicon or Intel download at
-[tibotattle.com](https://tibotattle.com/#download) or the
-[latest GitHub release](https://github.com/adamallcock/tibotattle/releases/latest).
-**Apple menu → About This Mac** shows whether your Mac has an Apple chip or an
-Intel processor. Open the matching DMG and drag TiboTattle to Applications.
-For checksum and artifact checks, follow [verify-release.md](./verify-release.md).
-
-Launch TiboTattle from Applications. The app bundles its runtime; Node.js, pnpm,
-and Xcode are needed only for development, not for installing or using the app.
+Launch TiboTattle after installation. The app bundles its runtime; Node.js and
+pnpm are needed only for development, not for installing or using the app.
 
 On first launch, the app explains which local sources it may inspect. Those are
 the selected OpenAI Codex session and archived-session directories, the Codex
@@ -274,10 +261,10 @@ before collection finishes. An explicitly requested history pass finishes even a
 once complete, the worker stops after its idle lease expires. Later visits resume
 from saved checkpoints. Timing failures do not block usage accounting.
 
-## Customize the menu bar and popup
+## Customize the tray icon and popup
 
 The 0.1.24 desktop release includes tray customization.
-Open **Customize menu bar…** from the native popup's More menu or General
+Open **Customize menu bar…** from the popup's More menu or General
 Settings. Electron's Settings includes the corresponding **Menu bar** or
 **Tray** controls and the popup opens the same page.
 
@@ -289,9 +276,8 @@ is 5-hour and the bottom is 7-day. Unknown evidence is outlined, not zero.
 
 For one window, you can show remaining allowance, reset time, or both. Reset
 format is shared with the popup: countdown or local clock time. Both-window
-mode keeps just the two remaining percentages to limit width. Windows and
-Linux use their supported icon, tooltip and popup surfaces rather than macOS
-text beside the icon; this does not change their platform qualification status.
+mode keeps just the two remaining percentages to limit width. Windows uses its tray icon, tooltip and popup surfaces; this does not change the
+platform qualification status.
 
 Show, hide and reorder Allowances, Weekly pace, Local usage and Cache reuse.
 Select a 7-day or 30-day popup history range, comfortable or compact spacing,
@@ -433,12 +419,8 @@ waiting for safety recovery. **Show diagnostics** runs a content-free doctor
 with app state, settings categories, timer/watchdog state, and local crash-capture
 status. It never includes the lease value, paths, accounts, credentials, session
 content, or a native crash dump. You can review and copy the report or prepare
-an editable GitHub support issue. On macOS, local crash capture is a separate
-off-by-default choice that takes effect after restart. See [support](../SUPPORT.md)
-before sharing a native report. If the app will not open, the source checkout's
-independent macOS crash doctor can inspect Apple reports without launching it;
-the support page gives the exact command, a more detailed `--verbose` mode, and
-an explicitly requested local export for private evidence review.
+an editable GitHub support issue. Native crash capture is not offered on Windows.
+See [support](../SUPPORT.md) before sharing any local diagnostic file.
 
 Trends shows **Allowance and activity** by default, keeping remaining percentage
 separate from API-price-equivalent activity. Expand **Detailed comparison of
@@ -515,18 +497,12 @@ If the dashboard stays blank or reports a schema/index error:
 
 1. Record the exact message and app version.
 2. Quit and reopen once, then allow a complete refresh.
-3. Do not delete Application Support, the unified index, source histories, or
-   Keychain items as a troubleshooting shortcut.
+3. Do not delete AppData, the unified index, source histories, or
+   Credential Manager items as a troubleshooting shortcut.
 4. Follow [SUPPORT.md](../SUPPORT.md) and share only sanitized diagnostics.
 
-If the report is visible but the Overview, Usage, Trends, and Community sidebar
-has disappeared, use the narrowly scoped
-[collapsed-sidebar rescue](./runbooks/sidebar-stranded-collapsed-rescue.md).
-That procedure resets only the persisted window geometry for published 0.1.16
-and earlier builds; it does not remove usage history, credentials, or settings.
-
 Maintainers use the preservation-first
-[unified-index recovery runbook](./runbooks/unified-index-recovery.md). Recovery
+[unified-index recovery runbook](./runbooks/local-index-recovery.md). Recovery
 is performed against a copy before replacing durable state.
 
 ### Secure upgrade
@@ -535,13 +511,11 @@ If Electron cannot read a preserved legacy credential, startup can stop with
 **Unable to prepare secure storage** and support code
 `SECURE_STORAGE_MIGRATION_REQUIRED`. The credential remains preserved. Choose
 **Quit** and follow [SUPPORT.md](../SUPPORT.md) with the support code. Do not
-delete or reset Keychain items or TiboTattle data.
+delete or reset Windows Credential Manager items or TiboTattle data.
 
 The current Electron app has no self-service credential migration or approval
 control. **Retry** repeats the silent readiness check; it does not migrate the
-credential. The [native migration decision](./decisions/2026-08-31-silent-keychain-migration.md)
-records the older AppKit app's approval flow, not a Settings control available
-in the current Electron app.
+credential.
 
 ## Optional community contribution
 
@@ -560,15 +534,15 @@ remain available to legacy clients. Successful collection, upload and aggregate
 publication are separate states. Keep the displayed status or sanitized error
 if support is needed.
 
-### Stop sharing from this Mac
+### Stop sharing from this computer
 
 Turn off **Share usage measurements** in Community to stop future accountless
 uploads and save your choice across restart. You can also reach Community through
 **Settings… → Data & privacy → Community sharing → Manage sharing**. This
 preserves accepted hosted history, local analysis and the existing enrollment.
 
-Older clients may offer **Disconnect this Mac** with a confirmation. It revokes
-this Mac's hosted contribution authority, clears its local device credential
+Older clients may offer a device disconnect control with a confirmation. It revokes
+this computer's hosted contribution authority, clears its local device credential
 and binding, and pauses delivery. It preserves previously contributed hosted
 history, other devices, and local analysis. Signing out only ends the browser
 session; it is not device disconnect.
@@ -583,24 +557,22 @@ is not evidence that any history was erased.
 
 ## Privacy, local data, and uninstall
 
-The exact maintained inventory of local reads, local stores, Keychain use,
+The exact maintained inventory of local reads, local stores, Windows Credential Manager use,
 network destinations, hosted retention, deletion, and uninstall residue is in
 [local-data-and-privacy.md](./reference/local-data-and-privacy.md). The public
 privacy notice is at `https://tibotattle.com/privacy.html`.
 
-Uninstalling the app bundle does not imply that accumulated local indexes,
-preferences, logs, or Keychain items were erased. That separation prevents an
+Uninstalling the app does not imply that accumulated local indexes,
+preferences, logs, or Credential Manager entries were erased. That separation prevents an
 ordinary application replacement from destroying history. Use documented
 local erase, identity-reset, sharing and legacy device-disconnect controls only for their
 separate effects. None erases hosted history; private owner erasure is separate.
 Follow the support guide for intentional cleanup and never remove broad
-Application Support or Keychain locations blindly.
+AppData or Credential Manager locations blindly.
 
 ## Updates and help
 
-In Electron, check for updates in **Settings → About**. An installed native Mac
-0.1.18 app can use **Check for Updates** on its retained signed Sparkle feed to
-transition to Electron on Apple silicon or Intel.
+In Electron, check for updates in **Settings → About**.
 A temporary network failure should leave the installed app usable; it does not
 prove an update exists or failed to
 publish. Verify the current release independently if an update looks stale.

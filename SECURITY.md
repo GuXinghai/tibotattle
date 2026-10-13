@@ -23,7 +23,7 @@ in the [current status matrix](docs/current-status.md).
 
 Two distinct surfaces share this repository:
 
-- **Local macOS app** (`apps/electron`, `apps/local`, `apps/web`, `src/`,
+- **Local Windows app** (`apps/electron`, `apps/local`, `apps/web`, `src/`,
   `packages/`): runs entirely on your machine, binds to loopback only, and
   works fully offline. Issues that break the privacy model — uploads that
   bypass the applicable sharing policy, prompts/responses/paths entering derived
@@ -75,13 +75,17 @@ text, and never exported or uploaded. Ancestry-only reads and cache-drop tables
 retain their title-free contract.
 Directory basenames and thread display labels are transient metadata; paths,
 names and project handles are never written into the accounting index, exports,
-diagnostics, contributions or browser storage. Repository grouping describes
+diagnostics, contributions or browser storage. The accepted
+[local index v2 decision](docs/decisions/2026-10-12-local-index-v2-and-local-paths.md)
+will let the owner-only local store, once implemented, hold source paths and
+working directories; they still never leave the machine. Until that cutover,
+the shipping index holds none. Repository grouping describes
 last-observed local workspace mappings, not verified historical ownership.
-On Windows, transient metadata uses the approved native source reader's
-current-owner, single-link and reparse-point checks instead of Unix mode bits.
+Transient metadata uses the approved native source reader's current-owner,
+single-link and reparse-point checks.
 Existing SQLite files are held through connection close; metadata never changes
 source permissions or journal mode. Selected rollout-head reads use the same
-boundary and never read titles. On both macOS and Windows, closed databases
+boundary and never read titles. Closed databases
 without sidecars use immutable reads with file-state revalidation; live WAL
 reads require existing WAL/SHM files and may update SHM coordination bytes.
 Missing or unsafe native access preserves
@@ -109,7 +113,7 @@ advisory and the maintainer will arrange a safe way to verify.
 For a specific published release, its checksum, platform signature, SBOM, and
 any build attestation establish different parts of the distribution chain.
 Follow [Verify a TiboTattle release](docs/verify-release.md) for the exact
-commands and the current macOS, Windows, and Linux availability boundary. The
+commands and the current Windows availability boundary. The
 GitHub release is canonical for the v1 manifest, any non-null SBOM, and any
 non-null attestation bundles; the website exposes download availability and
 digest. A v1 artifact may explicitly set `sbom`, `sbom.attestation`, or

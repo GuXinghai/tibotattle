@@ -14,7 +14,6 @@ fresh installs default on, existing installations without a recorded choice
 receive three notices, and a persistent opt-out is available without sign-in.
 Uploads honor the recorded preference and negotiated hosted capabilities.
 Local analysis remains available independently of hosted service availability.
-Native Mac version 0.1.18 retains its default-off, review-and-send behavior.
 
 
 > **The name:** TiboTattle is named with affection for the Codex community and
@@ -44,49 +43,35 @@ Native Mac version 0.1.18 retains its default-off, review-and-send behavior.
   changed, so turns before the first change in a session are attributed to
   Standard as a visible assumption unless a timestamped configuration reading
   covers them.
-- **A menu bar item** — where the allowance stands without opening the app,
+- **A tray icon** — where the allowance stands without opening the app,
   including a Check for Updates entry in builds that ship the updater.
 
-## Install (macOS, Apple silicon or Intel)
+## Install (Windows x64)
 
-Requires **macOS 14 or later**, on either Apple silicon or Intel. With
-[Homebrew](https://brew.sh/) installed, one command selects the correct signed,
-notarized app for your Mac:
-
-```bash
-brew install --cask adamallcock/tap/tibotattle
-```
-
-The app includes its runtime. You do **not** need Node.js, pnpm, or Xcode to
-install or use the published app.
-
-Alternatively, choose the **macOS Apple silicon** or **macOS Intel** DMG from
+TiboTattle supports **Windows x64** only. Download the Windows installer from
 [tibotattle.com](https://tibotattle.com) or the
-[TiboTattle releases page](https://github.com/adamallcock/tibotattle/releases).
-If you are unsure, **Apple menu → About This Mac** shows either an Apple chip or
-an Intel processor. Open the DMG, drag TiboTattle to Applications, and launch it.
-When both refer to the same published version, those channels point to the same
-architecture-specific Developer ID artifact. In Electron, check for updates in
-Settings → About. Native Mac version 0.1.18 uses its retained Sparkle feed to
-transition to Electron. A missing website slot is not a release claim—use the
-GitHub release page for the exact version and digest. A v1 release manifest may explicitly
-leave SBOM or provenance fields `null`; source-to-binary provenance is claimed
-only when a trusted hosted workflow generated/finalized and cryptographically
-verified the exact final bytes for that specific release. This repository is
-the source of truth for the public app and its releases. See the
-[user guide](docs/user-guide.md#install-and-first-launch) for first launch,
-or the developer section below to build from source.
+[TiboTattle releases page](https://github.com/adamallcock/tibotattle/releases),
+run it, and launch TiboTattle. The app includes its runtime. You do **not** need
+Node.js or pnpm to install or use the published app.
+
+In Electron, check for updates in Settings → About. A missing website slot is not
+a release claim; use the GitHub release page for the exact version and digest. A
+v1 release manifest may explicitly leave SBOM or provenance fields `null`;
+source-to-binary provenance is claimed only when a trusted hosted workflow
+generated/finalized and cryptographically verified the exact final bytes for that
+specific release. This repository is the source of truth for the public app and
+its releases. See the [user guide](docs/user-guide.md#install-and-first-launch) for
+first launch, or the developer section below to build from source.
 See [Verify a TiboTattle release](docs/verify-release.md) to check the downloaded
-bytes, Apple signature and notarization, and any non-null release-specific
-GitHub provenance evidence yourself.
+bytes, the Authenticode signature, and any non-null release-specific GitHub
+provenance evidence yourself.
 
 ## Build from source (developers)
 
 These requirements are for development, not installation of the released app.
 Repository tooling requires Node.js ≥ 22.13 and
-[pnpm](https://pnpm.io) 11. macOS Electron packaging also requires the
-supported macOS build host and Xcode command-line tools; the production
-candidate procedure is in the [macOS release runbook](docs/runbooks/macos-stable-release-runbook.md).
+[pnpm](https://pnpm.io) 11. Electron packaging requires a supported Windows x64
+host; the production candidate procedure is in the release runbooks.
 
 The root workspace uses pnpm; the Worker keeps its own npm lockfile, which is
 needed only for hosted-service checks and the full gates:
@@ -116,21 +101,15 @@ large history is bounded, cancellable, and resumable.
 
 ## Uninstall
 
-The ordinary Homebrew uninstall removes the app and preserves local state:
-
-```bash
-brew uninstall --cask tibotattle
-```
-
-To also remove TiboTattle's Application Support data, caches, WebKit storage,
-and preferences, use `brew uninstall --cask --zap tibotattle`. The zap is
-deliberately narrow: it never touches `~/.codex` and preserves TiboTattle's
-Keychain identities and device credentials. Those credentials can be reset
-only from the app's two-confirmation **Identity & Device Reset…** flow.
+Uninstall TiboTattle through Windows Settings → Apps. Uninstalling the app does
+not by itself erase accumulated local indexes, preferences, logs, or Windows
+Credential Manager entries. Use only the documented local erase, identity-reset,
+and sharing controls for their separate effects, or follow [SUPPORT.md](SUPPORT.md).
+None of them erases hosted history.
 
 ## Languages
 
-TiboTattle ships English, Simplified Chinese, and Spanish for its native shell,
+TiboTattle ships English, Simplified Chinese, and Spanish for its desktop shell,
 local dashboard, and public community/install surface. New users follow a safe
 system-language match with English fallback; General settings and the web
 header both provide a persisted override. Language choice does not change
@@ -140,14 +119,11 @@ for the provenance and future-locale policy.
 
 ## Privacy model
 
-- Local analysis works fully offline. On a new macOS install, the first-run
-  disclosure visibly preselects **Start TiboTattle at login**, but TiboTattle
-  registers the native Login Item only after the person confirms **Get
-  Started**. Settings re-reads the real macOS state after a request or return
-  from System Settings, and can remove an approval-pending request as well as
-  an enabled item. This starts the normal app at login; it does not install a
-  daemon, LaunchAgent, privileged helper, or separate background worker.
-- Optional macOS allowance notifications are **off by default** and local-only.
+- Local analysis works fully offline. **Start TiboTattle at login** is a Settings
+  switch. It reads the observed Windows startup state and registers only the
+  normal app at login; it does not install a daemon, privileged helper, or
+  separate background worker.
+- Optional Windows allowance notifications are **off by default** and local-only.
   If enabled in **Settings → Notifications**, they are evaluated only after the
   existing foreground refresh receives fresh direct provider quota evidence.
   Stale, inferred, mixed-source, unknown, unobserved, forecast, and
@@ -175,7 +151,7 @@ for the provenance and future-locale policy.
   Existing installations without a choice receive the policy's visible notices
   before activation. Community and Settings expose the same saved choice.
 - The shared dashboard contains no Google/Apple sign-in or legacy social
-  controls. Legacy enrollment and **Disconnect this Mac** backend contracts
+  controls. Legacy enrollment and device disconnect backend contracts
   remain compatible with their existing consumers. Hosted erasure is a separate
   private owner operation, not an app control; local-only use needs no account.
 - Derived artifacts (reports, exports, telemetry) are schema-validated to
@@ -226,40 +202,19 @@ Its source-parity check is `npm run docs:api:check`.
 
 ```bash
 npm test
-```
-
-The selected cross-platform core has an explicit portability lane and a pinned,
-network-isolated Linux container:
-
-```bash
-pnpm test:portable
-pnpm container:portable:build
-pnpm container:portable:test
-```
-
-These commands are preparation evidence only. The shipping application remains
-macOS-only. See the [current status matrix](docs/current-status.md) for the
-separate source, native, installed, release, updater, and platform gates.
-
-```bash
 npm run product:check
 ```
 
-For iteration, run the preflight and the retained native-upgrade transition
-contract gate:
+For iteration, run the preflight:
 
 ```bash
 npm run test:preflight
-npm run product:macos:transition:test
 ```
 
-The transition gate prepares the pinned Sparkle tools and tests historical
-signed-artifact validation, both incoming appcast paths, and Electron handover
-contracts. It does not build the retired native app or qualify an installed
-upgrade. Use `npm run test:changed -- --base <revision>` to select known changed
+Use `npm run test:changed -- --base <revision>` to select known changed
 paths; unfamiliar or shared changes run the complete `npm run check` gate.
-Both-architecture installed upgrade qualification remains a separate release
-gate in the [macOS release runbook](docs/runbooks/macos-stable-release-runbook.md).
+Installed-app qualification remains a separate release gate; see the release
+runbooks.
 
 `npm run architecture:check` enforces ownership boundaries. Maintained current
 references are deliberately split by authority:
@@ -276,8 +231,8 @@ vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Status
 
-TiboTattle publishes desktop installers for macOS, Windows x64 and Linux x64,
-with an operational optional hosted service. The current published version and
+TiboTattle publishes a Windows x64 desktop installer, and its optional hosted
+service is operational. The current published version and
 user-facing history are listed in the [changelog](CHANGELOG.md) and on the
 [GitHub Releases page](https://github.com/adamallcock/tibotattle/releases).
 TiboTattle is not a provider-authoritative billing dashboard: quota estimates

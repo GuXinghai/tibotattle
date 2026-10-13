@@ -37,7 +37,7 @@ Cloudflare's limit, followed by separately approved activation/canary/erasure.
 
 Prepare production collection for the accepted [Electron sharing policy](../decisions/2026-09-04-accountless-sharing-policy.md). This proposal authorizes no remote write, credential renewal, migration, deployment, public admission, or release publication. Public health was read on 2026-09-09: deployment `32cd6317622c9aef9b7bf015b376b4cdb93c91fc`, operational collection with enrollment/upload registration/processing/publication enabled, and passing reported storage/lifecycle checks. This endpoint does not expose accountless mode fields. A read-only production ledger observation at `2026-09-09T18:10:17.308Z` found primary migrations 0001–0056 applied and deletion-ledger migrations 0001–0002 applied. Read-only deployment and secret-name inspection at 18:19 UTC confirmed both accountless mode variables are absent (therefore disabled), collection revision 1 is operational with all four stages enabled, and all five required secret names are present and bound. No secret values were read. The credential-free observation is retained in the private qualification artifact directory.
 
-The [Electron readiness record](2026-09-05-electron-release-readiness.md) records the signed staging pass: automatic accepted upload, authenticated restart with retained installation binding, and persistent opt-out. The separate signed untouched-install run [34386204318](https://github.com/adamallcock/tibotattle/actions/runs/34386204318), using runner `e33c6b37` and signed app `c0c98040`, also passed: the real native introduction was completed and the app created default-on sharing without a seeded preference or acknowledgement. The three-visible-notice transition has focused source/composition evidence; no seven-day signed migration run is claimed.
+The Electron readiness record records the signed staging pass: automatic accepted upload, authenticated restart with retained installation binding, and persistent opt-out. The separate signed untouched-install run [34386204318](https://github.com/adamallcock/tibotattle/actions/runs/34386204318), using runner `e33c6b37` and signed app `c0c98040`, also passed: the real native introduction was completed and the app created default-on sharing without a seeded preference or acknowledgement. The three-visible-notice transition has focused source/composition evidence; no seven-day signed migration run is claimed.
 
 Enrollment, upload ownership, encrypted v1.1 transport, renewal, scheduling, opt-out fencing and installation-scoped replay protection are implemented. Production configuration still omits both accountless mode flags, whose server defaults are disabled. Public selectors explicitly exclude accountless owners. The older September 4–5 integration/migration proposals are historical, not the current implementation boundary.
 
@@ -611,7 +611,7 @@ admission is a separate product and aggregation decision below.
 
 # Prepared executable canary
 
-The separate [canary workflow](../../.github/workflows/electron-production-canary.yml)
+The separate canary workflow
 uses a fresh `macos-26` account, pinned Node 26.2.0, read-only repository access
 and no production secrets. Push only registers the workflow; the canary job is
 manual-dispatch-only and defaults to `plan`. The reviewed runner commit must
@@ -627,7 +627,7 @@ Its artifact allowlist is exactly:
   This is the normal production contribution runtime with the deliberately
   separate Mac handover test update channel, not a stable public release.
 
-The [runner](../../scripts/run-signed-electron-production-canary.mjs) successfully
+The runner successfully
 completed local `--plan` against those installed bytes after exact digest,
 source, ordinary manifest and production Developer ID signature verification.
 The private `production-canary-plan-qualified.json` receipt records preparation
