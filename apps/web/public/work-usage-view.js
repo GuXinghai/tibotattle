@@ -184,6 +184,7 @@ export function validateWorkUsageResponse(value) {
   }
   return value;
 }
+const RETRYABLE_STATUS = new Set(["error", "unavailable"]);
 export function mountWorkUsageView(options = {}) {
   const {
     root,
@@ -569,6 +570,10 @@ export function mountWorkUsageView(options = {}) {
         ? reportTranslate("unavailable")
         : tr(messageKey, values);
     message.dataset.state = key === "snapshot" ? "ready" : key === "preparing" ? "loading" : key;
+    // Only a failed or unavailable top-level query can be re-issued from here.
+    // Preparing, expired (use Refresh), retained saved reports and invalid
+    // input are not helped by repeating the same request.
+    retryButton.hidden = !RETRYABLE_STATUS.has(key);
   };
   const button = (label, action, className = "button button-secondary") => {
     const b = el("button", className, label);
@@ -606,9 +611,13 @@ export function mountWorkUsageView(options = {}) {
   heading.append(headingText);
   if (!sharedReporting) heading.append(period);
   const toolbar = el("div", "work-usage-toolbar");
-  const views = el("div", "work-usage-period segmented-control");
+  const viewsField = el("div", "work-usage-field work-usage-grouping");
+  const viewsLabel = el("span", "work-usage-field-label", tr("groupBy"));
+  viewsLabel.id = `${root.id || "work-usage"}-grouping-label`;
+  const views = el("div", "work-usage-period work-usage-grouping-control segmented-control");
   views.setAttribute("role", "group");
-  views.setAttribute("aria-label", tr("title"));
+  views.setAttribute("aria-labelledby", viewsLabel.id);
+  viewsField.append(viewsLabel, views);
   for (const id of ["project", "thread"]) {
     const viewButton = button(
       tr(id === "project" ? "projects" : "threads"),
@@ -627,6 +636,7 @@ export function mountWorkUsageView(options = {}) {
         resetPage();
         load();
       },
+      "work-usage-grouping-button",
     );
     viewButton.dataset.grouping = id;
     views.append(viewButton);
@@ -702,15 +712,18 @@ export function mountWorkUsageView(options = {}) {
   scope.wrapper.hidden = true;
   const refreshButton = button(tr("refresh"), refresh);
   const form = el("form", "work-usage-find");
+  const findField = el("label", "work-usage-select work-usage-find-field");
+  const findLabel = el("span", null, tr("find"));
   const input = el("input");
   input.type = "text";
   input.maxLength = 100;
   input.placeholder = tr("findHint");
-  input.setAttribute("aria-label", tr("findHint"));
-  form.append(input);
+  input.title = tr("findHint");
+  findField.append(findLabel, input);
+  form.append(findField);
   const filters = el("div", "work-usage-filter-controls");
   filters.append(sort.wrapper, model.wrapper, scope.wrapper, refreshButton);
-  toolbar.append(views, form, filters);
+  toolbar.append(viewsField, form, filters);
   function clearSearchTimer() {
     clearLeaseTimer(searchTimer);
     searchTimer = null;
@@ -814,9 +827,17 @@ export function mountWorkUsageView(options = {}) {
     setStatus("cancelled");
   });
   cancel.hidden = true;
+  // Re-issues the exact current query (cursor and filters preserved) through
+  // load(), which owns cancellation, serial fencing and lease handling.
+  const retryButton = button(tr("retry"), () => {
+    if (destroyed) return;
+    refreshButton.focus?.();
+    load(true, { force: true });
+  });
+  retryButton.hidden = true;
   const body = el("div", "work-usage-body");
   const actions = el("div", "dashboard-actions work-usage-actions");
-  actions.append(message, cancel);
+  actions.append(message, retryButton, cancel);
   root.replaceChildren(
     heading,
     toolbar,
@@ -1914,6 +1935,7 @@ export function mountWorkUsageView(options = {}) {
     headingText.lastChild.textContent = tr("subtitle");
     period.setAttribute("aria-label", tr("period"));
     if (period.lastChild) period.lastChild.textContent = tr("all");
+    viewsLabel.textContent = tr("groupBy");
     for (const b of views.children)
       b.textContent = tr(
         b.dataset.grouping === "project" ? "projects" : "threads",
@@ -1933,7 +1955,9 @@ export function mountWorkUsageView(options = {}) {
     });
     refreshButton.textContent = tr("refresh");
     input.placeholder = tr("findHint");
-    input.setAttribute("aria-label", tr("findHint"));
+    findLabel.textContent = tr("find");
+    input.title = tr("findHint");
+    retryButton.textContent = tr("retry");
     cancel.textContent = tr("cancel");
     if (["snapshot", "savedUpdating", "savedUnavailable"].includes(statusKey) && response)
       statusValues = {

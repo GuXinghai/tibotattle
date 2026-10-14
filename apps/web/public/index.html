@@ -415,6 +415,7 @@
       <section class="dashboard-section dashboard-page-inactive" id="accounting" aria-labelledby="usage-page-title" data-dashboard-page="usage" data-requires-evidence aria-hidden="true" inert>
         <ul class="evidence-warnings" id="accounting-warnings" hidden></ul>
         <div class="metric-grid accounting-summary" id="accounting-summary"></div>
+        <p class="annotation usage-trend-entry" id="usage-trend-entry"><a href="#allowance/changes" data-i18n="dashboard.views.usageTrendEntry">Usage over time: Allowance changes</a></p>
         <div class="two-column accounting-component-grid">
           <article class="panel">
             <div class="panel-heading">
@@ -451,6 +452,7 @@
               <h3 id="accounting-models-title">Model usage</h3>
             </div>
           </div>
+            <p class="annotation" data-i18n="dashboard.views.modelScope">All usage in the reporting period. Project search, scope and model filters apply only to the Projects view.</p>
             <div class="table-wrap dashboard-table-scroll" tabindex="0" role="region" aria-labelledby="accounting-models-title">
               <table class="dashboard-data-table">
                 <caption class="sr-only">Usage grouped by model, across every allowance. Each model expands into its token components as rows of the same table.</caption>
@@ -484,6 +486,7 @@
               allowance.
             </p>
         </article>
+        <div class="metric-grid cache-impact-summary" id="cache-impact-summary" hidden></div>
         <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details" id="cache-switch-details" hidden>
           <summary data-i18n="accounting.cacheSwitch.detailsSummary">See possible switch overhead</summary>
           <p class="annotation cache-impact-sample" id="cache-switch-sample" hidden></p>

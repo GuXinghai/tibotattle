@@ -128,7 +128,7 @@ test("cache continuity rows and empty states retain five correctly aligned cells
     ["Synthetic thread", "60s", "GPT-5.6 Sol · High", "100 → 20", "$0.25"]);
   render({ status: "available", recent: [{ ...recent, estimatedPremiumUsd: null }] });
   assert.equal(rows.children[0].children.length, 5);
-  assert.equal(rows.children[0].children[4].textContent, "—");
+  assert.equal(rows.children[0].children[4].textContent, "Not priced");
   render({ status: "available", recent: [] });
   assert.equal(rows.children[0].children.length, 1);
   assert.equal(rows.children[0].children[0].colSpan, 5);

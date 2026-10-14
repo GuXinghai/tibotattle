@@ -1687,6 +1687,8 @@ tbody tr:last-child td { border-bottom: 0; }
    half of the available space. */
 .accounting-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .accounting-summary > .accounting-speed-coverage { grid-column: 1 / -1; margin: 0; }
+.cache-impact-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.usage-trend-entry { margin: 0; }
 .compact-metric { min-height: 150px; }
 .compact-metric .metric-value { margin: 16px 0 8px; font-size: 2rem; }
 .accounting-component-grid { margin-bottom: 18px; }
@@ -4549,6 +4551,14 @@ html[data-theme="dark"] .noscript {
 .work-usage-toolbar, .work-usage-pagination { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
 .work-usage-period { display:flex; gap:6px; flex-wrap:wrap; }
 .work-usage-period .button[aria-pressed="true"] { border-color:var(--green); background:var(--green-soft); color:var(--green-text); }
+.work-usage-field { display:flex; flex-direction:column; gap:5px; font-size:12px; }
+.work-usage-field-label { font-size:12px; }
+.work-usage-grouping-control { align-self:flex-start; flex-wrap:nowrap; gap:0; }
+.work-usage-find-field { flex:1 1 260px; }
+.work-usage-find-field input { width:100%; }
+.work-usage-toolbar { align-items:flex-end; }
+.work-usage-toolbar .work-usage-find { margin:0; }
+.work-usage-grouping-button:focus-visible { outline:3px solid var(--dashboard-focus-ring, rgba(49,95,132,.42)); outline-offset:2px; }
 .work-usage-toolbar { justify-content:flex-start; margin:24px 0 16px; }
 .work-usage-select { display:flex; flex-direction:column; gap:5px; font-size:12px; }
 .work-usage-select select, .work-usage-find input { background:var(--paper, #fffdf7); color:inherit; border:1px solid var(--line, #d8dbcf); border-radius:8px; padding:9px 12px; font:inherit; }
@@ -5810,6 +5820,8 @@ body[data-dashboard-page] .dashboard-shell .table-wrap { max-height: none; }
 #timeline .chart-summary-grid > div { padding: 8px 10px; }
 #timeline .trends-exact-panel > h3 { margin: 0 0 10px; font: var(--weight-semibold) 16px var(--sans); }
 #accounting .accounting-summary { gap: 10px; }
+#accounting .cache-impact-summary { gap: 10px; }
+#accounting .cache-impact-summary .metric-card { padding: 14px; min-height: 0; }
 #accounting .accounting-summary .metric-card { padding: 14px; min-height: 0; }
 #accounting .accounting-summary .metric-value { font: var(--weight-semibold) 28px var(--sans); }
 #accounting .accounting-component-grid { gap: 12px; margin: 0; }

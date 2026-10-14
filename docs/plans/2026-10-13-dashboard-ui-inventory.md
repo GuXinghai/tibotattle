@@ -112,9 +112,9 @@ retirement.
 | Share focuses a hidden panel unless the user already chose the Share view | `navigateToSharePanel` sets only `#weekly`. The `share` view stays inactive (`display:none`). The test uses a fake panel | 1; obsolete because Share is removed |
 | Share copy says card text is "listed below", but no such element exists; `copyShareCardText` has no caller | `app.js` ~4003, 4100, 4202-4217 | 1; obsolete because share cards are removed |
 | Hard-coded English bypasses `t()` | share-card status/toast; usage summary labels (~5356); timeline confidence copy; "Auto review" (`work-usage-view.js`, `app.js`); comparison bar labels `index.html` ~394, 399 | owning stage |
-| Projects top-level unavailable/error has no local Retry (only nested children do) | `work-usage-view.js` ~703, ~1416 | 2 |
+| Projects top-level unavailable/error has no local Retry (only nested children do) | `work-usage-view.js` ~703, ~1416 | 2; fixed: Retry for error/unavailable only |
 | Divergence breakdown offers Retry for 400/404/405 "unavailable" responses that cannot succeed | `data-client.js` ~5796, `app.js` ~6366-6420 | 3 |
-| Cache-switch API-equivalent cell shows bare "—" where the model table distinguishes four reasons | `app.js` ~9594 vs ~10239 | 2 |
+| Cache-switch API-equivalent cell shows bare "—" where the model table distinguishes four reasons | `app.js` ~9594 vs ~10239 | 2; fixed: "Not priced" with reason (rows carry no pricing status, so the four model-table reasons cannot apply) |
 | Accounting model rows have no per-row Partial marker (Projects rows do) | `app.js` ~10389-10544 | 2, record only unless the data supports it |
 | Stale comments on page sizes and viewports | `app.js` ~260, ~5383; `index.html` ~537, ~775 | as touched |
 | No AbortController in the shared `load()`/`windowBreakdown` path; staleness is token-guarded | `app.js`, `data-client.js` | record only; plan forbids adding capabilities |

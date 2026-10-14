@@ -1027,6 +1027,7 @@ test("cache-switch mobile cards carry their translated column labels", async () 
     "cacheSwitchTablePagination",
     "cacheImpactTableSignature",
     "renderCacheImpactPagination",
+    "t",
     `${source.slice(renderStart, renderEnd)}\nreturn renderAccountingCacheSwitchDetails;`,
   )(
     (selector) => ({
@@ -1047,6 +1048,7 @@ test("cache-switch mobile cards carry their translated column labels", async () 
     { page: 0, signature: "" },
     () => "test",
     () => {},
+    (key) => `translated:${key}`,
   );
 
   render({
@@ -1071,6 +1073,22 @@ test("cache-switch mobile cards carry their translated column labels", async () 
       "translated:accounting.cacheSwitch.column.apiEquivalent",
     ],
   );
+
+  // An unpriced drop states its reason instead of a bare dash.
+  render({
+    status: "available",
+    recent: [{
+      observedAt: "Aug 16, 11:34 AM EDT",
+      previousCacheReadTokens: 207_616,
+      currentCacheReadTokens: 6_912,
+      lostCacheTokens: 200_704,
+      estimatedPremiumUsd: null,
+    }],
+  });
+  const amount = rows.children[0].children[4];
+  assert.equal(amount.textContent, "translated:accounting.cacheImpact.notPriced");
+  assert.equal(amount.title, "translated:accounting.cacheImpact.notPricedTitle");
+  assert.match(amount.className, /data-value-unavailable/u);
 });
 
 test("accounting tables page ten rows and reset for a changed set", async () => {

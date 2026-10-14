@@ -7351,6 +7351,7 @@ function cacheSwitchDataCell(className, value, labelKey) {
   return cell;
 }
 
+
 function isCacheDropThreadDashboard(data) {
   return ["local", "real_local_evidence"].includes(data?.mode);
 }
@@ -7620,13 +7621,19 @@ function renderAccountingCacheSwitchDetails(impact) {
         formatCount(item.lostCacheTokens),
         "accounting.cacheSwitch.column.lostTokens",
       ),
-      cacheSwitchDataCell(
-        "model-api-equivalent",
-        item.estimatedPremiumUsd === null
-          ? "—"
-          : formatApiMoney(item.estimatedPremiumUsd),
-        "accounting.cacheSwitch.column.apiEquivalent",
-      ),
+      // A drop without a price says so rather than showing a bare dash. Rows
+      // carry no pricing status, so "not priced" is the one honest reason.
+      item.estimatedPremiumUsd === null
+        ? Object.assign(cacheSwitchDataCell(
+          "model-api-equivalent data-value-unavailable",
+          t("accounting.cacheImpact.notPriced"),
+          "accounting.cacheSwitch.column.apiEquivalent",
+        ), { title: t("accounting.cacheImpact.notPricedTitle") })
+        : cacheSwitchDataCell(
+          "model-api-equivalent",
+          formatApiMoney(item.estimatedPremiumUsd),
+          "accounting.cacheSwitch.column.apiEquivalent",
+        ),
     );
     rows.append(row);
   }
@@ -7879,13 +7886,19 @@ function renderAccountingCacheContinuityDetails(impact) {
         `${formatCount(item.previousCacheReadTokens)} → ${formatCount(item.currentCacheReadTokens)}`,
         "accounting.cacheContinuity.column.cacheRead",
       ),
-      cacheSwitchDataCell(
-        "model-api-equivalent",
-        item.estimatedPremiumUsd === null
-          ? "—"
-          : formatApiMoney(item.estimatedPremiumUsd),
-        "accounting.cacheContinuity.column.apiEquivalent",
-      ),
+      // A drop without a price says so rather than showing a bare dash. Rows
+      // carry no pricing status, so "not priced" is the one honest reason.
+      item.estimatedPremiumUsd === null
+        ? Object.assign(cacheSwitchDataCell(
+          "model-api-equivalent data-value-unavailable",
+          t("accounting.cacheImpact.notPriced"),
+          "accounting.cacheContinuity.column.apiEquivalent",
+        ), { title: t("accounting.cacheImpact.notPricedTitle") })
+        : cacheSwitchDataCell(
+          "model-api-equivalent",
+          formatApiMoney(item.estimatedPremiumUsd),
+          "accounting.cacheContinuity.column.apiEquivalent",
+        ),
     );
     rows.append(row);
   }
@@ -8055,6 +8068,9 @@ function renderAccounting(data) {
       displayValue: () => "—",
     });
     renderAccountingModels(data.accounting, { unavailable: true });
+    const cacheImpactSummary = $("#cache-impact-summary");
+    clear(cacheImpactSummary);
+    cacheImpactSummary.hidden = true;
     renderAccountingCacheSwitchDetails(null);
     renderAccountingCacheContinuityDetails(null);
     return;
@@ -8143,7 +8159,10 @@ function renderAccounting(data) {
     rawNode("strong", "metric-value", cacheSwitchMetricValue(cacheSwitchImpact)),
     cacheSwitchNote,
   );
-  summary.append(cacheSwitchCard);
+  const cacheImpactSummary = $("#cache-impact-summary");
+  clear(cacheImpactSummary);
+  cacheImpactSummary.hidden = false;
+  cacheImpactSummary.append(cacheSwitchCard);
 
   const cacheContinuityImpact = accounting.cacheContinuityImpact;
   const cacheContinuityCard = node("article", "metric-card compact-metric cache-impact-card");
@@ -8162,7 +8181,7 @@ function renderAccounting(data) {
     ),
     cacheContinuityNote,
   );
-  summary.append(cacheContinuityCard);
+  cacheImpactSummary.append(cacheContinuityCard);
 
   const componentCountRows = Object.entries(accounting.components ?? {})
     .filter(([, tokens]) => tokens > 0)
@@ -9713,10 +9732,12 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   const view = (key, panels, filters = "") => ({ key, panels, filters });
   const configurations = [
     { id: "usage", page: "usage", level: 1, root: "#usage-screen", views: [
-      view("projects", "#accounting-summary, #projects"),
-      view("models", ".accounting-models-panel"),
-      view("composition", ".accounting-component-grid"),
-      view("cache", "#cache-reuse-outcome, .advanced-diagnostics"),
+      // Reporting-period totals head every view except Cache, whose impact
+      // estimates are diagnostics rather than totals.
+      view("projects", "#accounting-summary, #usage-trend-entry, #projects"),
+      view("models", "#accounting-summary, #usage-trend-entry, .accounting-models-panel"),
+      view("composition", "#accounting-summary, .accounting-component-grid"),
+      view("cache", "#cache-impact-summary, #cache-reuse-outcome, .advanced-diagnostics"),
     ] },
     { id: "usage-projects", page: "usage", level: 2, label: "projects",
       root: "#projects", host: ".work-usage-body", views: [
@@ -9863,21 +9884,29 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     if (bar.getAttribute("aria-label") !== label) bar.setAttribute("aria-label", label);
     const selection = selections.get(config.id);
     let visible = false;
+    // An element may belong to several views (Usage totals sit above the
+    // project, model and composition views), so it is active when the selected
+    // view lists it, whatever the other views list.
+    const active = new Set();
+    const listed = new Set();
     for (const { key, panels, filters } of config.views) {
       const button = [...bar.children].find(child => child.dataset.dashboardView === key);
       const text = t(`dashboard.views.${key}`);
       if (button.textContent !== text) button.textContent = text;
       const pressed = String(key === selection);
       if (button.getAttribute("aria-pressed") !== pressed) button.setAttribute("aria-pressed", pressed);
-      for (const panel of root.querySelectorAll(panels)) {
-        panel.toggleAttribute("data-page-view-inactive", key !== selection);
-        if (key === selection && !panel.hidden) visible = true;
+      const elements = [...root.querySelectorAll(panels),
+        ...(filters ? root.querySelectorAll(filters) : [])];
+      for (const element of elements) {
+        listed.add(element);
+        if (key === selection) active.add(element);
       }
-      if (filters) {
-        for (const filter of root.querySelectorAll(filters)) {
-          filter.toggleAttribute("data-page-view-inactive", key !== selection);
-        }
+      if (key === selection) {
+        visible = [...root.querySelectorAll(panels)].some(panel => !panel.hidden);
       }
+    }
+    for (const element of listed) {
+      element.toggleAttribute("data-page-view-inactive", !active.has(element));
     }
     let empty = host.querySelector(":scope > .dashboard-view-empty");
     if (config.level === 1) {

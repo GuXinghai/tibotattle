@@ -634,6 +634,8 @@ export const WEB_MESSAGES = Object.freeze({
   "accounting.model.notPricedUnknownTitle": ["This model identifier has not been reviewed, so no price is applied to it. It is not a zero.", "此模型标识尚未经过审核，因此不会为其应用任何价格。这不是零。", "Este identificador de modelo no se ha revisado, por lo que no se le aplica ningún precio. No es un cero."],
   "accounting.model.notReported": ["Not reported", "未报告", "No informado"],
   "accounting.model.notReportedTitle": ["No usable figure was reported for this row. It is shown as missing rather than as zero.", "此行没有报告可用的数值。它显示为缺失而不是零。", "No se informó ninguna cifra utilizable para esta fila. Se muestra como ausente, no como cero."],
+  "accounting.cacheImpact.notPriced": ["Not priced", "未计价", "Sin precio"],
+  "accounting.cacheImpact.notPricedTitle": ["No Standard API price could be calculated for this drop. It is left out of the period amount, not counted as zero.", "无法为这次下降计算 Standard API 价格。它不计入本期金额，也不按零计算。", "No se pudo calcular un precio de API Standard para esta caída. Queda fuera del importe del periodo y no se cuenta como cero."],
   "accounting.model.zeroTitle": ["A priced total that rounds to zero for this period.", "此期间计价后的总额四舍五入为零。", "Un total con precio que se redondea a cero en este período."],
   // Component rows under a model. Every share in this table is against the
   // whole period, so components add up to their model and models add up to the

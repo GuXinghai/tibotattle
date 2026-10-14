@@ -2403,3 +2403,50 @@ test("wrong-window replacements fail closed while leaving the prior shared repor
   view.setReportingWindow({ period: "7d", startAt: new Date(NOW - 7 * 86_400_000).toISOString(), endAt: new Date(NOW).toISOString() });
   assert.equal(harness.root.children.at(-1).hidden, true, "changing the period cannot borrow old figures");
 });
+
+test("top-level failures offer a local Retry that re-issues the same query, and other states do not", async (t) => {
+  const { root, windowRef } = mountedRoot();
+  const requests = [];
+  let reply = new Error("temporary failure");
+  const view = mountWorkUsageView({ root, windowRef, t: mountedTranslator,
+    fetchRef: async (_url, init) => {
+      requests.push(JSON.parse(init.body));
+      if (reply instanceof Error) throw reply;
+      return reply;
+    } });
+  t.after(() => view.destroy());
+  const retryButtons = () => findMounted(root,
+    node => node.tagName === "BUTTON" && node.textContent === "Retry" && !node.hidden);
+  await settleMountedView();
+  assert.match(root.textContent, /Could not load this report/u);
+  assert.equal(retryButtons().length, 1, "error state exposes one top-level Retry");
+  const before = requests.length;
+  reply = { ok: true, status: 200, json: async () => ({ ...PROJECT_ROWS_RESPONSE, status: "unavailable", rows: [], rowCount: 0 }) };
+  retryButtons()[0].click();
+  await settleMountedView();
+  assert.ok(requests.length > before, "Retry issues a new request");
+  assert.equal(requests.at(-1).period, requests[0].period);
+  assert.equal(requests.at(-1).grouping, requests[0].grouping);
+  reply = httpResponse(PROJECT_ROWS_RESPONSE);
+  if (retryButtons().length) retryButtons()[0].click();
+  await settleMountedView();
+  assert.match(root.textContent, /Project A/);
+  assert.equal(retryButtons().length, 0, "a healthy report has no top-level Retry");
+});
+
+test("grouping and search controls carry visible labels", async (t) => {
+  const { root, windowRef } = mountedRoot();
+  const view = mountWorkUsageView({ root, windowRef, t: mountedTranslator,
+    fetchRef: async () => httpResponse(PROJECT_ROWS_RESPONSE) });
+  t.after(() => view.destroy());
+  await settleMountedView();
+  const group = findMounted(root, node => node.getAttribute?.("role") === "group"
+    && node.getAttribute("aria-labelledby"))[0];
+  const labelId = group.getAttribute("aria-labelledby");
+  const label = findMounted(root, node => node.id === labelId)[0];
+  assert.equal(label.textContent, mountedTranslator("workUsage.groupBy"));
+  const input = findMounted(root, node => node.tagName === "INPUT")[0];
+  assert.equal(input.parentNode.tagName, "LABEL");
+  assert.equal(input.parentNode.children[0].textContent, mountedTranslator("workUsage.find"));
+  assert.equal(input.getAttribute("aria-label"), null, "the visible label names the input");
+});
