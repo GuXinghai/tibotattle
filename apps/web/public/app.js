@@ -9937,36 +9937,16 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     }
   };
 
-  const fit = () => {
+  // Pages keep their natural size; a tall page scrolls (see styles.css).
+  const sync = () => {
     frame = null;
     for (const config of configurations) syncViews(config);
     const page = documentRef.body.dataset.dashboardPage;
     if (dialog.open && (dialogPage !== page || !disclosure?.isConnected || disclosure.hidden)) dialog.close();
-    const screens = ["overview", "usage", "allowance", "performance"]
-      .map(id => documentRef.querySelector(`#${id}-screen`)).filter(Boolean);
-    for (const screen of screens) screen.style.zoom = "1";
-    const screen = screens.find(element => element.id === `${page}-screen`);
-    if (!screen) return;
-    const headerHeight = documentRef.querySelector(".topbar")?.getBoundingClientRect().height ?? 0;
-    const sidebarHeight = windowRef.innerWidth <= 900
-      ? documentRef.querySelector(".dashboard-sidebar")?.getBoundingClientRect().height ?? 0 : 0;
-    const available = Math.max(1, windowRef.innerHeight - headerHeight - sidebarHeight - 26);
-    main.style.setProperty("--overview-height", `${available}px`);
-    // Compact views fit ordinary desktop sizes naturally; unusual evidence
-    // states and smaller windows shrink proportionally rather than lose data.
-    const natural = screen.scrollHeight;
-    if (natural > available) screen.style.zoom = String(available / natural);
   };
   const schedule = () => {
-    if (frame === null) frame = windowRef.requestAnimationFrame(fit);
+    if (frame === null) frame = windowRef.requestAnimationFrame(sync);
   };
-  if (windowRef.ResizeObserver) {
-    const resize = new windowRef.ResizeObserver(schedule);
-    resize.observe(main);
-    for (const element of main.children) resize.observe(element);
-    const header = documentRef.querySelector(".topbar");
-    if (header) resize.observe(header);
-  }
   if (windowRef.MutationObserver) {
     const changes = new windowRef.MutationObserver(schedule);
     changes.observe(main, { childList: true, subtree: true, characterData: true,
@@ -9974,7 +9954,6 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     changes.observe(documentRef.body, { attributes: true,
       attributeFilter: ["data-dashboard-page", "class"] });
   }
-  windowRef.addEventListener("resize", schedule);
   windowRef.addEventListener("tibotattle:locale-change", schedule);
   // Build the switches now so the page switch below tracks every element that
   // belongs to a destination (including each level-1 empty-view message).

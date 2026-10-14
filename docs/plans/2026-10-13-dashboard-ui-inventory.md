@@ -31,6 +31,8 @@ runtime, browser, or packaged inspection is part of this record.
   click or Escape.
 - Whole-page scaling: `fit()` sets `style.zoom` on the active screen when its
   natural height exceeds the window. The plan requires replacing this in Stage 4.
+  Replaced in Stage 4: pages keep their natural size and the window scrolls
+  under the sticky topbar and sidebar.
   Tooltip positioning (`model-performance.js`) and the cache-matrix width
   observer run under this zoom.
 

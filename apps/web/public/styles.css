@@ -5620,19 +5620,14 @@ html[data-theme="dark"] .quota-tank.stale { --tank-fluid: #8c9a8d; --tank-glow: 
 
 .quota-tank.has-liquid-tank .quota-tank-bottom { margin-top: auto; }
 
-/* Overview is a viewport summary. Optional reading opens above it in a dialog. */
+/* Pages keep their natural size: text never shrinks to fit the window. A page
+   taller than the window scrolls under the sticky topbar and sidebar, and
+   optional reading opens above it in a dialog. */
 #overview-screen { display: contents; }
-body[data-dashboard-page] { height: 100dvh; display: flex; flex-direction: column; }
-body[data-dashboard-page] > .topbar { flex: none; }
-body[data-dashboard-page] .dashboard-shell { flex: 1; min-height: 0; width: 100%; }
-body[data-dashboard-page] .dashboard-sidebar { min-height: 0; height: 100%; }
-body[data-dashboard-page] .dashboard-content { min-height: 0; }
-body[data-dashboard-page] .dashboard-shell main {
-  width: calc(100% - 32px); padding: 12px 0;
-  height: calc(var(--overview-height, 100dvh - 100px) + 24px);
-}
+body[data-dashboard-page] .dashboard-shell { width: 100%; }
+body[data-dashboard-page] .dashboard-shell main { width: calc(100% - 32px); padding: 12px 0; }
 body[data-dashboard-page] footer { display: none; }
-body[data-dashboard-page] #overview-screen { display: block; transform-origin: top left; }
+body[data-dashboard-page] #overview-screen { display: block; }
 #overview-screen > .dashboard-page-header { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 #overview-screen > .dashboard-page-header > :first-child { width: 0; height: 0; }
 #overview-screen > .dashboard-page-header .page-description { display: none; }
