@@ -1270,7 +1270,8 @@ export function mountWorkUsageView(options = {}) {
           } else {
             content.append(link);
             if (part.autoReview) {
-              content.append(el("span", "cache-drop-subworker", " [Auto review]"));
+              content.append(el("span", "cache-drop-subworker",
+                ` [${t("accounting.cacheDropThread.autoReview")}]`));
             }
           }
           control = link;

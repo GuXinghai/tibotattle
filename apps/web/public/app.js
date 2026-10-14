@@ -7358,8 +7358,6 @@ function isCacheDropThreadDashboard(data) {
   return ["local", "real_local_evidence"].includes(data?.mode);
 }
 
-const CACHE_DROP_AUTO_REVIEW_LABEL = "Auto review";
-
 function cacheDropThreadParts(thread) {
   return formatCodexThreadParts(thread, t);
 }
@@ -7415,7 +7413,7 @@ function fillCacheDropThreadCell(cell, thread, observedAt) {
       if (part.autoReview) {
         const origin = rawNode("span", "cache-drop-subworker", "");
         origin.append(document.createTextNode(" ["),
-          document.createTextNode(CACHE_DROP_AUTO_REVIEW_LABEL),
+          document.createTextNode(t("accounting.cacheDropThread.autoReview")),
           document.createTextNode("]"));
         content.append(origin);
       }

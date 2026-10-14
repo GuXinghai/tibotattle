@@ -786,7 +786,7 @@ export function formatCodexThreadParts(thread, t) {
     // Internal reviews open only an explicitly resolved, accessible parent.
     // Never fall back to the internal review session's UUID.
     return parent === null ? [{
-      name: "Auto review",
+      name: t("accounting.cacheDropThread.autoReview"),
       href: null,
       autoReview: true,
     }] : [{

@@ -467,6 +467,7 @@ export const WEB_MESSAGES = Object.freeze({
   "accounting.cacheDropThread.column": ["Thread name", "会话名称", "Nombre de la conversación"],
   "accounting.cacheDropThread.unavailable": ["Thread unavailable", "会话不可用", "Conversación no disponible"],
   "accounting.cacheDropThread.fallback": ["Thread {id}", "会话 {id}", "Conversación {id}"],
+  "accounting.cacheDropThread.autoReview": ["Auto review", "自动审查", "Revisión automática"],
   "accounting.cacheDropThread.subworker": ["{name} subworker", "{name} 子任务", "{name}, subagente"],
   "accounting.cacheDropThread.localTime": ["Local time: {time}", "本地时间：{time}", "Hora local: {time}"],
   "accounting.cacheDropThread.open": ["Open {name} in Codex. {time}", "在 Codex 中打开 {name}。{time}", "Abrir {name} en Codex. {time}"],
