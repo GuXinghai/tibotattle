@@ -53,6 +53,31 @@ function liveWeeklyQuota(windows){
     })).filter(q=>Number.isFinite(q.atMs)&&Number.isFinite(q.usedPercent)&&!q.resetKey.startsWith("NaN:"));
 }
 
+// Retained local lineage establishes replay without changing stored facts.
+// Raw UUIDs stay inside this reader; only index-local session handles reach
+// the runtime-neutral analyzer. Ambiguous or cyclic ancestry proves nothing.
+function workAncestors(database) {
+  const ids = new Map(database.prepare("SELECT id,session_uuid FROM session WHERE session_uuid IS NOT NULL").all()
+    .map((s) => [s.session_uuid,String(s.id)]));
+  const parents = new Map();
+  for (const s of database.prepare("SELECT session_id,lineage_json FROM source WHERE lineage_json IS NOT NULL").iterate()) {
+    let lineage; try { lineage=JSON.parse(s.lineage_json)?.lineage; } catch { continue; }
+    if (!lineage?.isFork || !lineage.parentId) continue;
+    const child=String(s.session_id),parent=ids.get(lineage.parentId);
+    if (parent) { const set=parents.get(child)??new Set();set.add(parent);parents.set(child,set); }
+  }
+  const result=new Map();
+  for (const child of parents.keys()) {
+    const chain=[],seen=new Set([child]);let at=child,valid=true;
+    while (parents.has(at)) {
+      const set=parents.get(at);if(set.size!==1){valid=false;break;}
+      at=[...set][0];if(seen.has(at)){valid=false;break;}seen.add(at);chain.push(at);
+    }
+    result.set(child,valid?chain:[]);
+  }
+  return result;
+}
+
 /** Read only committed content-free facts. A failure never erases last-good analytics. */
 export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], capacity = null,
   previous = null, storedState = null, liveSinceMs = nowMs, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -69,8 +94,8 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const plan = current?.planType && current.planType!=="unknown" ? current.planType : capacity?.planScope?.planType ?? null;
       const quota = database.prepare(`SELECT DISTINCT q.observed_at_ms, q.used_percent, q.resets_at_ms, q.plan_type, q.limit_id
         FROM quota_occurrence q WHERE q.duration_mins=10080 AND q.admission='admitted'
-        AND q.observed_at_ms>=? AND q.observed_at_ms<=? AND q.limit_id='codex' AND ${committedPredicate("q")}
-        ORDER BY q.observed_at_ms`).all(from,nowMs)
+        AND (q.observed_at_ms>=? OR q.resets_at_ms>=?) AND q.observed_at_ms<=? AND q.limit_id='codex' AND ${committedPredicate("q")}
+        ORDER BY q.observed_at_ms`).all(from,from,nowMs)
         .filter((q)=>plan===null || q.plan_type===null || q.plan_type==="unknown" || q.plan_type===plan)
         .map((q)=>({atMs:q.observed_at_ms,usedPercent:q.used_percent,
           resetKey:`${q.resets_at_ms}:${q.plan_type&&q.plan_type!=="unknown"?q.plan_type:plan??"unknown"}:codex`}));
@@ -100,11 +125,12 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         usage.push({atMs:r.observed_at_ms,session:String(r.session_id),usd:weighted.usd,
           priced:p.pricingCoverageStatus==="fully_priced"&&Number.isFinite(weighted.usd)});
       }
+      const ancestors=workAncestors(database);
       const events=database.prepare(`SELECT w.* FROM work_lifecycle_fact w
         WHERE w.observed_at_ms>=? AND w.observed_at_ms<=? AND ${committedPredicate("w")}
         ORDER BY w.observed_at_ms,w.source_id,w.source_offset`).all(from-24*3600000,nowMs)
         .map((e)=>({key:Buffer.from(e.task_key).toString("hex"),session:String(e.session_id),
-          kind:e.kind,atMs:e.observed_at_ms,durationMs:e.duration_ms}));
+          kind:e.kind,atMs:e.observed_at_ms,durationMs:e.duration_ms,ancestors:ancestors.get(String(e.session_id))??[]}));
       const selected=capacity?.status==="available"&&capacity.planScope?.planType===plan?capacity.scenarios?.[capacity.selectedScenario]:null;
       const previousState=previous??storedState;
       const previousCapacity=previousState?.capacityHistory?.filter((c)=>c.planType===plan

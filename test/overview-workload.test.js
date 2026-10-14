@@ -17,7 +17,9 @@ test("parallel parent and children count once; inter-task breaks are excluded",(
 test("provider task duration recovers a missing start independently of inference timing",()=>{
   const result=taskWorkIntervals([event("complete",nowMs,{durationMs:10*M})],{nowMs});
   assert.equal(result.intervals[0].startMs,nowMs-10*M);
-  assert.equal(taskWorkIntervals([event("start",nowMs-5*M),event("complete",nowMs,{durationMs:10*M})],{nowMs}).conflicts,1);
+  const observed=taskWorkIntervals([event("start",nowMs-5*M),event("complete",nowMs,{durationMs:10*M})],{nowMs});
+  assert.equal(observed.conflicts,0);assert.equal(observed.durationDifferences,1);
+  assert.deepEqual(observed.intervals,[{startMs:nowMs-5*M,endMs:nowMs}]);
 });
 test("fresh open tasks with no tokens are working; old unfinished tasks do not grow forever",()=>{
   const events=[event("start",nowMs-20*M)];
@@ -30,6 +32,48 @@ test("duplicates are replay safe; conflicting starts are rejected",()=>{
   const a=event("start",nowMs-10*M),b=event("complete",nowMs);
   assert.equal(taskWorkIntervals([a,a,b,b],{nowMs}).intervals.length,1);
   assert.equal(taskWorkIntervals([a,event("start",nowMs-5*M),b],{nowMs}).conflicts,1);
+});
+test("lineage-proven replay is removed while unrelated and differing completions remain conflicts",()=>{
+  const start=event("start",nowMs-10*M),end=event("complete",nowMs-5*M,{durationMs:5*M});
+  const copies=[event("start",nowMs-4*M,{session:"child",ancestors:["session"]}),
+    event("complete",nowMs-4*M+1,{session:"child",ancestors:["session"],durationMs:5*M})];
+  for(const events of [[start,end,...copies],[...copies,end,start]]){
+    const r=taskWorkIntervals(events,{nowMs});assert.equal(r.conflicts,0);assert.equal(r.replayed,2);
+    assert.deepEqual(r.intervals,[{startMs:nowMs-10*M,endMs:nowMs-5*M}]);
+  }
+  assert.equal(taskWorkIntervals([start,end,...copies.map(({ancestors,...e})=>e)],{nowMs}).conflicts,1);
+  assert.equal(taskWorkIntervals([start,end,{...copies[1],durationMs:6*M}],{nowMs}).conflicts,1);
+  const continued=taskWorkIntervals([start,copies[0],event("complete",nowMs,{session:"child",ancestors:["session"]})],{nowMs});
+  assert.equal(continued.conflicts,0);assert.deepEqual(continued.intervals,[{startMs:nowMs-10*M,endMs:nowMs}]);
+});
+test("seconds of elapsed-timer skew retain work but reversed boundaries still fail",()=>{
+  const r=taskWorkIntervals([event("start",nowMs-10*M),event("complete",nowMs,{durationMs:10*M+21518})],{nowMs});
+  assert.equal(r.conflicts,0);assert.equal(r.durationDifferences,1);assert.equal(r.intervals[0].startMs,nowMs-10*M);
+  assert.equal(taskWorkIntervals([event("complete",nowMs-10*M),event("start",nowMs)],{nowMs}).conflicts,1);
+});
+test("stale quota and rebound cannot double count consumption in any card",()=>{
+  const q=(minutes,usedPercent,resetKey="r")=>({atMs:nowMs-minutes*M,usedPercent,resetKey});
+  const input={nowMs,events:[event("start",nowMs-30*M),event("complete",nowMs)],
+    quota:[q(30,10),q(25,16),q(20,10),q(15,16),q(10,15),q(5,17),q(0,16)],
+    usage:[{atMs:nowMs-2*M,session:"session",usd:7,priced:true}],
+    capacity:{usd:100,availableAtMs:nowMs-60*M},comparisonAnchorMs:nowMs-30*M};
+  const r=analyzeWorkload(input);
+  assert.equal(r.coverage.actualPp,7);assert.equal(r.adjustments.quotaStaleObservations,3);
+  assert.equal(r.daily.reduce((s,d)=>s+d.light+d.medium+d.heavy+d.unclassified,0),7);
+  assert.equal(r.allowance.remainingPercent,83);assert.equal(r.allowance.observedAt,new Date(nowMs-5*M).toISOString());
+  assert.equal(r.comparison.points.at(-1).value,null); // no API usage before this accepted endpoint
+  assert.equal(r.allowance.points.at(-1).remainingPercent,null);
+  assert.deepEqual(analyzeWorkload({...input,quota:input.quota.toReversed()}).coverage,r.coverage);
+});
+test("watermarks honor reset identities, old display-window evidence and conflicting gaps",()=>{
+  const from=nowMs-168*60*M,q=(atMs,usedPercent,resetKey="r")=>({atMs,usedPercent,resetKey});
+  const r=analyzeWorkload({nowMs,events:[event("start",from),event("complete",nowMs)],
+    quota:[q(from-M,16),q(from+M,10),q(from+2*M,16),q(nowMs-5*M,17),q(nowMs,1,"new")]});
+  assert.equal(r.coverage.actualPp,1);assert.equal(r.allowance.remainingPercent,99);
+  assert.equal(r.adjustments.quotaStaleObservations,1);assert.equal(r.allowance.points.at(-1).breakBefore,true);
+  const gap=analyzeWorkload({nowMs,events:[event("start",nowMs-20*M),event("complete",nowMs)],
+    quota:[q(nowMs-20*M,10),q(nowMs-15*M,11),q(nowMs-15*M,12),q(nowMs-10*M,15),q(nowMs,16)]});
+  assert.ok(gap.errors.some(e=>e.code==="quota_observation_conflict"));assert.equal(gap.coverage.actualPp,1);
 });
 test("actual historical composite is independent of classification, pricing and API capacity",()=>{
   const v=analyzeWorkload({nowMs,events:[event("start",nowMs-120*M),event("complete",nowMs)],

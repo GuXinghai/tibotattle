@@ -1,7 +1,7 @@
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 export const WORKLOAD_POLICY = Object.freeze({
-  version: "task-workload-v1", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
+  version: "task-workload-v2", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
   currentMs: 15 * MINUTE, minimumBins: 9, minimumClassBins: 3, minimumClassMs: MINUTE,
 });
 const LEVELS = ["light", "medium", "heavy"];
@@ -36,12 +36,22 @@ export function taskWorkIntervals(events, { nowMs, liveSinceMs = nowMs, sourceFr
   for (const e of events) {
     if (!finite(e.atMs) || e.atMs > nowMs || typeof e.key !== "string") continue;
     const group = groups.get(e.key) ?? [];
-    if (!group.some((x) => x.kind === e.kind && x.atMs === e.atMs && x.durationMs === e.durationMs)) group.push(e);
+    if (!group.some((x) => x.session === e.session && x.kind === e.kind && x.atMs === e.atMs && x.durationMs === e.durationMs)) group.push(e);
     groups.set(e.key, group);
   }
   const intervals = [], incomplete = [];
-  let active = 0, unresolved = 0, conflicts = 0;
-  for (const group of groups.values()) {
+  let active = 0, unresolved = 0, conflicts = 0, replayed = 0, durationDifferences = 0;
+  for (const candidates of groups.values()) {
+    // Only explicit ancestry establishes replay. Unrelated sessions with the
+    // same key remain conflicting; a genuine child completion may close an
+    // ancestor's open task. Different terminal durations are not deduplicated.
+    const owned = candidates.filter((e) => {
+      const copied = candidates.some((a) => e.ancestors?.includes(a.session)
+        && a.kind === e.kind && (e.kind !== "complete" || a.durationMs === e.durationMs));
+      if (copied) replayed++;
+      return !copied;
+    });
+    const group=owned.filter((e,i)=>owned.findIndex(x=>x.kind===e.kind&&x.atMs===e.atMs&&x.durationMs===e.durationMs)===i);
     group.sort((a, b) => a.atMs - b.atMs);
     const starts = group.filter((x) => x.kind === "start");
     const ends = group.filter((x) => ["complete", "abort"].includes(x.kind));
@@ -49,10 +59,12 @@ export function taskWorkIntervals(events, { nowMs, liveSinceMs = nowMs, sourceFr
     const begin = starts[0], end = ends[0];
     if (end) {
       const startMs = begin?.atMs ?? (finite(end.durationMs) ? end.atMs - end.durationMs : null);
-      if (!finite(startMs) || startMs < 0 || end.atMs < startMs
-          || begin && finite(end.durationMs) && Math.abs(end.atMs - startMs - end.durationMs) > 2000) {
+      if (!finite(startMs) || startMs < 0 || end.atMs < startMs) {
         conflicts++; continue;
       }
+      // Work is the observed task interval, including tools and waiting.
+      // A separate elapsed timer is diagnostic evidence, not a veto on work.
+      if (begin && finite(end.durationMs) && Math.abs(end.atMs - startMs - end.durationMs) > 2000) durationDifferences++;
       intervals.push({ startMs, endMs: end.atMs });
       continue;
     }
@@ -75,7 +87,7 @@ export function taskWorkIntervals(events, { nowMs, liveSinceMs = nowMs, sourceFr
       }
     }
   }
-  return { intervals, incomplete, active, unresolved, conflicts };
+  return { intervals, incomplete, active, unresolved, conflicts, replayed, durationDifferences };
 }
 
 // Exact weighted 1-D three-means; O(3*n*n), O(3*n) memory, no random seed.
@@ -162,22 +174,34 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const daily = Array.from({ length: 7 }, (_, i) => ({ date: iso(todayUtc - (6 - i) * 24 * HOUR).slice(0,10),
     light: 0, medium: 0, heavy: 0, unclassified: 0, covered: false }));
   const dayMap = new Map(daily.map((d) => [d.date, d]));
-  const observations = [];
-  for (const x of [...quota].filter((q) => q.atMs <= nowMs && q.atMs >= fromMs
+  const allObservations = [];
+  for (const x of [...quota].filter((q) => q.atMs <= nowMs && q.atMs >= 0
     && finite(q.usedPercent) && q.usedPercent >= 0 && q.usedPercent <= 100).sort((a,b) => a.atMs-b.atMs)) {
-    const last = observations.at(-1);
+    const last = allObservations.at(-1);
     if (last?.atMs === x.atMs) {
       if (last.usedPercent !== x.usedPercent || last.resetKey !== x.resetKey) {
-        last.conflict = true; errors.push({ code: "quota_observation_conflict", stage: "quota" });
+        last.conflict = true;
+        if(x.atMs>=fromMs)errors.push({ code: "quota_observation_conflict", stage: "quota" });
       }
-    } else observations.push({ ...x });
+    } else allObservations.push({ ...x });
+  }
+  const observations=allObservations.filter(q=>q.atMs>=fromMs);
+  const watermark = new Map(), pairs = [];
+  for(const q of allObservations.filter(q=>q.atMs<fromMs&&!q.conflict))
+    watermark.set(q.resetKey,Math.max(watermark.get(q.resetKey)??0,q.usedPercent));
+  let previous = null, staleQuota = 0;
+  for (const b of observations) {
+    if (b.conflict) { previous = null; continue; }
+    const high = watermark.get(b.resetKey);
+    if (high !== undefined && b.usedPercent < high) {
+      b.stale = true; staleQuota++; continue;
+    }
+    if (previous?.resetKey === b.resetKey) pairs.push([previous,b,b.usedPercent-(high??previous.usedPercent)]);
+    watermark.set(b.resetKey,b.usedPercent);
+    previous = b;
   }
   let actualPp = 0, actualWorkMs = 0;
-  for (let i = 1; i < observations.length; i++) {
-    const a = observations[i-1], b = observations[i];
-    if (a.conflict || b.conflict || a.resetKey !== b.resetKey) continue;
-    const delta = b.usedPercent-a.usedPercent;
-    if (delta < 0) { errors.push({ code:"quota_observation_conflict", stage:"quota" }); continue; }
+  for (const [a,b,delta] of pairs) {
     const ms = measure(a.atMs, b.atMs);
     const unknown = work.incomplete.some((x) => x.startMs < b.atMs && x.endMs > a.atMs);
     if (ms > 0 && !unknown) { actualPp += delta; actualWorkMs += ms; }
@@ -203,7 +227,9 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
       if (covered > 0) { bin.coveredWorkMs += covered; bin.actualCovered = true; }
     }
   }
-  const latest = observations.at(-1);
+  const accepted = observations.filter((q) => !q.conflict && !q.stale);
+  const last = observations.at(-1);
+  const latest = last?.conflict ? last : accepted.at(-1);
   const remainingPercent = latest && !latest.conflict ? 100-latest.usedPercent : null;
   const workHours = ["heavy","medium","light"].map((level) => {
     const rows = bins.filter((b) => b.level === level && b.actualCovered);
@@ -223,22 +249,22 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const current = { state:currentState, level: currentState==="working" ? classify(usdRate,centers) : null,
     ratePpPerHour:currentState==="working" ? currentRate : null,
     hours:currentState==="working" ? ratioHours(remainingPercent,currentRate) : null };
-  const first = observations.find((q) => !q.conflict);
+  const first = accepted[0];
   let anchor = finite(comparisonAnchorMs) ? comparisonAnchorMs : first?.atMs ?? nowMs;
   // A new weekly allowance starts a new comparison, even within an hour.
-  const cycleStart = observations.find((q) => !q.conflict && q.resetKey === latest?.resetKey);
+  const cycleStart = accepted.find((q) => q.resetKey === latest?.resetKey);
   if (cycleStart) anchor = Math.max(anchor, cycleStart.atMs);
   const versions=capacityHistory.length?capacityHistory:capacity?[capacity]:[];
   if(versions.length)anchor=Math.max(anchor,versions[0].availableAtMs);
   if (nowMs-anchor>HOUR && nowMs-(latest?.atMs??0)>HOUR) anchor=nowMs;
   while (nowMs-anchor>=HOUR) anchor+=40*MINUTE;
-  const base = observations.find((q) => !q.conflict && q.atMs>=anchor && q.atMs<anchor+WORKLOAD_POLICY.bucketMs);
+  const base = accepted.find((q) => q.atMs>=anchor && q.atMs<anchor+WORKLOAD_POLICY.bucketMs);
   const comparisonCapacity=base?versions.filter(c=>c.availableAtMs<=base.atMs).at(-1):null;
   const comparisonUsd=finite(comparisonCapacity?.usd)&&comparisonCapacity.usd>0?comparisonCapacity.usd:null;
   const points=[];
   if (base && comparisonUsd!==null) {
     const grouped = new Map();
-    for (const q of observations.filter((q) => !q.conflict && q.atMs>=base.atMs && q.resetKey===base.resetKey)) grouped.set(Math.floor(q.atMs/WORKLOAD_POLICY.bucketMs),q);
+    for (const q of accepted.filter((q) => q.atMs>=base.atMs && q.resetKey===base.resetKey)) grouped.set(Math.floor(q.atMs/WORKLOAD_POLICY.bucketMs),q);
     for (const q of grouped.values()) {
       const us=selectedUsage.filter((u) => u.atMs>base.atMs&&u.atMs<=q.atMs);
       const e=100*us.reduce((s,u)=>s+(u.priced?u.usd:0),0)/comparisonUsd;
@@ -255,8 +281,9 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
     groupedErrors.set(key,{...error,count:(prior?.count??0)+(error.count??1)});}
   return { schemaVersion:"overview-workload-v1", policyVersion:WORKLOAD_POLICY.version,
     generatedAt:iso(nowMs), timeZone, status:errors.length?"partial":"available", errors:[...groupedErrors.values()],
+    adjustments:{workReplayEvents:work.replayed,workDurationDifferences:work.durationDifferences,quotaStaleObservations:staleQuota},
     allowance:{ remainingPercent, observedAt:latest?iso(latest.atMs):null,
-      points:allowanceRows.map((q,i)=>({at:iso(q.atMs),remainingPercent:q.conflict?null:100-q.usedPercent,
+      points:allowanceRows.map((q,i)=>({at:iso(q.atMs),remainingPercent:q.conflict||q.stale?null:100-q.usedPercent,
         breakBefore:i===0||q.resetKey!==allowanceRows[i-1].resetKey||q.atMs-allowanceRows[i-1].atMs>15*MINUTE})) },
     workHours, classification:{ centers, version:WORKLOAD_POLICY.version }, daily, current,
     comparison:{anchorMs:base?.atMs??anchor,capacityUsd:comparisonUsd,points},

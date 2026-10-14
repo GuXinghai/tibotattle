@@ -135,6 +135,25 @@ source cursor are provisional; recovery and source replacement remove them with
 the other affected facts. Work includes tools and necessary waiting, and parallel
 intervals count once. Inference performance timing remains independent.
 
+Workload policy `task-workload-v2` projects, rather than rewrites, these facts.
+Retained unambiguous ancestry identifies copied task boundaries, including
+paginated forks; a copied completion must also match the ancestor's reported
+duration. New child work remains included, and unsupported/cyclic ancestry does
+not establish replay. Complete ordered timestamp boundaries define work even
+when the reported timer differs by seconds. Missing starts still require a
+valid reported duration; reversed or unpaired conflicting boundaries remain
+errors. The projection reports replay and duration-difference counts.
+
+Quota consumption is the increase beyond each reset/plan track's previously
+observed high watermark. A lower stale snapshot never replaces its pairing
+anchor and its rebound cannot be charged again. Relevant pre-window evidence
+seeds the watermark without allocating pre-window consumption. Conflicting
+same-time readings remain errors and break allocation coverage. Regressed
+observations remain in the store, appear as chart gaps and are counted in the
+projection's `adjustments`; the latest accepted observation retains its actual
+timestamp. This is an observed-consumption policy, not proof that a provider
+cannot issue a credit within a reset cycle.
+
 Overview groups committed usage timestamps into five-minute bins without
 splitting fifteen-minute display rollups. Its comparison anchor and capacity
 history persist in `private/overview-workload-state.json` under the same state

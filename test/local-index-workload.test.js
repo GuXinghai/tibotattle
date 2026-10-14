@@ -45,6 +45,35 @@ test("unreadable store retains last-good time and exposes a classified failure",
   const result=readLocalIndexWorkload({indexFile:"nonexistent-overview-test.sqlite",nowMs:at+M,previous});
   assert.equal(result.status,"stale");assert.equal(result.generatedAt,previous.generatedAt);assert.ok(result.errors.length);
 });
+test("projection uses retained ancestry to deduplicate paginated work without changing facts",async()=>{
+  const w=createWorkspace({files:2,events:2});
+  try{
+    const indexFile=join(w.state,"lineage.sqlite"),files=w.receipt.sources;
+    const ids=await Promise.all(files.map(async file=>JSON.parse((await readFile(file,"utf8")).split("\n")[0]).payload.id));
+    const task=(t,type,turn_id,duration_ms)=>line(t,"event_msg",{type,turn_id,...(duration_ms===undefined?{}:{duration_ms})});
+    await writeFile(files[0],line(at,"session_meta",{id:ids[0]})+line(at,"turn_context",{model:"gpt-6-astra"})+
+      task(at,"task_started","copied")+task(at+5*M,"task_complete","copied",5*M+12000));
+    await writeFile(files[1],line(at+6*M,"session_meta",{id:ids[1]})+line(at+6*M,"turn_context",{model:"gpt-6-astra"})+
+      task(at+6*M,"task_started","copied")+task(at+6*M+1,"task_complete","copied",5*M+12000)+
+      task(at+7*M,"task_started","own-child-work")+task(at+10*M,"task_complete","own-child-work",3*M));
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const db=openLocalIndexStore(indexFile);
+    const setParent=(child,parent)=>db.prepare('UPDATE source SET lineage_json=? WHERE session_id=(SELECT id FROM session WHERE session_uuid=?)')
+      .run(JSON.stringify({lineage:{isFork:true,historyMode:"paginated",parentId:parent}}),child);
+    setParent(ids[1],ids[0]);
+    const before=db.prepare("SELECT hex(task_key) k,kind,observed_at_ms,duration_ms FROM work_lifecycle_fact ORDER BY source_id,source_offset").all();db.close();
+    const result=readLocalIndexWorkload({indexFile,nowMs:at+11*M,sourceFresh:true});
+    assert.equal(result.coverage.workMs,8*M);assert.equal(result.adjustments.workReplayEvents,2);
+    assert.equal(result.adjustments.workDurationDifferences,1);assert.deepEqual(result.errors,[]);
+    assert.doesNotMatch(JSON.stringify(result),new RegExp(ids.join('|')));
+    const after=openLocalIndexStore(indexFile);
+    assert.deepEqual(after.prepare("SELECT hex(task_key) k,kind,observed_at_ms,duration_ms FROM work_lifecycle_fact ORDER BY source_id,source_offset").all(),before);
+    after.prepare('UPDATE source SET lineage_json=? WHERE session_id=(SELECT id FROM session WHERE session_uuid=?)')
+      .run(JSON.stringify({lineage:{isFork:true,parentId:ids[1]}}),ids[0]);after.close();
+    const cyclic=readLocalIndexWorkload({indexFile,nowMs:at+11*M});
+    assert.ok(cyclic.errors.some(e=>e.code==="work_boundary_conflict"));assert.equal(cyclic.coverage.workMs,3*M);
+  }finally{w.cleanup();}
+});
 test("v4 refresh refuses a missing device salt before any forward migration",async()=>{
   const w=createWorkspace({files:1,events:5});
   const indexFile=join(w.state,"identity.sqlite");
