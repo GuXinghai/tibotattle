@@ -154,6 +154,17 @@ test("failed initial and retained breakdowns offer a bounded retry without closi
   assert.doesNotMatch(h.panel().textContent, /trends.mixRetained/);
 });
 
+test("a companion without the breakdown route offers no futile retry", async () => {
+  const h = harness(); h.render(snapshot(), [period()]); h.toggle().click();
+  h.requests[0].resolve({ status: "unsupported" }); await settle();
+  assert.match(h.panel().textContent, /unavailablePlain/);
+  assert.equal(h.panel().children.some(child => child.className.includes("divergence-retry")), false);
+  h.toggle().click(); h.toggle().click();
+  assert.equal(h.requests.length, 1, "reopening repeats no request that cannot succeed");
+  h.render(snapshot("2"), [period()]);
+  assert.equal(h.requests.length, 2, "a new revision asks again");
+});
+
 test("new revisions refresh behind retained details and failed refreshes can retry", async () => {
   const h = harness(); h.render(snapshot(), [period()]); h.toggle().click();
   h.requests[0].resolve(result()); await settle();

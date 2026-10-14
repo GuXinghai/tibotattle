@@ -8448,15 +8448,22 @@ test("divergence window-breakdown client sends bounded integers and degrades on 
   const guardClient = new LocalCompanionClient({
     fetchImpl: async (url) => { noCall.push(url); return new Response("{}", { status: 200 }); },
   });
-  assert.equal((await guardClient.windowBreakdown(1.5, 2)).status, "unavailable");
+  assert.equal((await guardClient.windowBreakdown(1.5, 2)).status, "unsupported");
   assert.equal(noCall.length, 0);
 
-  // A companion predating the route answers 404; the panel degrades rather
-  // than throwing.
-  const oldClient = new LocalCompanionClient({
-    fetchImpl: async () => new Response("", { status: 404 }),
+  // A companion predating the route answers 404/405, or refuses the request
+  // with 400; the panel degrades without a retry rather than throwing. A
+  // server failure still throws so the panel can offer Retry.
+  for (const status of [400, 404, 405]) {
+    const oldClient = new LocalCompanionClient({
+      fetchImpl: async () => new Response("", { status }),
+    });
+    assert.equal((await oldClient.windowBreakdown(100, 200)).status, "unsupported");
+  }
+  const failingClient = new LocalCompanionClient({
+    fetchImpl: async () => new Response("", { status: 503 }),
   });
-  assert.equal((await oldClient.windowBreakdown(100, 200)).status, "unavailable");
+  await assert.rejects(failingClient.windowBreakdown(100, 200));
 });
 
 // The hourly usage chart was reported clipped at the bottom (x-axis and the

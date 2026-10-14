@@ -3745,20 +3745,11 @@ function renderTimelineConfidence(
     && (viewport.startMs !== full.startMs || viewport.endMs !== full.endMs);
   element.classList.toggle("low", matched < 3 || excluded > matched);
   if (!visiblePoints.length) {
-    setProductText(
-      element,
-      "No points fall inside this zoomed interval. Reset the view to return to the available evidence.",
-    );
+    setLocalizedText(element, "dashboard.timeline.noVisiblePoints");
   } else if (activePoints.length === 0) {
-    setProductText(
-      element,
-      "No local activity or provider-reported quota movement occurred in this interval.",
-    );
+    setLocalizedText(element, "dashboard.timeline.noActivity");
   } else if (!usingLive) {
-    setProductText(
-      element,
-      "This historical calibration view has no per-window reset annotations. Treat it as diagnostic evidence, not a live allowance reading.",
-    );
+    setLocalizedText(element, "dashboard.timeline.historicalOnly");
   } else if (matched < 3) {
     setLocalizedText(element, "dashboard.timeline.lowConfidence", {
       visible: tPlural("dashboard.timeline.visibleWindow", matched),
@@ -3900,18 +3891,18 @@ function renderTimelineSummary(
   const liveSignedAuc = signedResidualAucPpHours(matched);
   const values = [
     [
-      "Matched windows",
-      "Windows with both observed quota movement and a comparable cost-implied movement.",
+      t("dashboard.summary.matchedWindows"),
+      t("dashboard.summary.matchedWindowsExplanation"),
       unavailable ? "—" : compact(matched.length),
     ],
     [
-      "Mean absolute error",
-      "The average absolute difference between observed and cost-implied quota movement, in percentage points.",
+      t("dashboard.summary.meanAbsoluteError"),
+      t("dashboard.summary.meanAbsoluteErrorExplanation"),
       formatPp(live ? liveMae : sensitivity?.mae_pp ?? sensitivity?.weighted_mae_pp ?? summary.mean_absolute_error_pp),
     ],
     [
-      "Peak residual",
-      "The largest absolute observed-versus-calculated difference in the selected calibration view.",
+      t("dashboard.summary.peakResidual"),
+      t("dashboard.summary.peakResidualExplanation"),
       formatPp(live ? livePeak : summary.rolling_peak_absolute_residual_pp),
     ],
     [
@@ -3922,8 +3913,8 @@ function renderTimelineSummary(
       ),
     ],
     [
-      "Usable quota coverage",
-      "The share of active windows with enough quota evidence to make a comparison.",
+      t("dashboard.summary.usableCoverage"),
+      t("dashboard.summary.usableCoverageExplanation"),
       activePoints.length
         ? formatPercent(matched.length / activePoints.length * 100, 1)
         : "—",
@@ -4452,11 +4443,14 @@ function divergencePeriodItem(period, rangeContext, state) {
       if (state.expanded) state.load();
       return;
     }
-    state.failed = breakdown?.status !== "available";
+    // A companion that lacks or refuses the route answers the same way every
+    // time, so that answer is settled for this revision and offers no Retry.
+    const unsupported = breakdown?.status === "unsupported";
+    state.failed = breakdown?.status !== "available" && !unsupported;
     if (breakdown?.status === "available") {
       state.breakdown = breakdown;
       state.loadedRevision = revision;
-    }
+    } else if (unsupported) state.loadedRevision = revision;
     // Failed refreshes never erase a successful answer or mark failure as
     // loaded. Reopening or the next dashboard refresh can try again.
     state.render();
@@ -9730,6 +9724,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   const main = documentRef.querySelector("#main");
   if (!dialog || !content || !main) return;
   const view = (key, panels, filters = "") => ({ key, panels, filters });
+  const planFilter = "#weekly-plan-control, #weekly-plan-note";
   const configurations = [
     { id: "usage", page: "usage", level: 1, root: "#usage-screen", views: [
       // Reporting-period totals head every view except Cache, whose impact
@@ -9744,11 +9739,15 @@ function mountDashboardLayout({ documentRef, windowRef }) {
         view("list", ".work-usage-table-panel, .work-usage-body > .table-pagination, .work-usage-components"),
         view("components", ".work-usage-mix"),
       ] },
+    // The plan selects the population of every chart except the forecast, which
+    // follows the current allowance; the 5h/7d window applies to the
+    // equivalent history only.
     { id: "allowance", page: "allowance", level: 1, root: "#allowance-screen",
       emptyAfter: "#allowance-filters", views: [
-        view("changes", ".trends-capacity-panel"),
-        view("differences", ".allowance-differences"),
-        view("equivalent", ".allowance-equivalent", "#allowance-window-control"),
+        view("changes", ".trends-capacity-panel", planFilter),
+        view("differences", ".allowance-differences", planFilter),
+        view("equivalent", ".allowance-equivalent",
+          `#allowance-window-control, ${planFilter}`),
         view("forecast", "#weekly-pace-forecast"),
       ] },
     { id: "allowance-differences", page: "allowance", level: 2, label: "differences",

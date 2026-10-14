@@ -5778,12 +5778,15 @@ export class LocalCompanionClient {
    * The per-model / per-speed cost mix for one bounded [fromMs, toMs] window,
    * repriced from the unified local index by the companion. Used to explain a
    * detected divergence period with its own contributor mix. A companion that
-   * predates the route (404/405) reads back as an unavailable breakdown rather
-   * than throwing, so the panel degrades to its range-level context.
+   * predates the route (404/405) or refuses the request (400) reads back as an
+   * "unsupported" breakdown rather than throwing, so the panel degrades to its
+   * range-level context. Repeating such a request cannot succeed, so unlike a
+   * transport failure or the companion's own "unavailable" it offers no retry.
    */
   async windowBreakdown(fromMs, toMs) {
+    const unsupported = () => ({ ...normalizeWindowBreakdown(null), status: "unsupported" });
     if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs)) {
-      return normalizeWindowBreakdown(null);
+      return unsupported();
     }
     const query = new URLSearchParams({ from: String(fromMs), to: String(toMs) });
     try {
@@ -5792,9 +5795,7 @@ export class LocalCompanionClient {
         `${LOCAL_ROOT}/timeline/window-breakdown?${query}`,
       ));
     } catch (error) {
-      if ([400, 404, 405].includes(error?.status)) {
-        return normalizeWindowBreakdown(null);
-      }
+      if ([400, 404, 405].includes(error?.status)) return unsupported();
       throw error;
     }
   }
