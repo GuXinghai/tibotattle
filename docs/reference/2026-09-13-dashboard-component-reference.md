@@ -25,10 +25,12 @@ wraps onto a second header row. Community hides the reporting control.
 
 Page-local filters use the same `.segmented-control` and selected state. A
 `.dashboard-filter-group` may pair a `.dashboard-filter-label` with a filter.
-Filters are filled controls. A tablist uses `.dashboard-tabs` (or the existing
-`.performance-models`) with child `[role="tab"]` elements and
-`aria-selected="true"`; tabs use the baseline and underline treatment. Do not
-represent tabs as period or filter pills.
+Filters are filled controls. A tablist uses `.dashboard-tabs` with child
+`[role="tab"]` elements and `aria-selected="true"`; tabs use the baseline and
+underline treatment. Do not represent tabs as period or filter pills. The model
+performance model selector (`.performance-models`) is a filter: it keeps its
+tablist semantics for the one model panel it controls but is drawn as a
+labeled `.segmented-control`, so it never resembles the Speed/Latency view tabs.
 
 Use `.dashboard-actions` (or `.dashboard-action-group`) for a wrapping group of
 `.button` actions. Add `.dashboard-action-status` with `role="status"` when an

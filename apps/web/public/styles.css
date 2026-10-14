@@ -4847,7 +4847,7 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 }
 .dashboard-shell .segmented-control > button:disabled { cursor: not-allowed; }
 .dashboard-shell .segmented-control > button:focus-visible,
-.dashboard-shell :is(.dashboard-tabs, .performance-models) > [role="tab"]:focus-visible {
+.dashboard-shell .dashboard-tabs > [role="tab"]:focus-visible {
   outline: 3px solid var(--dashboard-focus-ring);
   outline-offset: 2px;
 }
@@ -4875,9 +4875,8 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 .dashboard-shell :is(.button, button)[aria-busy="true"],
 .dashboard-shell :is(.button, button)[data-loading="true"] { cursor: progress; }
 
-/* Tabs have a baseline and an underline rather than the filled filter pill.
-   `.performance-models` is an existing tablist and remains an alias. */
-.dashboard-shell :is(.dashboard-tabs, .performance-models) {
+/* Tabs have a baseline and an underline rather than the filled filter pill. */
+.dashboard-shell .dashboard-tabs {
   display: flex;
   flex-wrap: wrap;
   align-items: stretch;
@@ -4886,8 +4885,7 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
   padding: 0;
   border-bottom: 1px solid var(--line);
 }
-.dashboard-shell :is(.dashboard-tabs, .performance-models) > [role="tab"],
-.dashboard-shell .performance-model {
+.dashboard-shell .dashboard-tabs > [role="tab"] {
   appearance: none;
   display: inline-flex;
   align-items: center;
@@ -4909,13 +4907,11 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
   cursor: pointer;
   transition: background-color .12s ease, border-color .12s ease, color .12s ease;
 }
-.dashboard-shell :is(.dashboard-tabs, .performance-models) > [role="tab"]:hover:not(:disabled),
-.dashboard-shell .performance-model:hover:not(:disabled) {
+.dashboard-shell .dashboard-tabs > [role="tab"]:hover:not(:disabled) {
   color: var(--ink);
   background: var(--surface-quiet);
 }
-.dashboard-shell :is(.dashboard-tabs, .performance-models) > [role="tab"]:is(.active, [aria-selected="true"]),
-.dashboard-shell .performance-model[aria-selected="true"] {
+.dashboard-shell .dashboard-tabs > [role="tab"]:is(.active, [aria-selected="true"]) {
   color: var(--green);
   border-bottom-color: var(--green);
   background: transparent;
@@ -5167,20 +5163,19 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
   .dashboard-shell :is(.chart-card-header, .chart-heading) { gap: var(--space-3); }
 }
 @media (max-width: 520px) {
-  .dashboard-shell :is(.dashboard-tabs, .performance-models) {
+  .dashboard-shell .dashboard-tabs {
     flex-wrap: nowrap;
     overflow-x: auto;
     scrollbar-width: thin;
   }
-  .dashboard-shell :is(.dashboard-tabs, .performance-models) > [role="tab"],
-  .dashboard-shell .performance-model {
+  .dashboard-shell .dashboard-tabs > [role="tab"] {
     flex: 0 0 auto;
     white-space: nowrap;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .dashboard-shell .dashboard-state-indicator { animation: none; }
-  .dashboard-shell :is(.segmented-control > button, .dashboard-tabs > [role="tab"], .performance-model) { transition: none; }
+  .dashboard-shell :is(.segmented-control > button, .dashboard-tabs > [role="tab"]) { transition: none; }
 }
 
 /* Compact desktop actions remain recognisable and keyboard accessible. */

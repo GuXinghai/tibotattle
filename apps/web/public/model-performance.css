@@ -3,10 +3,8 @@
 .performance-periods { flex-shrink: 0; }
 .performance-periods button { min-height: 36px; white-space: nowrap; }
 .performance-status { min-height: 20px; margin: 12px 0 8px; color: var(--muted); font-size: 12px; }
-.performance-models { display: flex; flex-wrap: wrap; gap: 6px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
 .performance-model { appearance: none; display: inline-flex; align-items: center; gap: 7px; border: 1px solid transparent; border-radius: 8px; padding: 8px 12px; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 13px; }
 .performance-model-icon { width: 18px; height: 18px; }
-.performance-model[aria-selected=true] { background: var(--surface-raised); border-color: var(--line); color: var(--ink); font-weight: 650; }
 .performance-model-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 20px 0 12px; }
 .performance-model-heading h3 { margin: 0; font-size: 21px; }
 .performance-model-identity { display: inline-flex; align-items: center; gap: 9px; }
@@ -99,31 +97,11 @@ html[data-theme="dark"] .performance-axis-line { opacity: .42; }
 .model-performance .performance-status[data-state="error"],
 .model-performance .performance-status[data-state="cancelled"] { color: var(--rust); }
 
-.model-performance .performance-models {
-  align-items: stretch;
-  gap: var(--space-1, 4px);
-  margin: var(--space-4, 16px) 0 var(--space-5, 20px);
-  padding: 0;
-  border-bottom: 1px solid var(--line);
-}
-.model-performance .performance-model {
-  min-width: var(--hit-target, 24px);
-  min-height: 40px;
-  margin: 0;
-  padding: .5rem .72rem;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: var(--radius-xs, 6px) var(--radius-xs, 6px) 0 0;
-  font-size: .76rem;
-  font-weight: var(--weight-semibold, 700);
-  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
-}
-.model-performance .performance-model:hover:not(:disabled) { color: var(--ink); background: var(--surface-quiet); }
-.model-performance .performance-model[aria-selected="true"] {
-  color: var(--ink);
-  border-bottom-color: var(--green);
-  background: var(--green-soft);
-}
+/* The model selector is a filter, like the speed mode: a labeled segmented
+   control, never the underline that marks the Speed/Latency views. It keeps
+   its tablist semantics because it switches the one model panel below. */
+.model-performance .performance-models { flex-wrap: wrap; margin: 0; }
+.model-performance .performance-model { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; }
 .model-performance .performance-model-heading {
   gap: var(--space-3, 12px);
   padding: var(--space-4, 16px) 0 var(--space-3, 12px);
@@ -205,7 +183,7 @@ html[data-theme="dark"] .performance-axis-line { opacity: .42; }
   .model-performance .performance-model { transition: none; }
 }
 
-.performance-mode-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 18px; }
+.performance-mode-controls, .performance-model-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 18px; }
 .performance-modes { flex-shrink: 0; }
 .performance-modes button { min-height: 36px; min-width: 80px; }
 .performance-mode-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0; }

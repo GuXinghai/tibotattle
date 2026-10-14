@@ -559,7 +559,7 @@ export function mountModelPerformance(options = {}) {
       return;
     }
     if (!models.some((model) => model.id === modelId)) modelId = models[0].id;
-    const tabs = element("div", "performance-models"); tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", translate("models"));
+    const tabs = element("div", "segmented-control performance-models"); tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", translate("models"));
     for (const model of models) {
       const presentation = modelUsagePresentation(model.id), displayName = formatModelName(model.id);
       const button = element("button", `performance-model ${presentation.className}`); button.type = "button";
@@ -577,7 +577,9 @@ export function mountModelPerformance(options = {}) {
         remember(); render(); documentRef.getElementById(`performance-tab-${modelId}`)?.focus();
       }); tabs.append(button);
     }
-    root.append(element("span", "performance-filter-label", translate("models")), tabs);
+    const modelControls = element("div", "performance-model-controls");
+    modelControls.append(element("span", "performance-filter-label", translate("models")), tabs);
+    root.append(modelControls);
     const selected = models.find((model) => model.id === modelId);
     const selectedPresentation = modelUsagePresentation(selected.id), selectedName = formatModelName(selected.id);
     const domain = performanceDomain(payload, selected);
