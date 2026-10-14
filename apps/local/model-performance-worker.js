@@ -1,17 +1,11 @@
 import { parentPort, workerData, isMainThread } from 'node:worker_threads';
-import { createHash } from 'node:crypto';
 import { opendir, lstat, mkdir, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
-import { canonicalTelemetryPerformanceJson } from '@app-usagemonitor/telemetry-contract';
 import { MODEL_PERFORMANCE_MAX_WINDOWS } from './model-performance-snapshots.js';
 import { openTimingStore, ingestTimingFile, readTimingRows } from '../../src/platform/index.js';
-import {
-  createModelPerformanceContext,
-  prepareTelemetryPerformanceDay,
-  projectTelemetryPerformanceDay,
-} from '../../src/application/index.js';
+import { createModelPerformanceContext } from '../../src/application/index.js';
 
 // The Windows native SQLite guard retains the two nearest parent-directory
 // handles with delete sharing disabled. A nested supplemental store would
@@ -30,8 +24,7 @@ const PERFORMANCE_DAY = /^\d{4}-\d{2}-\d{2}$/u;
 const PERFORMANCE_PROVIDER = 'openai_codex';
 
 // Separate from accounting: no accounting DB. The worker serves bounded
-// dashboard reads and the independently approved daily performance scheduler;
-// neither path starts before its own caller opts in. Fixed, bounded errors only.
+// dashboard reads. Fixed, bounded errors only.
 async function run() {
   const context = createModelPerformanceContext({ openStore: openTimingStore });
   const abort = new AbortController();
@@ -39,57 +32,6 @@ async function run() {
   let publishedRevision = null;
   const windows = new Map();
   let windowsChanged = false;
-  const pendingPerformanceRequests = [];
-  async function performanceReport(message) {
-    if (!store || typeof message?.requestId !== 'string'
-        || !PERFORMANCE_DAY.test(message.day)
-        || message.provider !== PERFORMANCE_PROVIDER
-        || !Number.isSafeInteger(message.nowEpoch)
-        || message.nowEpoch < 0) {
-      if (typeof message?.requestId === 'string') {
-        parentPort.postMessage({ type: 'performance-unavailable', requestId: message.requestId });
-      }
-      return;
-    }
-    try {
-      const result = readTimingRows(store, { supplement, withRevision: true, day: message.day });
-      const rows = projectTelemetryPerformanceDay(result.rows, {
-        day: message.day,
-        provider: message.provider,
-        now: message.nowEpoch,
-      }).map(record => ({ record, canonical: canonicalTelemetryPerformanceJson(record) }))
-        .sort((left, right) => left.canonical < right.canonical ? -1 : left.canonical > right.canonical ? 1 : 0)
-        .map(({ record }) => record);
-      const facts = JSON.stringify(result.sources.map(({ id, digest, fingerprint, revision, telemetryRevision, parserVersion, replayParserVersion, exhausted, role }) => ({
-        id, digest, fingerprint, revision, telemetryRevision, parserVersion, replayParserVersion, exhausted, role,
-      })));
-      // The timing store's persistent mutation counter advances for every
-      // source write, including ordinary appends and replay corrections.  It
-      // is content-free and independent of the cache/replay generation fence.
-      const sourceRevisionBigInt = result.sources.reduce((sum, source) => sum + BigInt(source.telemetryRevision), 0n);
-      if (sourceRevisionBigInt > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('performance_source_revision_overflow');
-      const sourceRevision = Number(sourceRevisionBigInt);
-      const sourceDigest = createHash('sha256').update(facts).digest('hex');
-      const report = await prepareTelemetryPerformanceDay({
-        records: rows,
-        day: message.day,
-        sourceGeneration: `timing:${result.revision}`,
-        sourceDigest,
-        sourceRevision,
-        parserVersion: result.sources.every(source => source.parserVersion === context.parserVersion)
-          ? `codex-inference-timing-v${context.parserVersion}` : 'codex-inference-timing-mixed',
-      });
-      parentPort.postMessage({ type: 'performance-report', requestId: message.requestId, report });
-    } catch {
-      parentPort.postMessage({ type: 'performance-unavailable', requestId: message.requestId });
-    }
-  }
-  async function drainPerformanceRequests() {
-    while (pendingPerformanceRequests.length > 0 && !stopped) {
-      const message = pendingPerformanceRequests.shift();
-      if (message) await performanceReport(message);
-    }
-  }
   const stop = () => { stopped = true; clearTimeout(timer); abort.abort(); };
   parentPort.on('message', message => {
     if (message?.type === 'stop') stop();
@@ -99,15 +41,6 @@ async function run() {
       && message.requestKey === `${message.period}:${message.speedMode}:${message.end}`) {
       windows.set(message.requestKey, message); windowsChanged = true;
       while (windows.size > MODEL_PERFORMANCE_MAX_WINDOWS) windows.delete(windows.keys().next().value);
-    } else if (message?.type === 'performance-day') {
-      if (!store) {
-        if (pendingPerformanceRequests.length < 2) pendingPerformanceRequests.push(message);
-        else if (typeof message.requestId === 'string') {
-          parentPort.postMessage({ type: 'performance-unavailable', requestId: message.requestId });
-        }
-      } else {
-        void performanceReport(message);
-      }
     }
   });
   async function discover() {
@@ -188,7 +121,6 @@ async function run() {
       }), store.key);
     }
     catch { degraded = true; }
-    await drainPerformanceRequests();
     publish(true);
     while (!stopped) {
       try {

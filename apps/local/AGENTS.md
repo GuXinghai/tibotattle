@@ -13,8 +13,7 @@ compose. Apply the repository root guidance first.
   local-network origin for convenience.
 - Treat every local source file, provider response, cached artifact, and query as
   untrusted input. Errors and diagnostics remain bounded and content-free.
-- The local product must remain useful offline. Hosted health, auth, and
-  contribution are optional capabilities with explicit unavailable states.
+- The local product must remain useful offline. Hosted health checks are optional capabilities with explicit unavailable states.
 
 ## State and indexing
 
@@ -38,17 +37,14 @@ compose. Apply the repository root guidance first.
 
 ## API and presentation semantics
 
-- Keep quota refresh, accounting refresh, index maintenance, and contribution
-  sync independently observable. One successful subsystem must not mask another
+- Keep quota refresh, accounting refresh, and index maintenance independently observable. One successful subsystem must not mask another
   failure.
 - Return explicit unknown, stale, partial, unavailable, cancelled, and failed
   states. Preserve a last-good value only with its source and freshness label.
 - Use same-origin opaque capabilities for privileged loopback actions and bind
   them to one operation and lifecycle. Do not place credentials or private state
   in URLs, browser storage, or rendered diagnostics.
-- Contribution routes may consume only prepared, privacy-validated data and
-  must preserve versioned authorization, durable opt-out, legacy review/consent,
-  retry and deletion guarantees.
+- Community sharing and contribution upload were removed from the desktop app on 2026-10-13 ([decision](../../docs/decisions/2026-10-13-desktop-sharing-removal.md)). Do not add a route that sends local data without a new decision.
 - Do not relay retired participant deletion or private owner-erasure requests.
   Device disconnect revokes this device's authority and preserves hosted/local
   history; browser sign-out and local identity reset are different operations.

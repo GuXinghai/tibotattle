@@ -76,8 +76,7 @@ evidence without advancing retained history. Manual **Refresh** updates quota
 and detailed accounting together, replacing retained or unavailable details
 only after its generation-bound full projection completes.
 
-To let the personal loopback dashboard read central-service health and use the
-fixed hosted identity/participation relay:
+To let the personal loopback dashboard read central-service health:
 
 ```bash
 USAGE_MONITOR_PORT=8791 \
@@ -85,32 +84,7 @@ USAGE_MONITOR_PORT=8791 \
   node ./apps/local/server.js
 ```
 
-`USAGE_MONITOR_CENTRAL_ORIGIN` is fixed at startup. It must be either explicit
-development loopback (`http://127.0.0.1:<port>`) or a non-loopback HTTPS
-origin. The credential-free relay permits only `GET /api/health`. The separate
-participant allowlist contains eight current browser operations: enrollment;
-Google and Apple sign-in start/result; session; logout; and
-device-pairing creation. Collector device sync and upload use their own fixed
-hosted client rather than widening the browser relay. Neither relay can proxy
-an arbitrary host, path, query, content type, cookie, CSRF value,
-authorization value, redirect, or upstream response.
-
-The participant relay is intentionally narrow rather than a generic reverse
-proxy. It validates bounded JSON request and response bodies, forwards only the
-fixed TiboTattle session cookie and route-appropriate CSRF value, rejects
-incoming `Authorization`, and rejects unexpected upstream cookies. This lets
-legacy clients complete their identity/pairing journey from one origin without
-exposing raw logs or granting arbitrary network access. The shared dashboard
-has no social sign-in, consent or pairing controls; Electron uses its existing
-accountless sharing controller and persisted preference.
-
-Retired self-service `DELETE /api/v1/me` and private owner erasure are not
-participant-relay permissions. Legacy confirmed **Disconnect this device** uses
-`POST /api/local/contribution/device-disconnect` and the collector's fixed
-hosted device client; it does not widen the relay or delete hosted/local
-history. This describes the
-[2026-08-30 source contract](../../docs/decisions/2026-08-30-self-service-deletion-retirement.md),
-not a verified installed release or hosted deployment.
+`USAGE_MONITOR_CENTRAL_ORIGIN` is fixed at startup. It must be either explicit development loopback (`http://127.0.0.1:<port>`) or a non-loopback HTTPS origin. The credential-free relay permits only `GET /api/health`. The participant browser relay, its sign-in and device-pairing routes, and the device-disconnect route were removed with desktop sharing on 2026-10-13 ([decision](../../docs/decisions/2026-10-13-desktop-sharing-removal.md)).
 
 ## Electron developer app
 
@@ -134,9 +108,7 @@ On first use:
 4. during manual **Refresh**, keep reading as
    TiboTattle continues bounded slices under that original action, or choose
    **Cancel** and resume later; and
-5. review the privacy-safe local results; then
-6. optionally choose **Contribute and keep it current**, review the exact first
-   prepared contribution, and send it explicitly.
+5. review the privacy-safe local results.
 
 Every detailed-analysis slice is deliberately bounded. A separate 128 MiB
 checkpointed headline pass publishes current quota and recent content-free
@@ -252,115 +224,24 @@ resources stay inside the app directory. A source build never inherits release
 signing or installer claims; those come only from the retained Windows release gates.
 
 
-## Product and contribution boundary
+## Product boundary
 
-The installed app is the local collection and lifecycle owner. Its private
-loopback dashboard is the canonical personal-reporting surface. A hosted site
-is for acquisition, downloads, documentation, and delayed public community
-aggregates; it does not receive permission to read Codex files and is not a
-substitute for the personal dashboard.
+The installed app is the local collection and lifecycle owner. Its private loopback dashboard is the canonical personal-reporting surface. A hosted site is for acquisition, downloads, documentation, and public aggregates; it does not receive permission to read Codex files and is not a substitute for the personal dashboard.
 
-The native/standalone contribution path is off by default. The Electron
-workstream uses the [accepted accountless policy](../../docs/decisions/2026-09-04-accountless-sharing-policy.md)
-and keeps this legacy hosted transport disabled.
-
-Accountless usage sync starts independently of dashboard refresh and otherwise
-checks every four hours after a completed pass. A successfully published,
-complete changed index now coalesces an upload within 60 seconds of snapshot
-reload. This preserves earlier retry deadlines, server backoff, single-flight
-execution, opt-out and terminal authorization states. Quick, unchanged, failed
-or cancelled refreshes do not claim a new index publication.
-
-The accountless production profile exposes a read-only scheduler snapshot through
-`GET /api/local/diagnostics/contribution`. Its closed `accountless` object contains
-`state`, `lastAttemptAt`, `lastSuccessfulSyncAt`, `lastAcceptedAt`, `nextAttemptAt`
-and `lastFailureCode`. The retired browser **Copy diagnostics** control is no
-longer presented; the closed diagnostic route remains available to its clients.
-Journey phases distinguish `accountless_active`, `accountless_off` and
-`accountless_unavailable`, without inventing legacy consent, sign-in or pairing.
-A successful bounded pass need not accept new chunks or finish historical
-backfill. Missing timestamps remain unavailable. The six live fields reset with
-the companion process; they do not prove continuity across a restart. Fixed-code
-attempt, success and failure notes persist separately in the existing private
-diagnostic log, at most once per code per hour per process. Up to five existing
-support references are retained in the response; private errors, identities,
-paths and payloads are excluded. Legacy profiles keep their existing exact shape.
-
-The legacy contribution gates are:
-
-
-1. an explicit consent choice;
-2. local preparation of a bounded content-free pseudonymous set;
-3. exact local review;
-4. an explicit first send; and
-5. a terminally accepted first upload before recurring contribution can start.
-
-After those gates, the app may attempt one bounded update every six hours while
-it is open. The optional Login Item starts the normal app; no daemon,
-scheduled task, or separate background process continues after the app exits. The
-recurring range begins from an owner-only
-accepted-through watermark bound to the exact destination and contribution
-contract, includes a fixed one-hour overlap for replay-safe server
-deduplication, and covers at most 24 hours per prepared pass. A partial,
-retryable, rejected, aborted, or timed-out pass cannot move the watermark.
-Settings v0.3 first persists an owner-only write-ahead claim containing the
-fixed preparation attempt and exact range contract. An interrupted run
-re-enters that same attempt, verifies any retained review, staging, or
-published evidence, and does not prepare a fresh range while the claim remains.
-Once its prepared-set ID is known, the claim binds and protects that exact set
-through maintenance and the transition to pending upload.
-
-One run requests cooperative abort at a five-minute deadline and is further
-limited to 100 upload jobs and 64 MiB. Shutdown waits for active preparation or
-upload cleanup to quiesce before releasing the single-instance lock. Longer
-offline intervals catch up across successive 24-hour passes; more than 256
-unresolved prepared sets fails closed for repair rather than allowing
-unbounded discovery.
-
-Accepted prepared sets are retired only when every queue job in the set is
-terminally accepted and the bounded artifact path passes the owner-only
-canonical-root checks. The policy protects the reviewed first-send evidence
-and any active claim or pending set from automatic retirement, makes an
-unprotected fully accepted set eligible when it is older than seven days or
-beyond the eight most-recent accepted sets, removes artifacts before compacting
-accepted queue rows, removes at most sixteen eligible sets per pass, and never
-removes retryable, in-flight, or rejected work.
-
-The shared dashboard presents accountless sharing through Electron's existing
-bridge. It has no legacy social contribution or device-disconnect controls.
-The retained legacy **Disconnect this device** contract asks for confirmation, revokes this device's hosted
-authority, clears its local credential/binding, and pauses delivery. Previously
-hosted history, other devices, and local analysis remain. Browser sign-out is
-not device disconnect; private hosted erasure is an owner operation.
-Native troubleshooting-only local erase and targeted Credential Manager reset remain
-under **Data & Diagnostics…** and are not contribution steps.
-
-The incremental controller persists `paused: true`,
-`pausedReason: "device_disconnected"`, and `nextAttemptAt: null` before remote
-revocation or local credential cleanup. This is explicit user intent, not the
-transient `device_unavailable` repair state: restarting the app or reaching the
-next scheduled run must not resume delivery. Only explicit approval or resume
-can rearm it. Disconnect cancels scheduled work and aborts in-flight attempts
-without rewriting consent, measured progress, or prior outcomes. If pause
-persistence fails, the operation fails before revocation/cleanup and preserves
-the credential/binding for retry; a later revocation or cleanup failure leaves
-delivery paused.
+The desktop app is local-only. Community sharing, contribution upload, performance sharing, and hosted sign-in were removed on 2026-10-13; see the [removal decision](../../docs/decisions/2026-10-13-desktop-sharing-removal.md). Local analysis works offline.
 
 ## Local API
 
 The complete route-by-route inventory lives in the maintained
 [TiboTattle API surface reference](../../docs/reference/api-surface.md).
-It covers all local companion paths, fixed report routes, the credential-free
-central relay, and the separately allowlisted participant relay. A source-parity
+It covers all local companion paths, fixed report routes, and the credential-free central relay. A source-parity
 test fails if an exact route allowlist changes without the reference changing
 with it.
 
 Local mutations require the exact same origin and
 `X-Usage-Monitor-Local: 1`; handlers with bodies additionally enforce closed
 JSON contracts. Detailed reports and browser assets use fixed allowlists.
-Every API response is `no-store`, and no CORS permission is emitted. The
-companion's `/api/local/contribution/sync-next` operation is `POST`; use the
-canonical reference rather than retaining a partial route list here.
+Every API response is `no-store`, and no CORS permission is emitted. Use the canonical reference rather than a partial route list here.
 
 ## Development identity override
 
@@ -403,15 +284,6 @@ an automatic recovery mechanism and does not establish production Credential Man
 acceptance. Keep the terminal open while testing; remove the specific temporary
 directory later only if losing that development identity's continuity is
 intentional.
-
-The exact-review endpoint is a same-origin, explicitly authorized local
-mutation. It reopens the next owner-only prepared contribution through the
-prepared-set verifier and returns every retained field and value to the local
-page. It never performs a service request. The send action remains disabled
-until that review succeeds. A successful review creates a ten-minute,
-single-use opaque authorization held only by the loopback server. It is bound
-to that one queue job and prepared-file SHA-256; delivery consumes the
-authorization and can claim only that exact ready job.
 
 ## Test
 

@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { createInterface } from "node:readline/promises";
 import { pathToFileURL } from "node:url";
 import { captureCodexObservation } from "./capture.js";
 import {
@@ -47,7 +46,6 @@ import {
 } from "./export-identity-production.js";
 import {
   localCodexLogScanner,
-  localContributionSyncQueue,
   localExportDeletion,
   localExportSetMaterialization,
   localExportSetVerification,
@@ -74,10 +72,6 @@ import {
 import { runR7SmokeBenchmark } from "./r7-resource-benchmark.js";
 import { runR7ReleaseSyntheticBenchmark } from "./r7-release-synthetic-evidence.js";
 import { runR7MaterializedBoundaryBenchmark } from "./r7-materialized-boundary-benchmark.js";
-import {
-  createProductionContributionDeviceBackend,
-} from "./contribution-device-capability.js";
-import { claimContributionDevicePairing } from "./contribution-device-client.js";
 import {
   defaultCollectorStateFile,
   runCollectorForeground,
@@ -159,16 +153,6 @@ const {
   discardLocalExportWorkspace,
   recoverLocalExportWorkspaceDiscard,
 } = localExportWorkspaceDiscard;
-const {
-  CONTRIBUTION_SYNC_QUEUE_LIMITS,
-  defaultContributionSyncQueueFile,
-  inspectContributionSyncQueue,
-  inspectNextContributionSyncUpload,
-  runContributionSyncQueueOnce,
-  runContributionSyncQueueWatch,
-  setContributionSyncPaused,
-} = localContributionSyncQueue;
-
 function usage() {
   console.log(`Usage:
   usage-monitor doctor
@@ -203,13 +187,6 @@ function usage() {
   usage-monitor rotate-claude-callback-identity [--confirm]
   usage-monitor remove-claude-callback-identity [--confirm-removal TOKEN]
   usage-monitor benchmark-r7 --profile smoke|release_synthetic_semantics|release_synthetic_pressure|release_materialized_boundaries --output PATH
-  usage-monitor pair-contribution-device --origin HTTPS_OR_LOOPBACK_ORIGIN
-  usage-monitor sync-contributions-inspect-next --directory PREPARED_DIRECTORY_OR_SPOOL [--queue-file PATH]
-  usage-monitor sync-contributions-once --directory PREPARED_DIRECTORY_OR_SPOOL --origin HTTPS_OR_LOOPBACK_ORIGIN [--queue-file PATH] [--max-uploads-per-pass N] [--max-upload-bytes-per-pass N]
-  usage-monitor sync-contributions-watch --directory PREPARED_SPOOL --origin HTTPS_OR_LOOPBACK_ORIGIN [--queue-file PATH] [--interval-seconds N] [--duration-ms N] [--max-uploads-per-pass N] [--max-upload-bytes-per-pass N]
-  usage-monitor sync-contributions-status [--queue-file PATH]
-  usage-monitor sync-contributions-pause [--queue-file PATH]
-  usage-monitor sync-contributions-resume [--queue-file PATH]
   usage-monitor collect-once [--stale-after-ms N] [--no-refresh] [--backfill] [--state-file PATH]
   usage-monitor collect-foreground [--stale-after-ms N] [--reconciliation-ms N] [--duration-ms N] [--state-file PATH]
   usage-monitor collector-state-status [--state-file PATH] [--json]
@@ -297,11 +274,6 @@ export function parseArgs(argv) {
     maximumCanonicalBundleBytes: null,
     maximumEncodedArtifactBytes: null,
     benchmarkProfile: null,
-    serviceOrigin: null,
-    queueFile: null,
-    intervalSeconds: null,
-    maximumUploadsPerPass: null,
-    maximumUploadBytesPerPass: null,
     usagePlan: null,
     usagePeriod: null,
     usageLimit: null,
@@ -368,11 +340,6 @@ export function parseArgs(argv) {
     else if (arg === "--max-bundle-bytes") result.maximumCanonicalBundleBytes = readNonNegativeNumber(argv, index++, arg);
     else if (arg === "--max-artifact-bytes") result.maximumEncodedArtifactBytes = readNonNegativeNumber(argv, index++, arg);
     else if (arg === "--profile") result.benchmarkProfile = readOptionValue(argv, index++, arg);
-    else if (arg === "--origin") result.serviceOrigin = readOptionValue(argv, index++, arg);
-    else if (arg === "--queue-file") result.queueFile = resolve(readOptionValue(argv, index++, arg));
-    else if (arg === "--interval-seconds") result.intervalSeconds = readNonNegativeNumber(argv, index++, arg);
-    else if (arg === "--max-uploads-per-pass") result.maximumUploadsPerPass = readNonNegativeNumber(argv, index++, arg);
-    else if (arg === "--max-upload-bytes-per-pass") result.maximumUploadBytesPerPass = readNonNegativeNumber(argv, index++, arg);
     else if (arg === "--plan") result.usagePlan = readOptionValue(argv, index++, arg);
     else if (arg === "--period") result.usagePeriod = readOptionValue(argv, index++, arg);
     else if (arg === "--limit") result.usageLimit = readPositiveInteger(argv, index++, arg);
@@ -414,52 +381,6 @@ export function parseArgs(argv) {
   }
   if (result.benchmarkProfile !== null && result.command !== "benchmark-r7") {
     throw new Error("--profile is available only for benchmark-r7");
-  }
-  if (result.serviceOrigin !== null
-      && ![
-        "pair-contribution-device",
-        "sync-contributions-once",
-        "sync-contributions-watch",
-      ].includes(result.command)) {
-    throw new Error("--origin is available only for contribution-device commands");
-  }
-  if (result.queueFile !== null
-      && ![
-        "sync-contributions-once",
-        "sync-contributions-watch",
-        "sync-contributions-inspect-next",
-        "sync-contributions-status",
-        "sync-contributions-pause",
-        "sync-contributions-resume",
-      ].includes(result.command)) {
-    throw new Error("--queue-file is available only for contribution-sync commands");
-  }
-  if (result.intervalSeconds !== null
-      && result.command !== "sync-contributions-watch") {
-    throw new Error("--interval-seconds is available only for sync-contributions-watch");
-  }
-  if ((result.maximumUploadsPerPass !== null
-        || result.maximumUploadBytesPerPass !== null)
-      && ![
-        "sync-contributions-once",
-        "sync-contributions-watch",
-      ].includes(result.command)) {
-    throw new Error("upload caps are available only for contribution sync delivery commands");
-  }
-  if (result.maximumUploadsPerPass !== null
-      && (!Number.isSafeInteger(result.maximumUploadsPerPass)
-        || result.maximumUploadsPerPass < 1
-        || result.maximumUploadsPerPass
-          > CONTRIBUTION_SYNC_QUEUE_LIMITS.maximumJobsPerPassAllowed)) {
-    throw new Error("--max-uploads-per-pass requires an integer from 1 to 100");
-  }
-  if (result.maximumUploadBytesPerPass !== null
-      && (!Number.isSafeInteger(result.maximumUploadBytesPerPass)
-        || result.maximumUploadBytesPerPass
-          < CONTRIBUTION_SYNC_QUEUE_LIMITS.minimumReservedUploadBytesPerPass
-        || result.maximumUploadBytesPerPass
-          > CONTRIBUTION_SYNC_QUEUE_LIMITS.maximumReservedUploadBytesPerPass)) {
-    throw new Error("--max-upload-bytes-per-pass requires an integer from 16384 to 268435456");
   }
   if (result.dataFile !== null && ["collect-once", "collect-foreground"].includes(result.command)) {
     throw new Error("--data-file is not collector state; use --state-file instead");
@@ -595,26 +516,6 @@ export async function run(
     rotateClaudeCallbackCommand = rotateManagedClaudeCallbackCapability,
     planClaudeCallbackRemoval = planManagedClaudeCallbackCapabilityRemoval,
     removeClaudeCallbackCredential = removeManagedClaudeCallbackCapability,
-    createContributionDeviceBackend = createProductionContributionDeviceBackend,
-    claimContributionDevicePairingCommand = claimContributionDevicePairing,
-    runContributionSyncQueueOnceCommand = runContributionSyncQueueOnce,
-    runContributionSyncQueueWatchCommand = runContributionSyncQueueWatch,
-    inspectContributionSyncQueueCommand = inspectContributionSyncQueue,
-    inspectNextContributionSyncUploadCommand =
-      inspectNextContributionSyncUpload,
-    setContributionSyncPausedCommand = setContributionSyncPaused,
-    readPairingCode = async () => {
-      const terminal = createInterface({
-        input: process.stdin,
-        output: process.stdout,
-        terminal: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-      });
-      try {
-        return (await terminal.question("Paste the short-lived pairing code: ")).trim();
-      } finally {
-        terminal.close();
-      }
-    },
     runR7BenchmarkCommand = async ({ profile }) => {
       if (profile === "smoke") return runR7SmokeBenchmark();
       if (["release_synthetic_semantics", "release_synthetic_pressure"].includes(profile)) {
@@ -700,127 +601,6 @@ export async function run(
     console.log(`Operations exercised: ${receipt.operations.filter((row) => row.status !== "not_run").length}; recovered after interruption: ${receipt.operations.filter((row) => row.status === "interrupted_recovered").length}; not run: ${receipt.operations.filter((row) => row.status === "not_run").length}`);
     console.log(`Determinism: ${receipt.determinismEvidence?.status ?? receipt.determinism.status}; receipt SHA-256: ${receipt.receiptSha256}`);
     console.log(`Network activity: ${receipt.networkActivity ?? receipt.network.activity}; upload disabled: ${(receipt.transportReady ?? receipt.network.transportReady) === false}`);
-    return;
-  }
-  if (args.command === "pair-contribution-device") {
-    if (!args.serviceOrigin) throw new Error("pair-contribution-device requires --origin");
-    const pairingCode = await readPairingCode();
-    const paired = await claimContributionDevicePairingCommand({
-      origin: args.serviceOrigin,
-      pairingCode,
-      capabilityOptions: { backend: createContributionDeviceBackend() },
-    });
-    console.log("Contribution device pairing: active");
-    console.log(`Upload-only scope: ${paired.scope}`);
-    console.log(`Expires: ${paired.expiresAt}`);
-    console.log("Browser session, recovery, personal reads, export, and deletion access: none");
-    return;
-  }
-  if (args.command === "sync-contributions-inspect-next") {
-    if (!args.directory) {
-      throw new Error("sync-contributions-inspect-next requires --directory");
-    }
-    const result = await inspectNextContributionSyncUploadCommand({
-      directory: args.directory,
-      queueFile: args.queueFile ?? defaultContributionSyncQueueFile(),
-    });
-    console.log(`Next contribution upload: ${result.state}`);
-    console.log(`Committed sets discovered: ${result.discoveredSets}; newly queued: ${result.enqueued}`);
-    if (result.item) {
-      console.log(`Coverage: ${result.item.coveredAt.startAt} through ${result.item.coveredAt.endAt}`);
-      console.log(`Records: ${result.item.recordCounts.total} (${result.item.recordCounts.usageEvents} usage, ${result.item.recordCounts.quotaSnapshots} quota, ${result.item.recordCounts.activityMarkers} activity)`);
-      console.log(`Estimated API cost: ${result.item.accounting.estimatedApiCostUsd ?? "unpriced"}; priced-event coverage: ${result.item.accounting.pricedEventCoveragePercent}%`);
-      console.log(`Unknown models: ${result.item.accounting.unknownModelEventCount}; unknown billable units: ${result.item.accounting.unknownBillableUnits}`);
-      console.log(`Prepared bytes: ${result.item.preparedBytes}; conservative upload reservation: ${result.item.reservedUploadBytes}`);
-      console.log(`Prior attempts: ${result.item.attemptCount}; next attempt: ${result.item.nextAttemptAt}`);
-    }
-    console.log("Network activity: none; content, paths, filenames, digests, identities, origins, and credentials printed: none");
-    return;
-  }
-  if (args.command === "sync-contributions-once") {
-    if (!args.serviceOrigin || !args.directory) {
-      throw new Error("sync-contributions-once requires --directory and --origin");
-    }
-    const result = await runContributionSyncQueueOnceCommand({
-      directory: args.directory,
-      origin: args.serviceOrigin,
-      backend: createContributionDeviceBackend(),
-      queueFile: args.queueFile ?? defaultContributionSyncQueueFile(),
-      ...(args.maximumUploadsPerPass === null
-        ? {}
-        : { maximumJobs: args.maximumUploadsPerPass }),
-      ...(args.maximumUploadBytesPerPass === null
-        ? {}
-        : { maximumReservedUploadBytes: args.maximumUploadBytesPerPass }),
-    });
-    console.log(`Contribution queue pass: ${result.status}`);
-    console.log(`Committed sets discovered: ${result.discoveredSets}; newly queued: ${result.enqueued}`);
-    console.log(`Processed: ${result.processed}; accepted or replayed: ${result.accepted}`);
-    console.log(`Conservative upload bytes reserved: ${result.reservedUploadBytes}; byte-cap stopped pass: ${result.bandwidthLimited}`);
-    console.log(`Waiting to retry: ${result.queue.counts.retryable}; permanently rejected: ${result.queue.counts.rejected}`);
-    console.log(`Queue paused: ${result.queue.paused}`);
-    console.log("Payload content, local paths, server origin, device identity, and credentials printed: none");
-    return;
-  }
-  if (args.command === "sync-contributions-watch") {
-    if (!args.serviceOrigin || !args.directory) {
-      throw new Error("sync-contributions-watch requires --directory and --origin");
-    }
-    const controller = new AbortController();
-    const stop = () => controller.abort();
-    process.once("SIGINT", stop);
-    process.once("SIGTERM", stop);
-    let result;
-    try {
-      result = await runContributionSyncQueueWatchCommand({
-        directory: args.directory,
-        origin: args.serviceOrigin,
-        backend: createContributionDeviceBackend(),
-        queueFile: args.queueFile ?? defaultContributionSyncQueueFile(),
-        intervalSeconds: args.intervalSeconds ?? 60,
-        durationMilliseconds: args.durationMs,
-        signal: controller.signal,
-        ...(args.maximumUploadsPerPass === null
-          ? {}
-          : { maximumJobs: args.maximumUploadsPerPass }),
-        ...(args.maximumUploadBytesPerPass === null
-          ? {}
-          : { maximumReservedUploadBytes: args.maximumUploadBytesPerPass }),
-      });
-    } finally {
-      process.removeListener("SIGINT", stop);
-      process.removeListener("SIGTERM", stop);
-    }
-    console.log(`Foreground contribution watch: ${result.status}`);
-    console.log(`Passes: ${result.passes}; newly queued: ${result.enqueued}`);
-    console.log(`Processed: ${result.processed}; accepted or replayed: ${result.accepted}`);
-    console.log(`Conservative upload bytes reserved: ${result.reservedUploadBytes}; byte-cap-limited passes: ${result.bandwidthLimitedPasses}`);
-    console.log(`Waiting to retry: ${result.queue.counts.retryable}; permanently rejected: ${result.queue.counts.rejected}`);
-    console.log(`Queue paused: ${result.queue.paused}`);
-    console.log("Installed background service: false; content, paths, identities, origins, and credentials printed: none");
-    return;
-  }
-  if (args.command === "sync-contributions-status") {
-    const result = await inspectContributionSyncQueueCommand({
-      queueFile: args.queueFile ?? defaultContributionSyncQueueFile(),
-    });
-    console.log("Contribution queue status");
-    console.log(`Paused: ${result.paused}; due now: ${result.dueNow}`);
-    console.log(`Pending: ${result.counts.pending}; in flight: ${result.counts.in_flight}; retryable: ${result.counts.retryable}`);
-    console.log(`Accepted: ${result.counts.accepted}; rejected: ${result.counts.rejected}`);
-    console.log("Content, paths, identities, origins, contribution IDs, and credentials printed: none");
-    return;
-  }
-  if (args.command === "sync-contributions-pause"
-      || args.command === "sync-contributions-resume") {
-    const paused = args.command === "sync-contributions-pause";
-    const result = await setContributionSyncPausedCommand({
-      paused,
-      queueFile: args.queueFile ?? defaultContributionSyncQueueFile(),
-    });
-    console.log(`Contribution queue: ${paused ? "paused" : "resumed"}`);
-    console.log(`Waiting: ${result.counts.pending + result.counts.retryable}; accepted: ${result.counts.accepted}; rejected: ${result.counts.rejected}`);
-    console.log("Network activity: none; content, paths, identities, origins, and credentials printed: none");
     return;
   }
   if (args.command === "inspect-claude-callback") {

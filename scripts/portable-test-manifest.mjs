@@ -53,12 +53,10 @@ export const PORTABLE_TEST_GROUPS = Object.freeze({
     "test/provider-crosscheck.test.js",
     "test/rollout-line-reader.test.js",
     "test/telemetry-contribution-builder.test.js",
-    "test/telemetry-contribution-v0.2.test.js",
     "test/telemetry-envelope-adapter.test.js",
     "test/telemetry-schema-mirror.test.js",
   ]),
   storageAndCompanion: Object.freeze([
-    "test/contribution-device-cli.test.js",
     "test/contribution-device-sync.test.js",
     "test/contribution-sync-queue.test.js",
     "test/export-identity-production.test.js",
@@ -101,8 +99,6 @@ export const PORTABLE_TEST_GROUPS = Object.freeze({
     "test/windows-path-contract.test.js",
     "test/windows-skip-ledger.test.js",
     "test/windows-test-manifest.test.js",
-    "apps/local/participant-relay-routes.test.mjs",
-    "apps/local/participant-session-cookie-bridge.test.mjs",
     "apps/local/server.test.mjs",
   ]),
   web: Object.freeze([

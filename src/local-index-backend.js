@@ -6,12 +6,7 @@ import {
   readLocalIndexCompanionProjection,
   readLocalIndexGenerationIdentity,
   readLocalIndexProjectionValidUntil,
-  readLocalIndexPublication,
 } from "./local-index-companion-source.js";
-import {
-  createLocalIndexTelemetryV11Reader,
-  createLocalIndexTelemetryV1IndexReader,
-} from "./local-index-contribution.js";
 import { readLegacyOrdinalMap } from "./local-index-cutover.js";
 import { maintainLocalIndex } from "./local-index-maintenance.js";
 import { refreshLocalIndex } from "./local-index-refresh.js";
@@ -24,7 +19,6 @@ import {
 } from "./local-index-store.js";
 import { auditWorkRollups } from "./local-index-work-rollup.js";
 import { readLocalIndexWindowBreakdown } from "./local-index-window-breakdown.js";
-import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, OUTCOME_UNKNOWN } from "./codex-usage-vocabulary.js";
 
 // The v2 index as one backend the local companion composes.
 //
@@ -292,29 +286,9 @@ export function createLocalIndexBackend({
     ),
   });
 
-  // The contribution engine's four seams over the store. The record rules are
-  // the contribution owner's; these only supply the row source and the
-  // publication proof it fences each pass with.
-  const contributionPorts = (ports) => ({
-    ...ports,
-    outcomeUnknownOrdinal: OUTCOME_UNKNOWN,
-    parserVersionBase: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-  });
-  const contribution = Object.freeze({
-    openIndex: (file, options) => openLocalIndexStore(file, options),
-    createIndexReader: (database, ports) => (
-      createLocalIndexTelemetryV1IndexReader(database, contributionPorts(ports))
-    ),
-    createV11Reader: (database, ports) => (
-      createLocalIndexTelemetryV11Reader(database, contributionPorts(ports))
-    ),
-    readPublication: readLocalIndexPublication,
-  });
-
   return Object.freeze({
     version: LOCAL_INDEX_BACKEND_VERSION,
     indexFile,
-    contribution,
     audit,
     refreshUnifiedIndex,
     refreshAccounting,

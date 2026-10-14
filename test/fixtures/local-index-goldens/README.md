@@ -3,8 +3,7 @@
 `views.json` holds figures the shipping (v1) unified index produced at commit
 `cf94e9a8` for one synthetic, content-free corpus: the companion report at two
 clocks (with a declared-speed ledger), the work breakdown at the same clocks,
-the replay-safe calibration layer with and without the ledger, and the
-contribution day digests and record identities.
+and the replay-safe calibration layer with and without the ledger.
 
 `test/local-index-goldens.test.js` builds the successor store from the same
 corpus and requires every figure to match. Integers, strings and identities are

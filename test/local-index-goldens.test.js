@@ -36,10 +36,6 @@ test("the store still produces the shipping implementation's views of the golden
   for (const name of ["no-ledger", "ledger"]) {
     expectSame(`calibration layer (${name})`, golden.layers[name], actual.layers[name], 300);
   }
-  // Day structure and every identity are exact: v1.0 chunk digests and the
-  // v1.1 event and observation ids are what the hosted service already holds.
-  assert.deepEqual(actual.contribution, golden.contribution);
-  assert.ok(golden.contribution.days.length >= 40, "the goldens span the whole corpus");
 });
 
 test("the goldens exercise the price-sensitive branches", () => {

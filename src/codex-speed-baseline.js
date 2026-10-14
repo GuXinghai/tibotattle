@@ -43,7 +43,7 @@
 import { CODEX_SPEED_MODE_OBSERVABILITY } from "@app-usagemonitor/accounting";
 
 import {
-  createOwnerOnlyAutomaticContributionStorageContext,
+  createOwnerOnlySettingsStorageContext,
   readCodexConfigServiceTier,
 } from "./platform/index.js";
 import { hasExactEnumerableKeys } from "./has-exact-enumerable-keys.js";
@@ -174,7 +174,7 @@ function projection(windows, { status, declaredMode = null } = {}) {
 export function createCodexSpeedBaselineController({
   ledgerFile,
   configFile,
-  storage = createOwnerOnlyAutomaticContributionStorageContext({
+  storage = createOwnerOnlySettingsStorageContext({
     createError: () => new CodexSpeedBaselineError(
       "codex_speed_baseline_unavailable",
     ),

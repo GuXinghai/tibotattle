@@ -7,14 +7,9 @@ import {
   buildCalibrationLayer,
   openLocalIndexCalibrationCorpus,
 } from "../../src/local-index-calibration.js";
-import {
-  createLocalIndexTelemetryV11Reader,
-  createLocalIndexTelemetryV1IndexReader,
-} from "../../src/local-index-contribution.js";
 import { readLocalIndexReport } from "../../src/local-index-report.js";
 import { openLocalIndexStore, withReadSnapshot } from "../../src/local-index-store.js";
 import { readLocalIndexWorkUsage } from "../../src/local-index-work-usage.js";
-import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, OUTCOME_UNKNOWN, outcomeName, reasoningEffortName } from "../../src/codex-usage-vocabulary.js";
 import { createWorkspace } from "./local-index-facts.js";
 
 // Golden outputs of the shipping (v1) implementation at commit cf94e9a8, over
@@ -199,28 +194,6 @@ export function goldenWorkView(work) {
   return JSON.parse(JSON.stringify(periods));
 }
 
-export function goldenContributionView({ v1Reader, v11Reader }) {
-  const days = v1Reader.days();
-  const chunks = days.map((day) => {
-    const derived = v1Reader.deriveDay(day);
-    return [day, derived.dayDigest, derived.chunks.map((chunk) => [chunk.chunkId, chunk.chunkDigest])];
-  });
-  const identities = days.map((day) => {
-    const read = v11Reader.readDay(day);
-    return [
-      day,
-      digest(read.recordsByStream.usage.map((record) => record.eventId)),
-      digest(read.recordsByStream.quota.map((record) => record.observationId)),
-    ];
-  });
-  return JSON.parse(JSON.stringify({
-    days,
-    historyDigest: digest(chunks.map(([day, dayDigest]) => [day, dayDigest])),
-    chunks,
-    identities,
-  }));
-}
-
 /** Build the store for the golden corpus and read every view from it. */
 export async function readGoldenViewsFromStore() {
   const workspace = createWorkspace(GOLDEN_CORPUS);
@@ -243,17 +216,6 @@ export async function readGoldenViewsFromStore() {
           secretFile: workspace.secretFile, nowMs,
         }));
       }
-      const ports = {
-        outcomeName,
-        reasoningEffortName,
-        fallbackParserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-        outcomeUnknownOrdinal: OUTCOME_UNKNOWN,
-        parserVersionBase: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-      };
-      views.contribution = goldenContributionView({
-        v1Reader: createLocalIndexTelemetryV1IndexReader(database, ports),
-        v11Reader: createLocalIndexTelemetryV11Reader(database, ports),
-      });
       database.close();
       for (const [name, baselines] of [["no-ledger", []], ["ledger", GOLDEN_LEDGER]]) {
         const endMs = GOLDEN_END_MS + 3_600_000;

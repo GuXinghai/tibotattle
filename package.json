@@ -68,7 +68,7 @@
     "product:keys:local": "npm --prefix apps/worker run keys:local",
     "product:keys:staging": "npm --prefix apps/worker run keys:staging",
     "product:local": "node ./apps/local/server.js",
-    "product:local:test": "node --test --test-concurrency=1 test/local-companion-data.test.js test/local-companion-refresh.test.js test/local-contribution-preparation.test.js test/real-local-backend-acceptance.test.js test/telemetry-contribution-builder.test.js test/contribution-device-sync.test.js test/contribution-sync-queue.test.js test/contribution-device-cli.test.js apps/local/*.test.mjs",
+    "product:local:test": "node --test --test-concurrency=1 test/local-companion-data.test.js test/local-companion-refresh.test.js test/local-contribution-preparation.test.js test/real-local-backend-acceptance.test.js test/telemetry-contribution-builder.test.js test/contribution-device-sync.test.js test/contribution-sync-queue.test.js apps/local/*.test.mjs",
     "product:prepare-contribution": "node ./scripts/build-telemetry-contributions.js",
     "product:release-site": "node ./scripts/build-public-release-site.js",
     "product:release-site:preview": "node ./scripts/preview-public-release-site.js",

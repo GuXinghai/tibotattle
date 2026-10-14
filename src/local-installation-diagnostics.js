@@ -148,7 +148,8 @@ export function localCompanionStatePaths(stateRoot) {
     // and removed only after its parity receipt is durable.
     collectorStateFile: join(selected, "local-collector-state-v1.sqlite"),
     // The previous local index. It is read only for the ordinal map that keeps
-    // hosted identity continuous, and only until the v2 store holds its own.
+    // the local identity ordinals continuous, and only until the v2 store holds
+    // its own.
     unifiedIndexFile: join(selected, "local-unified-index-v1.sqlite"),
     unifiedIndexSecretFile: join(
       selected,
@@ -156,41 +157,19 @@ export function localCompanionStatePaths(stateRoot) {
     ),
     // The local index: the one store the dashboard's full-history periods and
     // timelines read, advanced incrementally on refresh. It shares the device
-    // salt above so hosted identity is continuous.
+    // salt above so local identity ordinals are continuous.
     localIndexStoreFile: join(selected, "local-index-store-v1.sqlite"),
     accountObservationLockFile: join(
       selected,
       "account-observation-operation.lock",
     ),
-    activityMarkersFile: join(selected, "activity-markers-v0.1.jsonl"),
-    contributionQueueFile: join(
-      selected,
-      "private",
-      "contribution-sync-v0.1.sqlite3",
-    ),
-    automaticContributionSettingsFile: join(
-      selected,
-      "private",
-      "automatic-contribution-v0.1.json",
-    ),
-    automaticContributionLockFile: join(
+    // The companion's single-instance lock. The name predates the removal of
+    // the feature that first owned it and is kept so an older companion build
+    // that is still running recognizes this process.
+    companionInstanceLockFile: join(
       selected,
       "private",
       "automatic-contribution-v0.1.lock",
-    ),
-    incrementalContributionSyncSettingsFile: join(
-      selected,
-      "private",
-      "incremental-contribution-sync-v1.json",
-    ),
-    // The temporary OAuth result read-back capability must survive the native
-    // companion's random loopback port changing across a relaunch. It contains
-    // no proof or account data and expires after fifteen minutes, but it is
-    // still kept beside the other owner-only contribution state.
-    hostedSignInHandoffFile: join(
-      selected,
-      "private",
-      "hosted-signin-handoff-v1.json",
     ),
     // A bounded, generation-matched dashboard receipt used only when the
     // current build cannot read its local history. It never replaces the
@@ -205,26 +184,6 @@ export function localCompanionStatePaths(stateRoot) {
       selected,
       "private",
       "codex-speed-baseline-v0.1.json",
-    ),
-    preparedSpoolDirectory: join(
-      selected,
-      "local-contribution-prepared-v0.1",
-    ),
-    reviewArchiveDirectory: join(
-      selected,
-      "local-contribution-reviews-v0.1",
-    ),
-    exportParticipantSecretFile: join(
-      selected,
-      "export-participant-secret",
-    ),
-    contributionDeviceStateFile: join(
-      selected,
-      "contribution-device-binding-v1.json",
-    ),
-    contributionDeviceRenewalStateFile: join(
-      selected,
-      "contribution-device-renewal-v1.json",
     ),
   });
 }

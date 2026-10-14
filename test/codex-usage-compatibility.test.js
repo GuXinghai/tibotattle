@@ -5,11 +5,9 @@ import { join } from "node:path";
 import test from "node:test";
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
 import { extractRolloutUsage } from "../src/local-index-extract.js";
-import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, OUTCOME_UNKNOWN, isLocalUnifiedIndexBoundaryParserVersion, outcomeName, reasoningEffortName } from "../src/codex-usage-vocabulary.js";
+import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, isLocalUnifiedIndexBoundaryParserVersion } from "../src/codex-usage-vocabulary.js";
 import { openLocalIndexStore } from "../src/local-index-store.js";
-import { createLocalIndexTelemetryV1IndexReader } from "../src/local-index-contribution.js";
 import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
-import { createTelemetryV11Day } from "../src/contribution/index.js";
 import { usageProjection } from "../src/local-companion-usage-model.js";
 import { cumulativeSnapshotKey, normalizeTokenUsage } from "../src/providers/codex/logs.js";
 
@@ -40,13 +38,20 @@ function rows(file) {
     FROM usage_event ORDER BY observed_at_ms`).all().map((row) => ({ ...row })));
 }
 
+// The stored usage facts in the shape the assertions below read: exact totals
+// and components, with missing evidence kept as null.
 function uploadedUsage(file) {
-  return withReadOnlyStore(file, (database) => createLocalIndexTelemetryV1IndexReader(database, {
-    outcomeName, reasoningEffortName, outcomeUnknownOrdinal: OUTCOME_UNKNOWN,
-    parserVersionBase: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-    fallbackParserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION,
-  }).deriveDay("2026-09-03").chunks.filter((chunk) => chunk.stream === "usage")
-    .flatMap((chunk) => chunk.records));
+  return withReadOnlyStore(file, (database) => database.prepare(`SELECT total_input_context, tokens_in_uncached,
+    tokens_in_cache_write, tokens_out_text, tokens_out_combined
+    FROM usage_event ORDER BY observed_at_ms, event_key`).all().map((row) => ({
+    totalInputContextTokens: row.total_input_context,
+    components: {
+      inputUncachedTokens: row.tokens_in_uncached,
+      inputCacheWriteTokens: row.tokens_in_cache_write,
+      outputTextTokens: row.tokens_out_text,
+      outputCombinedTokens: row.tokens_out_combined,
+    },
+  })));
 }
 
 // Rewrites a store the way an older reparse left it: derived columns and the
@@ -56,7 +61,7 @@ function rewriteStore(file, statements) {
   try { for (const statement of statements) database.exec(statement); } finally { database.close(); }
 }
 
-test("exact selected totals survive serial, worker, incremental and v1/v1.1 projection without duplicate output", async () => {
+test("exact selected totals survive serial, worker, incremental and replayed refresh without duplicate output", async () => {
   const first = { ...vector(100, 60), cache_write_input_tokens: 20, reasoning_output_tokens: 4 };
   const second = { ...vector(250, 160), cache_write_input_tokens: 40,
     output_tokens: 30, reasoning_output_tokens: 10, total_tokens: 280 };
@@ -73,15 +78,8 @@ test("exact selected totals survive serial, worker, incremental and v1/v1.1 proj
     assert.deepEqual(expected.map((event) => event.totalInputContextTokens), [100, 150]);
     assert.deepEqual(expected.map((event) => event.components.outputCombinedTokens), [10, 20]);
     assert.deepEqual(expected.map((event) => event.components.inputCacheWriteTokens), [20, 20]);
-    assert.ok(expected.every((event) => event.outcome === "unknown"));
-    const successor = createTelemetryV11Day({ day: "2026-09-03",
-      recordsByStream: { usage: expected }, parserVersion: LOCAL_UNIFIED_INDEX_PARSER_VERSION });
-    assert.deepEqual(successor.chunks.flatMap((chunk) => chunk.records)
-      .map(({ schemaVersion, accountPlanAttribution, ...event }) => event),
-    expected.map(({ schemaVersion, ...event }) => event));
-
     const event = expected[0];
-    const projected = { observedAt: event.eventTime, model: event.modelId,
+    const projected = { observedAt: stamp(1), model: "gpt-6-astra",
       totalInputContextTokens: event.totalInputContextTokens,
       components: { input_uncached_tokens: 20, input_cache_read_tokens: 60, input_cache_write_tokens: 20,
         output_text_tokens: 6, output_reasoning_tokens: 4, output_combined_tokens: 10 } };

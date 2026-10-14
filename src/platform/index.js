@@ -5,10 +5,6 @@ export {
 } from './windows-legacy-state-migration.js';
 export { spawnWindowsCommand, terminateWindowsCommand } from './windows-command.js';
 export {
-  attachAccountlessParentChannel,
-  createAccountlessChildChannel,
-} from "./accountless-contribution-channel.js";
-export {
   readBoundedJsonLines,
   readBoundedUtf8LineEntries,
   readBoundedUtf8Lines,
@@ -23,17 +19,18 @@ export {
   readCompressedRolloutBytes,
   supportsCompressedRollouts,
 } from "./bounded-rollout-bytes.js";
-export { createTelemetryV11Envelope } from "./telemetry-v11-envelope.js";
-export { createTelemetryV12Envelope } from "./telemetry-v12-envelope.js";
-export {
-  createTelemetryPerformanceEnvelope,
-  validateTelemetryPerformanceEnvelope,
-} from "./telemetry-performance-envelope.js";
 export {
   CODEX_CONFIG_RETAINED_KEYS,
   CODEX_CONFIG_SERVICE_TIER_STATUSES,
   readCodexConfigServiceTier,
 } from "./codex-config-service-tier.js";
+export {
+  createOwnerOnlySettingsStorageContext,
+} from "./owner-only-settings-storage.js";
+export {
+  CompanionInstanceLockError,
+  acquireCompanionInstanceLock,
+} from "./companion-instance-lock.js";
 export { createLocalCodexLogPorts } from "./local-codex-log-ports.js";
 export { readCodexLocalThreadMetadata, readCodexLocalThreadAncestry, readCodexLocalRepositoryOrigins } from "./local-codex-thread-store.js";
 export {
@@ -132,9 +129,6 @@ export {
 export {
   createOwnerOnlyExportArtifactStorageContext,
 } from "./owner-only-export-artifact-storage.js";
-export {
-  createOwnerOnlyAutomaticContributionStorageContext,
-} from "./owner-only-automatic-contribution-storage.js";
 export {
   createOwnerOnlyExportDeletionStorage,
 } from "./owner-only-export-deletion-storage.js";

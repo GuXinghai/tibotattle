@@ -8,112 +8,37 @@ import * as localPreparationApplication from
   "../src/application/local-contribution-preparation.js";
 import * as localPreparedApplication from
   "../src/application/local-prepared-contribution.js";
-import * as accountCompatibility from "../src/telemetry-account-track.js";
 import * as builderCompatibility from "../src/telemetry-contribution-builder.js";
 import * as localPreparationCompatibility from
   "../src/local-contribution-preparation.js";
 import { preparedContributionContext } from
   "../src/prepared-contribution-compatibility-internal.js";
-import * as v02Compatibility from "../src/telemetry-contribution-v0.2.js";
 import * as preparedCompatibility from "../src/telemetry-prepared-set.js";
 
 const CONTRIBUTION_PUBLIC_EXPORTS = Object.freeze([
-  "accountlessDeviceUnavailableCode",
-  "accountlessLocalLaboratoryOrigin",
-  "accountlessTransportOrigin",
-  "ACCOUNTLESS_V12_UPLOAD_AUTHORIZATION_BASIS",
-  "ACCOUNTLESS_V12_UPLOAD_POLICY_VERSION",
-  "ACCOUNTLESS_V12_UPLOAD_SCHEMA_VERSION",
-  "ACCOUNTLESS_UPLOAD_OWNER_AUTHORIZATION_BASIS",
-  "ACCOUNTLESS_UPLOAD_OWNER_POLICY_VERSION",
-  "ACCOUNTLESS_UPLOAD_OWNER_SCHEMA_VERSION",
-  "ACCOUNTLESS_UPLOAD_OWNER_SCOPE",
-  "ACCOUNTLESS_UPLOAD_OWNER_TELEMETRY_SCHEMA_VERSION",
   "MAX_PREPARED_CONTRIBUTION_BATCHES",
   "PREPARED_CONTRIBUTION_ELIGIBLE_SCHEMA",
   "PREPARED_CONTRIBUTION_LIMITS",
   "PREPARED_CONTRIBUTION_SET_MANIFEST",
   "PREPARED_CONTRIBUTION_SET_VERSION",
   "PreparedContributionSetError",
-  "TELEMETRY_ACCOUNT_TRACK_VERSION",
-  "TELEMETRY_ACCOUNT_TRACK_V2_VERSION",
   "TELEMETRY_CONTRIBUTION_BUILDER_VERSION",
-  "TELEMETRY_CONTRIBUTION_V02_CONSENT_VERSION",
-  "TELEMETRY_CONTRIBUTION_V02_STATUS",
-  "TELEMETRY_CONTRIBUTION_V02_VERSION",
   "TELEMETRY_CONTRIBUTION_VERSION",
-  "UNATTRIBUTED_ACCOUNT_TRACK_ID",
   "buildTelemetryContributionsFromBundle",
-  "buildTelemetryContributionsV02",
-  "createTelemetryV11Day",
-  "createTelemetryV12Day",
-  "deriveTelemetryAccountTrackId",
-  "deriveTelemetryAccountTrackIdV2",
-  "deriveTelemetryPlanEraIdV1",
-  "deriveTelemetryV11Attribution",
-  "deriveTelemetryV11QuotaOccurrenceId",
-  "deriveTelemetryDatasetIdV02",
   "isPreparedContributionBasename",
-  "isTelemetryAccountTrackId",
-  "isTelemetryAccountTrackIdV2",
   "preparedContributionBasename",
   "preparedContributionRecordCounts",
   "preparedContributionSetId",
-  "projectTelemetryPerformanceDay",
-  "MAX_TELEMETRY_PERFORMANCE_REPORT_BYTES",
-  "MAX_TELEMETRY_PERFORMANCE_REPORT_RECORDS",
-  "MAX_TELEMETRY_PERFORMANCE_RETRIES",
-  "TELEMETRY_PERFORMANCE_AUTHORIZATION_VERSION",
-  "TELEMETRY_PERFORMANCE_CAPABILITIES_VERSION",
-  "TELEMETRY_PERFORMANCE_METHOD_VERSION",
-  "TELEMETRY_PERFORMANCE_PRIVACY_CONTRACT_VERSION",
-  "TELEMETRY_PERFORMANCE_REPORT_SCHEMA_VERSION",
-  "TELEMETRY_PERFORMANCE_SCOPE",
-  "TELEMETRY_PERFORMANCE_SUPPORTED_SPEED_METHODS",
-  "TELEMETRY_PERFORMANCE_SYNC_STATE_VERSION",
-  "initialTelemetryPerformanceSyncState",
-  "parseTelemetryPerformanceSyncState",
-  "resumeTelemetryPerformanceSyncAfterAuthorization",
-  "prepareTelemetryPerformanceDay",
-  "runTelemetryPerformanceSync",
-  "readTelemetryV12Capabilities",
-  "runTelemetryV12Sync",
-  "readTelemetryV11Capabilities",
-  "runTelemetryV11Sync",
   "sanitizeTelemetryAttributionBinding",
-  "telemetryV11FieldInventory",
-  "telemetryV12FieldInventory",
   "validatePreparedContributionFileEntry",
   "validatePreparedContributionManifest",
   "validatePreparedTelemetryContributionV01",
-  "validateTelemetryContributionDatasetV02",
-  "validateTelemetryContributionV02",
-]);
-const ACCOUNT_COMPATIBILITY_EXPORTS = Object.freeze([
-  "TELEMETRY_ACCOUNT_TRACK_VERSION",
-  "TELEMETRY_ACCOUNT_TRACK_V2_VERSION",
-  "UNATTRIBUTED_ACCOUNT_TRACK_ID",
-  "deriveTelemetryAccountTrackId",
-  "deriveTelemetryAccountTrackIdV2",
-  "deriveTelemetryPlanEraIdV1",
-  "isTelemetryAccountTrackId",
-  "isTelemetryAccountTrackIdV2",
-  "sanitizeTelemetryAttributionBinding",
 ]);
 const BUILDER_COMPATIBILITY_EXPORTS = Object.freeze([
   "TELEMETRY_CONTRIBUTION_BUILDER_VERSION",
   "TELEMETRY_CONTRIBUTION_VERSION",
   "buildTelemetryContributionsFromBundle",
   "materializeTelemetryContributions",
-]);
-const V02_COMPATIBILITY_EXPORTS = Object.freeze([
-  "TELEMETRY_CONTRIBUTION_V02_CONSENT_VERSION",
-  "TELEMETRY_CONTRIBUTION_V02_STATUS",
-  "TELEMETRY_CONTRIBUTION_V02_VERSION",
-  "buildTelemetryContributionsV02",
-  "deriveTelemetryDatasetIdV02",
-  "validateTelemetryContributionDatasetV02",
-  "validateTelemetryContributionV02",
 ]);
 const PREPARED_COMPATIBILITY_EXPORTS = Object.freeze([
   "MAX_PREPARED_CONTRIBUTION_BATCHES",
@@ -178,28 +103,18 @@ test("contribution publishes one exact reviewed domain API", () => {
 
 test("historical contribution roots retain exact alias identities", () => {
   assert.deepEqual(
-    Object.keys(accountCompatibility).sort(),
-    [...ACCOUNT_COMPATIBILITY_EXPORTS].sort(),
-  );
-  assert.deepEqual(
     Object.keys(builderCompatibility).sort(),
     [...BUILDER_COMPATIBILITY_EXPORTS].sort(),
-  );
-  assert.deepEqual(
-    Object.keys(v02Compatibility).sort(),
-    [...V02_COMPATIBILITY_EXPORTS].sort(),
   );
   assert.deepEqual(
     Object.keys(preparedCompatibility).sort(),
     [...PREPARED_COMPATIBILITY_EXPORTS].sort(),
   );
-  assertAliases(accountCompatibility, ACCOUNT_COMPATIBILITY_EXPORTS);
   assertAliases(
     builderCompatibility,
     BUILDER_COMPATIBILITY_EXPORTS.filter((name) =>
       name !== "materializeTelemetryContributions"),
   );
-  assertAliases(v02Compatibility, V02_COMPATIBILITY_EXPORTS);
   assertAliases(
     preparedCompatibility,
     PREPARED_COMPATIBILITY_EXPORTS.filter((name) =>
@@ -305,7 +220,6 @@ test("contribution implementations use only reviewed package and owner edges", a
     "src/contribution/account-track.js",
     "src/contribution/prepared-set-contract.js",
     "src/contribution/telemetry-v01-projection.js",
-    "src/contribution/telemetry-v02-projection.js",
   ]) {
     implementationImports.set(
       relativePath,
@@ -354,25 +268,6 @@ test("contribution implementations use only reviewed package and owner edges", a
   assert.doesNotMatch(
     await source("src/local-contribution-preparation.js"),
     /\.\/storage\.js/u,
-  );
-  const automaticStorageImports = await extractEsmImports(
-    await source(
-      "src/platform/owner-only-automatic-contribution-storage.js",
-    ),
-    {
-      sourceName:
-        "src/platform/owner-only-automatic-contribution-storage.js",
-    },
-  );
-  assert.deepEqual(
-    automaticStorageImports.map(({ specifier }) => specifier).sort(),
-    [
-      "./owner-only-filesystem.js",
-      "node:crypto",
-      "node:fs",
-      "node:fs/promises",
-      "node:path",
-    ],
   );
   const localRuntimeImports = await extractEsmImports(
     await source("src/local-node-runtime.js"),
