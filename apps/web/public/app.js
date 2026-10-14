@@ -1479,6 +1479,14 @@ function renderQuotaCards(data) {
       ? t("page.observation.noTimestamp")
       : t("dashboard.quota.observedAtPlain", { time: formatLocal(new Date(observedAt).toISOString()) });
     card.append(observed);
+    // Allowance changes plots the primary seven-day track only, so other pools
+    // get no detail link rather than one that shows someone else's data.
+    if (isPrimaryCodexWeeklyQuotaWindow(window)) {
+      const link = node("a", "overview-card-link");
+      link.href = "#allowance/changes";
+      setLocalizedText(link, "dashboard.overview.openAllowanceChanges");
+      card.append(link);
+    }
     container.append(card);
   }
 }

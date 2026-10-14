@@ -5655,6 +5655,10 @@ body[data-dashboard-page] #overview-screen { display: block; }
 #overview .quota-tank-caption, #overview .quota-tank-reset { font-size: 11px; }
 #overview .quota-summary-progress { display: none; }
 #overview .quota-summary-observed { grid-column: 1 / -1; font-size: 10px; }
+/* Each Overview card's detail entry: a quiet link to the view that explains it. */
+.overview-card-link { justify-self: start; align-self: start; font-size: 12px; font-weight: var(--weight-semibold); }
+#overview .quota-summary > .overview-card-link { grid-column: 1 / -1; }
+#overview .overview-data-card > .overview-card-link { display: inline-block; margin-top: 8px; }
 #overview .overview-panels { grid-template-columns: 1fr; gap: 12px; min-width: 0; }
 #overview .overview-data-card { padding: 16px; border-radius: 12px; box-shadow: none; }
 #overview .overview-data-card .panel-heading { margin-bottom: 8px; }
