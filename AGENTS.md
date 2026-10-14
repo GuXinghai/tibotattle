@@ -49,10 +49,11 @@ and updated authoritative documentation.
   commits, or PRs. Private paths/filenames live only in the owner-only local
   index and never leave it (`docs/decisions/2026-10-12-local-index-v2-and-local-paths.md`).
   Native crash dumps and raw crash reports are never projected or uploaded (`docs/decisions/2026-09-21-opt-in-crash-doctor.md`).
-- Hosted contribution is optional, content-free and pseudonymous. Follow the
-  accountless Electron defaults and transition in
-  `docs/decisions/2026-09-04-accountless-sharing-policy.md`; preserve durable
-  opt-outs and legacy consent contracts; hosted erasure is owner-only.
+- The desktop product has no community sharing, contribution upload, or share
+  cards (`docs/decisions/2026-10-13-desktop-sharing-removal.md`). Do not
+  reintroduce them without a new decision. Leave saved opt-outs, receipts,
+  salts, and identities untouched; the deployed Worker keeps its contracts until
+  separately retired, and hosted erasure is owner-only.
 - Derived data is allowlisted and schema-validated. Unknown upstream fields are
   omitted; unknown, stale, unavailable, or unattributed evidence stays explicit.
   Never convert missing evidence to zero or inferred continuity.

@@ -29,8 +29,8 @@ account deletion, native-shell, or local-monitoring contracts:
 |---|---:|---:|---|
 | Loopback API | 32 paths / 35 operations | 23 paths / 26 operations | [`apps/local/server.js`](../../apps/local/server.js) |
 | Direct local report pages | 4 `GET` paths | 4 `GET` paths | [`src/local-companion-data.js`](../../src/local-companion-data.js) |
-| Credential-free central relay | 5 paths | 1 health path | [`src/local-companion-central-proxy.js`](../../src/local-companion-central-proxy.js) |
-| Participant browser relay | 20 paths / 21 operations | 9 paths / 9 operations | [`participant-relay-routes.js`](../../apps/local/transport/participant-relay-routes.js) |
+| Credential-free central relay | 5 paths | 1 health path `src/local-companion-central-proxy.js` (removed 2026-10-13) |
+| Participant browser relay | 20 paths / 21 operations | 9 paths / 9 operations `apps/local/transport/participant-relay-routes.js` (removed 2026-10-13) |
 | Hosted Worker API | 38 paths / 39 operations | 31 paths / 31 operations | [`route-registry.ts`](../../apps/worker/src/route-registry.ts) |
 | Accounting package root | 47 symbols | 27 symbols | [`packages/accounting/index.js`](../../packages/accounting/index.js) |
 | Quota-analysis package root | 39 symbols | 32 symbols | [`packages/quota-analysis/index.js`](../../packages/quota-analysis/index.js) |

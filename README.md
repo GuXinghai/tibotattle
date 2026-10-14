@@ -8,19 +8,14 @@ confident answer.
 
 Personal analysis runs locally and works without an account. Raw source logs do
 not leave your machine, and prompts, responses, file paths, and raw account
-identifiers do not enter TiboTattle's derived artifacts. Electron implements
-[accountless optional sharing](docs/decisions/2026-09-04-accountless-sharing-policy.md):
-fresh installs default on, existing installations without a recorded choice
-receive three notices, and a persistent opt-out is available without sign-in.
-Uploads honor the recorded preference and negotiated hosted capabilities.
+identifiers do not enter TiboTattle's derived artifacts. The desktop app is local-only: it sends no usage data and has no community sharing, contribution upload, or hosted sign-in. See the [removal decision](docs/decisions/2026-10-13-desktop-sharing-removal.md).
 Local analysis remains available independently of hosted service availability.
 
 
 > **The name:** TiboTattle is named with affection for the Codex community and
 > its patron saint of quota resets. It is not affiliated with or endorsed by
 > OpenAI or Thibault Sottiaux, and we will happily rename it if asked. Your
-> personal analysis stays local, and sharing follows the applicable versioned
-> policy and your saved preference.
+> personal analysis stays local, and the desktop app sends no usage data.
 
 ## What it shows
 
@@ -95,7 +90,7 @@ npm run product:local
 ```
 
 then open <http://localhost:8787>. Electron is the main app and uses this same
-dashboard for local collection, Settings and accountless community sharing. A
+dashboard for local collection and Settings. A
 useful headline usually appears within seconds; the first deep pass over a
 large history is bounded, cancellable, and resumable.
 
@@ -103,8 +98,7 @@ large history is bounded, cancellable, and resumable.
 
 Uninstall TiboTattle through Windows Settings → Apps. Uninstalling the app does
 not by itself erase accumulated local indexes, preferences, logs, or Windows
-Credential Manager entries. Use only the documented local erase, identity-reset,
-and sharing controls for their separate effects, or follow [SUPPORT.md](SUPPORT.md).
+Credential Manager entries. Use only the documented local erase and identity-reset controls for their separate effects, or follow [SUPPORT.md](SUPPORT.md).
 None of them erases hosted history.
 
 ## Languages
@@ -145,11 +139,7 @@ for the provenance and future-locale policy.
   `account/read`, `account/rateLimits/read`, and `account/usage/read`. Source
   records are processed locally; prompt and response text is not retained in
   derived state.
-- Electron's optional community sharing is accountless, pseudonymous and
-  content-free. The [accepted sharing policy](docs/decisions/2026-09-04-accountless-sharing-policy.md)
-  enables it for identified fresh installations and preserves saved opt-outs.
-  Existing installations without a choice receive the policy's visible notices
-  before activation. Community and Settings expose the same saved choice.
+- The desktop app is local-only. Community sharing, contribution upload, performance sharing, and hosted sign-in were removed on 2026-10-13; see the [removal decision](docs/decisions/2026-10-13-desktop-sharing-removal.md).
 - The shared dashboard contains no Google/Apple sign-in or legacy social
   controls. Legacy enrollment and device disconnect backend contracts
   remain compatible with their existing consumers. Hosted erasure is a separate

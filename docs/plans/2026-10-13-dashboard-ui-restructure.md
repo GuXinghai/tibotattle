@@ -35,7 +35,12 @@ source. Reuse real results; do not derive algorithms from the mockup.
 - Four primary destinations: **Overview, Usage & costs, Allowance, Model
   performance**. Settings remains a utility entry. Retain the approved Chinese
   labels: **概览、用量与成本、额度、模型性能**.
-- Remove the desktop Community navigation and page module. Existing capabilities
+- Remove community sharing, contribution, and share cards from the desktop
+  product ([owner decision 2026-10-13](../decisions/2026-10-13-desktop-sharing-removal.md),
+  superseding this plan's earlier move of sharing controls into Settings).
+  Saved opt-outs, receipts, salts, and identities stay untouched on disk. The
+  deployed Worker and public site are retired separately. Previous wording:
+  existing capabilities
   must continue to own sharing preferences, transition notices, upload capability
   information, and durable opt-outs. This does not remove the public website,
   backend, retained history, or sharing contracts.
@@ -100,9 +105,9 @@ Do not hide the original six destinations behind collapsible groups or a generic
 | weekly.history | Allowance: Allowance equivalent | Overall median; historical estimates; slope-agreement range; observed-span control; short-observation classification |
 | weekly.forecast | Allowance: Usage forecast | Existing forecasts; applicable window; samples and intervals; insufficient-evidence reasons |
 | weekly.details | Allowance equivalent: Cycle detail | Complete cycle results; pagination; status and range |
-| weekly.share | Allowance action: Generate share card | Actual chart/filter scope; preview; save/copy; completion/failure feedback; content-free output boundary |
+| weekly.share | Removed (owner decision 2026-10-13) | Share-card generation, preview, save/copy, Share view, and global Share button are removed |
 | performance.speed/latency | Model performance: Generation speed/First-token latency | Model/mode selection; percentile bands; actual samples; measurement methods; sparse evidence; local recovery behavior |
-| community | Desktop module removed | Sharing switch, saved preference, upload capability, and necessary notices remain accessible through Settings |
+| community | Removed with all desktop sharing (owner decision 2026-10-13) | No sharing switch, notice, upload, or promotional link remains; saved choices stay on disk unread |
 
 Every capability needs a discoverable entry. Hidden DOM or a surviving backend
 response does not demonstrate feature preservation. The Usage trend entry reuses
@@ -170,7 +175,11 @@ but unavailable generation speed remain inspectable. Model switching, reporting
 range changes, preloading, cancellation, and retry must not add unnecessary
 repeated reads.
 
-### Settings, result sharing, and detail surfaces
+### Settings and detail surfaces
+
+> The sharing and share-card requirements in the next paragraph are superseded
+> by the 2026-10-13 removal decision. Settings keeps its other sections.
+
 
 Settings retains its Electron owner and existing sections; coordinate visuals
 without migrating stored state. Show the saved sharing preference separately
@@ -220,9 +229,9 @@ closing behavior to Settings, confirmations, or flows with unsaved input.
 | Stage | Work | Exit criteria and independent commit boundary |
 |---|---|---|
 | 0: Inventory | Reconcile this table with current entries, controls, detail, and states; identify existing defects | Record destination and verification for every capability; do not label unimplemented behavior preserved or reinvestigate unrelated platforms |
-| 1: Shell | Four destinations; view/filter hierarchy; status slots; Share navigation; Community page and dead references removed | All four destinations and internal navigation/shortcuts work; sharing and Settings remain accessible; commit the shell independently |
+| 1: Shell | Four destinations; view/filter hierarchy; status slots; removal of Community, sharing/contribution, and share cards | All four destinations and internal navigation/shortcuts work; Settings remains accessible; preserved state untouched; commit shell and removal independently |
 | 2: Usage | Compose project/thread and global model views; connect composition and cache analysis | Search, scope, pagination, expansion, and full-population denominators unchanged; diagnostics separated from totals; independent commit |
-| 3: Allowance | Compose allowance equivalent and trends; retain all analysis, forecasts, and sharing | Verify shared time, event localization, complete evidence, and window/filter semantics; independent commit |
+| 3: Allowance | Compose allowance equivalent and trends; retain all analysis and forecasts | Verify shared time, event localization, complete evidence, and window/filter semantics; independent commit |
 | 4: Visuals | Overview/performance cards; common typography; Settings coordination; replace whole-page scaling | Clear defaults and discoverable detail; long states/languages do not shrink text; commit by verified module |
 | 5: Acceptance | Focused pagination/state/navigation checks; Windows trial package; manual page-by-page review | Record source, browser, and packaged runtime separately; owner reviews design and detail; release gates remain separate |
 
@@ -278,11 +287,10 @@ Do not publish before critical release gates pass.
 ## Outstanding gates
 
 - Stage 0 inventory: [capability and caller inventory](./2026-10-13-dashboard-ui-inventory.md).
-
 - No implementation or acceptance of the new navigation and feature migration.
-- Share focusing a hidden view is a static path finding; reproduce and fix it
-  during implementation.
-- Notice access after Community removal, the Usage trend entry, and discovery
+- Share focusing a hidden view was a static path finding; the Share action is
+  removed by the 2026-10-13 decision.
+- The Usage trend entry and discovery
   of complex analysis still require complete integration.
 - Approved concept appearance does not prove production-data density, correct
   measurement scopes, or readable access to every detail.

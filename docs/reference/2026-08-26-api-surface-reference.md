@@ -39,10 +39,8 @@ Those remain separate verification gates in the relevant runbooks.
 
 | Surface | Boundary | Implemented surface |
 |---|---|---:|
-| Local companion API | Browser/native shell → loopback Node companion | 33 paths, 35 method/path operations |
+| Local companion API | Browser/native shell → loopback Node companion | 16 paths, 17 method/path operations |
 | Local report pages | Browser → fixed loopback report allowlist | 4 `GET` paths |
-| Central public relay | Loopback companion → configured hosted origin | 1 fixed `GET` path |
-| Participant relay | Loopback companion → configured hosted origin | 11 paths, 11 method/path operations |
 | Hosted Worker API | Internet/native collector → Cloudflare Worker | 49 API paths, 52 method/path operations |
 | Deliberate negative Worker route | Internet → fixed non-API interception | 1 always-`404` path |
 | Native/browser bridge | Electron preload/IPC ↔ desktop shell | 4 message handlers, 4 DOM events, 1 fixed URL scheme |
@@ -94,8 +92,6 @@ flowchart LR
   Local --> |read-only local files| Evidence
   Local <--> |sanitized account protocol| Codex
   Native <--> |four capabilities; get / set / delete| Keychain
-  Local --> |health-only central relay + 11 participant relays| Worker
-  Local --> |device bearer + one-use Upload authority| Worker
   Worker <--> Data
   Worker <--> Objects
   Worker <--> Budget
@@ -109,10 +105,10 @@ flowchart LR
 ```
 
 The most important architectural distinction is the line around the local Windows app:
-ordinary monitoring reads local evidence and needs no hosted account. Only an
-explicit contribution flow crosses into the hosted boundary, and its relays
-use exact path and authority allowlists rather than behaving as general
-proxies.
+ordinary monitoring reads local evidence and needs no hosted account. Since the
+[2026-10-13 sharing removal](../decisions/2026-10-13-desktop-sharing-removal.md), the desktop app sends no
+usage data to the hosted Worker; the Worker remains a separately deployed
+service.
 
 ### Local provider-owned data interfaces
 
@@ -154,8 +150,7 @@ bounded base-ten safe integers. `GET /api/local/model-performance` requires
 exactly one `period` parameter with value `1`, `7`, `30`, or `all`, and optionally
 a canonical ISO `endAt` no later than the current time. An explicit end uses
 rolling 24-hour, 7-day or 30-day bounds; omitted ends preserve legacy calendar
-windows for 7/30-day consumers. Other query shapes are rejected. Health, desktop status, contribution diagnostics, diagnostic notes, the
-hosted-sign-in handoff, and model performance can answer without a completed
+windows for 7/30-day consumers. Other query shapes are rejected. Health, desktop status, diagnostic notes, and model performance can answer without a completed
 Codex accounting snapshot.
 
 ### Local route inventory
@@ -164,9 +159,7 @@ Codex accounting snapshot.
 |---|---|---|
 | `GET` | `/api/local/health` | Companion readiness, refresh state, schema versions, and configured capabilities |
 | `GET` | `/api/local/desktop-status` | Closed lifecycle plus a current direct display allowance from bounded published-overview metadata; strict v2 notification evidence remains receipt-only. Available before the first snapshot and without account identifiers or filesystem paths. |
-| `GET` | `/api/local/diagnostics/contribution` | Closed, path-free contribution support diagnostics for the native shell |
 | `POST` | `/api/local/diagnostics/note` | Record one bounded fixed-vocabulary local diagnostic note |
-| `GET`, `POST` | `/api/local/identity/hosted-signin-handoff` | Read or update the bounded local recovery handle for an in-flight hosted sign-in |
 | `GET` | `/api/local/onboarding` | Local installation and evidence-source readiness |
 | `GET` | `/api/local/overview` | Personal dashboard headline and evidence coverage |
 | `GET` | `/api/local/cache-drop-thread-links` | Optional, generation-bound local thread-name/parent lookup for the two recent cache-drop tables; requires `X-Usage-Monitor-Local: 1` and no foreign Origin |
@@ -180,21 +173,6 @@ Codex accounting snapshot.
 | `GET`, `POST` | `/api/local/refresh` | Inspect refresh state or explicitly start one bounded retained-history and detailed-accounting refresh |
 | `POST` | `/api/local/refresh/quick` | Refresh current quota/headline evidence without advancing retained history or rebuilding detailed accounting |
 | `POST` | `/api/local/refresh/cancel` | Cooperatively cancel the active refresh |
-| `POST` | `/api/local/contribution/prepare` | Build and validate a reviewed local contribution set |
-| `GET` | `/api/local/contribution/sync-status` | Inspect the replay-safe contribution queue and pause state |
-| `POST` | `/api/local/contribution/sync-next` | Inspect the next bounded queued upload candidate; this is intentionally not a `GET` |
-| `POST` | `/api/local/contribution/device-pair` | Claim a one-use hosted pairing code and store the resulting device credential locally |
-| `POST` | `/api/local/contribution/device-disconnect` | Persist `device_disconnected` pause intent, revoke the current hosted device, and remove its local authority without deleting history |
-| `POST` | `/api/local/contribution/device-credential-reset` | Remove the local contribution-device credential under the fixed reset contract |
-| `POST` | `/api/local/contribution/sync-inspect-exact` | Inspect exact next-upload bytes and authority without sending |
-| `GET` | `/api/local/contribution/incremental-status` | Inspect incremental v1 eligibility, watermark, and state |
-| `POST` | `/api/local/contribution/incremental-review-v11` | Review the capability-gated v1.1 field inventory and derived sample; issue a publication/destination/contract-bound single-use token without uploading |
-| `POST` | `/api/local/contribution/incremental-review-v12` | Review the capability-gated v1.2 field inventory and derived sample; issue a publication/destination/contract-bound single-use token without uploading |
-| `GET` | `/api/local/performance/status` | Read separate performance consent and synchronization status |
-| `POST` | `/api/local/performance/review` | Prepare a content-free histogram review and one-use device/destination/dictionary/method-bound approval token |
-| `POST` | `/api/local/performance/approve` | Verify that review token and independent hosted grant before enabling daily performance delivery |
-| `POST` | `/api/local/contribution/incremental-approve` | Record explicit approval for the incremental contract |
-| `POST` | `/api/local/contribution/incremental-run` | Run one bounded incremental preparation/delivery cycle |
 
 The thread-link route has a closed `local-cache-drop-thread-links-v1` response:
 `schemaVersion`, `status`, `generation`, and at most 160 `entries`. Each entry
@@ -264,51 +242,8 @@ direct pages remain intentionally addressable for operator review.
 
 ## 2. Loopback-to-hosted relay APIs
 
-The companion has two separate upstream policies. Both accept only a
-configured absolute HTTP(S) origin, impose request/response byte ceilings and a
-15-second timeout, require JSON for API payloads, reject redirects, and never
-derive the upstream host from request data.
-
-### Public central relay
-
-**Source of truth:**
-[`src/local-companion-central-proxy.js`](../../src/local-companion-central-proxy.js).
-
-This deliberately credential-free relay is health-only. It forwards neither
-participant cookies nor device authority; collector envelope-key reads use
-their own fixed hosted client instead of widening the browser relay.
-
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/api/health` | Hosted service health |
-
-### Participant relay
-
-**Sources of truth:**
-[`apps/local/transport/participant-relay-routes.js`](../../apps/local/transport/participant-relay-routes.js)
-and
-[`apps/local/transport/participant-session-cookie-bridge.js`](../../apps/local/transport/participant-session-cookie-bridge.js).
-
-This relay bridges the hosted `__Host-usage_monitor_session` cookie into a
-loopback-origin browser without making the companion a general cookie proxy.
-It forwards only the allowlisted cookie and CSRF headers and rejects incoming
-`Authorization`. Identity start/result and enrollment are session-exempt by
-design; provider callbacks go directly to the hosted Worker and are never
-relayed through loopback.
-
-| Method | Path | Relay role |
-|---|---|---|
-| `POST` | `/api/v1/enroll` | Consume a short-lived identity proof and establish participation |
-| `POST` | `/api/v1/identity/google/start` | Start hosted Google sign-in |
-| `POST` | `/api/v1/identity/google/result` | Poll the one-time Google handoff result |
-| `POST` | `/api/v1/identity/apple/start` | Start hosted Apple sign-in |
-| `POST` | `/api/v1/identity/apple/result` | Poll the one-time Apple handoff result |
-| `GET` | `/api/v1/session` | Read the current hosted session projection |
-| `POST` | `/api/v1/logout` | End the hosted browser session |
-| `POST` | `/api/v1/me/device-pairings` | Create a one-use local-device pairing code |
-| `POST` | `/api/v1/me/device-telemetry-consents` | Relay explicit v1.1 consent under the hosted personal session and CSRF; never substitute device authority |
-| `POST` | `/api/v1/me/device-telemetry-v12-consents` | Relay explicit v1.2 consent under the hosted personal session and CSRF; never substitute device authority |
-| `POST` | `/api/v1/me/device-telemetry-performance-consents` | Relay explicit independent daily-performance consent under the hosted personal session and CSRF; never substitute device authority |
+Removed with desktop sharing ([decision](../decisions/2026-10-13-desktop-sharing-removal.md)). The
+companion no longer relays requests to a hosted origin.
 
 ## 3. Hosted Cloudflare Worker HTTP API
 
@@ -726,10 +661,10 @@ defines these as the only reviewed public entries into owned root-source areas:
 
 | Owner | Reviewed entrypoints |
 |---|---|
-| Application | [`src/application/index.js`](../../src/application/index.js), [`claude-callback-capability.js`](../../src/application/claude-callback-capability.js), [`local-review.js`](../../src/application/local-review.js), [`local-contribution-preparation.js`](../../src/application/local-contribution-preparation.js), [`local-incremental-contribution-sync.js`](../../src/application/local-incremental-contribution-sync.js), [`local-prepared-contribution.js`](../../src/application/local-prepared-contribution.js) |
-| Contribution | [`src/contribution/index.js`](../../src/contribution/index.js), [`telemetry-v1-chunks.js`](../../src/contribution/telemetry-v1-chunks.js) |
+| Application | [`src/application/index.js`](../../src/application/index.js), [`claude-callback-capability.js`](../../src/application/claude-callback-capability.js), [`local-review.js`](../../src/application/local-review.js), [`local-contribution-preparation.js`](../../src/application/local-contribution-preparation.js), [`local-prepared-contribution.js`](../../src/application/local-prepared-contribution.js) |
+| Contribution | [`src/contribution/index.js`](../../src/contribution/index.js) |
 | Export | [`src/export/bundle-verification.js`](../../src/export/bundle-verification.js), [`canonical-json.js`](../../src/export/canonical-json.js), [`index.js`](../../src/export/index.js), [`workspace-runtime.js`](../../src/export/workspace-runtime.js), [`set-materialization-runtime.js`](../../src/export/set-materialization-runtime.js) |
-| Platform | [`src/platform/index.js`](../../src/platform/index.js), [`windows-accountless-installation-credential.js`](../../src/platform/windows-accountless-installation-credential.js), [`windows-account-observation-credential.js`](../../src/platform/windows-account-observation-credential.js), [`windows-credential-manager-probe.js`](../../src/platform/windows-credential-manager-probe.js), [`claude-callback-lifecycle.js`](../../src/platform/claude-callback-lifecycle.js), [`owner-only-prepared-contribution-storage.js`](../../src/platform/owner-only-prepared-contribution-storage.js), [`telemetry-envelope.js`](../../src/platform/telemetry-envelope.js), [`telemetry-v1-envelope.js`](../../src/platform/telemetry-v1-envelope.js) |
+| Platform | [`src/platform/index.js`](../../src/platform/index.js), [`windows-accountless-installation-credential.js`](../../src/platform/windows-accountless-installation-credential.js), [`windows-account-observation-credential.js`](../../src/platform/windows-account-observation-credential.js), [`windows-credential-manager-probe.js`](../../src/platform/windows-credential-manager-probe.js), [`claude-callback-lifecycle.js`](../../src/platform/claude-callback-lifecycle.js), [`owner-only-prepared-contribution-storage.js`](../../src/platform/owner-only-prepared-contribution-storage.js), [`telemetry-envelope.js`](../../src/platform/telemetry-envelope.js) |
 | Providers | [`src/providers/claude/statusline.js`](../../src/providers/claude/statusline.js), [`src/providers/codex/account.js`](../../src/providers/codex/account.js), [`src/providers/codex/logs.js`](../../src/providers/codex/logs.js) |
 | Reporting | [`src/reporting/index.js`](../../src/reporting/index.js) |
 
@@ -765,10 +700,9 @@ around one generated or compiled authority.
 | [`schemas/r7-release-evidence-v0.1`](../../schemas/r7-release-evidence-v0.1) | R7 release qualification receipt |
 | [`schemas/r7-resource-benchmark-v0.1`](../../schemas/r7-resource-benchmark-v0.1) | R7 resource benchmark receipt |
 
-Telemetry v1 incremental chunks are code-defined in
-[`src/contribution/telemetry-v1-chunks.js`](../../src/contribution/telemetry-v1-chunks.js),
-with the Worker-side mirror in
+The Worker-side telemetry v1 incremental chunk mirror is in
 [`apps/worker/src/telemetry-v1.ts`](../../apps/worker/src/telemetry-v1.ts).
+The desktop-side chunk module was removed with desktop sharing on 2026-10-13.
 Local HTTP response schema versions remain beside their handlers because they
 are projections, not general-purpose persisted formats.
 

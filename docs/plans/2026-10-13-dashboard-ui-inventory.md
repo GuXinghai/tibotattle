@@ -76,9 +76,9 @@ stage that moves the capability.
 | weekly.history | `.weekly-hero`, `.weekly-history-panel` | Allowance equivalent | 5h/7d window toggle; plan select; observed-span slider (floor forced to 0 below 7 days); headline median is unfiltered, chart is filtered |
 | weekly.forecast | `#weekly-pace-forecast` (inserted by JS) | Usage forecast | forecast, waiting/stale, details disclosure |
 | weekly.details | `.weekly-table-panel` | Allowance equivalent → Cycle detail | full unfiltered history, 6/page |
-| weekly.share | `#share-panel`, `renderShareCard` | Allowance action: share card | 7-day only; preview; save (anchor/native bridge); copy; toast/status; busy guard; content-free filename |
+| weekly.share | `#share-panel`, `renderShareCard` | Removed (2026-10-13 decision) | — |
 | performance.speed/latency | `model-performance.js` | Model performance | model tabs; standard/fast/ultrafast modes; P10–P90/P25–P75/P50; sparse hollow markers under 5; measured/total turns; unknown-mode exclusion; cancel/retry; 60s cache, preload backoff |
-| community | `index.html` ~943-980, `app.js` sharing render/set | Removed; switch moves to Settings | see below |
+| community | `index.html` ~943-980, `app.js` sharing render/set | Removed (2026-10-13 decision) | see below |
 
 Data owners stay separate. Overview, Accounting, Weekly and Trends share
 `LocalCompanionClient.load()`. Projects uses `POST /api/local/work-usage/query`.
@@ -86,39 +86,31 @@ Performance uses `GET /api/local/model-performance`. Divergence breakdown uses
 `/api/local/timeline/window-breakdown`. Project filters never apply to the
 global model table.
 
-## Community removal contract (Stage 1)
+## Community and sharing removal (Stage 1)
 
-The desktop `#community` section holds the only sharing switch
-(`#electron-accountless-sharing-enabled`), its state and transport lines, a
-save-error line, and a link to the public community page. The transition
-notice with Share now / Keep sharing off is on Overview (`#electron-sharing-notice`).
-Removing the page does not touch that notice. The durable opt-out lives in
-`apps/electron/desktop-sharing.js` (`accountless-opt-out-v1`).
+The owner decided on 2026-10-13 to remove community sharing, contribution and
+share cards ([decision](../decisions/2026-10-13-desktop-sharing-removal.md)).
+That decision supersedes the earlier proposal to move the sharing switch into
+Settings.
 
-Settings currently shows read-only state and transport. Its summary refers to
-"the Community page", and "Manage sharing" calls `openCommunity`. To remove the
-page without losing a capability, Settings must own:
+Stage 1 removes the following desktop pieces:
 
-- the switch, with failure reverting to the saved state and showing an error line;
-- the state and transport lines, kept separate;
-- the public community link, if the owner still wants it.
+- the `#community` page and the Overview transition notice;
+- the Settings sharing card;
+- the Share button and the share-card view;
+- the Electron sharing, download, and hosted sign-in IPC;
+- the companion contribution routes and schedulers.
 
-The Settings bridge does not expose `setSharingEnabled` today, so this needs
-an Electron preload/IPC addition (`apps/electron/AGENTS.md` boundary). The
-alternative is a hash target in the dashboard for a Settings-owned sharing
-panel. `openCommunity`, its tests, the `#community`/`history`/`backend`/`data`
-aliases, the `community` nav icon and the toolbar-hiding branch become dead.
-
-`community.html`, `community.js`, `community-view.js`, `community-refresh.js`
-and `community-data.js` belong to the public site and admin build. They are
-out of scope and must stay.
+Saved choices and credentials stay on disk, unread. The public website
+community files and the Worker are deployed services and stay until a separate
+retirement.
 
 ## Existing defects found
 
 | Defect | Evidence | Stage |
 |---|---|---|
-| Share focuses a hidden panel unless the user already chose the Share view | `navigateToSharePanel` sets only `#weekly`. The `share` view stays inactive (`display:none`). The test uses a fake panel | 1 |
-| Share copy says card text is "listed below", but no such element exists; `copyShareCardText` has no caller | `app.js` ~4003, 4100, 4202-4217 | 3 |
+| Share focuses a hidden panel unless the user already chose the Share view | `navigateToSharePanel` sets only `#weekly`. The `share` view stays inactive (`display:none`). The test uses a fake panel | 1; obsolete because Share is removed |
+| Share copy says card text is "listed below", but no such element exists; `copyShareCardText` has no caller | `app.js` ~4003, 4100, 4202-4217 | 1; obsolete because share cards are removed |
 | Hard-coded English bypasses `t()` | share-card status/toast; usage summary labels (~5356); timeline confidence copy; "Auto review" (`work-usage-view.js`, `app.js`); comparison bar labels `index.html` ~394, 399 | owning stage |
 | Projects top-level unavailable/error has no local Retry (only nested children do) | `work-usage-view.js` ~703, ~1416 | 2 |
 | Divergence breakdown offers Retry for 400/404/405 "unavailable" responses that cannot succeed | `data-client.js` ~5796, `app.js` ~6366-6420 | 3 |

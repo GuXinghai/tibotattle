@@ -9,8 +9,7 @@ status: maintained
 
 TiboTattle is a local-first desktop application for understanding AI-tool usage,
 cost, quota windows, and trends. Local analysis works without an account and
-keeps session content on your device. Optional community contribution is a separate,
-content-free, consented feature.
+keeps session content on your device. The desktop app sends no usage data: it has no community sharing, contribution upload, or hosted sign-in ([decision](./decisions/2026-10-13-desktop-sharing-removal.md)).
 
 TiboTattle supports Windows x64 only. See [platform support](./reference/platform-support.md)
 for the current distribution and its qualification limits.
@@ -82,8 +81,7 @@ so the complete retained row set remains accessible.
 Optional disclosures open in a dialog instead of extending the page. Close it
 with **Close** or Escape to return to the originating control. If the owning
 report is replaced while a dialog is open, it closes rather than displaying
-detached evidence. Community keeps its existing sharing controls and policy
-inside the same compact viewport layout.
+detached evidence.
 
 
 - **Overview and trends** summarize locally derived activity and quota evidence.
@@ -112,16 +110,13 @@ correction contract.
 
 When local history contains more than one plan, **Allowance** separates the
 plans instead of averaging Plus and Pro reset estimates together. The plan
-selector keeps the headline, history, range, pace and share card on the same
-selected population. The newest observed plan is selected even if it does not
+selector keeps the headline, history, range, and pace on the same selected population. The newest observed plan is selected even if it does not
 yet have enough usable evidence; older-plan estimates remain selectable rather
 than being presented as the current plan's allowance.
 
 The allowance history automatically draws a **Robust LOWESS** trend alongside
 its all-data median reference, raw dots and slope-agreement ranges. It uses only
-the selected plan and visible, filtered reset estimates. The social share graph
-uses exactly the same fitted values, gaps, axes and date range; saving or copying
-the image needs no separate trend setting. The headline remains the all-data
+the selected plan and visible, filtered reset estimates. The headline remains the all-data
 median. LOWESS is not a confidence interval or proof that the
 provider changed a limit.
 
@@ -132,18 +127,11 @@ Both graphs explicitly label insufficient evidence and preserve raw estimates
 instead of extrapolating through unsupported history.
 The Allowance window control defaults to **7-day** whenever seven-day evidence
 is available. Choose **5-hour** to replace the headline, history graph and reset
-table with the selected plan's five-hour capacity history. Pace forecasts and
-share cards remain seven-day-only. A grey five-hour choice is an evidence state,
+table with the selected plan's five-hour capacity history. Pace forecasts remain seven-day-only. A grey five-hour choice is an evidence state,
 not a timer: run **Update local usage** so the detailed refresh can rebuild the
 local accounting cache. The choice becomes available only when that retained
 history contains a plan-specific five-hour reset with enough observed quota
 movement to fit; missing evidence is never presented as zero.
-
-**Save image** exports the share card as a PNG named with the local save time,
-such as `2026-09-28-19-15-tibotattle-results.png`. Desktop builds confirm the
-completed save in Downloads and offer **Open image** in the default app. A
-second save within the same minute receives a numeric suffix. In a browser,
-the destination follows that browser's download settings.
 
 These historical estimates are conditional on the locally observed plan, not
 proof of which provider account generated every token. Known plan switches and
@@ -184,8 +172,7 @@ Codex thread. A worker row shows a parent-name link and a separate bracketed
 subworker link. Hover a link for the local event time; keyboard users receive
 the same time in its accessible description. If a name is missing, the link
 uses a shortened thread ID. If attribution cannot be proven, it stays unlinked.
-Names are looked up locally and are not included in reports, share cards,
-diagnostics, or community contributions.
+Names are looked up locally and are not included in reports or diagnostics.
 
 ## Shared reporting period
 
@@ -198,7 +185,7 @@ Projects & threads. If matching accounting evidence is unavailable, the page say
 so instead of choosing a different period. All available history describes the
 evidence retained locally; coverage and indexing notices still qualify it.
 
-Current allowance readings and Community sharing preferences are unaffected.
+Current allowance readings are unaffected.
 The Allowance headline remains the median of its full qualifying plan population;
 the reporting period filters its history chart. Plan, allowance-window, model,
 grouping, chart zoom, and minimum-span controls remain beside the data they affect.
@@ -228,12 +215,7 @@ measurements are ready. Browser results stay in memory only; restarting the app
 starts a fresh page cache. Speculative requests pause while the app document is
 hidden.
 
-Accountless performance sharing rechecks its protected sharing preference and
-current hosted grant when the desktop restarts or that preference changes. A
-current grant can resume an earlier authorization or response-version rejection
-while preserving acknowledged upload progress. Ordinary polling does not retry
-a terminal rejection. Recorded opt-outs and invalid measurements remain
-protected; local Model performance analysis is independent of hosted sharing.
+The desktop app does not send performance data. Local Model performance analysis is unaffected.
 
 **Output speed** includes response-timed measurements plus eligible tool-free
 turn estimates from older logs. Each turn contributes once: covered response
@@ -517,35 +499,9 @@ The current Electron app has no self-service credential migration or approval
 control. **Retry** repeats the silent readiness check; it does not migrate the
 credential.
 
-## Optional community contribution
+## Community sharing removed
 
-Electron uses accountless, content-free sharing under the
-[accepted sharing policy](./decisions/2026-09-04-accountless-sharing-policy.md).
-Identified fresh installations default on. Existing saved choices are preserved;
-existing installations without a choice receive three visible notices before
-activation. Community and Settings display the same persisted sharing choice
-and current upload status. Contributions are pseudonymous and omit session
-content; pseudonymous does not mean anonymous. Local analysis remains available
-when sharing is off or uploads are unavailable.
-
-The shared dashboard no longer presents Google/Apple sign-in, legacy field
-review, consent, pairing or device-disconnect controls. Their backend contracts
-remain available to legacy clients. Successful collection, upload and aggregate
-publication are separate states. Keep the displayed status or sanitized error
-if support is needed.
-
-### Stop sharing from this computer
-
-Turn off **Share usage measurements** in Community to stop future accountless
-uploads and save your choice across restart. You can also reach Community through
-**Settings… → Data & privacy → Community sharing → Manage sharing**. This
-preserves accepted hosted history, local analysis and the existing enrollment.
-
-Older clients may offer a device disconnect control with a confirmation. It revokes
-this computer's hosted contribution authority, clears its local device credential
-and binding, and pauses delivery. It preserves previously contributed hosted
-history, other devices, and local analysis. Signing out only ends the browser
-session; it is not device disconnect.
+The desktop app is local-only. Community sharing, contribution upload, performance sharing, share cards, and hosted sign-in were removed on 2026-10-13 ([decision](./decisions/2026-10-13-desktop-sharing-removal.md)). The app sends no usage data, and local analysis works without an account.
 
 Self-service hosted deletion is retired under the
 [2026-08-30 source decision](./decisions/2026-08-30-self-service-deletion-retirement.md).
@@ -565,8 +521,7 @@ privacy notice is at `https://tibotattle.com/privacy.html`.
 Uninstalling the app does not imply that accumulated local indexes,
 preferences, logs, or Credential Manager entries were erased. That separation prevents an
 ordinary application replacement from destroying history. Use documented
-local erase, identity-reset, sharing and legacy device-disconnect controls only for their
-separate effects. None erases hosted history; private owner erasure is separate.
+local erase and identity-reset controls only for their separate effects. None erases hosted history; private owner erasure is separate.
 Follow the support guide for intentional cleanup and never remove broad
 AppData or Credential Manager locations blindly.
 

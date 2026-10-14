@@ -2,8 +2,12 @@
 title: Accountless sharing defaults and existing-install transition
 date: 2026-09-04
 type: decision-record
-status: accepted
+status: superseded
 ---
+
+> Superseded for the desktop client on 2026-10-13 by
+> [desktop sharing removal](2026-10-13-desktop-sharing-removal.md). This record
+> describes the earlier sharing behavior and saved-choice format, which remain on disk.
 
 # Accountless sharing defaults and existing-install transition
 

@@ -25,8 +25,7 @@ Two distinct surfaces share this repository:
 
 - **Local Windows app** (`apps/electron`, `apps/local`, `apps/web`, `src/`,
   `packages/`): runs entirely on your machine, binds to loopback only, and
-  works fully offline. Issues that break the privacy model — uploads that
-  bypass the applicable sharing policy, prompts/responses/paths entering derived
+  works fully offline. Issues that break the privacy model — unintended network transmission of usage data, prompts/responses/paths entering derived
   artifacts, loopback exposure — are in scope and treated as high priority.
 - **Hosted contribution service** (`apps/worker`, served at
   [tibotattle.com](https://tibotattle.com)): operated by the maintainer.
@@ -45,16 +44,9 @@ does not establish deployment or a new privacy-request reporting channel.
 
 The local refresh reads selected Codex session folders, local Codex
 configuration and lineage state, the installed Codex app-server account/quota
-methods, and owner-only derived state. Undisclosed source access, retention of
-prompt/response content, unsafe derived artifacts, unintended network
-transmission, or a bypass of contribution authorization or durable opt-out is in scope.
+methods, and owner-only derived state. Undisclosed source access, retention of prompt/response content, unsafe derived artifacts, or unintended network transmission is in scope.
 
-The accepted [accountless Electron sharing policy](docs/decisions/2026-09-04-accountless-sharing-policy.md)
-uses automatic sharing for fresh installations and three visible notices before
-transitioning existing installations without a prior choice. Explicit opt-outs
-remain off. It preserves content exclusion, protected credentials and offline
-local analysis; the legacy native review/consent flow remains compatible.
-This source decision is not a claim of deployment or release activation.
+The desktop app is local-only and sends no usage data. Community sharing, contribution upload, and hosted sign-in were removed on 2026-10-13 ([decision](docs/decisions/2026-10-13-desktop-sharing-removal.md)). The earlier [accountless Electron sharing policy](docs/decisions/2026-09-04-accountless-sharing-policy.md) is historical.
 
 The interactive local cache-drop tables also resolve explicit display names,
 worker nicknames, and parent links from bounded read-only Codex thread metadata

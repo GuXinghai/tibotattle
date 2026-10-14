@@ -166,42 +166,6 @@ function localRoutePolicy(source) {
   return policy;
 }
 
-function centralRoutePolicy(source) {
-  const block = sourceBlock(
-    source,
-    /const EXACT_ROUTES = new Map\(\[/u,
-    /\]\);/u,
-    "central relay",
-  );
-  return routePolicy(
-    [...block.matchAll(
-      /\["(\/api\/[^"?]+)",\s*new Set\(\[([^\]]*)\]\)\]/gu,
-    )].map((match) => ({
-      path: match[1],
-      methods: quotedMethods(match[2], `central relay ${match[1]}`),
-    })),
-    "central relay",
-  );
-}
-
-function participantRelayPolicy(source) {
-  const block = sourceBlock(
-    source,
-    /export const PARTICIPANT_RELAY_ROUTE_POLICY = Object\.freeze\(\[/u,
-    /\]\);/u,
-    "participant relay",
-  );
-  return routePolicy(
-    [...block.matchAll(
-      /defineParticipantRelayRoute\(\s*"(\/api\/v1\/[^"?]+)"\s*,\s*\[([^\]]*)\]/gu,
-    )].map((match) => ({
-      path: match[1],
-      methods: quotedMethods(match[2], `participant relay ${match[1]}`),
-    })),
-    "participant relay",
-  );
-}
-
 function reportRoutePolicy(source) {
   const block = sourceBlock(
     source,
@@ -217,31 +181,21 @@ function reportRoutePolicy(source) {
 }
 
 test("both maintained API references cover every registered HTTP boundary", async () => {
-  const [markdown, detailedMarkdown, worker, local, central, participant, reports] = await Promise.all([
+  const [markdown, detailedMarkdown, worker, local, reports] = await Promise.all([
     repositoryFile("docs/reference/api-surface.md"),
     repositoryFile("docs/reference/2026-08-26-api-surface-reference.md"),
     repositoryFile("apps/worker/src/route-registry.ts"),
     repositoryFile("apps/local/server.js"),
-    repositoryFile("src/local-companion-central-proxy.js"),
-    repositoryFile("apps/local/transport/participant-relay-routes.js"),
     repositoryFile("src/local-companion-data.js"),
   ]);
 
   const workerPolicy = workerRoutePolicy(worker);
   const localPolicy = localRoutePolicy(local);
   const reportPolicy = reportRoutePolicy(reports);
-  const centralPolicy = centralRoutePolicy(central);
-  const participantPolicy = participantRelayPolicy(participant);
 
   assert.equal(workerPolicy.length, 50, "review Worker route-count changes");
-  assert.equal(localPolicy.length, 33, "review local route-count changes");
+  assert.equal(localPolicy.length, 16, "review local route-count changes");
   assert.equal(reportPolicy.length, 4, "review fixed report-count changes");
-  assert.equal(centralPolicy.length, 1, "review central relay-count changes");
-  assert.equal(
-    participantPolicy.length,
-    11,
-    "review participant relay-count changes",
-  );
 
   for (const [name, reference] of [
     ["entrypoint", markdown],
@@ -251,8 +205,6 @@ test("both maintained API references cover every registered HTTP boundary", asyn
       ["Hosted Worker route inventory", workerPolicy],
       ["Local route inventory", localPolicy],
       ["Fixed report pages", reportPolicy],
-      ["Public central relay", centralPolicy],
-      ["Participant relay", participantPolicy],
     ]) {
       assert.deepEqual(
         documentedRoutePolicy(reference, heading),
@@ -260,6 +212,8 @@ test("both maintained API references cover every registered HTTP boundary", asyn
         `${name}: ${heading}`,
       );
     }
+    // The desktop relays were removed with sharing (2026-10-13 decision).
+    assert.doesNotMatch(reference, /^#+ (Public central relay|Participant relay)$/mu, name);
   }
 
   const ledger = new Map(headingSection(detailedMarkdown, "Surface ledger")
@@ -274,14 +228,7 @@ test("both maintained API references cover every registered HTTP boundary", asyn
     ledger.get("Local companion API"),
     `${localPolicy.length} paths, ${operationCount(localPolicy)} method/path operations`,
   );
-  assert.equal(
-    ledger.get("Participant relay"),
-    `${participantPolicy.length} paths, ${operationCount(participantPolicy)} method/path operations`,
-  );
-  assert.ok(
-    detailedMarkdown.includes(`health-only central relay + ${participantPolicy.length} participant relays`),
-    "the trust-boundary diagram must match the participant relay inventory",
-  );
+  assert.equal(ledger.has("Participant relay"), false);
   assert.equal(
     ledger.get("Hosted Worker API"),
     `${workerApiPolicy.length} API paths, ${operationCount(workerApiPolicy)} method/path operations`,

@@ -234,16 +234,14 @@ defines the exact audit domain and preserved pipeline/restore requirements.
 
 The local companion binds to loopback and checks the peer address and exact
 Host header. Unknown API paths are 404. Mutations also require a same-origin
-request and their route-specific authorization; contribution upload delivery
-is never an arbitrary local proxy.
+request and their route-specific authorization. The companion relays no
+requests to the hosted Worker.
 
 | Method | Path | Caller | Authority | Storage or network effect | Owner |
 | --- | --- | --- | --- | --- | --- |
 | `GET` | `/api/local/health` | Dashboard/native shell | Loopback read | Reports companion/snapshot readiness and enabled local capabilities. | Local companion |
 | `GET` | `/api/local/desktop-status` | Electron shell | Loopback read | Projects closed lifecycle, schema-v2 current display lanes with observation/reset times from bounded published-overview metadata, and receipt-only strict v2 notification evidence; no account identifiers or filesystem paths. Available before the first snapshot. | Local companion |
-| `GET` | `/api/local/diagnostics/contribution` | Dashboard/native shell | Loopback read | Reads a content-free local support projection. | Diagnostics |
 | `POST` | `/api/local/diagnostics/note` | Native shell | Loopback mutation | Records a bounded, fixed-vocabulary diagnostic reference; no prompt or path content. | Diagnostics |
-| `GET`, `POST` | `/api/local/identity/hosted-signin-handoff` | Dashboard/native shell | Loopback mutation | Inspects, stores, or clears the bounded local OAuth restart handle. | Hosted identity |
 | `GET` | `/api/local/onboarding` | Dashboard | Loopback read | Projects source readiness without exposing filesystem paths. | Local companion |
 | `GET` | `/api/local/overview` | Dashboard | Loopback read | Reads the current derived overview snapshot. | Local companion |
 | `GET` | `/api/local/cache-drop-thread-links` | Local dashboard only | Same-origin custom-header read | Ephemeral, generation-bound names and Codex thread IDs for recent cache-drop rows; no query parameters, persistence, or export. | Local companion |
@@ -257,21 +255,6 @@ is never an arbitrary local proxy.
 | `GET`, `POST` | `/api/local/refresh` | Dashboard/native shell | Loopback mutation | GET reads refresh state, closed `mode` (`null`, `quick`, `detailed`) and actual `startedAt`; POST explicitly advances retained history and recalculates generation-bound detailed accounting before full publication. A 409 returns the in-flight receipt. | Refresh controller |
 | `POST` | `/api/local/refresh/quick` | Dashboard/native shell | Loopback mutation | Refreshes current quota/headline evidence without advancing the unified index or rebuilding detailed accounting; the last authoritative detailed projection remains available with current freshness truth fields. | Refresh controller |
 | `POST` | `/api/local/refresh/cancel` | Dashboard/native shell | Loopback mutation | Requests cancellation; published prior state remains intact. | Refresh controller |
-| `POST` | `/api/local/contribution/prepare` | Dashboard | Loopback mutation | Materializes a reviewed, bounded prepared contribution set locally. | Contribution |
-| `GET` | `/api/local/contribution/sync-status` | Dashboard | Loopback read | Reads the legacy prepared-set queue state. | Contribution sync |
-| `POST` | `/api/local/contribution/sync-next` | Dashboard | Loopback mutation | Builds the next bounded local review projection; does not upload. | Contribution sync |
-| `POST` | `/api/local/contribution/device-pair` | Dashboard | Loopback mutation | Claims a hosted pairing and stores the device credential in the platform credential store. | Device lifecycle |
-| `POST` | `/api/local/contribution/device-disconnect` | Dashboard | Loopback mutation | Persists `device_disconnected` pause intent, revokes hosted device authority, and removes local binding/credential state; preserves history. | Device lifecycle |
-| `POST` | `/api/local/contribution/device-credential-reset` | Dashboard | Loopback mutation | Removes unusable local device credential/binding state; does not delete hosted data. | Device lifecycle |
-| `POST` | `/api/local/contribution/sync-inspect-exact` | Dashboard | Loopback mutation | Verifies the exact next payload and issues a short-lived, single-use local review token. | Contribution sync |
-| `GET` | `/api/local/contribution/incremental-status` | Dashboard | Loopback read | Reads v1 incremental consent/cursor/retry state. | Contribution sync |
-| `POST` | `/api/local/contribution/incremental-review-v11` | Dashboard | Loopback mutation | Capability-gated v1.1 field/sample review with a one-use token bound to the published index, consent triple and destination. Does not upload or grant hosted consent. | Contribution consent |
-| `POST` | `/api/local/contribution/incremental-review-v12` | Dashboard | Loopback mutation | Capability-gated v1.2 field/sample review with a one-use token bound to the published index, consent triple and destination. Does not upload or grant hosted consent. | Contribution consent |
-| `GET` | `/api/local/performance/status` | Dashboard | Loopback read | Independent daily-performance consent and synchronization status. | Performance consent |
-| `POST` | `/api/local/performance/review` | Dashboard | Loopback mutation | Review the independent histogram stream and bind a one-use token to the device, destination, dictionary and measurement methods. | Performance consent |
-| `POST` | `/api/local/performance/approve` | Dashboard | Loopback mutation | Verify the explicit review token and fresh hosted grant before enabling daily-performance delivery. | Performance consent |
-| `POST` | `/api/local/contribution/incremental-approve` | Dashboard | Loopback mutation | Records current consent after exact local review and schedules the first due pass. | Contribution sync |
-| `POST` | `/api/local/contribution/incremental-run` | Dashboard | Loopback mutation | Resets bounded retry backoff and asks the consent-gated controller to run now. | Contribution sync |
 
 The overview includes `accounting.trayCacheSummary` (schema version 1): exactly
 one `7d` and one `30d` entry with availability, comparable follow-up count,
@@ -299,50 +282,13 @@ the configured local resource root and have a stricter report CSP.
 | `GET` | `/reports/quality` | Monitoring quality |
 | `GET` | `/reports/multi-surface` | Multi-surface account usage |
 
-## Public central relay
-
-The loopback companion can relay only this exact public GET route to the
-configured central origin. It does not forward cookies, credentials, arbitrary
-headers, arbitrary methods, or arbitrary paths.
-
-| Method | Path | Upstream authority |
-| --- | --- | --- |
-| `GET` | `/api/health` | Public |
-
-## Participant relay
-
-The participant relay forwards only the exact method/path pairs in
-`apps/local/transport/participant-relay-routes.js`. It preserves the bounded
-session/CSRF/upload headers required by those routes, never chooses an upstream
-from request data, and keeps provider callbacks off loopback.
-
-| Method | Path |
-| --- | --- |
-| `POST` | `/api/v1/enroll` |
-| `POST` | `/api/v1/identity/google/start` |
-| `POST` | `/api/v1/identity/google/result` |
-| `POST` | `/api/v1/identity/apple/start` |
-| `POST` | `/api/v1/identity/apple/result` |
-| `GET` | `/api/v1/session` |
-| `POST` | `/api/v1/logout` |
-| `POST` | `/api/v1/me/device-pairings` |
-| `POST` | `/api/v1/me/device-telemetry-consents` |
-| `POST` | `/api/v1/me/device-telemetry-v12-consents` |
-| `POST` | `/api/v1/me/device-telemetry-performance-consents` |
-
 ## Native bridge
 
-The embedded dashboard view admits only the current loopback companion, `about:`,
-and bounded blob downloads. Provider sign-in opens in the system browser.
+The embedded dashboard view admits only the current loopback companion and `about:`.
 
 | Direction | Name | Payload boundary |
 | --- | --- | --- |
 | Web to native | `tibotattleLocalization` | Closed language-preference enum. |
-| Web to native | `tibotattleDownloads` | Fixed `reveal-latest-download` and exact completed-share `open-completed-download` actions; no path crosses the bridge. |
-| Web to native | `tibotattleHostedSignIn` | One boolean indicating whether a handoff is in flight. |
-| Native to web | `tibotattle:hosted-sign-in-return` | Payload-free wake-up event. |
-| Native to web | `tibotattle:share-download-result` | Share-save completion status and final basename, never a path. |
-| Native to web | `tibotattle:share-open-result` | Default-app open result for the exact completed share basename. |
 | Native to web | `tibotattle:local-evidence-updated` | Payload-free refresh-complete event. |
 | Native to web | `tibotattle:locale-override` | Closed language preference plus locale table metadata. |
 | Native to web | `tibotattle:appearance-override` | Closed appearance preference and resolved theme. |
@@ -356,15 +302,6 @@ one fixed IPC channel. Its refresh subset is dashboard-frame-only:
 | Renderer to main | `refreshStarted` | Exact `{ mode }`, where mode is `quick` or `detailed`; returns one positive integer lease. |
 | Renderer to main | `refreshHeartbeat` | Exact `{ lease }` with one positive safe integer; renews only the matching missing-heartbeat watchdog. |
 | Renderer to main | `refreshSettled` | Exact `{ lease }` with one positive safe integer; matching terminal settlement is idempotent. |
-
-## Electron share bridge
-
-The sandboxed Electron dashboard can request `openLatestDownload` without a
-path or filename. The main process authorizes only its live dashboard frame,
-rechecks the completed PNG in Downloads, and opens it with the OS default app.
-The desktop completion command contains only the validated final basename;
-the failure command contains no filesystem detail. The dashboard's main frame
-alone may request `clipboard-sanitized-write`; clipboard reads remain denied.
 
 ## Process and provider protocols
 

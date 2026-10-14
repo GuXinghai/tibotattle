@@ -23,49 +23,13 @@ text have no allowed destination in contribution schemas, diagnostics, or
 public aggregates. Unknown fields are omitted; an input that cannot be safely
 projected is refused or shown as unavailable.
 
-## Electron sharing transition
+## Desktop sharing removal
 
-The [accepted accountless policy](../decisions/2026-09-04-accountless-sharing-policy.md)
-applies to the unified Electron workstream. Fresh installations default to
-sharing; existing installations with no prior choice receive three visible
-notices before activation. A persistent Settings choice enables sharing now or
-keeps it off, cancelling all remaining reminders. Known off, paused and
-disconnected states remain off. Uncertain or unreadable state does not enable
-sharing. No social sign-in is required by this new mode.
+The desktop app is local-only. Community sharing, contribution upload, performance sharing, share cards, and hosted sign-in were removed on 2026-10-13 ([decision](../decisions/2026-10-13-desktop-sharing-removal.md)). The app sends no usage data, and local analysis works without an account.
 
-Electron stores the policy version, destination, basis and notice timestamps
-in the protected `desktop-settings/accountless-sharing-v1.json` profile record.
-It distinguishes automatic activation from affirmative choice and never invents
-an explicit-consent event. Classification reads metadata for a fixed set of
-managed files, not their contents or provider histories. Removing every app
-state marker can make a reinstall indistinguishable from a fresh installation;
-an upgrade or ordinary reinstall preserving the profile preserves the choice.
+The retained local state is preserved untouched: the saved sharing choice (`desktop-settings/accountless-sharing-v1.json`), notice receipts, device salts and identities, the accountless installation credential, and prepared spools and queues. The desktop app neither reads nor writes that state; deleting any of it needs a separate receipt-backed workflow.
 
-The integration source connects preferences, notices, protected installation
-credentials and while-open scheduling to the encrypted v1.1 upload transport.
-Enrollment alone grants no upload permission: the server separately binds an
-accountless owner and current versioned authorization to that installation.
-Usage and quota records retain the same owner, provider/account track and
-domain-generation boundaries. The accepted
-[upload-only opt-out policy](../decisions/2026-09-15-opt-out-stops-future-uploads.md)
-requires ordinary opt-out and device disconnect to stop future admission while
-retaining accepted evidence in public calculations. They do not erase history
-or restart historical work. Upload expiry has the same retention boundary.
-Security containment and explicit private owner erasure are separate operations.
-The [shared public sample](../decisions/2026-09-11-public-contribution-sources.md)
-admits device-bound accountless v1.1 sources alongside signed-in sources. The
-opt-out decision records implementation and deployment evidence; the policy
-statement alone does not establish that a deployed service has been corrected.
-Public counts describe contribution sources, not unique people or verified
-provider accounts; separate installations can supply overlapping history.
-Sealed legacy weekly snapshots retain their original cohort rules.
-
-Only a validated production distribution manifest enables the hosted client;
-development/QA packages keep it disabled. The server's separate ownership flag
-also defaults to disabled. Local synthetic end-to-end tests do not establish a
-deployed service or released client. The native and standalone review/consent
-path described below remains compatible. Production privacy disclosures must
-match the new policy before a build that sends automatically is distributed.
+The hosted service's contribution, enrollment, publication, and erasure contracts are a separate deployed surface. They do not describe desktop behavior.
 
 ## Normal refresh sources
 
@@ -98,7 +62,6 @@ for runtime and resource limits.
 | Custom Codex home | User chooses a directory in Settings | It replaces the default Codex home anchor; the same fixed subpaths and allowlists apply. | Owner-only launcher setting. |
 | Local cache-drop thread links | Local interactive dashboard, for recent displayed drops only | Read-only bounded `session_index.jsonl` (`id`, `thread_name`, `updated_at`) and `state_5.sqlite` (`id`, explicit `name`, worker nickname, and allowlisted source ancestry). For a `guardian_review` row only, the first bounded `session_meta` header in its selected owner-controlled session may supply its matching explicit parent UUID after source and path validation. Never uses prompt-bearing `threads.title`, first messages, or transcripts. | Names and IDs exist only in a separate `no-store`, same-origin local response and transient UI memory, reused for unchanged displayed event pairs during refresh. No snapshot/cache/report/share-card/diagnostic/contribution persistence. Clicking hands only the canonical thread UUID to the local Codex URL handler. |
 | Export workspace | Explicit CLI or review flow | Only allowlisted metadata for the selected time range and sources. | Journaled workspace, chunks, manifest, and verification/deletion receipts at explicit paths. |
-| Contribution preparation | Explicit review/consent flow | Closed telemetry schema; exact payload is locally reviewable before first approval. | Prepared spool/review archive and replay-safe sync state under the app state root. |
 
 ## Model performance timing in development source
 
@@ -122,8 +85,7 @@ excludes a turn. Full-turn duration includes initial waiting; TTFT is never
 subtracted. Output speed uses response timing when available, otherwise an eligible
 supplemental full-turn estimate. Each turn is counted once; the display discloses
 the fallback count and its inclusion of initial waiting. It does not feed accounting.
-Only the separately authorized performance scheduler can project and send its
-content-free daily histograms; opening the page does not grant sharing consent.
+The desktop app does not send its content-free daily histograms; performance sharing was removed on 2026-10-13.
 Failures preserve available saved evidence with its
 stale/unavailable state. Windows remains unavailable until its protected-state
 adapter is qualified. These are source behavior, not installed-release proof.
@@ -141,12 +103,12 @@ The app owns its per-user state root under Electron's user-data directory
 | `inference-timing-v2/source-<Codex-home digest>/timing-experiment.sqlite` (development source) | Separate owner-only timing sidecar: one row per completed turn, counts/durations/coverage, local HMAC keys, source cursors and bounded pending state. No raw content or IDs. | Maximum 256 MiB per selected source; parser method 2 and SQLite user version 4. The forward migration retains existing TPS/TTFT, adds nullable completion/mode fields and source revision counters, and fences older writers. The legacy unscoped sidecar is preserved without reading or migrating its unknown source provenance; first use rebuilds measurements from retained source logs. Incompatible stores, including version 1, are preserved and refused. Display periods do not delete evidence or migrate the accounting index. |
 | `inference-timing-v2/source-<Codex-home digest>/tool-free-v1/timing-experiment.sqlite` (development source) | Independent supplement for reconciled single-response turns without tools, plus its own source cursors and bounded scalar pending state. Shares the original private timing correlation key for local joins only. | Maximum 256 MiB; parser method 3 and SQLite user version 5. Its forward migration preserves previous supplement measurements and fences older writers; the original primary store remains separate. An incompatible or unavailable supplement does not hide original measurements. |
 | `local-collector-state-v1.sqlite` | App-server quota observations, checkpoints, dedupe, locks, and replay-safe collector state. | Accumulates until explicit local erase or a reviewed migration/retention workflow. |
-| `private/` settings/handoff state | Automatic/incremental contribution settings, bounded OAuth restart handle, fast-mode preference, and speed baselines. | Settings persist; the OAuth handle expires and is bounded. |
-| Prepared contribution/review directories and queue | Exact local review, delivery, retry, and audit state. | Retained for replay-safe completion, explicit cleanup, or local erase. |
+| `private/` settings/handoff state | Fast-mode preference and speed baselines. Retired contribution settings and OAuth handle are preserved, not read. | Settings persist. |
+| Retired prepared contribution/review directories and queue | Preserved spools and queue state from removed contribution sharing; not read or written. | Preserved untouched; deletion needs a receipt-backed workflow. |
 | Diagnostics log | Fixed error/status codes and opaque support references. | Bounded, content-free local diagnostics only. |
 | Chromium website data | Loopback dashboard session/local storage and short-lived hosted web session state. | Cleared by **Erase local data**; provider pages use the system browser. |
 
-Windows contribution device bindings, automatic settings/progress/instance locks
+Preserved Windows contribution device bindings, automatic settings/progress/instance locks
 and renewal state use native root-bound reads and atomic writes with protected
 current-owner DACLs. Existing inherited or broader ACL state is rejected without
 rewriting its ACL or credential identity. A failed read is unavailable evidence,
@@ -170,9 +132,9 @@ conflate those locations.
 
 TiboTattle keeps separate credential capabilities for:
 
-- export/contribution pseudonym identity;
+- export pseudonym identity;
 - current account observation pseudonymity;
-- the paired contribution-device credential.
+- the retired paired contribution-device credential, preserved and not used by the desktop app.
 
 The managed Claude callback has a separate pseudonym capability contract. Its
 Windows production backend requires explicit readiness and adapter injection;
@@ -193,20 +155,8 @@ delete or reset credentials or app data. Retry only repeats the silent readiness
 check, and reinstalling this release does not perform a credential migration.
 
 The Electron production source serves the four legacy broker capabilities
-through its signed main process and the inherited FD4 channel. A fifth,
-separate installation credential supports accountless sharing. Its native
-capability cannot be selected through FD4: the main process exposes only the
-closed accountless operations over the owned companion's private FD3 channel.
+through its signed main process and the inherited FD4 channel. The retired accountless installation credential is preserved in Credential Manager; the [2026-10-13 decision](../decisions/2026-10-13-desktop-sharing-removal.md) retires its sharing use.
 Secret bytes never enter renderer IPC, local HTTP responses or diagnostics.
-
-That accountless credential uses the noninteractive native Credential Manager adapter,
-with create-if-missing and exact-value deletion as its only mutations. Existing
-encrypted Electron credential files are inspected without decryption. A present
-legacy ciphertext requires explicit recovery and is preserved; an unreadable
-store never becomes permission to create a replacement identity. The sharing
-page reports recovery while local analysis remains available. These are source
-and synthetic-test contracts; signed installation continuity and prompt-free
-first use still require qualification on the actual candidate.
 
 **Reset identity and device** is a separate two-step action from local data
 erase. It removes the selected local Credential Manager capabilities and associated app
@@ -216,9 +166,7 @@ corrupt credential.
 
 ## Optional hosted contribution
 
-In the released native and standalone flow, contribution is off until the
-person completes the review, identity, consent,
-and pairing flow. A contribution can include closed-schema derived fields such
+The desktop app has no contribution flow (see the desktop sharing removal section above). The deployed hosted service accepts only the schema below. A contribution can include closed-schema derived fields such
 as:
 
 - opaque participant/session/event pseudonyms and schema versions;
@@ -297,6 +245,8 @@ before consent or admission-floor changes; disjoint dates do not make it safe
 to hide the old source. No local or hosted history is deleted by this refusal.
 
 ### Continuity successor and daily performance (source implementation)
+
+The desktop app no longer sends these streams (see the desktop sharing removal section above). The text below describes the retained hosted contract.
 
 V1.2 adds nullable turn-start/preceding-compaction bits, ordering among events
 with the same session and timestamp, and reported five-minute/one-hour cache
@@ -398,8 +348,7 @@ about applicable privacy rights or how a particular request should be resolved.
 | Ordinary app uninstall | Application binaries. | By design, local state and Credential Manager entries survive ordinary uninstall. |
 
 Use the app's explicit controls before uninstall when the intent includes
-local cleanup. Electron's saved sharing-off choice stops accountless delivery;
-the shared dashboard no longer offers legacy device disconnect. These controls
+local cleanup. The saved sharing choice is preserved and no longer read; the shared dashboard no longer offers legacy device disconnect. These controls
 cannot perform private owner erasure.
 Do not manually delete the only local index as a repair technique; follow
 [`../runbooks/local-index-recovery.md`](../runbooks/local-index-recovery.md).

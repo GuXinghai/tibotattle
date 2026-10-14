@@ -352,7 +352,7 @@ The foundation's [histogram primitive](../../packages/telemetry-contract/src/per
 and [schema factory](../../packages/telemetry-contract/src/telemetry-performance-v1-schemas.js)
 implement measurement validation. The
 [Codex parser](../../src/providers/codex/inference-timing.js) qualifies local
-rows and the [daily projector](../../src/contribution/performance-daily.js)
+rows and daily projector `src/contribution/performance-daily.js` (removed 2026-10-13)
 allowlists those rows into bounded daily cohorts. Neither grants upload authority. Generated mirrors and public types describe the
 same staged contract.
 
