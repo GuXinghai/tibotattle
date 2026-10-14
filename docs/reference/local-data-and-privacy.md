@@ -158,6 +158,14 @@ The Electron production source serves the four legacy broker capabilities
 through its signed main process and the inherited FD4 channel. The retired accountless installation credential is preserved in Credential Manager; the [2026-10-13 decision](../decisions/2026-10-13-desktop-sharing-removal.md) retires its sharing use.
 Secret bytes never enter renderer IPC, local HTTP responses or diagnostics.
 
+A packaged Windows development shell that passed the native qualification checks
+can read the existing fixed account-observation key through the same parent IPC
+boundary. Its parent broker refuses key creation before entering the credential
+backend. Missing keys remain unavailable; development cannot rotate, replace, or
+delete credentials. New observations can be attributed, while previously
+unattributed records retain their original status. This does not grant production
+updater, installer, or signing policy.
+
 **Reset identity and device** is a separate two-step action from local data
 erase. It removes the selected local Credential Manager capabilities and associated app
 state; it does not represent hosted participant deletion. An unavailable
