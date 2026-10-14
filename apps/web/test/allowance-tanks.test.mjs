@@ -44,7 +44,7 @@ function harness(locale = "en-US") {
   const document = { createElementNS: (_namespace, tag) => node(tag), createTextNode: text => node("text", "", text), activeElement: null };
   const constants = ["PACE_ON_TRACK_LOWER_RATIO", "PACE_ON_TRACK_UPPER_RATIO", "PACE_CRITICAL_RATIO", "PACE_AVERAGE_MINIMUM_HOURS", "PACE_STATE_LABELS"]
     .map(name => source.match(new RegExp(`\\nconst ${name} = [^;]+;`, "u"))[0]).join("\n");
-  const functions = ["formatAllowanceDuration", "allowanceTimestamp", "formatForecastDuration", "forecastTimestamp", "firstFiniteForecastNumber", "weeklyPaceRates", "weeklyPaceStanding", "formatPaceRatio", "weeklyPaceReading", "weeklyPaceHeadlineText", "weeklyPaceCopyText", "weeklyPaceTrack", "renderWeeklyPaceWaiting", "renderWeeklyPaceForecast", "renderQuotaCards", "providerReportedPlanEvidence", "renderDashboardSkeleton"]
+  const functions = ["formatAllowanceDuration", "allowanceTimestamp", "formatForecastDuration", "forecastTimestamp", "firstFiniteForecastNumber", "weeklyPaceRates", "weeklyPaceStanding", "formatPaceRatio", "weeklyPaceReading", "weeklyPaceHeadlineText", "weeklyPaceCopyText", "weeklyPaceTrack", "weeklyPaceWaitingText", "renderWeeklyPaceWaiting", "renderWeeklyPaceForecast", "renderQuotaCards", "providerReportedPlanEvidence", "renderDashboardSkeleton"]
     .map(declaration).join("\n");
   const factory = new Function("node", "document", "modelThemeIcon", "$", "t", "setLocalizedText", "isPrimaryCodexQuotaWindow", "isPrimaryCodexWeeklyQuotaWindow", "selectPrimaryCodexQuotaWindow", "isSparkQuotaLimitId", "isValidQuotaWindowDuration", "card", `
     const finite = value => typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -68,7 +68,9 @@ function harness(locale = "en-US") {
       allowanceTimestamp, renderDashboardSkeleton,
       popover: () => activeInformationPopover };
   `);
-  const api = factory(node, document, modelThemeIcon, selector => ({ "#quota-cards": quota, "#allowance-context": context, "#weekly-pace-forecast": card })[selector],
+  const api = factory(node, document, modelThemeIcon, selector => selector === "#overview-pace"
+    ? find(quota, "overview-pace")[0]
+    : ({ "#quota-cards": quota, "#allowance-context": context, "#weekly-pace-forecast": card })[selector],
     (key, values = {}) => translate(key, values, locale),
     (element, key) => { element.textContent = translate(key, {}, locale); },
     isPrimaryCodexQuotaWindow, isPrimaryCodexWeeklyQuotaWindow, selectPrimaryCodexQuotaWindow, isSparkQuotaLimitId, isValidQuotaWindowDuration, card);
@@ -102,6 +104,22 @@ test("compact cards retain one, two and many pools, with the current Codex pool 
     assert.equal(h.context.hidden, true);
   }
 });
+test("overview forecast stays inside its weekly card across refresh and pool changes", () => {
+  const h = harness();
+  const pools = [window({ durationMinutes: 300 }), window(),
+    window({ limitId: "codex_bengalfox" })];
+  h.renderQuotaCards(payload(pools));
+  const summary = find(h.quota, "overview-pace")[0];
+  assert.equal(find(h.quota, "overview-pace").length, 1);
+  assert.equal(summary.parentNode.dataset.forecastPool, "true");
+  assert.equal(summary.attributes["aria-live"], "polite");
+  h.renderQuotaCards(payload(pools));
+  assert.equal(find(h.quota, "overview-pace")[0], summary);
+  assert.equal(find(h.quota, "overview-pace").length, 1);
+  h.renderQuotaCards(payload([pools[0], pools[2]]));
+  assert.equal(find(h.quota, "overview-pace").length, 0);
+});
+
 test("unknown capacity has no fill; zero is a real empty tank; stale evidence stays explicit", () => {
   const h = harness();
   h.renderQuotaCards(payload([window({ remainingPercent: null }), window({ remainingPercent: 0 }), window({ status: "stale" })]));

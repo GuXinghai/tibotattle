@@ -5644,12 +5644,10 @@ body[data-dashboard-page] #overview-screen { display: block; }
   --pace-accent-soft: var(--green-soft);
   display: grid;
   gap: 10px;
-  margin: 12px 0 18px;
-  padding: 16px 20px;
-  border: 1px solid var(--line);
-  border-inline-start: 4px solid var(--pace-accent);
-  border-radius: var(--radius-md);
-  background: var(--surface-raised);
+  grid-column: 1 / -1;
+  margin: 8px 0 0;
+  padding: 12px 0 0;
+  border-top: 1px solid var(--line);
 }
 .overview-pace[hidden] { display: none; }
 .overview-pace.is-on-pace,

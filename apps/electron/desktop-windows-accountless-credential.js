@@ -41,7 +41,7 @@ function createWindowsNormalCandidateCredentialHandoverWithDependencies({
   createAccountObservationCredentialBackend,
   isAccountObservationBackendError,
   platform,
-}) {
+}, readOnly = false) {
   if (platform !== WINDOWS_PLATFORM || architecture !== WINDOWS_ARCHITECTURE
       || typeof attachBroker !== "function"
       || typeof createAccountObservationCredentialBackend !== "function"
@@ -54,6 +54,7 @@ function createWindowsNormalCandidateCredentialHandoverWithDependencies({
         channel,
         createBackend: createAccountObservationCredentialBackend,
         isBackendError: isAccountObservationBackendError,
+        readOnly,
       });
     },
   });
@@ -74,6 +75,24 @@ export function createWindowsNormalCandidateCredentialHandover() {
     isAccountObservationBackendError: isWindowsAccountObservationCredentialError,
     platform: process.platform,
   });
+}
+
+// A qualified development shell may read the existing fixed observation key.
+// The parent broker refuses creation before any credential mutation can run.
+export function createWindowsDevelopmentReadOnlyCredentialHandover() {
+  return createWindowsNormalCandidateCredentialHandoverWithDependencies({
+    architecture: process.arch,
+    attachBroker: attachDesktopWindowsAccountObservationBroker,
+    createAccountObservationCredentialBackend:
+      createWindowsNormalCandidateAccountObservationCredentialBackend,
+    isAccountObservationBackendError: isWindowsAccountObservationCredentialError,
+    platform: process.platform,
+  }, true);
+}
+
+export function createWindowsDevelopmentReadOnlyCredentialHandoverForTest(options = {}) {
+  if (!exactObjectKeys(options, NORMAL_CANDIDATE_HANDOVER_TEST_OPTION_KEYS)) throw failure();
+  return createWindowsNormalCandidateCredentialHandoverWithDependencies(options, true);
 }
 
 /** Explicit dependency seam for the fixed normal-Windows handover contract. */

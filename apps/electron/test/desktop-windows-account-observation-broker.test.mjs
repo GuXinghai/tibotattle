@@ -188,6 +188,7 @@ function fixture(options = {}) {
   const server = attachDesktopWindowsAccountObservationBroker({
     channel: wires.parent,
     createBackend: () => parentCredential,
+    readOnly: options.readOnly ?? false,
   });
   const transport = createWindowsAccountObservationBrokerTransport({
     channel: wires.child,
@@ -206,6 +207,18 @@ function disposeFixture(value) {
   value.server.dispose();
   value.transport.dispose();
 }
+
+test("development read-only broker reads existing keys and never creates a missing key", async () => {
+  for (const initial of [null, Buffer.alloc(32, 7)]) {
+    const h = fixture({ initial, readOnly: true });
+    try {
+      assert.deepEqual(await h.backend.read(ACCOUNT_CAPABILITY), initial);
+      await assert.rejects(h.backend.createIfMissing(ACCOUNT_CAPABILITY, Buffer.alloc(32, 9)));
+      assert.deepEqual(h.synthetic.stored(), initial);
+      assert.deepEqual(h.synthetic.calls, [["read"]]);
+    } finally { disposeFixture(h); }
+  }
+});
 
 test("Windows account-observation IPC is dormant, exact, and unavailable without explicit composition", async () => {
   assert.equal(PARENT_INTEGRATION_STATUS, "dormant");

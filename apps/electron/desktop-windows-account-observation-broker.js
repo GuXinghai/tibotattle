@@ -32,7 +32,7 @@ function backendFailureCode(error, isBackendError) {
   return "unavailable";
 }
 
-function snapshotBackend(backend) {
+function snapshotBackend(backend, readOnly) {
   let valid = false;
   try {
     valid = isWindowsAccountObservationCredentialBackend(backend)
@@ -49,7 +49,8 @@ function snapshotBackend(backend) {
   try {
     return Object.freeze({
       read: backend.read.bind(backend),
-      createIfMissing: backend.createIfMissing.bind(backend),
+      createIfMissing: readOnly ? async () => { fail("denied"); }
+        : backend.createIfMissing.bind(backend),
       close: backend.close.bind(backend),
     });
   } catch {
@@ -71,16 +72,17 @@ export function attachDesktopWindowsAccountObservationBroker({
   channel,
   createBackend,
   isBackendError = isWindowsAccountObservationCredentialError,
+  readOnly = false,
 } = {}) {
   if (!isWindowsAccountObservationBrokerIpcChannel(channel) || typeof createBackend !== "function"
-      || typeof isBackendError !== "function") {
+      || typeof isBackendError !== "function" || typeof readOnly !== "boolean") {
     fail("invalid_configuration");
   }
   let backend = null;
   let selected = null;
   try {
     backend = createBackend();
-    selected = snapshotBackend(backend);
+    selected = snapshotBackend(backend, readOnly);
     return attachWindowsAccountObservationBrokerIpcServer({
       channel,
       backend: selected,

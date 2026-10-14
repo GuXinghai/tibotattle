@@ -3,7 +3,20 @@ import test from "node:test";
 
 import {
   createWindowsNormalCandidateCredentialHandoverForTest,
+  createWindowsDevelopmentReadOnlyCredentialHandoverForTest,
 } from "../desktop-windows-accountless-credential.js";
+
+test("development handover fixes read-only policy on the owned broker", () => {
+  let options;
+  const handover = createWindowsDevelopmentReadOnlyCredentialHandoverForTest({
+    platform: "win32", architecture: "x64",
+    createAccountObservationCredentialBackend: () => ({}),
+    isAccountObservationBackendError: () => false,
+    attachBroker(value) { options = value; return {}; },
+  });
+  handover.attachWindowsAccountObservationBroker({});
+  assert.equal(options.readOnly, true);
+});
 
 test("normal Windows handover exposes only the fixed FD4 parent route", () => {
   const calls = [];

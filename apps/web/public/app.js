@@ -1350,6 +1350,11 @@ function renderDashboard(data) {
 function renderQuotaCards(data) {
   closeInformationPopover();
   const container = $("#quota-cards");
+  // Keep the live region with its weekly pool across refreshes.
+  const overviewPace = $("#overview-pace") ?? node("aside", "overview-pace");
+  overviewPace.id = "overview-pace";
+  overviewPace.setAttribute("aria-live", "polite");
+  overviewPace.hidden = true;
   clear(container);
   if ($("#allowance-context")) $("#allowance-context").hidden = true;
   const normalWindows = data.quotaWindows.filter(isPrimaryCodexQuotaWindow);
@@ -1487,6 +1492,7 @@ function renderQuotaCards(data) {
       link.href = "#allowance/changes";
       setLocalizedText(link, "dashboard.overview.openAllowanceChanges");
       card.append(link);
+      card.append(overviewPace);
     }
     container.append(card);
   }
@@ -6270,12 +6276,23 @@ function weeklyPaceTrack(standing, hoursToReset, resetAt) {
   return track;
 }
 
+function weeklyPaceWaitingText(primary) {
+  if (primary.status === "stale") {
+    return { title: "allowance.waitingStaleTitle", copy: "allowance.waitingStaleCopy" };
+  }
+  if (primary.accountAttribution === "unattributed") {
+    return { title: "allowance.waitingAccountTitle", copy: "allowance.waitingAccountCopy" };
+  }
+  return { title: "allowance.waitingTitle", copy: "allowance.waitingCopy" };
+}
+
 function renderWeeklyPaceWaiting(card, data) {
   const primary = Array.isArray(data?.quotaWindows)
     ? data.quotaWindows.find(isPrimaryCodexWeeklyQuotaWindow)
     : null;
   if (!primary) return;
   const stale = primary.status === "stale";
+  const waiting = weeklyPaceWaitingText(primary);
   const heading = node("div", "weekly-pace-forecast-heading");
   const kicker = node("p", "panel-kicker");
   const logo = node("img", "quota-codex-icon");
@@ -6286,12 +6303,12 @@ function renderWeeklyPaceWaiting(card, data) {
   heading.append(kicker, node("span", "evidence-chip weekly-pace-forecast-collecting-chip",
     t(stale ? "allowance.stale" : "allowance.waiting")));
   const title = node("h3", "weekly-pace-forecast-title",
-    t(stale ? "allowance.waitingStaleTitle" : "allowance.waitingTitle"));
+    t(waiting.title));
   title.id = "weekly-pace-forecast-title";
   card.setAttribute("aria-labelledby", title.id);
   card.className = "weekly-pace-forecast is-insufficient is-waiting";
   card.append(heading, title, node("p", "weekly-pace-forecast-copy",
-    t(stale ? "allowance.waitingStaleCopy" : "allowance.waitingCopy")));
+    t(waiting.copy)));
   card.hidden = false;
 }
 
@@ -6493,11 +6510,12 @@ function renderOverviewPace(data) {
   link.setAttribute("href", "#allowance/forecast");
 
   if (reading === null) {
+    const waiting = weeklyPaceWaitingText(primary);
     element.classList.add("is-waiting");
     heading.append(node("span", "evidence-chip overview-pace-chip",
       t(stale ? "allowance.stale" : "allowance.waiting")));
-    title.textContent = t(stale ? "allowance.waitingStaleTitle" : "allowance.waitingTitle");
-    element.append(heading, title, link);
+    title.textContent = t(waiting.title);
+    element.append(heading, title, node("p", "overview-pace-copy", t(waiting.copy)), link);
     element.hidden = false;
     return;
   }

@@ -10,6 +10,7 @@ import { ELECTRON_ENTRY_FAILURE_DIAGNOSTIC, shellError } from "./errors.js";
 import { assertElectronPlatformGate } from "./platform-gate.js";
 import {
   createWindowsNormalCandidateCredentialHandover,
+  createWindowsDevelopmentReadOnlyCredentialHandover,
 } from "./desktop-windows-accountless-credential.js";
 import {
   createWindowsElectronQualificationContext,
@@ -774,7 +775,12 @@ export async function launchElectronShell({
       && platform === "win32"
       && architecture === "x64"
       && productionDistribution.target === "win32-x64"
-      ? createWindowsNormalCandidateCredentialHandover() : null;
+      ? createWindowsNormalCandidateCredentialHandover()
+      : platform === "win32" && architecture === "x64"
+        && qualificationContext !== null && qualificationContext !== undefined
+        && app.getName?.() === "TiboTattle Dev"
+        && environment.USAGE_MONITOR_TEST_LANE === WINDOWS_ELECTRON_TEST_LANE
+        ? createWindowsDevelopmentReadOnlyCredentialHandover() : null;
     await markStartupDiagnostics(startupDiagnostics, "credential_wiring");
     const trayIconFactory = createDesktopTrayIconFactory({
       nativeImage: runtime.nativeImage,

@@ -298,6 +298,7 @@ function overviewHarness() {
     ${sliceDeclaration("weeklyPaceReading")}
     ${sliceDeclaration("weeklyPaceHeadlineText")}
     ${sliceDeclaration("weeklyPaceCopyText")}
+    ${sliceDeclaration("weeklyPaceWaitingText")}
     ${sliceDeclaration("renderOverviewPace")}
     return renderOverviewPace;
   `,
@@ -390,6 +391,19 @@ test("the overview stays out of the page when no weekly window was observed", ()
   render({ quotaWindows: [], weekly: {} });
   assert.equal(target.hidden, true);
   assert.equal(target.childElementCount, 0);
+});
+
+test("unattributed live allowance explains why forecast evidence is unavailable", () => {
+  const { target, render } = overviewHarness();
+  render({ quotaWindows: [weeklyWindow({ status: "live", accountAttribution: "unattributed" })],
+    weekly: { paceForecast: { status: "unavailable", observationCount: 0 } } });
+  assert.equal(target.hidden, false);
+  assert.match(target.text(), /allowance\.waitingAccountTitle/u);
+  assert.match(target.text(), /allowance\.waitingAccountCopy/u);
+  assert.doesNotMatch(target.text(), /allowance\.rate|allowance\.runout/u);
+  render({ quotaWindows: [weeklyWindow({ status: "stale", accountAttribution: "unattributed" })] });
+  assert.match(target.text(), /allowance\.waitingStaleCopy/u);
+  assert.doesNotMatch(target.text(), /allowance\.waitingAccountTitle/u);
 });
 
 test("the overview and the Forecast card share one reading", () => {

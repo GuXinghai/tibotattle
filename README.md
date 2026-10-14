@@ -21,6 +21,10 @@ Local analysis remains available independently of hosted service availability.
 
 - **Allowance tracks** — observed 7-day (and secondary) quota remaining, with
   reset times, reconstructed from local observations.
+  The Overview includes the pace forecast within the seven-day allowance card.
+  A forecast requires valid readings attributed to the same account and reset
+  cycle; live unattributed readings show remaining allowance with an explicit
+  explanation of why a forecast is unavailable.
 - **API-price-equivalent usage** — replay-safe totals split into cached input,
   uncached input, reasoning output, and output text, priced from a pinned
   public price registry.
@@ -62,6 +66,12 @@ bytes, the Authenticode signature, and any non-null release-specific GitHub
 provenance evidence yourself.
 
 ## Build from source (developers)
+
+A qualified packaged Windows development app can read an existing local
+account-observation key through the fixed parent broker to attribute new quota
+readings. Its broker refuses key creation; a missing key remains unavailable.
+This does not enable production updater or installer policy, and it does not
+attribute previously unowned observations retroactively.
 
 These requirements are for development, not installation of the released app.
 Repository tooling requires Node.js ≥ 22.13 and

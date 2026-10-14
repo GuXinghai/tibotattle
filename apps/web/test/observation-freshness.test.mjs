@@ -106,7 +106,8 @@ test("quota cards preserve unknown percentages and label stale observations", as
   const container = node("div");
   const finite = value => typeof value === "number" && Number.isFinite(value) ? value : null;
   const render = new Function("$", "clear", "node", "finite", "isPrimaryCodexQuotaWindow", "isSparkQuotaLimitId", "isValidQuotaWindowDuration", "selectPrimaryCodexQuotaWindow", "localizedQuotaWindowLabel", "providerReportedPlanEvidence", "setLocalizedText", "t", "formatPercent", "formatLocal", "formatTimeRemaining", "localizedQuotaWindowDuration", "isPrimaryCodexWeeklyQuotaWindow", "forecastTimestamp", "allowanceTimestamp", "CODEX_FIVE_HOUR_ALLOWANCE_MINUTES", `const closeInformationPopover = () => {}; ${body}; return renderQuotaCards;`)(
-    () => container, element => { element.children = []; }, node, finite,
+    selector => selector === "#overview-pace" ? null : container,
+    element => { element.children = []; }, node, finite,
     () => true, () => false, () => true, windows => windows[0] ?? null,
     () => "Seven-day allowance", () => "", (element, key, params) => { element.textContent = key; element.params = params; },
     key => key, value => `${value}%`, value => value, () => "Remaining time",
