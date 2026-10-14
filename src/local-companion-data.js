@@ -39,7 +39,7 @@ import {
   readAuthoritativeDashboardSnapshot,
   writeAuthoritativeDashboardSnapshot,
 } from "./local-authoritative-dashboard-snapshot.js";
-import { readLocalIndexProjection } from "./local-index-backend.js";
+import { readLocalIndexProjection, readLocalIndexWorkload, workloadStateStore, workloadState } from "./local-index-backend.js";
 import {
   decodePlanScopedTimelineRow,
   readReplaySafeAccountingCache,
@@ -2211,6 +2211,10 @@ export async function buildLocalCompanionSnapshot({
   // narrow injectable seam for source-level contract tests.
   collectorProjectionReader = readLocalCollectorProjectionOffMain,
   signal = null,
+  previousWorkload = null,
+  workloadLiveSinceMs = null,
+  workloadSourceFresh = false,
+  workloadErrors = [],
   now = () => Date.now(),
 } = {}) {
   const nowMs = now();
@@ -2847,11 +2851,30 @@ export async function buildLocalCompanionSnapshot({
       : unifiedAccountingWithheld
         ? "insufficient_evidence"
         : "collector_projection_unverified";
+  let storedWorkloadState=null,workloadStateError=null;
+  const workloadStore=workloadStateStore(unifiedIndexFile);
+  if(previousWorkload===null){try{storedWorkloadState=await workloadStore.read();}catch{workloadStateError="workload_state_read_failed";}}
+  const workload = readLocalIndexWorkload({ indexFile: unifiedIndexFile, nowMs,
+    storedState: storedWorkloadState,
+    declaredSpeedBaselines: codexSpeedBaselines,
+    quotaWindows: quota.windows.map((window) => ({ ...window, observedAt: quota.observedAt })),
+    capacity: { ...allowanceCapacity, computedAt: replaySafeCache?.generatedAt }, previous: previousWorkload,
+    liveSinceMs: workloadLiveSinceMs ?? nowMs,
+    sourceFresh: workloadSourceFresh });
+  if(workloadSourceFresh&&["available","partial"].includes(workload.status)){
+    try{await workloadStore.write(workloadState(workload));}catch{workloadStateError="workload_state_write_failed";}
+  }
+  if(workloadStateError){workload.errors.push({code:workloadStateError,stage:"publish"});if(workload.status==="available")workload.status="partial";}
+  for(const error of workloadErrors){
+    if(["quota_read_failed","index_refresh_failed"].includes(error?.code))workload.errors.push({code:error.code,stage:error.stage});
+  }
+  if(workloadErrors.length&&workload.status==="available")workload.status="partial";
   return {
     schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
     mode: "real_local_evidence",
     generatedAt: new Date(nowMs).toISOString(),
     overview: {
+      workload,
       status: freshnessStatus,
       evidenceStatus: collector.recordCount > 0 || unifiedAvailable
         ? "available"
@@ -3237,7 +3260,7 @@ export async function buildLocalCompanionSnapshot({
 // The purposes the snapshot builder answers with a DEFERRED unified
 // projection. Kept as the same vocabulary the builder keys on, so the two
 // cannot disagree about which reloads arrive without their heavy datasets.
-const DEFERRED_PROJECTION_PURPOSES = new Set(["startup", "quick"]);
+const DEFERRED_PROJECTION_PURPOSES = new Set(["startup", "quick", "overview"]);
 
 // How much evidence a surface is actually carrying. Zero means "a deferred
 // build could not rebuild this", which is the only condition under which the
@@ -3593,7 +3616,9 @@ export class LocalCompanionDataStore {
     if (signal?.aborted === true) {
       throw fixedError("local_companion_snapshot_reload_aborted");
     }
-    const candidate = await this.#builder(builderOptions);
+    const previousWorkload=this.#snapshot?.overview?.workload;
+    const candidate = await this.#builder(previousWorkload
+      ? {...builderOptions,previousWorkload} : builderOptions);
     // Cancellation may arrive while an off-main projection is finishing. Do
     // not publish the candidate after the controller has cancelled its run.
     if (signal?.aborted === true) {

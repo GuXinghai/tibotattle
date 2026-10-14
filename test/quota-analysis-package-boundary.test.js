@@ -162,6 +162,11 @@ test("quota analysis exposes one exact runtime-neutral package root", async () =
       ...PLAN_ATTRIBUTION_EXPORTS,
       ...RESET_EVENT_EXPORTS,
       ...WINDOW_EXPORTS,
+      "WORKLOAD_POLICY",
+      "analyzeWorkload",
+      "clusterWorkload",
+      "taskWorkIntervals",
+      "unionWorkIntervals",
     ].sort(),
   );
 });

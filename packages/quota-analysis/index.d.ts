@@ -788,3 +788,35 @@ export function blendedCompositionCapacityUsd(
     fallbackCapacityUsd: number | null;
   },
 ): number | null;
+
+export interface WorkInterval { startMs: number; endMs: number }
+export interface WorkLifecycleEvent { key: string; session: string; kind: "start" | "complete" | "abort"; atMs: number; durationMs?: number | null }
+export interface WorkUsageEvent { session: string; atMs: number; usd: number | null; priced: boolean }
+export interface WorkQuotaObservation { atMs: number; usedPercent: number; resetKey: string }
+export interface WorkloadInput {
+  nowMs: number; events?: WorkLifecycleEvent[]; usage?: WorkUsageEvent[]; quota?: WorkQuotaObservation[];
+  capacity?: { usd: number; availableAtMs: number } | null;
+  capacityHistory?: { usd: number; availableAtMs: number }[];
+  liveSinceMs?: number; sourceFresh?: boolean; timeZone?: string; comparisonAnchorMs?: number | null;
+}
+export interface WorkloadBin { atMs: number; workMs: number; usd: number; priced: boolean }
+export type WorkloadLevel = "light" | "medium" | "heavy" | "unclassified";
+export interface WorkloadResult {
+  schemaVersion: "overview-workload-v1"; policyVersion: string; generatedAt: string; timeZone: string;
+  status: "available" | "partial"; errors: { code: string; stage: string; count?: number }[];
+  allowance: { remainingPercent: number | null; observedAt: string | null;
+    points: { at: string; remainingPercent: number | null; breakBefore: boolean }[] };
+  workHours: { level: WorkloadLevel | "composite"; ratePpPerHour: number | null; hours: number | null }[];
+  classification: { centers: number[] | null; version: string };
+  daily: { date: string; light: number; medium: number; heavy: number; unclassified: number; covered: boolean }[];
+  current: { state: "unknown" | "working" | "idle"; level: WorkloadLevel | null; ratePpPerHour: number | null; hours: number | null };
+  comparison: { anchorMs: number; capacityUsd: number | null; points: { at: string; value: number | null }[] };
+  coverage: { workMs: number; actualWorkMs: number; actualPp: number; activeTasks: number; unresolvedTasks: number };
+}
+export const WORKLOAD_POLICY: Readonly<{ version: string; bucketMs: number; historyMs: number; currentMs: number;
+  minimumBins: number; minimumClassBins: number; minimumClassMs: number }>;
+export function unionWorkIntervals(intervals: readonly WorkInterval[], fromMs: number, toMs: number): WorkInterval[];
+export function taskWorkIntervals(events: readonly WorkLifecycleEvent[], options: Pick<WorkloadInput,"nowMs" | "liveSinceMs" | "sourceFresh" | "usage">): {
+  intervals: WorkInterval[]; incomplete: WorkInterval[]; active: number; unresolved: number; conflicts: number };
+export function clusterWorkload(bins: readonly WorkloadBin[]): number[] | null;
+export function analyzeWorkload(input: WorkloadInput): WorkloadResult;

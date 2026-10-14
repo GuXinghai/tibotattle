@@ -39,7 +39,7 @@ Those remain separate verification gates in the relevant runbooks.
 
 | Surface | Boundary | Implemented surface |
 |---|---|---:|
-| Local companion API | Browser/native shell → loopback Node companion | 16 paths, 17 method/path operations |
+| Local companion API | Browser/native shell → loopback Node companion | 17 paths, 18 method/path operations |
 | Local report pages | Browser → fixed loopback report allowlist | 4 `GET` paths |
 | Hosted Worker API | Internet/native collector → Cloudflare Worker | 49 API paths, 52 method/path operations |
 | Deliberate negative Worker route | Internet → fixed non-API interception | 1 always-`404` path |
@@ -172,6 +172,7 @@ Codex accounting snapshot.
 | `GET` | `/api/local/timeline/window-breakdown` | Bounded indexed timeline breakdown for `from` and `to` epoch-millisecond bounds |
 | `GET`, `POST` | `/api/local/refresh` | Inspect refresh state or explicitly start one bounded retained-history and detailed-accounting refresh |
 | `POST` | `/api/local/refresh/quick` | Refresh current quota/headline evidence without advancing retained history or rebuilding detailed accounting |
+| `POST` | `/api/local/refresh/overview` | Join or start a bounded quota, incremental usage/work and overview publication pass; reset the companion-owned five-minute cadence |
 | `POST` | `/api/local/refresh/cancel` | Cooperatively cancel the active refresh |
 
 The thread-link route has a closed `local-cache-drop-thread-links-v1` response:

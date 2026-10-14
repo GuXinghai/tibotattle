@@ -175,6 +175,7 @@ export const WEB_MESSAGES = Object.freeze({
       || key.startsWith("reporting.")
       || key.startsWith("setup.")
       || key.startsWith("workUsage.")
+      || key.startsWith("workload.")
       || key.startsWith("performance.")
       || key.startsWith("performanceConsent.")
       || key.startsWith("dashboard.overview.")

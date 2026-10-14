@@ -29,8 +29,8 @@ local-only and never leave the owner-only file.
 | File name | `local-index-store-v1.sqlite` | Stable machine path in the state root. The `v1` is a name, not the schema version. |
 | `PRAGMA application_id` | `1431128370` (`0x554D4932`) | Format guard. A mismatch fails with `local_index_family_mismatch`. |
 | `meta.family` | `local-index-store` | Logical family, written once at creation. |
-| `PRAGMA user_version` | `4` | Physical version. This build opens only 4. |
-| Parser stamp | `local-index-rollout-typed-v1+unified-rollout-typed-v19` | Written to `source.parser_version` and `meta.parser_version`. It embeds the shared extractor revision `unified-rollout-typed-v19`, and a test pins the two together. |
+| `PRAGMA user_version` | `5` | Physical version. A writer migrates 4 forward transactionally; read-only open requires 5. |
+| Parser stamp | `local-index-rollout-typed-v2+unified-rollout-typed-v19` | Adds task lifecycle extraction; existing sources reparse once. Shared accounting revision remains `unified-rollout-typed-v19`. |
 | Telemetry publication parser label | `unified-rollout-typed-v19` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint still retain v2 provenance; no hosted schema is widened. |
 | Commit sequence | `store_state.commit_seq` | Monotonic publication counter. Readers key their caches and the companion generation id off it. |
 
@@ -38,10 +38,11 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
 
 - A wrong `application_id` refuses the file with `local_index_family_mismatch`.
   `meta.family` is written at creation; the open path does not re-check it.
-- A `user_version` greater than 4 fails with `local_index_newer_version`. The
+- A `user_version` greater than 5 fails with `local_index_newer_version`. The
   file is not opened writable and must not be relabelled.
-- A `user_version` below 4 fails with `local_index_family_mismatch`. This build
-  has no migration from any earlier physical version.
+- A version-4 writer adds work lifecycle facts transactionally and advances to 5.
+  Earlier versions and read-only version-4 opens fail with
+  `local_index_family_mismatch`; readers never migrate state.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it
   fails with `local_index_journal_mode_refused`.
 
@@ -58,7 +59,7 @@ gives that first refresh the cold-build deadline.
 | Dimensions | `model`, `tier_semantics`, `surface_class`, `account_scope`, `session`, `work_directory` | Interned values. Each row is referenced by id from facts. |
 | Quota | `quota_observation`, `quota_occurrence` | Canonical quota readings deduplicated across sources, and source-scoped occurrences. |
 | Sources | `source`, `source_segment` | One row per rollout ever seen: identity, cursor, digests, carried state and quarantine. |
-| Facts | `usage_event`, `usage_event_boundary`, `tool_class_fact`, `lineage_snapshot` | Typed usage events, the boundaries before them, closed tool-category facts and fork-replay membership. |
+| Facts | `usage_event`, `usage_event_boundary`, `tool_class_fact`, `work_lifecycle_fact`, `lineage_snapshot` | Typed usage, request boundaries, tool classes, task lifecycle and fork-replay membership. |
 | Diagnostics | `source_diagnostic` | Counts per closed diagnostic code, per source. |
 | Aggregates | `rollup_context_start`, `usage_rollup`, `work_rollup` | Derived sums maintained by triggers (see below). |
 | Cache-impact pairs | `cache_candidate`, `session_positive` | Derived pair and count tables maintained by triggers (see below). |
@@ -121,6 +122,18 @@ store with sources is opened for writing: `usage_event_observed`,
   `oversizedLines`, `compactionEvents`). Unknown codes are dropped.
 
 ### Source state
+
+`work_lifecycle_fact` records cursor-bound task starts, completions and
+cancellations, observed time, a device-HMAC task key, session relation and optional
+reported duration. It retains no original task ID or content. Facts above a
+source cursor are provisional; recovery and source replacement remove them with
+the other affected facts. Work includes tools and necessary waiting, and parallel
+intervals count once. Inference performance timing remains independent.
+
+Overview groups committed usage timestamps into five-minute bins without
+splitting fifteen-minute display rollups. Its comparison anchor and capacity
+history persist in a validated Windows protected state file; write failures are
+visible publication errors.
 
 `source` carries everything a refresh needs to decide, without reading the
 rollout header, what to do with a file:

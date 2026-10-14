@@ -133,6 +133,7 @@ export {
   parseCodexRolloutFilename,
 } from "./log-sources.js";
 export { classifySessionSurface } from "./surface-classification.js";
+export { codexWorkLifecycle } from "./work-lifecycle.js";
 export {
   codexTierObservation,
   isCodexSpeedMode,

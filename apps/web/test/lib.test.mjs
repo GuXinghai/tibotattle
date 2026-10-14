@@ -2820,7 +2820,7 @@ test("local refresh uses the closed same-origin contract and exposes polling", a
   await client.refresh();
   await client.recalculateDetailedAccounting();
   await client.refreshStatus();
-  assert.equal(calls[0].url, "/api/local/refresh/quick");
+  assert.equal(calls[0].url, "/api/local/refresh/overview");
   assert.equal(calls[0].options.body, "{}");
   assert.equal(calls[0].options.headers["X-Usage-Monitor-Local"], "1");
   assert.equal(calls[1].url, "/api/local/refresh");

@@ -11,6 +11,7 @@ import { modelUsagePresentation, modelThemeIcon } from "./model-visuals.js";
 import { buildAllowanceTrends } from "./allowance-trends.js";
 import { mountWorkUsageView } from "./work-usage-view.js";
 import { mountModelPerformance } from "./model-performance.js";
+import { renderOverviewWorkload } from "./overview-workload.js";
 import { createDashboardReportPreloader } from "./dashboard-report-preload.js";
 import {
   isPrimaryCodexQuotaWindow,
@@ -1341,6 +1342,12 @@ function renderDashboard(data) {
   renderTimeline(data);
   renderWeekly(data);
   renderAccounting(data);
+  const overviewRoot = $("#overview");
+  overviewRoot.querySelector(".overview-allowances").hidden = true;
+  overviewRoot.querySelector(".overview-panels").hidden = true;
+  let workloadRoot = $("#overview-workload");
+  if (!workloadRoot) { workloadRoot = node("div"); workloadRoot.id="overview-workload"; overviewRoot.append(workloadRoot); }
+  renderOverviewWorkload(workloadRoot,data.workload,{translate:t,locale:getFormattingLocale()});
   observationFreshnessClock.update(data);
   // This optional lookup must never delay the native readiness marker or the
   // accounting render. Only the first-column cells are updated when it lands.
@@ -9198,7 +9205,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
           : "Analyzing files…"
         : pollCount < 3 ? "Analyzing local evidence…" : "Analyzing…";
       refreshProgressClock.update(phase, { processed, selected });
-      if (refreshNeedsContinuation({
+      if (detailed && refreshNeedsContinuation({
         outcome,
         errorCode: refresh.errorCode,
         progress,
@@ -9226,7 +9233,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
         outcome = "running";
         continue;
       }
-      if (outcome === "failed"
+      if (detailed && outcome === "failed"
           && refresh.errorCode === "refresh_timed_out") {
         refreshProgressClock.update("Stopping timed-out analysis…");
         if (!timeoutSettlementNoted) {
@@ -9491,7 +9498,9 @@ function startElectronStartupRefresh() {
       && Number.isFinite(generatedMs)
       && new Date(generatedMs).toISOString() === generatedAt
       && ageMs >= 0 && ageMs < 60 * 60_000;
-    const startupRefreshOptions = freshIndex ? {} : { detailed: true };
+    const workloadReady = dashboard?.workload?.schemaVersion === "overview-workload-v1"
+      && !["unavailable", "stale"].includes(dashboard.workload.status);
+    const startupRefreshOptions = freshIndex && workloadReady ? {} : { detailed: true };
     void requestRefresh(startupRefreshOptions);
   };
   // The Windows preload is the only smoke barrier this product exposes.
@@ -9685,7 +9694,7 @@ async function describeFailure({ surface, error, messages = {}, fallback }) {
 }
 
 $("#refresh-button").addEventListener("click", () => {
-  void requestRefresh({ detailed: true });
+  void requestRefresh();
 });
 $("#setup-refresh").addEventListener("click", () => {
   void requestRefresh({ detailed: true });
@@ -10172,6 +10181,30 @@ async function bootstrapDashboard() {
   await loadLocalDashboard();
   startElectronStartupRefresh();
   scheduleReturningUserRefresh();
+  startOverviewPublicationPolling();
+}
+
+// Observe publication, never trigger refresh here. The companion alone owns
+// the five-minute collection clock, including when the renderer is hidden.
+function startOverviewPublicationPolling() {
+  let receipt=null,failed=false;
+  const poll=async()=>{
+    try {
+      if(dashboard?.mode!=="demo"&&!localRefreshInProgress&&localAnalysisAllowed()){
+        const status=await localClient.refreshStatus();
+        if(status.overviewSchedule?.errorCode)throw Object.assign(new Error("overview_schedule_failed"),{code:status.overviewSchedule.errorCode});
+        const next=status.refresh?.finishedAt;
+        if(next&&next!==receipt){receipt=next;await loadLocalDashboard();
+          if(["failed","cancelled"].includes(status.refresh.status))showConnectionNotice({title:t("refresh.failedTitle"),copy:status.refresh.failureCode??status.refresh.errorCode??"refresh_failed",kind:"error"});
+          else publishRefreshResultNotice(status.refresh);}
+        failed=false;
+      }
+    } catch {
+      if(!failed)showConnectionNotice({title:t("refresh.failedTitle"),copy:t("refresh.failedCopy"),kind:"error"});
+      failed=true;
+    } finally { window.setTimeout(poll,2000); }
+  };
+  window.setTimeout(poll,2000);
 }
 
 bootstrapDashboard();

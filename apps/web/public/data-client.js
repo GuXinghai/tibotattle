@@ -34,6 +34,7 @@ export {
   normalizeCommunitySnapshot,
 } from "./community-data.js";
 
+import { normalizeOverviewWorkload } from "./overview-workload.js";
 const LOCAL_ROOT = "/api/local";
 const CENTRAL_ROOT = "/api/v1";
 // The dashboard has no tool-activity view. Keep this diagnostic in the raw
@@ -5474,6 +5475,7 @@ export function normalizeDashboardPayload(payload = {}, fragments = {}) {
     mode,
     state,
     generatedAt: text(overview?.generatedAt ?? payload?.generatedAt, ""),
+    workload: normalizeOverviewWorkload(overview?.workload),
     freshness: {
       status: state,
       latestObservedAt: text(freshness?.latestObservedAt ?? overview?.latestObservedAt ?? overview?.latestEvidenceAt, ""),
@@ -5749,7 +5751,7 @@ export class LocalCompanionClient {
   }
 
   async refresh() {
-    return fetchJson(this.fetchImpl, `${LOCAL_ROOT}/refresh/quick`, {
+    return fetchJson(this.fetchImpl, `${LOCAL_ROOT}/refresh/overview`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

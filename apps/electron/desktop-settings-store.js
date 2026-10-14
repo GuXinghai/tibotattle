@@ -279,7 +279,7 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
     if (!DESKTOP_REFRESH_INTERVAL_SECONDS.includes(seconds)) {
       throw new TypeError("seconds is invalid");
     }
-    return enqueueUpdate((current) => ({ ...current, refreshIntervalSeconds: seconds }));
+    return enqueueUpdate((current) => ({ ...current, refreshIntervalSeconds: 300 }));
   }
 
   async function setStartAtLogin(enabled) {

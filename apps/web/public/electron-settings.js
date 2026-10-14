@@ -837,7 +837,8 @@ function renderSettingsState(
     ? translateSettingsMessage(localizer, "electron.settings.codexFolder.default")
     : translateSettingsMessage(localizer, "electron.settings.codexFolder.custom");
   renderCodexRoots(documentRef, state, bridgeAvailable, localizer, onRootAction);
-  refresh.value = String(state.refreshIntervalSeconds);
+  refresh.value = "300";
+  refresh.disabled = true;
   loginSwitch.checked = state.startAtLogin.status === "enabled";
   loginSwitch.disabled = !bridgeAvailable || !state.startAtLogin.canSet;
   openLoginItems.hidden = !bridgeAvailable || !state.startAtLogin.canOpenSettings;

@@ -212,6 +212,7 @@ async function run() {
         let events = [];
         let boundaries = [];
         let tools = [];
+        let work = [];
         let snapshotKeys = [];
         const flush = (
           rolloutKey,
@@ -227,6 +228,7 @@ async function run() {
             events,
             boundaries,
             tools,
+            work,
             // Snapshot keys collected for descendants — "|"-joined token
             // counters, nothing that can hold content. The host persists them
             // so a later incremental ingest can answer for this ancestor.
@@ -241,6 +243,7 @@ async function run() {
           events = [];
           boundaries = [];
           tools = [];
+          work = [];
           snapshotKeys = [];
           snapshotResetPending = false;
         };
@@ -266,7 +269,7 @@ async function run() {
             add(key) {
               collector.add(key);
               snapshotKeys.push(key);
-              if (events.length + boundaries.length + tools.length
+              if (events.length + boundaries.length + tools.length + work.length
                   + snapshotKeys.length >= batchEvents) {
                 flush(source.rolloutKey, false, null);
               }
@@ -276,22 +279,28 @@ async function run() {
           ...(maximumLineBytes === undefined ? {} : { maximumLineBytes }),
           onEvent: (event) => {
             events.push(event);
-            if (events.length + boundaries.length + tools.length >= batchEvents) {
+            if (events.length + boundaries.length + tools.length + work.length >= batchEvents) {
               flush(source.rolloutKey, false, null);
             }
           },
           onBoundary: (event) => {
             boundaries.push(event);
-            if (events.length + boundaries.length + tools.length >= batchEvents) {
+            if (events.length + boundaries.length + tools.length + work.length >= batchEvents) {
               flush(source.rolloutKey, false, null);
             }
           },
             onTool: (event) => {
             tools.push(event);
-            if (events.length + boundaries.length + tools.length >= batchEvents) {
+            if (events.length + boundaries.length + tools.length + work.length >= batchEvents) {
               flush(source.rolloutKey, false, null);
             }
             },
+          onWork: (event) => {
+            work.push(event);
+            if (events.length + boundaries.length + tools.length + work.length >= batchEvents) {
+              flush(source.rolloutKey, false, null);
+            }
+          },
           });
           tapSegments = tap?.finish(extracted.read.nextOffset) ?? null;
           windows = await digestWindows(stableSource, extracted.read.nextOffset);

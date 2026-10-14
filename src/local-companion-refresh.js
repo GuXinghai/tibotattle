@@ -61,7 +61,7 @@ const INDEXING_PHASES = new Set([
   "paused",
   "prospective",
 ]);
-const LOCAL_REFRESH_MODES = new Set(["quick", "detailed"]);
+const LOCAL_REFRESH_MODES = new Set(["quick", "detailed", "overview"]);
 const ACCOUNTING_REFRESH_STATUSES = new Set(["reused", "rebuilt", "deferred"]);
 const GENERATION_TOKEN_PATTERN = /^[A-Za-z0-9._:-]{1,256}$/u;
 // Accounting reader failures are deliberately closed over a fixed vocabulary.
@@ -914,7 +914,7 @@ export function createLocalCollectorRefreshRunner({
     const accountingMayRun = detailed;
     let unifiedIndex = null;
     refreshStep = "unified_index";
-    if (detailed
+    if ((detailed || mode === "overview")
         && refreshUnifiedIndex !== null
         && signal?.aborted !== true) {
       const publishUnifiedIndexProgress = onProgress === null
@@ -1549,6 +1549,7 @@ export class LocalCompanionRefreshController {
   isRunning() {
     return this.#inFlight !== null;
   }
+  whenSettled() { return this.#inFlight ?? Promise.resolve(); }
 
   cancel() {
     if (this.#inFlight === null
@@ -1615,7 +1616,7 @@ export class LocalCompanionRefreshController {
       throw new TypeError("mode must be quick or detailed");
     }
     if (this.#inFlight !== null) return false;
-    const selectedTimeoutMs = this.#timeoutMsForRun === null
+    const selectedTimeoutMs = mode === "overview" ? 60_000 : this.#timeoutMsForRun === null
       ? this.#timeoutMs
       : this.#timeoutMsForRun();
     if (!Number.isSafeInteger(selectedTimeoutMs)
@@ -1725,7 +1726,7 @@ export class LocalCompanionRefreshController {
           }
           let quickResultAt = this.#state.quickResultAt;
           let quickResultReloaded = false;
-          if (projected.phase === "quick_result"
+          if (mode !== "overview" && projected.phase === "quick_result"
               && !this.#cancelRequested) {
             try {
               await this.#dataStore.reload({
@@ -1797,7 +1798,12 @@ export class LocalCompanionRefreshController {
         }
         if (!(mode === "quick" && quickResultReloadPublished)) {
           await this.#dataStore.reload({
-            purpose: mode === "quick" ? "quick" : "full",
+            purpose: mode === "overview" ? "overview" : mode === "quick" ? "quick" : "full",
+            workloadSourceFresh: result?.unifiedIndex?.status === "ingested",
+            workloadErrors: [
+              ...(result?.quotaRefresh?.errorCode ? [{code:"quota_read_failed",stage:"quota"}] : []),
+              ...(result?.unifiedIndex?.status === "failed" ? [{code:"index_refresh_failed",stage:"index"}] : []),
+            ],
             returnOverview: false,
             signal: controller.signal,
             ...(mode === "detailed"

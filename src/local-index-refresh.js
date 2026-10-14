@@ -391,6 +391,12 @@ function createFactSink({ writer, deviceSalt, accountScope, counts }) {
         sourceKind: event.sourceKind,
       });
     },
+    writeWork(state, event) {
+      writer.writeWorkFact({ sourceId: state.sourceId, sourceOffset: event.sourceOffset,
+        sessionId: state.sessionId, observedAtMs: event.observedAtMs,
+        kind: event.kind, durationMs: event.durationMs,
+        taskKey: localDigest(deviceSalt, "task-work-v1", event.taskId) });
+    },
     finishSource(state) {
       const gate = gates.get(state.sourceId);
       if (gate === undefined) return;
@@ -1302,6 +1308,7 @@ async function runRefresh({
                   onEvent: (event) => sink.write(state, event),
                   onBoundary: (event) => sink.writeBoundary(state, event),
                   onTool: (event) => sink.writeTool(state, event),
+                  onWork: (event) => sink.writeWork(state, event),
                 });
                 return {
                   outcome: extracted,
@@ -1419,6 +1426,7 @@ async function runRefresh({
           for (const event of message.events) sink.write(state, event);
           for (const event of message.boundaries ?? []) sink.writeBoundary(state, event);
           for (const event of message.tools ?? []) sink.writeTool(state, event);
+          for (const event of message.work ?? []) sink.writeWork(state, event);
           for (const key of message.snapshotKeys ?? []) {
             writer.addLineageSnapshot(state.sessionId, snapshotLocal(deviceSalt, key));
           }

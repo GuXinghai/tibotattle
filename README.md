@@ -21,10 +21,13 @@ Local analysis remains available independently of hosted service availability.
 
 - **Allowance tracks** — observed 7-day (and secondary) quota remaining, with
   reset times, reconstructed from local observations.
-  The Overview includes the pace forecast within the seven-day allowance card.
-  A forecast requires valid readings attributed to the same account and reset
-  cycle; live unattributed readings show remaining allowance with an explicit
-  explanation of why a forecast is unavailable.
+  Overview shows seven-day remaining allowance, daily consumption, task work
+  hours, current workload and actual-versus-expected consumption. Work includes
+  tools and necessary waiting; parallel tasks count once. Historical work-hour
+  rates use observed quota deductions; current rates use API-equivalent usage.
+  The single-account, continuous-subscription scenario is an analysis assumption,
+  not retrospective verification of account identity. The detailed pace forecast
+  remains on the Allowance page.
 - **API-price-equivalent usage** — replay-safe totals split into cached input,
   uncached input, reasoning output, and output text, priced from a pinned
   public price registry.

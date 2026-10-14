@@ -1,5 +1,6 @@
 import { createWorkUsageService } from "../../src/application/index.js";
 import { createWorkUsageSnapshotStore } from "./work-usage-snapshots.js";
+import { createOverviewRefreshScheduler } from "./overview-refresh-scheduler.js";
 import { enrichWorkUsageRows } from "../../src/work-usage-display.js";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
@@ -341,6 +342,7 @@ const API_ROUTES = new Set([
   "/api/local/model-performance",
   "/api/local/refresh",
   "/api/local/refresh/quick",
+  "/api/local/refresh/overview",
   "/api/local/refresh/cancel",
 ]);
 
@@ -845,6 +847,7 @@ function startParentDeathWatchdog({
   server,
   expectedParentPid,
   terminateProcess,
+  closeApplication = () => closeHttpServer(server),
 }) {
   if (expectedParentPid === null) {
     return Object.freeze({ stop() {} });
@@ -865,7 +868,7 @@ function startParentDeathWatchdog({
         PARENT_WATCHDOG_EXIT_GRACE_MS,
       );
     }
-    void closeHttpServer(server)
+    void closeApplication()
       .catch(() => {})
       .then(() => {
         if (forcedExit !== null) clearTimeout(forcedExit);
@@ -946,6 +949,7 @@ function createPreparedLocalCompanionServer({
   staticRoot,
   codexHome,
   homeDirectory,
+  workloadLiveSinceMs = Date.now(),
   diagnosticsLogFile,
   parentWatchdogPid,
   semanticOpenTarget,
@@ -980,16 +984,23 @@ function createPreparedLocalCompanionServer({
       purpose = "full",
       signal = null,
       unifiedProjectionReuse = null,
+      previousWorkload = null,
+      workloadSourceFresh = false,
+      workloadErrors = [],
     } = {}) => buildLocalCompanionSnapshot({
       root: resourceRoot,
       collectorStateFile: statePaths.collectorStateFile,
       unifiedIndexFile: unifiedStoreFile,
       codexHome,
-      unifiedProjectionMode: ["startup", "quick"].includes(purpose)
+      unifiedProjectionMode: ["startup", "quick", "overview"].includes(purpose)
         ? "deferred"
         : "full",
       unifiedProjectionReader,
       unifiedProjectionReuse,
+      previousWorkload,
+      workloadLiveSinceMs,
+      workloadSourceFresh,
+      workloadErrors,
       signal,
       allowDevelopmentArtifactFallback:
         environment.USAGE_MONITOR_DEVELOPMENT_ARTIFACT_FALLBACK === "1",
@@ -1115,6 +1126,7 @@ function createPreparedLocalCompanionServer({
   let instanceLockRelease = null;
   let instanceLockPromise = null;
   let snapshotPromise = null;
+  const startupSnapshotAbort = new AbortController();
   // The first snapshot defers full-history projection, but even its bounded
   // local reads can wait on storage. The port opens before that work, so this
   // records whether the in-memory snapshot the read routes project actually
@@ -1162,7 +1174,8 @@ function createPreparedLocalCompanionServer({
           // Publish the bounded startup projection first. The store retains
           // validated prior evidence with its provenance; the normal refresh
           // supplies the subsequent quick and full projections.
-          await dataStore.initialize({ purpose: "startup" });
+          await dataStore.initialize({ purpose: "startup",signal:startupSnapshotAbort.signal });
+          overviewScheduler.start();
           snapshotState = { status: "ready", errorCode: null };
           announceSnapshotOutcome();
         } catch (error) {
@@ -1229,6 +1242,7 @@ function createPreparedLocalCompanionServer({
     }),
   });
 
+  const overviewScheduler = createOverviewRefreshScheduler({refresh,onError,clock});
   const workUsage = createWorkUsageService({ build: workUsageBuild, enrich: workUsageEnrich,
     snapshotStore: createWorkUsageSnapshotStore({
       snapshotFile: join(stateRoot, "work-usage-snapshot.json"),
@@ -1241,7 +1255,12 @@ function createPreparedLocalCompanionServer({
   const closeProjectionReader = () => projectionShutdown ??= Promise.resolve()
     .then(() => sharedProjectionReader.close?.());
   let shutdownRequested = false;
-  const beginShutdown = () => { shutdownRequested = true; };
+  const beginShutdown = () => {
+    shutdownRequested = true;
+    startupSnapshotAbort.abort();
+    overviewScheduler.close();
+    refresh.cancel();
+  };
   const server = createServer(async (request, response) => {
     try {
       if (!isLoopbackPeer(request)) {
@@ -1557,6 +1576,7 @@ function createPreparedLocalCompanionServer({
           send(response, 200, {
             schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
             refresh: refresh.getStatus(),
+            overviewSchedule: overviewScheduler.status(),
           });
           return;
         }
@@ -1585,6 +1605,14 @@ function createPreparedLocalCompanionServer({
           schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
           refresh: refresh.getStatus(),
         });
+        overviewScheduler.observe();
+        return;
+      }
+      if (path === "/api/local/refresh/overview") {
+        if (request.method !== "POST") { sendError(response,405,"method_not_allowed"); return; }
+        if (!await authorizeLocalMutation(request,response,"refresh_not_authorized")) return;
+        const accepted=overviewScheduler.request();
+        send(response,accepted?202:200,{schemaVersion:LOCAL_COMPANION_SCHEMA_VERSION,refresh:refresh.getStatus()});
         return;
       }
       if (path === "/api/local/refresh/quick") {
@@ -1704,6 +1732,7 @@ function createPreparedLocalCompanionServer({
   });
 
   server.on("close", () => {
+    overviewScheduler.close();
     void closeWorkUsage().catch(() => onError("work_usage_shutdown_failed"));
     void closeProjectionReader().catch(() => onError("local_projection_shutdown_failed"));
   });
@@ -1725,6 +1754,7 @@ function createPreparedLocalCompanionServer({
     closeWorkUsage,
     closeProjectionReader,
     beginShutdown,
+    settleSnapshot: async () => { try { await snapshotPromise; } catch { /* snapshotStatus retains the classified failure */ } },
   };
 }
 
@@ -1740,14 +1770,26 @@ export async function startLocalCompanionServer({
     throw new TypeError("terminateProcessOnParentDeath must be a boolean");
   }
   const app = createLocalCompanionServer(options);
+  let parentWatchdog = null;
+  let closePromise = null;
+  const closeApplication = () => closePromise ??= (async () => {
+    app.beginShutdown();
+    parentWatchdog?.stop();
+    const results=await Promise.allSettled([app.settleSnapshot(),app.shutdownRuntime(),app.closeWorkUsage()]);
+    results.push(...await Promise.allSettled([app.closeModelPerformance(),app.closeProjectionReader()]));
+    await closeHttpServer(app.server);
+    const failed=results.find(x=>x.status==="rejected");
+    if(failed)throw failed.reason;
+  })();
   const expectedParentPid = app[PARENT_WATCHDOG_PID];
   if (!declaredParentIsCurrent(expectedParentPid)) {
     throw parentWatchdogConfigurationError();
   }
-  const parentWatchdog = startParentDeathWatchdog({
+  parentWatchdog = startParentDeathWatchdog({
     server: app.server,
     expectedParentPid,
     terminateProcess: terminateProcessOnParentDeath,
+    closeApplication,
   });
   try {
     // Single-instance exclusion still decides whether this process may serve at
@@ -1782,30 +1824,12 @@ export async function startLocalCompanionServer({
   // it still releases the instance lock.
   const snapshotReady = app.buildSnapshot();
   snapshotReady.catch(() => {});
-  let closePromise = null;
   return {
     ...app,
     host,
     port: actualPort(app.server),
     snapshotReady,
-    close: () => closePromise ??= (async () => {
-      app.beginShutdown();
-      parentWatchdog.stop();
-      // Keep the listener referenced while workers drain: their shutdown
-      // polling timers are unrefed and cannot keep the process alive alone.
-      const results = await Promise.allSettled([
-        app.shutdownRuntime(),
-        app.closeWorkUsage(),
-      ]);
-      results.push(...await Promise.allSettled([
-        app.closeModelPerformance(),
-        app.closeProjectionReader(),
-      ]));
-      // A producer failure must not leave the listening socket behind.
-      await closeHttpServer(app.server);
-      const failure = results.find((result) => result.status === "rejected");
-      if (failure) throw failure.reason;
-    })(),
+    close: closeApplication,
   };
 }
 

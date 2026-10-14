@@ -831,6 +831,7 @@ export async function launchDesktopRuntime({
   }
 
   controller = createDesktopController({
+    overviewRefreshOwnedByCompanion: true,
     settingsStore: store,
     platformServices: services,
     desktopSystemLocales,

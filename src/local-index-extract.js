@@ -2,6 +2,7 @@ import {
   canonicalRateLimitSnapshot,
   codexSessionMetaIdentity,
   codexTierObservation,
+  codexWorkLifecycle,
   cumulativeSnapshotKey,
   extractToolObservations,
 } from "./providers/codex/logs.js";
@@ -145,6 +146,7 @@ const IGNORED_RECORD_KINDS = new Set([
 function classifiedRecordKind(type, eventType = null) {
   if (type === "event_msg") {
     if (eventType === null) return null;
+    if (["task_started", "task_complete", "turn_aborted"].includes(eventType)) return "work";
     return eventType === "token_count" || eventType === "thread_settings_applied"
       ? eventType : "other";
   }
@@ -481,6 +483,7 @@ export async function extractRolloutUsage(path, {
   parentModelAt = null,
   onBoundary = null,
   onTool = null,
+  onWork = null,
 } = {}) {
   if (typeof onEvent !== "function") {
     throw new TypeError("onEvent must be a function");
@@ -874,6 +877,16 @@ export async function extractRolloutUsage(path, {
         );
       }
       if (record.type !== "event_msg") return;
+      const work = codexWorkLifecycle(record);
+      if (kind === "work" && work === null) {
+        diagnostics.malformedWorkRecords = (diagnostics.malformedWorkRecords ?? 0) + 1;
+        return;
+      }
+      // Inline forks carry copied ancestor turns before their own first
+      // context. They are not new work; paginated own segments are retained.
+      if (work !== null && (!isFork || turnContextSeenHere)) {
+        return onWork?.({ ...work, sourceOffset: lineEndOffset });
+      }
       if (record.payload?.type === "thread_settings_applied") {
         const settings = record.payload?.thread_settings;
         if (!settings || typeof settings !== "object" || Array.isArray(settings)) {

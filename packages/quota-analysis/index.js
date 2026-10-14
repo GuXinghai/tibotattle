@@ -45,6 +45,7 @@ export {
 export {
   analyzeQuotaPace,
 } from "./src/quota-pace-forecast.js";
+export { WORKLOAD_POLICY, unionWorkIntervals, taskWorkIntervals, clusterWorkload, analyzeWorkload } from "./src/workload.js";
 
 export {
   MODEL_COMPOSITION_POLICY,

@@ -37,35 +37,28 @@ states are meaningful; TiboTattle does not replace missing evidence with zero.
 
 ## Reading the dashboard
 
-Overview shows compact cards for each observed allowance. Each card names the
-allowance window and shows the remaining percentage,
-reset time and observation freshness. Percentages do not compare the absolute
-capacity of different windows.
-GPT-5.3 Codex Spark uses its shared model name and icon. Unavailable amounts retain
-their text state, and stale observations remain explicitly marked. A single current
-Codex weekly forecast appears on the Allowance Estimate page when usable pacing evidence exists. Otherwise,
-a waiting panel explains that fresh or sufficient allowance evidence is needed;
-it does not display a guessed rate or run-out time. Choosing a historical plan
-on the Allowance Estimate page does not change that current forecast.
+Overview contains five cards: remaining weekly allowance over seven days, plan
+work hours, seven daily consumption bars, current workload, and actual consumption
+relative to expected. It does not show an exhaustion date or countdown.
 
-Below the allowance cards, Overview carries a short summary of that same weekly
-forecast: the pace assessment, how the recent rate compares with the pace the
-window can still sustain, the allowance left, time to reset, the recent rate
-and either the estimated run-out or the allowance expected to be spare at the
-reset. It is computed from the same reading as the forecast page, so the two
-always agree, and it shows a waiting state instead of a rate when the evidence
-is missing or stale. Only the seven-day window is forecast; the five-hour
-window has no run-out estimate. **View usage forecast** opens the full forecast.
+Work hours include the whole task: thinking, tools, tests and necessary waiting.
+Parallel tasks count once; time between tasks is excluded. Heavy, medium and light
+loads are clustered from recent API-equivalent usage per work hour. Historical
+remaining hours use actual quota deductions; current workload uses the last
+fifteen minutes of API-equivalent usage and task work time. These are local
+analysis estimates under a single-account, continuous-subscription assumption.
 
-Overview is a single-screen summary: allowance rows sit beside the API-equivalent
-total and the allowance comparison. It fits the available window height,
-proportionally reducing the summary in small windows instead of cropping data.
-The latest absolute difference is shown as a separate percentage-point value.
-Choose **Calculation notes** to open a dialog for usage components, fitted rates,
-pricing methodology and examples. Local setup also opens in a dialog, so reading
-details does not expand the overview. Stale results, incomplete history,
-unavailable comparisons and account/plan qualifiers remain visible outside
-those notes; the API-equivalent total is explicitly not a bill.
+All overview cards publish together on a five-minute cadence. Manual refresh uses
+the same pipeline and restarts the countdown when work settles. First history
+preparation can take longer. Missing values remain unavailable; failures name
+the affected stage, and retained results keep their original timestamp.
+
+Daily bar totals are observed quota movement; colours allocate it using local
+usage. Grey portions are unclassified. Observation gaps and resets are not
+smoothed away. The relative-consumption chart compares quota deduction with
+API-equivalent usage divided by fitted weekly capacity; it does not correct the
+current workload rate. Detailed usage, allowance and performance analysis remain
+available on their respective pages.
 
 The forecast names its pace assessment, estimated run-out, reset countdown and
 any time without allowance. Its static timeline represents time until reset, not quota

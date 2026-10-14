@@ -98,9 +98,9 @@ test("settings writes are serialized and retain the last working state after fai
   const first = store.setLanguage("en");
   const second = store.setRefreshInterval(900);
   assert.equal((await first).language, "en");
-  assert.equal((await second).refreshIntervalSeconds, 900);
+  assert.equal((await second).refreshIntervalSeconds, 300);
   assert.equal((await store.getSettings()).language, "en");
-  assert.equal((await store.getSettings()).refreshIntervalSeconds, 900);
+  assert.equal((await store.getSettings()).refreshIntervalSeconds, 300);
   assert.equal(saves.length, 2);
   assert.equal(saves[1].language, "en");
 
@@ -112,7 +112,7 @@ test("settings writes are serialized and retain the last working state after fai
   assert.deepEqual(await store.getSettings(), projectDesktopSettingsPathFree({
     ...DESKTOP_DEFAULT_SETTINGS,
     language: "en",
-    refreshIntervalSeconds: 900,
+    refreshIntervalSeconds: 300,
   }));
   assert.equal((await store.setStartAtLogin(false)).startAtLogin, false);
 });

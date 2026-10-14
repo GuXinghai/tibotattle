@@ -54,6 +54,7 @@ function fixture({
   settingsSave = null,
   settingsStore: suppliedSettingsStore = null,
   automaticRefreshCadence,
+  overviewRefreshOwnedByCompanion = false,
 } = {}) {
   let persisted = null;
   const store = suppliedSettingsStore ?? createDesktopSettingsStore({
@@ -151,6 +152,7 @@ function fixture({
     },
     ...actionOverrides,
     automaticRefreshCadence,
+    overviewRefreshOwnedByCompanion,
     clock,
     setRecurringTimer(callback, milliseconds) {
       const timer = { callback, milliseconds, unref() {} };
@@ -194,6 +196,13 @@ function automaticCadenceBackend() {
     },
   };
 }
+
+test("production companion owns the five-minute timer while the shell retains hourly maintenance", async () => {
+  const value = fixture({ overviewRefreshOwnedByCompanion: true });
+  await value.controller.initialize();
+  assert.equal(value.timers.length, 1);
+  assert.equal(value.timers[0].milliseconds, 3_600_000);
+});
 
 test("controller initializes persisted cadence and projects truthful settings state", async () => {
   const value = fixture();
@@ -286,7 +295,7 @@ test("controller implements every bounded bridge action and desktop command", as
   assert.deepEqual(value.settingsWindows, ["general"]);
   assert.deepEqual(value.commands, [{ command: "language", value: "es" }]);
   assert.deepEqual(value.languageChanges, ["system", "es"]);
-  assert.equal(value.timers.at(-1).milliseconds, 60_000);
+  assert.equal(value.timers.at(-1).milliseconds, 300_000);
   assert.equal(value.cleared.length, 1);
   assert.equal(selected.settings.codexFolder.kind, "custom");
   assert.deepEqual(selected.settings.codexFolder, { kind: "custom" });
@@ -301,7 +310,7 @@ test("controller implements every bounded bridge action and desktop command", as
     value.persisted.codexHomes.activityRoots[0].rootId,
   );
   assert.equal(value.persisted.language, "es");
-  assert.equal(value.persisted.refreshIntervalSeconds, 60);
+  assert.equal(value.persisted.refreshIntervalSeconds, 300);
   assert.equal(value.persisted.startAtLogin, true);
   assert.deepEqual(value.persisted.notifications, { enabled: false, threshold: "off" });
 });
@@ -501,9 +510,9 @@ test("changing the refresh interval during an active lease persists without armi
   const timerCount = value.timers.length;
   await value.controller.handlers.setRefreshInterval({ seconds: 60 });
   assert.equal(value.timers.length, timerCount);
-  assert.equal((await value.store.getSettings()).refreshIntervalSeconds, 60);
+  assert.equal((await value.store.getSettings()).refreshIntervalSeconds, 300);
   assert.equal(await value.controller.handlers.refreshSettled({ lease }), true);
-  assert.equal(value.timers.at(-1).milliseconds, 60_000);
+  assert.equal(value.timers.at(-1).milliseconds, 300_000);
 });
 
 test("dashboard replacement releases an abandoned lease and rearms the cadence", async () => {

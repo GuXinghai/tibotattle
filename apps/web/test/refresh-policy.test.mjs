@@ -72,6 +72,7 @@ function refreshHarness({
     createTextNode: (textContent) => ({ textContent }),
   };
   const priorDashboard = {
+    workload: detailedSnapshot ? {schemaVersion:"overview-workload-v1",status:"available"} : null,
     mode: "local",
     state: "stale",
     activity: { lastScanAt: "2026-09-02T00:00:00.000Z" },
@@ -579,7 +580,7 @@ test("quota failure messages explain a missing Codex CLI and expose only fixed e
   assert.equal(JSON.stringify(untrusted).includes("private_detail_untrusted"), false);
 });
 
-test("both visible manual refresh controls request detailed accounting once", async (t) => {
+test("global refresh uses the bounded overview path while setup retains explicit detailed accounting", async (t) => {
   for (const selector of ["#refresh-button", "#setup-refresh"]) {
     await t.test(selector, async () => {
       const harness = refreshHarness();
@@ -591,8 +592,8 @@ test("both visible manual refresh controls request detailed accounting once", as
       // A DOM event cannot accidentally supply the quick/default options.
       harness.buttons.get(selector).click({ type: "click", detailed: false });
       await new Promise(setImmediate);
-      assert.deepEqual(harness.calls, ["detailed", "status", "reload", "continuation-check"]);
-      assert.deepEqual(harness.routes, ["/api/local/refresh"]);
+      assert.deepEqual(harness.calls, selector==="#refresh-button" ? ["quick","status","reload"] : ["detailed", "status", "reload", "continuation-check"]);
+      assert.deepEqual(harness.routes, [selector==="#refresh-button" ? "/api/local/refresh/quick" : "/api/local/refresh"]);
       assert.equal(harness.context.localActionBusy, false);
       assert.equal(harness.context.localRefreshInProgress, false);
       assert.equal(harness.context.dashboard, harness.priorDashboard,

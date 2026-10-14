@@ -42,11 +42,11 @@ import {
 
 export const LOCAL_INDEX_STORE_FAMILY = "local-index-store";
 export const LOCAL_INDEX_STORE_APPLICATION_ID = 0x554d4932;
-export const LOCAL_INDEX_STORE_USER_VERSION = 4;
+export const LOCAL_INDEX_STORE_USER_VERSION = 5;
 // Names the shared extractor revision it was built with, so a change to the
 // extractor's semantics cannot leave facts that no reparse will replace.
 // test/local-index-refresh.test.js pins the two together.
-export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v1+unified-rollout-typed-v19";
+export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v2+unified-rollout-typed-v19";
 
 // Append-only: ordinals are the on-disk and wire representation.
 export const REASONING_EFFORTS = Object.freeze([
@@ -64,6 +64,7 @@ export const EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO = 4;
 export const EVENT_FLAG_STATUS_ONLY = 8;
 
 const DIAGNOSTIC_CODES = new Set([
+  "malformedWorkRecords",
   "relevantLines", "malformedLines", "malformedTimestamps",
   "malformedAccountingRecords", "malformedUsageRecords",
   "malformedRateLimitRecords", "partialLines", "salvagedRecords",
@@ -293,6 +294,16 @@ const SCHEMA = `
     PRIMARY KEY(source_id, source_offset, tool_ordinal)) STRICT, WITHOUT ROWID;
 
   -- Persisted fork-replay boundary: membership is the only question asked.
+  CREATE TABLE IF NOT EXISTS work_lifecycle_fact(
+    source_id INTEGER NOT NULL REFERENCES source,
+    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),
+    session_id INTEGER NOT NULL REFERENCES session,
+    task_key BLOB NOT NULL CHECK(length(task_key) = 32),
+    observed_at_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('start', 'complete', 'abort')),
+    duration_ms INTEGER CHECK(duration_ms >= 0),
+    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID;
+
   CREATE TABLE IF NOT EXISTS lineage_snapshot(
     session_id INTEGER NOT NULL REFERENCES session,
     snapshot_local BLOB NOT NULL,
@@ -483,6 +494,19 @@ export function openLocalIndexStore(file, {
     database = new DatabaseSync(path, { readOnly, timeout: 5_000 });
     configure(database, { readOnly, bulkLoad });
     if (!existed) initialize(database);
+    if (existed && !readOnly
+        && database.prepare("PRAGMA application_id").get().application_id === LOCAL_INDEX_STORE_APPLICATION_ID
+        && database.prepare("PRAGMA user_version").get().user_version === 4) {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        database.exec(SCHEMA);
+        database.exec("PRAGMA user_version=5");
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    }
     assertFamily(database);
     if (!readOnly) {
       // A registry revision that moved a context threshold invalidates the
@@ -555,7 +579,7 @@ export function repairProvisional(database) {
   if (sources.length === 0) return 0;
   // Probe read-only first: a clean store takes no write transaction.
   const probes = [
-    "usage_event", "usage_event_boundary", "quota_occurrence", "tool_class_fact",
+    "usage_event", "usage_event_boundary", "quota_occurrence", "tool_class_fact", "work_lifecycle_fact",
   ].map((table) => database.prepare(
     `SELECT 1 AS present FROM ${table} WHERE source_id = ? AND source_offset > ? LIMIT 1`,
   ));
@@ -595,6 +619,8 @@ function deleteSourceRange(database, sourceId, fromOffset) {
   database.prepare(
     "DELETE FROM tool_class_fact WHERE source_id = ? AND source_offset >= ?",
   ).run(sourceId, fromOffset);
+  database.prepare("DELETE FROM work_lifecycle_fact WHERE source_id = ? AND source_offset >= ?")
+    .run(sourceId, fromOffset);
   for (const { id } of affected) {
     const replacement = database.prepare(`
       SELECT plan_type, used_percent, resets_at_ms, duration_mins
@@ -725,6 +751,9 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       INSERT INTO tool_class_fact(source_id, source_offset, tool_ordinal,
         event_key, session_id, observed_at_ms, tool_class, source_kind)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`),
+    workFact: database.prepare(`INSERT INTO work_lifecycle_fact
+      (source_id, source_offset, session_id, task_key, observed_at_ms, kind, duration_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`),
     lineageSnapshot: database.prepare(`
       INSERT INTO lineage_snapshot(session_id, snapshot_local)
       VALUES (?, ?) ON CONFLICT DO NOTHING`),
@@ -982,6 +1011,11 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
         fact.sourceId, fact.sourceOffset, fact.toolOrdinal, fact.eventKey,
         fact.sessionId, fact.observedAtMs, fact.toolClass, fact.sourceKind,
       ).changes);
+    },
+    writeWorkFact(fact) {
+      assertTransaction();
+      return Number(statements.workFact.run(fact.sourceId, fact.sourceOffset,
+        fact.sessionId, fact.taskKey, fact.observedAtMs, fact.kind, fact.durationMs).changes);
     },
     addLineageSnapshot(sessionId, snapshotLocalKey) {
       assertTransaction();

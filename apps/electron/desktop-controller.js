@@ -349,6 +349,7 @@ export function createDesktopController({
     throw controllerError("desktop_local_data_unavailable");
   },
   automaticRefreshCadence,
+  overviewRefreshOwnedByCompanion = false,
   clock = () => Date.now(),
   setRecurringTimer = setTimeout,
   clearRecurringTimer = clearTimeout,
@@ -727,6 +728,9 @@ export function createDesktopController({
 
   function startRefreshTimer(seconds) {
     stopRefreshTimer();
+    // Companion owns the five-minute overview cadence. The shell only retains
+    // the existing low-frequency detailed-maintenance command and watchdogs.
+    if (overviewRefreshOwnedByCompanion) seconds = 3600;
     if (disposed || refreshInFlight
         || !Number.isSafeInteger(seconds)
         || seconds <= 0) return;
@@ -1291,10 +1295,10 @@ export function createDesktopController({
     },
     async setRefreshInterval({ seconds }) {
       return enqueue(async () => {
-        await store.setRefreshInterval(seconds);
+        const settings = await store.setRefreshInterval(seconds);
         // Do not replace an active lease with a timer. The terminal settle or
         // watchdog recovery will reread this persisted interval exactly once.
-        if (!refreshInFlight) startRefreshTimer(seconds);
+        if (!refreshInFlight) startRefreshTimer(settings.refreshIntervalSeconds);
         return snapshot();
       });
     },

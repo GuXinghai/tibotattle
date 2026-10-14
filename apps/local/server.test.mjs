@@ -1338,7 +1338,10 @@ test("the port and readiness answer before the first snapshot is built", async (
     });
     const base = `http://127.0.0.1:${app.port}`;
     await buildStarted.promise;
-    assert.deepEqual(initializationOptions, { purpose: "startup" });
+    assert.deepEqual(Object.keys(initializationOptions).sort(),["purpose","signal"]);
+    assert.equal(initializationOptions.purpose,"startup");
+    assert.equal(initializationOptions.signal.aborted,false);
+    assert.equal(typeof initializationOptions.signal.addEventListener,"function");
 
     // Listening, and honest about what is not ready yet. Before the port moved
     // ahead of the build this request could not even be sent: a real install
@@ -1758,6 +1761,26 @@ test("loopback quick refresh is separately authorized and selects the quick cont
     await app.close();
     await rm(files.root, { recursive: true });
   }
+});
+
+test("overview refresh is origin-guarded, joins work and publishes once before rearming",async()=>{
+  const files=await fixture(),store=fakeStore();let release;let runs=0;
+  const app=await startLocalCompanionServer({root:files.resourceRoot,stateRoot:files.stateRoot,
+    codexHome:files.codexHome,staticRoot:files.staticRoot,dataStore:store,port:0,
+    refreshRunner:async({mode})=>{assert.equal(mode,"overview");runs++;await new Promise(r=>{release=r;});return{};}});
+  try{
+    const base=`http://127.0.0.1:${app.port}`,url=`${base}/api/local/refresh/overview`;
+    assert.equal((await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:"{}"})).status,403);
+    assert.equal((await fetch(url)).status,405);
+    const options={method:"POST",headers:{"Content-Type":"application/json","X-Usage-Monitor-Local":"1",Origin:base},body:"{}"};
+    const first=await fetch(url,options),receipt=await first.json();assert.equal(first.status,202);
+    const joined=await fetch(url,options),second=await joined.json();assert.equal(joined.status,200);
+    assert.equal(second.refresh.refreshId,receipt.refresh.refreshId);assert.equal(runs,1);assert.equal(store.reloads,0);
+    release();await app.refresh.whenSettled();await new Promise(setImmediate);
+    const status=await fetch(`${base}/api/local/refresh`).then(r=>r.json());
+    assert.equal(status.refresh.status,"succeeded");assert.equal(store.reloads,1);
+    assert.ok(Date.parse(status.overviewSchedule.nextAt)>=Date.parse(status.refresh.finishedAt)+300000);
+  }finally{release?.();await app.close();await rm(files.root,{recursive:true});}
 });
 
 test("loopback refresh publishes a rollout quarantine as degraded verified coverage", async () => {
