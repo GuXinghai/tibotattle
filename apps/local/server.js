@@ -134,25 +134,43 @@ export function createCachedLocalUnifiedProjectionReader({
       }, error => finish(reject, error));
     });
   }
+  const cacheKey = options => JSON.stringify([
+    options.indexFile, options.declaredSpeedBaselines ?? [],
+    options.includeWorkUsage === true, options.exactWindow === true, options.codexHome ?? null, options.secretFile ?? null,
+  ]);
+  // A completed full result stays valid for exactly the publication it was
+  // built from and within its proven time-membership bound.
+  const validCached = (options, key, fingerprint) => {
+    const nowMs = options.nowMs;
+    return cached && key === cached.key && fingerprint === cached.generationFingerprint
+      && (!options.exactWindow || nowMs === cached.projectedAtMs)
+      && Number.isFinite(nowMs) && nowMs >= cached.projectedAtMs && nowMs < cached.validUntilMs
+      ? cached.projection
+      : null;
+  };
   const read = async function read(options, controls = {}) {
     if (closed) throw projectionAborted();
     if (controls.signal?.aborted) throw projectionAborted();
-    // Deferred startup reads do not invalidate a completed full result.
     const select = controls.selectProjection ?? (value => value);
-    if (options?.mode !== "full") return select(await reader(options, controls));
+    if (options?.mode !== "full") {
+      // A deferred read never starts the expensive build, and it does not
+      // invalidate a completed full result: while the published generation
+      // is unchanged that result is still the full projection, so serve it.
+      if (cached !== null) {
+        const current = await readGeneration(options);
+        if (closed || controls.signal?.aborted) throw projectionAborted();
+        const valid = validCached(options, cacheKey(options), current);
+        if (valid !== null) return structuredClone(select(valid));
+      }
+      return select(await reader(options, controls));
+    }
     const nowMs = options.nowMs;
-    const key = JSON.stringify([
-      options.indexFile, options.declaredSpeedBaselines ?? [],
-      options.includeWorkUsage === true, options.exactWindow === true, options.codexHome ?? null, options.secretFile ?? null,
-    ]);
+    const key = cacheKey(options);
     const expectedFingerprint = controls.reuse?.generationFingerprint
       ?? (options.includeWorkUsage ? await readGeneration(options) : null);
     if (closed || controls.signal?.aborted) throw projectionAborted();
-    if (cached && key === cached.key && expectedFingerprint === cached.generationFingerprint
-        && (!options.exactWindow || nowMs === cached.projectedAtMs)
-        && Number.isFinite(nowMs) && nowMs >= cached.projectedAtMs && nowMs < cached.validUntilMs) {
-      return structuredClone(select(cached.projection));
-    }
+    const valid = validCached(options, key, expectedFingerprint);
+    if (valid !== null) return structuredClone(select(valid));
     // Exact timestamps can share immediately. Different timestamps use the
     // finished cache only after its time-membership proof has completed.
     const buildKey = JSON.stringify([key, expectedFingerprint, nowMs]);

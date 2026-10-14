@@ -14,7 +14,8 @@ test("every fixed companion projection warning has translated presentation copy"
   const source = await readFile(new URL("../../../src/local-companion-data.js", import.meta.url), "utf8");
   const warnings = [...source.matchAll(/(?:const|export const) [A-Z_]+_WARNING\s*=\s*"([^"]+)";/gu)]
     .map((match) => match[1]);
-  assert.ok(warnings.length >= 8);
+  // 7 since the retained-evidence "recalculating" sentence was retired (2026-10-14).
+  assert.ok(warnings.length >= 7);
   for (const warning of warnings) {
     const message = evidenceWarningLocalization(warning);
     assert.ok(message, warning);
@@ -66,7 +67,8 @@ test("warning localization recognizes only closed source-owned sentences", () =>
 
 test("warning catalogs have complete locale rows with matching placeholders", () => {
   const rows = Object.entries(WEB_MESSAGES).filter(([key]) => key.startsWith("dashboard.warning."));
-  assert.ok(rows.length >= 23);
+  // 22 since dashboard.warning.retainedRefresh was retired (2026-10-14).
+  assert.ok(rows.length >= 22);
   for (const [key, row] of rows) {
     assert.equal(row.length, SUPPORTED_LOCALES.length, key);
     for (const copy of row) assert.ok(copy.length > 0, key);

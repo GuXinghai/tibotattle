@@ -1878,7 +1878,7 @@ function renderEvidenceWarnings(data) {
     if (localized?.key === "dashboard.warning.unknownModel") {
       continue;
     }
-    if (/^Quota tracking started fresh on this Mac, so its retained records begin /u.test(message)) continue;
+    if (/^Quota tracking started fresh on this computer, so its retained records begin /u.test(message)) continue;
     grouped.get(evidenceWarningTarget(message)).push(message);
   }
   for (const [selector, messages] of grouped) {
@@ -7937,14 +7937,16 @@ function staleAccountingServePeriod(data) {
 }
 
 /**
- * The quiet informational recalculating label over stale-served figures:
- * "computed by the previous version", with the live rebuild state folded in
+ * The quiet informational label over stale-served figures. Figures from the
+ * previous version's cache say so, with the live rebuild state folded in
  * ("recalculating now" while attempts proceed normally, "being retried" once
- * the rebuild has deferred repeatedly). Deliberately an annotation, not an
- * alert — the replaced red withheld-cache banner over-alarmed a routine
- * update recalculation.
+ * the rebuild has deferred repeatedly). Figures retained from this version's
+ * last completed full projection (`lastCompletedAt` set) state only that and
+ * their age: refresh activity is the refresh control's to report. Deliberately
+ * an annotation, not an alert — the replaced red withheld-cache banner
+ * over-alarmed a routine update recalculation.
  */
-function renderStaleServeNote(element, active, reason = null) {
+function renderStaleServeNote(element, active, reason = null, lastCompletedAt) {
   if (!element) return;
   if (!active) {
     element.hidden = true;
@@ -7958,10 +7960,27 @@ function renderStaleServeNote(element, active, reason = null) {
       ? "accounting.staleServe.newerBuild"
       : reason === "current_projection_unavailable"
         ? "accounting.staleServe.lastVerified"
-        : accountingRebuildRetrying()
-          ? "accounting.staleServe.retrying"
-          : "accounting.staleServe.recalculating",
+        : lastCompletedAt !== undefined
+          ? Number.isFinite(Date.parse(lastCompletedAt ?? ""))
+            ? "accounting.staleServe.lastCompleted"
+            : "accounting.staleServe.lastCompletedUndated"
+          : accountingRebuildRetrying()
+            ? "accounting.staleServe.retrying"
+            : "accounting.staleServe.recalculating",
+    lastCompletedAt === undefined ? {} : { time: retainedResultTimeLabel(lastCompletedAt) },
   );
+}
+
+function retainedResultTimeLabel(instant) {
+  const timestamp = Date.parse(instant ?? "");
+  if (!Number.isFinite(timestamp)) return "";
+  return new Intl.DateTimeFormat(getFormattingLocale(), {
+    ...(USER_TIME_ZONE === "local time" ? {} : { timeZone: USER_TIME_ZONE }),
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(timestamp);
 }
 
 function renderAccountingRebuildDeferral(data, { staleServeShown = false } = {}) {
@@ -8026,10 +8045,13 @@ function renderAccounting(data) {
         && (finite(livePeriod.events, 0) > 0
           || finite(livePeriod.totalTokens, 0) > 0
           || finite(livePeriod.apiPriceEquivalentUsd, 0) > 0)));
+  // With no previous-version row, the figures are this version's last
+  // completed full projection, retained through a deferred or unmatched build.
   renderStaleServeNote(
     $("#accounting-stale-serve"),
     retainedEvidence,
     projection.reason,
+    staleRow === null ? projection.retainedAt ?? null : undefined,
   );
   renderAccountingRebuildDeferral(data, {
     staleServeShown: retainedEvidence,
@@ -8085,8 +8107,10 @@ function renderAccounting(data) {
   const fastMode = accounting.fastMode;
   // Stale substitution serves the version-stable Standard-price scalar and
   // labels itself as previous-version output; quota weighting belongs to the
-  // current pipeline and is not reconstructed from an old artifact.
-  const headlineRows = projection.status === "retained"
+  // current pipeline and is not reconstructed from an old artifact. Figures
+  // retained from this version's last completed projection are current-
+  // pipeline output and keep its headline, marked by their verified period.
+  const headlineRows = projection.status === "retained" && staleRow !== null
     ? [
       [
         t("accounting.staleServe.metricLabel"),
@@ -8118,7 +8142,14 @@ function renderAccounting(data) {
         localization.translateText(accounting.periodLabel)
       ]
     ];
-  for (const [label, explanation, value, note] of headlineRows) {
+  const currentPeriodNote = localization.translateText(accounting.periodLabel);
+  const retainedPeriodNote = projection.status === "retained" && staleRow === null
+    ? t("accounting.projection.lastVerifiedPeriod", { period: currentPeriodNote })
+    : null;
+  for (const [label, explanation, value, periodNote] of headlineRows) {
+    const note = retainedPeriodNote !== null && periodNote === currentPeriodNote
+      ? retainedPeriodNote
+      : periodNote;
     const card = node("article", "metric-card compact-metric");
     const metricLabel = node("span", "metric-name");
     metricLabel.append(informationLabel(label, explanation));

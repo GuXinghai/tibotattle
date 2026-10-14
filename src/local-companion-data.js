@@ -2051,7 +2051,7 @@ function unifiedPartialReason(unified) {
 // moment the data store serves retained full-authority evidence in its place,
 // which is exactly what every quick milestone and every mismatch-window full
 // build does. The store therefore needs to recognize these sentences to
-// replace them (owner-reported, 2026-08-21: both banners on screen through
+// drop them (owner-reported, 2026-08-21: both banners on screen through
 // every refresh cycle while the figures were complete and current), so they
 // are named constants rather than inline strings.
 const UNIFIED_DEFERRED_LOADING_WARNING =
@@ -2075,11 +2075,6 @@ export const RETAINED_EVIDENCE_RELABELED_WARNINGS = Object.freeze([
   UNIFIED_WITHHELD_UNREADABLE_WARNING,
   HISTORY_TOTALS_HIDDEN_WARNING,
 ]);
-// The one sentence that is true while retained evidence is on screen: nothing
-// is hidden, and what is loading is a replacement, not the figures. "still"
-// keeps the page's quiet progress treatment rather than the alert one.
-export const RETAINED_EVIDENCE_REFRESH_WARNING =
-  "The full history projection is still being recalculated in the background. The figures shown are the most recent completed projection and are replaced automatically when it finishes.";
 
 function unifiedHistoryState({ cache, unified, cacheErrorCode, generationReady }) {
   const history = cache?.history;
@@ -2776,8 +2771,8 @@ export async function buildLocalCompanionSnapshot({
       ? indexing.coveredAt.startAt.slice(0, 10)
       : null;
     warnings.push(trackingStartDate === null
-      ? "Quota tracking started fresh on this Mac, so its retained records begin when the collector first ran. Coverage of anything earlier is not claimed."
-      : `Quota tracking started fresh on this Mac, so its retained records begin on ${trackingStartDate}. Coverage of anything earlier is not claimed.`);
+      ? "Quota tracking started fresh on this computer, so its retained records begin when the collector first ran. Coverage of anything earlier is not claimed."
+      : `Quota tracking started fresh on this computer, so its retained records begin on ${trackingStartDate}. Coverage of anything earlier is not claimed.`);
   }
   const displayUnknownModelEvents = displayUsage?.byModel
     ?.find((row) => row.model === "unknown")?.events ?? 0;
@@ -3748,12 +3743,14 @@ export class LocalCompanionDataStore {
   // unconditionally ONLY when it is authoritative. A genuine transition to
   // empty still lands — the wipe mints a ready generation, its rebuild
   // catches up, matched turns true, and the empty authoritative build
-  // publishes. Until then the previous figures stand behind the retained-
-  // evidence refresh sentence below — stale-with-label, the presentation the
-  // owner chose for exactly this state. The build's own "loading/withheld/
-  // hidden" sentences do NOT stand: they describe the build's empty
-  // projection, not the retained one actually being served, and the owner
-  // reported them showing through every refresh cycle (2026-08-21).
+  // publishes. Until then the previous figures stand, labeled by the
+  // projection's own "retained" status and retainedAt — stale-with-label, the
+  // presentation the owner chose for exactly this state. The build's own
+  // "loading/withheld/hidden" sentences do NOT stand: they describe the
+  // build's empty projection, not the retained one actually being served, and
+  // the owner reported them showing through every refresh cycle (2026-08-21).
+  // Nor does any sentence claiming background work: whether a refresh is
+  // running is the refresh state's to report, not the projection's.
   //
   // M1 needs no special case: retention only ever fills surfaces whose
   // incoming evidence is ZERO, and M1 carries its buckets.
@@ -3821,23 +3818,20 @@ export class LocalCompanionDataStore {
         };
       }
     }
-    if (usageEvidenceRetained) this.#relabelRetainedWarnings(next);
+    if (usageEvidenceRetained) this.#dropRetainedEvidenceWarnings(next);
     return next;
   }
 
-  // Only the usage/accounting axes gate the relabel: those are the figures the
-  // five replaced sentences claim are loading, withheld, or hidden. A build
-  // that retained nothing on that axis keeps its own sentences — on a true
-  // cold start "loading" is exactly right.
-  #relabelRetainedWarnings(next) {
+  // Only the usage/accounting axes gate this: those are the figures the five
+  // dropped sentences claim are loading, withheld, or hidden. A build that
+  // retained nothing on that axis keeps its own sentences — on a true cold
+  // start "loading" is exactly right.
+  #dropRetainedEvidenceWarnings(next) {
     const warnings = next?.overview?.warnings;
     if (!Array.isArray(warnings)) return;
-    const kept = warnings.filter(
+    next.overview.warnings = warnings.filter(
       (sentence) => !RETAINED_EVIDENCE_RELABELED_WARNINGS.includes(sentence),
     );
-    if (kept.length === warnings.length) return;
-    kept.unshift(RETAINED_EVIDENCE_REFRESH_WARNING);
-    next.overview.warnings = kept;
   }
 
   // The cost-accounting node is the last surface of this class, and it cannot

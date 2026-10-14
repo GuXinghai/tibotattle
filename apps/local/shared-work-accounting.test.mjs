@@ -57,6 +57,39 @@ test("all periods and scopes reuse one priced projection with immutable original
   assert.equal(reads, 3);
 });
 
+test("a deferred read serves the completed full result only while it stays valid", async () => {
+  const modes = [];
+  let fingerprint = generation;
+  const reader = createCachedLocalUnifiedProjectionReader({
+    reader: async o => {
+      modes.push(o.mode);
+      return o.mode === "full" ? combined(o.nowMs, modes.length) : { companion: { status: "deferred" } };
+    },
+    readGeneration: async () => fingerprint,
+    validUntil: async o => o.nowMs + 1000,
+  });
+  const deferred = nowMs => ({ ...options(nowMs), mode: "deferred" });
+
+  // Nothing completed yet: the deferred read stays deferred and builds nothing.
+  assert.equal((await reader(deferred(50))).companion.status, "deferred");
+  assert.deepEqual(modes, ["deferred"]);
+
+  // An unchanged publication keeps the completed full result valid.
+  await reader(options(100));
+  const served = await reader(deferred(150));
+  assert.equal(served.companion.status, "available");
+  assert.equal(served.companion.marker, 2);
+  assert.deepEqual(modes, ["deferred", "full"]);
+
+  // Past its time-membership bound the result is no longer the full projection.
+  assert.equal((await reader(deferred(1100))).companion.status, "deferred");
+  // Nor once a different generation is published.
+  await reader(options(1200));
+  fingerprint = `generation-v2-${"b".repeat(64)}`;
+  assert.equal((await reader(deferred(1250))).companion.status, "deferred");
+  assert.deepEqual(modes, ["deferred", "full", "deferred", "full", "deferred"]);
+});
+
 test("concurrent dashboard and work reads coalesce, including later timestamps", async () => {
   const gate = latch(); let reads = 0;
   const reader = createCachedLocalUnifiedProjectionReader({

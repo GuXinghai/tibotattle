@@ -13,7 +13,6 @@ import {
   LOCAL_COMPANION_SCHEMA_VERSION,
   INFORMATIONAL_HISTORY_GAP_MAX_SHARE,
   LocalCompanionDataStore,
-  RETAINED_EVIDENCE_REFRESH_WARNING,
   RETAINED_EVIDENCE_RELABELED_WARNINGS,
   RETAINED_PROJECTION_SURFACE_PATHS,
   buildLocalCompanionSnapshot,
@@ -1813,8 +1812,11 @@ test("a build serving retained evidence does not claim its figures are loading",
     RETAINED_EVIDENCE_RELABELED_WARNINGS;
 
   // The captured cycle: an authoritative full, then the quick milestone. Both
-  // loading sentences are replaced by the one sentence that is true of the
-  // retained figures — once, first, with unrelated warnings kept in place.
+  // loading sentences are dropped and unrelated warnings kept in place. No
+  // sentence replaces them: the projection's retained status labels the
+  // figures, and background work is the refresh state's to report (owner-
+  // reported 2026-10-14: a "still recalculating" replacement stood for an
+  // hour while no recalculation was running).
   const quick = storeWith([
     { matched: true, empty: false, warnings: [] },
     {
@@ -1825,12 +1827,10 @@ test("a build serving retained evidence does not claim its figures are loading",
   ]);
   await quick.reload({ purpose: "full" });
   await quick.reload({ purpose: "quick" });
-  assert.deepEqual(quick.getOverview().warnings, [
-    RETAINED_EVIDENCE_REFRESH_WARNING,
-    UNRELATED_WARNING,
-  ], "loading claims must not outlive the evidence they describe");
+  assert.deepEqual(quick.getOverview().warnings, [UNRELATED_WARNING],
+    "loading claims must not outlive the evidence they describe");
 
-  // The mismatch-window full build (M3) gets the same relabel: its withheld
+  // The mismatch-window full build (M3) gets the same treatment: its withheld
   // sentence is false of the retained figures the page keeps showing.
   const mismatch = storeWith([
     { matched: true, empty: false, warnings: [] },
@@ -1838,9 +1838,7 @@ test("a build serving retained evidence does not claim its figures are loading",
   ]);
   await mismatch.reload({ purpose: "full" });
   await mismatch.reload({ purpose: "full" });
-  assert.deepEqual(mismatch.getOverview().warnings, [
-    RETAINED_EVIDENCE_REFRESH_WARNING,
-  ]);
+  assert.deepEqual(mismatch.getOverview().warnings, []);
 
   // A true cold start retains nothing, so "loading" is exactly right and the
   // build's own sentences stand untouched.
@@ -1855,8 +1853,8 @@ test("a build serving retained evidence does not claim its figures are loading",
   assert.deepEqual(cold.getOverview().warnings, [deferredLoading, historyHidden],
     "a cold start genuinely is loading and must say so");
 
-  // A deferred build with no replaceable sentence gains nothing: the relabel
-  // replaces false claims, it does not add a standing banner to every pass.
+  // A deferred build with no false sentence gains nothing: retention drops
+  // false claims, it never adds a standing banner to a pass.
   const quiet = storeWith([
     { matched: true, empty: false, warnings: [] },
     { matched: false, empty: true, warnings: [UNRELATED_WARNING] },

@@ -116,20 +116,33 @@ test("unchanged unified projections reuse only within exact generation, time, an
   assert.equal(reads, 5);
   assert.equal(changedGeneration.generation.fingerprint, generationB);
 
+  // A deferred (quick/startup) read builds nothing, and while the published
+  // generation and time bound are unchanged the completed full result is
+  // still the full projection, so it is served rather than discarded.
   const deferred = await reader(
     options(253, [{ startAt: 1, mode: "fast" }], "deferred"),
     reuse(generationB),
   );
-  assert.equal(reads, 6);
-  assert.equal(deferred.status, "deferred");
+  assert.equal(reads, 5);
+  assert.equal(deferred.status, "available");
+  assert.equal(deferred.usage[0].marker, 5);
   assert.equal(validityChecks.length, 5);
 
   const afterDeferred = await reader(
     options(254, [{ startAt: 1, mode: "fast" }]),
     reuse(generationB),
   );
-  assert.equal(reads, 6);
+  assert.equal(reads, 5);
   assert.equal(afterDeferred.usage[0].marker, 5);
+
+  // Past the time bound a deferred read stays deferred and builds nothing.
+  const deferredExpired = await reader(
+    options(400, [{ startAt: 1, mode: "fast" }], "deferred"),
+    reuse(generationB),
+  );
+  assert.equal(reads, 6);
+  assert.equal(deferredExpired.status, "deferred");
+  assert.equal(validityChecks.length, 5);
 
   const controller = new AbortController();
   controller.abort();

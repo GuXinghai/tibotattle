@@ -24,7 +24,6 @@ import {
 import {
   LOCAL_COMPANION_SCHEMA_VERSION,
   LocalCompanionDataStore,
-  RETAINED_EVIDENCE_REFRESH_WARNING,
   RETAINED_EVIDENCE_RELABELED_WARNINGS,
 } from "../src/local-companion-data.js";
 
@@ -643,7 +642,9 @@ test("startup retains only valid saved evidence until a full refresh publishes d
           assert.deepEqual(overview.timeline.usage, previous.overview.timeline.usage);
           assert.deepEqual(store.getGradient(), previous.gradient);
           assert.deepEqual(store.getWeekly(), previous.weekly);
-          assert.deepEqual(overview.warnings, [RETAINED_EVIDENCE_REFRESH_WARNING]);
+          // The retained status and retainedAt label the figures; no sentence
+          // claims background work that the refresh state does not report.
+          assert.deepEqual(overview.warnings, []);
         } else {
           assert.equal(overview.accounting.projection.status, "unavailable");
           assert.equal(overview.accounting.projection.retainedAt, null);

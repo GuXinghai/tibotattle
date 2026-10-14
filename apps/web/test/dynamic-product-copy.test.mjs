@@ -17,7 +17,7 @@ function element(tag = "span", className = "", textContent = "") {
 }
 
 test("recognized evidence warnings localize while unknown text retains the raw boundary", () => {
-  const warning = "The full history projection is still being recalculated in the background. The figures shown are the most recent completed projection and are replaced automatically when it finishes.";
+  const warning = "Full indexed history is loading. The latest replay-safe snapshot is shown meanwhile and will be replaced only by the completed full projection.";
   for (const locale of ["zh-Hans", "en-US", "es", "zh-Hans"]) {
     const list = element("ul");
     const context = createContext({ EVIDENCE_WARNING_ROUTES: [], EVIDENCE_WARNING_FALLBACK: "#warnings",
@@ -28,9 +28,9 @@ test("recognized evidence warnings localize while unknown text retains the raw b
     });
     runInContext(productionFunction("evidenceWarningTarget") + "\n" + productionFunction("renderEvidenceWarnings"), context);
     context.renderEvidenceWarnings({ warnings: [warning, "Ready"] });
-    assert.equal(list.children[0].textContent, translate("dashboard.warning.retainedRefresh", {}, locale));
+    assert.equal(list.children[0].textContent, translate("dashboard.warning.loading", {}, locale));
     assert.equal(list.children[0].attributes["data-i18n-skip"], undefined);
-    assert.equal(list.children[0].className, "evidence-warning progress");
+    assert.equal(list.children[0].className, "evidence-warning informational");
     assert.equal(list.children[1].textContent, "Ready");
     assert.equal(list.children[1].attributes["data-i18n-skip"], "");
   }
@@ -61,4 +61,29 @@ test("component labels translate only the closed product vocabulary", () => {
   assert.equal(context.componentLabel("output_reasoning_tokens"), "推理输出");
   assert.equal(context.componentLabel("output_combined_tokens"), "输出（无法拆分）");
   assert.equal(context.componentLabel("constructor"), "constructor");
+});
+
+test("retained last-completed figures state their age, never background work", () => {
+  for (const locale of ["en-US", "zh-Hans", "es"]) {
+    const note = { ...element("p"), hidden: true, removeAttribute() {} };
+    const context = createContext({
+      USER_TIME_ZONE: "UTC", getFormattingLocale: () => locale, accountingRebuildRetrying: () => false,
+      setLocalizedText(target, key, values) { target.key = key; target.textContent = translate(key, values, locale); },
+      setRawText(target, text) { target.textContent = text; },
+    });
+    runInContext(productionFunction("renderStaleServeNote") + "\n" + productionFunction("retainedResultTimeLabel"), context);
+
+    context.renderStaleServeNote(note, true, "local_unified_index_deferred", "2026-10-14T03:16:50.776Z");
+    assert.equal(note.key, "accounting.staleServe.lastCompleted");
+    assert.equal(note.hidden, false);
+    assert.doesNotMatch(note.textContent, /\{time\}/u);
+    assert.notEqual(note.textContent, translate("accounting.staleServe.recalculating", {}, locale));
+
+    context.renderStaleServeNote(note, true, "local_unified_index_deferred", null);
+    assert.equal(note.key, "accounting.staleServe.lastCompletedUndated");
+
+    // The previous-version cache keeps its own label and live rebuild state.
+    context.renderStaleServeNote(note, true, "local_unified_index_deferred");
+    assert.equal(note.key, "accounting.staleServe.recalculating");
+  }
 });

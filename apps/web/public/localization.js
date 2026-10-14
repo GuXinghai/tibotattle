@@ -117,7 +117,6 @@ function interpolate(message, values = {}) {
 // Match only these sentences and bounded numeric/date slots: arbitrary service
 // or provider text remains raw and cannot be interpreted as product copy.
 const EVIDENCE_WARNING_MESSAGES = Object.freeze({
-  "retainedRefresh": ["The full history projection is still being recalculated in the background. The figures shown are the most recent completed projection and are replaced automatically when it finishes.", "正在后台重新计算完整历史。当前显示的是最近一次计算完成的结果，新结果完成后会自动替换。", "El historial completo se está recalculando en segundo plano. Las cifras mostradas son el último resultado completo y se sustituirán automáticamente cuando termine."],
   "loading": ["Full indexed history is loading. The latest replay-safe snapshot is shown meanwhile and will be replaced only by the completed full projection.", "正在加载完整的已索引历史。期间显示最近一次可安全重放的快照，完整计算完成后才会替换它。", "Se está cargando el historial indexado completo. Mientras tanto se muestra la última instantánea reproducible sin duplicaciones; solo se sustituirá por el resultado completo."],
   "partialIndex": ["The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.", "统一本地索引可读取，但覆盖不完整。完整且与当前索引版本一致的结果发布前，不显示用量总计和时间线。", "El índice local unificado se puede leer, pero su cobertura es parcial. Los totales y las cronologías no se muestran hasta disponer de una publicación completa vinculada a la generación del índice."],
   "missingIndex": ["The unified local index has not been built yet. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "尚未建立统一本地索引。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado aún no se ha creado. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
@@ -428,6 +427,19 @@ export const WEB_MESSAGES = Object.freeze({
     "Last verified by a compatible build — this older build cannot refresh the newer local history.",
     "由兼容版本完成上次验证——此旧版本无法刷新较新的本地历史记录。",
     "Última verificación realizada por una versión compatible; esta versión anterior no puede actualizar el historial local más reciente.",
+  ],
+  // Figures retained from the last completed full-history projection. It
+  // states only validity and age; whether a refresh is running is reported
+  // by the refresh control, never inferred here.
+  "accounting.staleServe.lastCompleted": [
+    "Showing the last completed full-history result, from {time}.",
+    "显示最近一次完成的完整历史结果（{time}）。",
+    "Se muestra el último resultado completo del historial, de {time}.",
+  ],
+  "accounting.staleServe.lastCompletedUndated": [
+    "Showing the last completed full-history result.",
+    "显示最近一次完成的完整历史结果。",
+    "Se muestra el último resultado completo del historial.",
   ],
   "accounting.staleServe.lastVerified": [
     "Showing the last verified local projection because the current history could not be read.",

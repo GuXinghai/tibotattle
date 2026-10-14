@@ -148,7 +148,12 @@ or perform a second raw-log pass.
 
 An automatic quick refresh preserves the last authoritative accounting
 projection while publishing the newly observed quota card; it never advances
-the unified index or starts a replay-safe rebuild. The single manual Refresh action
+the unified index or starts a replay-safe rebuild. While the published index
+generation and the projection's time bound are unchanged, that completed
+projection remains current (`projection.status: "available"`, generation
+matched). Otherwise its figures stay on screen as `retained` with their
+`retainedAt` completion time. Projection validity never implies background
+work: whether a refresh is running is reported only by refresh status. The single manual Refresh action
 advances the index and rebuilds from the retained authoritative corpus when the
 generation is not already cached. A display range is not a history-retention
 limit; the explicit legacy rollback scan has a configured window of at least
