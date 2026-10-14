@@ -5,7 +5,7 @@ import { readFile } from "node:fs/promises";
 const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
 const paceSource = appSource.match(
-  /function renderWeeklyPaceForecast[\s\S]*?\n\}\n\nfunction renderWeekly\(data\)/u,
+  /function weeklyPaceReading[\s\S]*?\n\}\n\nfunction renderWeekly\(data\)/u,
 )?.[0] ?? "";
 
 function sliceDeclaration(name) {
@@ -245,4 +245,159 @@ test("weekly pace forecast styles map each standing to its own accent", () => {
   assert.match(styles, /\.weekly-pace-track-mark/u);
   // The dry remainder is hatched, not merely a paler colour.
   assert.match(styles, /repeating-linear-gradient/u);
+});
+
+// ---------------------------------------------------------------------------
+// Overview summary
+//
+// The Overview states the same reading as the Forecast card, so these cases run
+// the shipped renderOverviewPace, weeklyPaceReading and their helpers against
+// a minimal DOM. Only presentation primitives are stubbed; every number on the
+// page comes from the shipped arithmetic.
+// ---------------------------------------------------------------------------
+
+class FakeElement {
+  constructor(tag, className = "", text = "") {
+    this.tag = tag;
+    this.className = className;
+    this.textContent = text;
+    this.children = [];
+    this.attributes = new Map();
+    this.hidden = false;
+    this.classList = { add: (name) => { this.className = `${this.className} ${name}`.trim(); } };
+  }
+  append(...items) { this.children.push(...items); }
+  replaceChildren(...items) { this.children = items; }
+  setAttribute(name, value) { this.attributes.set(name, value); }
+  removeAttribute(name) { this.attributes.delete(name); }
+  get childElementCount() { return this.children.length; }
+  text() {
+    return [this.textContent, ...this.children.map((child) => (
+      typeof child === "string" ? child : child.text()
+    ))].filter(Boolean).join(" | ");
+  }
+}
+
+function overviewHarness() {
+  const target = new FakeElement("aside", "overview-pace");
+  target.hidden = true;
+  const render = new Function(
+    "finite", "formatDecimal", "formatPercent", "formatAllowanceDuration", "t",
+    "node", "clear", "$", "allowanceTimestamp", "document",
+    "isPrimaryCodexWeeklyQuotaWindow", "PACE_STATE_LABELS",
+    `
+    ${sliceConstant("PACE_ON_TRACK_LOWER_RATIO")}
+    ${sliceConstant("PACE_ON_TRACK_UPPER_RATIO")}
+    ${sliceConstant("PACE_CRITICAL_RATIO")}
+    ${sliceConstant("PACE_AVERAGE_MINIMUM_HOURS")}
+    ${sliceDeclaration("firstFiniteForecastNumber")}
+    ${sliceDeclaration("forecastTimestamp")}
+    ${sliceDeclaration("weeklyPaceRates")}
+    ${sliceDeclaration("weeklyPaceStanding")}
+    ${sliceDeclaration("formatPaceRatio")}
+    ${sliceDeclaration("weeklyPaceReading")}
+    ${sliceDeclaration("weeklyPaceHeadlineText")}
+    ${sliceDeclaration("weeklyPaceCopyText")}
+    ${sliceDeclaration("renderOverviewPace")}
+    return renderOverviewPace;
+  `,
+  )(
+    (value) => (typeof value === "number" && Number.isFinite(value) ? value : null),
+    (value, digits) => value.toFixed(digits),
+    (value) => `${value}%`,
+    (hours) => `${Math.round(hours)}h`,
+    (key, values = {}) => `${key}${Object.keys(values).length ? JSON.stringify(values) : ""}`,
+    (tag, className = "", text = "") => new FakeElement(tag, className, text),
+    (element) => { element.children = []; },
+    () => target,
+    (label) => new FakeElement("button", "allowance-timestamp", label),
+    { createTextNode: (text) => text },
+    (window) => window?.limitId === "codex" && window?.durationMinutes === 10_080,
+    { over: "allowance.over", on: "allowance.on", under: "allowance.under" },
+  );
+  return { target, render };
+}
+
+const HOUR = 3_600_000;
+const weeklyWindow = (extra = {}) => ({ limitId: "codex", durationMinutes: 10_080, ...extra });
+const resetIn = (hours) => new Date(Date.now() + hours * HOUR).toISOString();
+
+test("the overview names the run-out when the pace exhausts the window", () => {
+  const { target, render } = overviewHarness();
+  render({
+    quotaWindows: [weeklyWindow()],
+    weekly: { paceForecast: {
+      status: "available",
+      resetsAt: resetIn(40),
+      remainingPercent: 20,
+      etaAt: resetIn(20),
+      observationCount: 12,
+      pace: { overallPercentagePointsPerHour: 1.2, elapsedHours: 48, sampleCount: 11 },
+    } },
+  });
+  assert.equal(target.hidden, false);
+  assert.match(target.className, /is-over-pace/u);
+  assert.match(target.className, /is-critical/u);
+  const text = target.text();
+  assert.match(text, /allowance\.headline/u);
+  assert.match(text, /allowance\.runout/u);
+  assert.match(text, /allowance\.recentPace/u);
+  assert.match(text, /allowance\.rate\{"rate":"1\.2"\}/u);
+  assert.match(text, /allowance\.wayOver/u);
+  assert.doesNotMatch(text, /allowance\.spare\b/u);
+  assert.match(target.children.at(-1).attributes.get("href"), /^#allowance\/forecast$/u);
+});
+
+test("the overview reports spare allowance when the window outlasts the pace", () => {
+  const { target, render } = overviewHarness();
+  render({
+    quotaWindows: [weeklyWindow()],
+    weekly: { paceForecast: {
+      status: "will_reach_reset_first",
+      resetsAt: resetIn(40),
+      remainingPercent: 80,
+      observationCount: 12,
+      pace: { overallPercentagePointsPerHour: .5, elapsedHours: 48, sampleCount: 11 },
+    } },
+  });
+  assert.equal(target.hidden, false);
+  assert.match(target.className, /is-under-pace/u);
+  const text = target.text();
+  assert.match(text, /allowance\.spareTitle/u);
+  assert.match(text, /allowance\.spare\b/u);
+  assert.doesNotMatch(text, /allowance\.runout/u);
+});
+
+test("the overview says it is waiting instead of inventing a rate", () => {
+  const waiting = overviewHarness();
+  waiting.render({ quotaWindows: [weeklyWindow()], weekly: {} });
+  assert.equal(waiting.target.hidden, false);
+  assert.match(waiting.target.className, /is-waiting/u);
+  assert.match(waiting.target.text(), /allowance\.waitingTitle/u);
+  assert.doesNotMatch(waiting.target.text(), /allowance\.rate|allowance\.runout/u);
+
+  const stale = overviewHarness();
+  stale.render({
+    quotaWindows: [weeklyWindow({ status: "stale" })],
+    weekly: { paceForecast: { status: "available", resetsAt: resetIn(40), remainingPercent: 20 } },
+  });
+  assert.match(stale.target.text(), /allowance\.waitingStaleTitle/u);
+  assert.doesNotMatch(stale.target.text(), /allowance\.runout/u);
+});
+
+test("the overview stays out of the page when no weekly window was observed", () => {
+  const { target, render } = overviewHarness();
+  render({ quotaWindows: [], weekly: {} });
+  assert.equal(target.hidden, true);
+  assert.equal(target.childElementCount, 0);
+});
+
+test("the overview and the Forecast card share one reading", () => {
+  const overview = sliceDeclaration("renderOverviewPace");
+  const card = sliceDeclaration("renderWeeklyPaceForecast");
+  assert.match(overview, /weeklyPaceReading\(data\)/u);
+  assert.match(card, /weeklyPaceReading\(data\)/u);
+  // No second forecast parser: the Overview never reads the payload itself.
+  assert.doesNotMatch(overview, /paceForecast|hoursToExhaustion|etaAt/u);
+  assert.match(appSource, /renderWeeklyPaceForecast\(presentation\);\s*renderOverviewPace\(presentation\);/u);
 });

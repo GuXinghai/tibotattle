@@ -1280,6 +1280,7 @@ function renderLiveObservationPresentation(data, recency = observationRecency(da
     renderObservationConnectionState(presentation, recency);
     renderQuotaCards(presentation);
     renderWeeklyPaceForecast(presentation);
+    renderOverviewPace(presentation);
   }
 }
 
@@ -6294,23 +6295,22 @@ function renderWeeklyPaceWaiting(card, data) {
   card.hidden = false;
 }
 
-function renderWeeklyPaceForecast(data) {
-  const card = ensureWeeklyPaceForecastCard();
-  if (!card) return;
-  card.hidden = true;
-  card.className = "weekly-pace-forecast";
-  delete card.dataset.tankRatio;
-  delete card.dataset.tankReset;
-  delete card.dataset.tankRemaining;
-  card.removeAttribute("aria-labelledby");
-  clear(card);
-
+/**
+ * One reading of the weekly pace forecast, shared by the Forecast card and the
+ * Overview summary so both always state the same standing, rate and run-out.
+ *
+ * Returns `null` when the payload cannot support a reading - no forecast, a
+ * stale primary window, a reset already behind us, or a status that
+ * contradicts its own dates. Callers then show their own waiting state; a
+ * missing reading is never rendered as a pace of zero.
+ */
+function weeklyPaceReading(data, now = Date.now()) {
   const forecast = data?.weekly?.paceForecast;
   const stalePrimary = Array.isArray(data?.quotaWindows)
     && data.quotaWindows.some(window => isPrimaryCodexWeeklyQuotaWindow(window)
       && window.status === "stale");
   if (stalePrimary || !forecast || typeof forecast !== "object" || Array.isArray(forecast)) {
-    return renderWeeklyPaceWaiting(card, data);
+    return null;
   }
   const pace = forecast.pace && typeof forecast.pace === "object"
     ? forecast.pace
@@ -6326,8 +6326,7 @@ function renderWeeklyPaceForecast(data) {
     forecast.resetAt,
     forecast.reset_at,
   );
-  const now = Date.now();
-  if (resetAt === null || resetAt <= now) return renderWeeklyPaceWaiting(card, data);
+  if (resetAt === null || resetAt <= now) return null;
 
   let remaining = firstFiniteForecastNumber(
     forecast.remainingPercent,
@@ -6385,13 +6384,13 @@ function renderWeeklyPaceForecast(data) {
   );
   // A contradiction between the status and dates is an integration error, not
   // a reason to show a confident-looking card. Wait for the next refresh.
-  if (available && (etaAt === null || etaAt <= now || etaAt > resetAt)) return renderWeeklyPaceWaiting(card, data);
-  if (!available && !reachesResetFirst && !collectingEvidence) return renderWeeklyPaceWaiting(card, data);
-  if (collectingEvidence && remaining === null) return renderWeeklyPaceWaiting(card, data);
+  if (available && (etaAt === null || etaAt <= now || etaAt > resetAt)) return null;
+  if (!available && !reachesResetFirst && !collectingEvidence) return null;
+  if (collectingEvidence && remaining === null) return null;
   if (!collectingEvidence
       && remaining === null
       && headlinePace === null
-      && !reachesResetFirst) return renderWeeklyPaceWaiting(card, data);
+      && !reachesResetFirst) return null;
 
   // The standing is computed from the headline rate, so the card's colour,
   // its heading and its arithmetic all come from one number. The engine's own
@@ -6406,29 +6405,180 @@ function renderWeeklyPaceForecast(data) {
       hoursToReset,
       pacePpPerHour: headlinePace,
     });
-  if (standing) {
-    card.dataset.tankRatio = String(standing.ratio);
-    card.dataset.tankReset = String(resetAt);
-    card.dataset.tankRemaining = String(remaining);
-  }
   const paceState = standing?.state
     ?? (collectingEvidence ? null : reachesResetFirst ? "under" : null);
   const projectedEtaAt = standing !== null && standing.state === "over"
     ? now + standing.coveredHours * 3_600_000
     : null;
+  return {
+    remaining,
+    hoursToReset,
+    resetAt,
+    rates,
+    headlinePace,
+    observations,
+    paceElapsedHours,
+    collectingEvidence,
+    earlyEstimate,
+    available,
+    reachesResetFirst,
+    standing,
+    paceState,
+    projectedEtaAt,
+  };
+}
+
+function weeklyPaceHeadlineText({ collectingEvidence, paceState, projectedEtaAt, standing }) {
+  if (collectingEvidence) return t("allowance.collectingTitle");
+  if (paceState === "over") {
+    return projectedEtaAt === null
+      ? t("allowance.beforeReset")
+      : t("allowance.headline", { duration: formatAllowanceDuration(standing.coveredHours) });
+  }
+  return paceState === "on" ? t("allowance.nearReset") : t("allowance.spareTitle");
+}
+
+function weeklyPaceCopyText({ collectingEvidence, standing, earlyEstimate }) {
+  if (collectingEvidence) return t("allowance.collectingCopy");
+  let copy;
+  if (standing === null) {
+    copy = t("allowance.slowCopy");
+  } else if (standing.state === "over") {
+    const gap = standing.dryHours > 0 ? formatAllowanceDuration(standing.dryHours) : null;
+    copy = t("allowance.overCopy", {
+      ratio: formatPaceRatio(standing.ratio),
+      gap: gap ? t("allowance.gapCopy", { duration: gap }) : "",
+    });
+  } else if (standing.state === "on") {
+    copy = t("allowance.onCopy");
+  } else {
+    copy = t("allowance.underCopy", { ratio: formatPaceRatio(standing.ratio) });
+  }
+  return earlyEstimate ? `${copy} ${t("allowance.earlyCopy")}` : copy;
+}
+
+/**
+ * The Overview's short answer to "how fast am I using the allowance, and when
+ * does it run out?". It states the same reading as the Forecast card - one
+ * headline, one rate sentence and four figures - and links there for the
+ * track, the evidence and both rates. The weekly pool is the only one the pace
+ * engine models, so nothing is shown when no weekly window was observed, and a
+ * waiting reading says so rather than rendering a rate of zero.
+ */
+function renderOverviewPace(data) {
+  const element = $("#overview-pace");
+  if (!element) return;
+  clear(element);
+  element.hidden = true;
+  element.className = "overview-pace";
+  element.removeAttribute("aria-labelledby");
+  const primary = Array.isArray(data?.quotaWindows)
+    ? data.quotaWindows.find(isPrimaryCodexWeeklyQuotaWindow)
+    : null;
+  if (!primary) return;
+  const reading = weeklyPaceReading(data);
+  const stale = primary.status === "stale";
+  const heading = node("div", "overview-pace-heading");
+  const kicker = node("p", "panel-kicker");
+  const logo = node("img", "quota-codex-icon");
+  logo.setAttribute("src", "./codex-color.svg");
+  logo.setAttribute("alt", "");
+  logo.setAttribute("aria-hidden", "true");
+  kicker.append(logo, node("span", "", t("allowance.forecast")));
+  heading.append(kicker);
+  const title = node("h3", "overview-pace-title");
+  title.id = "overview-pace-title";
+  element.setAttribute("aria-labelledby", title.id);
+  const link = node("a", "overview-card-link", t("dashboard.overview.openForecast"));
+  link.setAttribute("href", "#allowance/forecast");
+
+  if (reading === null) {
+    element.classList.add("is-waiting");
+    heading.append(node("span", "evidence-chip overview-pace-chip",
+      t(stale ? "allowance.stale" : "allowance.waiting")));
+    title.textContent = t(stale ? "allowance.waitingStaleTitle" : "allowance.waitingTitle");
+    element.append(heading, title, link);
+    element.hidden = false;
+    return;
+  }
+
+  const { standing, paceState, collectingEvidence, earlyEstimate, remaining,
+    hoursToReset, headlinePace } = reading;
+  if (collectingEvidence) {
+    element.classList.add("is-insufficient");
+    heading.append(node("span", "evidence-chip overview-pace-chip", t("allowance.oneMore")));
+  } else if (paceState) {
+    element.classList.add(`is-${paceState}-pace`);
+    if (standing?.critical) element.classList.add("is-critical");
+    heading.append(node("span", "evidence-chip overview-pace-chip",
+      t(standing?.critical ? "allowance.wayOver" : PACE_STATE_LABELS[paceState])));
+  }
+  if (earlyEstimate) {
+    heading.append(node("span", "evidence-chip overview-pace-early-chip", t("allowance.early")));
+  }
+  title.textContent = weeklyPaceHeadlineText(reading);
+  if (reading.projectedEtaAt !== null) {
+    const [before, after] = t("allowance.headline", { duration: "{duration}" }).split("{duration}");
+    title.replaceChildren(document.createTextNode(before),
+      allowanceTimestamp(formatAllowanceDuration(standing.coveredHours), reading.projectedEtaAt),
+      document.createTextNode(after ?? ""));
+  }
+
+  const metrics = node("div", "overview-pace-metrics");
+  const addMetric = (label, value) => {
+    const item = node("div", "overview-pace-metric");
+    item.append(node("span", "", label));
+    item.append(node("strong", "", value));
+    metrics.append(item);
+  };
+  if (remaining !== null) addMetric(t("allowance.left"), formatPercent(remaining));
+  const resetDuration = formatAllowanceDuration(hoursToReset);
+  if (resetDuration) addMetric(t("allowance.resetsIn"), resetDuration);
+  if (!collectingEvidence && headlinePace !== null) {
+    addMetric(t("allowance.recentPace"), t("allowance.rate", { rate: formatDecimal(headlinePace, 1) }));
+  }
+  if (standing !== null && standing.dryHours > 0) {
+    addMetric(t("allowance.runout"), t("allowance.inDuration", {
+      duration: formatAllowanceDuration(standing.coveredHours),
+    }));
+  } else if (standing !== null) {
+    addMetric(t("allowance.spare"), formatPercent(standing.sparePercent));
+  }
+  element.append(heading, title);
+  if (!collectingEvidence) element.append(node("p", "overview-pace-copy", weeklyPaceCopyText(reading)));
+  if (metrics.childElementCount > 0) element.append(metrics);
+  element.append(link);
+  element.hidden = false;
+}
+
+function renderWeeklyPaceForecast(data) {
+  const card = ensureWeeklyPaceForecastCard();
+  if (!card) return;
+  card.hidden = true;
+  card.className = "weekly-pace-forecast";
+  delete card.dataset.tankRatio;
+  delete card.dataset.tankReset;
+  delete card.dataset.tankRemaining;
+  card.removeAttribute("aria-labelledby");
+  clear(card);
+
+  const reading = weeklyPaceReading(data);
+  if (reading === null) return renderWeeklyPaceWaiting(card, data);
+  const {
+    remaining, hoursToReset, resetAt, rates, headlinePace, observations,
+    paceElapsedHours, collectingEvidence, earlyEstimate, available,
+    reachesResetFirst, standing, paceState, projectedEtaAt,
+  } = reading;
+  if (standing) {
+    card.dataset.tankRatio = String(standing.ratio);
+    card.dataset.tankReset = String(resetAt);
+    card.dataset.tankRemaining = String(remaining);
+  }
 
   const title = node("h3", "weekly-pace-forecast-title");
   const cardId = "weekly-pace-forecast-title";
   title.id = cardId;
-  title.textContent = collectingEvidence
-    ? t("allowance.collectingTitle")
-    : paceState === "over"
-      ? projectedEtaAt === null
-        ? t("allowance.beforeReset")
-        : t("allowance.headline", { duration: formatAllowanceDuration(standing.coveredHours) })
-      : paceState === "on"
-        ? t("allowance.nearReset")
-        : t("allowance.spareTitle");
+  title.textContent = weeklyPaceHeadlineText(reading);
   if (projectedEtaAt !== null) {
     const [before, after] = t("allowance.headline", { duration: "{duration}" }).split("{duration}");
     title.replaceChildren(document.createTextNode(before),
@@ -6473,23 +6623,11 @@ function renderWeeklyPaceForecast(data) {
     ));
   }
 
-  const ratioLabel = standing === null ? null : formatPaceRatio(standing.ratio);
   const dryDuration = standing === null
     ? null
     : standing.dryHours > 0 ? formatAllowanceDuration(standing.dryHours) : null;
   const copy = node("p", "weekly-pace-forecast-copy");
-  copy.textContent = collectingEvidence
-    ? t("allowance.collectingCopy")
-    : standing === null
-      ? t("allowance.slowCopy")
-      : standing.state === "over"
-        ? t("allowance.overCopy", { ratio: ratioLabel, gap: dryDuration ? t("allowance.gapCopy", { duration: dryDuration }) : "" })
-        : standing.state === "on"
-          ? t("allowance.onCopy")
-          : t("allowance.underCopy", { ratio: ratioLabel });
-  if (earlyEstimate) {
-    copy.textContent += ` ${t("allowance.earlyCopy")}`;
-  }
+  copy.textContent = weeklyPaceCopyText(reading);
 
   const metrics = node("div", "weekly-pace-forecast-metrics");
   const addMetric = (label, value) => {

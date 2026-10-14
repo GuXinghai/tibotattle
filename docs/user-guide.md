@@ -48,6 +48,15 @@ a waiting panel explains that fresh or sufficient allowance evidence is needed;
 it does not display a guessed rate or run-out time. Choosing a historical plan
 on the Allowance Estimate page does not change that current forecast.
 
+Below the allowance cards, Overview carries a short summary of that same weekly
+forecast: the pace assessment, how the recent rate compares with the pace the
+window can still sustain, the allowance left, time to reset, the recent rate
+and either the estimated run-out or the allowance expected to be spare at the
+reset. It is computed from the same reading as the forecast page, so the two
+always agree, and it shows a waiting state instead of a rate when the evidence
+is missing or stale. Only the seven-day window is forecast; the five-hour
+window has no run-out estimate. **View usage forecast** opens the full forecast.
+
 Overview is a single-screen summary: allowance rows sit beside the API-equivalent
 total and the allowance comparison. It fits the available window height,
 proportionally reducing the summary in small windows instead of cropping data.

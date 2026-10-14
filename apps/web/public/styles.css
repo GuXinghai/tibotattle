@@ -5637,6 +5637,43 @@ body[data-dashboard-page] #overview-screen { display: block; }
 }
 #overview > :not(.overview-allowances):not(.overview-panels) { grid-column: 1 / -1; }
 .overview-allowances { min-width: 0; }
+/* Weekly pace summary. Accent comes from theme tokens only, so both themes and
+   forced-colours get a state that is also named by the chip and the headline. */
+.overview-pace {
+  --pace-accent: var(--green);
+  --pace-accent-soft: var(--green-soft);
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 18px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-inline-start: 4px solid var(--pace-accent);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+}
+.overview-pace[hidden] { display: none; }
+.overview-pace.is-on-pace,
+.overview-pace.is-insufficient,
+.overview-pace.is-waiting { --pace-accent: var(--blue); --pace-accent-soft: var(--blue-soft); }
+.overview-pace.is-over-pace { --pace-accent: var(--amber); --pace-accent-soft: var(--amber-soft); }
+.overview-pace.is-over-pace.is-critical { --pace-accent: var(--rust); --pace-accent-soft: var(--rust-soft); }
+.overview-pace-heading { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.overview-pace-heading .panel-kicker { margin: 0; }
+.overview-pace-chip { background: var(--pace-accent-soft); border-color: var(--pace-accent); }
+.overview-pace-early-chip { background: var(--amber-soft); }
+.overview-pace-title { margin: 0; font-size: clamp(1.05rem, 1.6vw, 1.25rem); line-height: 1.3; overflow-wrap: anywhere; }
+.overview-pace-copy { margin: 0; color: var(--muted); font-size: .78rem; line-height: 1.55; max-width: 70ch; }
+.overview-pace-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.overview-pace-metric {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--pad-tile);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+}
+.overview-pace-metric span { color: var(--muted); font-size: .72rem; }
+.overview-pace-metric strong { font-size: 1rem; overflow-wrap: anywhere; }
 #overview .metric-grid.quota-grid { grid-template-columns: 1fr; gap: 8px; margin: 0; }
 #overview .quota-grid > .quota-summary {
   display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(70px, .7fr);

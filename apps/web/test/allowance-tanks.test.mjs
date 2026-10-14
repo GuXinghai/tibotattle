@@ -44,7 +44,7 @@ function harness(locale = "en-US") {
   const document = { createElementNS: (_namespace, tag) => node(tag), createTextNode: text => node("text", "", text), activeElement: null };
   const constants = ["PACE_ON_TRACK_LOWER_RATIO", "PACE_ON_TRACK_UPPER_RATIO", "PACE_CRITICAL_RATIO", "PACE_AVERAGE_MINIMUM_HOURS", "PACE_STATE_LABELS"]
     .map(name => source.match(new RegExp(`\\nconst ${name} = [^;]+;`, "u"))[0]).join("\n");
-  const functions = ["formatAllowanceDuration", "allowanceTimestamp", "formatForecastDuration", "forecastTimestamp", "firstFiniteForecastNumber", "weeklyPaceRates", "weeklyPaceStanding", "formatPaceRatio", "weeklyPaceTrack", "renderWeeklyPaceWaiting", "renderWeeklyPaceForecast", "renderQuotaCards", "providerReportedPlanEvidence", "renderDashboardSkeleton"]
+  const functions = ["formatAllowanceDuration", "allowanceTimestamp", "formatForecastDuration", "forecastTimestamp", "firstFiniteForecastNumber", "weeklyPaceRates", "weeklyPaceStanding", "formatPaceRatio", "weeklyPaceReading", "weeklyPaceHeadlineText", "weeklyPaceCopyText", "weeklyPaceTrack", "renderWeeklyPaceWaiting", "renderWeeklyPaceForecast", "renderQuotaCards", "providerReportedPlanEvidence", "renderDashboardSkeleton"]
     .map(declaration).join("\n");
   const factory = new Function("node", "document", "modelThemeIcon", "$", "t", "setLocalizedText", "isPrimaryCodexQuotaWindow", "isPrimaryCodexWeeklyQuotaWindow", "selectPrimaryCodexQuotaWindow", "isSparkQuotaLimitId", "isValidQuotaWindowDuration", "card", `
     const finite = value => typeof value === "number" && Number.isFinite(value) ? value : null;
