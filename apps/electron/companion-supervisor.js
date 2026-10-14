@@ -6,6 +6,7 @@ import {
 } from "../../src/platform/index.js";
 import { shellError } from "./errors.js";
 import { createCompanionReadyLineParser } from "./ready-line.js";
+import { createCompanionStartupErrorParser } from "../../src/local-companion-startup-error.js";
 
 const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 5_000;
@@ -354,7 +355,7 @@ export function createCompanionSupervisor({
         disposeCredentialBroker(currentCredentialBroker);
         if (credentialBroker === currentCredentialBroker) credentialBroker = null;
         if (!settled) {
-          fail(shellError("companion_exit_before_ready"), { childAlreadyExited: true });
+          fail(shellError(startupFailureCode ?? "companion_exit_before_ready"), { childAlreadyExited: true });
           return;
         }
         currentChild?.off?.("error", onError);
@@ -406,7 +407,11 @@ export function createCompanionSupervisor({
           credentialBroker = currentCredentialBroker;
         }
       } catch { fail(shellError("companion_spawn_failed")); return; }
-      discardStream(currentChild.stderr);
+      let startupFailureCode = null;
+      currentChild.stderr?.on?.("data", createCompanionStartupErrorParser((code) => {
+        startupFailureCode = code;
+      }));
+      currentChild.stderr?.resume?.();
       if (!currentChild.stdout || typeof currentChild.stdout.on !== "function") {
         fail(shellError("companion_spawn_failed"));
         return;

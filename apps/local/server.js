@@ -1,6 +1,7 @@
 import { createWorkUsageService } from "../../src/application/index.js";
 import { createWorkUsageSnapshotStore } from "./work-usage-snapshots.js";
 import { createOverviewRefreshScheduler } from "./overview-refresh-scheduler.js";
+import { companionStartupErrorLine } from "../../src/local-companion-startup-error.js";
 import { enrichWorkUsageRows } from "../../src/work-usage-display.js";
 import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
@@ -1843,6 +1844,7 @@ if (process.argv[1]
       process.exitCode = 1;
     }
   } else {
+    try {
     const requestedPort = Number(process.env.USAGE_MONITOR_PORT ?? 8787);
     const app = await startLocalCompanionServer({
       port: requestedPort,
@@ -1863,7 +1865,8 @@ if (process.argv[1]
     // project, so the process still exits and the host still sees a failed
     // companion - the same outcome as before the port moved ahead of the build,
     // reported once the port is open rather than in place of opening it.
-    app.snapshotReady.catch(() => {
+    app.snapshotReady.catch((error) => {
+      process.stderr.write(companionStartupErrorLine(error));
       if (closing) return;
       closing = true;
       app.server.closeAllConnections?.();
@@ -1874,5 +1877,9 @@ if (process.argv[1]
     });
     process.once("SIGINT", close);
     process.once("SIGTERM", close);
+    } catch (error) {
+      process.stderr.write(companionStartupErrorLine(error));
+      process.exitCode = 1;
+    }
   }
 }

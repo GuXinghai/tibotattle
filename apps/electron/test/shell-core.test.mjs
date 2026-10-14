@@ -916,6 +916,16 @@ test("companion supervisor starts a live plain child without Node IPC", async (t
 });
 
 
+test("companion supervisor retains only a classified startup error before ready", async () => {
+  const child = new FakeChild();
+  const supervisor = createCompanionSupervisor({spawnChild:()=>child,command:"node",args:["apps/local/server.js"],cwd:REPOSITORY_ROOT});
+  const starting=supervisor.start();
+  child.stderr.emit("data",Buffer.from("private diagnostics\nTIBOTATTLE_COMPANION_FAILURE companion_state_security_policy\n"));
+  const rejected=assert.rejects(starting,errorCode("companion_state_security_policy"));
+  child.emit("exit",1,null);
+  await rejected;
+});
+
 test("companion supervisor owns one child, injects a parent contract, and strips child output", async () => {
   const child = new FakeChild();
   const spawnCalls = [];

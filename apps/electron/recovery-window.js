@@ -12,9 +12,11 @@ import {
   desktopText,
   resolveDesktopLocale,
 } from "./desktop-copy.js";
+import { COMPANION_STARTUP_ERROR_CODES } from "../../src/local-companion-startup-error.js";
 
 const RECOVERY_ACTIONS = Object.freeze(["retry", "settings", "diagnostics", "quit"]);
 const RECOVERY_STATUSES = Object.freeze([
+  ...COMPANION_STARTUP_ERROR_CODES,
   "starting",
   "companion_spawn_failed",
   "companion_start_timeout",
@@ -29,6 +31,11 @@ export const RECOVERY_ACTION_CHANNEL = "tibotattle:electron-recovery:v1";
 export const RECOVERY_WINDOW_VERSION = "v1";
 
 const RECOVERY_COPY = Object.freeze({
+  ...Object.fromEntries(COMPANION_STARTUP_ERROR_CODES.map((code) => [code, Object.freeze({
+    titleKey: "electron.recovery.companionExitBeforeReady.title",
+    detailKey: "electron.recovery.companionExitBeforeReady.detail",
+    code,
+  })])),
   starting: Object.freeze({
     titleKey: "electron.recovery.starting.title",
     detailKey: "electron.recovery.starting.detail",

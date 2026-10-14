@@ -1,4 +1,6 @@
+import { COMPANION_STARTUP_ERROR_CODES } from "../../src/local-companion-startup-error.js";
 const SAFE_ERROR_CODES = new Set([
+  ...COMPANION_STARTUP_ERROR_CODES,
   "companion_ready_invalid",
   "companion_ready_overflow",
   "companion_spawn_failed",
