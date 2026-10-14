@@ -1,14 +1,12 @@
 import { isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import distribution from "../../config/electron-production-distribution.cjs";
-import { DEPLOYMENT_ENDPOINTS } from "../../config/deployment-endpoints.js";
 
 import { createCompanionSupervisor } from "./companion-supervisor.js";
 import {
   createDesktopAutomaticRefreshCadence,
   createDesktopAutomaticRefreshCadenceBackend,
 } from "./desktop-automatic-refresh-cadence.js";
-import { createDesktopCommand } from "./desktop-command.js";
 import { createDesktopController } from "./desktop-controller.js";
 import { createDesktopDeepLinkQueue } from "./desktop-deep-links.js";
 import { createDesktopLifecycle } from "./desktop-lifecycle.js";
@@ -36,14 +34,6 @@ import {
 } from "./desktop-first-run.js";
 import { createDesktopFirstRunLoginRegistrar } from "./desktop-first-run-login.js";
 import { createDesktopRecoverySettingsAction } from "./desktop-recovery-settings.js";
-import { createDesktopOwnedDownloadRegistry } from "./desktop-owned-downloads.js";
-import { createDesktopSharingBackend, createDesktopSharingCoordinator } from "./desktop-sharing.js";
-import {
-  createDesktopContributionCredentialLegacyProbe,
-  createDesktopContributionCredentialLegacyRecoveryBackend,
-} from "./desktop-contribution-credential.js";
-import { classifyDesktopSharingInstallation } from "./desktop-sharing-installation.js";
-import { attachAccountlessParentChannel } from "../../src/platform/index.js";
 import {
   createDesktopNotificationCoordinator,
   createDesktopNotificationPolicyCodec,
@@ -60,7 +50,6 @@ import { createDesktopUpdatePreferences, createDesktopUpdatePreferencesBackend }
 import {
   createWindowsFilesystemAdapter,
   createWindowsProtectedStateStore,
-  defaultExportStateDirectory,
 } from "../../src/platform/index.js";
 
 const DESKTOP_SETTINGS_DIRECTORY = "desktop-settings";
@@ -164,10 +153,7 @@ function assertNoWindowsTestOverrides({
   settingsBackend,
   settingsStore,
   notificationBackend,
-  sharingBackend,
-  sharingInstallationState,
   firstRunReceiptBackend,
-  ownedDownloadsRegistry,
   automaticRefreshCadence,
   argv,
 } = {}) {
@@ -176,10 +162,7 @@ function assertNoWindowsTestOverrides({
       || settingsBackend !== undefined
       || settingsStore !== undefined
       || firstRunReceiptBackend !== undefined
-      || ownedDownloadsRegistry !== undefined
       || notificationBackend !== undefined
-      || sharingBackend !== undefined
-      || sharingInstallationState !== undefined
       || automaticRefreshCadence !== undefined
       || argv !== undefined) {
     throw shellError("windows_qualification_launch_override_forbidden");
@@ -239,48 +222,6 @@ function createNotificationPolicyBackend({
     childName: DESKTOP_NOTIFICATION_POLICY_FILE_NAME,
     codec,
   });
-}
-
-async function createRuntimeOwnedDownloadsRegistry({
-  app,
-  runtime,
-  qualificationContext,
-  ownedDownloadsRegistry,
-} = {}) {
-  if (ownedDownloadsRegistry !== undefined) {
-    if (qualificationContext !== null && qualificationContext !== undefined) {
-      throw shellError("windows_qualification_launch_override_forbidden");
-    }
-    return ownedDownloadsRegistry;
-  }
-  // Electron supplies both the Downloads path and shell.showItemInFolder in
-  // a real desktop runtime. Plain-Node composition tests may omit them; the
-  // rest of the shell remains testable and the reveal action is unavailable.
-  if (typeof app?.getPath !== "function"
-      || typeof runtime?.shell?.showItemInFolder !== "function") {
-    return null;
-  }
-  let rootPath;
-  try {
-    rootPath = app.getPath("downloads");
-  } catch {
-    return null;
-  }
-  if (typeof rootPath !== "string" || rootPath.length === 0) return null;
-  try {
-    return await createDesktopOwnedDownloadRegistry({
-      rootPath,
-      reveal: (path) => runtime.shell.showItemInFolder(path),
-      open: typeof runtime.shell.openPath === "function"
-        ? async (path) => await runtime.shell.openPath(path) === ""
-        : undefined,
-    });
-  } catch {
-    // A real Electron runtime must not silently fall back to the browser's
-    // unmanaged default Downloads path. Fail closed before the dashboard can
-    // offer a save action whose destination the main process does not own.
-    throw shellError("electron_configuration_invalid");
-  }
 }
 
 function runtimePlatformServices({
@@ -378,14 +319,9 @@ export async function launchDesktopRuntime({
   settingsBackend,
   settingsStore,
   notificationBackend,
-  sharingBackend,
-  sharingInstallationState,
   firstRunReceiptBackend,
-  ownedDownloadsRegistry,
   automaticRefreshCadence,
   argv,
-  accountlessLaboratory,
-  accountlessProduction,
   productionDistribution,
   onStartupPhase,
   onStartupStop,
@@ -415,38 +351,6 @@ export async function launchDesktopRuntime({
       // Startup diagnostics are observational and never control shutdown.
     }
   };
-  // Test-only loopback composition. Normal main.js does not provide this port.
-  // Production is a separate packaged-manifest selection below.
-  if (accountlessLaboratory !== undefined) {
-    let url;
-    try { url = new URL(accountlessLaboratory.origin); } catch { throw shellError("electron_configuration_invalid"); }
-    const credentialBackend = accountlessLaboratory.backend;
-    if (credentialBackend !== undefined && (!credentialBackend
-        || typeof credentialBackend !== "object" || Array.isArray(credentialBackend)
-        || ["read", "createIfMissing", "deleteExact"]
-          .some((operation) => typeof credentialBackend[operation] !== "function"))) {
-      throw shellError("electron_configuration_invalid");
-    }
-    if (url.origin !== accountlessLaboratory.origin || url.protocol !== "http:"
-        || url.hostname !== "127.0.0.1" || !url.port || url.username || url.password
-        || environment.USAGE_MONITOR_TEST_LANE !== "accountless-local-lab-v1"
-        || sharingBackend === undefined || sharingInstallationState === undefined
-        || qualificationContext !== null) throw shellError("electron_configuration_invalid");
-  }
-  if (accountlessProduction !== undefined && (
-    accountlessProduction === null || typeof accountlessProduction !== "object"
-      || Array.isArray(accountlessProduction)
-      || Object.keys(accountlessProduction).sort().join(",")
-        !== "createWindowsCredentialBackend,origin,policyVersion"
-      || typeof accountlessProduction.createWindowsCredentialBackend !== "function"
-      || accountlessProduction.origin !== DEPLOYMENT_ENDPOINTS.public.origin
-      || accountlessProduction.policyVersion !== "accountless-opt-out-v1"
-      || accountlessLaboratory !== undefined || app.isPackaged !== true
-      || app.getName?.() !== "TiboTattle"
-      || environment.USAGE_MONITOR_TEST_LANE !== undefined
-      || qualificationContext !== null)) throw shellError("electron_configuration_invalid");
-  const accountlessEnabled = accountlessLaboratory !== undefined
-    || accountlessProduction !== undefined;
   if (productionDistribution !== undefined) {
     validateProductionDistributionMetadata(productionDistribution, {
       platform,
@@ -473,10 +377,7 @@ export async function launchDesktopRuntime({
     settingsBackend,
     settingsStore,
     notificationBackend,
-    sharingBackend,
-    sharingInstallationState,
     firstRunReceiptBackend,
-    ownedDownloadsRegistry,
     automaticRefreshCadence,
     argv,
   });
@@ -497,26 +398,6 @@ export async function launchDesktopRuntime({
     childEnvironment.USAGE_MONITOR_STATE_ROOT = join(userDataPath(app), "companion-state");
     delete childEnvironment.USAGE_MONITOR_DEVELOPMENT_ACCOUNT_SECRET_FILE;
   }
-  const sharingDestinationOrigin = accountlessProduction?.origin ?? accountlessLaboratory?.origin
-    ?? childEnvironment.USAGE_MONITOR_CENTRAL_ORIGIN
-    ?? DEPLOYMENT_ENDPOINTS.public.origin;
-  // Never run the legacy scheduler beside the installation policy. The
-  // selected accountless mode still requires current server upload authority.
-  // Local provider capture and offline analysis remain independently available.
-  delete childEnvironment.USAGE_MONITOR_CENTRAL_ORIGIN;
-  delete childEnvironment.USAGE_MONITOR_ACCOUNTLESS_ORIGIN;
-  delete childEnvironment.USAGE_MONITOR_ACCOUNTLESS_MODE;
-  if (accountlessLaboratory) childEnvironment.USAGE_MONITOR_ACCOUNTLESS_ORIGIN = accountlessLaboratory.origin;
-  if (accountlessProduction) {
-    // The accountless companion owns its fixed binding and progress paths.
-    // Retired manual-upload inputs must not select a second queue or spool.
-    delete childEnvironment.USAGE_MONITOR_CONTRIBUTION_QUEUE_FILE;
-    delete childEnvironment.USAGE_MONITOR_PREPARED_DIRECTORY;
-    childEnvironment.USAGE_MONITOR_ACCOUNTLESS_ORIGIN = accountlessProduction.origin;
-    childEnvironment.USAGE_MONITOR_ACCOUNTLESS_MODE = "production-v1";
-  }
-  let sharingCoordinator;
-  let installationCredentialBackend;
   // Keep one mutable argument vector for the lifetime of this runtime. The
   // supervisor snapshots it for each spawn, so a Settings root change can
   // persist first, update this vector, and then use the ordinary bounded
@@ -539,12 +420,6 @@ export async function launchDesktopRuntime({
     args: companionArgs,
     cwd: paths.companionCwd,
     environment: childEnvironment,
-    attachPrivateChannel: accountlessEnabled ? (channel) => attachAccountlessParentChannel({
-      channel,
-      readPreference: () => sharingCoordinator.readAuthorization(),
-      backend: installationCredentialBackend,
-      onStatus: (value) => sharingCoordinator.updateTransport?.(value),
-    }) : undefined,
   });
   let updater = null;
   const selectedPlatformServices = platformServices ?? runtimePlatformServices({
@@ -590,11 +465,10 @@ export async function launchDesktopRuntime({
     const pending = deepLinkQueue.drain();
     let delivered = 0;
     for (const target of pending) {
-      lifecycle.showWindow?.();
-      const sent = lifecycle.sendDashboardCommand?.(
-        createDesktopCommand("hostedSignInReturn"),
-      ) === true;
-      if (sent) {
+      // The app link is a plain wake target: it only brings the dashboard
+      // forward and carries no renderer-visible command.
+      const shown = lifecycle.showWindow?.() === true;
+      if (shown) {
         delivered += 1;
       } else {
         // Requeue only the fixed canonical target. The original URL/argv is
@@ -630,20 +504,6 @@ export async function launchDesktopRuntime({
   const settingsRootPath = join(userDataPath(app), DESKTOP_SETTINGS_DIRECTORY);
   const injectedSettings = settingsBackend !== undefined || settingsStore !== undefined
     || firstRunReceiptBackend !== undefined;
-  const homeDirectory = runtimeHomeDirectory({ environment: runtimeEnvironment });
-  const legacyStateRoots = [defaultExportStateDirectory({
-    platform,
-    homeDirectory,
-    environment: runtimeEnvironment,
-  })];
-  // Establish provenance before the first-run receipt or settings create a new
-  // managed marker. Injected test backends never inspect real profile state.
-  await markStartupPhase("installation_state");
-  const installationState = sharingInstallationState ?? (injectedSettings
-    ? "unknown"
-    : await classifyDesktopSharingInstallation({
-      profileRoot: userDataPath(app),
-      stateRoot: childEnvironment.USAGE_MONITOR_STATE_ROOT, legacyStateRoots }));
   const needsWindowsProtectedStateStore = platform === "win32"
     && (qualificationContext !== null
       && qualificationContext !== undefined
@@ -659,50 +519,6 @@ export async function launchDesktopRuntime({
       rootPath: settingsRootPath,
     })
     : null;
-  // The exact Windows candidate uses a main-process native adapter. The
-  // explicit factory requirement prevents a fallback to Electron safeStorage
-  // before a reviewed native route is selected.
-  // Do not call Electron safeStorage there: its asynchronous availability probe
-  // can initialize a platform credential provider. Existing encrypted records
-  // are inspected without decrypting or changing them so a prior installation
-  // stops for explicit recovery instead of rotating identity.
-  if (accountlessProduction !== undefined) {
-    // Injected settings backends never inspect real profile state, so an
-    // injected composition has no protected store to read the old record from.
-    const legacyCredentialProbe = createDesktopContributionCredentialLegacyProbe({
-      platform,
-      rootPath: settingsRootPath,
-      windowsProtectedStateStore,
-      ...(windowsProtectedStateStore === null && injectedSettings
-        ? { storage: { load: async () => null } }
-        : {}),
-    });
-    const nativeBackend = accountlessProduction.createWindowsCredentialBackend({
-      legacyCredentialProbe: legacyCredentialProbe.inspect,
-      rootPath: settingsRootPath,
-    });
-    if (!nativeBackend
-        || typeof nativeBackend !== "object"
-        || ["read", "createIfMissing", "deleteExact"].some(
-          (operation) => typeof nativeBackend[operation] !== "function",
-        )) {
-      throw shellError("electron_configuration_invalid");
-    }
-    // Windows keeps the metadata-only recovery boundary in this main-process
-    // wrapper until its reviewed native backend is selected by an entrypoint.
-    installationCredentialBackend = createDesktopContributionCredentialLegacyRecoveryBackend({
-      backend: nativeBackend,
-      legacyCredentialProbe: legacyCredentialProbe.inspect,
-    });
-  } else if (accountlessEnabled) {
-    // Windows accountless identity is deliberately absent from any generic
-    // path. It must be composed through the reviewed native factory, or by the
-    // test-only loopback laboratory with an explicit backend.
-    if (accountlessLaboratory?.backend === undefined) {
-      throw new TypeError("Windows accountless credential requires a native factory");
-    }
-    installationCredentialBackend = accountlessLaboratory.backend;
-  }
   const firstRunBackend = firstRunReceiptBackend
     ?? createDesktopFirstRunReceiptBackend({
       platform,
@@ -734,34 +550,8 @@ export async function launchDesktopRuntime({
       childEnvironment,
     });
   }
-  let initialSharingSnapshot = null;
-  try {
-    const selectedSharingBackend = sharingBackend ?? (injectedSettings
-      ? { load: async () => { throw new Error("Sharing unavailable"); },
-        save: async () => { throw new Error("Sharing unavailable"); } }
-      : createDesktopSharingBackend({ platform, rootPath: settingsRootPath,
-        windowsProtectedStateStore }));
-    sharingCoordinator = createDesktopSharingCoordinator({ backend: selectedSharingBackend,
-      installationState, destinationOrigin: sharingDestinationOrigin,
-      onAuthorizationChanged: () => supervisor.invalidatePrivateChannel() });
-    initialSharingSnapshot = await sharingCoordinator.initialize();
-  } catch {
-    // Preference or protected-store failure blocks contribution, never local use.
-    const unavailable = async () => { throw shellError("desktop_sharing_unavailable"); };
-    sharingCoordinator = { inspect: unavailable, setEnabled: unavailable,
-      markNoticePresented: unavailable,
-      readAuthorization: async () => ({ available: false, current: false,
-        enabled: false, policyVersion: null, destinationOrigin: null }),
-      updateTransport() {}, dispose() {} };
-  }
   await markStartupPhase("secure_storage");
   await markStartupPhase("runtime_services");
-  const runtimeOwnedDownloadsRegistry = await createRuntimeOwnedDownloadsRegistry({
-    app,
-    runtime,
-    qualificationContext,
-    ownedDownloadsRegistry,
-  });
   const validateCodexHome = typeof services.validateCodexHome === "function"
     ? services.validateCodexHome
     : (path) => validateDesktopCodexHome(path);
@@ -1041,7 +831,6 @@ export async function launchDesktopRuntime({
   }
 
   controller = createDesktopController({
-    sharingCoordinator,
     settingsStore: store,
     platformServices: services,
     desktopSystemLocales,
@@ -1163,7 +952,6 @@ export async function launchDesktopRuntime({
       supervisor,
       ...selectedLifecycleOptions,
       platform,
-      ownedDownloadsRegistry: runtimeOwnedDownloadsRegistry,
     });
   } catch (error) {
     deepLinkIntakeCleanup();
@@ -1180,7 +968,6 @@ export async function launchDesktopRuntime({
       removeNativeThemeListener = () => {};
       updater?.dispose();
       ipcInstallation.dispose?.();
-      sharingCoordinator.dispose();
       await controller.dispose();
       // Drain first so a final status evaluation cannot race disposal. The
       // coordinator is idempotent, which also tolerates a future controller
@@ -1215,13 +1002,6 @@ export async function launchDesktopRuntime({
         trustedSender: (sender, event) => lifecycle?.isAuthorizedDesktopSender?.(sender, event) === true,
         trustedFrame: (frame, event) => lifecycle?.isAuthorizedDesktopFrame?.(frame, event) === true,
         trustedAction: (action, event) => {
-          if (action === "sharingNoticePresented") {
-            const context = { sender: event?.sender };
-            // The scheduled notice is rendered only in the dashboard. Settings
-            // can select a preference, but cannot supply a display receipt.
-            return lifecycle?.state.windowVisible === true
-              && lifecycle.isAuthorizedDashboardFrame?.(event?.senderFrame, context) === true;
-          }
           if (action === "sendTestNotification" || SETTINGS_CODEX_ROOT_ACTIONS.has(action)) {
             return lifecycle?.isAuthorizedSettingsFrame?.(
               event?.senderFrame,
@@ -1324,9 +1104,6 @@ export async function launchDesktopRuntime({
     isAuthorizedDashboardFrame: lifecycle.isAuthorizedDashboardFrame,
     isAuthorizedCodexThreadNavigation: lifecycle.isAuthorizedCodexThreadNavigation,
     isAuthorizedSettingsFrame: lifecycle.isAuthorizedSettingsFrame,
-    isAuthorizedDesktopDownloadContext: lifecycle.isAuthorizedDesktopDownloadContext,
-    revealLatestDownload: lifecycle.revealLatestDownload,
-    openLatestDownload: lifecycle.openLatestDownload,
     get state() {
       return lifecycle.state;
     },
@@ -1339,7 +1116,6 @@ export async function launchDesktopRuntime({
     supervisor,
     controller,
     notificationCoordinator,
-    sharingCoordinator,
     settingsStore: store,
     settingsBackend: backend,
     ipc: ipcInstallation,

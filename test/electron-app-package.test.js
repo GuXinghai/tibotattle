@@ -111,7 +111,7 @@ test("staged Electron linkage fails closed for missing modules and packages", as
       output: join(root, "missing-relative"),
       includeElectronShell: true,
     });
-    await rm(join(relative.output, "apps/electron/desktop-contribution-credential.js"));
+    await rm(join(relative.output, "apps/electron/desktop-first-run.js"));
     await assert.rejects(
       () => assertStagedElectronShellModuleLinkage(relative.output),
       (error) => error?.code === "ELECTRON_RUNTIME_STAGED_MODULE_LINKAGE",

@@ -3,9 +3,8 @@
  *
  * The native client deliberately registers one semantic wake target:
  * `usagemonitor://open`.  It is not an OAuth redirect and it never carries a
- * provider, account, token, path, selector, or navigation destination.  A
- * browser completes hosted sign-in in its own page and uses this link only to
- * wake the existing app so that the page can poll its already-owned handoff.
+ * provider, account, token, path, selector, or navigation destination.  It
+ * only wakes and focuses the existing app.
  *
  * Keep this module independent of Electron.  The main process can feed it
  * Windows second-instance argv, and launch argv while

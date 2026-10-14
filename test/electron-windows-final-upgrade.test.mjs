@@ -19,9 +19,9 @@ const oldIdentity = { sourceRevision: oldRevision, target: 'win32-x64',
 const newIdentity = { ...oldIdentity, sourceRevision: newRevision, artifactSha256: 'f'.repeat(64) };
 const expectedJourney = { dashboardRendered: true, localRefreshObserved: true,
   localRefreshTerminal: 'succeeded', syntheticIngestionVerified: true,
-  projectsAndThreadsVerified: true, sharingOptOutRetained: true, settingsPersisted: true, cleanQuit: true };
+  projectsAndThreadsVerified: true, settingsPersisted: true, cleanQuit: true };
 function fixture(overrides = {}) {
-  const calls = [], profile = { root: String.raw`C:\owned\profile` }, seed = {};
+  const calls = [], profile = { root: String.raw`C:\owned\profile` };
   let replaced = false, snapshots = 0;
   const candidateState = { quiescent: true, tracked: null };
   const previous = { sourceRevision: oldRevision, expectedAsarSha256: oldIdentity.artifactSha256,
@@ -42,7 +42,6 @@ function fixture(overrides = {}) {
         { pid: replaced ? 202 : 102, creation: 'old-companion' }];
       return { ...expectedJourney };
     },
-    verifyOptOut: async selected => { assert.equal(selected, seed); calls.push('optout'); return true; },
     processAbsence: async options => {
       assert.equal(options.tracked, candidateState.tracked);
       assert.equal(options.tracked.length, 2); calls.push('absence');
@@ -54,7 +53,7 @@ function fixture(overrides = {}) {
     ...overrides,
   };
   return { calls, candidateState, deps, snapshots: () => snapshots,
-    input: { previous, candidate, appPath: String.raw`C:\owned\app\TiboTattle.exe`, profile, seed,
+    input: { previous, candidate, appPath: String.raw`C:\owned\app\TiboTattle.exe`, profile,
       environment: {}, candidateState, replaceInstaller: async () => {
         assert.equal(candidateState.quiescent, true); calls.push('replace'); replaced = true;
       } } };
@@ -86,14 +85,13 @@ test('predecessor intake admits only exact reviewed published identity and no ca
 
 test('one profile spans old rendered state, exact replacement and two new runtime launches', async () => {
   const f = fixture(); const receipt = await runWindowsFinalUpgradeContinuity(f.input, f.deps);
-  assert.deepEqual(f.calls, ['verify:old', 'launch:seed', 'absence', 'optout', 'verify:old', 'snapshot',
-    'replace', 'snapshot', 'verify:new', 'launch:retained', 'absence', 'optout', 'verify:new',
-    'launch:retained', 'absence', 'optout', 'verify:new']);
+  assert.deepEqual(f.calls, ['verify:old', 'launch:seed', 'absence', 'verify:old', 'snapshot',
+    'replace', 'snapshot', 'verify:new', 'launch:retained', 'absence', 'verify:new',
+    'launch:retained', 'absence', 'verify:new']);
   assert.equal(f.snapshots(), 2, 'byte equality stops before normal runtime migrations');
   assert.equal(receipt.profileUnchangedAcrossInstaller, true);
   assert.equal(receipt.syntheticHistoryRetainedAcrossUpgrade, true);
   assert.equal(receipt.settingsRetainedAcrossUpgrade, true);
-  assert.equal(receipt.durableOptOutRetainedAcrossUpgrade, true);
   assert.equal(receipt.successorColdRestart, true);
   assert.equal(receipt.predecessorIdentity, oldIdentity);
   assert.equal(receipt.successorIdentity, newIdentity);
@@ -134,7 +132,7 @@ test('installer failure never advances to successor runtime', async () => {
 });
 
 test('successor identity, semantic loss and changed runtime bytes fail closed', async () => {
-  for (const mode of ['same-asar', 'wrong-source', 'lost-optout', 'lost-history', 'changed-native']) {
+  for (const mode of ['same-asar', 'wrong-source', 'lost-history', 'changed-native']) {
     const f = fixture(); const verify = f.deps.verifyPackage, launch = f.deps.launchJourney;
     let newChecks = 0;
     f.deps.verifyPackage = async options => {
@@ -149,7 +147,6 @@ test('successor identity, semantic loss and changed runtime bytes fail closed', 
     f.deps.launchJourney = async options => {
       const value = await launch(options);
       return options.changeSettings ? value : { ...value,
-        ...(mode === 'lost-optout' ? { sharingOptOutRetained: false } : {}),
         ...(mode === 'lost-history' ? { syntheticIngestionVerified: false } : {}) };
     };
     await assert.rejects(runWindowsFinalUpgradeContinuity(f.input, f.deps), /ELECTRON_WINDOWS_FINAL_UPGRADE_/u, mode);

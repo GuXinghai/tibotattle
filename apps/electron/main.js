@@ -2,7 +2,6 @@ import { dirname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { DEPLOYMENT_ENDPOINTS } from "../../config/deployment-endpoints.js";
 import { launchDesktopRuntime } from "./desktop-runtime.js";
 import { createDesktopTrayIconFactory } from "./desktop-tray.js";
 import { createDesktopStartupDiagnostics } from "./desktop-startup-diagnostics.js";
@@ -20,9 +19,6 @@ import {
   runWindowsElectronQualificationCredentialProbe,
   assertWindowsElectronQualificationContext,
 } from "./windows-qualification.js";
-import {
-  runWindowsAccountlessQualificationSmoke,
-} from "./windows-accountless-qualification-smoke.js";
 import {
   classifyWindowsAccountObservationSmokeFailure,
   runWindowsAccountObservationQualificationSmoke,
@@ -55,7 +51,6 @@ const WINDOWS_ELECTRON_SMOKE_COMMANDS = new Set([
   "credential-create-v1",
   "credential-read-v1",
   "credential-delete-v1",
-  "accountless-storage-v1",
   "account-observation-storage-v1",
   "quit-v1",
 ]);
@@ -133,19 +128,13 @@ function packagedResourcesPath(app, appPath, resourcesPath) {
   return appPath === null ? null : dirname(appPath);
 }
 
-export function companionEnvironment({
-  app,
-  environment,
-  qualificationContext,
-}) {
-  if (!isPackagedElectronApp(app)
-      || qualificationContext !== null) {
-    return environment;
-  }
-  return {
-    ...environment,
-    USAGE_MONITOR_CENTRAL_ORIGIN: DEPLOYMENT_ENDPOINTS.public.origin,
-  };
+/**
+ * The companion inherits the launch environment unchanged. The desktop product
+ * adds no hosted endpoint for it; the supervisor's own allowlist decides what
+ * reaches the child.
+ */
+export function companionEnvironment({ environment }) {
+  return environment;
 }
 
 function resolveCompanionLaunchPaths({
@@ -318,7 +307,6 @@ export function assertElectronQualificationLaunchOptions({
   supervisorOptions = {},
   lifecycleOptions = {},
   firstRunReceiptBackend,
-  ownedDownloadsRegistry,
   notificationBackend,
 } = {}) {
   if (qualificationContext === null) return;
@@ -331,7 +319,6 @@ export function assertElectronQualificationLaunchOptions({
       || resourceRoot !== undefined
       || resourcesPath !== undefined
       || firstRunReceiptBackend !== undefined
-      || ownedDownloadsRegistry !== undefined
       || notificationBackend !== undefined
       || supervisorOptions === null
       || typeof supervisorOptions !== "object"
@@ -438,7 +425,6 @@ function installWindowsSmokeControlWithRunners(lifecycle, {
 } = {}, {
   credentialProbe,
   credentialCommand,
-  accountlessStorage,
   accountObservationStorage,
 } = {}) {
   if (platform !== "win32"
@@ -547,16 +533,15 @@ function installWindowsSmokeControlWithRunners(lifecycle, {
       credentialOperation.catch(() => {});
       return;
     }
-    if (command === "accountless-storage-v1" || command === "account-observation-storage-v1") {
+    if (command === "account-observation-storage-v1") {
       credentialOperation = credentialOperation.then(async () => {
         if (!active) return;
         try {
-          const runner = command === "accountless-storage-v1" ? accountlessStorage : accountObservationStorage;
+          const runner = accountObservationStorage;
           if (typeof runner !== "function") throw new Error("unavailable");
-          if (command === "account-observation-storage-v1"
-              && (environment.GITHUB_ACTIONS !== "true"
-                || environment.USAGE_MONITOR_WINDOWS_ACCOUNT_OBSERVATION_QUALIFICATION
-                  !== "windows-account-observation-fd4-v1")) throw new Error("unavailable");
+          if (environment.GITHUB_ACTIONS !== "true"
+              || environment.USAGE_MONITOR_WINDOWS_ACCOUNT_OBSERVATION_QUALIFICATION
+                !== "windows-account-observation-fd4-v1") throw new Error("unavailable");
           await runner({ context: qualificationContext, environment });
           if (!active) return;
           send(windowsSmokeCredentialMessage(
@@ -566,9 +551,10 @@ function installWindowsSmokeControlWithRunners(lifecycle, {
         } catch (error) {
           if (!active) return;
           const failure = windowsSmokeCredentialMessage(command, WINDOWS_ELECTRON_SMOKE_FAILED_STATUS);
-          send(command === "account-observation-storage-v1"
-            ? Object.freeze({ ...failure, failureStage: classifyWindowsAccountObservationSmokeFailure(error) ?? "unavailable" })
-            : failure);
+          send(Object.freeze({
+            ...failure,
+            failureStage: classifyWindowsAccountObservationSmokeFailure(error) ?? "unavailable",
+          }));
         }
       });
       credentialOperation.catch(() => {});
@@ -624,7 +610,6 @@ export function installWindowsSmokeControl(lifecycle, options = {}) {
   return installWindowsSmokeControlWithRunners(lifecycle, options, {
     credentialProbe: runWindowsElectronQualificationCredentialProbe,
     credentialCommand: runWindowsElectronQualificationCredentialCommand,
-    accountlessStorage: runWindowsAccountlessQualificationSmoke,
     accountObservationStorage: runWindowsAccountObservationQualificationSmoke,
   });
 }
@@ -633,7 +618,6 @@ export function installWindowsSmokeControl(lifecycle, options = {}) {
 export function installWindowsSmokeControlForTest(lifecycle, {
   credentialProbe,
   credentialCommand,
-  accountlessStorage,
   accountObservationStorage,
   ...options
 } = {}) {
@@ -644,7 +628,6 @@ export function installWindowsSmokeControlForTest(lifecycle, {
   return installWindowsSmokeControlWithRunners(lifecycle, options, {
     credentialProbe,
     credentialCommand,
-    accountlessStorage,
     accountObservationStorage,
   });
 }
@@ -709,7 +692,6 @@ export async function launchElectronShell({
   supervisorOptions = {},
   lifecycleOptions = {},
   firstRunReceiptBackend,
-  ownedDownloadsRegistry,
   notificationBackend,
   emitFailureDiagnostic = false,
   writeDiagnostic,
@@ -737,7 +719,6 @@ export async function launchElectronShell({
       supervisorOptions,
       lifecycleOptions,
       firstRunReceiptBackend,
-      ownedDownloadsRegistry,
       notificationBackend,
     });
     const preparation = startupPreparation ?? await prepareElectronShellBootstrap({
@@ -772,9 +753,9 @@ export async function launchElectronShell({
     // A local-QA launch must never inherit production sending or updating.
     const productionEnabled = productionDistribution !== null
       && environment.USAGE_MONITOR_TEST_LANE === undefined;
-    // Exact stable Windows candidates select the fixed native adapter. Qualification
-    // and installed lifecycle evidence remain separate from this source selection.
-    const accountlessProductionEnabled = productionEnabled;
+    // Exact stable Windows candidates select the fixed FD4 account-observation
+    // adapter. Qualification and installed lifecycle evidence remain separate
+    // from this source selection.
     const normalCandidateCompanionProcessObserver =
       createWindowsNormalCandidateCompanionProcessObserver({
         environment,
@@ -789,7 +770,7 @@ export async function launchElectronShell({
         architecture: process.arch,
         writeDiagnostic,
       });
-    const windowsNormalCandidateCredentialHandover = accountlessProductionEnabled
+    const windowsNormalCandidateCredentialHandover = productionEnabled
       && platform === "win32"
       && architecture === "x64"
       && productionDistribution.target === "win32-x64"
@@ -812,7 +793,7 @@ export async function launchElectronShell({
         preloadPath: resolve(MODULE_DIRECTORY, "preload.cjs"),
       },
       environment: {
-        ...companionEnvironment({ app, environment, qualificationContext }),
+        ...companionEnvironment({ environment }),
         USAGE_MONITOR_RESOURCE_ROOT: paths.resourceRoot,
       },
       supervisorOptions: {
@@ -834,7 +815,6 @@ export async function launchElectronShell({
         }),
       },
       firstRunReceiptBackend,
-      ownedDownloadsRegistry,
       notificationBackend,
       qualificationContext,
       platform,
@@ -842,14 +822,6 @@ export async function launchElectronShell({
       productionDistribution: productionEnabled ? productionDistribution : undefined,
       onStartupPhase: (phase) => markStartupDiagnostics(startupDiagnostics, phase),
       onStartupStop: (code) => writeStartupDiagnostics(startupDiagnostics, "stop", code),
-      accountlessProduction: accountlessProductionEnabled ? {
-        origin: DEPLOYMENT_ENDPOINTS.public.origin,
-        policyVersion: productionDistribution.contributionPolicy,
-        ...(windowsNormalCandidateCredentialHandover === null ? {} : {
-          createWindowsCredentialBackend:
-            windowsNormalCandidateCredentialHandover.createAccountlessCredentialBackend,
-        }),
-      } : undefined,
     });
     installWindowsSmokeControl(desktop.lifecycle, {
       environment,

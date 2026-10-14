@@ -327,7 +327,6 @@ function createTransientAutomaticRefreshCadence(clock) {
  * their failure/rollback behavior remains plain-Node testable.
  */
 export function createDesktopController({
-  sharingCoordinator,
   settingsStore,
   platformServices,
   desktopSystemLocales = [],
@@ -397,12 +396,6 @@ export function createDesktopController({
   const testDelivery = notificationDelivery === undefined ? null
     : assertPort(notificationDelivery, ["sendTest"], "notificationDelivery");
   let lastNotificationTestAt = null;
-  const sharing = sharingCoordinator === undefined ? null
-    : assertPort(sharingCoordinator, ["inspect", "setEnabled", "markNoticePresented"], "sharingCoordinator");
-  function requireSharing() {
-    if (disposed || sharing === null) throw controllerError("desktop_sharing_unavailable");
-    return sharing;
-  }
   if (typeof getLifecycle !== "function") throw new TypeError("getLifecycle is required");
   if (typeof applyCodexHome !== "function") throw new TypeError("applyCodexHome is required");
   if (applyCodexHomes !== undefined && typeof applyCodexHomes !== "function") {
@@ -1198,9 +1191,6 @@ export function createDesktopController({
   }
 
   const handlers = Object.freeze({
-    getSharingPreference: () => requireSharing().inspect(),
-    setSharingEnabled: ({ enabled }) => requireSharing().setEnabled(enabled),
-    sharingNoticePresented: ({ index }) => requireSharing().markNoticePresented(index),
     async getSettings() {
       return snapshot();
     },
@@ -1221,16 +1211,6 @@ export function createDesktopController({
     },
     async restoreTrayDefaults() {
       return handlers.setTrayPreferences({ value: DESKTOP_TRAY_DEFAULTS });
-    },
-    async openCommunity() {
-      const selected = lifecycle();
-      if (typeof selected.navigateDashboardSection !== "function") {
-        throw controllerError("desktop_community_unavailable");
-      }
-      if (selected.navigateDashboardSection("community") !== true) {
-        throw controllerError("desktop_community_unavailable");
-      }
-      return true;
     },
     async toggleSidebar() {
       return toggleSidebar();
@@ -1420,14 +1400,6 @@ export function createDesktopController({
     async openExternal({ target }) {
       await platform.openExternal(target);
     },
-    async openHostedSignIn({ authorizeUrl }) {
-      if (sharing !== null) throw controllerError("accountless_signin_unavailable");
-      if (typeof platform.openHostedSignIn !== "function") {
-        throw controllerError("desktop_hosted_signin_unavailable");
-      }
-      await platform.openHostedSignIn(authorizeUrl);
-      return true;
-    },
     async openCodexThread({ url }) {
       if (typeof platform.openCodexThread !== "function") {
         throw controllerError("desktop_codex_thread_unavailable");
@@ -1462,37 +1434,6 @@ export function createDesktopController({
       }
       await platform.setAutomaticDownload(enabled);
       return snapshot();
-    },
-    async revealLatestDownload(_args, context = {}) {
-      const selected = lifecycle();
-      let authorized = false;
-      try {
-        authorized = typeof selected.isAuthorizedDesktopDownloadContext === "function"
-          && selected.isAuthorizedDesktopDownloadContext(
-            context.sender,
-            context.senderFrame,
-          ) === true;
-      } catch {
-        authorized = false;
-      }
-      if (!authorized || typeof selected.revealLatestDownload !== "function") {
-        throw controllerError("desktop_download_unavailable");
-      }
-      return selected.revealLatestDownload();
-    },
-    async openLatestDownload(_args, context = {}) {
-      const selected = lifecycle();
-      let authorized = false;
-      try {
-        authorized = typeof selected.isAuthorizedDesktopDownloadContext === "function"
-          && selected.isAuthorizedDesktopDownloadContext(context.sender, context.senderFrame) === true;
-      } catch {
-        authorized = false;
-      }
-      if (!authorized || typeof selected.openLatestDownload !== "function") {
-        throw controllerError("desktop_download_unavailable");
-      }
-      return selected.openLatestDownload();
     },
     async openDashboardInBrowser() {
       return openDashboardInBrowserAction();

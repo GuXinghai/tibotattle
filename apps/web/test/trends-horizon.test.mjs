@@ -178,9 +178,9 @@ test("core trends and deeper comparison retain separate view groups, with one ti
   assert.ok(html.indexOf('id="allowance-timeline-chart"') < html.indexOf('id="timeline-chart"'));
   assert.ok(html.indexOf('id="difference-timeline-chart"') < html.indexOf('id="residual-chart"'));
   assert.doesNotMatch(html, /<details class="advanced-calibration"/);
-  assert.match(html, /<div class="trends-analysis-details">/);
-  assert.ok(html.indexOf('class="trends-analysis-details"') > html.indexOf('id="usage-timeline-summary"'));
-  assert.ok(html.indexOf('class="trends-analysis-details"') < html.indexOf('class="panel chart-panel trends-comparison-panel"'));
+  assert.match(html, /<div class="trends-analysis-details allowance-differences">/);
+  assert.ok(html.indexOf('class="trends-analysis-details allowance-differences"') > html.indexOf('id="usage-timeline-summary"'));
+  assert.ok(html.indexOf('class="trends-analysis-details allowance-differences"') < html.indexOf('class="panel chart-panel trends-comparison-panel"'));
   assert.doesNotMatch(html, /class="trends-sky"/);
   assert.match(html, /class="calibration-controls" hidden/);
   assert.match(source, /activeCalibrationRangeDays = activeUsageRangeDays/);

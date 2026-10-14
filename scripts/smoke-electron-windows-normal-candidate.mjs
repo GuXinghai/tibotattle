@@ -32,13 +32,8 @@ import {
   validateDesktopFirstRunReceipt,
 } from "../apps/electron/desktop-first-run.js";
 import { ELECTRON_ENTRY_FAILURE_DIAGNOSTIC } from "../apps/electron/errors.js";
-import {
-  createDesktopSharingBackend,
-  createDesktopSharingCoordinator,
-} from "../apps/electron/desktop-sharing.js";
 import { isDesktopSettingsBackendError } from "../apps/electron/desktop-settings-backends.js";
 import { validateProductionDistributionMetadata } from "../apps/electron/desktop-updater.js";
-import { DEPLOYMENT_ENDPOINTS } from "../config/deployment-endpoints.js";
 import {
   buildWindowsNormalCandidateLaunchSpec,
   prepareWindowsDevelopmentProfile,
@@ -257,7 +252,6 @@ const NORMAL_CANDIDATE_STARTUP_PHASES = new Set([
   "explicit_refresh_completion",
   "model_performance",
   "projects_and_threads",
-  "sharing_opt_out",
   "process_proof",
   "settings_target",
   "settings_ready",
@@ -329,7 +323,6 @@ const PROTECTED_OPT_OUT_STAGES = new Set([
   "PROTECTED_OPT_OUT_STORE_UNAVAILABLE",
   "PROTECTED_OPT_OUT_INITIAL_READ_UNAVAILABLE",
   "PROTECTED_OPT_OUT_FIRST_RUN_UNAVAILABLE",
-  "PROTECTED_OPT_OUT_SHARING_UNAVAILABLE",
 ]);
 const WINDOWS_FILESYSTEM_SEED_CAUSES = new Set([
   "WINDOWS_FILESYSTEM_BINDING_INTEGRITY_MISMATCH",
@@ -928,20 +921,6 @@ function createStagedWindowsAdapter(stagedAppPath, {
   return adapter;
 }
 
-function sharingCoordinator(backend, {
-  createCoordinator = createDesktopSharingCoordinator,
-} = {}) {
-  try {
-    return createCoordinator({
-      backend,
-      installationState: "fresh",
-      destinationOrigin: DEPLOYMENT_ENDPOINTS.public.origin,
-    });
-  } catch {
-    fail("PROTECTED_OPT_OUT_UNAVAILABLE");
-  }
-}
-
 function protectedOptOutCause(error) {
   let code = "";
   try { code = typeof error?.code === "string" ? error.code : ""; }
@@ -1042,7 +1021,7 @@ export async function seedWindowsNormalCandidateCodexFixture({ profile } = {}, {
   return Object.freeze({ codexHome, fixture, sessions, project, namesFile });
 }
 
-/** Seed only the fixed acknowledgement and durable contribution opt-out. */
+/** Seed only the fixed first-run acknowledgement into the protected state store. */
 export async function prepareWindowsNormalCandidateProfile({
   profile,
   stagedAppPath,
@@ -1050,8 +1029,6 @@ export async function prepareWindowsNormalCandidateProfile({
   createAdapter = createStagedWindowsAdapter,
   createStore = createWindowsProtectedStateStore,
   createReceiptBackend = createDesktopFirstRunReceiptBackend,
-  createSharingBackend = createDesktopSharingBackend,
-  createCoordinator = createDesktopSharingCoordinator,
 } = {}) {
   if (!profile || typeof profile !== "object" || !exactWindowsPath(profile.userData)
       || !exactWindowsPath(stagedAppPath)) {
@@ -1062,11 +1039,10 @@ export async function prepareWindowsNormalCandidateProfile({
   let adapter;
   let store;
   let receiptBackend;
-  let shareBackend;
   try {
     adapter = await protectedOptOutStage("PROTECTED_OPT_OUT_ADAPTER_UNAVAILABLE", () =>
       createAdapter(stagedAppPath));
-    ({ store, receiptBackend, shareBackend } = await protectedOptOutStage(
+    ({ store, receiptBackend } = await protectedOptOutStage(
       "PROTECTED_OPT_OUT_STORE_UNAVAILABLE",
       () => {
         const selectedStore = createStore({ adapter, rootPath: settingsRoot });
@@ -1076,11 +1052,6 @@ export async function prepareWindowsNormalCandidateProfile({
             platform: "win32",
             windowsProtectedStateStore: selectedStore,
           }),
-          shareBackend: createSharingBackend({
-            platform: "win32",
-            rootPath: settingsRoot,
-            windowsProtectedStateStore: selectedStore,
-          }),
         };
       },
     ));
@@ -1088,11 +1059,7 @@ export async function prepareWindowsNormalCandidateProfile({
       "PROTECTED_OPT_OUT_INITIAL_READ_UNAVAILABLE",
       () => receiptBackend.load(),
     );
-    const initialSharing = await protectedOptOutStage(
-      "PROTECTED_OPT_OUT_INITIAL_READ_UNAVAILABLE",
-      () => shareBackend.load(),
-    );
-    if (initialReceipt !== null || initialSharing !== null) {
+    if (initialReceipt !== null) {
       fail("PROFILE_NOT_ABSENT");
     }
     await protectedOptOutStage(
@@ -1104,33 +1071,6 @@ export async function prepareWindowsNormalCandidateProfile({
       async () => validateDesktopFirstRunReceipt(await receiptBackend.load()),
     );
     if (receipt.acknowledged !== true) fail("PROTECTED_OPT_OUT_UNAVAILABLE");
-    const coordinator = await protectedOptOutStage(
-      "PROTECTED_OPT_OUT_SHARING_UNAVAILABLE",
-      () => sharingCoordinator(shareBackend, { createCoordinator }),
-    );
-    try {
-      const { selection, authorization, inspection } = await protectedOptOutStage(
-        "PROTECTED_OPT_OUT_SHARING_UNAVAILABLE",
-        async () => {
-          await coordinator.initialize();
-          return {
-            selection: await coordinator.setEnabled(false),
-            authorization: await coordinator.readAuthorization(),
-            inspection: await coordinator.inspect(),
-          };
-        },
-      );
-      // readAuthorization intentionally returns the raw policy projection. Its
-      // `current` result binds the durable record to this fixed destination;
-      // inspect exposes Electron's transport-state projection separately.
-      if (selection?.enabled !== false || authorization?.available !== true
-          || authorization?.current !== true || authorization?.enabled !== false
-          || inspection?.enabled !== false || inspection?.transportStatus !== "off") {
-        fail("PROTECTED_OPT_OUT_UNAVAILABLE");
-      }
-    } finally {
-      coordinator.dispose();
-    }
   } catch (error) {
     if (String(error?.code ?? "").startsWith(PREFIX)) throw error;
     fail("PROTECTED_OPT_OUT_UNAVAILABLE");
@@ -1139,34 +1079,7 @@ export async function prepareWindowsNormalCandidateProfile({
     adapter,
     settingsRoot,
     store,
-    shareBackend,
   });
-}
-
-/** Re-read the fixed durable opt-out after the second ordinary app launch. */
-export async function verifyWindowsNormalCandidateOptOut(seed, {
-  createCoordinator = createDesktopSharingCoordinator,
-} = {}) {
-  if (!seed?.shareBackend || typeof createCoordinator !== "function") {
-    fail("PROTECTED_OPT_OUT_UNAVAILABLE");
-  }
-  const coordinator = sharingCoordinator(seed.shareBackend, { createCoordinator });
-  try {
-    await coordinator.initialize();
-    const authorization = await coordinator.readAuthorization();
-    const inspection = await coordinator.inspect();
-    if (authorization?.available !== true || authorization?.current !== true
-        || authorization?.enabled !== false || inspection?.enabled !== false
-        || inspection?.transportStatus !== "off") {
-      fail("PROTECTED_OPT_OUT_UNAVAILABLE");
-    }
-    return true;
-  } catch (error) {
-    if (String(error?.code ?? "").startsWith(PREFIX)) throw error;
-    fail("PROTECTED_OPT_OUT_UNAVAILABLE");
-  } finally {
-    coordinator.dispose();
-  }
 }
 
 function systemPowerShell(environment) {
@@ -3267,20 +3180,6 @@ async function assertDashboard({ cdp, target, fetchImpl, launch, onPhase = () =>
   }
 }
 
-async function assertRenderedSharingOptOut(cdp) {
-  let retained = false;
-  try {
-    retained = await cdp.evaluate(`(async () => {
-      const preference = await globalThis.tibotattleDesktop?.getSharingPreference?.();
-      return preference?.enabled === false && preference?.transportStatus === "off";
-    })()`);
-  } catch {
-    retained = false;
-  }
-  if (retained !== true) fail("PROTECTED_OPT_OUT_UNAVAILABLE");
-  return true;
-}
-
 async function findSettingsTarget(endpoint, dashboardOrigin, port, fetchImpl) {
   return waitFor(async () => selectWindowsNormalCandidateSettingsTarget(
     await jsonFetch(`${endpoint}/json`, { fetchImpl }),
@@ -3527,8 +3426,6 @@ export async function launchAndRenderCandidate({
       candidateState.localRefreshObserved = true;
       candidateState.localRefreshTerminal = dashboard.refreshTerminalStatus;
     }
-    onPhase("sharing_opt_out");
-    const sharingOptOutRetained = await assertRenderedSharingOptOut(cdp);
     onPhase("process_proof");
     tracked = await processProof({
       appPath,
@@ -3566,7 +3463,6 @@ export async function launchAndRenderCandidate({
       localRefreshTerminal: dashboard.refreshTerminalStatus,
       syntheticIngestionVerified: dashboard.syntheticIngestionVerified === true,
       projectsAndThreadsVerified: dashboard.projectsAndThreadsVerified === true,
-      sharingOptOutRetained,
       settingsPersisted: true,
       cleanQuit: true,
     });
@@ -3695,7 +3591,6 @@ function candidateReceipt({
       journey?.syntheticTotalsRetainedAcrossRestart === true,
     projectsAndThreadsRetainedAcrossRestart: journey?.projectsAndThreadsVerified === true,
     settingsPersistedAcrossRestart: journey?.settingsPersisted === true,
-    durableContributionOptOutRetained: journey?.optOutRetained === true,
     loopbackJourneyVerified: journey?.loopbackJourneyVerified === true,
     outboundFirewallRuleVerified: cleanup.firewallInstalled === true,
     outboundFirewallRuleRemoved: cleanup.firewallRemoved === true,
@@ -3749,7 +3644,6 @@ export async function runWindowsNormalCandidateSmoke(options, {
   seedCodexFixture = seedWindowsNormalCandidateCodexFixture,
   seedProfile = prepareWindowsNormalCandidateProfile,
   launchJourney = launchAndRenderCandidate,
-  verifyOptOut = verifyWindowsNormalCandidateOptOut,
   installFirewall = installOutboundFirewallBlock,
   removeFirewall = removeOutboundFirewallBlock,
   assertProcessAbsence = assertCandidateProcessAbsence,
@@ -3761,7 +3655,7 @@ export async function runWindowsNormalCandidateSmoke(options, {
   if (!options || typeof verifyPackage !== "function" || typeof createRoot !== "function"
       || typeof prepareProfile !== "function" || typeof seedCodexFixture !== "function"
       || typeof seedProfile !== "function"
-      || typeof launchJourney !== "function" || typeof verifyOptOut !== "function"
+      || typeof launchJourney !== "function"
       || typeof installFirewall !== "function" || typeof removeFirewall !== "function"
       || typeof assertProcessAbsence !== "function" || typeof ensureReceiptParent !== "function"
       || typeof reserveReceipt !== "function" || typeof removeProfile !== "function") {
@@ -3800,7 +3694,7 @@ export async function runWindowsNormalCandidateSmoke(options, {
     root = await createRoot(environment.RUNNER_TEMP);
     const profile = await prepareProfile({ appPath: options.appPath, profilePath: win32.join(root, "profile") });
     await seedCodexFixture({ profile });
-    const seed = await seedProfile({ profile, stagedAppPath: options.stagedAppPath });
+    await seedProfile({ profile, stagedAppPath: options.stagedAppPath });
     await assertProcessAbsence({ appPath: options.appPath, environment });
     candidateState.quiescent = true;
     firewallName = await installFirewall({ appPath: options.appPath, environment });
@@ -3824,15 +3718,13 @@ export async function runWindowsNormalCandidateSmoke(options, {
         || !["succeeded", "degraded"].includes(first?.localRefreshTerminal)
         || first?.syntheticIngestionVerified !== true
         || first?.projectsAndThreadsVerified !== true
-        || first?.sharingOptOutRetained !== true || second?.dashboardRendered !== true
+        || second?.dashboardRendered !== true
         || second?.syntheticIngestionVerified !== true
         || second?.projectsAndThreadsVerified !== true
-        || second?.sharingOptOutRetained !== true || second?.settingsPersisted !== true
+        || second?.settingsPersisted !== true
         || second?.cleanQuit !== true || candidateState.quiescent !== true) {
       fail("DASHBOARD_INVALID");
     }
-    const optOutRetained = await verifyOptOut(seed);
-    if (optOutRetained !== true) fail("PROTECTED_OPT_OUT_UNAVAILABLE");
     journey = Object.freeze({
       dashboardRendered: first.dashboardRendered === true && second.dashboardRendered === true,
       localRefreshObserved: first.localRefreshObserved === true,
@@ -3844,8 +3736,6 @@ export async function runWindowsNormalCandidateSmoke(options, {
       projectsAndThreadsVerified: first.projectsAndThreadsVerified === true
         && second.projectsAndThreadsVerified === true,
       settingsPersisted: first.settingsPersisted === true && second.settingsPersisted === true,
-      optOutRetained: optOutRetained === true
-        && first.sharingOptOutRetained === true && second.sharingOptOutRetained === true,
       loopbackJourneyVerified: first.cleanQuit === true && second.cleanQuit === true,
     });
   } catch (error) {

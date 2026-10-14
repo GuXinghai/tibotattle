@@ -1,8 +1,8 @@
 /**
  * Small Electron-only bridge for controls that belong to the desktop shell,
  * not to the hosted dashboard. It intentionally has no filesystem or URL
- * input: Settings is one fixed local route/bridge action and Share is one
- * fixed dashboard panel.
+ * input: Settings is one fixed local route/bridge action and dashboard
+ * sections are a fixed set of hashes.
  */
 
 import {
@@ -24,68 +24,12 @@ const DESKTOP_LANGUAGE_BY_PICKER_VALUE = Object.freeze(
   ),
 );
 const DASHBOARD_SECTION_HASHES = Object.freeze({
-  weekly: "#weekly",
-  timeline: "#timeline",
-  accounting: "#accounting",
-  projects: "#projects",
-  community: "#community",
+  overview: "#overview",
+  usage: "#usage",
+  allowance: "#allowance",
+  performance: "#performance",
 });
 const mountedDocuments = new WeakMap();
-
-function focusSharePanel(documentRef, windowRef) {
-  const panel = documentRef?.querySelector?.("#share-panel");
-  if (!panel) return false;
-  panel.setAttribute?.("tabindex", "-1");
-  const focus = () => {
-    panel.focus?.({ preventScroll: true });
-    let reduceMotion = false;
-    try {
-      reduceMotion = windowRef?.matchMedia?.("(prefers-reduced-motion: reduce)")
-        ?.matches === true;
-    } catch {
-      // A presentation-only media-query failure must not make Share unusable.
-    }
-    panel.scrollIntoView?.({
-      block: "start",
-      behavior: reduceMotion ? "auto" : "smooth",
-    });
-  };
-  if (typeof windowRef?.requestAnimationFrame === "function") {
-    windowRef.requestAnimationFrame(focus);
-  } else {
-    windowRef?.setTimeout?.(focus, 0);
-  }
-  return true;
-}
-
-function navigateToSharePanel(documentRef, windowRef) {
-  const location = windowRef?.location;
-  if (!location || location.hash === "#weekly") {
-    focusSharePanel(documentRef, windowRef);
-    return;
-  }
-
-  // The dashboard navigation listener also handles this hash change. Wait
-  // for that event before scheduling the panel focus so its page-heading
-  // focus and top-of-page scroll cannot overwrite Share's destination. This
-  // is one event listener plus one animation frame, rather than a timer or a
-  // polling loop; the browser guarantees a hashchange for this assignment.
-  if (typeof windowRef?.addEventListener !== "function") {
-    location.hash = "#weekly";
-    focusSharePanel(documentRef, windowRef);
-    return;
-  }
-  let handled = false;
-  const onHashChange = () => {
-    if (handled) return;
-    handled = true;
-    windowRef.removeEventListener?.("hashchange", onHashChange);
-    if (windowRef.location?.hash !== "#weekly") return;
-    focusSharePanel(documentRef, windowRef);
-  };
-  windowRef.addEventListener("hashchange", onHashChange);
-  location.hash = "#weekly";
-}
 
 /**
  * Navigate to one of the dashboard's evidence views from a native menu or
@@ -151,17 +95,6 @@ function readPersistedSettings(bridge, applyLanguage, applySidebar, applyAppeara
   }).catch(() => {});
 }
 
-function dispatchFixedDesktopEvent(windowRef, type) {
-  const EventConstructor = windowRef?.Event;
-  if (typeof EventConstructor !== "function"
-      || typeof windowRef?.dispatchEvent !== "function") return false;
-  // These events are intentionally payload-free.  The main process has
-  // already verified the outcome; the dashboard only needs a semantic state
-  // transition and must never receive a path, identifier, filename, or error.
-  windowRef.dispatchEvent(new EventConstructor(type));
-  return true;
-}
-
 function dispatchAutomaticRefresh(windowRef, mode) {
   if (mode !== "quick" && mode !== "detailed") return false;
   const CustomEventConstructor = windowRef?.CustomEvent;
@@ -222,23 +155,6 @@ function installCommandBridge(documentRef, windowRef, applyLanguage, applySideba
       applySidebar(command.collapsed);
       return;
     }
-    if (command.command === "shareCardDownloadCompleted") {
-      if (typeof windowRef?.CustomEvent === "function"
-          && typeof windowRef?.dispatchEvent === "function") {
-        windowRef.dispatchEvent(new windowRef.CustomEvent(
-          "tibotattle:share-card-download-completed",
-          { detail: { filename: command.filename } },
-        ));
-      }
-      return;
-    }
-    if (command.command === "shareCardDownloadFailed") {
-      dispatchFixedDesktopEvent(
-        windowRef,
-        "tibotattle:share-card-download-failed",
-      );
-      return;
-    }
     if (command.command === "appearance") {
       dispatchAppearanceOverride(windowRef, command);
       return;
@@ -259,33 +175,11 @@ export function mountDesktopShell({
   }
   const existing = mountedDocuments.get(documentRef);
   if (existing) return existing;
-  const shareButton = documentRef.querySelector?.("#electron-share-button");
   const settingsButton = documentRef.querySelector?.("#electron-settings-button");
   if (!settingsButton) return Object.freeze({ teardown() {} });
   settingsButton.hidden = false;
-  if (shareButton) shareButton.hidden = false;
-  const onShare = () => {
-    // The share card lives on the Allowance page. Navigating to Overview
-    // first leaves that page inert, so focus() can succeed in a unit fake yet
-    // the packaged Chromium window appears not to move at all.
-    navigateToSharePanel(documentRef, windowRef);
-  };
   const onSettings = () => openSettings(windowRef);
   const bridge = windowRef?.tibotattleDesktop;
-  const communityLink = documentRef.querySelector?.(".community-public-evidence a");
-  const onCommunity = (event) => {
-    // Electron denies new windows. Send the existing fixed website action;
-    // never forward renderer markup or an arbitrary href to the OS shell.
-    event?.preventDefault?.();
-    if (bridge?.version !== ELECTRON_API_VERSION
-        || typeof bridge.openExternal !== "function") return;
-    try {
-      void Promise.resolve(bridge.openExternal("website")).catch(() => {});
-    } catch {
-      // Shell shutdown must not produce an unhandled renderer exception.
-    }
-  };
-  communityLink?.addEventListener?.("click", onCommunity);
   const picker = documentRef.querySelector?.("[data-language-picker]");
   const applySidebar = (collapsed) => applySidebarState(documentRef, collapsed);
   const applyAppearance = (preference) => {
@@ -314,7 +208,6 @@ export function mountDesktopShell({
       // A renderer control must not surface bridge implementation errors.
     }
   };
-  shareButton?.addEventListener?.("click", onShare);
   settingsButton.addEventListener("click", onSettings);
   picker?.addEventListener?.("change", onLanguageChange);
   readPersistedSettings(bridge, applyLanguage, applySidebar, applyAppearance);
@@ -326,8 +219,6 @@ export function mountDesktopShell({
   );
   const mounted = Object.freeze({
     teardown() {
-      shareButton?.removeEventListener?.("click", onShare);
-      communityLink?.removeEventListener?.("click", onCommunity);
       settingsButton.removeEventListener?.("click", onSettings);
       picker?.removeEventListener?.("change", onLanguageChange);
       unsubscribeCommand();

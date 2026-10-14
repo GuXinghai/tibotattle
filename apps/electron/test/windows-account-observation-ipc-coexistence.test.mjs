@@ -7,7 +7,6 @@ import {
   attachDesktopWindowsAccountObservationBroker,
 } from "../desktop-windows-account-observation-broker.js";
 import {
-  attachAccountlessParentChannel,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
 } from "../../../src/platform/index.js";
@@ -46,24 +45,6 @@ function observationManager() {
   });
 }
 
-function accountlessBackend() {
-  let stored = null;
-  return Object.freeze({
-    async read() { return stored === null ? null : Buffer.from(stored); },
-    async createIfMissing(secret) {
-      if (stored !== null) return "existing";
-      stored = Buffer.from(secret);
-      return "created";
-    },
-    async deleteExact(secret) {
-      if (stored === null || !Buffer.isBuffer(secret) || !stored.equals(secret)) return "missing";
-      stored.fill(0);
-      stored = null;
-      return "deleted";
-    },
-  });
-}
-
 function isControl(message, kind) {
   try {
     const keys = kind === "result-v1" ? "kind,schemaVersion,status" : "kind,schemaVersion";
@@ -75,7 +56,7 @@ function isControl(message, kind) {
   }
 }
 
-test("one real child process roundtrips accountless and observation credentials over distinct IPC schemas", async () => {
+test("one real child process roundtrips observation credentials over the broker IPC schema", async () => {
   const environment = {
     ...process.env,
     [WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV]: WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
@@ -89,7 +70,6 @@ test("one real child process roundtrips accountless and observation credentials 
     stdio: ["ignore", "ignore", "ignore", "ipc"],
     windowsHide: true,
   });
-  let accountless = null;
   let observationBroker = null;
   let attached = false;
   let childReady = false;
@@ -167,17 +147,6 @@ test("one real child process roundtrips accountless and observation credentials 
       architecture: "x64",
       createCredentialManagerBackend: observationManager,
     });
-    accountless = attachAccountlessParentChannel({
-      channel: child,
-      backend: accountlessBackend(),
-      readPreference: async () => Object.freeze({
-        available: true,
-        current: true,
-        enabled: true,
-        policyVersion: "accountless-test-v1",
-        destinationOrigin: "https://example.invalid",
-      }),
-    });
     observationBroker = attachDesktopWindowsAccountObservationBroker({
       channel: child,
       createBackend: () => observation,
@@ -191,7 +160,6 @@ test("one real child process roundtrips accountless and observation credentials 
     assert.deepEqual(await exited, { code: 0, signal: null });
   } finally {
     cleanup();
-    accountless?.dispose();
     observationBroker?.dispose();
     if (child.exitCode === null && child.signalCode === null) {
       try { child.kill("SIGKILL"); } catch { /* The owned child may already be gone. */ }

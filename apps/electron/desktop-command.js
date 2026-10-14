@@ -7,9 +7,6 @@ export const DESKTOP_COMMAND_NAMES = Object.freeze([
   "language",
   "appearance",
   "sidebar",
-  "hostedSignInReturn",
-  "shareCardDownloadCompleted",
-  "shareCardDownloadFailed",
 ]);
 
 const LANGUAGES = Object.freeze(["system", "en", "zh-Hans", "es"]);
@@ -18,9 +15,7 @@ const AUTOMATIC_REFRESH_MODES = Object.freeze(["quick", "detailed"]);
 // These are the only dashboard destinations the native shell may request.
 // Keeping the values closed prevents a menu or tray action from becoming a
 // renderer-controlled selector, path, or URL navigation primitive.
-const DASHBOARD_SECTIONS = Object.freeze(["weekly", "timeline", "accounting", "projects", "community"]);
-const SAVED_SHARE_CARD_FILENAME =
-  /^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-tibotattle-results(?:-[1-9][0-9]{0,2})?\.png$/u;
+const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance"]);
 
 function plainExactObject(value, keys) {
   if (value === null || typeof value !== "object" || Array.isArray(value)
@@ -68,20 +63,6 @@ export function validateDesktopCommand(value) {
       resolvedTheme: value.resolvedTheme,
     });
   }
-  if (value?.command === "hostedSignInReturn"
-      && plainExactObject(value, ["command"])) {
-    return Object.freeze({ command: "hostedSignInReturn" });
-  }
-  if (value?.command === "shareCardDownloadCompleted"
-      && plainExactObject(value, ["command", "filename"])
-      && typeof value.filename === "string"
-      && SAVED_SHARE_CARD_FILENAME.test(value.filename)) {
-    return Object.freeze({ command: "shareCardDownloadCompleted", filename: value.filename });
-  }
-  if (value?.command === "shareCardDownloadFailed"
-      && plainExactObject(value, ["command"])) {
-    return Object.freeze({ command: "shareCardDownloadFailed" });
-  }
   throw new TypeError("desktop command is invalid");
 }
 
@@ -111,10 +92,6 @@ export function createDesktopCommand(command, value) {
       preference: value,
       resolvedTheme: arguments[2],
     });
-  }
-  if (command === "shareCardDownloadCompleted") {
-    if (arguments.length !== 2) throw new TypeError("desktop command is invalid");
-    return validateDesktopCommand({ command, filename: value });
   }
   if (arguments.length !== 1) throw new TypeError("desktop command is invalid");
   return validateDesktopCommand({ command });

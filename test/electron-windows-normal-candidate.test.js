@@ -15,7 +15,6 @@ import { createLocalIndexBackend } from "../src/local-index-backend.js";
 import { startLocalCompanionServer } from "../apps/local/server.js";
 import { createProductionDistributionMetadata } from "../apps/electron/desktop-updater.js";
 import { DesktopSettingsBackendError } from "../apps/electron/desktop-settings-backends.js";
-import { createDesktopSharingCoordinator } from "../apps/electron/desktop-sharing.js";
 import { ELECTRON_ENTRY_FAILURE_DIAGNOSTIC } from "../apps/electron/errors.js";
 import {
   ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX,
@@ -80,7 +79,6 @@ import {
   normalizeWindowsNormalCandidatePerformancePageDiagnostic,
   verifyWindowsNormalCandidateProjectsAndThreads,
   inspectWindowsNormalCandidateProjectsAndThreads,
-  verifyWindowsNormalCandidateOptOut,
   verifyWindowsNormalCandidateSmokePackage,
   WINDOWS_NORMAL_CANDIDATE_FIREWALL_TIMEOUT_MS,
 } from "../scripts/smoke-electron-windows-normal-candidate.mjs";
@@ -1330,7 +1328,6 @@ function passedJourney() {
     localRefreshTerminal: "succeeded",
     syntheticIngestionVerified: true,
     projectsAndThreadsVerified: true,
-    sharingOptOutRetained: true,
     settingsPersisted: true,
     cleanQuit: true,
   };
@@ -1413,18 +1410,6 @@ function normalCandidateSeedDependencies(overrides = {}) {
     createReceiptBackend: () => Object.freeze({
       async load() { return receipt; },
       async save(value) { receipt = value; return value; },
-    }),
-    createSharingBackend: () => Object.freeze({
-      async load() { return null; },
-      async save() {},
-    }),
-    createCoordinator: () => Object.freeze({
-      async initialize() {},
-      async setEnabled() { return Object.freeze({ enabled: false }); },
-      async readAuthorization() {
-        return Object.freeze({ enabled: false, transportStatus: "off" });
-      },
-      dispose() {},
     }),
     ...overrides,
   };
@@ -2111,17 +2096,6 @@ test("normal candidate protected opt-out seeding retains closed source causes by
     code: "ELECTRON_WINDOWS_NORMAL_CANDIDATE_SMOKE_PROTECTED_OPT_OUT_FIRST_RUN_UNAVAILABLE_DESKTOP_SETTINGS_BACKEND_WRITE_FAILED",
   });
 
-  await assert.rejects(seed({
-    createCoordinator: () => Object.freeze({
-      async initialize() {},
-      async setEnabled() { throw new DesktopSettingsBackendError("unavailable"); },
-      async readAuthorization() { return null; },
-      dispose() {},
-    }),
-  }), {
-    code: "ELECTRON_WINDOWS_NORMAL_CANDIDATE_SMOKE_PROTECTED_OPT_OUT_SHARING_UNAVAILABLE_DESKTOP_SETTINGS_BACKEND_UNAVAILABLE",
-  });
-
   const unknownStages = [
     {
       stage: "PROTECTED_OPT_OUT_ADAPTER_UNAVAILABLE",
@@ -2153,17 +2127,6 @@ test("normal candidate protected opt-out seeding retains closed source causes by
         }),
       },
     },
-    {
-      stage: "PROTECTED_OPT_OUT_SHARING_UNAVAILABLE",
-      dependencies: {
-        createCoordinator: () => Object.freeze({
-          async initialize() {},
-          async setEnabled() { throw new Error("private sharing detail"); },
-          async readAuthorization() { return null; },
-          dispose() {},
-        }),
-      },
-    },
   ];
   for (const { stage, dependencies } of unknownStages) {
     await assert.rejects(seed(dependencies), (error) => {
@@ -2175,37 +2138,20 @@ test("normal candidate protected opt-out seeding retains closed source causes by
   }
 });
 
-test("normal candidate opt-out distinguishes raw authorization from projected transport state", async () => {
-  let sharingText = null;
-  const sharingBackend = Object.freeze({
-    async load() { return sharingText; },
-    async save(value) { sharingText = value; },
-  });
+test("normal candidate profile seeding writes only the first-run acknowledgement", async () => {
+  const saved = [];
   const seed = await prepareWindowsNormalCandidateProfile({
     profile: NORMAL_CANDIDATE_PROFILE,
     stagedAppPath: STAGED_APP_PATH,
   }, normalCandidateSeedDependencies({
-    createSharingBackend: () => sharingBackend,
-    createCoordinator: createDesktopSharingCoordinator,
+    createReceiptBackend: () => Object.freeze({
+      async load() { return saved.at(-1) ?? null; },
+      async save(value) { saved.push(value); return value; },
+    }),
   }));
-  assert.equal(await verifyWindowsNormalCandidateOptOut(seed, {
-    createCoordinator: createDesktopSharingCoordinator,
-  }), true);
-
-  const coordinator = createDesktopSharingCoordinator({
-    backend: sharingBackend,
-    installationState: "fresh",
-    destinationOrigin: "https://tibotattle.com",
-  });
-  const authorization = await coordinator.readAuthorization();
-  const inspection = await coordinator.inspect();
-  assert.equal(authorization.available, true);
-  assert.equal(authorization.current, true);
-  assert.equal(authorization.enabled, false);
-  assert.equal(Object.hasOwn(authorization, "transportStatus"), false);
-  assert.equal(inspection.enabled, false);
-  assert.equal(inspection.transportStatus, "off");
-  coordinator.dispose();
+  assert.equal(saved.length, 1);
+  assert.deepEqual(saved[0], { schemaVersion: "tibotattle-desktop-first-run-v1", acknowledged: true });
+  assert.deepEqual(Object.keys(seed).sort(), ["adapter", "settingsRoot", "store"]);
 });
 
 test("normal candidate runner preserves a package stage in its content-free receipt", async () => {
@@ -2248,11 +2194,10 @@ test("normal candidate receipt retains distinct terminal startup-gate causes", a
       createRoot: async () => String.raw`C:\\runner\\temp\\owned`,
       prepareProfile: async () => ({ root: String.raw`C:\\runner\\temp\\owned\\profile` }),
       seedCodexFixture: async () => {},
-      seedProfile: async () => ({ shareBackend: {} }),
+      seedProfile: async () => ({}),
       assertProcessAbsence: async () => true,
       installFirewall: async () => FIREWALL_RULE,
       launchJourney: async () => { throw Object.assign(new Error("private failure"), { code: expected }); },
-      verifyOptOut: async () => true,
       removeFirewall: async () => true,
       removeProfile: async () => {},
     }), { code: expected });
@@ -2506,7 +2451,7 @@ test("normal candidate runner orders firewall coverage around both ordinary laun
     createRoot: async () => { events.push("root"); return String.raw`C:\runner\temp\owned`; },
     prepareProfile: async () => ({ root: String.raw`C:\runner\temp\owned\profile` }),
     seedCodexFixture: async () => { events.push("fixture"); },
-    seedProfile: async () => ({ shareBackend: {} }),
+    seedProfile: async () => ({}),
     assertProcessAbsence: async () => { events.push("absent"); return true; },
     installFirewall: async () => { events.push("firewall-add"); return FIREWALL_RULE; },
     launchJourney: async ({ candidateState, changeSettings }) => {
@@ -2517,7 +2462,6 @@ test("normal candidate runner orders firewall coverage around both ordinary laun
       launchNumber += 1;
       return passedJourney();
     },
-    verifyOptOut: async () => { events.push("opt-out"); return true; },
     removeFirewall: async () => { events.push("firewall-remove"); return true; },
     removeProfile: async () => { events.push("profile-remove"); },
   });
@@ -2526,7 +2470,7 @@ test("normal candidate runner orders firewall coverage around both ordinary laun
   assert.ok(events.indexOf("firewall-add") < events.indexOf("first"));
   assert.ok(events.indexOf("second") < events.indexOf("firewall-remove"));
   assert.deepEqual(events, [
-    "receipt-parent", "package", "root", "fixture", "absent", "firewall-add", "first", "second", "opt-out", "firewall-remove", "profile-remove",
+    "receipt-parent", "package", "root", "fixture", "absent", "firewall-add", "first", "second", "firewall-remove", "profile-remove",
   ]);
   assert.deepEqual(receipt, {
     schemaVersion: "tibotattle-electron-windows-normal-candidate-smoke-v1",
@@ -2545,7 +2489,6 @@ test("normal candidate runner orders firewall coverage around both ordinary laun
     syntheticFixtureTotalsRetainedAcrossRestart: true,
     projectsAndThreadsRetainedAcrossRestart: true,
     settingsPersistedAcrossRestart: true,
-    durableContributionOptOutRetained: true,
     loopbackJourneyVerified: true,
     outboundFirewallRuleVerified: true,
     outboundFirewallRuleRemoved: true,
@@ -2572,7 +2515,7 @@ test("normal candidate receipt retains completed dashboard proof when Settings f
     createRoot: async () => String.raw`C:\\runner\\temp\\owned`,
     prepareProfile: async () => ({ root: String.raw`C:\\runner\\temp\\owned\\profile` }),
     seedCodexFixture: async () => {},
-    seedProfile: async () => ({ shareBackend: {} }),
+    seedProfile: async () => ({}),
     assertProcessAbsence: async () => true,
     installFirewall: async () => FIREWALL_RULE,
     launchJourney: async ({ candidateState }) => {
@@ -2582,7 +2525,6 @@ test("normal candidate receipt retains completed dashboard proof when Settings f
       candidateState.quiescent = true;
       throw Object.assign(new Error("settings unavailable"), { code: errorCode });
     },
-    verifyOptOut: async () => true,
     removeFirewall: async () => true,
     removeProfile: async () => {},
   }), { code: errorCode });
@@ -2591,7 +2533,6 @@ test("normal candidate receipt retains completed dashboard proof when Settings f
   assert.equal(receipt.localRefreshObserved, true);
   assert.equal(receipt.localRefreshTerminal, "succeeded");
   assert.equal(receipt.settingsPersistedAcrossRestart, false);
-  assert.equal(receipt.durableContributionOptOutRetained, false);
   assert.equal(receipt.loopbackJourneyVerified, false);
   assert.equal(receipt.errorCode, errorCode);
 });
@@ -2612,7 +2553,7 @@ test("normal candidate failure receipt preserves only closed performance page di
     verifyPackage: async () => ({ sourceRevision: SOURCE_REVISION, artifactSha256: "a".repeat(64), executableSha256: "b".repeat(64) }),
     createRoot: async () => String.raw`C:\runner\temp\owned`,
     prepareProfile: async () => ({ root: String.raw`C:\runner\temp\owned\profile` }),
-    seedCodexFixture: async () => {}, seedProfile: async () => ({ shareBackend: {} }),
+    seedCodexFixture: async () => {}, seedProfile: async () => ({}),
     assertProcessAbsence: async () => true, installFirewall: async () => FIREWALL_RULE,
     launchJourney: async ({ candidateState }) => {
       candidateState.dashboardRendered = true;
@@ -2623,8 +2564,7 @@ test("normal candidate failure receipt preserves only closed performance page di
       throw Object.assign(new Error("private renderer error"), {
         code: errorCode, performancePageDiagnostic: { ...diagnostic, rawText: "private", toJSON: () => "private" },
       });
-    },
-    verifyOptOut: async () => true, removeFirewall: async () => true, removeProfile: async () => {},
+    }, removeFirewall: async () => true, removeProfile: async () => {},
   }), { code: errorCode });
   assert.deepEqual(receipt.performancePageDiagnostic, diagnostic);
   assert.equal(receipt.errorCode, errorCode);
@@ -2684,7 +2624,7 @@ test("normal candidate runner retains the outbound block and profile when proces
     createRoot: async () => String.raw`C:\runner\temp\owned`,
     prepareProfile: async () => ({ root: String.raw`C:\runner\temp\owned\profile` }),
     seedCodexFixture: async () => {},
-    seedProfile: async () => ({ shareBackend: {} }),
+    seedProfile: async () => ({}),
     assertProcessAbsence: async () => true,
     installFirewall: async () => FIREWALL_RULE,
     launchJourney: async ({ candidateState }) => {
@@ -2699,7 +2639,6 @@ test("normal candidate runner retains the outbound block and profile when proces
         startupCompletionDiagnostic,
       });
     },
-    verifyOptOut: async () => true,
     removeFirewall: async () => { removedFirewall = true; return true; },
     removeProfile: async () => { removedProfile = true; },
   }), {
@@ -2742,7 +2681,7 @@ test("normal candidate refuses to launch before the outbound block is verified",
     createRoot: async () => String.raw`C:\runner\temp\owned`,
     prepareProfile: async () => ({ root: String.raw`C:\runner\temp\owned\profile` }),
     seedCodexFixture: async () => {},
-    seedProfile: async () => ({ shareBackend: {} }),
+    seedProfile: async () => ({}),
     assertProcessAbsence: async () => true,
     installFirewall: (options) => installOutboundFirewallBlock({
       ...options,
@@ -2760,7 +2699,6 @@ test("normal candidate refuses to launch before the outbound block is verified",
       launched = true;
       return passedJourney();
     },
-    verifyOptOut: async () => true,
     removeFirewall: async () => true,
     removeProfile: async () => {},
   }), {

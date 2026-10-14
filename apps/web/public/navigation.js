@@ -1,26 +1,49 @@
-const PAGE_BY_TARGET = new Map([
-  ["overview", "overview"],
-  ["projects", "projects"],
-  ["weekly", "weekly"],
-  ["accounting", "method"],
-  ["method", "method"],
-  ["timeline", "trends"],
-  ["trends", "trends"],
-  ["performance", "performance"],
-  ["community", "community"],
-  ["history", "community"],
-  ["backend", "community"],
-  ["data", "community"],
+/**
+ * The four dashboard destinations. A page id is also its hash target: the
+ * sidebar, the desktop shell's fixed section map and `#<page>/<view>` links all
+ * use these values, so there is nothing to translate between them.
+ */
+export const DASHBOARD_PAGES = Object.freeze([
+  "overview",
+  "usage",
+  "allowance",
+  "performance",
 ]);
 
-function targetFromHash(windowRef) {
-  return decodeURIComponent(windowRef.location.hash.slice(1));
+const DEFAULT_PAGE = "overview";
+
+/**
+ * Splits `#<page>` or `#<page>/<view>` into its parts. An unknown page, or a
+ * hash that cannot be decoded, yields `page: null` so the caller keeps the
+ * current page. A view is only reported when the hash names one; whether that
+ * view exists is decided by the page's own view switch, which falls back to its
+ * default for an unknown value.
+ */
+export function parseDashboardHash(hash) {
+  let target;
+  try {
+    target = decodeURIComponent(String(hash ?? "").replace(/^#/u, ""));
+  } catch {
+    return { page: null, view: null };
+  }
+  const separator = target.indexOf("/");
+  const pageName = separator < 0 ? target : target.slice(0, separator);
+  const viewName = separator < 0 ? "" : target.slice(separator + 1);
+  return {
+    page: DASHBOARD_PAGES.includes(pageName) ? pageName : null,
+    view: viewName === "" ? null : viewName,
+  };
 }
 
 /**
  * Keeps the dashboard's major areas as real pages.  The old scroll-spy made
  * every section appear to be a destination, which was awkward in a desktop
  * app and could leave people lost halfway down a long technical report.
+ *
+ * `#<page>/<view>` additionally asks the page to show one of its level-1 views
+ * through the `tibotattle:page-view` event. The page view switch owns the list
+ * of valid views, so mount it before this function (or read the initial hash
+ * with `parseDashboardHash`) if the first hash must select a view.
  */
 export function mountDashboardNavigation({ documentRef, windowRef }) {
   const links = [...documentRef.querySelectorAll("[data-nav]")];
@@ -42,8 +65,6 @@ export function mountDashboardNavigation({ documentRef, windowRef }) {
     }
     activePage = page;
     if (documentRef.body?.dataset) documentRef.body.dataset.dashboardPage = page;
-    const reportingToolbar = documentRef.querySelector("#reporting-period-toolbar");
-    if (reportingToolbar) reportingToolbar.hidden = page === "community";
     for (const element of pages) {
       const inactive = element.dataset.dashboardPage !== page;
       element.classList.toggle("dashboard-page-inactive", inactive);
@@ -61,18 +82,23 @@ export function mountDashboardNavigation({ documentRef, windowRef }) {
     return true;
   }
 
+  function requestView(page, view) {
+    const CustomEventConstructor = windowRef.CustomEvent;
+    if (typeof CustomEventConstructor !== "function"
+        || typeof documentRef.dispatchEvent !== "function") return;
+    documentRef.dispatchEvent(new CustomEventConstructor(
+      "tibotattle:page-view",
+      { detail: { page, view } },
+    ));
+  }
+
   function syncNavigationFromHash() {
-    const target = targetFromHash(windowRef);
-    if (["history", "backend"].includes(target)) {
-      const disclosure = documentRef.querySelector(
-        "#community-contribution-disclosure",
-      );
-      if (disclosure) disclosure.open = true;
-    }
+    const { page: target, view } = parseDashboardHash(windowRef.location.hash);
     const hadActivePage = activePage !== null;
-    const page = PAGE_BY_TARGET.get(target) ?? activePage ?? "overview";
-    if (setPage(page, { focusHeading: hadActivePage }) && hadActivePage) {
-      windowRef.scrollTo?.({ top: 0, behavior: "instant" });
+    const page = target ?? activePage ?? DEFAULT_PAGE;
+    if (setPage(page, { focusHeading: hadActivePage })) {
+      if (target !== null && view !== null) requestView(page, view);
+      if (hadActivePage) windowRef.scrollTo?.({ top: 0, behavior: "instant" });
     }
   }
 

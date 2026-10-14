@@ -337,6 +337,22 @@ async function loadLineChartRenderer(documentRef, { translate = null } = {}) {
 }
 
 /**
+ * Load the allowance plan-label helper in isolation, injecting the two
+ * bounded plan vocabularies it intentionally depends on.
+ */
+async function loadAllowancePlanLabel() {
+  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  const start = appSource.indexOf("const ALLOWANCE_PLAN_LABELS");
+  const end = appSource.indexOf("\n/**\n * A date-only label", start);
+  assert.ok(start >= 0 && end > start, "the allowance plan-label helper is available");
+  return Function(
+    "TELEMETRY_PLAN_DISPLAY_NAMES",
+    "TELEMETRY_PLAN_TYPES",
+    `${appSource.slice(start, end)}\nreturn { ALLOWANCE_PLAN_LABELS, allowancePlanLabel };`,
+  )(TELEMETRY_PLAN_DISPLAY_NAMES, TELEMETRY_PLAN_TYPES);
+}
+
+/**
  * Run the shipped renderWeekly against a fake DOM at a chosen range/span, so
  * the hero copy can be compared across control positions instead of inferred
  * from the source.
@@ -374,7 +390,7 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
   const money = (value, digits = 0) => value === null || value === undefined
     ? "—"
     : `$${Number(value).toFixed(digits)}`;
-  const { shareCardPlanLabel } = await loadShareCardPlan();
+  const { allowancePlanLabel } = await loadAllowancePlanLabel();
   let shared = null;
   let paceData = null;
 
@@ -383,12 +399,12 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
     "formatChartTimestamp", "formatMoney", "formatDecimal", "formatPercent",
     "formatPp", "formatChartTimeLabel", "formatTimeZoneLabel", "timelineStatusKey",
     "setRawText", "setLocalizedText", "setLocalizedPluralText", "t", "tPlural",
-    "shareCardDateLabel", "ALL_HISTORY_RANGE_DAYS",
+    "allowanceDateLabel", "ALL_HISTORY_RANGE_DAYS",
     "$", "clear", "node", "formatLocal", "formatNumber",
     "renderWeeklyPaceForecast",
-    // renderWeekly owns the share-card re-render (owner-verified regression,
-    // 2026-08-08), so the hero harness stubs it like the other renderers.
-    "renderShareCard",
+    // The harness observes the selected-plan view and the history model that
+    // renderWeekly builds from it.
+    "captureHistory",
     // The stale-serve recalculating note is rendered by the shared helper;
     // the hero harness stubs it like the other side-effect renderers.
     "renderStaleServeNote",
@@ -396,9 +412,12 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
     "selectAllowancePlanPopulation", "activeWeeklyPlanType",
     "activeAllowanceWindowMinutes", "CODEX_FIVE_HOUR_ALLOWANCE_MINUTES",
     "CODEX_WEEKLY_ALLOWANCE_MINUTES", "isPrimaryCodexQuotaWindow",
-    "renderWeeklyPlanControl", "shareCardPlanLabel",
+    "renderWeeklyPlanControl", "allowancePlanLabel",
     "buildAllowanceTrends",
-    `${section}\nreturn renderWeekly;`,
+    `${section}\nconst buildHistoryModel = allowanceHistoryChartModel;\n`
+      + `allowanceHistoryChartModel = (...args) => {\n`
+      + `  const model = buildHistoryModel(...args);\n  captureHistory(args[0], model);\n  return model;\n};\n`
+      + `return renderWeekly;`,
   )(
     { createElementNS: (_namespace, tagName) => new FakeSvgElement(tagName) },
     FakeResizeObserver,
@@ -427,7 +446,7 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
     (value) => new Date(value).toISOString().slice(0, 10),
     (value) => String(value),
     (selectedData) => { paceData = selectedData; },
-    (selectedData, { history }) => { shared = { data: selectedData, history }; },
+    (selectedData, history) => { shared = { data: selectedData, history }; },
     () => {},
     rangeDays,
     span,
@@ -438,7 +457,7 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
     CODEX_WEEKLY_ALLOWANCE_MINUTES,
     () => true,
     () => {},
-    shareCardPlanLabel,
+    allowancePlanLabel,
     buildAllowanceTrends,
   )(data);
 
@@ -2071,22 +2090,6 @@ test("newer-schema accounting remains a terminal unavailable state across the br
   assert.match(appSource, /projection\.status !== "available"/u);
   assert.match(appSource, /accountingIsUnavailable\(data\).*activePoints\.length === 0/u);
   assert.match(appSource, /unavailable && visiblePoints\.length === 0[\s\S]*?"—"/u);
-  assert.ok(
-    appSource.includes('if (projection.status === "unavailable") return null;'),
-    "share-card accounting selection closes on terminal unavailable data",
-  );
-  assert.ok(
-    appSource.includes('&& finite(totalCostUsd, 0) <= 0'),
-    "a retained zero cost is withheld rather than shared as measured evidence",
-  );
-  assert.ok(
-    appSource.includes('t("share.detail.newerBuildRequired")'),
-    "the shared-card unavailable state names the required newer build",
-  );
-  assert.ok(
-    appSource.includes('"share.detail.lastVerifiedNewerBuild"'),
-    "retained share-card evidence is labeled last verified and names the newer build",
-  );
 });
 
 test("a contradictory available accounting attestation fails closed", () => {
@@ -5275,7 +5278,7 @@ test("first run is a truthful install and local preflight journey", async () => 
   // Re-pinned 2026-08-08 (owner-directed): the prepare-and-review disclosure
   // is gone; the approve-once card carries the no-silent-upload promise now.
   assert.doesNotMatch(html, /id="community-contribution-disclosure"/u);
-  assert.match(html, /id="electron-accountless-sharing-description"/u);
+  assert.doesNotMatch(html, /id="electron-accountless-sharing-description"/u);
   assert.doesNotMatch(html, /id="incremental-consent"/u);
   assert.match(styles, /native-dashboard #setup-card/u);
   assert.match(appSource, /card\.hidden = true;[\s\S]*?card\.setAttribute\("aria-hidden", "true"\)/u);
@@ -5376,7 +5379,7 @@ test("timeline keeps time, uncertainty, and primary navigation explicit", async 
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.match(html, /data-nav="community"/);
+  assert.deepEqual([...html.matchAll(/data-nav="([a-z]+)"/gu)].map((match) => match[1]), ["overview", "usage", "allowance", "performance"]);
   assert.doesNotMatch(html, /data-nav="data"/u);
   assert.match(html, /id="residual-time-heading">Local time/);
   assert.doesNotMatch(html, /Exact local \/ UTC time/);
@@ -5426,7 +5429,7 @@ test("timeline keeps time, uncertainty, and primary navigation explicit", async 
   assert.ok(html.indexOf('id="usage-timeline-chart"') < html.indexOf('id="timeline-chart"'));
   assert.ok(html.indexOf('id="timeline-chart"') < html.indexOf('id="residual-chart"'));
   assert.doesNotMatch(html, /<details class="advanced-calibration"/u);
-  assert.match(html, /class="panel trends-evidence-details"/u);
+  assert.match(html, /class="trends-evidence-details"/u);
   // Owner decision 2026-08-06: the calibration rolling comparison window is
   // fixed at three hours — the 15-minute and 1-hour widths proved inaccurate,
   // and a segmented control with one honest option is clutter. The previous
@@ -5508,7 +5511,7 @@ test("weekly view keeps the default surface to the estimate and its reset histor
   const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.doesNotMatch(html, /id="weekly-trend"/);
   assert.doesNotMatch(html, /id="weekly-stats"/);
-  assert.match(html, /<summary>See individual usage changes<\/summary>/);
+  assert.match(html, /<h3>See individual usage changes<\/h3>/);
   assert.doesNotMatch(appSource, /function renderWeeklyTrend/);
   assert.doesNotMatch(appSource, /function renderWeeklyStats/);
 });
@@ -5522,9 +5525,8 @@ test("weekly view keeps pricing provenance with accounting and removes the obsol
   assert.doesNotMatch(appSource, /function renderWeeklyPricingReceipt|renderWeeklyPricingReceipt\(/u);
   assert.doesNotMatch(styles, /\.weekly-pricing-receipt/u);
   // The overview's registry-provenance fragment left with the cost card's
-  // metadata line (owner-directed, 2026-08-10); the share card remains the
-  // surface that publishes the price-registry version.
-  assert.match(appSource, /shareCardRegistryVersion\(data\?\.pricing\?\.registryVersion\)/u);
+  // metadata line (owner-directed, 2026-08-10); no dashboard surface prints it.
+  assert.doesNotMatch(appSource, /shareCardRegistryVersion/u);
 });
 
 test("weekly keeps every fit visible and marks short observations separately", async () => {
@@ -5691,7 +5693,7 @@ test("the weekly headline is a stable all-data median and says so on screen", as
   }
 });
 
-test("the historical allowance headline and shared history use one selected plan without changing current pace", async () => {
+test("the historical allowance headline and history use one selected plan without changing current pace", async () => {
   const populations = [["pro", 2_400], ["plus", 85]].map(([planType, value]) => ({
     planType,
     status: "available",
@@ -5739,7 +5741,7 @@ test("the historical allowance headline and shared history use one selected plan
       "historical plan changes cannot overwrite the current Overview forecast");
     assert.equal(view.shared.history.points.length, shown);
     assert.ok(view.shared.history.points.every((row) => row.value === value),
-      "the share card gets the exact selected-plan and filtered history, never a pooled graph");
+      "the chart gets the exact selected-plan and filtered history, never a pooled graph");
     assert.strictEqual(view.shared.data.accounting, data.accounting,
       "plan-specific estimates do not discard the complete activity ledger");
   }
@@ -6366,16 +6368,19 @@ test("the weekly allowance chart leads the dashboard", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
 
+  // One Allowance destination: its default view (Changes) leads, the
+  // equivalent history is a later view of the same page.
   assert.ok(
-    html.indexOf('id="weekly"') < html.indexOf('id="timeline"'),
-    "the weekly allowance section precedes the timeline section",
+    html.indexOf('id="timeline"') < html.indexOf('id="weekly"'),
+    "the Changes view precedes the API-equivalent view inside the Allowance page",
   );
   assert.ok(
-    html.indexOf('data-nav="weekly"') < html.indexOf('data-nav="trends"'),
-    "primary navigation follows the same order as the sections",
+    html.indexOf('data-nav="usage"') < html.indexOf('data-nav="allowance"')
+      && html.indexOf('data-nav="allowance"') < html.indexOf('data-nav="performance"'),
+    "primary navigation lists the four destinations in order",
   );
-  assert.match(html, /<h2 id="weekly-title" data-i18n="page.weekly.title">Allowance Estimate<\/h2>/u);
-  assert.match(html, /<h2 id="timeline-title" data-i18n="page.timeline.title">Trends<\/h2>/u);
+  assert.match(html, /<h1 id="allowance-page-title" data-i18n="page.allowance.title">Allowance<\/h1>/u);
+  assert.doesNotMatch(html, /id="weekly-title"|id="timeline-title"/u);
   assert.match(html, /class="dashboard-section lead-section(?: dashboard-page-inactive)?" id="weekly"/u);
   assert.match(html, /class="panel weekly-history-panel lead-chart-panel chart-card"/u);
   // The lead chart must use the available page width instead of introducing a
@@ -6397,7 +6402,7 @@ test("weekly details keep reset evidence concise and do not present speed covera
   assert.ok(tableMatch, "renderWeeklyTable source is available for contract review");
   const tableSource = tableMatch[1];
 
-  assert.match(html, /<summary>See individual usage changes<\/summary>/u);
+  assert.match(html, /<h3>See individual usage changes<\/h3>/u);
   // Re-pinned 2026-08-08 (estimator audit): the per-reset bars are the
   // p10–p90 spread of pairwise slopes WITHIN a reset — a disagreement
   // diagnostic. Every surface now calls them the slope-agreement range
@@ -7278,847 +7283,6 @@ function firstArguments(source, call) {
   }
   return found;
 }
-
-/**
- * Load the plan-label helpers in isolation, injecting the two values they
- * intentionally depend on from the surrounding browser module.
- */
-async function loadShareCardPlan() {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const start = appSource.indexOf("const SHARE_CARD_PLAN_LABELS");
-  const end = appSource.indexOf("\nlet shareCard = null;", start);
-  assert.ok(start >= 0 && end > start, "the plan-label helpers are available");
-  const section = appSource.slice(start, end);
-  return Function(
-    "finite",
-    "TELEMETRY_PLAN_DISPLAY_NAMES",
-    "TELEMETRY_PLAN_TYPES",
-    `${section}\nreturn { SHARE_CARD_PLAN_LABELS, shareCardPlanLabel, shareCardPlan };`,
-  )(
-    (value, fallback = null) => (
-      typeof value === "number" && Number.isFinite(value) ? value : fallback
-    ),
-    TELEMETRY_PLAN_DISPLAY_NAMES,
-    TELEMETRY_PLAN_TYPES,
-  );
-}
-
-test("the share card names only a known, most-recent Codex plan", async () => {
-  const { SHARE_CARD_PLAN_LABELS, shareCardPlanLabel, shareCardPlan } =
-    await loadShareCardPlan();
-
-  assert.equal(shareCardPlanLabel("pro"), "Pro (10×)");
-  assert.equal(shareCardPlanLabel("prolite"), "Pro Lite (5×)");
-  assert.equal(shareCardPlanLabel("promax"), "Pro Max 25×");
-  assert.equal(shareCardPlanLabel("plus"), "Plus");
-  assert.equal(shareCardPlanLabel("edu_plus"), "Edu Plus");
-  assert.equal(shareCardPlanLabel("edu_pro"), "Edu Pro");
-  assert.equal(
-    shareCardPlanLabel("self_serve_business_prolite"),
-    "Business · Pro Lite (5×)",
-  );
-  assert.equal(shareCardPlanLabel("unknown"), "");
-  assert.equal(shareCardPlanLabel(""), "");
-  assert.equal(shareCardPlanLabel("  "), "");
-  assert.equal(shareCardPlanLabel("teamplus"), "");
-  assert.equal(shareCardPlanLabel(undefined), "");
-  assert.equal(shareCardPlanLabel(null), "");
-  assert.ok(!Object.hasOwn(SHARE_CARD_PLAN_LABELS, "unknown"));
-  assert.deepEqual(
-    Object.keys(SHARE_CARD_PLAN_LABELS).sort(),
-    TELEMETRY_PLAN_TYPES.filter((plan) => plan !== "unknown").sort(),
-  );
-
-  assert.equal(
-    shareCardPlan([
-      { planType: "plus", observedAt: "2026-08-01T00:00:00.000Z" },
-      { planType: "pro", observedAt: "2026-08-13T00:00:00.000Z" },
-    ]),
-    "Pro (10×)",
-  );
-  assert.equal(
-    shareCardPlan([
-      { planType: "pro", observedAt: "2026-08-13T00:00:00.000Z" },
-      { planType: "plus", observedAt: "2026-08-01T00:00:00.000Z" },
-    ]),
-    "Pro (10×)",
-  );
-  assert.equal(
-    shareCardPlan([
-      { planType: "pro", observedAt: "2026-08-13T00:00:00.000Z" },
-      { planType: "unknown", observedAt: "2026-08-20T00:00:00.000Z" },
-    ]),
-    "Pro (10×)",
-  );
-  assert.equal(shareCardPlan([{ planType: "pro", observedAt: "" }]), "Pro (10×)");
-  assert.equal(
-    shareCardPlan([
-      { planType: "plus", observedAt: "2026-08-13T00:00:00.000Z" },
-      { planType: "pro", observedAt: "" },
-    ]),
-    "Plus",
-  );
-  assert.equal(shareCardPlan([{ planType: "unknown" }]), "");
-  assert.equal(
-    shareCardPlan([{ observedAt: "2026-08-20T00:00:00.000Z" }]),
-    "",
-  );
-  assert.equal(shareCardPlan([]), "");
-  assert.equal(shareCardPlan(null), "");
-});
-
-test("the share card wires plan copy through the canvas and transcript", async () => {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const section = shareCardSource(appSource);
-
-  assert.match(
-    section,
-    /const planLabel = data\.allowancePlanSelection\s*\n\s*\? shareCardPlanLabel\(data\?\.weekly\?\.planType\) \|\| t\("weekly\.plan\.unknown"\)\s*\n\s*: shareCardPlan\(data\?\.quotaWindows \?\? \[\]\);/u,
-  );
-  assert.match(
-    section,
-    /plan: planLabel === "" \? "" : t\(\s*\n\s*data\.allowancePlanSelection \? "share\.planAllowance" : "share\.plan",\s*\n\s*\{ plan: planLabel \},\s*\n\s*\),/u,
-  );
-  assert.match(
-    section,
-    /if \(card\.plan !== ""\) \{\s*\n\s*drawShareCardPlan\(context, card\.plan, SHARE_CARD_WIDTH - margin, 156\);/u,
-  );
-  assert.match(section, /function drawShareCardPlan\(context, plan, right, baseline\) \{/u);
-  assert.match(section, /context\.fillText\(plan, x \+ 13, baseline\);/u);
-  assert.doesNotMatch(
-    section.match(/function drawShareCardPlan[\s\S]*?\n\}/u)?.[0] ?? "",
-    /toLocaleUpperCase/u,
-  );
-  assert.match(
-    section,
-    /t\("share\.text\.header", \{ subtitle: card\.subtitle, title: card\.title \}\),\s*\n(?:\s*\/\/[^\n]*\n)*\s*card\.plan,/u,
-  );
-
-  assert.ok(Object.hasOwn(WEB_MESSAGES, "share.plan"));
-  assert.equal(WEB_MESSAGES["share.plan"].length, SUPPORTED_LOCALES.length);
-  for (const locale of SUPPORTED_LOCALES) {
-    const copy = translate("share.plan", { plan: "Pro (10×)" }, locale);
-    assert.match(copy, /Pro \(10×\)/u, locale);
-    assert.doesNotMatch(copy, /\{plan\}/u, locale);
-  }
-
-  // The additive plan field must not replace the evidence date in the image
-  // signature: a card remains tied to its observed headline date.
-  const signature = section.match(/const signature = JSON\.stringify\(\[([\s\S]*?)\]\);/u)?.[1];
-  assert.ok(signature, "the share-card signature is available");
-  assert.match(signature, /headlineDate,/u);
-  assert.match(signature, /shareCardPlan\(data\?\.quotaWindows \?\? \[\]\),/u);
-  assert.match(signature, /data\.allowancePlanSelection \?\? null,/u);
-  assert.match(section, /caveats\.push\(t\("share\.caveat\.planConditional"\)\);/u);
-});
-
-test("a posted results card can carry only fixed copy and formatted figures", async () => {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const section = shareCardSource(appSource);
-
-  // Everything painted onto the image. Each entry is either a literal written
-  // here, a formatted number, or a field of the frozen card model, so a
-  // payload string cannot reach the canvas without failing this list. A
-  // prompt, a response, a file path, a folder name, a URL, an account
-  // identifier or an email would all have to arrive as one of these.
-  // Re-pinned 2026-08-08 (owner-directed card v4): the identifier/debug line
-  // left the image (it survives in the text transcript, the file name, and
-  // the chip beside the card), the top-right corner prints the app version
-  // instead of the home host, and the trend corner states the shown-of-total
-  // population sentence rather than a bare subset count.
-  assert.deepEqual(
-    [...new Set(firstArguments(section, "context.fillText("))].sort(),
-    [
-      "\"TiboTattle\"",
-      "badge",
-      "card.trendCount",
-      "card.trendEmpty",
-      "card.trendEmptyDetail",
-      "card.trendLabel.toLocaleUpperCase(localization.locale())",
-      "card.versionLabel",
-      // The plot's marker key, composed in `buildShareCard` from the chart's
-      // own series labels and frozen onto `card.trendLegend` (2026-08-19):
-      // the outlined short-observation marker is a claim about evidence the
-      // picture could not otherwise explain.
-      "entry.label",
-      "formatMoney(value, axisDigits)",
-      "line",
-      "plan",
-      "shareCardFit(context, card.subtitle, inner)",
-      "shareCardFit(context, card.title, inner)",
-      "shareCardFit(context, stat.value, textWidth)",
-      "tick.label",
-      "xAxisLabel",
-      "yAxisLabel",
-    ],
-  );
-
-  // The whole of the dashboard the card is allowed to see. Everything here is
-  // a number, a fixed enumeration, or a version identifier; no field carries
-  // user text, and a card that started reading one would fail this list.
-  // data.accounting.periods joined 2026-08-10 (owner-directed): the activity
-  // figure follows the usage chart's selected range, and the selection reads
-  // only per-period numbers, the fastMode enum, and pricing-coverage counts,
-  // then labels the range through fixed message keys — never a payload label.
-  assert.deepEqual(
-    [...new Set(
-      [...section.matchAll(/data\??\.[A-Za-z]+(?:\?\.[A-Za-z]+)*/gu)].map((match) => match[0]),
-    )].sort(),
-    [
-      "data.accounting",
-      "data.allowancePlanSelection",
-      "data.reportingAccountingPeriod",
-      "data.reportingWindow",
-      "data?.accounting?.periods",
-      "data?.freshness?.latestObservedAt",
-      "data?.mode",
-      "data?.pricing",
-      "data?.pricing?.coveragePercent",
-      "data?.pricing?.fastMode?.unweightedUnknownApiPriceEquivalentUsd",
-      "data?.pricing?.fastMode?.weightingStatus",
-      "data?.pricing?.quotaWeightedTotalCostUsd",
-      "data?.pricing?.registryVersion",
-      "data?.pricing?.totalCostUsd",
-      "data?.quotaWindows",
-      "data?.schemaVersion",
-      "data?.weekly?.planType",
-      "data?.weekly?.summary",
-      "data?.weekly?.summary?.median",
-      "data?.weekly?.summary?.medianWeeklyValueUsd",
-    ],
-  );
-
-  // The card receives the same derived history model as the Allowance page.
-  // It cannot independently read raw local records, change the active range,
-  // hide shorter fits, or select a different vertical scale.
-  const trend = section.match(
-    /function shareCardTrend\(history\) \{[\s\S]*?\n\}/u,
-  )?.[0];
-  assert.ok(trend, "the plotted history builder is available");
-  assert.deepEqual(
-    [...new Set([...trend.matchAll(/point\?\.[A-Za-z0-9_]+/gu)].map((match) => match[0]))].sort(),
-    [
-      "point?.acrossResetHigh",
-      "point?.acrossResetLow",
-      "point?.allowanceLowess",
-      "point?.at",
-      "point?.high",
-      "point?.historicalMedian",
-      "point?.low",
-      "point?.value",
-    ],
-  );
-  assert.match(trend, /Array\.isArray\(history\?\.points\)/u);
-  assert.match(trend, /dateLabel: point\.dateLabel,/u);
-  assert.match(trend, /wellObserved: point\.wellObserved === true,/u);
-  assert.match(trend, /const axisLow = finite\(history\?\.axis\?\.low\);/u);
-  assert.match(trend, /axis: Object\.freeze\(\{[\s\S]*?low: axisLow,/u);
-  assert.match(trend, /xTicks: Object\.freeze\(\[\.\.\.\(history\?\.xTicks \?\? \[\]\)\]\),/u);
-  assert.match(trend, /firstDateLabel: points\[0\]\.dateLabel,/u);
-  assert.match(trend, /lastDateLabel: points\[points\.length - 1\]\.dateLabel,/u);
-  assert.doesNotMatch(
-    section,
-    /toLocaleString|toLocaleDateString|toLocaleTimeString|toISOString/u,
-  );
-  // The date formatter follows the independently selected regional format in
-  // the viewer's time zone. It accepts the parsed number, not a source string.
-  assert.match(
-    section,
-    /function shareCardDateLabel\(timestamp\) \{[\s\S]*?new Intl\.DateTimeFormat\(getFormattingLocale\(\), \{[\s\S]*?month: "short",[\s\S]*?day: "numeric",[\s\S]*?year: "numeric",/u,
-  );
-  assert.match(
-    section,
-    /if \(!Number\.isFinite\(timestamp\)\) return "";/u,
-  );
-  assert.match(
-    section,
-    /function shareCardHeadlineDate\(data, history\) \{\s*\n\s*const latestObservedAt = Date\.parse\(data\?\.freshness\?\.latestObservedAt \?\? ""\);\s*\n\s*const timestamp = Number\.isFinite\(history\?\.anchorAt\)\s*\n\s*\? history\.anchorAt\s*\n\s*: latestObservedAt;\s*\n\s*return shareCardDateLabel\(timestamp\);\s*\n\}/u,
-  );
-  assert.match(section, /const yAxisLabel = t\("share\.axis\.allowance"\);/u);
-  assert.match(section, /const xAxisLabel = t\("share\.axis\.resetEstimateDate"\);/u);
-  assert.match(section, /for \(const value of axis\.ticks\) \{[\s\S]*?formatMoney\(value, axisDigits\)/u);
-  assert.match(section, /for \(const tick of xTicks\) \{[\s\S]*?context\.fillText\(tick\.label, tickX, plotBottom \+ 21\);/u);
-  assert.match(section, /const bandLow = finite\(points\[0\]\?\.acrossResetLow\);/u);
-  assert.match(section, /const median = finite\(points\[0\]\?\.historicalMedian\);/u);
-  assert.doesNotMatch(
-    section,
-    /SHARE_CARD_TREND_MAX_POINTS|function shareCardTrendAxis|function shareCardTrendDateTicks/u,
-  );
-  // The classification is fixed in the shared model, not read from the
-  // on-screen control, so two readers of the same evidence post the same
-  // picture.
-  assert.doesNotMatch(section, /weeklySpanThresholdPp|showWeeklyPartialDiagnostics/u);
-
-  // The three free-form strings that do arrive are each replaced before use.
-  // A window's own label is never printed and an allowance is selected only
-  // through the stable normal-Codex quota predicate, not its translated label.
-  assert.match(
-    section,
-    /function shareCardWindowKind\(window\) \{\s*\n\s*if \(!isPrimaryCodexQuotaWindow\(window\)\) return "other";\s*\n\s*const minutes = finite\(window\?\.durationMinutes\);/u,
-  );
-  // A provider-reported 30-day window is a real allowance denominator. It
-  // must win selection rather than being silently replaced with the old
-  // seven-day/five-hour fallback, and it must suppress weekly-only history.
-  const providerReportedThirtyDayWindow = 43_200;
-  assert.equal(providerReportedThirtyDayWindow, 30 * 24 * 60);
-  assert.match(
-    section,
-    /const selected = selectPrimaryCodexQuotaWindow\(observed\);\s*\n\s*return selected;/u,
-  );
-  assert.doesNotMatch(section, /observed\.find\(/u);
-  assert.match(
-    section,
-    // A selected plan population is itself an explicit seven-day calibration
-    // contract, even when its historical account has no current quota window.
-    // Legacy payloads still cannot borrow a seven-day fit for another duration.
-    /const isWeeklyWindow = data\.allowancePlanSelection !== undefined\s*\n\s*\|\| shareCardWindowKind\(allowanceWindow\) === "seven_day";/u,
-  );
-  assert.match(
-    section,
-    /const capacity = isWeeklyWindow \? finite\(/u,
-  );
-  assert.match(
-    section,
-    /const trend = isWeeklyWindow \? shareCardTrend\(history\) : null;/u,
-  );
-  // The population sentence is composed only from the frozen trend's numbers
-  // and fixed range/span vocabulary.
-  assert.match(
-    section,
-    /trendCount: trend === null \? "" : shareCardTrendCountLabel\(trend\),/u,
-  );
-  assert.match(
-    section,
-    /\? t\("share\.trend\.countWithFloor", \{/u,
-  );
-  assert.match(
-    section,
-    /: t\("share\.trend\.countAnySpan", values\);/u,
-  );
-  assert.match(
-    section,
-    /localizedQuotaWindowDuration\(window\?\.durationMinutes\)/u,
-  );
-  assert.deepEqual(
-    [...new Set(
-      [...section.matchAll(/\b(?:window|allowanceWindow)\??\.[A-Za-z]+/gu)]
-        .map((match) => match[0])
-        .filter((value) => !value.startsWith("window.")),
-    )].sort(),
-    [
-      "allowanceWindow?.durationMinutes",
-      "allowanceWindow?.remainingPercent",
-      "window?.durationMinutes",
-      "window?.remainingPercent",
-    ],
-  );
-  // A period name is looked up in the product's own vocabulary and then
-  // translated from a stable key. The arriving string is matched, never
-  // rendered, so even a recognized label reaches the image only as fixed copy.
-  assert.match(
-    section,
-    /function shareCardPeriodLabel\(candidate\) \{\s*\n\s*return t\(SHARE_CARD_PERIOD_KEYS\.get\(candidate\) \?\? "share\.period\.recorded"\);/u,
-  );
-  const phrases = section.match(
-    /const SHARE_CARD_PERIOD_KEYS = new Map\(\[([\s\S]*?)\]\);/u,
-  )?.[1];
-  assert.ok(phrases, "the period vocabulary is available");
-  assert.deepEqual(
-    [...phrases.matchAll(/\["([^"]+)", "([^"]+)"\]/gu)].map((match) => match[1]),
-    [
-      "All retained evidence",
-      "Cached 31-day window",
-      "Cached 31-day collector window",
-      "Last 24 hours",
-      "Last 30 days",
-      "Last 7 days",
-      "Recorded period",
-    ],
-  );
-  // The range-selected label comes from the fixed SHARE_CARD_RANGE_PERIODS
-  // key map (owner-directed, 2026-08-10); the payload's own period label
-  // remains the fallback and still passes through the fixed vocabulary.
-  assert.match(
-    section,
-    /const period = activity !== null\s*\n\s*\? t\(activity\.labelKey\)\s*\n\s*: shareCardPeriodLabel\(pricing\.periodLabel\);/u,
-  );
-  assert.match(
-    section,
-    /const SHARE_CARD_RANGE_PERIODS = Object\.freeze\(\{/u,
-  );
-  assert.equal(
-    section.match(/pricing\.periodLabel/gu).length,
-    1,
-    "the period label is read only through the fixed vocabulary",
-  );
-  // Both version identifiers are accepted only in a shape that cannot hold a
-  // path, a sentence, or a quoted value.
-  assert.match(
-    section,
-    /const SHARE_CARD_REGISTRY_VERSION_PATTERN = \/\^\[A-Za-z0-9\]\[A-Za-z0-9\._-\]\{0,47\}\$\/u;/u,
-  );
-  assert.match(
-    section,
-    /const SHARE_CARD_APP_VERSION_PATTERN = \/\^\[0-9\]\+\\\.\[0-9\]\+\\\.\[0-9\]\+\$\/u;/u,
-  );
-  assert.match(
-    section,
-    /return typeof candidate === "string"\s*\n\s*&& SHARE_CARD_REGISTRY_VERSION_PATTERN\.test\(candidate\)/u,
-  );
-  assert.match(
-    section,
-    /return SHARE_CARD_APP_VERSION_PATTERN\.test\(value \?\? ""\) \? value : "";/u,
-  );
-
-  // The link prints a host and nothing else, so no path, query or fragment
-  // from the page's own canonical URL can be carried into a post.
-  assert.match(
-    section,
-    /const host = new URL\(canonical\)\.hostname\.replace\(\/\^www\\\.\/u, ""\);\s*\n\s*return SHARE_CARD_HOME_PATTERN\.test\(host\) \? host : fallback;/u,
-  );
-  assert.doesNotMatch(section, /\.pathname|\.search|\.hash|location\.href/u);
-
-  // Composed once and frozen, so nothing can be appended to a card between
-  // composition and painting.
-  assert.match(section, /return Object\.freeze\(\{\s*\n\s*reference,/u);
-  assert.match(section, /stats: Object\.freeze\(stats\.map\(\(stat\) => Object\.freeze\(\{ \.\.\.stat \}\)\)\)/u);
-
-  // The image and its accessible label are rendered from that one frozen card.
-  // The redundant text transcript is intentionally absent from the primary UI.
-  assert.match(section, /canvas\.setAttribute\("aria-label", shareCardText\(shareCard\)\);/u);
-  assert.doesNotMatch(section, /renderShareCardReadout\(shareCard\);/u);
-  assert.match(section, /if \(!drawShareCard\(canvas, shareCard\)\)/u);
-
-  // The page makes the same promise beside the card.
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  assert.match(html, /id="share-panel"/u);
-  // Re-pinned 2026-08-08 (third round): tolerate the caption's own wrapping —
-  // the promise itself is what is pinned, not the line break positions.
-  assert.match(
-    html,
-    /It contains no\s+prompts, responses, paths, account details, or raw\s+activity/u,
-  );
-  // Re-pinned 2026-08-08 (owner-directed, third round): the share panel sits
-  // ABOVE the "See individual usage changes" disclosure, and its header is
-  // the title plus ONE caption sentence — the filter promise and the privacy
-  // promise together, with the earlier multi-paragraph explainer gone.
-  const sharePosition = html.indexOf('id="share-panel"');
-  const disclosurePosition = html.indexOf(
-    "<summary>See individual usage changes</summary>",
-  );
-  assert.ok(sharePosition >= 0 && disclosurePosition >= 0);
-  assert.ok(sharePosition < disclosurePosition);
-  assert.match(
-    html,
-    /The card follows the chart’s active date range and span filter\.\s*\n?\s*It contains no\s*\n?\s*prompts, responses, paths, account details, or raw\s*\n?\s*activity\./u,
-  );
-  const sharePanelHtml = html.slice(
-    sharePosition,
-    html.indexOf('class="share-preview"', sharePosition),
-  );
-  assert.equal(
-    (sharePanelHtml.match(/class="annotation"/gu) ?? []).length,
-    1,
-    "the share panel header carries exactly one caption paragraph",
-  );
-  assert.doesNotMatch(
-    html,
-    /A ready-to-post image of the three headline figures\./u,
-  );
-  // The chart renderer owns the card re-render (owner-verified regression,
-  // 2026-08-08): renderWeekly ends by redrawing the card from the SAME
-  // history model it drew, and the range/span handlers rely on that instead
-  // of each carrying its own card call that a new path could forget.
-  assert.match(
-    appSource,
-    /renderWeeklyTable\(values, windowMinutes\);\s*\n[\s\S]{0,900}?if \(windowMinutes === CODEX_WEEKLY_ALLOWANCE_MINUTES\) \{\s*\n\s*renderShareCard\(data, \{ history \}\);/u,
-  );
-  assert.doesNotMatch(appSource, /renderShareCard\(dashboard\);/u);
-});
-
-/**
- * The plotted-history helpers in isolation, with the same two formatters and
- * the real catalogue behind them, so the strings asserted here are the ones a
- * reader gets.
- */
-async function loadShareCardTrendHelpers() {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const section = shareCardSource(appSource);
-  const helper = (name) => {
-    const match = section.match(
-      new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`, "u"),
-    );
-    assert.ok(match, `${name} is available`);
-    return match[0];
-  };
-  const names = [
-    "shareCardTrend",
-    "shareCardTrendLegend",
-    "shareCardTrendShortText",
-    "shareCardTrendLineLegend",
-    "shareCardTrendFitText",
-  ];
-  return Function(
-    "finite",
-    "t",
-    "tPlural",
-    "formatDecimal",
-    "formatNumber",
-    `${names.map(helper).join("\n")}\nreturn { ${names.join(", ")} };`,
-  )(
-    finite,
-    (key, values) => translate(key, values),
-    (key, count, values) => translatePlural(key, count, values),
-    (value, digits = 0) => numberFormatter({
-      maximumFractionDigits: digits,
-      minimumFractionDigits: digits,
-    }).format(value),
-    formatNumber,
-  );
-}
-
-function shareCardTrendHistory(shortSpans) {
-  return {
-    points: shortSpans.map((short, index) => ({
-      at: Date.parse(`2026-08-1${index + 2}T00:00:00.000Z`),
-      dateLabel: `Aug 1${index + 2}, 2026`,
-      value: 1_900 + index,
-      low: 1_800,
-      high: 2_000,
-      historicalMedian: 1_874,
-      acrossResetLow: 1_541,
-      acrossResetHigh: 2_432,
-      wellObserved: !short,
-    })),
-    axis: { low: 1_000, high: 3_000, ticks: [1_000, 2_000, 3_000] },
-    xTicks: [],
-    totalCount: 31,
-    spanFloorPp: 0,
-    wellObservedFloorPp: 50,
-    rangeDays: 7,
-  };
-}
-
-test("a posted card explains its outlined marker, or draws none", async () => {
-  const {
-    shareCardTrend,
-    shareCardTrendLegend,
-    shareCardTrendShortText,
-  } = await loadShareCardTrendHelpers();
-
-  // A short observation only reaches the plot because a range of seven days
-  // or less relaxes the inclusion floor to zero. The classification floor it
-  // failed is a different number, and it is the one the key must name.
-  const mixed = shareCardTrend(shareCardTrendHistory([true, false, false]));
-  assert.equal(mixed.count, 3);
-  assert.equal(mixed.shortCount, 1);
-  assert.equal(mixed.spanFloorPp, 0);
-  assert.equal(mixed.wellObservedFloorPp, 50);
-
-  const legend = shareCardTrendLegend(mixed);
-  assert.deepEqual(legend.map((entry) => entry.filled), [true, false]);
-  assert.equal(legend[0].label, translate("weekly.series.wellObserved", { span: "50" }));
-  assert.match(legend[0].label, /50/u);
-  assert.equal(legend[1].label, translate("weekly.series.shortObservation"));
-  assert.ok(Object.isFrozen(legend) && legend.every((entry) => Object.isFrozen(entry)));
-
-  // The text transcript is the only card a screen reader or a text-only post
-  // gets, so the difference the picture draws is stated there too.
-  const sentence = shareCardTrendShortText({ trend: mixed });
-  assert.match(sentence, /1 of these is a short observation/u);
-  assert.match(sentence, /outlined marker/u);
-  assert.equal(
-    shareCardTrendShortText({ trend: { ...mixed, shortCount: 2 } }),
-    translatePlural("share.text.shortObservation", 2, { count: "2" }),
-  );
-
-  // The common card draws no key and claims nothing: every plotted fit
-  // carries the filled marker, so there is no difference to explain.
-  const clean = shareCardTrend(shareCardTrendHistory([false, false]));
-  assert.equal(clean.shortCount, 0);
-  assert.deepEqual(shareCardTrendLegend(clean), []);
-  assert.equal(shareCardTrendShortText({ trend: clean }), "");
-  assert.deepEqual(shareCardTrendLegend(null), []);
-  assert.equal(shareCardTrendShortText({ trend: null }), "");
-
-  // A slider left at zero classifies nothing as short, but a fit with no
-  // recorded span is still never promoted, so the key names the honest
-  // all-spans series rather than a "0+ pp" threshold nobody set.
-  const unfloored = shareCardTrend({
-    ...shareCardTrendHistory([true, false]),
-    wellObservedFloorPp: 0,
-  });
-  assert.equal(
-    shareCardTrendLegend(unfloored)[0].label,
-    translate("weekly.series.allSpans"),
-  );
-
-  // Every locale carries both forms, and both count the fits they describe.
-  const entry = WEB_PLURAL_MESSAGES["share.text.shortObservation"];
-  assert.ok(entry, "the short-observation sentence is catalogued");
-  for (const form of ["one", "other"]) {
-    assert.equal(entry[form].length, SUPPORTED_LOCALES.length);
-    for (const message of entry[form]) assert.ok(message.includes("{count}"));
-  }
-});
-
-test("the posted card's marker key is drawn by the same calls as its points", async () => {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const section = shareCardSource(appSource);
-
-  // One palette, two draw sites: a key painted from its own colours could
-  // drift from the markers it explains without any test noticing.
-  assert.match(section, /context\.fillStyle = point\.wellObserved \? "#315f84" : "#fffef9";/u);
-  assert.match(section, /context\.fillStyle = entry\.filled \? "#315f84" : "#fffef9";/u);
-  assert.equal(section.match(/#a9492f/gu).length, 2);
-  assert.equal(section.match(/context\.arc\([^\n]*4\.5, 0, Math\.PI \* 2\);/gu).length, 2);
-
-  // The key is drawn only when the model composed one, and it restores the
-  // canvas state the axis labels below it inherit.
-  assert.match(
-    section,
-    /if \(card\.trendLegend\.length > 0\) \{\s*\n\s*context\.save\(\);[\s\S]*?context\.restore\(\);\s*\n\s*\}/u,
-  );
-  assert.match(section, /trendLegend: shareCardTrendLegend\(trend\),/u);
-  // The transcript line joins the composed card text, where an empty string
-  // is dropped by the existing filter.
-  assert.match(section, /figures,\s*\n\s*shareCardTrendText\(card\),\s*\n\s*shareCardTrendShortText\(card\),/u);
-
-  // The classification floor travels with the shared history model rather
-  // than being read from the slider at paint time.
-  assert.match(appSource, /wellObservedFloorPp: activeWeeklyMinimumObservedSpanPp,/u);
-  assert.match(section, /wellObservedFloorPp: finite\(history\?\.wellObservedFloorPp, 0\),/u);
-});
-
-test("the posted allowance graph uses the exact history model from the dashboard", async () => {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const section = shareCardSource(appSource);
-
-  // A single presentation model owns range selection, point inclusion,
-  // classification, vertical bounds, and date landmarks. A seven-day card
-  // takes that exact model; a different provider-reported allowance duration
-  // deliberately receives no borrowed seven-day graph.
-  assert.match(appSource, /function allowanceHistoryChartModel\(data,/u);
-  assert.match(appSource, /function allowanceHistoryAxis\(points\)/u);
-  assert.match(appSource, /function allowanceHistoryDateTicks\(points, maximum = 4\)/u);
-  assert.match(
-    appSource,
-    /function renderWeekly\(data\) \{[\s\S]*?const history = allowanceHistoryChartModel\(data\);/u,
-  );
-  assert.match(appSource, /shell\.replaceChildren\(renderAllowanceHistoryChart\(history, windowMinutes\)\);/u);
-  assert.match(
-    section,
-    // Re-pinned 2026-08-08 (owner-verified regression): the chart renderer
-    // hands its own model in; the card derives one only when rendered
-    // standalone, and both reads share the active-filter state.
-    /const isWeeklyWindow = data\.allowancePlanSelection !== undefined\s*\n\s*\|\| shareCardWindowKind\(allowanceWindow\) === "seven_day";\s*\n\s*const history = isWeeklyWindow\s*\n\s*\? sharedHistory \?\? allowanceHistoryChartModel\(data\)\s*\n\s*: null;\s*\n\s*const trend = isWeeklyWindow \? shareCardTrend\(history\) : null;/u,
-  );
-  assert.match(
-    section,
-    /history = null,/u,
-  );
-  assert.doesNotMatch(
-    section,
-    /SHARE_CARD_TREND_MAX_POINTS|shareCardTrendAxis|shareCardTrendDateTicks/u,
-  );
-});
-
-test("a posted results card always carries a diagnostic-format reference", async () => {
-  // The reference is minted by the same helper the diagnostic surfaces use, so
-  // a card someone posts can be matched against the local log.
-  for (let attempt = 0; attempt < 64; attempt += 1) {
-    const reference = createDiagnosticReference(webcrypto);
-    assert.match(reference, DIAGNOSTIC_REFERENCE_PATTERN);
-    assert.match(reference, /^TT-[0-9A-Z]{6}$/u);
-    assert.doesNotMatch(reference, /[ILOU]/u);
-  }
-
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const section = shareCardSource(appSource);
-
-  // The local card transcript retains a validated reference, while the export
-  // filename is now a simple timestamp rather than a diagnostic identifier.
-  assert.match(
-    section,
-    /if \(!DIAGNOSTIC_REFERENCE_PATTERN\.test\(reference \?\? ""\)\) \{\s*\n\s*throw new TypeError\("A results card requires a minted reference\."\);/u,
-  );
-  assert.match(section, /shareCardReference = createDiagnosticReference\(\);/u);
-  assert.doesNotMatch(
-    section.slice(0, section.indexOf("function shareCardFileName(")),
-    /Math\.random|Date\.now|new Date\(/u,
-  );
-
-  // One image and one reference always describe the same figures: the
-  // reference is re-minted whenever any printed figure changes.
-  const signature = section.match(
-    /const signature = JSON\.stringify\(\[([\s\S]*?)\]\);/u,
-  )?.[1];
-  assert.ok(signature, "the figure signature is available");
-  for (const figure of [
-    "data?.mode",
-    "headlineDate,",
-    "shareCardWindowKind(allowanceWindow)",
-    "finite(allowanceWindow?.durationMinutes)",
-    "finite(allowanceWindow?.remainingPercent)",
-    "data.allowancePlanSelection ?? null",
-    "finite(data?.pricing?.quotaWeightedTotalCostUsd)",
-    "finite(data?.pricing?.totalCostUsd)",
-    "finite(data?.pricing?.coveragePercent)",
-    "finite(data?.weekly?.summary?.median_weekly_value_usd",
-    "trend,",
-  ]) {
-    assert.ok(signature.includes(figure), `${figure} re-mints the reference`);
-  }
-  assert.match(
-    section,
-    // Re-pinned 2026-08-08 (owner-verified regression): the chart renderer
-    // hands its own model in; the card derives one only when rendered
-    // standalone, and both reads share the active-filter state.
-    /const isWeeklyWindow = data\.allowancePlanSelection !== undefined\s*\n\s*\|\| shareCardWindowKind\(allowanceWindow\) === "seven_day";\s*\n\s*const history = isWeeklyWindow\s*\n\s*\? sharedHistory \?\? allowanceHistoryChartModel\(data\)\s*\n\s*: null;\s*\n\s*const trend = isWeeklyWindow \? shareCardTrend\(history\) : null;/u,
-  );
-  assert.match(
-    section,
-    /if \(signature !== shareCardSignature \|\| shareCardReference === ""\) \{/u,
-  );
-
-  // The identifier line does not paint on the image; the selectable text
-  // transcript retains its reference. Export filenames use local save time.
-  assert.match(section, /const identifiers = \[\s*\n\s*t\("share\.identifier\.debug", \{ reference \}\),/u);
-  assert.match(section, /t\("share\.identifier\.version", \{/u);
-  assert.doesNotMatch(section, /price table \$\{registryVersion\}/u);
-  assert.doesNotMatch(section, /fillText\(\s*\n?\s*shareCardFit\(context, card\.identifierLine/u);
-  assert.match(section, /identifierLine: identifiers\.join\(" · "\),/u);
-  assert.match(
-    section,
-    /-tibotattle-results\.png`;/u,
-  );
-  assert.doesNotMatch(section, /The file name carries reference/u);
-  assert.doesNotMatch(section, /is printed on the image/u);
-
-  // The "TT-XXXXXX" header chip remains absent from the panel.
-  assert.doesNotMatch(section, /share-card-reference/u);
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  assert.doesNotMatch(html, /id="share-card-reference"/u);
-  assert.doesNotMatch(html, /id="share-card-readout"/u);
-});
-
-test("a posted results card states a figure in full, dates real evidence, and marks a fixture", async () => {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const section = shareCardSource(appSource);
-  const localizationSource = await readFile(new URL("../public/localization.js", import.meta.url), "utf8");
-
-  // One type size for the whole row, chosen so the longest figure fits its
-  // column whole. "Not estimable" and a seven-figure total both overrun the
-  // column at the full size, and a figure cut off mid-word in the largest type
-  // on the card is unreadable at a glance and easy to misread as a smaller
-  // number.
-  assert.match(
-    section,
-    /function shareCardValueSize\(context, values, maxWidth\) \{[\s\S]*?if \(values\.every\(\(value\) => context\.measureText\(value\)\.width <= maxWidth\)\) \{/u,
-  );
-  assert.match(
-    section,
-    /const valueSize = shareCardValueSize\(\s*\n\s*context,\s*\n\s*card\.stats\.map\(\(stat\) => stat\.value\),\s*\n\s*textWidth,\s*\n\s*\);/u,
-  );
-  assert.match(section, /context\.font = shareCardFont\(500, valueSize, "serif"\);/u);
-  assert.doesNotMatch(section, /shareCardFont\(500, 54, "serif"\)/u);
-  // Every value the card can print for missing evidence comes from a stable
-  // semantic key, so the size that fits it is the size the row is drawn at.
-  for (const key of [
-    "share.value.notObserved",
-    "share.value.notAvailable",
-    "share.value.notEstimable",
-  ]) {
-    assert.ok(section.includes(`t("${key}")`), `${key} is one of the fixed figures`);
-  }
-
-  // A real card uses the line under the title for the weekly headline's
-  // newest-fit date. The old local-privacy tagline is intentionally absent.
-  assert.match(
-    section,
-    /subtitle: isDemo\s*\n\s*\? t\("share\.subtitle\.demo"\)\s*\n\s*: headlineDate,/u,
-  );
-  assert.doesNotMatch(appSource, /share\.subtitle\.local/u);
-  assert.doesNotMatch(localizationSource, /Measured on my own Mac\. Nothing left it\./u);
-  // A fixture is marked where a reader scrolling a timeline will see it: in
-  // that same line and on a mark beside the wordmark, not only in the smallest
-  // copy on the image.
-  assert.match(section, /badge: isDemo \? t\("share\.badge\.demo"\) : "",/u);
-  assert.match(section, /if \(card\.badge !== ""\) \{\s*\n\s*drawShareCardBadge\(/u);
-  // The mark is drawn in the header, above the figures it qualifies.
-  assert.ok(
-    section.indexOf("drawShareCardBadge(\n      context,")
-      < section.indexOf("card.stats.forEach"),
-    "the demo mark is drawn before the figures",
-  );
-  // And the caveat that says the same thing stays, first in the list.
-  assert.match(
-    section,
-    /if \(isDemo\) \{\s*\n\s*caveats\.push\(t\("share\.caveat\.demo"\)\);/u,
-  );
-
-  // The history takes exactly the room the qualifications leave, but a card
-  // without material qualifications is allowed to use that visual height.
-  // Re-pinned 2026-08-08 (owner-directed): the identifier footer and its rule
-  // are gone from the image, so caveats anchor at the card's bottom edge and
-  // the reclaimed footer band belongs to the chart.
-  assert.match(
-    section,
-    /const caveatBaseY = SHARE_CARD_HEIGHT - 26;/u,
-  );
-  assert.match(
-    section,
-    /const caveatTop = caveatLines\.length === 0\s*\n\s*\? caveatBaseY \+ 22\s*\n\s*: caveatBaseY - \(caveatLines\.length - 1\) \* caveatStep;/u,
-  );
-  assert.doesNotMatch(section, /ruleY/u);
-  assert.match(
-    section,
-    /const trendHeight = Math\.min\(\s*\n\s*SHARE_CARD_TREND_MAX_HEIGHT,\s*\n\s*Math\.max\(SHARE_CARD_TREND_MIN_HEIGHT, caveatTop - 30 - trendTop\),\s*\n\s*\);/u,
-  );
-  // Re-pinned 2026-08-07 (owner-directed card v3): the separate
-  // activity-versus-allowance sentence row is gone — each stat's own detail
-  // line names its denominator — and the chart takes the reclaimed height.
-  assert.match(section, /const trendTop = statTop \+ statHeight \+ 34;/u);
-  assert.doesNotMatch(section, /relationshipNote/u);
-  assert.match(section, /label: t\(data\.allowancePlanSelection\s*\n\s*\? "share\.stat\.recordedActivityAllPlans" : "share\.stat\.recordedActivity"\),/u);
-  assert.match(
-    section,
-    /label: isWeeklyWindow\s*\n\s*\? t\("share\.stat\.estimatedAllowance"\)\s*\n\s*: t\("share\.stat\.estimatedAllowanceUnavailable"\),/u,
-  );
-  assert.match(
-    section,
-    /detail: !isWeeklyWindow\s*\n\s*\? t\("share\.detail\.notApplicableToWindow"\)/u,
-  );
-  // The social image reuses the date landmarks and vertical domain from the
-  // Allowance estimate history, instead of inventing a compact-card axis.
-  assert.match(appSource, /function allowanceHistoryDateTicks\(points, maximum = 4\)/u);
-  assert.match(appSource, /xTicks: history\.xTicks,/u);
-  assert.match(appSource, /yDomain: history\.axis,/u);
-  assert.match(section, /for \(const tick of xTicks\)/u);
-  assert.match(
-    section,
-    /context\.textAlign = tick\.alignment === "middle" \? "center" : tick\.alignment;/u,
-    "the shared SVG tick alignment is translated to a valid Canvas alignment",
-  );
-  assert.doesNotMatch(section, /shareCardTrendDateTicks|shareCardTrendAxis/u);
-  // 420 → 472 (owner-directed, 2026-08-08): the retired identifier footer's
-  // vertical band goes to the plot's ceiling.
-  assert.match(section, /const SHARE_CARD_TREND_MAX_HEIGHT = 472;/u);
-  assert.match(section, /const SHARE_CARD_TREND_MIN_HEIGHT = 168;/u);
-  // Only the qualifications that can change interpretation survive on a
-  // social image; the full evidence remains in the local app.
-  assert.match(appSource, /const SHARE_CARD_MAX_CAVEATS = 2;/u);
-  assert.match(appSource, /const SHARE_CARD_MAX_CAVEAT_LINES = 2;/u);
-
-  // The posted image and the preview element describe the same picture.
-  assert.match(appSource, /const SHARE_CARD_WIDTH = 1200;/u);
-  assert.match(appSource, /const SHARE_CARD_HEIGHT = 800;/u);
-  const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
-  assert.match(
-    html,
-    /<canvas\s+id="share-card-canvas"[\s\S]*?width="1200"\s*\n\s*height="800"/u,
-  );
-});
 
 test("a refresh finished by the native shell makes the page re-read its evidence", async () => {
   const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
@@ -9762,10 +8926,7 @@ test("Forest Ink dark appearance is explicit, balanced, and live-updateable", as
     styles,
     /html\[data-theme="dark"\] \.weekly-hero > div:first-child \{[\s\S]*?background: var\(--feature-bg\);/u,
   );
-  assert.match(
-    styles,
-    /Portable share-card exports deliberately keep the existing light brand/u,
-  );
+  assert.doesNotMatch(styles, /share-card|share-preview/u);
   assert.doesNotMatch(
     styles,
     /@media[^\{]*prefers-color-scheme[^\{]*\{[\s\S]*?--paper: #141a17/u,
@@ -9789,7 +8950,7 @@ test("Forest Ink dark appearance is explicit, balanced, and live-updateable", as
   );
 });
 
-test("LOWESS is shared exactly between allowance and social graphs after filtering", async () => {
+test("LOWESS is drawn exactly from the filtered allowance history", async () => {
   const weeklyValues = Array.from({ length: 16 }, (_, index) => ({
     last_observed_at: new Date(Date.UTC(2026, 0, 1 + index * 5)).toISOString(),
     value_usd: index < 8 ? 2200 : 1400,
@@ -9798,28 +8959,20 @@ test("LOWESS is shared exactly between allowance and social graphs after filteri
     pairwise_p90_usd: index < 8 ? 2300 : 1500,
   }));
   const data = { weekly: { summary: { median_weekly_value_usd: 1800, qualifying_resets: 16 }, weeklyValues } };
-  const { shareCardTrend, shareCardTrendLineLegend, shareCardTrendFitText } = await loadShareCardTrendHelpers();
   for (const [span, rangeDays] of [[50, 36_500], [0, 36_500], [50, 30], [50, 7]]) {
     const view = await renderWeeklyHero(data, { span, rangeDays });
     const history = view.shared.history;
-    const cardTrend = shareCardTrend(history);
-    assert.deepEqual(cardTrend.points.map(p => p.allowanceLowess), history.points.map(p => p.allowanceLowess));
-    assert.deepEqual(cardTrend.points.map(p => p.at), history.points.map(p => p.at));
-    assert.deepEqual(cardTrend.axis, history.axis);
     assert.equal(view.estimate, '$1800 API equivalent');
     const fitted = history.lowessCount > 0;
     assert.equal(view.chart.querySelectorAll('polyline.chart-line-weekly-lowess').length, fitted ? 1 : 0);
     assert.equal(view.chart.querySelectorAll('circle.chart-point-weekly-mature').filter(el => Number(el.getAttribute('r')) > 0).length, history.points.filter(p => p.wellObserved).length);
     assert.equal(view.chart.querySelectorAll('g.chart-error-bar-weekly').length, history.points.length);
     assert.equal(view.lowessLegend.hidden, !fitted);
-    assert.equal(shareCardTrendLineLegend(cardTrend).at(-1).kind, fitted ? 'lowess' : 'unavailable');
-    assert.equal(shareCardTrendFitText({ trend: cardTrend }), view.trendNote.textContent);
     assert.ok(Object.isFrozen(history.points) && history.points.every(Object.isFrozen));
   }
   const empty = await renderWeeklyHero(data, { span: 99, rangeDays: 36_500 });
   assert.equal(empty.empty.hidden, false);
   assert.equal(empty.trendNote.hidden, true);
-  assert.equal(shareCardTrend(empty.shared.history), null);
 });
 
 test("a narrow allowance chart uses its actual drawing width", async () => {
@@ -9836,62 +8989,6 @@ test("a narrow allowance chart uses its actual drawing width", async () => {
   assert.equal(vertices[0][0], 72);
   assert.equal(vertices[1][0], 296);
   assert.ok(vertices.every(([x, y]) => x >= 0 && x <= 320 && y >= 0 && y <= 300));
-});
-
-test("social LOWESS draws the shared coordinates and preserves null gaps", async () => {
-  const source = await readFile(new URL('../public/app.js', import.meta.url), 'utf8');
-  const drawSource = source.match(/function drawShareCardTrend\([\s\S]*?\n\}/u)?.[0];
-  assert.ok(drawSource);
-  const draw = Function('drawShareCardPanel', 'shareCardFont', 'finite', 't', 'formatMoney', `${drawSource}\nreturn drawShareCardTrend;`)(
-    () => {}, () => '13px sans-serif', finite, (key) => translate(key), (value) => `$${value}`,
-  );
-  const { shareCardTrend, shareCardTrendLineLegend, shareCardTrendFitText } = await loadShareCardTrendHelpers();
-  const history = shareCardTrendHistory([false, false, false, false, false]);
-  const fitted = [1800, 1825, null, 1900, 1950];
-  history.points = history.points.map((point, index) => ({ ...point, allowanceLowess: fitted[index] }));
-  const trend = shareCardTrend(history);
-  const strokes = [], labels = [];
-  let path = [];
-  const context = {
-    save() {}, restore() {}, fillRect() {}, fill() {}, arc() {},
-    beginPath() { path = []; },
-    moveTo(x, y) { path.push(['move', x, y]); },
-    lineTo(x, y) { path.push(['line', x, y]); },
-    stroke() { strokes.push({ color: this.strokeStyle, path: [...path] }); },
-    fillText(text) { labels.push(text); },
-    measureText(text) { return { width: String(text).length * 7 }; },
-  };
-  const card = { trend, trendLegend: [], trendLineLegend: shareCardTrendLineLegend(trend) };
-  draw(context, card, 0, 0, 1000, 300);
-  const curve = strokes.find(stroke => stroke.color === '#97402a' && stroke.path.length === 4);
-  assert.ok(curve, 'export canvas paints the fitted line');
-  assert.deepEqual(curve.path.map(([kind]) => kind), ['move', 'line', 'move', 'line']);
-  const plot = { left: 92, right: 980, top: 64, bottom: 246 };
-  const expected = [0, 1, 3, 4].map(index => [
-    index === 0 || index === 3 ? 'move' : 'line',
-    plot.left + index / 4 * (plot.right - plot.left),
-    plot.bottom - (fitted[index] - 1000) / 2000 * (plot.bottom - plot.top),
-  ]);
-  assert.deepEqual(curve.path, expected, 'canvas plots the exact shared timestamps and fitted dollars');
-  assert.ok(labels.includes(translate('weekly.controls.lowess')));
-  assert.match(shareCardTrendFitText(card), /same fitted values and gaps/u);
-
-  // Card admission omits invalid raw estimates but must not join across the
-  // missing source point, even when the adjacent LOWESS predictions are valid.
-  history.points[2] = { ...history.points[2], value: 0 };
-  const omitted = shareCardTrend(history);
-  assert.deepEqual(omitted.points.map(point => point.lowessBreakBefore), [false, false, true, false]);
-  strokes.length = 0;
-  draw(context, { trend: omitted, trendLegend: [], trendLineLegend: shareCardTrendLineLegend(omitted) }, 0, 0, 1000, 300);
-  assert.deepEqual(strokes.find(stroke => stroke.color === '#97402a' && stroke.path.length === 4).path.map(([kind]) => kind), ['move', 'line', 'move', 'line']);
-
-  history.points = history.points.map(point => ({ ...point, allowanceLowess: null }));
-  history.lowessReason = 'tooMany';
-  const unavailable = shareCardTrend(history);
-  assert.equal(unavailable.lowessCount, 0);
-  assert.equal(shareCardTrendLineLegend(unavailable).at(-1).kind, 'unavailable');
-  assert.equal(shareCardTrendLineLegend(unavailable).at(-1).label, translate('weekly.controls.lowessTooMany'));
-  assert.match(shareCardTrendFitText({ trend: unavailable }), /250/u);
 });
 
 test("responsive charts keep tooltips in bounds and interrupt an anchored cycle", async () => {

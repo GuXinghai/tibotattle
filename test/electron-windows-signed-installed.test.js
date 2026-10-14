@@ -148,7 +148,7 @@ test('signature proof requires OS trust, publisher and timestamp without raw cer
 const proofKeys = ['packageArtifactVerified', 'packagedElectronExecutionVerified',
   'syntheticFixtureIngestionVerified', 'syntheticFixtureTotalsRetainedAcrossRestart',
   'projectsAndThreadsRetainedAcrossRestart',
-  'settingsPersistedAcrossRestart', 'durableContributionOptOutRetained', 'loopbackJourneyVerified',
+  'settingsPersistedAcrossRestart', 'loopbackJourneyVerified',
   'outboundFirewallRuleRemoved', 'ownedProfileRemoved'];
 const valid = () => ({ status: 'passed', sourceRevision: revision, target: 'win32-x64',
   artifactSha256: digest, executableSha256: 'c'.repeat(64),

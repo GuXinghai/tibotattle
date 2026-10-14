@@ -466,11 +466,6 @@ export function mountModelPerformance(options = {}) {
     };
     chartCursors = []; selectedInterval = null;
     root.replaceChildren();
-    const heading = element("div", "dashboard-page-header");
-    const title = element("div");
-    const h2 = element("h2", "", translate("title")); h2.id = "performance-title";
-    h2.tabIndex = -1; h2.dataset.performanceFocus = "heading";
-    title.append(h2, element("p", "page-description", translate("subtitle")));
     const periods = element("div", "segmented-control performance-periods"); periods.setAttribute("aria-label", translate("period")); periods.setAttribute("role", "group");
     for (const value of STANDALONE_PERIODS) {
       const button = element("button", value === period ? "active" : "", translate(value === "all" ? "all" : `days${value}`));
@@ -482,9 +477,18 @@ export function mountModelPerformance(options = {}) {
         remember(); render(); refresh();
       }); periods.append(button);
     }
-    heading.append(title);
-    if (!sharedReporting) heading.append(periods);
-    root.append(heading, element("p", "performance-provider", translate("provider")));
+    // Inside the dashboard the page header owns the title and the period; the
+    // standalone report keeps its own.
+    if (!sharedReporting) {
+      const heading = element("div", "dashboard-page-header");
+      const title = element("div");
+      const h2 = element("h2", "", translate("title")); h2.id = "performance-title";
+      h2.tabIndex = -1; h2.dataset.performanceFocus = "heading";
+      title.append(h2, element("p", "page-description", translate("subtitle")));
+      heading.append(title, periods);
+      root.append(heading);
+    }
+    root.append(element("p", "performance-provider", translate("provider")));
     const modeControls = element("div", "performance-mode-controls");
     const modes = element("div", "segmented-control performance-modes");
     modes.setAttribute("role", "group"); modes.setAttribute("aria-label", translate("mode"));
@@ -506,7 +510,11 @@ export function mountModelPerformance(options = {}) {
       });
       modes.append(button);
     }
-    modeControls.append(modes, element("p", "performance-mode-note", translate(`${speedMode}Note`)));
+    modeControls.append(
+      element("span", "performance-filter-label", translate("mode")),
+      modes,
+      element("p", "performance-mode-note", translate(`${speedMode}Note`)),
+    );
     root.append(modeControls);
     if (payload?.excludedUnknownTurns) root.append(element("p", "performance-mode-note", translate("unknownMode", { count: number(payload.excludedUnknownTurns) })));
     const status = element("p", "performance-status"); status.setAttribute("role", "status");
@@ -569,7 +577,7 @@ export function mountModelPerformance(options = {}) {
         remember(); render(); documentRef.getElementById(`performance-tab-${modelId}`)?.focus();
       }); tabs.append(button);
     }
-    root.append(tabs);
+    root.append(element("span", "performance-filter-label", translate("models")), tabs);
     const selected = models.find((model) => model.id === modelId);
     const selectedPresentation = modelUsagePresentation(selected.id), selectedName = formatModelName(selected.id);
     const domain = performanceDomain(payload, selected);

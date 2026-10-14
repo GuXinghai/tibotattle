@@ -12,7 +12,6 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { DESKTOP_LANGUAGES } from "./desktop-contract.js";
 import { desktopText } from "./desktop-menu.js";
-import { validateHostedSignInAuthorizeUrl } from "./desktop-hosted-signin.js";
 import { parseCodexThreadURL } from "./loopback-policy.js";
 
 const EXTERNAL_URLS = Object.freeze({
@@ -440,24 +439,6 @@ export function createDesktopPlatformServices({
     return true;
   }
 
-  async function openHostedSignIn(authorizeUrl) {
-    let selected;
-    try {
-      // Validate again in the main-process platform adapter. The contract has
-      // already checked the IPC envelope, but this keeps the shell safe if a
-      // future caller reaches the adapter without that path.
-      selected = validateHostedSignInAuthorizeUrl(authorizeUrl);
-    } catch {
-      throw fixedFailure("desktop_hosted_signin_url_invalid");
-    }
-    try {
-      await shell.openExternal(selected, { activate: true });
-    } catch {
-      throw fixedFailure("desktop_hosted_signin_open_failed");
-    }
-    return true;
-  }
-
   async function openCodexThread(url) {
     const selected = parseCodexThreadURL(url);
     if (selected === null) throw fixedFailure("desktop_codex_thread_url_invalid");
@@ -532,7 +513,6 @@ export function createDesktopPlatformServices({
     chooseCodexHome,
     openSystemSettings,
     openExternal,
-    openHostedSignIn,
     openCodexThread,
     about,
     checkForUpdates,

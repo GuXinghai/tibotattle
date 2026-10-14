@@ -73,13 +73,9 @@ const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "USAGE_MONITOR_ACCOUNTING_SOURCE_MODE",
   "USAGE_MONITOR_RESOURCE_ROOT",
   "USAGE_MONITOR_STATE_ROOT",
-  "USAGE_MONITOR_CONTRIBUTION_QUEUE_FILE",
   "USAGE_MONITOR_PREPARED_DIRECTORY",
-  "USAGE_MONITOR_CENTRAL_ORIGIN",
   "USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION",
   "USAGE_MONITOR_TEST_LANE",
-  "USAGE_MONITOR_ACCOUNTLESS_ORIGIN",
-  "USAGE_MONITOR_ACCOUNTLESS_MODE",
 ]);
 
 function assertTimeout(value, label) {
@@ -162,7 +158,6 @@ export function createCompanionSupervisor({
   onChildLifecycleEvent,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
-  attachPrivateChannel,
   attachWindowsAccountObservationBroker,
 } = {}) {
   if (typeof spawnChild !== "function") throw new TypeError("spawnChild is required");
@@ -174,9 +169,6 @@ export function createCompanionSupervisor({
   }
   if (typeof environment !== "object" || environment === null || Array.isArray(environment)) {
     throw new TypeError("environment must be an object");
-  }
-  if (attachPrivateChannel !== undefined && typeof attachPrivateChannel !== "function") {
-    throw new TypeError("private channel factory is invalid");
   }
   if (attachWindowsAccountObservationBroker !== undefined
       && typeof attachWindowsAccountObservationBroker !== "function") {
@@ -201,12 +193,10 @@ export function createCompanionSupervisor({
   let stopPromise = null;
   let generation = 0;
   let unexpectedExitHandler = onUnexpectedExit;
-  let privateChannel = null;
   let credentialBroker = null;
   let activeChildLifecycleObservation = null;
   const selectedAccountObservationBroker = attachWindowsAccountObservationBroker;
-  const requiresNodeIpc = attachPrivateChannel !== undefined
-    || selectedAccountObservationBroker !== undefined;
+  const requiresNodeIpc = selectedAccountObservationBroker !== undefined;
   const credentialBrokerKind = selectedAccountObservationBroker !== undefined
     ? "windows_account_observation" : null;
 
@@ -269,7 +259,6 @@ export function createCompanionSupervisor({
       let settled = false;
       let startupTimer = null;
       let currentChild = null;
-      let currentPrivateChannel = null;
       let currentCredentialBroker = null;
       let currentChildLifecycleObservation = null;
       let parser;
@@ -364,8 +353,6 @@ export function createCompanionSupervisor({
         observeChildExit(currentChildLifecycleObservation, exitCode, signalCode);
         disposeCredentialBroker(currentCredentialBroker);
         if (credentialBroker === currentCredentialBroker) credentialBroker = null;
-        currentPrivateChannel?.dispose();
-        if (privateChannel === currentPrivateChannel) privateChannel = null;
         if (!settled) {
           fail(shellError("companion_exit_before_ready"), { childAlreadyExited: true });
           return;
@@ -389,9 +376,9 @@ export function createCompanionSupervisor({
         currentChild = spawnChild(command, [...args], {
           cwd,
           env: companionEnvironment(environment, parentPid, credentialBrokerKind),
-          // Fixed Windows observation and accountless messages share one
-          // inherited Node IPC channel with distinct closed schemas.
-          stdio: (attachPrivateChannel || selectedAccountObservationBroker)
+          // The fixed Windows account-observation broker is the only user of
+          // the inherited Node IPC channel.
+          stdio: selectedAccountObservationBroker
             ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
           windowsHide: true,
         });
@@ -417,10 +404,6 @@ export function createCompanionSupervisor({
             throw new TypeError("credential broker is invalid");
           }
           credentialBroker = currentCredentialBroker;
-        }
-        if (attachPrivateChannel) {
-          currentPrivateChannel = attachPrivateChannel(currentChild);
-          privateChannel = currentPrivateChannel;
         }
       } catch { fail(shellError("companion_spawn_failed")); return; }
       discardStream(currentChild.stderr);
@@ -455,7 +438,6 @@ export function createCompanionSupervisor({
     state = "stopping";
     disposeCredentialBroker(credentialBroker);
     credentialBroker = null;
-    privateChannel?.invalidate();
     ++generation;
     stopPromise = new Promise((resolveStop, rejectStop) => {
       let finished = false;
@@ -492,7 +474,6 @@ export function createCompanionSupervisor({
   return Object.freeze({
     start,
     stop,
-    invalidatePrivateChannel() { return privateChannel?.invalidate(); },
     setUnexpectedExitHandler(handler) {
       if (handler !== undefined && typeof handler !== "function") {
         throw new TypeError("handler must be a function");

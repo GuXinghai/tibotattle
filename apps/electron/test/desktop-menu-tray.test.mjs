@@ -92,7 +92,8 @@ test("desktop menu and tray copy resolves every supported language", () => {
   const expected = {
     "en-US": {
       file: "File",
-      projects: "Projects and Threads",
+      overview: "Overview",
+      sections: ["Usage & costs", "Allowance", "Model performance"],
       refresh: "Update Local Usage",
       checkForUpdates: "Check for Updates…",
       tray: "Open TiboTattle Dev",
@@ -102,7 +103,8 @@ test("desktop menu and tray copy resolves every supported language", () => {
     },
     "zh-Hans": {
       file: "文件",
-      projects: "项目与会话",
+      overview: "概览",
+      sections: ["用量与成本", "额度", "模型性能"],
       refresh: "更新本地用量",
       checkForUpdates: "检查更新…",
       tray: "打开 TiboTattle Dev",
@@ -112,7 +114,8 @@ test("desktop menu and tray copy resolves every supported language", () => {
     },
     es: {
       file: "Archivo",
-      projects: "Proyectos e hilos",
+      overview: "Resumen",
+      sections: ["Uso y costos", "Asignación", "Rendimiento de modelos"],
       refresh: "Actualizar uso local",
       checkForUpdates: "Buscar actualizaciones…",
       tray: "Abrir TiboTattle Dev",
@@ -133,7 +136,8 @@ test("desktop menu and tray copy resolves every supported language", () => {
     assert.equal(file[1].label, locale === "en-US" ? "Settings…" : locale === "zh-Hans" ? "设置…" : "Configuración…");
     const view = menu.find(({ label }) => label === (locale === "en-US" ? "View" : locale === "zh-Hans" ? "视图" : "Ver"));
     assert.equal(view.submenu[0].label, copy.refresh);
-    assert.equal(typeof item(view.submenu, copy.projects).click, "function");
+    assert.equal(typeof item(view.submenu, copy.overview).click, "function");
+    for (const label of copy.sections) assert.equal(typeof item(view.submenu, label).click, "function");
     const tray = createTrayFixture({
       appName: "TiboTattle Dev",
       locale,
@@ -179,9 +183,9 @@ test("tray menu exposes truthful status and shared action callbacks", () => {
     STATUS_PLACEHOLDER,
     "separator",
     "Open TiboTattle Dev",
-    "Weekly Allowance",
-    "Usage Timeline",
-    "Usage and Costs",
+    "Allowance",
+    "Usage & costs",
+    "Model performance",
     "Retry",
     "Check for Updates…",
     "Settings…",
@@ -191,18 +195,18 @@ test("tray menu exposes truthful status and shared action callbacks", () => {
   ]);
   assert.equal(item(template, STATUS_PLACEHOLDER).enabled, false);
   item(template, "Open TiboTattle Dev").click();
-  item(template, "Weekly Allowance").click();
-  item(template, "Usage Timeline").click();
-  item(template, "Usage and Costs").click();
+  item(template, "Allowance").click();
+  item(template, "Usage & costs").click();
+  item(template, "Model performance").click();
   item(template, "Retry").click();
   item(template, "Settings…").click();
   item(template, "About TiboTattle Dev").click();
   item(template, "Quit TiboTattle Dev").click();
   assert.deepEqual(calls, [
     "show",
-    "weekly",
-    "timeline",
-    "accounting",
+    "allowance",
+    "usage",
+    "performance",
     "retry",
     "settings",
     "about",

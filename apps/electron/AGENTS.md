@@ -33,9 +33,10 @@ packaging targets, or compatibility shims for other platforms.
   (`src/platform`). Settings, first-run receipts, sharing, notification policy,
   update preferences, and refresh cadence must not fall back to ordinary Node
   filesystem writes.
-- The accountless installation credential uses the reviewed Windows native
-  factory (`desktop-windows-accountless-credential.js`). Generic `safeStorage`
-  paths are not a production fallback.
+- The account-observation credential broker is handed over only through the
+  reviewed Windows factory (`desktop-windows-accountless-credential.js`; the
+  filename predates the sharing removal). Generic `safeStorage` paths are not a
+  production fallback.
 - The companion receives a closed environment allowlist
   (`companion-supervisor.js`). Add a variable only with a reviewed reason; do
   not pass shell secrets, provider credentials, or `NODE_OPTIONS`.

@@ -52,10 +52,7 @@ import {
   assertElectronPlatformGate,
 } from "../platform-gate.js";
 import {
-  accountlessQualificationEnvironmentForTest,
   assertWindowsElectronQualificationContext,
-  createWindowsElectronQualificationAccountlessCredentialBackend,
-  createWindowsElectronQualificationAccountlessCredentialBackendForTest,
   createWindowsElectronQualificationContext,
   runWindowsElectronQualificationCredentialCommandForTest,
 } from "../windows-qualification.js";
@@ -63,7 +60,6 @@ import {
   createLoopbackNavigationPolicy,
   installLoopbackNavigationPolicy,
   parseCodexThreadURL,
-  isAllowedCompanionBlobDownload,
   isAllowedCompanionURL,
 } from "../loopback-policy.js";
 import {
@@ -465,24 +461,6 @@ class DownloadSessionWindow extends FakeWindow {
   }
 }
 
-class LifecycleDownloadItem extends EventEmitter {
-  constructor() {
-    super();
-    this.url = "blob:http://127.0.0.1:4001/4a4e02e8-2cbf-4dfb-bb2a-4f6e4c0efb90";
-    this.mime = "image/png";
-    this.filename = "2026-09-28-19-15-tibotattle-results.png";
-    this.savePath = null;
-    this.cancelled = false;
-  }
-
-  getURL() { return this.url; }
-  getMimeType() { return this.mime; }
-  getFilename() { return this.filename; }
-  setSavePath(value) { this.savePath = value; }
-  cancel() { this.cancelled = true; }
-  finish(state) { this.emit("done", {}, state); }
-}
-
 class FakeTray extends EventEmitter {
   constructor(icon) {
     super();
@@ -559,7 +537,7 @@ class RuntimeChild extends FakeChild {
 
 function runtimePlatformServices() {
   return {
-    defaultCodexHome: "/Users/adam/.codex",
+    defaultCodexHome: process.platform === "win32" ? "C:\\Users\\adam\\.codex" : "/Users/adam/.codex",
     defaultCodexHomeDisplay: "Default location (~/.codex)",
     validateCodexHome: async (path) => path,
     loginItemStatus: () => ({ status: "unavailable", canSet: false, detail: "unavailable" }),
@@ -586,8 +564,7 @@ function runtimePlatformServices() {
   };
 }
 
-async function launchSharingRuntimeFixture({
-  sharingInstallationState = "existing_unselected",
+async function launchDashboardRuntimeFixture({
   environmentOverrides = {},
 } = {}) {
   RuntimeWindow.instances = [];
@@ -610,16 +587,6 @@ async function launchSharingRuntimeFixture({
       return null;
     },
     async save(value) {
-      return value;
-    },
-  };
-  const sharingBackend = {
-    stored: null,
-    async load() {
-      return this.stored;
-    },
-    async save(value) {
-      this.stored = value;
       return value;
     },
   };
@@ -665,8 +632,6 @@ async function launchSharingRuntimeFixture({
       load: async () => null,
       save: async (value) => value,
     },
-    sharingBackend,
-    sharingInstallationState,
     platform: "win32",
     supervisorOptions: {
       spawnChild(_command, args, options) {
@@ -686,7 +651,7 @@ async function launchSharingRuntimeFixture({
     candidate.loaded[0] === "http://127.0.0.1:4811/"
   ));
   assert.notEqual(dashboard, undefined);
-  return { app, child, desktop, dashboard, ipcMain, sharingBackend, spawnCalls };
+  return { app, child, desktop, dashboard, ipcMain, spawnCalls };
 }
 
 function dashboardWindowsForTest(windows) {
@@ -850,7 +815,7 @@ test("loopback policy installs exact navigation handlers and removable listeners
   assert.equal(prevented, false);
 });
 
-test("loopback session admits only the dashboard same-origin Blob download", () => {
+test("loopback session denies Blob downloads and clipboard writes for every window", () => {
   const origin = "http://127.0.0.1:3456";
   const blob = `blob:${origin}/4a4e02e8-2cbf-4dfb-bb2a-4f6e4c0efb90`;
   const session = {
@@ -871,7 +836,6 @@ test("loopback session admits only the dashboard same-origin Blob download", () 
     webContents: dashboard,
     session,
     policy: createLoopbackNavigationPolicy({ origin }),
-    allowBlobDownloads: true,
   });
   const settingsInstall = installLoopbackNavigationPolicy({
     webContents: settings,
@@ -883,39 +847,23 @@ test("loopback session admits only the dashboard same-origin Blob download", () 
   session.handler(settings, "notifications", (allowed) => permissions.push(allowed));
   session.handler(dashboard, "notifications", (allowed) => permissions.push(allowed));
   session.handler(settings, "geolocation", (allowed) => permissions.push(allowed));
-  session.handler(dashboard, "clipboard-sanitized-write", (allowed) => permissions.push(allowed), {
-    isMainFrame: true, requestingUrl: `${origin}/`,
-  });
-  session.handler(settings, "clipboard-sanitized-write", (allowed) => permissions.push(allowed), {
-    isMainFrame: true, requestingUrl: `${origin}/`,
-  });
-  session.handler(dashboard, "clipboard-sanitized-write", (allowed) => permissions.push(allowed), {
-    isMainFrame: false, requestingUrl: `${origin}/`,
-  });
-  session.handler(dashboard, "clipboard-read", (allowed) => permissions.push(allowed), {
-    isMainFrame: true, requestingUrl: `${origin}/`,
-  });
-  session.handler(dashboard, "clipboard-sanitized-write", (allowed) => permissions.push(allowed), {
-    isMainFrame: true, requestingUrl: "https://example.test/",
-  });
-  assert.deepEqual(permissions, [true, false, false, true, false, false, false, false]);
+  for (const contents of [dashboard, settings]) {
+    for (const permission of ["clipboard-sanitized-write", "clipboard-read"]) {
+      session.handler(contents, permission, (allowed) => permissions.push(allowed), {
+        isMainFrame: true, requestingUrl: `${origin}/`,
+      });
+    }
+  }
+  assert.deepEqual(permissions, [true, false, false, false, false, false, false]);
   assert.equal(session.checkHandler(settings, "notifications"), true);
   assert.equal(session.checkHandler(dashboard, "notifications"), false);
-  assert.equal(session.checkHandler(dashboard, "clipboard-sanitized-write", origin, {
-    isMainFrame: true, requestingUrl: `${origin}/`,
-  }), true);
-  assert.equal(session.checkHandler(settings, "clipboard-sanitized-write", origin, {
-    isMainFrame: true, requestingUrl: `${origin}/`,
-  }), false);
-  assert.equal(session.checkHandler(dashboard, "clipboard-sanitized-write", "https://example.test", {
-    isMainFrame: true, requestingUrl: `${origin}/`,
-  }), false);
-  assert.equal(session.checkHandler(dashboard, "clipboard-sanitized-write", origin, {
-    isMainFrame: false, requestingUrl: `${origin}/`,
-  }), false);
-  assert.equal(session.checkHandler(dashboard, "clipboard-read", origin, {
-    isMainFrame: true, requestingUrl: `${origin}/`,
-  }), false);
+  for (const contents of [dashboard, settings]) {
+    for (const permission of ["clipboard-sanitized-write", "clipboard-read"]) {
+      assert.equal(session.checkHandler(contents, permission, origin, {
+        isMainFrame: true, requestingUrl: `${origin}/`,
+      }), false);
+    }
+  }
   const download = {
     url: blob,
     method: "GET",
@@ -924,18 +872,15 @@ test("loopback session admits only the dashboard same-origin Blob download", () 
   };
   const decisions = [];
   const request = (details) => session.webRequest.listener(details, (value) => decisions.push(value));
-  assert.equal(isAllowedCompanionBlobDownload(download, origin, dashboard.id), true);
   request(download);
   request({ ...download, webContentsId: settings.id });
-  request({ ...download, url: "blob:http://127.0.0.1:3457/id" });
   request({ ...download, url: "blob:https://evil.example/id" });
-  request({ ...download, resourceType: "image" });
+  request({ ...download, url: `${origin}/api/status`, resourceType: "xhr" });
   assert.deepEqual(decisions, [
+    { cancel: true },
+    { cancel: true },
+    { cancel: true },
     { cancel: false },
-    { cancel: true },
-    { cancel: true },
-    { cancel: true },
-    { cancel: true },
   ]);
   settingsInstall.remove();
   dashboardInstall.remove();
@@ -1015,7 +960,11 @@ test("companion supervisor owns one child, injects a parent contract, and strips
   assert.equal(spawnCalls[0].options.env.PATH, "/safe/path");
   assert.equal(spawnCalls[0].options.env.CODEX_HOME, "/safe/codex");
   assert.equal(spawnCalls[0].options.env.CLAUDE_CONFIG_DIR, "/safe/claude");
-  assert.equal(spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN, "http://127.0.0.1:8792");
+  assert.equal(
+    spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN,
+    undefined,
+    "the retired central upload origin is never forwarded to the companion",
+  );
   assert.equal(spawnCalls[0].options.env.APP_USAGEMONITOR_EXPORT_SECRET, undefined);
   assert.equal(spawnCalls[0].options.env.APP_USAGEMONITOR_ACCOUNT_HMAC_KEY, undefined);
   assert.equal(spawnCalls[0].options.env.USAGE_MONITOR_ENABLE_DEVELOPMENT_IDENTITY, undefined);
@@ -1323,106 +1272,6 @@ test("Windows qualification context accepts the generated unqualified binding ma
   });
 });
 
-test("Windows accountless smoke bridge accepts no caller-selected root or credential input", async () => {
-  await withWindowsQualificationFixture(async ({ context, environment }) => {
-    await assert.rejects(
-      createWindowsElectronQualificationAccountlessCredentialBackend({
-        context,
-        environment,
-        runId: "not-a-qualified-run-id",
-      }),
-      /Windows Electron qualification is unavailable/u,
-    );
-    await assert.rejects(
-      createWindowsElectronQualificationAccountlessCredentialBackend({
-        context,
-        environment,
-        runId: "550e8400-e29b-41d4-a716-446655440000",
-        rootPath: "C:\\caller-controlled",
-      }),
-      /Windows Electron qualification is unavailable/u,
-    );
-  });
-});
-
-test("Windows accountless factory derives a private platform context from the authenticated launcher profile", async () => {
-  await withWindowsQualificationFixture(async ({ context }) => {
-    const environment = qualificationProfileEnvironment();
-    const backend = Object.freeze({
-      async read() { return null; },
-      async createIfMissing() { return "created"; },
-      async deleteExact() { return "deleted"; },
-    });
-    let createdAdapter = null;
-    let desktopOptions = null;
-    const result = await createWindowsElectronQualificationAccountlessCredentialBackendForTest({
-      context,
-      environment,
-      runId: "550e8400-e29b-41d4-a716-446655440000",
-    }, {
-      createAdapter(options) {
-        assert.deepEqual(options, { platform: "win32", architecture: "x64" });
-        createdAdapter = qualificationFilesystemAdapter();
-        return createdAdapter;
-      },
-      createQualificationContext: (options) => {
-        assert.equal(options.environment.TEMP, "C:\\qualification-profile");
-        assert.equal(options.environment.USAGE_MONITOR_STATE_ROOT,
-          "C:\\qualification-profile\\state");
-        assert.equal(environment.TEMP, "C:\\qualification-profile\\tmp");
-        return createWindowsQualificationModeContext(options);
-      },
-      createDesktopBackend(options) {
-        desktopOptions = options;
-        return backend;
-      },
-    });
-
-    assert.equal(result, backend);
-    assert.equal(desktopOptions.adapter, createdAdapter);
-    assert.equal(desktopOptions.rootPath,
-      "C:\\qualification-profile\\state\\accountless-fd3-smoke-v1\\550e8400-e29b-41d4-a716-446655440000");
-    assert.equal(desktopOptions.windowsQualificationModeContext.tempRoot,
-      "C:\\qualification-profile");
-    assert.equal(desktopOptions.windowsQualificationModeContext.stateRoot,
-      "C:\\qualification-profile\\state");
-  });
-});
-
-test("Windows accountless factory refuses a profile whose state is not in the fixed launcher layout", async () => {
-  await withWindowsQualificationFixture(async ({ context }) => {
-    const environment = {
-      ...qualificationProfileEnvironment(),
-      USAGE_MONITOR_STATE_ROOT: "C:\\other-profile\\state",
-    };
-    let adapterCalls = 0;
-    await assert.rejects(
-      createWindowsElectronQualificationAccountlessCredentialBackendForTest({
-        context,
-        environment,
-        runId: "550e8400-e29b-41d4-a716-446655440000",
-      }, {
-        createAdapter() {
-          adapterCalls += 1;
-          return qualificationFilesystemAdapter();
-        },
-        createQualificationContext: createWindowsQualificationModeContext,
-        createDesktopBackend: () => ({
-          read: async () => null,
-          createIfMissing: async () => "created",
-          deleteExact: async () => "deleted",
-        }),
-      }),
-      /Windows Electron qualification is unavailable/u,
-    );
-    assert.equal(adapterCalls, 0);
-    assert.throws(
-      () => accountlessQualificationEnvironmentForTest(environment),
-      /Windows Electron qualification is unavailable/u,
-    );
-  });
-});
-
 test("Windows smoke control is qualification-only Node IPC with bounded cleanup", async () => {
   await withWindowsQualificationFixture(async ({ context, environment }) => {
     const source = new EventEmitter();
@@ -1581,10 +1430,8 @@ test("Windows smoke IPC maps every credential operation to a fixed result", asyn
         assert.equal(runId, qualifiedEnvironment.USAGE_MONITOR_WINDOWS_QUALIFICATION_RUN_ID);
         operations.push(command);
       },
-      accountlessStorage({ context: receivedContext, environment: receivedEnvironment }) {
-        assert.equal(receivedContext, context);
-        assert.equal(receivedEnvironment, qualifiedEnvironment);
-        operations.push("accountless-storage-v1");
+      accountlessStorage() {
+        operations.push("retired-accountless-storage-v1");
       },
       accountObservationStorage({ context: receivedContext, environment: receivedEnvironment }) {
         assert.equal(receivedContext, context);
@@ -1616,20 +1463,16 @@ test("Windows smoke IPC maps every credential operation to a fixed result", asyn
       // returning false for backpressure. The control handler must consume it.
       callbacks.at(-1)(new Error("ERR_IPC_CHANNEL_CLOSED"));
     }
+    // The retired FD3 accountless storage command is outside the closed
+    // vocabulary: it is ignored and never reaches a runner.
+    const sentBeforeRetired = sent.length;
     source.emit("message", {
       type: "windows-electron-smoke-v1",
       message: "command-v1",
       command: "accountless-storage-v1",
     });
     await nextTick();
-    assert.equal(typeof callbacks.at(-1), "function");
-    assert.deepEqual(sent.at(-1), {
-      type: "windows-electron-smoke-v1",
-      message: "credential-v1",
-      operation: "accountless-storage-v1",
-      status: "passed-v1",
-    });
-    callbacks.at(-1)(new Error("ERR_IPC_CHANNEL_CLOSED"));
+    assert.equal(sent.length, sentBeforeRetired);
     source.emit("message", {
       type: "windows-electron-smoke-v1",
       message: "command-v1",
@@ -1647,7 +1490,6 @@ test("Windows smoke IPC maps every credential operation to a fixed result", asyn
       "create-v1",
       "read-v1",
       "delete-v1",
-      "accountless-storage-v1",
       "account-observation-storage-v1",
     ]);
     cleanup();
@@ -1880,7 +1722,6 @@ test("Windows qualification forbids launch-path and supervisor overrides", async
       { companionScript: "C:\\forged\\server.js" },
       { resourceRoot: "C:\\forged\\resources" },
       { resourcesPath: "C:\\forged\\resources" },
-      { ownedDownloadsRegistry: {} },
       { notificationBackend: {} },
       { supervisorOptions: { command: "forged.exe" } },
       { lifecycleOptions: { appName: "Forged" } },
@@ -2269,43 +2110,17 @@ test("desktop lifecycle leaves macOS app reveal and focus APIs unused on Windows
   await lifecycle.dispose();
 });
 
-test("desktop lifecycle installs one dashboard-owned download handler and removes stale origins", async () => {
+test("desktop lifecycle installs no download handler and ignores the retired registry option", async () => {
   const app = new FakeApp();
   const windows = [];
-  const completed = [];
-  const failed = [];
-  let prepared = 0;
-  let revealed = 0;
-  let opened = 0;
-  let cleared = 0;
-  const ownedDownloadsRegistry = {
-    prepareDownload(value) {
-      assert.deepEqual(value, {
-        kind: "share_card",
-        mime: "image/png",
-        filename: "2026-09-28-19-15-tibotattle-results.png",
-      });
-      prepared += 1;
-      return {
-        id: `00000000-0000-4000-8000-${String(prepared).padStart(12, "0")}`,
-        destination: `/Users/adam/Downloads/owned-${prepared}.png`,
-      };
-    },
-    async completeDownload(id) { completed.push(id); return true; },
-    async failDownload(id) { failed.push(id); return true; },
-    async revealLatest() { revealed += 1; return "revealed"; },
-    async openLatest() { opened += 1; return "opened"; },
-    clear() { cleared += 1; },
-  };
   const supervisor = {
     starts: 0,
-    stops: 0,
     setUnexpectedExitHandler() {},
     async start() {
       this.starts += 1;
       return { origin: `http://127.0.0.1:${4000 + this.starts}` };
     },
-    async stop() { this.stops += 1; },
+    async stop() {},
   };
   const lifecycle = createDesktopLifecycle({
     app,
@@ -2320,65 +2135,16 @@ test("desktop lifecycle installs one dashboard-owned download handler and remove
     icon: "empty-icon",
     preloadPath: "/private/preload.cjs",
     supervisor,
-    ownedDownloadsRegistry,
+    ownedDownloadsRegistry: { prepareDownload() { throw new Error("must not be used"); } },
   });
   await lifecycle.start();
   const dashboard = windows.find((candidate) => candidate.loaded[0] === "http://127.0.0.1:4001/");
-  const dashboardSession = dashboard.webContents.session;
-  // A download may settle before the dashboard is ready to receive renderer
-  // commands. The registry records it, but lifecycle delivery stays silent.
-  const beforeReadyItem = new LifecycleDownloadItem();
-  dashboardSession.emit("will-download", { preventDefault() {} }, beforeReadyItem, dashboard.webContents);
-  assert.equal(beforeReadyItem.savePath, "/Users/adam/Downloads/owned-1.png");
-  beforeReadyItem.finish("completed");
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(dashboard.webContents.sent, []);
-
   dashboard.emit("ready-to-show");
-  const item = new LifecycleDownloadItem();
-  dashboardSession.emit("will-download", { preventDefault() {} }, item, dashboard.webContents);
-  assert.equal(item.savePath, "/Users/adam/Downloads/owned-2.png");
-  item.finish("completed");
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(completed, [
-    "00000000-0000-4000-8000-000000000001",
-    "00000000-0000-4000-8000-000000000002",
-  ]);
-  assert.deepEqual(dashboard.webContents.sent, [{
-    channel: "tibotattle:desktop-command:v1",
-    command: { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" },
-  }]);
-  assert.equal(lifecycle.isAuthorizedDesktopDownloadContext(
-    dashboard.webContents,
-    dashboard.webContents.mainFrame,
-  ), true);
-  assert.equal(await lifecycle.revealLatestDownload(), "revealed");
-  assert.equal(revealed, 1);
-  assert.equal(await lifecycle.openLatestDownload(), "opened");
-  assert.equal(opened, 1);
-
-  const oldSession = dashboardSession;
-  const stalePending = new LifecycleDownloadItem();
-  oldSession.emit("will-download", { preventDefault() {} }, stalePending, dashboard.webContents);
-  assert.equal(stalePending.savePath, "/Users/adam/Downloads/owned-3.png");
-  await lifecycle.retry();
-  assert.equal(oldSession.listenerCount("will-download"), 0);
-  stalePending.finish("completed");
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(dashboard.webContents.sent, [{
-    channel: "tibotattle:desktop-command:v1",
-    command: { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" },
-  }]);
-  const staleItem = new LifecycleDownloadItem();
-  oldSession.emit("will-download", { preventDefault() {} }, staleItem, dashboard.webContents);
-  assert.equal(staleItem.savePath, null);
-  assert.equal(lifecycle.isAuthorizedDesktopDownloadContext(
-    dashboard.webContents,
-    dashboard.webContents.mainFrame,
-  ), false);
+  assert.equal(dashboard.webContents.session.listenerCount("will-download"), 0);
+  assert.equal(lifecycle.revealLatestDownload, undefined);
+  assert.equal(lifecycle.openLatestDownload, undefined);
+  assert.equal(lifecycle.isAuthorizedDesktopDownloadContext, undefined);
   await lifecycle.requestQuit();
-  assert.equal(cleared, 1);
-  assert.ok(failed.length >= 0);
 });
 
 test("desktop lifecycle keeps a visible recovery window after a startup exit", async () => {
@@ -3691,7 +3457,7 @@ test("packaged Electron composition keeps the companion in app.asar and uses phy
   assert.equal(
     spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN,
     undefined,
-    "accountless desktop runtime must not expose the legacy central transport",
+    "the desktop runtime must not expose the retired central transport",
   );
   child.stdout.emit("data", Buffer.from("USAGE_MONITOR_READY http://127.0.0.1:4711/\n"));
   const lifecycle = await launch;
@@ -3700,70 +3466,35 @@ test("packaged Electron composition keeps the companion in app.asar and uses phy
   await dispose;
 });
 
-test("accountless sharing notices require a visible trusted frame and block hosted sign-in", async () => {
-  const fixture = await launchSharingRuntimeFixture();
+test("retired sharing, community, download and hosted sign-in actions are outside the IPC vocabulary", async () => {
+  const fixture = await launchDashboardRuntimeFixture();
+  fixture.dashboard.emit("ready-to-show");
+  assert.equal(fixture.desktop.lifecycle.state.windowVisible, true);
+  assert.equal(fixture.spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN, undefined);
   const event = {
     sender: fixture.dashboard.webContents,
     senderFrame: fixture.dashboard.webContents.mainFrame,
   };
-  const noticeRequest = { action: "sharingNoticePresented", args: { index: 1 } };
-
-  assert.equal(fixture.spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN, undefined);
-  assert.equal(fixture.desktop.childEnvironment.USAGE_MONITOR_CENTRAL_ORIGIN, undefined);
-  assert.equal(fixture.desktop.lifecycle.state.windowVisible, false);
-  await assert.rejects(
-    fixture.ipcMain.handler(event, noticeRequest),
-    (error) => error?.code === "desktop_ipc_untrusted_context",
-    "a hidden dashboard cannot acknowledge a sharing notice",
-  );
-
-  assert.equal(fixture.desktop.lifecycle.showSettingsWindow(), true);
-  const settings = RuntimeWindow.instances.find((candidate) => (
-    candidate.loaded[0]?.includes("electron-settings.html")
-  ));
-  assert.notEqual(settings, undefined);
-  settings.emit("ready-to-show");
-  assert.equal(fixture.desktop.lifecycle.state.settingsWindowVisible, true);
-  const settingsEvent = {
-    sender: settings.webContents,
-    senderFrame: settings.webContents.mainFrame,
-  };
-  const storedBeforeSettingsNotice = fixture.sharingBackend.stored;
-  await assert.rejects(
-    fixture.ipcMain.handler(settingsEvent, noticeRequest),
-    (error) => error?.code === "desktop_ipc_untrusted_context",
-    "a visible Settings frame cannot acknowledge a sharing notice",
-  );
-  assert.equal(
-    fixture.sharingBackend.stored,
-    storedBeforeSettingsNotice,
-    "a rejected Settings receipt must not persist or increment the notice",
-  );
-
-  fixture.dashboard.emit("ready-to-show");
-  assert.equal(fixture.desktop.lifecycle.state.windowVisible, true);
-  const acknowledged = await fixture.ipcMain.handler(event, noticeRequest);
-  assert.equal(acknowledged.noticeCount, 1);
-  assert.equal(fixture.sharingBackend.stored.notice1PresentedAt !== null, true);
-
-  fixture.desktop.lifecycle.hideWindow();
-  assert.equal(fixture.desktop.lifecycle.state.windowVisible, false);
-  await assert.rejects(
-    fixture.ipcMain.handler(event, noticeRequest),
-    (error) => error?.code === "desktop_ipc_untrusted_context",
-    "a hidden dashboard cannot acknowledge another sharing notice",
-  );
-
-  await assert.rejects(
-    fixture.ipcMain.handler(event, {
+  const commandsBefore = (fixture.dashboard.webContents.sent ?? []).length;
+  for (const request of [
+    { action: "getSharingPreference", args: {} },
+    { action: "setSharingEnabled", args: { enabled: true } },
+    { action: "sharingNoticePresented", args: { index: 1 } },
+    { action: "openCommunity", args: {} },
+    { action: "revealLatestDownload", args: {} },
+    { action: "openLatestDownload", args: {} },
+    {
       action: "openHostedSignIn",
-      args: {
-        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-      },
-    }),
-    (error) => error?.code === "desktop_ipc_handler_failed",
-    "accountless runtime must block social sign-in",
-  );
+      args: { authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test" },
+    },
+  ]) {
+    await assert.rejects(
+      fixture.ipcMain.handler(event, request),
+      (error) => error?.code === "desktop_ipc_invalid_request",
+      `${request.action} must be refused`,
+    );
+  }
+  assert.equal((fixture.dashboard.webContents.sent ?? []).length, commandsBefore);
   await fixture.desktop.lifecycle.dispose();
 });
 
@@ -3816,15 +3547,11 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "version",
     "onCommand",
     "getSettings",
-    "getSharingPreference",
-    "setSharingEnabled",
-    "sharingNoticePresented",
     "getCodexHomesForSettings",
     "openSettings",
     "openTraySettings",
     "restoreTrayDefaults",
     "setTrayPreferences",
-    "openCommunity",
     "toggleSidebar",
     "chooseCodexHome",
     "addCodexHome",
@@ -3841,13 +3568,10 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "setNotificationPreferences",
     "openSystemSettings",
     "openExternal",
-    "openHostedSignIn",
     "checkForUpdates",
     "downloadUpdate",
     "installUpdateAndRestart",
     "setAutomaticDownload",
-    "revealLatestDownload",
-    "openLatestDownload",
     "openDashboardInBrowser",
     "showDiagnostics",
     "revealLocalData",
@@ -3870,26 +3594,19 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   commandListener({}, { command: "refresh" });
   commandListener({}, { command: "automaticRefresh", mode: "quick" });
   commandListener({}, { command: "automaticRefresh", mode: "detailed" });
-  commandListener({}, { command: "dashboardSection", section: "weekly" });
-  commandListener({}, { command: "dashboardSection", section: "timeline" });
-  commandListener({}, { command: "dashboardSection", section: "accounting" });
-  commandListener({}, { command: "dashboardSection", section: "projects" });
-  commandListener({}, { command: "dashboardSection", section: "projects", search: "unexpected" });
-  commandListener({}, { command: "dashboardSection", section: "#projects" });
-  commandListener({}, { command: "dashboardSection", section: "community" });
+  for (const section of ["overview", "usage", "allowance", "performance"]) {
+    commandListener({}, { command: "dashboardSection", section });
+  }
+  for (const section of ["weekly", "timeline", "accounting", "projects", "community", "#usage", "usage/", "Usage", ""]) {
+    commandListener({}, { command: "dashboardSection", section });
+  }
+  commandListener({}, { command: "dashboardSection", section: "usage", search: "unexpected" });
   commandListener({}, { command: "language", value: "es" });
   commandListener({}, { command: "sidebar", collapsed: true });
+  // Retired native-to-renderer commands must not cross the preload boundary.
   commandListener({}, { command: "hostedSignInReturn" });
   commandListener({}, { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" });
   commandListener({}, { command: "shareCardDownloadFailed" });
-  commandListener({}, {
-    command: "shareCardDownloadCompleted",
-    path: "/private/opaque-download.png",
-  });
-  commandListener({}, {
-    command: "shareCardDownloadFailed",
-    error: "private details",
-  });
   commandListener({}, { command: "language", value: "fr" });
   commandListener({}, { command: "refresh", selector: "#private" });
   commandListener({}, { command: "automaticRefresh", mode: "background" });
@@ -3898,26 +3615,18 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     { command: "refresh" },
     { command: "automaticRefresh", mode: "quick" },
     { command: "automaticRefresh", mode: "detailed" },
-    { command: "dashboardSection", section: "weekly" },
-    { command: "dashboardSection", section: "timeline" },
-    { command: "dashboardSection", section: "accounting" },
-    { command: "dashboardSection", section: "projects" },
-    { command: "dashboardSection", section: "community" },
+    { command: "dashboardSection", section: "overview" },
+    { command: "dashboardSection", section: "usage" },
+    { command: "dashboardSection", section: "allowance" },
+    { command: "dashboardSection", section: "performance" },
     { command: "language", value: "es" },
     { command: "sidebar", collapsed: true },
-    { command: "hostedSignInReturn" },
-    { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" },
-    { command: "shareCardDownloadFailed" },
   ]);
   unsubscribe();
   assert.equal(commandListeners.size, 0);
   await bridge.getSettings();
-  await bridge.getSharingPreference();
-  await bridge.setSharingEnabled(true);
-  await bridge.sharingNoticePresented(1);
   await bridge.getCodexHomesForSettings();
   await bridge.openSettings();
-  await bridge.openCommunity();
   await bridge.toggleSidebar();
   await bridge.chooseCodexHome();
   await bridge.addCodexHome();
@@ -3938,15 +3647,10 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   });
   await bridge.openSystemSettings("notifications");
   await bridge.openExternal("github");
-  await bridge.openHostedSignIn(
-    "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-  );
   await bridge.checkForUpdates();
   await bridge.downloadUpdate();
   await bridge.installUpdateAndRestart();
   await bridge.setAutomaticDownload(false);
-  await bridge.revealLatestDownload();
-  await bridge.openLatestDownload();
   await bridge.openDashboardInBrowser();
   await bridge.showDiagnostics();
   await bridge.revealLocalData();
@@ -3956,12 +3660,8 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   await bridge.refreshSettled(1);
   assert.deepEqual(JSON.parse(JSON.stringify(calls.map(({ channel, request }) => ({ channel, request })))), [
     { channel: "tibotattle:desktop:v1", request: { action: "getSettings", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "getSharingPreference", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "setSharingEnabled", args: { enabled: true } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "sharingNoticePresented", args: { index: 1 } } },
     { channel: "tibotattle:desktop:v1", request: { action: "getCodexHomesForSettings", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "openSettings", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "openCommunity", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "toggleSidebar", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "chooseCodexHome", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "addCodexHome", args: {} } },
@@ -4013,21 +3713,10 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
       channel: "tibotattle:desktop:v1",
       request: { action: "openExternal", args: { target: "github" } },
     },
-    {
-      channel: "tibotattle:desktop:v1",
-      request: {
-        action: "openHostedSignIn",
-        args: {
-          authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-        },
-      },
-    },
     { channel: "tibotattle:desktop:v1", request: { action: "checkForUpdates", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "downloadUpdate", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "installUpdateAndRestart", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "setAutomaticDownload", args: { enabled: false } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "revealLatestDownload", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "openLatestDownload", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "openDashboardInBrowser", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "showDiagnostics", args: {} } },
     { channel: "tibotattle:desktop:v1", request: { action: "revealLocalData", args: {} } },
@@ -4042,9 +3731,6 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   );
   for (const operation of [
     () => bridge.onCommand(() => {}, "extra"),
-    () => bridge.getSharingPreference("extra"),
-    () => bridge.setSharingEnabled(true, "extra"),
-    () => bridge.sharingNoticePresented(1, "extra"),
     () => bridge.setLanguage("en", "extra"),
     () => bridge.toggleSidebar("extra"),
     () => bridge.getCodexHomesForSettings("extra"),
@@ -4062,19 +3748,12 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     ),
     () => bridge.openSystemSettings("startup", "extra"),
     () => bridge.openExternal("github", "extra"),
-    () => bridge.openHostedSignIn(
-      "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-      "extra",
-    ),
-    () => bridge.revealLatestDownload("extra"),
-    () => bridge.openLatestDownload("extra"),
     () => bridge.checkForUpdates("extra"),
     () => bridge.downloadUpdate("extra"),
     () => bridge.installUpdateAndRestart("extra"),
     () => bridge.setAutomaticDownload("true"),
     () => bridge.setAutomaticDownload(true, "extra"),
     () => bridge.openDashboardInBrowser("extra"),
-    () => bridge.openCommunity("extra"),
     () => bridge.showDiagnostics("extra"),
     () => bridge.revealLocalData("extra"),
     () => bridge.getRefreshStatus("extra"),
@@ -4085,11 +3764,6 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     () => bridge.refreshHeartbeat(0),
     () => bridge.refreshSettled("extra"),
     () => bridge.refreshSettled(0),
-    () => bridge.setSharingEnabled("true"),
-    () => bridge.sharingNoticePresented(0),
-    () => bridge.sharingNoticePresented(4),
-    () => bridge.sharingNoticePresented(1.5),
-    () => bridge.sharingNoticePresented("1"),
   ]) {
     await assert.rejects(operation(), (error) => error?.name === "TypeError");
   }
@@ -4108,10 +3782,10 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   ]) {
     await assert.rejects(operation(), (error) => error?.name === "TypeError");
   }
-  await assert.rejects(
-    bridge.openHostedSignIn("https://accounts.google.com.evil/?client_id=test"),
-    (error) => error?.name === "TypeError",
-  );
+  for (const retired of [
+    "openHostedSignIn", "getSharingPreference", "setSharingEnabled", "sharingNoticePresented",
+    "openCommunity", "revealLatestDownload", "openLatestDownload",
+  ]) assert.equal(Object.hasOwn(bridge, retired), false, `${retired} must not be exposed`);
 });
 
 test("preload exposes platform-qualified one-shot startup gates and rejects hostile calls", async () => {

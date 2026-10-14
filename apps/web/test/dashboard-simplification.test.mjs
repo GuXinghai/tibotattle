@@ -27,18 +27,6 @@ test("collection retains companion readiness without an extra dashboard mode", (
     archivedSessionsReadable: true }), true);
 });
 
-test("accountless sharing uses the existing versioned Electron bridge", () => {
-  const resolveBridge = new Function("ELECTRON_SHARING_API_VERSION",
-    `${productionFunction("electronSharingBridge")}\nreturn electronSharingBridge;`)("v1");
-  const bridge = { version: "v1", getSharingPreference() {}, setSharingEnabled() {}, sharingNoticePresented() {} };
-  assert.equal(resolveBridge({ tibotattleDesktop: bridge }), bridge);
-  assert.equal(resolveBridge({}), null);
-  assert.equal(resolveBridge({ tibotattleDesktop: { ...bridge, version: "v2" } }), null);
-  for (const method of ["getSharingPreference", "setSharingEnabled", "sharingNoticePresented"]) {
-    assert.equal(resolveBridge({ tibotattleDesktop: { ...bridge, [method]: null } }), null);
-  }
-});
-
 test("diagnostics keep fixed copy and require an exact write receipt", async () => {
   for (const locale of ["en-US", "zh-Hans", "es"]) {
   for (const outcome of ["recorded", "refused", "unreachable"]) {
@@ -112,15 +100,15 @@ test("readiness retries remain bounded and generation fenced", async () => {
   assert.equal(timers.length, 0);
 });
 
-test("the shared dashboard retains accountless controls and removes retired social presentation", async () => {
+test("the shared dashboard carries no sharing, community or retired social presentation", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
   for (const text of [source, html, styles]) {
     assert.doesNotMatch(text, /identity-google-signin|identity-apple-signin|provider-button-google|provider-button-apple|beginHostedSignIn|approveIncrementalContribution|disconnect-device-dialog|usage-monitor-google-client-id/u);
   }
-  assert.match(html, /id="electron-accountless-community-state"/u);
-  assert.match(html, /id="electron-accountless-community-transport"/u);
-  assert.match(html, /id="electron-accountless-sharing-enabled"/u);
+  for (const text of [source, html, styles]) {
+    assert.doesNotMatch(text, /electron-accountless|electronSharing|ElectronSharing|share-card|shareCard|share-panel|share-toast|contribution-cta|id="community"/u);
+  }
   assert.doesNotMatch(html, /id="(?:refresh-button|setup-refresh)"[^>]*hidden/u);
   assert.doesNotMatch(source, /dashboardCapabilities|communityClient|prepareContribution\(|restoreCommunitySession|resumePendingHostedSignIn/u);
 });

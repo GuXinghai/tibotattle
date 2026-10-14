@@ -18,25 +18,21 @@ test("desktop commands contain only the fixed presentation vocabulary", () => {
     command: "automaticRefresh",
     mode: "detailed",
   });
-  assert.deepEqual(createDesktopCommand("dashboardSection", "weekly"), {
+  assert.deepEqual(createDesktopCommand("dashboardSection", "overview"), {
     command: "dashboardSection",
-    section: "weekly",
+    section: "overview",
   });
-  assert.deepEqual(createDesktopCommand("dashboardSection", "timeline"), {
+  assert.deepEqual(createDesktopCommand("dashboardSection", "usage"), {
     command: "dashboardSection",
-    section: "timeline",
+    section: "usage",
   });
-  assert.deepEqual(createDesktopCommand("dashboardSection", "accounting"), {
+  assert.deepEqual(createDesktopCommand("dashboardSection", "allowance"), {
     command: "dashboardSection",
-    section: "accounting",
+    section: "allowance",
   });
-  assert.deepEqual(createDesktopCommand("dashboardSection", "projects"), {
+  assert.deepEqual(createDesktopCommand("dashboardSection", "performance"), {
     command: "dashboardSection",
-    section: "projects",
-  });
-  assert.deepEqual(createDesktopCommand("dashboardSection", "community"), {
-    command: "dashboardSection",
-    section: "community",
+    section: "performance",
   });
   assert.deepEqual(createDesktopCommand("language", "zh-Hans"), {
     command: "language",
@@ -52,16 +48,6 @@ test("desktop commands contain only the fixed presentation vocabulary", () => {
     preference: "dark",
     resolvedTheme: "dark",
   });
-  assert.deepEqual(createDesktopCommand("hostedSignInReturn"), {
-    command: "hostedSignInReturn",
-  });
-  assert.deepEqual(createDesktopCommand("shareCardDownloadCompleted", "2026-09-28-19-15-tibotattle-results.png"), {
-    command: "shareCardDownloadCompleted",
-    filename: "2026-09-28-19-15-tibotattle-results.png",
-  });
-  assert.deepEqual(createDesktopCommand("shareCardDownloadFailed"), {
-    command: "shareCardDownloadFailed",
-  });
   assert.equal(Object.isFrozen(createDesktopCommand("refresh")), true);
 });
 
@@ -71,11 +57,18 @@ test("desktop commands reject selectors, paths, URLs, extra keys, and prototypes
     { command: "refresh", selector: "#refresh-button" },
     { command: "automaticRefresh", mode: "quick", reason: "unexpected" },
     { command: "automaticRefresh", mode: "background" },
-    { command: "dashboardSection", section: "#weekly" },
-    { command: "dashboardSection", section: "#projects" },
-    { command: "dashboardSection", section: "projects", search: "unexpected" },
-    { command: "dashboardSection", section: "community", extra: true },
-    { command: "dashboardSection", section: "weekly", path: "/private/secret" },
+    { command: "dashboardSection", section: "#allowance" },
+    { command: "dashboardSection", section: "#usage" },
+    { command: "dashboardSection", section: "usage", search: "unexpected" },
+    { command: "dashboardSection", section: "performance", extra: true },
+    { command: "dashboardSection", section: "allowance", path: "/private/secret" },
+    ...["weekly", "timeline", "accounting", "projects", "community"].map((section) => ({
+      command: "dashboardSection",
+      section,
+    })),
+    { command: "hostedSignInReturn" },
+    { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" },
+    { command: "shareCardDownloadFailed" },
     { command: "navigate", value: "https://attacker.example" },
     { command: "language", value: "fr" },
     { command: "language", value: "en", path: "/tmp/private" },
@@ -83,23 +76,10 @@ test("desktop commands reject selectors, paths, URLs, extra keys, and prototypes
     { command: "sidebar", collapsed: "true" },
     { command: "appearance", preference: "dark", resolvedTheme: "sepia" },
     { command: "appearance", preference: "sepia", resolvedTheme: "dark" },
-    { command: "hostedSignInReturn", value: "unexpected" },
-    { command: "shareCardDownloadCompleted", path: "/private/download.png" },
-    { command: "shareCardDownloadCompleted", filename: "../private.png" },
-    { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png", path: "/private/download.png" },
-    { command: "shareCardDownloadFailed", error: "private details" },
     Object.assign(Object.create(null), { command: "refresh" }),
   ]) {
     assert.throws(() => validateDesktopCommand(value), TypeError);
   }
-  assert.throws(
-    () => createDesktopCommand("shareCardDownloadCompleted", "/private/download.png"),
-    TypeError,
-  );
-  assert.throws(
-    () => createDesktopCommand("shareCardDownloadFailed", { path: "/private/download.png" }),
-    TypeError,
-  );
   assert.throws(() => createDesktopCommand("dashboardSection"), TypeError);
   assert.throws(() => createDesktopCommand("automaticRefresh"), TypeError);
   assert.throws(() => createDesktopCommand("automaticRefresh", "background"), TypeError);

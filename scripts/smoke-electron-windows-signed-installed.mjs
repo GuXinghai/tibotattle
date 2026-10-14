@@ -177,7 +177,7 @@ export function validateSignedInstalledNormalReceipt(receipt, sourceRevision) {
         'packageArtifactVerified', 'packagedElectronExecutionVerified', 'syntheticFixtureIngestionVerified',
         'syntheticFixtureTotalsRetainedAcrossRestart', 'projectsAndThreadsRetainedAcrossRestart',
         'settingsPersistedAcrossRestart',
-        'durableContributionOptOutRetained', 'loopbackJourneyVerified', 'outboundFirewallRuleRemoved',
+        'loopbackJourneyVerified', 'outboundFirewallRuleRemoved',
         'ownedProfileRemoved',
       ].some((key) => receipt[key] !== true)) fail('NORMAL_JOURNEY_UNPROVEN');
   return receipt;

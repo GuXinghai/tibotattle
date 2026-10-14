@@ -54,37 +54,33 @@ function fakeWindow() {
 
 function fakeDocument({
   settingsButton = fakeButton(),
-  shareButton = null,
-  sharePanel = null,
-  communityLink = null,
 } = {}) {
   const classList = { contains: (value) => value === "electron-dashboard" };
   return {
     documentElement: { classList },
     querySelector(selector) {
       if (selector === "#electron-settings-button") return settingsButton;
-      if (selector === "#electron-share-button") return shareButton;
-      if (selector === "#share-panel") return sharePanel;
-      if (selector === ".community-public-evidence a") return communityLink;
       if (selector === "[data-language-picker]") return null;
       return null;
     },
   };
 }
 
-test("native navigation accepts only the fixed dashboard destinations", () => {
+test("native navigation accepts only the four fixed dashboard destinations", () => {
   const { windowRef } = fakeWindow();
-  assert.equal(navigateToDashboardSection({}, windowRef, "weekly"), true);
-  assert.equal(windowRef.location.hash, "#weekly");
-  assert.equal(navigateToDashboardSection({}, windowRef, "timeline"), true);
-  assert.equal(windowRef.location.hash, "#timeline");
-  assert.equal(navigateToDashboardSection({}, windowRef, "accounting"), true);
-  assert.equal(windowRef.location.hash, "#accounting");
-  assert.equal(navigateToDashboardSection({}, windowRef, "projects"), true);
-  assert.equal(windowRef.location.hash, "#projects");
-  assert.equal(navigateToDashboardSection({}, windowRef, "#projects"), false);
-  assert.equal(navigateToDashboardSection({}, windowRef, "#weekly"), false);
-  assert.equal(navigateToDashboardSection({}, {}, "weekly"), false);
+  for (const section of ["overview", "usage", "allowance", "performance"]) {
+    assert.equal(navigateToDashboardSection({}, windowRef, section), true);
+    assert.equal(windowRef.location.hash, `#${section}`);
+  }
+  windowRef.location.hash = "#overview";
+  for (const rejected of [
+    "#usage", "weekly", "timeline", "accounting", "projects", "community",
+    "history", "backend", "data", "trends", "method", "usage/cache", "",
+  ]) {
+    assert.equal(navigateToDashboardSection({}, windowRef, rejected), false, rejected);
+  }
+  assert.equal(windowRef.location.hash, "#overview");
+  assert.equal(navigateToDashboardSection({}, {}, "usage"), false);
 });
 
 test("desktop command bridge navigates the dashboard through the fixed section map", async () => {
@@ -93,18 +89,15 @@ test("desktop command bridge navigates the dashboard through the fixed section m
   const mounted = mountDesktopShell({ documentRef, windowRef });
   assert.equal(commandListeners.length, 1);
 
-  commandListeners[0]({ command: "dashboardSection", section: "weekly" });
-  assert.equal(windowRef.location.hash, "#weekly");
-  commandListeners[0]({ command: "dashboardSection", section: "timeline" });
-  assert.equal(windowRef.location.hash, "#timeline");
-  commandListeners[0]({ command: "dashboardSection", section: "accounting" });
-  assert.equal(windowRef.location.hash, "#accounting");
-  commandListeners[0]({ command: "dashboardSection", section: "projects" });
-  assert.equal(windowRef.location.hash, "#projects");
+  for (const section of ["usage", "allowance", "performance", "overview"]) {
+    commandListeners[0]({ command: "dashboardSection", section });
+    assert.equal(windowRef.location.hash, `#${section}`);
+  }
   commandListeners[0]({ command: "dashboardSection", section: "community" });
-  assert.equal(windowRef.location.hash, "#community");
-  commandListeners[0]({ command: "dashboardSection", section: "weekly", path: "/private/secret" });
-  assert.equal(windowRef.location.hash, "#community");
+  commandListeners[0]({ command: "dashboardSection", section: "weekly" });
+  assert.equal(windowRef.location.hash, "#overview");
+  commandListeners[0]({ command: "dashboardSection", section: "usage", path: "/private/secret" });
+  assert.equal(windowRef.location.hash, "#overview");
 
   mounted.teardown();
   await Promise.resolve();
@@ -149,82 +142,25 @@ test("desktop startup reapplies the persisted forced appearance", async () => {
   mounted.teardown();
 });
 
-test("desktop bridge forwards the completed share filename without a path", () => {
+test("retired share-card commands are ignored and never become renderer events", () => {
   const { commandListeners, events, windowRef } = fakeWindow();
   const mounted = mountDesktopShell({ documentRef: fakeDocument(), windowRef });
-  commandListeners[0]({
-    command: "shareCardDownloadCompleted",
-    filename: "2026-09-28-07-04-tibotattle-results-1.png",
-  });
-  assert.deepEqual(events.map(({ type, detail }) => ({ type, detail })), [{
-    type: "tibotattle:share-card-download-completed",
-    detail: { filename: "2026-09-28-07-04-tibotattle-results-1.png" },
-  }]);
+  commandListeners[0]({ command: "shareCardDownloadCompleted", filename: "x.png" });
+  commandListeners[0]({ command: "shareCardDownloadFailed" });
+  assert.deepEqual(events, []);
   mounted.teardown();
 });
 
-test("Electron Share selects Allowance and focuses the existing results card", () => {
+test("the shell no longer wires a global Share button or a community link", () => {
   const { windowRef } = fakeWindow();
-  const shareButton = fakeButton();
-  let focused = false;
-  let scrolled = false;
-  const sharePanel = {
-    setAttribute(name, value) {
-      assert.equal(name, "tabindex");
-      assert.equal(value, "-1");
-    },
-    focus(options) {
-      assert.deepEqual(options, { preventScroll: true });
-      focused = true;
-    },
-    scrollIntoView(options) {
-      assert.deepEqual(options, { block: "start", behavior: "smooth" });
-      scrolled = true;
-    },
+  const selectors = [];
+  const documentRef = fakeDocument();
+  const query = documentRef.querySelector;
+  documentRef.querySelector = (selector) => {
+    selectors.push(selector);
+    return query(selector);
   };
-  windowRef.requestAnimationFrame = (callback) => callback();
-  const mounted = mountDesktopShell({
-    documentRef: fakeDocument({ shareButton, sharePanel }),
-    windowRef,
-  });
-
-  shareButton.click();
-
-  assert.equal(windowRef.location.hash, "#weekly");
-  assert.equal(focused, true);
-  assert.equal(scrolled, true);
-  mounted.teardown();
-});
-
-
-test("community link opens the fixed website through Electron and tears down cleanly", async () => {
-  const { windowRef } = fakeWindow();
-  const calls = [];
-  windowRef.tibotattleDesktop.openExternal = async (...args) => { calls.push(args); };
-  const communityLink = fakeButton();
-  communityLink.href = "https://untrusted.example/renderer-mutation";
-  const documentRef = fakeDocument({ communityLink });
   const mounted = mountDesktopShell({ documentRef, windowRef });
-  let prevented = 0;
-  communityLink.click({ preventDefault() { prevented += 1; } });
-  await Promise.resolve();
-  assert.equal(prevented, 1);
-  assert.deepEqual(calls, [["website"]]);
-  mounted.teardown();
-  communityLink.click({ preventDefault() { prevented += 1; } });
-  assert.equal(prevented, 1);
-  assert.equal(calls.length, 1);
-});
-
-test("community bridge failures do not leave an unhandled rejection", async () => {
-  const { windowRef } = fakeWindow();
-  const communityLink = fakeButton();
-  const documentRef = fakeDocument({ communityLink });
-  windowRef.tibotattleDesktop.openExternal = () => Promise.reject(new Error("closed"));
-  const mounted = mountDesktopShell({ documentRef, windowRef });
-  communityLink.click({ preventDefault() {} });
-  await new Promise((resolve) => setImmediate(resolve));
-  windowRef.tibotattleDesktop.openExternal = () => { throw new Error("closed"); };
-  assert.doesNotThrow(() => communityLink.click({ preventDefault() {} }));
+  assert.equal(selectors.some((selector) => /share|community/iu.test(selector)), false);
   mounted.teardown();
 });

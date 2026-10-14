@@ -27,7 +27,6 @@ import {
   selectPrimaryCodexQuotaWindow
 } from "./data-client.js";
 import {
-  DIAGNOSTIC_REFERENCE_PATTERN,
   createDiagnosticReference,
   createQuotaTimelineLookup,
   createRefreshPollingBudget,
@@ -124,90 +123,10 @@ setMessageLocale(localization.locale());
 const t = localization.t;
 const tPlural = localization.tPlural;
 
-// Accountless sharing uses the existing Electron preload bridge. The Electron
-// main/application controller remains the policy owner; this page receives only
-// its bounded projection through the versioned preload bridge. A missing or malformed
-// projection never becomes an implied permission.
-const ELECTRON_SHARING_API_VERSION = "v1";
-const ELECTRON_SHARING_BASES = new Set([
-  "default_on",
-  "default_off",
-  "migration_default_on",
-  "user_choice",
-  "legacy_preserved",
-]);
-const ELECTRON_SHARING_STATES = new Set([
-  "pending_notices",
-  "enabled",
-  "disabled",
-  "legacy_preserved",
-]);
-const ELECTRON_SHARING_TRANSPORT_STATUSES = new Set(["unavailable", "off", "uploading", "pending", "up_to_date", "retry_wait", "paused", "recovery_required"]);
-
-function electronSharingBridge(windowRef = globalThis.window) {
-  const bridge = windowRef?.tibotattleDesktop;
-  if (bridge?.version !== ELECTRON_SHARING_API_VERSION
-      || typeof bridge.getSharingPreference !== "function"
-      || typeof bridge.setSharingEnabled !== "function"
-      || typeof bridge.sharingNoticePresented !== "function") {
-    return null;
-  }
-  return bridge;
-}
-
-function validSharingTimestamp(value) {
-  if (value === null) return true;
-  if (typeof value !== "string" || value.length !== 24) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds)
-    && new Date(milliseconds).toISOString() === value;
-}
-
-function normalizeElectronSharingPreference(raw) {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const available = raw.available === true;
-  const current = raw.current === true;
-  const state = ELECTRON_SHARING_STATES.has(raw.state) ? raw.state : null;
-  const basis = ELECTRON_SHARING_BASES.has(raw.basis) ? raw.basis : null;
-  const noticeCount = Number.isInteger(raw.noticeCount)
-    && raw.noticeCount >= 0 && raw.noticeCount <= 3
-    ? raw.noticeCount
-    : 0;
-  const nextNoticeIndex = raw.nextNoticeIndex === null
-    ? null
-    : Number.isInteger(raw.nextNoticeIndex)
-      && raw.nextNoticeIndex >= 1 && raw.nextNoticeIndex <= 3
-      ? raw.nextNoticeIndex
-      : null;
-  const nextNoticeAt = validSharingTimestamp(raw.nextNoticeAt) ? raw.nextNoticeAt : null;
-  const earliestActivationAt = validSharingTimestamp(raw.earliestActivationAt)
-    ? raw.earliestActivationAt
-    : validSharingTimestamp(raw.activatesAt) ? raw.activatesAt : null;
-  const transportStatus = ELECTRON_SHARING_TRANSPORT_STATUSES.has(raw.transportStatus)
-    ? raw.transportStatus
-    : raw.enabled === true ? "unavailable" : "off";
-  if (raw.nextNoticeAt !== undefined && !validSharingTimestamp(raw.nextNoticeAt)) return null;
-  if (raw.earliestActivationAt !== undefined && !validSharingTimestamp(raw.earliestActivationAt)) return null;
-  if (raw.activatesAt !== undefined && !validSharingTimestamp(raw.activatesAt)) return null;
-  return Object.freeze({
-    available,
-    current,
-    enabled: available && current && raw.enabled === true,
-    state,
-    basis,
-    noticeCount,
-    nextNoticeIndex,
-    noticeDue: raw.noticeDue === true,
-    nextNoticeAt,
-    earliestActivationAt,
-    transportStatus,
-  });
-}
-
 const localClient = new LocalCompanionClient();
 let dashboard = null;
 // Private, local-only display enrichment. Thread names never become part of
-// an accounting/dashboard DTO, share card, contribution, or browser storage.
+// an accounting/dashboard DTO or browser storage.
 const cacheDropThreadLinks = {
   dashboard: null,
   generation: null,
@@ -298,15 +217,6 @@ let localCompanionHealth = null;
 let localOnboarding = null;
 let localReadinessPollTimer = null;
 let localReadinessPollCount = 0;
-// Accountless sharing is deliberately page-local presentation state. Durable
-// choice, transition receipts, and transport authority stay in the companion.
-let electronSharingPreference = null;
-let electronSharingBusy = false;
-let electronSharingNoticeAcked = new Set();
-let electronSharingNoticeReceiptIndex = null;
-let electronSharingNoticeAckScheduled = null;
-let electronSharingNoticeAckCleanup = null;
-let electronSharingNoticeAckError = false;
 // The last refresh run's accounting-rebuild deferral, read from the local
 // refresh status alongside each dashboard load. A rebuild that keeps missing
 // its memory budget is otherwise invisible here: the refresh SUCCEEDS, the
@@ -498,8 +408,6 @@ function rerenderLocalizedDashboard() {
     notice.classList.toggle("notice-compact", compact);
   }
   localization.localizeTree();
-  renderElectronAccountlessCommunity();
-  renderElectronSharingNotice();
 }
 
 window.addEventListener("tibotattle:locale-change", (event) => {
@@ -950,313 +858,6 @@ function hideConnectionNotice() {
   visibleConnectionNotice = null;
   $("#connection-notice").open = false;
   $("#connection-notice").hidden = true;
-}
-
-function electronSharingStateMessageKey(preference) {
-  if (!preference?.available || !preference.current) {
-    return "electron.sharing.state.unavailable";
-  }
-  if (preference.state === "pending_notices") {
-    return "electron.sharing.state.pending";
-  }
-  if (preference.enabled && ["default_on", "migration_default_on"].includes(preference.basis)) {
-    return "electron.sharing.state.defaultOn";
-  }
-  if (preference.enabled) return "electron.sharing.state.enabled";
-  return preference.state === "legacy_preserved"
-    ? "electron.sharing.state.legacy"
-    : "electron.sharing.state.off";
-}
-
-function electronSharingTransportMessageKey(preference) {
-  switch (preference?.transportStatus) {
-    case "uploading": case "pending": case "up_to_date": case "retry_wait": case "paused": case "recovery_required":
-      return `electron.sharing.transport.${preference.transportStatus}`;
-    case "off":
-      return "electron.sharing.transport.off";
-    case "unavailable":
-    default:
-      return "electron.sharing.transport.unavailable";
-  }
-}
-
-function clearElectronSharingNoticeAckSchedule() {
-  const cleanup = electronSharingNoticeAckCleanup;
-  electronSharingNoticeAckCleanup = null;
-  electronSharingNoticeAckScheduled = null;
-  cleanup?.();
-}
-
-function electronSharingSurfaceIsVisible() {
-  if (document.visibilityState !== "visible") return false;
-  const notice = $("#electron-sharing-notice");
-  if (!notice || notice.hidden || notice.isConnected === false) return false;
-  for (let element = notice; element; element = element.parentElement) {
-    if (element.hidden || element.inert || element.getAttribute?.("aria-hidden") === "true") {
-      return false;
-    }
-  }
-  if (typeof notice.getBoundingClientRect !== "function") return false;
-  const rectangle = notice.getBoundingClientRect();
-  const viewportWidth = Number(globalThis.window?.innerWidth);
-  const viewportHeight = Number(globalThis.window?.innerHeight);
-  const left = Number(rectangle?.left);
-  const right = Number(rectangle?.right);
-  const top = Number(rectangle?.top);
-  const bottom = Number(rectangle?.bottom);
-  const width = Number(rectangle?.width ?? right - left);
-  const height = Number(rectangle?.height ?? bottom - top);
-  if (![viewportWidth, viewportHeight, left, right, top, bottom, width, height]
-    .every(Number.isFinite)
-    || viewportWidth <= 0 || viewportHeight <= 0 || width <= 0 || height <= 0) {
-    return false;
-  }
-  const visibleWidth = Math.min(right, viewportWidth) - Math.max(left, 0);
-  const visibleHeight = Math.min(bottom, viewportHeight) - Math.max(top, 0);
-  const requiredWidth = Math.min(width, viewportWidth) / 2;
-  const requiredHeight = Math.min(height, viewportHeight) / 2;
-  return visibleWidth >= requiredWidth && visibleHeight >= requiredHeight;
-}
-
-function scheduleElectronSharingNoticeAck(index) {
-  if (electronSharingNoticeAcked.has(index)
-      || electronSharingNoticeAckScheduled === index) return;
-  const bridge = electronSharingBridge();
-  if (!bridge) return;
-  electronSharingNoticeAckScheduled = index;
-  let finished = false;
-  let framePending = false;
-  const removers = [];
-  const listen = (target, type, handler) => {
-    if (typeof target?.addEventListener !== "function") return;
-    target.addEventListener(type, handler);
-    removers.push(() => target.removeEventListener?.(type, handler));
-  };
-  const finish = () => {
-    if (finished) return;
-    finished = true;
-    for (const remove of removers.splice(0)) remove();
-    if (electronSharingNoticeAckCleanup === finish) {
-      electronSharingNoticeAckCleanup = null;
-      electronSharingNoticeAckScheduled = null;
-    }
-  };
-  electronSharingNoticeAckCleanup = finish;
-  const scheduleFrame = (callback) => {
-    const raf = globalThis.window?.requestAnimationFrame;
-    if (typeof raf === "function") {
-      raf.call(globalThis.window, callback);
-      return;
-    }
-    const schedule = globalThis.window?.setTimeout ?? globalThis.setTimeout;
-    if (typeof schedule === "function") schedule(callback, 0);
-  };
-  const attempt = () => {
-    if (finished || framePending) return;
-    const preference = electronSharingPreference;
-    if (!preference || preference.state !== "pending_notices"
-        || preference.nextNoticeIndex !== index || !preference.noticeDue) {
-      finish();
-      return;
-    }
-    // A hidden Electron renderer can run JavaScript while its BrowserWindow is
-    // backgrounded. Do not count a notice until the two-frame paint has landed
-    // while the document is visible. Visibility/focus listeners retry it.
-    if (!electronSharingSurfaceIsVisible()) return;
-    framePending = true;
-    scheduleFrame(() => scheduleFrame(async () => {
-      framePending = false;
-      if (finished || !electronSharingSurfaceIsVisible()) return;
-      const current = electronSharingPreference;
-      if (!current || current.state !== "pending_notices"
-          || current.nextNoticeIndex !== index || !current.noticeDue) {
-        finish();
-        return;
-      }
-      electronSharingNoticeAckError = false;
-      try {
-        const result = await bridge.sharingNoticePresented(index);
-        const next = normalizeElectronSharingPreference(result);
-        if (next === null) throw new Error("Sharing notice response was invalid");
-        electronSharingPreference = next;
-        electronSharingNoticeAcked.add(index);
-        electronSharingNoticeReceiptIndex = index;
-        finish();
-        renderElectronAccountlessCommunity();
-        renderElectronSharingNotice();
-      } catch {
-        // Keep the visible notice and its retry listeners. A transient bridge
-        // failure must not be turned into a false displayed receipt.
-        electronSharingNoticeAckError = true;
-        renderElectronSharingNotice();
-      }
-    }));
-  };
-  const retry = () => {
-    if (electronSharingSurfaceIsVisible()) attempt();
-  };
-  listen(document, "visibilitychange", retry);
-  listen(globalThis.window, "focus", retry);
-  listen(globalThis.window, "hashchange", retry);
-  listen(globalThis.window, "popstate", retry);
-  listen(document, "scroll", retry);
-  listen(globalThis.window, "scroll", retry);
-  listen(globalThis.window, "resize", retry);
-  attempt();
-}
-
-function renderElectronSharingNotice() {
-  const notice = $("#electron-sharing-notice");
-  if (!notice) return;
-  const bridge = electronSharingBridge();
-  const preference = electronSharingPreference;
-  const receiptIndex = electronSharingNoticeReceiptIndex;
-  const receiptStillCurrent = Number.isInteger(receiptIndex)
-    && preference?.available === true
-    && preference.current === true
-    && preference.state === "pending_notices"
-    && preference.noticeCount === receiptIndex
-    && preference.nextNoticeIndex === (receiptIndex < 3 ? receiptIndex + 1 : null)
-    && !(preference.noticeDue === true
-      && preference.nextNoticeIndex === (receiptIndex < 3 ? receiptIndex + 1 : null));
-  if (Number.isInteger(receiptIndex) && !receiptStillCurrent) {
-    electronSharingNoticeReceiptIndex = null;
-  }
-  const heldIndex = receiptStillCurrent ? receiptIndex : null;
-  const index = heldIndex ?? preference?.nextNoticeIndex;
-  const projectedNoticeEligible = preference?.noticeDue === true
-    && Number.isInteger(preference?.nextNoticeIndex)
-    && preference.noticeCount === preference.nextNoticeIndex - 1;
-  const eligible = bridge !== null
-    && dashboard !== null
-    && document.documentElement.dataset.localDashboardReady === "true"
-    && preference?.available === true
-    && preference.current === true
-    && preference.state === "pending_notices"
-    && Number.isInteger(index)
-    && index >= 1 && index <= 3
-    && (heldIndex !== null || projectedNoticeEligible);
-  if (!eligible) {
-    notice.hidden = true;
-    clearElectronSharingNoticeAckSchedule();
-    return;
-  }
-  notice.hidden = false;
-  notice.dataset.noticeIndex = String(index);
-  setLocalizedText(
-    $("#electron-sharing-notice-copy"),
-    "electron.sharing.notice.copy",
-    { index },
-  );
-  const earliest = $("#electron-sharing-notice-earliest");
-  if (earliest) {
-    if (preference.earliestActivationAt) {
-      setLocalizedText(
-        earliest,
-        "electron.sharing.notice.earliest",
-        { date: formatLocal(preference.earliestActivationAt, { dateOnly: true }) },
-      );
-      earliest.hidden = false;
-    } else {
-      earliest.hidden = true;
-    }
-  }
-  setLocalizedText(
-    $("#electron-sharing-notice-transport"),
-    electronSharingTransportMessageKey(preference),
-  );
-  const shareNow = $("#electron-sharing-share-now");
-  const keepOff = $("#electron-sharing-keep-off");
-  if (shareNow) shareNow.disabled = electronSharingBusy;
-  if (keepOff) keepOff.disabled = electronSharingBusy;
-  const status = $("#electron-sharing-notice-status");
-  if (status) {
-    status.hidden = !electronSharingNoticeAckError;
-    if (electronSharingNoticeAckError) {
-      setLocalizedText(status, "electron.sharing.notice.error");
-    }
-  }
-  if (!electronSharingNoticeAckError) scheduleElectronSharingNoticeAck(index);
-}
-
-function renderElectronAccountlessCommunity() {
-  const surface = $("#electron-accountless-community");
-  if (!surface) return;
-  const bridge = electronSharingBridge();
-  if (!bridge) {
-    surface.hidden = true;
-    return;
-  }
-  surface.hidden = false;
-  setLocalizedText(
-    $("#electron-accountless-community-state"),
-    electronSharingStateMessageKey(electronSharingPreference),
-  );
-  setLocalizedText(
-    $("#electron-accountless-community-transport"),
-    electronSharingTransportMessageKey(electronSharingPreference),
-  );
-  const enabled = $("#electron-accountless-sharing-enabled");
-  const usable = electronSharingPreference?.available === true
-    && electronSharingPreference.current === true;
-  if (enabled) {
-    enabled.checked = usable && electronSharingPreference.enabled === true;
-    enabled.disabled = !usable || electronSharingBusy;
-  }
-  const error = $("#electron-accountless-sharing-error");
-  if (error) error.hidden = !electronSharingNoticeAckError;
-}
-
-async function loadElectronSharingPreference({ dashboardReady = false } = {}) {
-  const bridge = electronSharingBridge();
-  if (!bridge || !dashboardReady || dashboard === null) {
-    electronSharingPreference = null;
-    electronSharingNoticeAckError = false;
-    renderElectronAccountlessCommunity();
-    renderElectronSharingNotice();
-    return null;
-  }
-  try {
-    const next = normalizeElectronSharingPreference(
-      await bridge.getSharingPreference(),
-    );
-    electronSharingPreference = next;
-    electronSharingNoticeAckError = false;
-  } catch {
-    electronSharingPreference = null;
-    electronSharingNoticeAckError = false;
-  }
-  renderElectronAccountlessCommunity();
-  renderElectronSharingNotice();
-  return electronSharingPreference;
-}
-
-async function setElectronSharingEnabled(enabled) {
-  if (typeof enabled !== "boolean" || electronSharingBusy) return false;
-  const bridge = electronSharingBridge();
-  if (!bridge) return false;
-  electronSharingBusy = true;
-  electronSharingNoticeAckError = false;
-  renderElectronAccountlessCommunity();
-  renderElectronSharingNotice();
-  try {
-    const next = normalizeElectronSharingPreference(
-      await bridge.setSharingEnabled(enabled),
-    );
-    if (next === null) throw new Error("Sharing preference response was invalid");
-    electronSharingPreference = next;
-    renderElectronAccountlessCommunity();
-    renderElectronSharingNotice();
-    return true;
-  } catch {
-    electronSharingNoticeAckError = true;
-    renderElectronSharingNotice();
-    return false;
-  } finally {
-    electronSharingBusy = false;
-    renderElectronAccountlessCommunity();
-    renderElectronSharingNotice();
-  }
 }
 
 function renderDashboardUnavailableState(kind) {
@@ -1730,13 +1331,11 @@ function renderDashboard(data) {
   renderLiveObservationPresentation(data, recency);
   // The footer's "Dashboard contract" line is gone (owner-directed,
   // 2026-08-08): the version stays machine-discoverable on data.schemaVersion
-  // and in the share card's text transcript, and was never a user fact.
+  // and was never a user fact.
 
   renderEvidenceWarnings(data);
   renderPricing(data);
   renderComparison(data);
-  // The share card renders inside renderWeekly, from the same history model
-  // as the chart it summarizes (owner-verified regression, 2026-08-08).
   renderUsageTimeline(data);
   renderTimeline(data);
   renderWeekly(data);
@@ -2057,7 +1656,7 @@ function renderPricing(data) {
   // covered every known usage record. The companion now derives staleness
   // against the newest exportable evidence (src/local-companion-data.js), and
   // the surviving honesty surfaces here are the history-progress block above,
-  // the routed evidence warnings, and the share card's registry provenance.
+  // and the routed evidence warnings.
   const list = $("#cost-components");
   clear(list);
   const components = pricing.components.filter(
@@ -2333,7 +1932,7 @@ function renderComparison(data) {
     planNote.hidden = data.allowancePlanSelection?.comparisonAvailable !== true;
     if (!planNote.hidden) setLocalizedText(planNote,
       "weekly.plan.comparisonConditional",
-      { plan: shareCardPlanLabel(data.weekly.planType) || t("weekly.plan.unknown") });
+      { plan: allowancePlanLabel(data.weekly.planType) || t("weekly.plan.unknown") });
   }
   // The observed-versus-calculated comparison depends on the calibration
   // capacity; when that capacity is served from the previous version's cache
@@ -2613,83 +2212,17 @@ function renderCalibrationModelRates(capacityByModel, modelCostShares) {
 }
 
 // ---------------------------------------------------------------------------
-// Shareable results card
-//
-// This is the strictest surface on the page: the user may post the result in
-// public, so the card may carry only figures this dashboard already derived
-// plus fixed copy written here. Nothing that reaches the browser as free-form
-// text is ever echoed onto it. A quota window's label, a plan name and a
-// period name all arrive as unconstrained strings, so each is recomputed from
-// a structural field or matched against a fixed vocabulary first; the version
-// identifiers are accepted only in an identifier shape that cannot hold a
-// path, a sentence, or a quoted value. The traceable identifier reuses the
-// diagnostic-reference idiom rather than a parallel scheme: fresh WebCrypto
-// randomness, never derived from a participant id, an account, a hostname, a
-// figure, or a timestamp.
+// Allowance display labels
 // ---------------------------------------------------------------------------
 
-const SHARE_CARD_WIDTH = 1200;
-// 3:2. Three figures, the history behind them, every qualification that
-// applies and the identifier line do not fit in 16:9 at a size a feed can
-// still resolve, and shrinking the type was the wrong lever: the smallest
-// copy is already the first thing to break when a timeline scales the image.
-const SHARE_CARD_HEIGHT = 800;
-// Drawn at twice the posted size so the text stays clean after a feed
-// resamples it, and legible once a timeline scales it down.
-const SHARE_CARD_PIXEL_SCALE = 2;
-// A shared image is read at a glance. Keep only the two qualifications that
-// materially change how a reader should compare its headline figures.
-const SHARE_CARD_MAX_CAVEATS = 2;
-const SHARE_CARD_MAX_CAVEAT_LINES = 2;
-// One type size for all three figures, reduced until the longest of them fits
-// its column. A figure is never cut off: "Not estimable" and a seven-figure
-// total both overrun the column at the full size, and an ellipsis in the
-// largest type on the card is unreadable and easy to misread.
-const SHARE_CARD_VALUE_SIZE = 54;
-const SHARE_CARD_VALUE_MIN_SIZE = 34;
-// The plot has 94 px of fixed axis padding, so anything shorter cannot carry
-// an honest chart. This lower bound prevents a caveat from collapsing the
-// evidence region into a zero-height plot.
-const SHARE_CARD_TREND_MIN_HEIGHT = 168;
-// The chart is the evidence on the image, not decorative garnish. Reserve a
-// meaningful vertical lane for it instead of compressing it below three cards
-// and a verbose footer. Raised 420 → 472 (owner-directed, 2026-08-08): the
-// identifier footer and its rule are gone from the image, and every one of
-// those reclaimed pixels belongs to the plot.
-const SHARE_CARD_TREND_MAX_HEIGHT = 472;
-// Identifier-shaped only, exactly as a diagnostic code is: no space, no
-// slash, no separator that could carry a path or a folder name.
-const SHARE_CARD_REGISTRY_VERSION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,47}$/u;
-const SHARE_CARD_APP_VERSION_PATTERN = /^[0-9]+\.[0-9]+\.[0-9]+$/u;
-const SHARE_CARD_HOME_PATTERN =
-  /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$/u;
-// The exact period names this product emits, each mapped to an owned message
-// key. An unrecognized source value is replaced rather than printed, so a
-// renamed or injected label can never reach a shared card.
-const SHARE_CARD_PERIOD_KEYS = new Map([
-  ["All retained evidence", "share.period.allRetained"],
-  ["Cached 31-day window", "share.period.cachedThirtyOneDay"],
-  ["Cached 31-day collector window", "share.period.cachedThirtyOneDayCollector"],
-  ["Last 24 hours", "share.period.lastDay"],
-  ["Last 30 days", "share.period.lastThirtyDays"],
-  ["Last 7 days", "share.period.lastSevenDays"],
-  ["Recorded period", "share.period.recorded"],
-]);
-// Fixed window names, keyed on the observed window duration rather than on the
-// companion's own label field.
-const SHARE_CARD_WINDOW_KEYS = Object.freeze({
-  five_hour: "share.window.fiveHour",
-  other: "share.window.other",
-  seven_day: "share.window.sevenDay",
-});
-// The friendly name the card prints for a reported Codex plan. The keys are
-// Codex's own KnownPlan vocabulary (TELEMETRY_PLAN_TYPES) verbatim. Product
+// The friendly name the dashboard prints for a reported Codex plan. The keys
+// are Codex's own KnownPlan vocabulary (TELEMETRY_PLAN_TYPES) verbatim. Product
 // labels state the configured personal-plan ratios independently of upstream
 // display aliases; the Pro rename does not alter the recorded plan identity.
 // Plans without a configured ratio are named without a fabricated number.
 // "unknown" is Codex's sentinel for an unnamed plan and is deliberately
-// absent, so it — like any unmapped or empty reading — draws no chip.
-const SHARE_CARD_PLAN_LABELS = Object.freeze({
+// absent, so it - like any unmapped or empty reading - draws no label.
+const ALLOWANCE_PLAN_LABELS = Object.freeze({
   ...TELEMETRY_PLAN_DISPLAY_NAMES,
   pro: "Pro (10×)",
   prolite: "Pro Lite (5×)",
@@ -2704,138 +2237,21 @@ const SHARE_CARD_PLAN_LABELS = Object.freeze({
  * The display label for one reported plan_type, or "" when nothing nameable
  * was reported. Only the bounded KnownPlan enum reaches a label: "unknown",
  * an empty reading, and any value outside the map all resolve to "", so the
- * card prints no plan chip rather than an invented label.
+ * dashboard prints no plan label rather than an invented one.
  */
-function shareCardPlanLabel(planType) {
+function allowancePlanLabel(planType) {
   const candidate = typeof planType === "string" ? planType.trim() : "";
   return TELEMETRY_PLAN_TYPES.includes(candidate)
-    && Object.hasOwn(SHARE_CARD_PLAN_LABELS, candidate)
-    ? SHARE_CARD_PLAN_LABELS[candidate]
+    && Object.hasOwn(ALLOWANCE_PLAN_LABELS, candidate)
+    ? ALLOWANCE_PLAN_LABELS[candidate]
     : "";
-}
-
-/**
- * The reader's most-recently-observed plan, as a display label.
- *
- * Reads only the bounded plan_type enum and the observation time the card
- * already holds on each quota window. A window with no parseable time sorts
- * as the oldest, so a timestamped reading always wins recency. "" is
- * returned when no window names a plan, and the card then omits the chip.
- */
-function shareCardPlan(windows) {
-  let label = "";
-  let newest = -Infinity;
-  for (const observation of Array.isArray(windows) ? windows : []) {
-    const candidate = shareCardPlanLabel(observation.planType);
-    if (candidate === "") continue;
-    const at = finite(Date.parse(observation.observedAt), -Infinity);
-    if (at < newest) continue;
-    label = candidate;
-    newest = at;
-  }
-  return label;
-}
-let shareCard = null;
-let shareCardReference = "";
-let shareCardSignature = "";
-let shareCardBusy = false;
-// The posted image uses the same bundled mark as the dashboard and Windows app.
-// If it loads after a card has been drawn, repaint the existing card rather
-// than leaving an approximated logo in the image.
-const shareCardBrandImage = new Image();
-shareCardBrandImage.addEventListener("load", () => {
-  if (shareCard !== null) drawShareCard($("#share-card-canvas"), shareCard);
-});
-shareCardBrandImage.src = "./tibotattle-icon.png";
-
-function shareCardRegistryVersion(candidate) {
-  return typeof candidate === "string"
-    && SHARE_CARD_REGISTRY_VERSION_PATTERN.test(candidate)
-    ? candidate
-    : "";
-}
-
-function configuredAppVersion() {
-  const value = document
-    .querySelector('meta[name="usage-monitor-app-version"]')
-    ?.getAttribute("content")
-    ?.trim();
-  return SHARE_CARD_APP_VERSION_PATTERN.test(value ?? "") ? value : "";
-}
-
-/**
- * The home a shared card prints.
- *
- * A release build fills its own canonical slot, and that wins; otherwise the
- * fixed home declared in the page is used. Only the host is printed, so no
- * path, query, or fragment from either source can reach the image.
- */
-function shareCardHome() {
-  const declared = document
-    .querySelector('meta[name="usage-monitor-share-home"]')
-    ?.getAttribute("content")
-    ?.trim()
-    ?.toLowerCase() ?? "";
-  const fallback = SHARE_CARD_HOME_PATTERN.test(declared) ? declared : "";
-  const canonical = document
-    .querySelector('link[rel="canonical"]')
-    ?.getAttribute("href")
-    ?.trim();
-  if (!canonical) return fallback;
-  try {
-    const host = new URL(canonical).hostname.replace(/^www\./u, "");
-    return SHARE_CARD_HOME_PATTERN.test(host) ? host : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function shareCardWindowKind(window) {
-  if (!isPrimaryCodexQuotaWindow(window)) return "other";
-  const minutes = finite(window?.durationMinutes);
-  if (minutes === CODEX_WEEKLY_ALLOWANCE_MINUTES) return "seven_day";
-  if (minutes === CODEX_FIVE_HOUR_ALLOWANCE_MINUTES) return "five_hour";
-  return "other";
-}
-
-/**
- * Choose the one allowance window the card reports.
- *
- * The selected normal Codex window is the card's allowance denominator. A
- * provider-reported duration is never silently replaced with a shorter named
- * window: seven-day reset history and its estimate stay absent unless the
- * selected window is genuinely seven days.
- */
-function shareCardWindow(windows) {
-  const observed = (Array.isArray(windows) ? windows : [])
-    .filter((window) => (
-      isPrimaryCodexQuotaWindow(window)
-      && finite(window?.remainingPercent) !== null
-    ));
-  const selected = selectPrimaryCodexQuotaWindow(observed);
-  return selected;
-}
-
-function shareCardPeriodLabel(candidate) {
-  return t(SHARE_CARD_PERIOD_KEYS.get(candidate) ?? "share.period.recorded");
-}
-
-function shareCardWindowLabel(window) {
-  const kind = shareCardWindowKind(window);
-  if (kind !== "other") {
-    return t(SHARE_CARD_WINDOW_KEYS[kind]);
-  }
-  const duration = localizedQuotaWindowDuration(window?.durationMinutes);
-  return duration === ""
-    ? t(SHARE_CARD_WINDOW_KEYS.other)
-    : t("share.window.providerReportedDuration", { duration });
 }
 
 /**
  * A date-only label for a derived reset estimate or the latest observation.
- * The card deliberately omits a time of day and any raw-log timestamp.
+ * It deliberately omits a time of day and any raw-log timestamp.
  */
-function shareCardDateLabel(timestamp) {
+function allowanceDateLabel(timestamp) {
   if (!Number.isFinite(timestamp)) return "";
   return new Intl.DateTimeFormat(getFormattingLocale(), {
     ...(USER_TIME_ZONE === "local time" ? {} : { timeZone: USER_TIME_ZONE }),
@@ -2843,1381 +2259,6 @@ function shareCardDateLabel(timestamp) {
     day: "numeric",
     year: "numeric",
   }).format(timestamp);
-}
-
-function shareCardHeadlineDate(data, history) {
-  const latestObservedAt = Date.parse(data?.freshness?.latestObservedAt ?? "");
-  const timestamp = Number.isFinite(history?.anchorAt)
-    ? history.anchorAt
-    : latestObservedAt;
-  return shareCardDateLabel(timestamp);
-}
-
-/**
- * The history the card plots: the exact allowance-history series the weekly
- * panel uses, including shorter diagnostic observations. The horizontal axis
- * carries date-only labels for the derived estimate availability, never a
- * raw-log timestamp or a time of day.
- */
-function shareCardTrend(history) {
-  // The card is a compact rendering of the exact series on Allowance estimate
-  // history. It must not silently remove shorter fits, change the active
-  // period, or rescale the chart just because it is being shared.
-  let skippedPoint = false;
-  const points = (Array.isArray(history?.points) ? history.points : [])
-    .map((point) => {
-      const value = finite(point?.value);
-      if (!Number.isFinite(point?.at) || value === null || value <= 0) {
-        skippedPoint = true;
-        return null;
-      }
-      const low = finite(point?.low);
-      const high = finite(point?.high);
-      const lowessBreakBefore = skippedPoint;
-      skippedPoint = false;
-      return Object.freeze({
-        at: point.at,
-        dateLabel: point.dateLabel,
-        value,
-        low,
-        high,
-        historicalMedian: finite(point?.historicalMedian),
-        allowanceLowess: finite(point?.allowanceLowess),
-        lowessBreakBefore,
-        acrossResetLow: finite(point?.acrossResetLow),
-        acrossResetHigh: finite(point?.acrossResetHigh),
-        wellObserved: point.wellObserved === true,
-      });
-    })
-    .filter((point) => point !== null);
-  const axisLow = finite(history?.axis?.low);
-  const axisHigh = finite(history?.axis?.high);
-  if (!points.length || axisLow === null || axisHigh === null || axisHigh <= axisLow) {
-    return null;
-  }
-  const observedBounds = points.flatMap((point) => [
-    point.value,
-    point.low,
-    point.high,
-  ]).filter((value) => value !== null);
-  return Object.freeze({
-    points: Object.freeze(points),
-    low: Math.min(...observedBounds),
-    high: Math.max(...observedBounds),
-    axis: Object.freeze({
-      low: axisLow,
-      high: axisHigh,
-      ticks: Object.freeze([...(history?.axis?.ticks ?? [])]),
-    }),
-    xTicks: Object.freeze([...(history?.xTicks ?? [])]),
-    count: points.length,
-    lowessCount: points.filter((point) => point.allowanceLowess !== null).length,
-    lowessReason: history?.lowessReason === "tooMany" ? "tooMany" : null,
-    // How many plotted fits carry the outlined short-observation marker, and
-    // the floor that classified them. The outline is a claim about evidence
-    // quality that the picture cannot explain on its own, so the key beside
-    // the plot and the transcript's sentence both read these instead of
-    // re-deriving a classification the dashboard already made.
-    shortCount: points.filter((point) => !point.wellObserved).length,
-    wellObservedFloorPp: finite(history?.wellObservedFloorPp, 0),
-    // The population the count sentence names. The page headline counts the
-    // whole corpus while the chart draws the filtered subset; the card used
-    // to print only the subset count, which read as a different dataset. The
-    // shared history model carries the corpus size and the filter it applied,
-    // so the card can state "{shown} of {total}" exactly like the hero.
-    totalCount: Math.max(
-      points.length,
-      finite(history?.totalCount, points.length),
-    ),
-    spanFloorPp: finite(history?.spanFloorPp, 0),
-    rangeDays: finite(history?.rangeDays),
-    firstDateLabel: points[0].dateLabel,
-    lastDateLabel: points[points.length - 1].dateLabel,
-  });
-}
-
-/**
- * Compose one card from figures the dashboard already derived.
- *
- * Pure: it reads the normalized dashboard contract and the identifiers handed
- * to it, and returns only numbers and fixed copy. Every claim it makes about
- * precision is generated from the same state the panels above report, so the
- * card cannot describe the evidence as better than the page does.
- */
-function buildShareCard(data, {
-  reference,
-  appVersion = "",
-  registryVersion = "",
-  home = "",
-  contractVersion = "",
-  history = null,
-  activity = null,
-} = {}) {
-  if (!DIAGNOSTIC_REFERENCE_PATTERN.test(reference ?? "")) {
-    throw new TypeError("A results card requires a minted reference.");
-  }
-  const isDemo = data?.mode === "demo";
-  const headlineDate = shareCardHeadlineDate(data, history);
-  const pricing = data?.pricing ?? {};
-  const projection = dashboardAccountingProjection(data);
-  const accountingEvidenceAvailable = projection.status === "available"
-    || (projection.status === "retained" && activity !== null);
-  // The activity figure follows the usage chart's selected date range
-  // (owner-directed, 2026-08-10) whenever the accounting periods carry that
-  // range; the pricing fallback preserves the old 7-day-selected behavior
-  // for payloads without per-period accounting (the demo fixture among them).
-  const fastMode = accountingEvidenceAvailable
-    ? activity?.fastMode ?? pricing.fastMode ?? {}
-    : {};
-  // The share card's third figure is specifically the weekly reset fit. Do
-  // not substitute the older general-gradient summary here: both are API-price
-  // equivalents, but their evidence source and denominator are different.
-  const summary = data?.weekly?.summary ?? {};
-
-  const allowanceWindow = shareCardWindow(data?.quotaWindows ?? []);
-  const isWeeklyWindow = data.allowancePlanSelection !== undefined
-    || shareCardWindowKind(allowanceWindow) === "seven_day";
-  const remaining = finite(allowanceWindow?.remainingPercent);
-  const windowLabel = shareCardWindowLabel(allowanceWindow);
-  // The reader's most-recent plan, read from the same bounded plan_type enum
-  // the quota cards use. "" leaves the header chip off entirely.
-  const planLabel = data.allowancePlanSelection
-    ? shareCardPlanLabel(data?.weekly?.planType) || t("weekly.plan.unknown")
-    : shareCardPlan(data?.quotaWindows ?? []);
-
-  const weighted = !accountingEvidenceAvailable
-    ? null
-    : activity !== null
-      ? activity.quotaWeightedTotalCostUsd
-      : finite(pricing.quotaWeightedTotalCostUsd);
-  const useWeighted = weighted !== null && fastMode.weightingStatus !== "unknown";
-  const spend = !accountingEvidenceAvailable
-    ? null
-    : useWeighted
-    ? weighted
-    : activity !== null
-      ? activity.totalCostUsd
-      : finite(pricing.totalCostUsd);
-  const excluded = finite(fastMode.unweightedUnknownApiPriceEquivalentUsd, 0);
-  const period = activity !== null
-    ? t(activity.labelKey)
-    : shareCardPeriodLabel(pricing.periodLabel);
-
-  const capacity = isWeeklyWindow ? finite(
-    summary.median_weekly_value_usd ?? summary.medianWeeklyValueUsd,
-  ) : null;
-  const lower = isWeeklyWindow ? finite(
-    summary.lower_80_across_resets_usd ?? summary.lower80Usd,
-  ) : null;
-  const upper = isWeeklyWindow ? finite(
-    summary.upper_80_across_resets_usd ?? summary.upper80Usd,
-  ) : null;
-  const hasCapacity = capacity !== null && capacity > 0;
-  const hasRange = hasCapacity
-    && lower !== null && lower > 0
-    && upper !== null && upper > 0;
-
-  // The allowance estimate leads: it is the card's headline claim, and the
-  // title promises it (owner-directed reorder, 2026-08-07).
-  const stats = [
-    {
-      label: isWeeklyWindow
-        ? t("share.stat.estimatedAllowance")
-        : t("share.stat.estimatedAllowanceUnavailable"),
-      value: hasCapacity ? formatMoney(capacity, 0) : t("share.value.notEstimable"),
-      detail: !isWeeklyWindow
-        ? t("share.detail.notApplicableToWindow")
-        : hasRange
-        ? t("share.detail.resetRange", {
-          lower: formatMoney(lower, 0),
-          upper: formatMoney(upper, 0),
-        })
-        : hasCapacity
-          ? t("share.detail.noAcrossResetRange")
-          : t("share.detail.notEnoughMatchedWindows"),
-    },
-    {
-      label: t("share.stat.allowanceLeft"),
-      value: remaining === null ? t("share.value.notObserved") : formatPercent(remaining),
-      detail: remaining === null
-        ? t("share.detail.noCurrentAllowance")
-        : t("share.detail.ofWindow", { window: windowLabel }),
-    },
-    {
-      // This is the complete rolling ledger selection, not a single weekly
-      // allowance. The label must make the different denominator clear on the
-      // image itself: an activity total can legitimately exceed one estimated
-      // allowance without being a billing error or an allowance overrun.
-      label: t(data.allowancePlanSelection
-        ? "share.stat.recordedActivityAllPlans" : "share.stat.recordedActivity"),
-      value: spend === null ? t("share.value.notAvailable") : formatMoney(spend, 0),
-      // The "event-time API equivalent" caption is gone (owner-directed,
-      // 2026-08-10): the detail line states the selected range and nothing
-      // else.
-      detail: spend !== null
-        ? projection.status === "retained"
-          ? t(
-            projection.reason === "local_unified_index_schema_newer"
-              ? "share.detail.lastVerifiedNewerBuild"
-              : "share.detail.lastVerifiedPeriod",
-            { period },
-          )
-          : period
-        : projection.reason === "local_unified_index_schema_newer"
-          ? t("share.detail.newerBuildRequired")
-          : projection.status !== "available"
-            ? t("share.detail.accountingUnavailable")
-            : t("share.detail.noPricedUsage"),
-    },
-  ];
-
-  // Assembled from the same state the panels report, strongest qualification
-  // first. The old separate activity-versus-allowance sentence is gone
-  // (owner-directed, 2026-08-07): each stat's own detail line already names
-  // its denominator, and the reclaimed row belongs to the chart.
-  const caveats = [];
-  if (isDemo) {
-    caveats.push(t("share.caveat.demo"));
-  }
-  if (data.allowancePlanSelection) {
-    caveats.push(t("share.caveat.planConditional"));
-  }
-  if (spend !== null && excluded > 0) {
-    caveats.push(t("share.caveat.unweighted", {
-      amount: formatMoney(excluded, 2),
-    }));
-  }
-  if (spend !== null && fastMode.weightingStatus === "unknown") {
-    caveats.push(t("share.caveat.noWeighted"));
-  } else if (spend !== null && fastMode.weightingStatus !== "complete") {
-    caveats.push(t("share.caveat.fastPartial"));
-  }
-  // The caveat qualifies the figure actually printed, so it reads the same
-  // selected range the activity stat does.
-  const coverage = spend === null
-    ? null
-    : activity !== null
-    ? activity.coveragePercent
-    : finite(pricing.coveragePercent);
-  if (coverage !== null && coverage < 100) {
-    caveats.push(t("share.caveat.coverage", {
-      percent: formatPercent(coverage, 1),
-    }));
-  }
-  const identifiers = [
-    t("share.identifier.debug", { reference }),
-    appVersion === "" ? t("share.identifier.unversioned") : t("share.identifier.version", {
-      version: appVersion,
-    }),
-  ].filter((part) => part !== "");
-
-  const trend = isWeeklyWindow ? shareCardTrend(history) : null;
-  return Object.freeze({
-    reference,
-    isDemo,
-    title: t("share.title"),
-    // A real card carries the same newest-fit date as the weekly headline,
-    // falling back to the latest observation only when no weekly history is
-    // available. The strongest claim on the card is still the one a fixture
-    // must not borrow, so a demo keeps its warning here and beside the mark.
-    subtitle: isDemo
-      ? t("share.subtitle.demo")
-      : headlineDate,
-    badge: isDemo ? t("share.badge.demo") : "",
-    // The Codex plan name is presented as-is; only the surrounding word is
-    // localized (share.plan). "" when no window named a plan, so a card that
-    // cannot name a plan carries no chip and no empty wrapper.
-    plan: planLabel === "" ? "" : t(
-      data.allowancePlanSelection ? "share.planAllowance" : "share.plan",
-      { plan: planLabel },
-    ),
-    stats: Object.freeze(stats.map((stat) => Object.freeze({ ...stat }))),
-    // Reset-fit history is an explicitly seven-day model. It is never drawn
-    // behind a five-hour or provider-reported generic allowance window.
-    trend,
-    trendLabel: t("share.trend.label"),
-    // The plot's marker key. The dashboard reveals its own only when a short
-    // observation is actually drawn (`#weekly-partial-legend`), and the card
-    // follows: a card whose fits are all well observed carries no key, and
-    // the labels are the chart's own, so the two surfaces say one thing.
-    trendLegend: shareCardTrendLegend(trend),
-    trendLineLegend: shareCardTrendLineLegend(trend),
-    // The count sentence mirrors the Allowance hero's phrasing: shown of
-    // total, plus the range and span filter the shared model applied. A bare
-    // subset count beside the page's corpus count read as two different
-    // datasets (owner review, 2026-08-08).
-    trendCount: trend === null ? "" : shareCardTrendCountLabel(trend),
-    trendEmpty: isWeeklyWindow
-      ? t("share.trend.empty")
-      : t("share.trend.unavailableForWindow"),
-    trendEmptyDetail: isWeeklyWindow
-      ? t("share.trend.emptyDetail")
-      : t("share.trend.unavailableForWindowDetail"),
-    caveats: Object.freeze(caveats),
-    identifierLine: identifiers.join(" · "),
-    contractVersion,
-    home,
-    // Drawn at the image's top-right corner in place of the home host
-    // (owner-directed, 2026-08-08). Empty when the build is unversioned, so
-    // the corner is blank rather than carrying an invented number.
-    versionLabel: appVersion === ""
-      ? ""
-      : t("share.identifier.version", { version: appVersion }),
-  });
-}
-
-/**
- * The plotted history's population sentence: shown of total, with the fixed
- * range vocabulary and the span floor the shared model applied. Only numbers
- * and fixed copy can reach it.
- */
-function shareCardTrendCountLabel(trend) {
-  const range = trend.rangeDays === null
-    || trend.rangeDays >= ALL_HISTORY_RANGE_DAYS
-    ? t("share.range.all")
-    : t("share.range.days", { days: formatNumber(trend.rangeDays) });
-  const values = {
-    range,
-    shown: formatNumber(trend.count),
-    total: formatNumber(trend.totalCount),
-  };
-  return trend.spanFloorPp > 0
-    ? t("share.trend.countWithFloor", {
-      ...values,
-      span: formatNumber(trend.spanFloorPp),
-    })
-    : t("share.trend.countAnySpan", values);
-}
-
-/**
- * The plot's two markers, named: filled for a well-observed fit, outlined for
- * a short observation.
- *
- * Empty unless a short observation is actually plotted, so the common card
- * spends no pixels explaining a marker it never draws. The branch mirrors the
- * dashboard's own series label, so a card and the page it came from describe
- * the same classification.
- */
-function shareCardTrendLegend(trend) {
-  if (trend === null || trend.shortCount === 0) return Object.freeze([]);
-  return Object.freeze([
-    Object.freeze({
-      filled: true,
-      label: trend.wellObservedFloorPp > 0
-        ? t("weekly.series.wellObserved", {
-          span: formatDecimal(trend.wellObservedFloorPp, 0),
-        })
-        : t("weekly.series.allSpans"),
-    }),
-    Object.freeze({
-      filled: false,
-      label: t("weekly.series.shortObservation"),
-    }),
-  ]);
-}
-
-/** Fixed, localized labels for the same reference and fit drawn by the page. */
-function shareCardTrendLineLegend(trend) {
-  if (trend === null) return Object.freeze([]);
-  const entries = [];
-  if (finite(trend.points[0]?.historicalMedian) !== null) {
-    entries.push(Object.freeze({ kind: "median", label: t("weekly.series.allDataMedian") }));
-  }
-  entries.push(Object.freeze({
-    kind: trend.lowessCount > 0 ? "lowess" : "unavailable",
-    label: t(trend.lowessCount > 0 ? "weekly.controls.lowess"
-      : trend.lowessReason === "tooMany" ? "weekly.controls.lowessTooMany" : "weekly.controls.lowessUnavailable"),
-  }));
-  return Object.freeze(entries);
-}
-
-function shareCardTrendFitText(card) {
-  if (card.trend === null) return "";
-  return t(card.trend.lowessCount > 0 ? "weekly.controls.trendNote"
-    : card.trend.lowessReason === "tooMany" ? "weekly.controls.trendTooMany" : "weekly.controls.trendSparse");
-}
-
-/**
- * The same card as a sentence, for a screen reader and for a text-only post.
- */
-function shareCardText(card) {
-  const figures = card.stats
-    .map((stat) => t("share.text.figure", stat))
-    .join(" ");
-  const trailer = card.contractVersion === ""
-    ? card.identifierLine
-    : t("share.text.contract", {
-      identifier: card.identifierLine,
-      version: card.contractVersion,
-    });
-  return [
-    t("share.text.header", { subtitle: card.subtitle, title: card.title }),
-    // Already the fully composed "Plan …" line, or "" — the trailing filter
-    // drops it so the transcript names the plan only when one was reported.
-    card.plan,
-    figures,
-    shareCardTrendText(card),
-    shareCardTrendShortText(card),
-    shareCardTrendFitText(card),
-    card.caveats.join(" "),
-    t("share.text.trailer", { trailer }),
-    card.home === "" ? "" : t("share.text.more", { home: card.home }),
-  ].filter((line) => line !== "").join("\n");
-}
-
-/**
- * The plotted history as a sentence. The picture may not say anything the
- * text beside it does not.
- */
-function shareCardTrendText(card) {
-  return card.trend === null
-    ? t("share.text.trendEmpty", {
-      detail: card.trendEmptyDetail,
-      empty: card.trendEmpty,
-      label: card.trendLabel,
-    })
-    : t("share.text.trendPopulated", {
-      end: card.trend.lastDateLabel,
-      // The same shown-of-total sentence the image prints, so the text
-      // transcript and the picture state one population.
-      fits: card.trendCount,
-      high: formatMoney(card.trend.high, 0),
-      label: card.trendLabel,
-      low: formatMoney(card.trend.low, 0),
-      start: card.trend.firstDateLabel,
-    });
-}
-
-/**
- * The outlined marker, in words.
- *
- * The plot draws a short observation differently from a well-observed fit,
- * and a difference a reader can see is a claim the transcript owes them.
- * "" when every plotted fit is well observed, which is also when the image
- * draws no key.
- */
-function shareCardTrendShortText(card) {
-  return card.trend === null || card.trend.shortCount === 0
-    ? ""
-    : tPlural("share.text.shortObservation", card.trend.shortCount, {
-      count: formatNumber(card.trend.shortCount),
-    });
-}
-
-function shareCardFont(weight, size, family = "sans") {
-  return family === "serif"
-    ? `${weight} ${size}px "Iowan Old Style", Baskerville, "Times New Roman", serif`
-    : `${weight} ${size}px Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-}
-
-/**
- * Break one line into at most `maxLines` measured lines.
- *
- * Every string on the card is bounded by construction; this only guarantees
- * that a long fixed sentence wraps inside the card rather than running off it.
- */
-function shareCardWrap(context, value, maxWidth, maxLines) {
-  const lines = [];
-  let current = "";
-  const source = String(value).trim();
-  const words = /\s/u.test(source)
-    ? source.split(/\s+/u)
-    : typeof Intl.Segmenter === "function"
-      ? [...new Intl.Segmenter(localization.locale(), {
-        granularity: "grapheme",
-      }).segment(source)].map(({ segment }) => segment)
-      : Array.from(source);
-  const separator = /\s/u.test(source) ? " " : "";
-  for (const word of words) {
-    const candidate = current === "" ? word : `${current}${separator}${word}`;
-    if (current !== "" && context.measureText(candidate).width > maxWidth) {
-      lines.push(current);
-      current = word;
-      if (lines.length === maxLines) return lines;
-    } else {
-      current = candidate;
-    }
-  }
-  if (current !== "" && lines.length < maxLines) lines.push(current);
-  return lines;
-}
-
-function shareCardFit(context, value, maxWidth) {
-  if (context.measureText(value).width <= maxWidth) return value;
-  const units = Array.from(String(value));
-  while (units.length > 1
-    && context.measureText(`${units.join("")}…`).width > maxWidth) {
-    units.pop();
-  }
-  return `${units.join("")}…`;
-}
-
-function drawShareCardBrand(context, x, y) {
-  if (!shareCardBrandImage.complete || shareCardBrandImage.naturalWidth === 0) return;
-  context.drawImage(shareCardBrandImage, x, y - 19, 38, 38);
-}
-
-function drawShareCardPanel(context, x, y, width, height) {
-  context.save();
-  context.fillStyle = "#fffef9";
-  context.strokeStyle = "rgba(23, 33, 30, .16)";
-  context.lineWidth = 1;
-  context.beginPath();
-  context.roundRect(x + .5, y + .5, width - 1, height - 1, 10);
-  context.fill();
-  context.stroke();
-  context.restore();
-}
-
-/**
- * The one type size every figure on the card is drawn at.
- *
- * The row reads as a single scale, and the size is chosen so the longest
- * figure fits its column whole: a seven-figure total and a spelled-out "Not
- * estimable" both overrun the column at the full size, and a figure cut off
- * mid-word in the largest type on the card is unreadable at a glance and easy
- * to misread as a smaller number.
- */
-function shareCardValueSize(context, values, maxWidth) {
-  let size = SHARE_CARD_VALUE_SIZE;
-  while (size > SHARE_CARD_VALUE_MIN_SIZE) {
-    context.font = shareCardFont(500, size, "serif");
-    if (values.every((value) => context.measureText(value).width <= maxWidth)) {
-      break;
-    }
-    size -= 1;
-  }
-  return size;
-}
-
-/**
- * Draw a demo card's mark: the one qualification a reader must not miss, at
- * the top of the card rather than in the caveats.
- */
-function drawShareCardBadge(context, badge, x, y) {
-  context.save();
-  context.font = shareCardFont(750, 15);
-  const width = context.measureText(badge).width + 26;
-  context.fillStyle = "#8c2f1d";
-  context.beginPath();
-  context.roundRect(x, y - 17, width, 26, 13);
-  context.fill();
-  context.fillStyle = "#fdf6f2";
-  context.fillText(badge, x + 13, y);
-  context.restore();
-  return width;
-}
-
-/**
- * Draw the reader's current plan as a quiet chip beside the subtitle.
- *
- * The plan name is Codex's own, so it keeps its friendly case rather than
- * being upper-cased like the loud demo mark. The caller only reaches this
- * with a non-empty label; an absent plan draws nothing.
- */
-function drawShareCardPlan(context, plan, right, baseline) {
-  context.save();
-  context.textAlign = "left";
-  context.font = shareCardFont(700, 15);
-  const width = context.measureText(plan).width + 26;
-  const x = right - width;
-  context.fillStyle = "rgba(23, 79, 69, .08)";
-  context.strokeStyle = "rgba(23, 79, 69, .28)";
-  context.lineWidth = 1;
-  context.beginPath();
-  context.roundRect(x + .5, baseline - 17.5, width - 1, 26, 13);
-  context.fill();
-  context.stroke();
-  context.fillStyle = "#174f45";
-  context.fillText(plan, x + 13, baseline);
-  context.restore();
-  return width;
-}
-
-function drawShareCardTrend(context, card, x, y, width, height) {
-  drawShareCardPanel(context, x, y, width, height);
-  context.save();
-  if (card.trend === null) {
-    // Two lines rather than one: an empty plot area should say what will fill
-    // it, not read as a panel that failed to draw.
-    context.textAlign = "center";
-    context.fillStyle = "#17211e";
-    context.font = shareCardFont(600, 19);
-    context.fillText(card.trendEmpty, x + width / 2, y + height / 2 - 4);
-    context.fillStyle = "#65706b";
-    context.font = shareCardFont(500, 17);
-    context.fillText(card.trendEmptyDetail, x + width / 2, y + height / 2 + 24);
-    context.restore();
-    return;
-  }
-  const { points, axis, xTicks } = card.trend;
-  const xAxisLabel = t("share.axis.resetEstimateDate");
-  const yAxisLabel = t("share.axis.allowance");
-  const padTop = 64;
-  const padBottom = 54;
-  const padLeft = 92;
-  const padRight = 20;
-  context.font = shareCardFont(600, 14);
-  const axisDigits = axis.high < 100 ? 2 : 0;
-  const plotLeft = x + padLeft;
-  const plotRight = x + width - padRight;
-  const plotTop = y + padTop;
-  const plotBottom = y + height - padBottom;
-  const domainStart = points[0].at;
-  const domainEnd = points.at(-1).at;
-  const span = domainEnd - domainStart;
-  const range = axis.high - axis.low;
-  const positionX = (point) => points.length === 1 || span <= 0
-    ? (plotLeft + plotRight) / 2
-    : plotLeft + (point.at - domainStart) / span * (plotRight - plotLeft);
-  const positionY = (value) => range <= 0
-    ? (plotTop + plotBottom) / 2
-    : plotBottom - (value - axis.low) / range * (plotBottom - plotTop);
-
-  context.strokeStyle = "rgba(23, 33, 30, .12)";
-  context.lineWidth = 1;
-  for (const value of axis.ticks) {
-    const gridY = Math.round(positionY(value)) + .5;
-    context.beginPath();
-    context.moveTo(plotLeft, gridY);
-    context.lineTo(plotRight, gridY);
-    context.stroke();
-  }
-
-  context.strokeStyle = "rgba(23, 33, 30, .28)";
-  context.lineWidth = 1;
-  context.beginPath();
-  context.moveTo(plotLeft, plotTop);
-  context.lineTo(plotLeft, plotBottom);
-  context.lineTo(plotRight, plotBottom);
-  context.stroke();
-
-  const bandLow = finite(points[0]?.acrossResetLow);
-  const bandHigh = finite(points[0]?.acrossResetHigh);
-  if (bandLow !== null && bandHigh !== null && bandHigh > bandLow) {
-    context.fillStyle = "rgba(49, 95, 132, .14)";
-    context.fillRect(
-      plotLeft,
-      positionY(bandHigh),
-      plotRight - plotLeft,
-      positionY(bandLow) - positionY(bandHigh),
-    );
-  }
-
-  for (const point of points) {
-    const pointX = Math.round(positionX(point)) + .5;
-    if (point.low !== null && point.high !== null) {
-      context.strokeStyle = "rgba(49, 95, 132, .78)";
-      context.lineWidth = 1.8;
-      context.beginPath();
-      context.moveTo(pointX, positionY(point.high));
-      context.lineTo(pointX, positionY(point.low));
-      context.stroke();
-      for (const bound of [point.high, point.low]) {
-        const capY = Math.round(positionY(bound)) + .5;
-        context.beginPath();
-        context.moveTo(pointX - 5, capY);
-        context.lineTo(pointX + 5, capY);
-        context.stroke();
-      }
-    }
-  }
-
-  const median = finite(points[0]?.historicalMedian);
-  if (median !== null) {
-    const medianY = Math.round(positionY(median)) + .5;
-    context.strokeStyle = "#174f45";
-    context.lineWidth = 3;
-    context.beginPath();
-    context.moveTo(plotLeft, medianY);
-    context.lineTo(plotRight, medianY);
-    context.stroke();
-  }
-
-  // Consume the shared fit; never refit, interpolate nulls or bridge a gap
-  // when exporting the image. Geometry uses the same dates and axis as SVG.
-  context.strokeStyle = "#97402a";
-  context.lineWidth = 3;
-  context.beginPath();
-  let connected = false;
-  for (const point of points) {
-    // If card admission omitted an invalid raw estimate, keep the source
-    // chart's break even though that null point is absent from this projection.
-    if (point.lowessBreakBefore) connected = false;
-    const value = finite(point.allowanceLowess);
-    if (value === null) { connected = false; continue; }
-    if (connected) context.lineTo(positionX(point), positionY(value));
-    else context.moveTo(positionX(point), positionY(value));
-    connected = true;
-  }
-  context.stroke();
-
-  for (const point of points) {
-    const pointX = Math.round(positionX(point)) + .5;
-    context.fillStyle = point.wellObserved ? "#315f84" : "#fffef9";
-    context.beginPath();
-    context.arc(pointX, positionY(point.value), 4.5, 0, Math.PI * 2);
-    context.fill();
-    if (!point.wellObserved) {
-      context.strokeStyle = "#a9492f";
-      context.lineWidth = 2.4;
-      context.stroke();
-    }
-  }
-
-  context.fillStyle = "#65706b";
-  context.font = shareCardFont(600, 14);
-  context.textAlign = "right";
-  for (const value of axis.ticks) {
-    context.fillText(
-      formatMoney(value, axisDigits),
-      plotLeft - 10,
-      positionY(value) + 5,
-    );
-  }
-  context.textAlign = "left";
-  context.font = shareCardFont(700, 13);
-  context.fillText(yAxisLabel, plotLeft, y + 22);
-
-  // The marker key shares that strip, right-aligned to the plot's right edge:
-  // the panel's top padding is already reserved and the axis label leaves it
-  // free. Each swatch is drawn by the same two calls the points are, at the
-  // same radius, so the key cannot drift from what it explains.
-  if (card.trendLegend.length > 0) {
-    context.save();
-    context.font = shareCardFont(600, 13);
-    const swatch = 9;
-    const gap = 7;
-    const between = 18;
-    const widths = card.trendLegend.map((entry) =>
-      swatch + gap + context.measureText(entry.label).width);
-    let cursor = plotRight - widths.reduce(
-      (total, width) => total + width + between,
-      -between,
-    );
-    card.trendLegend.forEach((entry, index) => {
-      context.fillStyle = entry.filled ? "#315f84" : "#fffef9";
-      context.beginPath();
-      context.arc(cursor + swatch / 2, y + 17, 4.5, 0, Math.PI * 2);
-      context.fill();
-      if (!entry.filled) {
-        context.strokeStyle = "#a9492f";
-        context.lineWidth = 2.4;
-        context.stroke();
-      }
-      context.fillStyle = "#65706b";
-      context.fillText(entry.label, cursor + swatch + gap, y + 22);
-      cursor += widths[index] + between;
-    });
-    context.restore();
-  }
-
-  // A separate row keeps trend labels clear of the observation-marker key.
-  context.font = shareCardFont(600, 13);
-  context.textAlign = "left";
-  let lineCursor = plotLeft;
-  for (const entry of card.trendLineLegend) {
-    if (entry.kind !== "unavailable") {
-      context.strokeStyle = entry.kind === "lowess" ? "#97402a" : "#174f45";
-      context.lineWidth = 3;
-      context.beginPath();
-      context.moveTo(lineCursor, y + 43);
-      context.lineTo(lineCursor + 20, y + 43);
-      context.stroke();
-      lineCursor += 27;
-    }
-    context.fillStyle = "#65706b";
-    context.fillText(entry.label, lineCursor, y + 47);
-    lineCursor += context.measureText(entry.label).width + 20;
-  }
-
-  for (const tick of xTicks) {
-    // SVG uses `middle`; Canvas uses the equivalent `center` value.
-    context.textAlign = tick.alignment === "middle" ? "center" : tick.alignment;
-    const tickX = points.length === 1 || span <= 0
-      ? (plotLeft + plotRight) / 2
-      : plotLeft + (tick.at - domainStart) / span * (plotRight - plotLeft);
-    context.fillText(tick.label, tickX, plotBottom + 21);
-  }
-  context.font = shareCardFont(600, 13);
-  context.textAlign = "center";
-  context.fillText(xAxisLabel, (plotLeft + plotRight) / 2, y + height - 11);
-  context.restore();
-}
-
-/**
- * Paint the card. Every string drawn here comes from the composed model.
- */
-function drawShareCard(canvas, card) {
-  const context = canvas.getContext("2d");
-  if (context === null) return false;
-  canvas.width = SHARE_CARD_WIDTH * SHARE_CARD_PIXEL_SCALE;
-  canvas.height = SHARE_CARD_HEIGHT * SHARE_CARD_PIXEL_SCALE;
-  context.setTransform(
-    SHARE_CARD_PIXEL_SCALE, 0, 0, SHARE_CARD_PIXEL_SCALE, 0, 0,
-  );
-  const margin = 56;
-  const inner = SHARE_CARD_WIDTH - margin * 2;
-
-  context.fillStyle = "#f5f1e8";
-  context.fillRect(0, 0, SHARE_CARD_WIDTH, SHARE_CARD_HEIGHT);
-  context.fillStyle = "#174f45";
-  context.fillRect(0, 0, SHARE_CARD_WIDTH, 8);
-  context.strokeStyle = "rgba(23, 33, 30, .16)";
-  context.lineWidth = 2;
-  context.strokeRect(1, 1, SHARE_CARD_WIDTH - 2, SHARE_CARD_HEIGHT - 2);
-
-  // Header band (owner-directed tightening, 2026-08-07): brand, title and
-  // subtitle sit in 170px instead of the old 207px, and every reclaimed pixel
-  // below goes to the chart.
-  drawShareCardBrand(context, margin, 54);
-  context.textBaseline = "alphabetic";
-  context.fillStyle = "#17211e";
-  context.font = shareCardFont(800, 25);
-  context.fillText("TiboTattle", margin + 52, 63);
-  if (card.badge !== "") {
-    drawShareCardBadge(
-      context,
-      card.badge,
-      margin + 68 + context.measureText("TiboTattle").width,
-      61,
-    );
-  }
-
-  // The top-right corner names the build that produced these figures
-  // (owner-directed, 2026-08-08): the app version replaced the home host,
-  // which already reaches a reader through the text transcript's "More at"
-  // line. An unversioned build leaves the corner blank.
-  context.textAlign = "right";
-  context.font = shareCardFont(700, 20);
-  context.fillStyle = "#65706b";
-  if (card.versionLabel !== "") {
-    context.fillText(card.versionLabel, SHARE_CARD_WIDTH - margin, 63);
-  }
-  context.textAlign = "left";
-
-  context.fillStyle = "#17211e";
-  context.font = shareCardFont(500, 50, "serif");
-  context.fillText(shareCardFit(context, card.title, inner), margin, 126);
-  context.font = shareCardFont(600, 20);
-  context.fillStyle = "#65706b";
-  context.fillText(shareCardFit(context, card.subtitle, inner), margin, 156);
-  // The reader's plan sits right-aligned on the subtitle row, above the
-  // figures it contextualises. Empty when no window named a plan, so the row
-  // stays a single subtitle rather than carrying an empty chip.
-  if (card.plan !== "") {
-    drawShareCardPlan(context, card.plan, SHARE_CARD_WIDTH - margin, 156);
-  }
-
-  const gap = 22;
-  const columnWidth = (inner - gap * 2) / 3;
-  const statTop = 176;
-  const statHeight = 152;
-  const padding = 20;
-  const textWidth = columnWidth - padding * 2;
-  const valueSize = shareCardValueSize(
-    context,
-    card.stats.map((stat) => stat.value),
-    textWidth,
-  );
-  card.stats.forEach((stat, index) => {
-    const x = margin + index * (columnWidth + gap);
-    drawShareCardPanel(context, x, statTop, columnWidth, statHeight);
-    context.fillStyle = "#65706b";
-    context.font = shareCardFont(750, 15);
-    const labelLines = shareCardWrap(
-      context, stat.label.toLocaleUpperCase(localization.locale()), textWidth, 2,
-    );
-    labelLines.forEach((line, lineIndex) => {
-      context.fillText(line, x + padding, statTop + 32 + lineIndex * 19);
-    });
-    context.fillStyle = "#174f45";
-    context.font = shareCardFont(500, valueSize, "serif");
-    context.fillText(
-      shareCardFit(context, stat.value, textWidth),
-      x + padding,
-      statTop + 98,
-    );
-    context.fillStyle = "#65706b";
-    context.font = shareCardFont(600, 16);
-    shareCardWrap(context, stat.detail, textWidth, 2).forEach((line, lineIndex) => {
-      context.fillText(line, x + padding, statTop + 126 + lineIndex * 20);
-    });
-  });
-
-  // Qualifications are reserved only for incomplete data. A complete card
-  // gives the plot its natural visual weight instead of spending the lower
-  // third on generic methodology copy. The old activity-versus-allowance
-  // sentence row is gone with its field (owner-directed, 2026-08-07).
-  context.font = shareCardFont(500, 17);
-  const caveatLines = card.caveats
-    .slice(0, SHARE_CARD_MAX_CAVEATS)
-    .flatMap((caveat) => shareCardWrap(context, caveat, inner - 20, 2))
-    .slice(0, SHARE_CARD_MAX_CAVEAT_LINES);
-  const caveatStep = 23;
-  // The identifier/debug footer and its rule are gone from the image
-  // (owner-directed, 2026-08-08). The reference still reaches a reader
-  // through the text transcript, the saved file's name, and the chip beside
-  // the card; on the picture, every reclaimed pixel belongs to the chart.
-  // Caveats, when present, now anchor directly above the card's bottom edge.
-  const caveatBaseY = SHARE_CARD_HEIGHT - 26;
-  const caveatTop = caveatLines.length === 0
-    ? caveatBaseY + 22
-    : caveatBaseY - (caveatLines.length - 1) * caveatStep;
-  const trendTop = statTop + statHeight + 34;
-  const trendHeight = Math.min(
-    SHARE_CARD_TREND_MAX_HEIGHT,
-    Math.max(SHARE_CARD_TREND_MIN_HEIGHT, caveatTop - 30 - trendTop),
-  );
-  context.fillStyle = "#65706b";
-  context.font = shareCardFont(750, 15);
-  context.fillText(
-    card.trendLabel.toLocaleUpperCase(localization.locale()),
-    margin,
-    trendTop - 14,
-  );
-  if (card.trendCount !== "") {
-    context.textAlign = "right";
-    context.fillText(
-      card.trendCount,
-      SHARE_CARD_WIDTH - margin,
-      trendTop - 14,
-    );
-    context.textAlign = "left";
-  }
-  drawShareCardTrend(context, card, margin, trendTop, inner, trendHeight);
-
-  if (caveatLines.length > 0) {
-    context.font = shareCardFont(500, 17);
-    let caveatY = caveatTop;
-    context.fillStyle = "rgba(23, 79, 69, .3)";
-    context.fillRect(
-      margin,
-      caveatY - 16,
-      3,
-      (caveatLines.length - 1) * caveatStep + 22,
-    );
-    context.fillStyle = "#65706b";
-    for (const line of caveatLines) {
-      context.fillText(line, margin + 20, caveatY);
-      caveatY += caveatStep;
-    }
-  }
-  return true;
-}
-
-const SHARE_CARD_SAVED_FILE_PATTERN =
-  /^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-tibotattle-results(?:-[0-9]+)?\.png$/u;
-
-function shareCardFileName(now = new Date()) {
-  const pad = (value) => String(value).padStart(2, "0");
-  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-    + `-${pad(now.getHours())}-${pad(now.getMinutes())}-tibotattle-results.png`;
-}
-
-function setShareCardStatus(text, { error = false } = {}) {
-  const status = $("#share-card-status");
-  status.className = `participant-action-status${error ? " error" : ""}`;
-  status.textContent = text;
-  status.hidden = text === "";
-}
-
-// Confirmation of a completed copy is transient: the owner reported the
-// previous static status line as broken, because every copy appended
-// permanent text under the card. The toast appears over the panel, holds
-// long enough to read the printed reference, and removes itself. It is a
-// role="status" live region — the same announcement pattern the other action
-// statuses on this page use — and contains no focusable content, so it
-// cannot trap focus. Its entrance and exit motion live in the stylesheet
-// behind prefers-reduced-motion.
-const SHARE_CARD_TOAST_HOLD_MS = 6_000;
-const SHARE_CARD_TOAST_LEAVE_MS = 300;
-let shareCardToastHoldTimer = null;
-let shareCardToastLeaveTimer = null;
-
-function dismissShareCardToast() {
-  const toast = $("#share-card-toast");
-  clearTimeout(shareCardToastHoldTimer);
-  clearTimeout(shareCardToastLeaveTimer);
-  shareCardToastHoldTimer = null;
-  shareCardToastLeaveTimer = null;
-  toast.classList.remove("share-toast-leaving");
-  toast.textContent = "";
-  toast.hidden = true;
-}
-
-function showShareCardToast(text, { actionLabel = "", onAction = null } = {}) {
-  const toast = $("#share-card-toast");
-  dismissShareCardToast();
-  toast.hidden = false;
-  toast.textContent = text;
-  // An optional single action, used by Save to reveal the file. The button is
-  // only ever offered when a caller verified the capability exists, so the
-  // toast never shows a control that cannot act.
-  if (actionLabel !== "" && typeof onAction === "function") {
-    const action = document.createElement("button");
-    action.type = "button";
-    action.className = "button button-quiet compact share-toast-action";
-    action.textContent = actionLabel;
-    action.addEventListener("click", onAction);
-    toast.append(action);
-  }
-  shareCardToastHoldTimer = setTimeout(() => {
-    toast.classList.add("share-toast-leaving");
-    shareCardToastLeaveTimer = setTimeout(
-      dismissShareCardToast,
-      SHARE_CARD_TOAST_LEAVE_MS,
-    );
-  }, SHARE_CARD_TOAST_HOLD_MS);
-}
-
-function updateShareCardActions() {
-  const ready = shareCard !== null && !shareCardBusy;
-  for (const id of [
-    "share-card-download",
-    "share-card-copy",
-  ]) {
-    $(`#${id}`).disabled = !ready;
-  }
-}
-
-/**
- * Render the shareable card for the current evidence.
- *
- * A fresh reference is minted whenever the figures change, so one posted image
- * and one reference always describe the same numbers.
- *
- * Owner-verified regression fix (2026-08-08): the chart renderer hands its
- * OWN history model in through `history`, so the card and the chart are two
- * renderings of one model instance. A card that derived its own model relied
- * on every caller re-rendering it after every filter change — the coupling
- * that broke. Standalone calls (the brand-image late load) still derive the
- * model themselves and read the same active-filter state.
- */
-// The share card's activity figure follows the usage chart's selected date
-// range (owner-directed, 2026-08-10). The selection is structural — period
-// ids and fixed message keys — so no free-form label can reach the image,
-// and "All" states the honest denominator: everything recorded, not one
-// bounded window.
-const SHARE_CARD_RANGE_PERIODS = Object.freeze({
-  1: Object.freeze({ id: "24h", labelKey: "share.period.lastDay" }),
-  7: Object.freeze({ id: "7d", labelKey: "share.period.lastSevenDays" }),
-  30: Object.freeze({ id: "30d", labelKey: "share.period.lastThirtyDays" }),
-});
-
-function shareCardActivitySelection(data, rangeDays) {
-  const projection = dashboardAccountingProjection(data);
-  if (projection.status === "unavailable") return null;
-  const selected = { ...(SHARE_CARD_RANGE_PERIODS[rangeDays]
-    ?? { id: "all", labelKey: "share.period.allRecorded" }) };
-  if (data.reportingWindow) {
-    const matched = data.accounting.periods.find(row => row.periodId === data.reportingAccountingPeriod);
-    if (!matched) return null;
-    selected.id = matched.periodId;
-  }
-  const period = (Array.isArray(data?.accounting?.periods)
-    ? data.accounting.periods
-    : []).find((row) => row?.periodId === selected.id) ?? null;
-  if (period === null) return null;
-  const events = finite(period.events, 0);
-  const totalCostUsd = finite(period.apiPriceEquivalentUsd);
-  const quotaWeightedTotalCostUsd = finite(
-    period.quotaWeightedApiPriceEquivalentUsd,
-  );
-  if (projection.status === "retained"
-      && finite(totalCostUsd, 0) <= 0
-      && finite(quotaWeightedTotalCostUsd, 0) <= 0) return null;
-  const priced = finite(period.pricingCoverage?.fullyPricedEvents, 0)
-    + finite(period.pricingCoverage?.partiallyPricedEvents, 0);
-  return {
-    labelKey: selected.labelKey,
-    totalCostUsd,
-    quotaWeightedTotalCostUsd,
-    fastMode: period.fastMode ?? {},
-    coveragePercent: events > 0
-      ? Number(((priced / events) * 100).toFixed(6))
-      : null,
-  };
-}
-
-function renderShareCard(data, { history: sharedHistory = null } = {}) {
-  const canvas = $("#share-card-canvas");
-  const allowanceWindow = shareCardWindow(data?.quotaWindows ?? []);
-  const isWeeklyWindow = data.allowancePlanSelection !== undefined
-    || shareCardWindowKind(allowanceWindow) === "seven_day";
-  const history = isWeeklyWindow
-    ? sharedHistory ?? allowanceHistoryChartModel(data)
-    : null;
-  const trend = isWeeklyWindow ? shareCardTrend(history) : null;
-  const activity = shareCardActivitySelection(data, activeUsageRangeDays);
-  const headlineDate = shareCardHeadlineDate(data, history);
-  const signature = JSON.stringify([
-    data?.mode,
-    // The date is printed in the header, so a different visible date is a
-    // different card even when its three figures happen to be unchanged.
-    headlineDate,
-    shareCardWindowKind(allowanceWindow),
-    finite(allowanceWindow?.durationMinutes),
-    finite(allowanceWindow?.remainingPercent),
-    shareCardPlan(data?.quotaWindows ?? []),
-    data.allowancePlanSelection ?? null,
-    finite(data?.pricing?.quotaWeightedTotalCostUsd),
-    finite(data?.pricing?.totalCostUsd),
-    finite(data?.pricing?.coveragePercent),
-    data?.pricing?.fastMode?.weightingStatus ?? "",
-    finite(data?.pricing?.fastMode?.unweightedUnknownApiPriceEquivalentUsd, 0),
-    // A changed range selection is a different card: the activity figure,
-    // its label, and its coverage caveat all follow it.
-    activeUsageRangeDays,
-    activity,
-    finite(data?.weekly?.summary?.median_weekly_value_usd
-      ?? data?.weekly?.summary?.medianWeeklyValueUsd),
-    // The plotted history is on the image too, so any change to the canonical
-    // dashboard model becomes a new card.
-    trend,
-  ]);
-  if (signature !== shareCardSignature || shareCardReference === "") {
-    shareCardSignature = signature;
-    shareCardReference = createDiagnosticReference();
-  }
-  shareCard = buildShareCard(data, {
-    reference: shareCardReference,
-    appVersion: configuredAppVersion(),
-    registryVersion: shareCardRegistryVersion(data?.pricing?.registryVersion),
-    contractVersion: shareCardRegistryVersion(data?.schemaVersion),
-    home: shareCardHome(),
-    history,
-    activity,
-  });
-  // The header's reference chip is gone (owner-directed, 2026-08-08). The
-  // reference remains in the selectable transcript, while saved names use
-  // local time and do not expose a diagnostic identifier.
-  // This generated transcript replaces the initial placeholder. The static
-  // localizer must not overwrite the selected-plan figures after a language
-  // change; renderWeekly rebuilds the transcript in the new language.
-  canvas.removeAttribute("data-i18n-aria-label");
-  canvas.setAttribute("aria-label", shareCardText(shareCard));
-  if (!drawShareCard(canvas, shareCard)) {
-    shareCard = null;
-    setShareCardStatus(
-      "TiboTattle could not get a drawing surface, so no image could be produced. The card's figures are listed below it as text.",
-      { error: true },
-    );
-  } else {
-    setShareCardStatus("");
-  }
-  updateShareCardActions();
-}
-
-function shareCardBlob(canvas) {
-  return new Promise((resolve) => {
-    canvas.toBlob(resolve, "image/png");
-  });
-}
-
-async function runShareCardAction(action) {
-  if (shareCard === null || shareCardBusy) return;
-  shareCardBusy = true;
-  updateShareCardActions();
-  try {
-    await action(shareCard);
-  } finally {
-    shareCardBusy = false;
-    updateShareCardActions();
-  }
-}
-
-function waitForShareDownloadResult(requestedFilename) {
-  let settle;
-  const promise = new Promise((resolve) => {
-    const onResult = (event) => {
-      if (event.detail?.requestedFilename !== requestedFilename) return;
-      settle(event.detail);
-    };
-    const timer = setTimeout(() => settle({ status: "unconfirmed" }), 30_000);
-    settle = (result) => {
-      clearTimeout(timer);
-      window.removeEventListener("tibotattle:share-download-result", onResult);
-      resolve(result);
-    };
-    window.addEventListener("tibotattle:share-download-result", onResult);
-  });
-  return { promise, cancel: () => settle({ status: "cancelled" }) };
-}
-
-function waitForElectronShareDownloadResult() {
-  let settle;
-  const promise = new Promise((resolve) => {
-    const onCompleted = (event) => settle({ status: "saved", filename: event.detail?.filename });
-    const onFailed = () => settle({ status: "failed" });
-    const timer = setTimeout(() => settle({ status: "unconfirmed" }), 30_000);
-    settle = (result) => {
-      clearTimeout(timer);
-      window.removeEventListener("tibotattle:share-card-download-completed", onCompleted);
-      window.removeEventListener("tibotattle:share-card-download-failed", onFailed);
-      resolve(result);
-    };
-    window.addEventListener("tibotattle:share-card-download-completed", onCompleted);
-    window.addEventListener("tibotattle:share-card-download-failed", onFailed);
-  });
-  return { promise, cancel: () => settle({ status: "cancelled" }) };
-}
-
-function openSavedShareImage(bridge, filename) {
-  const fail = () => setShareCardStatus(
-    t("shareCard.openFailed"),
-    { error: true },
-  );
-  const cleanup = () => {
-    clearTimeout(timer);
-    window.removeEventListener("tibotattle:share-open-result", onResult);
-  };
-  const onResult = (event) => {
-    if (event.detail?.filename !== filename) return;
-    cleanup();
-    if (event.detail.opened !== true) fail();
-  };
-  const timer = setTimeout(() => {
-    cleanup();
-    fail();
-  }, 10_000);
-  window.addEventListener("tibotattle:share-open-result", onResult);
-  try {
-    bridge.postMessage({ type: "open-completed-download", filename });
-  } catch {
-    cleanup();
-    fail();
-  }
-}
-
-function downloadShareCard() {
-  return runShareCardAction(async () => {
-    dismissShareCardToast();
-    setShareCardStatus("");
-    const blob = await shareCardBlob($("#share-card-canvas"));
-    if (blob === null) {
-      setShareCardStatus(
-        "TiboTattle could not turn the card into a PNG. Nothing was saved; the figures remain listed below as text.",
-        { error: true },
-      );
-      return;
-    }
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    const filename = shareCardFileName();
-    link.download = filename;
-    // The native host confirms completion and supplies only the final basename.
-    // The page never receives the filesystem path.
-    const bridge = document.body.classList.contains("native-dashboard")
-      ? window.webkit?.messageHandlers?.tibotattleDownloads
-      : undefined;
-    const electron = window.tibotattleDesktop?.version === "v1"
-      && typeof window.tibotattleDesktop.openLatestDownload === "function"
-      ? window.tibotattleDesktop : null;
-    const completion = bridge
-      ? waitForShareDownloadResult(filename)
-      : electron ? waitForElectronShareDownloadResult() : null;
-    try {
-      link.click();
-    } catch {
-      completion?.cancel();
-      setShareCardStatus(t("shareCard.downloadStartFailed"), { error: true });
-      return;
-    } finally {
-      URL.revokeObjectURL(url);
-    }
-    if (!completion) {
-      showShareCardToast(t("shareCard.downloadRequested", { filename }));
-      return;
-    }
-    const result = await completion.promise;
-    if (result.status !== "saved"
-      || typeof result.filename !== "string"
-      || !SHARE_CARD_SAVED_FILE_PATTERN.test(result.filename)) {
-      setShareCardStatus(
-        result.status === "failed"
-          ? t("shareCard.saveFailed")
-          : t("shareCard.saveUnconfirmed"),
-        { error: true },
-      );
-      return;
-    }
-    setShareCardStatus("");
-    showShareCardToast(t("shareCard.savedToDownloads", { filename: result.filename }), {
-      actionLabel: t("shareCard.openImage"),
-      onAction: () => {
-        if (bridge) openSavedShareImage(bridge, result.filename);
-        else if (electron) {
-          Promise.resolve().then(() => electron.openLatestDownload()).then((status) => {
-            if (status !== "opened") setShareCardStatus(t("shareCard.openFailed"), { error: true });
-          }).catch(() => setShareCardStatus(t("shareCard.openFailed"), { error: true }));
-        }
-      },
-    });
-  });
-}
-
-function copyShareCardImage() {
-  return runShareCardAction(async (card) => {
-    if (typeof ClipboardItem !== "function"
-      || typeof navigator.clipboard?.write !== "function") {
-      setShareCardStatus(
-        "TiboTattle cannot put an image on the clipboard here. Use Save image instead, or Copy as text.",
-        { error: true },
-      );
-      return;
-    }
-    // WebKit requires the write to start during the click gesture. Give the
-    // ClipboardItem a promise so canvas.toBlob can finish after write starts.
-    const png = shareCardBlob($("#share-card-canvas")).then((blob) => {
-      if (blob === null) throw new Error("share-card-png-unavailable");
-      return blob;
-    });
-    // Observe conversion separately even if ClipboardItem construction or
-    // clipboard.write fails before the canvas callback runs.
-    const pngReady = png.then(() => true, () => false);
-    try {
-      const write = navigator.clipboard.write([
-        new ClipboardItem({ "image/png": png }),
-      ]);
-      await Promise.all([write, png]);
-      // A stale error from an earlier attempt would otherwise sit under the
-      // fresh confirmation.
-      setShareCardStatus("");
-      showShareCardToast(
-        `Copied. Paste it anywhere; reference ${card.reference} identifies these figures.`,
-      );
-    } catch {
-      setShareCardStatus(
-        (await pngReady)
-          ? "The image could not be copied to the clipboard. Use Save image instead."
-          : "TiboTattle could not turn the card into a PNG. Nothing was copied.",
-        { error: true },
-      );
-    }
-  });
-}
-
-function copyShareCardText() {
-  return runShareCardAction(async (card) => {
-    if (typeof navigator.clipboard?.writeText !== "function") {
-      setShareCardStatus(
-        "TiboTattle cannot write to the clipboard here. The card's text is listed below it and can be selected.",
-        { error: true },
-      );
-      return;
-    }
-    try {
-      await navigator.clipboard.writeText(shareCardText(card));
-      setShareCardStatus("Copied the card as text.");
-    } catch {
-      setShareCardStatus(
-        "The browser refused clipboard access, so nothing was copied. The card's text is listed below it and can be selected.",
-        { error: true },
-      );
-    }
-  });
 }
 
 function groupRolling(rows, hours) {
@@ -6179,7 +4220,7 @@ function focusTrendsPeriod(period) {
   }));
   requestAnimationFrame(() => {
     trendsHorizonView?.select(period.endMs, true);
-    document.dispatchEvent(new CustomEvent("tibotattle:page-view", { detail: { page: "trends", view: "activity" } }));
+    document.dispatchEvent(new CustomEvent("tibotattle:page-view", { detail: { page: "allowance", view: "changes" } }));
     $("#trends-time").focus({ preventScroll: true });
   });
 }
@@ -6789,7 +4830,7 @@ function chartSeriesDrawsPoints(item, field) {
  * Callers pass a descriptor rather than a string:
  *   { key: "chart.residual.title" }               → t(key)
  *   { key: "weekly.point.detail", values: {...} } → t(key, values)
- *   { key: "share.resetFit", plural: count }      → tPlural(key, count, values)
+ *   { key: "weekly.chart.resetFit", plural: count }      → tPlural(key, count, values)
  *   { data: alreadyFormattedSourceValue }         → verbatim, never translated
  *
  * A bare string throws. That is the enforcement: a chart added later cannot
@@ -7625,10 +5666,10 @@ function isWellObservedWeeklyFit(observedSpanPp) {
 }
 
 /**
- * The one presentation model for the allowance history in the dashboard and
- * on the share card. It deliberately contains only derived numerical evidence
- * and date-only labels, so both surfaces inherit the same inclusion, range,
- * point-classification, and axis decisions without exposing source rows.
+ * The one presentation model for the allowance history. It deliberately
+ * contains only derived numerical evidence and date-only labels, so every
+ * rendering inherits the same inclusion, range, point-classification, and
+ * axis decisions without exposing source rows.
  */
 function allowanceHistoryChartModel(data, {
   rangeDays = activeWeeklyRangeDays,
@@ -7646,7 +5687,7 @@ function allowanceHistoryChartModel(data, {
       return Object.freeze({
         timestamp: row?.last_observed_at ?? row?.first_observed_at,
         at,
-        dateLabel: shareCardDateLabel(at),
+        dateLabel: allowanceDateLabel(at),
         resetDueAt: row?.reset_due_at ?? row?.resetAt ?? null,
         value,
         low: finite(row?.pairwise_p10_usd ?? row?.lower),
@@ -7677,8 +5718,8 @@ function allowanceHistoryChartModel(data, {
   // (estimator audit, 2026-08-08). Short ranges therefore relax the span
   // floor to zero: every fit in range draws, with short observations keeping
   // their outlined diagnostic styling. The effective floor travels with the
-  // model so the hero sentence, the chart caption, and the share card all
-  // describe the filter that actually applied.
+  // model so the hero sentence and the chart caption both describe the
+  // filter that actually applied.
   const spanFloorPp = boundedRangeDays !== null && boundedRangeDays <= 7
     ? 0
     : activeWeeklyMinimumObservedSpanPp;
@@ -7868,7 +5909,7 @@ function renderAllowanceHistoryChart(
         pointStyle: CHART_POINT_STYLE.HOVER_ONLY,
         lineFocusable: true,
         lineDetail: (points) => ({
-          key: "share.resetFit",
+          key: "weekly.chart.resetFit",
           plural: points.length,
         }),
         format: (value) => formatMoney(value),
@@ -8029,15 +6070,17 @@ function formatForecastDuration(hours) {
 let weeklyPaceDetailsOpen = false;
 
 function ensureWeeklyPaceForecastCard() {
-  const hero = $("#weekly .dashboard-page-header");
-  if (!hero?.parentNode) return null;
+  const section = $("#weekly");
+  if (!section) return null;
   let card = $("#weekly-pace-forecast");
   if (!card) {
     card = node("aside", "weekly-pace-forecast");
     card.id = "weekly-pace-forecast";
     card.setAttribute("aria-live", "polite");
     card.setAttribute("aria-atomic", "true");
-    hero.parentNode.insertBefore(card, hero.nextSibling);
+    // A direct child of the Allowance section, so the Forecast view owns it
+    // and the Equivalent view's container never does.
+    section.prepend(card);
   }
   return card;
 }
@@ -8602,13 +6645,11 @@ function renderAllowanceWindowChrome(data, windowMinutes) {
       ? "weekly.window.fiveHour"
       : "weekly.window.sevenDay");
   }
-  setLocalizedText($("#weekly-title"), "page.weekly.title");
   const note = $("#allowance-window-note");
   note.hidden = !fiveHourSelected && fiveHourAvailable;
   if (!note.hidden) setLocalizedText(note, fiveHourSelected
     ? "weekly.window.historyOnly"
     : "weekly.window.unavailable");
-  $("#share-panel").hidden = fiveHourSelected;
   setLocalizedText($("#weekly-table-caption"), fiveHourSelected
     ? "weekly.table.fiveHourCaption"
     : "weekly.table.sevenDayCaption");
@@ -8621,7 +6662,7 @@ function renderWeeklyPlanControl(data) {
   if (!control || !select || !note) return;
   const selection = data.allowancePlanSelection;
   const previewPlan = data.mode === "demo"
-    ? shareCardPlanLabel(data?.weekly?.planType)
+    ? allowancePlanLabel(data?.weekly?.planType)
     : "";
   control.hidden = !selection && previewPlan === "";
   note.hidden = !selection;
@@ -8652,7 +6693,7 @@ function renderWeeklyPlanControl(data) {
       option.value = row.planType;
       option.textContent = t(row.planType === selection.currentPlanType
         ? "weekly.plan.latestOption" : "weekly.plan.historyOption", {
-        plan: shareCardPlanLabel(row.planType) || t("weekly.plan.unknown"),
+        plan: allowancePlanLabel(row.planType) || t("weekly.plan.unknown"),
       });
       return option;
     }));
@@ -8662,7 +6703,7 @@ function renderWeeklyPlanControl(data) {
   select.disabled = populations.length < 2;
   setLocalizedText(note, selection.isCurrentPlan
     ? "weekly.plan.conditional" : "weekly.plan.historicalConditional", {
-    plan: shareCardPlanLabel(selection.planType) || t("weekly.plan.unknown"),
+    plan: allowancePlanLabel(selection.planType) || t("weekly.plan.unknown"),
   });
 }
 
@@ -8695,7 +6736,7 @@ function renderWeekly(data) {
   // underneath reports how much of that population the chart is drawing. The
   // headline is deliberately not made to follow the filter — a figure people
   // quote should not move when they adjust a chart control.
-  const planLabel = shareCardPlanLabel(data.weekly.planType) || t("weekly.plan.unknown");
+  const planLabel = allowancePlanLabel(data.weekly.planType) || t("weekly.plan.unknown");
   setLocalizedText($("#weekly-estimate-label"), data.allowancePlanSelection
     ? "weekly.headline.planLabel" : "weekly.headline.label", { plan: planLabel });
   $("#weekly-estimate").textContent = estimate === null
@@ -8720,7 +6761,7 @@ function renderWeekly(data) {
       span: spanFloorSentenceLabel(history.spanFloorPp),
       anchor: history.anchorAt === null
         ? "—"
-        : shareCardDateLabel(history.anchorAt),
+        : allowanceDateLabel(history.anchorAt),
     })
     : t("weekly.headline.pending");
 
@@ -8768,16 +6809,6 @@ function renderWeekly(data) {
     shell.replaceChildren(renderAllowanceHistoryChart(history, windowMinutes));
   }
   renderWeeklyTable(values, windowMinutes);
-  // The chart renderer owns the card re-render (owner-verified regression,
-  // 2026-08-08). The old wiring re-rendered the card only where a caller
-  // remembered to, so a path that redrew the chart without the extra call
-  // left the card describing the previous filters. Every path that renders
-  // the allowance history — the range buttons, the span slider, a dashboard
-  // load, a locale change — now redraws the card from the SAME model
-  // instance, so the two surfaces cannot disagree.
-  if (windowMinutes === CODEX_WEEKLY_ALLOWANCE_MINUTES) {
-    renderShareCard(data, { history });
-  }
 }
 
 // The Allowance page's reset-estimate table pages through its full row set
@@ -10716,10 +8747,6 @@ async function loadLocalDashboard() {
     }
   }
   if (isCurrent()) {
-    // The dashboard has painted a real local result before the accountless
-    // preference is read. This ordering is also the authorization boundary for
-    // a notice receipt: unavailable/hidden startup never counts as displayed.
-    void loadElectronSharingPreference({ dashboardReady: primaryAvailable }).catch(() => {});
     // Optional reads never own primary readiness or the action's busy state.
     void loadLocalDashboardSecondaryState({ isCurrent, primaryAvailable }).catch(() => {});
   }
@@ -11463,20 +9490,6 @@ $("#connection-check").addEventListener("click", checkLocalSetup);
 $("#companion-check").addEventListener("click", checkLocalSetup);
 $("#setup-check-again").addEventListener("click", checkLocalSetup);
 window.addEventListener("tibotattle:automatic-refresh", handleElectronAutomaticRefresh);
-window.addEventListener("focus", () => {
-  if (electronSharingBridge() !== null && dashboard !== null) {
-    void loadElectronSharingPreference({ dashboardReady: true }).catch(() => {});
-  }
-});
-$("#electron-sharing-share-now")?.addEventListener("click", () => {
-  void setElectronSharingEnabled(true);
-});
-$("#electron-sharing-keep-off")?.addEventListener("click", () => {
-  void setElectronSharingEnabled(false);
-});
-$("#electron-accountless-sharing-enabled")?.addEventListener("change", (event) => {
-  void setElectronSharingEnabled(event.target.checked === true);
-});
 window.addEventListener("tibotattle:local-evidence-updated", () => {
   void reloadLocalEvidenceAfterNativeRefresh();
 });
@@ -11632,8 +9645,6 @@ $("#weekly-span-control").addEventListener("input", (event) => {
   renderWeekly(dashboard);
 });
 
-$("#share-card-download").addEventListener("click", downloadShareCard);
-$("#share-card-copy").addEventListener("click", copyShareCardImage);
 document.addEventListener("click", (event) => {
   const current = activeInformationPopover;
   if (!current) return;
@@ -11684,44 +9695,60 @@ document.querySelector("#reporting-period-controls").addEventListener("click", e
 renderReportingPeriod();
 const dashboardReportPreloader = createDashboardReportPreloader({ reports: [workUsageView, modelPerformance] });
 
-mountDashboardNavigation({
-  documentRef: document,
-  windowRef: window,
-});
-
-/** Switch measurement views without rebuilding their data or fetching again. */
+/**
+ * Switch measurement views without rebuilding their data or fetching again.
+ *
+ * Each destination has one level-1 switch of underline tabs in its page header.
+ * A level-1 view may contain a level-2 switch (smaller tabs at the top of its
+ * container). The two levels never toggle the same element: level 1 toggles the
+ * view's containers, level 2 toggles panels inside one container. Filters stay
+ * as labeled controls in `.view-filters`; a view lists the filters it shows.
+ */
 function mountDashboardLayout({ documentRef, windowRef }) {
   const dialog = documentRef.querySelector("#overview-details-dialog");
   const content = documentRef.querySelector("#overview-details-content");
   const title = documentRef.querySelector("#overview-details-title");
   const main = documentRef.querySelector("#main");
   if (!dialog || !content || !main) return;
+  const view = (key, panels, filters = "") => ({ key, panels, filters });
   const configurations = [
-    { page: "weekly", root: "#weekly", views: [
-      ["history", ".weekly-hero, .allowance-window-note, .weekly-history-panel"],
-      ["forecast", "#weekly-pace-forecast"],
-      ["details", ".weekly-table-panel"], ["share", "#share-panel"],
+    { id: "usage", page: "usage", level: 1, root: "#usage-screen", views: [
+      view("projects", "#accounting-summary, #projects"),
+      view("models", ".accounting-models-panel"),
+      view("composition", ".accounting-component-grid"),
+      view("cache", "#cache-reuse-outcome, .advanced-diagnostics"),
     ] },
-    { page: "trends", root: "#timeline", views: [
-      ["activity", ".trends-capacity-panel"], ["comparison", ".trends-comparison-panel"],
-      ["drift", ".trends-drift-panel"], ["divergence", ".divergence-panel"],
-      ["evidence", ".trends-exact-panel"],
-    ] },
-    { page: "method", root: "#accounting", views: [
-      ["summary", "#accounting-summary"], ["components", ".accounting-component-grid"],
-      ["models", ".accounting-models-panel"], ["cache", "#cache-reuse-outcome"],
-      ["diagnostics", ".advanced-diagnostics"],
-    ] },
-    { page: "projects", root: "#projects", host: ".work-usage-body", views: [
-      ["list", ".work-usage-table-panel, .work-usage-body > .table-pagination, .work-usage-components"],
-      ["components", ".work-usage-mix"],
-    ] },
-    { page: "performance", root: "#performance", before: ".performance-model-panel", views: [
-      ["speed", '[data-performance-metric="speed"]'],
-      ["latency", '[data-performance-metric="latency"]'],
+    { id: "usage-projects", page: "usage", level: 2, label: "projects",
+      root: "#projects", host: ".work-usage-body", views: [
+        view("list", ".work-usage-table-panel, .work-usage-body > .table-pagination, .work-usage-components"),
+        view("components", ".work-usage-mix"),
+      ] },
+    { id: "allowance", page: "allowance", level: 1, root: "#allowance-screen",
+      emptyAfter: "#allowance-filters", views: [
+        view("changes", ".trends-capacity-panel"),
+        view("differences", ".allowance-differences"),
+        view("equivalent", ".allowance-equivalent", "#allowance-window-control"),
+        view("forecast", "#weekly-pace-forecast"),
+      ] },
+    { id: "allowance-differences", page: "allowance", level: 2, label: "differences",
+      root: ".allowance-differences", views: [
+        view("comparison", ".trends-comparison-panel"),
+        view("drift", ".trends-drift-panel"),
+        view("divergence", ".divergence-panel"),
+        view("evidence", ".trends-exact-panel"),
+      ] },
+    { id: "allowance-equivalent", page: "allowance", level: 2, label: "equivalent",
+      root: ".allowance-equivalent", views: [
+        view("history", ".weekly-hero, .allowance-window-note, .weekly-history-panel"),
+        view("details", ".weekly-table-panel"),
+      ] },
+    { id: "performance", page: "performance", level: 1, root: "#performance-screen", views: [
+      view("speed", '[data-performance-metric="speed"]'),
+      view("latency", '[data-performance-metric="latency"]'),
     ] },
   ];
-  const selections = new Map(configurations.map(config => [config.page, config.views[0][0]]));
+  const levelOne = configurations.filter(config => config.level === 1);
+  const selections = new Map(configurations.map(config => [config.id, config.views[0].key]));
   let disclosure = null;
   let opener = null;
   let focusedViewButton = null;
@@ -11776,74 +9803,106 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     focusedViewButton = event.target.dataset?.dashboardView ? event.target : null;
   });
 
-  const choose = (config, view) => {
-    if (!config.views.some(([key]) => key === view)) return;
-    selections.set(config.page, view);
+  const choose = (config, key) => {
+    // An unknown view falls back to the destination's default.
+    const next = config.views.some(item => item.key === key) ? key : config.views[0].key;
+    selections.set(config.id, next);
     syncViews(config);
     schedule();
     // Hidden charts retain their data. Redraw at the revealed width, without a fetch.
     windowRef.requestAnimationFrame(() => windowRef.dispatchEvent(new Event("resize")));
   };
   documentRef.addEventListener("tibotattle:page-view", event => {
-    const config = configurations.find(item => item.page === event.detail?.page);
+    const config = levelOne.find(item => item.page === event.detail?.page);
     if (config) choose(config, event.detail.view);
   });
 
+  const buildBar = config => {
+    const bar = documentRef.createElement("div");
+    bar.className = `dashboard-view-switch ${config.level === 1
+      ? "dashboard-view-tabs" : "dashboard-subview-tabs"}`;
+    bar.dataset.viewSwitch = config.id;
+    bar.setAttribute("role", "group");
+    for (const { key } of config.views) {
+      const button = documentRef.createElement("button");
+      button.type = "button";
+      button.dataset.dashboardView = key;
+      button.addEventListener("click", () => choose(config, key));
+      bar.append(button);
+    }
+    bar.addEventListener("keydown", event => {
+      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      const buttons = [...bar.querySelectorAll("button")];
+      const index = buttons.indexOf(event.target);
+      if (index < 0) return;
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length;
+      buttons[next].focus();
+      choose(config, buttons[next].dataset.dashboardView);
+    });
+    return bar;
+  };
+
   const syncViews = config => {
     const root = documentRef.querySelector(config.root);
-    const host = config.host ? root?.querySelector(config.host) : root;
-    const before = config.before ? root?.querySelector(config.before) : null;
-    if (!host || config.before && !before) return;
-    let bar = host.querySelector(":scope > .dashboard-view-switch");
+    const header = config.level === 1
+      ? documentRef.querySelector(`.dashboard-page-header[data-dashboard-page="${config.page}"]`)
+      : null;
+    const host = config.level === 1 ? header
+      : config.host ? root?.querySelector(config.host) : root;
+    if (!root || !host) return;
+    let bar = host.querySelector(`:scope > [data-view-switch="${config.id}"]`);
     if (!bar) {
-      bar = documentRef.createElement("div");
-      bar.className = "dashboard-view-switch segmented-control";
-      bar.setAttribute("role", "group");
-      for (const [key] of config.views) {
-        const button = documentRef.createElement("button");
-        button.type = "button";
-        button.dataset.dashboardView = key;
-        button.addEventListener("click", () => choose(config, key));
-        bar.append(button);
-      }
-      bar.addEventListener("keydown", event => {
-        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-        const buttons = [...bar.querySelectorAll("button")];
-        const index = buttons.indexOf(event.target);
-        if (index < 0) return;
-        event.preventDefault();
-        const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
-          : (index + (event.key === "ArrowRight" ? 1 : buttons.length - 1)) % buttons.length;
-        buttons[next].focus();
-        choose(config, buttons[next].dataset.dashboardView);
-      });
-      host.insertBefore(bar, before ?? host.firstChild);
+      bar = buildBar(config);
+      if (config.level === 1) {
+        host.insertBefore(bar, host.querySelector(":scope > .dashboard-page-status"));
+      } else host.insertBefore(bar, host.firstChild);
     }
-    const label = t("dashboard.views.label");
+    const label = t(config.level === 1 ? "dashboard.views.label" : `dashboard.views.${config.label}`);
     if (bar.getAttribute("aria-label") !== label) bar.setAttribute("aria-label", label);
-    const selection = selections.get(config.page);
+    const selection = selections.get(config.id);
     let visible = false;
-    for (const [key, selector] of config.views) {
+    for (const { key, panels, filters } of config.views) {
       const button = [...bar.children].find(child => child.dataset.dashboardView === key);
       const text = t(`dashboard.views.${key}`);
       if (button.textContent !== text) button.textContent = text;
       const pressed = String(key === selection);
       if (button.getAttribute("aria-pressed") !== pressed) button.setAttribute("aria-pressed", pressed);
-      for (const panel of root.querySelectorAll(selector)) {
+      for (const panel of root.querySelectorAll(panels)) {
         panel.toggleAttribute("data-page-view-inactive", key !== selection);
         if (key === selection && !panel.hidden) visible = true;
       }
+      if (filters) {
+        for (const filter of root.querySelectorAll(filters)) {
+          filter.toggleAttribute("data-page-view-inactive", key !== selection);
+        }
+      }
     }
     let empty = host.querySelector(":scope > .dashboard-view-empty");
-    if (!empty) {
+    if (config.level === 1) {
+      const anchor = config.emptyAfter ? root.querySelector(config.emptyAfter) : header;
+      empty = anchor?.nextElementSibling?.classList.contains("dashboard-view-empty")
+        ? anchor.nextElementSibling : null;
+      if (!empty && anchor) {
+        empty = documentRef.createElement("p");
+        empty.className = "dashboard-view-empty annotation";
+        empty.setAttribute("role", "status");
+        // Tracked by the page switch so it never shows on another destination.
+        empty.dataset.dashboardPage = config.page;
+        anchor.after(empty);
+      }
+    } else if (!empty) {
       empty = documentRef.createElement("p");
       empty.className = "dashboard-view-empty annotation";
       empty.setAttribute("role", "status");
       host.insertBefore(empty, bar.nextSibling);
     }
-    const emptyText = t("dashboard.views.empty");
-    if (empty.textContent !== emptyText) empty.textContent = emptyText;
-    if (empty.hidden !== visible) empty.hidden = visible;
+    if (empty) {
+      const emptyText = t("dashboard.views.empty");
+      if (empty.textContent !== emptyText) empty.textContent = emptyText;
+      if (empty.hidden !== visible) empty.hidden = visible;
+    }
     if (focusedViewButton && !focusedViewButton.isConnected
         && documentRef.body.dataset.dashboardPage === config.page) {
       [...bar.children].find(button => button.dataset.dashboardView === selection)?.focus({ preventScroll: true });
@@ -11855,12 +9914,10 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     for (const config of configurations) syncViews(config);
     const page = documentRef.body.dataset.dashboardPage;
     if (dialog.open && (dialogPage !== page || !disclosure?.isConnected || disclosure.hidden)) dialog.close();
-    const screens = [documentRef.querySelector("#overview-screen"),
-      ...["#weekly", "#timeline", "#projects", "#performance", "#accounting", "#community"]
-        .map(selector => documentRef.querySelector(selector))].filter(Boolean);
+    const screens = ["overview", "usage", "allowance", "performance"]
+      .map(id => documentRef.querySelector(`#${id}-screen`)).filter(Boolean);
     for (const screen of screens) screen.style.zoom = "1";
-    const screen = page === "overview" ? screens[0]
-      : screens.find(element => element.dataset.dashboardPage === page);
+    const screen = screens.find(element => element.id === `${page}-screen`);
     if (!screen) return;
     const headerHeight = documentRef.querySelector(".topbar")?.getBoundingClientRect().height ?? 0;
     const sidebarHeight = windowRef.innerWidth <= 900
@@ -11891,10 +9948,20 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   }
   windowRef.addEventListener("resize", schedule);
   windowRef.addEventListener("tibotattle:locale-change", schedule);
+  // Build the switches now so the page switch below tracks every element that
+  // belongs to a destination (including each level-1 empty-view message).
+  for (const config of configurations) syncViews(config);
   schedule();
 }
 
+// Mount the view switches first: they create elements that belong to a
+// destination, and the page switch reads those at mount time. A `#page/view`
+// hash then finds the view switch already listening.
 mountDashboardLayout({ documentRef: document, windowRef: window });
+mountDashboardNavigation({
+  documentRef: document,
+  windowRef: window,
+});
 
 async function bootstrapDashboard() {
   renderSharedInstallerJourney(document, {

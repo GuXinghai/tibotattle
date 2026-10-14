@@ -21,20 +21,6 @@
     <meta name="usage-monitor-privacy-url" content="">
     <meta name="usage-monitor-security-url" content="">
     <meta name="usage-monitor-support-url" content="">
-    <!--
-      Not a release slot: this is the product version this dashboard build ships
-      as, and it is filled in source so the packaged Windows app carries it too. A
-      shared results card names it, so a posted figure can be tied back to the
-      build that produced it. The local companion and packaged app stamp it
-      from the release manifest.
-    -->
-    <meta name="usage-monitor-app-version" content="__USAGE_MONITOR_RELEASE_VERSION__">
-    <!--
-      The published home this build points at. A shared results card prints it
-      so a reader can find the project; the release build's own canonical URL
-      wins over it whenever release packaging has filled that slot.
-    -->
-    <meta name="usage-monitor-share-home" content="tibotattle.com">
     <meta name="usage-monitor-semantic-open-target" content="__USAGE_MONITOR_SEMANTIC_OPEN_TARGET__">
     <link rel="canonical" href="">
     <meta property="og:type" content="website">
@@ -57,7 +43,7 @@
     <meta name="twitter:image" content="">
     <meta
       name="description"
-      content="Private, local-first monitoring for AI usage, quota movement, calibration quality, and safe community contributions."
+      content="Private, local-first monitoring for AI usage, quota movement, and calibration quality."
     >
     <title>TiboTattle</title>
     <link rel="stylesheet" href="./styles.css">
@@ -115,16 +101,6 @@
           Cancel
         </button>
         <button
-          class="button button-quiet compact icon-button electron-only-control"
-          hidden
-          id="electron-share-button"
-          type="button"
-          aria-label="Share"
-          data-i18n-aria-label="electron.shell.share"
-          title="Share"
-          data-i18n-title="electron.shell.share"
-        ><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M7 10H5v11h14V10h-2"/></svg></button>
-        <button
           class="button button-quiet compact icon-button electron-only-control electron-settings-control"
           hidden
           id="electron-settings-button"
@@ -138,13 +114,10 @@
     <div class="dashboard-shell" data-i18n-legacy-root>
       <aside class="dashboard-sidebar" aria-label="Dashboard navigation" data-i18n-aria-label="aria.dashboardNavigation">
         <nav class="primary-nav" aria-label="Dashboard sections" data-i18n-aria-label="aria.dashboardSections">
-          <a href="#overview" data-nav="overview" data-requires-evidence>Overview</a>
-          <a href="#weekly" data-nav="weekly" data-requires-evidence data-i18n="allowance.valueTab">Allowance Estimate</a>
-          <a href="#timeline" data-nav="trends" data-requires-evidence>Trends</a>
-          <a href="#performance" data-nav="performance" data-i18n="performance.title">Model performance</a>
-          <a href="#accounting" data-nav="method" data-requires-evidence>Usage and costs</a>
-          <a href="#projects" data-nav="projects" data-i18n="workUsage.title">Projects &amp; threads</a>
-          <a href="#community" data-nav="community" data-requires-evidence>Community</a>
+          <a href="#overview" data-nav="overview" data-requires-evidence data-i18n="page.overview.title">Overview</a>
+          <a href="#usage" data-nav="usage" data-i18n="page.usage.title">Usage &amp; costs</a>
+          <a href="#allowance" data-nav="allowance" data-requires-evidence data-i18n="page.allowance.title">Allowance</a>
+          <a href="#performance" data-nav="performance" data-i18n="page.performance.title">Model performance</a>
         </nav>
       </aside>
       <div class="dashboard-content">
@@ -184,28 +157,6 @@
         </div>
       </div>
 
-
-      <section
-        class="notice notice-info electron-sharing-notice"
-        id="electron-sharing-notice"
-        role="region"
-        aria-labelledby="electron-sharing-notice-title"
-        data-dashboard-page="overview"
-        hidden
-      >
-        <div>
-          <p class="eyebrow" data-i18n="electron.sharing.notice.eyebrow">Community sharing</p>
-          <strong id="electron-sharing-notice-title" data-i18n="electron.sharing.notice.title">Share usage measurements</strong>
-          <p id="electron-sharing-notice-copy" data-i18n="electron.sharing.notice.copy">Community sharing will turn on automatically unless you choose Keep sharing off. This is notice {index} of 3. Shared measurements include token counts, model labels, quota measurements, and pseudonymous identifiers. Prompts, responses, credentials, private paths, and raw account identifiers stay on this device. No sign-in is needed.</p>
-          <p class="annotation" id="electron-sharing-notice-earliest" data-i18n="electron.sharing.notice.earliest">Earliest automatic sharing: {date}; activation also requires all three notices and at least 24 hours after the final notice.</p>
-          <p class="annotation" id="electron-sharing-notice-transport" role="status" aria-live="polite" data-i18n="electron.sharing.transport.unavailable">Uploads are not available in this build.</p>
-          <p class="participant-action-status" id="electron-sharing-notice-status" role="status" aria-live="polite" hidden></p>
-        </div>
-        <div class="notice-actions">
-          <button class="button button-primary" id="electron-sharing-share-now" type="button" data-i18n="electron.sharing.notice.shareNow">Share now</button>
-          <button class="button button-quiet" id="electron-sharing-keep-off" type="button" data-i18n="electron.sharing.notice.keepOff">Keep sharing off</button>
-        </div>
-      </section>
 
       <section class="companion-setup" id="companion-setup" aria-labelledby="companion-setup-title" data-dashboard-page="overview" hidden>
         <div class="companion-setup-copy">
@@ -453,354 +404,16 @@
 
       </div>
 
-      <section class="dashboard-section lead-section dashboard-page-inactive" id="weekly" aria-labelledby="weekly-title" data-dashboard-page="weekly" data-requires-evidence aria-hidden="true" inert>
-        <div class="dashboard-page-header">
-          <div>
-            <h2 id="weekly-title" data-i18n="page.weekly.title">Allowance Estimate</h2>
-            <p class="page-description" data-i18n="page.weekly.description">Estimate what a full allowance cycle is worth in API prices, based on your local usage and quota changes. It's an estimate, not a bill.</p>
-          </div>
-          <div class="allowance-header-controls">
-            <div class="allowance-window-control" id="allowance-window-control">
-              <span data-i18n="weekly.window.label">Allowance window</span>
-              <div class="segmented-control allowance-window-toggle" id="allowance-window-controls" role="group" aria-label="Allowance history window" data-i18n-aria-label="weekly.window.aria">
-                <button id="allowance-window-five-hour" type="button" data-window-minutes="300" aria-pressed="false">5-hour</button>
-                <button id="allowance-window-seven-day" type="button" data-window-minutes="10080" class="active" aria-pressed="true">7-day</button>
-              </div>
-            </div>
-            <label class="language-picker" id="weekly-plan-control" for="weekly-plan-select" hidden>
-              <span data-i18n="weekly.plan.label">Plan</span>
-              <select id="weekly-plan-select" aria-label="Allowance history plan" data-i18n-aria-label="weekly.plan.aria"></select>
-            </label>
-          </div>
+      <div class="dashboard-screen" id="usage-screen">
+      <div class="dashboard-page-header" data-dashboard-page="usage">
+        <h1 id="usage-page-title" data-i18n="page.usage.title">Usage &amp; costs</h1>
+        <div class="dashboard-page-status" role="status">
+          <p class="evidence-warning" id="accounting-rebuild-deferred" hidden></p>
+          <p class="annotation stale-serve-note" id="accounting-stale-serve" hidden></p>
         </div>
-        <p class="annotation" id="weekly-plan-note" hidden></p>
-
-        <div class="weekly-hero">
-          <div>
-            <span id="weekly-estimate-label">Speed-priced all-data median</span>
-            <strong id="weekly-estimate">—</strong>
-            <small id="weekly-range">No evidence interval available</small>
-          </div>
-          <p id="weekly-explanation">The estimate will appear when local usage can be matched to quota changes.</p>
-          <p class="annotation stale-serve-note" id="weekly-stale-note" hidden></p>
-        </div>
-        <p class="annotation allowance-window-note" id="allowance-window-note" hidden></p>
-
-        <article class="panel weekly-history-panel lead-chart-panel chart-card">
-          <div class="panel-heading chart-card-header">
-            <div>
-              <p class="panel-kicker">History</p>
-              <h3 class="chart-card-title">Allowance estimate history</h3>
-            </div>
-            <div class="weekly-chart-controls chart-card-controls">
-              <label class="weekly-span-control" for="weekly-span-control">
-                <span id="weekly-span-label">Minimum observed quota span</span>
-                <input id="weekly-span-control" type="range" min="0" max="99" step="1" value="50">
-                <output id="weekly-span-value" for="weekly-span-control">50+ pp</output>
-              </label>
-            </div>
-          </div>
-          <p id="weekly-span-note" class="small muted" hidden></p>
-          <div class="legend weekly-legend chart-card-legend" aria-label="Weekly estimate chart legend" data-i18n-aria-label="aria.weeklyEstimateLegend">
-            <span><i class="legend-dot weekly-center"></i>All-data median</span>
-            <span id="weekly-lowess-legend"><i class="legend-dot weekly-lowess"></i><span data-i18n="weekly.controls.lowess">Smoothed trend</span></span>
-            <span><i class="legend-dot weekly-mature"></i><span id="weekly-span-legend">Observed across 50+ points</span></span>
-            <span id="weekly-partial-legend" hidden><i class="legend-dot weekly-partial"></i>Short observation</span>
-            <span><i class="legend-dot weekly-error-bar"></i>Slope-agreement range</span>
-          </div>
-          <div class="dashboard-state chart-empty small" id="weekly-empty" role="status" data-state="empty">No weekly estimates loaded.</div>
-          <div class="chart-shell weekly-history-chart" id="weekly-chart" hidden></div>
-          <p class="annotation" id="weekly-trend-note" aria-live="polite" hidden></p>
-          <!--
-            Honest naming for the per-reset bars: they are the 10th-to-90th
-            percentile spread of slopes formed from different pairs of observed
-            quota boundaries WITHIN one reset — a disagreement diagnostic. The
-            calibration report states the same thing; calling it a measured or
-            confidence range here overclaimed.
-          -->
-          <p class="annotation chart-card-note">
-            Each reset estimate is drawn with its slope-agreement range: how
-            much the slopes differ between pairs of observed quota boundaries
-            within that reset. It shows disagreement inside one reset, not a
-            confidence interval.
-          </p>
-          <!-- The zone is named once per chart, from the reader's own system
-               zone, instead of being repeated on every tick and tooltip. -->
-          <p class="annotation chart-card-note" id="weekly-chart-timezone"></p>
-        </article>
-
-        <!--
-          Owner-directed 2026-08-08 (third round): the header above the card
-          is title plus ONE short caption. The earlier two-paragraph explainer
-          is gone; the surviving sentence keeps the two promises a reader must
-          have before posting — the card follows the chart's active filters,
-          and nothing private is on it. The reference still travels in the
-          saved file name only.
-        -->
-        <article class="panel share-panel" id="share-panel">
-          <div class="panel-heading">
-            <div>
-              <p class="panel-kicker">Share</p>
-              <h3>A results card you can post</h3>
-            </div>
-          </div>
-          <p class="annotation">
-            The card uses the chart's current date range and span filter. It
-            contains no prompts, responses, paths, account details or raw
-            activity.
-          </p>
-          <div class="share-preview">
-            <canvas
-              id="share-card-canvas"
-              role="img"
-              width="1200"
-              height="800"
-              aria-label="A results card is generated once local evidence is available."
-              data-i18n-aria-label="aria.shareCard"
-            ></canvas>
-          </div>
-          <div class="share-actions">
-            <button class="button button-primary" id="share-card-download" type="button" disabled>
-              Save image
-            </button>
-            <button class="button button-secondary" id="share-card-copy" type="button" disabled>
-              Copy image
-            </button>
-          </div>
-          <!--
-            Transient confirmation for a completed copy: it appears, holds a
-            few seconds, and leaves, instead of accumulating as permanent page
-            text under the card. A role="status" live region like the action
-            statuses elsewhere on this page, and it carries no focusable
-            content, so it cannot trap focus.
-          -->
-          <p class="share-toast" id="share-card-toast" role="status" hidden></p>
-          <p class="participant-action-status" id="share-card-status" role="status" hidden></p>
-        </article>
-
-        <div class="panel weekly-table-panel">
-          <h3>See individual usage changes</h3>
-          <div class="table-wrap">
-            <table>
-              <caption class="sr-only" id="weekly-table-caption">Individual seven-day reset estimates</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Observed</th>
-                  <th scope="col">Observed span</th>
-                  <th scope="col">Estimate</th>
-                  <th scope="col">Slope-agreement range</th>
-                  <th scope="col">Status</th>
-                </tr>
-              </thead>
-              <tbody id="weekly-table">
-                <tr><td colspan="5" class="empty-cell">No weekly evidence loaded.</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <!--
-            Pagination over the full reset-estimate row set (owner-directed,
-            2026-08-10): short batches, newest first, replacing the old
-            newest-fourteen truncation. Same pager idiom as the exact-windows
-            inspection table; the status span is written by the renderer.
-          -->
-          <div class="table-pagination" id="weekly-table-pagination" hidden>
-            <button class="button button-quiet compact" id="weekly-table-prev" type="button" disabled>Previous</button>
-            <span class="table-pagination-status" id="weekly-table-status" role="status"></span>
-            <button class="button button-quiet compact" id="weekly-table-next" type="button" disabled>Next</button>
-          </div>
-        </div>
-      </section>
-
-      <section class="dashboard-section dashboard-page-inactive" id="timeline" aria-labelledby="timeline-title" data-dashboard-page="trends" data-requires-evidence aria-hidden="true" inert>
-        <div class="dashboard-page-header">
-          <div>
-            <h2 id="timeline-title" data-i18n="page.timeline.title">Trends</h2>
-            <p class="page-description" data-i18n="page.timeline.description">Compare recorded usage with observed allowance changes.</p>
-          </div>
-        </div>
-
-        <article class="panel chart-panel trends-capacity-panel">
-          <div class="trends-horizon">
-            <div class="trends-clock-content"><span class="trends-clock-label" data-i18n="trends.localClock">Local clock · selected time</span><span id="trends-date" data-i18n-skip>—</span><strong id="trends-clock" data-i18n-skip>—</strong></div>
-            <div class="trends-live-metrics">
-              <div><span data-i18n="trends.headerAllowance">Allowance remaining</span><strong id="trends-allowance-value" data-i18n-skip>—</strong><small data-i18n="trends.headerObserved">Latest observation at this time</small></div>
-              <div><span data-i18n="trends.headerSpend">API equivalent / hour</span><strong id="trends-spend-value" data-i18n-skip>—</strong><small id="trends-spend-basis" data-i18n-skip>—</small></div>
-            </div>
-          </div>
-          <div class="trends-time-controls"><button id="trends-replay" class="button button-quiet compact" type="button" aria-pressed="false" disabled data-i18n="trends.play">Play history</button><input id="trends-time" type="range" aria-label="Explore history" data-i18n-aria-label="trends.explore" disabled><button id="trends-latest" class="button button-quiet compact" type="button" data-i18n="trends.latest">Latest</button></div>
-          <div class="chart-heading">
-            <div>
-              <h3 id="usage-timeline-title">API-price-equivalent usage over time</h3>
-              <p id="usage-timeline-copy">Local usage over time</p>
-            </div>
-            <div class="chart-control-stack">
-              <div class="segmented-control" id="usage-group-controls" aria-label="Usage grouping" data-i18n-aria-label="aria.usageGrouping">
-                <button type="button" data-group="hour" class="active" aria-pressed="true">Hour</button>
-                <button type="button" data-group="day">Day</button>
-                <button type="button" data-group="week">Week</button>
-              </div>
-              <div class="chart-navigation" aria-label="Usage zoom and pan" data-i18n-aria-label="aria.usageZoomPan">
-                <button class="button button-quiet compact" id="usage-pan-back" type="button" title="Pan usage earlier" data-i18n-title="title.panUsageEarlier">← Earlier</button>
-                <button class="button button-quiet compact" id="usage-zoom-out" type="button" title="Zoom out" data-i18n-title="title.zoomOut">−</button>
-                <button class="button button-quiet compact" id="usage-zoom-in" type="button" title="Zoom in" data-i18n-title="title.zoomIn">+</button>
-                <button class="button button-quiet compact" id="usage-reset-zoom" type="button">Reset view</button>
-                <button class="button button-quiet compact" id="usage-pan-forward" type="button" title="Pan usage later" data-i18n-title="title.panUsageLater">Later →</button>
-                <span class="sr-only" id="usage-zoom-status" aria-live="polite"></span>
-              </div>
-              <div class="legend compact-legend" aria-label="Usage chart legend" data-i18n-aria-label="aria.usageLegend">
-                <span><i class="legend-dot cost"></i><span id="usage-cost-legend-label">Speed-priced API-equivalent usage</span></span>
-                <span id="usage-allowance-legend"><i class="legend-dot allowance"></i>Seven-day allowance remaining</span>
-              </div>
-            </div>
-          </div>
-          <div class="chart-empty" id="usage-timeline-empty">
-            <strong>No real usage timeline loaded</strong>
-            <p>Analyze local usage to build recent content-free usage buckets.</p>
-          </div>
-          <div class="trends-lane-heading" data-i18n="trends.allowance">Observed allowance remaining</div>
-          <div class="chart-empty small" id="allowance-timeline-empty" hidden data-i18n="trends.allowanceUnavailable">No comparable allowance observations in this view.</div>
-          <div class="trends-reset-legend"><span id="trends-reset-count" data-i18n-skip></span><span data-i18n="trends.resetHint">Select a reset marker to inspect it.</span></div>
-          <div class="chart-shell" id="allowance-timeline-chart" hidden></div>
-          <p id="trends-event-detail" class="trends-event-detail" data-i18n-skip hidden></p>
-          <div class="trends-lane-heading" id="trends-activity-label" data-i18n="trends.activity">Recorded activity · API-price equivalent</div>
-          <div class="chart-shell" id="usage-timeline-chart" hidden></div>
-          <p class="series-coverage" id="usage-timeline-coverage" role="status" hidden></p>
-          <div class="chart-summary-grid" id="usage-timeline-summary"></div>
-        </article>
-
-        <div class="trends-analysis-details">
-          <article class="panel chart-panel trends-comparison-panel">
-            <div class="chart-heading">
-              <div>
-                <h3 id="timeline-chart-title">Observed quota change versus cost-implied change</h3>
-                <p id="timeline-chart-copy">Chart and table use this PC’s reporting time zone.</p>
-              </div>
-              <div class="calibration-controls" hidden>
-                <!--
-                  Owner decision 2026-08-06: the rolling comparison window is
-                  fixed at three hours. The 15-minute and 1-hour widths the old
-                  segmented control offered proved inaccurate, and a control
-                  with one honest option is clutter, so the width lives in
-                  app.js as CALIBRATION_WINDOW_HOURS rather than here.
-                -->
-                <div class="chart-navigation" aria-label="Calibration zoom and pan" data-i18n-aria-label="aria.calibrationZoomPan">
-                  <button class="button button-quiet compact" id="timeline-pan-back" type="button" title="Pan calibration earlier" data-i18n-title="title.panCalibrationEarlier">← Earlier</button>
-                  <button class="button button-quiet compact" id="timeline-zoom-out" type="button" title="Zoom out" data-i18n-title="title.zoomOut">−</button>
-                  <button class="button button-quiet compact" id="timeline-zoom-in" type="button" title="Zoom in" data-i18n-title="title.zoomIn">+</button>
-                  <button class="button button-quiet compact" id="timeline-reset-zoom" type="button">Reset view</button>
-                  <button class="button button-quiet compact" id="timeline-pan-forward" type="button" title="Pan calibration later" data-i18n-title="title.panCalibrationLater">Later →</button>
-                  <span class="sr-only" id="timeline-zoom-status" aria-live="polite"></span>
-                </div>
-              </div>
-            </div>
-            <div class="legend calibration-legend" aria-label="Calibration chart legend" data-i18n-aria-label="aria.calibrationLegend">
-              <span><i class="legend-dot observed"></i>Observed quota</span>
-              <span><i class="legend-dot expected"></i>Expected from speed-priced API cost</span>
-              <span class="legend-group-sep" aria-hidden="true"></span>
-              <span><i class="legend-dot area chart-status-missing"></i>Missing quota bracket</span>
-              <span><i class="legend-dot area chart-status-reset"></i>Window boundary or track change</span>
-              <span><i class="legend-dot area chart-status-weighting"></i>Speed pricing unavailable</span>
-              <span><i class="legend-dot area chart-status-ambiguous"></i>Movement needs context</span>
-              <span><i class="legend-dot area chart-status-saturated"></i>Allowance exhausted</span>
-            </div>
-            <div class="dashboard-state chart-empty" id="timeline-empty" role="status" data-state="empty">
-              <strong>No timeline loaded</strong>
-              <p>Connect the local companion or choose the labeled demo.</p>
-            </div>
-            <div class="chart-shell" id="timeline-chart" hidden></div>
-            <p class="series-coverage" id="timeline-coverage" role="status" hidden></p>
-            <div class="trends-difference-heading"><span data-i18n="trends.difference">Observed minus calculated</span><span class="trends-sign-key"><i></i><span data-i18n="trends.above">Above estimate</span><i></i><span data-i18n="trends.below">Below estimate</span></span></div>
-            <div class="chart-shell trends-difference-chart" id="difference-timeline-chart" hidden></div>
-            <p class="timeline-confidence" id="residual-coverage" role="status"></p>
-            <details class="trends-evidence-details"><summary data-i18n="trends.method">Comparison quality and assumptions</summary>
-            <p class="annotation" data-i18n="trends.quiet">Quiet periods with no activity and no quota change are neutral, not errors.</p>
-            <div class="chart-summary-grid" id="timeline-summary"></div>
-            <p class="timeline-confidence" id="timeline-confidence" role="status"></p>
-            </details>
-          </article>
-
-          <article class="panel trends-drift-panel">
-            <div class="panel-heading"><div><p class="panel-kicker" data-i18n="trends.cycle">Within each allowance cycle</p><h3 data-i18n="trends.drift">Cumulative drift</h3></div></div>
-            <p class="annotation" data-i18n="trends.driftCopy">Actual allowance use minus estimated use since the comparison began. Gaps or a new cycle break the line.</p>
-              <div class="chart-empty small" id="residual-empty">No residual evidence loaded.</div>
-              <div class="chart-shell compact-chart" id="residual-chart" hidden></div>
-              <p class="timeline-confidence" id="trends-drift-coverage" role="status"></p>
-            </article>
-          <article class="panel divergence-panel">
-            <div class="panel-heading">
-              <div>
-                <p class="panel-kicker">Divergence periods</p>
-                <h3 data-i18n="trends.divergenceTitle">When usage and allowance disagree</h3>
-              </div>
-            </div>
-            <p class="annotation" data-i18n="trends.divergenceCopy">Periods when the allowance fell more or less than recorded usage would explain. Each gap is in percentage points from the cycle's comparison start. Select a period to see it on the charts.</p>
-            <p class="timeline-confidence" id="divergence-summary" role="status" hidden></p>
-            <p class="annotation" id="divergence-caveat" hidden></p>
-            <div class="chart-empty small" id="divergence-empty" hidden></div>
-            <ol class="divergence-list" id="divergence-list"></ol>
-            <div class="table-pagination" id="divergence-pagination" hidden>
-              <button class="button button-quiet compact" id="divergence-page-prev" type="button" aria-controls="divergence-list" data-i18n="table.pagination.previous">Previous</button>
-              <span class="table-pagination-status" id="divergence-page-status" role="status"></span>
-              <button class="button button-quiet compact" id="divergence-page-next" type="button" aria-controls="divergence-list" data-i18n="table.pagination.next">Next</button>
-            </div>
-          </article>
-            <div class="panel trends-exact-panel">
-              <h3 data-i18n="trends.evidence">Exact windows and details</h3>
-              <div class="panel-heading">
-                <div>
-                  <p class="panel-kicker">Inspect exact periods</p>
-                  <h3 data-i18n="trends.evidenceTitle">What each row means</h3>
-                </div>
-              </div>
-              <p class="annotation" data-i18n="trends.evidenceIntro">Each sample compares a rolling window, normally 3 hours. Observed is the allowance used. Estimated is what recorded activity predicts. Difference = observed − estimated, in percentage points (pp).</p>
-              <p class="annotation" data-i18n="trends.evidenceHelp">For example, going from 60% to 50% remaining is 10 pp used. Comparable means the two values can be compared, not that they match. A dash means the value couldn't be determined.</p>
-              <div class="table-wrap">
-                <table class="residual-inspection-table">
-                  <caption class="sr-only">Largest unexplained quota movement periods</caption>
-                  <thead>
-                    <tr>
-                    <th scope="col" id="residual-time-heading">Local time</th>
-                    <th scope="col">Observed</th>
-                    <th scope="col" data-i18n="trends.estimated">Estimated</th>
-                    <th scope="col">Difference</th>
-                    <th scope="col" data-i18n="trends.evidenceColumn">How to read this row</th>
-                    </tr>
-                  </thead>
-                  <tbody id="residual-table">
-                    <tr><td colspan="5" class="empty-cell">No periods loaded.</td></tr>
-                  </tbody>
-                </table>
-              </div>
-              <!--
-                Simple pagination (owner-directed, 2026-08-08): ten rows per
-                page over the full merged inspection list, with the shown range
-                stated as "N–M of T". The status span is written by the
-                renderer, so it starts empty rather than carrying placeholder
-                copy.
-              -->
-              <div class="table-pagination" id="residual-pagination" hidden>
-                <button class="button button-quiet compact" id="residual-page-prev" type="button" disabled>Previous</button>
-                <span class="table-pagination-status" id="residual-page-status" role="status"></span>
-                <button class="button button-quiet compact" id="residual-page-next" type="button" disabled>Next</button>
-              </div>
-            </div>
-        </div>
-
-      </section>
-
-      <section class="dashboard-section dashboard-page-inactive" id="projects" aria-labelledby="work-usage-title" data-dashboard-page="projects" aria-hidden="true" inert></section>
-      <section class="dashboard-section dashboard-page-inactive model-performance" id="performance" aria-labelledby="performance-title" data-dashboard-page="performance" aria-hidden="true" inert data-i18n-skip></section>
-
-      <section class="dashboard-section dashboard-page-inactive" id="accounting" aria-labelledby="accounting-title" data-dashboard-page="method" data-requires-evidence aria-hidden="true" inert>
-        <div class="dashboard-page-header">
-          <div>
-            <h2 id="accounting-title" data-i18n="page.accounting.title">Usage and costs</h2>
-            <p class="page-description" data-i18n="page.accounting.description">Recorded tokens and their API-equivalent cost.</p>
-          </div>
-        </div>
+      </div>
+      <section class="dashboard-section dashboard-page-inactive" id="accounting" aria-labelledby="usage-page-title" data-dashboard-page="usage" data-requires-evidence aria-hidden="true" inert>
         <ul class="evidence-warnings" id="accounting-warnings" hidden></ul>
-        <p class="evidence-warning" id="accounting-rebuild-deferred" hidden></p>
-        <p class="annotation stale-serve-note" id="accounting-stale-serve" hidden></p>
         <div class="metric-grid accounting-summary" id="accounting-summary"></div>
         <div class="two-column accounting-component-grid">
           <article class="panel">
@@ -940,52 +553,305 @@
         </details>
       </section>
 
-      <section
-        class="contribution-cta dashboard-section dashboard-page-inactive"
-        id="community"
-        aria-labelledby="community-page-title"
-        data-dashboard-page="community"
-        data-requires-evidence
-        aria-hidden="true"
-        inert
-      >
-        <div class="dashboard-page-header">
-          <div>
-            <h2 id="community-page-title" data-i18n="page.community.title">Community</h2>
-            <p class="page-description" data-i18n="page.community.description">Manage sharing and explore community measurements.</p>
+      <section class="dashboard-section dashboard-page-inactive" id="projects" aria-labelledby="work-usage-title" data-dashboard-page="usage" aria-hidden="true" inert></section>
+      </div>
+
+      <div class="dashboard-screen" id="allowance-screen">
+      <div class="dashboard-page-header" data-dashboard-page="allowance" data-requires-evidence>
+        <h1 id="allowance-page-title" data-i18n="page.allowance.title">Allowance</h1>
+        <div class="dashboard-page-status" role="status">
+          <p class="annotation stale-serve-note" id="weekly-stale-note" hidden></p>
+        </div>
+      </div>
+      <div class="view-filters" id="allowance-filters" data-dashboard-page="allowance" data-requires-evidence>
+        <div class="view-filter allowance-window-control" id="allowance-window-control">
+          <span data-i18n="weekly.window.label">Allowance window</span>
+          <div class="segmented-control allowance-window-toggle" id="allowance-window-controls" role="group" aria-label="Allowance history window" data-i18n-aria-label="weekly.window.aria">
+            <button id="allowance-window-five-hour" type="button" data-window-minutes="300" aria-pressed="false">5-hour</button>
+            <button id="allowance-window-seven-day" type="button" data-window-minutes="10080" class="active" aria-pressed="true">7-day</button>
           </div>
         </div>
-        <section class="panel electron-accountless-community" id="electron-accountless-community" aria-labelledby="electron-accountless-community-title" hidden>
-          <div class="panel-heading">
-            <div>
-              <h2 id="electron-accountless-community-title" data-i18n="electron.sharing.community.title">Share usage measurements</h2>
+        <label class="view-filter language-picker" id="weekly-plan-control" for="weekly-plan-select" hidden>
+          <span data-i18n="weekly.plan.label">Plan</span>
+          <select id="weekly-plan-select" aria-label="Allowance history plan" data-i18n-aria-label="weekly.plan.aria"></select>
+        </label>
+        <p class="annotation" id="weekly-plan-note" hidden></p>
+      </div>
+
+      <section class="dashboard-section dashboard-page-inactive" id="timeline" aria-labelledby="allowance-page-title" data-dashboard-page="allowance" data-requires-evidence aria-hidden="true" inert>
+        <article class="panel chart-panel trends-capacity-panel">
+          <div class="trends-horizon">
+            <div class="trends-clock-content"><span class="trends-clock-label" data-i18n="trends.localClock">Local clock · selected time</span><span id="trends-date" data-i18n-skip>—</span><strong id="trends-clock" data-i18n-skip>—</strong></div>
+            <div class="trends-live-metrics">
+              <div><span data-i18n="trends.headerAllowance">Allowance remaining</span><strong id="trends-allowance-value" data-i18n-skip>—</strong><small data-i18n="trends.headerObserved">Latest observation at this time</small></div>
+              <div><span data-i18n="trends.headerSpend">API equivalent / hour</span><strong id="trends-spend-value" data-i18n-skip>—</strong><small id="trends-spend-basis" data-i18n-skip>—</small></div>
             </div>
           </div>
-          <p id="electron-accountless-community-state" class="annotation" role="status" aria-live="polite" data-i18n="electron.sharing.state.unavailable">Community sharing preference unavailable; nothing will be shared.</p>
-          <p id="electron-accountless-community-transport" class="annotation" role="status" aria-live="polite" data-i18n="electron.sharing.transport.unavailable">Uploads are not available in this build.</p>
-          <p id="electron-accountless-sharing-description" class="annotation" data-i18n="electron.settings.sharing.description">Choose whether this installation may share content-free usage measurements. No sign-in is required. Shared measurements may include token counts, model labels, quota measurements, and pseudonymous continuity identifiers. Prompts, responses, credentials, private paths, and raw account identifiers stay on this device.</p>
-          <label class="electron-accountless-sharing-control">
-            <input id="electron-accountless-sharing-enabled" type="checkbox" role="switch" disabled aria-describedby="electron-accountless-sharing-description electron-accountless-community-state electron-accountless-community-transport electron-accountless-sharing-error">
-            <span data-i18n="electron.settings.sharing.label">Share usage measurements</span>
-          </label>
-          <p id="electron-accountless-sharing-error" class="annotation" role="status" aria-live="polite" hidden data-i18n="electron.sharing.notice.error">This sharing choice was not confirmed. Try again.</p>
-        </section>
-          <!--
-            What the community published lives on the website. It is a link,
-            not a second explanation of the same thing inside the app.
-          -->
-          <p class="community-public-evidence">
-            <a href="https://tibotattle.com/#community" target="_blank" rel="noopener">See what the community published</a>
-          </p>
+          <div class="trends-time-controls"><button id="trends-replay" class="button button-quiet compact" type="button" aria-pressed="false" disabled data-i18n="trends.play">Play history</button><input id="trends-time" type="range" aria-label="Explore history" data-i18n-aria-label="trends.explore" disabled><button id="trends-latest" class="button button-quiet compact" type="button" data-i18n="trends.latest">Latest</button></div>
+          <div class="chart-heading">
+            <div>
+              <h3 id="usage-timeline-title">API-price-equivalent usage over time</h3>
+              <p id="usage-timeline-copy">Local usage over time</p>
+            </div>
+            <div class="chart-control-stack">
+              <div class="segmented-control" id="usage-group-controls" aria-label="Usage grouping" data-i18n-aria-label="aria.usageGrouping">
+                <button type="button" data-group="hour" class="active" aria-pressed="true">Hour</button>
+                <button type="button" data-group="day">Day</button>
+                <button type="button" data-group="week">Week</button>
+              </div>
+              <div class="chart-navigation" aria-label="Usage zoom and pan" data-i18n-aria-label="aria.usageZoomPan">
+                <button class="button button-quiet compact" id="usage-pan-back" type="button" title="Pan usage earlier" data-i18n-title="title.panUsageEarlier">← Earlier</button>
+                <button class="button button-quiet compact" id="usage-zoom-out" type="button" title="Zoom out" data-i18n-title="title.zoomOut">−</button>
+                <button class="button button-quiet compact" id="usage-zoom-in" type="button" title="Zoom in" data-i18n-title="title.zoomIn">+</button>
+                <button class="button button-quiet compact" id="usage-reset-zoom" type="button">Reset view</button>
+                <button class="button button-quiet compact" id="usage-pan-forward" type="button" title="Pan usage later" data-i18n-title="title.panUsageLater">Later →</button>
+                <span class="sr-only" id="usage-zoom-status" aria-live="polite"></span>
+              </div>
+              <div class="legend compact-legend" aria-label="Usage chart legend" data-i18n-aria-label="aria.usageLegend">
+                <span><i class="legend-dot cost"></i><span id="usage-cost-legend-label">Speed-priced API-equivalent usage</span></span>
+                <span id="usage-allowance-legend"><i class="legend-dot allowance"></i>Seven-day allowance remaining</span>
+              </div>
+            </div>
+          </div>
+          <div class="chart-empty" id="usage-timeline-empty">
+            <strong>No real usage timeline loaded</strong>
+            <p>Analyze local usage to build recent content-free usage buckets.</p>
+          </div>
+          <div class="trends-lane-heading" data-i18n="trends.allowance">Observed allowance remaining</div>
+          <div class="chart-empty small" id="allowance-timeline-empty" hidden data-i18n="trends.allowanceUnavailable">No comparable allowance observations in this view.</div>
+          <div class="trends-reset-legend"><span id="trends-reset-count" data-i18n-skip></span><span data-i18n="trends.resetHint">Select a reset marker to inspect it.</span></div>
+          <div class="chart-shell" id="allowance-timeline-chart" hidden></div>
+          <p id="trends-event-detail" class="trends-event-detail" data-i18n-skip hidden></p>
+          <div class="trends-lane-heading" id="trends-activity-label" data-i18n="trends.activity">Recorded activity · API-price equivalent</div>
+          <div class="chart-shell" id="usage-timeline-chart" hidden></div>
+          <p class="series-coverage" id="usage-timeline-coverage" role="status" hidden></p>
+          <div class="chart-summary-grid" id="usage-timeline-summary"></div>
+        </article>
+
+        <div class="trends-analysis-details allowance-differences">
+          <article class="panel chart-panel trends-comparison-panel">
+            <div class="chart-heading">
+              <div>
+                <h3 id="timeline-chart-title">Observed quota change versus cost-implied change</h3>
+                <p id="timeline-chart-copy">Chart and table use this PC’s reporting time zone.</p>
+              </div>
+              <div class="calibration-controls" hidden>
+                <!--
+                  Owner decision 2026-08-06: the rolling comparison window is
+                  fixed at three hours. The 15-minute and 1-hour widths the old
+                  segmented control offered proved inaccurate, and a control
+                  with one honest option is clutter, so the width lives in
+                  app.js as CALIBRATION_WINDOW_HOURS rather than here.
+                -->
+                <div class="chart-navigation" aria-label="Calibration zoom and pan" data-i18n-aria-label="aria.calibrationZoomPan">
+                  <button class="button button-quiet compact" id="timeline-pan-back" type="button" title="Pan calibration earlier" data-i18n-title="title.panCalibrationEarlier">← Earlier</button>
+                  <button class="button button-quiet compact" id="timeline-zoom-out" type="button" title="Zoom out" data-i18n-title="title.zoomOut">−</button>
+                  <button class="button button-quiet compact" id="timeline-zoom-in" type="button" title="Zoom in" data-i18n-title="title.zoomIn">+</button>
+                  <button class="button button-quiet compact" id="timeline-reset-zoom" type="button">Reset view</button>
+                  <button class="button button-quiet compact" id="timeline-pan-forward" type="button" title="Pan calibration later" data-i18n-title="title.panCalibrationLater">Later →</button>
+                  <span class="sr-only" id="timeline-zoom-status" aria-live="polite"></span>
+                </div>
+              </div>
+            </div>
+            <div class="legend calibration-legend" aria-label="Calibration chart legend" data-i18n-aria-label="aria.calibrationLegend">
+              <span><i class="legend-dot observed"></i>Observed quota</span>
+              <span><i class="legend-dot expected"></i>Expected from speed-priced API cost</span>
+              <span class="legend-group-sep" aria-hidden="true"></span>
+              <span><i class="legend-dot area chart-status-missing"></i>Missing quota bracket</span>
+              <span><i class="legend-dot area chart-status-reset"></i>Window boundary or track change</span>
+              <span><i class="legend-dot area chart-status-weighting"></i>Speed pricing unavailable</span>
+              <span><i class="legend-dot area chart-status-ambiguous"></i>Movement needs context</span>
+              <span><i class="legend-dot area chart-status-saturated"></i>Allowance exhausted</span>
+            </div>
+            <div class="dashboard-state chart-empty" id="timeline-empty" role="status" data-state="empty">
+              <strong>No timeline loaded</strong>
+              <p>Connect the local companion or choose the labeled demo.</p>
+            </div>
+            <div class="chart-shell" id="timeline-chart" hidden></div>
+            <p class="series-coverage" id="timeline-coverage" role="status" hidden></p>
+            <div class="trends-difference-heading"><span data-i18n="trends.difference">Observed minus calculated</span><span class="trends-sign-key"><i></i><span data-i18n="trends.above">Above estimate</span><i></i><span data-i18n="trends.below">Below estimate</span></span></div>
+            <div class="chart-shell trends-difference-chart" id="difference-timeline-chart" hidden></div>
+            <p class="timeline-confidence" id="residual-coverage" role="status"></p>
+            <details class="trends-evidence-details"><summary data-i18n="trends.method">Comparison quality and assumptions</summary>
+            <p class="annotation" data-i18n="trends.quiet">Quiet periods with no activity and no quota change are neutral, not errors.</p>
+            <div class="chart-summary-grid" id="timeline-summary"></div>
+            <p class="timeline-confidence" id="timeline-confidence" role="status"></p>
+            </details>
+          </article>
+
+          <article class="panel trends-drift-panel">
+            <div class="panel-heading"><div><p class="panel-kicker" data-i18n="trends.cycle">Within each allowance cycle</p><h3 data-i18n="trends.drift">Cumulative drift</h3></div></div>
+            <p class="annotation" data-i18n="trends.driftCopy">Actual allowance use minus estimated use since the comparison began. Gaps or a new cycle break the line.</p>
+              <div class="chart-empty small" id="residual-empty">No residual evidence loaded.</div>
+              <div class="chart-shell compact-chart" id="residual-chart" hidden></div>
+              <p class="timeline-confidence" id="trends-drift-coverage" role="status"></p>
+            </article>
+          <article class="panel divergence-panel">
+            <div class="panel-heading">
+              <div>
+                <p class="panel-kicker">Divergence periods</p>
+                <h3 data-i18n="trends.divergenceTitle">When usage and allowance disagree</h3>
+              </div>
+            </div>
+            <p class="annotation" data-i18n="trends.divergenceCopy">Periods when the allowance fell more or less than recorded usage would explain. Each gap is in percentage points from the cycle's comparison start. Select a period to see it on the charts.</p>
+            <p class="timeline-confidence" id="divergence-summary" role="status" hidden></p>
+            <p class="annotation" id="divergence-caveat" hidden></p>
+            <div class="chart-empty small" id="divergence-empty" hidden></div>
+            <ol class="divergence-list" id="divergence-list"></ol>
+            <div class="table-pagination" id="divergence-pagination" hidden>
+              <button class="button button-quiet compact" id="divergence-page-prev" type="button" aria-controls="divergence-list" data-i18n="table.pagination.previous">Previous</button>
+              <span class="table-pagination-status" id="divergence-page-status" role="status"></span>
+              <button class="button button-quiet compact" id="divergence-page-next" type="button" aria-controls="divergence-list" data-i18n="table.pagination.next">Next</button>
+            </div>
+          </article>
+            <div class="panel trends-exact-panel">
+              <h3 data-i18n="trends.evidence">Exact windows and details</h3>
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-kicker">Inspect exact periods</p>
+                  <h3 data-i18n="trends.evidenceTitle">What each row means</h3>
+                </div>
+              </div>
+              <p class="annotation" data-i18n="trends.evidenceIntro">Each sample compares a rolling window, normally 3 hours. Observed is the allowance used. Estimated is what recorded activity predicts. Difference = observed − estimated, in percentage points (pp).</p>
+              <p class="annotation" data-i18n="trends.evidenceHelp">For example, going from 60% to 50% remaining is 10 pp used. Comparable means the two values can be compared, not that they match. A dash means the value couldn't be determined.</p>
+              <div class="table-wrap">
+                <table class="residual-inspection-table">
+                  <caption class="sr-only">Largest unexplained quota movement periods</caption>
+                  <thead>
+                    <tr>
+                    <th scope="col" id="residual-time-heading">Local time</th>
+                    <th scope="col">Observed</th>
+                    <th scope="col" data-i18n="trends.estimated">Estimated</th>
+                    <th scope="col">Difference</th>
+                    <th scope="col" data-i18n="trends.evidenceColumn">How to read this row</th>
+                    </tr>
+                  </thead>
+                  <tbody id="residual-table">
+                    <tr><td colspan="5" class="empty-cell">No periods loaded.</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <!--
+                Simple pagination (owner-directed, 2026-08-08): ten rows per
+                page over the full merged inspection list, with the shown range
+                stated as "N–M of T". The status span is written by the
+                renderer, so it starts empty rather than carrying placeholder
+                copy.
+              -->
+              <div class="table-pagination" id="residual-pagination" hidden>
+                <button class="button button-quiet compact" id="residual-page-prev" type="button" disabled>Previous</button>
+                <span class="table-pagination-status" id="residual-page-status" role="status"></span>
+                <button class="button button-quiet compact" id="residual-page-next" type="button" disabled>Next</button>
+              </div>
+            </div>
+        </div>
+
       </section>
+
+      <section class="dashboard-section lead-section dashboard-page-inactive" id="weekly" aria-labelledby="allowance-page-title" data-dashboard-page="allowance" data-requires-evidence aria-hidden="true" inert>
+        <div class="allowance-equivalent">
+          <div class="weekly-hero">
+            <div>
+              <span id="weekly-estimate-label">Speed-priced all-data median</span>
+              <strong id="weekly-estimate">—</strong>
+              <small id="weekly-range">No evidence interval available</small>
+            </div>
+            <p id="weekly-explanation">The estimate will appear when local usage can be matched to quota changes.</p>
+          </div>
+          <p class="annotation allowance-window-note" id="allowance-window-note" hidden></p>
+
+          <article class="panel weekly-history-panel lead-chart-panel chart-card">
+            <div class="panel-heading chart-card-header">
+              <div>
+                <p class="panel-kicker">History</p>
+                <h3 class="chart-card-title">Allowance estimate history</h3>
+              </div>
+              <div class="weekly-chart-controls chart-card-controls">
+                <label class="weekly-span-control" for="weekly-span-control">
+                  <span id="weekly-span-label">Minimum observed quota span</span>
+                  <input id="weekly-span-control" type="range" min="0" max="99" step="1" value="50">
+                  <output id="weekly-span-value" for="weekly-span-control">50+ pp</output>
+                </label>
+              </div>
+            </div>
+            <p id="weekly-span-note" class="small muted" hidden></p>
+            <div class="legend weekly-legend chart-card-legend" aria-label="Weekly estimate chart legend" data-i18n-aria-label="aria.weeklyEstimateLegend">
+              <span><i class="legend-dot weekly-center"></i>All-data median</span>
+              <span id="weekly-lowess-legend"><i class="legend-dot weekly-lowess"></i><span data-i18n="weekly.controls.lowess">Smoothed trend</span></span>
+              <span><i class="legend-dot weekly-mature"></i><span id="weekly-span-legend">Observed across 50+ points</span></span>
+              <span id="weekly-partial-legend" hidden><i class="legend-dot weekly-partial"></i>Short observation</span>
+              <span><i class="legend-dot weekly-error-bar"></i>Slope-agreement range</span>
+            </div>
+            <div class="dashboard-state chart-empty small" id="weekly-empty" role="status" data-state="empty">No weekly estimates loaded.</div>
+            <div class="chart-shell weekly-history-chart" id="weekly-chart" hidden></div>
+            <p class="annotation" id="weekly-trend-note" aria-live="polite" hidden></p>
+            <!--
+              Honest naming for the per-reset bars: they are the 10th-to-90th
+              percentile spread of slopes formed from different pairs of observed
+              quota boundaries WITHIN one reset — a disagreement diagnostic. The
+              calibration report states the same thing; calling it a measured or
+              confidence range here overclaimed.
+            -->
+            <p class="annotation chart-card-note">
+              Each reset estimate is drawn with its slope-agreement range: how
+              much the slopes differ between pairs of observed quota boundaries
+              within that reset. It shows disagreement inside one reset, not a
+              confidence interval.
+            </p>
+            <!-- The zone is named once per chart, from the reader's own system
+                 zone, instead of being repeated on every tick and tooltip. -->
+            <p class="annotation chart-card-note" id="weekly-chart-timezone"></p>
+          </article>
+
+          <div class="panel weekly-table-panel">
+            <h3>See individual usage changes</h3>
+            <div class="table-wrap">
+              <table>
+                <caption class="sr-only" id="weekly-table-caption">Individual seven-day reset estimates</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Observed</th>
+                    <th scope="col">Observed span</th>
+                    <th scope="col">Estimate</th>
+                    <th scope="col">Slope-agreement range</th>
+                    <th scope="col">Status</th>
+                  </tr>
+                </thead>
+                <tbody id="weekly-table">
+                  <tr><td colspan="5" class="empty-cell">No weekly evidence loaded.</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <!--
+              Pagination over the full reset-estimate row set (owner-directed,
+              2026-08-10): short batches, newest first, replacing the old
+              newest-fourteen truncation. Same pager idiom as the exact-windows
+              inspection table; the status span is written by the renderer.
+            -->
+            <div class="table-pagination" id="weekly-table-pagination" hidden>
+              <button class="button button-quiet compact" id="weekly-table-prev" type="button" disabled>Previous</button>
+              <span class="table-pagination-status" id="weekly-table-status" role="status"></span>
+              <button class="button button-quiet compact" id="weekly-table-next" type="button" disabled>Next</button>
+            </div>
+          </div>
+        </div>
+      </section>
+      </div>
+
+      <div class="dashboard-screen" id="performance-screen">
+      <div class="dashboard-page-header" data-dashboard-page="performance">
+        <h1 id="performance-page-title" data-i18n="page.performance.title">Model performance</h1>
+      </div>
+      <section class="dashboard-section dashboard-page-inactive model-performance" id="performance" aria-labelledby="performance-page-title" data-dashboard-page="performance" aria-hidden="true" inert data-i18n-skip></section>
+      </div>
 
     </main>
 
     <!--
       Owner-directed 2026-08-08: the "Dashboard contract: …" line is gone from
       the user-facing footer. The contract version stays discoverable to
-      machines through the payload itself (data.schemaVersion) and on the
-      share card's text transcript; it was never a fact a reader acts on.
+      machines through the payload itself (data.schemaVersion); it was never a
+      fact a reader acts on.
     -->
     <footer data-i18n-legacy-root>
       <p>TiboTattle · not affiliated with OpenAI or Thibault Sottiaux</p>

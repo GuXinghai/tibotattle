@@ -24,15 +24,11 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
   assert.equal(DESKTOP_IPC_CHANNEL, "tibotattle:desktop:v1");
   assert.deepEqual(DESKTOP_ACTIONS, [
     "getSettings",
-    "getSharingPreference",
-    "setSharingEnabled",
-    "sharingNoticePresented",
     "getCodexHomesForSettings",
     "openSettings",
     "openTraySettings",
     "setTrayPreferences",
     "restoreTrayDefaults",
-    "openCommunity",
     "toggleSidebar",
     "chooseCodexHome",
     "addCodexHome",
@@ -49,14 +45,11 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
     "sendTestNotification",
     "openSystemSettings",
     "openExternal",
-    "openHostedSignIn",
     "openCodexThread",
     "checkForUpdates",
     "downloadUpdate",
     "installUpdateAndRestart",
     "setAutomaticDownload",
-    "revealLatestDownload",
-    "openLatestDownload",
     "openDashboardInBrowser",
     "showDiagnostics",
     "revealLocalData",
@@ -99,10 +92,8 @@ test("request validation accepts exact envelopes and freezes the result", () => 
 
   for (const action of [
     "getSettings",
-    "getSharingPreference",
     "getCodexHomesForSettings",
     "openSettings",
-    "openCommunity",
     "toggleSidebar",
     "chooseCodexHome",
     "addCodexHome",
@@ -110,8 +101,6 @@ test("request validation accepts exact envelopes and freezes the result", () => 
     "checkForUpdates",
     "downloadUpdate",
     "installUpdateAndRestart",
-    "revealLatestDownload",
-    "openLatestDownload",
     "openDashboardInBrowser",
     "showDiagnostics",
     "revealLocalData",
@@ -129,7 +118,7 @@ test("request validation accepts exact envelopes and freezes the result", () => 
     validateDesktopRequest({ action: "refreshHeartbeat", args: { lease: 1 } }),
     { action: "refreshHeartbeat", args: { lease: 1 } },
   );
-  for (const action of ["setSharingEnabled", "setAutomaticDownload"]) {
+  for (const action of ["setAutomaticDownload"]) {
     for (const enabled of [true, false]) {
       assert.deepEqual(
         validateDesktopRequest({ action, args: { enabled } }),
@@ -137,29 +126,9 @@ test("request validation accepts exact envelopes and freezes the result", () => 
       );
     }
   }
-  for (const index of [1, 2, 3]) {
-    assert.deepEqual(
-      validateDesktopRequest({ action: "sharingNoticePresented", args: { index } }),
-      { action: "sharingNoticePresented", args: { index } },
-    );
-  }
   assert.deepEqual(
     validateDesktopRequest({ action: "refreshSettled", args: { lease: 1 } }),
     { action: "refreshSettled", args: { lease: 1 } },
-  );
-  assert.deepEqual(
-    validateDesktopRequest({
-      action: "openHostedSignIn",
-      args: {
-        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-      },
-    }),
-    {
-      action: "openHostedSignIn",
-      args: {
-        authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-      },
-    },
   );
   assert.deepEqual(
     validateDesktopRequest({
@@ -200,21 +169,18 @@ test("request validation rejects unknown actions, extra keys, malformed values, 
   const invalidRequests = [
     { action: "unknown", args: {} },
     { action: "getSettings", args: { extra: true } },
-    { action: "getSharingPreference", args: { extra: true } },
-    { action: "setSharingEnabled", args: {} },
-    { action: "setSharingEnabled", args: { enabled: "true" } },
-    { action: "setSharingEnabled", args: { enabled: true, extra: true } },
+    // Actions removed with community sharing are unknown to the closed contract.
+    { action: "getSharingPreference", args: {} },
+    { action: "setSharingEnabled", args: { enabled: true } },
+    { action: "sharingNoticePresented", args: { index: 1 } },
+    { action: "openCommunity", args: {} },
+    { action: "openHostedSignIn", args: { authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?x=1" } },
+    { action: "revealLatestDownload", args: {} },
+    { action: "openLatestDownload", args: {} },
     { action: "setAutomaticDownload", args: {} },
     { action: "setAutomaticDownload", args: { enabled: "true" } },
     { action: "downloadUpdate", args: { extra: true } },
-    { action: "sharingNoticePresented", args: {} },
-    { action: "sharingNoticePresented", args: { index: 0 } },
-    { action: "sharingNoticePresented", args: { index: 4 } },
-    { action: "sharingNoticePresented", args: { index: 1.5 } },
-    { action: "sharingNoticePresented", args: { index: "1" } },
-    { action: "sharingNoticePresented", args: { index: 1, extra: true } },
     { action: "getSettings", args: {}, extra: true },
-    { action: "openCommunity", args: { extra: true } },
     { action: "setLanguage", args: { value: "fr" } },
     { action: "setLanguage", args: { value: "en", extra: true } },
     { action: "setRefreshInterval", args: { seconds: 5 } },
@@ -232,9 +198,6 @@ test("request validation rejects unknown actions, extra keys, malformed values, 
     { action: "refreshSettled", args: { lease: 1, extra: true } },
     { action: "openSystemSettings", args: { target: "arbitrary" } },
     { action: "openExternal", args: { target: "https://evil.example" } },
-    { action: "openHostedSignIn", args: { authorizeUrl: "https://evil.example/?x=1" } },
-    { action: "openHostedSignIn", args: { authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth" } },
-    { action: "openHostedSignIn", args: { authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?x=1#fragment" } },
     { action: "openCodexThread", args: { url: "codex://threads/not-a-thread" } },
     { action: "openCodexThread", args: { url: "codex://threads/11111111-1111-4111-8111-111111111111?query" } },
     { action: "openCodexThread", args: { url: "codex://user@threads/11111111-1111-4111-8111-111111111111" } },

@@ -56,7 +56,7 @@ test("source-owned metric and period labels translate before composing accountin
     const row = headline({ fastMode: { metricShortLabel: "Speed-priced API equivalent" },
       quotaWeightedApiPriceEquivalentUsd: 2, apiPriceEquivalentUsd: 1, periodLabel: "Last 7 days" });
     assert.equal(row[0], translateLegacyText("Speed-priced API equivalent", locale));
-    assert.equal(row[3], translate("share.period.lastSevenDays", {}, locale));
+    assert.equal(row[3], translateLegacyText("Last 7 days", locale));
     if (locale === "zh-Hans") assert.doesNotMatch(`${row[0]} ${row[3]}`, /Speed-priced|Last 7 days/u);
   }
 });

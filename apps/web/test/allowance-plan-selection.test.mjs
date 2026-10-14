@@ -398,8 +398,6 @@ test("plan selection and conditional-account copy is present in every dashboard 
       "weekly.plan.conditional", "weekly.plan.historicalConditional",
       "weekly.plan.comparisonConditional", "weekly.plan.comparisonPending",
       "weekly.headline.planLabel", "weekly.headline.planRange",
-      "share.caveat.planConditional", "share.stat.recordedActivityAllPlans",
-      "share.planAllowance",
     ]) {
       const copy = translate(key, { plan: "Plus", lower: "$70", upper: "$90" }, locale);
       assert.ok(copy.length > 0 && copy !== key, `${locale}: ${key}`);
@@ -408,13 +406,11 @@ test("plan selection and conditional-account copy is present in every dashboard 
   }
 });
 
-test("dynamic plan labels and share transcripts cannot be replaced by static localization placeholders", async () => {
+test("dynamic plan labels cannot be replaced by static localization placeholders", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(html, /<span id="weekly-estimate-label">/u,
     "renderWeekly owns the selected-plan label and its runtime localization registry");
-  assert.match(source, /canvas\.removeAttribute\("data-i18n-aria-label"\);\s*canvas\.setAttribute\("aria-label", shareCardText\(shareCard\)\);/u,
-    "a localized redraw keeps the selected-plan transcript, never the initial empty-card placeholder");
   assert.match(source, /const legacyDemo = data\.mode === "demo" && !data\.allowancePlanSelection;/u,
     "even a labelled fixture cannot borrow a global legacy rate for an insufficient selected plan");
 });

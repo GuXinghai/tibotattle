@@ -151,9 +151,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Continuar",
   }),
   "electron.firstRun.detail": Object.freeze({
-    "en-US": "Reads: timestamps, model and speed labels, token counters, tool categories, and quota snapshots from the selected Codex sessions folders.\n\nStores: content-free indexes, cached calculations, settings, and any prepared contribution in your owner-only TiboTattle app-data folder.\n\nLocal analysis runs on this computer. Fresh installations enable community sharing without sign-in. Existing installations without a saved choice receive three notices before automatic activation. You can turn sharing off persistently in Settings; an explicit earlier opt-out stays off. Uploads are not available in this build.\n\nLocal allowance notifications are off by default. Supported packaged builds can deliver a local alert after fresh provider-reported evidence crosses a selected threshold. This development build cannot deliver OS alerts until it has a supported app identity; TiboTattle does not add background polling.\n\nUpdates: this development build does not include update checks. Signed production releases can check for updates from About.\n\nNever contributed: prompts, responses, file paths, repositories, commands, credentials, emails, or account names.\n\nKeep the app open while analysis runs. You may close and reopen the TiboTattle window; quitting the app stops the current pass and preserves completed checkpoints.\n\nBy default, first-run setup preselects Start TiboTattle at login. TiboTattle adds an operating-system login item only after you click Continue; it uses no daemon, privileged helper, or hidden persistent process.\n\nContinue to start the local dashboard, or Quit to leave the app closed.",
-    "zh-Hans": "读取：从选定的 Codex 会话文件夹读取时间戳、模型和速度标签、Token 数量、工具类别以及配额快照。\n\n存储：在仅限你本人访问的 TiboTattle 应用数据文件夹中存储不含会话内容的索引、缓存的计算结果、设置以及已准备的共享数据。\n\n本地分析在此电脑上运行。新安装默认开启社区共享，无需登录。尚未保存共享选择的现有安装会在自动开启前收到三次提示。你可以在“设置”中关闭共享，关闭状态会持续保留；此前明确关闭过共享的安装不会自动开启。此版本暂不支持上传。\n\n本地配额提醒默认关闭。支持的已打包版本可以在提供商报告的最新证据显示用量超过所选阈值后发送本地提醒。此开发版本尚未具备受支持的应用身份，因此无法发送系统提醒；TiboTattle 不会添加后台轮询。\n\n更新：此开发版本不包含更新检查。已签名的生产版本可以从“关于”中检查更新。\n\n绝不共享：提示、回复、文件路径、代码仓库、命令、凭据、电子邮件或账户名称。\n\n分析运行期间请保持应用打开。你可以关闭并重新打开 TiboTattle 窗口；退出应用会停止当前分析，并保留已完成的检查点。\n\n首次设置默认勾选“登录时启动 TiboTattle”。只有在你点击“继续”后，TiboTattle 才会添加操作系统登录项；它不会使用守护进程、特权帮助程序或隐藏的常驻进程。\n\n点击“继续”启动本地用量面板，或点击“退出”关闭应用。",
-    "es": "Lee: marcas de tiempo, etiquetas de modelo y velocidad, contadores de tokens, categorías de herramientas y capturas de cuotas de las carpetas de sesiones de Codex seleccionadas.\n\nGuarda: índices sin contenido, cálculos en caché, configuración y cualquier contribución preparada en la carpeta de datos de la aplicación TiboTattle, protegida para tu usuario.\n\nEl análisis local se ejecuta en este equipo. Las instalaciones nuevas activan la compartición comunitaria sin iniciar sesión. Las instalaciones existentes sin una elección guardada reciben tres avisos antes de la activación automática. Puedes desactivar la compartición de forma persistente en Configuración; una desactivación explícita anterior se conserva. Las cargas no están disponibles en esta compilación.\n\nLas notificaciones locales de cuota están desactivadas de forma predeterminada. Las versiones empaquetadas compatibles pueden enviar una alerta local después de que evidencia reciente informada por el proveedor supere el umbral seleccionado. Esta compilación de desarrollo no puede enviar alertas del sistema hasta tener una identidad de aplicación compatible; TiboTattle no añade sondeo en segundo plano.\n\nActualizaciones: esta compilación de desarrollo no incluye comprobaciones de actualización. Las versiones de producción firmadas pueden comprobar actualizaciones desde Acerca de.\n\nNunca se contribuye: indicaciones, respuestas, rutas de archivos, repositorios, comandos, credenciales, correos electrónicos ni nombres de cuenta.\n\nMantén la aplicación abierta mientras se ejecuta el análisis. Puedes cerrar y volver a abrir la ventana de TiboTattle; salir de la aplicación detiene el análisis actual y conserva los puntos de control completados.\n\nDe forma predeterminada, la configuración inicial preselecciona Iniciar TiboTattle al iniciar sesión. TiboTattle añade un elemento de inicio del sistema operativo solo después de que hagas clic en Continuar; no usa demonios, asistentes privilegiados ni procesos persistentes ocultos.\n\nElige Continuar para iniciar el panel local o Salir para dejar la aplicación cerrada.",
+    "en-US": "Reads: timestamps, model and speed labels, token counters, tool categories, and quota snapshots from the selected Codex sessions folders.\n\nStores: content-free indexes, cached calculations, and settings in your owner-only TiboTattle app-data folder.\n\nLocal analysis runs on this computer and works offline. TiboTattle does not upload your usage data.\n\nLocal allowance notifications are off by default. Supported packaged builds can deliver a local alert after fresh provider-reported evidence crosses a selected threshold. This development build cannot deliver OS alerts until it has a supported app identity; TiboTattle does not add background polling.\n\nUpdates: this development build does not include update checks. Signed production releases can check for updates from About.\n\nKeep the app open while analysis runs. You may close and reopen the TiboTattle window; quitting the app stops the current pass and preserves completed checkpoints.\n\nBy default, first-run setup preselects Start TiboTattle at login. TiboTattle adds an operating-system login item only after you click Continue; it uses no daemon, privileged helper, or hidden persistent process.\n\nContinue to start the local dashboard, or Quit to leave the app closed.",
+    "zh-Hans": "读取：从选定的 Codex 会话文件夹读取时间戳、模型和速度标签、Token 数量、工具类别以及配额快照。\n\n存储：在仅限你本人访问的 TiboTattle 应用数据文件夹中存储不含会话内容的索引、缓存的计算结果和设置。\n\n本地分析在此电脑上运行，离线也可使用。TiboTattle 不会上传你的用量数据。\n\n本地配额提醒默认关闭。支持的已打包版本可以在提供商报告的最新证据显示用量超过所选阈值后发送本地提醒。此开发版本尚未具备受支持的应用身份，因此无法发送系统提醒；TiboTattle 不会添加后台轮询。\n\n更新：此开发版本不包含更新检查。已签名的生产版本可以从“关于”中检查更新。\n\n分析运行期间请保持应用打开。你可以关闭并重新打开 TiboTattle 窗口；退出应用会停止当前分析，并保留已完成的检查点。\n\n首次设置默认勾选“登录时启动 TiboTattle”。只有在你点击“继续”后，TiboTattle 才会添加操作系统登录项；它不会使用守护进程、特权帮助程序或隐藏的常驻进程。\n\n点击“继续”启动本地用量面板，或点击“退出”关闭应用。",
+    "es": "Lee: marcas de tiempo, etiquetas de modelo y velocidad, contadores de tokens, categorías de herramientas y capturas de cuotas de las carpetas de sesiones de Codex seleccionadas.\n\nGuarda: índices sin contenido, cálculos en caché y configuración en la carpeta de datos de la aplicación TiboTattle, protegida para tu usuario.\n\nEl análisis local se ejecuta en este equipo y funciona sin conexión. TiboTattle no sube tus datos de uso.\n\nLas notificaciones locales de cuota están desactivadas de forma predeterminada. Las versiones empaquetadas compatibles pueden enviar una alerta local después de que evidencia reciente informada por el proveedor supere el umbral seleccionado. Esta compilación de desarrollo no puede enviar alertas del sistema hasta tener una identidad de aplicación compatible; TiboTattle no añade sondeo en segundo plano.\n\nActualizaciones: esta compilación de desarrollo no incluye comprobaciones de actualización. Las versiones de producción firmadas pueden comprobar actualizaciones desde Acerca de.\n\nMantén la aplicación abierta mientras se ejecuta el análisis. Puedes cerrar y volver a abrir la ventana de TiboTattle; salir de la aplicación detiene el análisis actual y conserva los puntos de control completados.\n\nDe forma predeterminada, la configuración inicial preselecciona Iniciar TiboTattle al iniciar sesión. TiboTattle añade un elemento de inicio del sistema operativo solo después de que hagas clic en Continuar; no usa demonios, asistentes privilegiados ni procesos persistentes ocultos.\n\nElige Continuar para iniciar el panel local o Salir para dejar la aplicación cerrada.",
   }),
   "electron.firstRun.failure.detail": Object.freeze({
     "en-US": "Review the application data directory and try again. No local companion or login item was started.",
@@ -201,9 +201,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "TiboTattle actualiza los metadatos locales de Codex mientras la aplicación está abierta. El primer análisis comienza después de la configuración; las comprobaciones posteriores reutilizan el mismo servicio auxiliar local acotado.",
   }),
   "electron.firstRun.production.detail": Object.freeze({
-    "en-US": "TiboTattle reads local usage metadata: timestamps, models, token counts, tool categories and quota snapshots. Analysis and your saved history stay on this computer and work offline.\n\nCommunity sharing sends content-free usage and quota records without sign-in. Fresh installations share automatically. Existing installations without a saved choice receive three notices before sharing begins. Turn sharing off at any time in Settings or Community; an earlier explicit opt-out stays off.\n\nPrompts, responses, file paths, repositories, commands, credentials, emails and account names are never contributed.\n\nUpdate checks are available in About. Manage automatic downloads, optional local notifications and startup in Settings.\n\nKeep TiboTattle open while analysis runs. Quitting stops the current pass and preserves completed checkpoints. The startup checkbox below adds a login item only after you click Continue.",
-    "zh-Hans": "TiboTattle 读取本地用量元数据：时间戳、模型、Token 数量、工具类别和配额快照。分析和已保存的历史记录保留在此电脑上，离线也可使用。\n\n社区共享无需登录，会发送不含会话内容的用量和配额记录。新安装会自动共享。尚未保存共享选择的现有安装会在开始共享前收到三次提示。你可以随时在“设置”或“社区”中关闭共享；以前明确关闭的选择会保留。\n\n提示、回复、文件路径、代码仓库、命令、凭据、电子邮件和账户名称绝不会被共享。\n\n你可以在“关于”中检查更新，在“设置”中管理自动下载、可选的本地提醒和启动选项。\n\n分析期间请保持 TiboTattle 打开。退出会停止当前分析，并保留已完成的检查点。只有勾选下方的启动选项并点击“继续”后，应用才会添加系统登录项。",
-    "es": "TiboTattle lee metadatos de uso locales: marcas de tiempo, modelos, contadores de tokens, categorías de herramientas y capturas de cuotas. El análisis y tu historial guardado permanecen en este equipo y funcionan sin conexión.\n\nLa compartición comunitaria envía registros de uso y cuotas sin contenido y sin iniciar sesión. Las instalaciones nuevas comparten automáticamente. Las instalaciones existentes sin una elección guardada reciben tres avisos antes de empezar a compartir. Puedes desactivar la compartición en cualquier momento en Configuración o Comunidad; una desactivación explícita anterior se conserva.\n\nNunca se contribuyen instrucciones, respuestas, rutas de archivos, repositorios, comandos, credenciales, correos electrónicos ni nombres de cuenta.\n\nPuedes buscar actualizaciones en Acerca de. Gestiona las descargas automáticas, las notificaciones locales opcionales y el inicio en Configuración.\n\nMantén TiboTattle abierto durante el análisis. Salir detiene el análisis actual y conserva los puntos de control completados. La casilla de inicio que aparece abajo añade un elemento de inicio de sesión solo después de pulsar Continuar.",
+    "en-US": "TiboTattle reads local usage metadata: timestamps, models, token counts, tool categories and quota snapshots. Analysis and your saved history stay on this computer and work offline.\n\nTiboTattle does not upload your usage data.\n\nUpdate checks are available in About. Manage automatic downloads, optional local notifications and startup in Settings.\n\nKeep TiboTattle open while analysis runs. Quitting stops the current pass and preserves completed checkpoints. The startup checkbox below adds a login item only after you click Continue.",
+    "zh-Hans": "TiboTattle 读取本地用量元数据：时间戳、模型、Token 数量、工具类别和配额快照。分析和已保存的历史记录保留在此电脑上，离线也可使用。\n\nTiboTattle 不会上传你的用量数据。\n\n你可以在“关于”中检查更新，在“设置”中管理自动下载、可选的本地提醒和启动选项。\n\n分析期间请保持 TiboTattle 打开。退出会停止当前分析，并保留已完成的检查点。只有勾选下方的启动选项并点击“继续”后，应用才会添加系统登录项。",
+    "es": "TiboTattle lee metadatos de uso locales: marcas de tiempo, modelos, contadores de tokens, categorías de herramientas y capturas de cuotas. El análisis y tu historial guardado permanecen en este equipo y funcionan sin conexión.\n\nTiboTattle no sube tus datos de uso.\n\nPuedes buscar actualizaciones en Acerca de. Gestiona las descargas automáticas, las notificaciones locales opcionales y el inicio en Configuración.\n\nMantén TiboTattle abierto durante el análisis. Salir detiene el análisis actual y conserva los puntos de control completados. La casilla de inicio que aparece abajo añade un elemento de inicio de sesión solo después de pulsar Continuar.",
   }),
   "electron.firstRun.production.message": Object.freeze({
     "en-US": "See your Codex usage and allowance in one place.",
@@ -225,30 +225,30 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "zh-Hans": "TiboTattle 本地数据",
     "es": "Datos locales de TiboTattle",
   }),
-  "electron.menu.accounting": Object.freeze({
-    "en-US": "Usage and Costs",
+  "electron.menu.usage": Object.freeze({
+    "en-US": "Usage & costs",
     "zh-Hans": "用量与成本",
     "es": "Uso y costos",
   }),
-  "electron.menu.projects": Object.freeze({
-    "en-US": "Projects and Threads",
-    "zh-Hans": "项目与会话",
-    "es": "Proyectos e hilos",
+  "electron.menu.overview": Object.freeze({
+    "en-US": "Overview",
+    "zh-Hans": "概览",
+    "es": "Resumen",
   }),
-  "electron.menu.timeline": Object.freeze({
-    "en-US": "Usage Timeline",
-    "zh-Hans": "用量时间线",
-    "es": "Cronología de uso",
+  "electron.menu.performance": Object.freeze({
+    "en-US": "Model performance",
+    "zh-Hans": "模型性能",
+    "es": "Rendimiento de modelos",
   }),
   "electron.menu.toggleSidebar": Object.freeze({
     "en-US": "Toggle Sidebar",
     "zh-Hans": "显示或隐藏侧边栏",
     "es": "Alternar barra lateral",
   }),
-  "electron.menu.weekly": Object.freeze({
-    "en-US": "Weekly Allowance",
-    "zh-Hans": "每周配额",
-    "es": "Asignación semanal",
+  "electron.menu.allowance": Object.freeze({
+    "en-US": "Allowance",
+    "zh-Hans": "额度",
+    "es": "Asignación",
   }),
   "electron.notification.reset.body": Object.freeze({
     "en-US": "Fresh provider-reported quota evidence shows that the window has reset.",
@@ -450,8 +450,8 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "zh-Hans": "此开发版本不支持自动更新。",
     "es": "Las actualizaciones automáticas no están disponibles en esta compilación de desarrollo.",
   }),
-  "electron.tray.accounting": Object.freeze({
-    "en-US": "Usage and Costs",
+  "electron.tray.usage": Object.freeze({
+    "en-US": "Usage & costs",
     "zh-Hans": "用量与成本",
     "es": "Uso y costos",
   }),
@@ -505,15 +505,15 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "zh-Hans": "正在启动",
     "es": "Iniciando",
   }),
-  "electron.tray.timeline": Object.freeze({
-    "en-US": "Usage Timeline",
-    "zh-Hans": "用量时间线",
-    "es": "Cronología de uso",
+  "electron.tray.performance": Object.freeze({
+    "en-US": "Model performance",
+    "zh-Hans": "模型性能",
+    "es": "Rendimiento de modelos",
   }),
-  "electron.tray.weekly": Object.freeze({
-    "en-US": "Weekly Allowance",
-    "zh-Hans": "每周配额",
-    "es": "Asignación semanal",
+  "electron.tray.allowance": Object.freeze({
+    "en-US": "Allowance",
+    "zh-Hans": "额度",
+    "es": "Asignación",
   }),
   "electron.tray.windowFiveHour": Object.freeze({
     "en-US": "Five-hour allowance: {remainingPercent}% remaining · resets in {reset}",

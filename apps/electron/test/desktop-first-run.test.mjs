@@ -98,7 +98,7 @@ test("first-run native copy resolves the system and explicit desktop languages",
       "Continue",
       "Quit",
       "Start TiboTattle at login (you can change this later in Settings)",
-      /Reads:.*Stores:.*community sharing without sign-in.*three notices.*turn sharing off persistently in Settings.*Uploads are not available.*notifications.*development build.*Never contributed.*Keep the app open/su,
+      /Reads:.*Stores:.*works offline.*does not upload your usage data.*notifications.*development build.*Keep the app open/su,
     ],
     [
       "zh-Hans",
@@ -106,7 +106,7 @@ test("first-run native copy resolves the system and explicit desktop languages",
       "继续",
       "退出",
       "登录时启动 TiboTattle（稍后可在“设置”中更改）",
-      /读取：.*存储：.*默认开启社区共享，无需登录.*三次提示.*关闭共享，关闭状态会持续保留.*此前明确关闭过共享的安装不会自动开启.*暂不支持上传.*提醒.*开发版本.*绝不共享.*分析运行期间请保持应用打开/su,
+      /读取：.*存储：.*离线也可使用.*不会上传你的用量数据.*提醒.*开发版本.*分析运行期间请保持应用打开/su,
     ],
     [
       "es",
@@ -114,7 +114,7 @@ test("first-run native copy resolves the system and explicit desktop languages",
       "Continuar",
       "Salir",
       "Iniciar TiboTattle al iniciar sesión (puedes cambiarlo después en Configuración)",
-      /Lee:.*Guarda:.*compartición comunitaria sin iniciar sesión.*tres avisos.*desactivar la compartición de forma persistente.*cargas no están disponibles.*notificaciones.*compilación de desarrollo.*Nunca se contribuye.*Mantén la aplicación abierta/su,
+      /Lee:.*Guarda:.*funciona sin conexión.*no sube tus datos de uso.*notificaciones.*compilación de desarrollo.*Mantén la aplicación abierta/su,
     ],
   ];
   for (const [locale, title, continueLabel, quitLabel, checkboxLabel, detailPattern] of expectations) {
@@ -124,6 +124,7 @@ test("first-run native copy resolves the system and explicit desktop languages",
     assert.equal(copy.checkboxLabel, checkboxLabel);
     assert.notEqual(copy.message, "");
     assert.match(copy.detail, detailPattern);
+    assert.doesNotMatch(copy.detail, /shar|共享|compart/iu);
   }
   assert.equal(
     desktopFirstRunDialogCopy({ locale: "system", systemLocales: ["es-ES"] }).buttons[0],
@@ -155,14 +156,14 @@ test("first-run native copy resolves the system and explicit desktop languages",
   });
 });
 
-test("production disclosure describes automatic sharing and available updates in every desktop language", async () => {
+test("production disclosure states local-only analysis and available updates in every desktop language", async () => {
   for (const [locale, sharing, updates, unavailable] of [
-    ["en", /Fresh installations share automatically.*three notices.*Turn sharing off.*earlier explicit opt-out stays off/su,
-      /Update checks are available in About/u, /Uploads are not available|development build/u],
-    ["zh-Hans", /新安装会自动共享.*三次提示.*关闭共享.*以前明确关闭的选择会保留/su,
-      /“关于”中检查更新/u, /暂不支持上传|开发版本/u],
-    ["es", /instalaciones nuevas comparten automáticamente.*tres avisos.*desactivar la compartición.*desactivación explícita anterior se conserva/su,
-      /buscar actualizaciones en Acerca de/u, /cargas no están disponibles|compilación de desarrollo/u],
+    ["en", /does not upload your usage data/u,
+      /Update checks are available in About/u, /shar|development build/iu],
+    ["zh-Hans", /不会上传你的用量数据/u,
+      /“关于”中检查更新/u, /共享|开发版本/u],
+    ["es", /no sube tus datos de uso/u,
+      /buscar actualizaciones en Acerca de/u, /compart|compilación de desarrollo/iu],
   ]) {
     const dialog = fakeDialog([0]);
     const backend = fakeBackend();
@@ -173,7 +174,6 @@ test("production disclosure describes automatic sharing and available updates in
     assert.match(dialog.calls[0].detail, sharing);
     assert.match(dialog.calls[0].detail, updates);
     assert.doesNotMatch(dialog.calls[0].detail, unavailable);
-    // A disclosure acknowledgement never becomes sharing consent or upload authority.
     assert.deepEqual(backend.state.saveCalls, [receipt()]);
     assert.equal(result.startAtLogin, false);
   }

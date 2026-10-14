@@ -48,7 +48,6 @@ export const SETTINGS_ACTION_NAMES = Object.freeze([
   "getSettings",
   "getCodexHomesForSettings",
   "openSettings",
-  "openCommunity",
   "setLanguage",
   "setAppearance",
   "chooseCodexHome",
@@ -501,101 +500,6 @@ function desktopBridge(windowRef) {
   return bridge;
 }
 
-const SHARING_BASES = new Set([
-  "default_on",
-  "default_off",
-  "migration_default_on",
-  "user_choice",
-  "legacy_preserved",
-]);
-const SHARING_STATES = new Set([
-  "pending_notices",
-  "enabled",
-  "disabled",
-  "legacy_preserved",
-]);
-const SHARING_TRANSPORT_STATUSES = new Set(["unavailable", "off", "uploading", "pending", "up_to_date", "retry_wait", "paused", "recovery_required"]);
-
-function validSharingTimestamp(value) {
-  if (value === null) return true;
-  if (typeof value !== "string" || value.length !== 24) return false;
-  const milliseconds = Date.parse(value);
-  return Number.isFinite(milliseconds)
-    && new Date(milliseconds).toISOString() === value;
-}
-
-export function normalizeElectronSharingPreference(raw) {
-  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const available = raw.available === true;
-  const current = raw.current === true;
-  const state = SHARING_STATES.has(raw.state) ? raw.state : null;
-  const basis = SHARING_BASES.has(raw.basis) ? raw.basis : null;
-  const noticeCount = Number.isInteger(raw.noticeCount)
-    && raw.noticeCount >= 0 && raw.noticeCount <= 3
-    ? raw.noticeCount
-    : 0;
-  const nextNoticeIndex = raw.nextNoticeIndex === null
-    ? null
-    : Number.isInteger(raw.nextNoticeIndex)
-      && raw.nextNoticeIndex >= 1 && raw.nextNoticeIndex <= 3
-      ? raw.nextNoticeIndex
-      : null;
-  if (raw.nextNoticeAt !== undefined && !validSharingTimestamp(raw.nextNoticeAt)) return null;
-  if (raw.earliestActivationAt !== undefined && !validSharingTimestamp(raw.earliestActivationAt)) return null;
-  if (raw.activatesAt !== undefined && !validSharingTimestamp(raw.activatesAt)) return null;
-  const transportStatus = SHARING_TRANSPORT_STATUSES.has(raw.transportStatus)
-    ? raw.transportStatus
-    : raw.enabled === true ? "unavailable" : "off";
-  return Object.freeze({
-    available,
-    current,
-    enabled: available && current && raw.enabled === true,
-    state,
-    basis,
-    noticeCount,
-    nextNoticeIndex,
-    noticeDue: raw.noticeDue === true,
-    nextNoticeAt: validSharingTimestamp(raw.nextNoticeAt) ? raw.nextNoticeAt : null,
-    earliestActivationAt: validSharingTimestamp(raw.earliestActivationAt)
-      ? raw.earliestActivationAt
-      : validSharingTimestamp(raw.activatesAt) ? raw.activatesAt : null,
-    transportStatus,
-  });
-}
-
-function sharingBridge(bridge) {
-  return bridge
-    && typeof bridge.getSharingPreference === "function"
-    ? bridge
-    : null;
-}
-
-function sharingStateMessageKey(preference) {
-  if (!preference?.available || !preference.current) {
-    return "electron.sharing.state.unavailable";
-  }
-  if (preference.state === "pending_notices") return "electron.sharing.state.pending";
-  if (preference.enabled && ["default_on", "migration_default_on"].includes(preference.basis)) {
-    return "electron.sharing.state.defaultOn";
-  }
-  if (preference.enabled) return "electron.sharing.state.enabled";
-  return preference.state === "legacy_preserved"
-    ? "electron.sharing.state.legacy"
-    : "electron.sharing.state.off";
-}
-
-function sharingTransportMessageKey(preference) {
-  switch (preference?.transportStatus) {
-    case "uploading": case "pending": case "up_to_date": case "retry_wait": case "paused": case "recovery_required":
-      return `electron.sharing.transport.${preference.transportStatus}`;
-    case "off":
-      return "electron.sharing.transport.off";
-    case "unavailable":
-    default:
-      return "electron.sharing.transport.unavailable";
-  }
-}
-
 function fixedActionValue(actionName, value) {
   switch (actionName) {
     case "setLanguage":
@@ -891,42 +795,12 @@ function renderCodexRoots(
   });
 }
 
-function renderSharingPreference(
-  documentRef,
-  preference,
-  bridgeAvailable,
-  localizer,
-) {
-  const state = documentRef.querySelector?.("#settings-sharing-state");
-  const transport = documentRef.querySelector?.("#settings-sharing-transport");
-  if (!state || !transport) return;
-  const usable = bridgeAvailable
-    && preference?.available === true
-    && preference.current === true;
-  state.textContent = translateSettingsMessage(
-    localizer,
-    sharingStateMessageKey(preference),
-  );
-  transport.textContent = translateSettingsMessage(
-    localizer,
-    sharingTransportMessageKey(preference),
-  );
-  state.classList?.toggle?.("is-ready", usable && preference.enabled === true);
-  state.classList?.toggle?.("is-unavailable", !usable);
-  transport.classList?.toggle?.(
-    "is-unavailable",
-    !usable || preference.transportStatus === "unavailable",
-  );
-}
-
 function renderSettingsState(
   documentRef,
   state,
   bridgeAvailable,
   localizer,
   onRootAction,
-  sharingPreference = null,
-  sharingBridgeAvailable = false,
 ) {
   const language = queryRequired(documentRef, "#settings-language");
   const appearance = queryRequired(documentRef, "#settings-appearance");
@@ -1042,12 +916,6 @@ function renderSettingsState(
   openDashboardBrowser.disabled = !bridgeAvailable;
   showDiagnostics.disabled = !bridgeAvailable;
   revealLocalData.disabled = !bridgeAvailable;
-  renderSharingPreference(
-    documentRef,
-    sharingPreference,
-    sharingBridgeAvailable,
-    localizer,
-  );
 }
 
 function setTab(documentRef, tabName, { focus = false } = {}) {
@@ -1122,8 +990,6 @@ export async function mountSettingsPage({
   let currentState = normalizeSettingsState(null);
   applyElectronAppearancePreference(currentState.appearance, { documentRef, windowRef });
   let busy = false;
-  const settingsSharingBridge = sharingBridge(settingsBridge);
-  let currentSharingPreference = null;
   let invoke = null;
   let unsubscribeDesktopCommands = () => {};
   const listeners = [];
@@ -1184,31 +1050,17 @@ export async function mountSettingsPage({
         browserLanguagePreference(currentState.language),
         { notifyHost: false, announce: false },
       );
-      if (settingsSharingBridge) {
-        try {
-          currentSharingPreference = normalizeElectronSharingPreference(
-            await settingsSharingBridge.getSharingPreference(),
-          );
-        } catch {
-          currentSharingPreference = null;
-        }
-      } else {
-        currentSharingPreference = null;
-      }
       renderSettingsState(
         documentRef,
         currentState,
         true,
         pageLocalizer,
         (actionName, value) => { void invoke?.(actionName, value); },
-        currentSharingPreference,
-        settingsSharingBridge !== null,
       );
       trayController.update(currentState, true);
       setBridgeStatus(documentRef, "electron.settings.bridge.connected", true, pageLocalizer);
       return currentState;
     } catch {
-      currentSharingPreference = null;
       trayController.update(currentState, false);
       setBridgeStatus(
         documentRef,
@@ -1222,8 +1074,6 @@ export async function mountSettingsPage({
         false,
         pageLocalizer,
         () => {},
-        currentSharingPreference,
-        settingsSharingBridge !== null,
       );
       // The bridge exists but its read failed. Keep one explicit retry for
       // this error state; normal focus and switch changes refresh automatically.
@@ -1297,8 +1147,6 @@ export async function mountSettingsPage({
         true,
         pageLocalizer,
         (nextAction, nextValue) => { void invoke?.(nextAction, nextValue); },
-        currentSharingPreference,
-        settingsSharingBridge !== null,
       );
       if (actionName === "sendTestNotification") {
         if (result?.status !== "requested") throw new Error("notification test unavailable");
@@ -1328,8 +1176,6 @@ export async function mountSettingsPage({
         true,
         pageLocalizer,
         (nextAction, nextValue) => { void invoke?.(nextAction, nextValue); },
-        currentSharingPreference,
-        settingsSharingBridge !== null,
       );
     } finally {
       busy = false;
@@ -1423,11 +1269,6 @@ export async function mountSettingsPage({
       : "off";
     void invoke("setNotificationPreferences", { enabled, threshold });
   });
-  const manageSharing = documentRef.querySelector?.("#settings-manage-sharing");
-  if (manageSharing) {
-    manageSharing.disabled = typeof settingsBridge?.openCommunity !== "function";
-    listen(manageSharing, "click", () => { void invoke("openCommunity"); });
-  }
   if (typeof windowRef?.addEventListener === "function") {
     listen(windowRef, "focus", () => { void refresh(); });
   }
@@ -1468,8 +1309,6 @@ export async function mountSettingsPage({
         true,
         pageLocalizer,
         (nextAction, nextValue) => { void invoke?.(nextAction, nextValue); },
-        currentSharingPreference,
-        settingsSharingBridge !== null,
       );
       return;
     }
@@ -1489,8 +1328,6 @@ export async function mountSettingsPage({
           true,
           pageLocalizer,
           (nextAction, nextValue) => { void invoke?.(nextAction, nextValue); },
-          currentSharingPreference,
-          settingsSharingBridge !== null,
         );
         setOperationStatus(documentRef, "");
       })

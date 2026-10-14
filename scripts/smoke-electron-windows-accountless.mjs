@@ -35,7 +35,7 @@ const TYPE = "windows-electron-smoke-v1";
 const PREFIX = "ELECTRON_WINDOWS_ACCOUNTLESS_SMOKE_";
 const SHA = /^[0-9a-f]{64}$/u;
 const REVISION = /^[0-9a-f]{40}$/u;
-const COMMANDS = new Set(["status-v1", "accountless-storage-v1", "account-observation-storage-v1", "quit-v1"]);
+const COMMANDS = new Set(["status-v1", "account-observation-storage-v1", "quit-v1"]);
 const OBSERVATION_FAILURE_STAGES = new Set([
   ...WINDOWS_ACCOUNT_OBSERVATION_QUALIFICATION_SMOKE_FAILURE_STAGES,
   "unavailable",
@@ -290,15 +290,15 @@ export function createWindowsAccountlessSmokeProtocol(child, { timeoutMs = 60000
       if (observations) observations.statusResponseObserved = true;
       return finish(null, value);
     }
-    if ((command === "accountless-storage-v1" || command === "account-observation-storage-v1") && value.message === "credential-v1") {
-      if (command === "account-observation-storage-v1" && value.status === "failed-v1"
+    if (command === "account-observation-storage-v1" && value.message === "credential-v1") {
+      if (value.status === "failed-v1"
           && Object.keys(value).length === 5 && value.operation === command
           && OBSERVATION_FAILURE_STAGES.has(value.failureStage)) {
         if (observations) observations.accountObservationFailureStage = value.failureStage;
         return finish(failure("OBSERVATION_STORAGE_FAILED"));
       }
       if (Object.keys(value).length !== 4 || value.operation !== command || value.status !== "passed-v1") {
-        return finish(failure(command === "accountless-storage-v1" ? "STORAGE_FAILED" : "OBSERVATION_STORAGE_FAILED"));
+        return finish(failure("OBSERVATION_STORAGE_FAILED"));
       }
       return finish(null, true);
     }
@@ -365,9 +365,6 @@ export async function exerciseWindowsAccountlessSmoke(child, { timeoutMs = 60000
       if (Date.now() >= deadline) fail("STARTUP_TIMEOUT");
       await delay(250);
     }
-    if (observations) observations.storageRequested = true;
-    await protocol.request("accountless-storage-v1");
-    if (observations) observations.storagePassed = true;
     if (observations) observations.accountObservationStorageRequested = true;
     await protocol.request("account-observation-storage-v1");
     if (observations) observations.accountObservationStoragePassed = true;
@@ -420,8 +417,8 @@ export async function runWindowsAccountlessSmoke(options) {
   let errorCode = null;
   let stopped = true;
   const observations = { entryFailureObserved: false, statusResponseObserved: false,
-    firstRunAcknowledgementPrepared: false, storageRequested: false,
-    storagePassed: false, accountObservationStorageRequested: false,
+    firstRunAcknowledgementPrepared: false,
+    accountObservationStorageRequested: false,
     accountObservationStoragePassed: false, accountObservationFailureStage: null,
     quitAcknowledged: false, sendFailureCode: null };
   try {
@@ -459,7 +456,6 @@ export async function runWindowsAccountlessSmoke(options) {
       packagedApplicationExecuted: child !== null,
       syntheticCredentialOnly: true, nonSyntheticCredentialAccessed: false,
       nativeCredentialManagerJourneyVerified: observations.accountObservationStoragePassed,
-      accountlessStorageAndChildRestartVerified: errorCode === null,
       accountObservationStorageAndChildRestartVerified: errorCode === null,
       accountObservationCredentialCleanup: "disposable-runner-account-lifetime",
       fullApplicationRestartVerified: false, hostedUploadPerformed: false,

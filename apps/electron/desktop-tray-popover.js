@@ -31,13 +31,11 @@ export const TRAY_POPOVER_CONTENT_HEIGHT_CHANNEL = "tibotattle:electron-tray-pop
 export const TRAY_POPOVER_PRELOAD_FILE = "tray-popover-preload.cjs";
 export const TRAY_POPOVER_ACTIONS = Object.freeze([
   "open",
-  "weekly",
-  "timeline",
-  "accounting",
+  "allowance",
+  "usage",
   "refresh",
   "settings",
   "customize",
-  "usage",
   "history-7d",
   "history-30d",
   "more",

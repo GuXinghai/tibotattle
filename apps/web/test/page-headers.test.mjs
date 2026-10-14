@@ -96,7 +96,8 @@ test("translated setup checks preserve list semantics and capped observation cou
 test("every static page header is available through the browser locale entrypoint", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const keys = [...html.matchAll(/data-i18n="(page\.[^"]+)"/gu)].map((match) => match[1]);
-  assert.equal(keys.length, 10);
+  assert.deepEqual([...new Set(keys)].sort(), ["page.allowance.title", "page.overview.description", "page.overview.title", "page.performance.title", "page.usage.title"],
+    "the four destinations and the Overview description are the only static page headers");
   for (const locale of SUPPORTED_LOCALES) {
     for (const key of keys) {
       const value = translate(key, {}, locale);

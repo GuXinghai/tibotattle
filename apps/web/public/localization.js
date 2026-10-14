@@ -262,13 +262,6 @@ export const WEB_MESSAGES = Object.freeze({
   "dashboard.refresh.waitingForRecovery": ["Automatic refresh is waiting for safety recovery before the next scheduled update.", "自动刷新正在等待安全恢复，然后再进行下一次计划更新。", "La actualización automática espera la recuperación de seguridad antes de la siguiente actualización programada."],
   "dashboard.stale.observationTitle": ["Results need an update", "结果需要更新", "Los resultados necesitan actualizarse"],
   "dashboard.stale.observationCopy": ["Showing the last available results. Update local usage to check for newer measurements.", "显示最近可用的结果。更新本地用量，查看是否有新的测量数据。", "Se muestran los últimos resultados disponibles. Actualiza el uso local para comprobar si hay mediciones más recientes."],
-  "shareCard.openImage": ["Open image", "打开图片", "Abrir imagen"],
-  "shareCard.downloadRequested": ["Download requested as {filename}.", "已请求下载：{filename}。", "Descarga solicitada como {filename}."],
-  "shareCard.savedToDownloads": ["Saved to Downloads as {filename}.", "已保存到“下载”文件夹：{filename}。", "Guardado en Descargas como {filename}."],
-  "shareCard.downloadStartFailed": ["The image download could not be started.", "无法开始下载图片。", "No se pudo iniciar la descarga de la imagen."],
-  "shareCard.saveFailed": ["The image could not be saved. Try again.", "无法保存图片。请重试。", "No se pudo guardar la imagen. Inténtalo de nuevo."],
-  "shareCard.saveUnconfirmed": ["The save could not be confirmed. Check Downloads before trying again.", "无法确认图片是否已保存。请先检查“下载”文件夹，再重试。", "No se pudo confirmar el guardado. Comprueba Descargas antes de volver a intentarlo."],
-  "shareCard.openFailed": ["The image could not be opened automatically. Find it in Downloads.", "无法自动打开图片。请在“下载”文件夹中查找。", "No se pudo abrir la imagen automáticamente. Búscala en Descargas."],
   "dashboard.quota.remaining": ["{value} remaining", "剩余 {value}", "{value} restante"],
   "dashboard.quota.used": ["{value} used", "已使用 {value}", "{value} usado"],
   "dashboard.quota.usedUnknown": ["Used unknown", "已用量未知", "Uso desconocido"],
@@ -1001,69 +994,6 @@ export const WEB_MESSAGES = Object.freeze({
   // now the whole detail line under Recorded activity — the "event-time API
   // equivalent" caption is gone — so the mid-sentence "the …" phrasing left
   // with it. allRecorded is the range-selected "All" label.
-  "share.period.allRecorded": ["All recorded history", "所有记录的历史", "Todo el historial registrado"],
-  "share.period.allRetained": ["All retained evidence", "全部保留证据", "Toda la evidencia conservada"],
-  "share.period.cachedThirtyOneDay": ["Cached 31-day window", "缓存的 31 天窗口", "Ventana en caché de 31 días"],
-  "share.period.cachedThirtyOneDayCollector": ["Cached 31-day collector window", "缓存的 31 天收集器窗口", "Ventana del recopilador en caché de 31 días"],
-  "share.period.lastDay": ["Last 24 hours", "过去 24 小时", "Últimas 24 horas"],
-  "share.period.lastThirtyDays": ["Last 30 days", "过去 30 天", "Últimos 30 días"],
-  "share.period.lastSevenDays": ["Last 7 days", "过去 7 天", "Últimos 7 días"],
-  "share.period.recorded": ["Recorded period", "记录的期间", "Período registrado"],
-  "share.window.fiveHour": ["five-hour allowance", "五小时额度", "asignación de cinco horas"],
-  "share.window.other": ["observed allowance window", "观测到的额度窗口", "ventana de asignación observada"],
-  "share.window.providerReportedDuration": ["provider-reported {duration} window", "提供方报告的 {duration} 窗口", "ventana de {duration} informada por el proveedor"],
-  "share.window.sevenDay": ["seven-day allowance", "七天额度", "asignación de siete días"],
-  "share.stat.allowanceLeft": ["Allowance left", "剩余额度", "Asignación restante"],
-  "share.stat.recordedActivity": ["Recorded activity", "记录的活动", "Actividad registrada"],
-  "share.stat.estimatedAllowance": ["Estimated 7-day allowance", "估计的七天额度", "Asignación estimada de 7 días"],
-  "share.stat.estimatedAllowanceUnavailable": ["7-day estimate", "7 天估计", "Estimación de 7 días"],
-  "share.value.notObserved": ["Not observed", "未观测到", "No observado"],
-  "share.value.notAvailable": ["Not available", "不可用", "No disponible"],
-  "share.value.notEstimable": ["Not estimable", "无法估计", "No estimable"],
-  "share.detail.noCurrentAllowance": ["no current allowance window was observed", "未观测到当前额度窗口", "no se observó una ventana de asignación actual"],
-  "share.detail.ofWindow": ["of the {window}", "属于{window}", "de la {window}"],
-  "share.detail.notApplicableToWindow": ["not calculated for this allowance window", "不针对该额度窗口计算", "no se calcula para esta ventana de asignación"],
-  "share.detail.accountingUnavailable": ["usage accounting was unavailable", "用量核算不可用", "la contabilidad de uso no estaba disponible"],
-  "share.detail.lastVerifiedNewerBuild": ["last verified · {period}; newer build required", "上次验证 · {period}；需要较新版本", "última verificación · {period}; se requiere una versión más reciente"],
-  "share.detail.lastVerifiedPeriod": ["last verified · {period}", "上次验证 · {period}", "última verificación · {period}"],
-  "share.detail.newerBuildRequired": ["a newer TiboTattle build is required", "需要较新版本的 TiboTattle", "se requiere una versión más reciente de TiboTattle"],
-  "share.detail.noPricedUsage": ["no priced usage was recorded", "未记录到已定价的用量", "no se registró uso con precio"],
-  "share.detail.resetRange": ["Observed reset range {lower}–{upper}", "观测到的重置范围 {lower}–{upper}", "Rango de restablecimiento observado: {lower}–{upper}"],
-  "share.detail.noAcrossResetRange": ["no across-reset range yet", "尚无跨重置范围", "aún no hay intervalo entre restablecimientos"],
-  "share.detail.notEnoughMatchedWindows": ["not enough matched windows yet", "尚无足够的匹配窗口", "aún no hay suficientes ventanas coincidentes"],
-  "share.caveat.demo": ["Labeled demo data: an illustrative fixture, not measured usage.", "已标记的演示数据：示例性装置，不是测得的用量。", "Datos de demostración etiquetados: una muestra ilustrativa, no uso medido."],
-  "share.caveat.planConditional": ["Allowance history follows the recorded plan; account identity is unverified. Recorded activity includes all plans.", "额度历史按记录的方案分组；账户身份尚未验证。记录的活动包含所有方案。", "El historial de cuota sigue el plan registrado; la identidad de la cuenta no está verificada. La actividad registrada incluye todos los planes."],
-  "share.stat.recordedActivityAllPlans": ["Recorded activity · all plans", "记录的活动 · 所有方案", "Actividad registrada · todos los planes"],
-  "share.planAllowance": ["Allowance: {plan}", "额度：{plan}", "Cuota: {plan}"],
-  "share.caveat.unweighted": ["Not a complete total: {amount} of Standard-rate cost could not be speed-weighted and is excluded rather than counted at 1x.", "不是完整总额：{amount} 的 Standard 费率成本无法按速度加权，因此被排除而不是按 1 倍计入。", "No es un total completo: {amount} de coste a tarifa Standard no pudo ponderarse por velocidad y se excluye en lugar de contarse a 1×."],
-  "share.caveat.noWeighted": ["No usage could be speed-weighted, so this is the unchanged Standard-rate total.", "没有用量可按速度加权，因此这是未变动的 Standard 费率总额。", "No se pudo ponderar ningún uso por velocidad, por lo que este es el total sin cambios a tarifa Standard."],
-  "share.caveat.fastPartial": ["Speed-mode attribution is partial: some turns lack explicit speed evidence in the retained logs.", "速度模式归因不完整：保留日志中的部分轮次缺少明确的速度证据。", "La atribución del modo de velocidad es parcial: algunos turnos no tienen evidencia explícita de velocidad en los registros conservados."],
-  "share.caveat.coverage": ["{percent} of recorded usage changes have a reviewed public price; the remainder is omitted from the estimate.", "记录的用量增量中有 {percent} 具备经审核的公开价格；其余部分不纳入估算。", "El {percent} de los cambios de uso registrados tiene un precio público revisado; el resto queda fuera de la estimación."],
-  "share.title": ["What my Codex allowance is really worth", "我的 Codex 额度到底值多少", "Lo que realmente vale mi asignación de Codex"],
-  "share.subtitle.demo": ["Illustrative demo data. Not a measurement.", "示例性演示数据。不是测量结果。", "Datos de demostración ilustrativos. No son una medición."],
-  "share.badge.demo": ["DEMO DATA", "演示数据", "DATOS DEMO"],
-  "share.plan": ["Plan {plan}", "套餐 {plan}", "Plan {plan}"],
-  "share.trend.label": ["7-day allowance estimates", "七天额度估计", "Estimaciones de asignación de 7 días"],
-  "share.trend.empty": ["Not enough observed reset history yet.", "尚无足够的已观测重置历史。", "Aún no hay suficiente historial de restablecimientos observados."],
-  "share.trend.emptyDetail": ["A completed reset becomes a point once enough of its allowance was observed.", "一旦观测到足够额度，完成的重置就会成为一个点。", "Un restablecimiento completado se convierte en un punto cuando se observa una parte suficiente de su asignación."],
-  "share.trend.unavailableForWindow": ["No 7-day estimate for this allowance window.", "该额度窗口没有 7 天估计。", "No hay estimación de 7 días para esta ventana de asignación."],
-  "share.trend.unavailableForWindowDetail": ["Reset-history estimates remain separate from provider-reported windows.", "重置历史估计与提供方报告的窗口保持分开。", "Las estimaciones del historial de restablecimientos se mantienen separadas de las ventanas informadas por el proveedor."],
-  "share.axis.resetEstimateDate": ["Reset estimate date", "重置估计日期", "Fecha estimada de restablecimiento"],
-  "share.axis.allowance": ["7-day allowance ($)", "七天额度（美元）", "Asignación de 7 días (USD)"],
-  "share.identifier.debug": ["Debug: {reference}", "调试：{reference}", "Depuración: {reference}"],
-  "share.identifier.unversioned": ["unversioned", "未版本化", "sin versión"],
-  "share.identifier.version": ["v{version}", "v{version}", "v{version}"],
-  "share.text.figure": ["{label}: {value} — {detail}.", "{label}：{value} — {detail}。", "{label}: {value} — {detail}."],
-  "share.text.header": ["TiboTattle — {title}. {subtitle}", "TiboTattle — {title}。{subtitle}", "TiboTattle — {title}. {subtitle}"],
-  "share.text.contract": ["{identifier} · contract {version}", "{identifier} · 契约 {version}", "{identifier} · contrato {version}"],
-  "share.range.all": ["all history", "全部历史", "todo el historial"],
-  "share.range.days": ["{days}d", "{days} 天", "{days} d"],
-  "share.trend.countWithFloor": ["{shown} of {total} reset fits ({range}, ≥{span}pp span)", "{total} 个重置拟合中显示 {shown} 个（{range}，跨度 ≥{span}pp）", "{shown} de {total} ajustes de restablecimiento ({range}, intervalo ≥{span}pp)"],
-  "share.trend.countAnySpan": ["{shown} of {total} reset fits ({range}, any span)", "{total} 个重置拟合中显示 {shown} 个（{range}，任意跨度）", "{shown} de {total} ajustes de restablecimiento ({range}, cualquier intervalo)"],
-  "share.text.trailer": ["{trailer}.", "{trailer}。", "{trailer}."],
-  "share.text.more": ["More at {home}", "更多信息：{home}", "Más en {home}"],
-  "share.text.trendEmpty": ["{label}: {empty} {detail}", "{label}：{empty}{detail}", "{label}: {empty} {detail}"],
-  "share.text.trendPopulated": ["{label}: {fits} observed from {start} to {end}. The vertical axis is speed-priced API equivalent in dollars, spanning {low} to {high} including every measured range.", "{label}：从 {start} 到 {end} 观测到 {fits}。纵轴为美元按速度档定价 API 等价金额，范围从 {low} 到 {high}，包含每个测得的区间。", "{label}: se observaron {fits} de {start} a {end}. El eje vertical es equivalente de API con precio según velocidad en dólares y abarca de {low} a {high}, incluidos todos los rangos medidos."],
   "format.unknown": ["Unknown", "未知", "Desconocido"],
   "format.unknownAge": ["Unknown age", "未知时间", "Antigüedad desconocida"],
   "format.lessThanTwoMinutes": ["Less than 2 minutes ago", "不到 2 分钟前", "Hace menos de 2 minutos"],
@@ -1099,7 +1029,6 @@ export const WEB_MESSAGES = Object.freeze({
   "aria.githubExternal": ["GitHub (opens in a new tab)", "GitHub（在新标签页中打开）", "GitHub (se abre en una pestaña nueva)"],
   "aria.xExternal": ["X (opens in a new tab)", "X（在新标签页中打开）", "X (se abre en una pestaña nueva)"],
   "alt.previewWeeklyHistory": ["Sample seven-day allowance history with reset-level uncertainty ranges", "带有重置级别不确定性范围的七天额度历史示例", "Ejemplo de historial de asignación de siete días con intervalos de incertidumbre por restablecimiento"],
-  "aria.shareCard": ["A results card is generated once local evidence is available.", "本地证据可用后会生成结果卡片。", "Se genera una tarjeta de resultados cuando hay evidencia local disponible."],
   "aria.weeklyHistoryRange": ["Weekly history date range", "每周历史日期范围", "Intervalo de fechas del historial semanal"],
   "aria.allowanceRange": ["Allowance estimate date range", "额度估计日期范围", "Intervalo de fechas de la estimación de asignación"],
   "aria.expandCommunityAllowanceChart": ["Expand community allowance chart", "放大社区额度图表", "Ampliar el gráfico de asignación comunitaria"],
@@ -1484,7 +1413,6 @@ export const WEB_MESSAGES = Object.freeze({
   // The community allowance series. Aggregate dollar-equivalent estimates and
   // participant counts are owner-approved for publication; the participant
   // count is part of the claim and always rendered as visible copy.
-  "community.title": ["What the Codex allowance is really worth", "Codex 额度到底值多少", "Cuánto vale realmente la asignación de Codex"],
   "community.hero.context": ["Community view", "社区视图", "Vista de la comunidad"],
   "community.allowance.headingLegacy": ["Pro 20x-equivalent allowance", "Pro 20x 等值额度", "Asignación equivalente a Pro 20x"],
   "community.allowance.heading": ["Pro 10x-equivalent allowance", "Pro 10x 等值额度", "Asignación equivalente a Pro 10x"],
@@ -1699,16 +1627,10 @@ export const WEB_PLURAL_MESSAGES = Object.freeze({
     one: ["{count}-day", "{count} 天", "{count} día"],
     other: ["{count}-day", "{count} 天", "{count} días"],
   }),
-  "share.resetFit": Object.freeze({
+  // The count of reset fits one flat reference line summarizes in its tooltip.
+  "weekly.chart.resetFit": Object.freeze({
     one: ["{count} reset fit", "{count} 个重置拟合", "{count} ajuste de restablecimiento"],
     other: ["{count} reset fits", "{count} 个重置拟合", "{count} ajustes de restablecimiento"],
-  }),
-  // The card's outlined marker, in words. A reader of the text transcript
-  // cannot see the plot, so the difference the image draws has to be stated
-  // rather than left to the picture.
-  "share.text.shortObservation": Object.freeze({
-    one: ["{count} of these is a short observation, drawn as an outlined marker.", "其中 {count} 个为短观测，以空心标记绘制。", "{count} de estos es una observación corta, dibujada como un marcador sin relleno."],
-    other: ["{count} of these are short observations, drawn as outlined markers.", "其中 {count} 个为短观测，以空心标记绘制。", "{count} de estos son observaciones cortas, dibujadas como marcadores sin relleno."],
   }),
   // The community allowance caveat: the participant count backing every point
   // is visible copy. API participantCount fields retain their existing meaning;
@@ -1810,7 +1732,6 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   // Share panel caption (owner-directed 2026-08-08, third round): the header
   // above the card is title plus this ONE sentence — the filter promise and
   // the privacy promise together.
-  "The card uses the chart's current date range and span filter. It contains no prompts, responses, paths, account details or raw activity.": ["卡片使用图表当前的日期范围和跨度筛选。其中不含提示词、回复、路径、账户详情或原始活动。", "La tarjeta usa el intervalo de fechas y el filtro de span actuales del gráfico. No contiene prompts, respuestas, rutas, datos de cuenta ni actividad sin procesar."],
   // Allowance history: the honest error-bar naming (2026-08-08).
   "Slope-agreement range": ["斜率一致性区间", "Intervalo de concordancia de pendientes"],
   "Each reset estimate is drawn with its slope-agreement range: how much the slopes differ between pairs of observed quota boundaries within that reset. It shows disagreement inside one reset, not a confidence interval.": ["每个重置估计都带有其斜率一致性区间：即该重置内不同观测额度边界对之间斜率的差异程度。它显示的是单次重置内部的分歧，不是置信区间。", "Cada estimación de reinicio se dibuja con su intervalo de concordancia de pendientes: cuánto difieren las pendientes entre pares de límites de cuota observados dentro de ese reinicio. Muestra el desacuerdo dentro de un reinicio, no un intervalo de confianza."],
@@ -1843,11 +1764,9 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Analyze local usage": ["分析本地使用情况", "Analizar el uso local"],
   "Overview": ["概览", "Resumen"],
   "Allowance": ["额度", "Límite"],
-  "Trends": ["趋势", "Tendencias"],
   // Dashboard nav label for the #accounting page (renamed from "How it works",
   // 2026-08-09). The "How it works" entry below stays for the community site's
   // product walkthrough, which is a different section that keeps that name.
-  "Usage and costs": ["用量与成本", "Uso y costes"],
   "How it works": ["工作原理", "Cómo funciona"],
   "Community": ["社区", "Comunidad"],
   "Local evidence dashboard": ["本地证据仪表板", "Panel de evidencia local"],
@@ -1894,8 +1813,6 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Check this PC before analyzing": ["分析前检查这台电脑", "Comprueba este PC antes de analizar"],
 
   "Share": ["分享", "Compartir"],
-  "Save image": ["保存图片", "Guardar imagen"],
-  "Copy image": ["复制图片", "Copiar imagen"],
   "History": ["历史记录", "Historial"],
   "Each reset estimate is shown with the range supported by that reset’s observations.": ["每个重置估计都显示该重置观测所支持的范围。", "Cada estimación de restablecimiento muestra el intervalo respaldado por las observaciones de ese restablecimiento."],
   "See individual usage changes": ["查看单个用量增量", "Ver cambios individuales de uso"],
@@ -1951,7 +1868,6 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Look at the times and totals above, then confirm the send.": ["请查看上方的时间和总量，然后确认发送。", "Mira las horas y los totales de arriba y confirma el envío."],
 
   "Sign in above to contribute": ["请在上方登录以参与贡献", "Inicia sesión arriba para contribuir"],
-  "See what the community published": ["查看社区已发布的内容", "Ver lo que ha publicado la comunidad"],
 
   "Prepare a summary": ["准备摘要", "Preparar un resumen"],
   "How much to include": ["包含多少内容", "Cuánto incluir"],
@@ -2152,7 +2068,6 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Speed-priced API-equivalent usage": ["按速度档定价的 API 等价金额", "Uso equivalente de API con precio según velocidad"],
   "Standard API-equivalent cost": ["Standard 费率 API 等价成本", "Coste equivalente de API con tarifa Standard"],
   "Standard API equivalent": ["Standard 费率 API 等价金额", "Equivalente de API con tarifa Standard"],
-  "A results card you can post": ["可发布的结果卡片", "Una tarjeta de resultados que puedes publicar"],
   "Reference pending": ["参考待定", "Referencia pendiente"],
   // The exact-windows pager (owner-directed, 2026-08-08).
   "Previous": ["上一页", "Anterior"],
@@ -2163,7 +2078,6 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
     "第二条线是累计漂移：各时间段“观测值减预期值”的累计和，在每个窗口边界或额度轨道变化处重新开始。",
     "La segunda línea es la deriva acumulada: la suma corrida del movimiento observado menos esperado de cada intervalo, reiniciada en cada límite de ventana o cambio de seguimiento.",
   ],
-  "A results card is generated once local evidence is available.": ["本地证据可用后会生成结果卡片。", "Se genera una tarjeta de resultados cuando hay evidencia local disponible."],
   "02 · Weekly allowance": ["02 · 每周额度", "02 · Límite semanal"],
   "Our best estimate of the seven-day limit": ["我们对七天限额的最佳估计", "Nuestra mejor estimación del límite de siete días"],
   "Speed-priced all-data median": ["按速度档定价的全部数据中位数", "Mediana con precio según velocidad de todos los datos"],

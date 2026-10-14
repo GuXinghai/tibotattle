@@ -7,8 +7,7 @@ Scope: all files under `apps/web/`. Apply the repository root guidance first.
 - Web code presents validated companion or hosted-service contracts. It does not
   parse raw provider logs, calculate an independent ledger, infer identity, or
   redefine schema semantics.
-- Keep the local dashboard, optional hosted contribution surface, and public
-  release/install site explicit. Do not let a public build accidentally include
+- Keep the local dashboard and public release/install site explicit. Do not let a public build accidentally include
   loopback-only assets, private controls, or local runtime assumptions.
 - Local/offline rendering must not require a CDN, analytics, telemetry, remote
   font, or hosted API. Any permitted hosted request belongs to an explicit
@@ -43,11 +42,10 @@ Scope: all files under `apps/web/`. Apply the repository root guidance first.
   the owner additionally approved bounded Codex title fallbacks exclusively for
   Projects & threads local display on 2026-09-08. Render them as text only;
   project/worktree join handles remain process-local and content-free. Never propagate
-  them to accounting DTOs, reports, share cards, diagnostics, or contributions.
+  them to accounting DTOs, reports, diagnostics, or contributions.
 - Preserve restrictive network and content-security assumptions. A local preview
   convenience must not weaken the packaged or public surface.
-- Electron is the main app and uses the shared dashboard. Preserve its existing
-  collection, Settings and accountless sharing through their current owners.
+- Electron is the main app and uses the shared dashboard. Preserve its existing collection and Settings through their current owners. Desktop community sharing was removed on 2026-10-13 ([decision](../../docs/decisions/2026-10-13-desktop-sharing-removal.md)).
   Preserve saved sharing opt-outs and owner-only hosted erasure; retired social
   sign-in and disconnect flows belong to legacy backend contracts, not this UI.
 - Run the narrow `apps/web/test/*.test.mjs` files while iterating, then

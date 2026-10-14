@@ -103,47 +103,6 @@ export function isAllowedCompanionURL(url, allowedOrigin) {
     && parsed.password === "";
 }
 
-function isAllowedCompanionBlobURL(url, allowedOrigin) {
-  let selectedOrigin;
-  try {
-    selectedOrigin = exactLoopbackOrigin(allowedOrigin);
-  } catch {
-    return false;
-  }
-  if (typeof url !== "string") return false;
-  let parsed;
-  let creator;
-  try {
-    parsed = new URL(url);
-    creator = new URL(parsed.pathname);
-  } catch {
-    return false;
-  }
-  return parsed.protocol === "blob:"
-    && parsed.origin === selectedOrigin
-    && parsed.search === ""
-    && parsed.hash === ""
-    && creator.origin === selectedOrigin
-    && creator.protocol === "http:"
-    && creator.hostname === ELECTRON_LOOPBACK_HOST
-    && creator.username === ""
-    && creator.password === ""
-    && creator.pathname.length > 1
-    && creator.search === ""
-    && creator.hash === "";
-}
-
-export function isAllowedCompanionBlobDownload(details, allowedOrigin, webContentsId) {
-  return isAllowedCompanionBlobURL(details?.url, allowedOrigin)
-    && details?.method === "GET"
-    // Chromium reports blob anchor downloads as `other`; image/XHR/media
-    // Blob requests must remain denied. The webContents identity is the
-    // dashboard-only capability, so Settings cannot borrow this permission.
-    && details?.resourceType === "other"
-    && Number.isSafeInteger(webContentsId)
-    && details?.webContentsId === webContentsId;
-}
-
 /**
  * Electron event handlers for the private dashboard. Navigation is allowed
  * only inside the exact companion origin selected from its ready line;
@@ -187,16 +146,8 @@ export function createLoopbackNavigationPolicy({ origin } = {}) {
     handlePermissionCheck() {
       return false;
     },
-    handleBeforeRequest(details, callback, {
-      allowBlobDownloadWebContentsId = null,
-    } = {}) {
-      const allowed = isAllowedCompanionURL(details?.url, allowedOrigin)
-        || (allowBlobDownloadWebContentsId !== null
-          && isAllowedCompanionBlobDownload(
-            details,
-            allowedOrigin,
-            allowBlobDownloadWebContentsId,
-          ));
+    handleBeforeRequest(details, callback) {
+      const allowed = isAllowedCompanionURL(details?.url, allowedOrigin);
       callback?.({ cancel: !allowed });
       return allowed;
     },
@@ -208,7 +159,6 @@ export function installLoopbackNavigationPolicy({
   webContents,
   session,
   policy,
-  allowBlobDownloads = false,
   allowNotificationPermission = false,
 } = {}) {
   if (!webContents || typeof webContents.on !== "function") {
@@ -230,10 +180,6 @@ export function installLoopbackNavigationPolicy({
   webContents.setWindowOpenHandler?.(() => policy.handleWindowOpen());
 
   let sessionInstallation;
-  const blobDownloadWebContentsId = allowBlobDownloads
-    && Number.isSafeInteger(webContents.id)
-    ? webContents.id
-    : null;
   const notificationPermissionWebContentsId = allowNotificationPermission
     && Number.isSafeInteger(webContents.id)
     ? webContents.id
@@ -246,33 +192,18 @@ export function installLoopbackNavigationPolicy({
     if (sessionInstallation === undefined) {
       const requestFilter = { urls: ["<all_urls>"] };
       const onPermissionRequest = (contents, permission, callback, details) => {
-        const clipboardWrite = permission === "clipboard-sanitized-write"
-          && blobDownloadWebContentsIds.has(contents?.id)
-          && details?.isMainFrame === true
-          && policy.isAllowedURL(details.requestingUrl);
-        const allowed = clipboardWrite || (permission === "notifications"
-          && notificationPermissionWebContentsIds.has(contents?.id));
+        const allowed = permission === "notifications"
+          && notificationPermissionWebContentsIds.has(contents?.id);
         if (allowed) callback?.(true);
         else policy.handlePermissionRequest({ callback });
       };
-      const onPermissionCheck = (contents, permission, requestingOrigin, details) => (
-        (permission === "notifications"
-          && notificationPermissionWebContentsIds.has(contents?.id))
-        || (permission === "clipboard-sanitized-write"
-          && blobDownloadWebContentsIds.has(contents?.id)
-          && requestingOrigin === policy.origin
-          && details?.isMainFrame === true
-          && (details.requestingUrl === undefined
-            || policy.isAllowedURL(details.requestingUrl)))
+      const onPermissionCheck = (contents, permission) => (
+        permission === "notifications"
+          && notificationPermissionWebContentsIds.has(contents?.id)
       );
-      const blobDownloadWebContentsIds = new Set();
       const notificationPermissionWebContentsIds = new Set();
       const onBeforeRequest = (details, callback) => (
-        policy.handleBeforeRequest(details, callback, {
-          allowBlobDownloadWebContentsId: blobDownloadWebContentsIds.has(details?.webContentsId)
-            ? details.webContentsId
-            : null,
-        })
+        policy.handleBeforeRequest(details, callback)
       );
       session.setPermissionRequestHandler?.(onPermissionRequest);
       session.setPermissionCheckHandler?.(onPermissionCheck);
@@ -284,7 +215,6 @@ export function installLoopbackNavigationPolicy({
         onPermissionRequest,
         onPermissionCheck,
         onBeforeRequest,
-        blobDownloadWebContentsIds,
         notificationPermissionWebContentsIds,
       };
       sessionPolicyInstallations.set(session, sessionInstallation);
@@ -300,9 +230,6 @@ export function installLoopbackNavigationPolicy({
       throw new TypeError("session loopback policy origin conflict");
     }
     sessionInstallation.count += 1;
-    if (blobDownloadWebContentsId !== null) {
-      sessionInstallation.blobDownloadWebContentsIds.add(blobDownloadWebContentsId);
-    }
     if (notificationPermissionWebContentsId !== null) {
       sessionInstallation.notificationPermissionWebContentsIds.add(
         notificationPermissionWebContentsId,
@@ -320,9 +247,6 @@ export function installLoopbackNavigationPolicy({
       webContents.off?.("will-frame-navigate", onWillFrameNavigate);
       webContents.off?.("will-attach-webview", onWillAttachWebview);
       if (sessionInstallation === undefined) return;
-      if (blobDownloadWebContentsId !== null) {
-        sessionInstallation.blobDownloadWebContentsIds.delete(blobDownloadWebContentsId);
-      }
       if (notificationPermissionWebContentsId !== null) {
         sessionInstallation.notificationPermissionWebContentsIds.delete(
           notificationPermissionWebContentsId,

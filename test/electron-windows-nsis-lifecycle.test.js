@@ -799,8 +799,7 @@ class FixedSmokeChild extends EventEmitter {
           visible: true,
           tray: true,
         });
-      } else if (message.command === "accountless-storage-v1"
-          || message.command === "account-observation-storage-v1") {
+      } else if (message.command === "account-observation-storage-v1") {
         this.emit("message", {
           type: "windows-electron-smoke-v1",
           message: "credential-v1",
@@ -835,12 +834,10 @@ test("lifecycle smoke establishes its ready proof before any storage or quit com
   assert.deepEqual(tracked, [{ pid: child.pid, creation: "ready" }]);
   assert.deepEqual(child.commands, [
     "status-v1",
-    "accountless-storage-v1",
     "account-observation-storage-v1",
     "quit-v1",
   ]);
   assert.equal(sequence[0], "ready-proof");
-  assert.equal(observations.storagePassed, true);
   assert.equal(observations.accountObservationStoragePassed, true);
 });
 
@@ -895,7 +892,6 @@ test("launch proof fences ready snapshot and rejects a lingering exact installed
           tray: true,
         });
         const tracked = await readyBarrier();
-        observations.storagePassed = true;
         observations.accountObservationStoragePassed = true;
         child.exitCode = 0;
         return tracked;
@@ -961,7 +957,6 @@ test("second top-level launch binds the existing lifecycle run ID to restart-rea
           tray: true,
         });
         const tracked = await readyBarrier();
-        observations.storagePassed = true;
         observations.accountObservationStoragePassed = true;
         child.exitCode = 0;
         return tracked;
@@ -1007,7 +1002,6 @@ test("launch proof refuses a later exact installed-executable process before the
           tray: true,
         });
         const tracked = await readyBarrier();
-        observations.storagePassed = true;
         observations.accountObservationStoragePassed = true;
         child.exitCode = 0;
         return tracked;
@@ -1176,7 +1170,6 @@ test("lifecycle binds installed bytes, uses two distinct top-level processes in 
     assert.equal(receipt.persistentApplicationCredentialStateVerified, false);
     assert.equal(receipt.syntheticAccountObservationCredentialReadAcrossTopLevelRelaunches, true);
     assert.equal(receipt.nativeCredentialManagerSyntheticRecordReadAcrossTopLevelRelaunches, true);
-    assert.equal(receipt.accountlessSyntheticRecordDeleted, true);
     assert.equal(receipt.accountObservationCredentialCleanup, "disposable_runner_account_lifetime");
     assert.equal(receipt.uninstallRegistryAbsent, true);
     assert.equal(receipt.postUninstallPhase, "both_predicates_absent");
@@ -1326,8 +1319,6 @@ test("a first installed-launch failure retains its closed IPC code and phase in 
         firstLaunchDiagnostic.observations = {
           entryFailureObserved: true,
           statusResponseObserved: true,
-          storageRequested: false,
-          storagePassed: false,
           accountObservationStorageRequested: false,
           accountObservationStoragePassed: false,
           accountObservationFailureStage: "child_create",
@@ -1348,8 +1339,6 @@ test("a first installed-launch failure retains its closed IPC code and phase in 
     assert.deepEqual(receipt.firstLaunchObservations, {
       entryFailureObserved: true,
       statusResponseObserved: true,
-      storageRequested: false,
-      storagePassed: false,
       accountObservationStorageRequested: false,
       accountObservationStoragePassed: false,
       accountObservationFailureStage: "child_create",
@@ -1807,7 +1796,6 @@ test("an identity refusal writes the fixed failure receipt before any installer 
     assert.equal(receipt.status, "failed");
     assert.equal(receipt.errorCode, "ELECTRON_WINDOWS_NSIS_LIFECYCLE_INSTALLER_IDENTITY_INVALID");
     assert.equal(receipt.installationPerformed, false);
-    assert.equal(receipt.accountlessSyntheticRecordDeleted, false);
     assert.equal(receipt.productionReady, false);
   } finally {
     await rm(root, { recursive: true, force: true });

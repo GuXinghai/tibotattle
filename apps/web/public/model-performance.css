@@ -209,3 +209,4 @@ html[data-theme="dark"] .performance-axis-line { opacity: .42; }
 .performance-modes { flex-shrink: 0; }
 .performance-modes button { min-height: 36px; min-width: 80px; }
 .performance-mode-note { color: var(--muted); font-size: 12px; line-height: 1.5; margin: 0; }
+.performance-filter-label { color: var(--muted); font-size: .7rem; font-weight: 600; white-space: nowrap; }

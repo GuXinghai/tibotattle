@@ -27,7 +27,7 @@ const WINDOWS_TEST_LANE_ENV = "USAGE_MONITOR_TEST_LANE";
 const WINDOWS_TEST_LANE = "windows-electron-smoke";
 const LANGUAGES = Object.freeze(["system", "en", "zh-Hans", "es"]);
 const APPEARANCES = Object.freeze(["system", "light", "dark"]);
-const DASHBOARD_SECTIONS = Object.freeze(["weekly", "timeline", "accounting", "projects", "community"]);
+const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance"]);
 const AUTOMATIC_REFRESH_MODES = Object.freeze(["quick", "detailed"]);
 const REFRESH_INTERVALS = Object.freeze([60, 300, 900, 1800]);
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
@@ -38,15 +38,6 @@ const NOTIFICATION_THRESHOLDS = Object.freeze([
 ]);
 const SYSTEM_SETTINGS_TARGETS = Object.freeze(["startup", "notifications"]);
 const EXTERNAL_TARGETS = Object.freeze(["website", "github", "x"]);
-const HOSTED_SIGNIN_MAX_LENGTH = 4096;
-const HOSTED_SIGNIN_ENDPOINTS = Object.freeze([
-  "https://accounts.google.com/o/oauth2/v2/auth",
-  "https://appleid.apple.com/auth/authorize",
-]);
-const HOSTED_SIGNIN_DEFAULT_PORT_ENDPOINTS = Object.freeze([
-  "https://accounts.google.com:443/o/oauth2/v2/auth",
-  "https://appleid.apple.com:443/auth/authorize",
-]);
 const CODEX_THREAD_URL_PATTERN =
   /^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CODEX_ROOT_LIMIT = 8;
@@ -163,28 +154,6 @@ function reorderCodexRootsMethod(action, value) {
   return invoke(action, { rootIds: [...value.rootIds] });
 }
 
-// This deliberately mirrors the host allowlist without importing a
-// Node module into the sandboxed preload. The host parses the string
-// again after IPC; this first pass prevents an accidental generic opener from
-// being exposed to the renderer at all.
-function validHostedSignInAuthorizeUrl(value) {
-  if (typeof value !== "string"
-      || value.length === 0
-      || value.length > HOSTED_SIGNIN_MAX_LENGTH
-      || value.includes("\\")
-      || /[\u0000-\u0020\u007f-\u009f]/u.test(value)) {
-    return false;
-  }
-  const queryStart = value.indexOf("?");
-  if (queryStart <= 0 || queryStart === value.length - 1 || value.includes("#")) {
-    return false;
-  }
-  if (/%(?![0-9A-Fa-f]{2})/u.test(value.slice(queryStart + 1))) return false;
-  const endpoint = value.slice(0, queryStart);
-  return HOSTED_SIGNIN_ENDPOINTS.includes(endpoint)
-    || HOSTED_SIGNIN_DEFAULT_PORT_ENDPOINTS.includes(endpoint);
-}
-
 function validDesktopCommand(value) {
   if (value?.command === "refresh") {
     return exactObject(value, ["command"], "command")
@@ -226,23 +195,6 @@ function validDesktopCommand(value) {
       })
       : null;
   }
-  if (value?.command === "hostedSignInReturn") {
-    return exactObject(value, ["command"], "command")
-      ? Object.freeze({ command: "hostedSignInReturn" })
-      : null;
-  }
-  if (value?.command === "shareCardDownloadCompleted") {
-    return exactObject(value, ["command", "filename"], "command")
-      && typeof value.filename === "string"
-      && /^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}-[0-9]{2}-tibotattle-results(?:-[1-9][0-9]{0,2})?\.png$/u.test(value.filename)
-      ? Object.freeze({ command: "shareCardDownloadCompleted", filename: value.filename })
-      : null;
-  }
-  if (value?.command === "shareCardDownloadFailed") {
-    return exactObject(value, ["command"], "command")
-      ? Object.freeze({ command: "shareCardDownloadFailed" })
-      : null;
-  }
   return null;
 }
 
@@ -279,13 +231,6 @@ function installDesktopBridge() {
       subscribeToDesktopCommands,
     ),
     getSettings: (...values) => noArguments("getSettings", values),
-    getSharingPreference: (...values) => noArguments("getSharingPreference", values),
-    setSharingEnabled: (...values) => oneArgument("setSharingEnabled", values,
-      (enabled) => booleanMethod("setSharingEnabled", enabled)),
-    sharingNoticePresented: (...values) => oneArgument("sharingNoticePresented", values,
-      (index) => Number.isInteger(index) && index >= 1 && index <= 3
-        ? invoke("sharingNoticePresented", { index })
-        : rejected("notice index is invalid")),
     getCodexHomesForSettings: (...values) => noArguments(
       "getCodexHomesForSettings",
       values,
@@ -297,7 +242,6 @@ function installDesktopBridge() {
       if (!exactObject(value, ["schemaVersion", "preset", "iconMode", "meterWindow", "barMetric", "resetFormat", "sections", "historyRange", "showChart", "metrics", "density", "emphasizeLow"], "tray")) return rejected("tray preferences are invalid");
       return invoke("setTrayPreferences", { value });
     }),
-    openCommunity: (...values) => noArguments("openCommunity", values),
     toggleSidebar: (...values) => noArguments("toggleSidebar", values),
     chooseCodexHome: (...values) => noArguments("chooseCodexHome", values),
     addCodexHome: (...values) => noArguments("addCodexHome", values),
@@ -387,13 +331,6 @@ function installDesktopBridge() {
         "target",
       ),
     ),
-    openHostedSignIn: (...values) => oneArgument(
-      "openHostedSignIn",
-      values,
-      (authorizeUrl) => validHostedSignInAuthorizeUrl(authorizeUrl)
-        ? invoke("openHostedSignIn", { authorizeUrl })
-        : rejected("authorizeUrl is invalid"),
-    ),
     checkForUpdates: (...values) => noArguments("checkForUpdates", values),
     downloadUpdate: (...values) => noArguments("downloadUpdate", values),
     installUpdateAndRestart: (...values) => noArguments("installUpdateAndRestart", values),
@@ -401,14 +338,6 @@ function installDesktopBridge() {
       "setAutomaticDownload",
       values,
       (enabled) => booleanMethod("setAutomaticDownload", enabled),
-    ),
-    revealLatestDownload: (...values) => noArguments(
-      "revealLatestDownload",
-      values,
-    ),
-    openLatestDownload: (...values) => noArguments(
-      "openLatestDownload",
-      values,
     ),
     openDashboardInBrowser: (...values) => noArguments(
       "openDashboardInBrowser",

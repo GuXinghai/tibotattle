@@ -170,16 +170,16 @@ export function createDesktopTrayTemplate({
       click: boundedActions.show,
     },
     {
-      label: desktopText("electron.tray.weekly", {}, textOptions),
-      click: boundedActions.weekly,
+      label: desktopText("electron.tray.allowance", {}, textOptions),
+      click: boundedActions.allowance,
     },
     {
-      label: desktopText("electron.tray.timeline", {}, textOptions),
-      click: boundedActions.timeline,
+      label: desktopText("electron.tray.usage", {}, textOptions),
+      click: boundedActions.usage,
     },
     {
-      label: desktopText("electron.tray.accounting", {}, textOptions),
-      click: boundedActions.accounting,
+      label: desktopText("electron.tray.performance", {}, textOptions),
+      click: boundedActions.performance,
     },
     refreshAction,
     // Keep the native status-menu affordance visible even in the Electron

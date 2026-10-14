@@ -6,13 +6,11 @@ const VISIBILITY_CHANNEL = "tibotattle:electron-tray-popover-visibility:v1";
 const CONTENT_HEIGHT_CHANNEL = "tibotattle:electron-tray-popover-content-height:v1";
 const ACTIONS = new Set([
   "open",
-  "weekly",
-  "timeline",
-  "accounting",
+  "allowance",
+  "usage",
   "refresh",
   "settings",
   "customize",
-  "usage",
   "more",
   "quit",
 ]);

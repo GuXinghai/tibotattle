@@ -1,5 +1,4 @@
 import { DESKTOP_TRAY_DEFAULTS, migrateDesktopTrayPreferences, validateDesktopTrayPreferences } from "./desktop-tray-preferences.js";
-import { validateHostedSignInAuthorizeUrl } from "./desktop-hosted-signin.js";
 import { parseCodexThreadURL } from "./loopback-policy.js";
 import {
   DESKTOP_CODEX_ROOT_MAX,
@@ -79,15 +78,11 @@ export const DESKTOP_EXTERNAL_TARGETS = Object.freeze([
 
 export const DESKTOP_ACTIONS = Object.freeze([
   "getSettings",
-  "getSharingPreference",
-  "setSharingEnabled",
-  "sharingNoticePresented",
   "getCodexHomesForSettings",
   "openSettings",
   "openTraySettings",
   "setTrayPreferences",
   "restoreTrayDefaults",
-  "openCommunity",
   "toggleSidebar",
   "chooseCodexHome",
   "addCodexHome",
@@ -104,14 +99,11 @@ export const DESKTOP_ACTIONS = Object.freeze([
   "sendTestNotification",
   "openSystemSettings",
   "openExternal",
-  "openHostedSignIn",
   "openCodexThread",
   "checkForUpdates",
   "downloadUpdate",
   "installUpdateAndRestart",
   "setAutomaticDownload",
-  "revealLatestDownload",
-  "openLatestDownload",
   "openDashboardInBrowser",
   "showDiagnostics",
   "revealLocalData",
@@ -123,15 +115,11 @@ export const DESKTOP_ACTIONS = Object.freeze([
 
 const ACTION_ARGUMENT_KEYS = Object.freeze({
   getSettings: Object.freeze([]),
-  getSharingPreference: Object.freeze([]),
-  setSharingEnabled: Object.freeze(["enabled"]),
-  sharingNoticePresented: Object.freeze(["index"]),
   getCodexHomesForSettings: Object.freeze([]),
   openSettings: Object.freeze([]),
   openTraySettings: Object.freeze([]),
   setTrayPreferences: Object.freeze(["value"]),
   restoreTrayDefaults: Object.freeze([]),
-  openCommunity: Object.freeze([]),
   toggleSidebar: Object.freeze([]),
   chooseCodexHome: Object.freeze([]),
   addCodexHome: Object.freeze([]),
@@ -148,14 +136,11 @@ const ACTION_ARGUMENT_KEYS = Object.freeze({
   sendTestNotification: Object.freeze([]),
   openSystemSettings: Object.freeze(["target"]),
   openExternal: Object.freeze(["target"]),
-  openHostedSignIn: Object.freeze(["authorizeUrl"]),
   openCodexThread: Object.freeze(["url"]),
   checkForUpdates: Object.freeze([]),
   downloadUpdate: Object.freeze([]),
   installUpdateAndRestart: Object.freeze([]),
   setAutomaticDownload: Object.freeze(["enabled"]),
-  revealLatestDownload: Object.freeze([]),
-  openLatestDownload: Object.freeze([]),
   openDashboardInBrowser: Object.freeze([]),
   showDiagnostics: Object.freeze([]),
   revealLocalData: Object.freeze([]),
@@ -281,14 +266,8 @@ export function validateDesktopRequest(request) {
       assertSeconds(args.seconds);
       break;
     case "setStartAtLogin":
-    case "setSharingEnabled":
     case "setAutomaticDownload":
       assertBoolean(args.enabled, "enabled");
-      break;
-    case "sharingNoticePresented":
-      if (!Number.isInteger(args.index) || args.index < 1 || args.index > 3) {
-        throw new TypeError("notice index is invalid");
-      }
       break;
     case "setNotificationPreferences":
       assertBoolean(args.enabled, "enabled");
@@ -303,9 +282,6 @@ export function validateDesktopRequest(request) {
       break;
     case "openExternal":
       assertEnum(args.target, DESKTOP_EXTERNAL_TARGETS, "target");
-      break;
-    case "openHostedSignIn":
-      validateHostedSignInAuthorizeUrl(args.authorizeUrl);
       break;
     case "openCodexThread":
       if (parseCodexThreadURL(args.url) === null) {

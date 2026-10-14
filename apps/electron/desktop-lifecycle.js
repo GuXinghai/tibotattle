@@ -24,9 +24,6 @@ import {
   createRecoveryWindow,
   RECOVERY_STATUSES,
 } from "./recovery-window.js";
-import {
-  installDesktopOwnedDownloadHandler,
-} from "./desktop-owned-downloads.js";
 import { createDesktopStatusMonitor } from "./desktop-status-monitor.js";
 import {
   createDesktopTrayStatusReducer,
@@ -60,11 +57,10 @@ const SETTINGS_SECTIONS = Object.freeze([
 ]);
 
 const DASHBOARD_SECTIONS = Object.freeze([
-  "weekly",
-  "timeline",
-  "accounting",
-  "projects",
-  "community",
+  "overview",
+  "usage",
+  "allowance",
+  "performance",
 ]);
 
 const RENDER_PROCESS_GONE_REASONS = new Set([
@@ -117,7 +113,6 @@ export function createDesktopLifecycle({
   recoveryWindowOptions = {},
   recoveryPreloadPath,
   trayPopoverWindowOptions = {},
-  ownedDownloadsRegistry = null,
   singleInstanceLockAcquired = false,
   onDashboardReady,
   onDashboardInvalidated,
@@ -143,16 +138,6 @@ export function createDesktopLifecycle({
   if (typeof createNavigationPolicy !== "function"
       || typeof installNavigationPolicy !== "function") {
     throw new TypeError("navigation policy factories are required");
-  }
-  if (ownedDownloadsRegistry !== null) {
-    for (const method of ["prepareDownload", "completeDownload", "failDownload", "revealLatest"]) {
-      if (typeof ownedDownloadsRegistry[method] !== "function") {
-        throw new TypeError(`ownedDownloadsRegistry.${method} is required`);
-      }
-    }
-    if (typeof ownedDownloadsRegistry.clear !== "function") {
-      throw new TypeError("ownedDownloadsRegistry.clear is required");
-    }
   }
   if (onDesktopStatus !== undefined && typeof onDesktopStatus !== "function") {
     throw new TypeError("onDesktopStatus must be a function");
@@ -192,7 +177,6 @@ export function createDesktopLifecycle({
   let dashboardReady = false;
   let ready = null;
   let policyInstallation = null;
-  let downloadHandlerInstallation = null;
   let settingsPolicyInstallation = null;
   let windowListenerCleanup = null;
   let windowReadyListenerCleanup = null;
@@ -540,26 +524,6 @@ export function createDesktopLifecycle({
     return isAuthorizedSettingsFrame(frame, event);
   }
 
-  function isAuthorizedDesktopDownloadContext(sender, frame) {
-    if (!isLiveBrowserWindow(window)
-        || sender !== window.webContents
-        || !isAuthorizedDesktopFrame(frame, { sender })) {
-      return false;
-    }
-    const currentOrigin = ready?.origin;
-    if (typeof currentOrigin !== "string") return false;
-    const getURL = sender.getURL;
-    if (typeof getURL !== "function") return true;
-    let currentURL;
-    try {
-      currentURL = getURL.call(sender);
-      return typeof currentURL === "string"
-        && new URL(currentURL).origin === currentOrigin;
-    } catch {
-      return false;
-    }
-  }
-
   async function openDashboardInBrowser() {
     if (!isExactLoopbackOrigin(ready?.origin)
         || typeof openDashboardExternal !== "function") {
@@ -720,9 +684,8 @@ export function createDesktopLifecycle({
       return onTrayHistoryRange(action.slice(8));
     }
     if (action === "open") selected = actions.show;
-    else if (action === "weekly") selected = actions.weekly;
-    else if (action === "timeline") selected = actions.timeline;
-    else if (action === "accounting" || action === "usage") selected = actions.accounting;
+    else if (action === "allowance") selected = actions.allowance;
+    else if (action === "usage") selected = actions.usage;
     else if (action === "settings") selected = actions.settings;
     else if (action === "customize") selected = () => showSettingsWindow("tray");
     else if (action === "more") selected = showTrayContextMenu;
@@ -794,10 +757,10 @@ export function createDesktopLifecycle({
       show: suppliedActions.show ?? showWindow,
       focus: suppliedActions.focus ?? showWindow,
       refresh: suppliedActions.refresh ?? (() => sendDashboardCommand({ command: "refresh" })),
-      weekly: suppliedActions.weekly ?? (() => navigateDashboardSection("weekly")),
-      timeline: suppliedActions.timeline ?? (() => navigateDashboardSection("timeline")),
-      accounting: suppliedActions.accounting ?? (() => navigateDashboardSection("accounting")),
-      projects: suppliedActions.projects ?? (() => navigateDashboardSection("projects")),
+      overview: suppliedActions.overview ?? (() => navigateDashboardSection("overview")),
+      usage: suppliedActions.usage ?? (() => navigateDashboardSection("usage")),
+      allowance: suppliedActions.allowance ?? (() => navigateDashboardSection("allowance")),
+      performance: suppliedActions.performance ?? (() => navigateDashboardSection("performance")),
       toggleSidebar: suppliedActions.toggleSidebar ?? (() => false),
       retry: suppliedActions.retry ?? (() => retry()),
       settings: suppliedActions.settings ?? (() => showSettingsWindow()),
@@ -818,8 +781,6 @@ export function createDesktopLifecycle({
     const hadDashboardWindow = window !== null;
     dashboardReady = false;
     dashboardLoadState = null;
-    downloadHandlerInstallation?.remove?.();
-    downloadHandlerInstallation = null;
     windowReadyListenerCleanup?.();
     windowReadyListenerCleanup = null;
     windowListenerCleanup?.();
@@ -993,28 +954,7 @@ export function createDesktopLifecycle({
       webContents,
       session,
       policy,
-      allowBlobDownloads: true,
     });
-    if (ownedDownloadsRegistry !== null) {
-      downloadHandlerInstallation = installDesktopOwnedDownloadHandler({
-        session,
-        dashboardWebContents: webContents,
-        origin: ready.origin,
-        registry: ownedDownloadsRegistry,
-        onState: (command) => {
-          // The download handler can settle asynchronously, after a retry or
-          // shutdown has invalidated this BrowserWindow.  Only the current,
-          // already-visible dashboard may receive the fixed semantic state;
-          // no stale renderer gets a completion signal.
-          if (!dashboardReady
-              || window?.webContents !== webContents
-              || !isLiveBrowserWindow(window)) {
-            return;
-          }
-          sendDashboardCommand(command);
-        },
-      });
-    }
     let resolveDashboardLoad;
     let rejectDashboardLoad;
     const loadPromise = new Promise((resolve, reject) => {
@@ -1674,7 +1614,6 @@ export function createDesktopLifecycle({
       await pendingStartup?.catch(() => {});
       await updatePreparationPromise?.catch(() => {});
       await supervisor.stop().catch(() => {});
-      ownedDownloadsRegistry?.clear?.();
       tray?.destroy?.();
       tray = null;
       app.quit?.();
@@ -1698,7 +1637,6 @@ export function createDesktopLifecycle({
       tray?.destroy?.();
       tray = null;
       await supervisor.stop().catch(() => {});
-      ownedDownloadsRegistry?.clear?.();
       supervisor.setUnexpectedExitHandler?.(undefined);
       for (const remove of listeners.splice(0)) remove();
       started = false;
@@ -1738,15 +1676,6 @@ export function createDesktopLifecycle({
     isAuthorizedDashboardFrame,
     isAuthorizedCodexThreadNavigation,
     isAuthorizedSettingsFrame,
-    isAuthorizedDesktopDownloadContext,
-    revealLatestDownload() {
-      if (ownedDownloadsRegistry === null) return Promise.resolve("unavailable");
-      return ownedDownloadsRegistry.revealLatest();
-    },
-    openLatestDownload() {
-      if (ownedDownloadsRegistry === null) return Promise.resolve("unavailable");
-      return ownedDownloadsRegistry.openLatest?.() ?? Promise.resolve("unavailable");
-    },
     get state() {
       return Object.freeze({
         started,

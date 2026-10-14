@@ -2,7 +2,6 @@ import { timingSafeEqual } from "node:crypto";
 
 import {
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_CAPABILITY,
-  createAccountlessChildChannel,
   createWindowsAccountObservationBrokerBackendFromEnvironment,
 } from "../../../src/platform/index.js";
 
@@ -55,41 +54,26 @@ function finish(status) {
 }
 
 async function run() {
-  const accountless = createAccountlessChildChannel({
-    channel: process,
-    timeoutMilliseconds: 5_000,
-  });
   const observation = createWindowsAccountObservationBrokerBackendFromEnvironment();
   if (observation === null) throw new Error("missing observation broker");
-  const accountlessSecret = Buffer.alloc(32, 17);
   const observationSecret = Buffer.alloc(32, 23);
-  let accountlessRead = null;
   let observationRead = null;
   try {
-    const first = await Promise.all([
-      accountless.backend.read(),
-      observation.read(WINDOWS_ACCOUNT_OBSERVATION_BROKER_CAPABILITY),
-    ]);
-    if (first[0] !== null || first[1] !== null) throw new Error("unexpected initial record");
-    const created = await Promise.all([
-      accountless.backend.createIfMissing(null, accountlessSecret),
-      observation.createIfMissing(WINDOWS_ACCOUNT_OBSERVATION_BROKER_CAPABILITY, observationSecret),
-    ]);
-    if (created[0] !== "created" || created[1] !== "created") throw new Error("record not created");
-    [accountlessRead, observationRead] = await Promise.all([
-      accountless.backend.read(),
-      observation.read(WINDOWS_ACCOUNT_OBSERVATION_BROKER_CAPABILITY),
-    ]);
-    if (!sameSecret(accountlessRead, accountlessSecret)
-        || !sameSecret(observationRead, observationSecret)) {
+    if (await observation.read(WINDOWS_ACCOUNT_OBSERVATION_BROKER_CAPABILITY) !== null) {
+      throw new Error("unexpected initial record");
+    }
+    const created = await observation.createIfMissing(
+      WINDOWS_ACCOUNT_OBSERVATION_BROKER_CAPABILITY,
+      observationSecret,
+    );
+    if (created !== "created") throw new Error("record not created");
+    observationRead = await observation.read(WINDOWS_ACCOUNT_OBSERVATION_BROKER_CAPABILITY);
+    if (!sameSecret(observationRead, observationSecret)) {
       throw new Error("record roundtrip mismatch");
     }
   } finally {
-    accountlessRead?.fill(0);
     observationRead?.fill(0);
-    accountlessSecret.fill(0);
     observationSecret.fill(0);
-    accountless.dispose();
   }
 }
 

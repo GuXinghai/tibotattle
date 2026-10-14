@@ -67,7 +67,6 @@ function fixture({
   });
   const commands = [];
   const homes = [];
-  const hostedSignIns = [];
   const settingsWindows = [];
   const timers = [];
   const cleared = [];
@@ -115,7 +114,6 @@ function fixture({
     chooseCodexHome: async () => "/Users/adam/custom-codex",
     openSystemSettings: async () => {},
     openExternal: async () => {},
-    openHostedSignIn: async (authorizeUrl) => hostedSignIns.push(authorizeUrl),
     about: () => ({
       version: "0.1.16",
       build: "test",
@@ -166,7 +164,6 @@ function fixture({
     store,
     commands,
     homes,
-    hostedSignIns,
     settingsWindows,
     timers,
     cleared,
@@ -258,45 +255,20 @@ test("controller initializes persisted cadence and projects truthful settings st
   assert.deepEqual(value.commands, [{ command: "automaticRefresh", mode: "quick" }]);
 });
 
-test("controller opens the fixed Community dashboard section without changing settings", async () => {
-  const navigations = [];
-  const value = fixture({
-    lifecycleOverrides: {
-      navigateDashboardSection(section) {
-        navigations.push(section);
-        return true;
-      },
-    },
-  });
-  await value.controller.initialize();
-  const persistedBefore = value.persisted;
-  assert.equal(await value.controller.handlers.openCommunity({}), true);
-  assert.deepEqual(navigations, ["community"]);
-  assert.equal(value.persisted, persistedBefore);
-});
-
-test("controller fails closed when Community navigation is unavailable", async () => {
+test("controller exposes no community, sharing, hosted sign-in or download handlers", async () => {
   const value = fixture();
   await value.controller.initialize();
-  await assert.rejects(
-    value.controller.handlers.openCommunity({}),
-    (error) => error?.code === "desktop_community_unavailable",
-  );
-});
-
-test("controller fails closed when Community navigation is rejected", async () => {
-  const value = fixture({
-    lifecycleOverrides: {
-      navigateDashboardSection() {
-        return false;
-      },
-    },
-  });
-  await value.controller.initialize();
-  await assert.rejects(
-    value.controller.handlers.openCommunity({}),
-    (error) => error?.code === "desktop_community_unavailable",
-  );
+  for (const name of [
+    "openCommunity",
+    "getSharingPreference",
+    "setSharingEnabled",
+    "sharingNoticePresented",
+    "openHostedSignIn",
+    "revealLatestDownload",
+    "openLatestDownload",
+  ]) {
+    assert.equal(Object.hasOwn(value.controller.handlers, name), false, name);
+  }
 });
 
 test("controller implements every bounded bridge action and desktop command", async () => {
@@ -310,9 +282,6 @@ test("controller implements every bounded bridge action and desktop command", as
     enabled: false,
     threshold: "off",
   });
-  await value.controller.handlers.openHostedSignIn({
-    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-  });
   const selected = await value.controller.handlers.chooseCodexHome({});
   assert.deepEqual(value.settingsWindows, ["general"]);
   assert.deepEqual(value.commands, [{ command: "language", value: "es" }]);
@@ -322,9 +291,6 @@ test("controller implements every bounded bridge action and desktop command", as
   assert.equal(selected.settings.codexFolder.kind, "custom");
   assert.deepEqual(selected.settings.codexFolder, { kind: "custom" });
   assert.doesNotMatch(JSON.stringify(selected), /\/Users\/adam/u);
-  assert.deepEqual(value.hostedSignIns, [
-    "https://accounts.google.com/o/oauth2/v2/auth?client_id=test",
-  ]);
   assert.equal(value.persisted.schemaVersion, DESKTOP_DEFAULT_SETTINGS.schemaVersion);
   assert.equal(Object.hasOwn(value.persisted, "codexHome"), false);
   assert.equal(value.persisted.codexHomes.activityRoots.length, 1);
@@ -810,47 +776,6 @@ test("controller fails closed when notification rollback cannot be proven", asyn
   assert.equal(snapshot.settings.notifications.enabled, false);
   assert.equal(snapshot.settings.notifications.canSet, false);
   assert.equal(snapshot.settings.notifications.state, "state_unavailable");
-});
-
-test("controller permits reveal and open only for the live dashboard context", async () => {
-  const value = fixture({
-    lifecycleOverrides: {
-      isAuthorizedDesktopDownloadContext(sender, frame) {
-        return sender === "dashboard" && frame === "dashboard-frame";
-      },
-      revealLatestDownload: async () => "revealed",
-      openLatestDownload: async () => "opened",
-    },
-  });
-  await value.controller.initialize();
-  await assert.rejects(
-    value.controller.handlers.revealLatestDownload({}, {
-      sender: "settings",
-      senderFrame: "settings-frame",
-    }),
-    (error) => error?.code === "desktop_download_unavailable",
-  );
-  assert.equal(
-    await value.controller.handlers.revealLatestDownload({}, {
-      sender: "dashboard",
-      senderFrame: "dashboard-frame",
-    }),
-    "revealed",
-  );
-  await assert.rejects(
-    value.controller.handlers.openLatestDownload({}, {
-      sender: "settings",
-      senderFrame: "settings-frame",
-    }),
-    (error) => error?.code === "desktop_download_unavailable",
-  );
-  assert.equal(
-    await value.controller.handlers.openLatestDownload({}, {
-      sender: "dashboard",
-      senderFrame: "dashboard-frame",
-    }),
-    "opened",
-  );
 });
 
 test("Codex root change persists before process configuration when persistence fails", async () => {

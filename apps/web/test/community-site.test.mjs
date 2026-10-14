@@ -637,22 +637,25 @@ test("the public guidance pages are useful stubs without app-only controls", asy
   }
 });
 
-test("the dashboard uses accountless sharing while the public site owns delayed evidence", async () => {
+test("the dashboard carries no community or sharing surface while the public site owns delayed evidence", async () => {
   const siteSource = await readFile(SITE_SOURCE, "utf8");
   const appSource = await readFile(APP_SOURCE, "utf8");
   assert.match(siteSource, /from "\.\/community-view\.js"/u);
   assert.match(siteSource, /from "\.\/install-cta\.js"/u);
   assert.match(appSource, /from "\.\/install-cta\.js"/u);
   assert.doesNotMatch(appSource, /from "\.\/community-view\.js"/u);
-  // The dashboard is a single local review/send destination; delayed public
-  // evidence remains rendered by the public website entry point.
+  // Delayed public evidence is rendered by the public website entry point only.
   assert.doesNotMatch(appSource, /COMMUNITY_METRIC_LABELS|renderSharedCommunitySnapshot/u);
   assert.doesNotMatch(appSource, /function configuredInstallerRelease\(/u);
   assert.doesNotMatch(appSource, /function formatInstallerSize\(/u);
   const appHtml = await readFile(APP_HTML, "utf8");
-  assert.match(appHtml, /id="community"/u);
-  assert.match(appHtml, /https:\/\/tibotattle\.com\/#community/u);
-  for (const retiredControl of [
+  for (const removed of [
+    'id="community"',
+    'id="share-panel"',
+    'id="share-card-download"',
+    'id="electron-accountless-sharing-enabled"',
+    'id="electron-sharing-notice"',
+    "tibotattle.com/#community",
     'id="central-state"',
     'id="backend"',
     'id="contribution-file"',
@@ -660,20 +663,13 @@ test("the dashboard uses accountless sharing while the public site owns delayed 
     'id="automatic-contribution-toggle"',
     'id="download-participant"',
     'id="community-result"',
+    'id="community-connect-consent"',
+    'id="prepare-contribution"',
+    'id="sync-run-once"',
+    'id="incremental-consent"',
   ]) {
-    assert.doesNotMatch(appHtml, new RegExp(retiredControl, "u"), retiredControl);
+    assert.ok(!appHtml.includes(removed), `the dashboard no longer contains ${removed}`);
   }
-  // Re-pinned 2026-08-08 (owner-directed, second round): the connect-consent
-  // checkbox left with the connect card — the merged surface's explicit
-  // Review-and-approve action is the consent.
-  assert.doesNotMatch(appHtml, /id="community-connect-consent"/u);
-  // Earlier same-day re-pin: the legacy prepare-and-review flow
-  // is removed outright. The approve-once surface is the only contribution
-  // flow, so the dashboard's local destination is now the consent card.
-  assert.doesNotMatch(appHtml, /id="prepare-contribution"/u);
-  assert.doesNotMatch(appHtml, /id="sync-run-once"/u);
-  assert.doesNotMatch(appHtml, /id="incremental-consent"/u);
-  assert.match(appHtml, /id="electron-accountless-sharing-enabled"/u);
 });
 
 test("the retained weekly snapshot normalizer still guards the app's closed contract", () => {

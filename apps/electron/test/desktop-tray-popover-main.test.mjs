@@ -178,7 +178,7 @@ test("popover policy accepts only top-frame fixed actions and blocks navigation"
   webContents.emit("ipc-message", {
     sender: webContents,
     senderFrame: webContents.mainFrame,
-  }, TRAY_POPOVER_ACTION_CHANNEL, "weekly");
+  }, TRAY_POPOVER_ACTION_CHANNEL, "allowance");
   webContents.emit("ipc-message", {
     sender: webContents,
     senderFrame: { isMainFrame: false, parent: webContents.mainFrame },
@@ -190,7 +190,14 @@ test("popover policy accepts only top-frame fixed actions and blocks navigation"
   webContents.emit("ipc-message", {
     sender: webContents,
     senderFrame: webContents.mainFrame,
-  }, TRAY_POPOVER_ACTION_CHANNEL, "accounting");
+  }, TRAY_POPOVER_ACTION_CHANNEL, "usage");
+  // Retired native destinations are not part of the closed action vocabulary.
+  for (const retired of ["weekly", "timeline", "accounting"]) {
+    webContents.emit("ipc-message", {
+      sender: webContents,
+      senderFrame: webContents.mainFrame,
+    }, TRAY_POPOVER_ACTION_CHANNEL, retired);
+  }
   webContents.emit("ipc-message", {
     sender: webContents,
     senderFrame: webContents.mainFrame,
@@ -210,15 +217,15 @@ test("popover policy accepts only top-frame fixed actions and blocks navigation"
   webContents.emit("will-frame-navigate", {
     preventDefault: () => preventions.push("frame"),
   }, { isMainFrame: false, url: "data:text/html;charset=utf-8,initial" });
-  assert.deepEqual(calls, ["weekly", "accounting"]);
+  assert.deepEqual(calls, ["allowance", "usage"]);
   assert.deepEqual(preventions, ["navigate", "frame"]);
   assert.deepEqual(webContents.windowOpenHandler?.(), { action: "deny" });
   policy.remove();
   webContents.emit("ipc-message", {
     sender: webContents,
     senderFrame: webContents.mainFrame,
-  }, TRAY_POPOVER_ACTION_CHANNEL, "timeline");
-  assert.deepEqual(calls, ["weekly", "accounting"]);
+  }, TRAY_POPOVER_ACTION_CHANNEL, "performance");
+  assert.deepEqual(calls, ["allowance", "usage"]);
 });
 
 test("popover controller lazily positions, updates, routes, and destroys a trusted window", async () => {
@@ -289,8 +296,8 @@ test("popover controller lazily positions, updates, routes, and destroys a trust
   window.webContents.emit("ipc-message", {
     sender: window.webContents,
     senderFrame: window.webContents.mainFrame,
-  }, TRAY_POPOVER_ACTION_CHANNEL, "weekly");
-  assert.deepEqual(actions, ["history-7d", "weekly"]);
+  }, TRAY_POPOVER_ACTION_CHANNEL, "allowance");
+  assert.deepEqual(actions, ["history-7d", "allowance"]);
   assert.equal(popover.visible, false);
   assert.equal(window.webContents.sent.at(-1).channel, TRAY_POPOVER_VISIBILITY_CHANNEL);
   assert.equal(window.webContents.sent.at(-1).value, false);

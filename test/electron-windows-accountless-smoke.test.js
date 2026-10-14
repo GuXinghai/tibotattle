@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import {
-  mkdtemp,
-  rm,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import test from "node:test";
 import {
   parseWindowsAccountlessSmokeArguments,
@@ -15,18 +10,11 @@ import {
   observeWindowsSmokeStderr,
   prepareWindowsAccountlessSmokeFirstRunAcknowledgementForTest,
 } from "../scripts/smoke-electron-windows-accountless.mjs";
-import {
-  buildWindowsDevelopmentLaunchSpec,
-  prepareWindowsDevelopmentProfile,
-} from "../scripts/launch-electron-windows-development.mjs";
-import {
-  accountlessQualificationEnvironmentForTest,
-} from "../apps/electron/windows-qualification.js";
 
 const type = "windows-electron-smoke-v1";
 const state = { type, message: "state-v1", started: true, primary: true, window: true, visible: true, tray: true };
-const storage = { type, message: "credential-v1", operation: "accountless-storage-v1", status: "passed-v1" };
-const observationStorage = { ...storage, operation: "account-observation-storage-v1" };
+const observationStorage = { type, message: "credential-v1", operation: "account-observation-storage-v1", status: "passed-v1" };
+const retiredStorage = { ...observationStorage, operation: "accountless-storage-v1" };
 const quit = { type, message: "quit-v1", status: "accepted-v1" };
 function fakeChild(reply) {
   const child = new EventEmitter();
@@ -155,31 +143,6 @@ test("Windows smoke prepares and readbacks only the fixed first-run receipt in i
   assert.deepEqual(calls[5], ["load"]);
 });
 
-test("Windows accountless factory derives its private context from the actual launcher profile", {
-  skip: process.platform !== "win32",
-}, async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-accountless-profile-"));
-  try {
-    const appPath = join(root, "candidate", "TiboTattle Dev.exe");
-    const profile = await prepareWindowsDevelopmentProfile({
-      appPath,
-      profilePath: join(root, "profile"),
-    });
-    const spec = buildWindowsDevelopmentLaunchSpec({ appPath, profile });
-    const privateEnvironment = accountlessQualificationEnvironmentForTest(
-      spec.options.env,
-    );
-    assert.equal(spec.options.env.TEMP, profile.tmp);
-    assert.equal(privateEnvironment.TEMP, profile.root);
-    assert.equal(privateEnvironment.USAGE_MONITOR_STATE_ROOT, profile.state);
-    assert.equal(privateEnvironment.USERPROFILE, profile.home);
-    assert.equal(privateEnvironment.CODEX_HOME, profile.codex);
-    assert.notEqual(privateEnvironment, spec.options.env);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
 test("Windows smoke refuses an unauthenticated first-run context before it writes a receipt", async () => {
   const profile = disposableWindowsProfile();
   let receiptWrites = 0;
@@ -206,32 +169,30 @@ test("Windows smoke refuses an unauthenticated first-run context before it write
   assert.equal(receiptWrites, 0);
 });
 
-test("runner waits for ready then completes both fixed storage journeys and clean quit in order", async () => {
+test("runner waits for ready then completes the fixed observation storage journey and clean quit in order", async () => {
   const child = fakeChild((target, { command }) => {
-    target.emit("message", command === "status-v1" ? state : command === "accountless-storage-v1" ? storage : command === "account-observation-storage-v1" ? observationStorage : quit);
+    target.emit("message", command === "status-v1" ? state : command === "account-observation-storage-v1" ? observationStorage : quit);
     if (command === "quit-v1") setImmediate(() => { target.exitCode = 0; target.emit("exit", 0, null); });
   });
   const observations = {};
   await exerciseWindowsAccountlessSmoke(child, { timeoutMs: 1000, observations });
-  assert.deepEqual(child.commands, ["status-v1", "accountless-storage-v1", "account-observation-storage-v1", "quit-v1"].map((command) => ({ type, message: "command-v1", command })));
-  assert.equal(observations.storagePassed, true);
+  assert.deepEqual(child.commands, ["status-v1", "account-observation-storage-v1", "quit-v1"].map((command) => ({ type, message: "command-v1", command })));
   assert.equal(observations.accountObservationStoragePassed, true);
   assert.equal(observations.quitAcknowledged, true);
   assert.equal(child.listenerCount("message"), 0);
   assert.equal(child.listenerCount("exit"), 0);
 });
 
-test("storage failure or extra fields cannot produce a success receipt", async () => {
-  for (const response of [{ ...storage, status: "failed-v1" }, { ...storage, privateValue: "unexpected" }, { ...storage, operation: "credential-read-v1" }]) {
-    const child = fakeChild((target) => target.emit("message", response));
-    const protocol = createWindowsAccountlessSmokeProtocol(child, { timeoutMs: 50 });
-    await assert.rejects(protocol.request("accountless-storage-v1"), /STORAGE_FAILED/u);
-    protocol.close();
-  }
+test("the retired accountless storage command is refused by the fixed protocol", async () => {
+  const child = fakeChild(() => {});
+  const protocol = createWindowsAccountlessSmokeProtocol(child, { timeoutMs: 50 });
+  await assert.rejects(protocol.request("accountless-storage-v1"), /COMMAND_REFUSED/u);
+  assert.equal(child.commands.length, 0);
+  protocol.close();
 });
 
-test("observation storage rejects failures, extra fields and results from the independent upload credential journey", async () => {
-  for (const response of [{ ...observationStorage, status: "failed-v1" }, { ...observationStorage, privateValue: "unexpected" }, storage]) {
+test("observation storage rejects failures, extra fields and results from any other operation", async () => {
+  for (const response of [{ ...observationStorage, status: "failed-v1" }, { ...observationStorage, privateValue: "unexpected" }, retiredStorage]) {
     const child = fakeChild((target) => target.emit("message", response));
     const protocol = createWindowsAccountlessSmokeProtocol(child, { timeoutMs: 50 });
     await assert.rejects(protocol.request("account-observation-storage-v1"), /OBSERVATION_STORAGE_FAILED/u);
@@ -239,13 +200,12 @@ test("observation storage rejects failures, extra fields and results from the in
   }
 });
 
-test("observation failure preserves the upload result without claiming the second journey or a clean quit", async () => {
+test("observation failure does not claim the journey or a clean quit", async () => {
   const observations = {};
   const child = fakeChild((target, { command }) => {
-    target.emit("message", command === "status-v1" ? state : command === "accountless-storage-v1" ? storage : { ...observationStorage, status: "failed-v1" });
+    target.emit("message", command === "status-v1" ? state : { ...observationStorage, status: "failed-v1" });
   });
   await assert.rejects(exerciseWindowsAccountlessSmoke(child, { timeoutMs: 100, observations }), /OBSERVATION_STORAGE_FAILED/u);
-  assert.equal(observations.storagePassed, true);
   assert.equal(observations.accountObservationStorageRequested, true);
   assert.notEqual(observations.accountObservationStoragePassed, true);
   assert.notEqual(observations.quitAcknowledged, true);
@@ -302,16 +262,14 @@ test("malformed lifecycle state and asynchronous send errors fail without leakin
   protocol.close();
 });
 
-test("startup observation can be retried while a storage request is never replayed", async () => {
+test("startup observation can be retried while the storage request is never replayed", async () => {
   let statusCount = 0;
   const child = fakeChild((target, { command }) => {
     if (command === "status-v1" && ++statusCount === 2) target.emit("message", state);
   });
   const protocol = createWindowsAccountlessSmokeProtocol(child, { timeoutMs: 600 });
   assert.equal((await protocol.request("status-v1")).started, true);
-  await assert.rejects(protocol.request("accountless-storage-v1"), /TIMEOUT/u);
   assert.equal(child.commands.filter(({ command }) => command === "status-v1").length, 2);
-  assert.equal(child.commands.filter(({ command }) => command === "accountless-storage-v1").length, 1);
   await assert.rejects(protocol.request("account-observation-storage-v1"), /TIMEOUT/u);
   assert.equal(child.commands.filter(({ command }) => command === "account-observation-storage-v1").length, 1);
   protocol.close();

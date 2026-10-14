@@ -4,8 +4,7 @@
 // It never signs, enables production selection, or accepts a user-selected
 // install location. The only NSIS /D target is a new private child of
 // RUNNER_TEMP. The receipt keeps application credential persistence unproven:
-// the accountless FD3 journey deletes its synthetic record, while the
-// observation credential is scoped to the disposable runner account lifetime.
+// the observation credential is scoped to the disposable runner account lifetime.
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdtemp, open, readFile, readdir, rmdir, rm, unlink } from "node:fs/promises";
@@ -72,7 +71,6 @@ const FIRST_LAUNCH_PHASES = new Set([
   "launcher_child_spawn",
   "ready_private_ipc",
   "ready_process_identity",
-  "accountless_storage_private_ipc",
   "account_observation_storage_private_ipc",
   "quit_private_ipc",
   "quit_child_exit",
@@ -124,7 +122,6 @@ const FIRST_LAUNCH_FAILURE_CODES = new Set([
   `${PREFIX}OWNED_PROCESS_REMAINS`,
   "ELECTRON_WINDOWS_ACCOUNTLESS_SMOKE_CHILD_EXITED",
   "ELECTRON_WINDOWS_ACCOUNTLESS_SMOKE_RESPONSE_INVALID",
-  "ELECTRON_WINDOWS_ACCOUNTLESS_SMOKE_STORAGE_FAILED",
   "ELECTRON_WINDOWS_ACCOUNTLESS_SMOKE_OBSERVATION_STORAGE_FAILED",
   "ELECTRON_WINDOWS_ACCOUNTLESS_SMOKE_COMMAND_REFUSED",
   "ELECTRON_WINDOWS_ACCOUNTLESS_SMOKE_TIMEOUT",
@@ -209,8 +206,6 @@ function boundedFirstLaunchObservations(observations) {
   return Object.freeze({
     entryFailureObserved: observations?.entryFailureObserved === true,
     statusResponseObserved: observations?.statusResponseObserved === true,
-    storageRequested: observations?.storageRequested === true,
-    storagePassed: observations?.storagePassed === true,
     accountObservationStorageRequested: observations?.accountObservationStorageRequested === true,
     accountObservationStoragePassed: observations?.accountObservationStoragePassed === true,
     accountObservationFailureStage: FIRST_LAUNCH_OBSERVATION_FAILURE_STAGES
@@ -1422,7 +1417,7 @@ function observeOwnedProcessTreeAtReady(child, readSnapshot) {
 const delay = (milliseconds) => new Promise((done) => setTimeout(done, milliseconds));
 
 /**
- * Reuse the fixed accountless protocol but fence its mutation and quit steps
+ * Reuse the fixed smoke protocol but fence its mutation and quit steps
  * behind the ready-time process snapshot. This prevents the app from exiting
  * before its first process-tree proof exists.
  */
@@ -1457,9 +1452,6 @@ export async function exerciseWindowsNsisLifecycleSmoke(child, {
       if (Date.now() >= deadline) fail("APPLICATION_STARTUP_TIMEOUT");
       await delay(250);
     }
-    if (observations) observations.storageRequested = true;
-    await request("accountless-storage-v1", "accountless_storage_private_ipc");
-    if (observations) observations.storagePassed = true;
     if (observations) observations.accountObservationStorageRequested = true;
     await request("account-observation-storage-v1", "account_observation_storage_private_ipc");
     if (observations) observations.accountObservationStoragePassed = true;
@@ -1508,8 +1500,6 @@ export async function defaultLaunchAndExercise({
   const observations = {
     entryFailureObserved: false,
     statusResponseObserved: false,
-    storageRequested: false,
-    storagePassed: false,
     accountObservationStorageRequested: false,
     accountObservationStoragePassed: false,
     accountObservationFailureStage: null,
@@ -1587,8 +1577,7 @@ export async function defaultLaunchAndExercise({
       // this boundary.
       accountObservationStorageJourneyCompleted:
         observations.accountObservationStoragePassed === true,
-      storageJourneyCompleted: observations.storagePassed === true
-        && observations.accountObservationStoragePassed === true,
+      storageJourneyCompleted: observations.accountObservationStoragePassed === true,
     });
   } catch (error) {
     primaryError = error;
@@ -1848,8 +1837,7 @@ function lifecycleReceipt({
     // executables, so that broader process-tree claim remains unavailable.
     fullOwnedDescendantCleanupVerified: false,
     profileReusedAcrossLaunches: launches.length === 2,
-    // The accountless FD3 journey intentionally removes its synthetic record
-    // at exit. The FD4 route below creates then reads the deterministic
+    // The FD4 route below creates then reads the deterministic
     // qualification record through the native Credential Manager backend in
     // two top-level Electron processes under this disposable runner account.
     // It is synthetic test evidence, not evidence of a production credential
@@ -1861,8 +1849,6 @@ function lifecycleReceipt({
     nativeCredentialManagerSyntheticRecordReadAcrossTopLevelRelaunches:
       first?.accountObservationStorageJourneyCompleted === true
       && second?.accountObservationStorageJourneyCompleted === true,
-    accountlessSyntheticRecordDeleted: launches.length === 2
-      && launches.every((launch) => launch.storageJourneyCompleted === true),
     accountObservationCredentialCleanup: "disposable_runner_account_lifetime",
     uninstallationAttempted,
     uninstallationPerformed,

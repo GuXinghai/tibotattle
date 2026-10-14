@@ -15,7 +15,7 @@ import {
 import {
   assertCandidateProcessAbsence, installOutboundFirewallBlock, removeOutboundFirewallBlock,
   launchAndRenderCandidate, prepareWindowsNormalCandidateProfile,
-  seedWindowsNormalCandidateCodexFixture, verifyWindowsNormalCandidateOptOut,
+  seedWindowsNormalCandidateCodexFixture,
   verifyWindowsNormalCandidateSmokePackage,
 } from './smoke-electron-windows-normal-candidate.mjs';
 import {
@@ -111,7 +111,7 @@ function validateJourney(journey, candidateState) {
   if (candidateState.quiescent !== true || !Array.isArray(candidateState.tracked)
       || candidateState.tracked.length < 2
       || ['dashboardRendered', 'localRefreshObserved', 'syntheticIngestionVerified',
-        'projectsAndThreadsVerified', 'sharingOptOutRetained', 'settingsPersisted', 'cleanQuit']
+        'projectsAndThreadsVerified', 'settingsPersisted', 'cleanQuit']
         .some(key => journey?.[key] !== true)
       || !['succeeded', 'degraded'].includes(journey.localRefreshTerminal)) fail('NORMAL_JOURNEY_UNPROVEN');
 }
@@ -154,9 +154,9 @@ export async function snapshotWindowsFinalUpgradeProfile(root, {
 /** The synthetic injection boundary tests ordering/refusal; native callers use
  * these defaults. Replacing files precedes successor runtime, with no reseeding. */
 export async function runWindowsFinalUpgradeContinuity({ previous, candidate, appPath,
-  profile, seed, environment, candidateState, replaceInstaller }, {
+  profile, environment, candidateState, replaceInstaller }, {
   verifyPackage = verifyWindowsNormalCandidateSmokePackage,
-  launchJourney = launchAndRenderCandidate, verifyOptOut = verifyWindowsNormalCandidateOptOut,
+  launchJourney = launchAndRenderCandidate,
   processAbsence = assertCandidateProcessAbsence, snapshotProfile = snapshotWindowsFinalUpgradeProfile,
 } = {}) {
   const oldOptions = normalOptions(previous, appPath), newOptions = normalOptions(candidate, appPath);
@@ -166,7 +166,6 @@ export async function runWindowsFinalUpgradeContinuity({ previous, candidate, ap
   // The launch helper retains PID + creation identity for the main process and
   // every observed companion/renderer descendant, including reparented ones.
   await processAbsence({ appPath, environment, tracked: candidateState.tracked });
-  if (await verifyOptOut(seed) !== true) fail('OPT_OUT_UNPROVEN');
   if (JSON.stringify(await verifyPackage(oldOptions)) !== JSON.stringify(oldIdentity)) fail('PREDECESSOR_BYTES_CHANGED');
   const profileBefore = await snapshotProfile(profile.root);
   await replaceInstaller();
@@ -174,20 +173,19 @@ export async function runWindowsFinalUpgradeContinuity({ previous, candidate, ap
   if (JSON.stringify(profileBefore) !== JSON.stringify(profileAfter)) fail('PROFILE_CHANGED_BY_INSTALLER');
   const newIdentity = validateIdentity(await verifyPackage(newOptions), candidate);
   if (oldIdentity.artifactSha256 === newIdentity.artifactSha256) fail('SUCCESSOR_BYTES_UNCHANGED');
-  // Runtime may migrate schemas/caches. Its observed totals/settings/opt-out,
+  // Runtime may migrate schemas/caches. Its observed totals/settings,
   // rather than byte equality after launch, establish semantic continuity.
   for (let index = 0; index < 2; index += 1) {
     const journey = await launchJourney({ appPath, profile, environment, changeSettings: false, candidateState });
     validateJourney(journey, candidateState);
     await processAbsence({ appPath, environment, tracked: candidateState.tracked });
-    if (await verifyOptOut(seed) !== true) fail('OPT_OUT_UNPROVEN');
     if (JSON.stringify(await verifyPackage(newOptions)) !== JSON.stringify(newIdentity)) fail('SUCCESSOR_BYTES_CHANGED');
   }
   return Object.freeze({ predecessorIdentity: oldIdentity, successorIdentity: newIdentity,
     predecessorNormalJourney: true, predecessorOwnedProcessesExited: true,
     profileUnchangedAcrossInstaller: true, preservedProfileEntries: profileBefore.entries,
     syntheticHistoryRetainedAcrossUpgrade: true, projectsAndThreadsRetainedAcrossUpgrade: true,
-    settingsRetainedAcrossUpgrade: true, durableOptOutRetainedAcrossUpgrade: true,
+    settingsRetainedAcrossUpgrade: true,
     successorNormalJourney: true, successorColdRestart: true, successorOwnedProcessesExited: true });
 }
 
@@ -285,10 +283,10 @@ export async function runWindowsFinalUpgrade(options, {
     profile = await prepareWindowsDevelopmentProfile({ appPath, profilePath: win32.join(root, 'profile') });
     profileIdentity = await lstat(profile.root, { bigint: true });
     await seedWindowsNormalCandidateCodexFixture({ profile });
-    const seed = await prepareWindowsNormalCandidateProfile({ profile, stagedAppPath: options.predecessor.stagedAppPath });
+    await prepareWindowsNormalCandidateProfile({ profile, stagedAppPath: options.predecessor.stagedAppPath });
     firewallName = await installOutboundFirewallBlock({ appPath, environment });
     receipt.continuity = await runWindowsFinalUpgradeContinuity({ previous: options.predecessor,
-      candidate: options.candidate, appPath, profile, seed, environment, candidateState,
+      candidate: options.candidate, appPath, profile, environment, candidateState,
       replaceInstaller: async () => {
         if (candidateState.quiescent !== true) fail('PREDECESSOR_PROCESS_REMAINS');
         if (await registry(installRoot, environment, runProgram) !== 'expected-v1') fail('UPGRADE_OWNERSHIP_UNPROVEN');
