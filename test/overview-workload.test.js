@@ -56,12 +56,12 @@ test("stale quota and rebound cannot double count consumption in any card",()=>{
   const input={nowMs,events:[event("start",nowMs-30*M),event("complete",nowMs)],
     quota:[q(30,10),q(25,16),q(20,10),q(15,16),q(10,15),q(5,17),q(0,16)],
     usage:[{atMs:nowMs-2*M,session:"session",usd:7,priced:true}],
-    capacity:{usd:100,availableAtMs:nowMs-60*M},comparisonAnchorMs:nowMs-30*M};
+    capacity:{usd:100,availableAtMs:nowMs-60*M},liveSinceMs:nowMs-30*M};
   const r=analyzeWorkload(input);
   assert.equal(r.coverage.actualPp,7);assert.equal(r.adjustments.quotaStaleObservations,3);
   assert.equal(r.daily.reduce((s,d)=>s+d.light+d.medium+d.heavy+d.unclassified,0),7);
   assert.equal(r.allowance.remainingPercent,83);assert.equal(r.allowance.observedAt,new Date(nowMs-5*M).toISOString());
-  assert.equal(r.comparison.points.at(-1).value,null); // no API usage before this accepted endpoint
+  assert.equal(r.comparison.actualPp,7);assert.equal(r.comparison.expectedPp,0); // no API usage before the last accepted endpoint
   assert.equal(r.allowance.points.at(-1).remainingPercent,null);
   assert.deepEqual(analyzeWorkload({...input,quota:input.quota.toReversed()}).coverage,r.coverage);
 });
@@ -113,18 +113,62 @@ test("resets are never subtracted; conflicting quota remains explicit",()=>{
   assert.equal(conflict.allowance.remainingPercent,null);assert.ok(conflict.errors.length);
 });
 test("comparison uses cumulative consumption, with no work-hour denominator",()=>{
-  const v=analyzeWorkload({nowMs,comparisonAnchorMs:nowMs-10*M,capacity:{usd:100,availableAtMs:nowMs-60*M},
+  const v=analyzeWorkload({nowMs,liveSinceMs:nowMs-10*M,capacity:{usd:100,availableAtMs:nowMs-60*M},
     quota:[{atMs:nowMs-10*M,usedPercent:29,resetKey:"r"},{atMs:nowMs,usedPercent:34,resetKey:"r"}],
     usage:[{atMs:nowMs-M,session:"session",usd:4,priced:true}]});
-  assert.equal(v.comparison.points.at(-1).value,25);
+  assert.equal(v.comparison.actualPp,5);assert.equal(v.comparison.expectedPp,4);
 });
-test("weekly reset immediately rebases the comparison within the current hour",()=>{
-  const v=analyzeWorkload({nowMs,comparisonAnchorMs:nowMs-30*M,capacity:{usd:100,availableAtMs:nowMs-60*M},
+test("weekly resets preserve startup totals and never subtract across cycles",()=>{
+  const v=analyzeWorkload({nowMs,liveSinceMs:nowMs-30*M,capacity:{usd:100,availableAtMs:nowMs-60*M},
     quota:[{atMs:nowMs-30*M,usedPercent:90,resetKey:"old"},
+      {atMs:nowMs-20*M,usedPercent:94,resetKey:"old"},
       {atMs:nowMs-10*M,usedPercent:0,resetKey:"new"},{atMs:nowMs,usedPercent:5,resetKey:"new"}],
-    usage:[{atMs:nowMs-M,session:"session",usd:4,priced:true}]});
-  assert.equal(v.comparison.anchorMs,nowMs-10*M);
-  assert.equal(v.comparison.points.at(-1).value,25);
+    usage:[{atMs:nowMs-25*M,session:"session",usd:3,priced:true},{atMs:nowMs-M,session:"session",usd:4,priced:true}]});
+  assert.equal(v.comparison.startedAtMs,nowMs-30*M);
+  assert.equal(v.comparison.actualPp,9);assert.equal(v.comparison.expectedPp,7);
+});
+
+test("startup accumulation does not slide after an hour or seven days and excludes prelaunch usage",()=>{
+  const start=nowMs-8*24*60*M;
+  const input={nowMs,liveSinceMs:start,capacity:{usd:100,availableAtMs:start-M},
+    quota:[{atMs:start-M,usedPercent:4,resetKey:"r"},{atMs:start,usedPercent:5,resetKey:"r"},
+      {atMs:start+10*M,usedPercent:6,resetKey:"r"},{atMs:nowMs,usedPercent:9,resetKey:"r"}],
+    usage:[{atMs:start-M,usd:99,priced:true},{atMs:start+5*M,usd:1,priced:true},{atMs:nowMs-M,usd:2,priced:true}]};
+  const v=analyzeWorkload(input);assert.equal(v.comparison.startedAtMs,start);
+  assert.equal(v.comparison.actualPp,4);assert.equal(v.comparison.expectedPp,3);
+  const refreshed=analyzeWorkload({...input,nowMs:nowMs+5*M,comparisonCapacityUsd:100,
+    capacity:{usd:200,availableAtMs:nowMs+M}});
+  assert.deepEqual(refreshed.comparison,v.comparison);
+  const restarted=analyzeWorkload({...input,liveSinceMs:nowMs});
+  assert.equal(restarted.comparison.actualPp,0);assert.equal(restarted.comparison.expectedPp,0);
+});
+
+test("startup comparison tolerates bounded reset timestamp jitter only with compatible explicit metadata",()=>{
+  const q=(minutes,used,offset,planType="prolite")=>({atMs:nowMs-minutes*M,usedPercent:used,
+    resetAtMs:nowMs+offset,resetKey:`${offset}:${planType}`,planType,limitId:"codex"});
+  const input={nowMs,liveSinceMs:nowMs-20*M,capacity:{usd:100,availableAtMs:nowMs-30*M},
+    quota:[q(20,10,0),q(15,11,1000),q(10,10,0),q(5,11,2000),q(0,12,0)],
+    usage:[{atMs:nowMs-12*M,usd:1,priced:true},{atMs:nowMs-M,usd:1,priced:true}]};
+  const v=analyzeWorkload(input);assert.equal(v.comparison.actualPp,2);assert.equal(v.comparison.expectedPp,2);
+  assert.equal(v.errors.length,0);
+  const distinct=analyzeWorkload({...input,quota:[q(20,10,0),q(0,12,6000)]});
+  assert.ok(distinct.errors.some(e=>e.code==="comparison_reset_gap"));
+  const plan=analyzeWorkload({...input,quota:[q(20,10,0),q(0,12,0,"plus")]});
+  assert.ok(plan.errors.some(e=>e.code==="comparison_reset_gap"));
+});
+
+test("comparison distinguishes missing evidence, unpriced usage and ambiguous reset gaps from zero",()=>{
+  const quota=[{atMs:nowMs-20*M,usedPercent:10,resetKey:"old"},{atMs:nowMs-10*M,usedPercent:1,resetKey:"new"},{atMs:nowMs,usedPercent:2,resetKey:"new"}];
+  const input={nowMs,liveSinceMs:nowMs-20*M,quota,capacity:{usd:100,availableAtMs:nowMs-30*M}};
+  const gap=analyzeWorkload({...input,usage:[{atMs:nowMs-15*M,usd:1,priced:true}]});
+  assert.equal(gap.comparison.actualPp,null);assert.equal(gap.comparison.expectedPp,null);
+  assert.ok(gap.errors.some(e=>e.code==="comparison_reset_gap"));
+  const unpriced=analyzeWorkload({...input,usage:[{atMs:nowMs-M,usd:null,priced:false}]});
+  assert.equal(unpriced.comparison.actualPp,1);assert.equal(unpriced.comparison.expectedPp,null);
+  assert.equal(analyzeWorkload({...input,capacity:null}).comparison.expectedPp,null);
+  assert.equal(analyzeWorkload({...input,quota:[]}).comparison.actualPp,null);
+  const conflict=analyzeWorkload({...input,quota:[...quota,{atMs:nowMs,usedPercent:3,resetKey:"new"}]});
+  assert.equal(conflict.comparison.actualPp,null);assert.ok(conflict.errors.some(e=>e.code==="comparison_quota_conflict"));
 });
 test("receipts at five-minute boundaries use the preceding completed work bucket",()=>{
   const usage=Array.from({length:12},(_,i)=>({atMs:nowMs-(11-i)*5*M,session:"session",usd:i<4?1:i<8?2:3,priced:true}));

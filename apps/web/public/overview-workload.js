@@ -4,7 +4,7 @@ const finite=(v)=>typeof v==="number"&&Number.isFinite(v);
 const instant=(v)=>typeof v==="string"&&Number.isFinite(Date.parse(v));
 // Closed projection: never spread companion records into DOM-facing state.
 export function normalizeOverviewWorkload(value) {
-  if(!value||value.schemaVersion!=="overview-workload-v1")return null;
+  if(!value||value.schemaVersion!=="overview-workload-v2")return null;
   const scalar=(x)=>finite(x)&&x>=0?x:null;
   const rows=(x)=>Array.isArray(x)?x:[];
   return {schemaVersion:value.schemaVersion,status:["available","partial","stale","unavailable"].includes(value.status)?value.status:"unavailable",
@@ -19,7 +19,10 @@ export function normalizeOverviewWorkload(value) {
     current:{state:["working","idle","unknown"].includes(value.current?.state)?value.current.state:"unknown",
       level:["heavy","medium","light","unclassified"].includes(value.current?.level)?value.current.level:null,
       hours:scalar(value.current?.hours),ratePpPerHour:scalar(value.current?.ratePpPerHour)},
-    comparison:{points:rows(value.comparison?.points).filter(x=>instant(x?.at)).map(x=>({at:x.at,value:finite(x.value)?x.value:null}))}};
+    comparison:{startedAtMs:Number.isSafeInteger(value.comparison?.startedAtMs)&&value.comparison.startedAtMs>=0?value.comparison.startedAtMs:null,
+      observedFrom:instant(value.comparison?.observedFrom)?value.comparison.observedFrom:null,
+      observedThrough:instant(value.comparison?.observedThrough)?value.comparison.observedThrough:null,
+      actualPp:scalar(value.comparison?.actualPp),expectedPp:scalar(value.comparison?.expectedPp)}};
 }
 
 export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}) {
@@ -85,5 +88,21 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
     const rate=node("p","workload-current-rate");rate.append(node("span","",t("workload.rate")),node("strong","",finite(c.ratePpPerHour)?t("workload.rateValue",{value:num(c.ratePpPerHour)}):"—"));current.append(rate);
     const rest=node("p","workload-current-hours");rest.append(node("span","",t("workload.canWork")),node("strong","",hour(c.hours)));current.append(rest);}
   grid.append(current);
-  const comparison=card("comparison");comparison.classList.add("workload-wide");comparison.append(lineChart(w?.comparison?.points??[],"comparison","value"));grid.append(comparison);
+  const comparison=card("comparison");comparison.classList.add("workload-wide");
+  const totals=w?.comparison;
+  if(totals?.startedAtMs!==null&&totals?.startedAtMs!==undefined)comparison.append(node("p","workload-comparison-period",
+    t("workload.sinceStartup",{time:new Date(totals.startedAtMs).toLocaleString(locale,{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})})));
+  const columns=svgNode("svg",{viewBox:"0 0 640 240",role:"img","aria-label":t("workload.title.comparison")});
+  const values=[totals?.actualPp??null,totals?.expectedPp??null],scale=Math.max(1,...values.map(x=>x??0));
+  for(let i=0;i<=4;i++){const yy=174-i*134/4;columns.append(svgNode("line",{x1:46,x2:622,y1:yy,y2:yy,stroke:"#ddd"}));
+    const label=svgNode("text",{x:38,y:yy+4,"text-anchor":"end"});label.textContent=num(scale*i/4);columns.append(label);}
+  const pp=svgNode("text",{x:46,y:16});pp.textContent=t("workload.points");columns.append(pp);
+  values.forEach((v,i)=>{const cx=220+i*230,h=v===null?0:v/scale*134,top=174-h,color=i===0?"#111":"#888";
+    const column=svgNode("g",{"data-comparison-column":i===0?"actual":"expected"});
+    if(v!==null&&v>0){column.append(svgNode("rect",{x:cx-46,y:top,width:92,height:h,fill:color}),
+      svgNode("ellipse",{cx,cy:174,rx:46,ry:6,fill:color}),svgNode("ellipse",{cx,cy:top,rx:46,ry:6,fill:color,stroke:"#fff","stroke-width":1}));}
+    const amount=svgNode("text",{x:cx,y:top-15,"text-anchor":"middle","font-weight":"bold"});amount.textContent=v===null?"—":`${num(v,2)} ${t("workload.points")}`;
+    const label=svgNode("text",{x:cx,y:216,"text-anchor":"middle"});label.textContent=t(i===0?"workload.actualConsumption":"workload.expectedConsumption");
+    column.append(amount,label);columns.append(column);});
+  comparison.append(columns);grid.append(comparison);
 }

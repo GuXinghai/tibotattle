@@ -9498,7 +9498,7 @@ function startElectronStartupRefresh() {
       && Number.isFinite(generatedMs)
       && new Date(generatedMs).toISOString() === generatedAt
       && ageMs >= 0 && ageMs < 60 * 60_000;
-    const workloadReady = dashboard?.workload?.schemaVersion === "overview-workload-v1"
+    const workloadReady = dashboard?.workload?.schemaVersion === "overview-workload-v2"
       && !["unavailable", "stale"].includes(dashboard.workload.status);
     const startupRefreshOptions = freshIndex && workloadReady ? {} : { detailed: true };
     void requestRefresh(startupRefreshOptions);

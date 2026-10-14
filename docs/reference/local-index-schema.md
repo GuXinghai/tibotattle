@@ -135,7 +135,7 @@ source cursor are provisional; recovery and source replacement remove them with
 the other affected facts. Work includes tools and necessary waiting, and parallel
 intervals count once. Inference performance timing remains independent.
 
-Workload policy `task-workload-v2` projects, rather than rewrites, these facts.
+Workload policy `task-workload-v3` projects, rather than rewrites, these facts.
 Retained unambiguous ancestry identifies copied task boundaries, including
 paginated forks; a copied completion must also match the ancestor's reported
 duration. New child work remains included, and unsupported/cyclic ancestry does
@@ -155,8 +155,17 @@ timestamp. This is an observed-consumption policy, not proof that a provider
 cannot issue a credit within a reset cycle.
 
 Overview groups committed usage timestamps into five-minute bins without
-splitting fifteen-minute display rollups. Its comparison anchor and capacity
-history persist in `private/overview-workload-state.json` under the same state
+splitting fifteen-minute display rollups. The `overview-workload-v2` comparison
+reports two startup totals in percentage points, without a rolling display
+window or relative-ratio curve. Actual consumption sums only within each reset
+identity, retaining the high watermark; unmatched usage across reset boundaries
+and simultaneous quota conflicts remain explicit. Expected consumption uses
+the same covered intervals and the first known capacity frozen for that startup.
+The seven-day cards keep their existing range and current-plan filter. Startup
+reads extend beyond seven days when necessary. Its startup identity, frozen
+capacity and capacity history persist in `private/overview-workload-state.json`
+as `overview-workload-state-v2`; v1 reads preserve capacity history, while writes
+are forward-only. The same state
 root, using the existing validated Windows protected private boundary. The
 outer legacy state directory need not be rewritten. Write failures are visible
 publication errors.

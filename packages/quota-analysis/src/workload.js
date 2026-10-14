@@ -1,8 +1,9 @@
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 export const WORKLOAD_POLICY = Object.freeze({
-  version: "task-workload-v2", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
+  version: "task-workload-v3", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
   currentMs: 15 * MINUTE, minimumBins: 9, minimumClassBins: 3, minimumClassMs: MINUTE,
+  comparisonResetToleranceMs: 5_000,
 });
 const LEVELS = ["light", "medium", "heavy"];
 const finite = (x) => typeof x === "number" && Number.isFinite(x);
@@ -140,7 +141,7 @@ function dateKey(atMs, formatter) {
 }
 
 export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], capacity = null,
-  capacityHistory = [], liveSinceMs = nowMs, sourceFresh = false, timeZone = "UTC", comparisonAnchorMs = null }) {
+  capacityHistory = [], liveSinceMs = nowMs, sourceFresh = false, timeZone = "UTC", comparisonCapacityUsd = null }) {
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError("workload_clock_invalid");
   const fromMs = Math.max(0, nowMs - WORKLOAD_POLICY.historyMs);
   const dateFormatter=new Intl.DateTimeFormat("en-CA",{timeZone,year:"numeric",month:"2-digit",day:"2-digit"});
@@ -249,29 +250,59 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const current = { state:currentState, level: currentState==="working" ? classify(usdRate,centers) : null,
     ratePpPerHour:currentState==="working" ? currentRate : null,
     hours:currentState==="working" ? ratioHours(remainingPercent,currentRate) : null };
-  const first = accepted[0];
-  let anchor = finite(comparisonAnchorMs) ? comparisonAnchorMs : first?.atMs ?? nowMs;
-  // A new weekly allowance starts a new comparison, even within an hour.
-  const cycleStart = accepted.find((q) => q.resetKey === latest?.resetKey);
-  if (cycleStart) anchor = Math.max(anchor, cycleStart.atMs);
-  const versions=capacityHistory.length?capacityHistory:capacity?[capacity]:[];
-  if(versions.length)anchor=Math.max(anchor,versions[0].availableAtMs);
-  if (nowMs-anchor>HOUR && nowMs-(latest?.atMs??0)>HOUR) anchor=nowMs;
-  while (nowMs-anchor>=HOUR) anchor+=40*MINUTE;
-  const base = accepted.find((q) => q.atMs>=anchor && q.atMs<anchor+WORKLOAD_POLICY.bucketMs);
-  const comparisonCapacity=base?versions.filter(c=>c.availableAtMs<=base.atMs).at(-1):null;
-  const comparisonUsd=finite(comparisonCapacity?.usd)&&comparisonCapacity.usd>0?comparisonCapacity.usd:null;
-  const points=[];
-  if (base && comparisonUsd!==null) {
-    const grouped = new Map();
-    for (const q of accepted.filter((q) => q.atMs>=base.atMs && q.resetKey===base.resetKey)) grouped.set(Math.floor(q.atMs/WORKLOAD_POLICY.bucketMs),q);
-    for (const q of grouped.values()) {
-      const us=selectedUsage.filter((u) => u.atMs>base.atMs&&u.atMs<=q.atMs);
-      const e=100*us.reduce((s,u)=>s+(u.priced?u.usd:0),0)/comparisonUsd;
-      const a=q.usedPercent-base.usedPercent;
-      points.push({ at:iso(q.atMs), value: e>0 && a>=0 && us.every((u)=>u.priced) ? (a/e-1)*100 : null });
+  // Startup totals are independent of the seven-day display window. A reset
+  // starts a new pairing baseline, never a new application accumulation.
+  const startedAtMs = Math.max(0,Math.min(nowMs,liveSinceMs));
+  const versions=(capacityHistory.length?capacityHistory:capacity?[capacity]:[])
+    .filter(c=>c.availableAtMs<=nowMs).sort((a,b)=>a.availableAtMs-b.availableAtMs);
+  const initialCapacity=versions.filter(c=>c.availableAtMs<=startedAtMs).at(-1)
+    ??versions.find(c=>c.availableAtMs>=startedAtMs);
+  const comparisonUsd=finite(comparisonCapacityUsd)&&comparisonCapacityUsd>0?comparisonCapacityUsd
+    :finite(initialCapacity?.usd)&&initialCapacity.usd>0?initialCapacity.usd:null;
+  // Only explicit matching plan/limit metadata allows seconds-level reset
+  // timestamp jitter to share a startup baseline. Opaque tracks stay distinct.
+  // Clusters are bounded against their first reset, never chained wider.
+  const comparisonKeys=new Map(),scopes=new Map();
+  for(const q of allObservations){
+    if(!Number.isSafeInteger(q.resetAtMs)||typeof q.planType!=="string"||typeof q.limitId!=="string")continue;
+    const scope=`${q.planType}:${q.limitId}`,rows=scopes.get(scope)??[];rows.push(q);scopes.set(scope,rows);
+  }
+  for(const [scope,rows] of scopes){let first=null;
+    for(const q of rows.sort((a,b)=>a.resetAtMs-b.resetAtMs)){
+      if(first===null||q.resetAtMs-first>WORKLOAD_POLICY.comparisonResetToleranceMs)first=q.resetAtMs;
+      comparisonKeys.set(q.resetKey,`${scope}:${first}`);
     }
   }
+  const startupHigh=new Map();let prior=null,observedFrom=null,observedThrough=null,cumulativePp=0;
+  const comparisonRanges=[];let comparisonConflict=false,resetGap=false;
+  for(const original of allObservations){
+    const q={...original,resetKey:comparisonKeys.get(original.resetKey)??original.resetKey};
+    if(q.atMs<startedAtMs){if(!q.conflict)startupHigh.set(q.resetKey,Math.max(startupHigh.get(q.resetKey)??0,q.usedPercent));continue;}
+    if(q.conflict){comparisonConflict=true;prior=null;continue;}
+    const high=startupHigh.get(q.resetKey);
+    if(high!==undefined&&q.usedPercent<high)continue;
+    observedFrom??=q.atMs;observedThrough=q.atMs;
+    if(prior?.resetKey===q.resetKey){
+      cumulativePp+=q.usedPercent-(high??prior.usedPercent);
+      comparisonRanges.push([prior.atMs,q.atMs]);
+    }else if(prior&&usage.some(u=>u.atMs>prior.atMs&&u.atMs<=q.atMs))resetGap=true;
+    startupHigh.set(q.resetKey,q.usedPercent);prior=q;
+  }
+  const comparisonUsage=[];let rangeIndex=0;
+  for(const u of [...usage].sort((a,b)=>a.atMs-b.atMs)){
+    while(rangeIndex<comparisonRanges.length&&u.atMs>comparisonRanges[rangeIndex][1])rangeIndex++;
+    const range=comparisonRanges[rangeIndex];
+    if(range&&u.atMs>range[0]&&u.atMs<=range[1])comparisonUsage.push(u);
+  }
+  const comparisonPriced=comparisonUsage.every(u=>u.priced&&finite(u.usd));
+  const comparison={startedAtMs,observedFrom:observedFrom===null?null:iso(observedFrom),
+    observedThrough:observedThrough===null?null:iso(observedThrough),capacityUsd:comparisonUsd,
+    actualPp:observedFrom!==null&&!comparisonConflict&&!resetGap?cumulativePp:null,
+    expectedPp:observedFrom!==null&&comparisonUsd!==null&&comparisonPriced&&!comparisonConflict&&!resetGap
+      ?100*comparisonUsage.reduce((s,u)=>s+u.usd,0)/comparisonUsd:null};
+  if(comparisonConflict)errors.push({code:"comparison_quota_conflict",stage:"quota"});
+  if(resetGap)errors.push({code:"comparison_reset_gap",stage:"quota"});
+  if(!comparisonPriced)errors.push({code:"price_missing",stage:"pricing"});
   if (selectedUsage.some((u)=>!u.priced)) errors.push({code:"price_missing",stage:"pricing"});
   const allowancePoints=new Map();
   for(const q of observations)allowancePoints.set(`${Math.floor(q.atMs/WORKLOAD_POLICY.bucketMs)}:${q.resetKey}`,q);
@@ -279,13 +310,13 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const groupedErrors=new Map();
   for(const error of errors){const key=`${error.stage}:${error.code}`,prior=groupedErrors.get(key);
     groupedErrors.set(key,{...error,count:(prior?.count??0)+(error.count??1)});}
-  return { schemaVersion:"overview-workload-v1", policyVersion:WORKLOAD_POLICY.version,
+  return { schemaVersion:"overview-workload-v2", policyVersion:WORKLOAD_POLICY.version,
     generatedAt:iso(nowMs), timeZone, status:errors.length?"partial":"available", errors:[...groupedErrors.values()],
     adjustments:{workReplayEvents:work.replayed,workDurationDifferences:work.durationDifferences,quotaStaleObservations:staleQuota},
     allowance:{ remainingPercent, observedAt:latest?iso(latest.atMs):null,
       points:allowanceRows.map((q,i)=>({at:iso(q.atMs),remainingPercent:q.conflict||q.stale?null:100-q.usedPercent,
         breakBefore:i===0||q.resetKey!==allowanceRows[i-1].resetKey||q.atMs-allowanceRows[i-1].atMs>15*MINUTE})) },
     workHours, classification:{ centers, version:WORKLOAD_POLICY.version }, daily, current,
-    comparison:{anchorMs:base?.atMs??anchor,capacityUsd:comparisonUsd,points},
+    comparison,
     coverage:{workMs:lengthMs(intervals,fromMs,nowMs),actualWorkMs,actualPp,activeTasks:work.active,unresolvedTasks:work.unresolved} };
 }

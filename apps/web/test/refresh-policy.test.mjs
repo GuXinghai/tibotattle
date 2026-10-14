@@ -72,7 +72,7 @@ function refreshHarness({
     createTextNode: (textContent) => ({ textContent }),
   };
   const priorDashboard = {
-    workload: detailedSnapshot ? {schemaVersion:"overview-workload-v1",status:"available"} : null,
+    workload: detailedSnapshot ? {schemaVersion:"overview-workload-v2",status:"available"} : null,
     mode: "local",
     state: "stale",
     activity: { lastScanAt: "2026-09-02T00:00:00.000Z" },

@@ -41,7 +41,7 @@ test("work lifecycle survives cold, incremental, replay and forward migration wi
   }finally{w.cleanup();}
 });
 test("unreadable store retains last-good time and exposes a classified failure",()=>{
-  const previous={schemaVersion:"overview-workload-v1",generatedAt:new Date(at).toISOString(),current:{state:"idle"}};
+  const previous={schemaVersion:"overview-workload-v2",generatedAt:new Date(at).toISOString(),current:{state:"idle"}};
   const result=readLocalIndexWorkload({indexFile:"nonexistent-overview-test.sqlite",nowMs:at+M,previous});
   assert.equal(result.status,"stale");assert.equal(result.generatedAt,previous.generatedAt);assert.ok(result.errors.length);
 });
@@ -88,17 +88,25 @@ test("v4 refresh refuses a missing device salt before any forward migration",asy
     await assert.rejects(readFile(w.secretFile),{code:"ENOENT"});
   }finally{w.cleanup();}
 });
-test("comparison anchor persists through the protected Windows store and invalid state is refused",async()=>{
+test("startup comparison state persists, legacy state reads forward and downgrade writes are refused",async()=>{
   const w=createWorkspace({files:1,events:1});
   try{
     const legacyRoot=join(w.state,"legacy-root");await mkdir(legacyRoot);
     const store=workloadStateStore(join(legacyRoot,"index.sqlite"));
     assert.equal(await store.read(),null);
-    const value={schemaVersion:"overview-workload-state-v1",comparison:{anchorMs:at},capacityHistory:[]};
+    const value={schemaVersion:"overview-workload-state-v2",comparison:{startedAtMs:at,capacityUsd:100,planType:"prolite"},capacityHistory:[]};
     assert.equal(await store.write(value),true);assert.deepEqual(await store.read(),value);
     assert.equal(JSON.parse(await readFile(join(legacyRoot,"private","overview-workload-state.json"),"utf8")).schemaVersion,value.schemaVersion);
     await assert.rejects(readFile(join(legacyRoot,"overview-workload-state.json")),{code:"ENOENT"});
     await assert.rejects(store.write({...value,private:"not allowed"}));assert.deepEqual(await store.read(),value);
-    const next={...value,comparison:{anchorMs:at+40*M}};await store.write(next);assert.deepEqual(await store.read(),next);
+    const legacy={schemaVersion:"overview-workload-state-v1",comparison:{anchorMs:at},capacityHistory:[]};
+    await assert.rejects(store.write(legacy));
+    await writeFile(join(legacyRoot,"private","overview-workload-state.json"),JSON.stringify(legacy));
+    assert.deepEqual(await store.read(),legacy);
+    const next={...value,comparison:{...value.comparison,startedAtMs:at+40*M}};await store.write(next);assert.deepEqual(await store.read(),next);
+    const future={...next,schemaVersion:"overview-workload-state-v3"};
+    const path=join(legacyRoot,"private","overview-workload-state.json");await writeFile(path,JSON.stringify(future));
+    await assert.rejects(store.read());await assert.rejects(store.write(next));
+    assert.deepEqual(JSON.parse(await readFile(path,"utf8")),future);
   }finally{w.cleanup();}
 });
