@@ -120,6 +120,38 @@ retirement.
 | Accounting model rows have no per-row Partial marker (Projects rows do) | `app.js` ~10389-10544 | 2, record only unless the data supports it |
 | Stale comments on page sizes and viewports | `app.js` ~260, ~5383; `index.html` ~537, ~775 | as touched |
 | No AbortController in the shared `load()`/`windowBreakdown` path; staleness is token-guarded | `app.js`, `data-client.js` | record only; plan forbids adding capabilities |
+| Table batch sizes still follow the retired single-screen fit (divergence 4, residual/cache-impact/weekly/Projects 6), while the divergence paging tests still expect the earlier 10 rows | `641ce63e` (2026-10-08 single-screen plan) changed sizes without tests | 5; owner decision: restore larger batches now that pages scroll, or update the tests to the current sizes |
+| An index deferral on a first-ever refresh is labeled "Computed by the previous version — recalculating" | `renderStaleServeNote` maps every `retained` reason except two to that copy | 5, record only; the label clears when the index completes |
+
+## Stage 5 acceptance record (2026-10-14, `a147de57`)
+
+Point-in-time evidence; each layer proves only itself.
+
+- Source: `pnpm run product:ui:test` gives 980 tests, 17 failures. All 17 also
+  fail at the pre-restructure base `8b0e5646` (1002 tests, 21 failures), so the
+  restructure added none. The divergence paging failures come from the batch
+  size above; the others were not triaged.
+- Browser: a loopback companion was run over an isolated, content-free
+  synthetic Codex corpus (`src/synthetic-codex-rollout-corpus.js`, 160 sessions).
+  - The following states were observed directly:
+    - first use;
+    - Partial price label;
+    - stale observation;
+    - compact header refresh failure with Details;
+    - retained figures during an index deferral, which cleared on completion.
+  - Usage paging was exercised across 160 sessions, with a reset to page 1 on
+    sort change; the dialog keeps focus and returns it.
+  - The dark theme was checked via `data-theme`, with no overflow and no text
+    shrinking at 375 and 1024 px in Chinese and Spanish.
+  - Divergence periods need plan-matched calibration, which the corpus cannot
+    produce. "View period" remains source-tested only.
+- Packaged runtime: an unsigned development `dir` package was built at
+  `a147de57`. Its 44 dashboard files match `HEAD` byte for byte. It launched
+  with an isolated synthetic profile and reached the native first-run dialog.
+  The dialog was not accepted, because its default-on login item would
+  register an operating-system startup entry. Rendered packaged pages,
+  125%/150% scaling and owner design review remain open. No installer,
+  signing, update or release gate was exercised.
 
 ## Constraints for later stages
 

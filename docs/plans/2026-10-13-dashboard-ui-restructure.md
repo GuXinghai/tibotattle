@@ -2,7 +2,7 @@
 title: Dashboard UI restructure with preserved analytical detail
 date: 2026-10-13
 type: plan
-status: planned
+status: in-progress
 ---
 
 # Dashboard UI restructuring plan
@@ -12,7 +12,9 @@ status: planned
 The owner approved the four-entry concept on 2026-10-13 and explicitly required
 the implementation to retain details omitted from the preview and valuable
 existing design references. This plan defines navigation, presentation, feature
-migration, and acceptance criteria. It has not been implemented. Concept approval
+migration, and acceptance criteria. Stages 1-4 are implemented on branch
+`fix/windows-codex-refresh` as of `a147de57`. Stage 5 evidence is recorded in the
+[inventory](./2026-10-13-dashboard-ui-inventory.md). Concept approval
 confirms the design direction; it is not source, native UI, or release acceptance.
 
 The source investigation baseline is `8b0e5646`; the original plan was committed
@@ -287,10 +289,12 @@ Do not publish before critical release gates pass.
 ## Outstanding gates
 
 - Stage 0 inventory: [capability and caller inventory](./2026-10-13-dashboard-ui-inventory.md).
-- No implementation or acceptance of the new navigation and feature migration.
-- Share focusing a hidden view was a static path finding; the Share action is
-  removed by the 2026-10-13 decision.
-- The Usage trend entry and discovery
-  of complex analysis still require complete integration.
+- Source checks show no regressions against `8b0e5646`, and browser checks on
+  synthetic data passed. The owner has not yet accepted the design.
+- Rendered packaged-Electron review remains open, including 125%/150% Windows
+  scaling and the owner's page-by-page review. The development package has
+  only reached its first-run dialog.
+- Table batch sizes need an owner decision; see the inventory's defect table.
+- Divergence "View period" has not been exercised with plan-matched data.
 - Approved concept appearance does not prove production-data density, correct
   measurement scopes, or readable access to every detail.
