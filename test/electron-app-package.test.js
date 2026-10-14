@@ -191,6 +191,12 @@ test("Windows Electron staging includes the exact binding pair and shell", async
 
     assert.equal(packageJson.main, "apps/electron/main.js");
     assert.equal(packageJson.productName, "TiboTattle");
+    for (const path of [
+      "node_modules/@app-usagemonitor/quota-analysis/src/workload.js",
+      "src/local-index-workload.js",
+      "apps/local/overview-refresh-scheduler.js",
+      "apps/web/public/overview-workload.js",
+    ]) assert.ok(paths.includes(path), path);
     assert.equal(packageJson.version, RELEASE_VERSION);
     assert.equal(manifest.target, "win32");
     assert.equal(manifest.architecture, "x64");

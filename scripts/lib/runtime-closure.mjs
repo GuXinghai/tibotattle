@@ -150,6 +150,7 @@ export const RUNTIME_QUOTA_ANALYSIS_FILES = Object.freeze([
   "src/quota-tracks.js",
   "src/quota-windows.js",
   "src/reset-events.js",
+  "src/workload.js",
 ]);
 
 export const RUNTIME_IDENTITY_CORE_FILES = Object.freeze([
