@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {join} from "node:path";
-import {writeFile,appendFile,readFile,rm} from "node:fs/promises";
+import {writeFile,appendFile,readFile,rm,mkdir} from "node:fs/promises";
 import {DatabaseSync} from "node:sqlite";
 import {createWorkspace} from "./helpers/local-index-facts.js";
 import {refreshLocalIndex} from "../src/local-index-refresh.js";
@@ -62,10 +62,13 @@ test("v4 refresh refuses a missing device salt before any forward migration",asy
 test("comparison anchor persists through the protected Windows store and invalid state is refused",async()=>{
   const w=createWorkspace({files:1,events:1});
   try{
-    const store=workloadStateStore(join(w.state,"index.sqlite"));
+    const legacyRoot=join(w.state,"legacy-root");await mkdir(legacyRoot);
+    const store=workloadStateStore(join(legacyRoot,"index.sqlite"));
     assert.equal(await store.read(),null);
     const value={schemaVersion:"overview-workload-state-v1",comparison:{anchorMs:at},capacityHistory:[]};
     assert.equal(await store.write(value),true);assert.deepEqual(await store.read(),value);
+    assert.equal(JSON.parse(await readFile(join(legacyRoot,"private","overview-workload-state.json"),"utf8")).schemaVersion,value.schemaVersion);
+    await assert.rejects(readFile(join(legacyRoot,"overview-workload-state.json")),{code:"ENOENT"});
     await assert.rejects(store.write({...value,private:"not allowed"}));assert.deepEqual(await store.read(),value);
     const next={...value,comparison:{anchorMs:at+40*M}};await store.write(next);assert.deepEqual(await store.read(),next);
   }finally{w.cleanup();}

@@ -22,7 +22,7 @@ function validState(s){
     &&c.basisId===codexPrimaryAllowanceBasis("unresolved_as_standard").basisId);
 }
 export function workloadStateStore(indexFile){
-  const root=dirname(indexFile),name="overview-workload-state.json",file=join(root,name);
+  const root=join(dirname(indexFile),"private"),name="overview-workload-state.json",file=join(root,name);
   let backend=null;
   const store=()=>backend??=createWindowsProtectedStateStore({rootPath:root,adapter:createWindowsFilesystemAdapter()});
   return {

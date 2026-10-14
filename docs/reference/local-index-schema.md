@@ -137,8 +137,10 @@ intervals count once. Inference performance timing remains independent.
 
 Overview groups committed usage timestamps into five-minute bins without
 splitting fifteen-minute display rollups. Its comparison anchor and capacity
-history persist in a validated Windows protected state file; write failures are
-visible publication errors.
+history persist in `private/overview-workload-state.json` under the same state
+root, using the existing validated Windows protected private boundary. The
+outer legacy state directory need not be rewritten. Write failures are visible
+publication errors.
 
 `source` carries everything a refresh needs to decide, without reading the
 rollout header, what to do with a file:
