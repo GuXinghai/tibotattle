@@ -41,6 +41,11 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
 - A `user_version` greater than 5 fails with `local_index_newer_version`. The
   file is not opened writable and must not be relabelled.
 - A version-4 writer adds work lifecycle facts transactionally and advances to 5.
+  Refresh first performs a bounded read-only identity inspection accepting only
+  the reviewed v4 predecessor or current v5, validates the existing device salt,
+  and only then opens the writer. This inspection exposes no database handle or
+  old-format projection and makes no schema changes. Missing salt, foreign state,
+  and newer versions are refused before any migration or salt creation.
   Earlier versions and read-only version-4 opens fail with
   `local_index_family_mismatch`; readers never migrate state.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it

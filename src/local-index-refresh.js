@@ -45,6 +45,7 @@ import {
   loadCatalog,
   openLocalIndexStore,
   readCommitSeq,
+  readLocalIndexIdentityBeforeMigration,
   reasoningEffortOrdinal,
 } from "./local-index-store.js";
 import {
@@ -574,11 +575,8 @@ export async function refreshLocalIndex({
   try { lstatSync(resolvedIndexFile); present = true; }
   catch (error) { if (error?.code !== "ENOENT") throw fixedError("local_index_unavailable"); }
   if (present) {
-    const prior = openLocalIndexStore(resolvedIndexFile, { readOnly: true });
-    try {
-      existingIdentity ||= readCommitSeq(prior) > 0
-        || prior.prepare("SELECT 1 AS present FROM source LIMIT 1").get()?.present === 1;
-    } finally { prior.close(); }
+    const prior = readLocalIndexIdentityBeforeMigration(resolvedIndexFile);
+    existingIdentity ||= prior.hasFacts;
   }
   const saltFile = secretFile ?? defaultLocalIndexSecretFile(resolvedIndexFile);
   const deviceSalt = await (existingIdentity

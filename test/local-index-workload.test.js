@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {join} from "node:path";
-import {writeFile,appendFile,readFile} from "node:fs/promises";
+import {writeFile,appendFile,readFile,rm} from "node:fs/promises";
+import {DatabaseSync} from "node:sqlite";
 import {createWorkspace} from "./helpers/local-index-facts.js";
 import {refreshLocalIndex} from "../src/local-index-refresh.js";
 import {openLocalIndexStore} from "../src/local-index-store.js";
@@ -25,11 +26,15 @@ test("work lifecycle survives cold, incremental, replay and forward migration wi
     db=openLocalIndexStore(indexFile);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);
     assert.equal(Buffer.from(db.prepare("SELECT task_key FROM work_lifecycle_fact LIMIT 1").get().task_key).length,32);
-    db.exec("DROP TABLE work_lifecycle_fact; PRAGMA user_version=4");db.close();
-    db=openLocalIndexStore(indexFile);assert.equal(db.prepare("PRAGMA user_version").get().user_version,5);
-    assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,0);
+    db.exec("DROP TABLE work_lifecycle_fact; PRAGMA user_version=4");
     db.prepare("UPDATE source SET parser_version='local-index-rollout-typed-v1+unified-rollout-typed-v19'").run();db.close();
+    assert.throws(()=>openLocalIndexStore(indexFile,{readOnly:true}),{code:"local_index_family_mismatch"});
+    const saltBefore=await readFile(w.secretFile);
     await refreshLocalIndex(options);
+    db=openLocalIndexStore(indexFile,{readOnly:true});
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version,5);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);db.close();
+    assert.deepEqual(await readFile(w.secretFile),saltBefore);
     const result=readLocalIndexWorkload({indexFile,nowMs:at+11*M,sourceFresh:true});
     assert.notEqual(result.status,"unavailable",JSON.stringify(result.errors));assert.equal(result.coverage.workMs,10*M);
     assert.doesNotMatch(JSON.stringify(result),/synthetic-work-task|never retained/u);
@@ -39,6 +44,20 @@ test("unreadable store retains last-good time and exposes a classified failure",
   const previous={schemaVersion:"overview-workload-v1",generatedAt:new Date(at).toISOString(),current:{state:"idle"}};
   const result=readLocalIndexWorkload({indexFile:"nonexistent-overview-test.sqlite",nowMs:at+M,previous});
   assert.equal(result.status,"stale");assert.equal(result.generatedAt,previous.generatedAt);assert.ok(result.errors.length);
+});
+test("v4 refresh refuses a missing device salt before any forward migration",async()=>{
+  const w=createWorkspace({files:1,events:5});
+  const indexFile=join(w.state,"identity.sqlite");
+  const options={codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1};
+  try{
+    await refreshLocalIndex(options);
+    let db=openLocalIndexStore(indexFile);db.exec("PRAGMA user_version=4");db.close();
+    await rm(w.secretFile);
+    await assert.rejects(refreshLocalIndex(options),{code:"local_index_secret_unavailable"});
+    db=new DatabaseSync(indexFile,{readOnly:true});
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version,4);db.close();
+    await assert.rejects(readFile(w.secretFile),{code:"ENOENT"});
+  }finally{w.cleanup();}
 });
 test("comparison anchor persists through the protected Windows store and invalid state is refused",async()=>{
   const w=createWorkspace({files:1,events:1});

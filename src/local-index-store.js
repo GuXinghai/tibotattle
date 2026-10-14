@@ -429,7 +429,7 @@ function configure(database, { readOnly, bulkLoad = false }) {
   database.enableDefensive?.(true);
 }
 
-function assertFamily(database) {
+function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
   const applicationId = database.prepare("PRAGMA application_id").get().application_id;
   const userVersion = database.prepare("PRAGMA user_version").get().user_version;
   if (applicationId !== LOCAL_INDEX_STORE_APPLICATION_ID) {
@@ -439,9 +439,32 @@ function assertFamily(database) {
   if (userVersion > LOCAL_INDEX_STORE_USER_VERSION) {
     throw fixedError("local_index_newer_version");
   }
-  if (userVersion < LOCAL_INDEX_STORE_USER_VERSION) {
+  if (userVersion < LOCAL_INDEX_STORE_USER_VERSION
+      && !(allowWorkloadPredecessor && LOCAL_INDEX_STORE_USER_VERSION === 5 && userVersion === 4)) {
     throw fixedError("local_index_family_mismatch");
   }
+}
+
+/** Identity-only preflight for the reviewed v4 -> v5 migration. This never
+ * returns a database handle or permits projections/writes against old state. */
+export function readLocalIndexIdentityBeforeMigration(file) {
+  const path = resolve(file);
+  assertOwnerOnlyDirectory(dirname(path));
+  assertOwnerOnlyTarget(path, { allowMissing: false });
+  let database;
+  try {
+    database = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
+    configure(database, { readOnly: true });
+    assertFamily(database, { allowWorkloadPredecessor: true });
+    if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
+      throw fixedError("local_index_family_mismatch");
+    }
+    return { hasFacts: readCommitSeq(database) > 0
+      || database.prepare("SELECT 1 AS present FROM source LIMIT 1").get()?.present === 1 };
+  } catch (error) {
+    if (error?.code?.startsWith("local_index_")) throw error;
+    throw fixedError("local_index_unavailable");
+  } finally { database?.close(); }
 }
 
 function initialize(database) {
