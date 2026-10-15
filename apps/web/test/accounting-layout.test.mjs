@@ -1,5 +1,6 @@
 import { cacheReuseCoverageNote } from "../public/cache-reuse-metrics.js";
 import test from "node:test";
+import { finite } from "../public/ui-format.js";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { SUPPORTED_LOCALES, translate, translateLegacyText } from "../public/localization.js";
@@ -16,6 +17,7 @@ function appFunction(name, nextName, dependencies) {
 
 function localizedDependencies(locale = "en-US") {
   return {
+    finite,
     t: (key, values) => translate(key, values, locale),
     localization: { translateText: value => translateLegacyText(value, locale) },
     formatCount: String,
@@ -23,45 +25,31 @@ function localizedDependencies(locale = "en-US") {
   };
 }
 
-test("the live price headline shows one amount and moves its Standard comparison into help", () => {
+test("the headline uses recorded-speed API prices and never substitutes quota weighting", () => {
   const headline = appFunction("accountingPriceHeadline", "renderAccounting", localizedDependencies());
-  const period = Object.freeze({
-    fastMode: { metricShortLabel: "Speed-priced API equivalent" },
-    quotaWeightedApiPriceEquivalentUsd: 6_200,
-    apiPriceEquivalentUsd: 5_929.64,
-    periodLabel: "Last 7 days",
-  });
-  const [label, explanation, value, note] = headline(period);
-  assert.equal(label, "Speed-priced API equivalent");
-  assert.equal(value, "$6200.00");
-  assert.equal(note, "Last 7 days");
-  assert.match(explanation, /not a bill or a subscription limit/u);
-  assert.match(explanation, /\$5929\.64 at Standard rates before speed-mode weighting/u);
-  assert.doesNotMatch(note, /\$|Standard|Fast/u);
-  assert.match(appSource, /:\s*\[\s*accountingPriceHeadline\(accounting\),/u);
-
-  const samePrice = headline({ ...period, quotaWeightedApiPriceEquivalentUsd: 5_929.64 });
-  assert.equal(samePrice[2], "$5929.64");
-  assert.equal(samePrice[3], "Last 7 days");
-  const absent = headline({ ...period, quotaWeightedApiPriceEquivalentUsd: null });
-  assert.equal(absent[2], "—");
-  assert.equal(absent[3], "No increment in this period could be weighted");
-  assert.doesNotMatch(absent[1], /\$/u);
-  assert.equal(headline({ ...period, quotaWeightedApiPriceEquivalentUsd: 0 })[2], "$0.00");
+  const period = {
+    speedApiPriceEquivalentUsd: 6200, speedPricingCoverageStatus: "fully_priced",
+    quotaWeightedApiPriceEquivalentUsd: 9000, apiPriceEquivalentUsd: 5929.64,
+  };
+  assert.equal(headline(period)[2], "$6200.00");
+  assert.equal(headline(period)[3], "");
+  assert.equal(headline({ ...period, speedApiPriceEquivalentUsd: null })[2], "—");
+  assert.equal(headline({ ...period, speedApiPriceEquivalentUsd: undefined })[2], "—");
+  assert.equal(headline({ ...period, speedApiPriceEquivalentUsd: 0 })[2], "$0.00");
+  assert.equal(headline({ ...period, speedPricingCoverageStatus: "partially_priced" })[3],
+    translate("dashboard.overview.partial", {}, "en-US"));
 });
 
-test("source-owned metric and period labels translate before composing accounting headlines", () => {
+test("simplified headline labels translate in every locale", () => {
   for (const locale of SUPPORTED_LOCALES) {
     const headline = appFunction("accountingPriceHeadline", "renderAccounting", localizedDependencies(locale));
-    const row = headline({ fastMode: { metricShortLabel: "Speed-priced API equivalent" },
-      quotaWeightedApiPriceEquivalentUsd: 2, apiPriceEquivalentUsd: 1, periodLabel: "Last 7 days" });
-    assert.equal(row[0], translateLegacyText("Speed-priced API equivalent", locale));
-    assert.equal(row[3], translateLegacyText("Last 7 days", locale));
-    if (locale === "zh-Hans") assert.doesNotMatch(`${row[0]} ${row[3]}`, /Speed-priced|Last 7 days/u);
+    const row = headline({ speedApiPriceEquivalentUsd: 2, speedPricingCoverageStatus: "fully_priced" });
+    assert.equal(row[0], translate("usageSimple.apiEquivalent", {}, locale));
+    assert.equal(row[3], "");
   }
 });
 
-test("short accounting headings retain Standard-rate context in every locale", async () => {
+test("cache analysis retains its historical pricing context behind details", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const table = html.match(/<table class="cache-continuity-recent-table">[\s\S]*?<\/table>/u)?.[0];
   assert.ok(table);
@@ -69,7 +57,7 @@ test("short accounting headings retain Standard-rate context in every locale", a
   assert.match(table, /accounting\.cacheDropThread\.column">Thread name<\/th>/u);
   assert.match(table, /column\.configuration">Configuration<\/th>/u);
   assert.doesNotMatch(table, /lostTokens|Estimated lost reuse|Unchanged configuration/u);
-  assert.equal((html.match(/<th[^>]+data-i18n-title="accounting\.apiEquivalent\.standardRateBasis"[^>]*>API equivalent<\/th>/gu) ?? []).length, 3);
+  assert.equal((html.match(/<th[^>]+data-i18n-title="accounting\.apiEquivalent\.standardRateBasis"[^>]*>API equivalent<\/th>/gu) ?? []).length, 0);
   for (const kind of ["cacheSwitch", "cacheContinuity"]) {
     const caption = html.match(new RegExp(`data-i18n="accounting\\.${kind}\\.tableCaption">([^<]+)<`, "u"))?.[1];
     assert.equal(caption, translate(`accounting.${kind}.tableCaption`, {}, "en-US"));
@@ -83,7 +71,7 @@ test("short accounting headings retain Standard-rate context in every locale", a
   for (const locale of SUPPORTED_LOCALES) {
     const headline = appFunction("accountingPriceHeadline", "renderAccounting", localizedDependencies(locale));
     const row = headline({ fastMode: { metricShortLabel: "API" }, quotaWeightedApiPriceEquivalentUsd: 2, apiPriceEquivalentUsd: 1, periodLabel: "period" });
-    assert.match(row[1], /\$1\.00/u);
+    assert.equal(row[1], translate("usageSimple.apiExplanation", {}, locale));
     assert.doesNotMatch(row[1], /accounting\.|\{amount\}/u);
     assert.doesNotMatch(translate("accounting.apiEquivalent.standardRateBasis", {}, locale), /accounting\./u);
   }
@@ -96,7 +84,7 @@ test("cache continuity rows and empty states retain five correctly aligned cells
   const rows = element("tbody");
   const linkedItems = [];
   const render = appFunction("renderAccountingCacheContinuityDetails", "accountingRebuildRetrying", {
-    $: (selector) => ({ "#cache-continuity-details": disclosure, "#cache-continuity-rows": rows })[selector] ?? null,
+    $: (selector) => ({ "#cache-continuity-details": disclosure, "#cache-continuity-rows": rows, "#cache-continuity-sample": sampleNote })[selector] ?? null,
     cacheDropThreadLinks: { cells: { continuity: [] } },
     clear: (target) => { target.children.length = 0; },
     node: element,
@@ -193,28 +181,17 @@ test("cache matrix integration forwards empty, zero-reuse and unavailable eviden
   assert.equal(outcome.hidden, false, "unavailable evidence gets an explicit state");
 });
 
-test("speed attribution occupies a disclosure row without displacing overhead cards", async () => {
-  const [styles, source] = await Promise.all([
-    readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
-    readFile(new URL("../public/app.js", import.meta.url), "utf8"),
+test("usage keeps two headline cards and moves composition and cache analysis behind disclosures", async () => {
+  const [styles, html] = await Promise.all([
+    readFile(new URL("../public/usage-simple.css", import.meta.url), "utf8"),
+    readFile(new URL("../public/index.html", import.meta.url), "utf8"),
   ]);
-  assert.match(source, /node\("p", "annotation accounting-speed-coverage"\)/u);
-  assert.match(
-    styles,
-    /\.accounting-summary > \.accounting-speed-coverage\s*\{[^}]*grid-column:\s*1\s*\/\s*-1;/u,
-  );
-  assert.match(
-    styles,
-    /\.accounting-summary\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\);/u,
-  );
-  assert.doesNotMatch(styles, /\.accounting-summary\s*\{[^}]*auto-fit/u);
-  // This rule still stretches a lone allowance card, but must not mistake the
-  // accounting disclosure for a card when deciding which metric is alone.
-  assert.match(
-    styles,
-    /\.metric-grid:not\(\.accounting-summary\) > :last-child:nth-child\(odd\)/u,
-  );
-  assert.doesNotMatch(styles, /\.metric-grid > :last-child:nth-child\(odd\)/u);
+  assert.match(styles, /#accounting-summary[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/u);
+  assert.doesNotMatch(appSource, /node\("p", "annotation accounting-speed-coverage"\)/u);
+  assert.match(html, /<details[^>]+id="usage-composition-details"/u);
+  assert.match(html, /<details[^>]+id="usage-cache-details"/u);
+  assert.match(html, /id="usage-model-details"/u);
+  assert.match(appSource, /workUsageView.setMetric\(usageSimpleMetric\)/u);
 });
 
 test("overhead cards keep only the speed-priced amount and actionable coverage gaps", () => {

@@ -6,13 +6,13 @@ import {
   readCodexLocalThreadAncestry,
 } from "./platform/index.js";
 import { createWorkUsageAccumulator, workUsageError } from "./reporting/index.js";
+import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
 import { usageProjection } from "./local-companion-usage-model.js";
 import {
   committedPredicate,
   rollupKeyExpressions,
   storedContextStarts,
 } from "./local-index-rollup.js";
-import { WORK_ROLLUP_DAY_MS } from "./local-index-work-rollup.js";
 import { readCommitSeq } from "./local-index-store.js";
 import { defaultLocalUnifiedIndexSecretPath, localDigest, readExistingDeviceSalt } from "./local-device-salt.js";
 import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
@@ -21,9 +21,8 @@ import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 //
 // Per-fact inputs (working directory, session, model, tokens, provenance) are
 // stored with each usage fact, so a report reads them from the store: no
-// rollout is opened, whatever the history's size. Whole UTC days come from the
-// work rollups, one projection per row weighted by its fact count; the days a
-// period boundary cuts are read fact by fact.
+// rollout is opened. Committed facts preserve per-event speed tiers; the old
+// daily work rollups cannot price mixed-speed days because they omit tiers.
 
 const MAX_WORK_CELLS = 50_000;
 const WORK_RESOLVE_CONCURRENCY = 12;
@@ -42,18 +41,6 @@ function componentsOf(row) {
     output_text_tokens: value(3, row.out_text),
     output_reasoning_tokens: value(4, row.out_reasoning),
     output_combined_tokens: value(5, row.out_combined),
-  };
-}
-
-function eventComponents(row) {
-  const value = (raw) => (raw === null || raw === undefined ? null : Number(raw));
-  return {
-    input_uncached_tokens: value(row.tokens_in_uncached),
-    input_cache_read_tokens: value(row.tokens_in_cache_read),
-    input_cache_write_tokens: value(row.tokens_in_cache_write),
-    output_text_tokens: value(row.tokens_out_text),
-    output_reasoning_tokens: value(row.tokens_out_reasoning),
-    output_combined_tokens: value(row.tokens_out_combined),
   };
 }
 
@@ -83,6 +70,7 @@ export async function readLocalIndexWorkUsage({
   maximumCells = MAX_WORK_CELLS,
   pricer = createAccountingPricer(),
   resolveProject = null,
+  declaredSpeedBaselines = [],
 } = {}) {
   if (!Number.isSafeInteger(maximumCells) || maximumCells < 1 || maximumCells > MAX_WORK_CELLS) {
     const error = new Error("work_usage_capacity_exceeded");
@@ -194,138 +182,75 @@ export async function readLocalIndexWorkUsage({
     }),
   });
 
-  const starts = storedContextStarts(database);
+  const tiers = new Map(database.prepare("SELECT id, codex_speed_mode, api_service_tier FROM tier_semantics").all().map(row => [Number(row.id), { codexSpeedMode: row.codex_speed_mode, apiServiceTier: row.api_service_tier }]));
   const models = new Map(database.prepare("SELECT id, model_id FROM model").all()
     .map((row) => [Number(row.id), row.model_id]));
   const sessions = new Map(database.prepare("SELECT id, session_local, session_uuid FROM session").all()
     .map((row) => [Number(row.id), { local: row.session_local, uuid: row.session_uuid }]));
-
   const priceOf = (record) => {
-    const priced = usageProjection(record, "unknown", pricer);
-    return {
-      amount: priced?.apiPriceEquivalentUsdExact ?? null,
-      status: priced?.pricingCoverageStatus ?? "unpriced",
-    };
+    const priced = usageProjection(record, declaredSpeedModeAt(declaredSpeedBaselines, Date.parse(record.observedAt)) ?? "unknown", pricer)?.speedPriced;
+    return { amount: ["fully_priced", "partially_priced"].includes(priced?.coverageStatus) ? priced.totalUsd : null, status: priced?.coverageStatus ?? "unpriced" };
   };
   const allNull = (components) => Object.values(components).every((value) => value === null);
 
-  // Days a period boundary cuts are read fact by fact.
-  const edgeDays = new Set();
-  for (const period of periods) {
-    for (const boundary of [period.fromMs, period.toMs]) {
-      const day = Math.floor(boundary / WORK_ROLLUP_DAY_MS) * WORK_ROLLUP_DAY_MS;
-      if (boundary !== day) edgeDays.add(day);
-    }
-  }
-  const lowest = Math.min(...periods.map((period) => period.fromMs));
-  const highest = Math.max(...periods.map((period) => period.toMs));
+  // Aggregate facts with their tier and context band retained. The old work
+  // rollup omits tiers, so it cannot price a mixed-speed day correctly. Query
+  // one UTC day at a time and yield between days to keep cancellation and the
+  // companion event loop responsive even for an all-history report.
+  const lowest = Math.min(...periods.map(period => period.fromMs));
+  const highest = Math.max(...periods.map(period => period.toMs));
+  const dayMs = 86_400_000;
+  const starts = storedContextStarts(database);
   const key = rollupKeyExpressions("u");
-
-  // 1. Whole days, from the rollups.
-  const latestAt = database.prepare(`
-    SELECT MAX(u.observed_at_ms) AS value
-    FROM usage_event u
-    WHERE u.session_id = ? AND u.observed_at_ms >= ? AND u.observed_at_ms < ?
-      AND COALESCE(u.work_directory_id, 0) = ? AND u.model_id = ?
-      AND u.account_scope_id = ?
-      AND ${key.shape} = ? AND ${key.ctx_class} = ?
-      AND ((u.flags & 1) | ((u.flags & 4) >> 1) | ((u.flags & 8) >> 1)) = ?
-      AND ${committedPredicate("u")}`);
-  let sinceYield = 0;
-  for (const row of database.prepare(`
-    SELECT day_ms, session_id, work_directory_id, model_id, account_scope_id, shape,
-           ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write,
-           out_text, out_reasoning, out_combined, last_at_ms
-    FROM work_rollup
-    WHERE events > 0 AND day_ms + ${WORK_ROLLUP_DAY_MS} > ? AND day_ms < ?`).iterate(lowest, highest)) {
-    const dayMs = Number(row.day_ms);
-    if (edgeDays.has(dayMs)) continue;
-    if (++sinceYield % 2_000 === 0) await new Promise((resolve) => setImmediate(resolve));
-    const prov = Number(row.prov);
-    const components = componentsOf(row);
-    const statusOnly = (prov & 4) !== 0 && allNull(components);
-    const classIndex = Number(row.ctx_class);
-    const modelId = models.get(Number(row.model_id));
-    const session = sessions.get(Number(row.session_id));
-    let lastAtMs = row.last_at_ms === null ? null : Number(row.last_at_ms);
-    if (lastAtMs === null) {
-      lastAtMs = Number(latestAt.get(
-        Number(row.session_id), dayMs, dayMs + WORK_ROLLUP_DAY_MS,
-        Number(row.work_directory_id), Number(row.model_id), Number(row.account_scope_id),
-        Number(row.shape), classIndex, prov,
-      ).value ?? dayMs);
+  const cuts = new Set([lowest, highest]);
+  for (const period of periods) { cuts.add(period.fromMs); cuts.add(period.toMs); }
+  for (const baseline of declaredSpeedBaselines) {
+    for (const value of [baseline.firstSeenAt, baseline.lastSeenAt]) {
+      const at = Date.parse(value);
+      if (at > lowest && at < highest) { cuts.add(at); cuts.add(Math.min(at + 1, highest)); }
     }
-    core.add({
-      observedAtMs: dayMs,
-      lastAtMs,
-      accountScopeId: Number(row.account_scope_id),
-      sessionLocal: session.local,
-      sessionUuid: session.uuid,
-      modelId,
-      components,
-      statusOnly,
-      project: projectByDirectory.get(Number(row.work_directory_id)) ?? null,
-      cacheWriteAssumedZero: (prov & 2) !== 0,
-      partial: (prov & 1) !== 0,
-      price: statusOnly
-        ? { amount: null, status: "unpriced" }
-        : priceOf({
-          observedAt: new Date(dayMs).toISOString(),
-          model: modelId,
-          totalInputContextTokens: classIndex < 0 ? null : classIndex === 0 ? 0 : starts[classIndex - 1],
-          components,
-          tierSemantics: {},
-          surfaceClassification: {},
-          accountScope: {},
-        }),
-      weight: Number(row.events),
-    });
   }
-
-  // 2. Boundary days, fact by fact.
-  const facts = database.prepare(`
-    SELECT u.observed_at_ms, u.session_id, u.work_directory_id, u.model_id,
-           u.account_scope_id, u.flags, u.total_input_context,
-           u.tokens_in_uncached, u.tokens_in_cache_read, u.tokens_in_cache_write,
-           u.tokens_out_text, u.tokens_out_reasoning, u.tokens_out_combined
-    FROM usage_event u
-    WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND ${committedPredicate("u")}`);
-  for (const dayMs of [...edgeDays].sort((left, right) => left - right)) {
-    for (const row of facts.iterate(dayMs, dayMs + WORK_ROLLUP_DAY_MS)) {
-      signal?.throwIfAborted();
-      const observedMs = Number(row.observed_at_ms);
-      if (!periods.some((period) => observedMs >= period.fromMs && observedMs < period.toMs)) continue;
-      const components = eventComponents(row);
-      const flags = Number(row.flags);
-      const statusOnly = (flags & 8) !== 0 && allNull(components);
+  const bounds = database.prepare(`SELECT MIN(u.observed_at_ms) AS first_at, MAX(u.observed_at_ms) AS last_at
+    FROM usage_event u WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND ${committedPredicate("u")}`).get(lowest, highest);
+  if (bounds.first_at === null) return core.finish();
+  const first = Math.max(lowest, Number(bounds.first_at));
+  const last = Math.min(highest, Number(bounds.last_at) + 1);
+  cuts.add(first); cuts.add(last);
+  for (let at = (Math.floor(first / dayMs) + 1) * dayMs; at < last; at += dayMs) cuts.add(at);
+  const ordered = [...cuts].filter(at => at >= first && at <= last).sort((a, b) => a - b);
+  const grouped = database.prepare(`SELECT u.session_id, COALESCE(u.work_directory_id, 0) AS directory_id,
+    u.model_id, u.account_scope_id, u.tier_id, ${key.shape} AS shape, ${key.ctx_class} AS ctx_class,
+    ((u.flags & 1) | ((u.flags & 4) >> 1) | ((u.flags & 8) >> 1)) AS prov,
+    COUNT(*) AS events, MIN(u.observed_at_ms) AS first_at, MAX(u.observed_at_ms) AS last_at,
+    SUM(u.tokens_in_uncached) AS in_uncached, SUM(u.tokens_in_cache_read) AS in_cache_read,
+    SUM(u.tokens_in_cache_write) AS in_cache_write, SUM(u.tokens_out_text) AS out_text,
+    SUM(u.tokens_out_reasoning) AS out_reasoning, SUM(u.tokens_out_combined) AS out_combined
+    FROM usage_event u WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND ${committedPredicate("u")}
+    GROUP BY u.session_id, directory_id, u.model_id, u.account_scope_id, u.tier_id, shape, ctx_class, prov`);
+  for (let interval = 0; interval + 1 < ordered.length; interval += 1) {
+    signal?.throwIfAborted();
+    for (const row of grouped.iterate(ordered[interval], ordered[interval + 1])) {
+      const components = componentsOf(row);
+      const prov = Number(row.prov);
+      const statusOnly = (prov & 4) !== 0 && allNull(components);
       const modelId = models.get(Number(row.model_id));
       const session = sessions.get(Number(row.session_id));
+      const classIndex = Number(row.ctx_class);
       core.add({
-        observedAtMs: observedMs,
-        accountScopeId: Number(row.account_scope_id),
-        sessionLocal: session.local,
-        sessionUuid: session.uuid,
-        modelId,
-        components,
-        statusOnly,
-        project: projectByDirectory.get(Number(row.work_directory_id ?? 0)) ?? null,
-        cacheWriteAssumedZero: (flags & 4) !== 0,
-        partial: (flags & 1) !== 0,
-        price: statusOnly
-          ? { amount: null, status: "unpriced" }
-          : priceOf({
-            observedAt: new Date(observedMs).toISOString(),
-            model: modelId,
-            totalInputContextTokens: row.total_input_context === null
-              ? null : Number(row.total_input_context),
-            components,
-            tierSemantics: {},
-            surfaceClassification: {},
-            accountScope: {},
-          }),
-        weight: 1,
+        observedAtMs: Number(row.first_at), lastAtMs: Number(row.last_at),
+        accountScopeId: Number(row.account_scope_id), sessionLocal: session.local, sessionUuid: session.uuid,
+        modelId, components, statusOnly,
+        project: projectByDirectory.get(Number(row.directory_id)) ?? null,
+        cacheWriteAssumedZero: (prov & 2) !== 0, partial: (prov & 1) !== 0,
+        price: statusOnly ? { amount: null, status: "unpriced" } : priceOf({
+          observedAt: new Date(Number(row.first_at)).toISOString(), model: modelId,
+          totalInputContextTokens: classIndex < 0 ? null : classIndex === 0 ? 0 : starts[classIndex - 1],
+          components, tierSemantics: tiers.get(Number(row.tier_id)) ?? {}, surfaceClassification: {}, accountScope: {},
+        }),
+        weight: Number(row.events),
       });
     }
+    await new Promise(resolve => setImmediate(resolve));
   }
   return core.finish();
 }
@@ -519,7 +444,7 @@ export function createWorkUsageCollectorCore({
       pricing: {
         basis: "event_time",
         fingerprint: createHash("sha256")
-          .update(JSON.stringify(APP_PRICE_REGISTRY_MANIFEST))
+          .update(JSON.stringify(["speed-api-prices-v1", APP_PRICE_REGISTRY_MANIFEST]))
           .digest("hex"),
       },
       metadata: {
@@ -581,7 +506,7 @@ export function createWorkUsageCollectorCore({
           pricing: {
             basis: "event_time",
             fingerprint: createHash("sha256")
-              .update(JSON.stringify(APP_PRICE_REGISTRY_MANIFEST))
+              .update(JSON.stringify(["speed-api-prices-v1", APP_PRICE_REGISTRY_MANIFEST]))
               .digest("hex"),
           },
           metadata: {

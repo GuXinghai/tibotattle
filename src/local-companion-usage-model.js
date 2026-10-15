@@ -1,3 +1,4 @@
+import { speedApiPrice, addSpeedApiCost, speedApiCostSummary } from "./speed-api-cost.js";
 import { ExactUsdSum, projectRecordedTokenComponents } from "./reporting/index.js";
 import {
   emptySpeedWeightingCrossing,
@@ -342,6 +343,7 @@ export function usageProjection(record, declaredSpeed = "unknown", pricer = null
     priceCardIds,
     priceCardBreakdown,
     pricedComponents,
+    speedPriced: speedApiPrice({ ...pricingEvent, tierSemantics: record.tierSemantics }, pricingComponents, priced, declaredSpeed, pricer?.forApiTier),
     pricingCoverageStatus: ["fully_priced", "partially_priced"].includes(priced.coverageStatus)
       ? priced.coverageStatus
       : "unpriced",
@@ -509,6 +511,8 @@ export function addUsageToPeriod(period, projection, weight = 1) {
     projection.components,
     { components: projection.pricedComponents },
   );
+  addSpeedApiCost(period, projection.components, projection.speedPriced, weight);
+  addSpeedApiCost(modelSummary, projection.components, projection.speedPriced, weight);
   period.apiPriceEquivalentUsd += projection.apiPriceEquivalentUsd;
   if (projection.apiPriceEquivalentUsdExact !== null) {
     let exact = pendingExactUsd.get(period);
@@ -585,6 +589,7 @@ export function finalizeUsagePeriod(period) {
   const priced = period.pricingCoverage.fullyPricedEvents + period.pricingCoverage.partiallyPricedEvents;
   const finalized = {
     ...period,
+    ...speedApiCostSummary(period),
     apiPriceEquivalentUsd: Number(period.apiPriceEquivalentUsd.toFixed(6)),
     priceCardIds: [...period.priceCardIds].sort(),
     priceCardBreakdown: Object.values(period.priceCardBreakdown).sort(
@@ -595,6 +600,7 @@ export function finalizeUsagePeriod(period) {
     byModel: Object.values(period.byModel)
       .map((row) => ({
         ...row,
+        ...speedApiCostSummary(row),
         apiPriceEquivalentUsd: Number(row.apiPriceEquivalentUsd.toFixed(6)),
         componentCosts: roundComponentCosts(row.componentCosts),
       }))

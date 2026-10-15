@@ -1,4 +1,5 @@
 export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
+  "/usage-simple.css": Object.freeze({ file: "usage-simple.css", type: "text/css; charset=utf-8" }),
   "/overview-workload.js": Object.freeze({ file: "overview-workload.js", type: "text/javascript; charset=utf-8" }),
   "/allowance-trends.js": Object.freeze({ file: "allowance-trends.js", type: "text/javascript; charset=utf-8" }),
   "/cache-reuse-matrix.js": Object.freeze({ file: "cache-reuse-matrix.js", type: "text/javascript; charset=utf-8" }),

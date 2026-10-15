@@ -207,8 +207,9 @@ export function mountWorkUsageView(options = {}) {
     schemaVersion: SCHEMA,
     period: sharedReporting ? reportingWindow?.period ?? null : "7d",
     grouping: "project",
-    sort: "tokens",
+    sort: options.compact ? "cost" : "tokens",
     pageSize: 6,
+    ...options.initialQuery,
   };
   if (sharedReporting && reportingWindow) query.endAt = reportingWindow.endAt;
   let response = null;
@@ -237,13 +238,20 @@ export function mountWorkUsageView(options = {}) {
   let started = false;
   let ancestors = [];
   let pages = [];
-  let selectedTitle = null;
+  let restorePageDepth = 0;
+  let restoreScroll = null;
+  let selectedTitle = options.detailTitle ?? null;
+  let detailView = null;
+  let detailLauncher = null;
+  let detailRowId = null;
+  const rankLaunchers = new Map();
   let pendingFocus = null;
   let nested = null;
   let expandedThread = null;
   let nextNestedId = 0;
   let statusKey = "preparing";
   let statusValues;
+  const reportedFailures = new Set();
   let leaseTimer = null;
   let leaseController = null;
   let destroyed = false;
@@ -369,8 +377,9 @@ export function mountWorkUsageView(options = {}) {
       if (signal.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
       const requestController = new AbortController();
       const forwardAbort = () => requestController.abort();
+      let preloadTimedOut = false;
       const requestTimer = scheduleLease(
-        () => requestController.abort(),
+        () => { preloadTimedOut = true; requestController.abort(); },
         PRELOAD_REQUEST_TIMEOUT_MS,
       );
       requestTimer?.unref?.();
@@ -387,12 +396,12 @@ export function mountWorkUsageView(options = {}) {
           signal: requestController.signal,
         });
         if (requestController.signal.aborted)
-          throw Object.assign(new Error("aborted"), { name: "AbortError" });
+          throw Object.assign(new Error(preloadTimedOut ? "timeout" : "aborted"), { name: preloadTimedOut ? "TimeoutError" : "AbortError" });
         const payload = http.status === 409
           ? await http.json().catch(() => null)
           : http.ok ? await http.json() : null;
         if (requestController.signal.aborted)
-          throw Object.assign(new Error("aborted"), { name: "AbortError" });
+          throw Object.assign(new Error(preloadTimedOut ? "timeout" : "aborted"), { name: preloadTimedOut ? "TimeoutError" : "AbortError" });
         if (http.status === 409) {
           return {
             result: null,
@@ -403,10 +412,10 @@ export function mountWorkUsageView(options = {}) {
               ].includes(payload?.error?.code),
           };
         }
-        if (!http.ok) return {
-          result: null,
-          invalidated: http.status === 401 || http.status === 403,
-        };
+        if (!http.ok) {
+          reportFailure(new Error(http.status === 401 || http.status === 403 ? "permission" : "unavailable"), "preload");
+          return { result: null, invalidated: http.status === 401 || http.status === 403 };
+        }
         const result = validateWorkUsageResponse(payload);
         // A saved report cannot anchor speculative periods or become a live
         // report through warming. Its replacement belongs to the foreground.
@@ -472,11 +481,7 @@ export function mountWorkUsageView(options = {}) {
         if (result?.status === "available") cachePeriod(periodId, result, familyKey, anchor);
       }
     } catch (error) {
-      if (error?.name !== "AbortError") {
-        // Warm-up is opportunistic. A failed speculative request must not
-        // replace the visible report or turn a transient source failure into
-        // a page-level error.
-      }
+      if (error?.name !== "AbortError") reportFailure(error, "preload");
     } finally {
       if (periodPreloadController === controllerRef) periodPreloadController = null;
     }
@@ -499,6 +504,7 @@ export function mountWorkUsageView(options = {}) {
   }
 
   function schedulePeriodPreload() {
+    if (options.detailTitle) return;
     clearLeaseTimer(periodPreloadTimer);
     periodPreloadTimer = null;
     if (!visible() || statusKey !== "snapshot" || !liveAnchor || !stableAnchor(liveAnchor)
@@ -532,7 +538,8 @@ export function mountWorkUsageView(options = {}) {
     const token = serial;
     const requestController = new AbortController();
     leaseController = requestController;
-    const timeout = scheduleLease(() => requestController.abort(), 10_000);
+    let timedOut = false;
+    const timeout = scheduleLease(() => { timedOut = true; requestController.abort(); }, 10_000);
     try {
       const http = await fetchRef("/api/local/work-usage/query", {
         method: "POST",
@@ -541,6 +548,8 @@ export function mountWorkUsageView(options = {}) {
         body: JSON.stringify({ schemaVersion: SCHEMA, action: "touch", snapshotId }),
         signal: requestController.signal,
       });
+      if (!http.ok && http.status !== 409) throw new Error(http.status === 401 || http.status === 403 ? "permission" : "unavailable");
+      if (http.ok) clearFailure();
       if (http.status === 409 && token === serial && !requestController.signal.aborted && visible()) {
         const error = await http.json();
         if (error.error?.code === "work_usage_snapshot_expired" && token === serial
@@ -550,7 +559,9 @@ export function mountWorkUsageView(options = {}) {
           refresh();
         }
       }
-    } catch {} // A transient lease failure must not erase the displayed report.
+    } catch (error) {
+      if (!requestController.signal.aborted || timedOut) reportFailure(timedOut ? Object.assign(new Error("timeout"), { name: "TimeoutError" }) : error, "lease");
+    }
     finally {
       clearLeaseTimer(timeout);
       if (leaseController === requestController) {
@@ -711,6 +722,7 @@ export function mountWorkUsageView(options = {}) {
   });
   scope.wrapper.hidden = true;
   const refreshButton = button(tr("refresh"), refresh);
+  if (options.compact) refreshButton.hidden = true;
   const form = el("form", "work-usage-find");
   const findField = el("label", "work-usage-select work-usage-find-field");
   const findLabel = el("span", null, tr("find"));
@@ -723,7 +735,16 @@ export function mountWorkUsageView(options = {}) {
   form.append(findField);
   const filters = el("div", "work-usage-filter-controls");
   filters.append(sort.wrapper, model.wrapper, scope.wrapper, refreshButton);
-  toolbar.append(viewsField, form, filters);
+  const filterDisclosure = el("details", "work-usage-filters");
+  const filterSummary = el("summary", null, tr("filters"));
+  if (options.compact) {
+    root.classList.add("work-usage-compact");
+    viewsField.hidden = true;
+    sort.wrapper.hidden = true;
+    filterDisclosure.append(filterSummary, form, filters);
+    toolbar.append(viewsField, filterDisclosure);
+  } else toolbar.append(viewsField, form, filters);
+  if (options.detailTitle) { viewsField.hidden = true; form.hidden = true; }
   function clearSearchTimer() {
     clearLeaseTimer(searchTimer);
     searchTimer = null;
@@ -781,13 +802,51 @@ export function mountWorkUsageView(options = {}) {
     delete query.search;
     if (exactThread) query.findThread = value;
     else if (value) query.search = value;
-    query.grouping = exactThread ? "thread" : "project";
+    query.grouping = exactThread ? "thread" : options.compact ? query.grouping : "project";
     resetPage();
     return true;
   }
   const message = el("p", "work-usage-status");
   message.setAttribute("role", "status");
   message.setAttribute("aria-live", "polite");
+  const issue = el("p", "work-usage-issue evidence-warning");
+  issue.hidden = true;
+  issue.setAttribute("role", "status");
+  const classifyFailure = error => {
+    if (error?.name === "TimeoutError") return "timeout";
+    if (error instanceof SyntaxError || error?.message === "invalid_response") return "invalid_response";
+    if (["expired", "unavailable", "permission", "capacity"].includes(error?.message)) return error.message;
+    return "network";
+  };
+  function httpFailure(http, payload = null) {
+    const reason = http.status === 401 || http.status === 403 ? "permission"
+      : http.status === 409 ? "expired"
+      : payload?.error?.code === "work_usage_capacity_exceeded" ? "capacity"
+      : payload?.error?.code === "work_usage_query_invalid" ? "invalid_response"
+      : "unavailable";
+    return new Error(reason);
+  }
+  function reportFailure(error, phase = "query") {
+    const reason = classifyFailure(error);
+    if (phase !== "preload") {
+      issue.hidden = false;
+      issue.textContent = tr("failureReason", { reason: tr(`failure.${reason}`) });
+      issue.dataset.code = `work_usage_${reason}`;
+    }
+    const code = `work_usage_${reason}`;
+    const key = `${phase}:${code}`;
+    if (!reportedFailures.has(key)) {
+      reportedFailures.add(key);
+      Promise.resolve().then(() => options.onDiagnostic?.({ code, phase })).then(note => {
+        if (phase !== "preload" && note?.reference && /^TT-[0-9A-HJKMNP-TV-Z]{6}$/u.test(note.reference))
+          issue.textContent += ` · ${note.reference}`;
+      }).catch(() => {
+        issue.hidden = false;
+        issue.textContent = tr("diagnosticFailed");
+      });
+    }
+  }
+  function clearFailure() { issue.hidden = true; issue.textContent = ""; reportedFailures.clear(); }
   const cancel = button(tr("cancel"), async () => {
     clearSearchTimer();
     searchPending = false;
@@ -800,7 +859,7 @@ export function mountWorkUsageView(options = {}) {
     stopPeriodPreload();
     if (query.snapshotId) {
       try {
-        await fetchRef("/api/local/work-usage/query", {
+        const cancelled = await fetchRef("/api/local/work-usage/query", {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -812,7 +871,8 @@ export function mountWorkUsageView(options = {}) {
             snapshotId: query.snapshotId,
           }),
         });
-      } catch {}
+        if (!cancelled.ok) throw new Error("unavailable");
+      } catch (error) { reportFailure(error, "cancel"); }
     }
     delete query.snapshotId;
     delete query.sourceSnapshotId;
@@ -837,14 +897,93 @@ export function mountWorkUsageView(options = {}) {
   retryButton.hidden = true;
   const body = el("div", "work-usage-body");
   const actions = el("div", "dashboard-actions work-usage-actions");
-  actions.append(message, retryButton, cancel);
+  actions.append(message, issue, retryButton, cancel);
   root.replaceChildren(
     heading,
     toolbar,
     actions,
     body,
   );
+  const detailDialog = el("dialog", "work-usage-dialog");
+  const detailHeading = el("h2");
+  detailHeading.id = `${root.id}-detail-heading`;
+  detailDialog.setAttribute("aria-labelledby", detailHeading.id);
+  const detailClose = button(t("dashboard.overview.close"), () => detailDialog.close(), "button button-secondary");
+  const detailHeader = el("header", "work-usage-dialog-header");
+  detailHeader.append(detailHeading, detailClose);
+  const detailContent = el("section", "work-usage-dialog-content");
+  detailContent.id = `${root.id}-detail-content`;
+  detailDialog.append(detailHeader, detailContent);
+  if (options.compact) root.append(detailDialog);
+  detailDialog.addEventListener("close", () => {
+    detailView?.destroy();
+    detailView = null;
+    detailContent.replaceChildren();
+    const launcher = detailLauncher?.isConnected ? detailLauncher : rankLaunchers.get(detailRowId);
+    if (!root.inert) launcher?.focus({ preventScroll: true });
+    detailLauncher = null;
+    detailRowId = null;
+  });
+  detailDialog.addEventListener("click", event => {
+    if (event.target !== detailDialog) return;
+    const bounds = detailDialog.getBoundingClientRect();
+    if (event.clientX < bounds.left || event.clientX > bounds.right
+        || event.clientY < bounds.top || event.clientY > bounds.bottom) detailDialog.close();
+  });
+  function openDetails(row, launcher) {
+    if (retainedReport() || destroyed) return;
+    detailView?.destroy();
+    detailLauncher = launcher;
+    detailRowId = row.id;
+    detailHeading.textContent = label(row);
+    const initialQuery = { ...query, grouping: "thread" };
+    delete initialQuery.cursor;
+    delete initialQuery.findThread;
+    delete initialQuery.search;
+    initialQuery[row.kind] = row.id;
+    detailView = mountWorkUsageView({
+      root: detailContent, t, windowRef, fetchRef,
+      sharedReporting: true,
+      reportingWindow: { period: query.period, startAt: query.period === "all" ? null : new Date(Math.max(0, response.toMs - REPORTING_DURATION_MS[query.period])).toISOString(), endAt: new Date(response.toMs).toISOString() },
+      initialQuery, detailTitle: label(row),
+      renderInformationLabel: options.renderInformationLabel,
+      onDiagnostic: options.onDiagnostic,
+    });
+    detailDialog.showModal();
+    detailClose.focus();
+  }
+  function renderRanking() {
+    rankLaunchers.clear();
+    const list = el("div", "work-usage-ranking");
+    const byCost = query.sort === "cost";
+    const total = byCost ? (response.totals.costUsdExact === null ? null : Number(response.totals.costUsdExact)) : response.totals.tokens;
+    for (const row of response.rows) {
+      const item = el("div", "work-usage-rank");
+      const open = button(label(row), () => openDetails(row, open), "work-usage-rank-open");
+      rankLaunchers.set(row.id, open);
+      open.setAttribute("aria-haspopup", "dialog");
+      open.disabled = retainedReport();
+      const value = byCost ? (row.costUsdExact === null ? null : Number(row.costUsdExact)) : row.tokens;
+      const amount = el("span", "work-usage-rank-amount", byCost ? formatApiMoney(row.costUsdExact) : quantity(row.tokens));
+      const share = formatSharePercent(value, total);
+      const number = el("span", "work-usage-rank-number");
+      number.append(amount, el("small", "work-usage-muted", share ?? "—"));
+      const track = el("span", "work-usage-rank-track");
+      track.setAttribute("aria-hidden", "true");
+      if (value !== null && total > 0) {
+        const fill = el("span");
+        fill.style.width = `${Math.max(0, Math.min(100, value / total * 100))}%`;
+        track.append(fill);
+      }
+      item.append(open, number, track);
+      if (row.incompleteEvents || row.priceStatus !== "complete")
+        item.append(el("small", "work-usage-muted", tr(row.priceStatus === "unpriced" ? "unpriced" : "partial")));
+      list.append(item);
+    }
+    body.append(list);
+  }
   function resetPage() {
+    restorePageDepth = 0;
     delete query.cursor;
     pages = [];
   }
@@ -862,6 +1001,7 @@ export function mountWorkUsageView(options = {}) {
     ancestors.push({
       query: { ...query },
       pages: [...pages],
+      scrollTop: root.closest?.("dialog")?.scrollTop ?? 0,
       title: selectedTitle,
       rowId: row.id,
     });
@@ -1003,8 +1143,7 @@ export function mountWorkUsageView(options = {}) {
           return;
         }
       }
-      if (!http.ok)
-        throw new Error(http.status === 409 ? "expired" : "unavailable");
+      if (!http.ok) throw httpFailure(http, await http.json());
       const result = validateWorkUsageResponse(await http.json());
       if (
         result.status !== "available" ||
@@ -1022,6 +1161,7 @@ export function mountWorkUsageView(options = {}) {
       if (token !== serial || nested !== entry || controller.signal.aborted)
         return;
       entry.status = error.message === "expired" ? "expired" : "unavailable";
+      reportFailure(error);
     }
     if (nested === entry && token === serial) {
       pendingFocus = documentRef.activeElement?.classList?.contains(
@@ -1046,6 +1186,8 @@ export function mountWorkUsageView(options = {}) {
           const previous = ancestors.pop();
           query = previous.query;
           pages = previous.pages;
+          restorePageDepth = previous.restorePageDepth ?? 0;
+          restoreScroll = previous.scrollTop ?? null;
           selectedTitle = previous.title;
           pendingFocus = previous.rowId;
           load();
@@ -1080,6 +1222,7 @@ export function mountWorkUsageView(options = {}) {
       pendingFocus = null;
       return;
     }
+    if (!options.compact) {
     const summaries = el("div", "work-usage-summary");
     for (const [label, n] of [
       [tr("tokens"), response.totals.tokens],
@@ -1129,6 +1272,7 @@ export function mountWorkUsageView(options = {}) {
       }
       body.append(mix);
     }
+    }
     if (query.search) body.append(el("p", "annotation work-usage-search-note", tr("searchNote")));
     body.append(
       el(
@@ -1137,6 +1281,8 @@ export function mountWorkUsageView(options = {}) {
         `${formatLocal(new Date(response.fromMs).toISOString())} — ${formatLocal(new Date(response.toMs).toISOString())}`,
       ),
     );
+    if (options.compact) renderRanking();
+    else {
     if (query.project && !query.thread && !query.worktree)
       body.append(
         button(
@@ -1153,6 +1299,7 @@ export function mountWorkUsageView(options = {}) {
     if (query.thread) {
       const details = el("dl", "work-usage-components");
       COMPONENTS.forEach((key, i) => {
+        if ((i === 2 || i === 5) && !(response.totals.components[key] > 0)) return;
         const group = el("div");
         group.append(
           el("dt", null, tr(COMPONENT_LABELS[i])),
@@ -1236,6 +1383,8 @@ export function mountWorkUsageView(options = {}) {
         const caret = el("span", "model-disclosure-caret", "›");
         caret.setAttribute("aria-hidden", "true");
         control.prepend(caret);
+      } else if (options.detailTitle && row.kind === "thread" && !query.thread) {
+        control = button(name, () => descend(row), "work-usage-row-link");
       } else if (row.kind === "thread" && display?.codexUrl) {
         const parts = formatCodexThreadParts(
           display.thread ?? { id: display.codexUrl.split("/").at(-1), name },
@@ -1363,7 +1512,7 @@ export function mountWorkUsageView(options = {}) {
     };
     const appendRow = (group, row, report, child = false) => {
       group.append(addRow(row, report, child));
-      if (row.kind !== "thread" || expandedThread !== row.id || !row.modelBreakdown?.length) return;
+      if (row.kind !== "thread" || (expandedThread !== row.id && query.thread !== row.id) || !row.modelBreakdown?.length) return;
       const detailRow = el("tr", "work-usage-model-detail");
       const cell = el("td");
       cell.colSpan = 6;
@@ -1377,8 +1526,9 @@ export function mountWorkUsageView(options = {}) {
         ["output_text_tokens", "outputText"],
         ["output_reasoning_tokens", "reasoning"],
       ];
+
       if (row.modelBreakdown.some(model => (model.components.input_cache_write_tokens ?? 0) > 0)) components.splice(2,0,["input_cache_write_tokens", "cacheWrite"]);
-      if (row.modelBreakdown.some(model => model.components.output_combined_tokens !== null)) components.push(["output_combined_tokens", "combined"]);
+      if (row.modelBreakdown.some(model => model.components.output_combined_tokens > 0)) components.push(["output_combined_tokens", "combined"]);
       const headers = [tr("model"), ...components.map(([,key])=>tr(key)), tr("cost")];
       const head = el("thead"); const header = el("tr");
       headers.forEach((name,i) => { const th=el("th", i ? "numeric-cell" : null, name); th.scope="col"; header.append(th); });
@@ -1498,6 +1648,7 @@ export function mountWorkUsageView(options = {}) {
     wrap.append(table);
     panel.append(wrap);
     body.append(panel);
+    }
     body.dataset.state = "ready";
     const pagination = el("div", "table-pagination");
     const previous = quietButton(tr("previous"), () => {
@@ -1537,7 +1688,12 @@ export function mountWorkUsageView(options = {}) {
     body.append(pagination);
     if (response.namesAvailable === false)
       body.append(el("p", "work-usage-caption", tr("savedNamesUnavailable")));
-    focusTarget?.focus();
+    focusTarget?.focus({ preventScroll: true });
+    if (restoreScroll !== null) {
+      const scrollHost = root.closest?.("dialog");
+      if (scrollHost) scrollHost.scrollTop = restoreScroll;
+      restoreScroll = null;
+    }
     pendingFocus = null;
   }
   function load(recoverExpired = true, options = {}) {
@@ -1649,13 +1805,12 @@ export function mountWorkUsageView(options = {}) {
     for (const b of period.children)
       b.setAttribute("aria-pressed", String(b.dataset.period === query.period));
     sort.control.value = query.sort;
+    let requestTimedOut = false;
     try {
       const requestController = background ? new AbortController() : loadController;
       const requestSignal = requestController.signal;
       const forwardAbort = background ? () => requestController.abort() : null;
-      const requestTimer = background
-        ? scheduleLease(() => requestController.abort(), PRELOAD_REQUEST_TIMEOUT_MS)
-        : null;
+      const requestTimer = scheduleLease(() => { requestTimedOut = true; requestController.abort(); }, background ? PRELOAD_REQUEST_TIMEOUT_MS : 30_000);
       requestTimer?.unref?.();
       if (forwardAbort) loadController.signal.addEventListener("abort", forwardAbort, { once: true });
       let http;
@@ -1673,7 +1828,7 @@ export function mountWorkUsageView(options = {}) {
         });
         if (requestSignal.aborted)
           throw Object.assign(new Error("aborted"), { name: "AbortError" });
-        if (http.status === 409 || http.ok) payload = await http.json();
+        payload = await http.json();
         if (requestSignal.aborted)
           throw Object.assign(new Error("aborted"), { name: "AbortError" });
       } finally {
@@ -1703,7 +1858,7 @@ export function mountWorkUsageView(options = {}) {
           body.hidden = true;
           body.dataset.state = http.status === 409 ? "expired" : "unavailable";
         }
-        throw new Error(http.status === 409 ? "expired" : "unavailable");
+        throw httpFailure(http, payload);
       }
       let result = validateWorkUsageResponse(payload);
       if (token !== serial) return;
@@ -1748,12 +1903,26 @@ export function mountWorkUsageView(options = {}) {
         setStatus(result.status === "missing" ? "missing" : "unavailable");
         return;
       }
+      if (!result.retained && restorePageDepth > 0 && result.nextCursor) {
+        pages.push(query.cursor ?? null);
+        query.cursor = result.nextCursor;
+        restorePageDepth--;
+        return performLoad(recoverExpired, { background, preparingAttempt: 0 });
+      }
+      restorePageDepth = 0;
       response = result;
+      if (!result.retained && detailView && detailDialog.open) {
+        detailView.setReportingWindow({ period: query.period,
+          startAt: query.period === "all" ? null : new Date(Math.max(0, result.toMs - REPORTING_DURATION_MS[query.period])).toISOString(),
+          endAt: new Date(result.toMs).toISOString() }, result.snapshotId);
+      }
+      options.onSummary?.(result.totals, { filtered: Boolean(query.model || query.search || query.findThread || query.project || query.thread || query.worktree), period: query.period, toMs: result.toMs });
       responseQueryKey = queryKey();
       retainedWindowQueryKey = null;
       liveAnchor = result.retained ? null : responseAnchor(result);
       if (result.retained) clearPeriodCache();
       else if (!query.cursor) cachePeriod(query.period, result, familyKey, liveAnchor);
+      if (!result.retained) clearFailure();
       setStatus(result.retained ? (result.refreshing ? "savedUpdating" : "savedUnavailable") : "snapshot", {
         date: formatLocal(new Date(result.toMs).toISOString()),
       });
@@ -1800,7 +1969,10 @@ export function mountWorkUsageView(options = {}) {
         schedulePeriodPreload();
       }
     } catch (error) {
-      if (token !== serial || error.name === "AbortError") return;
+      if (token !== serial || error.name === "AbortError" && !requestTimedOut) return;
+      if (requestTimedOut) error = Object.assign(new Error("timeout"), { name: "TimeoutError" });
+      reportFailure(error);
+      if (detailView && detailDialog.open) detailView.markFailed();
       if (retainedReport() && !body.hidden && displayedForQuery())
         setStatus("savedUnavailable", { date: formatLocal(new Date(response.toMs).toISOString()) });
       else setStatus(error.message === "expired" ? "expired" : "error");
@@ -1812,10 +1984,15 @@ export function mountWorkUsageView(options = {}) {
       }
     }
   }
-  function setReportingWindow(value) {
+  function setReportingWindow(value, anchorSnapshotId = null) {
     const next = normalizeReportingWindow(value);
     const retainPrevious = next && reportingWindow && next.period === reportingWindow.period
       && Date.parse(next.endAt) > Date.parse(reportingWindow.endAt) && displayedForQuery();
+    if (detailDialog.open && next?.period !== reportingWindow?.period) detailDialog.close();
+    const keepNavigation = next && reportingWindow?.period === next.period && (options.detailTitle || options.compact);
+    const pageDepth = keepNavigation ? pages.length : 0;
+    const currentTitle = selectedTitle;
+    if (keepNavigation && options.detailTitle) restoreScroll = root.closest?.("dialog")?.scrollTop ?? 0;
     const previousKey = queryKey();
     const sameEnd = next && reportingWindow?.endAt === next.endAt;
     sharedReporting = true;
@@ -1849,9 +2026,18 @@ export function mountWorkUsageView(options = {}) {
     delete query.snapshotId;
     delete query.sourceSnapshotId;
     if (prepared) query.snapshotId = prepared.snapshotId;
+    else if (shortText(anchorSnapshotId)) query.snapshotId = anchorSnapshotId;
     resetPage();
-    ancestors = [];
-    selectedTitle = null;
+    restorePageDepth = pageDepth;
+    if (keepNavigation && options.detailTitle) {
+      ancestors = ancestors.map(previous => {
+        const updated = { ...previous.query, period: next.period, endAt: next.endAt };
+        delete updated.snapshotId; delete updated.sourceSnapshotId; delete updated.cursor;
+        return { ...previous, query: updated, restorePageDepth: previous.pages.length, pages: [] };
+      });
+      selectedTitle = currentTitle;
+    } else { ancestors = []; selectedTitle = options.detailTitle ?? null; }
+    if (detailView && next) detailView.markUpdating();
     response = prepared ?? (retainPrevious ? response : null);
     responseQueryKey = prepared ? queryKey() : retainPrevious ? responseQueryKey : null;
     retainedWindowQueryKey = prepared || retainPrevious ? queryKey() : null;
@@ -1920,6 +2106,7 @@ export function mountWorkUsageView(options = {}) {
       return;
     }
     if (!visible()) {
+      if (detailDialog.open) detailDialog.close();
       if (!periodPreloadAllowInactive) stopPeriodPreload();
       return;
     }
@@ -1939,6 +2126,8 @@ export function mountWorkUsageView(options = {}) {
   documentRef.addEventListener?.("visibilitychange", visibilityChanged);
   windowRef.addEventListener("pageshow", visibilityChanged);
   function relocalize() {
+    detailClose.textContent = t("dashboard.overview.close");
+    filterSummary.textContent = tr("filters");
     title.textContent = tr("title");
     headingText.lastChild.textContent = tr("subtitle");
     period.setAttribute("aria-label", tr("period"));
@@ -1976,10 +2165,34 @@ export function mountWorkUsageView(options = {}) {
   }
   windowRef.addEventListener("tibotattle:locale-change", relocalize);
   return {
+    setGrouping(grouping) {
+      if (!["project", "thread"].includes(grouping) || query.grouping === grouping) return;
+      query.grouping = grouping;
+      for (const key of ["project", "worktree", "thread", "findThread"]) delete query[key];
+      selectedTitle = null;
+      ancestors = [];
+      resetPage();
+      if (started) load();
+    },
+    markFailed() {
+      if (response) setStatus("savedUnavailable", { date: formatLocal(new Date(response.toMs).toISOString()) });
+    },
+    markUpdating() {
+      if (response) { setStatus("savedUpdating", { date: formatLocal(new Date(response.toMs).toISOString()) }); body.inert = true; }
+    },
+    setMetric(value) {
+      if (!["cost", "tokens"].includes(value) || query.sort === value) return;
+      query.sort = value;
+      sort.control.value = value;
+      resetPage();
+      if (started) load();
+    },
     refresh,
     setReportingWindow,
     preload,
     destroy() {
+      if (detailDialog.open) detailDialog.close();
+      detailView?.destroy();
       destroyed = true;
       clearSearchTimer();
       stopLease();

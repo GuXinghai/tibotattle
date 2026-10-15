@@ -12,6 +12,12 @@ const layout = source.slice(source.indexOf("function mountDashboardLayout("));
 function assertReachable(href) {
   const { page, view } = parseDashboardHash(href);
   assert.ok(page, href);
+  if (page === "usage" && view === "composition") {
+    assert.match(layout, /composition: "#usage-composition-details"/u);
+    assert.match(layout, /usageDetailRoutes\[event\.detail\.view\][\s\S]*?summary[\s\S]*?click/u);
+    assert.match(html, /id="usage-composition-details"/u);
+    return;
+  }
   const config = layout.slice(layout.indexOf(`{ id: "${page}", page: "${page}", level: 1`));
   const views = config.slice(0, config.indexOf("] },"));
   assert.match(views, new RegExp(`view\\("${view}"`, "u"), href);

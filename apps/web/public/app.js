@@ -183,17 +183,22 @@ let residualInspectionSignature = "";
 // period or refreshed row set returns to page one.
 const CACHE_IMPACT_TABLE_PAGE_SIZE = 6;
 const accountingModelsTablePagination = { page: 0, signature: "" };
+let usageSimpleMetric = "cost";
+let usageSimpleCounts = null;
+let usageSimpleCountsContext = null;
+let usageSimpleModelAccounting = null;
+let usageSimpleModelsUnavailable = false;
 // Which model rows the reader has opened. Held outside the render so a
 // background refresh redraws the table without collapsing a row mid-read.
 const accountingExpandedModels = new Set();
 const cacheSwitchTablePagination = { page: 0, signature: "" };
 const cacheContinuityTablePagination = { page: 0, signature: "" };
 
-function paginateCacheImpactRows(rows, state, signature) {
+function paginateCacheImpactRows(rows, state, signature, { preservePage = false } = {}) {
   const selectedRows = Array.isArray(rows) ? rows : [];
   if (state.signature !== signature) {
     state.signature = signature;
-    state.page = 0;
+    if (!preservePage) state.page = 0;
   }
   const pageCount = Math.max(
     1,
@@ -7751,6 +7756,7 @@ function renderAccountingCacheSwitchDetails(impact) {
     recent,
     cacheSwitchTablePagination,
     cacheImpactTableSignature("switch", impact, recent),
+    { preservePage: Boolean($("#overview-details-dialog")?.open) },
   );
   renderCacheImpactPagination("cache-switch", cacheSwitchTablePagination, page);
   if (!recent.length) {
@@ -8013,6 +8019,7 @@ function renderAccountingCacheContinuityDetails(impact) {
     recent,
     cacheContinuityTablePagination,
     cacheImpactTableSignature("continuity", impact, recent),
+    { preservePage: Boolean($("#overview-details-dialog")?.open) },
   );
   renderCacheImpactPagination(
     "cache-continuity",
@@ -8170,24 +8177,38 @@ function renderAccountingRebuildDeferral(data, { staleServeShown = false } = {})
 }
 
 function accountingPriceHeadline(accounting) {
-  const weighted = accounting.quotaWeightedApiPriceEquivalentUsd;
-  const explanation = [t("accounting.apiEquivalent.explanation")];
-  if (weighted !== null) {
-    explanation.push(t("accounting.apiEquivalent.standardRateDetail", {
-      amount: formatApiMoney(accounting.apiPriceEquivalentUsd),
-    }));
-  }
+  const amount = finite(accounting.speedApiPriceEquivalentUsd);
   return [
-    localization.translateText(accounting.fastMode.metricShortLabel),
-    explanation.join(" "),
-    weighted === null ? "—" : formatApiMoney(weighted),
-    weighted === null
-      ? t("accounting.apiEquivalent.noWeightedUsage")
-      : localization.translateText(accounting.periodLabel),
+    t("usageSimple.apiEquivalent"),
+    t("usageSimple.apiExplanation"),
+    amount === null ? "—" : formatApiMoney(amount),
+    accounting.speedPricingCoverageStatus === "fully_priced"
+      ? "" : t("dashboard.overview.partial"),
   ];
 }
 
+function updateUsageSimpleCounts() {
+  const label = document.querySelector("#usage-simple-counts");
+  if (!label) return;
+  const matches = usageSimpleCounts && usageSimpleCountsContext
+    && usageSimpleCountsContext.period === reportingWindow?.period
+    && usageSimpleCountsContext.toMs === Date.parse(reportingWindow?.endAt ?? "");
+  label.hidden = !matches;
+  if (!matches) return;
+  label.textContent = t("usageSimple.scopeCounts", {
+    projects: formatCount(usageSimpleCounts.activeProjects),
+    sessions: formatCount(usageSimpleCounts.activeThreads),
+  });
+}
+
 function renderAccounting(data) {
+  const openDialog = $("#overview-details-dialog");
+  const scroll = openDialog?.open ? openDialog.scrollTop : null;
+  renderAccountingContent(data);
+  if (scroll !== null && openDialog.open) openDialog.scrollTop = scroll;
+}
+
+function renderAccountingContent(data) {
   const projection = dashboardAccountingProjection(data);
   // The prior-version figures stand in only while the current channels are
   // genuinely empty: no current cache AND no events from any live source for
@@ -8323,22 +8344,12 @@ function renderAccounting(data) {
     );
     summary.append(card);
   }
-  // Keep the visible attribution note focused on what changed the headline:
-  // directly known speed, the Standard fallback, and any genuinely unweighted
-  // usage. Calibration diagnostics remain available in the accounting data but
-  // do not help a reader interpret this number.
-  if (staleRow === null) {
-    const attributionNote = node("p", "annotation accounting-speed-coverage");
-    const sentences = [fastModeCoverageSentence(fastMode)];
-    if (fastMode.assumedRatioStandardApiPriceEquivalentUsd > 0) {
-      sentences.push(t("accounting.fastMode.assumedRatio", {
-        amount: formatApiMoney(
-          fastMode.assumedRatioStandardApiPriceEquivalentUsd,
-        ),
-      }));
-    }
-    attributionNote.textContent = sentences.join(" ");
-    summary.append(attributionNote);
+  const tokenCard = summary.querySelectorAll("article")[1];
+  if (tokenCard) {
+    const counts = node("p", "", "");
+    counts.id = "usage-simple-counts";
+    tokenCard.append(counts);
+    updateUsageSimpleCounts();
   }
   const cacheSwitchImpact = accounting.cacheSwitchImpact;
   const cacheSwitchCard = node("article", "metric-card compact-metric cache-impact-card");
@@ -8378,7 +8389,7 @@ function renderAccounting(data) {
   cacheImpactSummary.append(cacheContinuityCard);
 
   const componentCountRows = Object.entries(accounting.components ?? {})
-    .filter(([, tokens]) => tokens > 0)
+    .filter(([key, tokens]) => key !== "input_cache_write_tokens" && tokens > 0)
     .map(([key, tokens]) => ({ key, tokens }))
     .sort((left, right) => right.tokens - left.tokens);
   renderAccountingComponentBars("#accounting-component-counts", componentCountRows, {
@@ -8389,13 +8400,14 @@ function renderAccounting(data) {
     displayValue: (row) => compact(row.tokens)
   });
 
-  const componentCostRows = Object.entries(accounting.componentCosts ?? {})
+  const componentCostRows = Object.entries(accounting.speedComponentCosts ?? {})
     .map(([key, value]) => ({
       key,
       tokens: finite(value?.tokens, 0),
       costUsd: finite(value?.costUsd, 0)
     }))
-    .filter((row) => row.tokens > 0 || row.costUsd > 0)
+    .filter((row) => row.key !== "input_cache_write_tokens"
+      && (row.key === "output_combined_tokens" ? row.tokens > 0 : row.tokens > 0 || row.costUsd > 0))
     .sort((left, right) => right.costUsd - left.costUsd || right.tokens - left.tokens);
   renderAccountingComponentBars("#accounting-component-costs", componentCostRows, {
     emptyMessage: projection.status === "retained" && staleRow !== null
@@ -8431,12 +8443,18 @@ function modelUsageRows(accounting) {
       ...(accounting?.byModel ?? []),
       ...(accounting?.spark?.byModel ?? []),
     ];
-  return [...combined].sort((left, right) => (
+  return combined.map(row => ({
+    ...row,
+    apiPriceEquivalentUsd: row.speedApiPriceEquivalentUsd ?? null,
+    componentCosts: row.speedComponentCosts ?? null,
+  })).sort((left, right) => (
     // A separate allowance has no comparable money figure, so those rows
     // cannot be ranked against the primary pool. They sort last.
     Number(modelRowIsSeparateAllowance(left))
       - Number(modelRowIsSeparateAllowance(right))
-    || finite(right.apiPriceEquivalentUsd, 0) - finite(left.apiPriceEquivalentUsd, 0)
+    || (usageSimpleMetric === "tokens"
+      ? finite(right.totalTokens, 0) - finite(left.totalTokens, 0)
+      : finite(right.apiPriceEquivalentUsd, 0) - finite(left.apiPriceEquivalentUsd, 0))
     || finite(right.totalTokens, 0) - finite(left.totalTokens, 0)
     || String(left.model ?? "").localeCompare(String(right.model ?? ""))
   ));
@@ -8522,6 +8540,9 @@ function modelApiEquivalentCell(row) {
 function pricingCoverageNote(accounting) {
   const events = finite(accounting?.events, 0);
   if (events <= 0) return null;
+  if (accounting?.speedPricingCoverageStatus && accounting.speedPricingCoverageStatus !== "fully_priced") {
+    return t("dashboard.overview.partial");
+  }
   if (finite(accounting?.pricingCoverage?.unpricedEvents, 0) <= 0) {
     return null;
   }
@@ -8540,7 +8561,6 @@ function pricingCoverageNote(accounting) {
 const MODEL_COMPONENT_ROWS = Object.freeze([
   ["input_cache_read_tokens", "accounting.model.componentCached"],
   ["input_uncached_tokens", "accounting.model.componentUncached"],
-  ["input_cache_write_tokens", "accounting.model.componentCacheWrite"],
   ["output_text_tokens", "accounting.model.componentOutputText"],
   ["output_reasoning_tokens", "accounting.model.componentReasoning"],
   ["output_combined_tokens", "accounting.model.componentCombined"],
@@ -8590,7 +8610,7 @@ function modelComponentRow(model, key, labelKey, totals) {
   // amount instead of dividing the row total into an invented one.
   let costCell;
   let costShareCell;
-  if (!modelHasComparableCost(model) || cost === null) {
+  if (!modelHasComparableCost(model) || cost === null || finite(cost.costUsd) === null) {
     costCell = localizedNode(
       "td",
       "numeric-cell model-component-withheld",
@@ -8630,7 +8650,10 @@ function modelComponentRow(model, key, labelKey, totals) {
   return row;
 }
 
-function renderAccountingModels(accounting, { unavailable = false } = {}) {
+function renderAccountingModels(accounting, { unavailable = false, preserveCompact = false } = {}) {
+  usageSimpleModelAccounting = accounting;
+  usageSimpleModelsUnavailable = unavailable;
+  if (!preserveCompact) renderUsageSimpleModels(accounting, unavailable);
   const models = $("#accounting-models");
   if (!models) return;
   clear(models);
@@ -8645,6 +8668,7 @@ function renderAccountingModels(accounting, { unavailable = false } = {}) {
     modelRows,
     accountingModelsTablePagination,
     cacheImpactTableSignature("models", accounting, modelRows),
+    { preservePage: Boolean($("#overview-details-dialog")?.open) },
   );
   renderCacheImpactPagination(
     "accounting-model",
@@ -8671,7 +8695,7 @@ function renderAccountingModels(accounting, { unavailable = false } = {}) {
   // the same rule its money cell already follows.
   const totals = {
     tokens: finite(accounting?.totalTokens, 0),
-    cost: finite(accounting?.apiPriceEquivalentUsd, 0),
+    cost: finite(accounting?.speedApiPriceEquivalentUsd, 0),
   };
   for (const model of page.rows) {
     const row = node("tr");
@@ -8784,6 +8808,70 @@ function renderAccountingModels(accounting, { unavailable = false } = {}) {
     }
 
     models.append(row, ...componentRows);
+  }
+}
+
+function renderUsageSimpleModels(accounting, unavailable) {
+  const host = $("#usage-simple-models");
+  if (!host) return;
+  clear(host);
+  const rows = unavailable ? [] : modelUsageRows(accounting);
+  if (!rows.length) {
+    host.append(localizedNode("p", "annotation", unavailable
+      ? "accounting.model.unavailable" : "accounting.model.noneInPeriod"));
+    return;
+  }
+  const total = usageSimpleMetric === "cost"
+    ? finite(accounting?.speedApiPriceEquivalentUsd)
+    : finite(accounting?.totalTokens);
+  for (const model of rows) {
+    const button = node("button", "usage-simple-model-row");
+    button.type = "button";
+    button.dataset.model = model.model;
+    button.setAttribute("aria-haspopup", "dialog");
+    const label = model.model === "unknown"
+      ? t("accounting.model.identityUnavailable") : formatModelName(model.model);
+    button.append(node("span", "usage-simple-model-name", label));
+    const validCost = modelHasComparableCost(model);
+    const amount = usageSimpleMetric === "cost"
+      ? validCost ? finite(model.apiPriceEquivalentUsd) : null
+      : finite(model.totalTokens);
+    const values = node("span", "usage-simple-model-values");
+    values.append(node("strong", "", amount === null
+      ? modelRowIsSeparateAllowance(model) ? t("accounting.model.separateAllowance")
+        : model.pricingStatus === "known_unpriced" ? t("accounting.model.noPublishedPrice")
+          : model.pricingStatus === "unrecognized" ? t("accounting.model.notPricedUnknown")
+            : t("accounting.model.notReported")
+      : usageSimpleMetric === "cost" ? formatApiMoney(amount) : formatCount(amount)));
+    const share = amount !== null && !modelRowIsSeparateAllowance(model)
+      ? formatSharePercent(amount, total) : null;
+    values.append(node("span", "annotation", share ?? "—"));
+    if (usageSimpleMetric === "cost" && amount !== null
+        && model.speedPricingCoverageStatus !== "fully_priced") {
+      values.append(localizedNode("span", "annotation", "dashboard.overview.partial"));
+    }
+    button.append(values);
+    const track = node("span", "usage-simple-model-track");
+    track.setAttribute("aria-hidden", "true");
+    const fill = node("span");
+    fill.style.width = `${amount !== null && total > 0
+      ? Math.min(100, Math.max(0, amount / total * 100)) : 0}%`;
+    track.append(fill);
+    button.append(track);
+    button.addEventListener("click", () => {
+      accountingExpandedModels.add(model.model);
+      const index = rows.findIndex(candidate => candidate.model === model.model);
+      accountingModelsTablePagination.page = Math.floor(index / CACHE_IMPACT_TABLE_PAGE_SIZE);
+      renderAccountingModels(usageSimpleModelAccounting, { unavailable: usageSimpleModelsUnavailable, preserveCompact: true });
+      $("#usage-model-details > summary").click();
+      const dialog = $("#overview-details-dialog");
+      dialog.addEventListener("close", () => {
+        const current = [...host.querySelectorAll("button")]
+          .find(candidate => candidate.dataset.model === model.model);
+        current?.focus({ preventScroll: true });
+      }, { once: true });
+    });
+    host.append(button);
   }
 }
 
@@ -9893,7 +9981,34 @@ document.addEventListener("scroll", () => {
   if (current) positionInformationPopover(current.popover, current.button);
 }, true);
 
-const workUsageView = mountWorkUsageView({ root: document.querySelector("#projects"), t, renderInformationLabel: informationLabel, sharedReporting: true, reportingWindow: null });
+const workUsageView = mountWorkUsageView({
+  root: document.querySelector("#projects"), t, renderInformationLabel: informationLabel,
+  sharedReporting: true, reportingWindow: null, compact: true,
+  async onDiagnostic({ code }) {
+    const result = await describeFailure({
+      surface: "local_refresh", error: { code }, fallback: t("workUsage.error"),
+    });
+    if (result.localNote !== "recorded") throw new Error("work_usage_diagnostic_failed");
+    return { reference: result.reference, localNote: result.localNote };
+  },
+  onSummary(totals, context) {
+    if (!context?.filtered) {
+      usageSimpleCounts = totals;
+      usageSimpleCountsContext = context;
+    }
+    updateUsageSimpleCounts();
+  },
+});
+for (const button of document.querySelectorAll("[data-usage-metric]")) {
+  button.addEventListener("click", () => {
+    usageSimpleMetric = button.dataset.usageMetric;
+    for (const option of document.querySelectorAll("[data-usage-metric]")) {
+      option.setAttribute("aria-pressed", String(option === button));
+    }
+    workUsageView.setMetric(usageSimpleMetric);
+    renderAccountingModels(usageSimpleModelAccounting, { unavailable: usageSimpleModelsUnavailable });
+  });
+}
 const modelPerformance = mountModelPerformance({
   root: document.querySelector("#performance"), client: localClient,
   t, locale: () => localization.formatLocale(), sharedReporting: true, reportingWindow: null,
@@ -9929,18 +10044,10 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   const planFilter = "#weekly-plan-control, #weekly-plan-note";
   const configurations = [
     { id: "usage", page: "usage", level: 1, root: "#usage-screen", views: [
-      // Reporting-period totals head every view except Cache, whose impact
-      // estimates are diagnostics rather than totals.
-      view("projects", "#accounting-summary, #usage-trend-entry, #projects"),
-      view("models", "#accounting-summary, #usage-trend-entry, .accounting-models-panel"),
-      view("composition", "#accounting-summary, .accounting-component-grid"),
-      view("cache", "#cache-impact-summary, #cache-reuse-outcome, .advanced-diagnostics"),
+      view("projects", "#accounting-summary, #projects"),
+      view("threads", "#accounting-summary, #projects"),
+      view("models", "#accounting-summary, .usage-simple-models-panel"),
     ] },
-    { id: "usage-projects", page: "usage", level: 2, label: "projects",
-      root: "#projects", host: ".work-usage-body", views: [
-        view("list", ".work-usage-table-panel, .work-usage-body > .table-pagination, .work-usage-components"),
-        view("components", ".work-usage-mix"),
-      ] },
     // The plan selects the population of every chart except the forecast, which
     // follows the current allowance; the 5h/7d window applies to the
     // equivalent history only.
@@ -9983,6 +10090,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
       disclosure.open = false;
     } else content.replaceChildren();
     disclosure = null;
+    delete dialog.dataset.disclosure;
     if (opener?.isConnected) opener.focus({ preventScroll: true });
     opener = null;
     dialogPage = null;
@@ -9994,6 +10102,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
         || typeof dialog.showModal !== "function") return;
     event.preventDefault();
     disclosure = details;
+    dialog.dataset.disclosure = details.id;
     opener = summary;
     dialogPage = documentRef.body.dataset.dashboardPage;
     title.textContent = summary.textContent.trim();
@@ -10029,6 +10138,9 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     // An unknown view falls back to the destination's default.
     const next = config.views.some(item => item.key === key) ? key : config.views[0].key;
     selections.set(config.id, next);
+    if (config.id === "usage" && next !== "models") {
+      workUsageView.setGrouping(next === "threads" ? "thread" : "project");
+    }
     syncViews(config);
     schedule();
     // Hidden charts retain their data. Redraw at the revealed width, without a fetch.
@@ -10037,6 +10149,12 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   documentRef.addEventListener("tibotattle:page-view", event => {
     const config = levelOne.find(item => item.page === event.detail?.page);
     if (config) choose(config, event.detail.view);
+    const usageDetailRoutes = { composition: "#usage-composition-details", diagnostics: "#usage-cache-details" };
+    if (event.detail?.page === "usage" && usageDetailRoutes[event.detail.view]) {
+      windowRef.requestAnimationFrame(() => {
+        documentRef.querySelector(`${usageDetailRoutes[event.detail.view]} > summary`)?.click();
+      });
+    }
   });
 
   const buildBar = config => {
@@ -10071,7 +10189,8 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     const header = config.level === 1
       ? documentRef.querySelector(`.dashboard-page-header[data-dashboard-page="${config.page}"]`)
       : null;
-    const host = config.level === 1 ? header
+    const host = config.id === "usage" ? documentRef.querySelector("#usage-simple-views")
+      : config.level === 1 ? header
       : config.host ? root?.querySelector(config.host) : root;
     if (!root || !host) return;
     let bar = host.querySelector(`:scope > [data-view-switch="${config.id}"]`);

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { WORK_USAGE_COMPONENTS } from "../reporting/index.js";
 
-const SCHEMA = "local-work-usage-snapshot-v1";
+const SCHEMA = "local-work-usage-snapshot-v2";
 const PERIODS = { "24h": 86_400_000, "7d": 604_800_000, "30d": 2_592_000_000, all: null };
 const COUNTS = ["events", "incompleteEvents", "unknownEvents", "assumedEvents", "unpricedEvents", "partialPriceEvents"];
 const CELL_KEYS = ["id", "kind", "tokens", ...COUNTS, "lastAt", "costUsdExact", "components", "threads", "projects", "worktrees", "models"];

@@ -56,6 +56,7 @@ async function modelTable(locale) {
     formatCount: String,
     formatApiMoney: (value) => `$${value.toFixed(2)}`,
     formatPercent: (value) => `${value.toFixed(1)}%`,
+    usageSimpleMetric: "cost", usageSimpleModelAccounting: null, usageSimpleModelsUnavailable: false,
     accountingModelsTablePagination: {},
     accountingExpandedModels: new Set(),
     paginateCacheImpactRows: (rows) => ({ rows }),
@@ -75,14 +76,14 @@ test("model table preserves unavailable, unreviewed, separate-allowance and pric
   for (const locale of SUPPORTED_LOCALES) {
     const { render, body, t } = await modelTable(locale);
     const rows = [
-      { model: "gpt-6-astra", pricingStatus: "priced", apiPriceEquivalentUsd: 5 },
-      { model: "unknown", pricingStatus: "unrecognized", apiPriceEquivalentUsd: 0 },
-      { model: "unreviewed", pricingStatus: "unrecognized", apiPriceEquivalentUsd: 0 },
-      { model: "gpt-5.3-codex-spark", pricingStatus: "known_unpriced", allowanceTrack: "spark", apiPriceEquivalentUsd: 0 },
-      { model: "codex-auto-review", pricingStatus: "known_unpriced", apiPriceEquivalentUsd: 0 },
-      { model: "gpt-5.5", pricingStatus: "priced", apiPriceEquivalentUsd: 0 },
+      { model: "gpt-6-astra", pricingStatus: "priced", speedApiPriceEquivalentUsd: 5 },
+      { model: "unknown", pricingStatus: "unrecognized", speedApiPriceEquivalentUsd: 0 },
+      { model: "unreviewed", pricingStatus: "unrecognized", speedApiPriceEquivalentUsd: 0 },
+      { model: "gpt-5.3-codex-spark", pricingStatus: "known_unpriced", allowanceTrack: "spark", speedApiPriceEquivalentUsd: 0 },
+      { model: "codex-auto-review", pricingStatus: "known_unpriced", speedApiPriceEquivalentUsd: 0 },
+      { model: "gpt-5.5", pricingStatus: "priced", speedApiPriceEquivalentUsd: 0 },
     ].map((row) => ({ events: 1, totalTokens: 10, components: { input_cache_read_tokens: 10 }, ...row }));
-    render({ modelUsage: rows, totalTokens: 50, apiPriceEquivalentUsd: 5 });
+    render({ modelUsage: rows, totalTokens: 50, speedApiPriceEquivalentUsd: 5 });
     const modelRows = body.children.filter((row) => !row.dataset.componentOf);
     const byName = (name) => modelRows.find((row) => contents(row.children[0]).replace("*", "") === name);
     const astra = byName("GPT-6 Astra");

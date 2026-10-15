@@ -1,3 +1,4 @@
+import { speedApiPrice, addSpeedApiCost, speedApiCostSummary } from "./speed-api-cost.js";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -128,8 +129,10 @@ import {
 // v0.18: preserve unavailable context/components and derive fast-plan context
 // bands from reviewed cards. Rebuild prior totals rather than treating unknown
 // context as zero or reusing a short-context plan above a model's threshold.
+// v0.19: retain event-speed API valuations and their component/provenance
+// coverage separately from the unchanged Standard and quota-analysis metrics.
 export const REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION =
-  "local-replay-safe-accounting-v0.18";
+  "local-replay-safe-accounting-v0.19";
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
   "codex-primary-allowance-capacity-v0.1";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
@@ -1115,10 +1118,10 @@ function flushExactUsd(target, key) {
 // per (model, context band, effective date), integer-scaled per event, falling
 // back to the full pricer whenever a plan cannot be proven exact. This is the
 // same pricer the replay-safe cache itself accounts with.
-export function createAccountingPricer() {
+export function createAccountingPricer({ apiServiceTier = "standard" } = {}) {
   const plans = new Map();
   const contextFloors = new Map();
-  return (event, components) => {
+  const price = (event, components) => {
     // Incomplete observations need the full ledger's coverage and context
     // checks. Zero-filled display totals cannot establish an exact unit plan.
     if (COMPONENT_KEYS.some((name) => (
@@ -1127,7 +1130,7 @@ export function createAccountingPricer() {
       || (name.startsWith("input_") && !Number.isSafeInteger(components[name]))
     ))) {
       return priceCodexUsageEvent({ ...event, components }, {
-        apiServiceTier: "standard", priceEpochBasis: "event_time",
+        apiServiceTier, priceEpochBasis: "event_time",
       });
     }
     // Derive the threshold from the public reviewed cards. Older models begin
@@ -1136,7 +1139,7 @@ export function createAccountingPricer() {
     if (!contextFloors.has(event.model)) {
       const floors = new Set(APP_OFFICIAL_PRICE_CARDS
         .filter((card) => card.provider === "openai"
-          && card.service_tier === "standard"
+          && card.service_tier === apiServiceTier
           && (card.model === event.model || card.aliases?.includes(event.model)))
         .flatMap((card) => card.components
           .filter((component) => component.unit === "token")
@@ -1149,7 +1152,7 @@ export function createAccountingPricer() {
     const contextFloor = contextFloors.get(event.model);
     if (contextFloor === null) {
       return priceCodexUsageEvent({ ...event, components }, {
-        apiServiceTier: "standard", priceEpochBasis: "event_time",
+        apiServiceTier, priceEpochBasis: "event_time",
       });
     }
     const suppliedTotal = event.totalInputContextTokens
@@ -1159,7 +1162,7 @@ export function createAccountingPricer() {
       ? null : Number(suppliedTotal);
     if (reportedTotal !== null && (!Number.isSafeInteger(reportedTotal) || reportedTotal < 0)) {
       return priceCodexUsageEvent({ ...event, components }, {
-        apiServiceTier: "standard", priceEpochBasis: "event_time",
+        apiServiceTier, priceEpochBasis: "event_time",
       });
     }
     const inputSum = (components.input_uncached_tokens ?? 0)
@@ -1188,7 +1191,7 @@ export function createAccountingPricer() {
           contextBand === "long" ? contextFloor : 0,
         components: templateComponents,
       }, {
-        apiServiceTier: "standard",
+        apiServiceTier,
         priceEpochBasis: "event_time",
       });
       // Keep only rows whose unit price is proven exact. The per-event loop
@@ -1225,7 +1228,7 @@ export function createAccountingPricer() {
         ...event,
         components,
       }, {
-        apiServiceTier: "standard",
+        apiServiceTier,
         priceEpochBasis: "event_time",
       });
     }
@@ -1242,7 +1245,7 @@ export function createAccountingPricer() {
           ...event,
           components,
         }, {
-          apiServiceTier: "standard",
+          apiServiceTier,
           priceEpochBasis: "event_time",
         });
       }
@@ -1258,7 +1261,7 @@ export function createAccountingPricer() {
           ...event,
           components,
         }, {
-          apiServiceTier: "standard",
+          apiServiceTier,
           priceEpochBasis: "event_time",
         });
       }
@@ -1310,6 +1313,13 @@ export function createAccountingPricer() {
     });
     return priced;
   };
+  const tierPricers = new Map();
+  price.forApiTier = (tier, event, components) => {
+    if (tier === apiServiceTier) return price(event, components);
+    if (!tierPricers.has(tier)) tierPricers.set(tier, createAccountingPricer({ apiServiceTier: tier }));
+    return tierPricers.get(tier)(event, components);
+  };
+  return price;
 }
 
 function eventProjection(event, price) {
@@ -1382,6 +1392,10 @@ function eventProjection(event, price) {
     components,
     totalTokens,
     priced,
+    speedPricingEvent: { ...event, model, componentAvailability: pricingAvailability },
+    speedPricingComponents: pricingComponents,
+    speedPricer: price.forApiTier,
+    combinedOnly,
     apiPriceEquivalentUsd: Number.isFinite(cost) && cost >= 0 ? cost : 0,
     pricingCoverageStatus: ["fully_priced", "partially_priced"].includes(
       priced.coverageStatus,
@@ -2168,6 +2182,9 @@ function addEvent(period, event) {
     addEvent(period.spark, { ...event, isSpark: false });
     return;
   }
+  let speedPriced = speedApiPrice(event.speedPricingEvent, event.speedPricingComponents, event.priced, event.declaredSpeed, event.speedPricer);
+  if (event.combinedOnly && speedPriced !== event.priced) speedPriced = { ...speedPriced, components: speedPriced.components.map(row => row.name === "output_text_tokens" ? { ...row, name: "output_combined_tokens" } : row) };
+  addSpeedApiCost(period, event.components, speedPriced);
   period.events += 1;
   period.totalTokens += event.totalTokens;
   period.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
@@ -2226,6 +2243,7 @@ function addEvent(period, event) {
   model.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
   addComponents(model.components, event.components);
   addComponentCosts(model.componentCosts, event.components, event.priced);
+  addSpeedApiCost(model, event.components, speedPriced);
   model.pricingCoverage[
     event.pricingCoverageStatus === "fully_priced"
       ? "fullyPricedEvents"
@@ -2313,6 +2331,7 @@ function finalizePeriod(period) {
   }
   const finalized = {
     ...period,
+    ...speedApiCostSummary(period),
     apiPriceEquivalentUsd: roundedExactMoney(
       period.apiPriceEquivalentUsdExact,
     ),
@@ -2332,6 +2351,7 @@ function finalizePeriod(period) {
     byModel: Object.values(period.byModel)
       .map((row) => ({
         ...row,
+        ...speedApiCostSummary(row),
         apiPriceEquivalentUsd: roundedMoney(row.apiPriceEquivalentUsd),
         componentCosts: Object.fromEntries(
           Object.entries(row.componentCosts).map(([key, cost]) => [

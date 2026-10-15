@@ -66,7 +66,7 @@ test('unavailable selected accounting clears previous model totals and coverage'
   const makeNode = () => ({ children: [], append(child) { this.children.push(child); } });
   const render = Function('$', 'clear', 'setRawText', 'modelUsageRows', 'pricingCoverageNote',
     'paginateCacheImpactRows', 'accountingModelsTablePagination', 'cacheImpactTableSignature',
-    'renderCacheImpactPagination', 'node', 'localizedNode',
+    'renderCacheImpactPagination', 'node', 'localizedNode', 'renderUsageSimpleModels',
     `${source.slice(start, end)}; return renderAccountingModels;`)(
     selector => selector === '#accounting-models' ? table : coverage,
     node => { node.children = []; }, (node, text) => { node.textContent = text; },
@@ -74,6 +74,7 @@ test('unavailable selected accounting clears previous model totals and coverage'
     () => { throw Error('must not borrow previous coverage'); },
     () => ({ rows: [] }), {}, () => '', () => {}, makeNode,
     (_tag, _class, key) => ({ key }),
+    (_accounting, unavailable) => { assert.equal(unavailable, true); },
   );
   render({ totalTokens: 999 }, { unavailable: true });
   assert.equal(coverage.hidden, true);

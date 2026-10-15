@@ -5909,3 +5909,37 @@ body[data-dashboard-page] #performance .performance-details summary { padding: 1
 @media(max-width:760px) { .workload-grid { grid-template-columns:1fr; } .workload-card { padding:18px; } }
 #overview:has(#overview-workload) { display:block; }
 body[data-dashboard-page="overview"] #reporting-period-toolbar { display:none; }
+
+/* Compact usage ranking; complete evidence lives in a modal report. */
+.work-usage-compact > .dashboard-page-header { display:none; }
+.work-usage-compact .work-usage-toolbar { display:flex; align-items:start; justify-content:space-between; gap:16px; }
+.work-usage-compact .work-usage-field-label { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.work-usage-filters { max-width:100%; }
+.work-usage-filters > summary { cursor:pointer; padding:10px; }
+.work-usage-filters[open] { flex:1; }
+.work-usage-filters .work-usage-filter-controls { flex-wrap:wrap; }
+.work-usage-ranking { display:grid; gap:22px; }
+.work-usage-rank { display:grid; grid-template-columns:minmax(0,1fr) auto; column-gap:20px; row-gap:6px; align-items:center; }
+.work-usage-rank-open { border:0; background:transparent; color:inherit; font:inherit; font-weight:600; padding:8px 0; text-align:left; cursor:pointer; overflow-wrap:anywhere; }
+.work-usage-rank-open::before { content:'›'; margin-right:10px; }
+.work-usage-rank-open:disabled { cursor:default; opacity:.65; }
+.work-usage-rank-number { text-align:right; font-variant-numeric:tabular-nums; }
+.work-usage-rank-number small { display:block; }
+.work-usage-rank-track { grid-column:1/-1; height:6px; background:#e7e7e7; border-radius:3px; overflow:hidden; }
+.work-usage-rank-track > span { display:block; height:100%; background:#222; }
+.work-usage-dialog { color:var(--ink,#181818); background:var(--panel,#fff); width:min(1120px,calc(100vw - 32px)); max-height:calc(100dvh - 32px); border:1px solid #ccc; border-radius:14px; padding:0; overflow:auto; }
+.work-usage-dialog::backdrop { background:rgb(0 0 0 / .45); }
+.work-usage-dialog-header { position:sticky; top:0; z-index:2; background:var(--panel,#fff); display:flex; justify-content:space-between; align-items:center; gap:20px; border-bottom:1px solid #ddd; padding:18px 24px; }
+.work-usage-dialog-header h2 { margin:0; overflow-wrap:anywhere; font-size:20px; }
+.work-usage-dialog-content { padding:20px 24px; }
+.work-usage-dialog-content > .dashboard-page-header { display:none; }
+.work-usage-dialog-content .work-usage-toolbar { display:flex; flex-wrap:wrap; }
+.work-usage-dialog-content .work-usage-body { max-height:none; overflow:visible; }
+.work-usage-dialog-content .work-usage-table { min-width:750px; }
+.work-usage-dialog-content .dashboard-table-scroll { overflow:auto; max-height:none; }
+@media(max-width:600px) {
+ .work-usage-compact .work-usage-toolbar { flex-wrap:wrap; }
+ .work-usage-dialog-content { padding:14px; }
+ .work-usage-dialog-header { padding:14px; }
+ .work-usage-rank { column-gap:10px; }
+}

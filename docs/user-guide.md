@@ -72,8 +72,13 @@ All dashboard pages fit the window height. View switches separate related
 measurements without changing the selected reporting range or fetching a new
 report. Allowance Estimate separates history, forecast, reset details and share
 cards; Trends separates activity, comparison, cumulative difference, divergence
-periods and exact evidence. Usage and costs separates summary, components,
-models and diagnostics; Projects separates lists from token composition;
+periods and exact evidence. Usage and costs shows amount and Token totals with
+project, thread and model breakdowns. Project and thread details open in a dialog;
+token composition and cache analysis are collapsed until requested. Dialogs follow
+the global five-minute refresh while preserving navigation and scroll position.
+Amount uses recorded speed and the corresponding event-time API price; unknown
+speed or missing prices remain explicitly unpriced or partial. The Standard-price
+analysis and subscription quota comparison remain separate calculations.
 Performance separates speed from response wait. Selections survive report
 redraws and language changes. Arrow keys, Home and End also operate each view
 switch. Scope, coverage, freshness and failure messages remain available across

@@ -354,9 +354,18 @@ class MountedElement {
     return this.dispatchEvent({ type: "click" });
   }
 
+  showModal() { this.open = true; }
+
+  close() { this.open = false; this.dispatchEvent({ type: "close" }); }
+
   focus(options) {
     this.ownerDocument.activeElement = this;
     this.focusOptions = options;
+  }
+
+  closest(selector) {
+    if (selector === "dialog" && this.tagName === "DIALOG") return this;
+    return this.parentNode?.closest?.(selector) ?? null;
   }
 
   contains(candidate) {
@@ -1380,7 +1389,8 @@ test("transient touch failures preserve the report and an expired touch refreshe
   const text = root.textContent;
   await harness.runTimer(60_000);
   assert.strictEqual(findMounted(root, node => node.tagName === "TABLE")[0], table);
-  assert.equal(root.textContent, text);
+  assert.equal(findMounted(root, node => node.classList.contains("work-usage-body"))[0].textContent, text.slice(text.indexOf("Recorded tokens100")));
+  assert.match(root.textContent, /Report issue: Connection failed/);
   assert.equal(requests.length, 2);
   expire = true;
   await harness.runTimer(60_000);
@@ -1787,8 +1797,8 @@ test("multi-page reports retain navigation and restore the first page", async ()
   const view = mountWorkUsageView({ root, windowRef, t: mountedTranslator,
     fetchRef: async (_url, init) => {
       const query = JSON.parse(init.body); calls.push(query);
-      return httpResponse({ ...PROJECT_ROWS_RESPONSE, rowCount: 27,
-        offset: query.cursor ? 25 : 0, nextCursor: query.cursor ? null : "page-two" });
+      return httpResponse({ ...PROJECT_ROWS_RESPONSE, rowCount: 8,
+        offset: query.cursor ? 6 : 0, nextCursor: query.cursor ? null : "page-two" });
     } });
   const pager = () => findMounted(root, node => node.classList.contains("table-pagination"))[0];
   const buttons = () => findMounted(pager(), node => node.tagName === "BUTTON");
@@ -1798,12 +1808,12 @@ test("multi-page reports retain navigation and restore the first page", async ()
     assert.equal(buttons()[0].disabled, true);
     buttons()[1].click(); await settleMountedView();
     assert.equal(calls.at(-1).cursor, "page-two");
-    assert.ok(pager().textContent.includes("26–27 of 27"));
+    assert.ok(pager().textContent.includes("7–8 of 8"));
     assert.ok(buttons().every(node => !node.hidden));
     assert.equal(buttons()[1].disabled, true);
     buttons()[0].click(); await settleMountedView();
     assert.equal(calls.at(-1).cursor, undefined);
-    assert.ok(pager().textContent.includes("1–25 of 27"));
+    assert.ok(pager().textContent.includes("1–6 of 8"));
   } finally { view.destroy(); }
 });
 
@@ -2474,4 +2484,144 @@ test("grouping and search controls carry visible labels", async (t) => {
   assert.equal(input.parentNode.tagName, "LABEL");
   assert.equal(input.parentNode.children[0].textContent, mountedTranslator("workUsage.find"));
   assert.equal(input.getAttribute("aria-label"), null, "the visible label names the input");
+});
+
+
+test("compact ranking opens a complete scoped modal without replacing the parent report", async () => {
+  const mounted = mountedLeaseRoot();
+  const calls = [];
+  const parent = structuredClone(PROJECT_ROWS_RESPONSE);
+  parent.fromMs = NOW - 7 * 86_400_000;
+  const child = structuredClone(THREAD_A_RESPONSE);
+  child.fromMs = parent.fromMs;
+  const view = mountWorkUsageView({ ...mounted, compact: true, t: mountedTranslator,
+    fetchRef: async (_url, init) => {
+      const query = JSON.parse(init.body); calls.push(query);
+      return httpResponse(query.project ? child : parent);
+    },
+  });
+  await settleMountedView();
+  const body = mounted.root.querySelectorAll(".work-usage-body")[0];
+  const before = body.textContent;
+  assert.equal(body.querySelectorAll("TABLE").length, 0);
+  const launcher = mounted.root.querySelectorAll(".work-usage-rank-open")[0];
+  assert.equal(launcher.getAttribute("aria-haspopup"), "dialog");
+  launcher.click();
+  await settleMountedView();
+  const dialog = mounted.root.querySelectorAll("DIALOG")[0];
+  assert.equal(dialog.open, true);
+  assert.equal(body.textContent, before);
+  assert.ok(dialog.textContent.includes("Thread A"));
+  assert.ok(dialog.querySelectorAll("TABLE").length > 0);
+  const request = calls.find(call => call.project);
+  assert.equal(request.project, PROJECT_A.id);
+  assert.equal(request.snapshotId, parent.snapshotId);
+  assert.equal(request.endAt, new Date(NOW).toISOString());
+  assert.equal(request.sort, "cost");
+  dialog.close();
+  assert.equal(mounted.documentRef.activeElement, launcher);
+  assert.equal(body.textContent, before);
+  assert.equal(dialog.querySelectorAll(".work-usage-dialog-content")[0].children.length, 0);
+  await view.setMetric("tokens");
+  await settleMountedView();
+  assert.equal(calls.at(-1).sort, "tokens");
+  view.destroy();
+});
+
+test("modal failure is explicit and closing fences a late details response", async () => {
+  const mounted = mountedLeaseRoot();
+  const parent = structuredClone(PROJECT_ROWS_RESPONSE);
+  parent.fromMs = NOW - 7 * 86_400_000;
+  let pending = null;
+  let detailSignal;
+  const view = mountWorkUsageView({ ...mounted, compact: true, t: mountedTranslator,
+    fetchRef: async (_url, init) => {
+      const query = JSON.parse(init.body);
+      if (!query.project) return httpResponse(parent);
+      detailSignal = init.signal;
+      if (pending) return pending.promise;
+      throw new Error("synthetic failure");
+    },
+  });
+  await settleMountedView();
+  const launcher = mounted.root.querySelectorAll(".work-usage-rank-open")[0];
+  const dialog = mounted.root.querySelectorAll("DIALOG")[0];
+  launcher.click();
+  await settleMountedView();
+  assert.ok(dialog.textContent.includes(mountedTranslator("workUsage.error")));
+  assert.ok(findMounted(dialog, node => node.tagName === "BUTTON" && node.textContent === "Retry" && !node.hidden).length);
+  dialog.close();
+  pending = deferred();
+  launcher.click();
+  await settleMountedView();
+  dialog.close();
+  assert.equal(detailSignal.aborted, true);
+  pending.resolve(httpResponse(parent));
+  await settleMountedView();
+  assert.equal(dialog.querySelectorAll(".work-usage-dialog-content")[0].children.length, 0);
+  assert.equal(mounted.documentRef.activeElement, launcher);
+  view.destroy();
+});
+
+
+test("open details follow publication while retaining thread navigation, page and scroll", async (t) => {
+  const mounted = mountedLeaseRoot();
+  const calls = [];
+  const windowAt = end => ({ period: "7d", startAt: new Date(end - 7 * 86_400_000).toISOString(), endAt: new Date(end).toISOString() });
+  const view = mountWorkUsageView({ ...mounted, compact: true, t: mountedTranslator, reportingWindow: windowAt(NOW),
+    fetchRef: async (_url, init) => {
+      const query = JSON.parse(init.body); calls.push(query);
+      const end = Date.parse(query.endAt);
+      const result = structuredClone(query.project ? THREAD_A_RESPONSE : PROJECT_ROWS_RESPONSE);
+      result.toMs = end; result.fromMs = end - 7 * 86_400_000;
+      result.snapshotId = end === NOW ? "old-snapshot" : "new-snapshot";
+      if (query.project && !query.thread) {
+        result.rowCount = 8;
+        result.offset = query.cursor ? 6 : 0;
+        result.nextCursor = query.cursor ? null : `next-${end}`;
+      }
+      return httpResponse(result);
+    },
+  });
+  t.after(() => view.destroy());
+  await settleMountedView();
+  mounted.root.querySelectorAll(".work-usage-rank-open")[0].click();
+  await settleMountedView();
+  const dialog = mounted.root.querySelectorAll("DIALOG")[0];
+  const content = mounted.root.querySelectorAll(".work-usage-dialog-content")[0];
+  findMounted(content, n => n.tagName === "BUTTON" && n.textContent === "Next" && !n.hidden)[0].click();
+  await settleMountedView();
+  assert.equal(calls.at(-1).cursor, `next-${NOW}`);
+  findMounted(content, n => n.classList.contains("work-usage-row-link") && n.textContent === "Thread A")[0].click();
+  await settleMountedView();
+  assert.equal(calls.at(-1).thread, THREAD_A.id);
+  dialog.scrollTop = 240;
+  view.setReportingWindow(windowAt(NOW + 300_000));
+  await settleMountedView();
+  assert.equal(dialog.open, true);
+  assert.equal(calls.at(-1).thread, THREAD_A.id);
+  assert.equal(calls.at(-1).snapshotId, "new-snapshot");
+  assert.equal(calls.at(-1).endAt, windowAt(NOW + 300_000).endAt);
+  assert.equal(dialog.scrollTop, 240);
+  findMounted(content, n => n.tagName === "BUTTON" && n.textContent.includes("Back"))[0].click();
+  await settleMountedView();
+  assert.equal(calls.at(-1).thread, undefined);
+  assert.equal(calls.at(-1).cursor, `next-${NOW + 300_000}`);
+  assert.equal(calls.at(-1).endAt, windowAt(NOW + 300_000).endAt);
+  assert.ok(content.textContent.includes("7–8 of 8"));
+});
+
+test("foreground timeout is visible, recorded and retryable rather than silently cancelled", async (t) => {
+  const mounted = mountedLeaseRoot();
+  const notes = [];
+  const view = mountWorkUsageView({ ...mounted, t: mountedTranslator,
+    onDiagnostic: note => { notes.push(note); },
+    fetchRef: (_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(Object.assign(new Error("abort"), { name: "AbortError" })))),
+  });
+  t.after(() => view.destroy());
+  mounted.runTimer(30_000);
+  await settleMountedView();
+  assert.match(mounted.root.textContent, /Request timed out/);
+  assert.equal(notes[0].code, "work_usage_timeout");
+  assert.ok(findMounted(mounted.root, n => n.tagName === "BUTTON" && n.textContent === "Retry" && !n.hidden).length);
 });

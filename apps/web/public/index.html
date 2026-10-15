@@ -47,6 +47,7 @@
     >
     <title>TiboTattle</title>
     <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./usage-simple.css">
   <link rel="stylesheet" href="./cache-reuse-matrix.css">
     <link rel="stylesheet" href="./model-performance.css">
     <script type="module" src="./app.js"></script>
@@ -417,7 +418,15 @@
       <section class="dashboard-section dashboard-page-inactive" id="accounting" aria-labelledby="usage-page-title" data-dashboard-page="usage" data-requires-evidence aria-hidden="true" inert>
         <ul class="evidence-warnings" id="accounting-warnings" hidden></ul>
         <div class="metric-grid accounting-summary" id="accounting-summary"></div>
-        <p class="annotation usage-trend-entry" id="usage-trend-entry"><a href="#allowance/changes" data-i18n="dashboard.views.usageTrendEntry">Usage over time: Allowance changes</a></p>
+        <div class="usage-simple-controls">
+          <div id="usage-simple-views"></div>
+          <div class="usage-simple-metric" role="group" data-i18n-aria-label="usageSimple.metric" aria-label="Measure">
+            <button type="button" data-usage-metric="cost" aria-pressed="true" data-i18n="usageSimple.amount">Amount</button>
+            <button type="button" data-usage-metric="tokens" aria-pressed="false" data-i18n="usageSimple.tokens">Tokens</button>
+          </div>
+        </div>
+        <details class="panel usage-simple-analysis" id="usage-composition-details">
+          <summary data-i18n="usageSimple.composition">Usage composition</summary>
         <div class="two-column accounting-component-grid">
           <article class="panel">
             <div class="panel-heading">
@@ -437,16 +446,21 @@
             <div class="panel-heading">
               <div>
                 <p class="panel-kicker">Cost contribution</p>
-                <h3>Standard API-equivalent cost</h3>
+                <h3 data-i18n="usageSimple.apiEquivalent">API-price equivalent</h3>
               </div>
             </div>
             <p class="annotation">
-              Standard-rate API equivalent by component. Coverage and price
-              sources stay visible, and no cost is guessed.
+              API equivalent by component. Missing prices remain unavailable.
             </p>
             <div class="accounting-bars" id="accounting-component-costs"></div>
           </article>
         </div>
+        </details>
+        <article class="panel usage-simple-models-panel">
+          <div id="usage-simple-models"></div>
+        </article>
+        <details id="usage-model-details" class="usage-simple-model-details">
+          <summary data-i18n="usageSimple.modelDetails">Model details</summary>
         <article class="panel accounting-models-panel">
           <div class="panel-heading">
             <div>
@@ -464,7 +478,7 @@
                     <th scope="col" class="numeric-cell">Usage changes</th>
                     <th scope="col" class="numeric-cell">Tokens</th>
                     <th scope="col" class="numeric-cell model-share-head" data-i18n="accounting.model.shareHeading" data-i18n-aria-label="workUsage.tokenShare" aria-label="Token share">Share</th>
-                    <th scope="col" class="numeric-cell" data-i18n-title="accounting.apiEquivalent.standardRateBasis" title="Calculated at Standard API rates.">API equivalent</th>
+                    <th scope="col" class="numeric-cell" >API equivalent</th>
                     <th scope="col" class="numeric-cell model-share-head" data-i18n="accounting.model.shareHeading" data-i18n-aria-label="workUsage.valueShare" aria-label="Value share">Share</th>
                   </tr>
                 </thead>
@@ -488,6 +502,9 @@
               allowance.
             </p>
         </article>
+        </details>
+        <details class="panel usage-simple-analysis" id="usage-cache-details">
+          <summary data-i18n="usageSimple.cache">Cache analysis</summary>
         <div class="metric-grid cache-impact-summary" id="cache-impact-summary" hidden></div>
         <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details" id="cache-switch-details" hidden>
           <summary data-i18n="accounting.cacheSwitch.detailsSummary">See possible switch overhead</summary>
@@ -506,7 +523,7 @@
                   <th data-i18n="accounting.cacheSwitch.column.change">Configuration change</th>
                   <th data-i18n="accounting.cacheSwitch.column.cacheRead">Cache read</th>
                   <th data-i18n="accounting.cacheSwitch.column.lostTokens">Est. lost reuse</th>
-                  <th data-i18n="accounting.cacheSwitch.column.apiEquivalent" data-i18n-title="accounting.apiEquivalent.standardRateBasis" title="Calculated at Standard API rates.">API equivalent</th>
+                  <th data-i18n="accounting.cacheSwitch.column.apiEquivalent" >API equivalent</th>
                 </tr>
               </thead>
               <tbody id="cache-switch-rows"></tbody>
@@ -544,7 +561,7 @@
                   <th data-i18n="accounting.cacheContinuity.column.gap">Time between turns</th>
                   <th data-i18n="accounting.cacheContinuity.column.configuration">Configuration</th>
                   <th data-i18n="accounting.cacheContinuity.column.cacheRead">Cache read</th>
-                  <th data-i18n="accounting.cacheContinuity.column.apiEquivalent" data-i18n-title="accounting.apiEquivalent.standardRateBasis" title="Calculated at Standard API rates.">API equivalent</th>
+                  <th data-i18n="accounting.cacheContinuity.column.apiEquivalent" >API equivalent</th>
                 </tr>
               </thead>
               <tbody id="cache-continuity-rows"></tbody>
@@ -555,6 +572,7 @@
             <span class="table-pagination-status" id="cache-continuity-page-status" role="status"></span>
             <button class="button button-quiet compact" id="cache-continuity-page-next" type="button" aria-controls="cache-continuity-rows" data-i18n="table.pagination.next">Next</button>
           </div>
+        </details>
         </details>
       </section>
 

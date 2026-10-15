@@ -4497,6 +4497,31 @@ function normalizeLocalQuotaTimeline(value, maximumRows = 10_000) {
  * that reported no usable figure is missing, and rendering it as a priced zero
  * is a different and untrue claim.
  */
+function normalizeSpeedApiFields(value) {
+  const status = ["fully_priced", "partially_priced", "unpriced"].includes(value?.speedPricingCoverageStatus)
+    ? value.speedPricingCoverageStatus : "unpriced";
+  const amount = nonNegative(value?.speedApiPriceEquivalentUsd, null);
+  const componentCosts = {};
+  for (const key of LOCAL_COMPONENT_KEYS) {
+    const row = value?.speedComponentCosts?.[key];
+    if (!row || count(row.tokens, null) === null || count(row.pricedTokens, null) === null
+        || count(row.unpricedTokens, null) === null || row.pricedTokens + row.unpricedTokens !== row.tokens
+        || nonNegative(row.costUsd, null) === null) continue;
+    componentCosts[key] = { tokens: row.tokens, pricedTokens: row.pricedTokens,
+      unpricedTokens: row.unpricedTokens, costUsd: row.pricedTokens > 0 || row.tokens === 0 ? row.costUsd : null };
+  }
+  const provenance = value?.speedPricingProvenance;
+  const validProvenance = provenance && ["observedEvents", "declaredEvents", "unknownEvents"]
+    .every(key => count(provenance[key], null) !== null);
+  return {
+    speedApiPriceEquivalentUsd: status === "unpriced" ? null : amount,
+    speedPricingCoverageStatus: amount === null ? "unpriced" : status,
+    speedComponentCosts: componentCosts,
+    speedPricingProvenance: validProvenance ? { observedEvents: provenance.observedEvents,
+      declaredEvents: provenance.declaredEvents, unknownEvents: provenance.unknownEvents } : null,
+  };
+}
+
 function normalizeLocalModelUsage(rows) {
   return array(rows).slice(0, 32).flatMap((row) => {
     if (!LOCAL_MODELS.has(row?.model)) return [];
@@ -4505,6 +4530,7 @@ function normalizeLocalModelUsage(rows) {
       : "primary";
     return [{
       model: row.model,
+      ...normalizeSpeedApiFields(row),
       events: count(row.events, 0),
       totalTokens: count(row.totalTokens, 0),
       apiPriceEquivalentUsd: nonNegative(row.apiPriceEquivalentUsd, null),
@@ -4557,6 +4583,7 @@ function normalizeLocalAccounting(value = {}, {
     ? normalizeLocalModelUsage(value.modelUsage)
     : [...models, ...normalizeLocalModelUsage(value?.spark?.byModel)];
   const normalized = {
+    ...normalizeSpeedApiFields(value),
     generation: normalizeAccountingGeneration(value.generation),
     generationMatched: value.generationMatched === true,
     cacheDiagnosticsSource: normalizeCacheDiagnosticsSource(value.cacheDiagnosticsSource),

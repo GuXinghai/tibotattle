@@ -342,7 +342,7 @@ async function readSnapshot({
   if (includeWorkUsage) {
     try {
       workUsage = await readLocalIndexWorkUsage({
-        database, indexFile, codexHome, secretFile, nowMs, signal,
+        database, indexFile, codexHome, secretFile, nowMs, signal, declaredSpeedBaselines: baselines,
       });
       const settled = Number(database.prepare(
         "SELECT commit_seq AS n FROM store_state WHERE id = 1",

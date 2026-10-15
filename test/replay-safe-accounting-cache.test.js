@@ -2414,7 +2414,7 @@ test("replay cache rejects the old prefix-priced version and unreviewed model cr
       components: { input_uncached_tokens: 1_000 },
     })]),
   });
-  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.18");
+  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.19");
   assert.doesNotThrow(() => assertReplaySafeAccountingCache(cache));
   const oldVersion = structuredClone(cache);
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.12";

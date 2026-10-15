@@ -1,0 +1,34 @@
+/* Usage and costs keeps the primary reading surface to two totals and one list. */
+body[data-dashboard-page="usage"] #usage-screen { display:flex; flex-direction:column; gap:18px; }
+body[data-dashboard-page="usage"] #accounting { display:contents; }
+#usage-screen > .dashboard-page-header { order:0; }
+#usage-screen #accounting-warnings { order:0; }
+#usage-screen #accounting-summary { order:1; grid-template-columns:repeat(2,minmax(0,1fr)); margin:0; }
+#usage-screen #accounting-summary .metric-card { background:#fff; border:1px solid #dedede; border-left:1px solid #dedede; border-radius:16px; box-shadow:none; padding:24px; }
+#usage-screen #accounting-summary .metric-name { color:#555; font-size:15px; }
+#usage-screen #accounting-summary .metric-value { color:#111; font-family:inherit; font-size:clamp(28px,3vw,42px); }
+#usage-screen .usage-simple-controls { order:2; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px; }
+#usage-screen #projects, #usage-screen .usage-simple-models-panel { order:3; margin:0; }
+#usage-screen .usage-simple-analysis { order:4; margin:0; }
+#usage-screen .usage-simple-model-details { display:none; }
+#usage-screen .dashboard-page-status:empty { display:none; }
+#usage-screen .dashboard-view-empty { order:3; }
+#usage-simple-views .dashboard-view-tabs, .usage-simple-metric { display:flex; gap:4px; margin:0; padding:4px; border:1px solid #dedede; border-radius:10px; background:#eee; }
+#usage-simple-views .dashboard-view-tabs button, .usage-simple-metric button { border:0; border-radius:7px; background:transparent; color:#555; padding:9px 18px; font:inherit; cursor:pointer; }
+#usage-simple-views .dashboard-view-tabs button[aria-pressed="true"], .usage-simple-metric button[aria-pressed="true"] { background:#fff; color:#111; box-shadow:0 1px 3px #0001; }
+.usage-simple-model-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px 24px; padding:22px 0; width:100%; border:0; border-bottom:1px solid #e5e5e5; background:transparent; text-align:left; font:inherit; color:#111; cursor:pointer; }
+.usage-simple-model-row:last-child { border-bottom:0; }
+.usage-simple-model-name { align-self:center; overflow-wrap:anywhere; font-weight:650; }
+.usage-simple-model-values { display:flex; gap:18px; align-items:baseline; font-variant-numeric:tabular-nums; }
+.usage-simple-model-values .annotation { min-width:4.5em; text-align:right; }
+.usage-simple-model-track { grid-column:1/-1; display:block; height:6px; background:#eee; border-radius:4px; overflow:hidden; }
+.usage-simple-model-track > span { display:block; height:100%; background:#333; border-radius:inherit; }
+.usage-simple-model-row:focus-visible, .usage-simple-metric button:focus-visible { outline:2px solid #222; outline-offset:3px; }
+#usage-screen .usage-simple-analysis summary { cursor:pointer; font-weight:600; }
+@media (max-width:600px) {
+  #usage-screen #accounting-summary { grid-template-columns:1fr; }
+  .usage-simple-model-row { gap:10px; }
+  .usage-simple-model-values { gap:8px; }
+}
+
+.overview-details-dialog[data-disclosure="usage-model-details"] { width:min(1100px,calc(100vw - 32px)); }
