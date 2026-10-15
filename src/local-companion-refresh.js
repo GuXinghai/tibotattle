@@ -1406,6 +1406,12 @@ function unifiedIndexDegradation(result) {
       failureCode: reason ?? "codex_rollout_generation_ambiguous",
     };
   }
+  if (result?.accounting?.status === "unavailable") {
+    return {
+      failedStep: "accounting",
+      failureCode: safeAccountingUnavailableCode(result.accounting.errorCode),
+    };
+  }
   return null;
 }
 

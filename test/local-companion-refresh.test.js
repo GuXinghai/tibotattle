@@ -470,6 +470,18 @@ test("overview cadence exposes an accounting failure instead of reporting silent
   assert.equal(result.accounting.errorCode, "accounting_unified_source_unavailable");
 });
 
+test("an unavailable accounting report degrades the shared refresh receipt explicitly", async () => {
+  const controller = new LocalCompanionRefreshController({
+    runner: async () => ({ accounting: { status: "unavailable", errorCode: "accounting_unified_source_unavailable" } }),
+    dataStore: { async reload() {} },
+  });
+  controller.start({ mode: "overview" });
+  await controller.whenSettled();
+  assert.equal(controller.getStatus().status, "degraded");
+  assert.equal(controller.getStatus().failedStep, "accounting");
+  assert.equal(controller.getStatus().failureCode, "accounting_unified_source_unavailable");
+});
+
 const FRESH_NOTIFICATION_EVIDENCE = Object.freeze({
   schemaVersion: "tibotattle-notification-evidence-v2",
   status: "fresh_provider_observation",
@@ -1913,11 +1925,13 @@ test("public unified accounting errors use the fixed unavailable-code allowlist"
 
   assert.equal(controller.start(), true);
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (controller.getStatus().status === "succeeded") break;
+    if (controller.getStatus().status === "degraded") break;
     await new Promise((resolve) => setImmediate(resolve));
   }
   const status = controller.getStatus();
-  assert.equal(status.status, "succeeded");
+  assert.equal(status.status, "degraded");
+  assert.equal(status.failedStep, "accounting");
+  assert.equal(status.failureCode, "accounting_unified_source_unavailable");
   assert.equal(
     status.result.accounting.errorCode,
     "accounting_unified_source_unavailable",
