@@ -68,7 +68,10 @@ body[data-dashboard-page="usage"] #accounting { display:contents; }
 .overview-details-dialog[data-disclosure="usage-model-details"] .model-allowance-footnote,
 .overview-details-dialog[data-disclosure="usage-model-details"] [data-i18n="dashboard.views.modelScope"] { display:none; }
 .overview-details-dialog[data-disclosure^="usage-"] .metric-card::before { display:none; }
-.overview-details-dialog[data-disclosure^="usage-"] .accounting-bar-fill { background:#333; }
+.overview-details-dialog[data-disclosure^="usage-"] .component-track { background:#e6e6e6; }
+.overview-details-dialog[data-disclosure^="usage-"] .component-track i { background:#333; }
+.overview-details-dialog[data-disclosure^="usage-"] .cache-impact-card { min-height:0; border:0; border-radius:0; padding:12px 0; }
+.overview-details-dialog[data-disclosure^="usage-"] .cache-impact-card .metric-value { font-family:var(--sans); }
 @media (max-width:760px) {
  #usage-screen #accounting-summary { gap:28px; }
  #usage-simple-views { flex-basis:100%; }
