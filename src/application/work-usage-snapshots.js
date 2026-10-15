@@ -121,6 +121,7 @@ export function createWorkUsageSnapshotStore({ createStore, snapshotFile, codexH
       if (!record) return Promise.resolve(false);
       // Coalesce by query and cap the pending set. Slow storage must not retain
       // an unbounded queue of private live report objects or old projections.
+      if (queued.get(record.key)?.toMs > record.toMs) return writing ?? Promise.resolve(false);
       queued.delete(record.key);
       queued.set(record.key, record);
       while (queued.size > 4) queued.delete(queued.keys().next().value);
@@ -131,8 +132,14 @@ export function createWorkUsageSnapshotStore({ createStore, snapshotFile, codexH
             const records = await initialize();
             const batch = [...queued.values()];
             queued.clear();
-            const keys = new Set(batch.map(item => item.key));
-            const next = [...records.filter(item => !keys.has(item.key)), ...batch].slice(-4);
+            // Exact-window warm-ups may finish after a newer foreground
+            // report. Compare covered instants, including against the write
+            // that just completed, rather than using arrival order.
+            const accepted = batch.filter(item => !records.some(previous =>
+              previous.key === item.key && previous.toMs > item.toMs));
+            if (accepted.length === 0) continue;
+            const keys = new Set(accepted.map(item => item.key));
+            const next = [...records.filter(item => !keys.has(item.key)), ...accepted].slice(-4);
             saved = await store.write({ source, entries: next });
             if (saved) entries = Promise.resolve(next);
           }

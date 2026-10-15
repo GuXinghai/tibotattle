@@ -154,6 +154,9 @@ export function createWorkUsageService({
     && result.generation?.status === "complete" && result.metadata?.status === "available";
   function retain(entry) {
     const key = cacheKey({ period: entry.period, scope: entry.requestedScope });
+    // Older exact-window navigation is valid evidence, but it must not
+    // replace the latest saved fallback shared by this period/account.
+    if (completed.get(key)?.toMs > entry.toMs) return;
     completed.delete(key);
     completed.set(key, { id: entry.id, result: entry.result,
       fromMs: entry.fromMs, toMs: entry.toMs, namesAvailable: true });

@@ -2190,6 +2190,31 @@ test("the browser validates saved report refresh and anonymous display boundarie
   }
 });
 
+test("an older saved fallback cannot roll the visible report date or figures backward", async (t) => {
+  const harness = mountedLeaseRoot();
+  const calls = [];
+  const newer = { ...PROJECT_ROWS_RESPONSE, toMs: NOW + 60_000, fromMs: NOW + 60_000 - 604_800_000 };
+  const view = mountWorkUsageView({ ...harness, t: mountedTranslator,
+    fetchRef: async (_url, init) => {
+      calls.push(JSON.parse(init.body));
+      if (calls.length === 1) return httpResponse(newer);
+      if (calls.length === 2) return httpResponse(retainedResponse());
+      return httpResponse({ ...newer, snapshotId: "pending-report", toMs: NOW + 120_000 });
+    },
+  });
+  t.after(() => view.destroy());
+  await settleMountedView();
+  const before = harness.root.children.at(-1).textContent;
+  view.refresh(); await settleMountedView();
+  assert.equal(harness.root.children.at(-1).textContent, before);
+  assert.match(harness.root.textContent, new RegExp(formatLocal(new Date(newer.toMs).toISOString()).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.doesNotMatch(harness.root.textContent, /Saved project/);
+  await harness.runTimer(750); await settleMountedView();
+  assert.equal(calls.at(-1).snapshotId, "pending-report");
+  assert.equal(harness.root.children.at(-1).inert, false);
+  assert.doesNotMatch(harness.root.textContent, /Saved report/);
+});
+
 test("first load shows anonymous saved figures while polling the replacement snapshot", async (t) => {
   const harness = mountedLeaseRoot();
   const { root, windowRef } = harness;

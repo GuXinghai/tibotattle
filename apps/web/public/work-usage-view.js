@@ -1705,9 +1705,16 @@ export function mountWorkUsageView(options = {}) {
         }
         throw new Error(http.status === 409 ? "expired" : "unavailable");
       }
-      const result = validateWorkUsageResponse(payload);
+      let result = validateWorkUsageResponse(payload);
       if (token !== serial) return;
       assertExactReportingBounds(result);
+      // An older saved fallback can arrive while replacing a newer visible
+      // report. Keep the visible evidence and date together; still follow the
+      // pending replacement's ID, or expose its failure normally.
+      if (result.retained && displayedForQuery() && result.toMs < response.toMs) {
+        result = { ...response, retained: true, refreshing: result.refreshing,
+          refreshSnapshotId: result.refreshSnapshotId, namesAvailable: response.namesAvailable ?? true };
+      }
       query.snapshotId = result.snapshotId;
       delete query.sourceSnapshotId;
       if (result.status === "preparing") {

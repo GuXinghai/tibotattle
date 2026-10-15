@@ -220,6 +220,37 @@ test("saved non-project figures preserve the public classification", async t => 
   assert.deepEqual((await store.read(query)).cells[0].projects, ["non-project"]);
 });
 
+test("older exact-window warming cannot roll back the latest saved report across restart", async t => {
+  const { store, options } = await fixture(t);
+  const newer = { ...result(40), fromMs: now + 60_000 - 604_800_000, toMs: now + 60_000 };
+  assert.equal(await store.write(query, newer), true);
+  await store.write({ ...query, endAt: new Date(now).toISOString() }, result(20));
+  const restarted = createWorkUsageSnapshotStore(options);
+  assert.equal((await restarted.read(query)).toMs, newer.toMs);
+  assert.equal((await restarted.read(query)).cells[0].tokens, 40);
+  assert.equal(await restarted.read({ ...query, endAt: new Date(now).toISOString() }), null);
+  // An authoritative correction at the same covered instant remains valid.
+  assert.equal(await store.write(query, { ...newer, cells: result(30).cells }), true);
+  assert.equal((await store.read(query)).cells[0].tokens, 30);
+});
+
+test("older navigation reports remain queryable without displacing the in-memory latest report", async t => {
+  let blocked = false;
+  const service = createWorkUsageService({ clock: () => now + 60_000,
+    build: async q => blocked ? new Promise(() => {})
+      : { ...result(q.toMs === now ? 20 : 40), fromMs: q.fromMs, toMs: q.toMs } });
+  t.after(() => service.close());
+  await completed(service, { ...query, endAt: new Date(now + 60_000).toISOString() });
+  const historical = await completed(service, { ...query, endAt: new Date(now).toISOString() });
+  assert.equal(historical.toMs, now);
+  assert.equal(historical.totals.tokens, 20);
+  blocked = true;
+  const saved = await service.query(query);
+  assert.equal(saved.retained, true);
+  assert.equal(saved.toMs, now + 60_000);
+  assert.equal(saved.totals.tokens, 40);
+});
+
 test("reports reached through period navigation are retained with their original bounds", async t => {
   let block = false;
   const service = createWorkUsageService({ clock: () => now, build: async q => block
@@ -266,4 +297,25 @@ test("slow snapshot writes coalesce repeated refreshes and publish the latest fi
   assert.equal(await pending, true);
   assert.equal(writes, 2);
   assert.equal((await context.read(query)).cells[0].tokens, 20);
+});
+
+test("slow writes compare queued and in-flight report bounds instead of arrival order", async () => {
+  const { createWorkUsageSnapshotStore: createContext } = await import("../../src/application/index.js");
+  let release, started, writes = 0;
+  const firstStarted = new Promise(resolve => { started = resolve; });
+  const context = createContext({ snapshotFile: "/synthetic/snapshot.json", codexHome: "/synthetic/codex", indexFile: "/synthetic/index",
+    createStore: () => ({ read: async () => null, write: async () => {
+      if (++writes === 1) { started(); await new Promise(resolve => { release = resolve; }); }
+      return true;
+    } }) });
+  const newer = { ...result(40), fromMs: now + 60_000 - 604_800_000, toMs: now + 60_000 };
+  const pending = context.write(query, newer);
+  await firstStarted;
+  context.write(query, result(20));
+  context.write(query, newer);
+  context.write(query, result(10));
+  release();
+  await pending;
+  assert.equal((await context.read(query)).toMs, newer.toMs);
+  assert.equal((await context.read(query)).cells[0].tokens, 40);
 });

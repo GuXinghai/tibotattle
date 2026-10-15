@@ -403,6 +403,15 @@ its id and `generation-v2-<64 hex>` as its fingerprint, computed from the
 committed snapshot. Projection caches are valid only while that fingerprint is
 unchanged.
 
+The derived Work Usage saved-report cache retains the latest covered instant
+per reporting period and account scope. Completing an older exact-window query
+does not roll back that fallback, either in memory, in queued writes, or after
+restart. Older windows remain queryable; authoritative corrections at the same
+covered instant may replace their saved projection. The browser retains the
+newer visible report and its date when a replacement returns an older saved
+fallback, while continuing to poll the replacement or displaying its failure.
+No source records or accounting timestamps are rewritten by this ordering rule.
+
 ## Compressed Codex histories
 
 Cold `.jsonl.zst` rollouts are read by streaming native Zstandard decompression.
