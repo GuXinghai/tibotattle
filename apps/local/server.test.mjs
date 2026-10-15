@@ -1384,7 +1384,7 @@ test("the port and readiness answer before the first snapshot is built", async (
   }
 });
 
-test("startup snapshot defers unified history until an explicit full refresh", async () => {
+test("startup defers history while full and overview refreshes publish the complete projection", async () => {
   const files = await fixture();
   const projectionModes = [];
   let fullRefreshRequested = false;
@@ -1445,6 +1445,12 @@ test("startup snapshot defers unified history until an explicit full refresh", a
       return payload.refresh.status === "succeeded";
     });
     assert.deepEqual(projectionModes, ["deferred", "full"]);
+    const scheduled = await fetch(`${base}/api/local/refresh/overview`, {
+      method: "POST", headers: { "Content-Type": "application/json", "X-Usage-Monitor-Local": "1", Origin: base }, body: "{}",
+    });
+    assert.equal(scheduled.status, 202);
+    await app.refresh.whenSettled();
+    assert.deepEqual(projectionModes, ["deferred", "full", "full"]);
   } finally {
     await app?.close();
     await rm(files.root, { recursive: true });

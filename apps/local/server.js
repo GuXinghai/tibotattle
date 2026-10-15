@@ -993,7 +993,7 @@ function createPreparedLocalCompanionServer({
       collectorStateFile: statePaths.collectorStateFile,
       unifiedIndexFile: unifiedStoreFile,
       codexHome,
-      unifiedProjectionMode: ["startup", "quick", "overview"].includes(purpose)
+      unifiedProjectionMode: ["startup", "quick"].includes(purpose)
         ? "deferred"
         : "full",
       unifiedProjectionReader,
