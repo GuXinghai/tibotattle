@@ -141,7 +141,8 @@ function dateKey(atMs, formatter) {
 }
 
 export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], capacity = null,
-  capacityHistory = [], liveSinceMs = nowMs, sourceFresh = false, timeZone = "UTC", comparisonCapacityUsd = null }) {
+  capacityHistory = [], liveSinceMs = nowMs, sourceFresh = false, timeZone = "UTC", comparisonCapacityUsd = null,
+  comparisonBaseline = null }) {
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError("workload_clock_invalid");
   const fromMs = Math.max(0, nowMs - WORKLOAD_POLICY.historyMs);
   const dateFormatter=new Intl.DateTimeFormat("en-CA",{timeZone,year:"numeric",month:"2-digit",day:"2-digit"});
@@ -262,8 +263,13 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   // Only explicit matching plan/limit metadata allows seconds-level reset
   // timestamp jitter to share a startup baseline. Opaque tracks stay distinct.
   // Clusters are bounded against their first reset, never chained wider.
+  const comparisonObservations=[...allObservations];
+  if(comparisonBaseline&&comparisonBaseline.atMs>=startedAtMs&&comparisonBaseline.atMs<=nowMs
+    &&finite(comparisonBaseline.usedPercent)&&comparisonBaseline.usedPercent>=0&&comparisonBaseline.usedPercent<=100)
+    comparisonObservations.push({...comparisonBaseline});
+  comparisonObservations.sort((a,b)=>a.atMs-b.atMs);
   const comparisonKeys=new Map(),scopes=new Map();
-  for(const q of allObservations){
+  for(const q of comparisonObservations){
     if(!Number.isSafeInteger(q.resetAtMs)||typeof q.planType!=="string"||typeof q.limitId!=="string")continue;
     const scope=`${q.planType}:${q.limitId}`,rows=scopes.get(scope)??[];rows.push(q);scopes.set(scope,rows);
   }
@@ -273,15 +279,20 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
       comparisonKeys.set(q.resetKey,`${scope}:${first}`);
     }
   }
-  const startupHigh=new Map();let prior=null,observedFrom=null,observedThrough=null,cumulativePp=0;
+  const startupHigh=new Map();let prior=null,observedFrom=null,observedThrough=null,cumulativePp=0,baseline=null;
   const comparisonRanges=[];let comparisonConflict=false,resetGap=false;
-  for(const original of allObservations){
+  for(const original of comparisonObservations){
     const q={...original,resetKey:comparisonKeys.get(original.resetKey)??original.resetKey};
     if(q.atMs<startedAtMs){if(!q.conflict)startupHigh.set(q.resetKey,Math.max(startupHigh.get(q.resetKey)??0,q.usedPercent));continue;}
     if(q.conflict){comparisonConflict=true;prior=null;continue;}
     const high=startupHigh.get(q.resetKey);
     if(high!==undefined&&q.usedPercent<high)continue;
-    observedFrom??=q.atMs;observedThrough=q.atMs;
+    if(observedFrom===null){observedFrom=q.atMs;
+      if(Number.isSafeInteger(q.resetAtMs)&&typeof q.planType==="string"&&typeof q.limitId==="string")
+        baseline={atMs:q.atMs,usedPercent:q.usedPercent,resetAtMs:q.resetAtMs,planType:q.planType,limitId:q.limitId};
+    }
+    if(prior?.atMs===q.atMs&&prior.usedPercent!==q.usedPercent){comparisonConflict=true;prior=null;continue;}
+    observedThrough=q.atMs;
     if(prior?.resetKey===q.resetKey){
       cumulativePp+=q.usedPercent-(high??prior.usedPercent);
       comparisonRanges.push([prior.atMs,q.atMs]);
@@ -295,7 +306,7 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
     if(range&&u.atMs>range[0]&&u.atMs<=range[1])comparisonUsage.push(u);
   }
   const comparisonPriced=comparisonUsage.every(u=>u.priced&&finite(u.usd));
-  const comparison={startedAtMs,observedFrom:observedFrom===null?null:iso(observedFrom),
+  const comparison={startedAtMs,baseline,observedFrom:observedFrom===null?null:iso(observedFrom),
     observedThrough:observedThrough===null?null:iso(observedThrough),capacityUsd:comparisonUsd,
     actualPp:observedFrom!==null&&!comparisonConflict&&!resetGap?cumulativePp:null,
     expectedPp:observedFrom!==null&&comparisonUsd!==null&&comparisonPriced&&!comparisonConflict&&!resetGap

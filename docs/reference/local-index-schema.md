@@ -164,8 +164,11 @@ the same covered intervals and the first known capacity frozen for that startup.
 The seven-day cards keep their existing range and current-plan filter. Startup
 reads extend beyond seven days when necessary. Its startup identity, frozen
 capacity and capacity history persist in `private/overview-workload-state.json`
-as `overview-workload-state-v2`; v1 reads preserve capacity history, while writes
-are forward-only. The same state
+as `overview-workload-state-v3`, including the first accepted startup quota
+baseline even when it came from a direct live read. Subsequent refreshes retain
+that baseline instead of replacing it with a later indexed occurrence. V1/v2
+reads preserve capacity history, while writes are forward-only and refuse an
+unknown newer state. The same state
 root, using the existing validated Windows protected private boundary. The
 outer legacy state directory need not be rewritten. Write failures are visible
 publication errors.

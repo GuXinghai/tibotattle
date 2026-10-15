@@ -10,17 +10,24 @@ import { existsSync } from "node:fs";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
 import { codexPrimaryAllowanceBasis } from "./codex-primary-allowance-basis.js";
 
-const STATE_SCHEMA="overview-workload-state-v2";
+const STATE_SCHEMA="overview-workload-state-v3";
+function validBaseline(b){return b===null||b&&Object.keys(b).length===5
+  &&["atMs","usedPercent","resetAtMs","planType","limitId"].every(k=>Object.hasOwn(b,k))
+  &&Number.isSafeInteger(b.atMs)&&b.atMs>=0&&Number.isSafeInteger(b.resetAtMs)&&b.resetAtMs>=0
+  &&Number.isFinite(b.usedPercent)&&b.usedPercent>=0&&b.usedPercent<=100
+  &&/^[a-z0-9_]{1,64}$/u.test(b.planType)&&b.limitId==="codex";}
 function validState(s){
   if(!s||Object.keys(s).some(k=>!["schemaVersion","comparison","capacityHistory"].includes(k))
-    ||![STATE_SCHEMA,"overview-workload-state-v1"].includes(s.schemaVersion))return false;
+    ||![STATE_SCHEMA,"overview-workload-state-v2","overview-workload-state-v1"].includes(s.schemaVersion))return false;
   if(s.schemaVersion==="overview-workload-state-v1"){
     if(!s.comparison||Object.keys(s.comparison).join()!=="anchorMs"||!Number.isSafeInteger(s.comparison.anchorMs)||s.comparison.anchorMs<0)return false;
-  }else if(!s.comparison||Object.keys(s.comparison).length!==3
+  }else if(!s.comparison||Object.keys(s.comparison).length!==(s.schemaVersion===STATE_SCHEMA?4:3)
     ||!["startedAtMs","capacityUsd","planType"].every(k=>Object.hasOwn(s.comparison,k))
     ||!Number.isSafeInteger(s.comparison.startedAtMs)||s.comparison.startedAtMs<0
     ||!(s.comparison.capacityUsd===null||Number.isFinite(s.comparison.capacityUsd)&&s.comparison.capacityUsd>0)
-    ||!(s.comparison.planType===null||/^[a-z0-9_]{1,64}$/u.test(s.comparison.planType)))return false;
+    ||!(s.comparison.planType===null||/^[a-z0-9_]{1,64}$/u.test(s.comparison.planType))
+    ||s.schemaVersion===STATE_SCHEMA&&(!validBaseline(s.comparison.baseline)
+      ||s.comparison.baseline&&s.comparison.baseline.atMs<s.comparison.startedAtMs))return false;
   return Array.isArray(s.capacityHistory)&&s.capacityHistory.length<=4096&&s.capacityHistory.every(c=>c
     &&Object.keys(c).length===5&&["usd","availableAtMs","planType","version","basisId"].every(k=>Object.hasOwn(c,k))
     &&Number.isFinite(c.usd)&&c.usd>0&&Number.isSafeInteger(c.availableAtMs)&&c.availableAtMs>=0
@@ -46,7 +53,7 @@ export function workloadStateStore(indexFile){
 }
 export function workloadState(result){return{schemaVersion:STATE_SCHEMA,
   comparison:{startedAtMs:result.comparison.startedAtMs,capacityUsd:result.comparison.capacityUsd,
-    planType:result.comparison.planType},capacityHistory:result.capacityHistory};}
+    planType:result.comparison.planType,baseline:result.comparison.baseline},capacityHistory:result.capacityHistory};}
 
 const SAFE_ERRORS = new Set(["local_index_newer_version", "local_index_family_mismatch",
   "local_index_unavailable", "price_missing", "numeric_invalid"]);
@@ -149,7 +156,7 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const selected=capacity?.status==="available"&&capacity.planScope?.planType===plan?capacity.scenarios?.[capacity.selectedScenario]:null;
       const previousState=previous??storedState;
       const previousCapacity=previousState?.capacityHistory?.filter((c)=>c.planType===plan
-        &&validState({schemaVersion:STATE_SCHEMA,comparison:{startedAtMs:0,capacityUsd:null,planType:null},capacityHistory:[c]}))??[];
+        &&validState({schemaVersion:STATE_SCHEMA,comparison:{startedAtMs:0,capacityUsd:null,planType:null,baseline:null},capacityHistory:[c]}))??[];
       const history=[...previousCapacity];
       if(selected && Number.isFinite(selected.medianCapacityUsd)) {
         const last=history.at(-1);
@@ -163,9 +170,13 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const previousComparison=previousState?.comparison;
       const comparisonCapacityUsd=previousComparison?.startedAtMs===comparisonFrom&&previousComparison.planType===plan
         ?previousComparison.capacityUsd:null;
+      const savedBaseline=previousComparison?.startedAtMs===comparisonFrom&&previousComparison.planType===plan
+        &&validBaseline(previousComparison.baseline)?previousComparison.baseline:null;
+      const comparisonBaseline=savedBaseline?{...savedBaseline,
+        resetKey:`${savedBaseline.resetAtMs}:${savedBaseline.planType}:${savedBaseline.limitId}`}:null;
       stage="aggregation";
       const state=analyzeWorkload({nowMs,events,usage,quota,capacity:cap,capacityHistory:validHistory,liveSinceMs,sourceFresh,timeZone,
-        comparisonCapacityUsd});
+        comparisonCapacityUsd,comparisonBaseline});
       state.comparison.planType=plan;
       const malformed=Number(database.prepare("SELECT COALESCE(SUM(count),0) AS n FROM source_diagnostic WHERE code='malformedWorkRecords'").get().n);
       if(malformed>0){state.errors.push({code:"work_record_unsupported",stage:"work",count:malformed});state.status="partial";}

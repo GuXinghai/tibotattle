@@ -170,6 +170,19 @@ test("comparison distinguishes missing evidence, unpriced usage and ambiguous re
   const conflict=analyzeWorkload({...input,quota:[...quota,{atMs:nowMs,usedPercent:3,resetKey:"new"}]});
   assert.equal(conflict.comparison.actualPp,null);assert.ok(conflict.errors.some(e=>e.code==="comparison_quota_conflict"));
 });
+
+test("startup live quota baseline survives later refreshes without a matching indexed occurrence",()=>{
+  const start=nowMs-20*M,reset=nowMs+7*24*60*M;
+  const q=(atMs,usedPercent)=>({atMs,usedPercent,resetAtMs:reset,planType:"prolite",limitId:"codex",resetKey:"r"});
+  const input={nowMs,liveSinceMs:start,capacity:{usd:100,availableAtMs:start-M},
+    usage:[{atMs:start+M,usd:1,priced:true},{atMs:nowMs-M,usd:1,priced:true}]};
+  const initial=analyzeWorkload({...input,quota:[q(start,10),q(nowMs,12)]});
+  const baseline={...initial.comparison.baseline,resetKey:"r"};
+  const next=analyzeWorkload({...input,quota:[q(start+10*M,11),q(nowMs,12)],comparisonBaseline:baseline});
+  assert.equal(next.comparison.observedFrom,new Date(start).toISOString());
+  assert.deepEqual(next.comparison,initial.comparison);
+  assert.deepEqual(analyzeWorkload({...input,quota:[q(start,10),q(nowMs,12)],comparisonBaseline:baseline}).comparison,next.comparison);
+});
 test("receipts at five-minute boundaries use the preceding completed work bucket",()=>{
   const usage=Array.from({length:12},(_,i)=>({atMs:nowMs-(11-i)*5*M,session:"session",usd:i<4?1:i<8?2:3,priced:true}));
   const v=analyzeWorkload({nowMs,events:[event("start",nowMs-60*M),event("complete",nowMs)],usage,

@@ -94,7 +94,7 @@ test("startup comparison state persists, legacy state reads forward and downgrad
     const legacyRoot=join(w.state,"legacy-root");await mkdir(legacyRoot);
     const store=workloadStateStore(join(legacyRoot,"index.sqlite"));
     assert.equal(await store.read(),null);
-    const value={schemaVersion:"overview-workload-state-v2",comparison:{startedAtMs:at,capacityUsd:100,planType:"prolite"},capacityHistory:[]};
+    const value={schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:100,planType:"prolite",baseline:null},capacityHistory:[]};
     assert.equal(await store.write(value),true);assert.deepEqual(await store.read(),value);
     assert.equal(JSON.parse(await readFile(join(legacyRoot,"private","overview-workload-state.json"),"utf8")).schemaVersion,value.schemaVersion);
     await assert.rejects(readFile(join(legacyRoot,"overview-workload-state.json")),{code:"ENOENT"});
@@ -103,8 +103,11 @@ test("startup comparison state persists, legacy state reads forward and downgrad
     await assert.rejects(store.write(legacy));
     await writeFile(join(legacyRoot,"private","overview-workload-state.json"),JSON.stringify(legacy));
     assert.deepEqual(await store.read(),legacy);
+    const v2={schemaVersion:"overview-workload-state-v2",comparison:{startedAtMs:at,capacityUsd:100,planType:"prolite"},capacityHistory:[]};
+    await writeFile(join(legacyRoot,"private","overview-workload-state.json"),JSON.stringify(v2));
+    assert.deepEqual(await store.read(),v2);await assert.rejects(store.write(v2));
     const next={...value,comparison:{...value.comparison,startedAtMs:at+40*M}};await store.write(next);assert.deepEqual(await store.read(),next);
-    const future={...next,schemaVersion:"overview-workload-state-v3"};
+    const future={...next,schemaVersion:"overview-workload-state-v4"};
     const path=join(legacyRoot,"private","overview-workload-state.json");await writeFile(path,JSON.stringify(future));
     await assert.rejects(store.read());await assert.rejects(store.write(next));
     assert.deepEqual(JSON.parse(await readFile(path,"utf8")),future);
