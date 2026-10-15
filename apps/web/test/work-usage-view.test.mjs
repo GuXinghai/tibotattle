@@ -2568,6 +2568,7 @@ test("open details follow publication while retaining thread navigation, page an
   const mounted = mountedLeaseRoot();
   const calls = [];
   let expiredParent = false;
+  let retainedParent = false;
   const windowAt = end => ({ period: "7d", startAt: new Date(end - 7 * 86_400_000).toISOString(), endAt: new Date(end).toISOString() });
   const view = mountWorkUsageView({ ...mounted, compact: true, t: mountedTranslator, reportingWindow: windowAt(NOW),
     fetchRef: async (_url, init) => {
@@ -2584,6 +2585,11 @@ test("open details follow publication while retaining thread navigation, page an
         result.rowCount = 8;
         result.offset = query.cursor ? 6 : 0;
         result.nextCursor = query.cursor ? null : `next-${end}`;
+        if (end === NOW + 600_000 && !retainedParent) {
+          retainedParent = true;
+          return httpResponse({ ...result, snapshotId: "saved-parent", retained: true,
+            refreshing: true, refreshSnapshotId: "pending-parent", namesAvailable: true });
+        }
       }
       return httpResponse(result);
     },
@@ -2615,6 +2621,8 @@ test("open details follow publication while retaining thread navigation, page an
   assert.equal(calls.at(-1).thread, THREAD_A.id);
   assert.equal(dialog.scrollTop, 240);
   findMounted(content, n => n.tagName === "BUTTON" && n.textContent.includes("Back"))[0].click();
+  await settleMountedView();
+  await mounted.runTimer(750);
   await settleMountedView();
   assert.equal(calls.at(-1).thread, undefined);
   assert.equal(expiredParent, true);

@@ -1920,7 +1920,7 @@ export function mountWorkUsageView(options = {}) {
         restorePageDepth--;
         return performLoad(recoverExpired, { background, preparingAttempt: 0 });
       }
-      restorePageDepth = 0;
+      if (!result.retained) restorePageDepth = 0;
       response = result;
       if (!result.retained && detailView && detailDialog.open) {
         detailView.setReportingWindow({ period: query.period,
