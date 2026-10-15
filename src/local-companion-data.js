@@ -39,7 +39,7 @@ import {
   readAuthoritativeDashboardSnapshot,
   writeAuthoritativeDashboardSnapshot,
 } from "./local-authoritative-dashboard-snapshot.js";
-import { readLocalIndexProjection, readLocalIndexWorkload, workloadStateStore, workloadState } from "./local-index-backend.js";
+import { readLocalIndexProjection, readLocalIndexWorkload, readWorkloadQuotaEvidence, workloadStateStore, workloadState } from "./local-index-backend.js";
 import {
   decodePlanScopedTimelineRow,
   readReplaySafeAccountingCache,
@@ -2854,7 +2854,12 @@ export async function buildLocalCompanionSnapshot({
   let storedWorkloadState=null,workloadStateError=null;
   const workloadStore=workloadStateStore(unifiedIndexFile);
   if(previousWorkload===null){try{storedWorkloadState=await workloadStore.read();}catch{workloadStateError="workload_state_read_failed";}}
+  let quotaEvidence;
+  try{quotaEvidence=await readWorkloadQuotaEvidence({stateFile:collectorStateFile,
+    fromMs:workloadLiveSinceMs??nowMs,nowMs});}
+  catch(error){quotaEvidence={errorCode:["quota_history_too_large","quota_history_invalid"].includes(error?.code)?error.code:"quota_history_read_failed"};}
   const workload = readLocalIndexWorkload({ indexFile: unifiedIndexFile, nowMs,
+    quotaEvidence,
     storedState: storedWorkloadState,
     declaredSpeedBaselines: codexSpeedBaselines,
     quotaWindows: quota.windows.map((window) => ({ ...window, observedAt: quota.observedAt })),

@@ -155,7 +155,7 @@ test("startup comparison identifies a pending common expiry beyond the old five-
   const distinct=analyzeWorkload({...input,quota:[q(20,10,0),q(0,12,6*M)]});
   assert.ok(distinct.errors.some(e=>e.code==="comparison_reset_ambiguous"));
   const plan=analyzeWorkload({...input,quota:[q(20,10,0),q(0,12,0,"plus")]});
-  assert.ok(plan.errors.some(e=>e.code==="comparison_reset_gap"));
+  assert.ok(plan.errors.some(e=>e.code==="comparison_identity_changed"));
 });
 
 test("comparison distinguishes missing evidence, unpriced usage and ambiguous reset gaps from zero",()=>{
@@ -185,7 +185,8 @@ test("confirmed weekly renewal preserves totals, skips late old-cycle readings, 
   const alreadyBusy=analyzeWorkload({...input,quota:[q(30,90,expiry),q(20,94,expiry),q(9,96,expiry+week),q(0,98,expiry+week)]});
   assert.equal(alreadyBusy.comparison.actualPp,6);assert.equal(alreadyBusy.comparison.expectedPp,7);
   const gap=analyzeWorkload({...input,usage:[...input.usage,{atMs:nowMs-15*M,usd:2,priced:true}]});
-  assert.equal(gap.comparison.actualPp,null);assert.equal(gap.comparison.expectedPp,null);
+  assert.equal(gap.comparison.actualPp,9);assert.equal(gap.comparison.expectedPp,7);
+  assert.equal(gap.comparison.coverage,"partial");
   assert.ok(gap.errors.some(e=>e.code==="comparison_reset_gap"));
 });
 
@@ -209,12 +210,12 @@ test("deadline jitter cannot chain indefinitely or bridge plans, quota families,
   const input={nowMs,liveSinceMs:nowMs-20*M,capacity:{usd:100,availableAtMs:nowMs-30*M},
     usage:[{atMs:nowMs-M,usd:2,priced:true}]};
   const chained=analyzeWorkload({...input,quota:[q(20,0,10),q(10,4*M,11),q(0,8*M,12)]});
-  assert.equal(chained.comparison.actualPp,null);
+  assert.equal(chained.comparison.actualPp,1);assert.equal(chained.comparison.coverage,"partial");
   assert.ok(chained.errors.some(e=>e.code==="comparison_reset_ambiguous"));
   for(const change of [{planType:"plus"},{limitId:"other"},{planType:"unknown"}]) {
     const value=analyzeWorkload({...input,quota:[q(20,0,10),{...q(0,6000,12),...change}]});
     assert.equal(value.comparison.actualPp,null);
-    assert.ok(value.errors.some(e=>e.code==="comparison_reset_gap"));
+    assert.ok(value.errors.some(e=>e.code===(change.planType==="unknown"?"comparison_reset_gap":"comparison_identity_changed")));
   }
 });
 
@@ -246,6 +247,49 @@ test("startup live quota baseline survives later refreshes without a matching in
   assert.equal(next.comparison.observedFrom,new Date(start).toISOString());
   assert.deepEqual(next.comparison,initial.comparison);
   assert.deepEqual(analyzeWorkload({...input,quota:[q(start,10),q(nowMs,12)],comparisonBaseline:baseline}).comparison,next.comparison);
+});
+
+test("retained direct observations and an early-reset event join old and new cumulative consumption",()=>{
+  const week=7*24*60*M,start=nowMs-5*60*M,oldExpiry=nowMs+5*24*60*M;
+  const oldLast=nowMs-60*M,resetAt=oldLast+5*M,firstUse=nowMs-20*M;
+  const q=(atMs,usedPercent,reset)=>({atMs,usedPercent,resetAtMs:reset,resetKey:String(reset),planType:"prolite",limitId:"codex"});
+  const reset={schemaVersion:"quota-reset-event-v0.1",kind:"unknown_reset",reason:"confirmed_unscheduled_quota_drop",
+    precision:"observation_interval",provider:"openai_codex",planType:"prolite",limitId:"codex",windowDurationMins:10080,
+    occurredAt:new Date(resetAt).toISOString(),observedAt:new Date(resetAt).toISOString(),intervalStartedAt:new Date(oldLast).toISOString()};
+  const history=[q(start,50,oldExpiry),q(start+10*M,51,oldExpiry),q(oldLast,51,oldExpiry),
+    q(resetAt,0,resetAt+week),q(resetAt+10*M,0,resetAt+10*M+week),q(firstUse,0,firstUse+week),
+    q(firstUse+M,51,oldExpiry),q(nowMs,1,firstUse+week)];
+  const input={nowMs,liveSinceMs:start,capacity:{usd:100,availableAtMs:start-M},
+    quota:[history[0],history[1],history.at(-1)],comparisonQuota:history,comparisonResetEvents:[reset],
+    usage:[{atMs:start+5*M,usd:1,priced:true},{atMs:nowMs-10*M,usd:2,priced:true}]};
+  const before=structuredClone(input),value=analyzeWorkload(input);
+  assert.deepEqual(input,before);assert.deepEqual(value.errors,[]);
+  assert.equal(value.comparison.actualPp,2);assert.equal(value.comparison.expectedPp,3);
+  assert.equal(value.comparison.coverage,"complete");
+  assert.deepEqual(analyzeWorkload({...input,comparisonQuota:[...history,...history],comparisonResetEvents:[reset,reset]}).comparison,value.comparison);
+  for(const invalid of [{...reset,planType:"plus"},{...reset,limitId:"other"},{...reset,reason:"invented"}]){
+    const result=analyzeWorkload({...input,comparisonResetEvents:[invalid]});
+    assert.equal(result.comparison.actualPp,1);assert.equal(result.comparison.coverage,"partial");
+    assert.ok(result.errors.some(e=>e.code==="comparison_reset_ambiguous"));
+  }
+  const missing=analyzeWorkload({...input,comparisonQuota:[],comparisonResetEvents:[]});
+  assert.equal(missing.comparison.actualPp,1);assert.equal(missing.comparison.coverage,"partial");
+});
+
+test("identity discontinuity retains only the confirmed prefix and missing pricing preserves known expected cost",()=>{
+  const start=nowMs-20*M;
+  const input={nowMs,liveSinceMs:start,capacity:{usd:100,availableAtMs:start-M},
+    quota:[{atMs:start,usedPercent:50,resetKey:"r"},{atMs:start+10*M,usedPercent:51,resetKey:"r"},{atMs:nowMs,usedPercent:52,resetKey:"r"}],
+    usage:[{atMs:start+5*M,usd:2,priced:true},{atMs:nowMs-M,usd:3,priced:true}]};
+  const changed=analyzeWorkload({...input,comparisonContinuityThroughMs:start+15*M});
+  assert.equal(changed.comparison.actualPp,1);assert.equal(changed.comparison.expectedPp,2);
+  assert.equal(changed.comparison.coverage,"partial");assert.ok(changed.errors.some(e=>e.code==="comparison_identity_changed"));
+  const missing=analyzeWorkload({...input,usage:[input.usage[0],{...input.usage[1],usd:null,priced:false}]});
+  assert.equal(missing.comparison.actualPp,2);assert.equal(missing.comparison.expectedPp,2);
+  assert.equal(missing.comparison.coverage,"partial");assert.ok(missing.errors.some(e=>e.code==="price_missing"));
+  const historyFailure=analyzeWorkload({...input,comparisonEvidenceError:"quota_history_read_failed"});
+  assert.equal(historyFailure.comparison.actualPp,2);assert.equal(historyFailure.comparison.coverage,"partial");
+  assert.ok(historyFailure.errors.some(e=>e.code==="quota_history_read_failed"));
 });
 test("receipts at five-minute boundaries use the preceding completed work bucket",()=>{
   const usage=Array.from({length:12},(_,i)=>({atMs:nowMs-(11-i)*5*M,session:"session",usd:i<4?1:i<8?2:3,priced:true}));

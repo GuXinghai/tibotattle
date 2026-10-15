@@ -6,9 +6,44 @@ import {DatabaseSync} from "node:sqlite";
 import {createWorkspace} from "./helpers/local-index-facts.js";
 import {refreshLocalIndex} from "../src/local-index-refresh.js";
 import {openLocalIndexStore} from "../src/local-index-store.js";
-import {readLocalIndexWorkload,workloadStateStore} from "../src/local-index-backend.js";
+import {readLocalIndexWorkload,readWorkloadQuotaEvidence,workloadStateStore} from "../src/local-index-backend.js";
+import {commitLocalCollectorState} from "../src/local-collector-state.js";
 const at=Date.parse("2026-09-01T00:00:00Z"),M=60000;
 const line=(atMs,type,payload)=>JSON.stringify({timestamp:new Date(atMs).toISOString(),type,payload})+"\n";
+test("quota evidence uses only recorded direct scoped reads and never returns account handles or payloads",async()=>{
+  const w=createWorkspace({files:1,events:1}),stateFile=join(w.state,"evidence.sqlite");
+  const record=(minutes,scope="synthetic-account-a",source="app_server_read")=>({schemaVersion:"0.3",kind:"codex_quota_snapshot",
+    eventKey:`synthetic-${minutes}-${source}`,observedAt:new Date(at+minutes*M).toISOString(),source,
+    private:"synthetic-private-marker",accountScope:{status:"available",scopeId:scope},
+    windows:[{limitId:"codex",slot:"secondary",planType:"prolite",usedPercent:minutes<10?51:0,
+      windowDurationMins:10080,resetsAt:Math.floor((at+7*24*60*M+minutes*M)/1000)}]});
+  const event={schemaVersion:"quota-reset-event-v0.1",kind:"unknown_reset",reason:"confirmed_unscheduled_quota_drop",
+    precision:"observation_interval",provider:"openai_codex",planType:"prolite",limitId:"codex",windowDurationMins:10080,
+    occurredAt:new Date(at+10*M).toISOString(),observedAt:new Date(at+10*M).toISOString(),intervalStartedAt:new Date(at).toISOString()};
+  try{
+    await commitLocalCollectorState({stateFile,checkpoint:{},records:[record(0),record(5,"synthetic-account-a","app_server_notification"),
+      {...record(10),resetEvents:[event]},record(20,"synthetic-account-b"),record(30),record(99)],clock:()=>at});
+    const before=await readFile(stateFile);
+    const evidence=await readWorkloadQuotaEvidence({stateFile,fromMs:at,nowMs:at+40*M});
+    assert.equal(evidence.observations.length,2);assert.equal(evidence.resetEvents.length,1);
+    assert.equal(evidence.continuityThroughMs,at+20*M);
+    assert.doesNotMatch(JSON.stringify(evidence),/synthetic-account|synthetic-private-marker|scopeId|eventKey/u);
+    assert.deepEqual(await readFile(stateFile),before);
+    assert.deepEqual(await readWorkloadQuotaEvidence({stateFile,fromMs:at,nowMs:at+40*M}),evidence);
+  }finally{w.cleanup();}
+});
+
+test("malformed saved reset evidence fails explicitly and a missing file is not a fabricated zero",async()=>{
+  const w=createWorkspace({files:1,events:1}),stateFile=join(w.state,"invalid-evidence.sqlite");
+  try{
+    const missing=await readWorkloadQuotaEvidence({stateFile,fromMs:at,nowMs:at+M});
+    assert.equal(missing.status,"missing");assert.deepEqual(missing.observations,[]);
+    await commitLocalCollectorState({stateFile,checkpoint:{},records:[{kind:"codex_quota_snapshot",eventKey:"invalid-reset",
+      observedAt:new Date(at).toISOString(),source:"app_server_read",accountScope:{status:"available",scopeId:"synthetic"},
+      windows:[],resetEvents:[{schemaVersion:"future"}]}],clock:()=>at});
+    await assert.rejects(readWorkloadQuotaEvidence({stateFile,fromMs:at,nowMs:at+M}),{code:"quota_history_invalid"});
+  }finally{w.cleanup();}
+});
 test("work lifecycle survives cold, incremental, replay and forward migration without leaking task identity",async()=>{
   const w=createWorkspace({files:1,events:5});
   try{

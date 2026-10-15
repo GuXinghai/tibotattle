@@ -1,7 +1,9 @@
+import { normalizeQuotaResetEvent } from "./reset-events.js";
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 export const WORKLOAD_POLICY = Object.freeze({
-  version: "task-workload-v4", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
+  version: "task-workload-v5", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
   currentMs: 15 * MINUTE, minimumBins: 9, minimumClassBins: 3, minimumClassMs: MINUTE,
   comparisonWindowMs: 168 * HOUR,
   comparisonDeadlineUncertaintyMs: 5 * MINUTE,
@@ -145,9 +147,16 @@ function dateKey(atMs, formatter) {
 // not exact IDs: while both deadlines are still in the future, nearby readings
 // describe the same pending expiry. At/after expiry that inference is forbidden.
 // Process chronologically; future observations never relabel earlier evidence.
-function startupQuotaTracks(observations) {
+function startupQuotaTracks(observations, resetEvents) {
   const scopes = new Map();
   const budget = WORKLOAD_POLICY.comparisonDeadlineUncertaintyMs;
+  const resets=new Map();
+  for(const raw of resetEvents){const event=normalizeQuotaResetEvent(raw);
+    if(event&&event.provider==="openai_codex"&&event.windowDurationMins===10080
+      &&["scheduled_reset","unknown_reset","banked_reset_used"].includes(event.kind))
+      resets.set(`${event.observedAt}:${event.planType}:${event.limitId}`,event);
+  }
+  const unusedDeadline=q=>q.usedPercent===0&&Math.abs(q.resetAtMs-q.atMs-WORKLOAD_POLICY.comparisonWindowMs)<=budget;
   return observations.map(q => {
     if (!Number.isSafeInteger(q.resetAtMs) || q.resetAtMs < 0 || typeof q.planType !== "string"
         || !q.planType || q.planType === "unknown" || typeof q.limitId !== "string" || !q.limitId) {
@@ -157,17 +166,30 @@ function startupQuotaTracks(observations) {
     const state = scopes.get(scope) ?? { current: null, retired: [] };
     scopes.set(scope, state);
     const prior = state.current;
-    if (prior && q.resetAtMs <= q.atMs && state.retired.some(track => Math.abs(q.resetAtMs - track.resetAtMs) <= budget)) {
+    if (prior && Math.abs(q.resetAtMs-prior.resetAtMs)>budget
+      && state.retired.some(track => Math.abs(q.resetAtMs - track.resetAtMs) <= budget)) {
       // A delayed reading from a positively expired, retired cycle cannot reopen
       // it or produce another artificial transition back from the new cycle.
       return { ...q, comparisonStale: true };
     }
     let transition = "initial";
     if (prior) {
+      const reset=q.evidence===true?resets.get(`${iso(q.atMs)}:${q.planType}:${q.limitId}`):null;
+      if(reset&&prior.atMs>=Date.parse(reset.intervalStartedAt)&&prior.atMs<q.atMs){
+        state.retired.push(prior);transition="reset";
+      }else{
       const distance = Math.abs(q.resetAtMs - prior.resetAtMs);
       const sameDeadline = q.resetAtMs === prior.resetAtMs;
       const pendingExpiry = q.atMs < Math.min(prior.resetAtMs, q.resetAtMs);
-      if (sameDeadline || pendingExpiry && distance <= budget) {
+      // An unused weekly window may report now+one week on every read. Its
+      // deadline is not anchored until first use/countdown; zero readings do
+      // not manufacture repeated resets. Once anchored, normal bounds apply.
+      const startsUnused=prior.pendingStart&&pendingExpiry
+        &&q.resetAtMs>=prior.atMs+WORKLOAD_POLICY.comparisonWindowMs-budget
+        &&q.resetAtMs<=q.atMs+WORKLOAD_POLICY.comparisonWindowMs+budget;
+      if (sameDeadline || pendingExpiry && distance <= budget || startsUnused) {
+        prior.atMs=q.atMs;prior.pendingStart=unusedDeadline(q);
+        if(startsUnused)prior.resetAtMs=q.resetAtMs;
         return { ...q, resetKey: prior.key, transition: sameDeadline ? "same" : "jitter" };
       }
       // A new weekly expiry must be future-dated, substantially later than the
@@ -179,15 +201,17 @@ function startupQuotaTracks(observations) {
         && q.resetAtMs - q.atMs <= WORKLOAD_POLICY.comparisonWindowMs + budget;
       transition = renewed ? "reset" : "ambiguous";
       if (renewed) state.retired.push(prior);
+      }
     }
-    state.current = { resetAtMs: q.resetAtMs, key: `${scope}:${q.resetAtMs}:${q.atMs}` };
+    state.current = { atMs:q.atMs,pendingStart:unusedDeadline(q),resetAtMs: q.resetAtMs, key: `${scope}:${q.resetAtMs}:${q.atMs}` };
     return { ...q, resetKey: state.current.key, transition };
   });
 }
 
 export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], capacity = null,
   capacityHistory = [], liveSinceMs = nowMs, sourceFresh = false, timeZone = "UTC", comparisonCapacityUsd = null,
-  comparisonBaseline = null }) {
+  comparisonBaseline = null, comparisonQuota = [], comparisonResetEvents = [],
+  comparisonContinuityThroughMs = null, comparisonEvidenceError = null }) {
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError("workload_clock_invalid");
   const fromMs = Math.max(0, nowMs - WORKLOAD_POLICY.historyMs);
   const dateFormatter=new Intl.DateTimeFormat("en-CA",{timeZone,year:"numeric",month:"2-digit",day:"2-digit"});
@@ -305,31 +329,51 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
     ??versions.find(c=>c.availableAtMs>=startedAtMs);
   const comparisonUsd=finite(comparisonCapacityUsd)&&comparisonCapacityUsd>0?comparisonCapacityUsd
     :finite(initialCapacity?.usd)&&initialCapacity.usd>0?initialCapacity.usd:null;
-  const comparisonObservations=[...allObservations];
+  const comparisonCandidates=[...quota,...comparisonQuota.map(q=>({...q,evidence:true}))]
+    .filter(q=>Number.isSafeInteger(q.atMs)&&q.atMs>=0&&q.atMs<=nowMs
+      &&finite(q.usedPercent)&&q.usedPercent>=0&&q.usedPercent<=100);
   if(comparisonBaseline&&comparisonBaseline.atMs>=startedAtMs&&comparisonBaseline.atMs<=nowMs
     &&finite(comparisonBaseline.usedPercent)&&comparisonBaseline.usedPercent>=0&&comparisonBaseline.usedPercent<=100)
-    comparisonObservations.push({...comparisonBaseline});
-  comparisonObservations.sort((a,b)=>a.atMs-b.atMs);
+    comparisonCandidates.push({...comparisonBaseline});
+  comparisonCandidates.sort((a,b)=>a.atMs-b.atMs||Number(b.evidence===true)-Number(a.evidence===true));
+  const comparisonObservations=[];
+  for(const q of comparisonCandidates){const last=comparisonObservations.at(-1);
+    if(last?.atMs===q.atMs){
+      const compatible=last.resetKey===q.resetKey||last.planType===q.planType&&last.limitId===q.limitId
+        &&Math.abs(last.resetAtMs-q.resetAtMs)<=WORKLOAD_POLICY.comparisonDeadlineUncertaintyMs
+        &&q.atMs<Math.min(last.resetAtMs,q.resetAtMs);
+      if(last.usedPercent!==q.usedPercent||!compatible)last.conflict=true;
+    }else comparisonObservations.push({...q});
+  }
   const startupHigh=new Map();let prior=null,observedFrom=null,observedThrough=null,cumulativePp=0,baseline=null;
-  const comparisonRanges=[];let comparisonConflict=false,resetGap=false,resetAmbiguous=false;
-  for(const q of startupQuotaTracks(comparisonObservations)){
+  const comparisonRanges=[];let comparisonConflict=false,resetGap=false,resetAmbiguous=false,blocked=false;
+  let identityChanged=Number.isSafeInteger(comparisonContinuityThroughMs);
+  let confirmedThrough=null;
+  for(const q of startupQuotaTracks(comparisonObservations,comparisonResetEvents)){
+    if(Number.isSafeInteger(comparisonContinuityThroughMs)&&q.atMs>=comparisonContinuityThroughMs){blocked=true;break;}
     if(q.comparisonStale)continue;
     if(q.atMs<startedAtMs){if(!q.conflict)startupHigh.set(q.resetKey,Math.max(startupHigh.get(q.resetKey)??0,q.usedPercent));continue;}
-    if(q.conflict){comparisonConflict=true;prior=null;continue;}
-    if(prior && q.transition==="ambiguous")resetAmbiguous=true;
+    if(q.conflict){comparisonConflict=true;blocked=true;prior=null;continue;}
+    if(prior&&((prior.planType&&q.planType&&prior.planType!=="unknown"&&q.planType!=="unknown"&&prior.planType!==q.planType)
+      ||(prior.limitId&&q.limitId&&prior.limitId!==q.limitId))){identityChanged=true;blocked=true;break;}
+    if(q.transition==="reset")blocked=false;
+    if(prior && q.transition==="ambiguous"){resetAmbiguous=true;blocked=true;}
     const high=startupHigh.get(q.resetKey);
-    if(prior && q.transition==="same" && q.atMs>=q.resetAtMs && high!==undefined && q.usedPercent<high)resetAmbiguous=true;
+    if(prior && q.transition==="same" && q.atMs>=q.resetAtMs && high!==undefined && q.usedPercent<high){resetAmbiguous=true;blocked=true;}
     if(high!==undefined&&q.usedPercent<high)continue;
     if(observedFrom===null){observedFrom=q.atMs;
       if(Number.isSafeInteger(q.resetAtMs)&&typeof q.planType==="string"&&typeof q.limitId==="string")
         baseline={atMs:q.atMs,usedPercent:q.usedPercent,resetAtMs:q.resetAtMs,planType:q.planType,limitId:q.limitId};
     }
-    if(prior?.atMs===q.atMs&&prior.usedPercent!==q.usedPercent){comparisonConflict=true;prior=null;continue;}
+    if(prior?.atMs===q.atMs&&prior.usedPercent!==q.usedPercent){comparisonConflict=true;blocked=true;prior=null;continue;}
     observedThrough=q.atMs;
-    if(prior?.resetKey===q.resetKey){
+    if(prior?.resetKey===q.resetKey&&!blocked){
       cumulativePp+=q.usedPercent-(high??prior.usedPercent);
       comparisonRanges.push([prior.atMs,q.atMs]);
-    }else if(prior&&usage.some(u=>u.atMs>prior.atMs&&u.atMs<=q.atMs))resetGap=true;
+      confirmedThrough=q.atMs;
+    }else if(prior?.resetKey!==q.resetKey&&prior&&usage.some(u=>u.atMs>prior.atMs&&u.atMs<=q.atMs)){
+      resetGap=true;if(q.transition!=="reset")blocked=true;
+    }
     startupHigh.set(q.resetKey,q.usedPercent);prior=q;
   }
   const comparisonUsage=[];let rangeIndex=0;
@@ -339,14 +383,22 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
     if(range&&u.atMs>range[0]&&u.atMs<=range[1])comparisonUsage.push(u);
   }
   const comparisonPriced=comparisonUsage.every(u=>u.priced&&finite(u.usd));
+  const expectedKnown=comparisonPriced||comparisonUsage.some(u=>u.priced&&finite(u.usd));
+  const partial=blocked||comparisonConflict||resetGap||resetAmbiguous
+    ||identityChanged||comparisonEvidenceError!==null||!comparisonPriced;
+  const hasConfirmed=observedFrom!==null&&(!partial||comparisonRanges.length>0);
   const comparison={startedAtMs,baseline,observedFrom:observedFrom===null?null:iso(observedFrom),
     observedThrough:observedThrough===null?null:iso(observedThrough),capacityUsd:comparisonUsd,
-    actualPp:observedFrom!==null&&!comparisonConflict&&!resetGap&&!resetAmbiguous?cumulativePp:null,
-    expectedPp:observedFrom!==null&&comparisonUsd!==null&&comparisonPriced&&!comparisonConflict&&!resetGap&&!resetAmbiguous
-      ?100*comparisonUsage.reduce((s,u)=>s+u.usd,0)/comparisonUsd:null};
+    coverage:observedFrom===null?"unavailable":partial?"partial":"complete",
+    confirmedThrough:confirmedThrough===null?null:iso(confirmedThrough),
+    actualPp:hasConfirmed?cumulativePp:null,
+    expectedPp:hasConfirmed&&comparisonUsd!==null&&expectedKnown
+      ?100*comparisonUsage.reduce((s,u)=>s+(u.priced&&finite(u.usd)?u.usd:0),0)/comparisonUsd:null};
   if(comparisonConflict)errors.push({code:"comparison_quota_conflict",stage:"quota"});
   if(resetGap)errors.push({code:"comparison_reset_gap",stage:"quota"});
   if(resetAmbiguous)errors.push({code:"comparison_reset_ambiguous",stage:"quota"});
+  if(identityChanged)errors.push({code:"comparison_identity_changed",stage:"quota"});
+  if(comparisonEvidenceError!==null)errors.push({code:["quota_history_read_failed","quota_history_too_large","quota_history_invalid"].includes(comparisonEvidenceError)?comparisonEvidenceError:"quota_history_read_failed",stage:"quota"});
   if(!comparisonPriced)errors.push({code:"price_missing",stage:"pricing"});
   if (selectedUsage.some((u)=>!u.priced)) errors.push({code:"price_missing",stage:"pricing"});
   const allowancePoints=new Map();
@@ -355,7 +407,7 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const groupedErrors=new Map();
   for(const error of errors){const key=`${error.stage}:${error.code}`,prior=groupedErrors.get(key);
     groupedErrors.set(key,{...error,count:(prior?.count??0)+(error.count??1)});}
-  return { schemaVersion:"overview-workload-v2", policyVersion:WORKLOAD_POLICY.version,
+  return { schemaVersion:"overview-workload-v3", policyVersion:WORKLOAD_POLICY.version,
     generatedAt:iso(nowMs), timeZone, status:errors.length?"partial":"available", errors:[...groupedErrors.values()],
     adjustments:{workReplayEvents:work.replayed,workDurationDifferences:work.durationDifferences,quotaStaleObservations:staleQuota},
     allowance:{ remainingPercent, observedAt:latest?iso(latest.atMs):null,

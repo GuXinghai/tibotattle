@@ -135,7 +135,7 @@ source cursor are provisional; recovery and source replacement remove them with
 the other affected facts. Work includes tools and necessary waiting, and parallel
 intervals count once. Inference performance timing remains independent.
 
-Workload policy `task-workload-v4` projects, rather than rewrites, these facts.
+Workload policy `task-workload-v5` projects, rather than rewrites, these facts.
 Retained unambiguous ancestry identifies copied task boundaries, including
 paginated forks; a copied completion must also match the ancestor's reported
 duration. New child work remains included, and unsupported/cyclic ancestry does
@@ -155,7 +155,7 @@ timestamp. This is an observed-consumption policy, not proof that a provider
 cannot issue a credit within a reset cycle.
 
 Overview groups committed usage timestamps into five-minute bins without
-splitting fifteen-minute display rollups. The `overview-workload-v2` comparison
+splitting fifteen-minute display rollups. The `overview-workload-v3` comparison
 reports two startup totals in percentage points, without a rolling display
 window or relative-ratio curve. Actual consumption sums only within each reset
 identity, retaining the high watermark; unmatched usage across reset boundaries
@@ -173,23 +173,37 @@ root, using the existing validated Windows protected private boundary. The
 outer legacy state directory need not be rewritten. Write failures are visible
 publication errors.
 
-The startup comparison resolves weekly cycles chronologically using explicit
-matching plan/limit metadata. Nearby deadlines describe the same pending expiry
-only while both are in the future. The fixed first deadline bounds uncertainty
-to one five-minute reporting interval; small shifts cannot chain into a larger
-change, and future evidence never relabels earlier observations. Percentage
-regressions within a pending expiry retain the high watermark. Once the earlier
-deadline has elapsed, jitter cannot establish continuity: a confirmed renewal
-requires a new future deadline, an advance of at least half a weekly window,
-and at most one weekly window plus reporting uncertainty remaining. It starts
-a separate pairing baseline even if the new reading has no percentage drop.
-Late readings of an expired retired cycle are withheld from the startup pairing.
-An expired unchanged deadline with a regressed percentage, early large advance,
-or other unproven rescheduling reports `comparison_reset_ambiguous`; unmatched
-usage across distinct cycles reports `comparison_reset_gap`. Both remain
-explicitly unknown rather than being subtracted across cycles. Opaque evidence
-and different plans/limits never gain inferred continuity. Raw observations,
-seven-day projections and the state schema remain unchanged by this resolver.
+The startup comparison reads retained direct `app_server_read` quota snapshots
+and their validated reset events through the secure collector facade, in addition
+to committed rollout quota and the latest live reading. This bounded private
+projection exports no account handles or raw records. It stops at changed/lost
+established account continuity; notifications cannot supply reset authority.
+Unreadable, malformed or over-budget history produces distinct quota-history
+errors. Records, cursors and SQL schemas are never rewritten by this reader.
+
+Cycles are resolved chronologically using explicit matching plan/limit metadata.
+Validated `scheduled_reset`, `unknown_reset` and `banked_reset_used` events from
+the corresponding direct observation can close a cycle before its old expiry.
+The observed interval is evidence of a reset, not proof of its provider cause.
+An unused zero window can report observation-time plus seven days repeatedly;
+these readings remain one cycle until use/countdown anchors its deadline.
+An anchored active cycle retains fixed first-deadline jitter bounds. Natural
+renewal without an event still requires the old deadline to have elapsed and
+a substantially advanced, plausible new weekly deadline. Retired-cycle cache
+readings do not reopen a closed cycle, and high watermarks prevent replays or
+stale rebounds from charging the same quota twice.
+
+Unproven changes report `comparison_reset_ambiguous`; usage in an unpaired reset
+interval reports `comparison_reset_gap`. Confirmed subtotals are retained, not
+cleared. A confirmed reset permits subsequent new-cycle pairs even when the
+boundary itself has a gap; ambiguous pairing stops until a confirmed reset.
+Missing prices retain the known priced subtotal and remain explicit errors.
+`comparison.coverage` is `complete`, `partial` or `unavailable`, and
+`confirmedThrough` identifies the last confirmed pair. The UI visibly qualifies
+partial subtotals; they are never presented as a complete cumulative total.
+The browser accepts retained v2 snapshots and current v3, and refuses unknown
+future versions. Private startup state remains v3. Seven-day and current-load
+cards keep their existing data and semantics.
 
 `source` carries everything a refresh needs to decide, without reading the
 rollout header, what to do with a file:

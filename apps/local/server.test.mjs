@@ -1441,6 +1441,7 @@ test("startup snapshot defers unified history until an explicit full refresh", a
     await waitFor(async () => {
       const payload = await fetch(`${base}/api/local/refresh`)
         .then((result) => result.json());
+      assert.notEqual(payload.refresh.status,"failed",JSON.stringify({failureCode:payload.refresh.failureCode,failedStep:payload.refresh.failedStep}));
       return payload.refresh.status === "succeeded";
     });
     assert.deepEqual(projectionModes, ["deferred", "full"]);

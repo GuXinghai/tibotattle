@@ -4,7 +4,7 @@ const finite=(v)=>typeof v==="number"&&Number.isFinite(v);
 const instant=(v)=>typeof v==="string"&&Number.isFinite(Date.parse(v));
 // Closed projection: never spread companion records into DOM-facing state.
 export function normalizeOverviewWorkload(value) {
-  if(!value||value.schemaVersion!=="overview-workload-v2")return null;
+  if(!value||!["overview-workload-v2","overview-workload-v3"].includes(value.schemaVersion))return null;
   const scalar=(x)=>finite(x)&&x>=0?x:null;
   const rows=(x)=>Array.isArray(x)?x:[];
   return {schemaVersion:value.schemaVersion,status:["available","partial","stale","unavailable"].includes(value.status)?value.status:"unavailable",
@@ -20,6 +20,7 @@ export function normalizeOverviewWorkload(value) {
       level:["heavy","medium","light","unclassified"].includes(value.current?.level)?value.current.level:null,
       hours:scalar(value.current?.hours),ratePpPerHour:scalar(value.current?.ratePpPerHour)},
     comparison:{startedAtMs:Number.isSafeInteger(value.comparison?.startedAtMs)&&value.comparison.startedAtMs>=0?value.comparison.startedAtMs:null,
+      coverage:["complete","partial","unavailable"].includes(value.comparison?.coverage)?value.comparison.coverage:null,
       observedFrom:instant(value.comparison?.observedFrom)?value.comparison.observedFrom:null,
       observedThrough:instant(value.comparison?.observedThrough)?value.comparison.observedThrough:null,
       actualPp:scalar(value.comparison?.actualPp),expectedPp:scalar(value.comparison?.expectedPp)}};
@@ -92,6 +93,7 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
   const totals=w?.comparison;
   if(totals?.startedAtMs!==null&&totals?.startedAtMs!==undefined)comparison.append(node("p","workload-comparison-period",
     t("workload.sinceStartup",{time:new Date(totals.startedAtMs).toLocaleString(locale,{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit"})})));
+  if(totals?.coverage==="partial")comparison.append(node("p","workload-comparison-partial",t("workload.comparisonPartial")));
   const columns=svgNode("svg",{viewBox:"0 0 640 240",role:"img","aria-label":t("workload.title.comparison")});
   const values=[totals?.actualPp??null,totals?.expectedPp??null],scale=Math.max(1,...values.map(x=>x??0));
   for(let i=0;i<=4;i++){const yy=174-i*134/4;columns.append(svgNode("line",{x1:46,x2:622,y1:yy,y2:yy,stroke:"#ddd"}));

@@ -1,8 +1,10 @@
-import { analyzeWorkload, WORKLOAD_POLICY } from "@app-usagemonitor/quota-analysis";
+import { analyzeWorkload, normalizeQuotaResetEvent, WORKLOAD_POLICY } from "@app-usagemonitor/quota-analysis";
 import { quotaWeightedApiPriceEquivalent } from "@app-usagemonitor/accounting";
 import { openLocalIndexStore, withReadSnapshot } from "./local-index-store.js";
 import { committedPredicate } from "./local-index-rollup.js";
-import { usageProjection } from "./local-companion-usage-model.js";
+import { quotaWindowProjection, usageProjection } from "./local-companion-usage-model.js";
+import { forEachLocalCollectorRecord } from "./local-collector-state.js";
+import { setImmediate } from "node:timers/promises";
 import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 import { createWindowsProtectedStateStore, createWindowsFilesystemAdapter } from "./platform/index.js";
 import { dirname, join } from "node:path";
@@ -11,6 +13,49 @@ import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
 import { codexPrimaryAllowanceBasis } from "./codex-primary-allowance-basis.js";
 
 const STATE_SCHEMA="overview-workload-state-v3";
+
+// Private, bounded projection: account handles are compared here and never
+// returned. The comparison stops at a change or loss of established identity.
+export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs}) {
+  if(typeof stateFile!=="string"||!stateFile||!Number.isSafeInteger(fromMs)||!Number.isSafeInteger(nowMs)||fromMs>nowMs)
+    throw new TypeError("Invalid workload quota evidence input");
+  const observations=[],resetEvents=[];
+  let scope=null,continuityThroughMs=null,count=0;
+  const result=await forEachLocalCollectorRecord({stateFile,kinds:["codex_quota_snapshot"],orderBy:"observed_at",
+    onRecord:async record=>{
+      if(++count>100_000)throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
+      if(count%256===0)await setImmediate();
+      const atMs=Date.parse(record.observedAt);
+      if(record.source!=="app_server_read"||!Number.isSafeInteger(atMs)||atMs<fromMs||atMs>nowMs)return;
+      if(!Array.isArray(record.windows)||record.windows.length>256
+        ||record.resetEvents!==undefined&&(!Array.isArray(record.resetEvents)||record.resetEvents.length>2304))
+        throw Object.assign(new Error("quota_history_invalid"),{code:"quota_history_invalid"});
+      const identity=record.accountScope?.status==="available"&&typeof record.accountScope.scopeId==="string"
+        ?record.accountScope.scopeId:null;
+      if(scope!==null&&identity!==scope){continuityThroughMs??=atMs;return;}
+      if(identity===null)return;
+      scope??=identity;
+      if(continuityThroughMs!==null)return;
+      const windows=[];
+      for(const raw of Array.isArray(record.windows)?record.windows:[]){
+        const q=quotaWindowProjection(raw);
+        if(!q||q.limitId!=="codex"||q.durationMinutes!==10080)continue;
+        const resetAtMs=Date.parse(q.resetAt);
+        const value={atMs,usedPercent:q.usedPercent,resetAtMs,planType:q.planType,limitId:q.limitId,
+          resetKey:`${resetAtMs}:${q.planType}:${q.limitId}`};
+        observations.push(value);windows.push(value);
+        if(observations.length>100_000)throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
+      }
+      for(const raw of Array.isArray(record.resetEvents)?record.resetEvents:[]){
+        const event=normalizeQuotaResetEvent(raw);
+        if(!event)throw Object.assign(new Error("quota_history_invalid"),{code:"quota_history_invalid"});
+        if(event&&["scheduled_reset","unknown_reset","banked_reset_used"].includes(event.kind)
+          &&event.provider==="openai_codex"&&event.limitId==="codex"&&event.windowDurationMins===10080
+          &&Date.parse(event.observedAt)===atMs&&windows.some(q=>q.planType===event.planType))resetEvents.push(event);
+      }
+    }});
+  return {status:result.status,observations,resetEvents,continuityThroughMs};
+}
 function validBaseline(b){return b===null||b&&Object.keys(b).length===5
   &&["atMs","usedPercent","resetAtMs","planType","limitId"].every(k=>Object.hasOwn(b,k))
   &&Number.isSafeInteger(b.atMs)&&b.atMs>=0&&Number.isSafeInteger(b.resetAtMs)&&b.resetAtMs>=0
@@ -99,7 +144,7 @@ function workAncestors(database) {
 /** Read only committed content-free facts. A failure never erases last-good analytics. */
 export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], capacity = null,
   previous = null, storedState = null, liveSinceMs = nowMs, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
-  sourceFresh = false, declaredSpeedBaselines = [] } = {}) {
+  sourceFresh = false, declaredSpeedBaselines = [], quotaEvidence = null } = {}) {
   let database,stage="index";
   const liveQuota=liveWeeklyQuota(quotaWindows);
   try {
@@ -176,7 +221,17 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         resetKey:`${savedBaseline.resetAtMs}:${savedBaseline.planType}:${savedBaseline.limitId}`}:null;
       stage="aggregation";
       const state=analyzeWorkload({nowMs,events,usage,quota,capacity:cap,capacityHistory:validHistory,liveSinceMs,sourceFresh,timeZone,
-        comparisonCapacityUsd,comparisonBaseline});
+        comparisonCapacityUsd,comparisonBaseline,
+        comparisonQuota:quotaEvidence?.observations??[],comparisonResetEvents:quotaEvidence?.resetEvents??[],
+        comparisonContinuityThroughMs:quotaEvidence?.continuityThroughMs??null,
+        comparisonEvidenceError:quotaEvidence?.errorCode??null});
+      if(quotaEvidence?.errorCode&&previous?.comparison?.startedAtMs===comparisonFrom
+        &&previous.comparison.planType===plan&&previous.comparison.capacityUsd===state.comparison.capacityUsd){
+        for(const key of ["actualPp","expectedPp"]){const known=previous.comparison[key];
+          if(Number.isFinite(known)&&known>=0)state.comparison[key]=Math.max(known,state.comparison[key]??0);
+        }
+        state.comparison.coverage="partial";
+      }
       state.comparison.planType=plan;
       const malformed=Number(database.prepare("SELECT COALESCE(SUM(count),0) AS n FROM source_diagnostic WHERE code='malformedWorkRecords'").get().n);
       if(malformed>0){state.errors.push({code:"work_record_unsupported",stage:"work",count:malformed});state.status="partial";}

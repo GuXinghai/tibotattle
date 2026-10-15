@@ -19,7 +19,7 @@ import {
 } from "./local-index-store.js";
 import { auditWorkRollups } from "./local-index-work-rollup.js";
 import { readLocalIndexWindowBreakdown } from "./local-index-window-breakdown.js";
-export { readLocalIndexWorkload, workloadStateStore, workloadState } from "./local-index-workload.js";
+export { readLocalIndexWorkload, readWorkloadQuotaEvidence, workloadStateStore, workloadState } from "./local-index-workload.js";
 
 // The v2 index as one backend the local companion composes.
 //

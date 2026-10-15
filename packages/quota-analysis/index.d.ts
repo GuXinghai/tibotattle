@@ -800,11 +800,15 @@ export interface WorkloadInput {
   capacityHistory?: { usd: number; availableAtMs: number }[];
   liveSinceMs?: number; sourceFresh?: boolean; timeZone?: string; comparisonCapacityUsd?: number | null;
   comparisonBaseline?: WorkQuotaObservation | null;
+  comparisonQuota?: WorkQuotaObservation[];
+  comparisonResetEvents?: QuotaResetEvent[];
+  comparisonContinuityThroughMs?: number | null;
+  comparisonEvidenceError?: string | null;
 }
 export interface WorkloadBin { atMs: number; workMs: number; usd: number; priced: boolean }
 export type WorkloadLevel = "light" | "medium" | "heavy" | "unclassified";
 export interface WorkloadResult {
-  schemaVersion: "overview-workload-v2"; policyVersion: string; generatedAt: string; timeZone: string;
+  schemaVersion: "overview-workload-v3"; policyVersion: string; generatedAt: string; timeZone: string;
   status: "available" | "partial"; errors: { code: string; stage: string; count?: number }[];
   adjustments: { workReplayEvents: number; workDurationDifferences: number; quotaStaleObservations: number };
   allowance: { remainingPercent: number | null; observedAt: string | null;
@@ -814,6 +818,7 @@ export interface WorkloadResult {
   daily: { date: string; light: number; medium: number; heavy: number; unclassified: number; covered: boolean }[];
   current: { state: "unknown" | "working" | "idle"; level: WorkloadLevel | null; ratePpPerHour: number | null; hours: number | null };
   comparison: { startedAtMs: number; observedFrom: string | null; observedThrough: string | null;
+    coverage: "complete" | "partial" | "unavailable"; confirmedThrough: string | null;
     capacityUsd: number | null; actualPp: number | null; expectedPp: number | null;
     baseline: {atMs: number; usedPercent: number; resetAtMs: number; planType: string; limitId: string} | null };
   coverage: { workMs: number; actualWorkMs: number; actualPp: number; activeTasks: number; unresolvedTasks: number };

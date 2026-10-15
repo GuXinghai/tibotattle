@@ -46,6 +46,17 @@ test("idle hides current rate and hours but retains historical hour rows",()=>{
   assert.ok(current.textContent.includes("无负载"));assert.ok(!current.textContent.includes("当前速率"));
   assert.equal(root.all().filter(x=>x.dataset.level).length,4);
 });
+
+test("v3 partial comparison keeps confirmed cylinders and visibly qualifies incomplete coverage",()=>{
+  const root=documentFixture(),p=payload();p.schemaVersion="overview-workload-v3";
+  p.comparison.coverage="partial";p.status="partial";p.errors=[{code:"comparison_reset_gap",stage:"quota"}];
+  render(root,p);
+  const card=root.all().find(x=>x.dataset.workloadCard==="comparison");
+  assert.equal(card.all().filter(x=>x.tagName==="rect").length,2);
+  assert.ok(card.textContent.includes("仅显示已确认的累计"));assert.ok(root.textContent.includes("comparison_reset_gap"));
+  assert.ok(card.textContent.includes("2 百分点"));
+  assert.equal(normalizeOverviewWorkload({...p,schemaVersion:"overview-workload-v4"}),null);
+});
 test("stale results keep timestamp and classified errors visible",()=>{
   const root=documentFixture(),p=payload();p.status="stale";p.errors=[{stage:"index",code:"source_unreadable",private:"never display"}];render(root,p);
   assert.ok(root.textContent.includes("source_unreadable"));assert.ok(root.textContent.includes("保留"));assert.ok(!root.textContent.includes("never display"));
