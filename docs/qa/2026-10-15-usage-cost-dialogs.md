@@ -2,11 +2,11 @@
 title: Usage and cost detail dialogs verification
 date: 2026-10-15
 type: qa
-status: in-progress-local-runtime
+status: verified-local-candidate-with-known-gate-failures
 ---
 
 This record covers the local Windows candidate for source
-`47c5f7846661ea35fb08124e8d1c35f6d65fe457`. It does not qualify a signed
+`ede1ff221ee1506d5fda823f27adcc98c1a40256`. It does not qualify a signed
 release, installed updater, public deployment, or hosted service.
 
 ## Implemented behavior
@@ -34,7 +34,8 @@ release, installed updater, public deployment, or hosted service.
 ## Source validation
 
 - Focused usage/UI/price tests: 109 passed.
-- Final detail-view suite, including two successive publications before Back:
+- Final detail-view suite, including two successive publications, HTTP 409
+  recovery and retained-result fallback before Back:
   82 passed.
 - Refresh controller tests after the cadence and failure changes: 105 passed.
 - Architecture check: 578 production files, 2,310 imports, no approved debt edges.
@@ -71,9 +72,9 @@ is executed and no signing or publication is performed.
 
 The final complete package was prepared with Node.js 26.2.0, Electron 43.5.0
 and electron-builder 26.15.7. Its ASAR digest is
-`b6c3c865fde189de52762d27ed16ae6aa8149c613755a6bdb1dad7bcf01aee99`.
+`e29f84a38f9c41c82151d6e686bb14eff14ab8d9698f7ae1eebfb98d24598a2b`.
 Its executable digest is
-`0009adfd51dd323d3aa15b79e002afe795a05fbd22b7e8abd1f08e3612cf13e8`.
+`70d4397cd0a8040d91599e9bd69bc4744d6497bfff6448de77d479e6f6837779`.
 
 The preceding accounting/publication candidate ran normally with the real
 default profile for ten minutes (60 read-only samples). Manual refresh finished
@@ -85,12 +86,12 @@ and scrolled near the bottom. A later Back check exposed the repeated-publicatio
 ancestor-page bug; that observation prompted the final two-line fix and its
 regression test rather than being counted as successful navigation proof.
 
-The final candidate started normally at 12:39:12 UTC with the existing default
+The intermediate candidate started normally at 12:39:12 UTC with the existing default
 profile. Its initial saved report was explicitly dated; an expired saved query
 was visibly classified, then replaced when the startup calculation completed.
 Neither missing prices nor stale evidence was converted to zero.
 
-At the final candidate's 12:42:43.054 UTC cutoff, headline and project totals
+At that candidate's 12:42:43.054 UTC cutoff, headline and project totals
 both equal USD 424.64476064; model totals equal the same amount and component
 totals differ only by binary floating-point display precision (less than
 1e-8 USD). All token totals equal 3093108699. The work report retains its
@@ -112,5 +113,33 @@ It advanced the cutoff to 12:48:47.834 UTC and amount to USD 425.38553134,
 with null refresh/scheduler errors. Back still returned to page one: recovery
 from an expired snapshot independently reset pending page restoration. The
 follow-up retains that depth during expiry recovery and anchors ancestors to
-the new publication. The detail regression now includes an actual HTTP 409
-expiry response. Final follow-up package verification remains pending.
+the new publication. A further synthetic regression reproduced the same loss
+when a saved result was returned before the new result; pending depth is now
+retained through that intermediate response as well. The regression failed
+before that fix and passed afterward.
+
+## Final package verification
+
+The source and hashes named above identify the follow-up package normally
+launched at 12:56:31 UTC, without an isolated profile. Its startup refresh
+finished at 12:57:26.414 UTC. Two manual overview requests then completed at
+12:59:48.505 and 13:00:36.447 UTC. Both requests used the existing refresh-button
+endpoint. The thread stayed open across both publications; Back returned to
+project rows 7–12 of 39. Closing restored focus to the original ranking button.
+
+At cutoff 13:00:08.992 UTC, headline, component and project totals equal
+USD 427.20071244; model summation differs only below 1e-8 USD. All token totals
+equal 3105039832. Partial work-evidence qualifiers remain visible.
+
+The final package was observed for seven minutes (42 read-only samples): health and snapshot
+were ready, observation/refresh/scheduler errors and workload issues were absent,
+and reporting cutoffs never regressed. The process responded, stderr was empty,
+and Windows application events recorded zero crashes since this launch.
+Automatic cadence and publication were observed on the preceding candidates
+above; the final follow-up's additional publications were manually requested.
+
+The real shared page and modal were inspected at 1440 and 360 pixels. At 360,
+the dialog width was about 307 pixels and the page had no horizontal overflow.
+The viewport override was reset after inspection. Original-fact preservation
+was rerun after the final candidate's refreshes with the same unchanged counts,
+valid integrity and foreign keys, and no errors. The final app remains running.
