@@ -2,7 +2,7 @@
 title: Attribute automatic review usage to its verified task family
 date: 2026-10-16
 type: plan
-status: implementing
+status: implemented-and-locally-verified
 ---
 
 The owner approved grouping automatic approval-review records into the owning
@@ -29,3 +29,6 @@ Reconcile real data at one fixed cutoff and verify frozen original fact hashes.
 Prepare a fresh Windows local candidate, preserve the prior candidate, launch
 with the real profile, and check startup, report rendering and refresh errors.
 Keep browser, native-window, unsigned-candidate and release evidence separate.
+
+Completed evidence and remaining native-interaction/test boundaries are recorded
+in the [local candidate validation](../qa/2026-10-16-automatic-review-families.md).
