@@ -248,6 +248,7 @@ export function mountWorkUsageView(options = {}) {
   let pendingFocus = null;
   let nested = null;
   let expandedThread = null;
+  let collapsedThread = null;
   let nextNestedId = 0;
   let statusKey = "preparing";
   let statusValues;
@@ -433,6 +434,10 @@ export function mountWorkUsageView(options = {}) {
           period: periodId,
           snapshotId: result.snapshotId,
         };
+      } catch (error) {
+        if (preloadTimedOut && !signal.aborted)
+          throw Object.assign(new Error("timeout"), { name: "TimeoutError" });
+        throw error;
       } finally {
         clearLeaseTimer(requestTimer);
         signal.removeEventListener("abort", forwardAbort);
@@ -1092,8 +1097,11 @@ export function mountWorkUsageView(options = {}) {
   }
   const quietButton = (text, action) =>
     button(text, action, "button button-quiet compact");
-  function clearNested() {
-    expandedThread = null;
+  function clearNested(preserveThread = false) {
+    if (!preserveThread) {
+      expandedThread = null;
+      collapsedThread = null;
+    }
     nested?.controller?.abort();
     nested = null;
   }
@@ -1441,9 +1449,10 @@ export function mountWorkUsageView(options = {}) {
         identity.append(el("small", "muted", ` · ${display.shortId}`));
       if (row.subworkerCount > 0) identity.append(el("small", "work-usage-muted work-usage-family-count", tr("subworkersIncluded", {count:quantity(row.subworkerCount)})));
       if (row.kind === "thread" && row.modelBreakdown?.length) {
-        const open = expandedThread === row.id;
+        const open = expandedThread === row.id || query.thread === row.id && collapsedThread !== row.id;
         const toggle = button("", () => {
           expandedThread = open ? null : row.id;
+          collapsedThread = open ? row.id : null;
           pendingFocus = row.id;
           render();
         }, "work-usage-project-toggle work-usage-model-toggle");
@@ -1512,7 +1521,7 @@ export function mountWorkUsageView(options = {}) {
     };
     const appendRow = (group, row, report, child = false) => {
       group.append(addRow(row, report, child));
-      if (row.kind !== "thread" || (expandedThread !== row.id && query.thread !== row.id) || !row.modelBreakdown?.length) return;
+      if (row.kind !== "thread" || (expandedThread !== row.id && (query.thread !== row.id || collapsedThread === row.id)) || !row.modelBreakdown?.length) return;
       const detailRow = el("tr", "work-usage-model-detail");
       const cell = el("td");
       cell.colSpan = 6;
@@ -1778,7 +1787,7 @@ export function mountWorkUsageView(options = {}) {
     const familyKey = queryFamilyKey();
     if (periodCacheFamilyKey !== null && periodCacheFamilyKey !== familyKey) clearPeriodCache();
     started = true;
-    clearNested();
+    clearNested(Boolean(options.detailTitle));
     const token = ++serial;
     controller?.abort();
     clearLeaseTimer(timer);
@@ -2022,7 +2031,7 @@ export function mountWorkUsageView(options = {}) {
     timer = null;
     clearSearchTimer();
     searchPending = false;
-    clearNested();
+    clearNested(Boolean(options.detailTitle));
     delete query.snapshotId;
     delete query.sourceSnapshotId;
     if (prepared) query.snapshotId = prepared.snapshotId;

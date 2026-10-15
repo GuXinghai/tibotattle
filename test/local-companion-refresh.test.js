@@ -439,6 +439,37 @@ function ingestedUnifiedIndex(generation = UNIFIED_GENERATION) {
   return async () => ({ status: "ingested", generation });
 }
 
+test("overview cadence advances accounting after ingestion without launching another writer", async () => {
+  const stages = [];
+  const runner = createLocalCollectorRefreshRunner({
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => ({ rolloutRecordsWritten: 1, filesDiscovered: 1,
+      refresh: { attempted: true, recordWritten: true, errorCode: null }, indexing: COMPLETE_INDEX }),
+    refreshUnifiedIndex: async () => { stages.push("index"); return { status: "ingested", generation: UNIFIED_GENERATION }; },
+    refreshAccounting: async ({ expectedGeneration }) => {
+      assert.equal(expectedGeneration.id, UNIFIED_GENERATION.id);
+      stages.push("accounting"); return REUSABLE_ACCOUNTING_CACHE;
+    },
+    refreshArchiveIndex: async () => { throw Error("overview must not launch archive maintenance"); },
+  });
+  const result = await runner({ mode: "overview" });
+  assert.deepEqual(stages, ["index", "accounting"]);
+  assert.equal(result.accounting.refreshStatus, "rebuilt");
+  assert.equal(result.accounting.status, "replay_safe");
+});
+
+test("overview cadence exposes an accounting failure instead of reporting silent omission", async () => {
+  const runner = createLocalCollectorRefreshRunner({
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => ({ rolloutRecordsWritten: 1, refresh: { attempted: true, recordWritten: true, errorCode: null } }),
+    refreshUnifiedIndex: ingestedUnifiedIndex(),
+    refreshAccounting: async () => { throw Object.assign(new Error("synthetic"), { code: "accounting_unified_source_unavailable" }); },
+  });
+  const result = await runner({ mode: "overview" });
+  assert.equal(result.accounting.status, "unavailable");
+  assert.equal(result.accounting.errorCode, "accounting_unified_source_unavailable");
+});
+
 const FRESH_NOTIFICATION_EVIDENCE = Object.freeze({
   schemaVersion: "tibotattle-notification-evidence-v2",
   status: "fresh_provider_observation",

@@ -915,7 +915,7 @@ export function createLocalCollectorRefreshRunner({
     // Accounting reads the independently published local index. The
     // quota-only collector's own indexing descriptor never gates it;
     // `unifiedGenerationAuthoritative` is the fail-closed source gate.
-    const accountingMayRun = detailed;
+    const accountingMayRun = detailed || mode === "overview";
     let unifiedIndex = null;
     refreshStep = "unified_index";
     if ((detailed || mode === "overview")
@@ -966,7 +966,7 @@ export function createLocalCollectorRefreshRunner({
     let accounting = null;
     let accountingRefreshStatus = null;
     let accountingRebuildDeferred = null;
-    let accountingUnavailableCode = detailed
+    let accountingUnavailableCode = accountingMayRun
         && !unifiedAccountingReady
       ? unifiedIndex?.status === "failed"
         ? "accounting_unified_source_unavailable"
@@ -1180,7 +1180,7 @@ export function createLocalCollectorRefreshRunner({
               accounting.diagnostics?.forkReplayEventsExcluded ?? 0,
           },
         }
-        : detailed
+        : accountingMayRun
           ? {
             accounting: {
               status: "unavailable",
@@ -1810,7 +1810,7 @@ export class LocalCompanionRefreshController {
             ],
             returnOverview: false,
             signal: controller.signal,
-            ...(mode === "detailed"
+            ...(mode === "detailed" || mode === "overview"
               ? { unifiedProjectionReuse: reusableUnifiedProjection(result) }
               : {}),
           });
