@@ -5,6 +5,32 @@
   "records": [
     {
       "classification": "build_release_operation",
+      "owner": "local_index",
+      "canonicalPath": "scripts/verify-local-index-preservation.mjs",
+      "stableAlias": null,
+      "stableAliasReason": "Explicit internal read-only preservation inspection; not a shipped product command.",
+      "additionalAliases": [],
+      "callers": ["test/local-index-preservation.test.js", "docs/runbooks/local-index-recovery.md"],
+      "decision": "retain_as_internal_preservation_inspection",
+      "provenance": "docs/runbooks/local-index-recovery.md",
+      "provenanceReason": null,
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
+      "owner": "local_index",
+      "canonicalPath": "scripts/lib/local-index-preservation.mjs",
+      "stableAlias": null,
+      "stableAliasReason": "Internal semantic fingerprint helper; no product imports.",
+      "additionalAliases": [],
+      "callers": ["scripts/verify-local-index-preservation.mjs", "test/local-index-preservation.test.js"],
+      "decision": "retain_as_internal_preservation_support",
+      "provenance": "docs/runbooks/local-index-recovery.md",
+      "provenanceReason": null,
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
       "owner": "electron_packaging",
       "canonicalPath": "scripts/lib/windows-synthetic-source-owner.mjs",
       "stableAlias": null,

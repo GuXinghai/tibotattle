@@ -35,7 +35,7 @@ Do not:
   sidecars, or the device salt;
 - use **Erase local data** or **Reset identity and device** as a diagnosis or
   repair;
-- open a store whose `user_version` is above 4 with a build that does not know
+- open a store whose `user_version` is above 5 with a build that does not know
   that version, or open any store writable with an older build;
 - copy the store without its sidecars, or copy it without the device salt;
 - hand-edit `usage_rollup`, `work_rollup`, `cache_candidate` or
@@ -64,8 +64,8 @@ guess between the installed and CLI roots.
 
 | Code or observation | Meaning | First action |
 | --- | --- | --- |
-| `local_index_family_mismatch` | Wrong `application_id` or family, or a `user_version` below 4. Not a store this build can open. | Preserve. Find where the file came from before anything else. Do not relabel. |
-| `local_index_newer_version` | `user_version` above 4. Written by a newer build. | Install the newer compatible build. Do not open it with this build. |
+| `local_index_family_mismatch` | Wrong `application_id`, or an unsupported predecessor version. Not a store this build can open. | Preserve. Find where the file came from before anything else. Do not relabel. |
+| `local_index_newer_version` | `user_version` above 5. Written by a newer build. | Install the newer compatible build. Do not open it with this build. |
 | `local_index_file_invalid` | Not a single-link regular file, a symbolic link, or an unsafe directory. | Check ownership and links. Do not chmod, replace or recreate the file. |
 | `local_index_unavailable` | The file cannot be opened or stat'ed. | Check that the file exists, is not locked by another process, and that the disk has space. |
 | `local_index_journal_mode_refused` | WAL mode could not be set. | Confirm the store sits on a local volume. |
@@ -117,6 +117,53 @@ The salt is the root of every local join key and of every hosted pseudonym.
 
 ## 5. Inspect the copy read-only
 
+### Preserve fact content across internal quota-ID rebuilds
+
+For a v5 index, capture a baseline **before** the operation under review, then
+verify against the same baseline. These explicit inspection commands open the
+index read-only, use one SQLite snapshot, never migrate it, and refuse to
+overwrite the baseline:
+
+```powershell
+node scripts/verify-local-index-preservation.mjs capture --index <index-copy> --baseline <new-local-baseline>
+node scripts/verify-local-index-preservation.mjs verify --index <index-copy> --baseline <saved-local-baseline>
+```
+
+Keep the baseline in protected local recovery storage. It contains counts,
+hashes, internal source numbers and frozen cursors, never paths or payload rows;
+do not upload it. Live read-only inspection is possible when explicitly needed;
+normal refresh may continue and append evidence outside the frozen scope.
+
+The check retains every column of `usage_event`, `quota_occurrence` and
+`work_lifecycle_fact` within each original source cursor. For the two quota
+foreign keys only, it compares the linked observation's unique identity
+`(observed_at_ms, limit_id, slot)` instead of its physical integer ID. A changed
+physical hash with an unchanged semantic hash reports `internalLinksRebuilt`,
+not a source-data failure. NULL remains distinct from a reference, and a
+missing target fails. Original occurrence percentages, plans, timestamps and
+all token/work fields remain hashed. Canonical winner values are derived from
+all observations and may change as new evidence arrives; they are not original
+occurrence content and are not frozen by this check. Other dimension-ID
+changes remain failures and need investigation.
+
+Verification exits nonzero for missing records, unexpected records inside the
+old prefix, changed facts or logical associations, missing/changed sources,
+regressed cursors, dangling references, failed integrity checks, incompatible
+schema, or invalid baseline. Structured errors distinguish these classes;
+unknown underlying I/O errors are content-free `preservation_read_or_write_failed`.
+This is an index-fact check, not an independent raw-log byte audit. A source
+change that produces the same indexed facts requires retained source-byte
+digests to detect; do not claim raw-byte preservation from this check alone.
+
+Legacy complete-row-hash baselines cannot establish logical association
+identity by themselves. They fail with `preservation_baseline_unsupported`.
+Retain them and establish a separate, explicitly recorded content-preservation
+proof before adopting a semantic baseline. Never resolve a failure by simply
+capturing current data over the old baseline, ignoring foreign keys, or using
+ID-gap/order guesses as a routine acceptance rule.
+
+### Inspect identifiers and integrity
+
 Open only the copy, with a read-only SQLite client such as Node's `node:sqlite`
 opened with `readOnly: true`. Run:
 
@@ -124,11 +171,11 @@ opened with `readOnly: true`. Run:
 PRAGMA query_only = ON;
 PRAGMA quick_check;
 PRAGMA application_id;                       -- expect 1431128370
-PRAGMA user_version;                         -- expect 4
+PRAGMA user_version;                         -- expect 5 (a retained v4 copy stays v4)
 SELECT key, value FROM meta
   WHERE key IN ('family', 'parser_version', 'rollup_basis');
   -- family: local-index-store
-  -- parser_version: local-index-rollout-typed-v1+unified-rollout-typed-v19
+  -- current parser_version: local-index-rollout-typed-v2+unified-rollout-typed-v19
 SELECT commit_seq FROM store_state;
 SELECT seq, committed_at_ms, kind, sources_changed
   FROM commit_log ORDER BY seq DESC LIMIT 5;
