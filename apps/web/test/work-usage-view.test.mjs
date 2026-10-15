@@ -2567,11 +2567,16 @@ test("modal failure is explicit and closing fences a late details response", asy
 test("open details follow publication while retaining thread navigation, page and scroll", async (t) => {
   const mounted = mountedLeaseRoot();
   const calls = [];
+  let expiredParent = false;
   const windowAt = end => ({ period: "7d", startAt: new Date(end - 7 * 86_400_000).toISOString(), endAt: new Date(end).toISOString() });
   const view = mountWorkUsageView({ ...mounted, compact: true, t: mountedTranslator, reportingWindow: windowAt(NOW),
     fetchRef: async (_url, init) => {
       const query = JSON.parse(init.body); calls.push(query);
       const end = Date.parse(query.endAt);
+      if (query.project && !query.thread && end === NOW + 600_000 && !expiredParent) {
+        expiredParent = true;
+        return { ok: false, status: 409, json: async () => ({ error: { code: "work_usage_snapshot_expired" } }) };
+      }
       const result = structuredClone(query.project ? THREAD_A_RESPONSE : PROJECT_ROWS_RESPONSE);
       result.toMs = end; result.fromMs = end - 7 * 86_400_000;
       result.snapshotId = end === NOW ? "old-snapshot" : "new-snapshot";
@@ -2612,6 +2617,7 @@ test("open details follow publication while retaining thread navigation, page an
   findMounted(content, n => n.tagName === "BUTTON" && n.textContent.includes("Back"))[0].click();
   await settleMountedView();
   assert.equal(calls.at(-1).thread, undefined);
+  assert.equal(expiredParent, true);
   assert.equal(calls.at(-1).cursor, `next-${NOW + 600_000}`);
   assert.equal(calls.at(-1).endAt, windowAt(NOW + 600_000).endAt);
   assert.ok(content.textContent.includes("7–8 of 8"));

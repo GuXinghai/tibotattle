@@ -1849,11 +1849,13 @@ export function mountWorkUsageView(options = {}) {
         const error = payload;
         if (token !== serial) return;
         if (error.error?.code === "work_usage_snapshot_expired") {
+          const pageDepth = options.detailTitle || options.compact ? pages.length + restorePageDepth : 0;
           liveAnchor = null;
           clearPeriodCache();
           delete query.snapshotId;
           delete query.sourceSnapshotId;
           resetPage();
+          restorePageDepth = pageDepth;
           return performLoad(false, { background, preparingAttempt: 0 });
         }
       }
@@ -2042,6 +2044,7 @@ export function mountWorkUsageView(options = {}) {
       ancestors = ancestors.map(previous => {
         const updated = { ...previous.query, period: next.period, endAt: next.endAt };
         delete updated.snapshotId; delete updated.sourceSnapshotId; delete updated.cursor;
+        if (shortText(anchorSnapshotId)) updated.snapshotId = anchorSnapshotId;
         return { ...previous, query: updated, restorePageDepth: previous.pages.length + (previous.restorePageDepth ?? 0), pages: [] };
       });
       selectedTitle = currentTitle;
