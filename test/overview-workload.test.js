@@ -143,16 +143,17 @@ test("startup accumulation does not slide after an hour or seven days and exclud
   assert.equal(restarted.comparison.actualPp,0);assert.equal(restarted.comparison.expectedPp,0);
 });
 
-test("startup comparison tolerates bounded reset timestamp jitter only with compatible explicit metadata",()=>{
+test("startup comparison identifies a pending common expiry beyond the old five-second boundary",()=>{
+  const expiry=nowMs+5*24*60*M;
   const q=(minutes,used,offset,planType="prolite")=>({atMs:nowMs-minutes*M,usedPercent:used,
-    resetAtMs:nowMs+offset,resetKey:`${offset}:${planType}`,planType,limitId:"codex"});
+    resetAtMs:expiry+offset,resetKey:`${offset}:${planType}`,planType,limitId:"codex"});
   const input={nowMs,liveSinceMs:nowMs-20*M,capacity:{usd:100,availableAtMs:nowMs-30*M},
-    quota:[q(20,10,0),q(15,11,1000),q(10,10,0),q(5,11,2000),q(0,12,0)],
+    quota:[q(20,10,0),q(15,11,6000),q(10,10,0),q(5,11,22000),q(0,12,0)],
     usage:[{atMs:nowMs-12*M,usd:1,priced:true},{atMs:nowMs-M,usd:1,priced:true}]};
   const v=analyzeWorkload(input);assert.equal(v.comparison.actualPp,2);assert.equal(v.comparison.expectedPp,2);
   assert.equal(v.errors.length,0);
-  const distinct=analyzeWorkload({...input,quota:[q(20,10,0),q(0,12,6000)]});
-  assert.ok(distinct.errors.some(e=>e.code==="comparison_reset_gap"));
+  const distinct=analyzeWorkload({...input,quota:[q(20,10,0),q(0,12,6*M)]});
+  assert.ok(distinct.errors.some(e=>e.code==="comparison_reset_ambiguous"));
   const plan=analyzeWorkload({...input,quota:[q(20,10,0),q(0,12,0,"plus")]});
   assert.ok(plan.errors.some(e=>e.code==="comparison_reset_gap"));
 });
@@ -169,6 +170,69 @@ test("comparison distinguishes missing evidence, unpriced usage and ambiguous re
   assert.equal(analyzeWorkload({...input,quota:[]}).comparison.actualPp,null);
   const conflict=analyzeWorkload({...input,quota:[...quota,{atMs:nowMs,usedPercent:3,resetKey:"new"}]});
   assert.equal(conflict.comparison.actualPp,null);assert.ok(conflict.errors.some(e=>e.code==="comparison_quota_conflict"));
+});
+
+test("confirmed weekly renewal preserves totals, skips late old-cycle readings, and does not require a percentage drop",()=>{
+  const expiry=nowMs-10*M,week=7*24*60*M;
+  const q=(minutes,used,reset)=>({atMs:nowMs-minutes*M,usedPercent:used,resetAtMs:reset,
+    resetKey:`${reset}:prolite:codex`,planType:"prolite",limitId:"codex"});
+  const input={nowMs,liveSinceMs:nowMs-30*M,capacity:{usd:100,availableAtMs:nowMs-60*M},
+    quota:[q(30,90,expiry),q(20,94,expiry),q(9,0,expiry+week),q(8,94,expiry),q(0,5,expiry+week)],
+    usage:[{atMs:nowMs-25*M,usd:3,priced:true},{atMs:nowMs-M,usd:4,priced:true}]};
+  const value=analyzeWorkload(input);
+  assert.equal(value.comparison.actualPp,9);assert.equal(value.comparison.expectedPp,7);
+  assert.equal(value.errors.length,0);
+  const alreadyBusy=analyzeWorkload({...input,quota:[q(30,90,expiry),q(20,94,expiry),q(9,96,expiry+week),q(0,98,expiry+week)]});
+  assert.equal(alreadyBusy.comparison.actualPp,6);assert.equal(alreadyBusy.comparison.expectedPp,7);
+  const gap=analyzeWorkload({...input,usage:[...input.usage,{atMs:nowMs-15*M,usd:2,priced:true}]});
+  assert.equal(gap.comparison.actualPp,null);assert.equal(gap.comparison.expectedPp,null);
+  assert.ok(gap.errors.some(e=>e.code==="comparison_reset_gap"));
+});
+
+test("expiry boundary, early renewal and large rescheduling remain ambiguous instead of being smoothed",()=>{
+  const q=(at,used,reset)=>({atMs:at,usedPercent:used,resetAtMs:reset,resetKey:`${reset}`,
+    planType:"prolite",limitId:"codex"});
+  const input={nowMs,liveSinceMs:nowMs-20*M,capacity:{usd:100,availableAtMs:nowMs-30*M}};
+  for(const [oldReset,newReset,newUsed] of [[nowMs-1000,nowMs+6000,1],
+    [nowMs-1000,nowMs-1000,1],[nowMs+60*M,nowMs+8*24*60*M,1],
+    [nowMs+60*M,nowMs+70*M,12]]) {
+    const value=analyzeWorkload({...input,quota:[q(nowMs-20*M,10,oldReset),q(nowMs,newUsed,newReset)]});
+    assert.equal(value.comparison.actualPp,null);assert.equal(value.comparison.expectedPp,null);
+    assert.ok(value.errors.some(e=>e.code==="comparison_reset_ambiguous"));
+  }
+});
+
+test("deadline jitter cannot chain indefinitely or bridge plans, quota families, or opaque evidence",()=>{
+  const reset=nowMs+5*24*60*M;
+  const q=(minutes,offset,used)=>({atMs:nowMs-minutes*M,usedPercent:used,resetAtMs:reset+offset,
+    resetKey:`${offset}`,planType:"prolite",limitId:"codex"});
+  const input={nowMs,liveSinceMs:nowMs-20*M,capacity:{usd:100,availableAtMs:nowMs-30*M},
+    usage:[{atMs:nowMs-M,usd:2,priced:true}]};
+  const chained=analyzeWorkload({...input,quota:[q(20,0,10),q(10,4*M,11),q(0,8*M,12)]});
+  assert.equal(chained.comparison.actualPp,null);
+  assert.ok(chained.errors.some(e=>e.code==="comparison_reset_ambiguous"));
+  for(const change of [{planType:"plus"},{limitId:"other"},{planType:"unknown"}]) {
+    const value=analyzeWorkload({...input,quota:[q(20,0,10),{...q(0,6000,12),...change}]});
+    assert.equal(value.comparison.actualPp,null);
+    assert.ok(value.errors.some(e=>e.code==="comparison_reset_gap"));
+  }
+});
+
+test("chronological cycle resolution is replay stable, does not mutate observations, and uses no future relabeling",()=>{
+  const reset=nowMs+5*24*60*M;
+  const quota=[0,6000,22000,1000,0].map((offset,i)=>({atMs:nowMs-(4-i)*5*M,
+    usedPercent:[48,49,48,49,50][i],resetAtMs:reset+offset,resetKey:`${offset}`,planType:"prolite",limitId:"codex"}));
+  const input={nowMs,liveSinceMs:nowMs-20*M,capacity:{usd:100,availableAtMs:nowMs-30*M},quota,
+    usage:[{atMs:nowMs-12*M,usd:1,priced:true},{atMs:nowMs-M,usd:1,priced:true}]};
+  const saved=structuredClone(input),value=analyzeWorkload(input);
+  assert.deepEqual(input,saved);
+  assert.equal(value.comparison.actualPp,2);assert.equal(value.comparison.expectedPp,2);
+  assert.deepEqual(analyzeWorkload({...input,quota:quota.toReversed()}).comparison,value.comparison);
+  const prefix=analyzeWorkload({...input,nowMs:nowMs-10*M});
+  const prefixOnly=analyzeWorkload({...input,nowMs:nowMs-10*M,quota:quota.slice(0,3)});
+  assert.deepEqual(prefix.comparison,prefixOnly.comparison);
+  assert.deepEqual(analyzeWorkload({...input,comparisonBaseline:{...value.comparison.baseline,resetKey:"direct"},
+    comparisonCapacityUsd:value.comparison.capacityUsd}).comparison,value.comparison);
 });
 
 test("startup live quota baseline survives later refreshes without a matching indexed occurrence",()=>{

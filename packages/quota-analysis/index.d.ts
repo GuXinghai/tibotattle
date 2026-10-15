@@ -819,7 +819,8 @@ export interface WorkloadResult {
   coverage: { workMs: number; actualWorkMs: number; actualPp: number; activeTasks: number; unresolvedTasks: number };
 }
 export const WORKLOAD_POLICY: Readonly<{ version: string; bucketMs: number; historyMs: number; currentMs: number;
-  minimumBins: number; minimumClassBins: number; minimumClassMs: number; comparisonResetToleranceMs: number }>;
+  minimumBins: number; minimumClassBins: number; minimumClassMs: number;
+  comparisonWindowMs: number; comparisonDeadlineUncertaintyMs: number }>;
 export function unionWorkIntervals(intervals: readonly WorkInterval[], fromMs: number, toMs: number): WorkInterval[];
 export function taskWorkIntervals(events: readonly WorkLifecycleEvent[], options: Pick<WorkloadInput,"nowMs" | "liveSinceMs" | "sourceFresh" | "usage">): {
   intervals: WorkInterval[]; incomplete: WorkInterval[]; active: number; unresolved: number; conflicts: number;

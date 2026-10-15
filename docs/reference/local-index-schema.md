@@ -135,7 +135,7 @@ source cursor are provisional; recovery and source replacement remove them with
 the other affected facts. Work includes tools and necessary waiting, and parallel
 intervals count once. Inference performance timing remains independent.
 
-Workload policy `task-workload-v3` projects, rather than rewrites, these facts.
+Workload policy `task-workload-v4` projects, rather than rewrites, these facts.
 Retained unambiguous ancestry identifies copied task boundaries, including
 paginated forks; a copied completion must also match the ancestor's reported
 duration. New child work remains included, and unsupported/cyclic ancestry does
@@ -172,6 +172,24 @@ unknown newer state. The same state
 root, using the existing validated Windows protected private boundary. The
 outer legacy state directory need not be rewritten. Write failures are visible
 publication errors.
+
+The startup comparison resolves weekly cycles chronologically using explicit
+matching plan/limit metadata. Nearby deadlines describe the same pending expiry
+only while both are in the future. The fixed first deadline bounds uncertainty
+to one five-minute reporting interval; small shifts cannot chain into a larger
+change, and future evidence never relabels earlier observations. Percentage
+regressions within a pending expiry retain the high watermark. Once the earlier
+deadline has elapsed, jitter cannot establish continuity: a confirmed renewal
+requires a new future deadline, an advance of at least half a weekly window,
+and at most one weekly window plus reporting uncertainty remaining. It starts
+a separate pairing baseline even if the new reading has no percentage drop.
+Late readings of an expired retired cycle are withheld from the startup pairing.
+An expired unchanged deadline with a regressed percentage, early large advance,
+or other unproven rescheduling reports `comparison_reset_ambiguous`; unmatched
+usage across distinct cycles reports `comparison_reset_gap`. Both remain
+explicitly unknown rather than being subtracted across cycles. Opaque evidence
+and different plans/limits never gain inferred continuity. Raw observations,
+seven-day projections and the state schema remain unchanged by this resolver.
 
 `source` carries everything a refresh needs to decide, without reading the
 rollout header, what to do with a file:

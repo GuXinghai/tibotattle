@@ -1,9 +1,10 @@
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 export const WORKLOAD_POLICY = Object.freeze({
-  version: "task-workload-v3", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
+  version: "task-workload-v4", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
   currentMs: 15 * MINUTE, minimumBins: 9, minimumClassBins: 3, minimumClassMs: MINUTE,
-  comparisonResetToleranceMs: 5_000,
+  comparisonWindowMs: 168 * HOUR,
+  comparisonDeadlineUncertaintyMs: 5 * MINUTE,
 });
 const LEVELS = ["light", "medium", "heavy"];
 const finite = (x) => typeof x === "number" && Number.isFinite(x);
@@ -140,6 +141,50 @@ function dateKey(atMs, formatter) {
   return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
+// Resolve only the startup comparison's weekly cycles. Deadlines are evidence,
+// not exact IDs: while both deadlines are still in the future, nearby readings
+// describe the same pending expiry. At/after expiry that inference is forbidden.
+// Process chronologically; future observations never relabel earlier evidence.
+function startupQuotaTracks(observations) {
+  const scopes = new Map();
+  const budget = WORKLOAD_POLICY.comparisonDeadlineUncertaintyMs;
+  return observations.map(q => {
+    if (!Number.isSafeInteger(q.resetAtMs) || q.resetAtMs < 0 || typeof q.planType !== "string"
+        || !q.planType || q.planType === "unknown" || typeof q.limitId !== "string" || !q.limitId) {
+      return { ...q, resetKey: `opaque:${q.resetKey}`, transition: "opaque" };
+    }
+    const scope = `${q.planType}:${q.limitId}`;
+    const state = scopes.get(scope) ?? { current: null, retired: [] };
+    scopes.set(scope, state);
+    const prior = state.current;
+    if (prior && q.resetAtMs <= q.atMs && state.retired.some(track => Math.abs(q.resetAtMs - track.resetAtMs) <= budget)) {
+      // A delayed reading from a positively expired, retired cycle cannot reopen
+      // it or produce another artificial transition back from the new cycle.
+      return { ...q, comparisonStale: true };
+    }
+    let transition = "initial";
+    if (prior) {
+      const distance = Math.abs(q.resetAtMs - prior.resetAtMs);
+      const sameDeadline = q.resetAtMs === prior.resetAtMs;
+      const pendingExpiry = q.atMs < Math.min(prior.resetAtMs, q.resetAtMs);
+      if (sameDeadline || pendingExpiry && distance <= budget) {
+        return { ...q, resetKey: prior.key, transition: sameDeadline ? "same" : "jitter" };
+      }
+      // A new weekly expiry must be future-dated, substantially later than the
+      // expired one, and no farther than a weekly window from this observation.
+      // No percentage drop is required: hidden usage may already fill a new
+      // cycle. A percentage drop alone never proves a reset or grants continuity.
+      const renewed = prior.resetAtMs <= q.atMs && q.resetAtMs > q.atMs
+        && q.resetAtMs - prior.resetAtMs >= WORKLOAD_POLICY.comparisonWindowMs / 2
+        && q.resetAtMs - q.atMs <= WORKLOAD_POLICY.comparisonWindowMs + budget;
+      transition = renewed ? "reset" : "ambiguous";
+      if (renewed) state.retired.push(prior);
+    }
+    state.current = { resetAtMs: q.resetAtMs, key: `${scope}:${q.resetAtMs}:${q.atMs}` };
+    return { ...q, resetKey: state.current.key, transition };
+  });
+}
+
 export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], capacity = null,
   capacityHistory = [], liveSinceMs = nowMs, sourceFresh = false, timeZone = "UTC", comparisonCapacityUsd = null,
   comparisonBaseline = null }) {
@@ -260,32 +305,20 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
     ??versions.find(c=>c.availableAtMs>=startedAtMs);
   const comparisonUsd=finite(comparisonCapacityUsd)&&comparisonCapacityUsd>0?comparisonCapacityUsd
     :finite(initialCapacity?.usd)&&initialCapacity.usd>0?initialCapacity.usd:null;
-  // Only explicit matching plan/limit metadata allows seconds-level reset
-  // timestamp jitter to share a startup baseline. Opaque tracks stay distinct.
-  // Clusters are bounded against their first reset, never chained wider.
   const comparisonObservations=[...allObservations];
   if(comparisonBaseline&&comparisonBaseline.atMs>=startedAtMs&&comparisonBaseline.atMs<=nowMs
     &&finite(comparisonBaseline.usedPercent)&&comparisonBaseline.usedPercent>=0&&comparisonBaseline.usedPercent<=100)
     comparisonObservations.push({...comparisonBaseline});
   comparisonObservations.sort((a,b)=>a.atMs-b.atMs);
-  const comparisonKeys=new Map(),scopes=new Map();
-  for(const q of comparisonObservations){
-    if(!Number.isSafeInteger(q.resetAtMs)||typeof q.planType!=="string"||typeof q.limitId!=="string")continue;
-    const scope=`${q.planType}:${q.limitId}`,rows=scopes.get(scope)??[];rows.push(q);scopes.set(scope,rows);
-  }
-  for(const [scope,rows] of scopes){let first=null;
-    for(const q of rows.sort((a,b)=>a.resetAtMs-b.resetAtMs)){
-      if(first===null||q.resetAtMs-first>WORKLOAD_POLICY.comparisonResetToleranceMs)first=q.resetAtMs;
-      comparisonKeys.set(q.resetKey,`${scope}:${first}`);
-    }
-  }
   const startupHigh=new Map();let prior=null,observedFrom=null,observedThrough=null,cumulativePp=0,baseline=null;
-  const comparisonRanges=[];let comparisonConflict=false,resetGap=false;
-  for(const original of comparisonObservations){
-    const q={...original,resetKey:comparisonKeys.get(original.resetKey)??original.resetKey};
+  const comparisonRanges=[];let comparisonConflict=false,resetGap=false,resetAmbiguous=false;
+  for(const q of startupQuotaTracks(comparisonObservations)){
+    if(q.comparisonStale)continue;
     if(q.atMs<startedAtMs){if(!q.conflict)startupHigh.set(q.resetKey,Math.max(startupHigh.get(q.resetKey)??0,q.usedPercent));continue;}
     if(q.conflict){comparisonConflict=true;prior=null;continue;}
+    if(prior && q.transition==="ambiguous")resetAmbiguous=true;
     const high=startupHigh.get(q.resetKey);
+    if(prior && q.transition==="same" && q.atMs>=q.resetAtMs && high!==undefined && q.usedPercent<high)resetAmbiguous=true;
     if(high!==undefined&&q.usedPercent<high)continue;
     if(observedFrom===null){observedFrom=q.atMs;
       if(Number.isSafeInteger(q.resetAtMs)&&typeof q.planType==="string"&&typeof q.limitId==="string")
@@ -308,11 +341,12 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const comparisonPriced=comparisonUsage.every(u=>u.priced&&finite(u.usd));
   const comparison={startedAtMs,baseline,observedFrom:observedFrom===null?null:iso(observedFrom),
     observedThrough:observedThrough===null?null:iso(observedThrough),capacityUsd:comparisonUsd,
-    actualPp:observedFrom!==null&&!comparisonConflict&&!resetGap?cumulativePp:null,
-    expectedPp:observedFrom!==null&&comparisonUsd!==null&&comparisonPriced&&!comparisonConflict&&!resetGap
+    actualPp:observedFrom!==null&&!comparisonConflict&&!resetGap&&!resetAmbiguous?cumulativePp:null,
+    expectedPp:observedFrom!==null&&comparisonUsd!==null&&comparisonPriced&&!comparisonConflict&&!resetGap&&!resetAmbiguous
       ?100*comparisonUsage.reduce((s,u)=>s+u.usd,0)/comparisonUsd:null};
   if(comparisonConflict)errors.push({code:"comparison_quota_conflict",stage:"quota"});
   if(resetGap)errors.push({code:"comparison_reset_gap",stage:"quota"});
+  if(resetAmbiguous)errors.push({code:"comparison_reset_ambiguous",stage:"quota"});
   if(!comparisonPriced)errors.push({code:"price_missing",stage:"pricing"});
   if (selectedUsage.some((u)=>!u.priced)) errors.push({code:"price_missing",stage:"pricing"});
   const allowancePoints=new Map();
