@@ -48,6 +48,7 @@ const SHARED_WEB_FILES = Object.freeze([
   "apps/web/public/navigation.js",
   "apps/web/public/reporting-period.js",
   "apps/web/public/styles.css",
+  "apps/web/public/usage-simple.css",
   "apps/web/public/telemetry-envelope.js",
   "apps/web/public/telemetry-shared.generated.js",
   "apps/web/public/tibotattle-icon.png",
