@@ -927,6 +927,7 @@ export function mountWorkUsageView(options = {}) {
   if (options.controlsRoot) options.controlsRoot.append(toolbar);
   const detailDialog = el("dialog", "work-usage-dialog");
   const detailHeading = el("h2");
+  detailHeading.tabIndex = -1;
   detailHeading.id = `${root.id}-detail-heading`;
   detailDialog.setAttribute("aria-labelledby", detailHeading.id);
   const detailClose = button(t("dashboard.overview.close"), () => detailDialog.close(), "button button-secondary");
@@ -967,7 +968,7 @@ export function mountWorkUsageView(options = {}) {
       sharedReporting: true,
       reportingWindow: { period: query.period, startAt: query.period === "all" ? null : new Date(Math.max(0, response.toMs - REPORTING_DURATION_MS[query.period])).toISOString(), endAt: new Date(response.toMs).toISOString() },
       initialQuery, detailTitle: label(row),
-      onTitle: value => { detailHeading.textContent = value; },
+      onTitle: (value, focus) => { detailHeading.textContent = value; if (focus) detailHeading.focus({ preventScroll: true }); },
       renderInformationLabel: options.renderInformationLabel,
       onDiagnostic: options.onDiagnostic,
     });
@@ -1062,7 +1063,7 @@ export function mountWorkUsageView(options = {}) {
     return value;
   }
   function renderDetailReport() {
-    options.onTitle?.(selectedTitle ?? options.detailTitle);
+    options.onTitle?.(selectedTitle ?? options.detailTitle, pendingFocus === "heading");
     if (ancestors.length) body.append(button(`← ${tr("back")}`, () => {
       const previous = ancestors.pop(); query = previous.query; pages = previous.pages;
       restorePageDepth = previous.restorePageDepth ?? 0; restoreScroll = previous.scrollTop;

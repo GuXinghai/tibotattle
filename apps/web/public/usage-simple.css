@@ -17,7 +17,10 @@ body[data-dashboard-page="usage"] #accounting { display:contents; }
 #usage-screen .usage-simple-controls input { width:200px; min-width:0; }
 #usage-screen .usage-simple-controls select { min-width:0; max-width:180px; }
 #usage-screen .usage-simple-controls input, #usage-screen .usage-simple-controls select { padding:8px 10px; border-radius:5px; background:#fff; }
-#usage-screen .usage-simple-controls .work-usage-find { margin:0; }
+#usage-screen .usage-simple-controls .work-usage-find { margin:0; flex:0 0 200px; }
+#usage-screen .usage-simple-controls .work-usage-find-field { flex:initial; }
+#usage-screen .usage-simple-controls .work-usage-toolbar { flex-wrap:nowrap; width:auto; }
+#usage-screen .usage-simple-analysis-actions { order:4; display:flex; gap:22px; margin-top:4px; }
 #usage-screen .usage-simple-metric { order:2; }
 #usage-screen #projects, #usage-screen .usage-simple-models-panel { order:3; margin:0; padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
 #usage-screen .usage-simple-analysis { order:4; align-self:flex-start; display:block; margin:0; padding:0; border:0; border-radius:0; box-shadow:none; background:transparent; }
@@ -69,7 +72,7 @@ body[data-dashboard-page="usage"] #accounting { display:contents; }
 @media (max-width:760px) {
  #usage-screen #accounting-summary { gap:28px; }
  #usage-simple-views { flex-basis:100%; }
- #usage-screen .usage-simple-controls .work-usage-toolbar { flex:1; }
+ #usage-screen .usage-simple-controls .work-usage-toolbar { flex:1; flex-wrap:wrap; }
  #usage-screen .usage-simple-controls input { width:100%; }
  #usage-screen .usage-simple-controls .work-usage-find { flex:1; }
  .work-usage-compact .work-usage-rank, .work-usage-detail-report .work-usage-rank, .usage-simple-model-row { grid-template-columns:minmax(0,1fr) 98px 48px 10px; gap:6px; }

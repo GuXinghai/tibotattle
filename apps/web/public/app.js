@@ -10057,6 +10057,13 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   const title = documentRef.querySelector("#overview-details-title");
   const main = documentRef.querySelector("#main");
   if (!dialog || !content || !main) return;
+  const usage = documentRef.querySelector("#usage-screen");
+  const analysisEntries = ["#usage-composition-details", "#usage-cache-details"].map(selector => documentRef.querySelector(selector)).filter(Boolean);
+  if (usage && analysisEntries.length === 2) {
+    const actions = documentRef.createElement("div");
+    actions.className = "usage-simple-analysis-actions";
+    actions.append(...analysisEntries); usage.append(actions);
+  }
   const view = (key, panels, filters = "") => ({ key, panels, filters });
   const planFilter = "#weekly-plan-control, #weekly-plan-note";
   const configurations = [
