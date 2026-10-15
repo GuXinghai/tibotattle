@@ -1999,7 +1999,7 @@ export function mountWorkUsageView(options = {}) {
       && Date.parse(next.endAt) > Date.parse(reportingWindow.endAt) && displayedForQuery();
     if (detailDialog.open && next?.period !== reportingWindow?.period) detailDialog.close();
     const keepNavigation = next && reportingWindow?.period === next.period && (options.detailTitle || options.compact);
-    const pageDepth = keepNavigation ? pages.length : 0;
+    const pageDepth = keepNavigation ? pages.length + restorePageDepth : 0;
     const currentTitle = selectedTitle;
     if (keepNavigation && options.detailTitle) restoreScroll = root.closest?.("dialog")?.scrollTop ?? 0;
     const previousKey = queryKey();
@@ -2042,7 +2042,7 @@ export function mountWorkUsageView(options = {}) {
       ancestors = ancestors.map(previous => {
         const updated = { ...previous.query, period: next.period, endAt: next.endAt };
         delete updated.snapshotId; delete updated.sourceSnapshotId; delete updated.cursor;
-        return { ...previous, query: updated, restorePageDepth: previous.pages.length, pages: [] };
+        return { ...previous, query: updated, restorePageDepth: previous.pages.length + (previous.restorePageDepth ?? 0), pages: [] };
       });
       selectedTitle = currentTitle;
     } else { ancestors = []; selectedTitle = options.detailTitle ?? null; }

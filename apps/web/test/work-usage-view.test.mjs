@@ -2603,11 +2603,17 @@ test("open details follow publication while retaining thread navigation, page an
   assert.equal(calls.at(-1).snapshotId, "new-snapshot");
   assert.equal(calls.at(-1).endAt, windowAt(NOW + 300_000).endAt);
   assert.equal(dialog.scrollTop, 240);
+  // An ancestor has not rebuilt its cursors while its child stays open.
+  // A second publication must preserve that pending page restoration too.
+  view.setReportingWindow(windowAt(NOW + 600_000));
+  await settleMountedView();
+  assert.equal(calls.at(-1).thread, THREAD_A.id);
+  assert.equal(dialog.scrollTop, 240);
   findMounted(content, n => n.tagName === "BUTTON" && n.textContent.includes("Back"))[0].click();
   await settleMountedView();
   assert.equal(calls.at(-1).thread, undefined);
-  assert.equal(calls.at(-1).cursor, `next-${NOW + 300_000}`);
-  assert.equal(calls.at(-1).endAt, windowAt(NOW + 300_000).endAt);
+  assert.equal(calls.at(-1).cursor, `next-${NOW + 600_000}`);
+  assert.equal(calls.at(-1).endAt, windowAt(NOW + 600_000).endAt);
   assert.ok(content.textContent.includes("7–8 of 8"));
 });
 
