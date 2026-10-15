@@ -265,6 +265,7 @@ export function queryWorkUsageSnapshot(snapshot, query) {
   // remains scoped to that worker rather than silently selecting its siblings.
   const exactWorker = query.thread && snapshot.threadFamilies?.[query.thread] && snapshot.threadFamilies[query.thread] !== query.thread;
   const familyOf = (id) => exactWorker ? id : snapshot.threadFamilies?.[id] ?? id;
+  const autoReviews = new Set(snapshot.autoReviewThreads ?? []);
   const matches = (cell) => (!query.project || cell.projects.includes(query.project))
     && (!query.worktree || cell.worktrees.includes(query.worktree))
     && (!query.thread || familyOf(cell.threads[0]) === query.thread)
@@ -310,7 +311,7 @@ export function queryWorkUsageSnapshot(snapshot, query) {
   // Only materialize model breakdowns for this page. Reuse the same cells and
   // merge/price rules, so model rows conserve the filtered thread totals.
   const modelsByThread = new Map(query.grouping === "thread" ? page.map(row => [row.id, new Map()]) : []);
-  const contributions = new Map([...modelsByThread.keys()].map(id => [id, { primary: empty("primary", "contribution"), subworkers: empty("subworkers", "contribution") }]));
+  const contributions = new Map([...modelsByThread.keys()].map(id => [id, { primary: empty("primary", "contribution"), subworkers: empty("subworkers", "contribution"), autoReviews: empty("autoReviews", "contribution") }]));
   if (modelsByThread.size) for (const cell of snapshot.cells) {
     const models = modelsByThread.get(familyOf(cell.threads[0]));
     if (!models || !matches(cell) || !matchesSearch(cell)) continue;
@@ -319,7 +320,7 @@ export function queryWorkUsageSnapshot(snapshot, query) {
     merge(model, cell);
     models.set(id, model);
     const parts = contributions.get(familyOf(cell.threads[0]));
-    merge(cell.threads[0] === familyOf(cell.threads[0]) ? parts.primary : parts.subworkers, cell);
+    merge(autoReviews.has(cell.threads[0]) ? parts.autoReviews : cell.threads[0] === familyOf(cell.threads[0]) ? parts.primary : parts.subworkers, cell);
   }
   return {
     totals: {
@@ -334,7 +335,8 @@ export function queryWorkUsageSnapshot(snapshot, query) {
       if (models) {
         const parts = contributions.get(row.id);
         result.subworkerCount = parts.subworkers.threads.size;
-        result.contributions = [parts.primary, parts.subworkers].filter(part => part.events > 0).map(part => dto(part, row.tokens));
+        if (autoReviews.has(row.id) && (snapshot.threadFamilies?.[row.id] ?? row.id) === row.id) result.unlinkedAutoReview = true;
+        result.contributions = [parts.primary, parts.subworkers, parts.autoReviews].filter(part => part.events > 0).map(part => dto(part, row.tokens));
       }
       if (models) result.modelBreakdown = [...models.values()]
         .sort((a,b) => (b.tokens ?? -1) - (a.tokens ?? -1) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))

@@ -417,6 +417,14 @@ they never leave the machine. Raw repository origins are not stored there.
 Explicit collaboration parent links are read in a bounded local metadata pass
 to group subworkers into primary-thread families. Cycles and unresolved ancestry
 remain separate; names and title policy are independent of this grouping.
+The usage-only relation reader also verifies automatic-review parents from the
+first bounded session header against the local thread-store classification.
+It supports current and legacy guardian classifications and compressed headers,
+without reading transcripts or titles. Missing, conflicting, inaccessible or
+cyclic relationships remain unlinked. Each usage cell contributes exactly once;
+live task details partition primary, subworker and automatic-review usage.
+Review classification is transient; the saved anonymous report schema is
+unchanged and restored reports do not open detail dialogs.
 Name search is submitted only to the loopback query route in a bounded POST
 body, never a URL. It may read up to 25,000 selected task identities through the
 same approved name/title reader; ordinary visible-row enrichment remains capped

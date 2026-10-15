@@ -3,6 +3,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { normalizeWorkUsageRepositoryOrigin } from "./work-usage-projects.js";
 import { readBoundedUtf8LineEntries } from "./bounded-jsonl-reader.js";
+import { compressedRolloutHandle } from "./bounded-rollout-bytes.js";
 import { createLocalCodexMetadataFilesystem } from "./local-codex-metadata-filesystem.js";
 
 const CODEX_THREAD_ID =
@@ -149,25 +150,44 @@ function isCodexSessionPath(codexHome, rolloutPath) {
  * this relationship. It is never retained or exposed: this returns one UUID
  * only after both the selected thread and its source classification agree.
  */
-async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem) {
+async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usageRelations = false) {
   if (typeof rolloutPath !== "string" || rolloutPath.length === 0
       || !isAbsolute(rolloutPath)) return null;
   let handle;
   try {
-    const [home, path] = await Promise.all([realpath(codexHome), realpath(rolloutPath)]);
-    if (!isCodexSessionPath(home, path)) return null;
+    const home = await realpath(codexHome);
+    let path;
+    try { path = await realpath(rolloutPath); }
+    catch (error) {
+      if (!usageRelations || error.code !== "ENOENT" || !rolloutPath.endsWith(".jsonl")) return null;
+      path = await realpath(`${rolloutPath}.zst`);
+    }
+    if (!isCodexSessionPath(home, path)
+        && !(usageRelations && relative(home, path).startsWith(`archived_sessions${sep}`))) return null;
     const opened = await filesystem.openFile(path);
     handle = opened.handle;
     const before = opened.before;
-    const bytes = Buffer.alloc(MAX_SESSION_METADATA_LINE_BYTES + 1);
-    const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
-    const newline = bytes.subarray(0, bytesRead).indexOf(0x0a);
-    if (newline < 0) return null;
-    const line = bytes.toString("utf8", 0, newline);
-    if (line.includes("\ufffd")) return null;
+    let line;
+    if (path.endsWith(".zst")) {
+      for await (const entry of readBoundedUtf8LineEntries(compressedRolloutHandle(handle), {
+        maximumLineBytes: MAX_SESSION_METADATA_LINE_BYTES,
+        maximumTotalBytes: MAX_SESSION_METADATA_LINE_BYTES + 1,
+        highWaterMark: 4096,
+      })) { line = entry.line; break; }
+    } else {
+      const bytes = Buffer.alloc(MAX_SESSION_METADATA_LINE_BYTES + 1);
+      const { bytesRead } = await handle.read(bytes, 0, bytes.length, 0);
+      const newline = bytes.subarray(0, bytesRead).indexOf(0x0a);
+      if (newline < 0) return null;
+      line = bytes.toString("utf8", 0, newline);
+    }
+    if (typeof line !== "string" || line.includes("\ufffd")) return null;
     const record = JSON.parse(line);
     const parentId = threadId(record?.payload?.parent_thread_id);
-    if (!isAutoReviewSessionMetadata(record, id) || parentId === null || parentId === id) {
+    const verified = isAutoReviewSessionMetadata(record, id)
+      || usageRelations && record?.type === "session_meta" && threadId(record.payload?.id) === id
+        && record.payload?.thread_source === "subagent" && isAutoReviewSource(record.payload?.source);
+    if (!verified || parentId === null || parentId === id) {
       return null;
     }
     const after = await handle.stat();
@@ -239,7 +259,7 @@ async function retryMetadataDatabaseCloses() {
   }
 }
 
-async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, allowTitleFallback = false, filesystem, databaseFactory } = {}) {
+async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, usageRelations = false, allowTitleFallback = false, signal, filesystem, databaseFactory } = {}) {
   const databaseFile = join(codexHome, "state_5.sqlite");
   let database;
   let guard;
@@ -281,6 +301,7 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
         ? displayName(row.display_title.replace(/\s+/gu, " ")) : null);
     const parentIds = new Set();
     for (const id of ids) {
+      signal?.throwIfAborted();
       const row = statement.get(id);
       if (row === undefined || threadId(row.id) !== id) continue;
       const source = parseThreadSource(row.source);
@@ -289,10 +310,10 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
       // Either exact guardian classification suppresses navigation to a review
       // row's internal UUID. A parent is trusted only when both stores agree.
       const autoReview = threadStoreAutoReview || sourceAutoReview;
-      const verifiedAutoReview = threadStoreAutoReview && sourceAutoReview;
+      const verifiedAutoReview = sourceAutoReview && (threadStoreAutoReview || usageRelations && row.thread_source === "subagent");
       const worker = autoReview ? null : workerMetadata(source, id);
-      const parentId = verifiedAutoReview && !ancestryOnly
-        ? await readAutoReviewParent(codexHome, row.rollout_path, id, filesystem)
+      const parentId = verifiedAutoReview && (!ancestryOnly || usageRelations)
+        ? await readAutoReviewParent(codexHome, row.rollout_path, id, filesystem, usageRelations)
         : worker?.parentId ?? null;
       if (parentId !== null) parentIds.add(parentId);
       result.set(id, {
@@ -304,6 +325,7 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
       });
     }
     for (const id of parentIds) {
+      signal?.throwIfAborted();
       if (result.size + parentIds.size > 50_000) return new Map();
       if (result.has(id)) continue;
       const row = statement.get(id);
@@ -311,16 +333,22 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
         const source = parseThreadSource(row.source);
         // Internal guardian surfaces must not become navigation targets or
         // collaboration ancestors. Preserve the current display contract.
-        if (isAutoReviewThreadSource(row.thread_source) || isAutoReviewSource(source)) {
+        if (!usageRelations && (isAutoReviewThreadSource(row.thread_source) || isAutoReviewSource(source))) {
           continue;
         }
-        const parentId = ancestryOnly ? workerMetadata(source, id)?.parentId ?? null : null;
+        const review = isAutoReviewThreadSource(row.thread_source) || isAutoReviewSource(source);
+        const verifiedReview = isAutoReviewSource(source)
+          && [AUTO_REVIEW_THREAD_SOURCE, "subagent"].includes(row.thread_source);
+        const parentId = usageRelations && verifiedReview
+          ? await readAutoReviewParent(codexHome, row.rollout_path, id, filesystem, true)
+          : ancestryOnly && !review ? workerMetadata(source, id)?.parentId ?? null : null;
         if (parentId) parentIds.add(parentId);
-        result.set(id, { name: selectedName(row), nickname: null, parentId, origin: null });
+        result.set(id, { name: selectedName(row), nickname: null, parentId, origin: review ? "auto_review" : null });
       }
     }
     return await guard.validate() ? result : new Map();
   } catch {
+    signal?.throwIfAborted();
     // Local display metadata is optional. Never expose paths or SQLite errors.
     return new Map();
   } finally {
@@ -445,6 +473,35 @@ export async function readCodexLocalThreadMetadata(codexHome, threadIds, {
 }
 
 /** Read only explicit collaboration edges; no names or prompt-bearing titles. */
+export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
+  platform = process.platform, loadWindowsBinding, databaseFactory = openMetadataDatabase, signal,
+} = {}) {
+  const filesystem = createLocalCodexMetadataFilesystem({ platform, loadWindowsBinding });
+  if (!Array.isArray(threadIds) || threadIds.length > 25_000 || !await filesystem.validHome(codexHome)) return new Map();
+  const ids = [...new Set(threadIds.map(threadId))];
+  if (ids.includes(null)) return new Map();
+  const selected = await readSelectedThreadMetadata(codexHome, ids, {
+    ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal,
+  });
+  return new Map(ids.map(id => {
+    let current = id;
+    const seen = new Set();
+    let valid = true;
+    for (let depth = 0; ; depth++) {
+      if (depth >= 64 || seen.has(current)) { valid = false; break; }
+      seen.add(current);
+      const record = selected.get(current);
+      if (!record) { valid = false; break; }
+      if (!record.parentId) break;
+      current = record.parentId;
+    }
+    const autoReview = selected.get(id)?.origin === "auto_review";
+    // Never attach to a missing, cyclic, or internal-review terminal parent.
+    if (!valid || autoReview && selected.get(current)?.origin === "auto_review") current = id;
+    return [id, { root: current, autoReview }];
+  }));
+}
+
 export async function readCodexLocalThreadAncestry(codexHome, threadIds, {
   platform = process.platform, loadWindowsBinding, databaseFactory = openMetadataDatabase,
 } = {}) {

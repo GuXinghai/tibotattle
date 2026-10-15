@@ -3,7 +3,7 @@ import { APP_PRICE_REGISTRY_MANIFEST } from "@app-usagemonitor/accounting";
 import {
   createWorkUsageProjectResolver,
   readCodexLocalRepositoryOrigins,
-  readCodexLocalThreadAncestry,
+  readCodexLocalThreadUsageRelations,
 } from "./platform/index.js";
 import { createWorkUsageAccumulator, workUsageError } from "./reporting/index.js";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
@@ -20,8 +20,9 @@ import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 // The work breakdown over the local index store.
 //
 // Per-fact inputs (working directory, session, model, tokens, provenance) are
-// stored with each usage fact, so a report reads them from the store: no
-// rollout is opened. Committed facts preserve per-event speed tiers; the old
+// stored with each usage fact, so accounting reads them from the store.
+// Review-family attribution separately verifies bounded session headers.
+// Committed facts preserve per-event speed tiers; the old
 // daily work rollups cannot price mixed-speed days because they omit tiers.
 
 const MAX_WORK_CELLS = 50_000;
@@ -388,12 +389,15 @@ export function createWorkUsageCollectorCore({
         ),
       ),
     ];
-    const ancestry = await readCodexLocalThreadAncestry(codexHome, ids);
+    const relations = await readCodexLocalThreadUsageRelations(codexHome, ids, { signal });
     for (const state of scopeStates.values()) {
       const { threads, threadLookup, id: selectedScope } = state;
       const threadFamilies = {};
+      const autoReviewThreads = [];
       for (const [id, record] of Object.entries(threads)) {
-        const root = ancestry.get(record.uuid);
+        const relation = relations.get(record.uuid);
+        if (relation?.autoReview) autoReviewThreads.push(id);
+        const root = relation?.root;
         if (!root || root === record.uuid) {
           threadFamilies[id] = id;
           continue;
@@ -428,6 +432,7 @@ export function createWorkUsageCollectorCore({
       }
 
       state.threadFamilies = threadFamilies;
+      state.autoReviewThreads = autoReviewThreads;
     }
     // Separate clones and folders may share a basename. Disambiguate against
     // the whole snapshot so the label remains stable across pages and filters.
@@ -450,7 +455,7 @@ export function createWorkUsageCollectorCore({
       metadata: {
         method: "last_observed_location",
         usageClassification: "verified-quota-status-v2",
-        resolverVersion: "work-location-v3",
+        resolverVersion: "work-location-v4-review-families",
         discoveryFingerprint: described.discoveryFingerprint,
         observationDigest: described.observationDigest,
         observedAt: Date.now(),
@@ -486,6 +491,7 @@ export function createWorkUsageCollectorCore({
           models: [...bucket.models].sort(),
           threadLookup: state.threadLookup,
           threadFamilies: state.threadFamilies,
+          autoReviewThreads: state.autoReviewThreads,
           display: { projects, worktrees, threads: state.threads },
           pricing: common.pricing,
           metadata: { ...common.metadata, excludedAllowanceUpdates },

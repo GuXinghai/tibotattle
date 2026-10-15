@@ -614,6 +614,34 @@ test("thread families group before ranking and pagination, conserving descendant
   assert.equal(filtered.contributions.length,1);assert.equal(filtered.contributions[0].id,'subworkers');
 });
 
+test("automatic review is a disjoint family contribution and unlinked reviews stay explicit", () => {
+  const tokens = { input_uncached_tokens: 100, input_cache_read_tokens: 0, input_cache_write_tokens: 0, output_text_tokens: 0, output_reasoning_tokens: 0 };
+  const report = reportFrom([
+    event({ thread: "root", tokens, price: { amount: "1.01" } }),
+    event({ thread: "worker", tokens, price: { amount: "2.02" } }),
+    event({ thread: "review", model: "codex-auto-review", tokens, price: { amount: "3.03" } }),
+    event({ thread: "unlinked", model: "codex-auto-review", tokens, price: { amount: "4.04" } }),
+  ]);
+  report.threadFamilies = { root: "root", worker: "root", review: "root", unlinked: "unlinked" };
+  report.autoReviewThreads = ["review", "unlinked"];
+  const result = query(report, { grouping: "thread", pageSize: 1 });
+  assert.equal(result.rowCount, 2);
+  assert.equal(result.totals.tokens, 400);
+  assert.equal(result.totals.costUsdExact, "10.1");
+  const root = result.rows[0];
+  assert.equal(root.id, "root"); assert.equal(root.tokens, 300); assert.equal(root.costUsdExact, "6.06");
+  assert.equal(root.subworkerCount, 1);
+  assert.deepEqual(root.contributions.map(p => [p.id, p.tokens, p.costUsdExact]),
+    [["primary", 100, "1.01"], ["subworkers", 100, "2.02"], ["autoReviews", 100, "3.03"]]);
+  const unlinked = query(report, { grouping: "thread", offset: result.nextOffset, pageSize: 1 }).rows[0];
+  assert.equal(unlinked.unlinkedAutoReview, true);
+  assert.equal(unlinked.contributions[0].id, "autoReviews");
+  const filtered = query(report, { grouping: "thread", thread: "root", model: "codex-auto-review" });
+  assert.equal(filtered.totals.tokens, 100); assert.equal(filtered.rows[0].contributions[0].id, "autoReviews");
+  assert.equal(query(report, { grouping: "thread", thread: "review" }).totals.tokens, 100);
+  assert.equal(query(report, { grouping: "thread", thread: "review" }).rows[0].unlinkedAutoReview, undefined);
+});
+
 test("related reports reject invalid anchors and preserve their source across rapid switches", async () => {
   let now = 10 * 86400000;
   const service = createWorkUsageService({ clock: () => now, idleMs: 1000,

@@ -78,6 +78,10 @@ and measure controls; the headline remains the full reporting-period total.
 Project and thread details open in a dialog; token composition and cache analysis
 use separate lightweight entries. Dialogs follow
 the global five-minute refresh while preserving navigation and scroll position.
+Automatic approval reviews with verified parent relationships are included once
+in the owning task family and shown separately from primary and subworker usage
+in its details. Reviews without a verifiable parent remain separately labelled
+as unlinked automatic reviews; their usage is still included in period totals.
 Amount uses recorded speed and the corresponding event-time API price; unknown
 speed or missing prices remain explicitly unpriced or partial. The Standard-price
 analysis and subscription quota comparison remain separate calculations.

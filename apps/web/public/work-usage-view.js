@@ -136,8 +136,10 @@ export function validateWorkUsageResponse(value) {
     throw new Error("invalid_response");
   for (const row of value.rows) {
     if (row.subworkerCount !== undefined && !count(row.subworkerCount)) throw new Error("invalid_response");
-    if (row.contributions !== undefined && (!Array.isArray(row.contributions) || row.contributions.length > 2
-      || row.contributions.some(part => part?.kind !== "contribution" || !["primary", "subworkers"].includes(part.id)))) throw new Error("invalid_response");
+    if (row.unlinkedAutoReview !== undefined && typeof row.unlinkedAutoReview !== "boolean") throw new Error("invalid_response");
+    if (row.contributions !== undefined && (!Array.isArray(row.contributions) || row.contributions.length > 3
+      || new Set(row.contributions.map(part => part?.id)).size !== row.contributions.length
+      || row.contributions.some(part => part?.kind !== "contribution" || !["primary", "subworkers", "autoReviews"].includes(part.id)))) throw new Error("invalid_response");
     if (row.modelBreakdown !== undefined && (row.kind !== "thread" || !Array.isArray(row.modelBreakdown)
         || row.modelBreakdown.length > 50_000 || row.modelBreakdown.some(model => model?.kind !== "model"))) throw new Error("invalid_response");
   }
@@ -1045,9 +1047,9 @@ export function mountWorkUsageView(options = {}) {
   }
   function appendThreadModels(target, row) {
     if (!row.modelBreakdown?.length) return;
-    if (row.subworkerCount > 0) target.append(el("h3", null, tr("contributions")), detailTable(
+    if (row.subworkerCount > 0 || row.contributions?.some(part => part.id === "autoReviews")) target.append(el("h3", null, tr("contributions")), detailTable(
       [tr("contributions"), tr("tokenColumn"), tr("cost")],
-      (row.contributions ?? []).map(part => [tr(part.id === "primary" ? "primaryThread" : "subworkers"), quantity(part.tokens), detailCost(part)]),
+      (row.contributions ?? []).map(part => [tr(part.id === "primary" ? "primaryThread" : part.id), quantity(part.tokens), detailCost(part)]),
     ));
     const indices = [1, 0, 3, 4];
     if (row.modelBreakdown.some(model => model.components[COMPONENTS[2]] > 0)) indices.splice(2, 0, 2);
@@ -1076,7 +1078,7 @@ export function mountWorkUsageView(options = {}) {
       appendDetailComponents(body, response.totals.components);
       body.append(el("p", "work-usage-detail-events", `${tr("changes")}: ${quantity(response.totals.events)}`));
       if (row) appendThreadModels(body, row);
-      const link = response.display[query.thread]?.codexUrl;
+      const link = row?.unlinkedAutoReview ? null : response.display[query.thread]?.codexUrl;
       if (/^codex:\/\/threads\/[0-9a-f-]{36}$/iu.test(link ?? "")) {
         const open = el("a", "button button-quiet compact", tr("open")); open.href = link; open.rel = "noreferrer"; body.append(open);
       }
@@ -1139,6 +1141,7 @@ export function mountWorkUsageView(options = {}) {
       return tr(row.kind === "project" ? "savedProject" : row.kind === "worktree" ? "savedWorktree" : "savedThread", {
         number: report.offset + report.rows.indexOf(row) + 1,
       });
+    if (row.unlinkedAutoReview) return `${tr("unlinkedAutoReview")} · ${display?.shortId ?? row.id.slice(-10)}`;
     return row.id === "unassigned"
       ? tr("unassigned")
       : row.id === "non-project" ? tr("nonProject")
@@ -1444,7 +1447,8 @@ export function mountWorkUsageView(options = {}) {
         details.append(group);
       });
       body.append(el("h3", null, tr("details")), details);
-      const link = response.display[query.thread]?.codexUrl;
+      const link = response.rows.find(row => row.id === query.thread)?.unlinkedAutoReview
+        ? null : response.display[query.thread]?.codexUrl;
       if (/^codex:\/\/threads\/[0-9a-f-]{36}$/iu.test(link ?? "")) {
         const a = el("a", "button button-secondary", tr("open"));
         a.href = link;

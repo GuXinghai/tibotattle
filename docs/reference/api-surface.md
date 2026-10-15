@@ -285,6 +285,13 @@ the configured local resource root and have a stricter report CSP.
 
 ## Native bridge
 
+Live work-usage thread rows may include `unlinkedAutoReview: true`.
+Their existing `contributions` array partitions the same filtered cells into
+`primary`, `subworkers` and `autoReviews`; these are disjoint components of the
+thread total, not additional charges. Verified review ancestry is used before
+ranking and pagination. Review relationships and classification remain local
+and process-only; no index or saved-report schema changes are required.
+
 The embedded dashboard view admits only the current loopback companion and `about:`.
 
 | Direction | Name | Payload boundary |

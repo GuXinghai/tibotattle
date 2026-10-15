@@ -2694,3 +2694,22 @@ test("thread detail presents each component once, keeps participant/model eviden
   assert.equal(componentRows.length,6, 'header plus four base components and real combined output');
   assert.ok(componentRows.some(r=>r.textContent.includes('—')), 'unknown output stays unknown');
 });
+
+test("review contributions render separately and unlinked reviews never navigate to internal Codex threads", async t => {
+  const mounted = mountedLeaseRoot();
+  const response = structuredClone(THREAD_A_RESPONSE);
+  response.rows = [response.rows[0]]; response.rowCount = 1;
+  const row = response.rows[0];
+  row.subworkerCount = 0;
+  row.unlinkedAutoReview = true;
+  row.contributions = [mountedRow({ id:'autoReviews',kind:'contribution',tokens:25,cost:'2.50',events:1,share:1 })];
+  row.modelBreakdown = [mountedRow({id:'codex-auto-review',kind:'model',tokens:25,cost:'2.50',events:1,share:1})];
+  const view = mountWorkUsageView({ ...mounted, detailTitle:'Review', initialQuery:{thread:'thread-a'}, t:mountedTranslator, fetchRef:async()=>httpResponse(response) });
+  t.after(()=>view.destroy()); await settleMountedView();
+  const body = mounted.root.querySelector('.work-usage-body');
+  assert.ok(body.textContent.includes(mountedTranslator('workUsage.autoReviews')));
+  assert.equal(body.querySelectorAll('A').length, 0);
+  const invalid = structuredClone(response);
+  invalid.rows[0].contributions.push(structuredClone(invalid.rows[0].contributions[0]));
+  assert.throws(()=>validateWorkUsageResponse(invalid), /invalid_response/);
+});

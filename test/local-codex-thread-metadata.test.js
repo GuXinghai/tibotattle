@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { readCodexLocalRepositoryOrigins, readCodexLocalThreadAncestry, readCodexLocalThreadMetadata } from "../src/platform/index.js";
+import { readCodexLocalRepositoryOrigins, readCodexLocalThreadAncestry, readCodexLocalThreadUsageRelations, readCodexLocalThreadMetadata } from "../src/platform/index.js";
+import * as zlib from "node:zlib";
 
 const ROOT = "11111111-1111-4111-8111-111111111111";
 const WORKER = "22222222-2222-4222-8222-222222222222";
@@ -126,6 +127,47 @@ test("accounting ancestry follows nested workers without reading guardian rollou
     mockedOpen.mock.restore();
     syncBuiltinESMExports();
   }
+});
+
+test("usage relations attach reviews through workers without changing the navigation ancestry contract", async t => {
+  const { home, databaseFile, rolloutPath } = await addAutoReview(t);
+  await writeFile(rolloutPath, `${autoReviewSession(AUTO_REVIEW, WORKER)}\n`, { mode: 0o600 });
+  const before = await Promise.all([readFile(databaseFile), readFile(rolloutPath)]);
+  const relations = await readCodexLocalThreadUsageRelations(home, [ROOT, WORKER, AUTO_REVIEW]);
+  assert.deepEqual([...relations], [
+    [ROOT, { root: ROOT, autoReview: false }],
+    [WORKER, { root: ROOT, autoReview: false }],
+    [AUTO_REVIEW, { root: ROOT, autoReview: true }],
+  ]);
+  assert.deepEqual(await Promise.all([readFile(databaseFile), readFile(rolloutPath)]), before);
+  for (const parent of [ABSENT, AUTO_REVIEW]) {
+    await writeFile(rolloutPath, `${autoReviewSession(AUTO_REVIEW, parent)}\n`, { mode: 0o600 });
+    assert.deepEqual((await readCodexLocalThreadUsageRelations(home, [AUTO_REVIEW])).get(AUTO_REVIEW),
+      { root: AUTO_REVIEW, autoReview: true });
+  }
+  await writeFile(rolloutPath, `${autoReviewSession(AUTO_REVIEW, WORKER)}\n`, { mode: 0o600 });
+  const db = new DatabaseSync(databaseFile);
+  db.prepare("UPDATE threads SET source=? WHERE id=?").run(JSON.stringify({ subagent: { thread_spawn: { parent_thread_id: AUTO_REVIEW } } }), WORKER);
+  db.close();
+  assert.deepEqual((await readCodexLocalThreadUsageRelations(home, [AUTO_REVIEW])).get(AUTO_REVIEW),
+    { root: AUTO_REVIEW, autoReview: true }, "cycles cannot attach a review or lose its classification");
+});
+
+test("usage relations verify legacy and compressed review headers, refusing mismatches", { skip: !zlib.zstdCompressSync }, async t => {
+  const { home, databaseFile, rolloutPath } = await addAutoReview(t);
+  const db = new DatabaseSync(databaseFile);
+  db.prepare("UPDATE threads SET thread_source='subagent' WHERE id=?").run(AUTO_REVIEW);
+  db.close();
+  const header = JSON.parse(autoReviewSession(AUTO_REVIEW, ROOT));
+  header.payload.thread_source = "subagent";
+  await writeFile(`${rolloutPath}.zst`, zlib.zstdCompressSync(Buffer.from(`${JSON.stringify(header)}\n`)), { mode: 0o600 });
+  await rm(rolloutPath);
+  assert.deepEqual((await readCodexLocalThreadUsageRelations(home, [AUTO_REVIEW])).get(AUTO_REVIEW),
+    { root: ROOT, autoReview: true });
+  header.payload.id = ABSENT;
+  await writeFile(`${rolloutPath}.zst`, zlib.zstdCompressSync(Buffer.from(`${JSON.stringify(header)}\n`)), { mode: 0o600 });
+  assert.deepEqual((await readCodexLocalThreadUsageRelations(home, [AUTO_REVIEW])).get(AUTO_REVIEW),
+    { root: AUTO_REVIEW, autoReview: true });
 });
 
 test("guardian review uses only its own verified session parent and an accessible local parent record", async (t) => {

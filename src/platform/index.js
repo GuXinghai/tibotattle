@@ -32,7 +32,7 @@ export {
   acquireCompanionInstanceLock,
 } from "./companion-instance-lock.js";
 export { createLocalCodexLogPorts } from "./local-codex-log-ports.js";
-export { readCodexLocalThreadMetadata, readCodexLocalThreadAncestry, readCodexLocalRepositoryOrigins } from "./local-codex-thread-store.js";
+export { readCodexLocalThreadMetadata, readCodexLocalThreadAncestry, readCodexLocalThreadUsageRelations, readCodexLocalRepositoryOrigins } from "./local-codex-thread-store.js";
 export {
   createLocalExportSourcePorts,
   localIsProxy,
