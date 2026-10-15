@@ -4,6 +4,14 @@ import { buildCommunityAllowanceChartModel, renderCommunityAllowanceSection } fr
 import { normalizeCommunityDailySeries, normalizePublicAllowanceBreakdowns, planWeeklyApiEquivalentUsd } from "../public/community-data.js";
 import { translate, translatePlural } from "../public/localization.js";
 import { publicAllowanceFixture } from "./fixtures/public-allowance.js";
+import { getFormattingLocale, setFormattingLocale } from "../public/ui-format.js";
+
+let previousFormattingLocale;
+test.beforeEach(() => {
+  previousFormattingLocale = getFormattingLocale();
+  setFormattingLocale("en-US");
+});
+test.afterEach(() => setFormattingLocale(previousFormattingLocale));
 
 // Synthetic presentation data only; never served by a production client.
 const summary = (centralUsd, participants = 2) => ({
@@ -458,7 +466,10 @@ test("real public render shows model sample semantics, per-view labels and discl
   emptyModels.allowanceBreakdowns.days.forEach(day => { day.models = []; });
   const container = new Element("div");
   assert.equal(renderCommunityAllowanceSection({ documentRef, container, payload: emptyModels, view: "models" }), "estimates_accumulating");
-  assert.match(container.text, /No identified model estimates/u);
+  assert.match(container.text, /No estimates for identified models have been published yet/u);
+  assert.match(container.text, /missing or unstable model data stays a gap/u);
+  assert.equal(container.descendants().filter(element => element.tag === "article").length, 0,
+    "missing model evidence must not produce zero-valued cards");
   assert.doesNotMatch(container.text, /no reset fit has qualified/u);
 });
 

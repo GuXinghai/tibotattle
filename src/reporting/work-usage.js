@@ -273,14 +273,13 @@ export function queryWorkUsageSnapshot(snapshot, query) {
     || query.searchMatches.projects.has(cell.projects[0])
     || query.searchMatches.threads.has(snapshot.threadFamilies?.[cell.threads[0]] ?? cell.threads[0]);
   for (const cell of snapshot.cells) {
-    if (!matches(cell)) continue;
+    if (!matches(cell) || !matchesSearch(cell)) continue;
     merge(total, cell);
     if (cell.tokens > 0) {
       for (const t of cell.threads) activeThreads.add(familyOf(t));
       for (const p of cell.projects)
         if (p !== "unassigned") activeProjects.add(p);
     }
-    if (!matchesSearch(cell)) continue;
     const id =
       query.grouping === "project"
         ? cell.projects[0]

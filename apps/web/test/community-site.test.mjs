@@ -603,7 +603,13 @@ test("the public guidance pages are useful stubs without app-only controls", asy
   assert.match(verifyRelease, /--source-digest "\$COMMIT"/u);
   assert.match(verifyRelease, /--signer-workflow/u);
   assert.match(verifyRelease, /### Windows direct installer or MSIX/u);
-  assert.doesNotMatch(verifyRelease, /macOS|\bMac\b|AppImage|Linux|\.dmg\b|Homebrew|Sparkle|Gatekeeper|Notariz/u);
+  assert.match(verifyRelease, /supports Windows x64 only/u);
+  assert.match(verifyRelease, /Current artifact validation qualifies Windows subjects only/u);
+  assert.match(verifyRelease, /retains historical macOS and Linux shapes for structural reading;\s+that compatibility does not restore platform support/u);
+  assert.doesNotMatch(verifyRelease, /\.dmg\b|AppImage|Homebrew|Sparkle|Gatekeeper|Notariz/u);
+  assert.deepEqual([...verifyRelease.matchAll(/^### (.+)$/gmu)]
+    .map(match => match[1]).filter(heading => /macOS|\bMac\b|Linux/u.test(heading)), [],
+  "historical schema compatibility must not add unsupported-platform installation instructions");
   assert.match(verifyRelease, /does not prove safety/u);
   assert.match(privacy, /<title>TiboTattle Privacy Overview<\/title>/u);
   assert.match(privacy, /This website cannot read local Codex files\./u);

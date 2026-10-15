@@ -181,12 +181,13 @@ test("cache matrix integration forwards empty, zero-reuse and unavailable eviden
   assert.equal(outcome.hidden, false, "unavailable evidence gets an explicit state");
 });
 
-test("usage keeps two headline cards and moves composition and cache analysis behind disclosures", async () => {
+test("usage keeps a compact summary and opens full analysis through light disclosures", async () => {
   const [styles, html] = await Promise.all([
     readFile(new URL("../public/usage-simple.css", import.meta.url), "utf8"),
     readFile(new URL("../public/index.html", import.meta.url), "utf8"),
   ]);
-  assert.match(styles, /#accounting-summary[^}]*grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/u);
+  assert.match(styles, /#accounting-summary[^}]*display:flex/u);
+  assert.match(styles, /\.metric-card::before\s*\{\s*display:none/u);
   assert.doesNotMatch(appSource, /node\("p", "annotation accounting-speed-coverage"\)/u);
   assert.match(html, /<details[^>]+id="usage-composition-details"/u);
   assert.match(html, /<details[^>]+id="usage-cache-details"/u);

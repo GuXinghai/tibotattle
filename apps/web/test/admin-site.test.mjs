@@ -6,6 +6,14 @@ import { formatReportingTime } from "../public/ui-format.js";
 import { ADMIN_MODEL_CONFIG } from "../public/telemetry-shared.generated.js";
 import { createAdminAllowancePreviewPayload } from "./fixtures/admin-allowance.js";
 
+// Admin dates and currency follow the host's regional conventions.
+const regionalUsd = (value) => new Intl.NumberFormat(undefined, {
+  style: "currency", currency: "USD", maximumFractionDigits: 0,
+}).format(value);
+const regionalDay = (day) => new Intl.DateTimeFormat(undefined, {
+  timeZone: "UTC", month: "short", day: "numeric",
+}).format(new Date(`${day}T00:00:00.000Z`));
+
 const fixture = async (name) => JSON.parse(await readFile(
   new URL(`./fixtures/${name}`, import.meta.url),
   "utf8",
@@ -1511,7 +1519,7 @@ test("admin refresh preserves the exact allowance DOM on transport failures and 
     await waitFor(() => container.querySelector('svg[role="img"]') !== graph);
     assert.equal(badge.textContent, "Admin preview available");
     assert.equal(container.querySelector('button[data-allowance-plan="prolite"]').getAttribute("aria-pressed"), "true");
-    assert.equal(container.querySelector(".allowance-summary-value").textContent, "$2,129");
+    assert.equal(container.querySelector(".allowance-summary-value").textContent, regionalUsd(2129));
   });
 });
 
@@ -1602,13 +1610,10 @@ test("rendered plan cards keep normalized headlines and show correctly rounded a
     const cards = allowanceNodes(documentRef, ".admin-allowance-plan-summary");
     assert.equal(cards.length, 4);
     assert.deepEqual(cards.map((card) => card.querySelector("h3").textContent), ["Pro 10×", "Pro 5×", "Pro Max 25×", "Plus"]);
-    assert.deepEqual(cards.map((card) => card.querySelector(".allowance-summary-value").textContent), ["$2,119", "$1,918", "$2,500", "$1,900"]);
-    assert.deepEqual(cards.map((card) => card.querySelector(".allowance-plan-value").textContent), [
-      "This plan: $2,119/week at API prices",
-      "This plan: $959/week at API prices",
-      "This plan: $6,250/week at API prices",
-      "This plan: $190/week at API prices",
-    ]);
+    assert.deepEqual(cards.map((card) => card.querySelector(".allowance-summary-value").textContent),
+      [2119, 1918, 2500, 1900].map(regionalUsd));
+    assert.deepEqual(cards.map((card) => card.querySelector(".allowance-plan-value").textContent),
+      [2119, 959, 6250, 190].map(value => `This plan: ${regionalUsd(value)}/week at API prices`));
     assert.equal(allowanceNodes(documentRef, ".allowance-summary-caption")[0].textContent,
       "API-equivalent USD / Pro 10× week");
     assert.match(descendantNodes(cards[1]).map((node) => node.textContent).join(" "), /1 account · 2 fits/u);
@@ -2074,8 +2079,10 @@ test("the processing pipeline shows every stage, observed movement and a publica
     assert.equal(badge.textContent, "Delivering · 14 changes behind");
     const [ingestion, delivery, daily, allowance] = texts();
     assert.match(ingestion, /Ingestion journal .*27,650 changes recorded Latest .*\(5 min ago\)/u);
-    assert.match(delivery, /Delivery into analytics .*14 changes behind · 13 device activations Current device: 13 of 94 days folded \(May 27 – Aug 28\)$/u);
-    assert.match(daily, /229 days queued · May 4 – Sep 16 Last published .*\(5 h ago\) · 0 in the last hour Waiting for delivery/u);
+    assert.match(delivery, /Delivery into analytics .*14 changes behind · 13 device activations/u);
+    assert.ok(delivery.endsWith(`Current device: 13 of 94 days folded (${regionalDay("2026-05-27")} – ${regionalDay("2026-08-28")})`));
+    assert.ok(daily.includes(`229 days queued · ${regionalDay("2026-05-04")} – ${regionalDay("2026-09-16")}`));
+    assert.match(daily, /Last published .*\(5 h ago\) · 0 in the last hour Waiting for delivery/u);
     assert.match(allowance, /1,042 results remaining · 23 in the last hour · 208 in 6 h/u);
     assert.deepEqual(stages.children.map((card) => card.className.split(" ").at(-1)),
       ["admin-pipeline-clear", "admin-pipeline-busy", "admin-pipeline-waiting", "admin-pipeline-busy"]);

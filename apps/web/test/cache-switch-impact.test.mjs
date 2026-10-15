@@ -1091,9 +1091,9 @@ test("cache-switch mobile cards carry their translated column labels", async () 
   assert.match(amount.className, /data-value-unavailable/u);
 });
 
-test("accounting tables page ten rows and reset for a changed set", async () => {
+test("accounting tables retain every row across compact pages and preserve an open detail page", async () => {
   const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const start = source.indexOf("const CACHE_IMPACT_TABLE_PAGE_SIZE = 10;");
+  const start = source.indexOf("const CACHE_IMPACT_TABLE_PAGE_SIZE =");
   const end = source.indexOf("\nlet localCompanionHealth", start);
   assert.ok(start >= 0 && end > start, "cache-impact pagination helper is available");
   const paginate = Function(
@@ -1103,21 +1103,35 @@ test("accounting tables page ten rows and reset for a changed set", async () => 
   const state = { page: 0, signature: "" };
 
   const first = paginate(rows, state, "set-a");
-  assert.deepEqual(first.rows, rows.slice(0, 10));
+  assert.deepEqual(first.rows, rows.slice(0, 6));
   assert.deepEqual(
     { start: first.start, end: first.end, total: first.total, pageCount: first.pageCount },
-    { start: 0, end: 10, total: 25, pageCount: 3 },
+    { start: 0, end: 6, total: 25, pageCount: 5 },
   );
 
-  state.page = 2;
-  const third = paginate(rows, state, "set-a");
-  assert.deepEqual(third.rows, rows.slice(20));
-  assert.equal(third.start, 20);
-  assert.equal(third.end, 25);
+  const reached = [];
+  for (let page = 0; page < first.pageCount; page += 1) {
+    state.page = page;
+    reached.push(...paginate(rows, state, "set-a").rows);
+  }
+  assert.deepEqual(reached, rows, "paging reaches every row exactly once and in order");
+  state.page = 99;
+  const last = paginate(rows, state, "set-a");
+  assert.deepEqual(last.rows, [24]);
+  assert.equal(last.start, 24);
+  assert.equal(last.end, 25);
 
-  const changed = paginate(rows.slice(0, 12), state, "set-b");
+  state.page = 2;
+  const refreshed = paginate(rows, state, "set-b", { preservePage: true });
+  assert.equal(state.page, 2);
+  assert.deepEqual(refreshed.rows, rows.slice(12, 18));
+  const shrunk = paginate(rows.slice(0, 8), state, "set-c", { preservePage: true });
+  assert.equal(state.page, 1, "an open detail clamps its page when the result shrinks");
+  assert.deepEqual(shrunk.rows, [6, 7]);
+
+  const changed = paginate(rows.slice(0, 12), state, "set-d");
   assert.equal(state.page, 0);
-  assert.deepEqual(changed.rows, rows.slice(0, 10));
+  assert.deepEqual(changed.rows, rows.slice(0, 6));
 
   const empty = paginate([], state, "empty");
   assert.deepEqual(empty.rows, []);

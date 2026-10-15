@@ -73,8 +73,10 @@ measurements without changing the selected reporting range or fetching a new
 report. Allowance Estimate separates history, forecast, reset details and share
 cards; Trends separates activity, comparison, cumulative difference, divergence
 periods and exact evidence. Usage and costs shows amount and Token totals with
-project, thread and model breakdowns. Project and thread details open in a dialog;
-token composition and cache analysis are collapsed until requested. Dialogs follow
+project, thread and model breakdowns. Search and model filters sit beside the view
+and measure controls; the headline remains the full reporting-period total.
+Project and thread details open in a dialog; token composition and cache analysis
+use separate lightweight entries. Dialogs follow
 the global five-minute refresh while preserving navigation and scroll position.
 Amount uses recorded speed and the corresponding event-time API price; unknown
 speed or missing prices remain explicitly unpriced or partial. The Standard-price
@@ -298,31 +300,30 @@ settings written by a newer app are preserved rather than overwritten.
 
 ## Projects and threads (development build)
 
-The development branch includes **Projects & threads** in the dashboard sidebar.
-Expand a repository to see named tasks and their grouped subworkers, then expand
-a task for model and contributor details. Worktrees share a repository group;
+The **Usage and costs** page includes project, thread and model views.
+Open a repository for its thread list, then open a thread in the same dialog for
+model and contributor details. Back restores the project page and scroll position.
+Worktrees share a repository group;
 folders with no identifiable repository appear under **Non-project tasks**.
 Missing source context remains **Unassigned**.
 
-Open **Projects & threads** in the dashboard sidebar, or choose
+Open **Usage and costs** in the dashboard sidebar, or choose
 **View → Projects and Threads** in the Electron desktop app.
 
 Search by project or task name, including subworker names, or paste a complete
 thread ID or Codex link. Name search covers the full report before pagination.
 A matching subworker brings back its task family; a matching project includes
-all its tasks. Search result rows show matching work, while summary totals,
-token mix and share denominators retain the selected period/model scope.
+all its tasks. Search result subtotals, token mix and share denominators cover all matching
+work before pagination; the page headline retains the global reporting total.
 Results update as you type after two characters and a short pause (300 ms).
 Deleting the text or shortening it below two characters restores the project
 list automatically. Names and search terms stay local.
 
-Small bars beside token and cost shares show their relative size. Token mix uses
-two rows: input tokens split into cached, uncached and any recorded cache writes;
-output tokens split into output text and reasoning. Output text excludes reasoning.
-Each row shows its recorded total, with percentages calculated within that row.
-Combined output stays separate when no split was recorded, and rows without
-positive recorded counts are omitted. Numeric labels remain available alongside
-the graphics. Model rows reuse the app's decorative icons.
+Short neutral bars beside shares show their relative size. Narrow layouts retain
+the numeric share without the bar. Thread details list token components once,
+followed by participant and model tables. Output text excludes reasoning.
+Combined output stays separate when no split was recorded. Cache writes appear
+only where a positive recorded value exists. Missing components remain unknown.
 
 Choose a period and model to compare token and API-equivalent shares. These are
 estimates of recorded usage, not subscription charges or quota shares. Omitted
@@ -330,9 +331,10 @@ cache-write counts use the explicitly approved zero assumption when the remainin
 input counters support it; **Includes assumed counts** distinguishes them from
 observed values. Other missing counts remain labelled partial.
 
-**Refresh report** updates this view from the existing local index. Use the app's
-main **Refresh** to collect new usage first. Each report displays its as-of time
-and the shared reporting bounds. Opening another section preserves the selection.
+The app's main **Refresh** collects new usage and publishes the shared report;
+automatic refresh uses the same five-minute cadence. There is no separate detail
+refresh button. Failures expose their category and an appropriate Retry action.
+Opening another section preserves the selection.
 A period switch with the same accounting end bound displays its prepared figures
 while validating the report lease. An expired lease or a new accounting bound
 requires a new report for those exact dates.

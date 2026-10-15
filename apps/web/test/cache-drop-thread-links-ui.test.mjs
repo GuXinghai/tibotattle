@@ -457,9 +457,11 @@ test("compact continuity rows preserve five translated columns, thread navigatio
     const harness = createHarness({ locale });
     const rows = new harness.Element("tbody");
     const disclosure = new harness.Element("details");
+    const sampleNote = new harness.Element("p");
     const message = (key) => translate(key, {}, locale);
     const dependencies = {
-      $: (selector) => selector === "#cache-continuity-rows" ? rows : disclosure,
+      $: (selector) => ({ "#cache-continuity-rows": rows,
+        "#cache-continuity-details": disclosure, "#cache-continuity-sample": sampleNote })[selector] ?? null,
       cacheDropThreadLinks: harness.state,
       clear: (element) => { element.textContent = ""; },
       renderAccountingCacheReuseOutcome: () => {},
@@ -469,6 +471,7 @@ test("compact continuity rows preserve five translated columns, thread navigatio
       cacheImpactTableSignature: () => "synthetic-continuity",
       node: (tag) => new harness.Element(tag),
       localizedNode: (tag, className, key) => new harness.Element(tag, className, message(key)),
+      setLocalizedText: (element, key, values) => { element.textContent = translate(key, values, locale); },
       cacheDropThreadCell: harness.cell,
       cacheSwitchDataCell: (className, value, key) => {
         const cell = new harness.Element("td", className, value);
@@ -484,7 +487,12 @@ test("compact continuity rows preserve five translated columns, thread navigatio
       `${source.slice(start, end)}; return renderAccountingCacheContinuityDetails;`)(
       ...Object.values(dependencies),
     );
-    render({ status: "available", recent: [{ ...row("continuity"), estimatedPremiumUsd: 0.3 }] });
+    render({ status: "available", cacheReadDrops: 3,
+      recent: [{ ...row("continuity"), estimatedPremiumUsd: 0.3 }] });
+    assert.equal(sampleNote.hidden, false);
+    assert.equal(sampleNote.textContent, translate("accounting.cacheImpact.bulletSample", {
+      shown: "1", total: "3",
+    }, locale));
     assert.equal(rows.children.length, 1);
     assert.equal(rows.children[0].children.length, 5);
     assert.deepEqual(rows.children[0].children.map((cell) => cell.getAttribute("data-label")), [
@@ -499,7 +507,8 @@ test("compact continuity rows preserve five translated columns, thread navigatio
       "120000 → 20000", "$0.30",
     ]);
     assert.equal(harness.state.cells.continuity.length, 1);
-    render({ status: "available", recent: [] });
+    render({ status: "available", cacheReadDrops: 0, recent: [] });
+    assert.equal(sampleNote.hidden, true);
     assert.equal(rows.children.length, 1);
     assert.equal(rows.children[0].children.length, 1);
     assert.equal(rows.children[0].children[0].colSpan, 5);

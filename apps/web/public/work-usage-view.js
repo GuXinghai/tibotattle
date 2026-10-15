@@ -184,7 +184,7 @@ export function validateWorkUsageResponse(value) {
   }
   return value;
 }
-const RETRYABLE_STATUS = new Set(["error", "unavailable"]);
+const RETRYABLE_STATUS = new Set(["error", "unavailable", "expired", "savedUnavailable"]);
 export function mountWorkUsageView(options = {}) {
   const {
     root,
@@ -241,6 +241,7 @@ export function mountWorkUsageView(options = {}) {
   let restorePageDepth = 0;
   let restoreScroll = null;
   let selectedTitle = options.detailTitle ?? null;
+  let worktreesOpen = false;
   let detailView = null;
   let detailLauncher = null;
   let detailRowId = null;
@@ -687,9 +688,10 @@ export function mountWorkUsageView(options = {}) {
     if (value) query.model = value;
     else delete query.model;
     resetPage();
+    notifyFilters();
     load();
   });
-  model.control.classList.add("model-picker");
+    if (!options.compact) model.control.classList.add("model-picker");
   function renderModelOptions(ids) {
     model.control.replaceChildren(
       ...[
@@ -727,7 +729,7 @@ export function mountWorkUsageView(options = {}) {
   });
   scope.wrapper.hidden = true;
   const refreshButton = button(tr("refresh"), refresh);
-  if (options.compact) refreshButton.hidden = true;
+  if (options.compact || options.detailTitle) refreshButton.hidden = true;
   const form = el("form", "work-usage-find");
   const findField = el("label", "work-usage-select work-usage-find-field");
   const findLabel = el("span", null, tr("find"));
@@ -746,10 +748,17 @@ export function mountWorkUsageView(options = {}) {
     root.classList.add("work-usage-compact");
     viewsField.hidden = true;
     sort.wrapper.hidden = true;
-    filterDisclosure.append(filterSummary, form, filters);
-    toolbar.append(viewsField, filterDisclosure);
+    toolbar.append(viewsField, form, filters);
   } else toolbar.append(viewsField, form, filters);
-  if (options.detailTitle) { viewsField.hidden = true; form.hidden = true; }
+  if (options.detailTitle) {
+    root.classList.add("work-usage-detail-report");
+    viewsField.hidden = true;
+    form.hidden = true;
+    toolbar.hidden = true;
+  }
+  function notifyFilters() {
+    options.onFilters?.({ search: searchValue(), model: query.model ?? "" });
+  }
   function clearSearchTimer() {
     clearLeaseTimer(searchTimer);
     searchTimer = null;
@@ -761,6 +770,7 @@ export function mountWorkUsageView(options = {}) {
   function deferSearch() {
     if (destroyed) return;
     clearSearchTimer();
+    notifyFilters();
     if (!searchPending && statusKey === "snapshot"
         && searchValue() === (query.search ?? query.findThread ?? "")) return;
     searchPending = true;
@@ -807,6 +817,7 @@ export function mountWorkUsageView(options = {}) {
     delete query.search;
     if (exactThread) query.findThread = value;
     else if (value) query.search = value;
+    notifyFilters();
     query.grouping = exactThread ? "thread" : options.compact ? query.grouping : "project";
     resetPage();
     return true;
@@ -847,7 +858,7 @@ export function mountWorkUsageView(options = {}) {
           issue.textContent += ` · ${note.reference}`;
       }).catch(() => {
         issue.hidden = false;
-        issue.textContent = tr("diagnosticFailed");
+        issue.textContent = `${tr("failureReason", { reason: tr(`failure.${reason}`) })} · ${tr("diagnosticFailed")}`;
       });
     }
   }
@@ -896,19 +907,24 @@ export function mountWorkUsageView(options = {}) {
   // load(), which owns cancellation, serial fencing and lease handling.
   const retryButton = button(tr("retry"), () => {
     if (destroyed) return;
-    refreshButton.focus?.();
-    load(true, { force: true });
+    retryButton.focus?.();
+    if (["expired", "savedUnavailable"].includes(statusKey)) refresh();
+    else load(true, { force: true });
   });
   retryButton.hidden = true;
   const body = el("div", "work-usage-body");
+  const filterResult = el("div", "work-usage-filter-result");
+  filterResult.hidden = true;
   const actions = el("div", "dashboard-actions work-usage-actions");
   actions.append(message, issue, retryButton, cancel);
   root.replaceChildren(
     heading,
     toolbar,
+    filterResult,
     actions,
     body,
   );
+  if (options.controlsRoot) options.controlsRoot.append(toolbar);
   const detailDialog = el("dialog", "work-usage-dialog");
   const detailHeading = el("h2");
   detailHeading.id = `${root.id}-detail-heading`;
@@ -951,28 +967,32 @@ export function mountWorkUsageView(options = {}) {
       sharedReporting: true,
       reportingWindow: { period: query.period, startAt: query.period === "all" ? null : new Date(Math.max(0, response.toMs - REPORTING_DURATION_MS[query.period])).toISOString(), endAt: new Date(response.toMs).toISOString() },
       initialQuery, detailTitle: label(row),
+      onTitle: value => { detailHeading.textContent = value; },
       renderInformationLabel: options.renderInformationLabel,
       onDiagnostic: options.onDiagnostic,
     });
     detailDialog.showModal();
     detailClose.focus();
   }
-  function renderRanking() {
+  function renderRanking({ detail = false } = {}) {
     rankLaunchers.clear();
     const list = el("div", "work-usage-ranking");
     const byCost = query.sort === "cost";
     const total = byCost ? (response.totals.costUsdExact === null ? null : Number(response.totals.costUsdExact)) : response.totals.tokens;
     for (const row of response.rows) {
-      const item = el("div", "work-usage-rank");
-      const open = button(label(row), () => openDetails(row, open), "work-usage-rank-open");
+      const open = button("", () => detail ? descend(row) : openDetails(row, open), "work-usage-rank work-usage-rank-open");
+      const item = open;
+      open.append(el("span", "work-usage-rank-name", label(row)));
       rankLaunchers.set(row.id, open);
-      open.setAttribute("aria-haspopup", "dialog");
+      if (!detail) open.setAttribute("aria-haspopup", "dialog");
       open.disabled = retainedReport();
       const value = byCost ? (row.costUsdExact === null ? null : Number(row.costUsdExact)) : row.tokens;
       const amount = el("span", "work-usage-rank-amount", byCost ? formatApiMoney(row.costUsdExact) : quantity(row.tokens));
       const share = formatSharePercent(value, total);
       const number = el("span", "work-usage-rank-number");
-      number.append(amount, el("small", "work-usage-muted", share ?? "—"));
+      number.append(amount);
+      if (byCost ? row.priceStatus !== "complete" : row.incompleteEvents > 0)
+        number.append(el("small", "work-usage-muted", tr(row.priceStatus === "unpriced" && byCost ? "unpriced" : "partial")));
       const track = el("span", "work-usage-rank-track");
       track.setAttribute("aria-hidden", "true");
       if (value !== null && total > 0) {
@@ -980,12 +1000,101 @@ export function mountWorkUsageView(options = {}) {
         fill.style.width = `${Math.max(0, Math.min(100, value / total * 100))}%`;
         track.append(fill);
       }
-      item.append(open, number, track);
-      if (row.incompleteEvents || row.priceStatus !== "complete")
-        item.append(el("small", "work-usage-muted", tr(row.priceStatus === "unpriced" ? "unpriced" : "partial")));
+      const proportion = el("span", "work-usage-rank-share");
+      proportion.append(track, el("small", "work-usage-muted", share ?? "—"));
+      const caret = el("span", "work-usage-rank-caret", "›");
+      caret.setAttribute("aria-hidden", "true");
+      item.append(number, proportion, caret);
       list.append(item);
     }
     body.append(list);
+  }
+  function appendCompactTotals(target, totals) {
+    const summary = el("div", "work-usage-detail-totals");
+    for (const [key, value, partial] of [
+      ["cost", formatApiMoney(totals.costUsdExact), totals.priceStatus !== "complete"],
+      ["tokenColumn", quantity(totals.tokens), totals.incompleteEvents > 0],
+    ]) {
+      const group = el("div");
+      group.append(el("span", "work-usage-muted", tr(key)), el("strong", null, value));
+      if (partial) group.append(el("small", "work-usage-muted", tr(key === "cost" && totals.priceStatus === "unpriced" ? "unpriced" : "partial")));
+      summary.append(group);
+    }
+    target.append(summary);
+  }
+  function detailTable(headers, rows, className = "") {
+    const wrap = el("div", "work-usage-detail-table-wrap");
+    const table = el("table", `work-usage-detail-table ${className}`);
+    const head = el("thead"); const line = el("tr");
+    for (const label of headers) { const th = el("th", null, label); th.scope = "col"; line.append(th); }
+    head.append(line); table.append(head);
+    const rowsNode = el("tbody");
+    for (const values of rows) {
+      const row = el("tr");
+      for (const value of values) { const cell = el("td"); if (typeof value === "object" && value !== null) cell.append(value); else cell.textContent = value; row.append(cell); }
+      rowsNode.append(row);
+    }
+    table.append(rowsNode); wrap.append(table); return wrap;
+  }
+  function appendDetailComponents(target, components) {
+    target.append(el("h3", null, tr("tokenMix")), detailTable(
+      [tr("details"), tr("tokenColumn")],
+      COMPONENTS.flatMap((key, i) => (i === 2 || i === 5) && !(components[key] > 0) ? [] : [[tr(COMPONENT_LABELS[i]), quantity(components[key])]]),
+    ));
+  }
+  function appendThreadModels(target, row) {
+    if (!row.modelBreakdown?.length) return;
+    if (row.subworkerCount > 0) target.append(el("h3", null, tr("contributions")), detailTable(
+      [tr("contributions"), tr("tokenColumn"), tr("cost")],
+      (row.contributions ?? []).map(part => [tr(part.id === "primary" ? "primaryThread" : "subworkers"), quantity(part.tokens), detailCost(part)]),
+    ));
+    const indices = [1, 0, 3, 4];
+    if (row.modelBreakdown.some(model => model.components[COMPONENTS[2]] > 0)) indices.splice(2, 0, 2);
+    if (row.modelBreakdown.some(model => model.components[COMPONENTS[5]] > 0)) indices.push(5);
+    target.append(el("h3", null, tr("model")), detailTable(
+      [tr("model"), ...indices.map(i => tr(COMPONENT_LABELS[i])), tr("cost")],
+      row.modelBreakdown.map(model => [formatModelName(model.id), ...indices.map(i => quantity(model.components[COMPONENTS[i]])), detailCost(model)]),
+    ));
+  }
+  function detailCost(row) {
+    const value = el("span", null, formatApiMoney(row.costUsdExact));
+    if (row.priceStatus !== "complete") value.append(el("small", "work-usage-muted", tr(row.priceStatus === "unpriced" ? "unpriced" : "partial")));
+    return value;
+  }
+  function renderDetailReport() {
+    options.onTitle?.(selectedTitle ?? options.detailTitle);
+    if (ancestors.length) body.append(button(`← ${tr("back")}`, () => {
+      const previous = ancestors.pop(); query = previous.query; pages = previous.pages;
+      restorePageDepth = previous.restorePageDepth ?? 0; restoreScroll = previous.scrollTop;
+      selectedTitle = previous.title; pendingFocus = previous.rowId; load();
+    }, "button button-quiet compact"));
+    appendCompactTotals(body, response.totals);
+    if (!response.rowCount) { body.append(el("p", "work-usage-empty", tr("empty"))); return; }
+    if (query.thread) {
+      const row = response.rows.find(row => row.id === query.thread);
+      appendDetailComponents(body, response.totals.components);
+      body.append(el("p", "work-usage-detail-events", `${tr("changes")}: ${quantity(response.totals.events)}`));
+      if (row) appendThreadModels(body, row);
+      const link = response.display[query.thread]?.codexUrl;
+      if (/^codex:\/\/threads\/[0-9a-f-]{36}$/iu.test(link ?? "")) {
+        const open = el("a", "button button-quiet compact", tr("open")); open.href = link; open.rel = "noreferrer"; body.append(open);
+      }
+    } else {
+      body.append(el("h3", null, tr(query.grouping === "worktree" ? "worktrees" : "threads")));
+      renderRanking({ detail: true });
+      if (query.project && !query.worktree) {
+        const worktrees = el("details", "work-usage-worktrees");
+        worktrees.open = worktreesOpen;
+        worktrees.addEventListener("toggle", () => { worktreesOpen = worktrees.open; });
+        worktrees.append(el("summary", null, tr("worktrees")), button(tr("worktrees"), () => {
+          // Worktree navigation uses the same report and restores the thread page on Back.
+          ancestors.push({ query: { ...query }, pages: [...pages], scrollTop: root.closest?.("dialog")?.scrollTop ?? 0, title: selectedTitle });
+          query.grouping = "worktree"; resetPage(); load();
+        }, "button button-quiet compact"));
+        body.append(worktrees);
+      }
+      appendDetailComponents(body, response.totals.components);
+    }
   }
   function resetPage() {
     restorePageDepth = 0;
@@ -1183,11 +1292,29 @@ export function mountWorkUsageView(options = {}) {
       render();
     }
   }
+  function renderFilterResult() {
+    if (options.compact) {
+      const filtered = Boolean(query.model || query.search || query.findThread);
+      filterResult.hidden = !filtered;
+      filterResult.replaceChildren();
+      if (filtered) {
+        const subtotal = el("span", null, `${tr("filteredResult")}: ${formatApiMoney(response.totals.costUsdExact)} · ${quantity(response.totals.tokens)} ${tr("tokenColumn")}`);
+        const clear = quietButton(tr("clearFilters"), () => {
+          input.value = ""; delete query.model; model.control.value = "";
+          searchPending = true; notifyFilters(); load();
+        });
+        filterResult.append(subtotal, clear);
+      }
+    }
+  }
   function render() {
     body.replaceChildren();
-    const evidence = appendUsageEvidence();
-    if (evidence) body.append(evidence);
+    renderFilterResult();
     let focusTarget;
+    if (options.detailTitle) renderDetailReport();
+    else {
+    const evidence = options.compact ? null : appendUsageEvidence();
+    if (evidence) body.append(evidence);
     if (ancestors.length)
       body.append(
         button(`← ${tr("back")}`, () => {
@@ -1281,8 +1408,8 @@ export function mountWorkUsageView(options = {}) {
       body.append(mix);
     }
     }
-    if (query.search) body.append(el("p", "annotation work-usage-search-note", tr("searchNote")));
-    body.append(
+    if (query.search && !options.compact) body.append(el("p", "annotation work-usage-search-note", tr("searchNote")));
+    if (!options.compact) body.append(
       el(
         "p",
         "work-usage-caption",
@@ -1658,6 +1785,7 @@ export function mountWorkUsageView(options = {}) {
     panel.append(wrap);
     body.append(panel);
     }
+    }
     body.dataset.state = "ready";
     const pagination = el("div", "table-pagination");
     const previous = quietButton(tr("previous"), () => {
@@ -1694,9 +1822,12 @@ export function mountWorkUsageView(options = {}) {
       ),
       next,
     );
-    body.append(pagination);
+    if ((!singlePage && !query.thread) || !options.compact && !options.detailTitle) body.append(pagination);
+
     if (response.namesAvailable === false)
       body.append(el("p", "work-usage-caption", tr("savedNamesUnavailable")));
+    if (pendingFocus && options.compact || pendingFocus && options.detailTitle)
+      focusTarget = rankLaunchers.get(pendingFocus) ?? (pendingFocus === "first-row" ? rankLaunchers.values().next().value : null);
     focusTarget?.focus({ preventScroll: true });
     if (restoreScroll !== null) {
       const scrollHost = root.closest?.("dialog");
@@ -2177,6 +2308,10 @@ export function mountWorkUsageView(options = {}) {
   }
   windowRef.addEventListener("tibotattle:locale-change", relocalize);
   return {
+    clearFilters() {
+      input.value = ""; delete query.model; model.control.value = "";
+      searchPending = true; notifyFilters(); load();
+    },
     setGrouping(grouping) {
       if (!["project", "thread"].includes(grouping) || query.grouping === grouping) return;
       query.grouping = grouping;

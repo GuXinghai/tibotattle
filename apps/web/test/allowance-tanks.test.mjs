@@ -194,13 +194,27 @@ test("one forecast preserves pace, evidence and early/unknown gates across refre
   assert.equal(h.card.hidden, true);
   assert.equal(h.card.children.length, 0);
 });
-test("the Overview owns current pace independently of historical plan selection", () => {
+test("the Allowance forecast follows current observations independently of historical plan selection", () => {
   assert.match(
     declaration("renderLiveObservationPresentation"),
     /renderQuotaCards\(presentation\);\s+renderWeeklyPaceForecast\(presentation\);/u,
   );
   assert.doesNotMatch(declaration("renderWeekly"), /renderWeeklyPaceForecast/u);
-  assert.match(declaration("ensureWeeklyPaceForecastCard"), /#quota-cards/u);
+  const weekly = new Element();
+  let mountedCard = null;
+  const ensure = Function("$", "node", `${declaration("ensureWeeklyPaceForecastCard")}\nreturn ensureWeeklyPaceForecastCard;`)(
+    selector => selector === "#weekly" ? weekly : selector === "#weekly-pace-forecast" ? mountedCard : null,
+    (...args) => { mountedCard = new Element(...args); return mountedCard; },
+  );
+  weekly.prepend = (child) => { weekly.children.unshift(child); };
+  assert.equal(ensure(), mountedCard);
+  assert.equal(weekly.children[0], mountedCard, "the forecast belongs to Allowance");
+  assert.equal(mountedCard.id, "weekly-pace-forecast");
+  assert.equal(mountedCard.attributes["aria-live"], "polite");
+  assert.equal(ensure(), mountedCard);
+  assert.equal(weekly.children.length, 1, "observation refresh reuses the existing card");
+  const layout = source.slice(source.indexOf("function mountDashboardLayout("));
+  assert.match(layout, /view\("forecast", "#weekly-pace-forecast"\)/u);
   assert.match(declaration("renderDashboardSkeleton"), /forecast.hidden = true; clear\(forecast\)/u);
 });
 

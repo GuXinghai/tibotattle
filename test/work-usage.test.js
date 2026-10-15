@@ -752,8 +752,9 @@ test("name search discovers off-page project and worker names before pagination 
   assert.equal(worker.rows[0].id, "repo-b");
   assert.equal(worker.rows[0].tokens, 28);
   assert.equal(worker.rows[0].costUsdExact, "2.8");
-  assert.equal(worker.rows[0].share, 28 / 130);
-  assert.deepEqual(worker.totals, initial.totals);
+  assert.equal(worker.rows[0].share, 1);
+  assert.equal(worker.totals.tokens, 28);
+  assert.equal(worker.totals.costUsdExact, "2.8");
   const family = await service.query({ ...pinned, grouping: "thread", project: "repo-b", search: "測試" });
   assert.equal(family.rowCount, 1);
   assert.equal(family.rows[0].id, "root");
@@ -769,8 +770,10 @@ test("name search discovers off-page project and worker names before pagination 
   const noMatch = await service.query({ ...pinned, search: "does not exist" });
   assert.equal(noMatch.rowCount, 0);
   assert.deepEqual(noMatch.rows, []);
-  assert.deepEqual(noMatch.totals, initial.totals);
+  assert.equal(noMatch.totals.events, 0);
+  assert.equal(noMatch.totals.tokens, 0);
   const allMatches = await service.query({ ...pinned, search: "Synthetic project" });
+  assert.equal(allMatches.totals.tokens, 130, "all matched pages contribute to the denominator");
   assert.ok(allMatches.nextCursor);
   await assert.rejects(service.query({ ...pinned, search: "Beta", cursor: allMatches.nextCursor }), error => error.code === "work_usage_snapshot_changed");
   const next = await service.query({ ...pinned, search: " SYNTHETIC PROJECT ", cursor: allMatches.nextCursor });

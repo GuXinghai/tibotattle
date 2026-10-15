@@ -2603,7 +2603,7 @@ test("open details follow publication while retaining thread navigation, page an
   findMounted(content, n => n.tagName === "BUTTON" && n.textContent === "Next" && !n.hidden)[0].click();
   await settleMountedView();
   assert.equal(calls.at(-1).cursor, `next-${NOW}`);
-  findMounted(content, n => n.classList.contains("work-usage-row-link") && n.textContent === "Thread A")[0].click();
+  findMounted(content, n => n.classList.contains("work-usage-rank-open") && n.textContent.startsWith("Thread A"))[0].click();
   await settleMountedView();
   assert.equal(calls.at(-1).thread, THREAD_A.id);
   dialog.scrollTop = 240;
@@ -2644,4 +2644,53 @@ test("foreground timeout is visible, recorded and retryable rather than silently
   assert.match(mounted.root.textContent, /Request timed out/);
   assert.equal(notes[0].code, "work_usage_timeout");
   assert.ok(findMounted(mounted.root, n => n.tagName === "BUTTON" && n.textContent === "Retry" && !n.hidden).length);
+});
+
+test("compact search and model filters stay outside the report, publish a subtotal and clear together", async (t) => {
+  const mounted = mountedLeaseRoot();
+  const controlsRoot = mounted.documentRef.createElement('div');
+  const filters = [], calls = [];
+  const view = mountWorkUsageView({ ...mounted, compact: true, controlsRoot, t: mountedTranslator,
+    onFilters: value => filters.push(value),
+    fetchRef: async (_url, init) => { calls.push(JSON.parse(init.body)); return httpResponse(PROJECT_ROWS_RESPONSE); },
+  });
+  t.after(() => view.destroy()); await settleMountedView();
+  assert.equal(mounted.root.querySelectorAll('INPUT').length, 0);
+  const input = controlsRoot.querySelectorAll('INPUT')[0];
+  input.value = 'Project'; input.dispatchEvent({type:'input'});
+  await mounted.runTimer(300); await settleMountedView();
+  const model = controlsRoot.querySelectorAll('SELECT')[1];
+  model.value = 'model-a'; model.dispatchEvent({type:'change'}); await settleMountedView();
+  assert.equal(calls.at(-1).search, 'Project'); assert.equal(calls.at(-1).model, 'model-a');
+  assert.deepEqual(filters.at(-1), {search:'Project',model:'model-a'});
+  assert.equal(mounted.root.querySelector('.work-usage-filter-result').hidden, false);
+  view.clearFilters(); await settleMountedView();
+  assert.equal(calls.at(-1).search, undefined); assert.equal(calls.at(-1).model, undefined);
+  assert.equal(mounted.root.querySelector('.work-usage-filter-result').hidden, true);
+  assert.equal(mounted.root.querySelectorAll('.table-pagination').length, 0);
+});
+
+test("thread detail presents each component once, keeps participant/model evidence and omits duplicated summary rows", async (t) => {
+  const mounted = mountedLeaseRoot();
+  const response = structuredClone(THREAD_A_RESPONSE);
+  response.rows = [response.rows[0]]; response.rowCount = 1;
+  const row = response.rows[0];
+  row.subworkerCount = 1;
+  row.contributions = [mountedRow({id:'primary',kind:'contribution',tokens:20,cost:'2.00',events:1,share:null}), mountedRow({id:'subworkers',kind:'contribution',tokens:5,cost:'0.50',events:1,share:null})];
+  row.modelBreakdown = [mountedRow({id:'gpt-6-luna',kind:'model',tokens:25,cost:'2.50',events:1,share:null})];
+  response.totals.components = completeComponents({input_cache_read_tokens:0,input_uncached_tokens:20,output_text_tokens:null,output_reasoning_tokens:null,output_combined_tokens:5});
+  const view = mountWorkUsageView({ ...mounted, detailTitle:'Thread A', initialQuery:{thread:'thread-a'}, t:mountedTranslator, fetchRef:async()=>httpResponse(response) });
+  t.after(()=>view.destroy()); await settleMountedView();
+  const body=mounted.root.querySelector('.work-usage-body');
+  assert.equal(body.querySelectorAll('.work-usage-detail-totals').length,1);
+  assert.equal(body.querySelectorAll('.work-usage-table').length,0);
+  assert.equal(body.querySelectorAll('.work-usage-detail-title').length,0);
+  assert.equal(mounted.root.querySelector('.work-usage-toolbar').hidden,true);
+  assert.ok(body.textContent.includes(mountedTranslator('workUsage.combined')));
+  assert.ok(!body.textContent.includes(mountedTranslator('workUsage.cacheWrite')));
+  assert.ok(body.textContent.includes(mountedTranslator('workUsage.contributions')));
+  assert.ok(body.textContent.includes('GPT-6 Luna'));
+  const componentRows=body.querySelectorAll('TABLE')[0].querySelectorAll('TR');
+  assert.equal(componentRows.length,6, 'header plus four base components and real combined output');
+  assert.ok(componentRows.some(r=>r.textContent.includes('—')), 'unknown output stays unknown');
 });

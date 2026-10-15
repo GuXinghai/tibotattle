@@ -188,6 +188,7 @@ let usageSimpleCounts = null;
 let usageSimpleCountsContext = null;
 let usageSimpleModelAccounting = null;
 let usageSimpleModelsUnavailable = false;
+let usageSimpleFilters = { search: "", model: "" };
 // Which model rows the reader has opened. Held outside the render so a
 // background refresh redraws the table without collapsing a row mid-read.
 const accountingExpandedModels = new Set();
@@ -8331,25 +8332,19 @@ function renderAccountingContent(data) {
     ? t("accounting.projection.lastVerifiedPeriod", { period: currentPeriodNote })
     : null;
   for (const [label, explanation, value, periodNote] of headlineRows) {
-    const note = retainedPeriodNote !== null && periodNote === currentPeriodNote
-      ? retainedPeriodNote
-      : periodNote;
+    const note = retainedEvidence ? retainedPeriodNote ?? periodNote : "";
     const card = node("article", "metric-card compact-metric");
     const metricLabel = node("span", "metric-name");
-    metricLabel.append(informationLabel(label, explanation));
+    metricLabel.textContent = localization.translateText(label);
+    metricLabel.title = explanation;
     card.append(
       metricLabel,
-      node("strong", "metric-value", value),
-      node("p", "", note)
+      node("strong", "metric-value", value)
     );
+    if (note) card.append(node("p", "", note));
+    if (summary.children.length === 0 && accounting.speedPricingCoverageStatus !== "fully_priced")
+      card.append(localizedNode("small", "annotation", "dashboard.overview.partial"));
     summary.append(card);
-  }
-  const tokenCard = summary.querySelectorAll("article")[1];
-  if (tokenCard) {
-    const counts = node("p", "", "");
-    counts.id = "usage-simple-counts";
-    tokenCard.append(counts);
-    updateUsageSimpleCounts();
   }
   const cacheSwitchImpact = accounting.cacheSwitchImpact;
   const cacheSwitchCard = node("article", "metric-card compact-metric cache-impact-card");
@@ -8815,15 +8810,31 @@ function renderUsageSimpleModels(accounting, unavailable) {
   const host = $("#usage-simple-models");
   if (!host) return;
   clear(host);
-  const rows = unavailable ? [] : modelUsageRows(accounting);
+  const allRows = unavailable ? [] : modelUsageRows(accounting);
+  const rows = allRows.filter(model => (!usageSimpleFilters.model || model.model === usageSimpleFilters.model)
+    && (!usageSimpleFilters.search || `${model.model} ${formatModelName(model.model)}`.toLocaleLowerCase().includes(usageSimpleFilters.search.toLocaleLowerCase())))
+    .sort((a, b) => usageSimpleMetric === "cost"
+      ? (finite(b.apiPriceEquivalentUsd) ?? -1) - (finite(a.apiPriceEquivalentUsd) ?? -1)
+      : (finite(b.totalTokens) ?? -1) - (finite(a.totalTokens) ?? -1));
   if (!rows.length) {
     host.append(localizedNode("p", "annotation", unavailable
       ? "accounting.model.unavailable" : "accounting.model.noneInPeriod"));
+    if (usageSimpleFilters.search || usageSimpleFilters.model) {
+      const clear = node("button", "button button-quiet compact", t("workUsage.clearFilters"));
+      clear.type = "button"; clear.addEventListener("click", () => workUsageView.clearFilters()); host.append(clear);
+    }
     return;
   }
-  const total = usageSimpleMetric === "cost"
-    ? finite(accounting?.speedApiPriceEquivalentUsd)
-    : finite(accounting?.totalTokens);
+  const filtered = Boolean(usageSimpleFilters.search || usageSimpleFilters.model);
+  const selectedAmounts = rows.map(row => usageSimpleMetric === "cost" ? finite(row.apiPriceEquivalentUsd) : finite(row.totalTokens));
+  const total = filtered ? selectedAmounts.some(value => value === null) ? null : selectedAmounts.reduce((sum, value) => sum + value, 0)
+    : usageSimpleMetric === "cost" ? finite(accounting?.speedApiPriceEquivalentUsd) : finite(accounting?.totalTokens);
+  if (filtered) {
+    const line = node("div", "work-usage-filter-result");
+    line.append(node("span", "", t("workUsage.filteredResult")), node("strong", "", usageSimpleMetric === "cost" ? formatApiMoney(total) : formatCount(total)));
+    const clear = node("button", "button button-quiet compact", t("workUsage.clearFilters"));
+    clear.type = "button"; clear.addEventListener("click", () => workUsageView.clearFilters()); line.append(clear); host.append(line);
+  }
   for (const model of rows) {
     const button = node("button", "usage-simple-model-row");
     button.type = "button";
@@ -8845,7 +8856,6 @@ function renderUsageSimpleModels(accounting, unavailable) {
       : usageSimpleMetric === "cost" ? formatApiMoney(amount) : formatCount(amount)));
     const share = amount !== null && !modelRowIsSeparateAllowance(model)
       ? formatSharePercent(amount, total) : null;
-    values.append(node("span", "annotation", share ?? "—"));
     if (usageSimpleMetric === "cost" && amount !== null
         && model.speedPricingCoverageStatus !== "fully_priced") {
       values.append(localizedNode("span", "annotation", "dashboard.overview.partial"));
@@ -8857,10 +8867,12 @@ function renderUsageSimpleModels(accounting, unavailable) {
     fill.style.width = `${amount !== null && total > 0
       ? Math.min(100, Math.max(0, amount / total * 100)) : 0}%`;
     track.append(fill);
-    button.append(track);
+    const proportion = node("span", "work-usage-rank-share");
+    proportion.append(track, node("small", "work-usage-muted", share ?? "—"));
+    button.append(proportion, node("span", "work-usage-rank-caret", "›"));
     button.addEventListener("click", () => {
       accountingExpandedModels.add(model.model);
-      const index = rows.findIndex(candidate => candidate.model === model.model);
+      const index = allRows.findIndex(candidate => candidate.model === model.model);
       accountingModelsTablePagination.page = Math.floor(index / CACHE_IMPACT_TABLE_PAGE_SIZE);
       renderAccountingModels(usageSimpleModelAccounting, { unavailable: usageSimpleModelsUnavailable, preserveCompact: true });
       $("#usage-model-details > summary").click();
@@ -9984,6 +9996,11 @@ document.addEventListener("scroll", () => {
 const workUsageView = mountWorkUsageView({
   root: document.querySelector("#projects"), t, renderInformationLabel: informationLabel,
   sharedReporting: true, reportingWindow: null, compact: true,
+  controlsRoot: document.querySelector(".usage-simple-controls"),
+  onFilters(filters) {
+    usageSimpleFilters = filters;
+    renderUsageSimpleModels(usageSimpleModelAccounting, usageSimpleModelsUnavailable);
+  },
   async onDiagnostic({ code }) {
     const result = await describeFailure({
       surface: "local_refresh", error: { code }, fallback: t("workUsage.error"),
@@ -10098,7 +10115,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   documentRef.addEventListener("click", event => {
     const summary = event.target.closest?.("summary");
     const details = summary?.parentElement;
-    if (details?.tagName !== "DETAILS" || !main.contains(details)
+    if (details?.tagName !== "DETAILS" || !main.contains(details) || details.closest?.("dialog")
         || typeof dialog.showModal !== "function") return;
     event.preventDefault();
     disclosure = details;
@@ -10120,6 +10137,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     }
   });
   dialog.addEventListener("close", restore);
+  documentRef.querySelector("#overview-details-close")?.addEventListener("click", () => dialog.close());
   const refreshNotice = documentRef.querySelector("#connection-notice");
   documentRef.addEventListener("click", event => {
     if (refreshNotice?.open && !refreshNotice.contains(event.target)) refreshNotice.open = false;

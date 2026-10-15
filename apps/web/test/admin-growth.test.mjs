@@ -238,18 +238,21 @@ test("sparkline inspection exposes dated values for pointer and keyboard input",
     ], "Approved accounts", String);
     assert.equal(chart.tabIndex, 0, "the chart has one keyboard focus target");
     const [svg, tooltip] = chart.children;
+    const dayLabel = (day) => new Intl.DateTimeFormat(undefined, {
+      timeZone: "UTC", month: "short", day: "numeric", year: "numeric",
+    }).format(new Date(`${day}T00:00:00.000Z`));
     svg.getBoundingClientRect = () => ({ left: 0, width: 120 });
     chart.listeners.get("pointermove")({ clientX: 2 });
-    assert.match(tooltip.textContent, /Aug 21, 2026 · 4/u);
+    assert.equal(tooltip.textContent, `${dayLabel("2026-08-21")} · 4`);
     let prevented = false;
     chart.listeners.get("keydown")({
       key: "End",
       preventDefault() { prevented = true; },
     });
     assert.equal(prevented, true);
-    assert.match(tooltip.textContent, /Aug 23, 2026 · 9/u);
+    assert.equal(tooltip.textContent, `${dayLabel("2026-08-23")} · 9`);
     chart.listeners.get("keydown")({ key: "ArrowLeft", preventDefault() {} });
-    assert.match(tooltip.textContent, /Aug 22, 2026 · 7/u);
+    assert.equal(tooltip.textContent, `${dayLabel("2026-08-22")} · 7`);
   } finally {
     if (previousDocument === undefined) delete globalThis.document;
     else globalThis.document = previousDocument;

@@ -221,44 +221,46 @@ test("detail retention covers every pageable window and clears with the result s
   assert.equal(h.state.size, 0);
 });
 
-test("all divergence periods are reachable ten rows at a time", () => {
+test("all divergence periods remain reachable exactly once across compact pages", () => {
   const h = harness();
   h.render(snapshot(), Array.from({ length: 25 }, (_, i) => period(100 * i)));
 
-  assert.equal(h.element("#divergence-list").children.length, 10);
-  assert.equal(h.element("#divergence-pagination").hidden, false);
-  assert.equal(h.element("#divergence-page-prev").disabled, true);
-  assert.equal(h.element("#divergence-page-next").disabled, false);
-  assert.match(h.element("#divergence-page-status").textContent, /1 10 25/u);
+  const reached = [];
+  for (let page = 0; page < 7; page += 1) {
+    const cards = h.element("#divergence-list").children;
+    assert.equal(cards.length, page === 6 ? 1 : 4);
+    assert.equal(h.element("#divergence-pagination").hidden, false);
+    assert.equal(h.element("#divergence-page-prev").disabled, page === 0);
+    assert.equal(h.element("#divergence-page-next").disabled, page === 6);
+    assert.equal(h.element("#divergence-page-status").textContent,
+      `divergence.pagination.page ${page * 4 + 1} ${Math.min(page * 4 + 4, 25)} 25`);
+    for (const card of cards) {
+      const entry = [...h.state].find(([, state]) => state.toggle === card.children.at(-2));
+      assert.ok(entry, "each visible card has a retained detail identity");
+      reached.push(entry[0]);
+    }
+    if (page < 6) h.next();
+  }
+  assert.equal(reached.length, 25);
+  assert.equal(new Set(reached).size, 25, "no period is duplicated or omitted");
 
   h.next();
-  assert.equal(h.element("#divergence-list").children.length, 10);
-  assert.equal(h.element("#divergence-page-prev").disabled, false);
-  assert.equal(h.element("#divergence-page-next").disabled, false);
-  assert.match(h.element("#divergence-page-status").textContent, /11 20 25/u);
-
-  h.next();
-  assert.equal(h.element("#divergence-list").children.length, 5);
-  assert.equal(h.element("#divergence-page-prev").disabled, false);
+  assert.equal(h.element("#divergence-list").children.length, 1);
   assert.equal(h.element("#divergence-page-next").disabled, true);
-  assert.match(h.element("#divergence-page-status").textContent, /21 25 25/u);
-
-  h.next();
-  assert.equal(h.element("#divergence-list").children.length, 5);
   h.previous();
-  assert.equal(h.element("#divergence-list").children.length, 10);
+  assert.equal(h.element("#divergence-list").children.length, 4);
 });
 
 test("a changed divergence population returns to the first page", () => {
   const h = harness();
   h.render(snapshot(), Array.from({ length: 25 }, (_, i) => period(100 * i)));
   h.next();
-  assert.match(h.element("#divergence-page-status").textContent, /11 20 25/u);
+  assert.match(h.element("#divergence-page-status").textContent, /5 8 25/u);
 
   h.render(snapshot(), Array.from({ length: 12 }, (_, i) => period(1_000 + 100 * i)));
-  assert.equal(h.element("#divergence-list").children.length, 10);
+  assert.equal(h.element("#divergence-list").children.length, 4);
   assert.equal(h.element("#divergence-page-prev").disabled, true);
-  assert.match(h.element("#divergence-page-status").textContent, /1 10 12/u);
+  assert.match(h.element("#divergence-page-status").textContent, /1 4 12/u);
 });
 
 test("paging away and back preserves an expanded loaded breakdown", async () => {
@@ -278,8 +280,15 @@ test("paging away and back preserves an expanded loaded breakdown", async () => 
 
 test("single-page divergence results hide the pager", () => {
   const h = harness();
-  h.render(snapshot(), Array.from({ length: 10 }, (_, i) => period(100 * i)));
-  assert.equal(h.element("#divergence-list").children.length, 10);
+  h.render(snapshot(), Array.from({ length: 4 }, (_, i) => period(100 * i)));
+  assert.equal(h.element("#divergence-list").children.length, 4);
+  assert.equal(h.element("#divergence-pagination").hidden, true);
+  h.render(snapshot(), Array.from({ length: 5 }, (_, i) => period(100 * i)));
+  assert.equal(h.element("#divergence-pagination").hidden, false);
+  h.next();
+  assert.equal(h.element("#divergence-list").children.length, 1);
+  assert.equal(h.element("#divergence-page-next").disabled, true);
+  h.render(snapshot(), []);
   assert.equal(h.element("#divergence-pagination").hidden, true);
 });
 

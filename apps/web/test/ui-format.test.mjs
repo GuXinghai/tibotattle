@@ -33,6 +33,11 @@ import {
   setMessageLocale,
 } from "../public/ui-format.js";
 
+test.beforeEach(() => {
+  setFormattingLocale("en-US");
+  setMessageLocale("en-US");
+});
+
 test.afterEach(() => {
   setFormattingLocale("en-US");
   setMessageLocale("en-US");
@@ -54,6 +59,24 @@ test("shared number formatters keep missing values separate from zero", () => {
   assert.equal(formatApiMoney("9007199254740993.00"), "$9,007,199,254,740,993.00");
   assert.equal(formatApiMoney("0"), "$0.00");
   assert.equal(formatApiMoney(null), UNKNOWN_DISPLAY_VALUE);
+});
+
+test("regional money display preserves exact amounts, real zero and missing evidence", () => {
+  for (const locale of ["en-US", "zh-Hans", "es"]) {
+    setFormattingLocale(locale);
+    const usd = new Intl.NumberFormat(locale, {
+      style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2,
+    });
+    for (const value of [0, "2129.25", "9007199254740993.00"]) {
+      assert.equal(formatMoney(value, 2), usd.format(value), locale);
+      assert.equal(formatApiMoney(value), usd.format(value), locale);
+    }
+    assert.equal(formatApiMoney("0.001"), `<${usd.format(0.01)}`, locale);
+    for (const value of [null, undefined, NaN]) {
+      assert.equal(formatMoney(value, 2), UNKNOWN_DISPLAY_VALUE, locale);
+      assert.equal(formatApiMoney(value), UNKNOWN_DISPLAY_VALUE, locale);
+    }
+  }
 });
 
 test("percentage and percentage-point helpers preserve units and endpoints", () => {

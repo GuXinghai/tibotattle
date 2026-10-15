@@ -9,11 +9,26 @@ const render = source.slice(source.indexOf("function renderLocalOnboarding(value
 
 function onboardingHarness(locale = "en-US") {
   const nodes = new Map();
+  const element = (tagName = "DIV") => ({
+    tagName, hidden: true, open: false, dataset: {}, isConnected: true,
+    classList: { toggle() {} }, children: [], removeAttribute() {}, setAttribute() {},
+    get childNodes() { return this.children; },
+    append(...children) {
+      for (const child of children) {
+        if (child.parentElement) {
+          const siblings = child.parentElement.children;
+          siblings.splice(siblings.indexOf(child), 1);
+        }
+        child.parentElement = this;
+        this.children.push(child);
+      }
+    },
+    replaceChildren() { this.children = []; },
+    closest(selector) { return selector === "summary" && this.tagName === "SUMMARY" ? this : null; },
+    focus() { this.focused = true; },
+  });
   const get = (id) => {
-    if (!nodes.has(id)) nodes.set(id, {
-      hidden: true, open: true, dataset: {}, classList: { toggle() {} },
-      children: [], removeAttribute() {}, setAttribute() {}, append(...children) { this.children.push(...children); },
-    });
+    if (!nodes.has(id)) nodes.set(id, element());
     return nodes.get(id);
   };
   const context = vm.createContext({
@@ -29,7 +44,52 @@ function onboardingHarness(locale = "en-US") {
   vm.runInContext(source.slice(source.indexOf("function onboardingSourceGuidance(value) {"), source.indexOf("\nlet reportingWindow")), context);
   vm.runInContext(render, context);
   const ready = { state: "ready", sourceStatus: "ready", stateWritable: true, rolloutFilesPresent: true, rolloutFilesObserved: 3 };
-  return { context, get, card: get("#setup-card"), ready, setLocale(value) { locale = value; }, update: (value = ready) => context.renderLocalOnboarding(value) };
+  const card = get("#setup-card");
+  card.tagName = "DETAILS";
+  const summary = element("SUMMARY");
+  summary.textContent = "Local setup";
+  const body = element();
+  body.append(get("#setup-summary"), get("#setup-checks"), get("#setup-note"));
+  card.append(summary, body);
+  const dialog = element("DIALOG"), content = element(), title = element();
+  const listeners = new Map(), windowListeners = new Map(), dialogListeners = new Map();
+  const frames = [];
+  const documentRef = {
+    body: { dataset: { dashboardPage: "overview" } },
+    querySelector: selector => ({ "#overview-details-dialog": dialog,
+      "#overview-details-content": content, "#overview-details-title": title,
+      "#main": { contains: target => target === card } })[selector] ?? null,
+    addEventListener(name, handler) {
+      if (!listeners.has(name)) listeners.set(name, []);
+      listeners.get(name).push(handler);
+    },
+  };
+  const windowRef = {
+    addEventListener(name, handler) { windowListeners.set(name, handler); },
+    requestAnimationFrame(handler) { frames.push(handler); return frames.length; },
+  };
+  dialog.addEventListener = (name, handler) => dialogListeners.set(name, handler);
+  dialog.showModal = () => { dialog.open = true; };
+  dialog.close = () => { dialog.open = false; dialogListeners.get("close")(); };
+  const layoutStart = source.indexOf("function mountDashboardLayout(");
+  const layoutEnd = source.indexOf("\n// Mount the view switches first:", layoutStart);
+  assert.ok(layoutStart >= 0 && layoutEnd > layoutStart);
+  vm.runInContext(source.slice(layoutStart, layoutEnd), context);
+  context.mountDashboardLayout({ documentRef, windowRef });
+  const settleLayout = () => {
+    windowListeners.get("tibotattle:locale-change")();
+    while (frames.length) frames.shift()();
+  };
+  settleLayout();
+  return { context, get, card, ready, dialog, content, body, summary, settleLayout,
+    setLocale(value) { locale = value; },
+    open() {
+      const event = { target: summary, preventDefault() { this.defaultPrevented = true; } };
+      for (const handler of listeners.get("click")) handler(event);
+      assert.equal(event.defaultPrevented, true, "the summary opens a modal instead of expanding Overview");
+    },
+    update: (value = ready) => context.renderLocalOnboarding(value),
+  };
 }
 
 test("setup failures render in the selected language and update after language changes", () => {
@@ -54,34 +114,61 @@ test("setup failures render in the selected language and update after language c
   }
 });
 
-test("setup disclosure preserves manual expansion but opens when readiness needs attention", () => {
+test("setup dialog keeps live details across readiness refreshes and restores content and focus on close", () => {
   const h = onboardingHarness();
   h.update();
   assert.equal(h.card.open, false);
-  h.card.open = true;
-  h.update();
-  assert.equal(h.card.open, true, "a refresh preserves manual expansion");
-  h.card.open = false;
+  assert.equal(h.card.dataset.setupMode, "ready");
+  h.open();
+  assert.equal(h.dialog.open, true);
+  assert.deepEqual(h.content.children, [h.body], "move the actual detail nodes, not a stale copy");
+  assert.deepEqual(h.card.children, [h.summary]);
   h.context.dashboard.collector.indexing = { status: "bounded_pause", filesProcessed: 1, filesSelected: 3 };
   h.update();
-  assert.equal(h.card.open, true, "a bounded pass needs an accessible continuation action");
+  h.settleLayout();
+  assert.equal(h.dialog.open, true, "background readiness updates preserve an open dialog");
+  assert.equal(h.card.open, false, "attention never expands the primary page");
+  assert.equal(h.card.dataset.setupMode, "attention");
+  assert.equal(h.get("#setup-summary").textContent, translate("setup.state.boundedCopy", {
+    processed: "1", selected: "3",
+  }, "en-US"));
+  assert.equal(h.content.children[0], h.body);
   h.context.dashboard.collector.indexing = null;
   h.update();
   assert.equal(h.card.open, false);
   h.update({ ...h.ready, stateWritable: false, stateStatus: "unwritable" });
-  assert.equal(h.card.open, true, "an unwritable state must expose recovery guidance");
+  assert.equal(h.card.open, false);
+  assert.equal(h.card.dataset.setupMode, "attention");
+  assert.equal(h.get("#setup-title").textContent, translate("setup.state.unwritableTitle", {}, "en-US"));
+  assert.equal(h.get("#setup-summary").textContent, translate("setup.state.unwritableCopy", {}, "en-US"));
   h.context.dashboard.collector.indexing = { status: "recent_7d_indexing" };
   h.update();
   assert.equal(h.card.open, false, "ready setup stays compact while collection runs in the header");
+  h.dialog.close();
+  assert.deepEqual(h.card.children, [h.summary, h.body]);
+  assert.equal(h.content.children.length, 0);
+  assert.equal(h.summary.focused, true);
+  h.open();
   h.update({ state: "unavailable" });
+  h.settleLayout();
   assert.equal(h.card.hidden, true, "unavailable onboarding is not a ready status");
+  assert.equal(h.dialog.open, false, "an unavailable disclosure cannot leave a stale dialog open");
 });
 
-test("setup stays expanded before any dashboard results exist", () => {
+test("setup remains reachable in a dialog before dashboard results exist without expanding Overview", () => {
   const h = onboardingHarness();
   h.context.dashboard = null;
   h.update();
-  assert.equal(h.card.open, true);
+  assert.equal(h.card.hidden, false);
+  assert.equal(h.card.open, false);
+  assert.equal(h.card.dataset.setupMode, "attention");
+  assert.equal(h.get("#setup-checks").children.length, 3);
+  h.open();
+  assert.equal(h.dialog.open, true);
+  assert.equal(h.content.children[0], h.body);
+  h.dialog.close();
+  assert.equal(h.card.children[1], h.body);
+  assert.equal(h.summary.focused, true);
 });
 
 test("translated setup checks preserve list semantics and capped observation counts", () => {
