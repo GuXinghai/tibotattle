@@ -25,6 +25,7 @@ import {
   resolveLocalLegacyReportReadPath,
 } from "../../src/local-legacy-report-storage.js";
 import { createLocalIndexBackend } from "../../src/local-index-backend.js";
+import {createRuntimeModelEvidenceCapture} from '../../src/local-index-runtime-model-evidence.js';
 import {
   createModelPerformanceController,
 } from "./model-performance-controller.js";
@@ -971,6 +972,8 @@ function createPreparedLocalCompanionServer({
   }),
   // The store every index consumer below reads.
   unifiedStoreFile = localIndexBackend.indexFile,
+  runtimeModelEvidence = createRuntimeModelEvidenceCapture({indexFile:unifiedStoreFile,
+    secretFile:statePaths.unifiedIndexSecretFile,codexHome}),
   sharedProjectionReader = createCachedLocalUnifiedProjectionReader(
     localIndexBackend.projectionReader,
   ),
@@ -1001,7 +1004,8 @@ function createPreparedLocalCompanionServer({
       previousWorkload,
       workloadLiveSinceMs,
       workloadSourceFresh,
-      workloadErrors,
+      workloadErrors:[...workloadErrors,...(runtimeModelEvidence.status().errorCode
+        ?[{code:runtimeModelEvidence.status().errorCode,stage:'index'}]:[])],
       signal,
       allowDevelopmentArtifactFallback:
         environment.USAGE_MONITOR_DEVELOPMENT_ARTIFACT_FALLBACK === "1",
@@ -1046,7 +1050,10 @@ function createPreparedLocalCompanionServer({
     refreshAccounting: localIndexBackend.refreshAccounting,
     // Advance the index by its cursors on every foreground refresh: an
     // ordinary pass reads only the bytes the rollout corpus grew.
-    refreshUnifiedIndex: localIndexBackend.refreshUnifiedIndex,
+    refreshUnifiedIndex: async options=>{
+      const result=await localIndexBackend.refreshUnifiedIndex(options);
+      await runtimeModelEvidence.tick();return result;
+    },
     unifiedIndexFile: unifiedStoreFile,
     unifiedIndexSecretFile: statePaths.unifiedIndexSecretFile,
     recordCodexSpeedBaseline: async () => (
@@ -1143,7 +1150,7 @@ function createPreparedLocalCompanionServer({
   let runtimeShutdown = null;
   const shutdownRuntime = () => {
     // Publish the shutdown fence before awaiting anything asynchronous.
-    runtimeShutdown ??= Promise.resolve().then(() => releaseInstanceLock());
+    runtimeShutdown ??= Promise.resolve().then(async()=>{await runtimeModelEvidence.close();return releaseInstanceLock();});
     return runtimeShutdown;
   };
   // Single-instance exclusion is cheap (one lock file) and must still be
@@ -1175,7 +1182,9 @@ function createPreparedLocalCompanionServer({
           // Publish the bounded startup projection first. The store retains
           // validated prior evidence with its provenance; the normal refresh
           // supplies the subsequent quick and full projections.
+          await runtimeModelEvidence.tick();
           await dataStore.initialize({ purpose: "startup",signal:startupSnapshotAbort.signal });
+          runtimeModelEvidence.start();
           overviewScheduler.start();
           snapshotState = { status: "ready", errorCode: null };
           announceSnapshotOutcome();
@@ -1514,7 +1523,10 @@ function createPreparedLocalCompanionServer({
           return;
         }
         try {
-          send(response, 200, await readModelPerformance(period, { speedMode, ...(endAt === null ? {} : { endAt }) }));
+          const snapshot = await readModelPerformance(period, { speedMode, ...(endAt === null ? {} : { endAt }) });
+          const diagnostics = modelPerformanceController?.diagnostics() ?? [];
+          if (diagnostics.length) response.setHeader('X-TiboTattle-Performance-Diagnostics', diagnostics.join(','));
+          send(response, 200, snapshot);
         } catch {
           sendError(response, 503, "model_performance_unavailable");
         }

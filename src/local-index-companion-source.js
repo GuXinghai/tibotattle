@@ -47,6 +47,7 @@ function unavailable(status, errorCode = null) {
     skippedSourceCount: 0,
     skippedSourceBytes: 0,
     skippedThreadCount: 0,
+    responseUnverifiedPrefixTurns: null,
     rolloutIssueCounts: {},
     indexBytes: 0,
     latestExportableRecordAt: null,

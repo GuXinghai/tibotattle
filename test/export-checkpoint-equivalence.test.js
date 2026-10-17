@@ -177,7 +177,7 @@ function workspaceEnvelopes(workspace) {
   })));
 }
 
-test("checkpoint and provider readers ignore overlapping response records and compacted copies across replay and resume", async () => {
+test("checkpoint and provider readers exclude foreign-thread response copies across replay and resume", async () => {
   const value = await fixture({ responseRecords: true });
   try {
     const legacy = await legacyResult(value.home);
@@ -190,7 +190,7 @@ test("checkpoint and provider readers ignore overlapping response records and co
   } finally { await rm(value.root, { recursive: true }); }
 });
 
-test("response-record-only sources do not become observed zero-token export records", async () => {
+test("foreign-thread-only sources do not become observed zero-token export records", async () => {
   const value = await fixture({ responseRecords: true, responseOnly: true });
   try {
     const legacy = await legacyResult(value.home);
@@ -200,6 +200,23 @@ test("response-record-only sources do not become observed zero-token export reco
     assert.deepEqual(checkpointed.records, legacy.records);
     assert.deepEqual(checkpointed.privateCanariesPresent, []);
   } finally { await rm(value.root, { recursive: true }); }
+});
+
+test('owned response chains include missing ordinary and compaction usage across checkpoint interruption',async()=>{
+  const root=await mkdtemp(join(tmpdir(),'response-checkpoint-owned-')),home=join(root,'codex');await mkdir(join(home,'sessions'),{recursive:true});
+  const stamp=n=>`2026-07-24T12:00:${String(n).padStart(2,'0')}.000Z`;
+  const vector=n=>usage({input:100*n,cached:80*n,output:20*n,reasoning:8*n});
+  const response=(n,id,total)=>({timestamp:stamp(n),type:'token_usage_record',payload:{thread_id:'synthetic-owned',turn_id:'synthetic-turn',response_id:id,usage:vector(1),turn_token_usage:vector(total),thread_token_usage:vector(total)}});
+  const cp=response(3,'synthetic-compaction',2);
+  const records=[{timestamp:stamp(0),type:'session_meta',payload:{id:'synthetic-owned'}},
+    {timestamp:stamp(0),type:'turn_context',payload:{turn_id:'synthetic-turn',model:'gpt-5.6-sol',service_tier:'default'}},
+    JSON.parse(tokenCount(stamp(1),vector(1),vector(1),1)),response(2,'synthetic-first',1),cp,
+    {timestamp:stamp(4),type:'compacted',payload:{compaction_response_id:cp.payload.response_id,latest_token_usage_record:cp.payload}},
+    response(5,'synthetic-missing-ordinary',3),cp];
+  await writeFile(join(home,'sessions','rollout-2026-07-24T12-00-00-owned.jsonl'),records.map(r=>JSON.stringify(r)).join('\n')+'\n');
+  try{const normal=await legacyResult(home),saved=await checkpointResult({root,home,label:'owned',maximumLinesPerBatch:1,interruptAfterBatch:4});
+    assert.deepEqual(saved.records,normal.records);const events=saved.records.filter(r=>r.recordType==='usageEvent');assert.equal(events.length,3);assert.equal(events.reduce((n,r)=>n+r.record.totalInputContextTokens,0),300);
+  }finally{await rm(root,{recursive:true});}
 });
 
 test("compressed parent and child histories retain checkpoint batch/resume parity", {
@@ -400,7 +417,9 @@ test("checkpoint scanner streams oversized message text containing tool-like pro
       quotaSnapshots: 2,
       activityMarkers: 0,
     });
-    assert.equal(result.resourceUsage.counters.oversizedIrrelevantLines, 2);
+    // Tier, response reconciliation, and record publication each perform a
+    // bounded read; all three must charge the oversized-line resource budget.
+    assert.equal(result.resourceUsage.counters.oversizedIrrelevantLines, 3);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

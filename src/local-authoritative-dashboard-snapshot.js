@@ -1,4 +1,5 @@
 import { createValidatedSnapshotStore } from "./platform/index.js";
+import { validWeeklyApiIntervals } from "./weekly-api-intervals.js";
 
 export const AUTHORITATIVE_DASHBOARD_SNAPSHOT_SCHEMA_VERSION =
   "local-authoritative-dashboard-snapshot-v1";
@@ -142,6 +143,12 @@ export function isAuthoritativeDashboardSnapshot(snapshot) {
     && accounting.accountingCacheStatus === "available"
     && timelineAuthoritative
     && historyCoverage?.status === "complete"
+    && (overview.timeline.weeklyApiIntervals === undefined
+      || (validWeeklyApiIntervals(overview.timeline.weeklyApiIntervals)
+        && (overview.timeline.weeklyApiIntervals.status !== "available"
+          || (overview.timeline.weeklyApiIntervals.sourceGeneration === String(generation)
+            && overview.timeline.weeklyApiIntervals.sourceFingerprint === fingerprint
+            && Date.parse(overview.timeline.weeklyApiIntervals.generatedAt)<=Date.parse(snapshot.generatedAt)))))
     && historyCoverage.phase === "complete";
 }
 

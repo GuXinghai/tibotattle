@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import fsPromises, {
+import {
   chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { syncBuiltinESMExports } from "node:module";
-import { join } from "node:path";
+import { join, sep } from "node:path";
+import { loadWindowsSourceReadBinding } from "../src/platform/windows-filesystem.js";
 import { DatabaseSync } from "node:sqlite";
+import { spawnSync } from "node:child_process";
+import { grantSyntheticEveryoneRead } from "./helpers/windows-owner-only-fixture.js";
+import { createWindowsFilesystemAdapter } from "../src/platform/index.js";
 import { readCodexLocalRepositoryOrigins, readCodexLocalThreadAncestry, readCodexLocalThreadUsageRelations, readCodexLocalThreadMetadata } from "../src/platform/index.js";
 import * as zlib from "node:zlib";
 
@@ -109,12 +112,12 @@ test("accounting ancestry follows nested workers without reading guardian rollou
   assert.equal(displayed.get(AUTO_REVIEW).parent.id, ROOT);
 
   const opened = [];
-  const originalOpen = fsPromises.open;
-  const mockedOpen = t.mock.method(fsPromises, "open", async function (path, ...args) {
+  const native = loadWindowsSourceReadBinding();
+  const originalOpen = native.openSourceFile;
+  const mockedOpen = t.mock.method(native, "openSourceFile", function (path, ...args) {
     opened.push(path);
     return originalOpen.call(this, path, ...args);
   });
-  syncBuiltinESMExports();
   try {
     // Request only the leaf, forcing both explicit ancestors to be loaded.
     const ancestry = await readCodexLocalThreadAncestry(home, [grandchild, AUTO_REVIEW]);
@@ -125,7 +128,6 @@ test("accounting ancestry follows nested workers without reading guardian rollou
       "ancestry opens only the database security guard, never display-name or rollout files");
   } finally {
     mockedOpen.mock.restore();
-    syncBuiltinESMExports();
   }
 });
 
@@ -139,6 +141,10 @@ test("usage relations attach reviews through workers without changing the naviga
     [WORKER, { root: ROOT, autoReview: false }],
     [AUTO_REVIEW, { root: ROOT, autoReview: true }],
   ]);
+  const evidence=await readCodexLocalThreadUsageRelations(home,[ROOT,AUTO_REVIEW,ABSENT],{includeOriginEvidence:true});
+  assert.equal(evidence.get(ROOT).originKnown,true);
+  assert.equal(evidence.get(AUTO_REVIEW).originKnown,true);
+  assert.equal(evidence.get(ABSENT).originKnown,false);
   assert.deepEqual(await Promise.all([readFile(databaseFile), readFile(rolloutPath)]), before);
   for (const parent of [ABSENT, AUTO_REVIEW]) {
     await writeFile(rolloutPath, `${autoReviewSession(AUTO_REVIEW, parent)}\n`, { mode: 0o600 });
@@ -339,7 +345,7 @@ test("worker metadata supports a source nickname and a missing parent's name wit
   assert.deepEqual(result.get(WORKER).parent, { id: ROOT, name: null });
 });
 
-test("unsafe metadata links and writable modes are refused independently by store", async (t) => {
+test("unsafe metadata links are refused independently by store without losing safe names", async (t) => {
   const { home, databaseFile, namesFile } = await fixture(t);
   const linkedNames = join(home, "saved-names.jsonl");
   await writeFile(linkedNames, `${named(ROOT, "Must not follow this link")}\n`, { mode: 0o600 });
@@ -353,10 +359,47 @@ test("unsafe metadata links and writable modes are refused independently by stor
   assert.equal((await readCodexLocalThreadMetadata(home, [ROOT])).get(ROOT).name, null);
   await rm(namesFile);
   await writeFile(namesFile, `${named(ROOT, "Safe root name")}\n`, { mode: 0o600 });
-  await chmod(databaseFile, 0o622);
+  // Windows source validation authenticates the owner and link identity; chmod
+  // cannot simulate a foreign Windows owner or ACL. Reject a real hardlink.
+  await link(databaseFile, join(home, "linked-state.sqlite"));
   result = await readCodexLocalThreadMetadata(home, [WORKER, ROOT]);
   assert.equal(result.get(WORKER).parent, null);
   assert.equal(result.get(ROOT).name, "Safe root name");
+});
+
+test("Windows metadata accepts ordinary source ACLs independently of the stricter derived-state policy", async (t) => {
+  const { home, databaseFile } = await fixture(t);
+  const adapter = createWindowsFilesystemAdapter();
+  assert.equal(adapter.inspectPath(databaseFile).ownerMatches, true);
+  const cwd = join(home, "repo");
+  const db = new DatabaseSync(databaseFile);
+  db.exec("ALTER TABLE threads ADD COLUMN cwd TEXT; ALTER TABLE threads ADD COLUMN git_origin_url TEXT;");
+  db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?")
+    .run(cwd, "https://example.test/owner/repo", ROOT);
+  db.close();
+  grantSyntheticEveryoneRead(databaseFile);
+  assert.equal((await readCodexLocalThreadMetadata(home, [WORKER])).get(WORKER).parent.id, ROOT,
+    "ordinary source ACLs are distinct from protected derived-state ACLs");
+  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [[cwd, "https://example.test/owner/repo"]]);
+  // Only this disposable fixture changes owner. Do not simulate Windows
+  // security with POSIX chmod or mock away the native source validation.
+  await t.test("foreign Windows database owners are refused by the native reader", async subtest => {
+    const changeOwner = spawnSync("icacls.exe", [databaseFile, "/setowner", "*S-1-5-32-544"], {
+      stdio: "pipe", windowsHide: true,
+    });
+    if (changeOwner.status === 1307) {
+      subtest.skip("Windows runner cannot assign a foreign owner (ERROR_INVALID_OWNER); native foreign-owner proof unavailable");
+      return;
+    }
+    assert.equal(changeOwner.status, 0, "synthetic foreign-owner setup");
+    assert.equal(adapter.inspectPath(databaseFile).ownerMatches, false);
+    const result = await readCodexLocalThreadMetadata(home, [WORKER, ROOT]);
+    assert.equal(result.get(WORKER).parent, null);
+    assert.equal(result.get(WORKER).nickname, null);
+    assert.equal(result.get(ROOT).name, "Plan synthetic app", "independent safe names remain readable");
+    assert.equal((await readCodexLocalThreadAncestry(home, [WORKER])).get(WORKER), WORKER);
+    assert.equal((await readCodexLocalRepositoryOrigins(home)).size, 0);
+  });
 });
 
 test("bounded metadata parsing fails closed on oversized lines, names, and unselected identities", async (t) => {
@@ -507,53 +550,61 @@ test("title fallback rejects nontext and control-containing values", async (t) =
 
 test("repository hints read bounded local metadata, normalize origins and preserve ambiguity", async (t) => {
   const { home, databaseFile } = await fixture(t);
+  const cwd = join(home, "gone", "repo");
   const db = new DatabaseSync(databaseFile);
   db.exec("ALTER TABLE threads ADD COLUMN cwd TEXT; ALTER TABLE threads ADD COLUMN git_origin_url TEXT;");
-  db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?").run("/gone/repo", "git@example.test:owner/repo.git", ROOT);
-  db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?").run("/gone/repo/", "https://user:private@example.test/owner/repo.git?secret=hidden", WORKER);
+  db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?").run(cwd, "git@example.test:owner/repo.git", ROOT);
+  db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?").run(`${cwd}${sep}`, "https://user:private@example.test/owner/repo.git?secret=hidden", WORKER);
   db.close();
   const before = await readFile(databaseFile);
-  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [["/gone/repo", "https://example.test/owner/repo"]]);
+  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [[cwd, "https://example.test/owner/repo"]]);
   assert.deepEqual(await readFile(databaseFile), before);
   const update = new DatabaseSync(databaseFile);
   update.prepare("UPDATE threads SET git_origin_url = ? WHERE id = ?").run("https://example.test/other/repo", WORKER);
   update.close();
-  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [["/gone/repo", null]]);
-  await chmod(databaseFile, 0o666);
+  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [[cwd, null]]);
+  await link(databaseFile, join(home, "linked-state.sqlite"));
   assert.equal((await readCodexLocalRepositoryOrigins(home)).size, 0);
 });
 
 test("repository hints fail closed for absent columns and invalid locations", async (t) => {
   const { home, databaseFile } = await fixture(t);
+  const cwd = join(home, "valid", "repo");
   assert.equal((await readCodexLocalRepositoryOrigins(home)).size, 0);
   const db = new DatabaseSync(databaseFile);
   db.exec("ALTER TABLE threads ADD COLUMN cwd TEXT; ALTER TABLE threads ADD COLUMN git_origin_url TEXT;");
   db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?").run("relative/repo", "https://example.test/owner/repo", ROOT);
-  db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?").run("/valid/repo", "file:///private/repo", WORKER);
+  db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?").run(cwd, "file:///private/repo", WORKER);
   db.close();
-  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [["/valid/repo", null]]);
+  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [[cwd, null]]);
 });
 
 
 test("repository hints reject oversized values and fail closed above the row bound", async (t) => {
   const { home, databaseFile } = await fixture(t);
+  const cwd = join(home, "gone", "repo");
   const db = new DatabaseSync(databaseFile);
   db.exec("ALTER TABLE threads ADD COLUMN cwd TEXT; ALTER TABLE threads ADD COLUMN git_origin_url TEXT;");
   const update = db.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?");
-  update.run("/gone/repo", "https://example.test/owner/" + "x".repeat(4096), ROOT);
-  update.run("/" + "x".repeat(4096), "https://example.test/owner/repo", WORKER);
+  update.run(cwd, "https://example.test/owner/" + "x".repeat(4096), ROOT);
+  update.run(join(home, "x".repeat(4096)), "https://example.test/owner/repo", WORKER);
   db.close();
-  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [["/gone/repo", null]]);
+  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [[cwd, null]]);
   const fill = new DatabaseSync(databaseFile);
-  fill.exec(`WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<24999)
-    INSERT INTO threads(id,cwd,git_origin_url) SELECT 'bounded-' || n, '/gone/repo', 'https://example.test/owner/repo' FROM rows;`);
+  fill.prepare(`WITH RECURSIVE rows(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM rows WHERE n<24998)
+    INSERT INTO threads(id,cwd,git_origin_url) SELECT 'bounded-' || n, ?, 'https://example.test/owner/repo' FROM rows;`).run(cwd);
   fill.close();
+  assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [[cwd, null]], "exactly 25,000 rows remain readable");
+  const overflow = new DatabaseSync(databaseFile);
+  overflow.prepare("INSERT INTO threads(id,cwd,git_origin_url) VALUES (?,?,?)").run("overflow", cwd, "https://example.test/owner/repo");
+  overflow.close();
   assert.equal((await readCodexLocalRepositoryOrigins(home)).size, 0);
 });
 
 
 test("present rejected repository origins block historical attribution in either row order", async (t) => {
   const { home, databaseFile } = await fixture(t);
+  const cwd = join(home, "gone", "repo");
   const db = new DatabaseSync(databaseFile);
   db.exec("ALTER TABLE threads ADD COLUMN cwd TEXT; ALTER TABLE threads ADD COLUMN git_origin_url TEXT;");
   db.close();
@@ -561,10 +612,10 @@ test("present rejected repository origins block historical attribution in either
     for (const origins of [[invalid, "https://example.test/owner/repo"], ["https://example.test/owner/repo", invalid]]) {
       const update = new DatabaseSync(databaseFile);
       const row = update.prepare("UPDATE threads SET cwd = ?, git_origin_url = ? WHERE id = ?");
-      row.run("/gone/repo", origins[0], ROOT);
-      row.run("/gone/repo", origins[1], WORKER);
+      row.run(cwd, origins[0], ROOT);
+      row.run(cwd, origins[1], WORKER);
       update.close();
-      assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [["/gone/repo", null]]);
+      assert.deepEqual([...await readCodexLocalRepositoryOrigins(home)], [[cwd, null]]);
     }
   }
 });

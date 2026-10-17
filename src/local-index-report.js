@@ -775,6 +775,28 @@ export function readLocalIndexCoverage(database) {
   const skippedThreads = Number(database.prepare(`
     SELECT COUNT(DISTINCT session_id) AS n FROM source
     WHERE quarantine_code IS NOT NULL AND session_id IS NOT NULL`).get().n);
+  const responseCoverageSourcePredicate = `
+    parser_version = ? AND quarantine_code IS NULL
+      AND (presence <> 'present' OR scanned_bytes = size_bytes)`;
+  const unparsedResponseSources = Number(database.prepare(`
+    SELECT COUNT(*) AS n FROM source
+    WHERE parser_version <> ? OR quarantine_code IS NOT NULL
+      OR (presence = 'present' AND scanned_bytes <> size_bytes)`
+  ).get(LOCAL_INDEX_PARSER_VERSION).n);
+  const qualifiedPrefixTurns = Number(database.prepare(`
+    SELECT COALESCE(SUM(d.count), 0) AS n
+    FROM source_diagnostic d JOIN source s ON s.id = d.source_id
+    WHERE d.code = 'responseUnverifiedPrefixTurns'
+      AND ${responseCoverageSourcePredicate}`
+  ).get(LOCAL_INDEX_PARSER_VERSION).n);
+  // A known partial source remains useful evidence even if another retained
+  // source predates the parser that records this diagnostic. Only an explicit
+  // zero requires every source to have been checked by the current parser.
+  const responseUnverifiedPrefixTurns = qualifiedPrefixTurns > 0
+    ? qualifiedPrefixTurns
+    : Number(totals.sources) > 0 && unparsedResponseSources === 0
+      ? 0
+      : null;
   return {
     sourceCount: Number(totals.sources),
     sourceBytes: Number(totals.bytes),
@@ -786,6 +808,7 @@ export function readLocalIndexCoverage(database) {
     skippedSourceBytes: Number(totals.skipped_bytes),
     skippedThreadCount: skippedThreads,
     rolloutIssueCounts: issues,
+    responseUnverifiedPrefixTurns,
   };
 }
 

@@ -56,6 +56,26 @@ test("memoized tier pricer agrees with ledger across dates and context boundarie
   }
 });
 
+test("Fast memoization preserves missing long-context rates instead of pricing them as short", () => {
+  const price = createAccountingPricer();
+  const mismatches = [];
+  for (const totalInputContextTokens of [271_999, 272_000, 272_001, 549_194]) {
+    const raw = { timestamp: "2026-07-24T12:00:00.000Z", model: "gpt-5.4", totalInputContextTokens };
+    const tokens = { input_uncached_tokens: totalInputContextTokens, input_cache_read_tokens: 0,
+      input_cache_write_tokens: 0, output_text_tokens: 100, output_reasoning_tokens: 0 };
+    const expected = priceCodexUsageEvent({ ...raw, components: tokens }, {
+      apiServiceTier: "priority", priceEpochBasis: "event_time",
+    });
+    assert.equal(expected.coverageStatus, totalInputContextTokens < 272_000 ? "fully_priced" : "unpriced");
+    const actual = price.forApiTier("priority", raw, tokens);
+    if (actual.totalUsd !== expected.totalUsd || actual.coverageStatus !== expected.coverageStatus) {
+      mismatches.push({ context: totalInputContextTokens, expected: expected.totalUsd,
+        expectedStatus: expected.coverageStatus, actual: actual.totalUsd, actualStatus: actual.coverageStatus });
+    }
+  }
+  assert.deepEqual(mismatches, []);
+});
+
 test("replay period exposes the same mixed-speed model and component amounts", async () => {
   const raws = [event("standard"), event("fast")];
   const result = await buildReplaySafeAccountingPeriod({

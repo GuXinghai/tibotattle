@@ -1,4 +1,5 @@
 export { createSourceFileAccess } from './source-file-access.js';
+export { createCompressedTimingReader, timingLogicalSourcePath } from './compressed-timing-reader.js';
 export {
   copyWindowsLegacyState, classifyWindowsLegacyStateMigrationFailure,
   WINDOWS_LEGACY_STATE_FILES, WINDOWS_LEGACY_STATE_MIGRATION_CONTRACT,
@@ -185,3 +186,4 @@ export { createWorkUsageProjectResolver, normalizeWorkUsageRepositoryOrigin } fr
 
 export { openTimingStore, ingestTimingFile, timingReport, readTimingRows } from './inference-timing-store.js';
 export { forEachRolloutLine, ROLLOUT_LINE_BYTES } from './rollout-line-reader.js';
+export { readCodexRuntimeLogBatch } from './codex-runtime-log-reader.js';

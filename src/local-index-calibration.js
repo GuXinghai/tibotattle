@@ -1,5 +1,8 @@
 import { openLocalIndexStore, readCommitSeq } from "./local-index-store.js";
 import { REPLAY_SAFE_CALIBRATION_INTERNALS } from "./replay-safe-accounting-cache.js";
+import { readCodexLocalThreadUsageRelations } from "./platform/index.js";
+import { buildWeeklyApiIntervals, unavailableWeeklyApiIntervals } from "./weekly-api-intervals.js";
+import { speedApiPrice } from "./speed-api-cost.js";
 
 const {
   ACCOUNTING_RSS_CHECK_INTERVAL,
@@ -25,6 +28,8 @@ const {
   deriveBoundedWeeklyCalibrationSeries,
   eventProjection,
   fitCompositionFromCorpusStream,
+  fitHistoricalPlanTimelines,
+  historicalPlanComparisonReceipts,
   fixedError,
   planScopedTimelineReceipt,
   projectBoundedWeeklyCalibrationSummary,
@@ -88,6 +93,9 @@ export async function openLocalIndexCalibrationCorpus({
     const commitSeq = readCommitSeq(database);
     const usageGraceMs = endMs + 5 * 60_000;
     const price = createAccountingPricer();
+    let weeklyApiOrigins = new Map();
+    const weeklyApiAccountScopes=new Map(database.prepare("SELECT id,status,scope_local FROM account_scope").all()
+      .map(row=>[Number(row.id),row.status==='available'&&row.scope_local!==null?Number(row.id):null]));
     const planEvidence = calibrationPlanEvidence({ ordered: true, maximum: limits.weeklySnapshots });
     let processed = 0;
     const cadence = async () => {
@@ -146,7 +154,7 @@ export async function openLocalIndexCalibrationCorpus({
     // dated after the request is itself evidence (a reversed clock).
     const openStatement = database.prepare(`
       WITH ordered AS (
-        SELECT u.source_id, u.source_offset, u.session_id, u.observed_at_ms,
+        SELECT u.source_id, u.source_offset, u.session_id, u.account_scope_id, u.observed_at_ms,
                u.model_id AS model_ref, u.tier_id,
                u.tokens_in_uncached, u.tokens_in_cache_read, u.tokens_in_cache_write,
                u.tokens_out_text, u.tokens_out_reasoning, u.tokens_out_combined,
@@ -156,7 +164,7 @@ export async function openLocalIndexCalibrationCorpus({
         WHERE u.source_offset <= s.scanned_bytes
         WINDOW source_order AS (PARTITION BY u.source_id ORDER BY u.source_offset)
       )
-      SELECT o.source_id, o.source_offset, o.session_id, o.observed_at_ms,
+      SELECT o.source_id, o.source_offset, o.session_id, o.account_scope_id, o.observed_at_ms,
              m.model_id AS model_id, t.codex_speed_mode AS codex_speed_mode,
              t.api_service_tier AS api_service_tier,
              o.tokens_in_uncached, o.tokens_in_cache_read, o.tokens_in_cache_write,
@@ -432,10 +440,21 @@ export async function openLocalIndexCalibrationCorpus({
       event.declaredSpeed = event.speed === "unknown"
         ? declaredSpeedModeAt(declaredSpeedBaselines, observedMs) ?? "unknown"
         : "unknown";
-      return transitionUsageProjection(rawEvent, event);
+      const projected = transitionUsageProjection(rawEvent, event);
+      const apiPrice=speedApiPrice(event.speedPricingEvent,event.speedPricingComponents,event.priced,
+        event.declaredSpeed==='unknown'?'standard':event.declaredSpeed,event.speedPricer);
+      const sessionId=Number(row.session_id),accountScope=weeklyApiAccountScopes.get(Number(row.account_scope_id))??null;
+      const apiInfo={apiUsd:apiPrice.totalUsd,apiCoverage:apiPrice.coverageStatus,
+        priceCardIds:apiPrice.selectedPriceCardIds??[],
+        unknownSpeed:event.speed==='unknown'&&event.declaredSpeed==='unknown'};
+      // Process-local metadata only; compact corpus and persisted accounting
+      // contracts retain their existing 21 cells.
+      Object.defineProperty(projected, "weeklyApiOrigin", { get: () => ({...weeklyApiOrigins.get(sessionId),
+        ...apiInfo,accountScope}) });
+      return projected;
     }
     const pageSql = (lowerOperator) => database.prepare(`
-      SELECT u.source_id, u.source_offset, u.observed_at_ms, m.model_id AS model_id,
+      SELECT u.source_id, u.source_offset, u.session_id, u.account_scope_id, u.observed_at_ms, m.model_id AS model_id,
              t.codex_speed_mode AS codex_speed_mode, t.api_service_tier AS api_service_tier,
              u.tokens_in_uncached, u.tokens_in_cache_read, u.tokens_in_cache_write,
              u.tokens_out_text, u.tokens_out_reasoning, u.tokens_out_combined,
@@ -502,6 +521,18 @@ export async function openLocalIndexCalibrationCorpus({
       usageMetadataBytes: meteredUsageMetadataBytes,
       weeklyRateLimitSnapshots,
       planAttribution: planEvidence.finish(),
+      loadWeeklyApiOrigins: async (codexHome) => {
+        const sessions = database.prepare("SELECT id, session_uuid FROM session LIMIT 25001").all();
+        if (sessions.length > 25_000) throw fixedError("weekly_api_resource_limit");
+        const selected = sessions.filter(row => typeof row.session_uuid === "string"
+          && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(row.session_uuid));
+        const relations = codexHome ? await readCodexLocalThreadUsageRelations(codexHome,
+          selected.map(row => row.session_uuid), { signal,includeOriginEvidence:true }) : new Map();
+        weeklyApiOrigins = new Map(selected.map(row => [Number(row.id), {
+          autoReview: relations.get(row.session_uuid)?.autoReview === true,
+          originKnown: relations.get(row.session_uuid)?.originKnown === true,
+        }]));
+      },
       usageMs,
       metrics: ((retainedWeeklySnapshots) => () => ({
         retainedUsageEvents,
@@ -556,12 +587,15 @@ export async function buildCalibrationLayer({
   sourceMode = "unified",
   generation = null,
   generationFingerprint = null,
+  codexHome = null,
 } = {}) {
   const baselines = Array.isArray(declaredSpeedBaselines) ? declaredSpeedBaselines : [];
   let composition = null;
   let planScopedTimelineDraft = null;
+  let historicalPlanDrafts = [];
   let compositionFitFailure = null;
   let transitionSeries;
+  let weeklyApiIntervals = unavailableWeeklyApiIntervals();
   const retainedUsageEvents = calibrationCorpus.retainedUsageEvents;
   const retainedWeeklySnapshots = calibrationCorpus.weeklyRateLimitSnapshots.length;
   const calibrationRetainedBytes = calibrationCorpus.usageMetadataBytes
@@ -594,6 +628,24 @@ export async function buildCalibrationLayer({
     }
     throwIfAborted(signal);
     checkRuntimeMemory();
+    historicalPlanDrafts = await fitHistoricalPlanTimelines({
+      forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
+      weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
+      endMs, signal, checkRuntimeMemory,
+      planAttributionIndex: calibrationAttribution.index,
+      declaredSpeedBaselines: baselines,
+    }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType);
+    try {
+      if (sourceMode === "unified" && generation != null && generationFingerprint != null) {
+        await calibrationCorpus.loadWeeklyApiOrigins?.(codexHome);
+        weeklyApiIntervals = await buildWeeklyApiIntervals({ corpus:calibrationCorpus,endMs,
+          generation,fingerprint:generationFingerprint,signal });
+      }
+    } catch (error) {
+      throwIfAborted(signal);
+      weeklyApiIntervals = unavailableWeeklyApiIntervals(/^weekly_api_[a-z_]{1,64}$/.test(error?.code ?? "")
+        ? error.code : "weekly_api_projection_failed");
+    }
     try {
       transitionSeries = await deriveBoundedWeeklyCalibrationSeries({
         startAt: calibrationCoveredAt.startAt,
@@ -703,7 +755,13 @@ export async function buildCalibrationLayer({
     generationFingerprint,
     capacityPlanScope,
   });
+  const historicalPlanComparisons = historicalPlanComparisonReceipts(
+    historicalPlanDrafts, allowanceCapacityByScenario,
+    { sourceMode, generation, generationFingerprint },
+  );
   return {
+    historicalPlanComparisons,
+    weeklyApiIntervals,
     weeklyCalibration,
     allowanceCapacityByScenario,
     fiveHourAllowanceCalibration,

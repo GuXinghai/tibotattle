@@ -2,7 +2,7 @@ import { createCodexLogIngestion } from "./log-ingestion.js";
 import { createCodexLogParser } from "./log-parser.js";
 import { createCodexLogSources } from "./log-sources.js";
 
-export const CODEX_LOG_SCAN_VERSION = "codex-log-scan-v10";
+export const CODEX_LOG_SCAN_VERSION = "codex-log-scan-v11";
 
 const FILESYSTEM_METHODS = Object.freeze([
   "defaultCodexHome",
@@ -134,6 +134,9 @@ export {
 } from "./log-sources.js";
 export { classifySessionSurface } from "./surface-classification.js";
 export { codexWorkLifecycle } from "./work-lifecycle.js";
+export { createResponseUsagePlan } from "./response-usage.js";
+export { projectCompactionUsageLine } from './compaction-usage-receipt.js';
+export { RESPONSE_MODEL_RECOVERY_VERSION } from './response-usage.js';
 export {
   codexTierObservation,
   isCodexSpeedMode,
@@ -154,3 +157,4 @@ export {
   TOOL_FREE_METHOD,
   MAX_STATE_BYTES,
 } from "./inference-timing.js";
+export { projectRuntimeModelEvidence } from './runtime-model-evidence.js';

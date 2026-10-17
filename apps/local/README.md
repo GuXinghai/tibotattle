@@ -1,5 +1,13 @@
 # Local companion
 
+The running companion also incrementally retains content-free Codex runtime
+model evidence in the protected index (physical schema 6). Its background
+collector shares durable read progress across restarts and never publishes a
+dashboard refresh. Request context and fallback attempts remain separate from
+an exact successful-response model; missing or conflicting evidence stays
+explicit. Homepage diagnostics sit below the cards with expandable pricing
+records and capture status. Original Codex records and log retention are untouched.
+
 This loopback-only Node application turns retained privacy-safe monitoring
 artifacts into the functional TiboTattle dashboard. It does not send raw
 Codex logs, accept arbitrary source paths, or expose raw account/session
@@ -47,11 +55,52 @@ threads views prepare their selected and other fixed periods before the first
 visit. Their browser caches are bounded and memory-only; speculative browser
 requests pause when the app document is hidden. A measurement history pass that
 has already started can finish independently. Performance reuses the
-worker's existing three-period snapshots. Projects & threads uses related
+worker's four periods and three observed speed modes. Only the selected exact
+performance window is preloaded; other combinations load on demand so multiple
+readers with different report cutoffs cannot churn the shared bounded cache.
+Completed performance results follow the global five-minute/manual
+refresh; pending reads are bounded to 24 attempts. Runtime collection and snapshot
+failures are reported separately through an allowlisted diagnostics header,
+without changing or discarding validated v5 measurements. Projects & threads uses related
 period queries anchored to the selected report, preserving generation checks
 and the two-report server capacity; cached display values do not authorize
 drill-down through an expired report. No additional log scan is required to
 change a warmed period.
+
+Performance snapshots use source-specific filenames. A matching legacy snapshot
+may restore a missing source-specific cache; mismatched or corrupt legacy files
+remain untouched. Unreadable or invalid current caches fail visibly and cannot
+fall back around validation. A finished scan may persist validated v5 results
+with `stale: true` when its remaining gap consists of unavailable retained
+history. That flag survives restart; it is not complete coverage. In-progress
+repairs and scan/store failures cannot replace a settled saved result.
+`timing_history_unavailable` identifies retained sources that still require parser
+repair but are not discoverable in the configured source. Their rows and parser
+versions remain unchanged. A successful source-specific write clears prior cache
+failures while the independent history diagnostic remains visible.
+
+Performance discovers both `.jsonl` and `.jsonl.zst`. Compressed representations
+use the original logical `.jsonl` path digest and logical byte cursor; when both
+exist the plain representation wins. The primary and supplement share a bounded
+in-memory decoding window, without writing decoded session content to disk.
+Parser progress and physical compressed-file metadata commit together. Restart
+recreates the decoder and advances to the saved logical cursor under bounded
+slices; it does not reparse committed turns. Completed, unchanged compressed
+sources skip decoding. Format/decode, read, resource-limit, unsupported-runtime
+and source-change failures remain separate allowlisted diagnostics.
+
+Timing source replacement, truncation, or detected edits rebuild only that source
+in bounded chunks. Existing measurements remain live while replacement rows are
+staged; a stable completed read atomically publishes the replacement and advances
+its revision once. Cancellation or failure preserves the live rows, and restart
+resumes or restarts only the affected source. A changed file is never continued
+with an unverified old cursor. The forward-only timing store schema prevents
+older writers from opening a store with an unfinished source rebuild. Normal
+collection keeps its existing discovery and read budgets; recovery does not
+schedule an all-history replay.
+The local timing schemas are now 10/11 (parser methods 2/3 and parser version 18
+are unchanged); prior 8/9 stores migrate forward without relabeling source
+parser provenance. Older candidates must not be used as writers after migration.
 
 ```bash
 USAGE_MONITOR_PORT=8791 node ./apps/local/server.js
@@ -230,6 +279,36 @@ signing or installer claims; those come only from the retained Windows release g
 
 
 ## Product boundary
+
+The desktop Allowance page puts **Weekly API equivalent** on the primary
+surface. The selected plan sits beside the product name; global reporting
+period and refresh remain shared. Exact, replay-safe API-priced usage in each
+quota-change interval is divided by its newly consumed quota fraction. Repeated
+or older interleaved readings never lower a cycle's confirmed deduction baseline;
+classified resets establish a new baseline. Free automatic approval reviews
+are excluded only from this numerator after the recorded announcement boundary.
+Unknown review origin, pricing, plan attribution and reset gaps stay explicit.
+
+Gaussian smoothing is a display-only, time-integrated kernel (off or sigma
+15/30/60/120/240 minutes). It never bridges reset, plan, account, pricing or
+coverage boundaries and never feeds accounting or calibration. It uses complete
+segments before clipping to the reporting period; the slider uses the exact
+same time domain and plot geometry. Full interval pagination, raw calculations,
+observations, reset events, calibration, five-hour history, consumption comparison,
+cycle differences and historical tools remain in the **Complete details** dialog.
+New report publication updates the graph and open details together. The page
+has no independent refresh timer; failures retain eligible old results with a
+visible category and retry. A scope change closes old details.
+
+Historical quota curves read the selected plan's observed quota independently of
+priced usage or fitted-capacity availability. Missing matching data withholds
+only usage/comparison views; it cannot clear observations or historical fits,
+and another plan's usage cannot fill that gap.
+Observed and expected consumption share actual quota-observation endpoints.
+Missing endpoints remain unavailable, and cumulative expected cost does not run
+ahead of the latest observed endpoint. The existing five-minute refresh owner
+publishes updates to both the page and open details; failed rereads retain the
+last good result and expose a retryable error.
 
 The installed app is the local collection and lifecycle owner. Its private loopback dashboard is the canonical personal-reporting surface. A hosted site is for acquisition, downloads, documentation, and public aggregates; it does not receive permission to read Codex files and is not a substitute for the personal dashboard.
 

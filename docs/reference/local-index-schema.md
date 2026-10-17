@@ -29,24 +29,24 @@ local-only and never leave the owner-only file.
 | File name | `local-index-store-v1.sqlite` | Stable machine path in the state root. The `v1` is a name, not the schema version. |
 | `PRAGMA application_id` | `1431128370` (`0x554D4932`) | Format guard. A mismatch fails with `local_index_family_mismatch`. |
 | `meta.family` | `local-index-store` | Logical family, written once at creation. |
-| `PRAGMA user_version` | `5` | Physical version. A writer migrates 4 forward transactionally; read-only open requires 5. |
-| Parser stamp | `local-index-rollout-typed-v2+unified-rollout-typed-v19` | Adds task lifecycle extraction; existing sources reparse once. Shared accounting revision remains `unified-rollout-typed-v19`. |
-| Telemetry publication parser label | `unified-rollout-typed-v19` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint still retain v2 provenance; no hosted schema is widened. |
+| `PRAGMA user_version` | `6` | Physical version. A writer migrates 4 or 5 forward transactionally; read-only open requires 6. |
+| Parser stamp | `local-index-rollout-typed-v2+unified-rollout-typed-v21` | Reconciles exact response usage with legacy spend; an unverified first-response prefix remains partial evidence. Existing sources reparse once. Original records and retained absent-source facts remain untouched. |
+| Telemetry publication parser label | `unified-rollout-typed-v21` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint retain store provenance; no hosted schema is widened. |
 | Commit sequence | `store_state.commit_seq` | Monotonic publication counter. Readers key their caches and the companion generation id off it. |
 
 Fail-closed rules, in the order `openLocalIndexStore` applies them:
 
 - A wrong `application_id` refuses the file with `local_index_family_mismatch`.
   `meta.family` is written at creation; the open path does not re-check it.
-- A `user_version` greater than 5 fails with `local_index_newer_version`. The
+- A `user_version` greater than 6 fails with `local_index_newer_version`. The
   file is not opened writable and must not be relabelled.
-- A version-4 writer adds work lifecycle facts transactionally and advances to 5.
+- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6.
   Refresh first performs a bounded read-only identity inspection accepting only
-  the reviewed v4 predecessor or current v5, validates the existing device salt,
+  the reviewed v4/v5 predecessors or current v6, validates the existing device salt,
   and only then opens the writer. This inspection exposes no database handle or
   old-format projection and makes no schema changes. Missing salt, foreign state,
   and newer versions are refused before any migration or salt creation.
-  Earlier versions and read-only version-4 opens fail with
+  Earlier versions and read-only version-4/version-5 opens fail with
   `local_index_family_mismatch`; readers never migrate state.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it
   fails with `local_index_journal_mode_refused`.
@@ -55,6 +55,40 @@ The extractor's parser revisions set the meaning of each stored fact. A change
 of extractor revision changes the parser stamp. Each source whose stamp differs
 is rescanned on the next refresh (reason `parser_version`), and the companion
 gives that first refresh the cold-build deadline.
+
+### Runtime model evidence
+
+`runtime_model_evidence` retains content-free native-log receipts: canonical model,
+previous model where explicit, kind, timestamp, digest, and device-HMAC thread,
+turn and response joins. `meta.runtime_model_capture_v1` commits the log source
+identity and read high-water mark atomically with each batch. Neither raw log
+bodies nor provider IDs are saved. Existing rollout parser stamps are unchanged;
+adding this evidence does not trigger a corpus reparse.
+
+The running companion samples every 30 seconds, up to four batches per tick;
+each batch reads at most 1,000 log rows and 8 MiB, with a 1 MiB individual-body
+ceiling. Backlog ticks wait one second; three consecutive failures suspend this
+timer until a global refresh retries it. No UI report is published by the timer.
+Missing logs, capture failures, replacement and observed coverage gaps remain
+distinct. Closing the companion stops capture and cannot protect upstream logs
+from cleanup while it is closed.
+
+Request context and explicit model-fallback outcomes are retained separately.
+Only an exact successful-response receipt with an explicit response model can
+repair an unknown model. Time proximity, setting changes, fallback attempts and
+compaction compatibility hashes cannot establish it. Runtime repairs carry flag
+32; contradictory receipts retract only such repairs and report a conflict.
+Model updates maintain the existing rollups transactionally without altering
+usage identities, Token fields, pairing, or raw sources. A source reparse clears
+the derived flag; retained exact receipts can be reapplied without rereading logs.
+Reconciliation runs at the foreground index-publication boundary before the
+generation descriptor is read; the capture timer never mutates accounting facts
+or changes a report generation in progress.
+
+A repair confined to known response-model gaps uses the separate
+`RESPONSE_MODEL_RECOVERY_VERSION`, not a global parser-stamp bump. The version
+is committed per source in `source_diagnostic` with its corrected facts. Only
+previously unattributed, not-yet-evaluated sources enter the repair queue.
 
 ## Tables
 
@@ -109,7 +143,10 @@ store with sources is opened for writing: `usage_event_observed`,
   shape bit 12.
 - `usage_event.flags` bits: `1` partial parse, `2` model inherited from a
   logical parent, `4` cache-write count assumed zero, `8` status-only quota
-  report with no spend.
+  report with no spend, `16` reconciled per-response usage. Response identities
+  use device-local digests and the partial `usage_event_response_identity` index;
+  duplicate physical copies do not add spend. A changed quantity under one
+  response identity fails with `codex_response_usage_identity_conflict`.
 - `quota_observation` is unique on `(observed_at_ms, limit_id, slot)`. When two
   sources report the same tuple, the whole reading with the higher
   `used_percent` wins, then the later `resets_at_ms`, so arrival order cannot
@@ -125,6 +162,76 @@ store with sources is opened for writing: `usage_event_observed`,
 - `source_diagnostic` holds counts for the closed code vocabulary in
   `src/local-index-store.js` (for example `malformedLines`, `partialLines`,
   `oversizedLines`, `compactionEvents`). Unknown codes are dropped.
+  Response counters also retain `responseUsageEvents`, `responseDuplicateCopies`,
+  `responseForeignThreadRecords`, `responseModelUnattributed` and
+  `responseUnverifiedPrefixTurns`. The latter counts source/turn pairs whose
+  first exact response begins after a structurally valid but unverified
+  cumulative prefix; only the exact response raw usage is charged.
+  `responseModelsRecovered` counts models recovered from request/checkpoint
+  evidence; `responseModelRecoveryVersion` records the completed evaluation
+  version, including evaluations that remain unknown. Both move atomically
+  with the source cursor and facts; cancellation/failure commits neither.
+
+### Response and legacy reconciliation
+
+`token_usage_record.usage` is one response, including separately recorded
+compaction and ordinary responses absent from `token_count`. The first response
+in a physical turn may start after a nonnegative cumulative prefix; that prefix
+is not charged and increments `responseUnverifiedPrefixTurns`. Every later
+response must continue the chain exactly. A legacy spend row is suppressed only
+when its known per-response components match modern evidence; unmatched overlap
+fails visibly. Legacy quota observations and legacy-only turns remain. Identical
+Token vectors with distinct response identities are distinct calls. Compaction
+checkpoint copies and ancestor responses in forked physical history are not
+new calls; cumulative thread/turn snapshots are never summed as spend.
+
+Changed modern files replay their retained prefix atomically. This includes a
+first modern append after an earlier legacy publication. Ordinary unchanged
+files still skip without a new transaction. Source-local segment hashing covers
+the publication pass, independently of the bounded reconciliation prepass.
+
+The established model attribution remains when context and persisted settings
+are coherent at the response. A setting written shortly after its context does
+not invalidate that existing evidence. Additional recovery only fills gaps.
+Ordinary responses can retain a fresh request context frozen before the response,
+even when thread settings change while it runs. A context already contradictory
+when captured, reused after a setting change, or preceding an unverified first
+response prefix cannot prove that attribution. A compaction response can use
+its exact checkpoint identity, matching raw/cumulative counters, record/time
+order, and the next same-turn replacement context when the checkpoint's prior
+model agrees. Different prior/replacement models or observed rerouting remain
+unknown when recovery is needed. A checkpoint quantity/turn conflict fails explicitly with
+`codex_response_usage_checkpoint_conflict`. Later UI/parent settings never fill
+these gaps. Speed attribution remains independently evidenced by the captured
+request context; later speed changes are not borrowed.
+
+Unknown models and missing/conflicting evidence remain model `unknown`, with
+unknown tier and unpriced amounts; Token counts remain available.
+Invalid identities, quantities, timestamps, incomplete
+chains, conflicting legacy evidence and exhausted bounds have distinct
+`codex_response_usage_*` errors. Raw response/thread identifiers stay only in
+scan-local memory, not diagnostics or persisted parser state. Limits are 100,000
+distinct responses and 250,000 relevant records per retained source scan.
+
+Supported modern accounting evidence is exact standalone response usage. A
+first response may have a valid cumulative total that includes an unobserved
+prefix: only that response's raw usage is counted, the prefix is never inferred
+as spend, and response-usage coverage remains partial for that source/turn.
+Every following response must continue the observed cumulative chain exactly.
+Checkpoint history remains opaque. A complete supported compaction envelope
+can project only its closed receipt suffix using a 512-byte header and at most
+128 KiB of trailing bytes; no replacement history is retained or parsed.
+Unsupported/missing/oversized metadata cannot establish a model. Checkpoint
+copies are never a second source of additive spend.
+
+Recovery reads at most eight affected sources or 256 MiB of source bytes per
+batch (one larger source may progress alone). It does not fan out to other
+unchanged files in the same session. The backend drains decreasing batches in
+one cancellable update under the existing recovery deadline; stalled progress
+fails explicitly. Successfully evaluated unchanged sources skip with no fact
+write or content rescan, even if attribution remains unknown. Source content
+changes and future recovery-version changes permit another evaluation. Existing
+source identity, segment integrity, transaction and replay checks still apply.
 
 ### Source state
 
@@ -143,6 +250,12 @@ not establish replay. Complete ordered timestamp boundaries define work even
 when the reported timer differs by seconds. Missing starts still require a
 valid reported duration; reversed or unpaired conflicting boundaries remain
 errors. The projection reports replay and duration-difference counts.
+The reader supplements its display-window lookback with committed older facts
+for the same tasks in established ancestor sessions. Lookups share the reporting
+transaction, use batches of at most 128 task keys and refuse more than 100,000
+supplementary candidate facts. Older evidence establishes replay only; output
+work intervals remain clipped to the seven-day display range. Missing,
+ambiguous or cyclic lineage never justifies deduplication.
 
 Quota consumption is the increase beyond each reset/plan track's previously
 observed high watermark. A lower stale snapshot never replaces its pairing
@@ -463,8 +576,11 @@ derivation or derived-table semantics requires, in one change:
 
 - a `user_version` bump when the physical format changes, with the fail-closed
   open rules above and tests for older and newer files;
-- a parser-stamp change when fact meaning changes, and the matching extractor
-  revision in `src/codex-usage-vocabulary.js`;
+- a parser-stamp change when general fact meaning changes, and the matching
+  extractor revision in `src/codex-usage-vocabulary.js`; a scoped response-model
+  repair may instead advance its independently persisted recovery version when
+  it demonstrably targets every affected prior source without invalidating
+  unrelated history;
 - updates to the DDL, writer, readers, audit oracle and rollup keys together,
   with tests that call `audit()` after each mutation;
 - the recovery runbook, this reference and the privacy reference, when the

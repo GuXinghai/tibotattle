@@ -5,6 +5,7 @@ import {
   codexSessionMetaIdentity,
   codexTierObservation,
   cumulativeSnapshotKey,
+  createResponseUsagePlan,
   deltaComponentPresence,
   extractToolObservations,
   normalizeProviderTier,
@@ -43,12 +44,12 @@ const { ExportWorkspaceError, sourceCheckpointBatchSha256 } = workspace;
 
 const DEFAULT_CHECKPOINT_LINES_PER_BATCH = 8_192;
 
-// Match the provider scanner's legacy-only accounting contract. Top-level
-// token_usage_record and compacted checkpoint copies overlap token_count;
-// they must not be charged once more during checkpoint/resume scans.
+// Reconcile exact response usage and verify later cumulative transitions.
+// Unknown first prefixes remain diagnostic; checkpoint copies are not calls.
 const RELEVANT_NEEDLES = Object.freeze([
   '"type":"session_meta"', '"type":"turn_context"',
   '"type":"thread_settings_applied"', '"type":"token_count"',
+  '"type":"token_usage_record"',
   '"type":"task_started"', '"type":"task_complete"', '"type":"custom_tool_call"',
   '"type":"function_call"', '"type":"web_search_call"', '"type":"file_search_call"',
   '"type":"code_interpreter_call"', '"type":"shell_call"', '"type":"computer_call"',
@@ -59,6 +60,7 @@ const ACCOUNTING_NEEDLES = Object.freeze([
   '"type":"turn_context"',
   '"type":"thread_settings_applied"',
   '"type":"token_count"',
+  '"type":"token_usage_record"',
 ]);
 
 function accountingLine(line) {
@@ -67,6 +69,7 @@ function accountingLine(line) {
 
 function accountingRecord(record) {
   return record?.type === "session_meta"
+    || record?.type === 'token_usage_record'
     || record?.type === "turn_context"
     || (record?.type === "event_msg"
       && ["thread_settings_applied", "token_count"]
@@ -316,6 +319,19 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
     let resourceBefore = workspace.resourceUsage();
     let lineCounts = { lines: 0, oversized: 0 };
     let cursor = { phase: "record_scan", byteOffset: current.byteOffset, lineOrdinal: current.lineOrdinal };
+    const reconciliation = createResponseUsagePlan({ identityKey: value =>
+      createHmac('sha256', secret).update('codex-response-usage/v1\0').update(value).digest('hex') });
+    for await (const entry of readBoundedUtf8LineEntries(handle, {
+      maximumLineBytes: resourceGuard.limits.maximumLineBytes, resourceGuard,
+      oversizedIrrelevantNeedles: RELEVANT_NEEDLES, maximumTotalBytes: source.prefixBytes,
+      startByte: 0, startLineOrdinal: 1,
+    })) {
+      if (entry.line === null || !relevantRecordLine(entry.line)) continue;
+      let record;try { record = JSON.parse(entry.line); } catch { if (accountingLine(entry.line)) contentInvalid(); continue; }
+      reconciliation.observe(record, entry.lineOrdinal);
+    }
+    const responsePlan = reconciliation.finish();
+    const pendingResponses = new Set();
     const openTasks = new Set(workspace.sourceOpenTaskKeys(source.sourceKey));
     const pendingTaskAdds = new Set();
     const pendingTaskDeletes = new Set();
@@ -436,6 +452,25 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
             }
           }
         }
+      } else if (record.type === 'token_usage_record') {
+        const response = responsePlan.responseAt(entry.lineOrdinal);
+        if (response && timestampMs >= bounds.startMs && timestampMs <= bounds.endMs
+            && !pendingResponses.has(response.key) && !workspace.hasSeenOccurrence('usage_event', response.key)) {
+          pendingResponses.add(response.key);
+          batch.seenOccurrences.push({ kind: 'usage_event', occurrenceKey: response.key, lineOrdinal: entry.lineOrdinal });
+          const presence = tokenComponentPresence(response.raw);
+          if (response.cacheWriteAssumedZero) presence.cache_write_input_tokens = false;
+          const tier = response.model === null ? null : workspace.sourceTierAt(source.sourceKey, timestampMs);
+          addRecord(batch, 'usageEvent', normalizeCodexUsageEvent(secret, {
+            timestamp: record.timestamp, modelDeclaration: safeExportModelDeclaration(secret, response.model),
+            raw: response.raw, rawAvailability: presence, components: canonicalComponents(response.raw),
+            componentAvailability: canonicalComponentAvailability(presence, response.raw),
+            tierSemantics: tierSemantics(tier), surfaceClassification: source.rolloutInfo.lineage.surfaceClassification,
+            sourceScopeId, ...(sourceOccurrenceScopeId === null ? {} : { sourceOccurrenceScopeId }),
+            sourceRecordOrdinal: entry.lineOrdinal,
+          }, state.pendingToolCounts), resourceGuard);
+          state.pendingToolCounts = createEmptySafeToolClassCounts();
+        }
       } else if (record.type === "event_msg" && record.payload?.type === "token_count") {
         const info = record.payload?.info;
         const totalPresence = tokenComponentPresence(info?.total_token_usage);
@@ -534,7 +569,7 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
             usagePresence = lastPresence;
             batch.diagnostics.add("last_only_events");
           }
-          if (usage && (usage.input_tokens !== 0 || usage.output_tokens !== 0)) {
+          if (!responsePlan.suppressLegacyAt(entry.lineOrdinal) && usage && (usage.input_tokens !== 0 || usage.output_tokens !== 0)) {
             const explicitModel = record.payload?.model ?? info?.model;
             const modelDeclaration = explicitModel !== null && explicitModel !== undefined
               ? safeExportModelDeclaration(secret, explicitModel)
@@ -562,6 +597,10 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
 
     const unattached = Object.values(state.pendingToolCounts).reduce((sum, count) => sum + count, 0);
     if (unattached > 0) batch.diagnostics.add("unattached_tool_calls", unattached);
+    if (responsePlan.diagnostics.unverifiedPrefixTurns > 0) {
+      batch.diagnostics.add("response_unverified_prefix_turns",
+        responsePlan.diagnostics.unverifiedPrefixTurns);
+    }
     state.pendingToolCounts = createEmptySafeToolClassCounts();
     cursor = { phase: "complete", byteOffset: source.prefixBytes, lineOrdinal: cursor.lineOrdinal };
     await flush();

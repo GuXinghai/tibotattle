@@ -28,9 +28,9 @@ Page-local filters use the same `.segmented-control` and selected state. A
 Filters are filled controls. A tablist uses `.dashboard-tabs` with child
 `[role="tab"]` elements and `aria-selected="true"`; tabs use the baseline and
 underline treatment. Do not represent tabs as period or filter pills. The model
-performance model selector (`.performance-models`) is a filter: it keeps its
-tablist semantics for the one model panel it controls but is drawn as a
-labeled `.segmented-control`, so it never resembles the Speed/Latency view tabs.
+performance model selector (`.performance-model-select`) is a native filter;
+the speed-mode buttons use pressed state and are drawn as a
+labeled `.segmented-control`, distinct from navigation tabs.
 
 Use `.dashboard-actions` (or `.dashboard-action-group`) for a wrapping group of
 `.button` actions. Add `.dashboard-action-status` with `role="status"` when an
@@ -48,8 +48,9 @@ card should keep this order:
 3. `.chart-card-body`, containing the chart or its state.
 
 Existing `.chart-heading`, `.chart-control-stack`, `.legend`, and `.chart-shell`
-map to the same roles. Allowance history and model-performance cards use these
-shared classes. Legends are direct card children below the header, including
+map to the same roles. Allowance history uses these shared classes. Compact
+model performance uses paired unframed sections and one shared legend. Other
+legends are direct card children below the header, including
 the usage timeline; they never compete with controls for header width.
 Incomplete chart coverage uses amber and retains its full explanation.
 Controls wrap at narrow widths and chart bodies retain
@@ -113,12 +114,20 @@ preference and the local pause control; the text remains accessible without it.
 
 ## Compact model-performance context
 
-Model performance uses the app header's reporting period in shared mode and
-retains a local range only in standalone mode. Its status and cancel/retry
-actions share one wrapping row. A progress/error status keeps a secondary
-result timestamp; a ready status already contains that timestamp. Stale result
-warnings remain explicit. Each chart's subtitle owns its measured/total count
-and partial-coverage styling, without duplicate coverage cards above the tabs.
+Model performance uses the global reporting period and collection clock in shared
+mode. Its paired neutral charts stack when their content area is narrow. Each
+headline identifies its own date and P50; selecting a date synchronizes both
+charts without borrowing missing observations. Missing bins break curves and
+bands. Shared P50 and percentile-band switches affect presentation only.
+
+Complete sample counts, source, timestamp, range, fallback distributions and
+runtime diagnostics live in one paginated modal. Ordinary refresh preserves its
+state; user scope switches close it. Normal results have no status paragraph.
+Failures remain visible with a retry and the retained result's timestamp. The
+v5 measurement and durable snapshot contracts are unchanged; the existing HTTP
+route carries bounded runtime diagnostics separately in
+`X-TiboTattle-Performance-Diagnostics`. A completed report does not start its own
+refresh timer; pending-report polling stops after at most 24 reads.
 
 ## Projects and threads controls and states
 

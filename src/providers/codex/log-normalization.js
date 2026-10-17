@@ -21,14 +21,14 @@ export function validAbortSignal(signal) {
       && typeof signal.addEventListener === "function");
 }
 
-// #41912 response-usage records and compacted.latest_token_usage_record are
-// overlapping evidence, not additive spend. Keep legacy token_count as the
-// supported accounting source until response-identity reconciliation exists.
+// Exact response raw usage replaces matched legacy spend; an unknown first
+// cumulative prefix is partial coverage, and checkpoint copies are not calls.
 export const CODEX_LOG_RELEVANT_LINE_NEEDLES = Object.freeze([
   '"type":"session_meta"',
   '"type":"turn_context"',
   '"type":"thread_settings_applied"',
   '"type":"token_count"',
+  '"type":"token_usage_record"',
   '"type":"task_started"',
   '"type":"task_complete"',
   '"type":"custom_tool_call"',

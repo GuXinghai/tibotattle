@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createWindowsProcessExitObserver } from "../../test/helpers/windows-process-exit-observer.js";
 import { request as httpRequest } from "node:http";
 import {
   lstat,
@@ -397,7 +398,7 @@ child.stdout.on("data", (chunk) => {
   pending += chunk.toString("utf8");
   if (!ready && pending.includes("USAGE_MONITOR_READY")) {
     ready = true;
-    setTimeout(() => process.exit(0), 25);
+    process.stdin.once("data", () => process.exit(0));
   }
 });
 child.stderr.on("data", (chunk) => writeSync(2, chunk));
@@ -1438,12 +1439,14 @@ test("startup defers history while full and overview refreshes publish the compl
       body: "{}",
     });
     assert.equal(started.status, 202);
-    await waitFor(async () => {
-      const payload = await fetch(`${base}/api/local/refresh`)
-        .then((result) => result.json());
-      assert.notEqual(payload.refresh.status,"failed",JSON.stringify({failureCode:payload.refresh.failureCode,failedStep:payload.refresh.failedStep}));
-      return payload.refresh.status === "succeeded";
-    });
+    // This checks publication ordering, not a one-second performance target.
+    // Join the controller's completion before asserting its terminal HTTP state.
+    await app.refresh.whenSettled();
+    const completed = await fetch(`${base}/api/local/refresh`)
+      .then((result) => result.json());
+    assert.equal(completed.refresh.status, "succeeded", JSON.stringify({
+      failureCode: completed.refresh.failureCode, failedStep: completed.refresh.failedStep,
+    }));
     assert.deepEqual(projectionModes, ["deferred", "full"]);
     const scheduled = await fetch(`${base}/api/local/refresh/overview`, {
       method: "POST", headers: { "Content-Type": "application/json", "X-Usage-Monitor-Local": "1", Origin: base }, body: "{}",
@@ -2181,8 +2184,9 @@ test("parent watchdog accepts only the exact live parent PID", async () => {
   }
 });
 
-test("configured CLI exits after its declared parent disappears", async () => {
+test("configured CLI exits after its declared parent disappears", async (t) => {
   const files = await fixture();
+  const observer = await createWindowsProcessExitObserver();
   const parentEnvironment = {
     ...process.env,
     WATCHDOG_SERVER_PATH: resolve("apps/local/server.js"),
@@ -2200,12 +2204,13 @@ test("configured CLI exits after its declared parent disappears", async () => {
     {
       cwd: files.root,
       env: parentEnvironment,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     },
   );
   let output = "";
   let errors = "";
   let childPid = null;
+  let watching = false;
   parent.stdout.on("data", (chunk) => {
     output += chunk.toString("utf8");
     const observed = Number(
@@ -2216,8 +2221,33 @@ test("configured CLI exits after its declared parent disappears", async () => {
   parent.stderr.on("data", (chunk) => {
     errors += chunk.toString("utf8");
   });
-  try {
-    const [code, signal] = await once(parent, "exit");
+  // A teardown failure is reported separately rather than masking a watchdog
+  // assertion. Never remove this synthetic state before its kernel exit signal.
+  t.after(async () => {
+    try {
+      if (parent.exitCode === null && parent.signalCode === null) {
+        parent.kill("SIGKILL");
+        await once(parent, "exit");
+      }
+      if (Number.isSafeInteger(childPid)) {
+        if (!watching && processIsRunning(childPid)) {
+          await observer.watch(childPid);
+          watching = true;
+        }
+        if (processIsRunning(childPid)) process.kill(childPid, "SIGKILL");
+        assert.equal(watching, true, "retain synthetic state if exact process termination cannot be confirmed");
+        await observer.waitForExit({ expectedCode: null });
+      }
+      await rm(files.root, { recursive: true });
+    } finally { await observer.close(); }
+  });
+  {
+    await waitFor(() => Number.isSafeInteger(childPid) && output.includes("USAGE_MONITOR_READY"), 15_000);
+    await observer.watch(childPid);
+    watching = true;
+    const parentExit = once(parent, "exit");
+    parent.stdin.end("exit\n");
+    const [code, signal] = await parentExit;
     assert.equal(signal, null);
     assert.equal(code, 0, errors);
     assert.equal(Number.isSafeInteger(childPid), true);
@@ -2225,19 +2255,11 @@ test("configured CLI exits after its declared parent disappears", async () => {
       /USAGE_MONITOR_READY (http:\/\/127\.0\.0\.1:\d+\/)/u,
     )?.[1];
     assert.ok(url);
-    await waitFor(() => !processIsRunning(childPid), 5_000);
+    await observer.waitForExit();
+    assert.equal(processIsRunning(childPid), false);
     await assert.rejects(fetch(url, {
       signal: AbortSignal.timeout(1_000),
     }));
-  } finally {
-    if (parent.exitCode === null && parent.signalCode === null) {
-      parent.kill("SIGKILL");
-      await once(parent, "exit");
-    }
-    if (Number.isSafeInteger(childPid) && processIsRunning(childPid)) {
-      process.kill(childPid, "SIGKILL");
-    }
-    await rm(files.root, { recursive: true });
   }
 });
 

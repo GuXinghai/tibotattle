@@ -16,6 +16,8 @@ import {
   tokenComponentPresence,
 } from "./log-normalization.js";
 import { codexTierObservation, normalizeProviderTier } from "./tier-normalization.js";
+import { createResponseUsagePlan } from './response-usage.js';
+import { projectCompactionUsageLine } from './compaction-usage-receipt.js';
 
 // Tolerance when deciding that a cumulative delta "materially exceeds" the
 // co-reported per-turn `last_token_usage`. The counters are exact integers
@@ -51,6 +53,7 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
       oversizedIrrelevantNeedles: CODEX_LOG_RELEVANT_LINE_NEEDLES,
       maximumTotalBytes,
       signal,
+      lineFrameProjector:projectCompactionUsageLine,
     });
   }
 
@@ -107,6 +110,7 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
     resourceGuard = null,
     maximumTotalBytes = Number.POSITIVE_INFINITY,
     signal = null,
+    responseReconciliation = null,
   ) {
     const timeline = [];
     let ordinal = 0;
@@ -119,14 +123,17 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
       throwIfAborted(signal);
       if (line === null) continue;
       ordinal += 1;
-      if (!line.includes('"type":"thread_settings_applied"')
-          && !line.includes('"type":"turn_context"')) continue;
+      if (!['"type":"thread_settings_applied"', '"type":"turn_context"',
+        '"type":"session_meta"', '"type":"token_count"', '"type":"task_started"',
+        '"type":"token_usage_record"','"type":"compacted"','"type":"model_reroute"'].some(needle => line.includes(needle))) continue;
       let record;
       try {
         record = JSON.parse(line);
       } catch {
+        if (line.includes('"type":"token_usage_record"')) throw new Error('codex_response_usage_invalid');
         continue;
       }
+      responseReconciliation?.observe(record, ordinal);
       const observation = codexTierObservation(record);
       if (observation === null || observation.status === "omitted") continue;
       const timestampMs = typeof record?.timestamp === "string"
@@ -290,13 +297,20 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
     seedTier = null,
     expectedSessionId = null,
   }) {
+    const reconciliation = createResponseUsagePlan({ identityKey: value =>
+      createSha256().update('codex-response-usage/v1\0').update(value).digest('hex') });
     const tierTimeline = await collectTierTimeline(
       source,
       diagnostics,
       resourceGuard,
       maximumTotalBytes,
       signal,
+      reconciliation,
     );
+    const responsePlan = reconciliation.finish();
+    diagnostics.responseUnverifiedPrefixTurns =
+      (diagnostics.responseUnverifiedPrefixTurns ?? 0)
+      + responsePlan.diagnostics.unverifiedPrefixTurns;
     let currentModel = seedModel;
     let previousTotals = seedTotals;
     let previousTotalsPresence = seedTotalsPresence;
@@ -449,6 +463,27 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
         }
         continue;
       }
+      if (record.type === 'token_usage_record') {
+        const response = responsePlan.responseAt(sourceRecordOrdinal);
+        if (!response || timestampMs < startMs || timestampMs > endMs) continue;
+        const key = `response:${response.key}`;
+        if (seenEvents.has(key)) continue;
+        seenEvents.add(key);
+        const presence = tokenComponentPresence(response.raw);
+        if (response.cacheWriteAssumedZero) presence.cache_write_input_tokens = false;
+        const tier = response.model === null ? null : Object.hasOwn(response,'requestTier')
+          ?response.requestTier:tierAt(tierTimeline, timestampMs, seedTier);
+        await onUsage({ timestamp: record.timestamp, model: response.model ?? 'unknown',
+          raw: response.raw, rawAvailability: presence, components: canonicalComponents(response.raw),
+          componentAvailability: canonicalComponentAvailability(presence, response.raw),
+          tierSemantics: normalizeProviderTier(tier?.rawTier ?? null, {
+            billingSurface: 'chatgpt_subscription', tierSource: tier?.tierSource ?? 'unobserved',
+            tierObservedAt: tier?.timestamp ?? null }),
+          surfaceClassification, sourceRolloutOrdinal,
+          ...(sourceScopeId ? { sourceScopeId } : {}),
+          ...(sourceOccurrenceScopeId ? { sourceOccurrenceScopeId } : {}), sourceRecordOrdinal });
+        continue;
+      }
       if (record.type !== "event_msg" || record.payload?.type !== "token_count") continue;
 
       const info = record.payload?.info;
@@ -559,6 +594,7 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
         usagePresence = lastPresence;
         diagnostics.lastOnlyEvents += 1;
       }
+      if (responsePlan.suppressLegacyAt(sourceRecordOrdinal)) continue;
       if (!usage || (usage.input_tokens === 0 && usage.output_tokens === 0)) continue;
 
       const model = record.payload?.model ?? info?.model ?? currentModel ?? "unknown";

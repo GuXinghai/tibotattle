@@ -246,7 +246,7 @@ requests to the hosted Worker.
 | `GET` | `/api/local/overview` | Dashboard | Loopback read | Reads the current derived overview snapshot. | Local companion |
 | `GET` | `/api/local/cache-drop-thread-links` | Local dashboard only | Same-origin custom-header read | Ephemeral, generation-bound names and Codex thread IDs for recent cache-drop rows; no query parameters, persistence, or export. | Local companion |
 | `POST` | `/api/local/work-usage/query` | Local dashboard only | Same-origin custom-header read; closed 4 KiB JSON | Cancellable, read-only project/worktree/thread reports over a pinned index; optional canonical ISO `endAt` pins the selected period and rejects older snapshot substitution; bounded process-local snapshots with closed `touch` lease renewal, per-thread model/component breakdowns and transient display metadata; optional `search` (at most 100 characters) finds project/task names before pagination with totals and share denominators covering every matching row before pagination; optional `sourceSnapshotId` anchors related period/scope queries to an available report and its canonical generation; no export. During revalidation an available saved reply has `retained`, `refreshing`, `namesAvailable` and a separate `refreshSnapshotId`; saved figures retain their original bounds and have no paging cursor. Names survive document reload only in process memory; durable snapshots contain anonymous usage figures. | Local reporting |
-| `GET` | `/api/local/model-performance` | Model performance page | Loopback read | Requires one `period` value: `1`, `7`, `30`, or `all`; optional canonical ISO `endAt` pins exact rolling bounds (never a future instant); optional `speedMode=standard|fast|ultrafast` (default `standard`) filters before aggregation; returns schema-5/method-5 bounded local timing aggregates, with the selected `speedMode` and period-scoped `excludedUnknownTurns`, including tool-free fallback estimates in Output speed with one sample per turn, restores validated saved measurements before starting work, and renews an independent background scan lease. No accounting or network effect. | Local timing |
+| `GET` | `/api/local/model-performance` | Model performance page | Loopback read | Requires one `period` value: `1`, `7`, `30`, or `all`; optional canonical ISO `endAt` pins exact rolling bounds (never a future instant); optional `speedMode=standard|fast|ultrafast` (default `standard`) filters before aggregation; returns schema-5/method-5 bounded local timing aggregates, with the selected `speedMode` and period-scoped `excludedUnknownTurns`, including tool-free fallback estimates in Output speed with one sample per turn, restores validated saved measurements before starting work, and renews an independent background scan lease. Optional `X-TiboTattle-Performance-Diagnostics` carries at most fourteen unique allowlisted codes within 512 bytes for timing worker/scan/store/projection, unavailable historical source, compressed source read/decode/resource/unsupported/recovery, or snapshot read/validation/source-mismatch/write failures, separately from the unchanged measurement body and durable snapshot. No accounting or network effect. | Local timing |
 | `GET` | `/api/local/gradient` | Dashboard | Loopback read | Reads the derived cost/quota gradient. | Local analysis |
 | `GET` | `/api/local/weekly` | Dashboard | Loopback read | Reads derived weekly capacity and pace evidence. | Local analysis |
 | `GET` | `/api/local/weekly-pace-outlook` | Native shell | Loopback read | Reads the bounded account-scoped weekly pace presentation projection. | Local analysis |
@@ -254,7 +254,7 @@ requests to the hosted Worker.
 | `GET` | `/api/local/timeline/window-breakdown` | Dashboard | Loopback read | Reads a bounded `from`/`to` timeline window. | Local analysis |
 | `GET`, `POST` | `/api/local/refresh` | Dashboard/native shell | Loopback mutation | GET reads refresh state, closed `mode` (`null`, `quick`, `detailed`, `overview`) and actual `startedAt`; POST explicitly advances retained history and recalculates generation-bound detailed accounting before full publication. A 409 returns the in-flight receipt. | Refresh controller |
 | `POST` | `/api/local/refresh/quick` | Dashboard/native shell | Loopback mutation | Refreshes current quota/headline evidence without advancing the unified index or rebuilding detailed accounting; the last authoritative detailed projection remains available with current freshness truth fields. | Refresh controller |
-| `POST` | `/api/local/refresh/overview` | Dashboard/companion scheduler | Loopback mutation | Joins or starts one 60-second quota, incremental usage/work and overview publication pass. Completion resets the sole five-minute overview timer. | Refresh controller |
+| `POST` | `/api/local/refresh/overview` | Dashboard/companion scheduler | Loopback mutation | Joins or starts one quota, incremental usage/work and overview publication pass using the existing bounded index deadline (ordinary incremental or cold index); an actual accounting rebuild may extend the total deadline once. Completion resets the sole five-minute overview timer. | Refresh controller |
 | `POST` | `/api/local/refresh/cancel` | Dashboard/native shell | Loopback mutation | Requests cancellation; published prior state remains intact. | Refresh controller |
 
 The overview includes `accounting.trayCacheSummary` (schema version 1): exactly
@@ -339,6 +339,40 @@ ownership and compatibility rules are documented in
 [`schema-contracts.md`](./schema-contracts.md). Storage-version recovery is
 documented separately in [`unified-index-schema.md`](./local-index-schema.md)
 and [`../runbooks/local-index-recovery.md`](../runbooks/local-index-recovery.md).
+
+## Local weekly API intervals
+
+The existing overview report carries optional `timeline.weeklyApiIntervals`,
+version `weekly-api-interval-v1`; no new HTTP route or database field is added.
+The closed bounded object contains status/reason, canonical result time, source
+generation/fingerprint and at most 100,000 content-free rows (8 MiB projection
+limit). Each row retains exact interval bounds, plan, continuity segment, quota
+percentage points, decimal API-priced amount, inferred full-week value, controlled
+unavailability reason, usage/unknown-speed/excluded-review counts, optional known
+excluded-review amount, and price-card IDs. Unknown amounts are not zero-filled.
+
+Its numerator uses the existing speed-specific API pricer, not subscription quota
+multipliers. Unknown speed is explicitly the Standard scenario. Free automatic
+approval reviews are excluded after the owner-recorded 2026-10-07 announcement;
+unknown review origin remains unavailable for conversion. Physical source/session
+identifiers, metadata, paths and session content never enter the projection.
+Interval event membership is `(start,end]`; displayed steps occupy `[start,end)`.
+Plateaus and stale lower readings retain their original cycle anchor until a new
+high-water observation or an independently classified reset. Reset/plan conflicts
+never yield a capacity. Old caches without this additive projection remain readable;
+the next ordinary accounting publication computes it from the index, not a full
+raw-log rescan. Failed computations retain an explicit closed reason.
+
+The browser validates the extension and its source fence independently. Gaussian
+smoothing is a time-integrated, normalized presentation transform within a
+continuous segment, never a new accounting or observation field. It uses the full
+segment before display clipping and eight-sigma numerical support. CDF differences
+are integrated directly with eight-point Gauss-Legendre panels of at most half
+a sigma, avoiding cancellation for millisecond intervals; independent Simpson
+integration checks the numerical result. Preferences and rendered
+sampling do not change report data. Snapshot validation rejects malformed, foreign
+generation or future interval projections; absence remains a compatible older
+snapshot, not fabricated intervals.
 
 ## Compatibility and retirement
 

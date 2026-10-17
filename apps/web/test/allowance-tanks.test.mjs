@@ -214,7 +214,7 @@ test("the Allowance forecast follows current observations independently of histo
   assert.equal(ensure(), mountedCard);
   assert.equal(weekly.children.length, 1, "observation refresh reuses the existing card");
   const layout = source.slice(source.indexOf("function mountDashboardLayout("));
-  assert.match(layout, /view\("forecast", "#weekly-pace-forecast"\)/u);
+  assert.doesNotMatch(layout, /view\("forecast", "#weekly-pace-forecast"\)/u);
   assert.match(declaration("renderDashboardSkeleton"), /forecast.hidden = true; clear\(forecast\)/u);
 });
 

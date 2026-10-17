@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createModelPerformanceController } from "./model-performance-controller.js";
-import { modelPerformanceSourceScope } from "./model-performance-snapshots.js";
+import { modelPerformanceSourceScope, createModelPerformanceSnapshotStore } from "./model-performance-snapshots.js";
 import { createParser, digest, METHOD, MAX_STATE_BYTES, INFERENCE_TIMING_PARSER_VERSION } from "../../src/providers/codex/logs.js";
 import { openTimingStore, ingestTimingFile, readTimingRows, createWindowsFilesystemAdapter } from "../../src/platform/index.js";
 
@@ -110,7 +110,12 @@ test("unavailable parser-repair sources retain stale measurements", async t => {
     assert.equal(snapshot.collecting, false);
     assert.equal(snapshot.stale, true);
     assert.equal(totalTurns(snapshot), 1);
+    assert.ok(controller.diagnostics().includes('timing_history_unavailable'));
   } finally { await controller.close(); }
+  const receipt=await createModelPerformanceSnapshotStore({directory,codexHome}).read();
+  assert.ok(receipt,'finished partial history survives restart as an explicitly stale receipt');
+  assert.ok(receipt.values.every(value=>value.stale&&!value.collecting));
+  assert.equal(totalTurns(receipt.values.find(value=>value.period==='all'&&value.speedMode==='standard')),1);
   const saved = await openTimingStore(scopedDirectory, config);
   try {
     assert.deepEqual(readTimingRows(saved), retained);

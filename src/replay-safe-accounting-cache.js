@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
+import { buildWeeklyApiIntervals, validWeeklyApiIntervals, unavailableWeeklyApiIntervals } from "./weekly-api-intervals.js";
 import {
   CODEX_TRANSITION_DERIVATION_CEILINGS,
   deriveCodexTransitionSeriesCooperatively,
@@ -131,8 +132,11 @@ import {
 // context as zero or reusing a short-context plan above a model's threshold.
 // v0.19: retain event-speed API valuations and their component/provenance
 // coverage separately from the unchanged Standard and quota-analysis metrics.
+// v0.20: independently fenced historical-plan comparison projections. Rebuild
+// older caches; historical absence must not be mistaken for absent source usage.
+// v0.21: preserve observed quota outside comparable intervals independently.
 export const REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION =
-  "local-replay-safe-accounting-v0.19";
+  "local-replay-safe-accounting-v0.21";
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
   "codex-primary-allowance-capacity-v0.1";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
@@ -2704,13 +2708,41 @@ function finalizePlanScopedTimelineDraft({
     const interval = comparisonIntervals[quotaIntervalAt];
     if (interval && row[0] >= interval[0] && row[0] < interval[1]) comparableQuota.push(row);
   }
+  const excluded = new Map();
+  for (const era of attributionIndex?.eras ?? []) {
+    if (era.contextKey !== contextKey || era.accountScopeId !== null || era.planType !== planType) continue;
+    for (const boundary of [era.lowerBoundMs, era.upperBoundMs]) {
+      if (boundary === null) continue;
+      const start = Math.floor(boundary / TIMELINE_BUCKET_MS) * TIMELINE_BUCKET_MS;
+      if (start >= firstStart && start < lastEnd) excluded.set(start, "plan_transition_interval");
+    }
+    const lower = Math.max(firstStart, era.firstObservedAtMs - TIMELINE_BUCKET_MS);
+    const upper = Math.min(lastEnd - 1, era.lastObservedAtMs);
+    for (let i = firstIndexAtLeast(invalid, lower); i < invalid.length && invalid[i] <= upper; i += 1) {
+      if (!excluded.has(invalid[i])) excluded.set(invalid[i], "usage_attribution_unresolved");
+    }
+  }
+  const excludedIntervals = [];
+  let comparableAt = 0;
+  for (const [start, reason] of [...excluded].sort((a, b) => a[0] - b[0])) {
+    // A boundary exactly on the grain can be fully covered. Never call a
+    // positively comparable bucket missing just because it borders an era.
+    while (comparableAt < comparisonIntervals.length && comparisonIntervals[comparableAt][1] <= start) comparableAt += 1;
+    const covered = comparisonIntervals[comparableAt];
+    if (covered && start >= covered[0] && start + TIMELINE_BUCKET_MS <= covered[1]) continue;
+    const prior = excludedIntervals.at(-1);
+    if (prior && prior[1] === start && prior[2] === reason) prior[1] += TIMELINE_BUCKET_MS;
+    else excludedIntervals.push([start, start + TIMELINE_BUCKET_MS, reason]);
+  }
   return {
     planType,
     rows,
     comparisonIntervals,
+    excludedIntervals,
     resourceLimited,
     attributionReady: attributionIndex?.status === "ready",
     quota: comparableQuota,
+    observedQuota: quota,
     diagnostics: {
       ...diagnostics,
       admittedEvents: rows.reduce((sum, row) => sum + row.usageEvents, 0),
@@ -2762,7 +2794,7 @@ function unavailablePlanTimeline(reason) {
   return {
     schemaVersion: PLAN_SCOPED_TIMELINE_SCHEMA_VERSION,
     encoding: PLAN_TIMELINE_ENCODING,
-    status: "unavailable", reason, planScope: null, usage: [], quota: [], comparisonIntervals: [],
+    status: "unavailable", reason, planScope: null, usage: [], quota: [], observedQuota: [], comparisonIntervals: [], excludedIntervals: [],
     diagnostics: { consideredEvents: 0, admittedEvents: 0, incompatibleEvents: 0,
       unresolvedEvents: 0, conflictedEvents: 0, malformedEvents: 0,
       invalidatedBuckets: 0, invalidatedCandidateEvents: 0 },
@@ -2801,6 +2833,8 @@ function planScopedTimelineReceipt({
   }
   if (draft.resourceLimited || draft.rows.length > MAX_PLAN_TIMELINE_ROWS
       || draft.comparisonIntervals.length > MAX_PLAN_TIMELINE_ROWS
+      || draft.excludedIntervals.length > MAX_PLAN_TIMELINE_ROWS
+      || draft.observedQuota.length > MAX_PLAN_TIMELINE_ROWS
       || draft.quota.length > MAX_PLAN_TIMELINE_ROWS) return unavailable("plan_scoped_resource_limit");
   const receipt = {
     schemaVersion: PLAN_SCOPED_TIMELINE_SCHEMA_VERSION,
@@ -2814,11 +2848,68 @@ function planScopedTimelineReceipt({
     },
     usage: draft.rows.map(encodePlanScopedTimelineRow),
     comparisonIntervals: draft.comparisonIntervals,
+    excludedIntervals: draft.excludedIntervals,
     quota: draft.quota,
+    observedQuota: draft.observedQuota,
     diagnostics: draft.diagnostics,
   };
   return Buffer.byteLength(stableJson(receipt)) <= MAX_PLAN_TIMELINE_BYTES
     ? receipt : unavailable("plan_scoped_resource_limit");
+}
+
+// Select an existing fit, never pool plans or refit a history lane using the
+// current plan's capacity. This is a projection, not an additional ledger.
+function allowanceCapacityForPlan(container, planType) {
+  const scenarios = {};
+  for (const [scenario, row] of Object.entries(container.scenarios)) {
+    const calibration = row.calibration;
+    const population = calibration.planPopulations.find((p) => p.planType === planType);
+    if (!population) return null;
+    scenarios[scenario] = { ...row, calibration: {
+      ...population, selectedPlanType: planType, planPopulations: calibration.planPopulations,
+    } };
+  }
+  return { ...container, scenarios, planScope: {
+    ...container.planScope, planType,
+    cohortId: calibrationCohortId(scenarios.unresolved_as_standard.calibration),
+  } };
+}
+
+async function fitHistoricalPlanTimelines(options, planTypes, currentPlanType) {
+  if (!Array.isArray(planTypes) || planTypes.length > 16) {
+    throw fixedError("accounting_transition_derivation_limit_exceeded");
+  }
+  const results = [];
+  for (const planType of [...new Set(planTypes)].sort()) {
+    if (planType === currentPlanType || planType === "unknown") continue;
+    throwIfAborted(options.signal);
+    try {
+      const fit = await fitCompositionFromCorpusStream({ ...options, selectedPlanType: planType });
+      results.push({ planType, draft: fit.planScopedTimeline, failure: null });
+    } catch (error) {
+      throwIfAborted(options.signal);
+      results.push({ planType, draft: null, failure: compositionFitFailureReason(error) });
+    }
+  }
+  return results;
+}
+
+function historicalPlanComparisonReceipts(drafts, capacity, provenance) {
+  let retainedBytes = 0;
+  return drafts.map(({ planType, draft, failure }) => {
+    const allowanceCapacityByScenario = allowanceCapacityForPlan(capacity, planType);
+    const row = { planType, failure, allowanceCapacityByScenario,
+      planScopedTimeline: planScopedTimelineReceipt({
+        ...provenance, draft, capacityPlanScope: allowanceCapacityByScenario?.planScope,
+      }),
+    };
+    const bytes = Buffer.byteLength(stableJson(row));
+    if (retainedBytes + bytes > MAX_PLAN_TIMELINE_BYTES) {
+      row.planScopedTimeline = unavailablePlanTimeline("plan_scoped_resource_limit");
+      row.failure = "accounting_plan_timeline_resource_limit";
+    } else retainedBytes += bytes;
+    return row;
+  });
 }
 
 function publicDiagnostics(value) {
@@ -3809,8 +3900,10 @@ export async function buildReplaySafeAccountingCache({
   }
   let composition = null;
   let planScopedTimelineDraft = null;
+  let historicalPlanDrafts = [];
   let compositionFitFailure = null;
   let transitionSeries;
+  let weeklyApiIntervals = unavailableWeeklyApiIntervals();
   const retainedUsageEvents = calibrationCorpus.retainedUsageEvents;
   const retainedWeeklySnapshots = calibrationCorpus.weeklyRateLimitSnapshots.length;
   const calibrationRetainedBytes = calibrationCorpus.usageMetadataBytes
@@ -3850,6 +3943,27 @@ export async function buildReplaySafeAccountingCache({
     }
     throwIfAborted(signal);
     checkRuntimeMemory();
+    historicalPlanDrafts = await fitHistoricalPlanTimelines({
+      forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
+      weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
+      endMs, signal, checkRuntimeMemory,
+      planAttributionIndex: calibrationAttribution.index,
+      declaredSpeedBaselines: baselines,
+    }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType);
+    // Transition derivation consumes and releases the snapshot array. Project
+    // exact intervals before that ownership transfer, not from an emptied list.
+    if (selectedSourceMode === "unified") {
+      try {
+        await calibrationCorpus.loadWeeklyApiOrigins?.(codexHome);
+        weeklyApiIntervals = await buildWeeklyApiIntervals({ corpus: calibrationCorpus, endMs,
+          generation: unifiedCoverage?.generation, fingerprint: unifiedCoverage?.generationFingerprint, signal });
+      } catch (error) {
+        throwIfAborted(signal);
+        if (error?.name === "AbortError") throw error;
+        weeklyApiIntervals = unavailableWeeklyApiIntervals(
+          /^weekly_api_[a-z_]{1,64}$/.test(error?.code ?? "") ? error.code : "weekly_api_projection_failed");
+      }
+    }
     try {
       transitionSeries = await deriveBoundedWeeklyCalibrationSeries({
         startAt: calibrationCoveredAt.startAt,
@@ -3979,6 +4093,12 @@ export async function buildReplaySafeAccountingCache({
     generationFingerprint: unifiedCoverage?.generationFingerprint ?? null,
     capacityPlanScope,
   });
+  const historicalPlanComparisons = historicalPlanComparisonReceipts(
+    historicalPlanDrafts, allowanceCapacityByScenario, {
+      sourceMode: selectedSourceMode, generation: unifiedCoverage?.generation ?? null,
+      generationFingerprint: unifiedCoverage?.generationFingerprint ?? null,
+    },
+  );
   const paceForecast = projectWeeklyPaceForecast(weeklyPaceSnapshots, endMs);
   throwIfAborted(signal);
   const cache = {
@@ -4008,6 +4128,8 @@ export async function buildReplaySafeAccountingCache({
     periods: [...periods.values()].map(finalizePeriod),
     timeline: finalizeTimeline(timeline),
     planScopedTimeline,
+    historicalPlanComparisons,
+    weeklyApiIntervals,
     sparkUsageTimeline: finalizeTimeline(sparkTimeline),
     quotaTimeline: finalizeWeeklyQuotaTimeline(
       weeklyQuotaTimelineBuckets,
@@ -4745,7 +4867,9 @@ function validPlanScopedTimeline(value, sourceDescriptor, capacity) {
       || value.usage.length > MAX_PLAN_TIMELINE_ROWS
       || !Array.isArray(value.comparisonIntervals)
       || value.comparisonIntervals.length > MAX_PLAN_TIMELINE_ROWS
+      || !Array.isArray(value.excludedIntervals) || value.excludedIntervals.length > MAX_PLAN_TIMELINE_ROWS
       || !Array.isArray(value.quota) || value.quota.length > MAX_PLAN_TIMELINE_ROWS
+      || !Array.isArray(value.observedQuota) || value.observedQuota.length > MAX_PLAN_TIMELINE_ROWS
       || !value.diagnostics || typeof value.diagnostics !== "object"
       || Array.isArray(value.diagnostics)) return false;
   const diagnosticKeys = [
@@ -4764,7 +4888,7 @@ function validPlanScopedTimeline(value, sourceDescriptor, capacity) {
   ))) return false;
   if (value.status === "unavailable") {
     return value.planScope === null && value.usage.length === 0
-      && value.comparisonIntervals.length === 0 && value.quota.length === 0
+      && value.comparisonIntervals.length === 0 && value.quota.length === 0 && value.observedQuota.length === 0 && value.excludedIntervals.length === 0
       && [
         "plan_scoped_generation_unavailable",
         "plan_scoped_attribution_unavailable",
@@ -4785,12 +4909,36 @@ function validPlanScopedTimeline(value, sourceDescriptor, capacity) {
         !== sourceDescriptor?.generationFingerprint) return false;
   let admittedEvents = 0;
   let priorEndMs = Number.NEGATIVE_INFINITY;
+  const observedQuotaByTime = new Map();
+  for (const row of value.observedQuota) {
+    if (!Array.isArray(row) || row.length !== 3
+        || !row.every((n) => typeof n === "number" && Number.isFinite(n))
+        || !Number.isSafeInteger(row[0]) || row[0] <= priorEndMs
+        || !Number.isFinite(new Date(row[0]).getTime())
+        || !Number.isFinite(new Date(row[1] * 1000).getTime())
+        || row[2] < 0 || row[2] > 100) return false;
+    observedQuotaByTime.set(row[0], row);
+    priorEndMs = row[0];
+  }
+  priorEndMs = Number.NEGATIVE_INFINITY;
   for (const interval of value.comparisonIntervals) {
     if (!Array.isArray(interval) || interval.length !== 2
         || !interval.every((ms) => Number.isSafeInteger(ms)
           && ms % TIMELINE_BUCKET_MS === 0 && Number.isFinite(new Date(ms).getTime()))
         || interval[0] < priorEndMs || interval[1] <= interval[0]) return false;
     priorEndMs = interval[1];
+  }
+  priorEndMs = Number.NEGATIVE_INFINITY;
+  let comparableAt = 0;
+  for (const row of value.excludedIntervals) {
+    if (!Array.isArray(row) || row.length !== 3
+        || !row.slice(0, 2).every((ms) => Number.isSafeInteger(ms)
+          && ms % TIMELINE_BUCKET_MS === 0 && Number.isFinite(new Date(ms).getTime()))
+        || row[0] < priorEndMs || row[1] <= row[0]
+        || !["plan_transition_interval", "usage_attribution_unresolved"].includes(row[2])) return false;
+    while (comparableAt < value.comparisonIntervals.length && value.comparisonIntervals[comparableAt][1] <= row[0]) comparableAt += 1;
+    if (value.comparisonIntervals[comparableAt]?.[0] < row[1]) return false;
+    priorEndMs = row[1];
   }
   priorEndMs = Number.NEGATIVE_INFINITY;
   let quotaIntervalAt = 0;
@@ -4805,6 +4953,8 @@ function validPlanScopedTimeline(value, sourceDescriptor, capacity) {
         && value.comparisonIntervals[quotaIntervalAt][1] <= row[0]) quotaIntervalAt += 1;
     const interval = value.comparisonIntervals[quotaIntervalAt];
     if (!interval || row[0] < interval[0] || row[0] >= interval[1]) return false;
+    const observed = observedQuotaByTime.get(row[0]);
+    if (!observed || observed[1] !== row[1] || observed[2] !== row[2]) return false;
     priorEndMs = row[0];
   }
   priorEndMs = Number.NEGATIVE_INFINITY;
@@ -4850,6 +5000,28 @@ function validPlanScopedTimeline(value, sourceDescriptor, capacity) {
     admittedEvents += row.usageEvents;
   }
   return admittedEvents === value.diagnostics.admittedEvents;
+}
+
+function validHistoricalPlanComparisons(value) {
+  if (!Array.isArray(value.historicalPlanComparisons) || value.historicalPlanComparisons.length > 15) return false;
+  const seen = new Set([value.allowanceCapacityByScenario?.planScope?.planType]);
+  const intervals = [...(value.planScopedTimeline?.comparisonIntervals ?? [])];
+  for (const row of value.historicalPlanComparisons) {
+    if (!row || Object.keys(row).sort().join(",") !== "allowanceCapacityByScenario,failure,planScopedTimeline,planType"
+        || typeof row.planType !== "string" || row.planType === "unknown" || seen.has(row.planType)
+        || !(row.failure === null || (typeof row.failure === "string" && COMPOSITION_FIT_FAILURE_REASON_PATTERN.test(row.failure)))
+        || (row.failure !== null && row.planScopedTimeline?.status !== "unavailable")
+        || !validAllowanceCapacityByScenario(row.allowanceCapacityByScenario)
+        || stableJson(row.allowanceCapacityByScenario) !== stableJson(allowanceCapacityForPlan(value.allowanceCapacityByScenario, row.planType))
+        || !validPlanScopedTimeline(row.planScopedTimeline, value.sourceDescriptor, row.allowanceCapacityByScenario)) return false;
+    seen.add(row.planType);
+    intervals.push(...row.planScopedTimeline.comparisonIntervals);
+  }
+  const expectedPlans = value.allowanceCapacityByScenario.scenarios.unresolved_as_standard.calibration.planPopulations
+    .map((row) => row.planType).filter((plan) => plan !== "unknown");
+  if (expectedPlans.some((plan) => !seen.has(plan))) return false;
+  intervals.sort((a, b) => a[0] - b[0]);
+  return intervals.every((row, i) => i === 0 || intervals[i - 1][1] <= row[0]);
 }
 
 const COMPOSITION_CACHE_STATUSES = new Set([
@@ -4973,6 +5145,11 @@ function validCache(value) {
         value.sourceDescriptor,
         value.allowanceCapacityByScenario,
       )
+      || !validHistoricalPlanComparisons(value)
+      || (value.weeklyApiIntervals !== undefined && (!validWeeklyApiIntervals(value.weeklyApiIntervals)
+        || (value.weeklyApiIntervals.status === "available" && (
+          value.weeklyApiIntervals.sourceGeneration !== String(value.sourceDescriptor.generation)
+          || value.weeklyApiIntervals.sourceFingerprint !== value.sourceDescriptor.generationFingerprint))))
       || value.weeklyCalibration?.schemaVersion
         !== "weekly-calibration-summary-v0.1"
       || value.weeklyCalibration.windowDurationMinutes
@@ -5252,6 +5429,8 @@ export const REPLAY_SAFE_CALIBRATION_INTERNALS = Object.freeze({
   deriveBoundedWeeklyCalibrationSeries,
   eventProjection,
   fitCompositionFromCorpusStream,
+  fitHistoricalPlanTimelines,
+  historicalPlanComparisonReceipts,
   fixedError,
   planScopedTimelineReceipt,
   projectBoundedWeeklyCalibrationSummary,

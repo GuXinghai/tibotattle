@@ -4,6 +4,7 @@ import { configureGuardedSqliteConnection } from './windows-protected-sqlite.js'
 import { randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { forEachRolloutLine } from './rollout-line-reader.js';
+import { createCompressedTimingReader, timingLogicalSourcePath } from './compressed-timing-reader.js';
 
 
 const APPLICATION = 0x54425450;
@@ -21,7 +22,7 @@ const REQUIRED_TURN_COLUMNS = Object.freeze([
   'key', 'source', 'offset', ...PRIMARY_TURN_COLUMNS.filter(column => !V12_TURN_COLUMNS.includes(column)),
 ]);
 const REQUIRED_SOURCE_COLUMNS = Object.freeze([
-  'id', 'digest', 'fingerprint', 'cursor', 'snapshot', 'state', 'revision', 'telemetry_revision', 'parser_version', 'replay_parser_version',
+  'id', 'digest', 'fingerprint', 'cursor', 'snapshot', 'state', 'revision', 'telemetry_revision', 'parser_version', 'replay_parser_version', 'rebuild_kind',
 ]);
 const TURN_SCHEMA = `(key BLOB PRIMARY KEY, source INTEGER NOT NULL, offset INTEGER NOT NULL,
   at INTEGER NOT NULL, model TEXT, effort TEXT, tokens INTEGER, reasoning INTEGER,
@@ -36,8 +37,8 @@ const safe = (ok, code) => { if (!ok) throw new Error(code); };
 // Parser methods identify the HMAC/keying semantics of each projection.  The
 // SQLite schema method is separate so older writers cannot reopen a migrated
 // file and overwrite additive performance columns or parser provenance.
-const STORE_SCHEMA_METHODS = Object.freeze({ 2: 6, 3: 7 });
-const PREVIOUS_STORE_SCHEMA_METHODS = Object.freeze({ 2: 4, 3: 5 });
+const STORE_SCHEMA_METHODS = Object.freeze({ 2: 10, 3: 11 });
+const PREVIOUS_STORE_SCHEMA_METHODS = Object.freeze({ 2: [4, 6, 8], 3: [5, 7, 9] });
 
 function schemaMethodFor(method) {
   safe(Number.isSafeInteger(method) && method >= 1, 'invalid_method');
@@ -53,7 +54,7 @@ function migrateTimingSchema(db, schemaMethod) {
   const sourceColumns = tableColumns(db, 'source');
   safe(REQUIRED_TURN_COLUMNS.every(column => turnColumns.has(column))
     && REQUIRED_SOURCE_COLUMNS.every(column => sourceColumns.has(column)
-      || ['revision', 'telemetry_revision', 'parser_version', 'replay_parser_version'].includes(column)),
+      || ['revision', 'telemetry_revision', 'parser_version', 'replay_parser_version', 'rebuild_kind'].includes(column)),
   'incompatible_database');
   const additions = [];
   for (const column of V12_TURN_COLUMNS) {
@@ -63,6 +64,7 @@ function migrateTimingSchema(db, schemaMethod) {
   if (!sourceColumns.has('telemetry_revision')) additions.push('ALTER TABLE source ADD COLUMN telemetry_revision INTEGER NOT NULL DEFAULT 0');
   if (!sourceColumns.has('parser_version')) additions.push('ALTER TABLE source ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0');
   if (!sourceColumns.has('replay_parser_version')) additions.push('ALTER TABLE source ADD COLUMN replay_parser_version INTEGER NOT NULL DEFAULT 0');
+  if (!sourceColumns.has('rebuild_kind')) additions.push("ALTER TABLE source ADD COLUMN rebuild_kind TEXT NOT NULL DEFAULT 'none' CHECK(rebuild_kind IN ('none','source','late'))");
   const replayColumns = tableColumns(db, 'parser_replay_turn');
   if (!replayColumns.size) additions.push(`CREATE TABLE parser_replay_turn ${TURN_SCHEMA}`);
   else safe(['key', 'source', 'offset', ...PRIMARY_TURN_COLUMNS].every(column => replayColumns.has(column)), 'incompatible_database');
@@ -91,7 +93,7 @@ function revisionToken(db, supplement = null) {
 }
 
 function sourceFacts(db) {
-  return db.prepare('SELECT id,digest,fingerprint,revision,telemetry_revision,parser_version,replay_parser_version,snapshot FROM source ORDER BY id').all()
+  return db.prepare('SELECT id,digest,fingerprint,revision,telemetry_revision,parser_version,replay_parser_version,rebuild_kind,snapshot FROM source ORDER BY id').all()
     .map(row => {
       let parsed;
       try { parsed = JSON.parse(row.snapshot); } catch { throw new Error('invalid_source_snapshot'); }
@@ -103,6 +105,7 @@ function sourceFacts(db) {
         && Number.isSafeInteger(row.telemetry_revision) && row.telemetry_revision >= 0
         && Number.isSafeInteger(row.parser_version) && row.parser_version >= 0
         && Number.isSafeInteger(row.replay_parser_version) && row.replay_parser_version >= 0
+        && ['none', 'source', 'late'].includes(row.rebuild_kind)
         && parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed), 'invalid_source_snapshot');
       return {
         id: row.id,
@@ -112,6 +115,7 @@ function sourceFacts(db) {
         telemetryRevision: row.telemetry_revision,
         parserVersion: row.parser_version,
         replayParserVersion: row.replay_parser_version,
+        rebuilding: row.rebuild_kind !== 'none',
         exhausted: parsed.exhausted === true,
       };
     });
@@ -133,6 +137,7 @@ function setAttemptedBytes(error, attemptedBytes) {
 }
 
 export async function openTimingStore(directory, { createParser, digest, METHOD, MAX_STATE_BYTES, correlationKey, parserVersion = 0,
+  compressedReader = null,
   filesystem = createTimingFilesystem(),
   databaseFactory = (file, options) => new DatabaseSync(file, options) }) {
   const schemaMethod = schemaMethodFor(METHOD);
@@ -144,6 +149,10 @@ export async function openTimingStore(directory, { createParser, digest, METHOD,
   let dbClosed = false;
   let leaseReleaseAttempted = false;
   let leaseReleaseError = null;
+  let ownedCompressedReader = null;
+  if (compressedReader !== null && ['slice', 'commit', 'detach', 'close', 'register', 'checkpoint'].some(k => typeof compressedReader[k] !== 'function')) {
+    lease.release(); throw new TypeError('Invalid compressed timing reader');
+  }
 
   // SQLite must be closed before its native file guards are released. If a
   // close failure leaves the database open, retain the lease and let a caller
@@ -182,7 +191,7 @@ export async function openTimingStore(directory, { createParser, digest, METHOD,
     const application = db.prepare('PRAGMA application_id').get().application_id;
     safe(created || (application === APPLICATION
       && (version === METHOD || version === schemaMethod
-        || version === PREVIOUS_STORE_SCHEMA_METHODS[METHOD])), 'incompatible_database');
+        || PREVIOUS_STORE_SCHEMA_METHODS[METHOD]?.includes(version))), 'incompatible_database');
     db.exec('PRAGMA busy_timeout=100; PRAGMA cache_size=-2048; PRAGMA synchronous=FULL; PRAGMA max_page_count=65536;');
     if (created) {
       db.exec(`BEGIN IMMEDIATE;
@@ -193,7 +202,8 @@ export async function openTimingStore(directory, { createParser, digest, METHOD,
           revision INTEGER NOT NULL DEFAULT 0,
           telemetry_revision INTEGER NOT NULL DEFAULT 0,
           parser_version INTEGER NOT NULL DEFAULT 0,
-          replay_parser_version INTEGER NOT NULL DEFAULT 0);
+          replay_parser_version INTEGER NOT NULL DEFAULT 0,
+          rebuild_kind TEXT NOT NULL DEFAULT 'none' CHECK(rebuild_kind IN ('none','source','late')));
         CREATE TABLE turn ${TURN_SCHEMA};
         CREATE TABLE parser_replay_turn ${TURN_SCHEMA};
         CREATE INDEX turn_time ON turn(at);
@@ -216,9 +226,18 @@ export async function openTimingStore(directory, { createParser, digest, METHOD,
       safe(Number.isSafeInteger(newest) && newest >= 0 && newest <= parserVersion, 'incompatible_parser_version');
     }
     if (!created) migrateTimingSchema(db, schemaMethod);
-    return { db, key, file, createParser, digest, filesystem, method: METHOD, parserVersion, close: () => {
+    compressedReader?.register(file);
+    return { db, key, file, createParser, digest, filesystem, method: METHOD, parserVersion,
+      readCompressed: () => {
+        if (compressedReader) return compressedReader;
+        if (!ownedCompressedReader) { ownedCompressedReader = createCompressedTimingReader({ filesystem }); ownedCompressedReader.register(file); }
+        return ownedCompressedReader;
+      },
+      close: () => {
+      compressedReader?.detach(file);
       const error = closeOwnedResources();
       if (error !== null) throw error;
+      return ownedCompressedReader?.close();
     } };
   } catch (e) {
     closeOwnedResources(e);
@@ -242,18 +261,32 @@ async function fingerprint(handle, cursor, key, digest) {
 export async function ingestTimingFile(store, path, { maxBytes = CHUNK, signal, onReadLine } = {}) {
   safe(Number.isSafeInteger(maxBytes) && maxBytes > 0 && maxBytes <= CHUNK, 'invalid_budget');
   const { db, key, createParser, digest } = store;
-  const handle = await store.filesystem.openSource(path);
+  const sourceKey = Buffer.from(digest(key, 'source-path', timingLogicalSourcePath(path)), 'hex');
+  const old = db.prepare('SELECT * FROM source WHERE digest=?').get(sourceKey);
+  if (path.endsWith('.jsonl.zst')) return ingestCompressedTimingFile(store, path, {
+    sourceKey, old, maxBytes, signal, onReadLine,
+  });
+  let handle;
+  try {
+    handle = await store.filesystem.openSource(path);
+  } catch (error) {
+    if (old && (old.rebuild_kind !== 'none'
+        || old.parser_version !== store.parserVersion && old.replay_parser_version === store.parserVersion)) {
+      throw new Error('source_recovery_failed');
+    }
+    throw error;
+  }
   let attemptedBytes = 0;
   let primaryError = null;
+  let recoveryAttempt = false;
   try {
     const stat = await handle.stat();
     const before = snapshot(stat);
-    const sourceKey = Buffer.from(digest(key, 'source-path', resolve(path)), 'hex');
-    const old = db.prepare('SELECT * FROM source WHERE digest=?').get(sourceKey);
     const cursor = old?.cursor ?? 0;
     let previous = null;
-    let replay = false;
     let upgradingParser = false;
+    let rebuildKind = old?.rebuild_kind ?? 'none';
+    let resetStaging = false;
     if (old) {
       previous = JSON.parse(old.snapshot);
       safe(Number.isSafeInteger(old.parser_version) && old.parser_version >= 0
@@ -261,109 +294,54 @@ export async function ingestTimingFile(store, path, { maxBytes = CHUNK, signal, 
         && Number.isSafeInteger(old.replay_parser_version) && old.replay_parser_version >= 0
         && old.replay_parser_version <= store.parserVersion, 'incompatible_parser_version');
       upgradingParser = old.parser_version !== store.parserVersion;
-      safe(sameFile(before, previous) && before.size >= previous.size, 'source_replaced');
-      if (before.size === previous.size) {
-        safe(before.mtime === previous.mtime && before.ctime === previous.ctime, 'source_rewritten');
-        if (!upgradingParser && (cursor === before.size || previous.exhausted === true)) return { bytes: 0, unchanged: true };
+      const identityMatches = sameFile(before, previous);
+      const cursorFits = cursor <= before.size;
+      const prefixMatches = identityMatches && cursorFits
+        ? await fingerprint(handle, cursor, key, digest) === old.fingerprint
+        : false;
+      const sameSizeChanged = identityMatches && before.size === previous.size
+        && (before.mtime !== previous.mtime || before.ctime !== previous.ctime);
+      const sourceChanged = !identityMatches || !cursorFits || before.size < previous.size
+        || sameSizeChanged || identityMatches && cursorFits && !prefixMatches;
+      if (sourceChanged) {
+        // Rebuild only this source. The prior live rows stay readable while the
+        // replacement is parsed in bounded chunks into parser_replay_turn.
+        rebuildKind = 'source';
+        resetStaging = true;
+      }
+      if (!sourceChanged && rebuildKind === 'none' && !upgradingParser
+          && before.size === previous.size && before.mtime === previous.mtime
+          && before.ctime === previous.ctime
+          && (cursor === before.size || previous.exhausted === true)) {
+        return { bytes: 0, unchanged: true };
       }
       // A source that was completely scanned can later gain a delayed record.
       // Rebuild its logical rows from the beginning in the same transaction so
       // stale measurements disappear even when the late record is not itself
-      // a second completion. Stable HMAC keys preserve logical identities.
-      replay = upgradingParser ? old.replay_parser_version !== store.parserVersion
-        : before.size > previous.size && previous.exhausted === true;
-      safe(await fingerprint(handle, cursor, key, digest) === old.fingerprint, 'source_rewritten');
+      // a second completion. Keep this selected-source replay staged as well.
+      if (!sourceChanged && rebuildKind === 'none' && !upgradingParser
+          && before.size > previous.size && previous.exhausted === true) {
+        rebuildKind = 'late';
+        resetStaging = true;
+      }
+      if (upgradingParser && old.replay_parser_version !== store.parserVersion) resetStaging = true;
+      recoveryAttempt = rebuildKind !== 'none';
     }
     if (signal?.aborted) throw new Error('cancelled');
-    const start = replay ? 0 : cursor;
-    const end = Math.min(before.size, start + maxBytes);
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      if (!old) db.prepare('INSERT INTO source(digest,fingerprint,cursor,snapshot,state) VALUES (?,?,?,?,?)')
-        .run(sourceKey, '', 0, JSON.stringify(before), '{}');
-      const source = old?.id ?? Number(db.prepare('SELECT last_insert_rowid() AS id').get().id);
-      // Parser repairs may span many bounded reads. Keep the prior live rows
-      // and their parser provenance until the verified replay is complete.
-      const table = upgradingParser ? 'parser_replay_turn' : 'turn';
-      if (replay) db.prepare(`DELETE FROM ${table} WHERE source=?`).run(source);
-      const insert = db.prepare(`INSERT OR IGNORE INTO ${table}
-        (key,source,offset,${PRIMARY_TURN_COLUMNS.join(',')})
-        VALUES (${new Array(3 + PRIMARY_TURN_COLUMNS.length).fill('?').join(',')})`);
-      const existing = db.prepare(`SELECT ${PRIMARY_TURN_COLUMNS.join(',')} FROM ${table} WHERE key=?`);
-      const conflictFields = "model=NULL,effort=NULL,duration=NULL,ttft=NULL,sample_tokens=NULL,sample_reasoning=NULL,sample_duration=NULL,sample_responses=0,sample_method=NULL,turn_duration=NULL,speed_mode=NULL,speed_mode_source=NULL,api_service_tier=NULL,quality='conflicting_duplicate'";
-      const conflict = db.prepare(`UPDATE ${table} SET ${conflictFields} WHERE key=?`);
-      const saved = replay ? null : old ? JSON.parse(old.state) : null;
-      let discardLine = saved?.discardLine === true;
-      const parser = createParser(key, saved, t => {
-        const turnKey = Buffer.from(t.key, 'hex');
-        const prior = existing.get(turnKey);
-        const values = PRIMARY_TURN_COLUMNS.map(column => t[column] ?? null);
-        if (prior) {
-          if (PRIMARY_TURN_COLUMNS.some((column, index) => prior[column] !== values[index])) conflict.run(turnKey);
-        } else insert.run(turnKey, source, t.offset, ...values);
-      });
-      attemptedBytes = end - start;
-      const receipt = await forEachRolloutLine(handle, { start, end, signal,
-        onLine: (line, offset, partial) => {
-          if (discardLine) discardLine = false;
-          else parser.line(line, offset, partial);
-          onReadLine?.();
-        } });
-      if (receipt.aborted || signal?.aborted) throw new Error('cancelled');
-      const after = snapshot(await handle.stat());
-      const named = snapshot(await store.filesystem.namedStat(path, handle));
-      safe(sameFile(before, after) && sameFile(before, named)
-        && before.size === after.size && before.mtime === after.mtime
-        && before.ctime === after.ctime, 'source_changed');
-      let nextOffset = receipt.nextOffset;
-      // Persist only the fact that an oversized line is being discarded. This
-      // allows arbitrarily large content lines without retaining their bytes or
-      // repeatedly reading the same prefix. Resume parsing after its newline.
-      if (nextOffset === start && (discardLine || end - start > 64 * 1024)) {
-        if (!discardLine) parser.line(Buffer.alloc(0), end, true);
-        discardLine = true; nextOffset = end;
-      }
-      const state = parser.state(); state.discardLine = discardLine;
-      after.exhausted = end === before.size;
-      if (state.blocked) db.prepare(`UPDATE ${table} SET model=NULL,effort=NULL,duration=NULL,ttft=NULL,sample_tokens=NULL,sample_reasoning=NULL,sample_duration=NULL,sample_responses=0,sample_method=NULL,turn_duration=NULL,speed_mode=NULL,speed_mode_source=NULL,api_service_tier=NULL,quality='blocked_source' WHERE source=?`).run(source);
-      const repairComplete = upgradingParser && after.exhausted;
-      if (repairComplete) {
-        db.prepare('DELETE FROM turn WHERE source=?').run(source);
-        // Preserve the original cross-source duplicate/conflict policy when
-        // the staged replacement joins the live measurement set.
-        db.prepare(`UPDATE turn SET ${conflictFields} WHERE key IN (
-          SELECT staged.key FROM parser_replay_turn staged JOIN turn live ON live.key=staged.key
-          WHERE staged.source=? AND (${PRIMARY_TURN_COLUMNS.map(column => `live.${column} IS NOT staged.${column}`).join(' OR ')})
-        )`).run(source);
-        const columns = ['key', 'source', 'offset', ...PRIMARY_TURN_COLUMNS].join(',');
-        db.prepare(`INSERT OR IGNORE INTO turn (${columns}) SELECT ${columns} FROM parser_replay_turn WHERE source=?`).run(source);
-        db.prepare('DELETE FROM parser_replay_turn WHERE source=?').run(source);
-      }
-      const previousRevision = old === undefined ? 0 : old.revision;
-      const previousTelemetryRevision = old === undefined ? 0 : old.telemetry_revision;
-      safe(Number.isSafeInteger(previousRevision) && previousRevision >= 0, 'invalid_revision');
-      safe(Number.isSafeInteger(previousTelemetryRevision) && previousTelemetryRevision >= 0, 'invalid_telemetry_revision');
-      const invalidated = upgradingParser ? repairComplete : replay;
-      const revision = previousRevision + (invalidated ? 1 : 0);
-      const telemetryRevision = previousTelemetryRevision + 1;
-      safe(Number.isSafeInteger(revision) && revision >= 0, 'invalid_revision');
-      safe(Number.isSafeInteger(telemetryRevision) && telemetryRevision >= 1, 'invalid_telemetry_revision');
-      db.prepare('UPDATE source SET fingerprint=?,cursor=?,snapshot=?,state=?,revision=?,telemetry_revision=?,parser_version=?,replay_parser_version=? WHERE id=?')
-        .run(await fingerprint(handle, nextOffset, key, digest), nextOffset,
-          JSON.stringify(after), JSON.stringify(state), revision, telemetryRevision,
-          upgradingParser && !repairComplete ? old.parser_version : store.parserVersion,
-          upgradingParser && !repairComplete ? store.parserVersion : 0, source);
-      db.exec('COMMIT');
-      return { bytes: end - start, unchanged: false, replayed: replay || upgradingParser, invalidated,
-        revision, cursor: nextOffset, remaining: before.size - nextOffset, partial: receipt.partialDeferred };
-    } catch (e) {
-      try { db.exec('ROLLBACK'); } catch { /* Preserve the operation failure. */ }
-      throw e;
-    }
+    const start = resetStaging ? 0 : cursor, end = Math.min(before.size, start + maxBytes);
+    attemptedBytes = end - start;
+    return await commitTimingBatch(store, { old, sourceKey, before, upgradingParser, rebuildKind,
+      resetStaging, start, end, signal, onReadLine, exhausted: end === before.size,
+      readLines: controls => forEachRolloutLine(handle, controls),
+      verifyAfter: () => verifyTimingSource(store, path, handle, before),
+      fingerprintAt: offset => fingerprint(handle, offset, key, digest),
+    });
   } catch (e) {
-    primaryError = e;
-    setAttemptedBytes(e, attemptedBytes);
-    throw e;
+    const reported = recoveryAttempt && e?.message === 'source_changed'
+      ? new Error('source_recovery_failed') : e;
+    primaryError = reported;
+    setAttemptedBytes(reported, attemptedBytes);
+    throw reported;
   } finally {
     try {
       await handle.close();
@@ -375,6 +353,73 @@ export async function ingestTimingFile(store, path, { maxBytes = CHUNK, signal, 
       // A cleanup failure must not replace the parser, read, or transaction
       // error that the caller uses to account for attempted bytes.
     }
+  }
+}
+
+async function ingestCompressedTimingFile(store, path, { sourceKey, old, maxBytes, signal, onReadLine }) {
+  let handle, attemptedBytes = 0, primaryError = null;
+  try {
+    signal?.throwIfAborted();
+    handle = await store.filesystem.openSource(path);
+    const physical = await handle.stat(), before = snapshot(physical);
+    const previous = old ? JSON.parse(old.snapshot) : null;
+    if (previous?.compression === 'zstd') safe(Number.isSafeInteger(old.cursor) && old.cursor >= 0
+      && typeof previous.exhausted === 'boolean'
+      && (previous.logicalSize === null || Number.isSafeInteger(previous.logicalSize)
+        && previous.logicalSize >= old.cursor && previous.logicalSize <= 16 * 1024 ** 3)
+      && (!previous.exhausted || previous.logicalSize !== null), 'invalid_source_snapshot');
+    if (old) safe(Number.isSafeInteger(old.parser_version) && old.parser_version >= 0
+      && old.parser_version <= store.parserVersion && Number.isSafeInteger(old.replay_parser_version)
+      && old.replay_parser_version >= 0 && old.replay_parser_version <= store.parserVersion, 'incompatible_parser_version');
+    const unchangedPhysical = previous?.compression === 'zstd' && sameFile(before, previous)
+      && before.size === previous.size && before.mtime === previous.mtime && before.ctime === previous.ctime;
+    const upgradingParser = old !== undefined && old.parser_version !== store.parserVersion;
+    const reader = store.readCompressed();
+    if (unchangedPhysical && !upgradingParser && old.rebuild_kind === 'none'
+        && old.replay_parser_version === 0 && previous.exhausted === true) {
+      reader.checkpoint(path, store.file, Infinity);
+      return { bytes: 0, decodedBytes: 0, unchanged: true };
+    }
+    const resetStaging = !unchangedPhysical || upgradingParser && old.replay_parser_version !== store.parserVersion;
+    const rebuildKind = unchangedPhysical ? old.rebuild_kind : 'source';
+    const start = resetStaging ? 0 : old.cursor;
+    reader.checkpoint(path, store.file, start);
+    const slice = await reader.slice({ path, physical, start, maxBytes, consumer: store.file, signal });
+    attemptedBytes = slice.readBytes;
+    if (!slice.ready) {
+      await verifyTimingSource(store, path, handle, before);
+      return { bytes: slice.readBytes, decodedBytes: slice.readBytes, preparing: true,
+        unchanged: false, remaining: 1, partial: false };
+    }
+    // A resumed parser checkpoint must refer to the same decoded prefix. This
+    // check costs no additional decompression and never trusts a physical size
+    // as a logical cursor.
+    if (!resetStaging && old.cursor > 0) safe(
+      slice.fingerprint(old.cursor, store.key, store.digest) === old.fingerprint, 'source_changed');
+    const memoryHandle = {
+      stat: async () => physical,
+      async read(buffer, offset, length, position) {
+        safe(position >= start && position + length <= slice.end, 'invalid_source_read');
+        const bytes = slice.bytes.subarray(position - start, position - start + length);
+        buffer.set(bytes, offset); return { bytesRead: bytes.length, buffer };
+      },
+    };
+    const result = await commitTimingBatch(store, { old, sourceKey, before, upgradingParser,
+      rebuildKind, resetStaging, start, end: slice.end, signal, onReadLine, exhausted: slice.exhausted,
+      readLines: controls => forEachRolloutLine(memoryHandle, controls),
+      verifyAfter: async () => ({ ...await verifyTimingSource(store, path, handle, before),
+        compression: 'zstd', logicalSize: slice.logicalSize }),
+      fingerprintAt: offset => slice.fingerprint(offset, store.key, store.digest),
+    });
+    reader.commit(path, store.file, result.cursor);
+    return { ...result, decodedBytes: slice.readBytes,
+      remaining: slice.exhausted ? Math.max(0, slice.end - result.cursor) : 1 };
+  } catch (error) {
+    primaryError = error;
+    const reported = error?.message === 'source_changed' ? Object.assign(new Error('source_recovery_failed'), { code: 'source_recovery_failed' }) : error;
+    setAttemptedBytes(reported, attemptedBytes); throw reported;
+  } finally {
+    try { await handle?.close(); } catch (error) { if (!primaryError) throw error; }
   }
 }
 
@@ -440,4 +485,99 @@ export function timingReport(store) {
       diagnostics[k] = (diagnostics[k] ?? 0) + v;
   }
   return { method: store.method, diagnostics, turns: rows };
+}
+
+async function verifyTimingSource(store, path, handle, before) {
+  const after = snapshot(await handle.stat()), named = snapshot(await store.filesystem.namedStat(path, handle));
+  safe(sameFile(before, after) && sameFile(before, named)
+    && before.size === after.size && before.mtime === after.mtime && before.ctime === after.ctime, 'source_changed');
+  return after;
+}
+
+async function commitTimingBatch(store, { old, sourceKey, before, upgradingParser, rebuildKind,
+  resetStaging, start, end, signal, onReadLine, exhausted, readLines, verifyAfter, fingerprintAt }) {
+  const { db, key, createParser } = store;
+  const stagedReplay = upgradingParser || rebuildKind !== 'none';
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      if (!old) db.prepare('INSERT INTO source(digest,fingerprint,cursor,snapshot,state) VALUES (?,?,?,?,?)')
+        .run(sourceKey, '', 0, JSON.stringify(before), '{}');
+      const source = old?.id ?? Number(db.prepare('SELECT last_insert_rowid() AS id').get().id);
+      // Parser repairs and source rebuilds may span many bounded reads. Keep
+      // prior live rows until the complete replacement commits atomically.
+      const table = stagedReplay ? 'parser_replay_turn' : 'turn';
+      if (resetStaging) db.prepare('DELETE FROM parser_replay_turn WHERE source=?').run(source);
+      const insert = db.prepare(`INSERT OR IGNORE INTO ${table}
+        (key,source,offset,${PRIMARY_TURN_COLUMNS.join(',')})
+        VALUES (${new Array(3 + PRIMARY_TURN_COLUMNS.length).fill('?').join(',')})`);
+      const existing = db.prepare(`SELECT ${PRIMARY_TURN_COLUMNS.join(',')} FROM ${table} WHERE key=?`);
+      const conflictFields = "model=NULL,effort=NULL,duration=NULL,ttft=NULL,sample_tokens=NULL,sample_reasoning=NULL,sample_duration=NULL,sample_responses=0,sample_method=NULL,turn_duration=NULL,speed_mode=NULL,speed_mode_source=NULL,api_service_tier=NULL,quality='conflicting_duplicate'";
+      const conflict = db.prepare(`UPDATE ${table} SET ${conflictFields} WHERE key=?`);
+      const saved = resetStaging ? null : old ? JSON.parse(old.state) : null;
+      let discardLine = saved?.discardLine === true;
+      const parser = createParser(key, saved, t => {
+        const turnKey = Buffer.from(t.key, 'hex');
+        const prior = existing.get(turnKey);
+        const values = PRIMARY_TURN_COLUMNS.map(column => t[column] ?? null);
+        if (prior) {
+          if (PRIMARY_TURN_COLUMNS.some((column, index) => prior[column] !== values[index])) conflict.run(turnKey);
+        } else insert.run(turnKey, source, t.offset, ...values);
+      });
+      const receipt = await readLines({ start, end, signal,
+        onLine: (line, offset, partial) => {
+          if (discardLine) discardLine = false;
+          else parser.line(line, offset, partial);
+          onReadLine?.();
+        } });
+      if (receipt.aborted || signal?.aborted) throw new Error('cancelled');
+      const after = await verifyAfter();
+      let nextOffset = receipt.nextOffset;
+      // Persist only the fact that an oversized line is being discarded. This
+      // allows arbitrarily large content lines without retaining their bytes or
+      // repeatedly reading the same prefix. Resume parsing after its newline.
+      if (nextOffset === start && (discardLine || end - start > 64 * 1024)) {
+        if (!discardLine) parser.line(Buffer.alloc(0), end, true);
+        discardLine = true; nextOffset = end;
+      }
+      const state = parser.state(); state.discardLine = discardLine;
+      // A stable EOF scan may defer an incomplete final line. Mark the source
+      // exhausted for this file version so it is not retried forever; a later
+      // append triggers the bounded late-source rebuild and parses that line.
+      after.exhausted = exhausted;
+      if (state.blocked) db.prepare(`UPDATE ${table} SET model=NULL,effort=NULL,duration=NULL,ttft=NULL,sample_tokens=NULL,sample_reasoning=NULL,sample_duration=NULL,sample_responses=0,sample_method=NULL,turn_duration=NULL,speed_mode=NULL,speed_mode_source=NULL,api_service_tier=NULL,quality='blocked_source' WHERE source=?`).run(source);
+      const replacementComplete = stagedReplay && after.exhausted;
+      if (replacementComplete) {
+        db.prepare('DELETE FROM turn WHERE source=?').run(source);
+        // Preserve the original cross-source duplicate/conflict policy when
+        // the staged replacement joins the live measurement set.
+        db.prepare(`UPDATE turn SET ${conflictFields} WHERE key IN (
+          SELECT staged.key FROM parser_replay_turn staged JOIN turn live ON live.key=staged.key
+          WHERE staged.source=? AND (${PRIMARY_TURN_COLUMNS.map(column => `live.${column} IS NOT staged.${column}`).join(' OR ')})
+        )`).run(source);
+        const columns = ['key', 'source', 'offset', ...PRIMARY_TURN_COLUMNS].join(',');
+        db.prepare(`INSERT OR IGNORE INTO turn (${columns}) SELECT ${columns} FROM parser_replay_turn WHERE source=?`).run(source);
+        db.prepare('DELETE FROM parser_replay_turn WHERE source=?').run(source);
+      }
+      const previousRevision = old === undefined ? 0 : old.revision;
+      const previousTelemetryRevision = old === undefined ? 0 : old.telemetry_revision;
+      safe(Number.isSafeInteger(previousRevision) && previousRevision >= 0, 'invalid_revision');
+      safe(Number.isSafeInteger(previousTelemetryRevision) && previousTelemetryRevision >= 0, 'invalid_telemetry_revision');
+      const invalidated = replacementComplete && (upgradingParser || rebuildKind !== 'none');
+      const revision = previousRevision + (invalidated ? 1 : 0);
+      const telemetryRevision = previousTelemetryRevision + 1;
+      safe(Number.isSafeInteger(revision) && revision >= 0, 'invalid_revision');
+      safe(Number.isSafeInteger(telemetryRevision) && telemetryRevision >= 1, 'invalid_telemetry_revision');
+      db.prepare('UPDATE source SET fingerprint=?,cursor=?,snapshot=?,state=?,revision=?,telemetry_revision=?,parser_version=?,replay_parser_version=?,rebuild_kind=? WHERE id=?')
+        .run(await fingerprintAt(nextOffset), nextOffset,
+          JSON.stringify(after), JSON.stringify(state), revision, telemetryRevision,
+          upgradingParser && !replacementComplete ? old.parser_version : store.parserVersion,
+          upgradingParser && !replacementComplete ? store.parserVersion : 0,
+          replacementComplete ? 'none' : rebuildKind, source);
+      db.exec('COMMIT');
+      return { bytes: end - start, unchanged: false, replayed: stagedReplay, invalidated,
+        revision, cursor: nextOffset, remaining: exhausted ? Math.max(0, end - nextOffset) : Math.max(1, before.size - nextOffset), partial: receipt.partialDeferred };
+    } catch (e) {
+      try { db.exec('ROLLBACK'); } catch { /* Preserve the operation failure. */ }
+      throw e;
+    }
 }

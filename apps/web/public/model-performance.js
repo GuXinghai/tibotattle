@@ -1,11 +1,7 @@
-import { modelUsagePresentation, modelThemeIcon } from "./model-visuals.js";
 import { formatModelName } from "./ui-format.js";
 import {
-  REPORTING_PERIODS,
-  REPORTING_DURATION_MS,
   normalizeReportingWindow,
   reportingRequestPeriod,
-  reportingPeriodLabel,
 } from "./dashboard-ui.js";
 export { normalizeReportingWindow } from "./dashboard-ui.js";
 
@@ -20,7 +16,7 @@ const MAX_READY_PERIODS = 12;
 // Keep the in-memory period cache useful across quick switches while ensuring
 // each entry is eventually revalidated. The cache holds at most the four
 // shared periods in three speed modes; it never persists measurements in browser storage.
-const PERIOD_CACHE_TTL_MS = 60_000;
+const PERIOD_CACHE_TTL_MS = 300_000;
 // A first history pass can take minutes. Continue bounded background retries
 // while the document is visible instead of giving up after ten seconds.
 const PRELOAD_MAX_ATTEMPTS = 24;
@@ -99,7 +95,7 @@ export function normalizeModelPerformance(value) {
   return value;
 }
 
-/** Connect observed medians; missing bins use an honest dashed bridge. */
+/** Segment metadata identifies gaps; renderers must not draw those intervals. */
 export function performanceSegments(points, interval) {
   const step = interval === "week" ? 7 * DAY : DAY;
   return points.slice(1).flatMap((point, index) => {
@@ -185,7 +181,11 @@ export function mountModelPerformance(options = {}) {
   let period = STANDALONE_PERIODS.includes(saved.period) ? saved.period : "all";
   let reportingWindow = sharedReporting ? normalizeReportingWindow(options.reportingWindow) : null;
   let modelId = Object.hasOwn(MODEL_NAMES, saved.model) ? saved.model : null;
-  let speedMode = "standard";
+  let speedMode = SPEED_MODES.includes(saved.speedMode) ? saved.speedMode : "standard";
+  let diagnostics = [], failureCode = null, pendingAttempts = 0;
+  const pendingResult = () => (payload?.status === 'loading' || payload?.collecting)
+    && !diagnostics.some(code => code === 'timing_worker_failed' || code === 'timing_projection_failed');
+  const diagnosticsByKey = new Map();
   let payload = null, loading = false, failed = false, cancelled = false, request = 0, timer = null;
   let retainedWindowKey = null;
   let retainedWindowUnavailable = false;
@@ -204,7 +204,7 @@ export function mountModelPerformance(options = {}) {
   let lifecycle = 0, scopeGeneration = 0, scopeUnavailable = false, destroyed = false;
   let preloadPromise = null, preloadComplete = false;
   const preloadWaiters = new Map();
-  let aboutOpen = false, chartCursors = [];
+  let chartCursors = [];
   let selectedInterval = null;
   const showInterval = (at) => { if (at === selectedInterval) return; selectedInterval = at; for (const update of chartCursors) update(at); };
   const translate = (key, values) => t(`performance.${key}`, values);
@@ -233,7 +233,7 @@ export function mountModelPerformance(options = {}) {
   const visible = () => !root.classList.contains("dashboard-page-inactive") && !documentRef.hidden;
   const remember = () => {
     try {
-      const preference = sharedReporting ? { model: modelId } : { period, model: modelId };
+      const preference = sharedReporting ? { model: modelId, speedMode } : { period, model: modelId, speedMode };
       windowRef.localStorage.setItem(storageKey, JSON.stringify(preference));
     } catch { /* Nonessential preference. */ }
   };
@@ -242,13 +242,6 @@ export function mountModelPerformance(options = {}) {
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
-  };
-  const evidenceRow = (kind, label, value, state = null) => {
-    const row = element("div", "performance-evidence-row");
-    row.dataset.evidence = kind;
-    if (state) row.dataset.state = state;
-    row.append(element("dt", "performance-evidence-label", label), element("dd", "performance-evidence-value", value));
-    return row;
   };
   const derivedReportingStart = (window) => {
     if (!window?.endAt || window.period === "all") return null;
@@ -269,20 +262,6 @@ export function mountModelPerformance(options = {}) {
     if (!startAt) return end;
     return reportTranslate("range", { start: fullDateFormat.format(new Date(startAt)), end });
   };
-  const appendReportingEvidence = (container, selected = null) => {
-    if ((!sharedReporting || retainedWindowKey !== null) && selected) {
-      const fallback = { period: selected.period === "1" ? "24h" : selected.period === "7" ? "7d" : selected.period === "30" ? "30d" : "all", start: selected.start, end: selected.end };
-      container.append(evidenceRow("period", reportTranslate("period"), `${reportingPeriodLabel(fallback.period, (key) => reportTranslate(key))} · ${reportingRange(null, fallback)}`));
-    }
-  };
-  const appendPerformanceEvidence = (container, statusState) => {
-    appendReportingEvidence(container, payload);
-    if (payload?.updatedAt && statusState !== "ready") {
-      formatters();
-      const updated = fullDateFormat.format(new Date(payload.updatedAt));
-      container.append(evidenceRow("freshness", translate("updated", { date: "" }).trim(), updated, payload.stale ? "stale" : "fresh"));
-    }
-  };
   const svgElement = (name, attributes = {}, text) => {
     const node = documentRef.createElementNS("http://www.w3.org/2000/svg", name);
     for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
@@ -292,14 +271,15 @@ export function mountModelPerformance(options = {}) {
   function plot(series, metric, color, domain) {
     const holder = element("div", "performance-plot");
     const points = series.flatMap((item) => item.points);
-    if (!points.length) { holder.append(element("p", "performance-empty", translate(metric === "speed"
-      ? "combinedSpeedEmpty" : "ttftEmpty"))); return holder; }
-    const svg = svgElement("svg", { viewBox: "0 0 800 256", role: "group", "aria-label": translate(metric) });
+    if (!points.length) { holder.append(element("p", "performance-empty", translate("noMeasurements"))); return holder; }
+    const contentWidth = root.clientWidth || 800;
+    const width = Math.max(240, contentWidth >= 760 ? (contentWidth - 28) / 2 : contentWidth);
+    const svg = svgElement("svg", { viewBox: `0 0 ${width} 256`, role: "group", "aria-label": translate(metric) });
     formatters();
     const { start, end } = domain;
     const scale = performanceYScale(points.map(point => point.p90 ?? point.median));
     const axisNumber = new Intl.NumberFormat(locale(), { maximumFractionDigits: metric === "latency" ? Math.min(20, scale.digits) : 0 });
-    const plotLeft = 52, plotRight = 708, plotWidth = plotRight - plotLeft;
+    const plotLeft = 50, plotRight = width - 14, plotWidth = plotRight - plotLeft;
     const x = value => plotLeft + Math.max(0, Math.min(1, (value - start) / Math.max(1, end - start))) * plotWidth;
     const y = value => 214 - value / scale.maximum * 190;
     const curve = (a, b, key, reverse = false) => {
@@ -315,7 +295,8 @@ export function mountModelPerformance(options = {}) {
     }
     const dateTicks = performanceDateTicks(domain);
     const tickDate = new Intl.DateTimeFormat(locale(), { month: "short", ...(end - start > 730 * DAY ? { year: "numeric" } : { day: "numeric" }), timeZone: "UTC" });
-    for (const at of dateTicks) {
+    const tickStride = Math.max(1, Math.ceil(dateTicks.length / (width < 360 ? 2 : 4)));
+    for (const at of dateTicks.filter((_, index) => index % tickStride === 0)) {
       const px = x(at);
       svg.append(svgElement("line", { x1: px, x2: px, y1: 24, y2: 214, class: "performance-grid performance-date-grid" }),
         svgElement("text", { x: px, y: 244, "text-anchor": px < 80 ? "start" : px > plotRight - 30 ? "end" : "middle", class: "performance-axis" }, tickDate.format(at)));
@@ -344,15 +325,12 @@ export function mountModelPerformance(options = {}) {
       svg.append(defs);
       for (const segment of performanceSegments(item.points, payload.interval)) {
         const a = segment.from, b = segment.to;
+        if (segment.dashed) continue;
         if (!segment.dashed && a.p10 !== null && b.p10 !== null) {
-          svg.append(svgElement("path", { d: band(a, b, "p10", "p90"), fill: `url(#performance-outer-${gradientSuffix})`, class: "performance-percentile-band performance-percentile-band-outer" }),
-            svgElement("path", { d: band(a, b, "p25", "p75"), fill: `url(#performance-inner-${gradientSuffix})`, class: "performance-percentile-band performance-percentile-band-inner" }));
-          for (const key of ["p10", "p25", "p75", "p90"]) svg.append(svgElement("path", {
-            d: curve(a, b, key), fill: "none", stroke: color,
-            class: `performance-percentile-line performance-percentile-line-${key}`,
-          }));
+          if (layers.outer) svg.append(svgElement("path", { d: band(a, b, "p10", "p90"), fill: `url(#performance-outer-${gradientSuffix})`, class: "performance-percentile-band performance-percentile-band-outer" }));
+          if (layers.inner) svg.append(svgElement("path", { d: band(a, b, "p25", "p75"), fill: `url(#performance-inner-${gradientSuffix})`, class: "performance-percentile-band performance-percentile-band-inner" }));
         }
-        svg.append(svgElement("path", { d: curve(a, b, "median"), fill: "none", stroke: color,
+        if (layers.median) svg.append(svgElement("path", { d: curve(a, b, "median"), fill: "none", stroke: color,
           class: `performance-median-line${segment.dashed ? " performance-median-line-gap" : ""}` }));
       }
       for (const point of item.points) {
@@ -364,10 +342,10 @@ export function mountModelPerformance(options = {}) {
         marker.append(svgElement("circle", { cx, cy, r: 14, fill: "transparent", class: "performance-hit-target" }));
         marker.append(svgElement("circle", {
           cx, cy, r: 4,
-          fill: point.n < 5 ? "var(--surface-raised)" : color, stroke: color, "stroke-width": 1.8,
+          fill: point.n < 5 ? "var(--surface-raised)" : color, stroke: color, "stroke-width": 1.8, visibility: layers.median ? 'visible' : 'hidden',
         }));
-        if (point.p10 !== null) svg.append(svgElement("line", { x1: cx, x2: cx, y1: y(point.p10), y2: y(point.p90), stroke: color, class: "performance-percentile-range" }),
-          svgElement("line", { x1: cx, x2: cx, y1: y(point.p25), y2: y(point.p75), stroke: color, class: "performance-quartile-range" }));
+        if (point.p10 !== null && layers.outer) svg.append(svgElement("line", { x1: cx, x2: cx, y1: y(point.p10), y2: y(point.p90), stroke: color, class: "performance-percentile-range" }));
+        if (point.p10 !== null && layers.inner) svg.append(svgElement("line", { x1: cx, x2: cx, y1: y(point.p25), y2: y(point.p75), stroke: color, class: "performance-quartile-range" }));
         marker.addEventListener("focus", () => {
           for (const entry of markers) entry.node.setAttribute("tabindex", entry.node === marker ? "0" : "-1");
           showInterval(point.at);
@@ -384,23 +362,6 @@ export function mountModelPerformance(options = {}) {
     }
     markers.sort((a, b) => a.at - b.at);
     markers[0]?.node.setAttribute("tabindex", "0");
-    const latest = [...(series[0]?.points ?? [])].reverse().find(point => point.p10 !== null);
-    if (latest) {
-      const unit = translate(metric === "latency" ? "latencyShortUnit" : "speedShortUnit");
-      const labels = [["p90", "P90"], ["p75", "P75"], ["median", "P50"], ["p25", "P25"], ["p10", "P10"]]
-        .map(([key, label]) => ({ key, label, actualY: y(latest[key]), labelY: y(latest[key]) }))
-        .sort((a, b) => a.labelY - b.labelY);
-      for (let i = 1; i < labels.length; i++) labels[i].labelY = Math.max(labels[i].labelY, labels[i - 1].labelY + 13);
-      const overflow = Math.max(0, labels.at(-1).labelY - 210);
-      if (overflow) for (const label of labels) label.labelY -= overflow;
-      const underflow = Math.max(0, 28 - labels[0].labelY);
-      if (underflow) for (const label of labels) label.labelY += underflow;
-      for (const label of labels) {
-        svg.append(svgElement("line", { x1: x(latest.at) + 3, y1: label.actualY, x2: 717, y2: label.labelY, stroke: color, class: "performance-endpoint-leader", "aria-hidden": "true" }),
-          svgElement("circle", { cx: x(latest.at), cy: label.actualY, r: label.key === "median" ? 3.2 : 2.4, fill: color, class: "performance-endpoint-dot", "aria-hidden": "true" }),
-          svgElement("text", { x: 721, y: label.labelY + 4, fill: color, class: `performance-endpoint-label${label.key === "median" ? " performance-endpoint-label-median" : ""}`, "aria-hidden": "true" }, `${label.label} ${metricNumber(latest[label.key], metric)} ${unit}`));
-      }
-    }
     const highlights = series.map(() => svgElement("circle", { r: 8, fill: "none", stroke: color, "stroke-width": 2.5, visibility: "hidden", class: "performance-highlight" }));
     svg.append(cursor, ...highlights);
     const byDate = series.map(item => new Map(item.points.map(point => [point.at, point])));
@@ -425,7 +386,7 @@ export function mountModelPerformance(options = {}) {
         row.append(element("span", "performance-tooltip-method", method === "ttft" ? translate("latency") : translate("medianP50")),
           element("strong", "performance-tooltip-value", `${metricNumber(point.median, metric)} ${unit}`));
         const distribution = element("div", "performance-tooltip-percentiles");
-        if (point.p10 === null) distribution.append(element("span", "performance-tooltip-detail", translate("percentilesUnavailable")));
+        if (point.p10 === null) distribution.append(element("span", "performance-tooltip-detail", 'P10 / P25 / P75 / P90 —'));
         else for (const [label, value] of [["P90", point.p90], ["P75", point.p75], ["P25", point.p25], ["P10", point.p10]]) {
           distribution.append(element("span", "", label), element("strong", "", `${metricNumber(value, metric)} ${unit}`));
         }
@@ -434,7 +395,7 @@ export function mountModelPerformance(options = {}) {
       }
       const anchorY = matches.length ? y(matches[0].point.median) : 24;
       const bounds = svg.getBoundingClientRect();
-      const anchorXCss = x(at) / 800 * bounds.width;
+      const anchorXCss = x(at) / width * bounds.width;
       const anchorYCss = anchorY / 256 * bounds.height;
       const tooltipHeight = tooltip.offsetHeight || 180;
       const vertical = bounds.top + anchorYCss >= tooltipHeight + 12 ? "above" : "below";
@@ -446,7 +407,7 @@ export function mountModelPerformance(options = {}) {
     const sweep = event => {
       const bounds = svg.getBoundingClientRect();
       if (!bounds.width || !bounds.height) return;
-      const px = (event.clientX - bounds.left) * 800 / bounds.width;
+      const px = (event.clientX - bounds.left) * width / bounds.width;
       const py = (event.clientY - bounds.top) * 256 / bounds.height;
       if (px < plotLeft || px > plotRight || py < 24 || py > 214) { showInterval(null); return; }
       showInterval(performanceHoverBin((px - plotLeft) / plotWidth, domain, payload.interval));
@@ -458,191 +419,190 @@ export function mountModelPerformance(options = {}) {
     holder.append(svg, tooltip, readout);
     return holder;
   }
-  function render() {
-    const activeFocus = documentRef.activeElement?.dataset?.performanceFocus;
-    const restoreFocus = () => {
-      if (activeFocus) [...root.querySelectorAll("[data-performance-focus]")]
-        .find((node) => node.dataset.performanceFocus === activeFocus)?.focus({ preventScroll: true });
+  let dialog = null, dialogBody = null, dialogTitle = null, dialogView = null, dialogPage = 0, dialogOpener = null;
+  let pageContent = null;
+  const layers = { median: true, inner: true, outer: true };
+  const button = (label, key, action, className = 'performance-text-button') => {
+    const node = element('button', className, label); node.type = 'button';
+    node.dataset.performanceFocus = key; node.addEventListener('click', action); return node;
+  };
+  const closeDetails = () => { if (dialog?.open) dialog.close(); };
+  const selectedModel = () => payload?.models.find(model => model.id === modelId);
+  const pointsFor = (model, metric) => metric === 'speed' ? model.speed.flatMap(series => series.points)
+    : metric === 'toolFree' ? model.toolFree : model.ttft;
+  const instant = value => value ? new Intl.DateTimeFormat(locale(), { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value)) : '—';
+  const runtimeStage = code => code.includes('history') ? 'history' : code.includes('snapshot') ? 'snapshot' : code.includes('scan') ? 'scan'
+    : code.includes('store') ? 'store' : code.includes('projection') ? 'projection' : code.includes('worker') ? 'worker' : 'request';
+  function ensureView() {
+    if (pageContent) return;
+    pageContent = element('div', 'performance-content');
+    dialog = element('dialog', 'performance-dialog'); dialog.id = 'performance-details-dialog';
+    dialog.setAttribute('aria-labelledby', 'performance-details-title');
+    const head = element('header', 'performance-dialog-heading');
+    dialogTitle = element('h2', '', ''); dialogTitle.id = 'performance-details-title';
+    head.append(dialogTitle, button(translate('close'), 'detail-close', closeDetails));
+    dialogBody = element('div', 'performance-dialog-body'); dialog.append(head, dialogBody);
+    dialog.addEventListener('close', () => {
+      dialogView = null;
+      const target = [...root.querySelectorAll('[data-performance-focus]')].find(node => node.dataset.performanceFocus === dialogOpener);
+      target?.focus({ preventScroll: true });
+    });
+    dialog.addEventListener('click', event => {
+      if (event.target !== dialog) return;
+      const b = dialog.getBoundingClientRect();
+      if (event.clientX < b.left || event.clientX > b.right || event.clientY < b.top || event.clientY > b.bottom) closeDetails();
+    });
+    root.replaceChildren(); root.append(pageContent, dialog);
+  }
+  function openDetails(view, opener) {
+    dialogView = view; dialogPage = 0; dialogOpener = opener;
+    renderDetails(); if (!dialog.open) dialog.showModal();
+  }
+  function renderDetails() {
+    if (!dialogView || !payload && dialogView !== 'measurements') return;
+    const model = selectedModel(), scroll = dialog.scrollTop, active = documentRef.activeElement?.dataset?.performanceFocus;
+    dialogTitle.textContent = model ? formatModelName(model.id) : translate('measurements');
+    dialogBody.replaceChildren();
+    const tabs = element('nav', 'performance-dialog-tabs'); tabs.setAttribute('aria-label', translate('details'));
+    for (const key of ['speed', 'latency', 'toolFree', 'measurements']) {
+      const tab = button(translate(key), `detail-tab-${key}`, () => { dialogView = key; dialogPage = 0; renderDetails(); });
+      tab.disabled = !model && key !== 'measurements';
+      tab.setAttribute('aria-pressed', String(dialogView === key)); tabs.append(tab);
+    }
+    dialogBody.append(tabs);
+    const kv = (label, value) => {
+      const row = element('div', 'performance-detail-row');
+      row.append(element('span', '', label), element('strong', '', value)); dialogBody.append(row);
     };
-    chartCursors = []; selectedInterval = null;
-    root.replaceChildren();
-    const periods = element("div", "segmented-control performance-periods"); periods.setAttribute("aria-label", translate("period")); periods.setAttribute("role", "group");
-    for (const value of STANDALONE_PERIODS) {
-      const button = element("button", value === period ? "active" : "", translate(value === "all" ? "all" : `days${value}`));
-      button.type = "button"; button.setAttribute("aria-pressed", String(period === value)); button.dataset.performanceFocus = `period-${value}`;
-      button.addEventListener("click", () => {
-        if (period === value) return;
-        period = value;
-        payload = cachedPayload(value);
-        remember(); render(); refresh();
-      }); periods.append(button);
+    if (dialogView === 'measurements') {
+      kv(translate('models'), model ? formatModelName(model.id) : '—'); kv(translate('mode'), translate(speedMode));
+      kv(reportTranslate('period'), (payload ? reportingRange(null, { period: payload.period, start: payload.start, end: payload.end }) : reportingRange(reportingWindow)) ?? '—');
+      kv(translate('providerLabel'), 'Codex'); kv(translate('grain'), payload ? translate(payload.interval) : '—');
+      kv(translate('updatedLabel'), instant(payload?.updatedAt));
+      if (model) for (const [key, value] of [['totalTurns', model.turns], ['speedTurns', model.speedTurns],
+        ['responseTurns', model.speedTurns - model.toolFreeTurns], ['toolFreeTurns', model.toolFreeTurns],
+        ['ttftTurns', model.ttftTurns], ['timedResponses', model.timedResponses]]) kv(translate(key), number(value));
+      kv(translate('unknownTurns'), payload?.status === 'ready' ? number(payload.excludedUnknownTurns) : '—');
+      if (payload?.historyProgress) kv(translate('historyProgress'), `${number(payload.historyProgress.checked)} / ${number(payload.historyProgress.total)}`);
+      for (const code of diagnostics) kv(translate(`error.${code}`), `${code} · ${runtimeStage(code)}`);
+      if (failed && failureCode && !diagnostics.includes(failureCode)) kv(translate(`error.${failureCode}`), `${failureCode} · ${runtimeStage(failureCode)}`);
+    } else {
+      const points = [...pointsFor(model, dialogView)].reverse(), pages = Math.max(1, Math.ceil(points.length / 10));
+      dialogPage = Math.min(dialogPage, pages - 1);
+      const context = element('div', 'performance-detail-context');
+      context.append(element('span', '', translate(speedMode)), element('span', '', translate(dialogView === 'latency' ? 'latencyShortUnit' : 'speedShortUnit')), element('span', '', translate(payload.interval)));
+      dialogBody.append(context);
+      const wrap = element('div', 'performance-detail-table'), table = element('table');
+      const thead = element('thead'), header = element('tr');
+      for (const key of [translate('date'), translate('sampleTurns'), 'P10', 'P25', 'P50', 'P75', 'P90']) header.append(element('th', '', key));
+      thead.append(header); const tbody = element('tbody');
+      for (const point of points.slice(dialogPage * 10, dialogPage * 10 + 10)) {
+        const tr = element('tr');
+        for (const value of [fullDateFormat.format(point.at), number(point.n), ...['p10', 'p25', 'median', 'p75', 'p90'].map(key => point[key] === null ? '—' : number(point[key]))]) tr.append(element('td', '', value));
+        tbody.append(tr);
+      }
+      table.append(thead, tbody); wrap.append(table); dialogBody.append(wrap);
+      if (!points.length) dialogBody.append(element('p', 'performance-empty', translate('noMeasurements')));
+      if (pages > 1) {
+        const pager = element('div', 'performance-pager');
+        const prev = button(translate('previous'), 'detail-prev', () => { dialogPage--; renderDetails(); }); prev.disabled = dialogPage === 0;
+        const next = button(translate('next'), 'detail-next', () => { dialogPage++; renderDetails(); }); next.disabled = dialogPage === pages - 1;
+        pager.append(prev, element('span', '', `${dialogPage + 1} / ${pages}`), next); dialogBody.append(pager);
+      }
     }
-    // Inside the dashboard the page header owns the title and the period; the
-    // standalone report keeps its own.
+    dialog.scrollTop = scroll;
+    if (active) [...root.querySelectorAll('[data-performance-focus]')].find(node => node.dataset.performanceFocus === active)?.focus({ preventScroll: true });
+  }
+  function render() {
+    ensureView(); formatters();
+    const activeFocus = documentRef.activeElement?.dataset?.performanceFocus;
+    chartCursors = [];
+    pageContent.replaceChildren();
+    const append = (...nodes) => pageContent.append(...nodes);
     if (!sharedReporting) {
-      const heading = element("div", "dashboard-page-header");
-      const title = element("div");
-      const h2 = element("h2", "", translate("title")); h2.id = "performance-title";
-      h2.tabIndex = -1; h2.dataset.performanceFocus = "heading";
-      title.append(h2, element("p", "page-description", translate("subtitle")));
-      heading.append(title, periods);
-      root.append(heading);
+      const periods = element('div', 'segmented-control performance-periods');
+      for (const value of STANDALONE_PERIODS) {
+        const b = button(translate(value === 'all' ? 'all' : `days${value}`), `period-${value}`, () => {
+          if (period === value) return; closeDetails(); selectedInterval = null; pendingAttempts = 0;
+          period = value; payload = cachedPayload(value); remember(); render(); refresh();
+        }); b.setAttribute('aria-pressed', String(period === value)); periods.append(b);
+      }
+      const heading = element('div', 'dashboard-page-header'), title = element('h2', '', translate('title'));
+      title.id = 'performance-title'; title.tabIndex = -1; title.dataset.performanceFocus = 'heading'; heading.append(title, periods); append(heading);
     }
-    root.append(element("p", "performance-provider", translate("provider")));
-    const modeControls = element("div", "performance-mode-controls");
-    const modes = element("div", "segmented-control performance-modes");
-    modes.setAttribute("role", "group"); modes.setAttribute("aria-label", translate("mode"));
+    const models = payload?.models ? [...payload.models].sort((a,b) => MODEL_ORDER.indexOf(a.id) - MODEL_ORDER.indexOf(b.id)) : [];
+    if (models.length && !models.some(model => model.id === modelId)) {
+      if (modelId) closeDetails(); modelId = models[0].id; selectedInterval = null;
+    }
+    const toolbar = element('div', 'performance-toolbar');
+    const select = element('select', 'performance-model-select'); select.setAttribute('aria-label', translate('models')); select.dataset.performanceFocus = 'model-select';
+    if (!models.length) { const option = element('option', '', translate('models')); option.value = ''; select.append(option); select.disabled = true; }
+    for (const model of models) { const option = element('option', '', formatModelName(model.id)); option.value = model.id; select.append(option); }
+    select.value = models.length ? modelId : '';
+    select.addEventListener('change', () => { closeDetails(); selectedInterval = null; modelId = select.value; remember(); render(); });
+    const modes = element('div', 'segmented-control performance-modes'); modes.setAttribute('role', 'group'); modes.setAttribute('aria-label', translate('mode'));
     for (const value of SPEED_MODES) {
-      const button = element("button", value === speedMode ? "active" : "", translate(value));
-      button.type = "button"; button.setAttribute("aria-pressed", String(speedMode === value));
-      button.dataset.performanceFocus = `mode-${value}`;
-      button.addEventListener("click", () => {
-        if (speedMode === value) return;
-        speedMode = value;
-        request++; scopeGeneration++;
-        cancelPending(); cancelPreloadWaits();
+      const b = button(translate(value), `mode-${value}`, () => {
+        if (value === speedMode) return;
+        closeDetails(); selectedInterval = null; speedMode = value; pendingAttempts = 0;
+        request++; scopeGeneration++; cancelPending(); cancelPreloadWaits();
         preloadPromise = null; preloadComplete = false; foregroundKey = null;
-        windowRef.clearTimeout(timer); timer = null;
-        retainedWindowKey = null; retainedWindowUnavailable = false;
-        payload = cachedPayload(selectedRequestPeriod());
-        loading = false; failed = false; cancelled = false; scopeUnavailable = false;
-        render(); refresh();
-      });
-      modes.append(button);
+        windowRef.clearTimeout(timer); timer = null; retainedWindowKey = null; retainedWindowUnavailable = false;
+        payload = cachedPayload(selectedRequestPeriod()); diagnostics = [];
+        loading = false; failed = false; cancelled = false; scopeUnavailable = false; remember(); render(); refresh();
+      }); b.setAttribute('aria-pressed', String(value === speedMode)); modes.append(b);
     }
-    modeControls.append(
-      element("span", "performance-filter-label", translate("mode")),
-      modes,
-      element("p", "performance-mode-note", translate(`${speedMode}Note`)),
-    );
-    root.append(modeControls);
-    if (payload?.excludedUnknownTurns) root.append(element("p", "performance-mode-note", translate("unknownMode", { count: number(payload.excludedUnknownTurns) })));
-    const status = element("p", "performance-status"); status.setAttribute("role", "status");
-    const progress = payload?.historyProgress;
-    const collectingLabel = progress?.total
-      ? translate("buildingHistory", { checked: number(progress.checked), total: number(progress.total) })
-      : translate("updating");
-    const updatedLabel = payload?.updatedAt ? translate("updated", {
-      date: new Intl.DateTimeFormat(locale(), { dateStyle: "medium", timeStyle: "short" }).format(new Date(payload.updatedAt)),
-    }) : "";
-    const collectingStatus = payload?.status === "ready" && updatedLabel
-      ? `${updatedLabel} · ${collectingLabel}` : collectingLabel;
-    const statusState = cancelled ? "cancelled" : failed ? "error" : retainedWindowUnavailable ? "unavailable" : loading && !payload ? "loading" : payload?.collecting || payload?.status === "loading" ? "updating" : payload?.status === "unavailable" ? "unavailable" : payload?.updatedAt ? "ready" : sharedReporting && !reportingWindow ? "waiting" : "";
-    status.dataset.state = statusState;
-    status.textContent = cancelled ? translate("cancelled") : failed ? translate("failed") : retainedWindowUnavailable ? translate("unavailable") : loading && !payload ? translate("loading") : payload?.collecting || payload?.status === "loading" ? collectingStatus : payload?.status === "unavailable" ? translate("unavailable") : updatedLabel ? updatedLabel : sharedReporting && !reportingWindow ? reportTranslate("waiting") : "";
-    const actions = element("div", "dashboard-actions performance-actions");
-    actions.append(status);
-    root.append(actions);
-    if (payload?.stale) {
-      const stale = element("p", "performance-status", translate("stale"));
-      stale.dataset.state = "stale";
-      actions.append(stale);
+    const details = button(translate('measurements'), 'measurements', () => openDetails('measurements', 'measurements')); details.disabled = !payload && !failed && !diagnostics.length;
+    toolbar.append(select, modes, details); append(toolbar);
+    const state = cancelled ? 'cancelled' : failed || diagnostics.length ? 'error' : retainedWindowUnavailable ? 'unavailable'
+      : payload?.status === 'unavailable' ? 'unavailable' : payload?.stale ? 'stale' : loading && !payload ? 'loading'
+      : payload?.collecting || payload?.status === 'loading' ? 'updating' : sharedReporting && !reportingWindow ? 'waiting' : '';
+    if (state) {
+      const actions = element('div', 'performance-actions'), status = element('p', 'performance-status'); status.setAttribute('role', 'status'); status.dataset.state = state;
+      const code = failed ? failureCode : diagnostics[0];
+      status.textContent = state === 'error' ? translate(`error.${code || 'timing_request_failed'}`)
+        : state === 'waiting' ? reportTranslate('waiting') : translate(state === 'updating' ? 'collectingCompact' : `status.${state}`);
+      if (payload?.updatedAt && ['error','stale','unavailable'].includes(state)) status.textContent += ` · ${instant(payload.updatedAt)}`;
+      actions.append(status);
+      if (loading) actions.append(button(translate('cancel'), 'cancel', cancelRefresh));
+      else if (['error','unavailable','stale'].includes(state)) actions.append(button(translate('retry'), 'retry', () => { pendingAttempts = 0; refresh(); }));
+      append(actions);
     }
-    if (loading) {
-      const cancel = element("button", "button button-secondary compact", translate("cancel")); cancel.type = "button"; cancel.dataset.performanceFocus = "cancel"; cancel.addEventListener("click", cancelRefresh); actions.append(cancel);
-    } else if (failed || retainedWindowUnavailable || payload?.status === "unavailable") {
-      const retry = element("button", "button button-secondary compact", translate("retry")); retry.type = "button"; retry.dataset.performanceFocus = "retry"; retry.addEventListener("click", refresh); actions.append(retry);
-    }
-    if (payload) {
-      const evidence = element("dl", "performance-evidence");
-      appendPerformanceEvidence(evidence, statusState);
-      if (evidence.children.length) root.append(evidence);
-    }
-    const models = [...(payload?.models ?? [])].sort((a, b) => MODEL_ORDER.indexOf(a.id) - MODEL_ORDER.indexOf(b.id));
-    if (!models.length) {
-      if (payload?.status === "ready") {
-        const empty = element("p", "performance-empty", translate("modeEmpty", { mode: translate(speedMode) }));
-        empty.dataset.state = "empty";
-        root.append(empty);
+    if (models.length) {
+      const selected = selectedModel(), panel = element('div', 'performance-model-panel'); panel.id = 'performance-model-panel';
+      panel.setAttribute('aria-label', formatModelName(selected.id));
+      const domain = performanceDomain(payload, selected);
+      for (const metric of ['speed', 'latency']) {
+        const card = element('article', 'performance-card'); card.dataset.performanceMetric = metric;
+        const heading = element('header', 'performance-card-heading');
+        heading.append(element('h3', '', translate(metric)), button(translate('details'), `details-${metric}`, () => openDetails(metric, `details-${metric}`)));
+        const headline = element('div', 'performance-headline'), value = element('strong', 'performance-headline-value'), when = element('span', 'performance-headline-date');
+        headline.append(value, element('span', 'performance-headline-unit', translate(metric === 'speed' ? 'speedShortUnit' : 'latencyShortUnit')), when);
+        const points = pointsFor(selected, metric);
+        const update = at => { const point = at === null ? points.at(-1) : points.find(point => point.at === at); value.textContent = point ? number(point.median) : '—'; when.textContent = point ? `${date(point.at)} · P50` : at === null ? '' : `${date(at)} · P50`; };
+        update(selectedInterval); chartCursors.push(update);
+        card.append(heading, headline, plot(metric === 'speed' ? selected.speed : [{ method: 'ttft', points: selected.ttft }], metric, 'var(--ink)', domain)); panel.append(card);
       }
-      restoreFocus();
-      return;
-    }
-    if (!models.some((model) => model.id === modelId)) modelId = models[0].id;
-    const tabs = element("div", "segmented-control performance-models"); tabs.setAttribute("role", "tablist"); tabs.setAttribute("aria-label", translate("models"));
-    for (const model of models) {
-      const presentation = modelUsagePresentation(model.id), displayName = formatModelName(model.id);
-      const button = element("button", `performance-model ${presentation.className}`); button.type = "button";
-      const icon = modelThemeIcon(documentRef, presentation.theme);
-      if (icon) { icon.setAttribute("class", `allowance-model-icon performance-model-icon ${presentation.className}`); button.append(icon); }
-      button.append(element("span", "", displayName));
-      button.setAttribute("aria-label", displayName);
-      button.setAttribute("role", "tab"); button.setAttribute("aria-selected", String(model.id === modelId)); button.setAttribute("aria-controls", "performance-model-panel"); button.tabIndex = model.id === modelId ? 0 : -1;
-      button.id = `performance-tab-${model.id}`; button.dataset.performanceFocus = `model-${model.id}`;
-      button.addEventListener("click", () => { modelId = model.id; remember(); render(); });
-      button.addEventListener("keydown", (event) => {
-        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-        event.preventDefault(); const index = models.indexOf(model);
-        modelId = models[event.key === "Home" ? 0 : event.key === "End" ? models.length - 1 : (index + (event.key === "ArrowRight" ? 1 : models.length - 1)) % models.length].id;
-        remember(); render(); documentRef.getElementById(`performance-tab-${modelId}`)?.focus();
-      }); tabs.append(button);
-    }
-    const modelControls = element("div", "performance-model-controls");
-    modelControls.append(element("span", "performance-filter-label", translate("models")), tabs);
-    root.append(modelControls);
-    const selected = models.find((model) => model.id === modelId);
-    const selectedPresentation = modelUsagePresentation(selected.id), selectedName = formatModelName(selected.id);
-    const domain = performanceDomain(payload, selected);
-    const panel = element("div", `performance-model-panel ${selectedPresentation.className}`); panel.id = "performance-model-panel"; panel.setAttribute("role", "tabpanel"); panel.setAttribute("aria-labelledby", `performance-tab-${modelId}`);
-    const subheading = element("div", "performance-model-heading"), identity = element("h3", "performance-model-identity");
-    const selectedIcon = modelThemeIcon(documentRef, selectedPresentation.theme);
-    if (selectedIcon) { selectedIcon.setAttribute("class", `allowance-model-icon performance-model-icon ${selectedPresentation.className}`); identity.append(selectedIcon); }
-    identity.append(element("span", "", selectedName));
-    subheading.append(identity, element("span", "", translate(payload.interval))); panel.append(subheading);
-    for (const metric of ["speed", "latency"]) {
-      const card = element("article", "performance-card chart-card");
-      card.dataset.performanceMetric = metric;
-      const cardHeading = element("div", "performance-card-heading chart-card-header"), cardTitle = element("div");
-      const summary = metric === "speed"
-        ? translate("combinedSpeedSummary", { measured: number(selected.speedTurns), total: number(selected.turns),
-            responses: number(selected.speedTurns - selected.toolFreeTurns), estimates: number(selected.toolFreeTurns) })
-        : translate("latencySummary", { measured: number(selected.ttftTurns), total: number(selected.turns), responses: number(selected.timedResponses) });
-      const coverage = element("p", "performance-unit", summary);
-      const measured = metric === "speed" ? selected.speedTurns : selected.ttftTurns;
-      coverage.dataset.state = measured < selected.turns ? "partial" : "complete";
-      cardTitle.append(element("h4", "chart-card-title", translate(metric)), coverage);
-      if (metric === "speed" && selected.toolFreeTurns > 0)
-        cardTitle.append(element("p", "performance-method-note", translate("combinedSpeedMethodology")));
-      const legend = element("div", "performance-legend chart-card-legend");
-      for (const method of ["outerBand", "innerBand", "medianP50"]) {
-        const entry = element("span", "performance-legend-item");
-        const swatch = svgElement("svg", { width: method === "medianP50" ? 24 : 22, height: 16, viewBox: "0 0 24 16", "aria-hidden": "true" });
-        const color = "var(--allowance-color)";
-        swatch.append(svgElement(method === "medianP50" ? "line" : "rect", {
-          ...(method === "medianP50" ? { x1: 1, y1: 8, x2: 23, y2: 8 } : { x: 1, y: method === "outerBand" ? 3 : 5, width: 22, height: method === "outerBand" ? 10 : 6, rx: 3 }),
-          fill: color, stroke: color, opacity: method === "outerBand" ? .1 : method === "innerBand" ? .22 : 1,
-          "stroke-width": method === "medianP50" ? 2.6 : 0,
-        }));
-        entry.append(swatch, element("span", "", translate(method))); legend.append(entry);
+      append(panel);
+      const legend = element('div', 'performance-legend');
+      for (const [key, label] of [['median','P50'],['inner','P25–P75'],['outer','P10–P90']]) {
+        const b = button('', `layer-${key}`, () => { layers[key] = !layers[key]; render(); }); b.setAttribute('aria-pressed', String(layers[key]));
+        b.append(element('i', `performance-key performance-key-${key}`), element('span', '', label)); legend.append(b);
       }
-      cardHeading.append(cardTitle); card.append(cardHeading, legend,
-        // Each selected mode carries one combined, non-overlapping speed population.
-        plot(metric === "speed" ? selected.speed : [{ method: "ttft", points: selected.ttft }], metric, "var(--allowance-color)", domain));
-      panel.append(card);
-    }
-    const aboutSummary = element("summary", "", translate("about")); aboutSummary.dataset.performanceFocus = "about";
-    const about = element("details", "performance-details"); about.open = aboutOpen; about.append(aboutSummary, element("p", "", translate("combinedMethodology")), element("p", "", translate("variance"))); about.addEventListener("toggle", () => { aboutOpen = about.open; }); panel.append(about);
-    root.append(panel);
-    restoreFocus();
+      append(legend);
+      for (const update of chartCursors) update(selectedInterval);
+    } else if (payload?.status === 'ready') append(element('p', 'performance-empty', translate('noMeasurements')));
+    if (dialog.open && !selectedModel() && dialogView !== 'measurements') closeDetails(); else renderDetails();
+    if (activeFocus) [...root.querySelectorAll('[data-performance-focus]')].find(node => node.dataset.performanceFocus === activeFocus)?.focus({ preventScroll: true });
   }
   const cacheKeyFor = (value, mode = speedMode, window = reportingWindow) => `${mode}::${sharedReporting
     ? `${window?.period ?? "waiting"}:${window?.startAt ?? ""}:${window?.endAt ?? ""}::${value}` : value}`;
-  const cachedPayload = value => readyPeriods.get(cacheKeyFor(value))?.payload ?? null;
+  const cachedPayload = value => { diagnostics = diagnosticsByKey.get(cacheKeyFor(value)) ?? []; return readyPeriods.get(cacheKeyFor(value))?.payload ?? null; };
   const cacheFresh = entry => entry && Date.now() - entry.cachedAt < PERIOD_CACHE_TTL_MS;
   const preloadTargets = () => {
     if (!sharedReporting) return PRELOAD_PERIODS.map(value => ({ value, mode: speedMode, window: null }));
     if (!reportingWindow) return [];
-    const endMs = Date.parse(reportingWindow.endAt);
-    return REPORTING_PERIODS.flatMap(periodId => {
-      const window = normalizeReportingWindow({
-        period: periodId,
-        startAt: periodId === "all" ? null
-          : new Date(Math.max(0, endMs - REPORTING_DURATION_MS[periodId])).toISOString(),
-        endAt: reportingWindow.endAt,
-      });
-      const value = reportingRequestPeriod(periodId);
-      return SPEED_MODES.map(mode => ({ value, mode, window }));
-    });
+    return [{ value: selectedRequestPeriod(), mode: speedMode, window: reportingWindow }];
   };
   const allPeriodsFresh = () => {
     const targets = preloadTargets();
@@ -730,14 +690,16 @@ export function mountModelPerformance(options = {}) {
     const record = { controller, promise: null, speculative };
     const promise = (async () => {
       try {
+        let responseDiagnostics = [];
         const result = normalizeModelPerformance(await client.modelPerformance(value, {
           signal: controller.signal, speedMode: expectedMode,
+          onDiagnostics: codes => { responseDiagnostics = codes; },
           ...(expectedEndAt ? { endAt: expectedEndAt } : {}),
         }));
         if (!result || result.period !== value || result.speedMode !== expectedMode
             || (expectedEndAt && result.end !== Date.parse(expectedEndAt))
             || (expectedStartAt !== null && result.start !== Date.parse(expectedStartAt))) {
-          throw new Error("Invalid timing contract");
+          throw Object.assign(new Error("Invalid timing contract"), { code: 'timing_contract_invalid' });
         }
         // Hidden/destroyed views and responses from an invalidated scope may
         // finish, but they must not affect the visible state or cache.
@@ -746,15 +708,24 @@ export function mountModelPerformance(options = {}) {
         // Treat that response as timed out so a late result cannot become a
         // fresh cache entry or replace the current period.
         if (controller.signal.aborted) {
-          if (timedOut) throw new Error("Performance request timed out");
+          if (timedOut) throw Object.assign(new Error("Performance request timed out"), { code: 'timing_timeout' });
           return null;
         }
+        diagnosticsByKey.set(cacheKey, responseDiagnostics);
+        while (diagnosticsByKey.size > MAX_READY_PERIODS) diagnosticsByKey.delete(diagnosticsByKey.keys().next().value);
+        if (expectedMode === speedMode && value === selectedRequestPeriod()) diagnostics = responseDiagnostics;
         if (result.status === "unavailable") invalidateScope(value, result, cacheKey);
         else {
           scopeUnavailable = false;
           if (result.status === "ready") rememberReady(cacheKey, result);
         }
         return result;
+      } catch (error) {
+        if (controller.signal.aborted && !timedOut || destroyed || lifecycle !== startedLifecycle || scopeGeneration !== startedScope) return null;
+        throw Object.assign(new Error('Performance request failed'), {
+          code: timedOut ? 'timing_timeout' : error?.code === 'timing_contract_invalid' ? error.code
+            : error instanceof SyntaxError ? 'timing_parse_failed' : 'timing_request_failed',
+        });
       } finally {
         windowRef.clearTimeout(deadline);
         if (pendingPeriods.get(cacheKey) === record) pendingPeriods.delete(cacheKey);
@@ -781,7 +752,12 @@ export function mountModelPerformance(options = {}) {
       if (!canPreload(runLifecycle, runScope)) return null;
       let result = null;
       try { result = await requestPeriod(value, { speculative: true, mode, window }); }
-      catch { if (!canPreload(runLifecycle, runScope)) return null; }
+      catch (error) {
+        if (canPreload(runLifecycle, runScope) && mode === speedMode && value === selectedRequestPeriod()) {
+          failed = true; failureCode = error.code; render();
+        }
+        return null;
+      }
       if (result?.status === "unavailable") {
         if (mode === speedMode && value === selectedRequestPeriod() && presentResult(value, result)) render();
         return result;
@@ -789,7 +765,7 @@ export function mountModelPerformance(options = {}) {
       if (!canPreload(runLifecycle, runScope)) return null;
       if (result) {
         if (mode === speedMode && presentResult(value, result)) render();
-        if (result.status === "ready") return result;
+        if (result.status === "ready" && !result.collecting) return result;
       }
       if (attempt + 1 < PRELOAD_MAX_ATTEMPTS
           && !await waitForPreload(preloadRetryDelay(attempt), runLifecycle, runScope)) return null;
@@ -806,8 +782,8 @@ export function mountModelPerformance(options = {}) {
       }
       return;
     }
-    // Every exact period/mode window shares the same timing worker. Register
-    // them together so one background history pass can fill every period/mode view.
+    // Readers can have different exact cutoffs. Warm only the selected window;
+    // two clients must not evict each other's active result with speculative work.
     await Promise.all(preloadTargets().map(target => preloadPeriod(target, runLifecycle, runScope)));
   }
   function preload() {
@@ -858,7 +834,7 @@ export function mountModelPerformance(options = {}) {
     if (!targetPeriod) return;
     const targetKey = cacheKeyFor(targetPeriod);
     foregroundKey = targetKey;
-    const hadFailure = failed || retainedWindowUnavailable;
+    const hadFailure = failed || retainedWindowUnavailable || diagnostics.length > 0;
     retainedWindowUnavailable = false;
     if (retainedWindowKey === reportingKey() && payload?.status === "ready")
       payload = { ...payload, collecting: true, stale: true };
@@ -872,18 +848,24 @@ export function mountModelPerformance(options = {}) {
       if (request !== current || lifecycle !== startedLifecycle || destroyed || !result) return;
       shouldWarm = !sharedReporting && result.status !== "unavailable";
       changed = presentResult(targetPeriod, result);
-    } catch {
+    } catch (error) {
       if (request !== current || lifecycle !== startedLifecycle || destroyed) return;
       // Keep a good period visible through transient foreground failures. A
       // scope invalidation that aborted this request already rendered its
       // unavailable state, so do not replace it with a generic failure.
       failed = scopeGeneration === startedScope;
+      if (failed) failureCode = error.code ?? 'timing_request_failed';
     } finally {
       if (foregroundKey === targetKey && request === current) foregroundKey = null;
       if (request === current && lifecycle === startedLifecycle && !destroyed) {
-        loading = false; if (changed || failed || !payload) render();
+        if (!failed && pendingResult() && pendingAttempts >= PRELOAD_MAX_ATTEMPTS - 1) {
+          failed = true; failureCode = 'timing_timeout';
+        }
+        loading = false; if (changed || failed || diagnostics.length || hadFailure || !payload) render();
         if (visible()) {
-          timer = windowRef.setTimeout(refresh, failed ? 30_000 : 10_000);
+          if (!failed && pendingResult() && pendingAttempts < PRELOAD_MAX_ATTEMPTS - 1) {
+            timer = windowRef.setTimeout(refresh, preloadRetryDelay(pendingAttempts++));
+          }
           if (shouldWarm && !scopeUnavailable) void warmOtherPeriods();
         }
       }
@@ -909,6 +891,7 @@ export function mountModelPerformance(options = {}) {
   const rootVisibilityChanged = () => {
     if (visible()) { if (!loading) refresh(); }
     else {
+      closeDetails();
       windowRef.clearTimeout(timer);
       request++;
       loading = false;
@@ -933,6 +916,7 @@ export function mountModelPerformance(options = {}) {
   };
   function setReportingWindow(value) {
     const next = normalizeReportingWindow(value);
+    if (next?.period !== reportingWindow?.period) { closeDetails(); selectedInterval = null; }
     const retainPrevious = next && reportingWindow && next.period === reportingWindow.period
       && Date.parse(next.endAt) > Date.parse(reportingWindow.endAt) && payload?.status === "ready";
     const previousPayload = retainPrevious ? payload : null;
@@ -951,6 +935,7 @@ export function mountModelPerformance(options = {}) {
       return next !== null;
     }
     request++;
+    pendingAttempts = 0;
     scopeGeneration++;
     cancelPending();
     cancelPreloadWaits();
@@ -980,6 +965,11 @@ export function mountModelPerformance(options = {}) {
   }
   const observer = new windowRef.MutationObserver(rootVisibilityChanged);
   observer.observe(root, { attributes: true, attributeFilter: ["class"] });
+  let lastWidth = root.clientWidth;
+  const resizeObserver = windowRef.ResizeObserver ? new windowRef.ResizeObserver(() => {
+    if (root.clientWidth > 0 && root.clientWidth !== lastWidth) { lastWidth = root.clientWidth; render(); }
+  }) : null;
+  resizeObserver?.observe(root);
   documentRef.addEventListener("visibilitychange", documentVisibilityChanged);
   render();
   if (visible()) refresh();
@@ -990,11 +980,13 @@ export function mountModelPerformance(options = {}) {
     setReportingWindow,
     cancel: cancelRefresh,
     destroy() {
+      closeDetails();
       destroyed = true;
       lifecycle++;
       readyPeriods.clear();
       payload = null;
       observer.disconnect();
+      resizeObserver?.disconnect();
       cancelPending();
       cancelPreloadWaits();
       preloadPromise = null;

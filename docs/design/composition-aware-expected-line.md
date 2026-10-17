@@ -47,6 +47,14 @@ A reset or a new allowance-pool identity starts a new segment. Residual and
 signed-area calculations exclude saturated spans rather than smoothing through
 them. The dashboard renders the excluded state explicitly.
 
+Dashboard rolling comparisons require two distinct quota observations. Observed
+movement and cost-implied movement share their actual observation endpoints;
+an older end observation does not authorize including later cost. Cumulative
+comparison uses the same endpoint boundary, establishes cycle anchors before
+clipping the display range, and retains explicit gaps and re-anchors. These
+presentation rules do not change the estimator's eligible population or pricing
+basis.
+
 ### Lineage-scoped speed carry-forward
 
 A rollout may inherit the most recent reviewed speed tier from its own resume
@@ -95,3 +103,29 @@ Revalidate this contract when any of the following changes:
 - weekly calibration eligibility or fitting code;
 - session lineage, fork replay, or speed-tier inheritance; or
 - dashboard residual, signed-area, or unavailable-state rendering.
+
+
+## Historical plan comparison populations
+
+The local report publishes separate, bounded usage lanes for observed historical
+plans as well as the latest plan. Plus/Pro upgrades, downgrades and later returns
+to an earlier plan are permitted under the owner's single-account, continuous-
+subscription assumption; that assumption does not certify account identity.
+Each lane uses its own plan's existing calibration population and is fenced by
+pricing basis, reset cohort and committed source generation. It is a comparison
+projection of the replay-safe ledger, never another accounting input.
+
+A quantity interval that crosses an uncertain plan change is not assigned from
+its ending label alone. Ambiguous buckets are omitted individually and exposed
+as dated excluded intervals. Sound usage and quota observations remain visible
+when another interval or the capacity estimate is unavailable. Historical fits
+use the existing plan-specific scalar when no plan-specific model vector exists;
+the latest plan's vector cannot fill that gap. Refresh publishes all lanes in the
+same report; there is no per-plan timer or source re-ingestion.
+
+
+Plan-scoped reports retain complete observed quota separately from comparable
+quota. A historical last observation cannot depend on the generic chart sampler
+or disappear because its final partial bucket has an unresolved usage interval.
+Only comparison arithmetic uses the eligibility intervals; the observation chart
+and last-reading headline keep the original observation and timestamp.

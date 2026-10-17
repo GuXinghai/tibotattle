@@ -228,6 +228,7 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
   const replay = $("#trends-replay");
   const sky = $(".trends-sky");
   const media = win.matchMedia("(prefers-reduced-motion: reduce)");
+  let followLatest = true;
   let at = null, playing = false, frame = 0, lastFrame = null, disposed = false;
   let formatLocale = locale;
   const formatters = new Map();
@@ -256,7 +257,7 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
   function select(timestamp, user = false) {
     const bounds = domain();
     if (!bounds) return;
-    if (user) stop();
+    if (user) { stop(); followLatest = false; }
     at = clamp(timestamp, bounds.startMs, bounds.endMs);
     input.value = String(at);
     if (sky) {
@@ -275,6 +276,7 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
     setText("#trends-clock", format(at, { hour: "numeric", minute: "2-digit" }));
     const description = format(at, { dateStyle: "medium", timeStyle: "short" });
     input.setAttribute("aria-valuetext", description);
+    if (win.CustomEvent) document.dispatchEvent?.(new win.CustomEvent("tibotattle:allowance-time", { detail: { at } }));
     const levelPoint = sampleAt(allowanceSamples, at, 3 * 3_600_000);
     const spendPoint = spendAt(at);
     const rate = hourlySpend(spendPoint);
@@ -319,7 +321,7 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
     if (!domain() || media.matches) return;
     playing = true; setPlayLabel(); frame = win.requestAnimationFrame(tick);
   };
-  $("#trends-latest").onclick = () => { if (domain()) select(domain().endMs, true); };
+  $("#trends-latest").onclick = () => { if (domain()) select(domain().endMs, true); followLatest = true; };
   function motionChanged() { stop(); replay.hidden = media.matches; }
   function visibilityChanged() { if (document.hidden) stop(); }
   media.addEventListener("change", motionChanged);
@@ -359,11 +361,13 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
         setText("#trends-event-detail", caption);
         $("#trends-event-detail").hidden = false;
       };
-      marker.addEventListener("click", e => { e.stopPropagation(); inspect(); });
+      marker.addEventListener("click", e => { e.stopPropagation(); inspect();
+        document.dispatchEvent(new win.CustomEvent("tibotattle:allowance-reset", {detail:{timestampMs:event.timestampMs}})); });
       marker.addEventListener("focus", inspect);
       marker.addEventListener("pointerenter", inspect);
       marker.addEventListener("keydown", e => {
-        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); inspect(); }
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); inspect();
+          if (win.CustomEvent) document.dispatchEvent?.(new win.CustomEvent("tibotattle:allowance-reset", {detail:{timestampMs:event.timestampMs}})); }
       });
       layer.append(marker);
     }
@@ -435,13 +439,14 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
     if (limits) {
       input.disabled = replay.disabled = false;
       input.min = limits.startMs; input.max = limits.endMs; input.step = Math.max(1, (limits.endMs - limits.startMs) / 4000);
-      select(at === null ? limits.endMs : at);
+      select(followLatest || at === null ? limits.endMs : at);
     }
     if (shell.id === "allowance-timeline-chart") renderEvents();
   }
   return {
     register,
     select,
+    stop,
     setSpendLookup(lookup) { spendAt = lookup; },
     setAllowanceSamples(points) {
       allowanceSamples = points.filter(point => finite(point.timestampMs)).sort((a, b) => a.timestampMs - b.timestampMs);
@@ -455,12 +460,20 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
       for (const [id, chart] of charts) {
         if (!chart.svg.isConnected || chart.shell.hidden) { chart.cleanup(); charts.delete(id); }
       }
-      input.disabled = replay.disabled = !domain();
-      if (!domain()) {
+      const limits = domain();
+      input.disabled = replay.disabled = !limits;
+      if (!limits) {
         stop(); at = null; setText("#trends-date", "—"); setText("#trends-clock", "—");
         setText("#trends-allowance-value", "—"); setText("#trends-spend-value", "—");
         setText("#trends-spend-basis", t("trends.rateUnavailable"));
-      } else select(at ?? domain().endMs);
+      } else {
+        // Registration may run while the previous plan's usage chart is still
+        // visible. Rebind after hidden charts have been removed, before the
+        // native range input clamps a historical timestamp to those old limits.
+        input.min = limits.startMs; input.max = limits.endMs;
+        input.step = Math.max(1, (limits.endMs-limits.startMs)/4000);
+        select(followLatest || at === null ? limits.endMs : at);
+      }
     },
     refreshLocale(next) {
       if (formatLocale !== next) { formatLocale = next; formatters.clear(); charts.forEach(chart => { delete chart.lastPoint; }); }

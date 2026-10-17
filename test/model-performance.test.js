@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { modelPerformanceProjection } from '../src/reporting/index.js';
 import { createModelPerformanceController } from '../apps/local/model-performance-controller.js';
 import { createModelPerformanceSnapshotStore, isModelPerformanceSnapshot,
-  MODEL_PERFORMANCE_MAX_WINDOWS } from '../apps/local/model-performance-snapshots.js';
+  MODEL_PERFORMANCE_MAX_WINDOWS, modelPerformanceSourceScope } from '../apps/local/model-performance-snapshots.js';
 import { modelPerformanceSupplementDirectory } from '../apps/local/model-performance-worker.js';
 import { createWindowsFilesystemAdapter, loadWindowsSourceReadBinding } from '../src/platform/windows-filesystem.js';
 import { createWindowsSyntheticOwnedSource } from '../scripts/lib/windows-synthetic-source-owner.mjs';
@@ -244,7 +244,7 @@ async function snapshotFixture(t) {
   worker.emit('message', { type: 'snapshots', values: complete });
   await initial.close();
   return { root, options, create, complete, worker: () => worker,
-    file: join(options.directory, 'model-performance-snapshot.json') };
+    file: join(options.directory, `model-performance-snapshot-${modelPerformanceSourceScope(options.codexHome)}.json`) };
 }
 test('saved complete measurements are immediately available after restart with a blocked worker', async t => {
   const fixture = await snapshotFixture(t);
@@ -491,7 +491,7 @@ test('pinned cache receipts reject mismatched keys and rolling bounds even with 
 test('complete measurements persist immediately, then hourly, and flush the latest value on close', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'model-speed-cadence-')));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = join(root, 'timing'), file = join(directory, 'model-performance-snapshot.json');
+  const directory = join(root, 'timing'), file = join(directory, `model-performance-snapshot-${modelPerformanceSourceScope(join(root, 'codex'))}.json`);
   let now = NOW, worker;
   const writeCompletions = [];
   const options = { directory, codexHome: join(root, 'codex'), platform: 'darwin', snapshotNow: () => now,

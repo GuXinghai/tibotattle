@@ -154,7 +154,16 @@ test("the compact time toolbar needs no decorative DOM, uses exact observations,
   assert.equal(text("#trends-spend-value"), "—");
   controller.select(2 * hour);
   assert.equal(text("#trends-allowance-value"), "—", "a future observation cannot be borrowed");
+  const historical = new Element(); historical.id="allowance-timeline-chart";
+  controller.register(historical,{svg:new Element(),points:[{timestampMs:-2*hour,allowanceRemaining:45}],
+    series:[{key:"allowanceRemaining",label:"Remaining",format:String}],x:p=>p.timestampMs/hour,y:v=>v,
+    domain:{startMs:-4*hour,endMs:-2*hour},margin:{top:12,bottom:30,left:72,right:24},width:900,height:180});
   shell.hidden = true;
+  controller.refresh();
+  assert.equal(elements.get("#trends-time").min,-4*hour);
+  assert.equal(elements.get("#trends-time").max,-2*hour);
+  assert.equal(elements.get("#trends-time").value,String(-2*hour),"historical cursor cannot retain the newer plan's limits");
+  historical.hidden = true;
   controller.refresh();
   assert.equal(text("#trends-spend-value"), "—");
   assert.equal(elements.get("#trends-time").disabled, true);

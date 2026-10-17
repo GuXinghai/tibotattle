@@ -447,7 +447,7 @@ test("provider accounting keeps reverted suffix spend and replacement work with 
       onUsage: (event) => events.push(event),
     });
 
-    assert.equal(result.parserVersion, "codex-log-scan-v10");
+    assert.equal(result.parserVersion, "codex-log-scan-v11");
     assert.deepEqual(events.map((event) => event.raw.input_tokens), [
       100,
       50,

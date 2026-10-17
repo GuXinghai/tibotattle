@@ -1080,6 +1080,111 @@ test("unified companion and window readers preserve output-only context evidence
   }
 });
 
+test("response usage stays exact and exposes an unverified prefix through the public history coverage", async () => {
+  const root = await fixtureRoot();
+  try {
+    const stateDirectory = join(root, ".usage-monitor");
+    const indexFile = join(stateDirectory, "response-prefix-index.sqlite");
+    const sessions = join(root, "sessions");
+    await mkdir(sessions);
+    const at = "2026-09-29T12:00:00.000Z";
+    const id = "synthetic-response-coverage-session";
+    const turnId = "synthetic-response-coverage-turn";
+    const usage = rolloutUsage(100, 10);
+    const cumulative = rolloutUsage(300, 30);
+    const records = [
+      { timestamp: at, type: "session_meta", payload: { id } },
+      { timestamp: at, type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
+      { timestamp: at, type: "turn_context", payload: { turn_id: turnId, model: "gpt-6.1-sol" } },
+      { timestamp: at, type: "event_msg", payload: { type: "token_count", info: {
+        last_token_usage: usage, total_token_usage: cumulative,
+      } } },
+      { timestamp: at, type: "token_usage_record", payload: {
+        thread_id: id, turn_id: turnId, response_id: "synthetic-response-coverage-id",
+        usage, turn_token_usage: cumulative, thread_token_usage: cumulative,
+      } },
+    ];
+    await writeFile(join(sessions, "rollout-2026-09-29T12-00-00-response-prefix.jsonl"),
+      `${records.map(JSON.stringify).join("\n")}\n`);
+    const completeId = "synthetic-response-complete-session";
+    const completeTurnId = "synthetic-response-complete-turn";
+    const completeRecords = [
+      { timestamp: at, type: "session_meta", payload: { id: completeId } },
+      { timestamp: at, type: "event_msg", payload: { type: "task_started", turn_id: completeTurnId } },
+      { timestamp: at, type: "turn_context", payload: { turn_id: completeTurnId, model: "gpt-6.1-sol" } },
+      { timestamp: at, type: "event_msg", payload: { type: "token_count", info: {
+        last_token_usage: usage, total_token_usage: usage,
+      } } },
+      { timestamp: at, type: "token_usage_record", payload: {
+        thread_id: completeId, turn_id: completeTurnId, response_id: "synthetic-response-complete-id",
+        usage, turn_token_usage: usage, thread_token_usage: usage,
+      } },
+    ];
+    await writeFile(join(sessions, "rollout-2026-09-29T12-00-00-response-complete.jsonl"),
+      `${completeRecords.map(JSON.stringify).join("\n")}\n`);
+    const built = await refreshLocalIndex({
+      codexHome: root,
+      indexFile,
+      secretFile: join(stateDirectory, "response-prefix-device-salt"),
+      workerCount: 1,
+    });
+    assert.equal(built.usageEvents, 2);
+
+    const companion = await readLocalIndexCompanionProjection({
+      indexFile, nowMs: Date.parse("2026-09-29T13:00:00.000Z"),
+    });
+    assert.equal(companion.status, "available");
+    assert.equal(companion.responseUnverifiedPrefixTurns, 1);
+    const total = companion.usage.find((period) => period.id === "all");
+    assert.equal(total.events, 2);
+    assert.equal(total.totalTokens, 220);
+
+    const snapshot = await buildLocalCompanionSnapshot({
+      root,
+      unifiedIndexFile: indexFile,
+      now: () => Date.parse("2026-09-29T13:00:00.000Z"),
+    });
+    assert.equal(snapshot.overview.pricing.historyCoverage.responseUsageCoverageStatus, "partial");
+    assert.equal(snapshot.overview.pricing.historyCoverage.responseUnverifiedPrefixTurns, 1);
+    assert.ok(snapshot.overview.warnings.some((warning) => (
+      warning === "Historical response coverage is partial. Recorded response amounts remain counted; earlier usage remains unavailable."
+    )));
+
+    // Keep the positive diagnostic from the current parser when a different
+    // retained source has not yet been checked by that parser.
+    const database = openLocalIndexStore(indexFile);
+    try {
+      database.prepare(`UPDATE source SET parser_version = ?
+        WHERE path LIKE '%response-complete.jsonl'`).run(
+        "local-index-rollout-typed-v2+unified-rollout-typed-v20",
+      );
+    } finally {
+      database.close();
+    }
+    const mixedParsers = await readLocalIndexCompanionProjection({
+      indexFile, nowMs: Date.parse("2026-09-29T13:00:00.000Z"),
+    });
+    assert.equal(mixedParsers.responseUnverifiedPrefixTurns, 1);
+
+    // If every source is old, absence of the new diagnostic is unknown rather
+    // than evidence that no prefixes were unverified.
+    const oldDatabase = openLocalIndexStore(indexFile);
+    try {
+      oldDatabase.prepare("UPDATE source SET parser_version = ?").run(
+        "local-index-rollout-typed-v2+unified-rollout-typed-v20",
+      );
+    } finally {
+      oldDatabase.close();
+    }
+    const oldParser = await readLocalIndexCompanionProjection({
+      indexFile, nowMs: Date.parse("2026-09-29T13:00:00.000Z"),
+    });
+    assert.equal(oldParser.responseUnverifiedPrefixTurns, null);
+  } finally {
+    await rm(root, { recursive: true });
+  }
+});
+
 test("closed v2 real-data projection exposes no session, account, path or filename identifiers", async () => {
   const root = await mkdtemp(join(tmpdir(), "local-companion-data-v2-closure-"));
   try {
@@ -1908,6 +2013,7 @@ test("every surface a withheld projection empties is registered for retention", 
   );
 
   assert.deepEqual(RETAINED_PROJECTION_SURFACE_PATHS, [
+    "overview.timeline.weeklyApiIntervals",
     // allowanceCapacity: registered 2026-08-21 after a live capture showed a
     // non-authoritative publish stripping it to status "unavailable" and
     // blanking every Trends window at once, while every array surface here
@@ -1918,6 +2024,7 @@ test("every surface a withheld projection empties is registered for retention", 
     "overview.usage",
     "overview.timeline.usage",
     "overview.timeline.sparkUsage",
+    "overview.timeline.historicalPlanComparisons",
     "overview.timeline.calibrationUsage",
     "overview.timeline.allowanceCapacity",
     "overview.timeline.planScoped",

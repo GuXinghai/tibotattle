@@ -1,12 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rename, rm, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rename, rm, realpath, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createParser, createToolFreeParser, digest, METHOD, TOOL_FREE_METHOD, MAX_STATE_BYTES, INFERENCE_TIMING_PARSER_VERSION } from '../src/providers/codex/logs.js';
-import { openTimingStore, ingestTimingFile, readTimingRows } from '../src/platform/index.js';
+import { openTimingStore, ingestTimingFile, readTimingRows, createWindowsFilesystemAdapter } from '../src/platform/index.js';
+import { modelPerformanceSupplementDirectory } from '../apps/local/model-performance-worker.js';
 import { createModelPerformanceController } from '../apps/local/model-performance-controller.js';
-import { modelPerformanceSourceScope } from '../apps/local/model-performance-snapshots.js';
+import { modelPerformanceSourceScope, createModelPerformanceSnapshotStore } from '../apps/local/model-performance-snapshots.js';
 
 const BASE = Date.parse('2026-06-01T12:00:00Z');
 const key = Buffer.alloc(32, 7);
@@ -119,11 +120,24 @@ test('malformed and oversized content exclude throughput without retaining priva
 const primaryConfig = { createParser, digest, METHOD, MAX_STATE_BYTES };
 const extraConfig = correlationKey => ({ createParser: createToolFreeParser, digest, METHOD: TOOL_FREE_METHOD, MAX_STATE_BYTES, correlationKey });
 async function setup(t) {
-  const dir = await realpath(await mkdtemp(join(tmpdir(), 'tool-free-')));
-  t.after(() => rm(dir, { recursive: true, force: true }));
+  const temporary = await realpath(await mkdtemp(join(tmpdir(), 'tool-free-')));
+  let primary;
+  t.after(async () => {
+    // Release SQLite and its native directory guards before deleting the fixture.
+    primary?.close();
+    await rm(temporary, { recursive: true, force: true });
+  });
+  await assert.rejects(openTimingStore(join(temporary, 'unprotected'), primaryConfig),
+    error => error.code === 'security_policy', 'inherited temporary ACLs must remain rejected');
+  // Native creation supplies and verifies the protected Windows DACL; mode bits
+  // on an inherited mkdtemp directory cannot establish that boundary.
+  const dir = join(temporary, 'private');
+  const filesystem = createWindowsFilesystemAdapter();
+  filesystem.ensureDirectory(dir);
+  filesystem.ensureDirectory(join(dir, 'legacy-root'));
+  filesystem.ensureDirectory(join(dir, 'supplement-root'));
   const file = join(dir, 'synthetic.jsonl');
-  const primary = await openTimingStore(join(dir, 'primary'), primaryConfig);
-  t.after(() => primary.close());
+  primary = await openTimingStore(join(dir, 'legacy-root', 'primary'), primaryConfig);
   return { dir, file, primary };
 }
 
@@ -131,20 +145,25 @@ test('additive sidecar resumes and joins without changing original rows, version
   const { dir, file, primary } = await setup(t);
   await writeFile(file, lines(fixture()), { mode: 0o600 }); await ingestTimingFile(primary, file);
   const before = readTimingRows(primary);
-  const path = join(dir, 'supplement');
+  const path = join(dir, 'supplement-root', 'supplement');
+  let checkpoint;
   let extra = await openTimingStore(path, extraConfig(primary.key));
   try {
-    assert.equal(extra.db.prepare('PRAGMA user_version').get().user_version, 7);
+    assert.equal(extra.db.prepare('PRAGMA user_version').get().user_version, 11);
     await ingestTimingFile(extra, file, { maxBytes: Buffer.byteLength(lines(fixture().slice(0, 6))) });
+    checkpoint = extra.db.prepare('SELECT cursor FROM source').get().cursor;
+    assert.ok(checkpoint > 0 && checkpoint < Buffer.byteLength(lines(fixture())));
+    assert.equal(extra.db.prepare('SELECT count(*) n FROM turn').get().n, 0);
   } finally { extra.close(); }
   extra = await openTimingStore(path, extraConfig(primary.key));
   try {
+    assert.equal(extra.db.prepare('SELECT cursor FROM source').get().cursor, checkpoint);
     await ingestTimingFile(extra, file);
     const joined = readTimingRows(primary, { supplement: extra });
     assert.equal(joined.length, 1); assert.equal(joined[0].tool_free_tokens, 120); assert.equal(joined[0].tool_free_duration, 1200);
     const { tool_free_tokens, tool_free_duration, ...original } = joined[0];
     assert.deepEqual(original, before[0]); assert.deepEqual(readTimingRows(primary), before);
-    assert.equal(primary.db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(primary.db.prepare('PRAGMA user_version').get().user_version, 10);
     assert.equal((await ingestTimingFile(extra, file)).bytes, 0);
     await assert.rejects(openTimingStore(path, primaryConfig), /incompatible_database/);
     await assert.rejects(openTimingStore(path, extraConfig(Buffer.alloc(32))), /correlation_mismatch/);
@@ -160,14 +179,23 @@ test('additive sidecar resumes and joins without changing original rows, version
 test('supplement cancellation rolls back rows and checkpoints, preserving existing data', async t => {
   const { dir, file, primary } = await setup(t);
   await writeFile(file, lines(fixture()), { mode: 0o600 }); await ingestTimingFile(primary, file);
-  const before = readTimingRows(primary), extra = await openTimingStore(join(dir, 'extra'), extraConfig(primary.key));
+  const before = readTimingRows(primary), path = join(dir, 'supplement-root', 'extra');
+  let extra = await openTimingStore(path, extraConfig(primary.key));
   try {
     const abort = new AbortController();
     await assert.rejects(ingestTimingFile(extra, file, { signal: abort.signal, onReadLine: () => abort.abort() }), /cancelled/);
     assert.equal(extra.db.prepare('SELECT count(*) n FROM source').get().n, 0);
+    assert.equal(extra.db.prepare('SELECT count(*) n FROM turn').get().n, 0);
+    assert.equal(extra.db.prepare('SELECT count(*) n FROM parser_replay_turn').get().n, 0);
     assert.deepEqual(readTimingRows(primary, { supplement: extra }), before);
+    extra.close();
+    extra = await openTimingStore(path, extraConfig(primary.key));
+    assert.equal(extra.db.prepare('SELECT count(*) n FROM source').get().n, 0);
     await ingestTimingFile(extra, file);
     assert.equal(readTimingRows(primary, { supplement: extra })[0].tool_free_tokens, 120);
+    assert.equal((await ingestTimingFile(extra, file)).bytes, 0);
+    assert.equal(readTimingRows(primary, { supplement: extra }).length, 1);
+    assert.deepEqual(readTimingRows(primary), before);
   } finally { extra.close(); }
 });
 
@@ -178,8 +206,9 @@ test('real worker backfills the supplement beside saved measurements and preserv
   const source = join(codexHome, 'sessions', 'synthetic.jsonl');
   await writeFile(source, lines(fixture()), { mode: 0o600 });
   await ingestTimingFile(primary, source);
-  const before = readTimingRows(primary);
-  const options = { directory: join(dir, 'primary'), codexHome };
+  primary.close();
+  const before = await readFile(primary.file);
+  const options = { directory: join(dir, 'legacy-root', 'primary'), codexHome };
   const ready = async (controller, expectedModels = 1) => {
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
@@ -198,8 +227,8 @@ test('real worker backfills the supplement beside saved measurements and preserv
       assert.equal(model.speedTurns, 1); assert.equal(model.ttftTurns, 1); assert.equal(model.toolFreeTurns, 1);
       assert.equal(model.toolFree[0].median, 100);
       assert.equal(model.speed[0].points[0].median, 100);
-      assert.deepEqual(readTimingRows(primary), before);
     } finally { await controller.close(); }
+    assert.deepEqual(await readFile(primary.file), before, 'legacy database at the real unscoped location is untouched');
   }
   const emptyHome = join(dir, 'empty-codex');
   await mkdir(join(emptyHome, 'sessions'), { recursive: true });
@@ -214,18 +243,39 @@ test('real worker backfills the supplement beside saved measurements and preserv
       }
     } finally { await controller.close(); }
   }
+  const snapshotFile = join(options.directory, `model-performance-snapshot-${modelPerformanceSourceScope(codexHome)}.json`);
+  const emptySnapshotFile = join(options.directory, `model-performance-snapshot-${modelPerformanceSourceScope(emptyHome)}.json`);
+  assert.notEqual(snapshotFile, emptySnapshotFile);
+  const originalSnapshot = await readFile(snapshotFile, 'utf8');
+  const emptySnapshot = await readFile(emptySnapshotFile, 'utf8');
+  const legacySnapshotFile = join(options.directory, 'model-performance-snapshot.json');
+  // A valid legacy receipt cannot bypass a mismatched current-source receipt.
+  await writeFile(legacySnapshotFile, emptySnapshot);
+  await copyFile(snapshotFile, emptySnapshotFile);
+  const diagnostics = [];
+  const isolatedStore = createModelPerformanceSnapshotStore({
+    ...options, codexHome: emptyHome, onDiagnostic: code => diagnostics.push(code),
+  });
+  assert.equal(await isolatedStore.read(), null);
+  assert.deepEqual(diagnostics, ['timing_snapshot_scope_mismatch']);
+  assert.equal(await readFile(emptySnapshotFile, 'utf8'), originalSnapshot, 'rejected receipt is not rewritten');
+  assert.equal(await readFile(snapshotFile, 'utf8'), originalSnapshot, 'another source retains its receipt');
+  await writeFile(emptySnapshotFile, emptySnapshot);
+  await rm(legacySnapshotFile);
+
   // Each Codex root owns both of its additive sidecars; the unscoped original
   // remains untouched because it cannot prove which root produced its rows.
   const scopedDirectory = join(options.directory, `source-${modelPerformanceSourceScope(codexHome)}`);
   const scopedPrimary = await openTimingStore(scopedDirectory, { ...primaryConfig, parserVersion: INFERENCE_TIMING_PARSER_VERSION });
   try {
-    const extra = await openTimingStore(join(scopedDirectory, 'tool-free-v1'), {
+    const extra = await openTimingStore(modelPerformanceSupplementDirectory({
+      directory: scopedDirectory, timingRoot: options.directory,
+    }), {
       ...extraConfig(scopedPrimary.key), parserVersion: INFERENCE_TIMING_PARSER_VERSION,
     });
     extra.db.exec('PRAGMA user_version=999'); extra.close();
-    assert.equal(scopedPrimary.db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(scopedPrimary.db.prepare('PRAGMA user_version').get().user_version, 10);
   } finally { scopedPrimary.close(); }
-  const snapshotFile = join(options.directory, 'model-performance-snapshot.json');
   const saved = await readFile(snapshotFile, 'utf8');
   let controller = createModelPerformanceController(options);
   try {
@@ -244,6 +294,6 @@ test('real worker backfills the supplement beside saved measurements and preserv
     assert.equal(result.stale, true); assert.equal(result.models[0].ttftTurns, 1);
     assert.equal(result.models[0].turns, 1); assert.equal(result.models[0].toolFreeTurns, 0);
     assert.deepEqual(result.models[0].toolFree, []);
-    assert.deepEqual(readTimingRows(primary), before, 'legacy original metrics remain unchanged');
   } finally { await controller.close(); }
+  assert.deepEqual(await readFile(primary.file), before, 'legacy original database remains byte-identical');
 });

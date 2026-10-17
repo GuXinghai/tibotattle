@@ -3,8 +3,17 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createValidatedSnapshotStore } from '../../src/platform/index.js';
 
 export const MODEL_PERFORMANCE_PERIODS = Object.freeze(['1', '7', '30', 'all']);
+export const MODEL_PERFORMANCE_DIAGNOSTIC_HEADER = 'X-TiboTattle-Performance-Diagnostics';
+export const MODEL_PERFORMANCE_DIAGNOSTICS = Object.freeze([
+  'timing_worker_failed', 'timing_scan_failed', 'timing_store_failed',
+  'timing_projection_failed', 'timing_snapshot_read_failed',
+  'timing_snapshot_invalid', 'timing_snapshot_write_failed',
+  'timing_snapshot_scope_mismatch',
+  'timing_history_unavailable', 'timing_source_recovery_failed',
+  'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported',
+]);
 export const MODEL_PERFORMANCE_SPEED_MODES = Object.freeze(['standard', 'fast', 'ultrafast']);
-// The shared dashboard preloads one exact window for every period/mode pair.
+// Retain at most one roster's worth of exact windows across concurrent readers.
 export const MODEL_PERFORMANCE_MAX_WINDOWS = MODEL_PERFORMANCE_PERIODS.length * MODEL_PERFORMANCE_SPEED_MODES.length;
 export const modelPerformanceSnapshotKey = (period, speedMode) => `${period}:${speedMode}`;
 const DAY = 86_400_000;
@@ -83,6 +92,12 @@ export const isCompleteModelPerformanceSnapshot = value => isModelPerformanceSna
   && !value.collecting && !value.stale && (value.historyProgress === null
     || value.historyProgress.checked === value.historyProgress.total);
 
+// A finished scan may retain unavailable historical evidence. Persist its
+// explicit stale flag; it is never a complete/fresh measurement receipt.
+export const isSettledModelPerformanceSnapshot = value => isModelPerformanceSnapshot(value)
+  && !value.collecting && (value.historyProgress === null
+    || value.historyProgress.checked === value.historyProgress.total);
+
 // Pinned results carry the exact requested end in their key. Their collection
 // timestamp may be later, but a stored rolling window must keep its bounds.
 export function readModelPerformanceSnapshotEntry(value) {
@@ -102,32 +117,45 @@ export function modelPerformanceSourceScope(codexHome) {
     ? createHash('sha256').update(`model-performance-v1\0${resolve(codexHome)}`).digest('hex') : null;
 }
 
-export function createModelPerformanceSnapshotStore({ directory, codexHome, now = () => Date.now() }) {
+export function createModelPerformanceSnapshotStore({ directory, codexHome, now = () => Date.now(), onDiagnostic = () => {} }) {
   // Relative paths are used by in-memory clients/tests and must never create a
   // cache in the working directory. The production composition supplies both.
   if (typeof directory !== 'string' || !isAbsolute(directory)
       || typeof codexHome !== 'string' || !isAbsolute(codexHome)) return null;
   const source = modelPerformanceSourceScope(codexHome);
-  const store = createValidatedSnapshotStore({
-    snapshotFile: join(directory, 'model-performance-snapshot.json'),
+  let scopeMismatch = false, readDiagnosed = false;
+  const createStore = snapshotFile => createValidatedSnapshotStore({
+    snapshotFile,
     // Earlier receipts combine speed modes. Rebuild from retained turn evidence;
     // never relabel old aggregates as measurements for a single mode.
     schemaVersion: 'local-model-performance-snapshot-v5',
     maximumBytes: 4 * 1024 * 1024,
     now,
+    onReadDiagnostic: code => {
+      readDiagnosed = true;
+      onDiagnostic(scopeMismatch && code === 'snapshot_invalid'
+        ? 'timing_snapshot_scope_mismatch' : `timing_${code}`);
+    },
     validate: value => {
+      scopeMismatch = exact(value, ['source', 'values']) && value.source !== source;
       if (!exact(value, ['source', 'values']) || value.source !== source
           || !Array.isArray(value.values) || value.values.length < 1
           || value.values.length > MODEL_PERFORMANCE_PERIODS.length * MODEL_PERFORMANCE_SPEED_MODES.length + MODEL_PERFORMANCE_MAX_WINDOWS) return false;
       const entries = value.values.map(readModelPerformanceSnapshotEntry);
-      return entries.every(entry => entry && isCompleteModelPerformanceSnapshot(entry.snapshot))
+      return entries.every(entry => entry && isSettledModelPerformanceSnapshot(entry.snapshot))
         && new Set(entries.map(entry => entry.key)).size === entries.length
         && entries.filter(entry => entry.key !== modelPerformanceSnapshotKey(entry.snapshot.period, entry.snapshot.speedMode)).length <= MODEL_PERFORMANCE_MAX_WINDOWS;
     },
   });
+  const store = createStore(join(directory, `model-performance-snapshot-${source}.json`));
+  const legacy = createStore(join(directory, 'model-performance-snapshot.json'));
   return {
     async read() {
-      const receipt = await store.read();
+      scopeMismatch = false; readDiagnosed = false;
+      // Do not fall back around corruption or an unreadable current receipt.
+      // Only an absent source-specific file may consult the preserved legacy one.
+      let receipt = await store.read();
+      if (!receipt && !readDiagnosed) receipt = await legacy.read();
       return receipt ? { values: receipt.snapshot.values, savedAt: receipt.savedAt } : null;
     },
     write(values) { return store.write({ source, values }); },

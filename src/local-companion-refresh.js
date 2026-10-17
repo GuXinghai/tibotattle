@@ -114,6 +114,8 @@ const UNIFIED_INDEX_PUBLIC_ERROR_CODES = new Set([
   "local_index_unavailable",
   "codex_rollout_source_changed",
   "local_unified_index_publication_busy",
+  "local_unified_index_model_recovery_stalled",
+  "codex_response_usage_checkpoint_conflict",
   "local_unified_index_publication_timed_out",
   "local_unified_index_publication_failed",
   "local_index_maintenance_failed",
@@ -1007,6 +1009,7 @@ export function createLocalCollectorRefreshRunner({
               && existing?.status === "available"
               && existing.cache?.schemaVersion
                 === REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
+              && (withinRebuildBackoff || existing.cache?.weeklyApiIntervals?.status === "available")
               && unifiedAccountingCacheHasZeroFallback(existing.cache)) {
             accounting = existing.cache;
             // No new usage -> the reused cache still covers every event, so it
@@ -1626,7 +1629,11 @@ export class LocalCompanionRefreshController {
       throw new TypeError("mode must be quick or detailed");
     }
     if (this.#inFlight !== null) return false;
-    const selectedTimeoutMs = mode === "overview" ? 60_000 : this.#timeoutMsForRun === null
+    // Overview advances the same real index as a detailed refresh. Its index
+    // phase must use the reviewed fresh/incremental budget, rather than an
+    // unrelated one-minute cutoff before accounting can announce real work.
+    // Progress never resets this total-from-start deadline.
+    const selectedTimeoutMs = this.#timeoutMsForRun === null
       ? this.#timeoutMs
       : this.#timeoutMsForRun();
     if (!Number.isSafeInteger(selectedTimeoutMs)

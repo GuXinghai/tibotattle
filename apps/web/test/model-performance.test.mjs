@@ -185,9 +185,9 @@ function focusHarness() {
     }
     append(...children) { this.children.push(...children); }
     all() { return this.children.flatMap(child => [child, ...child.all()]); }
-    replaceChildren() {
+    replaceChildren(...children) {
       if (this.all().includes(documentRef.activeElement)) documentRef.activeElement = null;
-      this.children = [];
+      this.children = children;
     }
     querySelectorAll(selector) {
       assert.equal(selector, '[data-performance-focus]');
@@ -197,6 +197,8 @@ function focusHarness() {
     getBoundingClientRect() { return { left: 0, top: 0, width: 800, height: 256 }; }
     contains(node) { return node === this || this.all().includes(node); }
     addEventListener(type, listener) { this.listeners[type] = listener; }
+    showModal() { this.open = true; }
+    close() { this.open = false; this.listeners.close?.(); }
     focus(options) { documentRef.activeElement = this; this.focusOptions = options; this.listeners.focus?.(); }
   }
   documentRef.createElement = tag => new Node(tag);
@@ -224,51 +226,8 @@ const performanceClient = handler => {
   };
 };
 
-test('background history scan reports honest bounded progress while keeping charts visible', async () => {
-  const dom = focusHarness();
-  const data = { ...combinedPayload(), collecting: true, historyProgress: { checked: 629, total: 9026 } };
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => data },
-    t: (key, values) => translate(key, values, 'en-US') });
-  dom.show(); await controller.refresh();
-  const updated = translate('performance.updated', { date: new Intl.DateTimeFormat('en-US', {
-    dateStyle: 'medium', timeStyle: 'short',
-  }).format(new Date(data.updatedAt)) }, 'en-US');
-  assert.equal(dom.root.all().find(node => node.className === 'performance-status').textContent,
-    `${updated} · Building earlier history · 629 of 9,026 sessions checked`);
-  assert.ok(dom.root.all().some(node => node.id === 'performance-model-panel'));
-  assert.equal(dom.root.all().filter(node => node.className === 'performance-card chart-card').length, 2);
-  assert.ok(dom.root.all().some(node => node.className === 'performance-unit' && node.textContent.includes('2 full-turn estimates')));
-  controller.destroy();
-});
-test('recovered estimates stay in one output-speed chart with explicit population coverage', async () => {
-  const dom = focusHarness(); let response = combinedPayload();
-  response.models[0].ttftTurns = response.models[0].turns;
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => response },
-    t: (key, values) => translate(key, values, 'en-US') });
-  dom.show(); await controller.refresh();
-  assert.deepEqual(dom.root.all().filter(node => node.tagName === 'h4').map(node => node.textContent),
-    ['Output speed', 'Time before the reply starts']);
-  assert.equal(dom.root.all().find(node => node.className === 'performance-method-note').textContent,
-    "When response timing isn't available, eligible single-response turns without tools give full-turn estimates. These include initial waiting, so they can be lower than response-timed speed.");
-  assert.equal(dom.root.all().filter(node => node.className === 'performance-unit')[0].textContent,
-    'tokens/s · 12 of 20 turns measured · 10 response-timed · 2 full-turn estimates');
-  assert.deepEqual(dom.root.all().filter(node => node.className === 'performance-unit').map(node => node.dataset.state),
-    ['partial', 'complete'], 'speed and latency retain their own coverage state');
-  const cards = dom.root.all().filter(node => node.className === 'performance-card chart-card');
-  assert.equal(cards.length, 2);
-  assert.ok(cards.every(card => card.children[0].className === 'performance-card-heading chart-card-header'
-    && card.children[1].className === 'performance-legend chart-card-legend'), 'all cards retain the compact shared chart layout');
-  const plots = dom.root.all().filter(node => node.tagName === 'svg' && node.listeners.pointermove);
-  assert.equal(plots.length, 2);
-  assert.equal(plots[0].attributes['aria-label'], 'Output speed');
-  assert.equal(plots[0].all().filter(node => node.className === 'performance-point').length, 3,
-    'pooled points render once; diagnostic fallback percentiles are not drawn again');
-  response = combinedPayload(); response.models[0].toolFree = []; response.models[0].toolFreeTurns = 0;
-  await controller.refresh();
-  assert.equal(dom.root.all().filter(node => node.tagName === 'h4').length, 2);
-  assert.equal(dom.root.all().some(node => node.className === 'performance-method-note'), false);
-  controller.destroy();
-});
+
+
 test('legacy independent distributions reject mixed-mode evidence without rendering charts', async () => {
   const dom = focusHarness(), data = legacyToolFreePayload();
   const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => data },
@@ -280,84 +239,11 @@ test('legacy independent distributions reject mixed-mode evidence without render
   controller.destroy();
 });
 
-test('retained measurements show their original update date alongside refresh while loading and failure stay distinct', async () => {
-  const dom = focusHarness();
-  let response = { ...combinedPayload(), status: 'loading', updatedAt: null, models: [] };
-  let failure = false;
-  const controller = mountModelPerformance({ ...dom, client: {
-    modelPerformance: async () => { if (failure) throw new Error('synthetic failure'); return response; },
-  }, t: (key, values) => translate(key, values, 'en-US') });
-  const status = () => dom.root.all().find(node => node.className === 'performance-status').textContent;
-  dom.show(); await controller.refresh();
-  assert.equal(status(), translate('performance.updating', {}, 'en-US'));
-  response = { ...combinedPayload(), collecting: true };
-  await controller.refresh();
-  const updated = translate('performance.updated', { date: new Intl.DateTimeFormat('en-US', {
-    dateStyle: 'medium', timeStyle: 'short',
-  }).format(new Date(response.updatedAt)) }, 'en-US');
-  assert.equal(status(), `${updated} · ${translate('performance.updating', {}, 'en-US')}`);
-  assert.ok(dom.root.all().some(node => node.id === 'performance-model-panel'));
-  assert.equal(dom.root.all().filter(node => node.className === 'performance-card chart-card').length, 2);
-  response = combinedPayload(); await controller.refresh();
-  assert.equal(status(), updated, 'a fresh report shows its date without an updating claim');
-  failure = true; await controller.refresh();
-  assert.equal(status(), translate('performance.failed', {}, 'en-US'));
-  assert.ok(dom.root.all().some(node => node.id === 'performance-model-panel'));
-  assert.equal(dom.root.all().filter(node => node.className === 'performance-card chart-card').length, 2);
-  assert.ok(dom.root.all().some(node => node.className === 'performance-unit' && node.textContent.includes('2 full-turn estimates')));
-  failure = false; response = { ...combinedPayload(), status: 'unavailable', updatedAt: null, models: [] };
-  await controller.refresh();
-  assert.equal(status(), translate('performance.unavailable', {}, 'en-US'));
-  controller.destroy();
-});
 
-test('cached update time uses the local date while measurements are updating', async () => {
-  const previousZone = process.env.TZ;
-  process.env.TZ = 'America/New_York';
-  try {
-    const dom = focusHarness();
-    const response = { ...combinedPayload(), collecting: true, updatedAt: '2026-09-22T02:12:00.000Z' };
-    const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => response },
-      t: (key, values) => translate(key, values, 'en-US') });
-    dom.show(); await controller.refresh();
-    assert.equal(dom.root.all().find(node => node.className === 'performance-status').textContent,
-      'Updated Sep 21, 2026, 10:12 PM · Updating measurements…');
-    controller.destroy();
-  } finally {
-    if (previousZone === undefined) delete process.env.TZ;
-    else process.env.TZ = previousZone;
-  }
-});
 
-test('loading and background renders retain heading and About keyboard focus without a duplicate table', async () => {
-  const dom = focusHarness();
-  let response = { ...payload(), status: 'loading', models: [] };
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => response },
-    t: (key, values) => translate(key, values, 'en-US') });
-  const initialHeading = dom.find('heading');
-  initialHeading.focus();
-  dom.show();
-  await controller.refresh();
-  assert.notEqual(dom.documentRef.activeElement, initialHeading);
-  assert.equal(dom.documentRef.activeElement, dom.find('heading'), 'empty loading branch restores navigation focus');
-  assert.equal(dom.documentRef.activeElement.tabIndex, -1, 'replacement heading is programmatically focusable');
-  response = payload();
-  response.models[0] = { ...response.models[0], speed: [], ttft: [], speedTurns: 0, ttftTurns: 0, timedResponses: 0 };
-  await controller.refresh();
-  assert.equal(dom.documentRef.activeElement, dom.find('heading'), 'loaded branch retains heading focus');
-  dom.find('about').focus();
-  const previousAbout = dom.documentRef.activeElement;
-  controller.render();
-  assert.notEqual(dom.documentRef.activeElement, previousAbout);
-  assert.equal(dom.documentRef.activeElement, dom.find('about'), 'locale render retains About focus');
-  response = structuredClone(response); response.models[0].turns++;
-  await controller.refresh();
-  assert.equal(dom.documentRef.activeElement, dom.find('about'), 'new background data retains About disclosure focus');
-  assert.deepEqual(dom.documentRef.activeElement.focusOptions, { preventScroll: true });
-  assert.equal(dom.root.all().some(node => node.tagName === 'table'), false, 'chart aggregates are not duplicated in a table');
-  assert.equal(dom.find('table'), undefined);
-  controller.destroy();
-});
+
+
+
 
 
 test('y axes use readable round steps, include the spread, and retain subsecond resolution', () => {
@@ -386,97 +272,12 @@ test('horizontal hover bins are calendar-aligned including unobserved days and e
   assert.equal(performanceHoverBin(.5, domain, 'day'), 6*DAY);
   assert.equal((performanceHoverBin(.5, domain, 'week') - 4*DAY) % (7*DAY), 0);
 });
-test('performance cards render separate GPT-6 generations with their shared family icons', async () => {
-  const dom = focusHarness();
-  const data = payload();
-  data.models.push(...[['gpt-6.1-sol', 'GPT-6.1 Sol'], ['gpt-6-sol', 'GPT-6 Sol'], ['gpt-6-luna', 'GPT-6 Luna'], ['gpt-5.6-luna', 'Luna']]
-    .map(([id, label]) => ({ ...structuredClone(data.models[0]), id, label })));
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => data },
-    t: (key, values) => translate(key, values, 'en-US') });
-  try {
-    dom.show(); await controller.refresh();
-    for (const name of ['GPT-5.6 Sol', 'GPT-5.6 Luna', 'GPT-6 Sol', 'GPT-6 Luna', 'GPT-6.1 Sol']) {
-      assert.ok(dom.root.all().some(node => node.textContent === name), name);
-    }
-    for (const family of ['sol', 'luna']) {
-      const buttons = dom.root.all().filter(node => node.tagName === 'button');
-      assert.equal(buttons.filter(button => button.all().some(node => node.className ===
-        `allowance-model-icon performance-model-icon allowance-model-${family}`)).length, family === 'sol' ? 3 : 2);
-    }
-  } finally { controller.destroy(); }
-});
-test('plot-area sweep works away from points, clears on exit, and keyboard order follows dates', async () => {
-  const dom = focusHarness();
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => payload() },
-    t: (key, values) => translate(key, values, 'en-US') });
-  dom.show(); await controller.refresh();
-  const svgs = dom.root.all().filter(node => node.tagName === 'svg' && node.listeners.pointermove);
-  assert.equal(svgs.length, 2);
-  assert.ok(svgs[1].all().some(node => node.className === 'performance-percentile-band performance-percentile-band-outer'));
-  assert.ok(svgs[1].all().some(node => node.className === 'performance-percentile-band performance-percentile-band-inner'));
-  assert.ok(svgs[1].all().some(node => node.className === 'performance-percentile-line performance-percentile-line-p10'));
-  assert.ok(svgs[1].all().some(node => node.className === 'performance-median-line'));
-  assert.equal(svgs.some(svg => svg.all().some(node => node.tagName === 'polygon')), false);
-  assert.equal(svgs[1].all().filter(node => node.className?.startsWith('performance-endpoint-label')).length, 5);
-  assert.ok(dom.root.all().some(node => node.textContent === 'GPT-5.6 Sol'));
-  assert.ok(dom.root.all().some(node => node.className === 'allowance-model-icon performance-model-icon allowance-model-sol'));
-  assert.deepEqual(dom.root.all().filter(node => node.className === 'performance-unit').map(node => node.textContent), [
-    'tokens/s · 10 of 20 turns measured · 10 response-timed · 0 full-turn estimates',
-    'seconds · Lower is faster · 15 of 20 turns measured · 45 timed responses',
-  ]);
-  assert.equal(dom.root.all().some(node => node.className === 'performance-coverage'), false);
-  const readouts = () => dom.root.all().filter(node => node.className === 'sr-only performance-readout');
-  // Jan3 = first measured day. Pointer near the top, far from its actual point.
-  svgs[0].listeners.pointermove({ clientX: 52, clientY: 30 });
-  assert.ok(readouts().every(node => node.textContent.includes('Median 50')));
-  assert.ok(readouts().every(node => node.textContent.includes('P10 30 · P25 40 · P75 60 · P90 70')));
-  const tooltipPercentiles = dom.root.all().filter(node => node.className === 'performance-tooltip-percentiles');
-  assert.equal(tooltipPercentiles.length, 2);
-  assert.deepEqual(tooltipPercentiles[0].children.filter(node => node.tagName === 'span').map(node => node.textContent), ['P90', 'P75', 'P25', 'P10']);
-  assert.deepEqual(dom.root.all().filter(node => node.className === 'performance-tooltip-method').map(node => node.textContent), ['Median (P50)', 'Time before the reply starts']);
-  assert.ok(dom.root.all().filter(node => node.className?.startsWith('performance-tooltip ')).every(node => node.className.includes('performance-tooltip-after')));
-  svgs[0].listeners.pointermove({ clientX: 52, clientY: 200 });
-  assert.ok(readouts().every(node => node.textContent.includes('Median 50')), 'vertical position never changes selected date');
-  svgs[0].listeners.pointermove({ clientX: 52 + 656 * 4/7, clientY: 100 });
-  assert.ok(readouts().every(node => node.textContent.includes('No measurements')), 'missing day never borrows a nearby observation');
-  svgs[0].listeners.pointermove({ clientX: 700, clientY: 100 });
-  assert.ok(dom.root.all().filter(node => node.className?.startsWith('performance-tooltip ')).every(node => node.className.includes('performance-tooltip-before')));
-  svgs[0].listeners.pointerleave();
-  assert.ok(readouts().every(node => node.textContent === ''));
-  const targets = svgs[0].all().filter(node => node.className === 'performance-point');
-  assert.equal(targets.filter(node => node.attributes.tabindex === '0').length, 1);
-  targets[0].focus(); targets[0].listeners.keydown({ key: 'ArrowRight', preventDefault() {} });
-  assert.equal(dom.documentRef.activeElement, targets[1]);
-  assert.ok(readouts().every(node => node.textContent.includes('Jan 4')));
-  targets[1].listeners.keydown({ key: 'Escape' });
-  assert.ok(readouts().every(node => node.textContent === ''));
-  controller.destroy();
-});
 
-test('output-speed labels round to whole tokens per second while latency retains tenths', async () => {
-  const dom = focusHarness(), data = payload();
-  Object.assign(data.models[0].speed[0].points[0], { p10: 30.4, p25: 40.4, median: 50.4, p75: 60.4, p90: 70.4 });
-  Object.assign(data.models[0].ttft[0], { p10: 3.04, p25: 4.04, median: 5.04, p75: 6.04, p90: 7.04 });
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => data },
-    t: (key, values) => translate(key, values, 'en-US') });
-  dom.show(); await controller.refresh();
-  const plots = dom.root.all().filter(node => node.tagName === 'svg' && node.listeners.pointermove);
-  plots[0].listeners.pointermove({ clientX: 52, clientY: 30 });
-  const readouts = dom.root.all().filter(node => node.className === 'sr-only performance-readout');
-  assert.match(readouts[0].textContent, /Median 50 · P10 30 · P25 40 · P75 60 · P90 70/u);
-  assert.match(readouts[1].textContent, /Median 5 · P10 3 · P25 4 · P75 6 · P90 7/u);
-  controller.destroy();
-});
 
-test('combined speed evidence draws one readable set of endpoint percentile labels', async () => {
-  const dom = focusHarness(), data = payload();
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => data },
-    t: (key, values) => translate(key, values, 'en-US') });
-  dom.show(); await controller.refresh();
-  const speed = dom.root.all().find(node => node.tagName === 'svg' && node.listeners.pointermove);
-  assert.equal(speed.all().filter(node => node.className?.startsWith('performance-endpoint-label')).length, 5);
-  controller.destroy();
-});
+
+
+
+
 
 
 test('revisits and background loading retain the ready period while replacements and invalidation stay authoritative', async () => {
@@ -550,7 +351,7 @@ test('shared reporting waits for its bound, maps 24h to the rolling backend peri
   assert.equal(calls[0].options.endAt, window.endAt);
   assert.equal(dom.root.all().some(node => node.dataset.performanceFocus?.startsWith('period-')), false);
   assert.equal(dom.root.all().some(node => node.dataset.evidence === 'period'), false, 'the shared header owns the reporting range');
-  assert.equal(dom.root.all().filter(node => node.className === 'performance-unit').length, 2, 'coverage remains beside each chart');
+  assert.equal(dom.root.all().filter(node => node.className === 'performance-headline').length, 2, 'both plots retain their own dated value');
   controller.destroy();
 });
 
@@ -568,15 +369,16 @@ test('advancing a shared end bound retains dated charts under their original bou
     t: (key, values) => translate(key, values, 'en-US') });
   dom.show(); await controller.refresh();
   const panel = () => dom.root.all().find(node => node.id === 'performance-model-panel');
-  const toolFreeVisible = () => dom.root.all().some(node => node.className === 'performance-unit' && node.textContent.includes('2 full-turn estimates'));
-  const status = () => dom.root.all().find(node => node.className === 'performance-status').textContent;
+  const toolFreeVisible = () => { if (!panel()) return false; dom.find('measurements').listeners.click(); const found = dom.root.all().some(n => n.className === 'performance-detail-row' && n.children[0].textContent === 'Full-turn estimates' && n.children[1].textContent === '2'); dom.find('detail-close').listeners.click(); return found; };
+  const status = () => dom.root.all().find(node => node.className === 'performance-status')?.textContent ?? '';
   const pending = Promise.withResolvers(); response = pending.promise;
   controller.setReportingWindow(windowAt(end + DAY));
   assert.ok(panel());
   assert.ok(toolFreeVisible());
-  assert.match(status(), /^Updated .+ · Updating measurements…$/u);
-  const priorBounds = dom.root.all().find(node => node.dataset.evidence === 'period');
-  assert.ok(priorBounds, 'retained charts identify their old bounds even with a shared header');
+  assert.match(status(), /Previous result/u);
+  dom.find('measurements').listeners.click();
+  assert.ok(dom.root.all().some(node => node.className === 'performance-detail-row' && node.children[0].textContent === 'Reporting period'));
+  dom.find('detail-close').listeners.click();
   assert.equal(calls.at(-1).options.endAt, windowAt(end + DAY).endAt);
   pending.resolve(exactAt(end + DAY));
   await new Promise(resolve => setImmediate(resolve));
@@ -599,15 +401,15 @@ test('advancing a shared end bound retains dated charts under their original bou
   await controller.refresh();
   assert.ok(panel());
   assert.ok(toolFreeVisible());
-  assert.match(status(), /Could not update/, 'an old-window response cannot be accepted as the new window');
-  assert.ok(dom.root.all().some(node => node.dataset.evidence === 'period'));
+  assert.match(status(), /Measurement validation failed/, 'an old-window response cannot be accepted as the new window');
+  assert.ok(dom.root.all().some(node => node.className === 'performance-headline-date' && node.textContent.includes('P50')));
   response = { ...exactAt(end + 2 * DAY), status: 'unavailable', models: [] };
   await controller.refresh();
   assert.ok(panel(), 'an unavailable replacement keeps the old explicitly dated window');
   assert.ok(toolFreeVisible(), 'unavailable does not drop recovered estimates from the retained speed chart');
-  assert.match(status(), /Timing measurements are unavailable/);
+  assert.match(status(), /Measurements unavailable/);
   assert.ok(dom.find('retry'));
-  assert.ok(dom.root.all().some(node => node.dataset.evidence === 'period'));
+  assert.ok(dom.root.all().some(node => node.className === 'performance-headline-date' && node.textContent.includes('P50')));
   response = { ...exactAt(end + 2 * DAY), models: [] };
   await controller.refresh();
   assert.equal(panel(), undefined, 'an authoritative empty replacement still clears the old chart');
@@ -617,30 +419,7 @@ test('advancing a shared end bound retains dated charts under their original bou
 });
 
 
-test('failed refresh retains chart coverage and timestamp beside the retry action', async () => {
-  const dom = focusHarness();
-  let fail = false;
-  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => {
-    if (fail) throw new Error('Synthetic request failure');
-    return payload();
-  } }, t: (key, values) => translate(key, values, 'en-US') });
-  dom.show(); await controller.refresh();
-  assert.equal(dom.root.all().some(node => node.dataset.evidence === 'freshness'), false, 'ready status already carries its timestamp');
-  assert.equal(dom.root.all().some(node => node.dataset.evidence === 'period'), true, 'standalone mode still identifies its own period');
-  fail = true; await controller.refresh();
-  const actions = dom.root.all().find(node => node.className === 'dashboard-actions performance-actions');
-  assert.ok(actions.children.some(node => node.dataset.state === 'error'));
-  assert.ok(actions.children.some(node => node.dataset.performanceFocus === 'retry'));
-  assert.equal(dom.root.all().filter(node => node.dataset.evidence === 'freshness').length, 1);
-  assert.deepEqual(dom.root.all().filter(node => node.className === 'performance-unit').map(node => node.textContent), [
-    'tokens/s · 10 of 20 turns measured · 10 response-timed · 0 full-turn estimates',
-    'seconds · Lower is faster · 15 of 20 turns measured · 45 timed responses',
-  ]);
-  fail = false; await dom.find('retry').listeners.click();
-  assert.equal(dom.find('retry'), undefined);
-  assert.equal(dom.root.all().some(node => node.dataset.evidence === 'freshness'), false);
-  controller.destroy();
-});
+
 
 
 test('page preload warms all periods before first visit and remains idempotent', async () => {
@@ -818,7 +597,7 @@ test('fresh period entries avoid warm requests until the bounded TTL expires', a
   dom.show(); await controller.refresh(); await settle(); await settle();
   await controller.refresh(); await settle();
   assert.deepEqual(calls.map(call => call.period), ['all', '7', '30', 'all'], 'fresh siblings are not re-fetched');
-  const originalNow = Date.now, expiredAt = originalNow() + 61_000;
+  const originalNow = Date.now, expiredAt = originalNow() + 301_000;
   Date.now = () => expiredAt;
   try {
     await controller.refresh(); await settle(); await settle();
@@ -837,7 +616,7 @@ test('scope unavailability invalidates every period cache', async () => {
   });
   const controller = mountModelPerformance({ ...dom, client, t: (key, values) => translate(key, values, 'en-US') });
   dom.show(); await controller.refresh(); await settle(); await settle();
-  const originalNow = Date.now, expiredAt = originalNow() + 61_000;
+  const originalNow = Date.now, expiredAt = originalNow() + 301_000;
   Date.now = () => expiredAt;
   try {
     unavailable = true; pendingThirty = Promise.withResolvers();
@@ -862,7 +641,7 @@ test('scope unavailability withdraws the selected chart while the page is inacti
   dom.show(); await controller.refresh(); await settle(); await settle();
   assert.ok(dom.root.all().some(node => node.id === 'performance-model-panel'));
   dom.navigate(false);
-  const originalNow = Date.now, expiredAt = originalNow() + 61_000;
+  const originalNow = Date.now, expiredAt = originalNow() + 301_000;
   Date.now = () => expiredAt;
   try {
     unavailable = true;
@@ -889,7 +668,7 @@ test('an empty ready result replaces the warmed period authoritatively', async (
   const { client } = performanceClient(period => periodPayload(period, empty && period === '7' ? { models: [] } : {}));
   const controller = mountModelPerformance({ ...dom, client, t: (key, values) => translate(key, values, 'en-US') });
   dom.show(); await controller.refresh(); await settle(); await settle();
-  const originalNow = Date.now, expiredAt = originalNow() + 61_000;
+  const originalNow = Date.now, expiredAt = originalNow() + 301_000;
   Date.now = () => expiredAt;
   try {
     empty = true; await controller.refresh(); await settle(); await settle();
@@ -909,7 +688,7 @@ test('background failures retain the last good period value', async () => {
   });
   const controller = mountModelPerformance({ ...dom, client, t: (key, values) => translate(key, values, 'en-US') });
   dom.show(); await controller.refresh(); await settle(); await settle();
-  const originalNow = Date.now, expiredAt = originalNow() + 61_000;
+  const originalNow = Date.now, expiredAt = originalNow() + 301_000;
   Date.now = () => expiredAt;
   try {
     fail = true; await controller.refresh(); await settle(); await settle();
@@ -983,8 +762,10 @@ test('Standard is the initial mode and Fast empty results show unknown exclusion
   fast.resolve(modePayload('all', 'fast', { models: [], excludedUnknownTurns: 17 }));
   await settle(); await settle();
   assert.equal(hasPanel(dom), false);
-  assert.ok(dom.root.all().some(node => node.textContent?.includes('No Fast mode measurements')));
-  assert.ok(dom.root.all().some(node => node.textContent?.includes('Excluded turns (unknown or mixed speed mode): 17.')));
+  assert.ok(dom.root.all().some(node => node.className === 'performance-empty' && node.textContent === 'No measurements'));
+  dom.find('measurements').listeners.click();
+  assert.ok(dom.root.all().some(node => node.className === 'performance-detail-row' && node.children[0].textContent === 'Unknown speed mode' && node.children[1].textContent === '17'));
+  dom.find('detail-close').listeners.click();
   assert.equal(dom.find('mode-fast').attributes['aria-pressed'], 'true');
   controller.destroy();
 });
@@ -1006,9 +787,11 @@ test('Ultrafast clears other modes while pending and retains its own empty resul
   ultrafast.resolve(modePayload('all', 'ultrafast', { models: [], excludedUnknownTurns: 17 }));
   await settle(); await settle();
   assert.equal(hasPanel(dom), false);
-  assert.ok(dom.root.all().some(node => node.textContent?.includes('No Ultrafast mode measurements')));
-  assert.ok(dom.root.all().some(node => node.textContent?.includes('Ultrafast mode only')));
-  assert.ok(dom.root.all().some(node => node.textContent?.includes('Excluded turns (unknown or mixed speed mode): 17.')));
+  assert.ok(dom.root.all().some(node => node.className === 'performance-empty' && node.textContent === 'No measurements'));
+  assert.equal(dom.find('mode-ultrafast').attributes['aria-pressed'], 'true');
+  dom.find('measurements').listeners.click();
+  assert.ok(dom.root.all().some(node => node.className === 'performance-detail-row' && node.children[0].textContent === 'Unknown speed mode' && node.children[1].textContent === '17'));
+  dom.find('detail-close').listeners.click();
   dom.find('mode-standard').listeners.click();
   assert.equal(hasPanel(dom), true);
   dom.find('mode-ultrafast').listeners.click();
@@ -1032,7 +815,8 @@ test('one Fast observation shows its own coverage, hollow points and no percenti
   assert.equal(nodes.filter(node => node.attributes.fill === 'var(--surface-raised)').length, 2);
   assert.equal(nodes.some(node => node.className?.startsWith('performance-percentile-band ')), false);
   assert.equal(nodes.some(node => node.className === 'performance-median-line'), false);
-  assert.ok(nodes.some(node => node.textContent === 'tokens/s · 1 of 1 turns measured · 1 response-timed · 0 full-turn estimates'));
+  dom.find('measurements').listeners.click();
+  assert.ok(dom.root.all().some(node => node.className === 'performance-detail-row' && node.children[0].textContent === 'Speed measurements' && node.children[1].textContent === '1'));
   controller.destroy();
 });
 
@@ -1126,44 +910,21 @@ test('shared reporting keeps its exact bound and selected speed mode through mod
   controller.destroy();
 });
 
-test('shared preload prepares twelve period and speed-mode pairs at one exact end bound', async () => {
-  const dom = focusHarness(), end = 60 * DAY;
-  const endAt = new Date(end).toISOString();
-  const pending = Promise.withResolvers();
-  let revalidating = false;
-  const { calls, client } = performanceClient((period, { speedMode }) => revalidating
-    ? pending.promise
-    : modePayload(period, speedMode, {
-      start: period === 'all' ? null : end - Number(period) * DAY,
-      end, models: [],
-    }));
-  const windowAt = period => ({ period, endAt, startAt: period === 'all' ? null
-    : new Date(end - (period === '24h' ? 1 : period === '7d' ? 7 : 30) * DAY).toISOString() });
-  const controller = mountModelPerformance({ ...dom, client, reportingWindow: windowAt('7d'),
-    t: (key, values) => translate(key, values, 'en-US') });
-  try {
-    await controller.preload();
-    assert.equal(calls.length, 12);
-    assert.deepEqual(new Set(calls.map(call => `${call.period}:${call.options.speedMode}`)), new Set([
-      '1:standard', '1:fast', '1:ultrafast', '7:standard', '7:fast', '7:ultrafast',
-      '30:standard', '30:fast', '30:ultrafast', 'all:standard', 'all:fast', 'all:ultrafast',
-    ]));
-    assert.ok(calls.every(call => call.options.endAt === endAt));
-    revalidating = true;
-    dom.navigate(true);
-    dom.find('mode-fast').listeners.click();
-    assert.ok(dom.root.all().some(node => node.className === 'performance-empty'),
-      'Fast displays its prepared result while revalidation is pending');
-    controller.setReportingWindow(windowAt('30d'));
-    assert.ok(dom.root.all().some(node => node.className === 'performance-empty'),
-      'a different period displays its prepared Fast result immediately');
-    dom.find('mode-ultrafast').listeners.click();
-    assert.ok(dom.root.all().some(node => node.className === 'performance-empty'),
-      'Ultrafast retains its own prepared result while revalidation is pending');
-  } finally {
-    controller.destroy();
-    pending.resolve(null);
-  }
+test('shared preload warms only the exact selected period and mode without evicting another reader', async () => {
+  const end=60*DAY, calls=[];
+  const make=(period,delta)=>{const dom=focusHarness(),endAt=new Date(end+delta).toISOString(),window={period,startAt:period==='all'?null:new Date(end+delta-7*DAY).toISOString(),endAt};
+    const controller=mountModelPerformance({...dom,reportingWindow:window,client:{modelPerformance:async(value,options)=>{calls.push({value,...options});return modePayload(value,options.speedMode,{start:period==='all'?null:end+delta-7*DAY,end:end+delta,models:[]});}},t:(k,v)=>translate(k,v,'en-US')});
+    return {controller,dom,endAt};};
+  const left=make('7d',0),right=make('all',-2000);
+  try{
+    await Promise.all([left.controller.preload(),right.controller.preload()]);
+    assert.equal(calls.length,2);assert.deepEqual(new Set(calls.map(c=>c.endAt)),new Set([left.endAt,right.endAt]));
+    assert.deepEqual(calls.map(c=>c.value),['7','all']);assert.ok(calls.every(c=>c.speedMode==='standard'));
+    await Promise.all([left.controller.preload(),right.controller.preload()]);assert.equal(calls.length,2,'repeat preparation reuses each exact result');
+    left.dom.navigate(true);left.dom.find('mode-fast').listeners.click();await settle();
+    assert.equal(calls.at(-1).speedMode,'fast');assert.equal(calls.at(-1).endAt,left.endAt);
+    assert.equal(calls.filter(c=>c.speedMode==='ultrafast').length,0,'unselected modes never consume shared cache slots');
+  }finally{left.controller.destroy();right.controller.destroy();}
 });
 
 test('client rejects unsupported modes, preserves endAt, and page rejects a wrong-mode response', async () => {
@@ -1188,4 +949,120 @@ test('client rejects unsupported modes, preserves endAt, and page rejects a wron
   assert.equal(hasPanel(dom), false);
   assert.ok(dom.find('retry'));
   controller.destroy();
+});
+
+test('compact controls preserve complete statistics in one dialog including fallback and unknown modes', async () => {
+  const dom = focusHarness(), data = {...combinedPayload(), excludedUnknownTurns: 17};
+  const c = mountModelPerformance({...dom, client:{modelPerformance:async()=>data}, t:(key,v)=>translate(key,v,'en-US')});
+  dom.show(); await c.refresh();
+  assert.equal(dom.root.all().filter(n=>n.className==='performance-card').length,2);
+  assert.equal(dom.root.all().some(n=>['performance-provider','performance-mode-note','performance-method-note'].includes(n.className)),false);
+  dom.find('measurements').focus(); dom.find('measurements').listeners.click();
+  const rows = () => Object.fromEntries(dom.root.all().filter(n=>n.className==='performance-detail-row').map(n=>[n.children[0].textContent,n.children[1].textContent]));
+  assert.equal(rows()['Speed measurements'],'12'); assert.equal(rows()['Response-timed turns'],'10');
+  assert.equal(rows()['Full-turn estimates'],'2'); assert.equal(rows()['Unknown speed mode'],'17');
+  dom.find('detail-tab-toolFree').listeners.click();
+  const cells = dom.root.all().filter(n=>n.tagName==='td').map(n=>n.textContent);
+  assert.deepEqual(cells.slice(1),['2','—','—','50','—','—']);
+  dom.find('detail-close').listeners.click(); assert.equal(dom.documentRef.activeElement,dom.find('measurements'));
+  c.destroy();
+});
+
+test('all measurement rows paginate without changing values and a refresh preserves dialog state', async () => {
+  const dom=focusHarness(), data=payload(); data.end=60*DAY;
+  const rows=Array.from({length:35},(_,i)=>point((i+1)*DAY));
+  Object.assign(data.models[0],{turns:175,speedTurns:175,ttftTurns:175,speed:[{method:'speed',points:rows}],ttft:rows});
+  const c=mountModelPerformance({...dom,client:{modelPerformance:async()=>data},t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();dom.find('details-speed').listeners.click();
+  let count=0;
+  for(let i=0;i<4;i++){count+=dom.root.all().filter(n=>n.tagName==='tbody')[0].children.length;if(i<3)dom.find('detail-next').listeners.click();}
+  assert.equal(count,35);assert.equal(dom.find('detail-next').disabled,true);
+  const dialog=dom.root.all().find(n=>n.tagName==='dialog');dialog.scrollTop=120;
+  await c.refresh();assert.equal(dialog.open,true);assert.equal(dialog.scrollTop,120);
+  assert.equal(dom.root.all().find(n=>n.className==='performance-pager').children[1].textContent,'4 / 4');
+  dom.find('period-7').listeners.click();assert.equal(dialog.open,false);c.destroy();
+});
+
+test('shared layer toggles leave data intact and a missing date never borrows another metric', async()=>{
+  const dom=focusHarness(), data=payload(); data.models[0].speed[0].points=[point(DAY),point(3*DAY)];
+  const original=JSON.stringify(data),c=mountModelPerformance({...dom,client:{modelPerformance:async()=>data},t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();
+  assert.equal(dom.root.all().filter(n=>n.className==='performance-median-line').length,2,'only adjacent latency bins connect');
+  const marker=dom.root.all().find(n=>n.dataset.performanceFocus==='point-speed-speed-86400000');marker.focus();
+  assert.deepEqual(dom.root.all().filter(n=>n.className==='performance-headline-value').map(n=>n.textContent),['50','—']);
+  dom.find('layer-inner').listeners.click();
+  assert.equal(dom.root.all().some(n=>n.className==='performance-percentile-band performance-percentile-band-inner'),false);
+  dom.find('layer-median').listeners.click();assert.equal(dom.root.all().some(n=>n.className==='performance-median-line'),false);
+  assert.equal(JSON.stringify(data),original);c.destroy();
+});
+
+test('ready reports have no recurring timer and loading requests stop at the bounded budget',async()=>{
+  const dom=focusHarness();let data=payload(),calls=0;
+  const c=mountModelPerformance({...dom,sharedReporting:true,reportingWindow:{period:'all',startAt:null,endAt:new Date(data.end).toISOString()},client:{modelPerformance:async()=>{calls++;return data;}},t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();assert.equal(dom.timerIds().length,0);
+  data={...data,status:'loading',models:[]};await c.refresh();
+  for(let i=0;i<30;i++){const timers=dom.timerIds().filter(id=>dom.timerDelay(id)!==15000);if(!timers.length)break;dom.runTimer(timers.at(-1));await settle();}
+  assert.equal(calls,25,'one completed report plus at most 24 pending reads');c.destroy();
+});
+
+test('request diagnostics are closed and separate from the v5 DTO',async()=>{
+  const run=async raw=>{const seen=[];const client=new LocalCompanionClient({fetchImpl:async()=>({ok:true,status:200,headers:{get:()=>raw},json:async()=>payload()})});const value=await client.modelPerformance('all',{onDiagnostics:codes=>seen.push(codes)});assert.deepEqual(Object.keys(value),Object.keys(payload()));return seen;};
+  assert.deepEqual(await run('timing_scan_failed,timing_snapshot_write_failed'),[['timing_scan_failed','timing_snapshot_write_failed']]);
+  assert.deepEqual(await run('timing_history_unavailable'),[['timing_history_unavailable']]);
+  const sourceCodes=['timing_source_decode_failed','timing_source_read_failed','timing_source_limit','timing_source_unsupported'];
+  for(const code of sourceCodes)assert.deepEqual(await run(code),[[code]]);
+  const allCodes=['timing_worker_failed','timing_scan_failed','timing_store_failed','timing_projection_failed',
+    'timing_snapshot_read_failed','timing_snapshot_invalid','timing_snapshot_write_failed','timing_snapshot_scope_mismatch',
+    'timing_history_unavailable','timing_source_recovery_failed',...sourceCodes];
+  assert.deepEqual(await run(allCodes.join(',')),[allCodes]);
+  for(const raw of ['private/path','timing_scan_failed,timing_scan_failed','x'.repeat(513)])await assert.rejects(run(raw),{code:'timing_contract_invalid'});
+});
+
+test('background diagnostics remain visible with a good result and clear after successful recovery',async()=>{
+  const dom=focusHarness();let codes=['timing_snapshot_write_failed'];
+  const c=mountModelPerformance({...dom,client:{modelPerformance:async(_,options)=>{options.onDiagnostics(codes);return payload();}},t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();assert.equal(hasPanel(dom),true);assert.ok(dom.find('retry'));
+  assert.match(dom.root.all().find(n=>n.className==='performance-status').textContent,/could not be saved/);
+  dom.find('measurements').listeners.click();assert.ok(dom.root.all().some(n=>n.textContent==='timing_snapshot_write_failed · snapshot'));
+  codes=[];await c.refresh();assert.equal(dom.root.all().some(n=>n.className==='performance-status'),false);c.destroy();
+});
+
+test('parse failure, timeout and contract failure remain distinct from cancellation',async()=>{
+  for(const [error,code] of [[new SyntaxError('synthetic'),'timing_parse_failed'],[new Error('network'),'timing_request_failed']]){
+    const dom=focusHarness(),c=mountModelPerformance({...dom,client:{modelPerformance:async()=>{throw error;}},t:(k,v)=>translate(k,v,'en-US')});dom.show();await c.refresh();
+    assert.equal(dom.root.all().find(n=>n.className==='performance-status').textContent,translate('performance.error.'+code,{},'en-US'));
+    assert.ok(dom.find('retry'));c.destroy();
+  }
+});
+test('saved-source warnings never block bounded reads of a cold live reporting window',async()=>{
+  const dom=focusHarness();let pending=true;
+  const c=mountModelPerformance({...dom,sharedReporting:true,reportingWindow:{period:'all',startAt:null,endAt:new Date(payload().end).toISOString()},
+    client:{modelPerformance:async(_,options)=>{options.onDiagnostics(['timing_snapshot_scope_mismatch']);return pending?{...payload(),status:'loading',models:[]}:payload();}},t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();const retry=dom.timerIds().find(id=>dom.timerDelay(id)===5000);assert.ok(retry);
+  pending=false;dom.runTimer(retry);await settle();assert.equal(hasPanel(dom),true);
+  assert.match(dom.root.all().find(n=>n.className==='performance-status').textContent,/source mismatch/);
+  c.destroy();
+});
+test('unavailable historical sources remain visible with their history stage while current measurements stay readable',async()=>{
+  const dom=focusHarness(),c=mountModelPerformance({...dom,
+    client:{modelPerformance:async(_,options)=>{options.onDiagnostics(['timing_history_unavailable']);return {...payload(),stale:true};}},
+    t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();assert.equal(hasPanel(dom),true);
+  assert.match(dom.root.all().find(n=>n.className==='performance-status').textContent,/historical sources/);
+  dom.find('measurements').listeners.click();
+  assert.ok(dom.root.all().some(n=>n.textContent==='timing_history_unavailable · history'));c.destroy();
+});
+
+test('pending metadata does not present placeholder counts as measured zero',async()=>{
+  const dom=focusHarness(),c=mountModelPerformance({...dom,client:{modelPerformance:async()=>({...payload(),status:'loading',models:[]})},t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();dom.find('measurements').listeners.click();
+  const row=dom.root.all().find(n=>n.className==='performance-detail-row'&&n.children[0].textContent==='Unknown speed mode');
+  assert.equal(row.children[1].textContent,'—');c.destroy();
+});
+test('a failed first request still exposes its bounded diagnostic code without invented measurements',async()=>{
+  const dom=focusHarness(),c=mountModelPerformance({...dom,client:{modelPerformance:async()=>{throw new SyntaxError('synthetic');}},t:(k,v)=>translate(k,v,'en-US')});
+  dom.show();await c.refresh();assert.equal(dom.find('measurements').disabled,false);dom.find('measurements').listeners.click();
+  assert.ok(dom.root.all().some(n=>n.textContent==='timing_parse_failed · request'));
+  assert.equal(dom.root.all().some(n=>n.className==='performance-detail-row'&&n.children[0].textContent==='Speed measurements'),false);
+  c.destroy();
 });

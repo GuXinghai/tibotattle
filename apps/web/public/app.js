@@ -8,6 +8,8 @@ import { createCacheReuseMatrix } from "./cache-reuse-matrix.js";
 import { cacheReuseMetricLines, cacheReuseCoverageNote } from "./cache-reuse-metrics.js";
 import { mountTrendsHorizon, createSpendRateLookup } from "./trends-horizon.js";
 import { modelUsagePresentation, modelThemeIcon } from "./model-visuals.js";
+import { mountAllowancePage, retainedPageIndex, dashboardReadFailure, observedAllowancePoints } from "./allowance-page.js";
+import { resetEventPresentation } from "./trends-horizon.js";
 import { buildAllowanceTrends } from "./allowance-trends.js";
 import { mountWorkUsageView } from "./work-usage-view.js";
 import { mountModelPerformance } from "./model-performance.js";
@@ -930,6 +932,7 @@ let reportingWindow = null;
 let reportingAccountingPeriod = null;
 const reportingPeriod = createReportingPeriod({
   onChange: () => {
+    allowancePage?.close();
     resetTimelineViewport();
     resetUsageTimelineViewport();
     timelineSeriesMemo = null;
@@ -2843,7 +2846,7 @@ function liveTimelinePoints(
       rollingEvents -= usage[startIndex].usageEvents;
       startIndex += 1;
     }
-    if (endMs < cutoff || endMs > Date.parse(data.reportingWindow?.endAt ?? "9999-12-31")) continue;
+    if (endMs > Date.parse(data.reportingWindow?.endAt ?? "9999-12-31")) continue;
     const startMs = endMs - windowMs;
     const afterMatch = quotaLookup.atOrBefore(endMs);
     const maximumBracketGapMs = Math.max(30 * 60 * 1_000, windowMs);
@@ -2879,6 +2882,11 @@ function liveTimelinePoints(
         startMatch = null;
       }
     }
+    if (startMatch && afterMatch && afterMatch.timestampMs > startMatch.timestampMs) {
+      spanStartMs = startMatch.timestampMs;
+      spanEndMs = afterMatch.timestampMs;
+      shrunkenSpan = true;
+    } else startMatch = null;
     const before = startMatch?.row ?? null;
     const after = afterMatch?.row ?? null;
     const planComparable = timelineComparisonInterval(data,
@@ -2917,7 +2925,7 @@ function liveTimelinePoints(
       // Only the usage buckets ending inside the measured span count, so the
       // expected line integrates the interval the observed delta covers —
       // (spanStartMs, spanEndMs], both edges pinned to real observations.
-      let lower = startIndex;
+      let lower = 0;
       let upper = index + 1;
       while (lower < upper) {
         const middle = lower + Math.floor((upper - lower) / 2);
@@ -2961,6 +2969,13 @@ function liveTimelinePoints(
       ? { status: "reset_or_track_change", residual: null }
       : windowWeightingGaps === 0 ? classifiedEvidence
         : { status: "quota_weighting_unavailable", residual: null };
+    const costAt = timestamp => {
+      let low = 0, high = index + 1;
+      while (low < high) { const mid = (low + high) >>> 1;
+        if (usageEndsMs[mid] <= timestamp) low = mid + 1; else high = mid; }
+      return costPrefix[low];
+    };
+    if (driftAnchor && afterMatch) driftCostUsd = costAt(afterMatch.timestampMs) - driftAnchor.costAt;
     let cumulativeResidual = null;
     // A re-anchor marks the first drift observation of a new reset or track:
     // the deviation-period detector splits its runs here, so a sustained drift
@@ -3008,6 +3023,7 @@ function liveTimelinePoints(
         // zero by definition at the first observation of a new reset.
         driftAnchor = {
           resetAt: after.resetAt,
+          costAt: costAt(afterMatch.timestampMs),
           usedPercent: after.usedPercent,
           maxUsedPercent: after.usedPercent,
           pendingDrop: null,
@@ -3055,6 +3071,7 @@ function liveTimelinePoints(
     const comparable = observed !== null && expected !== null;
     if (comparable && !previousComparable) comparisonSegment += 1;
     previousComparable = comparable;
+    if (endMs < cutoff) continue;
     points.push({
       timestamp: current.endAt,
       timestampMs: endMs,
@@ -3078,6 +3095,8 @@ function liveTimelinePoints(
       // start edge was recovered forward past a collection silence, in which
       // case both edges sit on real observations.
       measuredSpanMs: spanEndMs - spanStartMs,
+      measurementStartedAt: spanStartMs,
+      measurementEndedAt: spanEndMs,
       status: evidence.status,
     });
   }
@@ -3313,17 +3332,26 @@ function renderUsageTimeline(data) {
   data = selectAllowancePlanPopulation(data, activeWeeklyPlanType);
   syncUsageGroupingControls();
   const points = selectedUsagePoints(data);
+  const allowancePoints = observedAllowancePoints(mainWeeklyQuotaTrack(data.timeline.quota), {
+    startMs: timelineCutoffMs(data, activeUsageRangeDays),
+    endMs: Date.parse(data.reportingWindow?.endAt ?? "9999-12-31"),
+  }, sameResetBoundary);
+  const navigationPoints = [...points, ...allowancePoints];
   const viewport = withChartViewport(
     USAGE_CHART_VIEWPORT,
-    () => normalizeTimelineViewport(points),
+    () => normalizeTimelineViewport(navigationPoints),
   );
   const visiblePoints = timelinePointsInViewport(points, viewport);
+  const visibleAllowance = timelinePointsInViewport(allowancePoints, viewport);
   const shell = $("#usage-timeline-chart");
   const empty = $("#usage-timeline-empty");
   const unit = t(usageGroupingUnitKey());
   const quotaComparable = timelineCalibrationCapacity(data) !== null;
   const axisLabels = usageChartAxisLabels(activeUsageGrouping, quotaComparable);
   const unavailable = accountingIsUnavailable(data);
+  empty.classList.toggle('allowance-simple-missing-usage', !visiblePoints.length && !unavailable
+    && data.allowancePlanSelection?.usageAvailable === false);
+  $('#usage-group-controls').hidden=!points.length;
   setLocalizedText(
     $("#usage-cost-legend-label"),
     quotaComparable
@@ -3338,19 +3366,20 @@ function renderUsageTimeline(data) {
     "trends.allowanceActivity",
   );
   const allowanceShell = $("#allowance-timeline-chart");
-  const hasAllowance = visiblePoints.some(point => finite(point.allowanceRemaining) !== null);
+  const hasAllowance = visibleAllowance.some(point => finite(point.allowanceRemaining) !== null);
   allowanceShell.hidden = !hasAllowance;
   $("#allowance-timeline-empty").hidden = hasAllowance;
   if (hasAllowance) drawChart(allowanceShell, lineChart({
-    points: visiblePoints,
+    points: visibleAllowance,
     series: [{ key: "allowanceRemaining", className: "chart-line-observed", label: { key: "trends.allowance" },
       pointStyle: CHART_POINT_STYLE.HOVER_ONLY, format: value => formatPercent(value, 1),
-      segmentKey: "allowanceSegment", maxGapMs: { hour: 6, day: 36, week: 192 }[activeUsageGrouping] * 3_600_000 }],
+      segmentKey: "allowanceSegment", maxGapMs: 6 * 3_600_000 }],
     yLabel: { key: "trends.remainingPercent" }, title: { key: "trends.allowance" },
     description: { key: "trends.allowanceDescription" },
     yDomain: { low: 0, high: 100, ticks: [0, 25, 50, 75, 100] }, height: 180, xDomain: viewport,
     width: Math.max(360, allowanceShell.clientWidth || 900),
   }));
+  if (hasAllowance) bindUsageTimelineInteractions(allowanceShell, navigationPoints, viewport);
   if (!visiblePoints.length) {
     shell.hidden = true;
     empty.hidden = false;
@@ -3359,10 +3388,11 @@ function renderUsageTimeline(data) {
       ? t(accountingRequiresNewerBuild(data)
         ? "chart.usage.newerBuildTitle"
         : "chart.usage.unavailableTitle")
-      : t("chart.usage.emptyTitle");
+      : t(data.allowancePlanSelection?.usageAvailable === false
+        ? "allowance.simple.usageUnavailable" : "chart.usage.emptyTitle");
     empty.querySelector("p").textContent = unavailable
       ? t(projectionUnavailableCopyKey(data))
-      : t("chart.usage.emptyCopy");
+      : data.allowancePlanSelection?.usageAvailable === false ? "" : t("chart.usage.emptyCopy");
   } else {
     shell.hidden = false;
     empty.hidden = true;
@@ -3399,7 +3429,7 @@ function renderUsageTimeline(data) {
       width: Math.max(360, shell.clientWidth || 900),
       xDomain: viewport,
     }));
-    bindUsageTimelineInteractions(shell, points, viewport);
+    bindUsageTimelineInteractions(shell, navigationPoints, viewport);
   }
   setLocalizedText($("#usage-timeline-copy"), "chart.timeZoneNote", {
     timeZone: formatTimeZoneLabel(),
@@ -3414,7 +3444,8 @@ function renderUsageTimeline(data) {
   // The plotted weighted series already renders a missing interval as a gap.
   // Its summary must do the same: adding only finite points would publish a
   // deceptively partial allowance-facing aggregate.
-  const total = unavailable && visiblePoints.length === 0
+  const missingUsage = unavailable || data.allowancePlanSelection?.usageAvailable === false;
+  const total = missingUsage && visiblePoints.length === 0
     ? null
     : completeUsageTimelineTotal(
       visiblePoints,
@@ -3424,7 +3455,7 @@ function renderUsageTimeline(data) {
     [
       "Time intervals",
       "The number of displayed hour, day, or week intervals.",
-      unavailable && visiblePoints.length === 0
+      missingUsage && visiblePoints.length === 0
         ? "—"
         : compact(visiblePoints.length)
     ],
@@ -3715,12 +3746,39 @@ function renderTimeline(data) {
   // Incompatible intervals explicitly interrupt the sample stream.
   trendsHorizonView?.setAllowanceSamples(mainWeeklyQuotaTrack(data.timeline.quota).map(row => {
     const timestampMs = Date.parse(row.observedAt);
-    return { timestampMs, allowanceRemaining:
-      timelineComparisonInterval(data, timestampMs, timestampMs) !== false
-        ? finite(row.remainingPercent) : null };
+    return { timestampMs, allowanceRemaining: finite(row.remainingPercent) };
   }));
   trendsHorizonView?.setEvents(timelineTypedResetEvents(data));
   trendsHorizonView?.refresh();
+  const observations = mainWeeklyQuotaTrack(data.timeline.quota).filter(row => {
+    const at = Date.parse(row.observedAt);
+    return at >= Date.parse(data.reportingWindow?.startAt ?? "0001-01-01")
+      && at <= Date.parse(data.reportingWindow?.endAt ?? "9999-12-31");
+  }).sort((a,b) => Date.parse(b.observedAt)-Date.parse(a.observedAt));
+  const allObservations = mainWeeklyQuotaTrack(data.timeline.quota).slice().sort((a,b)=>Date.parse(b.observedAt)-Date.parse(a.observedAt));
+  allowancePage?.update({
+    weeklyApi: data.timeline.selectedWeeklyApiIntervals ?? data.timeline.weeklyApiIntervals,
+    period: reportingPeriod.period,
+    planType: data.allowancePlanSelection?.planType ?? data.weekly?.planType,
+    generatedAt: data.generatedAt,
+    endMs: Date.parse(data.reportingWindow?.endAt ?? data.generatedAt),
+    startMs: Number.isFinite(data.timeline.weeklyApiIntervals?.rows?.[0]?.startMs)
+      ? data.timeline.weeklyApiIntervals.rows[0].startMs : Date.parse(data.reportingWindow?.startAt ?? data.generatedAt),
+    scope: `${reportingPeriod.period}:${data.allowancePlanSelection?.planType ?? data.weekly?.planType}`,
+    observations, points: visiblePoints,
+    current: data.allowancePlanSelection?.isCurrentPlan === false ? allObservations[0] ?? null
+      : data.quotaWindows?.filter(isPrimaryCodexWeeklyQuotaWindow).sort((a,b)=>Date.parse(b.observedAt)-Date.parse(a.observedAt))[0] ?? allObservations[0] ?? null,
+    currentIsHistorical: data.allowancePlanSelection?.isCurrentPlan === false,
+    comparisonAvailable: data.allowancePlanSelection?.comparisonAvailable,
+    comparisonGaps: (data.timeline.excludedIntervals ?? []).filter(([start, end]) =>
+      end > Date.parse(data.reportingWindow?.startAt ?? "0001-01-01")
+      && start <= Date.parse(data.reportingWindow?.endAt ?? "9999-12-31")),
+    comparisonFailure: data.allowancePlanSelection?.failure,
+    events: timelineTypedResetEvents(data).filter(e => e.timestampMs >= Date.parse(data.reportingWindow?.startAt ?? "0001-01-01")
+      && e.timestampMs <= Date.parse(data.reportingWindow?.endAt ?? "9999-12-31"))
+      .map(e=>({...e,caption:resetEventPresentation(e,{t,formatInstant:at=>formatChartTimestamp(new Date(at).toISOString())}).caption}))
+      .sort((a,b)=>b.timestampMs-a.timestampMs),
+  });
 }
 
 // The copy names each exclusion mechanism that actually fired, in classifier
@@ -4135,7 +4193,7 @@ function renderResiduals(data, points, viewport = null) {
     + `:${inspection.at(-1)?.timestamp ?? ""}`;
   if (signature !== residualInspectionSignature) {
     residualInspectionSignature = signature;
-    residualTablePage = 0;
+    residualTablePage = retainedPageIndex(residualInspectionRows, inspection, residualTablePage, RESIDUAL_TABLE_PAGE_SIZE, row => row.timestamp);
   }
   residualInspectionRows = inspection;
   renderResidualInspectionTable();
@@ -4819,8 +4877,8 @@ function drawChart(shell, chart) {
     previous.chartTickDensityObserver?.disconnect();
   }
   shell.replaceChildren(chart);
-  if (shell.closest?.("#timeline") && chart.timelinePresentation) {
-    trendsHorizonView ??= mountTrendsHorizon($("#timeline"), { t, locale: getFormattingLocale(), timeZone: USER_TIME_ZONE,
+  if (["usage-timeline-chart", "allowance-timeline-chart", "timeline-chart", "difference-timeline-chart", "residual-chart"].includes(shell.id) && chart.timelinePresentation) {
+    trendsHorizonView ??= mountTrendsHorizon($("#allowance-screen"), { t, locale: getFormattingLocale(), timeZone: USER_TIME_ZONE,
       formatMoney: formatApiMoney, formatPercent, formatDuration: formatSpanLength });
     trendsHorizonView.refreshLocale(getFormattingLocale());
     trendsHorizonView.register(shell, chart.timelinePresentation);
@@ -6883,7 +6941,7 @@ function renderWeekly(data) {
   data = allowanceWindowView(data);
   const windowMinutes = data.allowanceWindowDurationMinutes;
   renderAllowanceWindowChrome(rootData, windowMinutes);
-  renderWeeklyPlanControl(data);
+  renderWeeklyPlanControl(selectAllowancePlanPopulation(rootData, activeWeeklyPlanType));
   // A weekly estimate carried over from the previous app version while the
   // recalculation runs announces itself here, quietly.
   renderStaleServeNote(
@@ -7004,7 +7062,7 @@ function renderWeeklyTable(values, windowMinutes = CODEX_WEEKLY_ALLOWANCE_MINUTE
     + `:${rows.at(-1)?.timestamp ?? ""}`;
   if (signature !== weeklyTableSignature) {
     weeklyTableSignature = signature;
-    weeklyTablePage = 0;
+    weeklyTablePage = retainedPageIndex(weeklyTableRows, rows, weeklyTablePage, WEEKLY_TABLE_PAGE_SIZE, row => row.timestamp);
   }
   weeklyTableRows = rows;
   weeklyTableWindowMinutes = windowMinutes;
@@ -8954,7 +9012,7 @@ function scheduleLocalReadinessPoll(isCurrent) {
   }, 4_000);
 }
 
-async function loadLocalDashboardSecondaryState({ isCurrent }) {
+async function loadLocalDashboardSecondaryState({ isCurrent, primaryAvailable = true }) {
   const read = async (request, publish = () => {}) => {
     const value = await Promise.resolve().then(request).catch(() => null);
     if (isCurrent()) publish(value);
@@ -8982,7 +9040,7 @@ async function loadLocalDashboardSecondaryState({ isCurrent }) {
     if (refreshState === null) return;
     accountingRebuildDeferral =
       refreshState?.refresh?.result?.accountingRebuildDeferred ?? null;
-    publishRefreshResultNotice(refreshState?.refresh);
+    if (primaryAvailable !== false && !dashboardReadFailed) publishRefreshResultNotice(refreshState?.refresh);
     if (dashboard) renderAccounting(dashboard);
   });
   await Promise.all([health, onboarding, refresh]);
@@ -8990,6 +9048,8 @@ async function loadLocalDashboardSecondaryState({ isCurrent }) {
 }
 
 /** Mark the first real local-dashboard render for the native shell. */
+let dashboardReadFailed = false;
+
 function markLocalDashboardReady() {
   // The native shell uses this app-owned marker instead of mistaking static
   // hero copy for a loaded evidence view. It contains no data; it means only
@@ -8999,6 +9059,7 @@ function markLocalDashboardReady() {
 }
 
 async function loadLocalDashboard() {
+  const previousDashboard = dashboard;
   const loadToken = ++cacheDropThreadLinks.loadToken;
   const load = {
     previousBusy: activeLocalDashboardLoad?.pending
@@ -9032,15 +9093,24 @@ async function loadLocalDashboard() {
     const data = await loadDashboardData();
     if (!isCurrent()) return;
     renderDashboard(data);
+    dashboardReadFailed = false;
     // Clear the first-run evidence curtain using the result we actually have,
     // even while the next optional onboarding verdict is still pending.
     renderLocalOnboarding(localOnboarding);
     markLocalDashboardReady();
     primaryAvailable = true;
     dashboardReportPreloader.schedule();
-  } catch {
-    if (!isCurrent()) return;
-    dashboard = null;
+  } catch (error) {
+    if (!isCurrent()) return false;
+    dashboard = previousDashboard;
+    if (error?.name === "AbortError") return false;
+    dashboardReadFailed = true;
+    if (previousDashboard) {
+      try { renderDashboard(previousDashboard); } catch { dashboard = previousDashboard; }
+      const failure = dashboardReadFailure(error);
+      if (failure) showConnectionNotice({ titleKey: "allowance.simple.loadFailed", copyKey: failure.copyKey, copyValues: {code:failure.code}, kind: "error", showCheck: true });
+      setGlobalState("stale", {companionReachable:true});
+    } else {
     observationFreshnessClock.stop();
     lastObservationPresentationStatus = null;
     renderLocalOnboarding(localOnboarding);
@@ -9048,6 +9118,7 @@ async function loadLocalDashboard() {
       localCompanionHealth ? "dashboard-unavailable" : "companion-unavailable",
     );
     markLocalDashboardReady();
+    }
   } finally {
     if (activeLocalDashboardLoad === load) {
       load.pending = false;
@@ -9057,12 +9128,14 @@ async function loadLocalDashboard() {
         electronStartupRefreshDeferred = false;
         startElectronStartupRefresh();
       }
+      if (nativeEvidenceReloadPending && !localRefreshInProgress && !localActionBusy) void reloadLocalEvidenceAfterNativeRefresh();
     }
   }
   if (isCurrent()) {
     // Optional reads never own primary readiness or the action's busy state.
     void loadLocalDashboardSecondaryState({ isCurrent, primaryAvailable }).catch(() => {});
   }
+  return primaryAvailable;
 }
 
 function renderDashboardSkeleton() {
@@ -9087,14 +9160,22 @@ function renderDashboardSkeleton() {
 }
 
 async function loadQuickResultDashboard() {
+  const previousDashboard = dashboard;
   const loadToken = ++cacheDropThreadLinks.loadToken;
   const isCurrent = () => cacheDropThreadLinks.loadToken === loadToken;
   try {
     const data = await localClient.load();
     if (!isCurrent()) return;
     renderDashboard(data);
+    dashboardReadFailed = false;
     renderLocalOnboarding(localOnboarding);
     dashboardReportPreloader.schedule();
+  } catch (error) {
+    if (isCurrent()) {
+      dashboard = previousDashboard;
+      if (error?.name !== "AbortError") dashboardReadFailed = true;
+    }
+    throw error;
   } finally {
     // This generation replaces any pending startup reads too. Keep optional
     // recovery alive without making native evidence reloads wait for it.
@@ -9368,7 +9449,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       refreshProgressClock.stop();
       refreshProgressClock = null;
       renderRefreshProgress(button, t("refresh.degradedLoading"));
-      await loadLocalDashboard();
+      if (await loadLocalDashboard() === false) return;
       lastReindexProgressReceipt = historyProgressReceipt();
       publishRefreshResultNotice(finalRefreshState);
       return;
@@ -9389,7 +9470,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     refreshProgressClock.stop();
     refreshProgressClock = null;
     renderRefreshProgress(button, "Loading updated evidence…");
-    await loadLocalDashboard();
+    if (await loadLocalDashboard() === false) return;
     publishRefreshResultNotice(finalRefreshState);
     if (detailed) scheduleReindexAutoContinuation();
   } catch (error) {
@@ -9449,6 +9530,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     localActionBusy = false;
     localRefreshInProgress = false;
     localRefreshCancelRequested = false;
+    if (nativeEvidenceReloadPending) void reloadLocalEvidenceAfterNativeRefresh();
     updateLocalActionButtons();
     void refreshElectronCadenceHealth();
     // The updating pill is derived from the renderer-owned lifecycle flag.
@@ -9460,7 +9542,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       : null;
     const stableState = [currentDashboardState, globalState?.state, previousGlobalState?.state]
       .find((state) => state && state !== "updating");
-    const candidateState = stableState ?? "insufficient";
+    const candidateState = dashboardReadFailed ? "stale" : stableState ?? "insufficient";
     setGlobalState(
       candidateState,
       {
@@ -9519,6 +9601,7 @@ async function checkLocalSetup() {
 }
 
 let nativeEvidenceReloadInFlight = false;
+let nativeEvidenceReloadPending = false;
 
 /**
  * Re-read the companion's fragments after the native shell finished a refresh.
@@ -9534,16 +9617,20 @@ async function reloadLocalEvidenceAfterNativeRefresh() {
   // A refresh started from this page re-renders on its own completion, and a
   // second overlapping read would only race it.
   if (nativeEvidenceReloadInFlight || localRefreshInProgress || localActionBusy) {
+    nativeEvidenceReloadPending = true;
     return;
   }
   nativeEvidenceReloadInFlight = true;
+  nativeEvidenceReloadPending = false;
   try {
     await loadQuickResultDashboard();
-  } catch {
-    // A failed re-read leaves the previous numbers on screen rather than
-    // blanking them. The next finished refresh signals again.
+  } catch (error) {
+    const failure = dashboardReadFailure(error);
+    if (failure) showConnectionNotice({titleKey:"allowance.simple.loadFailed",copyKey:failure.copyKey,copyValues:{code:failure.code},kind:"error",showCheck:true});
+    if (failure) setGlobalState("stale", {companionReachable:true});
   } finally {
     nativeEvidenceReloadInFlight = false;
+    if (nativeEvidenceReloadPending && !localActionBusy && !localRefreshInProgress) void reloadLocalEvidenceAfterNativeRefresh();
   }
 }
 
@@ -9946,6 +10033,7 @@ $("#weekly-plan-select")?.addEventListener("change", (event) => {
   if (!dashboard || !dashboard.weekly.planPopulations.some(
     (population) => population.planType === event.target.value,
   )) return;
+  allowancePage?.close();
   activeWeeklyPlanType = event.target.value;
   timelineSeriesMemo = null;
   renderComparison(dashboard);
@@ -10062,6 +10150,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   if (usage && analysisEntries.length === 2) {
     const actions = documentRef.createElement("div");
     actions.className = "usage-simple-analysis-actions";
+    actions.dataset.dashboardPage = "usage";
     actions.append(...analysisEntries); usage.append(actions);
   }
   const view = (key, panels, filters = "") => ({ key, panels, filters });
@@ -10071,33 +10160,6 @@ function mountDashboardLayout({ documentRef, windowRef }) {
       view("projects", "#accounting-summary, #projects"),
       view("threads", "#accounting-summary, #projects"),
       view("models", "#accounting-summary, .usage-simple-models-panel"),
-    ] },
-    // The plan selects the population of every chart except the forecast, which
-    // follows the current allowance; the 5h/7d window applies to the
-    // equivalent history only.
-    { id: "allowance", page: "allowance", level: 1, root: "#allowance-screen",
-      emptyAfter: "#allowance-filters", views: [
-        view("changes", ".trends-capacity-panel", planFilter),
-        view("differences", ".allowance-differences", planFilter),
-        view("equivalent", ".allowance-equivalent",
-          `#allowance-window-control, ${planFilter}`),
-        view("forecast", "#weekly-pace-forecast"),
-      ] },
-    { id: "allowance-differences", page: "allowance", level: 2, label: "differences",
-      root: ".allowance-differences", views: [
-        view("comparison", ".trends-comparison-panel"),
-        view("drift", ".trends-drift-panel"),
-        view("divergence", ".divergence-panel"),
-        view("evidence", ".trends-exact-panel"),
-      ] },
-    { id: "allowance-equivalent", page: "allowance", level: 2, label: "equivalent",
-      root: ".allowance-equivalent", views: [
-        view("history", ".weekly-hero, .allowance-window-note, .weekly-history-panel"),
-        view("details", ".weekly-table-panel"),
-      ] },
-    { id: "performance", page: "performance", level: 1, root: "#performance-screen", views: [
-      view("speed", '[data-performance-metric="speed"]'),
-      view("latency", '[data-performance-metric="latency"]'),
     ] },
   ];
   const levelOne = configurations.filter(config => config.level === 1);
@@ -10310,6 +10372,19 @@ function mountDashboardLayout({ documentRef, windowRef }) {
 // Mount the view switches first: they create elements that belong to a
 // destination, and the page switch reads those at mount time. A `#page/view`
 // hash then finds the view switch already listening.
+const allowancePage = mountAllowancePage({ documentRef: document, t, formatMoney: formatApiMoney,
+  formatDetailInstant: value => new Intl.DateTimeFormat(localization.locale(), {year:'numeric',month:'2-digit',day:'2-digit',
+    hour:'2-digit',minute:'2-digit',second:'2-digit',fractionalSecondDigits:3,timeZoneName:'short'}).format(new Date(value)),
+  formatPp, formatPercent, formatInstant: value => formatChartTimestamp(new Date(value).toISOString()),
+  formatReset: value => {
+    const hours = (Date.parse(value) - Date.now()) / 3_600_000;
+    return hours > 0 ? `${formatAllowanceDuration(hours)} ${t("allowance.simple.untilReset")}`
+      : t("allowance.resetPassed");
+  },
+  selectTime: value => trendsHorizonView?.select(value, true),
+  stopPlayback: () => trendsHorizonView?.stop(),
+  retry: () => $("#refresh-button").click(),
+});
 mountDashboardLayout({ documentRef: document, windowRef: window });
 mountDashboardNavigation({
   documentRef: document,
@@ -10338,9 +10413,9 @@ function startOverviewPublicationPolling() {
         const status=await localClient.refreshStatus();
         if(status.overviewSchedule?.errorCode)throw Object.assign(new Error("overview_schedule_failed"),{code:status.overviewSchedule.errorCode});
         const next=status.refresh?.finishedAt;
-        if(next&&next!==receipt){receipt=next;await loadLocalDashboard();
+        if(next&&next!==receipt){receipt=next;const displayed=await loadLocalDashboard();if(displayed!==false){
           if(["failed","cancelled"].includes(status.refresh.status))showConnectionNotice({title:t("refresh.failedTitle"),copy:status.refresh.failureCode??status.refresh.errorCode??"refresh_failed",kind:"error"});
-          else publishRefreshResultNotice(status.refresh);}
+          else publishRefreshResultNotice(status.refresh);}}
         failed=false;
       }
     } catch {

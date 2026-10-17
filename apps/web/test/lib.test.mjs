@@ -1,3 +1,4 @@
+import { retainedPageIndex, dashboardReadFailure } from "../public/allowance-page.js";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
@@ -413,7 +414,7 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
     "activeAllowanceWindowMinutes", "CODEX_FIVE_HOUR_ALLOWANCE_MINUTES",
     "CODEX_WEEKLY_ALLOWANCE_MINUTES", "isPrimaryCodexQuotaWindow",
     "renderWeeklyPlanControl", "allowancePlanLabel",
-    "buildAllowanceTrends",
+    "buildAllowanceTrends", "retainedPageIndex",
     `${section}\nconst buildHistoryModel = allowanceHistoryChartModel;\n`
       + `allowanceHistoryChartModel = (...args) => {\n`
       + `  const model = buildHistoryModel(...args);\n  captureHistory(args[0], model);\n  return model;\n};\n`
@@ -458,7 +459,7 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
     () => true,
     () => {},
     allowancePlanLabel,
-    buildAllowanceTrends,
+    buildAllowanceTrends, retainedPageIndex,
   )(data);
 
   return {
@@ -1735,11 +1736,27 @@ test("history coverage only becomes complete from coherent archive evidence", ()
     pendingSourceCount: 0,
     sourceBytes: 100,
     indexedBytes: 100,
+    responseUnverifiedPrefixTurns: 0,
   };
   assert.equal(
     normalizeDashboardPayload({ pricing: { historyCoverage: complete } })
       .pricing.historyCoverage.status,
     "complete",
+  );
+  assert.equal(
+    normalizeDashboardPayload({ pricing: { historyCoverage: {
+      ...complete, responseUnverifiedPrefixTurns: 1,
+    } } }).pricing.historyCoverage.responseUsageCoverageStatus,
+    "partial",
+  );
+  const olderReader = { ...complete };
+  delete olderReader.responseUnverifiedPrefixTurns;
+  assert.deepEqual(
+    (({ responseUsageCoverageStatus, responseUnverifiedPrefixTurns }) => (
+      { responseUsageCoverageStatus, responseUnverifiedPrefixTurns }
+    ))(normalizeDashboardPayload({ pricing: { historyCoverage: olderReader } })
+      .pricing.historyCoverage),
+    { responseUsageCoverageStatus: "unknown", responseUnverifiedPrefixTurns: null },
   );
   assert.equal(
     normalizeDashboardPayload({
@@ -1796,6 +1813,8 @@ test("history coverage only becomes complete from coherent archive evidence", ()
       generatedAt: "2026-08-03T12:00:00.000Z",
       errorCode: null,
       coveredAt: complete.coveredAt,
+      responseUsageCoverageStatus: "unknown",
+      responseUnverifiedPrefixTurns: null,
     },
   );
   assert.equal(
@@ -2089,7 +2108,8 @@ test("newer-schema accounting remains a terminal unavailable state across the br
   assert.match(appSource, /function accountingRequiresNewerBuild\(data\)/u);
   assert.match(appSource, /projection\.status !== "available"/u);
   assert.match(appSource, /accountingIsUnavailable\(data\).*activePoints\.length === 0/u);
-  assert.match(appSource, /unavailable && visiblePoints\.length === 0[\s\S]*?"—"/u);
+  assert.match(appSource, /const missingUsage = unavailable \|\| data\.allowancePlanSelection\?\.usageAvailable === false;/u);
+  assert.match(appSource, /missingUsage && visiblePoints\.length === 0[\s\S]*?\? null[\s\S]*?missingUsage && visiblePoints\.length === 0[\s\S]*?"—"/u);
 });
 
 test("a contradictory available accounting attestation fails closed", () => {
@@ -4871,6 +4891,14 @@ async function createDashboardStartupHarness({
     document: { documentElement: { dataset: {} } },
     cacheDropThreadLinks: { loadToken: 0 },
     activeLocalDashboardLoad: null,
+    nativeEvidenceReloadPending: false,
+    dashboardReadFailure,
+    dashboardReadFailed: false,
+    reloadLocalEvidenceAfterNativeRefresh() {},
+    diagnosticErrorCode: () => "report_load_failed",
+    t: key => translate(key),
+    showConnectionNotice(value) { state.events.push(["notice", value]); },
+    setGlobalState(value) { state.events.push(["global", value]); },
     dashboardReportPreloader: {
       schedule() { state.events.push(["preload-reports"]); },
     },
@@ -7302,7 +7330,7 @@ test("a refresh finished by the native shell makes the page re-read its evidence
   // second overlapping read would only race it.
   assert.match(
     appSource,
-    /async function reloadLocalEvidenceAfterNativeRefresh\(\) \{[\s\S]*?if \(nativeEvidenceReloadInFlight \|\| localRefreshInProgress \|\| localActionBusy\) \{\s*\n\s*return;/u,
+    /async function reloadLocalEvidenceAfterNativeRefresh\(\) \{[\s\S]*?if \(nativeEvidenceReloadInFlight \|\| localRefreshInProgress \|\| localActionBusy\) \{\s*\n\s*nativeEvidenceReloadPending = true;\s*\n\s*return;/u,
   );
   // And the reason the shell has to send that signal at all is unchanged: the
   // web return-visit timer must not race the native one.
@@ -7656,7 +7684,7 @@ test("the inspection list keeps every row and restarts paging when the selection
   // A changed selection restarts at the first page.
   assert.match(
     appSource,
-    /if \(signature !== residualInspectionSignature\) \{\s*\n\s*residualInspectionSignature = signature;\s*\n\s*residualTablePage = 0;\s*\n\s*\}/u,
+    /if \(signature !== residualInspectionSignature\) \{\s*\n\s*residualInspectionSignature = signature;\s*\n\s*residualTablePage = retainedPageIndex\(residualInspectionRows, inspection, residualTablePage, RESIDUAL_TABLE_PAGE_SIZE, row => row.timestamp\);\s*\n\s*\}/u,
   );
   // The pager's controls exist on the page, and the Prev/Next labels carry
   // legacy translations for the static inventory.
@@ -7841,7 +7869,7 @@ test("cumulative drift sums non-overlapping buckets and re-anchors at each reset
   // instead of letting the static observation read as ever-growing drift.
   assert.deepEqual(
     points.map((point) => point.cumulativeResidual),
-    [0, 7, 4, 0, -4, -9, -14, -19, null],
+    [0, 7, 4, 0, -4, -4, -4, -4, null],
   );
   // The first comparable window is recovered forward from hour 1, so this
   // point legitimately spans two weighted buckets rather than the nominal
@@ -9017,4 +9045,30 @@ test("local accounting preserves distinct subscription and API Ultrafast dimensi
   assert.deepEqual(result.accounting.bySpeed.ultrafast, row);
   assert.deepEqual(result.accounting.byApiServiceTier.ultrafast, row);
   assert.equal(Object.hasOwn(result.accounting.byApiServiceTier, "private_canary"), false);
+});
+
+
+test("a failed dashboard reread preserves the last good result and returns failure", async () => {
+  const h = await createDashboardStartupHarness();
+  await h.context.loadLocalDashboard();
+  const prior = h.context.dashboard;
+  h.context.localClient.load = async () => { throw Object.assign(new Error("synthetic"), {code:"report_invalid"}); };
+  assert.equal(await h.context.loadLocalDashboard(), false);
+  assert.equal(h.context.dashboard, prior);
+  assert.ok(h.state.events.some(row => row[0] === "notice" && row[1].kind === "error"));
+  assert.equal(h.context.localActionBusy, false);
+});
+
+test("a backward single quota observation cannot fabricate measured consumption", async () => {
+  const calculate = await loadLiveTimelinePoints();
+  const base=Date.parse("2026-08-05T00:00:00Z"), hour=i=>new Date(base+i*3_600_000).toISOString();
+  const data={timeline:{allowanceCapacity:testAllowanceCapacity(),usage:[0,1,2,3].map(i=>({
+    startAt:hour(i),endAt:hour(i+1),usageEvents:1,apiPriceEquivalentUsd:10,
+    allowanceWeighting:testAllowanceWeighting(10)})),quota:[{observedAt:hour(0),limitId:"codex",
+      durationMinutes:10080,slot:"primary",usedPercent:10,remainingPercent:90,resetAt:hour(168)}]}};
+  const points=calculate(data);
+  assert.equal(points[2].observed,null);
+  assert.equal(points[2].status,"missing_quota_bracket");
+  assert.deepEqual(points.slice(0,3).map(p=>p.cumulativeResidual),[0,0,0],
+    "cost after the last observed endpoint cannot create negative cumulative drift");
 });

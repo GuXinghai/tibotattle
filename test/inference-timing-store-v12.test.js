@@ -2,10 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { chmod, mkdir, mkdtemp, realpath, rm, writeFile, appendFile } from 'node:fs/promises';
+import { appendFileSync, mkdirSync, writeFileSync, openSync, readSync, fstatSync, closeSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createParser, createToolFreeParser, digest, METHOD, TOOL_FREE_METHOD, MAX_STATE_BYTES, INFERENCE_TIMING_PARSER_VERSION } from '../src/providers/codex/logs.js';
 import { ingestTimingFile, openTimingStore, readTimingRows } from '../src/platform/inference-timing-store.js';
+import { createTimingFilesystem } from '../src/platform/inference-timing-filesystem.js';
 
 const BASE = Date.parse('2026-09-01T12:00:00Z');
 const rec = (ms, type, payload) => ({ timestamp: new Date(BASE + ms).toISOString(), type, payload });
@@ -20,8 +22,38 @@ const fixture = () => [
     turn_token_usage: { output_tokens: 100, reasoning_output_tokens: 50 } }),
   rec(1000, 'event_msg', { type: 'task_complete', turn_id: 'synthetic-turn', duration_ms: 1000, time_to_first_token_ms: 200 }),
 ];
+const namedFixture = (name, model = 'gpt-5.6-sol') => {
+  const rows = JSON.parse(JSON.stringify(fixture())
+    .replaceAll('synthetic-session', `synthetic-session-${name}`)
+    .replaceAll('synthetic-turn', `synthetic-turn-${name}`)
+    .replaceAll('synthetic-response', `synthetic-response-${name}`));
+  Object.assign(rows.find(row => row.type === 'turn_context').payload, { model });
+  return rows;
+};
 const lines = rows => rows.map(row => JSON.stringify(row)).join('\n') + '\n';
-const options = { createParser, digest, METHOD, MAX_STATE_BYTES };
+const syntheticNative = (() => {
+  const guards = new Set(), sources = new Map();
+  const identity = { volumeSerialNumber: '0000000000000001', fileId: '00000000000000000000000000000002', linkCount: 1 };
+  return {
+    credentialAuditFileGuardContractVersion: 'windows-credential-audit-file-guard-v1',
+    credentialAuditFileGuardSafe: true,
+    ensureDirectory: path => mkdirSync(path, { recursive: true, mode: 0o700 }),
+    createFile: (path, data) => writeFileSync(path, data, { flag: 'wx', mode: 0o600 }),
+    inspectPath: path => lstatSync(path),
+    acquireCredentialAuditFileGuard(path) { const guard = { path }; guards.add(guard); return { guard, identity }; },
+    releaseCredentialAuditFileGuard(guard) { assert.ok(guards.delete(guard), 'only live guards are released'); },
+    closeSourceFile(lease) { closeSync(sources.get(lease)); sources.delete(lease); },
+    openSourceFile(path) { const lease = {}; sources.set(lease, openSync(path, 'r')); return lease; },
+    statSourceFile(lease) { return fstatSync(sources.get(lease)); },
+    readSourceFile(lease, position, length) {
+      assert.ok(length <= 65_536);
+      const data = Buffer.alloc(length);
+      return data.subarray(0, readSync(sources.get(lease), data, 0, length, position));
+    },
+  };
+})();
+const syntheticFilesystem = createTimingFilesystem({ platform: 'win32', loadWindowsBinding: () => syntheticNative });
+const options = { createParser, digest, METHOD, MAX_STATE_BYTES, filesystem: syntheticFilesystem };
 
 test('opens the prior method-2 schema, adds nullable v1.2 columns, and preserves old rows', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'timing-v12-schema-')));
@@ -59,7 +91,8 @@ test('opens the prior method-2 schema, adds nullable v1.2 columns, and preserves
     assert.ok(sourceColumns.has('telemetry_revision'));
     assert.ok(sourceColumns.has('parser_version'));
     assert.ok(sourceColumns.has('replay_parser_version'));
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.ok(sourceColumns.has('rebuild_kind'));
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 10);
     assert.notEqual(store.db.prepare('PRAGMA user_version').get().user_version, METHOD,
       'the pre-v1.2 writer method cannot reopen the upgraded store');
     const rows = readTimingRows(store);
@@ -77,8 +110,12 @@ test('parser upgrades replay unchanged verified sources once without changing st
   Object.assign(rows.find(row => row.type === 'turn_context').payload, { model: 'gpt-6.1-sol', service_tier: 'ultrafast' });
   await writeFile(file, lines(rows), { mode: 0o600 });
   for (const [name, parser, method, oldSchema, newSchema] of [
-    ['primary', createParser, METHOD, 4, 6],
-    ['supplement', createToolFreeParser, TOOL_FREE_METHOD, 5, 7],
+    ['primary-v4', createParser, METHOD, 4, 10],
+    ['primary-v6', createParser, METHOD, 6, 10],
+    ['primary-v8', createParser, METHOD, 8, 10],
+    ['supplement-v5', createToolFreeParser, TOOL_FREE_METHOD, 5, 11],
+    ['supplement-v7', createToolFreeParser, TOOL_FREE_METHOD, 7, 11],
+    ['supplement-v9', createToolFreeParser, TOOL_FREE_METHOD, 9, 11],
   ]) {
     const directory = join(root, name);
     const config = { ...options, createParser: parser, METHOD: method };
@@ -87,8 +124,11 @@ test('parser upgrades replay unchanged verified sources once without changing st
     old.db.prepare("UPDATE turn SET speed_mode='other',model=NULL").run();
     const oldKey = Buffer.from(old.db.prepare('SELECT key FROM turn').get().key);
     const oldRows = readTimingRows(old);
-    old.db.exec(`DROP TABLE parser_replay_turn; ALTER TABLE source DROP COLUMN parser_version;
-      ALTER TABLE source DROP COLUMN replay_parser_version; PRAGMA user_version=${oldSchema}`);
+    if (oldSchema === 4 || oldSchema === 5) {
+      old.db.exec('DROP TABLE parser_replay_turn; ALTER TABLE source DROP COLUMN parser_version; ALTER TABLE source DROP COLUMN replay_parser_version');
+    }
+    if (oldSchema < 8) old.db.exec('ALTER TABLE source DROP COLUMN rebuild_kind');
+    old.db.exec(`PRAGMA user_version=${oldSchema}`);
     old.close();
     const current = await openTimingStore(directory, { ...config, parserVersion: INFERENCE_TIMING_PARSER_VERSION });
     try {
@@ -172,22 +212,133 @@ test('bounded parser repair keeps last-good rows until the complete replay commi
   } finally { current.close(); }
 });
 
-test('parser repair preserves retained evidence when a source is unavailable or rewritten', async t => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), 'timing-parser-source-')));
+test('single-source recovery preserves live rows across replacement, restart, disappearance, and retry', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'timing-source-rebuild-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, 'source.jsonl'), otherFile = join(root, 'other.jsonl'), directory = join(root, 'timing');
+  const oldRows = [...namedFixture('old'), ...namedFixture('old-second').slice(1)];
+  const otherRows = namedFixture('unaffected', 'gpt-6-sol');
+  await writeFile(file, lines(oldRows), { mode: 0o600 });
+  await writeFile(otherFile, lines(otherRows), { mode: 0o600 });
+  let store = await openTimingStore(directory, options);
+  await ingestTimingFile(store, file);
+  await ingestTimingFile(store, otherFile);
+  const before = readTimingRows(store, { withRevision: true });
+  assert.equal(before.rows.length, 3);
+  const replacement = [...namedFixture('new-first', 'gpt-6-astra'), ...namedFixture('new-second', 'gpt-6-astra').slice(1)];
+  const replacementFirstTurnBytes = Buffer.byteLength(lines(replacement.slice(0, 6)));
+  await rm(file);
+  await writeFile(file, lines(replacement), { mode: 0o600 });
+  let partial;
+  try {
+    partial = await ingestTimingFile(store, file, { maxBytes: replacementFirstTurnBytes });
+    assert.equal(partial.replayed, true);
+    assert.equal(partial.invalidated, false);
+    assert.deepEqual(readTimingRows(store), before.rows, 'old live measurements remain available during the staged rebuild');
+    assert.equal(store.db.prepare("SELECT rebuild_kind FROM source WHERE digest=?").get(
+      Buffer.from(store.digest(store.key, 'source-path', file), 'hex')).rebuild_kind, 'source');
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM parser_replay_turn').get().count, 1);
+    assert.equal(readTimingRows(store, { withRevision: true }).sources.find(source => source.digest === store.digest(store.key, 'source-path', file)).rebuilding, true);
+    store.close();
+    store = await openTimingStore(directory, options);
+    assert.deepEqual(readTimingRows(store), before.rows, 'reopening leaves last-good rows readable');
+    await rm(file);
+    await assert.rejects(ingestTimingFile(store, file), /source_recovery_failed/u);
+    assert.deepEqual(readTimingRows(store), before.rows, 'a missing active source cannot clear saved rows');
+    await writeFile(file, lines(replacement), { mode: 0o600 });
+    await ingestTimingFile(store, file, { maxBytes: replacementFirstTurnBytes });
+    assert.deepEqual(readTimingRows(store), before.rows);
+    const complete = await ingestTimingFile(store, file);
+    assert.equal(complete.invalidated, true);
+    assert.equal(complete.revision, 1);
+    const after = readTimingRows(store, { withRevision: true });
+    assert.equal(after.rows.length, 3);
+    assert.deepEqual(after.rows.filter(row => row.model === 'gpt-6-astra').map(row => row.model), ['gpt-6-astra', 'gpt-6-astra']);
+    assert.equal(after.rows.find(row => row.model === 'gpt-6-sol').model, 'gpt-6-sol');
+    assert.equal(after.sources.length, 2, 'the independent source stays present');
+    assert.equal(after.sources.find(source => source.digest === store.digest(store.key, 'source-path', file)).revision, 1);
+    assert.equal(after.sources.find(source => source.digest === store.digest(store.key, 'source-path', otherFile)).revision, 0);
+    assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM parser_replay_turn').get().count, 0);
+    assert.deepEqual(await ingestTimingFile(store, file), { bytes: 0, unchanged: true }, 'a repeated pass does not duplicate rows');
+    assert.equal(readTimingRows(store).length, 3);
+  } finally { store.close(); }
+});
+
+test('a second replacement during one staged read rolls back and restarts that source from zero', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'timing-source-replace-twice-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const file = join(root, 'source.jsonl'), directory = join(root, 'timing');
+  await writeFile(file, lines([...namedFixture('old'), ...namedFixture('old-second').slice(1)]), { mode: 0o600 });
+  const store = await openTimingStore(directory, options);
+  try {
+    await ingestTimingFile(store, file);
+    const liveBefore = readTimingRows(store);
+    const firstGeneration = [...namedFixture('gen-one', 'gpt-6-sol'), ...namedFixture('gen-one-second', 'gpt-6-sol').slice(1)];
+    const bytesToFirstTurn = Buffer.byteLength(lines(firstGeneration.slice(0, 6))) + 512;
+    await rm(file);
+    await writeFile(file, lines(firstGeneration), { mode: 0o600 });
+    await ingestTimingFile(store, file, { maxBytes: bytesToFirstTurn });
+    const stageBefore = store.db.prepare('SELECT key FROM parser_replay_turn ORDER BY offset').all().map(row => Buffer.from(row.key).toString('hex'));
+    assert.equal(stageBefore.length, 1, 'the first source generation has exactly one staged turn');
+
+    const secondGeneration = [...namedFixture('gen-two', 'gpt-6-astra'), ...namedFixture('gen-two-second', 'gpt-6-astra').slice(1)];
+    await rm(file);
+    await writeFile(file, lines(secondGeneration), { mode: 0o600 });
+    const cancel = new AbortController();
+    await assert.rejects(ingestTimingFile(store, file, { maxBytes: bytesToFirstTurn, signal: cancel.signal,
+      onReadLine: () => cancel.abort() }), /cancelled/u);
+    assert.deepEqual(store.db.prepare('SELECT key FROM parser_replay_turn ORDER BY offset').all().map(row => Buffer.from(row.key).toString('hex')), stageBefore,
+      'rollback retains the previous committed stage and drops partial work');
+    assert.deepEqual(readTimingRows(store), liveBefore);
+    const restarted = await ingestTimingFile(store, file, { maxBytes: bytesToFirstTurn });
+    assert.equal(restarted.replayed, true);
+    assert.equal(restarted.invalidated, false);
+    const stagedModels = store.db.prepare('SELECT model FROM parser_replay_turn ORDER BY offset').all().map(row => row.model);
+    assert.deepEqual(stagedModels, ['gpt-6-astra'], JSON.stringify({ restarted,
+      source: store.db.prepare('SELECT cursor,snapshot,rebuild_kind,state FROM source').get() }));
+    assert.deepEqual(readTimingRows(store), liveBefore);
+    const complete = await ingestTimingFile(store, file);
+    assert.equal(complete.invalidated, true);
+    assert.ok(readTimingRows(store).every(row => row.model === 'gpt-6-astra'));
+  } finally { store.close(); }
+});
+
+test('a mutation during one bounded read fails closed while a stable EOF with an incomplete tail can resume after append', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'timing-source-stable-read-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const file = join(root, 'source.jsonl'), directory = join(root, 'timing');
   await writeFile(file, lines(fixture()), { mode: 0o600 });
-  const old = await openTimingStore(directory, options);
-  await ingestTimingFile(old, file);
-  const before = readTimingRows(old, { withRevision: true });
-  old.close();
-  const current = await openTimingStore(directory, { ...options, parserVersion: INFERENCE_TIMING_PARSER_VERSION });
+  const store = await openTimingStore(directory, options);
   try {
-    await assert.rejects(ingestTimingFile(current, join(root, 'missing.jsonl')));
-    await writeFile(file, lines(fixture()).replace('gpt-5.6-sol', 'gpt-6-astra'), { mode: 0o600 });
-    await assert.rejects(ingestTimingFile(current, file), /source_rewritten/u);
-    assert.deepEqual(readTimingRows(current, { withRevision: true }), before);
-  } finally { current.close(); }
+    await ingestTimingFile(store, file);
+    const before = readTimingRows(store);
+    await rm(file);
+    const incomplete = lines(namedFixture('incomplete', 'gpt-6-astra')).slice(0, -1);
+    await writeFile(file, incomplete, { mode: 0o600 });
+    await assert.rejects(ingestTimingFile(store, file, { maxBytes: Buffer.byteLength(incomplete),
+      onReadLine: () => appendFileSync(file, '\n') }), /source_recovery_failed/u);
+    assert.deepEqual(readTimingRows(store), before, 'mid-read source mutation rolls back the staged transaction');
+
+    // Restore stable content with an incomplete last record and rebuild it.
+    await writeFile(file, incomplete, { mode: 0o600 });
+    const completeScan = await ingestTimingFile(store, file, { maxBytes: Buffer.byteLength(incomplete) });
+    assert.equal(completeScan.invalidated, true);
+    assert.equal(readTimingRows(store).length, 0, 'the incomplete final JSONL line is deferred, not parsed as a turn');
+    assert.deepEqual(await ingestTimingFile(store, file), { bytes: 0, unchanged: true }, 'stable incomplete EOF does not stay pending');
+    await appendFile(file, '\n');
+    await ingestTimingFile(store, file);
+    assert.equal(readTimingRows(store).length, 1, 'a later newline triggers a bounded replay that includes the deferred line');
+
+    const oversized = join(root, 'oversized.jsonl');
+    await writeFile(oversized, 'x'.repeat(600 * 1024), { mode: 0o600 });
+    await ingestTimingFile(store, oversized);
+    const oversizedState = store.db.prepare('SELECT cursor,snapshot FROM source WHERE digest=?').get(
+      Buffer.from(store.digest(store.key, 'source-path', oversized), 'hex'));
+    assert.equal(oversizedState.cursor, 600 * 1024);
+    assert.equal(JSON.parse(oversizedState.snapshot).exhausted, true);
+    assert.deepEqual(await ingestTimingFile(store, oversized), { bytes: 0, unchanged: true },
+      'an oversized unterminated line at stable EOF does not remain pending');
+  } finally { store.close(); }
 });
 
 test('replays an exhausted source after append and advances a content-free revision fence', async t => {

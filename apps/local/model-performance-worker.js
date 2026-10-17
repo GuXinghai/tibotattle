@@ -4,7 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { MODEL_PERFORMANCE_MAX_WINDOWS } from './model-performance-snapshots.js';
-import { openTimingStore, ingestTimingFile, readTimingRows } from '../../src/platform/index.js';
+import { openTimingStore, ingestTimingFile, readTimingRows, createCompressedTimingReader, timingLogicalSourcePath } from '../../src/platform/index.js';
 import { createModelPerformanceContext } from '../../src/application/index.js';
 
 // The Windows native SQLite guard retains the two nearest parent-directory
@@ -23,13 +23,70 @@ export function modelPerformanceSupplementDirectory({ directory, timingRoot, pla
 const PERFORMANCE_DAY = /^\d{4}-\d{2}-\d{2}$/u;
 const PERFORMANCE_PROVIDER = 'openai_codex';
 
+export async function discoverModelPerformanceSources(codexHome, signal = null) {
+  const result = new Map(); let entries = 0;
+  async function walk(path, depth) {
+    signal?.throwIfAborted();
+    if (depth > 3) return;
+    let directory;
+    try { directory = await opendir(path); } catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    for await (const entry of directory) {
+      signal?.throwIfAborted();
+      if (++entries > 50000) throw new Error('discovery_limit');
+      const next = join(path, entry.name);
+      if (entry.isDirectory()) await walk(next, depth + 1);
+      else if (entry.isFile() && (entry.name.endsWith('.jsonl') || entry.name.endsWith('.jsonl.zst'))) {
+        const stat = await lstat(next), logicalPath = timingLogicalSourcePath(next);
+        const file = { path: next, logicalPath, at: stat.mtimeMs, compressed: next.endsWith('.zst') };
+        const prior = result.get(logicalPath);
+        if (!prior || prior.compressed && !file.compressed) result.set(logicalPath, file);
+      }
+    }
+  }
+  await walk(join(codexHome, 'sessions'), 0);
+  await walk(join(codexHome, 'archived_sessions'), 0);
+  return [...result.values()].sort((a, b) => b.at - a.at || a.path.localeCompare(b.path));
+}
+
+export function modelPerformanceSourceFailure(error) {
+  const code = typeof error?.code === 'string' ? error.code : '';
+  if (error?.message === 'source_recovery_failed' || code === 'codex_rollout_source_changed') return 'timing_source_recovery_failed';
+  if (code === 'codex_rollout_compression_unsupported') return 'timing_source_unsupported';
+  if (code === 'codex_rollout_content_invalid') return 'timing_source_decode_failed';
+  if (code.startsWith('export_resource_')) return 'timing_source_limit';
+  if (['ENOENT', 'EACCES', 'EPERM'].includes(code) || code.startsWith('WINDOWS_FILESYSTEM_')) return 'timing_source_read_failed';
+  return 'timing_store_failed';
+}
+
+export function modelPerformanceHistoryState(sources, parserVersion, discoveredDigests) {
+  let pending = 0, unavailable = 0, recoveryFailed = 0;
+  for (const source of sources) {
+    const discovered = discoveredDigests === null || discoveredDigests.has(source.digest);
+    if (source.rebuilding) {
+      if (discovered) pending++;
+      else { unavailable++; recoveryFailed++; }
+      continue;
+    }
+    if (source.parserVersion === parserVersion && source.replayParserVersion === 0) continue;
+    if (discovered) pending++;
+    else unavailable++;
+  }
+  return { pending, unavailable, recoveryFailed };
+}
+
 // Separate from accounting: no accounting DB. The worker serves bounded
 // dashboard reads. Fixed, bounded errors only.
 async function run() {
-  const context = createModelPerformanceContext({ openStore: openTimingStore });
+  const compressedReader = createCompressedTimingReader();
+  const context = createModelPerformanceContext({ openStore: openTimingStore, compressedReader });
   const abort = new AbortController();
   let timer, store, supplement, files = null, cursor = 0, discoveryAt = 0, stopped = false, degraded = false, passFailed = false;
   let publishedRevision = null;
+  let discoveredDigests = null;
+  const diagnostics = new Set();
+  const sourceFailures = new Map();
+  let stage = 'timing_store_failed';
+  const emitDiagnostics = () => parentPort.postMessage({ type: 'diagnostics', codes: [...diagnostics] });
   const windows = new Map();
   let windowsChanged = false;
   const stop = () => { stopped = true; clearTimeout(timer); abort.abort(); };
@@ -43,41 +100,26 @@ async function run() {
       while (windows.size > MODEL_PERFORMANCE_MAX_WINDOWS) windows.delete(windows.keys().next().value);
     }
   });
-  async function discover() {
-    const result = []; let entries = 0;
-    async function walk(path, depth) {
-      if (depth > 3 || stopped) return;
-      let directory;
-      try { directory = await opendir(path); } catch (e) { if (e.code === 'ENOENT') return; throw e; }
-      for await (const entry of directory) {
-        if (stopped) return;
-        if (++entries > 50000) throw new Error('discovery_limit');
-        const next = join(path, entry.name);
-        if (entry.isDirectory()) await walk(next, depth + 1);
-        else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-          const stat = await lstat(next);
-          result.push({ path: next, at: stat.mtimeMs });
-        }
-      }
-    }
-    await walk(join(workerData.codexHome, 'sessions'), 0);
-    await walk(join(workerData.codexHome, 'archived_sessions'), 0);
-    return result.sort((a, b) => b.at - a.at || a.path.localeCompare(b.path));
-  }
   let lastPublished = 0, lastCollecting = null;
   function publish(collecting) {
-    let rows, revision, parserIncomplete;
+    let rows, revision, history;
     try {
       const result = readTimingRows(store, { supplement, withRevision: true });
       rows = result.rows; revision = result.revision;
-      parserIncomplete = result.sources.some(source => source.parserVersion !== context.parserVersion
-        || source.replayParserVersion !== 0);
+      history = modelPerformanceHistoryState(result.sources, context.parserVersion, discoveredDigests);
     } catch {
       degraded = true; passFailed = true;
+      diagnostics.add('timing_store_failed');
       const result = readTimingRows(store, { withRevision: true });
       rows = result.rows; revision = result.revision;
-      parserIncomplete = result.sources.some(source => source.parserVersion !== context.parserVersion
-        || source.replayParserVersion !== 0);
+      history = modelPerformanceHistoryState(result.sources, context.parserVersion, discoveredDigests);
+    }
+    if (history.unavailable) diagnostics.add('timing_history_unavailable');
+    else diagnostics.delete('timing_history_unavailable');
+    for (const code of ['timing_source_recovery_failed', 'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported']) {
+      if (code === 'timing_source_recovery_failed' && history.recoveryFailed
+          || [...sourceFailures.values()].some(codes => codes.has(code))) diagnostics.add(code);
+      else diagnostics.delete(code);
     }
     if (publishedRevision !== null && revision !== publishedRevision) {
       // A completed source grew after its last scan. The store replay has
@@ -88,14 +130,19 @@ async function run() {
     publishedRevision = revision;
     const now = Date.now();
     lastPublished = now; lastCollecting = collecting; windowsChanged = false;
-    parentPort.postMessage({ type: 'snapshots', revision, values: [
+    stage = 'timing_projection_failed';
+    parentPort.postMessage({ type: 'snapshots', revision,
+      cacheable: files !== null && !collecting && !degraded && history.pending === 0, values: [
       ...['1', '7', '30', 'all'].flatMap(period => ['standard', 'fast', 'ultrafast'].map(speedMode => ({ period, speedMode, end: now }))), ...windows.values(),
     ].map(({period, speedMode, end, requestKey}) => ({
       ...(requestKey ? { requestKey } : {}),
       ...context.project(rows, { period, speedMode, now: end, rolling: Boolean(requestKey), historyProgress: files === null ? null : {
         checked: Math.min(cursor, files.length), total: files.length,
-      } }), updatedAt: new Date(now).toISOString(), collecting, stale: degraded || parserIncomplete,
+      } }), updatedAt: new Date(now).toISOString(), collecting,
+      stale: degraded || history.pending > 0 || history.unavailable > 0,
     })) });
+    diagnostics.delete('timing_projection_failed');
+    emitDiagnostics();
   }
   try {
     // Windows' qualified filesystem adapter creates and verifies both parent
@@ -120,17 +167,23 @@ async function run() {
         timingRoot: workerData.timingRoot,
       }), store.key);
     }
-    catch { degraded = true; }
+    catch { degraded = true; diagnostics.add('timing_store_failed'); }
     publish(true);
     while (!stopped) {
       try {
         if (files === null || (cursor >= files.length && Date.now() - discoveryAt >= 60_000)) {
-          files = await discover(); cursor = 0; discoveryAt = Date.now(); passFailed = !supplement;
+          stage = 'timing_scan_failed';
+          files = await discoverModelPerformanceSources(workerData.codexHome, abort.signal); cursor = 0; discoveryAt = Date.now(); passFailed = !supplement;
+          discoveredDigests = new Set(files.map(file => store.digest(store.key, 'source-path', file.logicalPath)));
+          diagnostics.delete('timing_scan_failed');
+          if (supplement) diagnostics.delete('timing_store_failed');
         }
         const started = performance.now(); let bytes = 0;
         while (!stopped && cursor < files.length && bytes < 32 * 1024 ** 2 && performance.now() - started < 750) {
           try {
+            stage = 'timing_store_failed';
             let done = true;
+            const failuresForSource = new Set();
             // Two 2-MiB chunks preserve the original total 4-MiB slice budget.
             for (const target of [store, supplement].filter(Boolean)) {
               try {
@@ -140,12 +193,18 @@ async function run() {
               } catch (e) {
                 if (stopped) break;
                 bytes += e.attemptedBytes ?? 0; degraded = true; passFailed = true;
+                const code = modelPerformanceSourceFailure(e);
+                failuresForSource.add(code); diagnostics.add(code);
               }
             }
+            const sourceDigest = store.digest(store.key, 'source-path', files[cursor].logicalPath);
+            if (failuresForSource.size) sourceFailures.set(sourceDigest, failuresForSource);
+            else sourceFailures.delete(sourceDigest);
             if (done) cursor++;
           } catch (e) {
             if (stopped) break;
             bytes += e.attemptedBytes ?? 0; cursor++; degraded = true; passFailed = true;
+            diagnostics.add('timing_store_failed');
           }
           await yieldTurn();
         }
@@ -154,8 +213,10 @@ async function run() {
         if (!stopped && (windowsChanged || lastCollecting !== collecting || Date.now() - lastPublished >= 5_000))
           publish(collecting);
       } catch {
+        if (stopped) break;
         degraded = true; passFailed = true;
-        if (!stopped) { try { publish(false); } catch { parentPort.postMessage({ type: 'unavailable' }); } }
+        diagnostics.add(stage); emitDiagnostics();
+        if (!stopped) { try { publish(false); } catch { parentPort.postMessage({ type: 'unavailable', code: 'timing_projection_failed' }); } }
       }
       if (!stopped) await new Promise(resolve => {
         const done = () => { clearTimeout(timer); abort.signal.removeEventListener('abort', done); resolve(); };
@@ -163,7 +224,11 @@ async function run() {
         abort.signal.addEventListener('abort', done, { once: true });
       });
     }
-  } catch { parentPort.postMessage({ type: 'unavailable' }); }
-  finally { try { supplement?.close(); } finally { store?.close(); parentPort.close(); } }
+  } catch { parentPort.postMessage({ type: 'unavailable', code: stage }); }
+  finally {
+    try { await compressedReader.close(); }
+    catch { diagnostics.add('timing_source_read_failed'); emitDiagnostics(); }
+    finally { try { await supplement?.close(); } finally { await store?.close(); parentPort.close(); } }
+  }
 }
 if (!isMainThread && workerData?.modelPerformance === true) void run();

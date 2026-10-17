@@ -177,6 +177,18 @@ function triggerSql() {
       WHERE ${KEY_COLUMNS.map((name) => `${name} = ${removed[name]}`).join("\n        AND ")};
     END;
 
+    CREATE TRIGGER IF NOT EXISTS usage_rollup_model_update
+    AFTER UPDATE OF model_id ON usage_event
+    WHEN OLD.model_id <> NEW.model_id AND NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id=NEW.source_id)
+    BEGIN
+      UPDATE usage_rollup SET events=events-1,
+        ${removeSums.map(([target,expression])=>`${target}=${target}-${expression}`).join(', ')}
+      WHERE ${KEY_COLUMNS.map(name=>`${name}=${removed[name]}`).join(' AND ')};
+      INSERT INTO usage_rollup(${keyList},events,${sumList})
+      VALUES (${KEY_COLUMNS.map(name=>added[name]).join(', ')},1,${addSums.map(([,expression])=>expression).join(', ')})
+      ${accumulate}
+    END;
+
     CREATE TRIGGER IF NOT EXISTS usage_rollup_cursor_advance
     AFTER UPDATE OF scanned_bytes ON source
     WHEN NEW.scanned_bytes > OLD.scanned_bytes

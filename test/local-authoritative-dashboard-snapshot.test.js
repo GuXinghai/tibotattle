@@ -134,6 +134,19 @@ test("authoritative snapshot keys match the production companion projection", ()
   assert.equal(isAuthoritativeDashboardSnapshot(snapshot), true);
 });
 
+test('weekly API snapshot extension is closed, generation isolated and never from the future',()=>{
+  const snapshot=authoritativeSnapshot(),fingerprint=`generation-v2-${'a'.repeat(64)}`;
+  snapshot.overview.accounting.generationFingerprint=fingerprint;
+  snapshot.overview.timeline.weeklyApiIntervals={schemaVersion:'weekly-api-interval-v1',status:'available',reason:null,
+    generatedAt:snapshot.generatedAt,sourceGeneration:'17',sourceFingerprint:fingerprint,rows:[]};
+  assert.equal(isAuthoritativeDashboardSnapshot(snapshot),true);
+  for(const mutate of [v=>v.sourceGeneration='18',v=>v.sourceFingerprint=`generation-v2-${'b'.repeat(64)}`,
+    v=>v.generatedAt='2026-09-01T00:00:00.000Z',v=>v.privatePath='synthetic']){
+    const copy=structuredClone(snapshot);mutate(copy.overview.timeline.weeklyApiIntervals);
+    assert.equal(isAuthoritativeDashboardSnapshot(copy),false);
+  }
+});
+
 function unavailableSnapshot() {
   const snapshot = authoritativeSnapshot();
   snapshot.generatedAt = "2026-08-27T12:05:00.000Z";

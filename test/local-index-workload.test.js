@@ -67,7 +67,7 @@ test("work lifecycle survives cold, incremental, replay and forward migration wi
     const saltBefore=await readFile(w.secretFile);
     await refreshLocalIndex(options);
     db=openLocalIndexStore(indexFile,{readOnly:true});
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version,5);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version,6);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);db.close();
     assert.deepEqual(await readFile(w.secretFile),saltBefore);
     const result=readLocalIndexWorkload({indexFile,nowMs:at+11*M,sourceFresh:true});
@@ -109,6 +109,39 @@ test("projection uses retained ancestry to deduplicate paginated work without ch
     assert.ok(cyclic.errors.some(e=>e.code==="work_boundary_conflict"));assert.equal(cyclic.coverage.workMs,3*M);
   }finally{w.cleanup();}
 });
+test("rolling work reads retain older ancestor evidence without counting fork copies or uncommitted facts",async()=>{
+  const w=createWorkspace({files:3,events:3});
+  try{
+    const indexFile=join(w.state,"rolling-lineage.sqlite"),files=w.receipt.sources;
+    const ids=await Promise.all(files.map(async file=>JSON.parse((await readFile(file,"utf8")).split("\n")[0]).payload.id));
+    const task=(t,type,id,duration)=>line(t,"event_msg",{type,turn_id:id,...(duration===undefined?{}:{duration_ms:duration})});
+    const day=24*60*M,nowMs=at+9*day;
+    await writeFile(files[0],line(at,"session_meta",{id:ids[0]})+
+      task(at,"task_started","synthetic-ancestor-task")+task(at+10*M,"task_complete","synthetic-ancestor-task",10*M));
+    for(let i=1;i<3;i++){
+      const t=at+3*day+i*12000;
+      await writeFile(files[i],line(t,"session_meta",{id:ids[i]})+
+        task(t,"task_started","synthetic-ancestor-task")+task(t+1,"task_complete","synthetic-ancestor-task",10*M)+
+        (i===1?task(t+M,"task_started","synthetic-owned-task")+task(t+21*M,"task_complete","synthetic-owned-task",20*M):""));
+    }
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    let db=openLocalIndexStore(indexFile);
+    for(const id of ids.slice(1))db.prepare("UPDATE source SET lineage_json=? WHERE session_id=(SELECT id FROM session WHERE session_uuid=?)")
+      .run(JSON.stringify({lineage:{isFork:true,historyMode:"paginated",parentId:ids[0]}}),id);
+    const facts=()=>db.prepare("SELECT * FROM work_lifecycle_fact ORDER BY source_id,source_offset").all();
+    const before=facts();db.close();
+    const result=readLocalIndexWorkload({indexFile,nowMs});
+    assert.deepEqual(result.errors,[]);assert.equal(result.coverage.workMs,20*M);
+    assert.equal(result.adjustments.workReplayEvents,4);
+    db=openLocalIndexStore(indexFile);assert.deepEqual(facts(),before);
+    // An uncommitted ancestor is not evidence, even though its rows exist.
+    db.prepare("UPDATE source SET scanned_bytes=0 WHERE session_id=(SELECT id FROM session WHERE session_uuid=?)").run(ids[0]);db.close();
+    const unresolved=readLocalIndexWorkload({indexFile,nowMs});
+    assert.ok(unresolved.errors.some(e=>e.code==="work_boundary_conflict"));
+    assert.equal(unresolved.coverage.workMs,20*M);
+  }finally{w.cleanup();}
+});
+
 test("v4 refresh refuses a missing device salt before any forward migration",async()=>{
   const w=createWorkspace({files:1,events:5});
   const indexFile=join(w.state,"identity.sqlite");

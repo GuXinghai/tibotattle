@@ -6,7 +6,15 @@ clocks (with a declared-speed ledger), the work breakdown at the same clocks,
 and the replay-safe calibration layer with and without the ledger.
 
 `test/local-index-goldens.test.js` builds the successor store from the same
-corpus and requires every figure to match. Integers, strings and identities are
+corpus. The frozen Standard report and calibration still match; historical work
+cells are reconstructed by per-event Standard pricing against the same frozen
+fixture. Only the five explicitly named additive speed-pricing fields leave the
+historical report projection. Current speed-tier report fields and full work-cell
+digests are checked separately against an independent per-event public-ledger
+oracle, including unknown speeds and unavailable tier/context prices. No current
+pricing values are regenerated into the frozen fixture.
+
+Integers, strings and identities are
 exact; the only sanctioned difference is binary-float rounding of money
 (deviation N1 in the redesign plan). Large cache-impact breakdowns are held as
 digests because one shared analyzer produces them from the same rows.

@@ -16,6 +16,7 @@
  * responses, but never silently turn a failure into real-looking data.
  */
 
+import { normalizeWeeklyApiIntervals } from './weekly-api-intervals.js';
 import {
   codexCacheReasoningConfiguration,
   REVIEWED_CODEX_MODEL_IDS,
@@ -3913,7 +3914,7 @@ function unavailableAllowanceCapacity(reason = "allowance_capacity_unavailable")
   };
 }
 
-function normalizePlanScope(value) {
+function normalizePlanScope(value, { allowMissingCohort = false } = {}) {
   const planType = normalizePlanType(value?.planType);
   const cohortId = typeof value?.cohortId === "string"
       && /^[0-9a-f]{64}$/u.test(value.cohortId)
@@ -3934,7 +3935,7 @@ function normalizePlanScope(value) {
   if (value?.methodVersion !== PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION
       || planType === "unknown"
       || value?.basisFamilyId !== ALLOWANCE_BASIS_FAMILY_ID
-      || cohortId === null
+      || (cohortId === null && !(allowMissingCohort && value?.cohortId === null))
       || sourceGeneration === ""
       || sourceGenerationFingerprint === "") return null;
   return {
@@ -4222,11 +4223,14 @@ function normalizePlanScopedTimeline(value, weightingEncoding, capacity) {
       || value.encoding !== "plan_bucket_v1") {
     return unavailablePlanScopedTimeline();
   }
-  const planScope = normalizePlanScope(value.planScope);
+  // A source-scoped usage projection does not require a successful capacity
+  // fit. An explicit null cohort is permitted only here; comparisons still
+  // require an available capacity and an exact non-null cohort match.
+  const planScope = normalizePlanScope(value.planScope, { allowMissingCohort: true });
   const capacityScope = capacity?.status === "available"
     ? capacity.planScope : null;
-  if (planScope === null || capacityScope === null
-      || !matchingPlanScope(planScope, capacityScope)) {
+  if (planScope === null || (capacityScope !== null
+      && !matchingPlanScope(planScope, capacityScope))) {
     return unavailablePlanScopedTimeline("plan_scoped_timeline_scope_mismatch");
   }
   if (!Array.isArray(value.usage) || value.usage.length > 100_000
@@ -4246,24 +4250,35 @@ function normalizePlanScopedTimeline(value, weightingEncoding, capacity) {
     comparisonIntervals.push([...interval]);
     priorEnd = interval[1];
   }
+  const excludedIntervals = [];
+  priorEnd = -Infinity;
+  let coveredAt = 0;
+  if (!Array.isArray(value.excludedIntervals ?? []) || (value.excludedIntervals?.length ?? 0) > 100_000) {
+    return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
+  }
+  for (const row of value.excludedIntervals ?? []) {
+    if (!Array.isArray(row) || row.length !== 3
+        || !row.slice(0, 2).every((ms) => Number.isSafeInteger(ms) && ms % 900_000 === 0 && Number.isFinite(new Date(ms).getTime()))
+        || row[0] < priorEnd || row[1] <= row[0]
+        || !["plan_transition_interval", "usage_attribution_unresolved"].includes(row[2])) {
+      return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
+    }
+    while (coveredAt < comparisonIntervals.length && comparisonIntervals[coveredAt][1] <= row[0]) coveredAt += 1;
+    if (comparisonIntervals[coveredAt]?.[0] < row[1]) return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
+    excludedIntervals.push([...row]); priorEnd = row[1];
+  }
   const decodedUsage = value.usage.map(decodePlanTimelineUsage);
   if (decodedUsage.includes(null)) return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
   const usage = normalizeLocalUsageTimeline(decodedUsage, weightingEncoding, 100_000);
-  const decodedQuota = [];
-  for (const row of value.quota) {
-    if (!Array.isArray(row) || row.length !== 3
-        || !row.every((n) => typeof n === "number" && Number.isFinite(n))
-        || !Number.isSafeInteger(row[0]) || !Number.isFinite(new Date(row[0]).getTime())
-        || !Number.isFinite(new Date(row[1] * 1000).getTime())
-        || row[2] < 0 || row[2] > 100) return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
-    decodedQuota.push({ observedAt: new Date(row[0]).toISOString(), resetAt: new Date(row[1] * 1000).toISOString(),
-      usedPercent: row[2], remainingPercent: 100 - row[2], limitId: "codex", durationMinutes: 10_080,
-      slot: "unknown", planType: planScope.planType, accountAttribution: "unattributed" });
-  }
-  const quota = normalizeLocalQuotaTimeline(decodedQuota, 100_000);
-  if (usage.length !== value.usage.length || quota.length !== value.quota.length
-      || quota.some((row) => row.planType !== planScope.planType)) {
-    return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
+  const quota = decodePlanQuotaRows(value.quota, planScope);
+  const observedQuota = Object.hasOwn(value, "observedQuota") ? decodePlanQuotaRows(value.observedQuota, planScope) : null;
+  if (quota === null || (Object.hasOwn(value, "observedQuota") && observedQuota === null)
+      || usage.length !== value.usage.length) return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
+  if (observedQuota !== null) {
+    const readings = new Map(observedQuota.map(row => [row.observedAt,row]));
+    if (quota.some(row => {const observed=readings.get(row.observedAt);return !observed || observed.usedPercent !== row.usedPercent || observed.resetAt !== row.resetAt;})) {
+      return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
+    }
   }
   let intervalAt = 0;
   priorEnd = -Infinity;
@@ -4297,8 +4312,29 @@ function normalizePlanScopedTimeline(value, weightingEncoding, capacity) {
     planScope,
     usage,
     quota,
-    comparisonIntervals
+    comparisonIntervals,
+    excludedIntervals,
+    observedQuota
   };
+}
+
+function decodePlanQuotaRows(rows, scope) {
+  if (!Array.isArray(rows) || rows.length > 100_000) return null;
+  const decoded = []; let previous = -Infinity;
+  for (const row of rows) {
+    if (!Array.isArray(row) || row.length !== 3
+        || !row.every(n => typeof n === "number" && Number.isFinite(n))
+        || !Number.isSafeInteger(row[0]) || row[0] <= previous
+        || !Number.isFinite(new Date(row[0]).getTime())
+        || !Number.isFinite(new Date(row[1] * 1000).getTime())
+        || row[2] < 0 || row[2] > 100) return null;
+    previous = row[0];
+    decoded.push({observedAt:new Date(row[0]).toISOString(),resetAt:new Date(row[1]*1000).toISOString(),
+      usedPercent:row[2],remainingPercent:100-row[2],limitId:"codex",durationMinutes:10080,
+      slot:"unknown",planType:scope.planType,accountAttribution:"unattributed"});
+  }
+  const result=normalizeLocalQuotaTimeline(decoded,100_000);
+  return result.length === rows.length ? result : null;
 }
 
 function decodePlanTimelineUsage(row) {
@@ -4347,6 +4383,36 @@ function normalizeLocalTimeline(value = {}) {
     weightingEncoding,
     allowanceCapacity
   );
+  let weeklyApiIntervals = normalizeWeeklyApiIntervals(value.weeklyApiIntervals);
+  const intervalScope = planScoped.planScope ?? allowanceCapacity.planScope;
+  const intervalGeneration=intervalScope?.sourceGeneration??value.history?.generation;
+  const intervalFingerprint=intervalScope?.sourceGenerationFingerprint??value.history?.generationFingerprint;
+  if(weeklyApiIntervals.status==='available'
+    && (intervalGeneration==null||intervalFingerprint==null
+      ||weeklyApiIntervals.sourceGeneration!==String(intervalGeneration)
+      ||weeklyApiIntervals.sourceFingerprint!==intervalFingerprint)) {
+    weeklyApiIntervals={status:'unavailable',reason:'weekly_api_source_mismatch',rows:[]};
+  }
+  const historicalPlanComparisons = [];
+  const candidates = array(value.historicalPlanComparisons);
+  const seen = new Set();
+  for (const row of candidates.slice(0, 15)) {
+    const planType = row?.planType;
+    if (!TELEMETRY_PLAN_TYPES.includes(planType) || planType === "unknown" || seen.has(planType)
+        || candidates.filter((candidate) => candidate?.planType === planType).length !== 1) continue;
+    seen.add(planType);
+    const capacity = normalizeAllowanceCapacity(row.allowanceCapacity);
+    let scoped = normalizePlanScopedTimeline(row.planScoped, weightingEncoding, capacity);
+    const currentScope = planScoped.planScope ?? allowanceCapacity.planScope;
+    if (scoped.planScope?.planType !== planType
+        || (capacity.planScope !== null && capacity.planScope.planType !== planType)
+        || (currentScope && scoped.planScope && ["sourceGeneration", "sourceGenerationFingerprint"]
+          .some((key) => currentScope[key] !== scoped.planScope[key]))) {
+      scoped = unavailablePlanScopedTimeline("plan_scoped_timeline_scope_mismatch");
+    }
+    historicalPlanComparisons.push({ planType, allowanceCapacity: capacity, planScoped: scoped,
+      failure: typeof row.failure === "string" && /^[A-Za-z0-9_.-]{1,64}$/u.test(row.failure) ? row.failure : null });
+  }
   const quota = normalizeLocalQuotaTimeline(value.quota);
   return {
     bucketMinutes: count(value.bucketMinutes, 15),
@@ -4358,6 +4424,8 @@ function normalizeLocalTimeline(value = {}) {
     calibrationUsage,
     allowanceCapacity,
     planScoped,
+    historicalPlanComparisons,
+    weeklyApiIntervals,
     quota,
     resetEvents: normalizeLocalResetEvents(value.resetEvents),
     history: normalizeTimelineHistory({
@@ -4820,6 +4888,7 @@ function normalizeHistoryCoverage(value = {}) {
   const sourceBytes = count(value?.sourceBytes, null);
   const indexedBytes = count(value?.indexedBytes, null);
   const skippedSourceBytes = count(value?.skippedSourceBytes, null);
+  const responseUnverifiedPrefixTurns = count(value?.responseUnverifiedPrefixTurns, null);
   const generatedAt = canonicalInstant(value?.generatedAt);
   const coveredStartAt = canonicalInstant(value?.coveredAt?.startAt);
   const coveredEndAt = canonicalInstant(value?.coveredAt?.endAt);
@@ -4928,6 +4997,10 @@ function normalizeHistoryCoverage(value = {}) {
       ? 0
       : Math.min(indexedBytes, sourceBytes),
     generatedAt: generatedAt ?? "",
+    responseUsageCoverageStatus: responseUnverifiedPrefixTurns === null
+      ? "unknown"
+      : responseUnverifiedPrefixTurns > 0 ? "partial" : "complete",
+    responseUnverifiedPrefixTurns,
     errorCode,
     coveredAt: {
       startAt: coveredStartAt ?? "",
@@ -5006,7 +5079,7 @@ function normalizePricing(pricing = {}) {
       duplicateSnapshotsExcluded: count(
         pricing?.replayExclusionDiagnostics?.duplicateSnapshotsExcluded,
         0
-      )
+      ),
     }
   };
 }
@@ -5389,24 +5462,35 @@ export function selectAllowancePlanPopulation(data, requestedPlanType = null) {
   const population = populations.find((row) => row.planType === selectedPlanType)
     ?? normalizeWeeklyPopulation({ planType: selectedPlanType });
   const isCurrentPlan = selectedPlanType === currentPlanType;
-  const allowanceCapacity = root.timeline?.allowanceCapacity ?? null;
-  const planScoped = root.timeline?.planScoped ?? null;
+  const historical = array(root.timeline?.historicalPlanComparisons)
+    .find((row) => row.planType === selectedPlanType);
+  const allowanceCapacity = (isCurrentPlan ? root.timeline?.allowanceCapacity : historical?.allowanceCapacity) ?? null;
+  const planScoped = (isCurrentPlan ? root.timeline?.planScoped : historical?.planScoped) ?? null;
   // The old gate asked whether the whole retained history contained one plan.
   // That made a perfectly coherent current-plan fit unusable as soon as an
   // earlier plan existed, then paired the selected capacity with all-plan
   // usage anyway. The new gate is stricter where it matters: the scoped usage
   // and fitted capacity must name the same current plan, method, basis, reset
-  // cohort and unified-index generation. Historical selections remain
-  // unavailable because no historical scoped numerator is published.
-  const comparisonAvailable = isCurrentPlan
-    && population.status === "available"
-    && allowanceCapacity?.status === "available"
-    && planScoped?.status === "available"
+  // cohort and unified-index generation. Historical lanes use exactly the same
+  // fences; upgrades and downgrades do not make sound older evidence disappear.
+  const usageAvailable = planScoped?.status === "available"
     && planScoped.planScope?.planType === selectedPlanType
+    && (allowanceCapacity?.status !== "available"
+      || matchingPlanScope(planScoped.planScope, allowanceCapacity.planScope));
+  const comparisonAvailable = population.status === "available"
+    && allowanceCapacity?.status === "available"
+    && usageAvailable
     && matchingPlanScope(
       planScoped.planScope,
       allowanceCapacity.planScope
     );
+  const observedQuota = array(root.timeline?.quota).filter((row) => row.planType === selectedPlanType);
+  const scopedQuota = usageAvailable ? planScoped.quota : [];
+  const quotaKey = (row) => `${row.observedAt}|${row.durationMinutes}|${row.limitId}`;
+  const scopedKeys = new Set(scopedQuota.map(quotaKey));
+  const selectedQuota = usageAvailable && planScoped.observedQuota !== null && planScoped.observedQuota !== undefined
+    ? planScoped.observedQuota
+    : [...scopedQuota, ...observedQuota.filter((row) => !scopedKeys.has(quotaKey(row)))];
   const selected = {
     ...root,
     weekly: {
@@ -5425,12 +5509,19 @@ export function selectAllowancePlanPopulation(data, requestedPlanType = null) {
       // Keep `usage` and `calibrationUsage` as the conserved all-plan ledger.
       // Trends consumes this explicit selected-plan lane; Usage & costs and
       // every all-plan total continue to read the established fields.
-      selectedPlanUsage: comparisonAvailable ? planScoped.usage : [],
-      selectedPlanCalibrationUsage: comparisonAvailable ? planScoped.usage : [],
+      selectedPlanUsage: usageAvailable ? planScoped.usage : [],
+      selectedWeeklyApiIntervals: {
+        ...root.timeline.weeklyApiIntervals,
+        rows: array(root.timeline.weeklyApiIntervals?.rows).filter(row => row.planType === selectedPlanType),
+      },
+      selectedPlanCalibrationUsage: usageAvailable ? planScoped.usage : [],
       // The scoped quota lane was built before the generic cross-plan collapse.
       // Keep the original root DTO untouched for all-plan consumers.
-      quota: comparisonAvailable ? planScoped.quota : [],
-      comparisonIntervals: comparisonAvailable ? planScoped.comparisonIntervals : [],
+      // Observation-only points outside comparable intervals stay visible;
+      // the comparison interval fence still refuses arithmetic across a gap.
+      quota: selectedQuota,
+      comparisonIntervals: usageAvailable ? planScoped.comparisonIntervals : [],
+      excludedIntervals: usageAvailable ? planScoped.excludedIntervals ?? [] : [],
       allowanceCapacity: comparisonAvailable ? allowanceCapacity : null,
     },
     allowancePlanSelection: {
@@ -5438,6 +5529,8 @@ export function selectAllowancePlanPopulation(data, requestedPlanType = null) {
       currentPlanType,
       isCurrentPlan,
       comparisonAvailable,
+      usageAvailable,
+      failure: historical?.failure ?? (planScoped?.status === "unavailable" ? planScoped.reason : null),
     },
   };
   views ??= new Map();
@@ -5725,16 +5818,24 @@ export class LocalCompanionClient {
 
   async load() {
     const paths = ["overview", "gradient", "weekly", "quality"];
-    const settled = await Promise.allSettled(paths.map((path) => fetchJson(this.fetchImpl, `${LOCAL_ROOT}/${path}`)));
+    // Valid unavailable report payloads remain displayable; transport/parse
+    // failures must not silently become empty reports in a successful update.
+    const signal = AbortSignal.timeout(30_000);
+    const settled = await Promise.allSettled(paths.map((path) => fetchJson(this.fetchImpl, `${LOCAL_ROOT}/${path}`, {signal})));
+    const rejected = settled.find(result => result.status === "rejected");
+    if (rejected) throw rejected.reason;
     const fragments = Object.fromEntries(settled.map((result, index) => [
       paths[index],
       result.status === "fulfilled" ? result.value : null
     ]));
-    if (!fragments.overview) throw new Error("The local companion did not return an overview.");
+    if (!fragments.overview) {
+      if (settled[0].status === "rejected") throw settled[0].reason;
+      throw Object.assign(new Error("The local companion did not return an overview."), {code:"report_overview_unavailable"});
+    }
     return normalizeDashboardPayload({}, fragments);
   }
 
-  modelPerformance(period = "all", { signal, endAt, speedMode = "standard" } = {}) {
+  modelPerformance(period = "all", { signal, endAt, speedMode = "standard", onDiagnostics = () => {} } = {}) {
     if (!["1", "7", "30", "all"].includes(period)) throw new RangeError("Unsupported display period");
     if (!["standard", "fast", "ultrafast"].includes(speedMode)) throw new RangeError("Unsupported speed mode");
     const query = new URLSearchParams({ period, speedMode });
@@ -5744,7 +5845,21 @@ export class LocalCompanionClient {
           || new Date(end).toISOString() !== endAt) throw new RangeError("Unsupported display window");
       query.set("endAt", endAt);
     }
-    return fetchJson(this.fetchImpl, `${LOCAL_ROOT}/model-performance?${query}`, {
+    const fetchPerformance = async (...args) => {
+      const response = await this.fetchImpl(...args);
+      const raw = response.headers?.get('X-TiboTattle-Performance-Diagnostics') ?? '';
+      const allowed = ['timing_worker_failed', 'timing_scan_failed', 'timing_store_failed',
+        'timing_projection_failed', 'timing_snapshot_read_failed', 'timing_snapshot_invalid', 'timing_snapshot_write_failed', 'timing_snapshot_scope_mismatch', 'timing_history_unavailable', 'timing_source_recovery_failed',
+        'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported'];
+      const codes = raw === '' ? [] : raw.split(',');
+      if (raw.length > 512 || codes.length > allowed.length || new Set(codes).size !== codes.length
+          || codes.some(code => !allowed.includes(code))) {
+        throw Object.assign(new Error('Invalid performance diagnostics'), { code: 'timing_contract_invalid' });
+      }
+      onDiagnostics(codes);
+      return response;
+    };
+    return fetchJson(fetchPerformance, `${LOCAL_ROOT}/model-performance?${query}`, {
       cache: "no-store", signal, headers: { "X-Usage-Monitor-Local": "1" },
     });
   }

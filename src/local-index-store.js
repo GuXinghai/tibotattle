@@ -42,11 +42,13 @@ import {
 
 export const LOCAL_INDEX_STORE_FAMILY = "local-index-store";
 export const LOCAL_INDEX_STORE_APPLICATION_ID = 0x554d4932;
-export const LOCAL_INDEX_STORE_USER_VERSION = 5;
+export const LOCAL_INDEX_STORE_USER_VERSION = 6;
+// A confirmed native response receipt repaired this derived model. Reparse clears it.
+export const EVENT_FLAG_RUNTIME_MODEL = 32;
 // Names the shared extractor revision it was built with, so a change to the
 // extractor's semantics cannot leave facts that no reparse will replace.
 // test/local-index-refresh.test.js pins the two together.
-export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v2+unified-rollout-typed-v19";
+export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v2+unified-rollout-typed-v21";
 
 // Append-only: ordinals are the on-disk and wire representation.
 export const REASONING_EFFORTS = Object.freeze([
@@ -62,6 +64,7 @@ export const EVENT_FLAG_MODEL_INHERITED = 2;
 export const EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO = 4;
 // A quota report with no spend, on a verified unchanged cumulative total.
 export const EVENT_FLAG_STATUS_ONLY = 8;
+export const EVENT_FLAG_RESPONSE_USAGE = 16;
 
 const DIAGNOSTIC_CODES = new Set([
   "malformedWorkRecords",
@@ -74,6 +77,9 @@ const DIAGNOSTIC_CODES = new Set([
   "modelMissing", "oversizedLines", "contradictedLeadingSnapshotsSkipped",
   "toolRecords", "toolEvents", "toolRecordsSkipped",
   "toolSourceHistoryUnavailable", "compactionEvents",
+  "responseUsageEvents", "responseDuplicateCopies", "responseForeignThreadRecords", "responseModelUnattributed",
+  "responseUnverifiedPrefixTurns",
+  "responseModelsRecovered", "responseModelRecoveryVersion",
 ]);
 
 // Extraction-level reasons first; the rest are discovery-level reasons, which
@@ -97,6 +103,18 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS meta(
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL) STRICT;
+
+  CREATE TABLE IF NOT EXISTS runtime_model_evidence(
+    evidence_key BLOB PRIMARY KEY CHECK(length(evidence_key)=32),
+    response_key BLOB CHECK(response_key IS NULL OR length(response_key)=32),
+    thread_key BLOB NOT NULL CHECK(length(thread_key)=32),
+    turn_key BLOB CHECK(turn_key IS NULL OR length(turn_key)=32),
+    observed_at_ms INTEGER NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('response_completed','fallback_succeeded','fallback_failed','request_context','response_reference')),
+    model TEXT NOT NULL,
+    previous_model TEXT,
+    digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT, WITHOUT ROWID;
+  CREATE INDEX IF NOT EXISTS runtime_model_evidence_response ON runtime_model_evidence(response_key);
 
   -- Monotonic publication counter. Readers key every cache off it.
   CREATE TABLE IF NOT EXISTS store_state(
@@ -440,12 +458,12 @@ function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
     throw fixedError("local_index_newer_version");
   }
   if (userVersion < LOCAL_INDEX_STORE_USER_VERSION
-      && !(allowWorkloadPredecessor && LOCAL_INDEX_STORE_USER_VERSION === 5 && userVersion === 4)) {
+        && !(allowWorkloadPredecessor && [4,5].includes(userVersion))) {
     throw fixedError("local_index_family_mismatch");
   }
 }
 
-/** Identity-only preflight for the reviewed v4 -> v5 migration. This never
+/** Identity-only preflight for reviewed forward migrations. This never
  * returns a database handle or permits projections/writes against old state. */
 export function readLocalIndexIdentityBeforeMigration(file) {
   const path = resolve(file);
@@ -500,10 +518,15 @@ function initialize(database) {
  * Open the store. `create` makes a new owner-only file; `readOnly` never
  * mutates it. Writers also run provisional-fact recovery.
  */
+const EVIDENCE_WRITE=Symbol('evidence-write');
+// Background receipt capture shares the database but must never run ingestion recovery
+// while the foreground writer has intentionally committed provisional source batches.
+export function openLocalIndexEvidenceStore(file){return openLocalIndexStore(file,{[EVIDENCE_WRITE]:true});}
 export function openLocalIndexStore(file, {
   create = false,
   readOnly = false,
   bulkLoad = false,
+  [EVIDENCE_WRITE]: evidenceOnly = false,
 } = {}) {
   const path = resolve(file);
   if (create && !readOnly) {
@@ -519,11 +542,12 @@ export function openLocalIndexStore(file, {
     if (!existed) initialize(database);
     if (existed && !readOnly
         && database.prepare("PRAGMA application_id").get().application_id === LOCAL_INDEX_STORE_APPLICATION_ID
-        && database.prepare("PRAGMA user_version").get().user_version === 4) {
+        && [4,5].includes(database.prepare("PRAGMA user_version").get().user_version)) {
       database.exec("BEGIN IMMEDIATE");
       try {
         database.exec(SCHEMA);
-        database.exec("PRAGMA user_version=5");
+        database.exec(ROLLUP_TRIGGER_SCHEMA);
+        database.exec("PRAGMA user_version=6");
         database.exec("COMMIT");
       } catch (error) {
         database.exec("ROLLBACK");
@@ -531,7 +555,7 @@ export function openLocalIndexStore(file, {
       }
     }
     assertFamily(database);
-    if (!readOnly) {
+    if (!readOnly && !evidenceOnly) {
       // A registry revision that moved a context threshold invalidates the
       // key; the rollups are regrouped from the facts, never from rollouts.
       reconcileRollups(database, undefined, rebuildWorkRollups);
@@ -586,6 +610,14 @@ export function withReadSnapshot(database, work) {
   } finally {
     try { database.exec("COMMIT"); } catch { /* read transaction already closed */ }
   }
+}
+
+export function readPendingResponseModelRecoverySources(database, version) {
+  if (!Number.isSafeInteger(version) || version < 1) throw new TypeError('Invalid response model recovery version');
+  return new Set(database.prepare(`SELECT d.source_id FROM source_diagnostic d
+    LEFT JOIN source_diagnostic v ON v.source_id=d.source_id AND v.code='responseModelRecoveryVersion'
+    WHERE d.code='responseModelUnattributed' AND d.count>0 AND COALESCE(v.count,0)<?`)
+    .all(version).map(row => Number(row.source_id)));
 }
 
 export function readCommitSeq(database) {
@@ -673,8 +705,17 @@ function deleteSourceRange(database, sourceId, fromOffset) {
  * between `begin()` and `commit()`.
  */
 export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
+  database.exec('CREATE INDEX IF NOT EXISTS usage_event_response_identity ON usage_event(event_key) WHERE (flags & 16)<>0');
+  // Retain content-free signatures while a changed source is replaced. Without
+  // this transaction-local comparison, deleting its old facts first would let
+  // a changed quantity under the same response identity pass unnoticed.
+  database.exec('CREATE TEMP TABLE IF NOT EXISTS prior_response_usage(event_key BLOB PRIMARY KEY,u INTEGER,c INTEGER,w INTEGER,o INTEGER,r INTEGER) WITHOUT ROWID');
   void deviceSalt;
   const statements = {
+    response: database.prepare('SELECT tokens_in_uncached u,tokens_in_cache_read c,tokens_in_cache_write w,tokens_out_combined o,tokens_out_reasoning r FROM usage_event WHERE event_key=? AND (flags & 16)<>0 LIMIT 1'),
+    priorResponse: database.prepare('SELECT u,c,w,o,r FROM prior_response_usage WHERE event_key=?'),
+    preserveResponses: database.prepare('INSERT OR IGNORE INTO prior_response_usage SELECT event_key,tokens_in_uncached,tokens_in_cache_read,tokens_in_cache_write,tokens_out_combined,tokens_out_reasoning FROM usage_event WHERE source_id=? AND source_offset>=? AND source_offset<=(SELECT scanned_bytes FROM source WHERE id=?) AND (flags & 16)<>0'),
+    hasUsage: database.prepare('SELECT 1 FROM usage_event WHERE source_id=? AND source_offset=?'),
     model: database.prepare(`
       INSERT INTO model(model_id, recognition) VALUES (?, ?)
       ON CONFLICT(model_id) DO NOTHING`),
@@ -993,10 +1034,21 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
 
     writeUsageEvent(event) {
       assertTransaction();
+      if (event.responseUsage) {
+        const active = statements.response.get(event.eventKey);
+        const old = active ?? statements.priorResponse.get(event.eventKey);
+        if (old) {
+          if (old.u !== event.tokensInUncached || old.c !== event.tokensInCacheRead
+              || old.w !== event.tokensInCacheWrite || old.o !== event.tokensOutCombined
+              || old.r !== event.tokensOutReasoning) throw fixedError('codex_response_usage_identity_conflict');
+          if (active) return 0;
+        }
+      }
       const flags = (event.partial ? EVENT_FLAG_PARTIAL : 0)
         | (event.modelInherited ? EVENT_FLAG_MODEL_INHERITED : 0)
         | (event.cacheWriteAssumedZero ? EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO : 0)
-        | (event.statusOnly ? EVENT_FLAG_STATUS_ONLY : 0);
+        | (event.statusOnly ? EVENT_FLAG_STATUS_ONLY : 0)
+        | (event.responseUsage ? EVENT_FLAG_RESPONSE_USAGE : 0);
       const changed = Number(statements.usage.run(
         event.sourceId, event.sourceOffset, event.observedAtMs,
         event.eventKey, event.sessionId, event.accountScopeId, event.modelId,
@@ -1018,6 +1070,7 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
         boundary.compactedAtMs ?? null,
       ).changes);
     },
+    hasUsageEvent(sourceId, offset) { return statements.hasUsage.get(sourceId, offset) !== undefined; },
     writeQuotaOccurrence(occurrence) {
       assertTransaction();
       return Number(statements.quotaOccurrence.run(
@@ -1063,6 +1116,7 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
     /** Remove a source's facts from `fromOffset` (0 = all of them). */
     deleteSourceFacts(sourceId, { fromOffset = 0 } = {}) {
       assertTransaction();
+      statements.preserveResponses.run(sourceId, fromOffset, sourceId);
       // Facts at or below the cursor are counted by the derived tables. Retreat
       // the cursor first so the retreat triggers undo them in bulk and every
       // fact written afterwards is provisional until the next advance counts

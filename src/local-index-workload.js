@@ -11,6 +11,7 @@ import { dirname, join } from "node:path";
 import { existsSync } from "node:fs";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
 import { codexPrimaryAllowanceBasis } from "./codex-primary-allowance-basis.js";
+import { readRuntimeModelEvidenceStatus } from './local-index-runtime-model-evidence.js';
 
 const STATE_SCHEMA="overview-workload-state-v3";
 
@@ -141,6 +142,34 @@ function workAncestors(database) {
   return result;
 }
 
+// Display-window clipping must not discard the ancestry evidence needed to
+// recognize copied boundaries. Retrieve only older facts for the same tasks
+// and their established ancestors, within the reader's existing transaction.
+function completeWorkAncestry(database, rows, ancestors, beforeMs) {
+  const wanted=new Map();
+  for(const row of rows){
+    const chain=ancestors.get(String(row.session_id))??[];
+    if(!chain.length)continue;
+    const key=Buffer.from(row.task_key).toString("hex"),sessions=wanted.get(key)??new Set();
+    for(const session of chain)sessions.add(session);
+    wanted.set(key,sessions);
+  }
+  const keys=[...wanted.keys()];let inspected=0;
+  for(let i=0;i<keys.length;i+=128){
+    const batch=keys.slice(i,i+128);
+    const older=database.prepare(`SELECT w.* FROM work_lifecycle_fact w
+      WHERE w.task_key IN (${batch.map(()=>"?").join(",")}) AND w.observed_at_ms<?
+      AND ${committedPredicate("w")} ORDER BY w.observed_at_ms,w.source_id,w.source_offset LIMIT 100001`)
+      .all(...batch.map(key=>Buffer.from(key,"hex")),beforeMs);
+    inspected+=older.length;
+    if(inspected>100_000)throw Object.assign(new Error("local_index_unavailable"),{code:"local_index_unavailable"});
+    for(const row of older){
+      if(wanted.get(Buffer.from(row.task_key).toString("hex")).has(String(row.session_id)))rows.push(row);
+    }
+  }
+  return rows;
+}
+
 /** Read only committed content-free facts. A failure never erases last-good analytics. */
 export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], capacity = null,
   previous = null, storedState = null, liveSinceMs = nowMs, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
@@ -172,7 +201,7 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
           resetAtMs,planType:current.planType??plan??"unknown",limitId:"codex",resetKey:`${resetAtMs}:${current.planType??plan??"unknown"}:codex`});
       }
       const pricer=createAccountingPricer();
-      const usage=[];
+      const usage=[],pricingRecords=[];let pricingIssueCount=0;
       for(const r of database.prepare(`SELECT u.*,m.model_id,t.codex_speed_mode,t.api_service_tier
         FROM usage_event u JOIN model m ON m.id=u.model_id JOIN tier_semantics t ON t.id=u.tier_id
         WHERE u.observed_at_ms>=? AND u.observed_at_ms<=? AND ${committedPredicate("u")}
@@ -189,13 +218,19 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         const weighted=quotaWeightedApiPriceEquivalent({apiPriceEquivalentUsd:p.apiPriceEquivalentUsd,
           model:p.model,mode:speed,eventTime:record.observedAt,standardPriceCardIds:p.priceCardIds,
           totalInputContextTokens:r.total_input_context});
-        usage.push({atMs:r.observed_at_ms,session:String(r.session_id),usd:weighted.usd,
-          priced:p.pricingCoverageStatus==="fully_priced"&&Number.isFinite(weighted.usd)});
+        const priced=p.pricingCoverageStatus==="fully_priced"&&Number.isFinite(weighted.usd);
+        usage.push({atMs:r.observed_at_ms,session:String(r.session_id),usd:weighted.usd,priced});
+        if(!priced){pricingIssueCount++;if(pricingRecords.length<2000)pricingRecords.push({at:record.observedAt,
+          model:p.model,reason:p.model==='unknown'?'model_unknown':'price_incomplete',tokens:p.totalTokens,
+          inputUncached:r.tokens_in_uncached,cacheRead:r.tokens_in_cache_read,
+          output:r.tokens_out_combined??(r.tokens_out_text===null||r.tokens_out_reasoning===null?null:r.tokens_out_text+r.tokens_out_reasoning)});}
       }
       const ancestors=workAncestors(database);
-      const events=database.prepare(`SELECT w.* FROM work_lifecycle_fact w
+      const workFrom=from-24*3600000;
+      const workRows=database.prepare(`SELECT w.* FROM work_lifecycle_fact w
         WHERE w.observed_at_ms>=? AND w.observed_at_ms<=? AND ${committedPredicate("w")}
-        ORDER BY w.observed_at_ms,w.source_id,w.source_offset`).all(from-24*3600000,nowMs)
+        ORDER BY w.observed_at_ms,w.source_id,w.source_offset`).all(workFrom,nowMs);
+      const events=completeWorkAncestry(database,workRows,ancestors,workFrom)
         .map((e)=>({key:Buffer.from(e.task_key).toString("hex"),session:String(e.session_id),
           kind:e.kind,atMs:e.observed_at_ms,durationMs:e.duration_ms,ancestors:ancestors.get(String(e.session_id))??[]}));
       const selected=capacity?.status==="available"&&capacity.planScope?.planType===plan?capacity.scenarios?.[capacity.selectedScenario]:null;
@@ -225,6 +260,10 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         comparisonQuota:quotaEvidence?.observations??[],comparisonResetEvents:quotaEvidence?.resetEvents??[],
         comparisonContinuityThroughMs:quotaEvidence?.continuityThroughMs??null,
         comparisonEvidenceError:quotaEvidence?.errorCode??null});
+      let capture;
+      try{capture=readRuntimeModelEvidenceStatus(database);}catch{capture={status:'failed',errorCode:'runtime_evidence_checkpoint_invalid'};}
+      if(capture.errorCode){state.errors.push({code:capture.errorCode,stage:'index'});state.status='partial';}
+      state.pricingDetails={total:pricingIssueCount,records:pricingRecords,truncated:pricingIssueCount>pricingRecords.length,capture};
       if(quotaEvidence?.errorCode&&previous?.comparison?.startedAtMs===comparisonFrom
         &&previous.comparison.planType===plan&&previous.comparison.capacityUsd===state.comparison.capacityUsd){
         for(const key of ["actualPp","expectedPp"]){const known=previous.comparison[key];

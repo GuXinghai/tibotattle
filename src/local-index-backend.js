@@ -10,15 +10,18 @@ import {
 import { readLegacyOrdinalMap } from "./local-index-cutover.js";
 import { maintainLocalIndex } from "./local-index-maintenance.js";
 import { refreshLocalIndex } from "./local-index-refresh.js";
+import { RESPONSE_MODEL_RECOVERY_VERSION } from "./providers/codex/logs.js";
 import { auditPairing } from "./local-index-pairing.js";
 import { auditRollups } from "./local-index-rollup.js";
 import {
   LOCAL_INDEX_PARSER_VERSION,
   openLocalIndexStore,
+  readPendingResponseModelRecoverySources,
   withReadSnapshot,
 } from "./local-index-store.js";
 import { auditWorkRollups } from "./local-index-work-rollup.js";
 import { readLocalIndexWindowBreakdown } from "./local-index-window-breakdown.js";
+import {reconcileRuntimeModelEvidence} from './local-index-runtime-model-evidence.js';
 export { readLocalIndexWorkload, readWorkloadQuotaEvidence, workloadStateStore, workloadState } from "./local-index-workload.js";
 
 // The v2 index as one backend the local companion composes.
@@ -156,7 +159,7 @@ export function createLocalIndexBackend({
     signal = null,
   } = {}) {
     const file = requestedFile ?? indexFile;
-    const result = await refresh({
+    const options = {
       codexHome,
       indexFile: file,
       secretFile: requestedSecret ?? secretFile,
@@ -165,11 +168,34 @@ export function createLocalIndexBackend({
       ordinalSeed: legacyOrdinalSeed(file),
       requireExistingDeviceSalt: legacyIndexFile !== null && existsSync(legacyIndexFile),
       ...(onProgress === null ? {} : { onProgress }),
-    });
+    };
+    let result = await refresh(options);
+    // Drain the finite once-only repair queue in bounded source batches. Keep
+    // the same cancellation/deadline and do not publish a mixed repair state.
+    // A stalled queue is an error, not an unbounded retry loop.
+    let pending = Infinity;
+    const totals = { sourcesResumed: 0, sourcesRescanned: 0, sourcesNew: 0,
+      bytesScanned: 0, usageEvents: 0, wallMs: 0 };
+    let changed = false;
+    for (let pass = 0; ; pass++) {
+      signal?.throwIfAborted();
+      for (const key of Object.keys(totals)) totals[key] += Math.max(0, Number(result[key]) || 0);
+      changed ||= result.unchanged !== true;
+      if (result.status !== 'deferred' || result.deferred?.reason !== 'model_attribution_recovery') break;
+      const next = result.deferred.pendingSources;
+      if (!Number.isSafeInteger(next) || next < 1 || next >= pending || pass >= 1024) {
+        throw fixedError('local_unified_index_model_recovery_stalled');
+      }
+      pending = next;
+      result = await refresh({ ...options, ordinalSeed: null });
+    }
     // A deferred refresh stopped under write-ahead-log pressure. Everything it
     // committed is valid, but it did not reach the end of the corpus, so it
     // is not a publication accounting may treat as complete.
     if (result.status !== "refreshed") throw fixedError("local_unified_index_publication_busy");
+    result = { ...result, ...totals, unchanged: !changed };
+    const runtimeEvidence=reconcileRuntimeModelEvidence({indexFile:file,signal});
+    if(runtimeEvidence.applied>0)result.unchanged=false;
     // First completed refresh in every process (including after a crash), then
     // daily at this idle ingestion boundary. Never run on a report read path.
     const maintenanceResult = await maintainIfDue(file, signal);
@@ -213,8 +239,9 @@ export function createLocalIndexBackend({
 
   /**
    * The refresh deadline for the next run. A store that does not exist yet, or
-   * whose sources were written by another parser stamp, needs a full scan and
-   * gets the bounded cold window; every other store, including an unreadable
+   * whose sources were written by another parser stamp, needs a full scan.
+   * A finite response-model repair queue also gets the bounded recovery window
+   * for its affected sources only. Every other store, including an unreadable
    * one, keeps the ordinary incremental deadline.
    */
   function refreshTimeoutMs({
@@ -227,7 +254,8 @@ export function createLocalIndexBackend({
       const stale = database.prepare(
         "SELECT 1 AS stale FROM source WHERE parser_version <> ? LIMIT 1",
       ).get(LOCAL_INDEX_PARSER_VERSION);
-      return stale?.stale === 1 ? freshTimeoutMs : existingTimeoutMs;
+      const recovery = readPendingResponseModelRecoverySources(database, RESPONSE_MODEL_RECOVERY_VERSION);
+      return stale?.stale === 1 || recovery.size > 0 ? freshTimeoutMs : existingTimeoutMs;
     } catch {
       return existingTimeoutMs;
     } finally {

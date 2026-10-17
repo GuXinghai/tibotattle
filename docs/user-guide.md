@@ -53,6 +53,14 @@ the same pipeline and restarts the countdown when work settles. First history
 preparation can take longer. Missing values remain unavailable; failures name
 the affected stage, and retained results keep their original timestamp.
 
+Overview diagnostics appear below the cards. Expand them to inspect unpriced
+records, Token components, reasons and runtime-evidence capture status. Unknown
+models remain unknown; recorded usage is preserved without guessed prices.
+While TiboTattle is open it incrementally retains content-free model and retry
+evidence before Codex removes its diagnostic logs. Capture does not change the
+dashboard's five-minute publication cadence. Closing TiboTattle stops capture;
+it cannot recover upstream logs that have already been removed.
+
 Daily bar totals are observed quota movement; colours allocate it using local
 usage. Grey portions are unclassified. Observation gaps and resets are not
 smoothed away. The relative-consumption chart compares quota deduction with
@@ -127,7 +135,7 @@ selector keeps the headline, history, range, and pace on the same selected popul
 yet have enough usable evidence; older-plan estimates remain selectable rather
 than being presented as the current plan's allowance.
 
-The allowance history automatically draws a **Robust LOWESS** trend alongside
+The calibration history under **Complete details → Allowance API equivalent** draws a **Robust LOWESS** trend alongside
 its all-data median reference, raw dots and slope-agreement ranges. It uses only
 the selected plan and visible, filtered reset estimates. The headline remains the all-data
 median. LOWESS is not a confidence interval or proof that the
@@ -199,9 +207,16 @@ so instead of choosing a different period. All available history describes the
 evidence retained locally; coverage and indexing notices still qualify it.
 
 Current allowance readings are unaffected.
-The Allowance headline remains the median of its full qualifying plan population;
-the reporting period filters its history chart. Plan, allowance-window, model,
-grouping, chart zoom, and minimum-span controls remain beside the data they affect.
+The Allowance primary chart shows **Weekly API equivalent** by exact quota-change
+interval. Select the plan beside TiboTattle and choose Gaussian smoothing (off
+or sigma 15/30/60/120/240 minutes). Smoothing changes the displayed curve only;
+missing or incompatible evidence remains a gap. The time slider and chart share
+one time scale. **Complete details** keeps raw interval amounts and quota
+fractions, all pages, observations, reset records and the existing calibration
+and comparison tools. The calibration headline inside that dialog remains the
+median of its qualifying plan population. The shared five-minute refresh and
+manual refresh publish matching chart/detail versions, preserving usable old
+results with an explicit failure status when an update fails.
 Updating local usage can advance the displayed reporting dates when a new
 accounting snapshot becomes available.
 
@@ -417,7 +432,8 @@ content, or a native crash dump. You can review and copy the report or prepare
 an editable GitHub support issue. Native crash capture is not offered on Windows.
 See [support](../SUPPORT.md) before sharing any local diagnostic file.
 
-Trends shows **Allowance and activity** by default, keeping remaining percentage
+Under **Allowance → Complete details → Allowance and usage history**, the retained
+history view keeps remaining percentage
 separate from API-price-equivalent activity. Expand **Detailed comparison of
 observed and estimated usage** to inspect the linked **three-hour observed versus
 calculated comparison** and **Cumulative drift**.

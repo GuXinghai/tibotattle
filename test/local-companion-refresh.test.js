@@ -389,6 +389,7 @@ const UNIFIED_SOURCE_DESCRIPTOR = Object.freeze({
 });
 
 const REUSABLE_ACCOUNTING_CACHE = Object.freeze({
+  weeklyApiIntervals: Object.freeze({schemaVersion:'weekly-api-interval-v1',status:'available',rows:[]}),
   schemaVersion: REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION,
   generatedAt: "2026-07-23T10:00:00.000Z",
   coveredAt: Object.freeze({
@@ -2068,6 +2069,16 @@ test("zero-write local refresh rebuilds when the cache cannot be safely reused",
       }),
     },
     {
+      name: "missing interval projection",
+      read: async () => ({status:'available',errorCode:null,
+        cache:{...REUSABLE_ACCOUNTING_CACHE,weeklyApiIntervals:undefined}}),
+    },
+    {
+      name: "failed interval projection",
+      read: async () => ({status:'available',errorCode:null,
+        cache:{...REUSABLE_ACCOUNTING_CACHE,weeklyApiIntervals:{status:'unavailable',reason:'weekly_api_projection_failed'}}}),
+    },
+    {
       name: "stale schema",
       read: async () => ({
         status: "available",
@@ -3735,6 +3746,8 @@ test("refresh controller exposes only allowlisted unified-index failure codes", 
       "local_unified_index_publication_busy",
       "local_unified_index_publication_timed_out",
       "local_unified_index_publication_failed",
+      "local_unified_index_model_recovery_stalled",
+      "codex_response_usage_checkpoint_conflict",
       "local_index_maintenance_failed",
       "local_index_maintenance_cancelled",
       "local_index_maintenance_deferred",
@@ -4324,4 +4337,37 @@ test("index publication observer is fenced on failed or cancelled reload and can
       if (outcome.endsWith("observer")) assert.equal(controller.getStatus().status, "succeeded");
     });
   }
+});
+
+
+test("overview indexing uses the configured source budget beyond one minute without resetting its hard deadline", async (t) => {
+  const timers=createManualTimerScheduler(),entered=Promise.withResolvers(),settled=Promise.withResolvers();
+  let signal,publish,selections=0,reloads=0;t.after(()=>settled.resolve({}));
+  const controller=new LocalCompanionRefreshController({
+    runner:async options=>{signal=options.signal;publish=options.onProgress;entered.resolve();return settled.promise;},
+    dataStore:{async reload(){reloads++;}},timeoutMs:1000,timeoutMsForRun:()=>{selections++;return 120_000;},
+    monotonicClock:timers.now,setTimeoutImpl:timers.setTimeout,clearTimeoutImpl:timers.clearTimeout,
+  });
+  controller.start({mode:"overview"});await entered.promise;assert.equal(selections,1);
+  timers.advanceBy(59_000);await publish({sources:10,sourcesScanned:1,usageEvents:10});
+  timers.advanceBy(30_000);assert.equal(controller.getStatus().status,"running");assert.equal(signal.aborted,false);
+  await publish({sources:10,sourcesScanned:2,usageEvents:20});
+  timers.advanceBy(30_999);assert.equal(controller.getStatus().status,"running");
+  timers.advanceBy(1);assert.equal(controller.getStatus().errorCode,"refresh_timed_out");assert.equal(signal.aborted,true);
+  settled.resolve({});await flushControllerSettlement(controller);assert.equal(controller.getStatus().status,"failed");assert.equal(reloads,0);
+});
+
+test("overview grants only the existing one-time accounting extension after a longer valid index phase", async (t) => {
+  const timers=createManualTimerScheduler(),entered=Promise.withResolvers(),settled=Promise.withResolvers();let publish,signal;
+  t.after(()=>settled.resolve({}));
+  const controller=new LocalCompanionRefreshController({runner:async options=>{publish=options.onProgress;signal=options.signal;entered.resolve();return settled.promise;},
+    dataStore:{async reload(){}},timeoutMsForRun:()=>120_000,accountingTimeoutMs:240_000,
+    monotonicClock:timers.now,setTimeoutImpl:timers.setTimeout,clearTimeoutImpl:timers.clearTimeout});
+  controller.start({mode:"overview"});await entered.promise;
+  timers.advanceBy(110_000);await publish({kind:"accounting",status:"calculating"});
+  timers.advanceBy(100_000);assert.equal(controller.getStatus().status,"running");
+  await publish({kind:"accounting",status:"calculating"});
+  timers.advanceBy(29_999);assert.equal(controller.getStatus().status,"running");
+  timers.advanceBy(1);assert.equal(controller.getStatus().errorCode,"refresh_timed_out");assert.equal(signal.aborted,true);
+  settled.resolve({});await flushControllerSettlement(controller);
 });

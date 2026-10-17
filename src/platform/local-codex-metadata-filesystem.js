@@ -81,6 +81,7 @@ export function createLocalCodexMetadataFilesystem({
         // not claim protection against a transient create/remove of an absent
         // name by a hostile same-owner process between the checks.
         return {
+          identity: `${held[0].before.dev}:${held[0].before.ino}:${held[0].before.birthtimeMs}`,
           databasePath: immutable ? `${pathToFileURL(path).href}?mode=ro&immutable=1` : path,
           async validate() {
             if (!(await readHeader()).equals(databaseHeader)) return false;

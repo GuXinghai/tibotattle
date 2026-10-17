@@ -95,7 +95,7 @@
     margin-top: 6px;
     background: var(--surface-raised, #fffef9);
     color: var(--matrix-light);
-    box-shadow: 0 16px 38px rgb(23 33 30 / 18%);
+    box-shadow: var(--shadow);
   }
   .cache-matrix-model-picker option {
     display: flex;
@@ -107,7 +107,7 @@
     font-size: .85rem;
     white-space: normal;
   }
-  .cache-matrix-model-picker option:hover { background: rgb(23 33 30 / 6%); }
+  .cache-matrix-model-picker option:hover { background: var(--surface-quiet); }
   .cache-matrix-model-picker option:checked, .cache-matrix-model-picker option:checked:hover { background: rgb(47 127 184 / 12%); }
   .cache-matrix-model-picker option:focus-visible { outline-color: var(--matrix-light); }
   .cache-matrix-model-picker option::checkmark { order: 2; margin-inline-start: auto; color: var(--matrix-good); }
@@ -154,14 +154,15 @@
   .cache-matrix-plot .cache-matrix-rate { font-size: 12px; }
 }
 .cache-matrix-gap { font-weight: 600; }
-.cache-matrix-baseline { stroke: rgb(23 33 30 / 18%); }
-.cache-matrix-gridline { stroke: rgb(23 33 30 / 7%); }
+.cache-matrix-baseline { stroke: var(--line-strong); }
+.cache-matrix-gridline { stroke: var(--line); }
 .cache-matrix-cells { filter: none; }
 .cache-matrix-cell-more { fill: var(--matrix-good); }
 .cache-matrix-cell-less { fill: var(--matrix-poor); }
 .cache-matrix-selection {
-  fill: rgb(23 33 30 / 4%);
-  stroke: rgb(23 33 30 / 40%);
+  fill: currentColor;
+  fill-opacity: .04;
+  stroke: var(--muted);
   stroke-width: 1;
   pointer-events: none;
   transition: transform 220ms cubic-bezier(.2,.8,.2,1), opacity 160ms ease;

@@ -475,6 +475,7 @@ export async function readCodexLocalThreadMetadata(codexHome, threadIds, {
 /** Read only explicit collaboration edges; no names or prompt-bearing titles. */
 export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
   platform = process.platform, loadWindowsBinding, databaseFactory = openMetadataDatabase, signal,
+  includeOriginEvidence = false,
 } = {}) {
   const filesystem = createLocalCodexMetadataFilesystem({ platform, loadWindowsBinding });
   if (!Array.isArray(threadIds) || threadIds.length > 25_000 || !await filesystem.validHome(codexHome)) return new Map();
@@ -498,7 +499,8 @@ export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
     const autoReview = selected.get(id)?.origin === "auto_review";
     // Never attach to a missing, cyclic, or internal-review terminal parent.
     if (!valid || autoReview && selected.get(current)?.origin === "auto_review") current = id;
-    return [id, { root: current, autoReview }];
+    return [id, { root: current, autoReview,
+      ...(includeOriginEvidence ? {originKnown:selected.has(id)} : {}) }];
   }));
 }
 

@@ -55,6 +55,7 @@ export const EXPORT_DIAGNOSTIC_CODES = Object.freeze([
   "missing_rate_limit_records",
   "replayed_events_skipped",
   "replayed_tool_calls_skipped",
+  "response_unverified_prefix_turns",
   "unattached_tool_calls",
   "unattributed_fork_replay_events_skipped",
 ]);

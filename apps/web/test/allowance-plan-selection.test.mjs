@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {createContext,runInContext} from 'node:vm';
 import {
   normalizeDashboardPayload,
   selectAllowancePlanPopulation,
@@ -120,7 +121,7 @@ function population(planType, value, comparisonEligibility = "unavailable") {
 }
 
 function dashboard({ current = "plus", plus = null, comparison = "unavailable",
-  scopedRows = [usageRow()], scopedIntervals = [[Date.parse("2026-01-01T00:00:00Z"), Date.parse("2026-09-01T00:00:00Z")]],
+  historical = [], scopedRows = [usageRow()], scopedIntervals = [[Date.parse("2026-01-01T00:00:00Z"), Date.parse("2026-09-01T00:00:00Z")]],
 } = {}) {
   const populations = [population("pro", 2_400, comparison), population("plus", plus, comparison)];
   const selected = populations.find((row) => row.planType === current);
@@ -164,6 +165,7 @@ function dashboard({ current = "plus", plus = null, comparison = "unavailable",
       usage: [usageRow({ events: 2, standardUsd: 10, fastUsd: 20 })],
       calibrationUsage: [],
       allowanceCapacity: allowanceCapacity(current),
+      historicalPlanComparisons: historical,
       planScoped: {
         schemaVersion: "local-plan-scoped-accounting-timeline-v1",
         encoding: "plan_bucket_v1",
@@ -180,6 +182,20 @@ function dashboard({ current = "plus", plus = null, comparison = "unavailable",
   return data;
 }
 
+test('the primary header selects the requested weekly plan before any five-hour detail projection',async()=>{
+  const source=await readFile(new URL('../public/app.js',import.meta.url),'utf8');
+  const start=source.indexOf('function renderWeekly(data) {'),end=source.indexOf('  const summary =',start);
+  assert.ok(start>=0&&end>start);
+  const input=dashboard({current:'pro',plus:100});let header;
+  const context=createContext({input,activeWeeklyPlanType:'plus',selectAllowancePlanPopulation,
+    allowanceWindowView:data=>({...data,allowanceWindowDurationMinutes:300,weekly:{planType:'free',planPopulations:[]}}),
+    renderAllowanceWindowChrome:()=>{},renderWeeklyPlanControl:value=>{header=value;},renderStaleServeNote:()=>{},$:()=>({})});
+  runInContext(`${source.slice(start,end)}}\nrenderWeekly(input);`,context);
+  assert.equal(header.allowancePlanSelection.planType,'plus');
+  assert.deepEqual(header.weekly.planPopulations.map(row=>row.planType),['pro','plus']);
+  assert.equal(input.weekly.planType,'pro','the header does not change current evidence');
+});
+
 test("latest-plan selection remains insufficient instead of borrowing the old plan's fit", () => {
   const data = dashboard();
   assert.equal(data.weekly.paceForecast.status, "available",
@@ -194,7 +210,8 @@ test("latest-plan selection remains insufficient instead of borrowing the old pl
   assert.strictEqual(selected.weekly.paceForecast, data.weekly.paceForecast);
   assert.deepEqual(selected.quotaWindows.map((row) => row.planType), ["plus"]);
   assert.equal(selected.timeline.allowanceCapacity, null);
-  assert.deepEqual(selected.timeline.selectedPlanUsage, []);
+  assert.equal(selected.timeline.selectedPlanUsage.length, 1, "known usage survives an unavailable capacity estimate");
+  assert.equal(selected.allowancePlanSelection.usageAvailable, true);
   assert.equal(selected.timeline.usage[0].usageEvents, 2,
     "the all-plan ledger remains conserved while the sparse current plan is unavailable");
 });
@@ -205,6 +222,40 @@ test("selected quota is independent of generic cross-plan collapse and all-plan 
   const selected = selectAllowancePlanPopulation(data);
   assert.deepEqual(selected.timeline.quota.map((row) => [row.planType, row.usedPercent]), [["pro", 30]]);
   assert.deepEqual(data.timeline.quota.map((row) => [row.planType, row.usedPercent]), [["plus", 90]]);
+});
+
+test("historical observations survive without a matched usage/capacity lane", () => {
+  const data = dashboard({current:"pro", plus:85});
+  const plus = {observedAt:"2026-08-29T12:00:00.000Z", planType:"plus",
+    durationMinutes:10080, limitId:"codex", remainingPercent:42, usedPercent:58};
+  data.timeline.quota = [plus, {...plus, planType:"pro", remainingPercent:70},
+    {...plus, planType:"unknown", remainingPercent:1}];
+  const original = JSON.stringify(data);
+  const historical = selectAllowancePlanPopulation(data,"plus");
+  assert.deepEqual(historical.timeline.quota,[plus]);
+  assert.equal(historical.weekly.weeklyValues.length,1);
+  assert.equal(historical.allowancePlanSelection.comparisonAvailable,false);
+  assert.deepEqual(historical.timeline.selectedPlanUsage,[]);
+  assert.deepEqual(historical.timeline.comparisonIntervals,[]);
+  assert.equal(historical.timeline.allowanceCapacity,null);
+  assert.deepEqual(historical.quotaWindows,[],"historical readings cannot become a current quota card");
+  assert.equal(JSON.stringify(data),original,"selection cannot mutate the source or all-plan accounting");
+  const current = selectAllowancePlanPopulation(historical,"pro");
+  assert.deepEqual(current.timeline.quota.map(r=>r.planType),["pro","pro"], "both comparable and observation-only points survive");
+  assert.equal(current.timeline.quota.at(-1).observedAt,plus.observedAt);
+  assert.equal(current.timeline.selectedPlanUsage.length,1);
+});
+
+test("a failed comparison preserves only positively attributed observations of the selected plan", () => {
+  const data = dashboard({current:"pro", plus:85});
+  data.timeline.quota = [{planType:"pro",observedAt:"2026-08-30T12:00:00Z",remainingPercent:65},
+    {planType:"plus",observedAt:"2026-08-30T12:00:00Z",remainingPercent:15}];
+  data.timeline.planScoped.planScope.sourceGeneration=999;
+  const selected=selectAllowancePlanPopulation(data);
+  assert.equal(selected.allowancePlanSelection.comparisonAvailable,false);
+  assert.deepEqual(selected.timeline.quota.map(r=>r.remainingPercent),[65]);
+  assert.deepEqual(selected.timeline.selectedPlanUsage,[]);
+  assert.equal(selected.timeline.allowanceCapacity,null);
 });
 
 test("valid scoped history beyond 3000 buckets is retained, not rejected or truncated", () => {
@@ -428,4 +479,92 @@ test("manual refresh includes detailed accounting while automatic refresh stays 
     "ordinary quick refresh cannot schedule a history continuation");
   assert.match(source, /requestRefresh\(\{ autoContinue: true, detailed: true \}\)/u,
     "bounded continuation preserves the original explicit detailed operation");
+});
+
+function historicalLane(planType = "plus") {
+  const start = Date.parse("2026-08-29T11:45:00Z"), end = start + 900_000;
+  const row = {...usageRow(), startAt:new Date(start).toISOString(),endAt:new Date(end).toISOString()};
+  return {planType, failure:null, allowanceCapacity:allowanceCapacity(planType), planScoped:{
+    schemaVersion:"local-plan-scoped-accounting-timeline-v1",encoding:"plan_bucket_v1",
+    status:"available",reason:null,planScope:planScope(planType),usage:[compactPlanRow(row)],
+    comparisonIntervals:[[start,end]],quota:[[start,end/1000,30]],
+    excludedIntervals:[[start-900_000,start,"plan_transition_interval"]],
+  }};
+}
+
+test("historical Plus uses its own fenced lane across upgrades and downgrades without adding to totals", () => {
+  for (const [current,history] of [["pro","plus"],["plus","pro"]]) {
+    const data=dashboard({current,plus:85,historical:[historicalLane(history)]});
+    const before=JSON.stringify(data), global=data.timeline.usage;
+    const selected=selectAllowancePlanPopulation(data,history);
+    assert.equal(selected.allowancePlanSelection.comparisonAvailable,true);
+    assert.equal(selected.allowancePlanSelection.usageAvailable,true);
+    assert.equal(selected.timeline.allowanceCapacity.planScope.planType,history);
+    assert.equal(selected.timeline.selectedPlanUsage.length,1);
+    assert.equal(selected.timeline.excludedIntervals.length,1);
+    assert.equal(selected.timeline.quota[0].planType,history);
+    assert.strictEqual(selected.timeline.usage,global);
+    assert.equal(JSON.stringify(data),before);
+    assert.equal(selectAllowancePlanPopulation(selected,current).timeline.selectedPlanUsage.length,1);
+  }
+});
+
+test("historical scope mismatches and duplicate lanes cannot borrow the current plan's data", () => {
+  for (const alter of [
+    r=>r.planScoped.planScope.cohortId="b".repeat(64),
+    r=>r.planScoped.planScope.sourceGeneration=99,
+    r=>r.planScoped.planScope.planType="pro",
+    r=>r.allowanceCapacity.planScope.planType="pro",
+    r=>r.planScoped.excludedIntervals=[[r.planScoped.usage[0][0],r.planScoped.usage[0][0]+900_000,"private-reason"]],
+  ]) {
+    const lane=historicalLane();alter(lane);
+    const data=dashboard({current:"pro",plus:85,historical:[lane]});
+    const selected=selectAllowancePlanPopulation(data,"plus");
+    assert.equal(selected.allowancePlanSelection.comparisonAvailable,false);
+    assert.equal(selected.timeline.selectedPlanUsage.length,0);
+    assert.equal(data.timeline.usage[0].usageEvents,2);
+  }
+  const data=dashboard({current:"pro",plus:85,historical:[historicalLane(),historicalLane()]});
+  assert.equal(selectAllowancePlanPopulation(data,"plus").allowancePlanSelection.comparisonAvailable,false);
+});
+
+test("known historical usage survives an unavailable fit, while calculation failures stay explicit", () => {
+  const lane=historicalLane();lane.allowanceCapacity={...lane.allowanceCapacity,status:"unavailable",selectedScenario:null,planScope:null};
+  lane.planScoped.planScope.cohortId=null;
+  const data=dashboard({current:"pro",plus:85,historical:[lane]});
+  const selected=selectAllowancePlanPopulation(data,"plus");
+  assert.equal(selected.allowancePlanSelection.comparisonAvailable,false);
+  assert.equal(selected.allowancePlanSelection.usageAvailable,true);
+  assert.equal(selected.timeline.selectedPlanUsage.length,1);
+  assert.equal(selected.timeline.allowanceCapacity,null);
+  for(const invalidCohort of [undefined,"not-a-cohort"]){
+    const invalid=historicalLane();invalid.planScoped.planScope.cohortId=invalidCohort;
+    invalid.allowanceCapacity={...lane.allowanceCapacity};
+    const rejected=selectAllowancePlanPopulation(dashboard({current:"pro",plus:85,historical:[invalid]}),"plus");
+    assert.equal(rejected.allowancePlanSelection.usageAvailable,false,"a null fit cannot excuse malformed provenance");
+  }
+  const broken=historicalLane();broken.failure="accounting_transition_memory_budget_exceeded";
+  broken.planScoped={...broken.planScoped,status:"unavailable",reason:"plan_scoped_resource_limit"};
+  const failed=selectAllowancePlanPopulation(dashboard({current:"pro",plus:85,historical:[broken]}),"plus");
+  assert.equal(failed.allowancePlanSelection.failure,broken.failure);
+  assert.equal(failed.allowancePlanSelection.comparisonAvailable,false);
+});
+
+
+test("complete historical observations survive an excluded tail and a changing generic sampler", () => {
+  const lane=historicalLane(),tail=lane.planScoped.comparisonIntervals[0][1]+300_000;
+  lane.planScoped.observedQuota=[...lane.planScoped.quota,[tail,lane.planScoped.quota[0][1],15]];
+  const data=dashboard({current:"pro",plus:85,historical:[lane]});
+  const selected=selectAllowancePlanPopulation(data,"plus");
+  assert.equal(selected.allowancePlanSelection.comparisonAvailable,true);
+  assert.equal(selected.timeline.quota.at(-1).remainingPercent,85);
+  assert.equal(Date.parse(selected.timeline.quota.at(-1).observedAt),tail);
+  assert.ok(tail>selected.timeline.comparisonIntervals.at(-1)[1],"a real quota observation is independent of quantity-interval eligibility");
+  assert.equal(selected.timeline.selectedPlanUsage.length,1);
+  assert.deepEqual(data.timeline.quota,[],"the generic sampler cannot be required to recover a historical last reading");
+  for(const alter of [
+    r=>r.planScoped.observedQuota.push([...r.planScoped.observedQuota.at(-1)]),
+    r=>{const q=r.planScoped.observedQuota;q[0]=[q[0][0],q[0][1],31];},
+    r=>r.planScoped.observedQuota.at(-1)[2]=101,
+  ]){const invalid=structuredClone(lane);alter(invalid);const rejected=selectAllowancePlanPopulation(dashboard({current:"pro",plus:85,historical:[invalid]}),"plus");assert.equal(rejected.allowancePlanSelection.usageAvailable,false);}
 });

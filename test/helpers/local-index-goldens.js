@@ -11,6 +11,7 @@ import { readLocalIndexReport } from "../../src/local-index-report.js";
 import { openLocalIndexStore, withReadSnapshot } from "../../src/local-index-store.js";
 import { readLocalIndexWorkUsage } from "../../src/local-index-work-usage.js";
 import { createWorkspace } from "./local-index-facts.js";
+import { readPricingOracleFacts, reportSpeedOracle, workPricingOracle } from "./local-index-pricing-oracle.js";
 
 // Golden outputs of the shipping (v1) implementation at commit cf94e9a8, over
 // one committed synthetic corpus. They were generated once, while that
@@ -158,7 +159,9 @@ export function goldenLayerView(layer) {
     weeklyCalibration: layer.weeklyCalibration,
     allowanceCapacityByScenario: layer.allowanceCapacityByScenario,
     fiveHourAllowanceCalibration: layer.fiveHourAllowanceCalibration,
-    planScopedTimeline: layer.planScopedTimeline,
+    // The frozen golden predates explicit excluded intervals; its accounting
+    // fields remain exact. New plan projections have independent regression tests.
+    planScopedTimeline: Object.fromEntries(Object.entries(layer.planScopedTimeline).filter(([key]) => !["excludedIntervals", "observedQuota"].includes(key))),
     weeklyCalibrationInput: input,
   }));
 }
@@ -206,7 +209,8 @@ export async function readGoldenViewsFromStore() {
     });
     const database = openLocalIndexStore(file, { readOnly: true });
     try {
-      const views = { corpus: workspace.receipt.digest, reports: {}, layers: {}, work: {} };
+      const views = { corpus: workspace.receipt.digest, reports: {}, layers: {}, work: {}, standardWork: {}, speedWork: {}, speedReports: {} };
+      const facts = readPricingOracleFacts(database);
       for (const [name, nowMs] of GOLDEN_CLOCKS) {
         views.reports[name] = goldenReportView(withReadSnapshot(database, () => readLocalIndexReport(
           database, { nowMs, declaredSpeedBaselines: GOLDEN_LEDGER },
@@ -215,6 +219,10 @@ export async function readGoldenViewsFromStore() {
           database, indexFile: file, codexHome: workspace.codexHome,
           secretFile: workspace.secretFile, nowMs,
         }));
+        const oracleOptions = { nowMs, codexHome: workspace.codexHome, secretFile: workspace.secretFile };
+        views.standardWork[name] = goldenWorkView(await workPricingOracle(database, facts, { ...oracleOptions, standard: true }));
+        views.speedWork[name] = goldenWorkView(await workPricingOracle(database, facts, oracleOptions));
+        views.speedReports[name] = reportSpeedOracle(facts, nowMs, GOLDEN_LEDGER);
       }
       database.close();
       for (const [name, baselines] of [["no-ledger", []], ["ledger", GOLDEN_LEDGER]]) {

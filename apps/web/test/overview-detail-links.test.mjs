@@ -6,12 +6,18 @@ import { parseDashboardHash } from "../public/navigation.js";
 const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
 const layout = source.slice(source.indexOf("function mountDashboardLayout("));
+const allowance = await readFile(new URL('../public/allowance-page.js', import.meta.url), 'utf8');
 
 // A link is real only when its page exists and that page's level-1 switch
 // lists the view; an unknown view would silently fall back to the default.
 function assertReachable(href) {
   const { page, view } = parseDashboardHash(href);
   assert.ok(page, href);
+  if (page === 'allowance') {
+    assert.match(allowance, new RegExp(`${view}:'${view === 'changes' ? 'history' : view}'`));
+    assert.match(allowance, /routes\[event\.detail\.view\]\) open\(routes\[event\.detail\.view\]\)/u);
+    return;
+  }
   if (page === "usage" && view === "composition") {
     assert.match(layout, /composition: "#usage-composition-details"/u);
     assert.match(layout, /usageDetailRoutes\[event\.detail\.view\][\s\S]*?summary[\s\S]*?click/u);

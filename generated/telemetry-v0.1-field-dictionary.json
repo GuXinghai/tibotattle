@@ -20,13 +20,13 @@
     {
       "schemaName": "bundle.schema.json",
       "schemaId": "https://app-usagemonitor.local/schemas/telemetry-v0.1/bundle.schema.json",
-      "schemaSha256": "556e14ebc808d95940ab94946d2f7b72ec59052b0912a38b64f0311805de35cc",
+      "schemaSha256": "90a952cdabcb97165342a1be5ad217d0b43aa397d80a3cfb3cc2e08d10c16386",
       "propertyCount": 24
     },
     {
       "schemaName": "compatibility.schema.json",
       "schemaId": "https://app-usagemonitor.local/schemas/telemetry-v0.1/compatibility.schema.json",
-      "schemaSha256": "ebd695673e305942c0a3b63ce7154899550b73ccbf28fcfae390b32e21fcab1f",
+      "schemaSha256": "ac4a950f8bb3af1c4004ca0ab41ef5b88433f2e83814fa39c00736ceb6555acb",
       "propertyCount": 66
     },
     {

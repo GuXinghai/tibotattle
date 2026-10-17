@@ -3,9 +3,11 @@ import { join } from 'node:path';
 // Keep the worker reachable to the native runtime dependency scanner.
 import './model-performance-worker.js';
 import { createModelPerformanceSnapshotStore, isCompleteModelPerformanceSnapshot,
+  isSettledModelPerformanceSnapshot,
   readModelPerformanceSnapshotEntry, modelPerformanceSourceScope, modelPerformanceSnapshotKey,
   MODEL_PERFORMANCE_SPEED_MODES as SPEED_MODES,
-  MODEL_PERFORMANCE_MAX_WINDOWS as MAX_WINDOWS, MODEL_PERFORMANCE_PERIODS as PERIODS } from './model-performance-snapshots.js';
+  MODEL_PERFORMANCE_MAX_WINDOWS as MAX_WINDOWS, MODEL_PERFORMANCE_PERIODS as PERIODS,
+  MODEL_PERFORMANCE_DIAGNOSTICS } from './model-performance-snapshots.js';
 
 export function createModelPerformanceController({ directory, codexHome,
   idleMs = 60_000, snapshotNow = () => Date.now(), snapshotWriteIntervalMs = 60 * 60 * 1_000,
@@ -14,8 +16,10 @@ export function createModelPerformanceController({ directory, codexHome,
   if (typeof snapshotNow !== 'function') throw new TypeError('snapshotNow must be a function');
   if (!Number.isSafeInteger(snapshotWriteIntervalMs) || snapshotWriteIntervalMs < 1)
     throw new TypeError('snapshotWriteIntervalMs must be a positive integer');
-  const cache = new Map(), complete = new Map(), windows = new Map();
-  const store = snapshotStoreFactory({ directory, codexHome, now: snapshotNow });
+  const cache = new Map(), settled = new Map(), windows = new Map();
+  const diagnostics = new Set();
+  const onDiagnostic = code => { if (MODEL_PERFORMANCE_DIAGNOSTICS.includes(code)) diagnostics.add(code); };
+  const store = snapshotStoreFactory({ directory, codexHome, now: snapshotNow, onDiagnostic });
   const sourceScope = modelPerformanceSourceScope(codexHome);
   const timingRoot = sourceScope && typeof directory === 'string' ? directory : undefined;
   // Keep each configured source's durable rows separate. The legacy unscoped
@@ -28,9 +32,9 @@ export function createModelPerformanceController({ directory, codexHome,
     if (sourceRevision === nextSourceRevision) return false;
     sourceRevision = nextSourceRevision;
     // A replay can remove a previously emitted turn or invalidate its timing.
-    // Do not serve the old complete projection while the worker rebuilds; the
+    // Do not serve the old settled projection while the worker rebuilds; the
     // next validated snapshot repopulates both caches.
-    complete.clear(); cache.clear(); revision++; savedRevision = -1;
+    settled.clear(); cache.clear(); revision++; savedRevision = -1;
     return true;
   }
   const empty = (period, speedMode, status) => ({ schemaVersion: 5, method: 5, status, collecting: false, stale: false,
@@ -45,25 +49,25 @@ export function createModelPerformanceController({ directory, codexHome,
         for (const entry of receipt.values) {
           const { key, snapshot: value } = readModelPerformanceSnapshotEntry(entry);
           if (key !== modelPerformanceSnapshotKey(value.period, value.speedMode)) windows.set(key, { period: value.period, speedMode: value.speedMode, end: value.end, requestKey: key });
-          complete.set(key, value);
+          settled.set(key, value);
           cache.set(key, { ...value, collecting: true, historyProgress: null });
         }
-      } catch { /* A missing or rejected receipt never blocks live measurements. */ }
+      } catch { onDiagnostic('timing_snapshot_read_failed'); }
     })();
     return restoration;
   }
   const withinWriteInterval = nowMs => lastPersistedAt !== null && nowMs >= lastPersistedAt
     && nowMs - lastPersistedAt < snapshotWriteIntervalMs;
   function persist(force = false) {
-    if (!store || !complete.size || savedRevision === revision) return;
+    if (!store || !settled.size || savedRevision === revision) return;
     let nowMs;
-    try { nowMs = snapshotNow(); } catch { return; }
+    try { nowMs = snapshotNow(); } catch { onDiagnostic('timing_snapshot_write_failed'); return; }
     // Match the dashboard's first-result/hourly disk cadence. Live completed
     // measurements stay in memory between writes; close flushes the newest one.
     if (!Number.isFinite(nowMs) || (!force && withinWriteInterval(nowMs))) return;
     // Keep one queued immutable candidate: a slow disk cannot accumulate an
     // unbounded write queue, and older writes can never overtake newer ones.
-    pending = { values: structuredClone([...complete].map(([key, snapshot]) => key === modelPerformanceSnapshotKey(snapshot.period, snapshot.speedMode)
+    pending = { values: structuredClone([...settled].map(([key, snapshot]) => key === modelPerformanceSnapshotKey(snapshot.period, snapshot.speedMode)
       ? snapshot : { ...snapshot, requestKey: key })), revision, nowMs, force };
     if (writing) return;
     writing = (async () => {
@@ -72,10 +76,14 @@ export function createModelPerformanceController({ directory, codexHome,
         if (candidate.revision === savedRevision || (!candidate.force && withinWriteInterval(candidate.nowMs))) continue;
         try {
           if (await store.write(candidate.values)) {
+            diagnostics.delete('timing_snapshot_write_failed');
+            diagnostics.delete('timing_snapshot_invalid');
+            diagnostics.delete('timing_snapshot_read_failed');
+            diagnostics.delete('timing_snapshot_scope_mismatch');
             lastPersistedAt = candidate.nowMs;
             savedRevision = candidate.revision;
-          }
-        } catch { /* Retain the previous atomic receipt. */ }
+          } else onDiagnostic('timing_snapshot_write_failed');
+        } catch { onDiagnostic('timing_snapshot_write_failed'); }
       }
     })().finally(() => {
       writing = null;
@@ -85,7 +93,8 @@ export function createModelPerformanceController({ directory, codexHome,
       }
     });
   }
-  function fail() {
+  function fail(code = 'timing_worker_failed') {
+    onDiagnostic(code);
     failedAt = Date.now();
     for (const [period, value] of cache) cache.set(period, { ...value, collecting: false, stale: true });
   }
@@ -123,29 +132,40 @@ export function createModelPerformanceController({ directory, codexHome,
         directory: workerDirectory, timingRoot, codexHome },
         resourceLimits: { maxOldGenerationSizeMb: 128 } });
       worker = current;
-      for (const [period, value] of complete) cache.set(period, { ...value, collecting: true, historyProgress: null });
+      for (const [period, value] of settled) cache.set(period, { ...value, collecting: true, historyProgress: null });
       current.on('message', message => {
         if (closed || worker !== current) return;
         if (message?.type === 'invalidate' && typeof message.revision === 'string') {
           invalidateCachedProjection(message.revision);
           return;
         }
+        if (message?.type === 'diagnostics' && Array.isArray(message.codes)) {
+          for (const code of ['timing_scan_failed', 'timing_store_failed', 'timing_projection_failed', 'timing_history_unavailable', 'timing_source_recovery_failed',
+            'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported']) diagnostics.delete(code);
+          if (message.codes.length > MODEL_PERFORMANCE_DIAGNOSTICS.length
+              || message.codes.some(code => !MODEL_PERFORMANCE_DIAGNOSTICS.includes(code))) { fail('timing_projection_failed'); return; }
+          message.codes.forEach(onDiagnostic);
+          return;
+        }
         if (message?.type === 'snapshots' && Array.isArray(message.values)) {
+          if (message.cacheable !== undefined && typeof message.cacheable !== 'boolean') { fail('timing_projection_failed'); return; }
           if (typeof message.revision === 'string' && sourceRevision !== null
               && sourceRevision !== message.revision) invalidateCachedProjection(message.revision);
           if (typeof message.revision === 'string') sourceRevision = message.revision;
-          if (message.values.length > MAX_WINDOWS + PERIODS.length * SPEED_MODES.length) { fail(); return; }
+          if (message.values.length > MAX_WINDOWS + PERIODS.length * SPEED_MODES.length) { fail('timing_projection_failed'); return; }
           const entries = message.values.map(readModelPerformanceSnapshotEntry);
           if (entries.some(value => value === null)
-              || new Set(entries.map(value => value.key)).size !== entries.length) { fail(); return; }
+              || new Set(entries.map(value => value.key)).size !== entries.length) { fail('timing_projection_failed'); return; }
+          diagnostics.delete('timing_worker_failed');
           let changed = false;
           for (const { key, snapshot: value } of entries) {
             // A late projection for an evicted window cannot resurrect it or
             // replace the requested period's independently keyed snapshot.
             if (key !== modelPerformanceSnapshotKey(value.period, value.speedMode) && !windows.has(key)) continue;
-            const previous = complete.get(key);
-            if (isCompleteModelPerformanceSnapshot(value)) {
-              complete.set(key, value);
+            const previous = settled.get(key);
+            if (isCompleteModelPerformanceSnapshot(value)
+                || message.cacheable === true && isSettledModelPerformanceSnapshot(value)) {
+              settled.set(key, value);
               cache.set(key, value);
               changed = true;
             } else if (previous) {
@@ -154,7 +174,7 @@ export function createModelPerformanceController({ directory, codexHome,
             } else cache.set(key, value);
           }
           if (changed) { revision++; persist(); }
-        } else if (message?.type === 'unavailable') fail();
+        } else if (message?.type === 'unavailable') fail(MODEL_PERFORMANCE_DIAGNOSTICS.includes(message.code) ? message.code : 'timing_worker_failed');
       });
       current.on('error', () => { if (!closed && worker === current) fail(); });
       current.on('exit', code => {
@@ -168,6 +188,7 @@ export function createModelPerformanceController({ directory, codexHome,
     } catch { fail(); }
   }
   return {
+    diagnostics: () => [...diagnostics],
     async read(period, { endAt, speedMode = 'standard' } = {}) {
       if (!PERIODS.includes(period)) throw new Error('invalid_timing_period');
       if (!SPEED_MODES.includes(speedMode)) throw new Error('invalid_timing_speed_mode');
@@ -186,7 +207,7 @@ export function createModelPerformanceController({ directory, codexHome,
         while (windows.size > MAX_WINDOWS) {
           const oldest = windows.keys().next().value;
           windows.delete(oldest); cache.delete(oldest);
-          if (complete.delete(oldest)) revision++;
+          if (settled.delete(oldest)) revision++;
         }
         worker?.postMessage({ type: 'window', period, speedMode, end, requestKey: key });
       }

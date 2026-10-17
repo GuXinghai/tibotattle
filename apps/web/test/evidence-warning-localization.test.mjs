@@ -38,6 +38,7 @@ test("bounded companion warning templates retain counts, dates and missing-evide
     "Indexed-history totals include 11 of 23 verified sources. 12 sources across 3 threads did not pass local validation. This is a material coverage gap; missing usage remains unavailable rather than zero.",
     "Excluded from indexed history: 1 source across 1 thread did not pass local validation. Their usage remains unavailable.",
     "Excluded from indexed history: 12 sources across 3 threads did not pass local validation. Their usage remains unavailable.",
+    "Historical response coverage is partial. Recorded response amounts remain counted; earlier usage remains unavailable.",
   ];
   for (const warning of fixtures) {
     const message = evidenceWarningLocalization(warning);

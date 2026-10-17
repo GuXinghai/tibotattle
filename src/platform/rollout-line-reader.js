@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import { isCompressedRolloutSource, readCompressedRolloutBytes } from "./bounded-rollout-bytes.js";
+import { createLineFrame, projectCompleteLine } from './line-frame-projection.js';
 
 // Bounded, content-free line reader for Codex rollout JSONL.
 //
@@ -12,7 +13,8 @@ import { isCompressedRolloutSource, readCompressedRolloutBytes } from "./bounded
 // 2. Accounting records are usually small, but provider metadata and tool
 //    envelopes can exceed the former 64 KiB limit. Retain at most 512 KiB per
 //    line; callers can inspect structural headers without retaining the tail.
-//    Huge compactions still use only a bounded top-level type/timestamp prefix.
+//    A trusted optional projector can additionally retain a bounded receipt
+//    suffix for huge compactions, without retaining replacement history.
 //
 // So a line longer than the cap never needs full buffering or parsing. Its
 // tail is skipped without concatenation, which is what makes peak memory
@@ -39,8 +41,10 @@ function positiveSafeInteger(value, label) {
  *
  * `onLine(line, lineEndOffset, partial)` receives a `Buffer` view, not a
  * string. Callers may inspect structural headers as bytes, or decode complete
- * bounded records when full JSON member semantics are required. An oversized
- * suffix is never retained or decoded by this reader.
+ * bounded records when full JSON member semantics are required. The optional
+ * lineFrameProjector receives a 512-byte prefix and at most 128 KiB of suffix;
+ * undefined keeps the original bounded-prefix behavior, null skips the line,
+ * and a bounded string replaces it with complete projected metadata.
  *
  * The view handed to `onLine` is only valid for the duration of that call. It
  * may alias the read buffer, which is refilled on the next read.
@@ -52,6 +56,7 @@ export async function forEachRolloutLine(path, {
   maximumLineBytes = ROLLOUT_LINE_BYTES,
   highWaterMark = 256 * 1024,
   signal = null,
+  lineFrameProjector = null,
 } = {}) {
   if (typeof onLine !== "function") {
     throw new TypeError("onLine must be a function");
@@ -64,6 +69,7 @@ export async function forEachRolloutLine(path, {
   }
   positiveSafeInteger(maximumLineBytes, "maximumLineBytes");
   positiveSafeInteger(highWaterMark, "highWaterMark");
+  if(lineFrameProjector!==null&&typeof lineFrameProjector!=='function')throw new TypeError('lineFrameProjector must be a function');
 
   const empty = {
     nextOffset: start,
@@ -116,14 +122,16 @@ export async function forEachRolloutLine(path, {
   let oversizedLines = 0;
   let completeLines = 0;
   let aborted = false;
+  let frame = null;
 
   // Appends up to the cap. Returns nothing; over-cap state lives in
   // `truncated` so the discarded suffix costs a length check per segment.
   function appendSegment(segment) {
     if (segment.length === 0) return;
-    if (truncated) return;
+    if (truncated) { frame?.append(segment); return; }
     const room = maximumLineBytes - carryBytes;
     if (segment.length > room) {
+      if(lineFrameProjector){frame=createLineFrame(lineFrameProjector);for(const part of carry)frame.append(part);frame.append(segment);}
       if (room > 0) {
         carry.push(Buffer.from(segment.subarray(0, room)));
         carryBytes += room;
@@ -142,6 +150,7 @@ export async function forEachRolloutLine(path, {
     if (carryBytes === 0 && !truncated) {
       // Fast path: the whole line arrived inside one chunk. Hand over a view.
       if (segment.length > maximumLineBytes) {
+        if(lineFrameProjector){frame=createLineFrame(lineFrameProjector);frame.append(segment);}
         truncated = true;
         return segment.subarray(0, maximumLineBytes);
       }
@@ -162,13 +171,15 @@ export async function forEachRolloutLine(path, {
       if (newline < 0) break;
       const line = completeLine(chunk.subarray(from, newline));
       const partial = truncated;
+      const projected=lineFrameProjector?(frame?frame.finish():projectCompleteLine(lineFrameProjector,line)):undefined;
       const lineEndOffset = absolutePosition + newline + 1;
       carry = [];
       carryBytes = 0;
       truncated = false;
+      frame = null;
       completeLines += 1;
       if (partial) oversizedLines += 1;
-      const pending = onLine(line, lineEndOffset, partial);
+      const pending = onLine(projected===undefined?line:Buffer.from(projected??''),lineEndOffset,partial&&projected===undefined);
       if (pending !== null
           && (typeof pending === "object" || typeof pending === "function")) {
         if (pending instanceof Promise) {

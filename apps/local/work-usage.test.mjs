@@ -326,11 +326,23 @@ test("work-usage route searches local saved task names through the real enrichme
     assert.equal(result.json.status, "available");
     assert.equal(result.json.rows[0].id, "repo-b");
     assert.equal(result.json.rows[0].tokens, 10);
-    assert.equal(result.json.totals.tokens, 110);
+    assert.equal(result.json.totals.tokens, 10, "search totals cover all matching rows");
+    assert.equal(result.json.rows[0].share, 1, "filtered share uses the matching subtotal");
     assert.equal(Object.hasOwn(result.json, "search"), false);
     const children = await request({ snapshotId: first.json.snapshotId, grouping: "thread", project: "repo-b", search: "CAFÉ" });
     assert.equal(children.json.rows[0].id, "needle");
     assert.equal(children.json.display.needle.name, "Review café interface");
+    assert.equal(children.json.totals.tokens, 10);
+    const unfiltered = await request({ snapshotId: first.json.snapshotId, pageSize: 1 });
+    assert.equal(unfiltered.json.rows.length, 1);
+    assert.equal(unfiltered.json.totals.tokens, 110, "global totals include every page and survive filtering");
+    assert.ok(unfiltered.json.nextCursor);
+    const lastPage = await request({ snapshotId: first.json.snapshotId, pageSize: 1, cursor: unfiltered.json.nextCursor });
+    assert.equal(lastPage.json.rows.length, 1);
+    assert.notEqual(lastPage.json.rows[0].id, unfiltered.json.rows[0].id);
+    assert.equal(lastPage.json.totals.tokens, 110);
+    assert.equal(unfiltered.json.rows[0].share + lastPage.json.rows[0].share, 1,
+      "page shares use the whole result, not each page subtotal");
     assert.equal(builds, 1);
   } finally {
     await closeFixture(fixture);

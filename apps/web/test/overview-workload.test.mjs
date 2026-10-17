@@ -5,6 +5,10 @@ import {translate} from "../public/localization.js";
 function documentFixture(){const doc={};class Element{
   constructor(tag){this.tagName=tag;this.ownerDocument=doc;this.children=[];this.dataset={};this.style={};this.attrs={};this.classList={add:(x)=>{this.className=(this.className??"")+" "+x;}};}
   append(...nodes){this.children.push(...nodes);}replaceChildren(){this.children=[];}setAttribute(k,v){this.attrs[k]=v;}
+  addEventListener(type,listener){this.listeners??={};this.listeners[type]=listener;}focus(){doc.activeElement=this;}
+  contains(n){return this===n||this.all().includes(n);}
+  querySelector(selector){if(selector.startsWith('[data-workload-diagnostic-focus=')){const k=selector.match(/="([^"]+)"/)[1];return this.all().find(n=>n.dataset.workloadDiagnosticFocus===k);}
+    if(selector==='button:not(:disabled)')return this.all().find(n=>n.tagName==='button'&&!n.disabled);return null;}
   set textContent(v){this.text=v;this.children=[];}get textContent(){return(this.text??"")+this.children.map(x=>x.textContent).join("");}
   all(){return this.children.flatMap(x=>[x,...x.all()]);}}
   doc.createElement=tag=>new Element(tag);doc.createElementNS=(_,tag)=>new Element(tag);doc.createTextNode=text=>{const n=new Element("text-node");n.textContent=text;return n;};
@@ -14,6 +18,18 @@ const payload=()=>({schemaVersion:"overview-workload-v2",status:"available",gene
   daily:[{date:"2026-10-15",covered:true,heavy:2,medium:1,light:1,unclassified:0}],
   current:{state:"working",level:"heavy",ratePpPerHour:4.2,hours:15.7},comparison:{startedAtMs:Date.parse("2026-10-15T10:00:00Z"),actualPp:2,expectedPp:1}});
 const render=(root,value)=>renderOverviewWorkload(root,normalizeOverviewWorkload(value),{translate:(key,values)=>translate(key,values,"zh-Hans"),locale:"zh-CN"});
+test("overview SVG and inline colours follow the document theme without rerendering evidence",()=>{
+  const root=documentFixture(),p=payload();
+  p.allowance.points=[{at:"2026-10-15T11:00:00Z",remainingPercent:70},{at:"2026-10-15T12:00:00Z",remainingPercent:66}];
+  render(root,p);
+  const nodes=root.all();
+  const paints=nodes.flatMap(n=>[n.attrs.fill,n.attrs.stroke,n.style.backgroundColor,n.style.color]).filter(Boolean);
+  assert.ok(paints.includes("var(--neutral-ink)"));
+  assert.ok(paints.includes("var(--neutral-muted)"));
+  assert.ok(paints.includes("var(--neutral-line)"));
+  for(const paint of paints) assert.match(paint,/^(?:none|var\(--(?:neutral|workload)-[a-z]+\))$/u);
+  for(const level of ["heavy","medium","light"]) assert.ok(paints.includes(`var(--workload-${level})`));
+});
 test("approved overview contains exactly five cards and common-scale hour bars",()=>{
   const root=documentFixture();render(root,payload());
   assert.equal(root.all().filter(x=>x.dataset.workloadCard).length,5);
@@ -45,6 +61,23 @@ test("idle hides current rate and hours but retains historical hour rows",()=>{
   const current=root.all().find(x=>x.dataset.workloadCard==="current");
   assert.ok(current.textContent.includes("无负载"));assert.ok(!current.textContent.includes("当前速率"));
   assert.equal(root.all().filter(x=>x.dataset.level).length,4);
+});
+
+test('pricing diagnostics stay below every card, disclose real fields, paginate and retain state on refresh',()=>{
+ const root=documentFixture(),p=payload();p.status='partial';p.errors=[{code:'price_missing',stage:'pricing'}];
+ p.pricingDetails={total:11,records:Array.from({length:11},(_,i)=>({at:new Date(Date.UTC(2026,9,1,0,i)).toISOString(),model:'unknown',reason:'model_unknown',tokens:100+i,inputUncached:20,cacheRead:70,output:10})),capture:{status:'available'}};
+ render(root,p);let details=root.children.at(-1);assert.equal(details.tagName,'details');assert.equal(root.children[0].className,'workload-grid');
+ assert.match(details.children[0].textContent,/11 条用量未计价/u);assert.match(details.textContent,/缺少可确认的请求模型/u);
+ assert.doesNotMatch(details.textContent,/计价暂不可用|synthetic-response|private-path/u);
+ details.open=true;details.listeners.toggle();const next=details.all().find(n=>n.dataset.workloadDiagnosticFocus==='next');next.focus();next.listeners.click();
+ assert.match(details.textContent,/2 \/ 2/u);render(root,p);details=root.children.at(-1);assert.equal(details.open,true);assert.match(details.textContent,/2 \/ 2/u);
+ assert.equal(details.all().filter(n=>n.tagName==='tbody').flatMap(n=>n.children).length,1);
+});
+
+test('pricing detail normalization drops arbitrary fields and retains missing numeric values',()=>{
+ const p=payload();p.pricingDetails={total:1,records:[{at:p.generatedAt,model:'<script>private</script>',reason:'private text',tokens:null,cacheRead:NaN,path:'private-path'}],capture:{status:'invented'}};
+ const out=normalizeOverviewWorkload(p).pricingDetails;assert.equal(out.records[0].tokens,null);assert.equal(out.records[0].cacheRead,null);
+ assert.equal(out.records[0].model,'unknown');assert.equal(out.capture.status,'pending');assert.doesNotMatch(JSON.stringify(out),/private|script/u);
 });
 
 test("v3 partial comparison keeps confirmed cylinders and visibly qualifies incomplete coverage",()=>{

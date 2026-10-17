@@ -1,6 +1,7 @@
 import { createReadStream } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { isCompressedRolloutSource, readCompressedRolloutBytes } from "./bounded-rollout-bytes.js";
+import { createLineFrame, projectCompleteLine } from './line-frame-projection.js';
 
 const DEFAULT_MAXIMUM_LINE_BYTES = 16 * 1024 * 1024;
 const DEFAULT_HIGH_WATER_MARK = 256 * 1024;
@@ -44,8 +45,10 @@ export async function* readBoundedUtf8LineEntries(path, {
   startLineOrdinal = 1,
   signal = null,
   createLimitError = defaultLimitError,
+  lineFrameProjector = null,
 } = {}) {
   const limitError = validatedLimitErrorFactory(createLimitError);
+  if(lineFrameProjector!==null&&typeof lineFrameProjector!=='function')throw new TypeError('lineFrameProjector must be a function');
   if (!Number.isSafeInteger(maximumLineBytes) || maximumLineBytes < 1) {
     throw new TypeError("maximumLineBytes must be a positive safe integer");
   }
@@ -117,6 +120,7 @@ export async function* readBoundedUtf8LineEntries(path, {
   let absoluteOffset = startByte;
   let lineStartByte = startByte;
   let lineOrdinal = startLineOrdinal;
+  let frame = null;
   const needles = oversizedIrrelevantNeedles.map((needle) => {
     if (typeof needle !== "string" || needle.length === 0 || needle.length > 256) {
       throw new TypeError("Oversized-line relevance needles must be bounded strings");
@@ -137,11 +141,13 @@ export async function* readBoundedUtf8LineEntries(path, {
     if (segment.length === 0) return;
     lineBytes += segment.length;
     if (oversized) {
+      frame?.append(segment);
       inspectRelevance(segment);
       return;
     }
     if (lineBytes > maximumLineBytes) {
-      if (needles.length === 0) {
+      if(lineFrameProjector){frame=createLineFrame(lineFrameProjector);for(const part of chunks)frame.append(part);frame.append(segment);}
+      if (needles.length === 0 && !lineFrameProjector) {
         input?.destroy();
         throw limitError("line_bytes");
       }
@@ -158,8 +164,15 @@ export async function* readBoundedUtf8LineEntries(path, {
     const entry = { startByte: lineStartByte, endByteExclusive, lineOrdinal };
     lineStartByte = endByteExclusive;
     lineOrdinal += 1;
+    const projected=lineFrameProjector?(frame?frame.finish():projectCompleteLine(lineFrameProjector,chunks.length===1?chunks[0]:Buffer.concat(chunks,lineBytes))):undefined;
+    frame=null;
+    if(projected!==undefined){
+      resourceGuard?.observeLine(lineBytes,{oversizedIrrelevant:oversized});
+      chunks=[];lineBytes=0;oversized=false;oversizedRelevant=false;searchTail=Buffer.alloc(0);
+      return {...entry,line:projected};
+    }
     if (oversized) {
-      if (oversizedRelevant) throw limitError("line_bytes");
+      if (oversizedRelevant || needles.length===0) throw limitError("line_bytes");
       resourceGuard?.observeLine(lineBytes, { oversizedIrrelevant: true });
       chunks = [];
       lineBytes = 0;

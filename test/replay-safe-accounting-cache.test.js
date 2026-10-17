@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -28,6 +28,50 @@ import {
 import {
   buildRollingQuotaComparisons,
 } from "@app-usagemonitor/quota-analysis";
+import {
+  assertWindowsOwnerOnly,
+  createProtectedFixtureDirectory,
+  grantSyntheticEveryoneRead,
+  writeInitialProtectedFixtureFile,
+} from "./helpers/windows-owner-only-fixture.js";
+
+async function ownerOnlyCacheFixture(t, prefix, nested = false) {
+  const directory = await mkdtemp(join(tmpdir(), prefix));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const root = join(directory, "private");
+  createProtectedFixtureDirectory(root);
+  const parent = nested ? join(root, "nested") : root;
+  if (nested) createProtectedFixtureDirectory(parent);
+  assertWindowsOwnerOnly(root);
+  assertWindowsOwnerOnly(parent);
+  return join(parent, "accounting.sqlite");
+}
+
+// Retention starts from an actually private, valid SQLite cache. Provision that
+// initial fixture through native storage, without repairing any refresh result.
+// The separate new-cache round-trip test still tests production creation and
+// must fail if it does not establish the same ACL contract.
+async function seedOwnerOnlyCache({ cacheFile, ...options }) {
+  const cache = await buildReplaySafeAccountingCache(options);
+  const stagingFile = `${cacheFile}.synthetic-seed`;
+  await writeLocalCollectorAccountingCache({ stateFile: stagingFile, cache });
+  const bytes = await readFile(stagingFile);
+  try { writeInitialProtectedFixtureFile(cacheFile, bytes); }
+  finally {
+    bytes.fill(0);
+    await rm(stagingFile);
+  }
+  assertWindowsOwnerOnly(cacheFile);
+  return cache;
+}
+
+test("Windows cache ACL assertions reject broad access on disposable fixtures", async (t) => {
+  const cacheFile = await ownerOnlyCacheFixture(t, "usage-monitor-acl-negative-");
+  writeInitialProtectedFixtureFile(cacheFile, "synthetic ACL fixture");
+  assertWindowsOwnerOnly(cacheFile);
+  grantSyntheticEveryoneRead(cacheFile);
+  assert.throws(() => assertWindowsOwnerOnly(cacheFile), { code: "ERR_ASSERTION" });
+});
 
 // A scanner built by these helpers carries its own calibration source. A call
 // that supplies such a scanner and names no source mode is a unified build
@@ -1141,9 +1185,8 @@ test("combined-only output is retained once and priced as ordinary output", asyn
   assert.equal(cache.timeline[0].apiPriceEquivalentUsd, 17.5);
 });
 
-test("refresh and read round-trip a valid owner-only cache", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-monitor-accounting-"));
-  const cacheFile = join(directory, "nested", "accounting.json");
+test("refresh and read round-trip a valid owner-only cache", async (t) => {
+  const cacheFile = await ownerOnlyCacheFixture(t, "usage-monitor-accounting-", true);
   const written = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -1154,14 +1197,13 @@ test("refresh and read round-trip a valid owner-only cache", async () => {
       }),
     ]),
   });
-  const metadata = await stat(cacheFile);
   const read = await readReplaySafeAccountingCache({ cacheFile });
 
-  assert.equal(metadata.mode & 0o777, 0o600);
   assert.equal(read.status, "available");
   assert.equal(read.errorCode, null);
   assert.deepEqual(read.cache, written);
   assert.equal(period(read.cache, "24h").apiPriceEquivalentUsd, 5);
+  assertWindowsOwnerOnly(cacheFile);
 });
 
 test("cache freshness uses the covered end and rejects a future projection", async () => {
@@ -2414,13 +2456,14 @@ test("replay cache rejects the old prefix-priced version and unreviewed model cr
       components: { input_uncached_tokens: 1_000 },
     })]),
   });
-  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.19");
+  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.21");
   assert.doesNotThrow(() => assertReplaySafeAccountingCache(cache));
   const oldVersion = structuredClone(cache);
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.12";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.13";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
+  for(const version of ["0.19","0.20"]){oldVersion.schemaVersion="local-replay-safe-accounting-v"+version;assert.throws(()=>assertReplaySafeAccountingCache(oldVersion));}
   for (const model of ["gpt-5.6", "gpt-5.5-pro", "gpt-5.5-future"]) {
     const invalidCrossing = structuredClone(cache);
     invalidCrossing.timeline[0].speedWeighting.unknown ??= {};
@@ -2736,10 +2779,9 @@ test("a caller that names its own ceiling keeps it, which is how the rebuild sub
   assert.equal(samples.length, 2);
 });
 
-test("an RSS ceiling miss during accounting is a soft target: the prior cache is retained and served", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-monitor-rss-bound-"));
-  const cacheFile = join(directory, "accounting.json");
-  await refreshReplaySafeAccountingCache({
+test("an RSS ceiling miss during accounting is a soft target: the prior cache is retained and served", async (t) => {
+  const cacheFile = await ownerOnlyCacheFixture(t, "usage-monitor-rss-bound-");
+  await seedOwnerOnlyCache({
     cacheFile,
     now: () => NOW,
     scan: scanner([
@@ -2793,9 +2835,8 @@ test("an RSS ceiling miss during accounting is a soft target: the prior cache is
       observedRssMib: 0,
     },
   }]);
-  // The last good cache survives on disk untouched, at its owner-only mode...
+  // The last good cache survives on disk untouched...
   assert.deepEqual(await readTestCache(cacheFile), before);
-  assert.equal((await stat(cacheFile)).mode & 0o777, 0o600);
   // ...and is still SERVED: the surface is available, not blanked.
   const served = await readReplaySafeAccountingCache({
     cacheFile,
@@ -2803,6 +2844,7 @@ test("an RSS ceiling miss during accounting is a soft target: the prior cache is
   });
   assert.equal(served.status, "available");
   assert.deepEqual(served.cache, before);
+  assertWindowsOwnerOnly(cacheFile);
 });
 
 test("the RSS guard is budget-relative: a pass past the delta budget soft-fails below the absolute ceiling", async () => {
@@ -3068,10 +3110,9 @@ test("the scan resource guard inherits the budget-relative RSS ceiling", async (
   assert.ok(EXPORT_POLICY_MAX_RSS_BYTES < baseline + ACCOUNTING_RSS_DELTA);
 });
 
-test("deep log scanning receives hard resource bounds and preserves the last cache when they trip", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-monitor-scan-bound-"));
-  const cacheFile = join(directory, "accounting.json");
-  await refreshReplaySafeAccountingCache({
+test("deep log scanning receives hard resource bounds and preserves the last cache when they trip", async (t) => {
+  const cacheFile = await ownerOnlyCacheFixture(t, "usage-monitor-scan-bound-");
+  await seedOwnerOnlyCache({
     cacheFile,
     now: () => NOW,
     scan: scanner([]),
@@ -3099,26 +3140,46 @@ test("deep log scanning receives hard resource bounds and preserves the last cac
 
   assert.equal(typeof observedGuard?.checkRuntime, "function");
   assert.deepEqual(await readTestCache(cacheFile), before);
-  assert.equal((await stat(cacheFile)).mode & 0o777, 0o600);
+  assertWindowsOwnerOnly(cacheFile);
 });
 
-test("the deep-scan guard admits a full rollout corpus and still stops above the source-file ceiling", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-monitor-scan-files-"));
-  const cacheFile = join(directory, "accounting.json");
+test("the deep-scan guard admits a full rollout corpus and still stops above the source-file ceiling", async (t) => {
+  const cacheFile = await ownerOnlyCacheFixture(t, "usage-monitor-scan-files-");
 
   // The owner's deduped Codex rollout corpus measured 4,880 files; the ceiling
   // was raised 5_000 -> 100_000 so a real corpus is admitted with headroom.
   let admittedGuard = null;
-  await refreshReplaySafeAccountingCache({
+  let historyCalls = 0;
+  const admitted = await seedOwnerOnlyCache({
     cacheFile,
     now: () => NOW,
-    scan: async ({ resourceGuard }) => {
+    scan: async ({ resourceGuard, indexedHistory }) => {
+      if (indexedHistory === undefined) {
+        historyCalls += 1;
+        assert.equal(resourceGuard, undefined, "fallback reads have their own archive budget");
+        return { diagnostics: {} };
+      }
+      assert.ok(resourceGuard);
       admittedGuard = resourceGuard;
       resourceGuard.observeSourcePlan(4_880, 0);
       return { diagnostics: {} };
     },
   });
   assert.equal(admittedGuard?.counters.sourceFiles, 4_880);
+  assert.equal(historyCalls, 1);
+  assert.equal(admitted.history.status, "available");
+  // The exact ceiling is admitted; only its successor is rejected.
+  let exactLimitGuard = null;
+  const ceilingScan = async ({ resourceGuard }) => {
+    if (resourceGuard) {
+      exactLimitGuard = resourceGuard;
+      resourceGuard.observeSourcePlan(resourceGuard.limits.maximumSourceFiles, 0);
+    }
+    return { diagnostics: {} };
+  };
+  const atLimit = await refreshReplaySafeAccountingCache({ cacheFile, now: () => NOW, scan: ceilingScan });
+  assert.equal(atLimit.history.status, "available");
+  assert.equal(exactLimitGuard.counters.sourceFiles, exactLimitGuard.limits.maximumSourceFiles);
   const before = await readTestCache(cacheFile);
 
   // Above the ceiling it still stops, and -- unlike the RSS soft miss -- a
@@ -3138,7 +3199,7 @@ test("the deep-scan guard admits a full rollout corpus and still stops above the
     (error) => error?.code === "accounting_scan_source_files_limit_exceeded",
   );
   assert.deepEqual(await readTestCache(cacheFile), before);
-  assert.equal((await stat(cacheFile)).mode & 0o777, 0o600);
+  assertWindowsOwnerOnly(cacheFile);
 });
 
 test("an AbortSignal can interrupt cooperative derivation after a dense scan and preserves the last cache", async () => {
@@ -3180,10 +3241,9 @@ test("an AbortSignal can interrupt cooperative derivation after a dense scan and
   assert.deepEqual(await readTestCache(cacheFile), before);
 });
 
-test("a failed refresh leaves the last good owner-only cache intact", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "usage-monitor-last-good-"));
-  const cacheFile = join(directory, "accounting.json");
-  await refreshReplaySafeAccountingCache({
+test("a failed refresh leaves the last good owner-only cache intact", async (t) => {
+  const cacheFile = await ownerOnlyCacheFixture(t, "usage-monitor-last-good-");
+  await seedOwnerOnlyCache({
     cacheFile,
     now: () => NOW,
     scan: scanner([
@@ -3207,7 +3267,7 @@ test("a failed refresh leaves the last good owner-only cache intact", async () =
   );
 
   assert.deepEqual(await readTestCache(cacheFile), before);
-  assert.equal((await stat(cacheFile)).mode & 0o777, 0o600);
+  assertWindowsOwnerOnly(cacheFile);
 });
 
 test("Ultrafast replay weights Astra once and withholds unsupported Sol without losing Standard totals", async () => {
@@ -3355,4 +3415,94 @@ test("a stored cache built from the retired legacy source is never served as cur
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+
+test("historical plan comparisons preserve both upgrade directions, exclude only uncertain intervals and conserve accounting", async () => {
+  const start=Date.parse("2026-07-20T00:00:00Z"), plans=["plus","prolite","plus","prolite"];
+  const events=[],snapshots=[];
+  for(const [era,planType] of plans.entries()) {
+    const base=start+era*86_400_000, reset=(base+7*86_400_000)/1000;
+    for(let i=0;i<10;i++) {
+      const at=base+i*3_600_000;
+      snapshots.push(weeklySnapshot({timestamp:new Date(at).toISOString(),usedPercent:i,planType,resetsAt:reset}));
+      if(i>0)events.push({...usageEvent({timestamp:new Date(at).toISOString(),speed:"standard",components:{input_uncached_tokens:1_000_000}}),
+        planAttribution:{basis:"same_record",planType,planVariant:null},
+        usageIntervalStartedAt:new Date(at-1_800_000).toISOString(),usageIntervalBasis:"previous_session_record"});
+    }
+    snapshots.push(weeklySnapshot({timestamp:new Date(base+9*3_600_000+900_000).toISOString(),usedPercent:9,planType,resetsAt:reset}));
+  }
+  // One quantity crosses the upgrade boundary. It cannot poison the whole
+  // historical plan or be charged to both plans.
+  events.push({...usageEvent({timestamp:new Date(start+86_400_000+300_000).toISOString(),speed:"standard",components:{input_uncached_tokens:999}}),
+    planAttribution:{basis:"same_record",planType:"prolite",planVariant:null},
+    usageIntervalStartedAt:new Date(start+9*3_600_000).toISOString(),usageIntervalBasis:"previous_session_record"});
+  const cache=await buildReplaySafeAccountingCache({now:()=>start+4*86_400_000,windowDays:365,
+    scan:async({onUsage,onRateLimitSnapshot})=>{for(const e of events)onUsage(e);for(const q of snapshots)onRateLimitSnapshot(q);return {diagnostics:{}};}});
+  assert.doesNotThrow(()=>assertReplaySafeAccountingCache(cache));
+  const history=cache.historicalPlanComparisons;
+  assert.equal(history.length,1);assert.equal(history[0].planType,"plus");
+  assert.equal(history[0].failure,null);
+  assert.equal(history[0].allowanceCapacityByScenario.planScope.planType,"plus");
+  const plus=history[0].planScopedTimeline,pro=cache.planScopedTimeline;
+  assert.equal(plus.status,"available");assert.equal(pro.status,"available");
+  assert.equal(plus.diagnostics.admittedEvents,18);assert.equal(pro.diagnostics.admittedEvents,18);
+  assert.equal(plus.usage.length,18);assert.equal(pro.usage.length,18);
+  assert.ok(plus.observedQuota.length>plus.quota.length,"comparison gaps cannot erase independent quota observations");
+  assert.ok(plus.observedQuota.at(-1)[0]>plus.quota.at(-1)[0]);
+  assert.ok(plus.excludedIntervals.some(r=>r[2]==="plan_transition_interval"));
+  assert.ok(pro.excludedIntervals.some(r=>r[2]==="plan_transition_interval"));
+  assert.equal(cache.periods.find(p=>p.id==="all").events,37,"the all-plan ledger owns every source event exactly once");
+  assert.equal([...plus.usage,...pro.usage].reduce((n,r)=>n+r[1],0),36,"an unresolved boundary is omitted once, never guessed or duplicated");
+  assert.ok(plus.comparisonIntervals.every(([a,b])=>pro.comparisonIntervals.every(([c,d])=>b<=c||d<=a)));
+  assert.doesNotThrow(()=>assertReplaySafeAccountingCache(JSON.parse(serializeLocalCollectorAccountingCache(cache))));
+  for(const change of [
+    c=>c.historicalPlanComparisons.push(structuredClone(c.historicalPlanComparisons[0])),
+    c=>c.historicalPlanComparisons[0].planScopedTimeline.planScope.sourceGeneration="other",
+    c=>c.historicalPlanComparisons[0].planScopedTimeline.planScope.cohortId="b".repeat(64),
+    c=>c.historicalPlanComparisons[0].allowanceCapacityByScenario.planScope.planType="prolite",
+    c=>c.historicalPlanComparisons[0].planScopedTimeline.excludedIntervals.push([0,900_000,"private-reason"]),
+    c=>c.historicalPlanComparisons[0].planScopedTimeline.observedQuota.at(-1)[2]=101,
+    c=>{const q=c.historicalPlanComparisons[0].planScopedTimeline.observedQuota;q[0]=[q[0][0],q[0][1],q[0][2]+1];},
+  ]) {const invalid=structuredClone(cache);change(invalid);assert.throws(()=>assertReplaySafeAccountingCache(invalid));}
+});
+
+
+test("a failed historical lane preserves other plan results, cancellation and bounded work", async () => {
+  const {REPLAY_SAFE_CALIBRATION_INTERNALS:I}=await import("../src/replay-safe-accounting-cache.js");
+  let passes=0;
+  const options={endMs:NOW,weeklyRateLimitSnapshots:[],forEachUsageRow:async()=>{
+    if(++passes===1)throw Object.assign(new Error("synthetic"),{code:"accounting_transition_memory_budget_exceeded"});
+  }};
+  const results=await I.fitHistoricalPlanTimelines(options,["prolite","pro","plus"],"prolite");
+  assert.deepEqual(results.map(r=>r.planType),["plus","pro"]);
+  assert.equal(results[0].failure,"accounting_transition_memory_budget_exceeded");
+  assert.equal(results[0].draft,null);
+  assert.equal(results[1].failure,null);assert.equal(results[1].draft.planType,"pro");
+  await assert.rejects(I.fitHistoricalPlanTimelines(options,Array(17).fill("plus"),"prolite"),{code:"accounting_transition_derivation_limit_exceeded"});
+  const controller=new AbortController();controller.abort();
+  await assert.rejects(I.fitHistoricalPlanTimelines({...options,signal:controller.signal},["plus"],"prolite"),{name:"AbortError"});
+});
+
+
+test("an ambiguous historical bucket removes only that interval, retaining surrounding valid usage", async () => {
+  const {REPLAY_SAFE_CALIBRATION_INTERNALS:I}=await import("../src/replay-safe-accounting-cache.js");
+  const start=Date.parse("2026-07-20T00:00:00Z"),price=I.createAccountingPricer();
+  const rows=[30,60,65,90].map((minute,i)=>{
+    const raw={...usageEvent({timestamp:new Date(start+minute*60_000).toISOString(),speed:"standard",components:{input_uncached_tokens:1_000_000}}),
+      planAttribution:{basis:i===2?"conflicted":"same_record",planType:i===2?null:"plus"},
+      usageIntervalStartedAt:new Date(start+(minute-5)*60_000).toISOString()};
+    return I.transitionUsageProjection(raw,I.eventProjection(raw,price));
+  });
+  const snapshots=[0,30,60,90,120,180].map(minute=>I.weeklyRateLimitProjection(weeklySnapshot({
+    timestamp:new Date(start+minute*60_000).toISOString(),planType:"plus",usedPercent:minute/30,resetsAt:(start+7*86_400_000)/1000})));
+  const result=await I.fitCompositionFromCorpusStream({forEachUsageRow:async consume=>{for(const row of rows)await consume(row);},
+    weeklyRateLimitSnapshots:snapshots,selectedPlanType:"plus",endMs:start+4*3_600_000});
+  const lane=result.planScopedTimeline;
+  assert.equal(lane.diagnostics.admittedEvents,2);
+  assert.equal(lane.diagnostics.invalidatedCandidateEvents,1);
+  assert.deepEqual(lane.rows.map(r=>Date.parse(r.startAt)-start),[30*60_000,90*60_000]);
+  assert.ok(lane.excludedIntervals.some(([a,b,reason])=>a===start+60*60_000&&b===start+75*60_000&&reason==="usage_attribution_unresolved"));
+  assert.ok(lane.comparisonIntervals.some(([a,b])=>a<=start+30*60_000&&b>=start+45*60_000));
+  assert.ok(lane.comparisonIntervals.some(([a,b])=>a<=start+90*60_000&&b>=start+105*60_000));
 });

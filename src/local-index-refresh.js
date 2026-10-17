@@ -6,12 +6,14 @@ import { Worker } from "node:worker_threads";
 
 import {
   createLeadingRateLimitGate,
+  RESPONSE_MODEL_RECOVERY_VERSION,
 } from "./providers/codex/logs.js";
 import { localCodexLogScanner } from "./local-node-runtime.js";
 import { recognizedExportModelId } from "./export/index.js";
 import {
   createLineageSnapshots,
   extractRolloutUsage,
+  rolloutContainsResponseUsage,
   inheritedTierSeed,
   ownObservedTier,
   resolveLogicalRolloutHeads,
@@ -45,6 +47,7 @@ import {
   loadCatalog,
   openLocalIndexStore,
   readCommitSeq,
+  readPendingResponseModelRecoverySources,
   readLocalIndexIdentityBeforeMigration,
   reasoningEffortOrdinal,
 } from "./local-index-store.js";
@@ -82,6 +85,7 @@ const REPLACEMENT_REASONS = new Set([
   "parser_version", "identity_changed", "cursor_invalid", "quarantine_changed",
   "dependency_quarantine_changed", "same_size_changed", "shrink",
   "boundary_changed", "compressed_changed", "segment_mismatch",
+  "response_reconciliation",
 ]);
 
 function fixedError(code) {
@@ -343,7 +347,9 @@ function createFactSink({ writer, deviceSalt, accountScope, counts }) {
         sourceId: state.sourceId,
         sourceOffset: event.sourceOffset,
         observedAtMs: event.observedAtMs,
-        eventKey: eventKey(state, event.sourceOffset, event.observedAtMs),
+        eventKey: event.responseIdentity
+          ? localDigest(deviceSalt, 'unified-index-response', event.responseIdentity)
+          : eventKey(state, event.sourceOffset, event.observedAtMs),
         sessionId: state.sessionId,
         accountScopeId: writer.internAccountScope(accountScope),
         modelId: writer.internModel(declaration.modelId, declaration.recognition),
@@ -357,6 +363,7 @@ function createFactSink({ writer, deviceSalt, accountScope, counts }) {
         modelInherited: event.modelInherited === true,
         cacheWriteAssumedZero: event.cacheWriteAssumedZero === true,
         statusOnly: event.statusOnly === true,
+        responseUsage: event.responseUsage === true,
         tokensInUncached: components?.inputUncachedTokens ?? null,
         tokensInCacheRead: components?.inputCacheReadTokens ?? null,
         tokensInCacheWrite: components?.inputCacheWriteTokens ?? null,
@@ -366,8 +373,10 @@ function createFactSink({ writer, deviceSalt, accountScope, counts }) {
         totalInputContext: event.totalInputContextTokens ?? null,
       });
       counts.usageEvents += inserted;
+      return inserted;
     },
     writeBoundary(state, event) {
+      if (!writer.hasUsageEvent(state.sourceId, event.currentSourceOffset)) return;
       writer.writeBoundary({
         sourceId: state.sourceId,
         sourceOffset: event.currentSourceOffset,
@@ -694,15 +703,27 @@ async function runRefresh({
   // 1. Classify every discovered source by stat, then confirm growth by windows.
   const classification = new Map();
   const verifiedSources = [];
+  // Scoped recovery version lives beside the source's committed diagnostics.
+  // Do not bump the global parser and invalidate every historical source.
+  const modelRecovery=readPendingResponseModelRecoverySources(database, RESPONSE_MODEL_RECOVERY_VERSION);
+  let modelRecoverySources=0,modelRecoveryBytes=0,modelRecoveryPending=0;
   for (const info of infos) {
     const row = catalog.get(hexOf(info));
     let decision = classifyFromStat(info, row, LOCAL_INDEX_PARSER_VERSION);
+    if(decision.mode==='skip'&&row?.quarantine_code===null&&modelRecovery.has(Number(row.id))){
+      const bytes=Number(info.size??0);
+      if(modelRecoverySources>=8||(modelRecoverySources>0&&modelRecoveryBytes+bytes>256*1024*1024))modelRecoveryPending++;
+      else{decision={mode:'rescan',reason:'response_model_recovery'};modelRecoverySources++;modelRecoveryBytes+=bytes;}
+    }
     if (decision.mode === "append") {
       let handle;
       try {
         handle = await open(info.path, "r");
         if (!(await windowsMatch(handle, row))) {
           decision = { mode: "rescan", reason: "boundary_changed" };
+        } else if (database.prepare('SELECT 1 FROM usage_event WHERE source_id=? AND (flags & 16)<>0 LIMIT 1').get(row.id)
+            || await rolloutContainsResponseUsage(handle, { start: Number(row.scanned_bytes), end: Number(info.size), signal })) {
+          decision = { mode: 'rescan', reason: 'response_reconciliation' };
         }
       } catch {
         decision = { mode: "rescan", reason: "boundary_changed" };
@@ -1070,6 +1091,7 @@ async function runRefresh({
     await runLanes();
   }
   if (deferred === null) createLocalIndexSecondaryIndexes(database);
+  if(deferred===null&&modelRecoveryPending>0)deferred={reason:'model_attribution_recovery',pendingSources:modelRecoveryPending};
 
   // 4. Sources that vanished keep their facts and become absent.
   const discovered = new Set([
@@ -1285,6 +1307,7 @@ async function runRefresh({
                   ? null
                   : await createSegmentTap(handle, { startOffset });
                 const extracted = await extractRolloutUsage(tap?.handle ?? handle, {
+                  responseSource: handle,
                   size: Number(info.size ?? 0),
                   startOffset,
                   isFork: info.lineage?.isInlineFork === true,

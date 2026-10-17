@@ -24,17 +24,19 @@ test("dashboard component styles keep shared visual rules scoped", () => {
   assert.match(styles, /aria-selected="true"/u);
 });
 
-test("model performance has explicit evidence rows and state treatments", () => {
+test("compact model performance keeps complete evidence in dialogs and visible failure states", () => {
   for (const selector of [
-    ".performance-evidence",
-    ".performance-evidence-row",
+    ".performance-detail-row",
+    ".performance-detail-table",
     ".performance-card",
     ".performance-empty",
-    ".performance-details",
+    ".performance-dialog",
+    ".performance-headline-date",
   ]) assert.match(performanceStyles, new RegExp(selector.replaceAll(".", "\\.")), selector);
-  assert.match(performanceStyles, /data-state="partial"/u);
-  assert.match(performanceStyles, /data-state="stale"/u);
-  assert.match(performanceStyles, /prefers-reduced-motion:\s*reduce/u);
+  assert.match(performanceStyles, /data-state="error"/u);
+  assert.match(performanceStyles, /data-state="unavailable"/u);
+  assert.match(performanceStyles, /grid-template-columns:\s*minmax\(0,1fr\) minmax\(0,1fr\)/u);
+  assert.match(performanceStyles, /var\(--surface-raised\)/u);
 });
 
 test("dashboard component reference documents the integration contract", () => {

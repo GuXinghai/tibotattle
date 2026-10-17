@@ -686,7 +686,7 @@ test("older parser coverage withholds both continuity and switch premiums", () =
   assert.equal(switched.coveredSubtotal, null);
 });
 
-test("retained v15/v16/v17 parser suffixes retain cache continuity coverage after the v18 classification upgrade", () => {
+test("retained parser suffixes retain cache continuity coverage after the v21 response upgrade", () => {
   const retainedV15 = [
     "unified-rollout-typed-v15",
     "unified-rollout-typed-v15-partial",

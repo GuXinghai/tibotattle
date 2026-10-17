@@ -102,7 +102,11 @@
 // reviewed catalog and retain explicit turn-context service tiers. Present
 // sources are reparsed, while absent sources retain
 // their original unknown identity and provenance. Physical schema is unchanged.
-export const LOCAL_UNIFIED_INDEX_PARSER_VERSION = "unified-rollout-typed-v19";
+// v20: exact response usage replaces matching legacy spend, including
+// compaction and ordinary responses, while preserving unknown attribution.
+// v21: retain exact first-response usage across an unverified cumulative
+// prefix, report incomplete response coverage, and require exact continuation.
+export const LOCAL_UNIFIED_INDEX_PARSER_VERSION = "unified-rollout-typed-v21";
 
 export const LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION =
   "codex-immutable-rollout-v1";
@@ -114,22 +118,22 @@ export const LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION =
 // degraded row is recorded. Kept in lockstep with the main constant: salvaged
 // rows run the same delta derivation.
 export const LOCAL_UNIFIED_INDEX_PARTIAL_PARSER_VERSION =
-  "unified-rollout-typed-v19-partial";
+  "unified-rollout-typed-v21-partial";
 
 // Per-row provenance variants retain the inherited-model assumption without
-// changing the physical schema. Ingest cursors keep the base v19 stamp.
+// changing the physical schema. Ingest cursors keep the base v21 stamp.
 export const LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARSER_VERSION =
-  "unified-rollout-typed-v19-parent-model";
+  "unified-rollout-typed-v21-parent-model";
 
 export const LOCAL_UNIFIED_INDEX_PARENT_MODEL_PARTIAL_PARSER_VERSION =
-  "unified-rollout-typed-v19-parent-model-partial";
+  "unified-rollout-typed-v21-parent-model-partial";
 
 // Cache continuity and dormant successor preparation both accept these exact
-// row-level provenance variants. Keep the reviewed v15-v18 families readable after a
-// v19 reparse; future parser labels remain unsupported until their semantics
+// row-level provenance variants. Keep the reviewed v15-v20 families readable after a
+// v21 reparse; future parser labels remain unsupported until their semantics
 // are reviewed explicitly.
 const QUALIFIED_LOCAL_PARSER_VERSIONS = new Set([
-  ...["unified-rollout-typed-v15", "unified-rollout-typed-v16", "unified-rollout-typed-v17", "unified-rollout-typed-v18"].flatMap((version) =>
+  ...["unified-rollout-typed-v15", "unified-rollout-typed-v16", "unified-rollout-typed-v17", "unified-rollout-typed-v18", "unified-rollout-typed-v19", "unified-rollout-typed-v20"].flatMap((version) =>
     [version, `${version}-partial`, `${version}-parent-model`, `${version}-parent-model-partial`]),
   LOCAL_UNIFIED_INDEX_PARSER_VERSION,
   LOCAL_UNIFIED_INDEX_PARTIAL_PARSER_VERSION,

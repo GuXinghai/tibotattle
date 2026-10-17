@@ -202,12 +202,12 @@ function decode(payload, schemaVersion, validate) {
       || envelope.schemaVersion !== schemaVersion
       || canonicalInstant(envelope.savedAt) === null
       || typeof envelope.digest !== "string"
-      || !/^[0-9a-f]{64}$/u.test(envelope.digest)
-      || !validSnapshot(envelope.snapshot, validate)) {
+      || !/^[0-9a-f]{64}$/u.test(envelope.digest)) {
     return null;
   }
   const snapshotPayload = JSON.stringify(envelope.snapshot);
   if (digest(snapshotPayload) !== envelope.digest) return null;
+  if (!validSnapshot(envelope.snapshot, validate)) return null;
   return {
     savedAt: envelope.savedAt,
     snapshot: envelope.snapshot,
@@ -226,6 +226,7 @@ export function createValidatedSnapshotStore({
   validate,
   maximumBytes = DEFAULT_MAXIMUM_SNAPSHOT_BYTES,
   now = () => Date.now(),
+  onReadDiagnostic = () => {},
 } = {}) {
   const selected = validSnapshotFile(snapshotFile);
   const configured = selected !== null
@@ -236,16 +237,17 @@ export function createValidatedSnapshotStore({
 
   async function read() {
     if (!configured) return null;
+    const reject = code => { onReadDiagnostic(code); return null; };
     let metadata;
     try {
       metadata = await lstat(selected);
-    } catch {
-      return null;
+    } catch (error) {
+      return error?.code === "ENOENT" ? null : reject("snapshot_read_failed");
     }
     if (!ownerOnlyFile(metadata)
         || !Number.isSafeInteger(metadata.size)
         || metadata.size < 2
-        || metadata.size > maximumBytes) return null;
+        || metadata.size > maximumBytes) return reject("snapshot_invalid");
     let handle;
     try {
       handle = await open(
@@ -257,7 +259,7 @@ export function createValidatedSnapshotStore({
           || !sameFile(metadata, opened)
           || !Number.isSafeInteger(opened.size)
           || opened.size < 2
-          || opened.size > maximumBytes) return null;
+          || opened.size > maximumBytes) return reject("snapshot_invalid");
       // The extra byte detects growth after stat without allowing readFile to
       // allocate beyond the checked bound if another writer appends in place.
       const buffer = Buffer.alloc(opened.size + 1);
@@ -269,10 +271,11 @@ export function createValidatedSnapshotStore({
         if (bytesRead === 0) break;
         offset += bytesRead;
       }
-      if (offset !== opened.size) return null;
-      return decode(buffer.subarray(0, offset).toString("utf8"), schemaVersion, validate);
+      if (offset !== opened.size) return reject("snapshot_invalid");
+      const receipt = decode(buffer.subarray(0, offset).toString("utf8"), schemaVersion, validate);
+      return receipt ?? reject("snapshot_invalid");
     } catch {
-      return null;
+      return reject("snapshot_read_failed");
     } finally {
       await handle?.close().catch(() => {});
     }

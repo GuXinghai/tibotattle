@@ -259,6 +259,7 @@ async function run() {
             ? null
             : await createSegmentTap(stableSource, { startOffset: 0 });
           const extracted = await extractRolloutUsage(tap?.handle ?? stableSource, {
+          responseSource: stableSource,
           parentModelAt,
           size: source.size,
           isFork: source.isInlineFork === true,
@@ -327,6 +328,13 @@ async function run() {
           partialLines: outcome.diagnostics.partialLines,
           salvagedRecords: outcome.diagnostics.salvagedRecords,
           compactionEvents: outcome.diagnostics.compactionEvents,
+          responseUsageEvents: outcome.diagnostics.responseUsageEvents,
+          responseDuplicateCopies: outcome.diagnostics.responseDuplicateCopies,
+          responseForeignThreadRecords: outcome.diagnostics.responseForeignThreadRecords,
+          responseModelUnattributed: outcome.diagnostics.responseModelUnattributed,
+          responseModelsRecovered: outcome.diagnostics.responseModelsRecovered,
+          responseModelRecoveryVersion: outcome.diagnostics.responseModelRecoveryVersion,
+          responseUnverifiedPrefixTurns: outcome.diagnostics.responseUnverifiedPrefixTurns,
           forkReplayEventsSkipped: outcome.diagnostics.forkReplayEventsSkipped,
           unattributedForkReplayEventsSkipped:
             outcome.diagnostics.unattributedForkReplayEventsSkipped,

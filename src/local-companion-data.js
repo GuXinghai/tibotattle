@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { lstat, readFile } from "node:fs/promises";
+import { validWeeklyApiIntervals, unavailableWeeklyApiIntervals } from "./weekly-api-intervals.js";
 import {
   APP_PRICE_REGISTRY_MANIFEST,
   CODEX_SPEED_MODE_DECLARATION,
@@ -1930,11 +1931,11 @@ function quotaWeightedUsageTimeline(rows, { inference }) {
   });
 }
 
-function projectPlanScopedUsageTimeline(cache, allowanceCapacity) {
+function projectPlanScopedUsageTimeline(cache, allowanceCapacity, capacityContainer = cache?.allowanceCapacityByScenario) {
   const source = cache?.planScopedTimeline;
   const sourceDescriptor = cache?.sourceDescriptor;
   const scope = source?.planScope;
-  const expectedScope = allowanceCapacity?.planScope;
+  const expectedScope = allowanceCapacity?.planScope ?? capacityContainer?.planScope;
   const unavailable = (reason) => ({
     schemaVersion: PLAN_SCOPED_TIMELINE_SCHEMA_VERSION,
     status: "unavailable",
@@ -1942,7 +1943,9 @@ function projectPlanScopedUsageTimeline(cache, allowanceCapacity) {
     planScope: null,
     usage: [],
     quota: [],
+    observedQuota: [],
     comparisonIntervals: [],
+    excludedIntervals: [],
   });
   if (source?.schemaVersion !== PLAN_SCOPED_TIMELINE_SCHEMA_VERSION
       || source?.status !== "available"
@@ -1951,7 +1954,6 @@ function projectPlanScopedUsageTimeline(cache, allowanceCapacity) {
       || !Array.isArray(source.usage)
       || !Array.isArray(source.quota) || !Array.isArray(source.comparisonIntervals)
       || sourceDescriptor?.mode !== "unified"
-      || allowanceCapacity?.status !== "available"
       || scope?.methodVersion !== PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION
       || scope.planType !== expectedScope?.planType
       || scope.basisFamilyId !== expectedScope?.basisFamilyId
@@ -1983,8 +1985,33 @@ function projectPlanScopedUsageTimeline(cache, allowanceCapacity) {
     planScope: { ...scope },
     usage,
     comparisonIntervals: source.comparisonIntervals.map(([startMs, endMs]) => [startMs, endMs]),
+    excludedIntervals: source.excludedIntervals.map((row) => [...row]),
     quota: source.quota.map((row) => [...row]),
+    observedQuota: source.observedQuota.map((row) => [...row]),
   };
+}
+
+function projectWeeklyApiIntervals(cache) {
+  const value = cache?.weeklyApiIntervals;
+  if (!validWeeklyApiIntervals(value)) return unavailableWeeklyApiIntervals(
+    value === undefined ? "weekly_api_intervals_unavailable" : "weekly_api_validation_failed");
+  if (value.status === "available" && (cache.sourceDescriptor?.mode !== "unified"
+      || value.sourceGeneration !== String(cache.sourceDescriptor.generation)
+      || value.sourceFingerprint !== cache.sourceDescriptor.generationFingerprint)) {
+    return unavailableWeeklyApiIntervals("weekly_api_source_mismatch");
+  }
+  return structuredClone(value);
+}
+
+function projectHistoricalPlanComparisons(cache) {
+  return (cache?.historicalPlanComparisons ?? []).map((row) => {
+    const allowanceCapacity = projectAllowanceCapacity(row.allowanceCapacityByScenario, cache.sourceDescriptor);
+    return { planType: row.planType, failure: row.failure, allowanceCapacity,
+      planScoped: projectPlanScopedUsageTimeline({
+        sourceDescriptor: cache.sourceDescriptor, planScopedTimeline: row.planScopedTimeline,
+      }, allowanceCapacity, row.allowanceCapacityByScenario),
+    };
+  });
 }
 
 function timelineAllowanceWeightingEncoding() {
@@ -2122,6 +2149,11 @@ function unifiedHistoryState({ cache, unified, cacheErrorCode, generationReady }
     ? Math.max(0, unified?.skippedThreadCount
       ?? unified?.generation?.skippedThreadCount)
     : 0;
+  const responseUnverifiedPrefixTurns = Number.isSafeInteger(
+    unified?.responseUnverifiedPrefixTurns,
+  ) && unified.responseUnverifiedPrefixTurns >= 0
+    ? unified.responseUnverifiedPrefixTurns
+    : null;
   const coveredAt = safeHistoryCoveredAt(history?.coverage?.coveredAt);
   const errorCode = available
     ? null
@@ -2180,6 +2212,10 @@ function unifiedHistoryState({ cache, unified, cacheErrorCode, generationReady }
       indexedBytes: indexedSourceBytes,
       sourceMode: "unified",
       generationMatched,
+      responseUsageCoverageStatus: responseUnverifiedPrefixTurns === null
+        ? "unknown"
+        : responseUnverifiedPrefixTurns > 0 ? "partial" : "complete",
+      responseUnverifiedPrefixTurns,
     },
   };
 }
@@ -2786,6 +2822,11 @@ export async function buildLocalCompanionSnapshot({
   if (displayUnknownModelEvents > 0) {
     warnings.push("Some usage events name an unrecognized model and remain unpriced rather than being assigned a guessed price.");
   }
+  if (historyCoverage.responseUsageCoverageStatus === "partial") {
+    warnings.push(
+      "Historical response coverage is partial. Recorded response amounts remain counted; earlier usage remains unavailable.",
+    );
+  }
   const thirtyDayUsage = usage.find((period) => period.id === "30d");
   if (OPENAI_PRICE_EVIDENCE_START_DATE !== null
       && (thirtyDayUsage?.pricingCoverage.unpricedEvents ?? 0)
@@ -2871,7 +2912,8 @@ export async function buildLocalCompanionSnapshot({
   }
   if(workloadStateError){workload.errors.push({code:workloadStateError,stage:"publish"});if(workload.status==="available")workload.status="partial";}
   for(const error of workloadErrors){
-    if(["quota_read_failed","index_refresh_failed"].includes(error?.code))workload.errors.push({code:error.code,stage:error.stage});
+    if(["quota_read_failed","index_refresh_failed"].includes(error?.code)||/^runtime_evidence_[a-z_]{1,60}$/u.test(error?.code??''))workload.errors.push({code:error.code,stage:error.stage});
+    if(/^runtime_evidence_[a-z_]{1,60}$/u.test(error?.code??'')&&workload.pricingDetails?.capture)workload.pricingDetails.capture.status='failed';
   }
   if(workloadErrors.length&&workload.status==="available")workload.status="partial";
   return {
@@ -2932,6 +2974,9 @@ export async function buildLocalCompanionSnapshot({
         usage: exactUsageTimeline,
         allowanceCapacity,
         planScoped: planScopedTimeline,
+        historicalPlanComparisons: projectHistoricalPlanComparisons(replaySafeCache),
+        weeklyApiIntervals: unifiedAccountingWithheld ? unavailableWeeklyApiIntervals("weekly_api_source_pending")
+          : projectWeeklyApiIntervals(replaySafeCache),
         quota: quotaTimeline,
         sparkUsage: sparkUsageTimeline,
         sparkQuota: sparkQuotaTimeline,
@@ -3376,6 +3421,12 @@ function accountingEvidenceRows(accounting) {
 // in both modes and fails if any surface loses evidence without appearing here,
 // so a newly added projection surface cannot reintroduce this class silently.
 const PROJECTION_SURFACES = Object.freeze([
+  {
+    path: Object.freeze(["overview", "timeline", "weeklyApiIntervals"]),
+    rows: value => value?.status === "available" ? value.rows.length : 0,
+    canRetain: (incoming, previous) => previous.weeklyApiIntervals?.sourceGeneration === String(incoming.history?.generation)
+      && previous.weeklyApiIntervals?.sourceFingerprint === incoming.history?.generationFingerprint,
+  },
   { path: Object.freeze(["gradient"]), rows: datasetRows },
   {
     path: Object.freeze(["weekly"]),
@@ -3396,6 +3447,10 @@ const PROJECTION_SURFACES = Object.freeze([
     ]),
   },
   { path: Object.freeze(["overview", "timeline", "sparkUsage"]), rows: arrayRows },
+  {
+    path: Object.freeze(["overview", "timeline", "historicalPlanComparisons"]),
+    rows: (rows) => Array.isArray(rows) ? rows.filter((row) => row.planScoped?.status === "available").length : 0,
+  },
   {
     path: Object.freeze(["overview", "timeline", "calibrationUsage"]),
     rows: arrayRows,

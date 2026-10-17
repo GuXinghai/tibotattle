@@ -1,18 +1,22 @@
+import { createHash } from "node:crypto";
 import {
   canonicalRateLimitSnapshot,
   codexSessionMetaIdentity,
   codexTierObservation,
   codexWorkLifecycle,
   cumulativeSnapshotKey,
+  createResponseUsagePlan,
+  projectCompactionUsageLine,
+  RESPONSE_MODEL_RECOVERY_VERSION,
   extractToolObservations,
 } from "./providers/codex/logs.js";
 import { forEachRolloutLine, ROLLOUT_LINE_BYTES } from "./rollout-line-reader.js";
 
 // Projection from one Codex rollout file to typed usage facts.
 //
-// Codex #41912 also persists top-level token_usage_record and compaction
-// checkpoint copies. They overlap the still-emitted legacy token_count stream
-// and are intentionally not additional accounting sources. Authored
+// Codex #41912 persists complete per-response usage, including compaction and
+// responses missing from token_count. Reconcile complete turn chains before
+// selecting spend; legacy token_count still supplies quota observations. Authored
 // configuration_update controls are likewise not backend application receipts;
 // reasoningEffort remains the recorded turn/request setting, not inferred
 // effective effort. See docs/reference/local-index-schema.md.
@@ -22,8 +26,8 @@ import { forEachRolloutLine, ROLLOUT_LINE_BYTES } from "./rollout-line-reader.js
 // one owner-area import is the reviewed `cumulativeSnapshotKey`, measured at
 // 5.1 ms to load per thread.
 //
-// The accounting records are `turn_context`, `token_count` and
-// `thread_settings_applied`; typed `response_item` tool descriptors are also
+// The accounting records include `turn_context`, `token_count`,
+// `token_usage_record` and `thread_settings_applied`; typed tool descriptors are also
 // classified through the reviewed privacy-safe normalizer. A fourth boundary,
 // top-level `compacted`, is recognised from its bounded header without ever
 // parsing its payload. No prompt, reply, reasoning, tool name, tool input or
@@ -137,10 +141,10 @@ const TOKEN_KEYS = [
 // unknown header cannot establish that accounting is absent and is quarantined.
 const RECORD_HEADER_BYTES = 4 * 1024;
 const ACCOUNTING_KINDS = new Set([
-  "session_meta", "turn_context", "token_count", "thread_settings_applied",
+  "session_meta", "turn_context", "token_count", "thread_settings_applied", "token_usage_record",
 ]);
 const IGNORED_RECORD_KINDS = new Set([
-  "compacted", "token_usage_record", "configuration_update", "item_completed",
+  "compacted", "configuration_update", "item_completed",
 ]);
 
 function classifiedRecordKind(type, eventType = null) {
@@ -150,7 +154,7 @@ function classifiedRecordKind(type, eventType = null) {
     return eventType === "token_count" || eventType === "thread_settings_applied"
       ? eventType : "other";
   }
-  if (type === "session_meta" || type === "turn_context" || type === "response_item") {
+  if (type === "session_meta" || type === "turn_context" || type === "response_item" || type === "token_usage_record") {
     return type;
   }
   return IGNORED_RECORD_KINDS.has(type) ? "other" : null;
@@ -369,6 +373,20 @@ function quotaSnapshot(rateLimits, observedAtMs) {
 const SALVAGE_NUMBER = /^\s*(-?\d{1,15})/u;
 const SALVAGE_TOKEN = /^\s*"([A-Za-z0-9._:-]{1,64})"/u;
 
+// Used only for changed append candidates. Existing modern sources are marked
+// by a usage flag; a first modern append also requires atomic prefix replay.
+export async function rolloutContainsResponseUsage(path, options = {}) {
+  let found = false;
+  await forEachRolloutLine(path, { ...options, onLine(line, offset, partial) {
+    const kind = recordPrefixKind(line);
+    if (kind === 'token_usage_record') found = true;
+    else if (kind === null && !partial) {
+      try { if (JSON.parse(line.toString('utf8'))?.type === 'token_usage_record') found = true; } catch { /* classified by the full parser */ }
+    }
+  } });
+  return found;
+}
+
 function salvageScalar(text, key, shape) {
   const marker = `"${key}":`;
   const at = text.indexOf(marker);
@@ -481,6 +499,7 @@ export async function extractRolloutUsage(path, {
   signal = null,
   onEvent,
   parentModelAt = null,
+  responseSource = path,
   onBoundary = null,
   onTool = null,
   onWork = null,
@@ -586,7 +605,7 @@ export async function extractRolloutUsage(path, {
     }
     Object.assign(event, canonicalUsageTotals(rawUsage));
     event.cwd = currentCwd;
-    if (event.model === null && parentModelAt !== null) {
+    if (event.model === null && !event.responseUsage && parentModelAt !== null) {
       event.model = parentModelAt(event.observedAtMs);
       event.modelInherited = event.model !== null;
     }
@@ -679,6 +698,35 @@ export async function extractRolloutUsage(path, {
   if (seedModel !== null) diagnostics.modelSeededFromLineage = 1;
   if (seedTier?.inherited === true) diagnostics.tierSeededFromLineage = 1;
 
+  const reconciliation = createResponseUsagePlan({ identityKey: value =>
+    createHash('sha256').update('codex-response-usage/v1\0').update(value).digest('hex') });
+  const prepared = await forEachRolloutLine(responseSource, {
+    end: size, maximumLineBytes, highWaterMark, signal, lineFrameProjector:projectCompactionUsageLine,
+    onLine(line, offset, partial) {
+      if (line.length === 0) return;
+      const header = recordPrefixKind(line);
+      if (header !== null && !ACCOUNTING_KINDS.has(header) && header !== 'work' && parseCompactionPrefix(line)===null) return;
+      if (partial) {
+        if (header === 'token_usage_record') { const e = new Error('codex_response_usage_invalid'); e.code = e.message; throw e; }
+        return;
+      }
+      let record;
+      try { record = JSON.parse(line.toString('utf8')); } catch { return; }
+      reconciliation.observe(record, offset);
+    },
+  });
+  if (prepared.aborted) { const e = new Error('local_index_aborted'); e.code = e.message; throw e; }
+  const responsePlan = reconciliation.finish();
+  Object.assign(diagnostics, { responseUsageEvents: responsePlan.diagnostics.responses,
+    responseDuplicateCopies: responsePlan.diagnostics.duplicateResponses,
+    responseForeignThreadRecords: responsePlan.diagnostics.foreignResponses,
+    responseModelUnattributed: responsePlan.diagnostics.unattributedModels,
+    responseModelsRecovered: responsePlan.diagnostics.modelsRecovered,
+    responseModelRecoveryVersion: RESPONSE_MODEL_RECOVERY_VERSION,
+    responseUnverifiedPrefixTurns: responsePlan.diagnostics.unverifiedPrefixTurns });
+  if (startOffset > 0 && responsePlan.modern) {
+    const e = new Error('codex_response_usage_rescan_required'); e.code = e.message; throw e;
+  }
   const read = await forEachRolloutLine(path, {
     start: startOffset,
     end: size,
@@ -830,6 +878,20 @@ export async function extractRolloutUsage(path, {
           diagnostics.malformedAccountingRecords += 1;
         }
         return;
+      }
+      if (record.type === 'token_usage_record') {
+        const response = responsePlan.responseAt(lineEndOffset);
+        if (response === null) return;
+        return emitUsage({ observedAtMs, sourceOffset: lineEndOffset,
+          responseIdentity: response.key, responseUsage: true,
+          cacheWriteAssumedZero: response.cacheWriteAssumedZero,
+          model: response.model, reasoningEffort: currentEffort ?? settingsEffort,
+          tier: response.model === null ? null : Object.hasOwn(response,'requestTier')
+            ?response.requestTier===null?null:{providerTierRaw:response.requestTier.rawTier,tierSource:response.requestTier.tierSource,observedAtMs:Date.parse(response.requestTier.timestamp)}
+            :tierState !== null
+            && (tierState.inherited === true || tierState.observedAtMs <= observedAtMs) ? tierState : null,
+          components: canonicalComponents(response.raw), quota: [], partial: false,
+        }, response.raw);
       }
       if (record.type === "turn_context") {
         diagnostics.turnContexts += 1;
@@ -1022,6 +1084,7 @@ export async function extractRolloutUsage(path, {
         usage = last;
       }
       const normalizedQuota = quotaSnapshot(record.payload?.rate_limits, observedAtMs);
+      if (responsePlan.suppressLegacyAt(lineEndOffset)) usage = null;
       const quota = normalizedQuota?.windows ?? [];
       if (record.payload?.rate_limits !== null
           && record.payload?.rate_limits !== undefined
@@ -1048,7 +1111,7 @@ export async function extractRolloutUsage(path, {
         quota,
         partial: false,
         // Quota reported with no spend, on a verified unchanged total.
-        statusOnly: lineVerifiedStatus && quota.length > 0,
+        statusOnly: (lineVerifiedStatus || responsePlan.suppressLegacyAt(lineEndOffset)) && quota.length > 0,
       }, usage);
     },
   });
@@ -1064,6 +1127,7 @@ export async function extractRolloutUsage(path, {
     finalTurnContextPending: turnContextPending,
     finalTurnContextSeen: turnContextSeenHere,
     finalCwd: currentCwd,
+    responseUsageDiagnostics: responsePlan.diagnostics,
   };
 }
 

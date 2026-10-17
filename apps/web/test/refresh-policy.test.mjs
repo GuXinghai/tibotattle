@@ -103,6 +103,8 @@ function refreshHarness({
     electronStartupRefreshTriggered: false,
     electronStartupRefreshDeferred: false,
     activeLocalDashboardLoad: null,
+    nativeEvidenceReloadPending: false,
+    dashboardReadFailed: false,
     globalState: { state: "stale", companionReachable: true },
     refreshResultNotice: null,
     lastRefreshResultReceipt: null,
