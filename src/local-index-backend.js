@@ -17,6 +17,7 @@ import {
   LOCAL_INDEX_PARSER_VERSION,
   openLocalIndexStore,
   readPendingResponseModelRecoverySources,
+  readPendingModelRecognitionSources,
   withReadSnapshot,
 } from "./local-index-store.js";
 import { auditWorkRollups } from "./local-index-work-rollup.js";
@@ -255,6 +256,7 @@ export function createLocalIndexBackend({
         "SELECT 1 AS stale FROM source WHERE parser_version <> ? LIMIT 1",
       ).get(LOCAL_INDEX_PARSER_VERSION);
       const recovery = readPendingResponseModelRecoverySources(database, RESPONSE_MODEL_RECOVERY_VERSION);
+      for (const id of readPendingModelRecognitionSources(database)) recovery.add(id);
       return stale?.stale === 1 || recovery.size > 0 ? freshTimeoutMs : existingTimeoutMs;
     } catch {
       return existingTimeoutMs;

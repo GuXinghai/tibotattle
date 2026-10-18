@@ -34,7 +34,7 @@ export const DESKTOP_NOTIFICATION_COPY_KEYS = Object.freeze({
   RESET_BODY: "electron.notification.reset.body",
 });
 
-const THRESHOLD_KEYS = new Set([80, 90]);
+// Threshold notifications accept the user-selected integer percentage.
 
 function isPlainRecord(value) {
   return value !== null
@@ -68,7 +68,7 @@ export function validateDesktopNotificationToDeliver(value) {
       throw invalidNotification("threshold notification has unexpected fields");
     }
     if (!Number.isInteger(value.thresholdPercent)
-        || !THRESHOLD_KEYS.has(value.thresholdPercent)) {
+        || value.thresholdPercent < 1 || value.thresholdPercent > 100) {
       throw invalidNotification("threshold notification percent is invalid");
     }
     return Object.freeze({
@@ -88,11 +88,10 @@ export function validateDesktopNotificationToDeliver(value) {
 function copyForNotification(notification, textOptions) {
   const keys = notification.key === DESKTOP_NOTIFICATION_KEYS.RESET
     ? [DESKTOP_NOTIFICATION_COPY_KEYS.RESET_TITLE, DESKTOP_NOTIFICATION_COPY_KEYS.RESET_BODY]
-    : notification.thresholdPercent === 80
-      ? [DESKTOP_NOTIFICATION_COPY_KEYS.THRESHOLD_80_TITLE, DESKTOP_NOTIFICATION_COPY_KEYS.THRESHOLD_80_BODY]
-      : [DESKTOP_NOTIFICATION_COPY_KEYS.THRESHOLD_90_TITLE, DESKTOP_NOTIFICATION_COPY_KEYS.THRESHOLD_90_BODY];
-  const title = desktopText(keys[0], {}, textOptions);
-  const body = desktopText(keys[1], {}, textOptions);
+    : ["electron.notification.threshold.title", "electron.notification.threshold.body"];
+  const values = { percent: notification.thresholdPercent };
+  const title = desktopText(keys[0], values, textOptions);
+  const body = desktopText(keys[1], values, textOptions);
   if (typeof title !== "string" || title.length === 0
       || typeof body !== "string" || body.length === 0
       || title === keys[0] || body === keys[1]) {

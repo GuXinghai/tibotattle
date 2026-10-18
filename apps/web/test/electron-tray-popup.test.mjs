@@ -352,6 +352,27 @@ test("tray popup assets are local, bounded, and wired as a visual surface", asyn
   assert.match(css, /prefers-color-scheme:\s*dark/u);
 });
 
+// Owner direction (2026-10-18): the app is monochrome, so the tray popup keeps
+// one neutral ink and a greyscale pace ramp. This pins the ramp so the popup
+// cannot quietly drift back to its old green/amber/red tones.
+test("tray popup palette stays monochrome with a greyscale pace ramp", async () => {
+  const css = await readFile(new URL("../public/electron-tray-popup.css", import.meta.url), "utf8");
+  assert.match(css, /--tray-paper: #fff;/u);
+  assert.match(css, /--tray-ink: #000;/u);
+  assert.match(css, /--tray-paper: #161616;/u);
+  assert.match(css, /--tray-ink: #f2f2f2;/u);
+  assert.doesNotMatch(css, /--tray-critical|#174f45|#e52b21|#a2571a|#76aa9c|#efb56f|#26312b/iu);
+  const tone = (name) =>
+    css.match(new RegExp(`\\.electron-tray-popup-pace\\[data-pace-tone="${name}"\\][^\\{]*\\{([^}]*)\\}`, "u"))?.[1] ?? "";
+  assert.match(tone("over"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 80%, transparent\);/u);
+  assert.match(tone("on"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 45%, transparent\);/u);
+  assert.match(tone("insufficient"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 30%, transparent\);/u);
+  assert.match(tone("unavailable"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 30%, transparent\);/u);
+  assert.match(tone("critical"), /--pace-color: var\(--tray-ink\);/u);
+  // No tone carries a background wash any more.
+  assert.doesNotMatch(css, /--pace-wash/u);
+});
+
 test("rendered action labels interpolate the product name", () => {
   const documentRef = new FakeDocument();
   renderTrayPopup(documentRef, createTrayPopupProjection(fixture(), { now: NOW, timeZone: "UTC" }), {

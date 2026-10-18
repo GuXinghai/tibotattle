@@ -1,19 +1,24 @@
+/*
+ * Monochrome tray appearance (owner direction, 2026-10-18). The popup drops
+ * every decorative wash and keeps one neutral ink so it matches the
+ * white/black/grey dashboard around it. These `--tray-*` roles remain the
+ * only place a future personalized theme colour or background would override.
+ */
 :root {
   color-scheme: light dark;
-  --tray-paper: #f5f1e8;
-  --tray-ink: #4a4946;
-  --tray-muted: #75726a;
-  --tray-tertiary: #a7a39b;
+  --tray-paper: #fff;
+  --tray-ink: #000;
+  --tray-muted: #000;
+  --tray-tertiary: #000;
   --tray-rule: #e6e6e6;
-  --tray-track: #e6e6e6;
-  --tray-accent: #174f45;
-  --tray-critical: #e52b21;
-  --tray-accent-solid: rgba(23, 79, 69, .82);
-  --tray-accent-partial-fill: rgba(23, 79, 69, .22);
-  --tray-accent-partial-border: rgba(23, 79, 69, .8);
-  --tray-accent-hatch: rgba(23, 79, 69, .55);
-  --tray-control-fill: #e0ddd5;
-  --tray-control-fill-selected: #c1beb6;
+  --tray-track: #ececec;
+  --tray-accent: #000;
+  --tray-accent-solid: rgba(0, 0, 0, .82);
+  --tray-accent-partial-fill: rgba(0, 0, 0, .22);
+  --tray-accent-partial-border: rgba(0, 0, 0, .8);
+  --tray-accent-hatch: rgba(0, 0, 0, .55);
+  --tray-control-fill: #f2f2f2;
+  --tray-control-fill-selected: #e0e0e0;
   --tray-gap: 13px;
   background: var(--tray-paper);
   color: var(--tray-ink);
@@ -223,32 +228,37 @@ body {
   line-height: 1.35;
 }
 
+/* The pace section runs the dashboard's greyscale urgency ramp: the darker the
+   left rule, the covered fill and the track hatch, the more urgent the
+   standing. The section itself stays on the plain popup paper, and every tone
+   is derived from `--tray-ink`, so one definition serves light and dark. */
 .electron-tray-popup-pace {
-  --pace-color: var(--tray-accent);
-  --pace-wash: rgba(23, 79, 69, .055);
-  --pace-hatch: rgba(23, 79, 69, .14);
+  --pace-color: color-mix(in srgb, var(--tray-ink) 60%, transparent);
+  --pace-hatch: color-mix(in srgb, var(--tray-ink) 14%, transparent);
   margin-inline: -10px;
   padding-inline: 10px;
   border-left: 3px solid var(--pace-color);
   border-radius: 7px;
-  background: var(--pace-wash);
+}
+
+.electron-tray-popup-pace[data-pace-tone="on"] {
+  --pace-color: color-mix(in srgb, var(--tray-ink) 45%, transparent);
+}
+
+.electron-tray-popup-pace[data-pace-tone="insufficient"],
+.electron-tray-popup-pace[data-pace-tone="unavailable"] {
+  --pace-color: color-mix(in srgb, var(--tray-ink) 30%, transparent);
+  --pace-hatch: color-mix(in srgb, var(--tray-ink) 10%, transparent);
 }
 
 .electron-tray-popup-pace[data-pace-tone="over"] {
-  --pace-color: #a2571a;
-  --pace-wash: rgba(162, 87, 26, .07);
-  --pace-hatch: rgba(162, 87, 26, .18);
+  --pace-color: color-mix(in srgb, var(--tray-ink) 80%, transparent);
+  --pace-hatch: color-mix(in srgb, var(--tray-ink) 18%, transparent);
 }
 
 .electron-tray-popup-pace[data-pace-tone="critical"] {
-  --pace-color: var(--tray-critical);
-  --pace-wash: rgba(229, 43, 33, .065);
-  --pace-hatch: rgba(229, 43, 33, .2);
-}
-
-.electron-tray-popup-pace[data-pace-tone="unavailable"] {
-  --pace-color: var(--tray-muted);
-  --pace-wash: rgba(117, 114, 106, .065);
+  --pace-color: var(--tray-ink);
+  --pace-hatch: color-mix(in srgb, var(--tray-ink) 22%, transparent);
 }
 
 .electron-tray-popup-pace > h2 { margin-bottom: 7px; }
@@ -261,7 +271,7 @@ body {
 .electron-tray-popup-pace-heading p { margin-bottom: 0; }
 
 #pace-state {
-  color: var(--pace-color);
+  color: var(--tray-ink);
   font-size: 11px;
   font-weight: 700;
   line-height: 1.3;
@@ -282,7 +292,7 @@ body {
 }
 
 #pace-evidence {
-  color: var(--pace-color);
+  color: var(--tray-ink);
   font-size: 10px;
   font-weight: 600;
 }
@@ -302,7 +312,7 @@ body {
 .electron-tray-popup-pace-timeline-foot { margin-top: 4px; color: var(--tray-muted); }
 .electron-tray-popup-pace-timeline-labels span,
 .electron-tray-popup-pace-timeline-foot span { min-width: 0; overflow-wrap: anywhere; }
-#pace-outlook { position: relative; display: flex; flex-direction: column; align-items: flex-start; color: var(--pace-color); }
+#pace-outlook { position: relative; display: flex; flex-direction: column; align-items: flex-start; color: var(--tray-ink); }
 #pace-outlook-caption { font-weight: 500; }
 #pace-outlook-duration { font-size: 10px; font-weight: 700; }
 #pace-outlook-duration[tabindex] { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
@@ -317,9 +327,9 @@ body {
   max-width: min(280px, calc(100vw - 48px));
   padding: 6px 8px;
   border-radius: 5px;
-  background: #26312b;
+  background: var(--tray-ink);
   box-shadow: 0 3px 10px rgba(0, 0, 0, .22);
-  color: #fff;
+  color: var(--tray-paper);
   font-size: 10px;
   font-weight: 500;
   line-height: 1.35;
@@ -676,36 +686,19 @@ button:focus-visible {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --tray-paper: #141a17;
-    --tray-ink: #edf2ed;
-    --tray-muted: #b8c0b8;
-    --tray-tertiary: #909a91;
-    --tray-rule: rgba(237, 242, 237, .18);
-    --tray-track: rgba(237, 242, 237, .2);
-    --tray-accent: #76aa9c;
-    --tray-critical: #ff867d;
-    --tray-accent-solid: rgba(118, 170, 156, .82);
-    --tray-accent-partial-fill: rgba(118, 170, 156, .22);
-    --tray-accent-partial-border: rgba(118, 170, 156, .8);
-    --tray-accent-hatch: rgba(118, 170, 156, .55);
-    --tray-control-fill: #303b35;
-    --tray-control-fill-selected: #53645a;
-  }
-
-  .electron-tray-popup-pace {
-    --pace-wash: rgba(118, 170, 156, .1);
-    --pace-hatch: rgba(118, 170, 156, .23);
-  }
-
-  .electron-tray-popup-pace[data-pace-tone="over"] {
-    --pace-color: #efb56f;
-    --pace-wash: rgba(239, 181, 111, .11);
-    --pace-hatch: rgba(239, 181, 111, .24);
-  }
-
-  .electron-tray-popup-pace[data-pace-tone="critical"] {
-    --pace-wash: rgba(255, 134, 125, .1);
-    --pace-hatch: rgba(255, 134, 125, .24);
+    --tray-paper: #161616;
+    --tray-ink: #f2f2f2;
+    --tray-muted: #f2f2f2;
+    --tray-tertiary: #f2f2f2;
+    --tray-rule: rgba(255, 255, 255, .22);
+    --tray-track: #3a3a3a;
+    --tray-accent: #f2f2f2;
+    --tray-accent-solid: rgba(242, 242, 242, .82);
+    --tray-accent-partial-fill: rgba(242, 242, 242, .22);
+    --tray-accent-partial-border: rgba(242, 242, 242, .8);
+    --tray-accent-hatch: rgba(242, 242, 242, .55);
+    --tray-control-fill: #262626;
+    --tray-control-fill-selected: #3a3a3a;
   }
 
   .electron-tray-popup-footer button.electron-tray-popup-primary {

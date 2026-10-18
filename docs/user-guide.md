@@ -37,6 +37,16 @@ states are meaningful; TiboTattle does not replace missing evidence with zero.
 
 ## Reading the dashboard
 
+The desktop window has one top row: application menus on the left and native
+Windows minimize, maximize and close buttons on the right, without a separate
+application-name row. Drag the empty area to move the window; double-click it
+to maximize or restore. Menu shortcuts remain available, and closing the window
+continues to hide it to the tray. Use **File → Exit** or **Ctrl+Q** to quit.
+
+The window-background image picker remembers the folder of the last confirmed
+file selection across restarts. If that folder is unavailable, it uses the
+system default. Cancelling the picker leaves the remembered folder unchanged.
+
 Overview contains five cards: remaining weekly allowance over seven days, plan
 work hours, seven daily consumption bars, current workload, and actual consumption
 relative to expected. It does not show an exhaustion date or countdown.
@@ -120,7 +130,11 @@ corrections, and longer-term views.
 Historical model identification and pricing updates require a completed main
 **Refresh**. Desktop startup requests this refresh once local analysis is
 allowed. Retained session and archived-session logs let the app correct earlier
-unrecognized GPT-6.1 Sol records without changing token totals. An exact stored
+unrecognized GPT-6.1 Sol and GPT-5.1 Codex Max records without changing token totals.
+Codex Max has its own reviewed Standard API price: $1.25 input, $0.125 cached
+input and $10 output per million tokens, from its
+[official model page](https://developers.openai.com/api/docs/models/gpt-5.1-codex-max).
+No unpublished API tier or historical speed mode is inferred. An exact stored
 model identity can also be repriced from sufficient preserved token, context
 and time evidence. If a record's model became `unknown` and its original log is
 gone, the app cannot safely reconstruct that identity; missing evidence and
@@ -176,6 +190,11 @@ request order cannot be proven, and comparisons without prices, remain excluded
 and disclosed; that subtotal is not the whole-period total or a percentage of
 your allowance. A subtotal with no priceable comparisons stays unavailable,
 not a zero-valued placeholder.
+
+Cache-overhead pricing uses the same output-representation selection as the
+main usage totals: matching combined output is not charged again alongside
+text and reasoning output. Missing or contradictory output evidence remains
+unpriced; incomplete ordering still limits the result to a covered subtotal.
 
 The **Cache reuse between turns** memory matrix compares follow-up turns with
 unchanged model and settings across nine time gaps, ending at **24h+**. The
@@ -271,12 +290,68 @@ before collection finishes. An explicitly requested history pass finishes even a
 once complete, the worker stops after its idle lease expires. Later visits resume
 from saved checkpoints. Timing failures do not block usage accounting.
 
+## Settings in the main window
+
+Settings is a main-window sidebar category. Sidebar, menu and tray entry points
+open the same page; tray customization opens its labeled example preview in
+a secondary dialog. Close the preview with its Close button or Escape.
+
+The categories are General & appearance, Tray & panel, Notifications,
+Data & diagnostics, and About & updates. Data & diagnostics accepts a positive
+whole number of minutes for periodic overview refresh, or `-1` to disable
+periodic overview and maintenance refresh. The default is five minutes. Manual
+refresh, startup initialization and necessary state observations remain available.
+Detailed maintenance retains its independent hourly minimum when enabled.
+
+Notifications accepts one used-allowance percentage from 1 to 100; `-1` disables
+usage reminders. There is no master switch. A fresh provider observation must
+cross the threshold; the first observation and a changed threshold establish
+a baseline without sending a historical reminder. Receipts prevent duplicate
+reminders in the same allowance cycle. Test notification is a separate action,
+subject to operating-system permission and application notification capability.
+Reset notifications are retired: their underlying policy and historical receipts
+remain, but production cannot enable or deliver them. Cycle recognition remains
+active to rearm used-allowance reminders for a new cycle.
+
+Legacy disabled/off preferences migrate to `-1`; both the old 90% and 80%+90%
+modes migrate to 90%. Settings and notification policy use forward-only versions
+v4 and v2 respectively, preserving unknown future state instead of overwriting it.
+
+## Customize the window background
+
+In the Electron app, open **Settings → General & appearance → Window background**. Choose a
+solid preset, use the system color palette, or enter a six-digit HEX color or
+RGB integers from 0 to 255. Valid changes preview immediately and save locally;
+the status reports whether the save succeeded. A solid preset replaces the
+current image background. Custom color entry retains a selected image.
+
+Choose a static PNG, JPEG or WebP image through the filtered file picker.
+There is no application-imposed byte or pixel limit; the operating system must
+be able to allocate and decode the image. The app preserves original image bytes
+in independent protected local resources. Moving the source file later does
+not break the saved background. Images stay on this device and never enter
+usage reports, diagnostics or telemetry. Unsupported or failed imports retain
+the last saved background. The file picker can be cancelled safely.
+
+The image covers the entire main window, including the sidebar, centered and
+without stretching; resizing may crop its edges. The light overlay affects
+only the image and can be adjusted from 0 to 90%. Custom backgrounds use black
+text; choose a background and overlay that keep it readable. **Remove** returns
+to the selected background color. The page has no background restore-default
+button. Removing an imported image never deletes the original source file.
+
+Main-window dropdowns, dialogs and floating hints repeat the same background
+at the matching window position, with a subtle blur on the background only.
+Their opaque base hides underlying text, including with transparent images.
+The selected image overlay is preserved; menu text stays sharp. Native system
+menus and the independent tray window retain their own presentation.
+
 ## Customize the tray icon and popup
 
 The 0.1.24 desktop release includes tray customization.
-Open **Customize menu bar…** from the popup's More menu or General
-Settings. Electron's Settings includes the corresponding **Menu bar** or
-**Tray** controls and the popup opens the same page.
+Open **Customize menu bar…** from the popup's More menu or choose
+**Settings → Tray & panel**. Both entry points open the same main-window
+category; **Open preview** shows the secondary preview dialog.
 
 Choose 5-hour remaining, 7-day remaining, both, or icon only. The `5h` and `7d`
 labels keep the windows distinguishable. Single-window meters follow that

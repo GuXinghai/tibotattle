@@ -630,6 +630,38 @@ test("loopback server exposes only fixed API, static, and report routes", async 
   }
 });
 
+test("loopback schedule honors disabled startup and live interval changes without adding a route", async () => {
+  const files = await fixture();
+  const app = await startLocalCompanionServer({
+    resourceRoot: files.resourceRoot, stateRoot: files.stateRoot,
+    codexHome: files.codexHome, staticRoot: files.staticRoot,
+    dataStore: fakeStore(), refreshRunner: async () => ({}),
+    environment: { ...process.env, USAGE_MONITOR_REFRESH_INTERVAL_SECONDS: "-1" }, port: 0,
+  });
+  try {
+    await app.snapshotReady;
+    const base = `http://127.0.0.1:${app.port}`;
+    const schedule = async () => (await (await fetch(`${base}/api/local/refresh`)).json()).overviewSchedule;
+    assert.equal((await schedule()).nextAt, null);
+    app.setRefreshIntervalSeconds(420);
+    const deadline = Date.parse((await schedule()).nextAt);
+    assert.ok(deadline > Date.now() + 419_000 && deadline <= Date.now() + 420_000);
+    app.setRefreshIntervalSeconds(-1);
+    assert.equal((await schedule()).nextAt, null);
+    const manual = await fetch(`${base}/api/local/refresh/overview`, {
+      method: "POST", headers: { Origin: base, "Content-Type": "application/json", "x-usage-monitor-local": "1" }, body: "{}",
+    });
+    assert.equal(manual.status, 202);
+    await app.refresh.whenSettled();
+    assert.equal((await schedule()).nextAt, null);
+    assert.equal((await fetch(`${base}/api/local/refresh/interval`, {
+      method: "POST", headers: { Origin: base, "Content-Type": "application/json", "x-usage-monitor-local": "1" }, body: '{"seconds":60}',
+    })).status, 404);
+  } finally {
+    await app.close(); await rm(files.root, { recursive: true });
+  }
+});
+
 test("preview companion stamps only the preview semantic-open route", async () => {
   const files = await fixture();
   const app = await startLocalCompanionServer({

@@ -6,6 +6,9 @@ export const DESKTOP_COMMAND_NAMES = Object.freeze([
   "dashboardSection",
   "language",
   "appearance",
+  "windowBackground",
+  "windowFullscreen",
+  "settingsChanged",
   "sidebar",
 ]);
 
@@ -15,7 +18,8 @@ const AUTOMATIC_REFRESH_MODES = Object.freeze(["quick", "detailed"]);
 // These are the only dashboard destinations the native shell may request.
 // Keeping the values closed prevents a menu or tray action from becoming a
 // renderer-controlled selector, path, or URL navigation primitive.
-const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance"]);
+const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance", "settings"]);
+const SETTINGS_SECTIONS = Object.freeze(["general", "tray", "notifications", "data", "about"]);
 
 function plainExactObject(value, keys) {
   if (value === null || typeof value !== "object" || Array.isArray(value)
@@ -30,6 +34,19 @@ function plainExactObject(value, keys) {
  * capability and accept no paths, URLs, selectors, or executable strings.
  */
 export function validateDesktopCommand(value) {
+  if (value?.command === "windowFullscreen" && plainExactObject(value, ["command", "fullscreen"])
+      && typeof value.fullscreen === "boolean") return Object.freeze({ command: "windowFullscreen", fullscreen: value.fullscreen });
+  if (value?.command === "settingsChanged" && plainExactObject(value, ["command"])) {
+    return Object.freeze({ command: "settingsChanged" });
+  }
+  if (value?.command === "dashboardSection" && value.section === "settings"
+      && plainExactObject(value, ["command", "section", "settingsSection"])
+      && SETTINGS_SECTIONS.includes(value.settingsSection)) {
+    return Object.freeze({ command: "dashboardSection", section: "settings", settingsSection: value.settingsSection });
+  }
+  if (value?.command === "windowBackground" && plainExactObject(value, ["command"])) {
+    return Object.freeze({ command: "windowBackground" });
+  }
   if (value?.command === "refresh" && plainExactObject(value, ["command"])) {
     return Object.freeze({ command: "refresh" });
   }
@@ -67,6 +84,10 @@ export function validateDesktopCommand(value) {
 }
 
 export function createDesktopCommand(command, value) {
+  if (command === "windowFullscreen") {
+    if (arguments.length !== 2) throw new TypeError("desktop command is invalid");
+    return validateDesktopCommand({ command, fullscreen: value });
+  }
   if (command === "automaticRefresh") {
     if (arguments.length !== 2) throw new TypeError("desktop command is invalid");
     return validateDesktopCommand({ command, mode: value });

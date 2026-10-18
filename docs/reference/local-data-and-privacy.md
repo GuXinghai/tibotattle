@@ -23,6 +23,23 @@ text have no allowed destination in contribution schemas, diagnostics, or
 public aggregates. Unknown fields are omitted; an input that cannot be safely
 projected is refused or shown as unavailable.
 
+## Owner-selected window backgrounds
+
+Electron Settings can read one image chosen through the native file picker.
+Only static PNG, JPEG and WebP images within the bounded byte and pixel limits
+are accepted. The app keeps an original-byte copy in owner-only protected
+binary resources, using bounded chunks and SHA-256 verification. A dedicated
+small configuration contains an opaque resource reference, color and overlay;
+the normal desktop settings record is unchanged. An import journal recovers
+interrupted changes and reclaims only unreferenced background resources.
+
+The source filename/path never crosses the renderer mutation boundary, is not
+persisted in the background configuration, and is not printed in failures.
+Original image bytes travel only over the trusted local desktop bridge for
+rendering. They never enter local usage reports, diagnostics, exports or
+telemetry, and there is no remote image URL or upload path. Removing or resetting
+a background affects only the app's own resource copy, not the source file.
+
 ## Desktop sharing removal
 
 The desktop app is local-only. Community sharing, contribution upload, performance sharing, share cards, and hosted sign-in were removed on 2026-10-13 ([decision](../decisions/2026-10-13-desktop-sharing-removal.md)). The app sends no usage data, and local analysis works without an account.
@@ -468,3 +485,14 @@ to associate with a current or retained repository identity. This is independent
 and event-time API-price coverage. See the
 [implementation plan](../plans/2026-09-08-thread-project-usage-implementation.md)
 for the preview's bounds and qualification status.
+
+### Background resource isolation
+
+Imported images retain their original bytes in independently protected 1 MiB
+chunks, with atomic metadata and recovery journals. There is no artificial total
+byte or pixel limit; system decoding/allocation failures preserve the previous
+selection. The main process validates a bound source handle and verifies its
+digest during import. Renderers receive only an opaque local resource reference,
+never a source path or whole-image Base64 payload. Only the trusted main top
+frame may load the currently selected image; it is never uploaded or projected
+into diagnostics or usage artifacts. Background state migrates forward to v2.

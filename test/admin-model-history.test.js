@@ -75,6 +75,17 @@ test("GPT-6.1 Sol preserves prior catalog coverage and stays separate from GPT-6
   assert.deepEqual(browser.expandAdminModelHistoryDay(prior), old);
 });
 
+test("Codex Max does not change the coverage of retained September 29 history", () => {
+  const prior = { ...current(), catalogVersion: "reviewed-model-catalog-2026-09-29.1",
+    values: [["gpt-6.1-sol", 12, 1]] };
+  const old = expandAdminModelHistoryDay(prior);
+  assert.deepEqual(old.byModel["gpt-5.1-codex-max"], { capacityUsd: null, participantCount: null });
+  assert.equal(projectAdminModelHistoryDay({ ...prior, values: [["gpt-5.1-codex-max", 12, 1]] }), null);
+  const fresh = { ...current(), values: [["gpt-5.1-codex-max", 12, 1]] };
+  assert.notEqual(projectAdminModelHistoryDay(fresh), null);
+  assert.deepEqual(browser.expandAdminModelHistoryDay(prior), old);
+});
+
 test("70 complete catalog days remain bounded even at maximum count/number serialization", () => {
   const day = { ...current(), ...Object.fromEntries(Object.keys(counts()).map((key) => [key, 0])),
     fittedParticipantCount: Number.MAX_SAFE_INTEGER,

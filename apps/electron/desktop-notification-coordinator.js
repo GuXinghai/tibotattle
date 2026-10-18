@@ -15,6 +15,7 @@ import {
   createDesktopNotificationPolicyState,
   deserializeDesktopNotificationPolicyState,
   evaluateDesktopNotificationPolicy,
+  migrateDesktopNotificationPolicyState,
   serializeDesktopNotificationPolicyState,
   validateDesktopNotificationPolicyState,
 } from "./desktop-notification-policy.js";
@@ -72,17 +73,9 @@ export const DESKTOP_NOTIFICATION_COORDINATOR_DELIVERY_STATUSES = Object.freeze(
   "state_unavailable",
 ]);
 
-const SETTINGS_THRESHOLDS = Object.freeze([
-  "off",
-  "ninety",
-  "eighty_and_ninety",
-]);
-
-const POLICY_THRESHOLDS = Object.freeze({
-  off: "off",
-  ninety: "ninety",
-  eighty_and_ninety: "eightyAndNinety",
-});
+function validThreshold(value) {
+  return Number.isInteger(value) && (value === -1 || (value >= 1 && value <= 100));
+}
 
 const DELIVERY_STATUS_SET = new Set(
   DESKTOP_NOTIFICATION_COORDINATOR_DELIVERY_STATUSES,
@@ -119,8 +112,8 @@ function defaultStatus() {
     schemaVersion: DESKTOP_NOTIFICATION_COORDINATOR_SCHEMA_VERSION,
     state: "uninitialized",
     enabled: false,
-    threshold: "off",
-    resetEnabled: true,
+    threshold: -1,
+    resetEnabled: false,
     delivery: "not_attempted",
     lastOutcome: "none",
     lastReason: "none",
@@ -139,7 +132,7 @@ function safeStatusValue({
   lastDelivery,
 }) {
   const safeState = COORDINATOR_STATE_SET.has(state) ? state : "state_unavailable";
-  const safeThreshold = SETTINGS_THRESHOLDS.includes(threshold) ? threshold : "off";
+  const safeThreshold = validThreshold(threshold) ? threshold : -1;
   const safeDelivery = DELIVERY_STATUS_SET.has(delivery)
     ? delivery
     : "state_unavailable";
@@ -156,7 +149,7 @@ function safeStatusValue({
     schemaVersion: DESKTOP_NOTIFICATION_COORDINATOR_SCHEMA_VERSION,
     state: safeState,
     enabled: safeState === "ready" && enabled === true,
-    threshold: safeState === "ready" ? safeThreshold : "off",
+    threshold: safeState === "ready" ? safeThreshold : -1,
     resetEnabled: safeState === "ready" && resetEnabled === true,
     delivery: safeDelivery,
     lastOutcome: safeOutcome,
@@ -205,34 +198,17 @@ function assertOptions(options) {
 }
 
 function assertPreferenceInput(value) {
-  if (!hasExactKeys(value, ["enabled", "threshold"])) {
+  if (!hasExactKeys(value, ["threshold"]) || !validThreshold(value.threshold)) {
     throw new TypeError("notification preferences are invalid");
   }
-  if (typeof value.enabled !== "boolean") {
-    throw new TypeError("notification enabled preference is invalid");
-  }
-  if (!SETTINGS_THRESHOLDS.includes(value.threshold)) {
-    throw new TypeError("notification threshold preference is invalid");
-  }
-  return Object.freeze({
-    enabled: value.enabled,
-    threshold: value.threshold,
-  });
-}
-
-function settingsThresholdForPolicy(value) {
-  return POLICY_THRESHOLDS[value];
+  return Object.freeze({ enabled: value.threshold !== -1, threshold: value.threshold });
 }
 
 function settingsPreferencesForState(state) {
-  const threshold = Object.entries(POLICY_THRESHOLDS)
-    .find(([, policyThreshold]) => policyThreshold === state.preferences.thresholdMode)?.[0]
-    ?? "off";
-  return Object.freeze({
-    enabled: state.preferences.enabled,
-    threshold,
-    resetEnabled: state.preferences.resetEnabled,
-  });
+  const value = state.preferences.thresholdMode;
+  const threshold = state.preferences.enabled
+    ? (validThreshold(value) ? value : value === "off" ? -1 : 90) : -1;
+  return Object.freeze({ enabled: threshold !== -1, threshold, resetEnabled: false });
 }
 
 function fixedResult({ outcome, reason, delivery, status, notification = null }) {
@@ -314,7 +290,7 @@ function equalState(left, right) {
 
 function statusWithState(previous, state, lifecycle, delivery, outcome, reason, lastDelivery) {
   const preferences = state === null
-    ? { enabled: false, threshold: "off", resetEnabled: true }
+    ? { enabled: false, threshold: -1, resetEnabled: false }
     : settingsPreferencesForState(state);
   return safeStatusValue({
     state: lifecycle,
@@ -359,7 +335,7 @@ export const DESKTOP_NOTIFICATION_POLICY_CODEC = Object.freeze({
   },
 
   decodeValue(value) {
-    return validateDesktopNotificationPolicyState(value);
+    return validateDesktopNotificationPolicyState(migrateDesktopNotificationPolicyState(value));
   },
 });
 
@@ -481,7 +457,9 @@ export function createDesktopNotificationCoordinator(options = {}) {
     try {
       nextState = loaded === null || loaded === undefined
         ? createDesktopNotificationPolicyState()
-        : validateDesktopNotificationPolicyState(loaded);
+        : validateDesktopNotificationPolicyState(migrateDesktopNotificationPolicyState(loaded));
+      // Reset notification implementation is retained but no longer used by production.
+      nextState = validateDesktopNotificationPolicyState({ ...nextState, preferences: { ...nextState.preferences, resetEnabled: false } });
     } catch {
       const status = unavailableStatus();
       return fixedResult({
@@ -492,7 +470,9 @@ export function createDesktopNotificationCoordinator(options = {}) {
       });
     }
 
-    if (loaded === null || loaded === undefined) {
+    // Publish the current version even when a protected backend codec already
+    // migrated the loaded v1 record before returning it to this coordinator.
+    {
       try {
         await backend.save(nextState);
       } catch {
@@ -553,10 +533,12 @@ export function createDesktopNotificationCoordinator(options = {}) {
 
       const nextState = createDesktopNotificationPolicyState({
         enabled: preferences.enabled,
-        thresholdMode: settingsThresholdForPolicy(preferences.threshold),
-        resetEnabled: state.preferences.resetEnabled,
+        thresholdMode: preferences.threshold,
+        resetEnabled: false,
       });
-      if (equalState(nextState, state)) {
+      if (state.preferences.enabled === preferences.enabled
+          && state.preferences.thresholdMode === preferences.threshold
+          && state.preferences.resetEnabled === false) {
         const nextStatus = publish(statusWithState(
           currentStatus,
           state,
@@ -574,10 +556,10 @@ export function createDesktopNotificationCoordinator(options = {}) {
         });
       }
 
-      // Preference changes intentionally create a new comparison epoch.  No
-      // previous baseline or handled event is allowed to bridge disable /
-      // re-enable or threshold-mode changes.
-      if (!await saveState(nextState)) {
+      // A changed threshold starts a fresh comparison baseline, while historical
+      // receipts stay available for dedupe across disable/re-enable and restart.
+      const nextWithReceipts = validateDesktopNotificationPolicyState({ ...nextState, handledKeys: state.handledKeys });
+      if (!await saveState(nextWithReceipts)) {
         const nextStatus = currentStatus;
         return fixedResult({
           outcome: "state_unavailable",
@@ -586,7 +568,7 @@ export function createDesktopNotificationCoordinator(options = {}) {
           status: nextStatus,
         });
       }
-      state = nextState;
+      state = nextWithReceipts;
       const nextStatus = publish(statusWithState(
         currentStatus,
         state,

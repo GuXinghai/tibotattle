@@ -1,5 +1,5 @@
 // Reviewed provider price evidence shared by local and edge accounting adapters.
-export const APP_PRICE_REGISTRY_OBSERVED_AT = "2026-09-29T18:16:22Z";
+export const APP_PRICE_REGISTRY_OBSERVED_AT = "2026-10-18T17:03:53Z";
 // First official-page review. This is the review boundary, not a lower bound
 // on the reviewed model rates: recognized OpenAI/Codex events before this date
 // remain priceable unless a card has an explicit vendor-effective boundary.
@@ -10,7 +10,7 @@ export const OPENAI_PRICE_EVIDENCE_START_DATE = OPENAI_FIRST_OBSERVED_DATE;
 // lower bound on the reviewed model rates.
 const ANTHROPIC_OBSERVED_AT = "2026-07-25T14:18:33Z";
 const PER_MILLION = "1000000";
-export const APP_PRICE_REGISTRY_VERSION = "app-official-api-prices-v0.9";
+export const APP_PRICE_REGISTRY_VERSION = "app-official-api-prices-v0.10";
 
 export const OFFICIAL_PRICE_SOURCE_URLS = Object.freeze({
   openai: "https://developers.openai.com/api/docs/pricing",
@@ -98,7 +98,7 @@ const SOURCE_DEFINITIONS = Object.freeze({
     provider: "openai",
     name: "openai-official-sol61-ultrafast-api-pricing",
     url: OFFICIAL_PRICE_SOURCE_URLS.openai,
-    observedAt: APP_PRICE_REGISTRY_OBSERVED_AT,
+    observedAt: "2026-09-29T18:16:22Z",
     evidenceVersion: "openai-sol61-ultrafast-api-pricing-reviewed-2026-09-29",
     evidenceUrls: Object.freeze([
       OFFICIAL_PRICE_SOURCE_URLS.openai,
@@ -107,7 +107,23 @@ const SOURCE_DEFINITIONS = Object.freeze({
       "https://developers.openai.com/codex/models",
     ]),
   }),
+  openaiCodexMax: Object.freeze({
+    provider: "openai",
+    name: "openai-official-codex-max-api-pricing",
+    url: "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max",
+    observedAt: APP_PRICE_REGISTRY_OBSERVED_AT,
+    evidenceVersion: "openai-codex-max-api-pricing-reviewed-2026-10-19",
+    evidenceUrls: Object.freeze([
+      "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max",
+    ]),
+  }),
 });
+
+// Standalone reviewed model; do not alias it to GPT-5.1 Codex or assume its
+// unpublished service tiers. The review date does not bound historical usage.
+const OPENAI_CODEX_MAX_ROWS = Object.freeze([
+  ["gpt-5.1-codex-max", "standard", "1.25", "0.125", null, "10"],
+]);
 
 // Astra's release-date lower bound is independent of the later review time.
 // These eight cells were each reviewed on the official pricing tabs. Unlike
@@ -398,6 +414,7 @@ export const NORMALIZED_PRICE_EVIDENCE_ROWS = deepFreeze({
   openaiSolLuna: [OPENAI_SOL_LUNA_ROWS],
   anthropicLatest: [ANTHROPIC_LATEST_ROWS],
   openaiSol61Ultrafast: [OPENAI_SOL61_ULTRAFAST_ROWS],
+  openaiCodexMax: [OPENAI_CODEX_MAX_ROWS],
 });
 
 // These hashes are generated from the normalized reviewed rows during an
@@ -410,6 +427,7 @@ const EVIDENCE_HASHES = Object.freeze({
   openaiAstra: "546af74276392ac5cd4f3faab783fff6d2b62235c7a5288012e8a24fd309301b",
   anthropicLatest: "3762998c98a2d9c058b9e698f3d3b8b77b652d0c838ada78cc2ba550de4740c7",
   openaiSol61Ultrafast: "aaba22387dcf21551b86be6abe7ffea6d88a33447fa46e91b442f5d6ef265687",
+  openaiCodexMax: "10328a483af5fdbc38f39789a9126fc5308835dca6a1443f25d2c396143f9024",
 });
 
 function component(usageComponent, amount, conditions) {
@@ -537,7 +555,8 @@ function openAiCard([model, tier, input, cacheRead, cacheWrite, output, contextB
   const isSolLuna = model === "gpt-6-sol" || model === "gpt-6-luna";
   const isSol61 = model === "gpt-6.1-sol";
   const strictAbove272K = hasStrictAbove272KBoundary(model);
-  const sourceKey = isSol61 || (isAstra && tier === "ultrafast")
+  const sourceKey = model === "gpt-5.1-codex-max" ? "openaiCodexMax"
+    : isSol61 || (isAstra && tier === "ultrafast")
     ? "openaiSol61Ultrafast"
     : isAstra ? "openaiAstra" : isSolLuna ? "openaiSolLuna" : "openai";
   const contextConditions = contextBand === "short"
@@ -695,6 +714,7 @@ function providerToolCard(provider, model, rows) {
 export const OPENAI_OFFICIAL_PRICE_CARDS = deepFreeze([
   ...OPENAI_ROWS, ...OPENAI_ASTRA_ROWS, ...OPENAI_SOL_LUNA_ROWS,
   ...OPENAI_SOL61_ULTRAFAST_ROWS,
+  ...OPENAI_CODEX_MAX_ROWS,
 ].map(openAiCard));
 export const ANTHROPIC_OFFICIAL_PRICE_CARDS = deepFreeze([
   ...ANTHROPIC_ROWS.map((row) => anthropicCard(row)),
@@ -711,7 +731,7 @@ export const APP_OFFICIAL_PRICE_CARDS = deepFreeze([
 ]);
 
 export const APP_PRICE_REGISTRY_SHA256 =
-  "d57a7443bb43a756f1458872897dfcfcafdde0893433fc83b1036d58184de78d";
+  "8dffd8b6d94cf954fd1c204914b6105bcedaea2fb05652f9141e56119673fd61";
 
 export const APP_PRICE_REGISTRY_MANIFEST = deepFreeze({
   version: APP_PRICE_REGISTRY_VERSION,

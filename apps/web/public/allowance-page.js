@@ -130,7 +130,7 @@ export function mountAllowancePage({ documentRef, t, formatMoney, formatPp,
     onDetails:button=>open('complete',button),onRetry:retry});
   root.prepend(chart.root);
   const planControl=$('#weekly-plan-control');
-  if(planControl){$('.brand').after(planControl);planControl.dataset.dashboardPage='allowance';}
+  if(planControl){$('.topbar').prepend(planControl);planControl.dataset.dashboardPage='allowance';}
   let data = {observations: [], events: [], points: [], comparisonGaps: []}, modal = null, trigger = null;
   let recordsPage = 0, eventsPage = 0, gapsPage = 0, intervalsPage = 0, selectedAt = null, scope = null, dialogScroll = new Map(), inspected = null;
   function open(key, button) {

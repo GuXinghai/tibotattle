@@ -19,8 +19,8 @@ test("reviewed identity catalog covers priced OpenAI models and explicit aliases
     && card.model !== "openai-provider-tools").flatMap((card) => [card.model, ...(card.aliases ?? [])]));
   assert.deepEqual(models.filter((entry) => entry.pricingStatus !== "unpriced").map((entry) => entry.id).sort(), [...priced].sort());
   assert.deepEqual(models.filter((entry) => entry.pricingStatus === "unpriced").map((entry) => entry.id), ["gpt-5.3-codex-spark", "gpt-6.1-astra"]);
-  assert.equal(models.length, 43);
-  for (const id of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
+  assert.equal(models.length, 44);
+  for (const id of ["gpt-5.1-codex-max", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
     assert.equal(reviewedModelIdentity(id).priceModelId, id);
     assert.equal(reviewedModelIdentity(id).pricingStatus, "published");
   }
@@ -51,10 +51,10 @@ test("package, browser and closed upload schemas preserve all reviewed models an
     "claude-fable-5", "claude-haiku-4-5-20251001", "claude-opus-4-8",
     "claude-sonnet-4-6", "claude-sonnet-5",
   ]);
-  assert.deepEqual(TELEMETRY_MODEL_IDS.slice(-7), [
+  assert.deepEqual(TELEMETRY_MODEL_IDS.slice(-8), [
     "gpt-6-luna",
     "gpt-6.1-astra", "claude-fable-5-1", "claude-mythos-5-1",
-    "claude-opus-5", "claude-opus-5-5", "gpt-6.1-sol",
+    "claude-opus-5", "claude-opus-5-5", "gpt-6.1-sol", "gpt-5.1-codex-max",
   ]);
   const schema = JSON.parse(await readFile(new URL("../packages/telemetry-contract/schemas/v0.2/usage-event.schema.json", import.meta.url), "utf8"));
   assert.deepEqual([...schema.properties.modelId.enum].sort(), [...TELEMETRY_MODEL_IDS].sort());

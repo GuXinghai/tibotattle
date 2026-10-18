@@ -66,7 +66,7 @@ function fakeDocument({
   };
 }
 
-test("native navigation accepts only the four fixed dashboard destinations", () => {
+test("native navigation accepts only the fixed dashboard destinations", () => {
   const { windowRef } = fakeWindow();
   for (const section of ["overview", "usage", "allowance", "performance"]) {
     assert.equal(navigateToDashboardSection({}, windowRef, section), true);
@@ -162,5 +162,188 @@ test("the shell no longer wires a global Share button or a community link", () =
   };
   const mounted = mountDesktopShell({ documentRef, windowRef });
   assert.equal(selectors.some((selector) => /share|community/iu.test(selector)), false);
+  mounted.teardown();
+});
+
+test("native Settings commands accept fixed categories and reject arbitrary destinations", () => {
+  const { windowRef, commandListeners } = fakeWindow();
+  const mounted = mountDesktopShell({ documentRef: fakeDocument(), windowRef });
+  commandListeners[0]({ command: "dashboardSection", section: "settings", settingsSection: "notifications" });
+  assert.equal(windowRef.location.hash, "#settings/notifications");
+  for (const settingsSection of ["../private", "#usage", "", "settings/data"]) {
+    commandListeners[0]({ command: "dashboardSection", section: "settings", settingsSection });
+    assert.equal(windowRef.location.hash, "#settings/notifications");
+  }
+  commandListeners[0]({ command: "dashboardSection", section: "usage", settingsSection: "data" });
+  assert.equal(windowRef.location.hash, "#settings/notifications");
+  mounted.teardown();
+});
+
+function titlebarFixture() {
+  const { windowRef, commandListeners } = fakeWindow();
+  const documentRef = fakeDocument();
+  function target() {
+    const listeners = new Map();
+    return {
+      addEventListener(type, listener) {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type).add(listener);
+      },
+      removeEventListener(type, listener) { listeners.get(type)?.delete(listener); },
+      emit(type, init = {}) {
+        const event = { preventDefault() { this.defaultPrevented = true; }, ...init };
+        for (const listener of listeners.get(type) ?? []) listener(event);
+        return event;
+      },
+      listenerCount() { return [...listeners.values()].reduce((sum, group) => sum + group.size, 0); },
+    };
+  }
+  function element() {
+    const attributes = new Map();
+    return {
+      ...target(), children: [],
+      setAttribute(name, value) { attributes.set(name, value); },
+      getAttribute(name) { return attributes.get(name); },
+      append(...children) { children.forEach((child) => { child.parent = this; this.children.push(child); }); },
+      prepend(child) { child.parent = this; this.children.unshift(child); },
+      replaceChildren(...children) { this.children = []; this.append(...children); },
+      remove() { this.parent.children = this.parent.children.filter((child) => child !== this); },
+      focus() { documentRef.activeElement = this; },
+      blur() { if (documentRef.activeElement === this) documentRef.activeElement = documentRef.body; },
+      getBoundingClientRect() { return { left: 19.5, bottom: 35.5 }; },
+    };
+  }
+  const classes = new Set(["electron-dashboard"]);
+  documentRef.documentElement.classList = {
+    contains: (value) => classes.has(value),
+    add: (...values) => values.forEach((value) => classes.add(value)),
+    remove: (...values) => values.forEach((value) => classes.delete(value)),
+    toggle(value, on) { if (on) classes.add(value); else classes.delete(value); },
+  };
+  Object.assign(documentRef, target());
+  Object.assign(windowRef, target());
+  documentRef.createElement = element;
+  documentRef.body = element();
+  documentRef.activeElement = documentRef.body;
+  const overlay = { ...target(), visible: true };
+  windowRef.navigator = { windowControlsOverlay: overlay };
+  let labels = ["&File", "&Edit", "&View", "&Window", "&Help"];
+  const ids = ["file", "edit", "view", "window", "help"];
+  const calls = [];
+  let closePopup;
+  windowRef.tibotattleDesktop.getApplicationMenu = async () => ({
+    menus: ids.map((id, index) => ({ id, label: labels[index] })),
+    fullscreen: false,
+  });
+  windowRef.tibotattleDesktop.openApplicationMenu = (payload) => {
+    calls.push(payload);
+    return new Promise((resolve) => { closePopup = resolve; });
+  };
+  return {
+    documentRef, windowRef, overlay, commandListeners, classes, calls,
+    setLabels(next) { labels = next; },
+    closePopup() { closePopup?.(true); },
+    buttons() { return documentRef.body.children[0].children[0].children; },
+  };
+}
+
+test("desktop titlebar uses native menu labels, coordinates and keyboard navigation without duplicating mounts", async () => {
+  const fixture = titlebarFixture();
+  const { documentRef, windowRef, calls } = fixture;
+  const content = documentRef.createElement("input");
+  content.focus();
+  const mounted = mountDesktopShell({ documentRef, windowRef });
+  assert.equal(mountDesktopShell({ documentRef, windowRef }), mounted);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(documentRef.body.children.length, 1);
+  assert.deepEqual(fixture.buttons().map((button) => button.textContent), ["File", "Edit", "View", "Window", "Help"]);
+  assert.equal(documentRef.emit("keydown", { key: "F10" }).defaultPrevented, true);
+  assert.equal(documentRef.activeElement, fixture.buttons()[0]);
+  documentRef.emit("keydown", { key: "ArrowRight" });
+  assert.equal(documentRef.activeElement, fixture.buttons()[1]);
+  documentRef.emit("keydown", { key: "End" });
+  documentRef.emit("keydown", { key: "Enter" });
+  assert.deepEqual(calls, [{ menu: "help", x: 20, y: 36 }]);
+  assert.equal(fixture.buttons()[4].getAttribute("aria-expanded"), "true");
+  fixture.closePopup();
+  await Promise.resolve();
+  assert.equal(fixture.buttons()[4].getAttribute("aria-expanded"), "false");
+  documentRef.emit("keydown", { key: "Escape" });
+  assert.equal(documentRef.activeElement, content);
+  documentRef.emit("keydown", { key: "f", altKey: true });
+  assert.equal(calls[1].menu, "file");
+  fixture.closePopup();
+  await Promise.resolve();
+  mounted.teardown();
+  assert.equal(documentRef.body.children.length, 0);
+  assert.equal(documentRef.listenerCount(), 0);
+  assert.equal(windowRef.listenerCount(), 0);
+  assert.equal(fixture.overlay.listenerCount(), 0);
+  assert.equal(fixture.classes.has("desktop-titlebar-active"), false);
+});
+
+test("titlebar refreshes localized labels, handles fullscreen and ignores late responses after teardown", async () => {
+  const fixture = titlebarFixture();
+  const { documentRef, windowRef, overlay, commandListeners, classes } = fixture;
+  const mounted = mountDesktopShell({ documentRef, windowRef });
+  await Promise.resolve();
+  await Promise.resolve();
+  fixture.setLabels(["文件(&F)", "编辑(&E)", "视图(&V)", "窗口(&W)", "帮助(&H)"]);
+  commandListeners[0]({ command: "settingsChanged" });
+  await Promise.resolve();
+  assert.deepEqual(fixture.buttons().map((button) => button.textContent), ["文件", "编辑", "视图", "窗口", "帮助"]);
+  documentRef.emit("keydown", { key: "Alt" });
+  documentRef.emit("keyup", { key: "Alt" });
+  assert.equal(documentRef.activeElement, fixture.buttons()[0]);
+  overlay.visible = false;
+  overlay.emit("geometrychange");
+  assert.equal(classes.has("desktop-titlebar-fullscreen"), false);
+  commandListeners[0]({ command: "windowFullscreen", fullscreen: true });
+  assert.equal(classes.has("desktop-titlebar-fullscreen"), true);
+  commandListeners[0]({ command: "windowFullscreen", fullscreen: false, extra: true });
+  commandListeners[0]({ command: "windowFullscreen", fullscreen: "false" });
+  assert.equal(classes.has("desktop-titlebar-fullscreen"), true);
+  overlay.visible = true;
+  overlay.emit("geometrychange");
+  assert.equal(classes.has("desktop-titlebar-fullscreen"), true);
+  commandListeners[0]({ command: "windowFullscreen", fullscreen: false });
+  assert.equal(classes.has("desktop-titlebar-fullscreen"), false);
+  documentRef.fullscreenElement = {};
+  documentRef.emit("fullscreenchange");
+  assert.equal(classes.has("desktop-titlebar-fullscreen"), true);
+  let resolvePending;
+  windowRef.tibotattleDesktop.getApplicationMenu = () => new Promise((resolve) => { resolvePending = resolve; });
+  windowRef.emit("tibotattle:locale-change");
+  mounted.teardown();
+  resolvePending({ menus: [] });
+  await Promise.resolve();
+  assert.equal(documentRef.body.children.length, 0);
+  assert.equal(classes.has("desktop-titlebar-fullscreen"), false);
+});
+
+test("trusted desktop without the optional overlay geometry API still has its menu row", async () => {
+  const fixture = titlebarFixture();
+  delete fixture.windowRef.navigator.windowControlsOverlay;
+  const mounted = mountDesktopShell(fixture);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(fixture.buttons().length, 5);
+  assert.equal(fixture.classes.has("desktop-titlebar-fullscreen"), false);
+  mounted.teardown();
+});
+
+test("native fullscreen metadata initializes the row without inferring state from overlay visibility", async () => {
+  const fixture = titlebarFixture();
+  const readMenu = fixture.windowRef.tibotattleDesktop.getApplicationMenu;
+  fixture.windowRef.tibotattleDesktop.getApplicationMenu = async () => ({
+    ...await readMenu(), fullscreen: true,
+  });
+  const mounted = mountDesktopShell(fixture);
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(fixture.buttons().length, 5);
+  assert.equal(fixture.classes.has("desktop-titlebar-fullscreen"), true);
   mounted.teardown();
 });

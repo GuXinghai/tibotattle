@@ -198,9 +198,10 @@ test("reviewed registries and schemas expose the same closed model, limit, and d
     // Claude enum positions survive the addition of another Codex model.
     [
       "unknown",
-      ...registry.providers.openai_codex.modelIds.filter((model) => model !== "gpt-6.1-sol"),
+      ...registry.providers.openai_codex.modelIds.filter((model) => !["gpt-6.1-sol", "gpt-5.1-codex-max"].includes(model)),
       ...registry.providers.anthropic_claude_code.modelIds,
       "gpt-6.1-sol",
+      "gpt-5.1-codex-max",
     ],
   );
   assert.ok(registry.providers.openai_codex.modelIds.includes("gpt-6.1-sol"));

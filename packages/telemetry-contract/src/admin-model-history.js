@@ -42,6 +42,10 @@ const adminHistorySeptember23Version = "reviewed-model-catalog-2026-09-23.1";
 const adminHistorySeptember23Ids = Object.freeze([
   ...adminHistoryPreviousIds, "gpt-6.1-astra",
 ]);
+const adminHistorySeptember29Version = "reviewed-model-catalog-2026-09-29.1";
+const adminHistorySeptember29Ids = Object.freeze([
+  ...adminHistorySeptember23Ids, "gpt-6.1-sol",
+]);
 // Frozen roster for reviewed-model-catalog-2026-09-03.1.
 const adminHistoryOlderIds = Object.freeze([
   "codex-auto-review", "gpt-4-turbo-2024-04-09", "gpt-4.1", "gpt-4.1-mini",
@@ -116,7 +120,9 @@ export function projectAdminModelHistoryDay(value) {
   }
   const ids = catalogVersion === ADMIN_MODEL_HISTORY_CATALOG_VERSION
     ? adminHistoryCurrentIds
-    : catalogVersion === adminHistorySeptember23Version
+    : catalogVersion === adminHistorySeptember29Version
+      ? adminHistorySeptember29Ids
+      : catalogVersion === adminHistorySeptember23Version
       ? adminHistorySeptember23Ids
       : catalogVersion === PREVIOUS_ADMIN_MODEL_HISTORY_CATALOG_VERSION
       ? adminHistoryPreviousIds

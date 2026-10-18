@@ -9,6 +9,7 @@ import {
 } from "../src/codex-primary-allowance-basis.js";
 
 import {
+  analyzeCacheImpactRows,
   analyzeCacheContinuityRows,
   analyzeCacheSwitchRows,
   CACHE_CONTINUITY_OUTCOME_DISPLAY_MAXIMUM_GAP_MS,
@@ -46,7 +47,7 @@ function fullyPriced(_event, components) {
     + components.input_cache_write_tokens * 12
     + components.output_text_tokens * 20
     + components.output_reasoning_tokens * 20
-    + components.output_combined_tokens * 20;
+    + (components.output_combined_tokens ?? 0) * 20;
   return {
     coverageStatus: "fully_priced",
     totalUsd: usdFromNanos(nanos),
@@ -190,7 +191,6 @@ test("analyzer classifies effective changes and prices the conservative warm cou
     input_cache_write_tokens: 100,
     output_text_tokens: 0,
     output_reasoning_tokens: 0,
-    output_combined_tokens: 0,
   });
   assert.deepEqual(Object.keys(period.recent[0]).sort(), [
     "changeType",
@@ -754,6 +754,77 @@ for (const [name, analyze, makeRow, premiumNanos] of [
   ["switch", analyzeCacheSwitchRows, row, 9_400],
   ["continuity", analyzeCacheContinuityRows, continuityRow, 9_000],
 ]) {
+  const pricedInput = {
+    model_id: "gpt-5.4",
+    previous_model_id: "gpt-5.4",
+    tokens_in_uncached: 1_000,
+    tokens_in_cache_read: 0,
+    tokens_in_cache_write: 0,
+    tokens_out_text: 60,
+    tokens_out_reasoning: 40,
+    tokens_out_combined: 100,
+  };
+
+  test(`${name} production pricing deduplicates matching combined and split output`, () => {
+    const source = makeRow(pricedInput);
+    const original = structuredClone(source);
+    const period = analyze([source], { nowMs: NOW_MS }).periods.find(
+      (candidate) => candidate.periodId === "7d",
+    );
+    assert.equal(period.pricedDrops, 1);
+    assert.equal(period.unpricedDrops, 0);
+    // 1000 tokens move from $2.50/M fresh input to $0.25/M cache reads.
+    assert.equal(period.estimatedPremiumUsdExact, "0.00225");
+    const splitOnly = analyze([{ ...source, tokens_out_combined: null }], {
+      nowMs: NOW_MS,
+    }).periods.find((candidate) => candidate.periodId === "7d");
+    assert.equal(splitOnly.estimatedPremiumUsdExact, period.estimatedPremiumUsdExact);
+    assert.deepEqual(source, original);
+  });
+
+  test(`${name} missing or contradictory output stays unpriced`, () => {
+    for (const output of [
+      { tokens_out_text: null, tokens_out_reasoning: null, tokens_out_combined: null },
+      { tokens_out_text: 60, tokens_out_reasoning: null, tokens_out_combined: null },
+      { tokens_out_text: 60, tokens_out_reasoning: 40, tokens_out_combined: 101 },
+    ]) {
+      let calls = 0;
+      const period = analyze([makeRow({ ...pricedInput, ...output })], {
+        nowMs: NOW_MS,
+        pricer: (...args) => { calls++; return fullyPriced(...args); },
+      }).periods.find((candidate) => candidate.periodId === "7d");
+      assert.equal(period.cacheReadDrops, 1);
+      assert.equal(period.pricedDrops, 0);
+      assert.equal(period.unpricedDrops, 1);
+      assert.equal(period.coveredSubtotal, null);
+      assert.equal(period.estimatedPremiumUsdExact, null);
+      assert.equal(calls, 0);
+    }
+    // A combined-only output remains observed, but has no approved OpenAI
+    // component mapping; do not turn its unknown split into zero output.
+    const combinedOnly = analyze([makeRow({ ...pricedInput,
+      tokens_out_text: null, tokens_out_reasoning: null,
+    })], { nowMs: NOW_MS }).periods.find((candidate) => candidate.periodId === "7d");
+    assert.equal(combinedOnly.pricedDrops, 0);
+    assert.equal(combinedOnly.coveredSubtotal, null);
+  });
+
+  test(`${name} repaired pricing preserves the covered subtotal and incomplete-order warning`, () => {
+    const result = analyzeCacheImpactRows([
+      { ...makeRow(pricedInput), ordering_coverage_gap: 0 },
+      { observed_at_ms: NOW_MS - 30_000, ordering_coverage_gap: 1 },
+    ], { nowMs: NOW_MS });
+    const impact = name === "switch" ? result.cacheSwitchImpact : result.cacheContinuityImpact;
+    const period = impact.periods.find((candidate) => candidate.periodId === "7d");
+    assert.equal(period.pricedDrops, 1);
+    assert.equal(period.coverageStatus, "incomplete");
+    assert.equal(period.orderingCoverageGaps, 1);
+    assert.equal(period.estimatedPremiumUsdExact, null);
+    assert.equal(period.allowanceWeighting.status, "unavailable");
+    assert.equal(period.coveredSubtotal.scope, "covered_priced_drops");
+    assert.equal(period.coveredSubtotal.standardApiPremiumUsdExact, "0.00225");
+  });
+
   test(`${name} covered subtotal survives an excluded comparison without becoming the period total`, () => {
     const period = analyze([
       makeRow({ codex_speed_mode: "fast" }),

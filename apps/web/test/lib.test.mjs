@@ -4881,6 +4881,7 @@ async function createDashboardStartupHarness({
       hidden: false,
       textContent: "",
       setAttribute() {},
+      getAttribute() { return null; },
     });
     return elements.get(selector);
   };
@@ -8582,8 +8583,8 @@ test("Trends calibration legend is a full-width row with distinct line and area 
 
 // Owner polish (2026-08-11): "Missing quota bracket" and "Movement needs
 // context" shared one grey, so a shaded region could not be mapped back to its
-// exclusion. Each exclusion category now owns a distinct hue, and the legend
-// swatch carries the same hue as the band it keys.
+// exclusion. Each exclusion category got a distinct hue, and the legend swatch
+// carried the same hue as the band it keys.
 //
 // Owner sanity check (2026-08-19): distinct hues were necessary but not
 // sufficient. Every wash sat at .08-.1, where the composite over the card's
@@ -8591,44 +8592,59 @@ test("Trends calibration legend is a full-width row with distinct line and area 
 // legend looked colourful and the plot did not. `quota_weighting_unavailable`
 // was also a counted exclusion with no hue at all, and fell through the
 // renderer's default into violet. Both are pinned here.
-test("Trends exclusion bands and legend swatches use five distinct, matching, legible hues", async () => {
+//
+// Owner direction (2026-10-18): the dashboard is monochrome, so the five
+// categories no longer differ by hue. They share the theme ink and step apart
+// by wash density instead: five distinct alphas, every band dense enough to
+// read as its own step, every tick at identity strength, and each legend
+// swatch pinned to its tick.
+test("Trends exclusion bands and legend swatches use five distinct, matching, legible grey steps", async () => {
   const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
   const names = ["missing", "reset", "weighting", "ambiguous", "saturated"];
   const declaration = (selector) =>
-    styles.match(new RegExp(`${selector} \\{ (?:fill|background): rgba\\((\\d+, \\d+, \\d+), (\\.\\d+)\\)`, "u"));
+    styles.match(new RegExp(`${selector} \\{ (?:fill|background): color-mix\\(in srgb, var\\(--ink\\) (\\d+)%, transparent\\)`, "u"));
   const bandRule = (name) => declaration(`\\.chart-status-${name}`);
   const tickRule = (name) => declaration(`\\.chart-status-tick\\.chart-status-${name}`);
   const swatchRule = (name) => declaration(`\\.legend-dot\\.chart-status-${name}`);
+  const alpha = (rule) => Number(rule[1]);
 
   const bands = names.map(bandRule);
   const ticks = names.map(tickRule);
   const swatches = names.map(swatchRule);
-  assert.ok(bands.every(Boolean), "every exclusion band declares an rgba fill");
-  assert.ok(ticks.every(Boolean), "every exclusion band declares an rgba tick fill");
-  assert.ok(swatches.every(Boolean), "every legend swatch declares an rgba background");
+  assert.ok(bands.every(Boolean), "every exclusion band declares an ink-mix fill");
+  assert.ok(ticks.every(Boolean), "every exclusion band declares an ink-mix tick fill");
+  assert.ok(swatches.every(Boolean), "every legend swatch declares an ink-mix background");
   assert.equal(
-    new Set(bands.map((rule) => rule[1])).size,
+    new Set(bands.map(alpha)).size,
     5,
-    "the five exclusion bands use five distinct hues",
+    "the five exclusion bands use five distinct grey steps",
   );
   for (let index = 0; index < names.length; index += 1) {
     const name = names[index];
-    // The wash has to be dense enough for the hue to survive compositing onto
-    // cream. Below roughly .12 the five bands are indistinguishable greys, which
-    // is the whole defect this test exists to prevent regressing.
+    // The wash has to be dense enough to read as its own step. Below roughly
+    // .12 the five bands composite into one indistinguishable grey, which is
+    // the whole defect this test exists to prevent regressing.
     assert.ok(
-      Number(bands[index][2]) >= 0.14,
-      `the ${name} band wash is dense enough to carry its hue (got ${bands[index][2]})`,
+      alpha(bands[index]) >= 14,
+      `the ${name} band wash is dense enough to read as its step (got ${alpha(bands[index])})`,
     );
     // The legend shows the reader the TICK, because at a month's zoom the tick
     // is the mark a single excluded window actually leaves on the plot.
-    assert.equal(swatches[index][1], ticks[index][1], `${name} swatch matches its tick hue`);
-    assert.equal(swatches[index][2], ticks[index][2], `${name} swatch matches its tick alpha`);
-    assert.equal(ticks[index][1], bands[index][1], `${name} tick matches its band hue`);
+    assert.equal(alpha(swatches[index]), alpha(ticks[index]), `${name} swatch matches its tick step`);
     assert.ok(
-      Number(ticks[index][2]) > Number(bands[index][2]) * 2,
+      alpha(ticks[index]) > alpha(bands[index]) * 2,
       `the ${name} tick reads at identity strength, well above its wash`,
     );
+    if (index > 0) {
+      assert.ok(
+        alpha(bands[index]) > alpha(bands[index - 1]),
+        `the ${name} band steps past ${names[index - 1]}`,
+      );
+      assert.ok(
+        alpha(ticks[index]) > alpha(ticks[index - 1]),
+        `the ${name} tick steps past ${names[index - 1]}`,
+      );
+    }
   }
 });
 
@@ -8923,20 +8939,24 @@ const INDEXING_HEALTH = Object.freeze({
   }),
 });
 
-test("Forest Ink dark appearance is explicit, balanced, and live-updateable", async () => {
+test("Monochrome dark appearance is explicit, balanced, and live-updateable", async () => {
   const [styles, appSource] = await Promise.all([
     readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
     readFile(new URL("../public/app.js", import.meta.url), "utf8"),
   ]);
 
   assert.match(styles, /html\[data-theme="dark"\] \{/u);
-  assert.match(styles, /--paper: #141a17;/u);
-  assert.match(styles, /--surface-raised: #24322c;/u);
-  assert.match(styles, /--ink: #f5f1e8;/u);
-  assert.match(styles, /--green: #76aa9c;/u);
-  assert.match(styles, /--feature-bg: #2d7466;/u);
-  assert.match(styles, /--chart-accent: #99c5ba;/u);
-  assert.match(styles, /--blue: #7d9eb8;/u);
+  assert.match(
+    styles,
+    /html\[data-theme="dark"\] body:not\(\.community-site\):not\(\.admin-operator-page\) \{/u,
+  );
+  assert.match(styles, /--paper: #161616;/u);
+  assert.match(styles, /--surface-raised: #161616;/u);
+  assert.match(styles, /--ink: #f2f2f2;/u);
+  assert.match(styles, /--green: #f2f2f2;/u);
+  assert.match(styles, /--feature-bg: #161616;/u);
+  assert.match(styles, /--chart-accent: #f2f2f2;/u);
+  assert.match(styles, /--blue: #f2f2f2;/u);
   assert.match(
     styles,
     /html\[data-theme="dark"\] \.weekly-hero \{[\s\S]*?gap: 0;[\s\S]*?padding: 0;[\s\S]*?background: var\(--surface\);/u,
@@ -8948,7 +8968,7 @@ test("Forest Ink dark appearance is explicit, balanced, and live-updateable", as
   assert.doesNotMatch(styles, /share-card|share-preview/u);
   assert.doesNotMatch(
     styles,
-    /@media[^\{]*prefers-color-scheme[^\{]*\{[\s\S]*?--paper: #141a17/u,
+    /@media[^\{]*prefers-color-scheme[^\{]*\{[\s\S]*?--paper: #161616/u,
   );
 
   assert.match(
@@ -8965,7 +8985,7 @@ test("Forest Ink dark appearance is explicit, balanced, and live-updateable", as
   assert.match(appSource, /"tibotattle:appearance-override"/u);
   assert.match(
     appSource,
-    /theme === "dark" \? "#141a17" : "#f5f1e8"/u,
+    /theme === "dark" \? "#161616" : "#fff"/u,
   );
 });
 

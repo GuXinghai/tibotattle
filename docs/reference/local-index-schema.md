@@ -56,6 +56,21 @@ of extractor revision changes the parser stamp. Each source whose stamp differs
 is rescanned on the next refresh (reason `parser_version`), and the companion
 gives that first refresh the cold-build deadline.
 
+### Reviewed model recognition recovery
+
+When the reviewed model vocabulary gains an identity, sources with committed
+unknown-model events and an older `source_diagnostic.modelRecognitionVersion`
+are reparsed from their original records. No current or later model setting is
+backfilled. The version-1 recovery includes GPT-5.1 Codex Max; it does not change
+the store schema or global parser stamp. Known-model-only sources stay untouched.
+
+Recovery shares the existing bounded model-attribution queue: at most eight
+sources and 256 MiB per pass, with one larger source allowed to make progress.
+The per-source recognition receipt commits with the replacement facts, so
+cancellation or restart resumes the queue and still-unknown models do not loop.
+The normal foreground refresh drains this queue before publishing. Token
+quantities and unresolved speed modes retain their original evidence semantics.
+
 ### Runtime model evidence
 
 `runtime_model_evidence` retains content-free native-log receipts: canonical model,

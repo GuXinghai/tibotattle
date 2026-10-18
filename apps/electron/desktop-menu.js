@@ -116,6 +116,7 @@ export function createDesktopMenuTemplate({
   const boundedActions = createDesktopActionInterface(actions);
   const textOptions = { locale, systemLocales };
   const platformMenu = {
+    id: "file",
     label: desktopText("electron.menu.file", {}, textOptions),
     submenu: [
       actionItem(desktopText("electron.menu.open", {}, textOptions), boundedActions.show),
@@ -131,6 +132,7 @@ export function createDesktopMenuTemplate({
   const commonMenus = [
     platformMenu,
     {
+      id: "edit",
       label: desktopText("electron.menu.edit", {}, textOptions),
       submenu: [
         { role: "copy" },
@@ -138,6 +140,7 @@ export function createDesktopMenuTemplate({
       ],
     },
     {
+      id: "view",
       label: desktopText("electron.menu.view", {}, textOptions),
       submenu: [
         actionItem(desktopText("electron.menu.refresh", {}, textOptions), boundedActions.refresh, {
@@ -156,6 +159,7 @@ export function createDesktopMenuTemplate({
       ],
     },
     {
+      id: "window",
       label: desktopText("electron.menu.window", {}, textOptions),
       submenu: [
         { role: "minimize" },
@@ -165,6 +169,7 @@ export function createDesktopMenuTemplate({
     },
   ];
   commonMenus.push({
+    id: "help",
     label: desktopText("electron.menu.help", {}, textOptions),
     submenu: [
       actionItem(desktopText("electron.menu.about", { appName }, textOptions), boundedActions.about),

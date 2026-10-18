@@ -12,6 +12,7 @@ import {
   DESKTOP_REFRESH_INTERVAL_SECONDS,
   DESKTOP_REFRESH_MODES,
   DESKTOP_SETTINGS_SCHEMA_VERSION,
+  DESKTOP_MAX_REFRESH_INTERVAL_SECONDS,
   DESKTOP_SYSTEM_SETTINGS_TARGETS,
   createDesktopRequest,
   migrateDesktopSettingsSnapshot,
@@ -24,6 +25,8 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
   assert.equal(DESKTOP_IPC_CHANNEL, "tibotattle:desktop:v1");
   assert.deepEqual(DESKTOP_ACTIONS, [
     "getSettings",
+    "getApplicationMenu",
+    "openApplicationMenu",
     "getCodexHomesForSettings",
     "openSettings",
     "openTraySettings",
@@ -39,6 +42,10 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
     "useDefaultCodexHome",
     "setLanguage",
     "setAppearance",
+    "getWindowBackground",
+    "setWindowBackground",
+    "chooseWindowBackground",
+    "restoreWindowBackground",
     "setRefreshInterval",
     "setStartAtLogin",
     "setNotificationPreferences",
@@ -61,11 +68,7 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
   assert.deepEqual(DESKTOP_LANGUAGES, ["system", "en", "zh-Hans", "es"]);
   assert.deepEqual(DESKTOP_REFRESH_INTERVAL_SECONDS, [60, 300, 900, 1800]);
   assert.deepEqual(DESKTOP_REFRESH_MODES, ["quick", "detailed"]);
-  assert.deepEqual(DESKTOP_NOTIFICATION_THRESHOLDS, [
-    "off",
-    "ninety",
-    "eighty_and_ninety",
-  ]);
+  assert.deepEqual(DESKTOP_NOTIFICATION_THRESHOLDS, [-1, ...Array.from({ length: 100 }, (_, index) => index + 1)]);
   assert.deepEqual(DESKTOP_SYSTEM_SETTINGS_TARGETS, ["startup", "notifications"]);
   assert.deepEqual(DESKTOP_EXTERNAL_TARGETS, ["website", "github", "x"]);
   assert.equal(Object.isFrozen(DESKTOP_ACTIONS), true);
@@ -75,16 +78,28 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
   assert.equal(Object.isFrozen(DESKTOP_DEFAULT_SETTINGS.notifications), true);
 });
 
+test("application menu requests accept only fixed menus and bounded integer coordinates", () => {
+  assert.deepEqual(createDesktopRequest("getApplicationMenu"), { action: "getApplicationMenu", args: {} });
+  for (const menu of ["file", "edit", "view", "window", "help"]) {
+    const args = { menu, x: 0, y: 40 };
+    assert.deepEqual(createDesktopRequest("openApplicationMenu", args).args, args);
+  }
+  for (const args of [
+    { menu: "quit", x: 0, y: 40 }, { menu: "file", x: -1, y: 40 },
+    { menu: "file", x: 1.5, y: 40 }, { menu: "file", x: 1, y: Infinity },
+    { menu: "file", x: 16385, y: 40 }, { menu: "file", x: 0, y: 40, action: "quit" },
+  ]) assert.throws(() => createDesktopRequest("openApplicationMenu", args), TypeError);
+  assert.throws(() => createDesktopRequest("getApplicationMenu", { menu: "file" }), TypeError);
+});
+
 test("request validation accepts exact envelopes and freezes the result", () => {
   const request = createDesktopRequest("setNotificationPreferences", {
-    enabled: true,
-    threshold: "eighty_and_ninety",
+    threshold: 85,
   });
   assert.deepEqual(request, {
     action: "setNotificationPreferences",
     args: {
-      enabled: true,
-      threshold: "eighty_and_ninety",
+      threshold: 85,
     },
   });
   assert.equal(Object.isFrozen(request), true);
@@ -233,7 +248,7 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
     appearance: "system",
     refreshIntervalSeconds: 300,
     startAtLogin: false,
-    notifications: { enabled: false, threshold: "off" },
+    notifications: { enabled: false, threshold: -1 },
     sidebarCollapsed: false,
     tray: DESKTOP_DEFAULT_SETTINGS.tray,
   });
@@ -253,7 +268,7 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
     appearance: "dark",
     refreshIntervalSeconds: 1800,
     startAtLogin: true,
-    notifications: { enabled: true, threshold: "ninety" },
+    notifications: { enabled: true, threshold: 90 },
   });
   assert.equal(valid.codexHomes.activityRoots[0].kind, "custom");
   assert.equal(Object.isFrozen(valid.notifications), true);
@@ -337,4 +352,28 @@ test("test notification accepts no renderer content", () => {
   for (const args of [{ body: "text" }, { title: "title" }, { enabled: true }, { url: "https://example.com" }]) {
     assert.throws(() => createDesktopRequest("sendTestNotification", args), TypeError);
   }
+});
+
+test("numeric settings reject fractional and unsafe values and migrate legacy choices forward", () => {
+  for (const seconds of [-1, 60, 420, DESKTOP_MAX_REFRESH_INTERVAL_SECONDS]) {
+    assert.equal(createDesktopRequest("setRefreshInterval", { seconds }).args.seconds, seconds);
+  }
+  for (const seconds of [0, -60, 61, 60.5, Infinity, Number.MAX_SAFE_INTEGER, "60"]) {
+    assert.throws(() => createDesktopRequest("setRefreshInterval", { seconds }), TypeError);
+  }
+  for (const threshold of [-1, 1, 37, 100]) {
+    assert.equal(createDesktopRequest("setNotificationPreferences", { threshold }).args.threshold, threshold);
+  }
+  for (const threshold of [0, -2, 101, 37.5, NaN, Infinity, "90", "ninety"]) {
+    assert.throws(() => createDesktopRequest("setNotificationPreferences", { threshold }), TypeError);
+  }
+  assert.throws(() => createDesktopRequest("setNotificationPreferences", { enabled: true, threshold: 90 }), TypeError);
+  for (const [enabled, mode, expected] of [[false, "ninety", -1], [true, "off", -1], [true, "ninety", 90], [true, "eighty_and_ninety", 90]]) {
+    const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v3", notifications: { enabled, threshold: mode } };
+    const migrated = migrateDesktopSettingsSnapshot(legacy);
+    assert.equal(migrated.schemaVersion, DESKTOP_SETTINGS_SCHEMA_VERSION);
+    assert.deepEqual(migrated.notifications, { enabled: expected !== -1, threshold: expected });
+  }
+  assert.throws(() => migrateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v3", notifications: { enabled: true, threshold: 90 } }), TypeError);
+  assert.throws(() => validateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, notifications: { enabled: false, threshold: 90 } }), TypeError);
 });

@@ -135,7 +135,7 @@ test("fresh installation state is explicit, bounded, and deeply frozen", () => {
     schemaVersion: DESKTOP_NOTIFICATION_POLICY_SCHEMA_VERSION,
     preferences: {
       enabled: false,
-      resetEnabled: true,
+      resetEnabled: false,
       thresholdMode: "off",
     },
     baselines: {},

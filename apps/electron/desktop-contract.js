@@ -1,5 +1,6 @@
 import { DESKTOP_TRAY_DEFAULTS, migrateDesktopTrayPreferences, validateDesktopTrayPreferences } from "./desktop-tray-preferences.js";
 import { parseCodexThreadURL } from "./loopback-policy.js";
+import { validateWindowBackgroundPatch } from "./desktop-background.js";
 import {
   DESKTOP_CODEX_ROOT_MAX,
   createDefaultCodexHomes,
@@ -21,7 +22,8 @@ import {
 
 export const DESKTOP_BRIDGE_VERSION = "v1";
 export const DESKTOP_IPC_CHANNEL = "tibotattle:desktop:v1";
-export const DESKTOP_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v3";
+export const DESKTOP_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v4";
+export const DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v3";
 export const DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v2";
 export const DESKTOP_LEGACY_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v1";
 export const DESKTOP_LEGACY_LAUNCHER_SETTINGS_SCHEMA_VERSION = "usage-monitor-launcher-settings-v1";
@@ -47,6 +49,7 @@ export const DESKTOP_APPEARANCES = Object.freeze([
   "dark",
 ]);
 
+// Historical v1-v3 choices, retained exclusively for strict migration validation.
 export const DESKTOP_REFRESH_INTERVAL_SECONDS = Object.freeze([
   60,
   300,
@@ -59,11 +62,15 @@ export const DESKTOP_REFRESH_MODES = Object.freeze([
   "detailed",
 ]);
 
-export const DESKTOP_NOTIFICATION_THRESHOLDS = Object.freeze([
-  "off",
-  "ninety",
-  "eighty_and_ninety",
-]);
+export const DESKTOP_NOTIFICATION_THRESHOLDS = Object.freeze([-1, ...Array.from({ length: 100 }, (_, index) => index + 1)]);
+export const DESKTOP_MAX_REFRESH_INTERVAL_SECONDS = Math.floor(Number.MAX_SAFE_INTEGER / 60_000) * 60;
+export function isDesktopRefreshIntervalSeconds(value) {
+  return value === -1 || (Number.isSafeInteger(value) && value > 0
+    && value % 60 === 0 && value <= DESKTOP_MAX_REFRESH_INTERVAL_SECONDS);
+}
+export function isDesktopNotificationThreshold(value) {
+  return Number.isInteger(value) && (value === -1 || (value >= 1 && value <= 100));
+}
 
 export const DESKTOP_SYSTEM_SETTINGS_TARGETS = Object.freeze([
   "startup",
@@ -75,9 +82,12 @@ export const DESKTOP_EXTERNAL_TARGETS = Object.freeze([
   "github",
   "x",
 ]);
+export const DESKTOP_APPLICATION_MENUS = Object.freeze(["file", "edit", "view", "window", "help"]);
 
 export const DESKTOP_ACTIONS = Object.freeze([
   "getSettings",
+  "getApplicationMenu",
+  "openApplicationMenu",
   "getCodexHomesForSettings",
   "openSettings",
   "openTraySettings",
@@ -93,6 +103,10 @@ export const DESKTOP_ACTIONS = Object.freeze([
   "useDefaultCodexHome",
   "setLanguage",
   "setAppearance",
+  "getWindowBackground",
+  "setWindowBackground",
+  "chooseWindowBackground",
+  "restoreWindowBackground",
   "setRefreshInterval",
   "setStartAtLogin",
   "setNotificationPreferences",
@@ -115,6 +129,8 @@ export const DESKTOP_ACTIONS = Object.freeze([
 
 const ACTION_ARGUMENT_KEYS = Object.freeze({
   getSettings: Object.freeze([]),
+  getApplicationMenu: Object.freeze([]),
+  openApplicationMenu: Object.freeze(["menu", "x", "y"]),
   getCodexHomesForSettings: Object.freeze([]),
   openSettings: Object.freeze([]),
   openTraySettings: Object.freeze([]),
@@ -130,9 +146,13 @@ const ACTION_ARGUMENT_KEYS = Object.freeze({
   useDefaultCodexHome: Object.freeze([]),
   setLanguage: Object.freeze(["value"]),
   setAppearance: Object.freeze(["value"]),
+  getWindowBackground: Object.freeze([]),
+  setWindowBackground: Object.freeze(["value"]),
+  chooseWindowBackground: Object.freeze([]),
+  restoreWindowBackground: Object.freeze([]),
   setRefreshInterval: Object.freeze(["seconds"]),
   setStartAtLogin: Object.freeze(["enabled"]),
-  setNotificationPreferences: Object.freeze(["enabled", "threshold"]),
+  setNotificationPreferences: Object.freeze(["threshold"]),
   sendTestNotification: Object.freeze([]),
   openSystemSettings: Object.freeze(["target"]),
   openExternal: Object.freeze(["target"]),
@@ -152,7 +172,7 @@ const ACTION_ARGUMENT_KEYS = Object.freeze({
 
 const DEFAULT_NOTIFICATIONS = Object.freeze({
   enabled: false,
-  threshold: "off",
+  threshold: -1,
 });
 
 export const DESKTOP_DEFAULT_SETTINGS = Object.freeze({
@@ -213,7 +233,7 @@ function assertBoolean(value, label) {
 }
 
 function assertSeconds(value) {
-  if (!DESKTOP_REFRESH_INTERVAL_SECONDS.includes(value)) {
+  if (!isDesktopRefreshIntervalSeconds(value)) {
     throw new TypeError("seconds is invalid");
   }
   return value;
@@ -253,6 +273,15 @@ export function validateDesktopRequest(request) {
   const args = assertExactKeys(request.args, expectedKeys, "args");
 
   switch (action) {
+    case "openApplicationMenu":
+      assertEnum(args.menu, DESKTOP_APPLICATION_MENUS, "menu");
+      for (const coordinate of [args.x, args.y]) {
+        if (!Number.isInteger(coordinate) || coordinate < 0 || coordinate > 16384) throw new TypeError("menu position is invalid");
+      }
+      break;
+    case "setWindowBackground":
+      validateWindowBackgroundPatch(args.value);
+      break;
     case "setTrayPreferences":
       validateDesktopTrayPreferences(args.value);
       break;
@@ -270,12 +299,7 @@ export function validateDesktopRequest(request) {
       assertBoolean(args.enabled, "enabled");
       break;
     case "setNotificationPreferences":
-      assertBoolean(args.enabled, "enabled");
-      assertEnum(
-        args.threshold,
-        DESKTOP_NOTIFICATION_THRESHOLDS,
-        "threshold",
-      );
+      if (!isDesktopNotificationThreshold(args.threshold)) throw new TypeError("threshold is invalid");
       break;
     case "openSystemSettings":
       assertEnum(args.target, DESKTOP_SYSTEM_SETTINGS_TARGETS, "target");
@@ -350,14 +374,17 @@ function validateSettingsScalarFields(snapshot) {
   assertBoolean(snapshot.startAtLogin, "startAtLogin");
   assertExactKeys(snapshot.notifications, ["enabled", "threshold"], "notifications");
   assertBoolean(snapshot.notifications.enabled, "notifications.enabled");
-  assertEnum(snapshot.notifications.threshold, DESKTOP_NOTIFICATION_THRESHOLDS, "notifications.threshold");
+  if (!isDesktopNotificationThreshold(snapshot.notifications.threshold)
+      || snapshot.notifications.enabled !== (snapshot.notifications.threshold !== -1)) {
+    throw new TypeError("notifications.threshold is invalid");
+  }
   return snapshot.sidebarCollapsed === undefined
     ? false
     : assertBoolean(snapshot.sidebarCollapsed, "sidebarCollapsed");
 }
 
 /**
- * Validate the persisted v3 settings schema with a versioned tray preference.  This does not resolve or
+ * Validate the persisted v4 settings schema with a versioned tray preference.  This does not resolve or
  * inspect paths; path policy belongs to the injected main-process picker and
  * platform validator.  A missing custom path therefore remains valid so its
  * configured root can report partial/LKG coverage after reload.
@@ -454,17 +481,35 @@ function isLegacySettingsShape(snapshot) {
 }
 
 /**
- * Migrate v1's singleton codexHome and v2 presentation defaults to v3.  `idFactory` is injected by
+ * Migrate legacy root, presentation, and notification choices forward to v4. `idFactory` is injected by
  * the main process so IDs are opaque and testable; successful store loading
  * persists the result, making the generated ID stable across later reloads.
  * Both the historic Electron object form and the native launcher's scalar
  * path form are accepted for a bounded compatibility window.
  */
+function migrateLegacyNotificationPreferences(value) {
+  assertExactKeys(value, ["enabled", "threshold"], "legacy notifications");
+  assertBoolean(value.enabled, "legacy notifications.enabled");
+  assertEnum(value.threshold, ["off", "ninety", "eighty_and_ninety"], "legacy notifications.threshold");
+  const threshold = value.enabled && value.threshold !== "off" ? 90 : -1;
+  return { enabled: threshold !== -1, threshold };
+}
+
 export function migrateDesktopSettingsSnapshot(snapshot, { idFactory } = {}) {
-  if (isPlainRecord(snapshot) && snapshot.schemaVersion === DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION) {
-    return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION, sidebarCollapsed: snapshot.sidebarCollapsed ?? false, tray: migrateDesktopTrayPreferences(snapshot.tray) });
+  if (isPlainRecord(snapshot) && [DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION, DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION].includes(snapshot.schemaVersion)) {
+    const expected = snapshot.schemaVersion === DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION
+      ? SETTINGS_KEYS.filter((key) => (key !== "tray" && key !== "sidebarCollapsed") || Object.hasOwn(snapshot, key)) : SETTINGS_KEYS;
+    if (!hasExactKeys(snapshot, expected)) throw new TypeError("legacy settings has unexpected keys");
+    if (!DESKTOP_REFRESH_INTERVAL_SECONDS.includes(snapshot.refreshIntervalSeconds)) throw new TypeError("legacy seconds is invalid");
+    return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION,
+      notifications: migrateLegacyNotificationPreferences(snapshot.notifications),
+      sidebarCollapsed: snapshot.sidebarCollapsed ?? false, tray: migrateDesktopTrayPreferences(snapshot.tray) });
   }
   if (!isLegacySettingsShape(snapshot)) return snapshot;
+  if (snapshot.refreshIntervalSeconds !== undefined
+      && !DESKTOP_REFRESH_INTERVAL_SECONDS.includes(snapshot.refreshIntervalSeconds)) {
+    throw new TypeError("legacy seconds is invalid");
+  }
   const codexHomes = migrateLegacyCodexHome(snapshot.codexHome, { idFactory });
   const appearance = snapshot.appearance === undefined
     ? DESKTOP_DEFAULT_SETTINGS.appearance
@@ -487,7 +532,7 @@ export function migrateDesktopSettingsSnapshot(snapshot, { idFactory } = {}) {
       : snapshot.startAtLogin,
     notifications: snapshot.notifications === undefined
       ? { ...DESKTOP_DEFAULT_SETTINGS.notifications }
-      : { ...snapshot.notifications },
+      : migrateLegacyNotificationPreferences(snapshot.notifications),
     sidebarCollapsed,
     tray: migrateDesktopTrayPreferences(snapshot.tray ?? snapshot.menuBarDisplayMode),
   };

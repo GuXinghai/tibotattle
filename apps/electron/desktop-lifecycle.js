@@ -10,6 +10,7 @@ import {
 } from "./loopback-policy.js";
 import { shellError } from "./errors.js";
 import { DESKTOP_COMMAND_CHANNEL, validateDesktopCommand } from "./desktop-command.js";
+import { DESKTOP_APPLICATION_MENUS } from "./desktop-contract.js";
 import {
   createDesktopActionInterface,
   installDesktopApplicationMenu,
@@ -41,13 +42,6 @@ const DEFAULT_WINDOW_OPTIONS = Object.freeze({
   minHeight: 520,
 });
 
-const DEFAULT_SETTINGS_WINDOW_OPTIONS = Object.freeze({
-  width: 760,
-  height: 760,
-  minWidth: 620,
-  minHeight: 520,
-});
-
 const SETTINGS_SECTIONS = Object.freeze([
   "general",
   "data",
@@ -61,6 +55,7 @@ const DASHBOARD_SECTIONS = Object.freeze([
   "usage",
   "allowance",
   "performance",
+  "settings",
 ]);
 
 const RENDER_PROCESS_GONE_REASONS = new Set([
@@ -109,7 +104,6 @@ export function createDesktopLifecycle({
   trayClock = () => Date.now(),
   desktopSystemLocales,
   desktopActions = {},
-  settingsWindowOptions = {},
   recoveryWindowOptions = {},
   recoveryPreloadPath,
   trayPopoverWindowOptions = {},
@@ -165,7 +159,6 @@ export function createDesktopLifecycle({
   let quitting = false;
   let primaryInstance = false;
   let window = null;
-  let settingsWindow = null;
   let recovery = null;
   let tray = null;
   let trayImage;
@@ -175,19 +168,14 @@ export function createDesktopLifecycle({
   let desktopActionInterface = null;
   let activeDesktopLocale = desktopLocale;
   let dashboardReady = false;
+  let pendingSettingsCommand = null;
   let ready = null;
   let policyInstallation = null;
-  let settingsPolicyInstallation = null;
   let windowListenerCleanup = null;
   let windowReadyListenerCleanup = null;
-  let settingsWindowListenerCleanup = null;
-  let settingsWindowReadyListenerCleanup = null;
   let dashboardLoadState = null;
-  let settingsLoadState = null;
   let recoveryWindowListenerCleanup = null;
-  let destroyingSettingsWindow = false;
   let destroyingRecoveryWindow = false;
-  let settingsLoadedURL = null;
   let shutdownPromise = null;
   let updatePreparationPromise = null;
   let updatePreparing = false;
@@ -395,15 +383,6 @@ export function createDesktopLifecycle({
       window.webContents.send(DESKTOP_COMMAND_CHANNEL, command);
       delivered = true;
     }
-    // Refresh belongs only to the dashboard. Language is shared presentation
-    // state, so an already-open trusted Settings renderer receives that same
-    // validated command and no broader broadcast surface.
-    if ((command.command === "language" || command.command === "appearance")
-        && isLiveBrowserWindow(settingsWindow)
-        && typeof settingsWindow.webContents?.send === "function") {
-      settingsWindow.webContents.send(DESKTOP_COMMAND_CHANNEL, command);
-      delivered = true;
-    }
     return delivered;
   }
 
@@ -411,26 +390,14 @@ export function createDesktopLifecycle({
   // already-open trusted Settings surface, using the existing fixed command;
   // do not reload, focus, or broadcast it to the dashboard.
   function refreshSettings() {
-    if (!isLiveBrowserWindow(settingsWindow)
-        || typeof settingsWindow.webContents?.send !== "function") return false;
-    settingsWindow.webContents.send(
-      DESKTOP_COMMAND_CHANNEL,
-      validateDesktopCommand({ command: "refresh" }),
-    );
-    return true;
+    // Update only the mounted settings controls, without refreshing accounting.
+    return sendDashboardCommand({ command: "settingsChanged" });
   }
 
-  // Keep native dashboard navigation bounded to the shell's fixed views. The
-  // renderer owns the page state and existing projections; the main process
-  // only requests a fixed hash after bringing the dashboard window to the
-  // front.
   function navigateDashboardSection(section) {
     if (!DASHBOARD_SECTIONS.includes(section)) return false;
+    pendingSettingsCommand = null;
     if (!showWindow()) return false;
-    // Settings is a separate auxiliary BrowserWindow. Close-to-tray and
-    // single-instance wakeups may leave it visible over the dashboard; a
-    // dashboard navigation must make the selected main surface authoritative.
-    hideSettingsWindow();
     return sendDashboardCommand({ command: "dashboardSection", section });
   }
 
@@ -440,8 +407,7 @@ export function createDesktopLifecycle({
   }
 
   function isAuthorizedDesktopSender(sender) {
-    return (isLiveBrowserWindow(window) && sender === window.webContents)
-      || (isLiveBrowserWindow(settingsWindow) && sender === settingsWindow.webContents);
+    return isLiveBrowserWindow(window) && sender === window.webContents;
   }
 
   function isAuthorizedDashboardSender(sender) {
@@ -487,40 +453,17 @@ export function createDesktopLifecycle({
   }
 
   function isAuthorizedSettingsFrame(frame, event = undefined) {
-    if (!frame || typeof frame !== "object") return false;
-    const sender = event?.sender;
-    if (!isLiveBrowserWindow(settingsWindow) || sender !== settingsWindow.webContents) {
-      return false;
-    }
-    if (settingsWindow.webContents?.mainFrame !== frame) return false;
-    if (Object.hasOwn(frame, "isMainFrame") && frame.isMainFrame !== true) return false;
-    if (Object.hasOwn(frame, "parent") && frame.parent !== null) return false;
-    // Navigation policy is the primary URL gate. Recheck the live URL when
-    // Electron exposes it so a renderer that navigated away cannot retain
-    // access to pathful root settings actions.
-    const getURL = settingsWindow.webContents?.getURL;
-    if (typeof getURL === "function") {
-      let currentURL;
-      try {
-        currentURL = getURL.call(settingsWindow.webContents);
-        const parsed = new URL(currentURL);
-        if (!isExactLoopbackOrigin(ready?.origin)
-            || parsed.origin !== ready.origin
-            || parsed.pathname !== "/electron-settings.html"
-            || parsed.search !== ""
-            || parsed.username !== ""
-            || parsed.password !== "") {
-          return false;
-        }
-      } catch {
-        return false;
-      }
-    }
-    return true;
+    if (!isAuthorizedDashboardFrame(frame, event) || !isExactLoopbackOrigin(ready?.origin)) return false;
+    // Settings now share the trusted dashboard top frame. A hash is presentation,
+    // not authorization: assets, remote URLs and subframes never gain access.
+    try {
+      const parsed = new URL(window.webContents.getURL());
+      return parsed.origin === ready.origin && parsed.pathname === "/"
+        && parsed.search === "" && parsed.username === "" && parsed.password === "";
+    } catch { return false; }
   }
 
   function isAuthorizedDesktopFrame(frame, event = undefined) {
-    if (isAuthorizedDashboardFrame(frame, event)) return true;
     return isAuthorizedSettingsFrame(frame, event);
   }
 
@@ -546,13 +489,6 @@ export function createDesktopLifecycle({
     return section;
   }
 
-  function settingsURL(section) {
-    assertSettingsSection(section);
-    if (!ready?.origin) throw shellError("electron_configuration_invalid");
-    const url = new URL("/electron-settings.html", `${ready.origin}/`);
-    url.hash = section;
-    return url.href;
-  }
 
   function recoveryStatusFor(error, fallback = "companion_spawn_failed") {
     const candidate = typeof error?.code === "string"
@@ -799,26 +735,6 @@ export function createDesktopLifecycle({
     }
   }
 
-  function destroySettingsWindow() {
-    if (settingsLoadState) settingsLoadState.requestedVisible = false;
-    settingsLoadState = null;
-    settingsWindowReadyListenerCleanup?.();
-    settingsWindowReadyListenerCleanup = null;
-    settingsWindowListenerCleanup?.();
-    settingsWindowListenerCleanup = null;
-    settingsPolicyInstallation?.remove?.();
-    settingsPolicyInstallation = null;
-    const candidate = settingsWindow;
-    settingsWindow = null;
-    settingsLoadedURL = null;
-    if (!candidate || candidate.isDestroyed?.()) return;
-    destroyingSettingsWindow = true;
-    try {
-      candidate.destroy?.();
-    } finally {
-      destroyingSettingsWindow = false;
-    }
-  }
 
   function revealDashboardWhenLoaded(state) {
     if (dashboardLoadState !== state
@@ -831,6 +747,10 @@ export function createDesktopLifecycle({
       return false;
     }
     dashboardReady = true;
+    if (pendingSettingsCommand) {
+      sendDashboardCommand(pendingSettingsCommand);
+      pendingSettingsCommand = null;
+    }
     showApplicationWindow(state.window);
     try {
       onDashboardReady?.();
@@ -874,7 +794,6 @@ export function createDesktopLifecycle({
     stopDesktopStatusMonitor();
     ready = null;
     destroyWindow();
-    destroySettingsWindow();
     started = false;
     startupFailureStatus = "companion_spawn_failed";
     showRecoveryWindow(startupFailureStatus);
@@ -882,42 +801,7 @@ export function createDesktopLifecycle({
     return true;
   }
 
-  function handleSettingsLoadFailure(candidate) {
-    const state = settingsLoadState;
-    if (!state || state.candidate !== candidate || state.failed) return false;
-    state.failed = true;
-    // A failed auxiliary renderer is never left as a hidden or blank zombie.
-    // The next explicit Settings action creates a fresh, independently
-    // guarded BrowserWindow. No URL or renderer error crosses this boundary.
-    destroySettingsWindow();
-    return true;
-  }
 
-  function startSettingsLoad(candidate, url) {
-    const state = settingsLoadState;
-    if (!state || state.candidate !== candidate || state.failed) return false;
-    settingsLoadedURL = url;
-    let loadResult;
-    try {
-      loadResult = candidate.loadURL?.(url);
-    } catch {
-      handleSettingsLoadFailure(candidate);
-      return false;
-    }
-    Promise.resolve(loadResult).then(
-      () => {
-        if (settingsLoadState !== state || state.failed) return;
-        state.loadSucceeded = true;
-        if (state.readyToShow && state.requestedVisible) {
-          showApplicationWindow(candidate);
-        }
-      },
-      () => {
-        handleSettingsLoadFailure(candidate);
-      },
-    );
-    return true;
-  }
 
   function createWindow() {
     if (window && !window.isDestroyed?.()) return window;
@@ -925,6 +809,9 @@ export function createDesktopLifecycle({
     const selectedOptions = {
       ...DEFAULT_WINDOW_OPTIONS,
       ...windowOptions,
+      titleBarStyle: "hidden",
+      titleBarOverlay: { color: "#00000000", symbolColor: "#000000", height: 40 },
+      autoHideMenuBar: false,
       webPreferences: {
         ...(windowOptions.webPreferences ?? {}),
         preload: preloadPath,
@@ -946,6 +833,7 @@ export function createDesktopLifecycle({
       selectedOptions.width = Math.min(selectedOptions.width, availableWidth);
     }
     window = new BrowserWindow(selectedOptions);
+    window.setMenuBarVisibility?.(false);
     dashboardReady = false;
     const webContents = window.webContents;
     const session = webContents?.session;
@@ -954,6 +842,8 @@ export function createDesktopLifecycle({
       webContents,
       session,
       policy,
+      allowNotificationPermission: true,
+      allowBackgroundResource: true,
     });
     let resolveDashboardLoad;
     let rejectDashboardLoad;
@@ -1005,9 +895,16 @@ export function createDesktopLifecycle({
       event?.preventDefault?.();
       hideWindow();
     };
+    // Electron may emit the transition before isFullScreen() reflects it.
+    const onEnterFullscreen = () => sendDashboardCommand({ command: "windowFullscreen", fullscreen: true });
+    const onLeaveFullscreen = () => sendDashboardCommand({ command: "windowFullscreen", fullscreen: false });
     window.on("close", onWindowClose);
+    window.on("enter-full-screen", onEnterFullscreen);
+    window.on("leave-full-screen", onLeaveFullscreen);
     windowListenerCleanup = () => {
       window?.off?.("close", onWindowClose);
+      window?.off?.("enter-full-screen", onEnterFullscreen);
+      window?.off?.("leave-full-screen", onLeaveFullscreen);
     };
     let loadResult;
     try {
@@ -1031,129 +928,15 @@ export function createDesktopLifecycle({
     return window;
   }
 
-  function createSettingsWindow(section) {
-    const url = settingsURL(section);
-    if (isLiveBrowserWindow(settingsWindow)) return settingsWindow;
-    if (!ready?.origin) throw shellError("electron_configuration_invalid");
-    const suppliedSettingsOptions = settingsWindowOptions === null
-      || typeof settingsWindowOptions !== "object"
-      || Array.isArray(settingsWindowOptions)
-      ? {}
-      : settingsWindowOptions;
-    const selectedOptions = {
-      ...DEFAULT_SETTINGS_WINDOW_OPTIONS,
-      ...suppliedSettingsOptions,
-      webPreferences: {
-        ...(suppliedSettingsOptions.webPreferences ?? {}),
-        preload: preloadPath,
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-      },
-      show: false,
-    };
-    settingsWindow = new BrowserWindow(selectedOptions);
-    const candidate = settingsWindow;
-    const webContents = settingsWindow.webContents;
-    const session = webContents?.session;
-    const policy = createNavigationPolicy({ origin: ready.origin });
-    settingsPolicyInstallation = installNavigationPolicy({
-      webContents,
-      session,
-      policy,
-      allowNotificationPermission: true,
-    });
-    const settingsState = {
-      candidate,
-      failed: false,
-      loadSucceeded: false,
-      readyToShow: false,
-      requestedVisible: false,
-    };
-    settingsLoadState = settingsState;
-    const onReadyToShow = () => {
-      if (settingsLoadState !== settingsState || settingsState.failed) return;
-      settingsState.readyToShow = true;
-      if (settingsState.requestedVisible && isLiveBrowserWindow(settingsWindow)) {
-        showApplicationWindow(settingsWindow);
-      }
-    };
-    const onDidFailLoad = (_event, _errorCode, _errorDescription, _validatedURL, isMainFrame) => {
-      if (isMainFrame === false) return;
-      handleSettingsLoadFailure(candidate);
-    };
-    const onRenderProcessGone = () => {
-      handleSettingsLoadFailure(candidate);
-    };
-    settingsWindow.once?.("ready-to-show", onReadyToShow);
-    webContents?.on?.("did-fail-load", onDidFailLoad);
-    webContents?.on?.("render-process-gone", onRenderProcessGone);
-    settingsWindowReadyListenerCleanup = () => {
-      candidate?.off?.("ready-to-show", onReadyToShow);
-      webContents?.off?.("did-fail-load", onDidFailLoad);
-      webContents?.off?.("render-process-gone", onRenderProcessGone);
-    };
-    const onWindowClose = (event) => {
-      if (quitting || updateQuitRequested || destroyingSettingsWindow) return;
-      event?.preventDefault?.();
-      settingsState.requestedVisible = false;
-      settingsWindow?.hide?.();
-    };
-    const onWindowClosed = () => {
-      // Electron may destroy the BrowserWindow before it emits `closed`.
-      // Reading `settingsWindow.webContents` at that point throws
-      // "Object has been destroyed" in the main process, which can make a
-      // transient Settings close look like the whole app disappeared. The
-      // captured object identity is sufficient to reject stale close events
-      // and remains safe after Electron invalidates the object.
-      if (settingsWindow !== candidate) return;
-      settingsWindowReadyListenerCleanup?.();
-      settingsWindowReadyListenerCleanup = null;
-      settingsWindowListenerCleanup = null;
-      settingsPolicyInstallation?.remove?.();
-      settingsPolicyInstallation = null;
-      settingsState.requestedVisible = false;
-      settingsWindow = null;
-      settingsLoadedURL = null;
-      if (settingsLoadState === settingsState) settingsLoadState = null;
-    };
-    settingsWindow.on("close", onWindowClose);
-    settingsWindow.on("closed", onWindowClosed);
-    settingsWindowListenerCleanup = () => {
-      candidate?.off?.("close", onWindowClose);
-      candidate?.off?.("closed", onWindowClosed);
-    };
-    if (!startSettingsLoad(candidate, url)) return null;
-    return settingsWindow;
-  }
 
   function showSettingsWindow(section = "general") {
-    const selectedSection = assertSettingsSection(section);
-    if (!started || quitting || !ready?.origin) return false;
-    const hadWindow = isLiveBrowserWindow(settingsWindow);
-    const target = createSettingsWindow(selectedSection);
-    if (!isLiveBrowserWindow(target)) return false;
-    const targetURL = settingsURL(selectedSection);
-    if (hadWindow && settingsLoadedURL !== targetURL) {
-      if (!startSettingsLoad(target, targetURL)) return false;
-    }
-    if (settingsLoadState) settingsLoadState.requestedVisible = true;
-    // A newly-created window waits for ready-to-show to avoid a blank flash;
-    // an existing window is already safe to show and should be focused now.
-    if (hadWindow) {
-      showApplicationWindow(target);
-    }
-    return true;
+    const settingsSection = assertSettingsSection(section);
+    if (!started || quitting || !ready?.origin || !showWindow()) return false;
+    const command = { command: "dashboardSection", section: "settings", settingsSection };
+    if (!dashboardReady) { pendingSettingsCommand = command; return true; }
+    return sendDashboardCommand(command);
   }
 
-  function hideSettingsWindow() {
-    if (!isLiveBrowserWindow(settingsWindow)) return false;
-    if (settingsLoadState) settingsLoadState.requestedVisible = false;
-    settingsWindow.hide?.();
-    return true;
-  }
 
   function updateTrayContextMenu(template) {
     trayContextMenu = Menu?.buildFromTemplate?.(template) ?? null;
@@ -1221,6 +1004,27 @@ export function createDesktopLifecycle({
     return applicationMenu;
   }
 
+  function getApplicationMenu() {
+    const menu = createApplicationMenu();
+    return Object.freeze({ fullscreen: window?.isFullScreen?.() === true, menus: Object.freeze((menu?.items ?? [])
+      .filter(item => DESKTOP_APPLICATION_MENUS.includes(item.id))
+      .map(item => Object.freeze({ id: item.id, label: item.label }))) });
+  }
+
+  function openApplicationMenu({ menu, x, y }) {
+    if (!DESKTOP_APPLICATION_MENUS.includes(menu)
+        || [x, y].some(value => !Number.isInteger(value) || value < 0 || value > 16384)
+        || !isLiveBrowserWindow(window) || quitting) return false;
+    const submenu = createApplicationMenu()?.items?.find(item => item.id === menu)?.submenu;
+    const size = window.getContentSize?.();
+    if (typeof submenu?.popup !== "function" || !Array.isArray(size)
+        || size.length !== 2 || size.some(value => !Number.isFinite(value) || value <= 0)) return false;
+    return new Promise(resolve => submenu.popup({
+      window, x: Math.min(x, Math.floor(size[0]) - 1), y: Math.min(y, Math.floor(size[1]) - 1),
+      callback: () => resolve(true),
+    }));
+  }
+
   function refreshDesktopSurfaces() {
     if (applicationMenu !== null) {
       applicationMenu = installDesktopApplicationMenu({
@@ -1232,6 +1036,8 @@ export function createDesktopLifecycle({
         systemLocales: desktopSystemLocales,
       });
     }
+    // Installing a localized application menu must not restore its native row.
+    window?.setMenuBarVisibility?.(false);
     refreshTrayImage();
     if (tray && typeof Menu?.buildFromTemplate === "function") {
       const template = createDesktopTrayTemplate({
@@ -1294,7 +1100,7 @@ export function createDesktopLifecycle({
         // The recovery surface owns the process until the validated dashboard
         // origin has been loaded. It is destroyed before any dashboard
         // renderer can become visible, so it cannot retain a stale origin.
-        destroyRecoveryWindow();
+      destroyRecoveryWindow();
         started = true;
         lifecycleActive = true;
         startDesktopStatusMonitor(ready.origin);
@@ -1307,8 +1113,7 @@ export function createDesktopLifecycle({
         stopDesktopStatusMonitor();
         ready = null;
         destroyWindow();
-        destroySettingsWindow();
-        await supervisor.stop().catch(() => {});
+            await supervisor.stop().catch(() => {});
         started = false;
         startupFailureStatus = status;
         if (quitting) throw error;
@@ -1387,7 +1192,6 @@ export function createDesktopLifecycle({
       return await attemptStartup();
     } catch (error) {
       destroyWindow();
-      destroySettingsWindow();
       destroyRecoveryWindow();
       destroyTrayPopover();
       tray?.destroy?.();
@@ -1417,8 +1221,7 @@ export function createDesktopLifecycle({
       stopDesktopStatusMonitor();
       destroyTrayPopover();
       destroyWindow();
-      destroySettingsWindow();
-      showRecoveryWindow("starting");
+        showRecoveryWindow("starting");
       ready = null;
       started = false;
       try {
@@ -1438,7 +1241,7 @@ export function createDesktopLifecycle({
         if (dashboardLoad?.failed) {
           throw shellError("companion_spawn_failed");
         }
-        destroyRecoveryWindow();
+      destroyRecoveryWindow();
         started = true;
         startupFailureStatus = null;
         startDesktopStatusMonitor(ready.origin);
@@ -1450,8 +1253,7 @@ export function createDesktopLifecycle({
         stopDesktopStatusMonitor();
         ready = null;
         destroyWindow();
-        destroySettingsWindow();
-        await supervisor.stop().catch(() => {});
+            await supervisor.stop().catch(() => {});
         started = false;
         startupFailureStatus = status;
         showRecoveryWindow(status);
@@ -1491,7 +1293,6 @@ export function createDesktopLifecycle({
     // Invalidate the old webview synchronously before queueing the restart, so
     // no stale origin remains usable while the child is being replaced.
     destroyWindow();
-    destroySettingsWindow();
     started = false;
     showRecoveryWindow(status);
     automaticRetryPromise = performRetry({ epoch }).finally(() => {
@@ -1517,7 +1318,6 @@ export function createDesktopLifecycle({
       // not remain hostage to a renderer load that can never finish.
       settleDashboardLoadFailure(dashboardLoadState, "companion_exit_before_ready");
       destroyWindow();
-      destroySettingsWindow();
       startupFailureStatus = "companion_exit_before_ready";
       showRecoveryWindow("companion_exit_before_ready");
       return;
@@ -1527,7 +1327,6 @@ export function createDesktopLifecycle({
     stopDesktopStatusMonitor();
     ready = null;
     destroyWindow();
-    destroySettingsWindow();
     started = false;
     showRecoveryWindow("companion_exit_before_ready");
     scheduleAutomaticRetry();
@@ -1604,7 +1403,6 @@ export function createDesktopLifecycle({
     const pendingStartup = startupAttemptPromise;
     shutdownPromise = enqueueExclusive(async () => {
       destroyWindow();
-      destroySettingsWindow();
       destroyRecoveryWindow();
       destroyTrayPopover();
       // The supervisor owns the child created during its bounded startup
@@ -1631,7 +1429,6 @@ export function createDesktopLifecycle({
     stopDesktopStatusMonitor();
     await enqueueExclusive(async () => {
       destroyWindow();
-      destroySettingsWindow();
       destroyRecoveryWindow();
       destroyTrayPopover();
       tray?.destroy?.();
@@ -1654,10 +1451,11 @@ export function createDesktopLifecycle({
     retry,
     showWindow,
     showSettingsWindow,
-    hideSettingsWindow,
     hideWindow,
     toggleWindow,
     sendDashboardCommand,
+    getApplicationMenu,
+    openApplicationMenu,
     refreshSettings,
     navigateDashboardSection,
     setDesktopLanguage,
@@ -1695,10 +1493,8 @@ export function createDesktopLifecycle({
         recoveryStatus,
         active: lifecycleActive,
         hasTray: tray !== null,
-        hasSettingsWindow: settingsWindow !== null && !settingsWindow.isDestroyed?.(),
-        settingsWindowVisible: settingsWindow !== null
-          && !settingsWindow.isDestroyed?.()
-          && settingsWindow.isVisible?.() === true,
+        hasSettingsWindow: false,
+        settingsWindowVisible: false,
         origin: ready?.origin ?? null,
       });
     },

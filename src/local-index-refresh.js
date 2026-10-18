@@ -42,12 +42,14 @@ import {
 import {
   DISCOVERY_QUARANTINE_CODES,
   LOCAL_INDEX_PARSER_VERSION,
+  LOCAL_INDEX_MODEL_RECOGNITION_VERSION,
   createLocalIndexSecondaryIndexes,
   createLocalIndexWriter,
   loadCatalog,
   openLocalIndexStore,
   readCommitSeq,
   readPendingResponseModelRecoverySources,
+  readPendingModelRecognitionSources,
   readLocalIndexIdentityBeforeMigration,
   reasoningEffortOrdinal,
 } from "./local-index-store.js";
@@ -706,14 +708,19 @@ async function runRefresh({
   // Scoped recovery version lives beside the source's committed diagnostics.
   // Do not bump the global parser and invalidate every historical source.
   const modelRecovery=readPendingResponseModelRecoverySources(database, RESPONSE_MODEL_RECOVERY_VERSION);
+  for (const id of readPendingModelRecognitionSources(database)) modelRecovery.add(id);
   let modelRecoverySources=0,modelRecoveryBytes=0,modelRecoveryPending=0;
   for (const info of infos) {
     const row = catalog.get(hexOf(info));
     let decision = classifyFromStat(info, row, LOCAL_INDEX_PARSER_VERSION);
-    if(decision.mode==='skip'&&row?.quarantine_code===null&&modelRecovery.has(Number(row.id))){
+    if(['skip','append'].includes(decision.mode)&&row?.quarantine_code===null&&modelRecovery.has(Number(row.id))){
       const bytes=Number(info.size??0);
-      if(modelRecoverySources>=8||(modelRecoverySources>0&&modelRecoveryBytes+bytes>256*1024*1024))modelRecoveryPending++;
-      else{decision={mode:'rescan',reason:'response_model_recovery'};modelRecoverySources++;modelRecoveryBytes+=bytes;}
+      if(modelRecoverySources>=8||(modelRecoverySources>0&&modelRecoveryBytes+bytes>256*1024*1024)){
+        modelRecoveryPending++;
+        // Appending must not stamp old unknown facts as already reparsed.
+        decision={mode:'skip'};
+      }
+      else{decision={mode:'rescan',reason:'model_attribution_recovery'};modelRecoverySources++;modelRecoveryBytes+=bytes;}
     }
     if (decision.mode === "append") {
       let handle;
@@ -1029,6 +1036,10 @@ async function runRefresh({
       lineageJson: inspectionRecord(info),
       ...outcome,
       ...extra,
+      diagnostics: {
+        ...(extra.diagnostics ?? outcome.diagnostics ?? {}),
+        modelRecognitionVersion: LOCAL_INDEX_MODEL_RECOGNITION_VERSION,
+      },
     };
   }
 

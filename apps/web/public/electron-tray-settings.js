@@ -7,7 +7,8 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
   if (!root || typeof documentRef.createElement !== "function") return { update() {}, teardown() {} };
   const translationKeys = new Map();
   const t = (key, values) => {
-    const id = `electron.trayCustomization.${key}`;
+    const layoutKeys = ["openPreview", "closePreview", "iconAndTooltip", "panelContent", "panelAppearance"];
+    const id = `${layoutKeys.includes(key) ? "electron.settings.trayCustomization" : "electron.trayCustomization"}.${key}`;
     const copy = localizer?.t?.(id, values) ?? translate(id, values);
     if (values === undefined) translationKeys.set(copy, id);
     return copy;
@@ -72,17 +73,17 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
     listen(input, "change", () => void save({ ...current, [key]: input.checked }));
   }
   const bar = node("fieldset", undefined, "settings-card settings-tray-group");
-  bar.append(node("legend", t("besideIcon")));
-  for (const key of ["preset", "iconMode", "meterWindow", "barMetric", "resetFormat"]) select(bar, key);
+  bar.append(node("legend", t("iconAndTooltip")));
+  for (const key of ["iconMode", "meterWindow"]) select(bar, key);
   check(bar, "emphasizeLow");
+  for (const key of ["preset", "barMetric", "resetFormat"]) select(bar, key);
   const capabilityNotice = node("p", "", "settings-tray-note");
   bar.append(capabilityNotice);
   const popup = node("fieldset", undefined, "settings-card settings-tray-group");
-  popup.append(node("legend", t("whenOpened")));
+  popup.append(node("legend", t("panelContent")));
   const sections = node("div", undefined, "settings-tray-sections");
   popup.append(sections);
-  for (const key of ["historyRange", "density"]) select(popup, key);
-  check(popup, "showChart");
+  select(popup, "historyRange");
   const totals = node("fieldset", undefined, "settings-tray-totals");
   totals.append(node("legend", t("metrics")));
   for (const metric of TRAY_OPTIONS.metrics) {
@@ -97,7 +98,11 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
       ? [...current.metrics, metric] : current.metrics.filter((value) => value !== metric) }));
   }
   popup.append(totals, node("p", t("usageRule"), "settings-tray-note"));
-  controls.append(bar, popup);
+  const appearance = node("fieldset", undefined, "settings-card settings-tray-group");
+  appearance.append(node("legend", t("panelAppearance")));
+  select(appearance, "density");
+  check(appearance, "showChart");
+  controls.append(bar, popup, appearance);
   const preview = node("section", undefined, "settings-card settings-tray-preview");
   preview.setAttribute("aria-label", t("preview"));
   preview.append(node("h3", t("preview")), node("p", t("example"), "settings-tray-note"));
@@ -121,7 +126,16 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
   actions.append(undo, restore);
   listen(undo, "click", () => { if (previous) void save(previous, { undoing: true }); });
   listen(restore, "click", () => void save(null, { restoring: true }));
-  root.replaceChildren(controls, preview, actions, notice);
+  const previewButton = node("button", t("openPreview"), "button button-quiet");
+  previewButton.type = "button";
+  const dialog = node("dialog", undefined, "settings-tray-dialog");
+  dialog.setAttribute("aria-label", t("preview"));
+  const closePreview = node("button", t("closePreview"), "button button-quiet settings-preview-close");
+  closePreview.type = "button";
+  dialog.append(closePreview, preview);
+  listen(previewButton, "click", () => dialog.showModal?.());
+  listen(closePreview, "click", () => dialog.close?.());
+  root.replaceChildren(previewButton, controls, dialog, actions, notice);
 
   function renderPreview() {
     const missing = exampleState === "offline";
@@ -239,7 +253,8 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
     undo.disabled = locked || previous === null;
     // Unknown or unreadable files remain owned by the compatible host version.
     restore.disabled = locked;
-    capabilityNotice.textContent = t(capabilities.title === false ? "platformTooltip" : "platformMac");
+    capabilityNotice.textContent = capabilities.title === false ? t("platformTooltip") : "";
+    capabilityNotice.hidden = capabilityNotice.textContent === "";
     if (status !== "current") notice.textContent = t(status === "future" ? "future" : "invalid");
     renderPreview();
   }
@@ -279,7 +294,7 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
       current = normalizeTrayPreferences(state?.tray);
       status = state?.traySettingsStatus ?? "current";
       capabilities = state?.trayCapabilities ?? {};
-      for (const id of ["settings-tab-tray", "settings-tray-heading"]) {
+      for (const id of ["settings-tray-heading"]) {
         const heading = documentRef.getElementById?.(id);
         if (heading) {
           const key = capabilities.title === true ? "menuBar" : "title";
@@ -290,6 +305,7 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
       available = connected && typeof bridge?.setTrayPreferences === "function" && typeof bridge?.restoreTrayDefaults === "function";
       render();
     },
-    teardown() { for (const remove of listeners) remove(); },
+    teardown() {
+      dialog.close?.(); for (const remove of listeners) remove(); },
   };
 }

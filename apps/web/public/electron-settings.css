@@ -13,9 +13,7 @@
   min-width: 0;
   min-height: 100vh;
   overflow-x: hidden;
-  background:
-    radial-gradient(circle at 92% 2%, rgba(45, 116, 102, .1), transparent 28rem),
-    var(--paper);
+  background: var(--paper);
 }
 
 .electron-settings-page .skip-link {
@@ -57,7 +55,7 @@
   width: 32px;
   height: 32px;
   border-radius: var(--radius-round);
-  box-shadow: 0 6px 18px rgba(23, 79, 69, .16);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .16);
 }
 
 .settings-header h1,
@@ -90,7 +88,7 @@
   padding: var(--space-2) var(--space-3);
   color: var(--green);
   background: var(--green-soft);
-  border: 1px solid rgba(23, 79, 69, .16);
+  border: 1px solid color-mix(in srgb, var(--green) 16%, transparent);
   border-radius: var(--radius-pill);
   font-size: .72rem;
   line-height: 1.25;
@@ -101,7 +99,7 @@
 .settings-status.is-unavailable {
   color: var(--rust);
   background: var(--rust-soft);
-  border-color: rgba(151, 64, 42, .16);
+  border-color: color-mix(in srgb, var(--rust) 16%, transparent);
 }
 
 .settings-tabs {
@@ -116,7 +114,7 @@
   background: var(--surface-raised);
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  box-shadow: 0 6px 18px rgba(23, 33, 30, .08);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .08);
   backdrop-filter: blur(18px);
 }
 
@@ -224,7 +222,7 @@
 }
 
 .settings-root-card[data-primary="true"] {
-  border-color: rgba(23, 79, 69, .38);
+  border-color: color-mix(in srgb, var(--green) 38%, transparent);
   box-shadow: inset 3px 0 var(--green);
 }
 
@@ -300,7 +298,7 @@
 .settings-root-primary:has(input:checked) {
   color: var(--green);
   background: var(--green-soft);
-  border-color: rgba(23, 79, 69, .25);
+  border-color: color-mix(in srgb, var(--green) 25%, transparent);
 }
 
 .settings-root-primary input {
@@ -309,7 +307,7 @@
 
 .settings-root-primary input:focus-visible,
 .settings-root-actions .button:focus-visible {
-  outline: 3px solid rgba(49, 95, 132, .42);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 2px;
 }
 
@@ -476,7 +474,7 @@
   width: 42px;
   height: 24px;
   padding: 3px;
-  background: var(--paper-2);
+  background: transparent;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-pill);
   transition: background .16s ease, border-color .16s ease;
@@ -485,23 +483,26 @@
 .settings-switch-track > span {
   width: 16px;
   height: 16px;
-  background: var(--surface-raised);
+  background: transparent;
+  border: 2px solid var(--ink);
+  box-sizing: border-box;
   border-radius: var(--radius-round);
-  box-shadow: 0 1px 3px rgba(23, 33, 30, .2);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .2);
   transition: transform .16s ease;
 }
 
 .settings-switch input:checked + .settings-switch-track {
-  background: var(--green-2);
-  border-color: var(--green-2);
+  background: transparent;
+  border-color: var(--ink);
 }
 
 .settings-switch input:checked + .settings-switch-track > span {
+  background: var(--ink);
   transform: translateX(18px);
 }
 
 .settings-switch input:focus-visible + .settings-switch-track {
-  outline: 3px solid rgba(49, 95, 132, .42);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 
@@ -538,7 +539,7 @@
 .settings-radio-group label:has(input:checked) {
   color: var(--green);
   background: var(--green-soft);
-  border-color: rgba(23, 79, 69, .25);
+  border-color: color-mix(in srgb, var(--green) 25%, transparent);
 }
 
 .settings-radio-group label:has(input:disabled) {
@@ -764,9 +765,9 @@
   .settings-root-card[data-primary="true"],
   .settings-root-primary:has(input:checked),
   .settings-switch input:checked + .settings-switch-track {
-    color: HighlightText;
-    background: Highlight;
-    border-color: Highlight;
+    color: CanvasText;
+    background: Canvas;
+    border-color: CanvasText;
   }
   .settings-switch-track,
   .settings-switch-track > span {
@@ -774,7 +775,10 @@
     background: Canvas;
   }
   .settings-switch input:checked + .settings-switch-track > span {
-    background: HighlightText;
+    background: CanvasText;
+  }
+  .settings-switch input:checked + .settings-switch-track {
+    background: transparent;
   }
   .settings-tab:focus-visible,
   .settings-field select:focus-visible,
@@ -783,7 +787,7 @@
   .settings-root-primary:focus-visible,
   .settings-root-actions .button:focus-visible,
   .electron-settings-page #settings-content:focus-visible {
-    outline: 3px solid Highlight;
+    outline: 3px solid CanvasText;
     outline-offset: 3px;
   }
 }
@@ -933,7 +937,7 @@
   gap: var(--space-2);
   color: var(--green);
   background: var(--green-soft);
-  border: 1px solid rgba(23, 79, 69, .24);
+  border: 1px solid color-mix(in srgb, var(--green) 24%, transparent);
   border-radius: var(--radius-sm);
   font-family: var(--sans);
   font-size: .82rem;
@@ -1049,3 +1053,64 @@
 @media (max-width: 680px) {
   .settings-tray-grid { grid-template-columns: 1fr; }
 }
+
+/* Settings is a dashboard destination; controls share the main window background. */
+.dashboard-main .settings-window,
+main .settings-window[data-dashboard-page] { width: 100%; margin: 0; padding: 0 0 24px; }
+.settings-window .settings-header { border: 0; padding-bottom: 20px; }
+.settings-window .settings-header h1 { font-family: var(--sans); font-size: 2rem; }
+.settings-window .settings-bridge-status:not(.is-unavailable) { display: none; }
+.settings-window .settings-tabs { position: static; padding: 0; margin: 0; gap: 24px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+.settings-window .settings-tab { flex: 0 1 auto; min-width: 0; min-height: 44px; padding: 0 0 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--ink); background: transparent; box-shadow: none; }
+.settings-window .settings-tab[aria-selected="true"] { border-bottom-color: currentColor; font-weight: 700; }
+.settings-window .settings-panels { margin-top: 24px; }
+.settings-window .settings-card { background: transparent; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; margin: 0; padding: 24px 0; }
+.settings-window .settings-card h3 { margin: 0; color: var(--ink); }
+.settings-window .settings-field { width: auto; min-width: 0; justify-self: end; }
+.settings-window .settings-field select { width: auto; max-width: 100%; min-width: 8rem; }
+.settings-window .settings-control-column { flex-direction: column; justify-self: end; min-width: 0; text-align: right; align-items: flex-end; }
+.settings-window .settings-control-column p { margin: 10px 0 0; font-size: .8rem; }
+.settings-window .settings-control-column p:empty,
+.settings-window .settings-roots-status:empty { display: none; }
+.settings-window .settings-numeric-field { display: flex; align-items: center; justify-content: flex-end; gap: 10px; justify-self: end; }
+.settings-window .settings-numeric-field input { box-sizing: border-box; width: 6ch; min-width: 64px; padding: 10px; font: inherit; text-align: right; background: transparent; border: 1px solid var(--line-strong, var(--line)); border-radius: 6px; }
+.settings-window .settings-numeric-field input::-webkit-inner-spin-button { appearance: none; }
+.settings-window .settings-input-error,
+.settings-window .settings-roots-status { grid-column: 1 / -1; justify-self: end; text-align: right; margin: 0; }
+.settings-window .settings-roots-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+.settings-window .settings-roots-card h3 { overflow-wrap: anywhere; }
+.settings-window .settings-actions,
+.settings-window .settings-updates-controls { justify-content: flex-end; }
+.settings-window .window-background-controls { display: block; }
+.settings-window .window-background-controls[hidden] { display: none; }
+.settings-window .window-background-controls > h3 { margin-bottom: 20px; }
+.settings-window .background-section { border-top: 1px solid var(--line); padding: 20px 0; }
+.settings-window .background-section:first-of-type { border-top: 0; padding-top: 0; }
+.settings-window .background-color-row { display: flex; flex-wrap: wrap; align-items: end; gap: 16px; }
+.settings-window .background-rgb { display: flex; gap: 12px; margin-top: 0; }
+.settings-window .background-hex { flex: 0 0 auto; }
+.settings-window .window-background-controls .background-hex input:not([type="range"]):not([type="color"]) { width: 10ch; }
+.settings-window .window-background-controls .background-rgb input:not([type="range"]):not([type="color"]) { width: 7ch; }
+.settings-window .settings-auto-update-row > .settings-switch { justify-self: end; grid-column: 1 / -1; }
+.settings-window .settings-tray-grid { display: grid; grid-template-columns: 1fr; }
+.settings-window .settings-tray-group { display: flex; flex-direction: column; align-items: stretch; gap: 16px; }
+.settings-window .settings-tray-group legend { padding: 0; font-weight: 700; }
+.settings-window .settings-tray-group > .settings-field,
+.settings-window .settings-tray-checkbox { display: flex; justify-content: space-between; align-items: center; width: 100%; gap: 20px; }
+.settings-window .settings-tray-checkbox input { order: 2; }
+.settings-tray-dialog { width: min(680px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow: auto; box-sizing: border-box; color: #000; background: var(--window-background-color, var(--paper)); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+.settings-tray-dialog::backdrop { background: rgb(0 0 0 / .2); }
+.settings-tray-dialog .settings-tray-preview { background: transparent; border: 0; box-shadow: none; }
+.settings-preview-close { display: block; margin-left: auto; }
+@media (max-width: 600px) {
+  .settings-window .settings-tabs { gap: 14px; }
+  .settings-window .settings-card { grid-template-columns: minmax(0, 1fr) auto; gap: 12px; }
+  .settings-window .settings-control-column { grid-column: 1 / -1; max-width: 100%; }
+  .settings-window .settings-local-tools-card { grid-template-columns: 1fr; }
+  .settings-window .settings-actions { flex-wrap: wrap; }
+}
+
+.settings-window .settings-login-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+
+.settings-window .background-rgb input::-webkit-inner-spin-button,
+.settings-window .background-rgb input::-webkit-outer-spin-button { appearance: none; margin: 0; }

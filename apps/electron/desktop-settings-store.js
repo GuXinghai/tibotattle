@@ -1,9 +1,9 @@
 import {
   DESKTOP_DEFAULT_SETTINGS,
   DESKTOP_LANGUAGES,
-  DESKTOP_NOTIFICATION_THRESHOLDS,
+  isDesktopNotificationThreshold,
   DESKTOP_APPEARANCES,
-  DESKTOP_REFRESH_INTERVAL_SECONDS,
+  isDesktopRefreshIntervalSeconds,
   DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER,
   DESKTOP_SETTINGS_SCHEMA_VERSION,
   migrateDesktopSettingsSnapshot,
@@ -276,10 +276,10 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
   }
 
   async function setRefreshInterval(seconds) {
-    if (!DESKTOP_REFRESH_INTERVAL_SECONDS.includes(seconds)) {
+    if (!isDesktopRefreshIntervalSeconds(seconds)) {
       throw new TypeError("seconds is invalid");
     }
-    return enqueueUpdate((current) => ({ ...current, refreshIntervalSeconds: 300 }));
+    return enqueueUpdate((current) => ({ ...current, refreshIntervalSeconds: seconds }));
   }
 
   async function setStartAtLogin(enabled) {
@@ -288,16 +288,11 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
   }
 
   async function setNotificationPreferences(preferences) {
-    assertExactKeys(preferences, ["enabled", "threshold"], "preferences");
-    if (typeof preferences.enabled !== "boolean") {
-      throw new TypeError("enabled is invalid");
-    }
-    if (!DESKTOP_NOTIFICATION_THRESHOLDS.includes(preferences.threshold)) {
-      throw new TypeError("threshold is invalid");
-    }
+    assertExactKeys(preferences, ["threshold"], "preferences");
+    if (!isDesktopNotificationThreshold(preferences.threshold)) throw new TypeError("threshold is invalid");
     return enqueueUpdate((current) => ({
       ...current,
-      notifications: { ...preferences },
+      notifications: { enabled: preferences.threshold !== -1, threshold: preferences.threshold },
     }));
   }
 

@@ -1,0 +1,168 @@
+/* Only the two trusted Electron renderers load this sheet. User backgrounds
+   override surface roles; semantic workload colors and native preferences stay. */
+#window-background-layer { display: none; }
+/* Style both the root scroller and nested desktop scrollers. Leave forced
+   colors to the system so its scrollbar contrast remains accessible. */
+@media (forced-colors: none) {
+  html:has(body.electron-dashboard), body.electron-dashboard * {
+    /* Non-auto standard properties suppress Chromium's thumb pseudo states. */
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+  }
+  :is(html:has(body.electron-dashboard), body.electron-dashboard *)::-webkit-scrollbar {
+    width: 10px; height: 10px; background: transparent;
+  }
+  :is(html:has(body.electron-dashboard), body.electron-dashboard *)::-webkit-scrollbar-track,
+  :is(html:has(body.electron-dashboard), body.electron-dashboard *)::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+  :is(html:has(body.electron-dashboard), body.electron-dashboard *)::-webkit-scrollbar-thumb {
+    background: rgb(0 0 0 / .05); border-radius: 5px;
+  }
+  :is(html:has(body.electron-dashboard), body.electron-dashboard *)::-webkit-scrollbar-thumb:hover {
+    background: rgb(0 0 0 / .60);
+  }
+  :is(html:has(body.electron-dashboard), body.electron-dashboard *)::-webkit-scrollbar-button {
+    display: none;
+  }
+}
+:is(.dashboard-shell, .electron-settings-page) :is(input, select) { accent-color: var(--ink); }
+/* Chromium's customizable select keeps native keyboard/AT semantics while the
+   closed control and its popup use the same application typography and colors. */
+@supports (appearance: base-select) {
+  :is(.dashboard-shell, .electron-settings-page) select,
+  :is(.dashboard-shell, .electron-settings-page) select::picker(select) {
+    appearance: base-select;
+    font: inherit;
+    color: var(--ink);
+  }
+  :is(.dashboard-shell, .electron-settings-page) select {
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+  }
+  :is(.dashboard-shell, .electron-settings-page) select::picker(select) {
+    padding: 5px;
+    margin-top: 5px;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: Canvas;
+    box-shadow: 0 5px 18px rgb(0 0 0 / .15);
+    max-height: min(360px, 60vh);
+    overflow: auto;
+  }
+  :is(.dashboard-shell, .electron-settings-page) select::picker-icon { color: currentColor; }
+  :is(.dashboard-shell, .electron-settings-page) select:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  :is(.dashboard-shell, .electron-settings-page) select option:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+  :is(.dashboard-shell, .electron-settings-page) select option::checkmark { color: var(--ink); }
+  html[data-window-background] :is(.dashboard-shell, .electron-settings-page) select::picker(select) {
+    isolation: isolate; contain: paint; background: var(--window-background-color);
+    /* Keep the same opaque wallpaper under the blur's fading edges and picker
+       padding, instead of exposing the user's fallback solid color. */
+    background-image: linear-gradient(rgb(255 255 255 / var(--window-background-mask, 0)), rgb(255 255 255 / var(--window-background-mask, 0))), var(--window-background-image, none);
+    background-size: auto, var(--window-background-viewport-image-size, cover);
+    background-position: center, var(--window-background-viewport-image-position, center); background-repeat: no-repeat;
+    background-attachment: fixed;
+  }
+  html[data-window-background] :is(.dashboard-shell, .electron-settings-page) select::picker(select)::before {
+    content: ""; position: sticky; top: 0; display: block; width: 100%;
+    height: var(--window-background-picker-height, 0px);
+    margin-bottom: calc(0px - var(--window-background-picker-height, 0px));
+    z-index: -1; pointer-events: none;
+    background-color: var(--window-background-color);
+    background-image: linear-gradient(rgb(255 255 255 / var(--window-background-mask, 0)), rgb(255 255 255 / var(--window-background-mask, 0))), var(--window-background-image, none);
+    background-size: auto, var(--window-background-viewport-image-size, cover);
+    background-position: center, var(--window-background-viewport-image-position, center); background-repeat: no-repeat;
+    background-attachment: fixed; filter: blur(4px);
+  }
+  :is(.dashboard-shell, .electron-settings-page) select option {
+    padding: 8px 10px;
+    border-radius: 3px;
+    background: transparent;
+    color: var(--ink);
+    white-space: normal;
+  }
+  :is(.dashboard-shell, .electron-settings-page) select option:is(:hover, :focus) { background: var(--hover); }
+  :is(.dashboard-shell, .electron-settings-page) select option:checked { font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
+  :is(.dashboard-shell, .electron-settings-page) select:disabled { cursor: default; }
+}
+html[data-window-background] body:not(.community-site):not(.admin-operator-page) {
+  isolation: isolate;
+  --paper: transparent; --paper-2: transparent; --white: transparent;
+  --surface: transparent; --surface-raised: transparent; --surface-quiet: transparent; --surface-sunken: transparent;
+  --green-soft: transparent; --rust-soft: transparent; --amber-soft: transparent; --blue-soft: transparent;
+  --action-bg: transparent; --feature-bg: transparent;
+  --ink: #000; --text: #000; --muted: #000; --action-ink: #000;
+  --green: #000; --green-2: #000; --green-text: #000; --rust: #000; --amber: #000; --blue: #000;
+  --neutral-page: transparent; --neutral-surface: transparent; --neutral-ink: #000; --neutral-muted: #000;
+  --line: rgb(0 0 0 / .18); --line-strong: rgb(0 0 0 / .4); --neutral-line: rgb(0 0 0 / .18);
+  --hover: rgb(0 0 0 / .06); --neutral-hover: rgb(0 0 0 / .06); --action-bg-hover: rgb(0 0 0 / .06);
+  --focus-ring: rgb(0 0 0 / .7); --neutral-track: rgb(0 0 0 / .12); --track: rgb(0 0 0 / .12);
+  --feature-ink: #000; --feature-muted: #000;
+  color: #000; background: transparent; color-scheme: light;
+}
+html[data-window-background] #window-background-layer {
+  display: block; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background-color: var(--window-background-color);
+  background-size: var(--window-background-viewport-image-size, cover);
+  background-position: var(--window-background-viewport-image-position, center); background-repeat: no-repeat;
+}
+html[data-window-background] #window-background-layer::after {
+  content: ""; position: absolute; inset: 0; background: rgb(255 255 255 / var(--window-background-mask, 0));
+}
+html[data-window-background] body :is(.topbar, .dashboard-sidebar, .dashboard-content, .workload-overview, .settings-card, .settings-nav) { background: transparent; backdrop-filter: none; }
+/* An opaque base seals off page content, even for transparent PNGs or while
+   decoding. Only a decoration made from the wallpaper is softly blurred.
+   Fixed decoration inside paint containment does not scroll off a dialog.
+   Do not use backdrop-filter: its input would include the obscured text. */
+html[data-window-background] body :is(dialog, .info-popover, .performance-tooltip, .refresh-notice-content, [popover], .work-usage-dialog-header, .model-performance-dialog-header) {
+  isolation: isolate; contain: paint; background: var(--window-background-color); backdrop-filter: none;
+  background-image: linear-gradient(rgb(255 255 255 / var(--window-background-mask, 0)), rgb(255 255 255 / var(--window-background-mask, 0))), var(--window-background-copy-image, none);
+  background-size: auto, var(--window-background-copy-size, auto);
+  background-position: center, var(--window-background-copy-position, center);
+  background-repeat: no-repeat;
+}
+html[data-window-background] body :is(dialog, .info-popover, .performance-tooltip, .refresh-notice-content, [popover], .work-usage-dialog-header, .model-performance-dialog-header)::before {
+  content: ""; position: fixed; z-index: -1; pointer-events: none;
+  inset: var(--window-background-copy-scroll-y, 0px) calc(0px - var(--window-background-copy-scroll-x, 0px)) calc(0px - var(--window-background-copy-scroll-y, 0px)) var(--window-background-copy-scroll-x, 0px);
+  background-color: var(--window-background-color);
+  background-image: linear-gradient(rgb(255 255 255 / var(--window-background-mask, 0)), rgb(255 255 255 / var(--window-background-mask, 0))), var(--window-background-copy-image, none);
+  background-size: auto, var(--window-background-copy-size, auto);
+  background-position: center, var(--window-background-copy-position, center);
+  background-repeat: no-repeat; filter: blur(4px);
+}
+html[data-window-background] #allowance-screen { --paper: transparent; --surface: transparent; --ink: #000; --muted: #000; }
+.window-background-controls { display: block; }
+.window-background-controls h4 { margin: 0 0 12px; font: inherit; font-weight: 600; }
+.background-section + .background-section { margin-top: 22px; padding-top: 20px; border-top: 1px solid var(--line); }
+.background-presets { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; }
+.background-presets button { display: grid; justify-items: center; gap: 6px; padding: 4px; min-width: 0; border: 0; background: transparent; color: var(--ink); cursor: pointer; }
+.background-swatch { display: block; width: 100%; height: 36px; border: 1px solid var(--line-strong); border-radius: 5px; }
+.background-presets button[aria-pressed="true"] .background-swatch { outline: 2px solid var(--ink); outline-offset: 2px; }
+.background-color-row, .background-image-actions { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.window-background-controls label { display: grid; gap: 6px; min-width: 0; }
+.window-background-controls input:not([type="range"]):not([type="color"]) { width: 100%; min-width: 0; min-height: 40px; padding: 6px 9px; border: 1px solid var(--line-strong); border-radius: 5px; background: transparent; color: var(--ink); }
+.background-hex { flex: 1; max-width: 190px; }
+.background-color-chip { position: relative; display: block; width: 58px; height: 40px; border-radius: 5px; border: 1px solid var(--line-strong); }
+.background-color-chip:focus-within { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
+.background-color-chip input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.background-rgb { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 14px; }
+.background-image-options { margin-top: 18px; }
+.background-image-options label { grid-template-columns: 1fr auto; }
+.background-image-options input { grid-column: 1/-1; width: 100%; accent-color: var(--ink); }
+.window-background-controls .background-reset,
+.window-background-controls .background-reset:is(:hover,:active,:disabled,:focus) { background: transparent; border-color: transparent; box-shadow: none; color: var(--ink); padding-inline: 0; text-decoration: underline; text-underline-offset: 4px; }
+.background-footer { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 22px; }
+.background-footer p { margin: 0; }
+.window-background-controls button:disabled { opacity: .5; cursor: default; }
+@media (max-width: 480px) { .background-presets { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (forced-colors: active) {
+  html[data-window-background] #window-background-layer { display: none; }
+  html[data-window-background] body :is(dialog, .info-popover, .performance-tooltip, .refresh-notice-content, [popover], .work-usage-dialog-header, .model-performance-dialog-header) { background: Canvas; }
+  html[data-window-background] body :is(dialog, .info-popover, .performance-tooltip, .refresh-notice-content, [popover], .work-usage-dialog-header, .model-performance-dialog-header)::before,
+  html[data-window-background] :is(.dashboard-shell, .electron-settings-page) select::picker(select)::before { content: none; }
+  html[data-window-background] :is(.dashboard-shell, .electron-settings-page) select::picker(select) { background: Canvas; color: CanvasText; }
+  html[data-window-background] body:not(.community-site):not(.admin-operator-page) {
+    color: CanvasText; background: Canvas; --ink: CanvasText; --muted: CanvasText; --neutral-ink: CanvasText; --neutral-muted: CanvasText;
+  }
+}

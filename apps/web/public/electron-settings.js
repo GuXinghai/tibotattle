@@ -30,13 +30,16 @@ export const SETTINGS_APPEARANCE_VALUES = Object.freeze([
   "dark",
 ]);
 
-export const SETTINGS_REFRESH_INTERVAL_VALUES = Object.freeze([60, 300, 900, 1800]);
+export function validSettingsRefreshSeconds(value) {
+  return value === -1 || (Number.isSafeInteger(value) && value > 0
+    && value % 60 === 0 && Number.isSafeInteger(value * 1000));
+}
 
-export const SETTINGS_NOTIFICATION_THRESHOLD_VALUES = Object.freeze([
-  "off",
-  "ninety",
-  "eighty_and_ninety",
-]);
+export function validSettingsNotificationThreshold(value) {
+  return value === -1 || (Number.isInteger(value) && value >= 1 && value <= 100);
+}
+
+
 
 export const SETTINGS_EXTERNAL_TARGETS = Object.freeze({
   website: "https://tibotattle.com",
@@ -377,22 +380,14 @@ export function normalizeSettingsState(raw, settingsRoots = null) {
   const appearance = valueIn(SETTINGS_APPEARANCE_VALUES, settings.appearance)
     ? settings.appearance
     : "system";
-  const refreshIntervalSeconds = valueIn(
-    SETTINGS_REFRESH_INTERVAL_VALUES,
-    finiteNumber(settings.refreshIntervalSeconds, 300),
-  )
-    ? finiteNumber(settings.refreshIntervalSeconds, 300)
-    : 300;
+  const refreshIntervalSeconds = validSettingsRefreshSeconds(settings.refreshIntervalSeconds)
+    ? settings.refreshIntervalSeconds : 300;
   const folderKind = primaryRoot?.kind ?? (folder.kind === "custom" ? "custom" : "default");
   const loginStatus = LOGIN_ITEM_STATUSES.has(startAtLogin.status)
     ? startAtLogin.status
     : "unavailable";
-  const notificationThreshold = valueIn(
-    SETTINGS_NOTIFICATION_THRESHOLD_VALUES,
-    notifications.threshold,
-  )
-    ? notifications.threshold
-    : "off";
+  const notificationThreshold = validSettingsNotificationThreshold(notifications.threshold)
+    ? notifications.threshold : -1;
   const notificationState = NOTIFICATION_STATES.has(notifications.state)
     ? notifications.state
     : "state_unavailable";
@@ -408,8 +403,7 @@ export function normalizeSettingsState(raw, settingsRoots = null) {
   const notificationLastDelivery = NOTIFICATION_DELIVERY_STATUSES.has(notifications.lastDelivery)
     ? notifications.lastDelivery
     : "state_unavailable";
-  const notificationShapeValid = typeof notifications.enabled === "boolean"
-    && SETTINGS_NOTIFICATION_THRESHOLD_VALUES.includes(notifications.threshold);
+  const notificationShapeValid = validSettingsNotificationThreshold(notifications.threshold);
   const notificationCanSet = notificationShapeValid
     && notifications.canSet === true
     && notificationState === "ready"
@@ -448,8 +442,8 @@ export function normalizeSettingsState(raw, settingsRoots = null) {
       detail: safeText(startAtLogin.detail, LOGIN_ITEM_LABELS[loginStatus]),
     }),
     notifications: Object.freeze({
-      enabled: notificationCanSet && notifications.enabled === true,
-      threshold: notificationCanSet ? notificationThreshold : "off",
+      enabled: notificationCanSet && notificationThreshold !== -1,
+      threshold: notificationThreshold,
       canSet: notificationCanSet,
       state: notificationState,
       delivery: notificationDelivery,
@@ -507,11 +501,11 @@ function fixedActionValue(actionName, value) {
     case "setAppearance":
       return valueIn(SETTINGS_APPEARANCE_VALUES, value);
     case "setRefreshInterval":
-      return valueIn(SETTINGS_REFRESH_INTERVAL_VALUES, Number(value));
+      return validSettingsRefreshSeconds(value);
     case "setNotificationPreferences":
       return value && typeof value === "object"
-        && typeof value.enabled === "boolean"
-        && valueIn(SETTINGS_NOTIFICATION_THRESHOLD_VALUES, value.threshold);
+        && !Array.isArray(value) && Reflect.ownKeys(value).length === 1
+        && validSettingsNotificationThreshold(value.threshold);
     case "openSystemSettings":
       return value === "startup" || value === "notifications";
     case "openExternal":
@@ -588,7 +582,7 @@ export function applyElectronAppearancePreference(
   root.dataset.theme = theme;
   if (root.style) root.style.colorScheme = theme;
   const themeColor = documentRef.querySelector?.('meta[name="theme-color"]');
-  if (themeColor) themeColor.content = theme === "dark" ? "#141a17" : "#f5f1e8";
+  if (themeColor) themeColor.content = theme === "dark" ? "#161616" : "#fff";
   return true;
 }
 
@@ -687,112 +681,17 @@ function renderCodexRoots(
   localizer,
   onAction,
 ) {
-  const list = queryRequired(documentRef, "#settings-codex-roots");
-  const status = queryRequired(documentRef, "#settings-codex-roots-status");
-  const add = queryRequired(documentRef, "#settings-add-codex-root");
-  const useDefault = queryRequired(documentRef, "#settings-use-default-codex-folder");
-  const roots = state.codexHomesForSettings?.activityRoots
-    ?? state.codexHomes.activityRoots;
-  const primaryRootId = state.codexHomesForSettings?.primaryRootId
-    ?? state.codexHomes.primaryRootId;
-  const detailsAvailable = state.codexHomesForSettings !== null;
+  const roots = state.codexHomesForSettings?.activityRoots ?? state.codexHomes.activityRoots;
+  const primaryRootId = state.codexHomesForSettings?.primaryRootId ?? state.codexHomes.primaryRootId;
   const primaryRoot = roots.find(({ rootId }) => rootId === primaryRootId);
-  const defaultRoot = roots.find(({ kind }) => kind === "default");
-  const canResetSingleton = roots.length === 1 && primaryRoot?.kind !== "default";
-  const canSelectRetainedDefault = roots.length > 1
-    && defaultRoot !== undefined
-    && defaultRoot.rootId !== primaryRootId;
-
-  // Adding a root would make the single-folder capability claim misleading.
-  // A reset is safe for a singleton, and a retained default can safely become
-  // primary without changing the saved root records.
-  add.hidden = true;
-  add.disabled = true;
-  useDefault.hidden = false;
-  useDefault.disabled = !bridgeAvailable
-    || !detailsAvailable
-    || (!canResetSingleton && !canSelectRetainedDefault);
-  useDefault.setAttribute(
-    "title",
-    !detailsAvailable
-      ? translateSettingsMessage(localizer, "electron.settings.codexRoots.unavailable")
-      : roots.length > 1 && defaultRoot === undefined
-        ? translateSettingsMessage(localizer, "electron.settings.codexRoots.defaultUnavailable")
-        : "",
+  const detailsAvailable = state.codexHomesForSettings !== null;
+  const path = primaryRoot?.kind === "default" ? "~/.codex" : primaryRoot?.path;
+  queryRequired(documentRef, "#settings-codex-roots-title").textContent = translateSettingsMessage(
+    localizer, "electron.settings.codexRoots.locationTitle", { path: path ?? "…" },
   );
-  status.textContent = !detailsAvailable
-    ? translateSettingsMessage(localizer, "electron.settings.codexRoots.unavailable")
-    : roots.length > 1 && defaultRoot === undefined
-      ? translateSettingsMessage(localizer, "electron.settings.codexRoots.defaultUnavailable")
-      : "";
-  list.replaceChildren?.();
-  if (!detailsAvailable && typeof list.replaceChildren !== "function") {
-    list.textContent = "";
-  }
-
-  roots.forEach((root, index) => {
-    const card = createSettingsElement(documentRef, "article", "settings-root-card");
-    const info = createSettingsElement(documentRef, "div");
-    const heading = createSettingsElement(documentRef, "h4");
-    const location = createSettingsElement(documentRef, "span", "settings-root-path");
-    const role = createSettingsElement(documentRef, "div", "settings-root-role");
-    const actions = createSettingsElement(documentRef, "div", "settings-root-actions");
-    if (!card || !info || !heading || !location || !role || !actions) return;
-
-    const isPrimary = root.rootId === primaryRootId;
-    const rootLabel = translateSettingsMessage(
-      localizer,
-      isPrimary
-        ? "electron.settings.codexRoots.rootLabel"
-        : "electron.settings.codexRoots.retainedRootLabel",
-      { position: index + 1 },
-    );
-    card.dataset.primary = String(isPrimary);
-    card.dataset.analysisScope = isPrimary ? "primary" : "retained";
-    card.setAttribute("role", "listitem");
-    card.setAttribute("aria-labelledby", `settings-codex-root-${root.rootId}`);
-    heading.id = `settings-codex-root-${root.rootId}`;
-    heading.textContent = rootLabel;
-    location.textContent = root.kind === "default"
-      ? translateSettingsMessage(localizer, "electron.settings.codexRoots.defaultPath")
-      : (root.path ?? translateSettingsMessage(
-        localizer,
-        "electron.settings.codexRoots.missingPath",
-      ));
-
-    const roleText = createSettingsElement(documentRef, "span");
-    if (roleText) {
-      roleText.textContent = translateSettingsMessage(
-        localizer,
-        isPrimary
-          ? "electron.settings.codexRoots.primaryHelp"
-          : "electron.settings.codexRoots.retained",
-      );
-      role.append(roleText);
-    }
-
-    // A custom primary can be replaced in place, preserving the IDs and
-    // paths of every retained v2 root. No secondary action is exposed while
-    // only the primary is passed to the companion.
-    if (isPrimary && detailsAvailable && (root.kind === "custom" || roots.length === 1)) {
-      const edit = createSettingsElement(documentRef, "button", "button button-quiet");
-      if (!edit) return;
-      const editLabel = translateSettingsMessage(localizer, "electron.settings.codexRoots.edit");
-      const action = root.kind === "custom" ? "editCodexHome" : "chooseCodexHome";
-      configureRootAction(edit, action, root.rootId, `${editLabel}: ${rootLabel}`);
-      edit.textContent = editLabel;
-      edit.disabled = !bridgeAvailable;
-      edit.addEventListener("click", () => onAction?.(
-        action,
-        action === "editCodexHome" ? { rootId: root.rootId } : undefined,
-      ));
-      actions.append(edit);
-    }
-    info.append(heading, location, role);
-    card.append(info);
-    if (actions.childNodes?.length > 0) card.append(actions);
-    list.append(card);
-  });
+  queryRequired(documentRef, "#settings-choose-codex-folder").disabled = !bridgeAvailable || !detailsAvailable;
+  queryRequired(documentRef, "#settings-codex-roots-status").textContent = detailsAvailable ? ""
+    : translateSettingsMessage(localizer, "electron.settings.codexRoots.unavailable");
 }
 
 function renderSettingsState(
@@ -804,17 +703,11 @@ function renderSettingsState(
 ) {
   const language = queryRequired(documentRef, "#settings-language");
   const appearance = queryRequired(documentRef, "#settings-appearance");
-  const folder = queryRequired(documentRef, "#settings-codex-folder-status");
   const refresh = queryRequired(documentRef, "#settings-refresh-interval");
   const loginSwitch = queryRequired(documentRef, "#settings-start-at-login");
-  const loginSummary = queryRequired(documentRef, "#settings-start-at-login-summary");
-  const openLoginItems = queryRequired(documentRef, "#settings-open-login-items");
-  const retryLoginStatus = queryRequired(documentRef, "#settings-refresh-login-status");
-  const notificationsSwitch = queryRequired(documentRef, "#settings-notifications-enabled");
+
   const notificationDetail = queryRequired(documentRef, "#settings-notifications-detail");
-  const thresholdInputs = [...documentRef.querySelectorAll(
-    "input[name=\"settings-notification-threshold\"]",
-  )];
+  const thresholdInput = queryRequired(documentRef, "#settings-notification-threshold");
   const notificationStatus = queryRequired(documentRef, "#settings-notification-status");
   const openNotificationSettings = queryRequired(
     documentRef,
@@ -833,27 +726,19 @@ function renderSettingsState(
 
   language.value = state.language;
   appearance.value = state.appearance;
-  folder.textContent = state.codexFolder.kind === "default"
-    ? translateSettingsMessage(localizer, "electron.settings.codexFolder.default")
-    : translateSettingsMessage(localizer, "electron.settings.codexFolder.custom");
   renderCodexRoots(documentRef, state, bridgeAvailable, localizer, onRootAction);
-  refresh.value = "300";
-  refresh.disabled = true;
+  refresh.value = String(state.refreshIntervalSeconds === -1 ? -1 : state.refreshIntervalSeconds / 60);
+  refresh.disabled = !bridgeAvailable;
   loginSwitch.checked = state.startAtLogin.status === "enabled";
   loginSwitch.disabled = !bridgeAvailable || !state.startAtLogin.canSet;
-  openLoginItems.hidden = !bridgeAvailable || !state.startAtLogin.canOpenSettings;
-  retryLoginStatus.hidden = !bridgeAvailable || state.startAtLogin.status !== "error";
-  loginSummary.textContent = translateSettingsMessage(
-    localizer,
-    LOGIN_STATUS_KEYS[state.startAtLogin.status] ?? LOGIN_STATUS_KEYS.unavailable,
-  );
+  loginSwitch.title = state.startAtLogin.status === "error"
+    ? translateSettingsMessage(localizer, LOGIN_STATUS_KEYS.error) : "";
   const notificationReady = bridgeAvailable && state.notifications.canSet === true;
-  notificationsSwitch.checked = notificationReady && state.notifications.enabled === true;
-  notificationsSwitch.disabled = !notificationReady;
   notificationDetail.textContent = translateSettingsMessage(
     localizer,
     notificationCapabilityMessageKey(state.notifications),
   );
+  notificationDetail.hidden = notificationReady;
   notificationStatus.textContent = translateSettingsMessage(
     localizer,
     notificationPermissionMessageKey(state.notifications),
@@ -873,10 +758,8 @@ function renderSettingsState(
   openNotificationSettings.disabled = !bridgeAvailable
     || notificationPermission === "authorized"
     || notificationPermission === "unavailable";
-  for (const input of thresholdInputs) {
-    input.checked = input.value === state.notifications.threshold;
-    input.disabled = !notificationReady;
-  }
+  thresholdInput.value = String(state.notifications.threshold);
+  thresholdInput.disabled = !notificationReady;
   const automaticUpdatesReady = bridgeAvailable && state.about.automaticUpdates.canSet;
   automaticSwitch.checked = automaticUpdatesReady && state.about.automaticUpdates.enabled;
   automaticSwitch.disabled = !automaticUpdatesReady;
@@ -939,7 +822,7 @@ function setTab(documentRef, tabName, { focus = false } = {}) {
 
 function initialTab(windowRef) {
   const candidate = typeof windowRef?.location?.hash === "string"
-    ? windowRef.location.hash.slice(1)
+    ? windowRef.location.hash.replace(/^#settings\/?/u, "")
     : "";
   return ["general", "tray", "data", "notifications", "about"].includes(candidate)
     ? candidate
@@ -971,13 +854,25 @@ function notificationOperationStatus(documentRef, state, localizer) {
  * so focused tests can exercise keyboard and bridge behavior without a real
  * Electron process.
  */
-export async function mountSettingsPage({
+const mountedSettingsPages = new WeakMap();
+export function mountSettingsPage(options = {}) {
+  const documentRef = options.documentRef ?? globalThis.document;
+  if (!documentRef || typeof documentRef !== "object") return Promise.resolve(Object.freeze({ teardown() {} }));
+  const existing = mountedSettingsPages.get(documentRef);
+  if (existing) return existing;
+  const mounting = mountSettingsPageOnce(options);
+  mountedSettingsPages.set(documentRef, mounting);
+  void mounting.catch(() => mountedSettingsPages.delete(documentRef));
+  return mounting;
+}
+
+async function mountSettingsPageOnce({
   documentRef = globalThis.document,
   windowRef = globalThis.window,
   bridge = desktopBridge(windowRef),
   localizer = null,
 } = {}) {
-  if (!documentRef?.querySelector) return Object.freeze({ teardown() {} });
+  if (!documentRef?.querySelector || !documentRef.querySelector("#settings-content")) return Object.freeze({ teardown() {} });
 
   const settingsBridge = bridge && bridge.version === DESKTOP_SETTINGS_API_VERSION
     ? bridge
@@ -994,6 +889,7 @@ export async function mountSettingsPage({
   let invoke = null;
   let unsubscribeDesktopCommands = () => {};
   const listeners = [];
+  let disposed = false;
   const listen = (element, type, handler) => {
     element.addEventListener(type, handler);
     listeners.push(() => element.removeEventListener?.(type, handler));
@@ -1034,6 +930,7 @@ export async function mountSettingsPage({
     if (!settingsBridge) return currentState;
     try {
       const next = await settingsBridge.getSettings();
+      if (disposed) return currentState;
       let rootsForSettings = null;
       if (typeof settingsBridge.getCodexHomesForSettings === "function") {
         try {
@@ -1042,6 +939,7 @@ export async function mountSettingsPage({
           rootsForSettings = undefined;
         }
       }
+      if (disposed) return currentState;
       currentState = withRendererNotificationPermission(
         normalizeSettingsState(next, rootsForSettings),
         windowRef,
@@ -1078,13 +976,13 @@ export async function mountSettingsPage({
       );
       // The bridge exists but its read failed. Keep one explicit retry for
       // this error state; normal focus and switch changes refresh automatically.
-      queryRequired(documentRef, "#settings-refresh-login-status").hidden = false;
+      setOperationStatus(documentRef, translateSettingsMessage(pageLocalizer, "electron.settings.bridge.readFailed"), { error: true });
       return currentState;
     }
   };
 
   const refresh = () => {
-    if (!settingsBridge) return Promise.resolve(currentState);
+    if (!settingsBridge || disposed) return Promise.resolve(currentState);
     refreshQueued = true;
     if (refreshOperation !== null) return refreshOperation;
     refreshOperation = (async () => {
@@ -1102,7 +1000,7 @@ export async function mountSettingsPage({
   };
 
   invoke = async (actionName, value) => {
-    if (!settingsBridge || busy || !SETTINGS_ACTION_NAMES.includes(actionName)) return;
+    if (!settingsBridge || disposed || busy || !SETTINGS_ACTION_NAMES.includes(actionName)) return;
     if (!fixedActionValue(actionName, value)) {
       operationError(documentRef, pageLocalizer);
       return;
@@ -1186,7 +1084,7 @@ export async function mountSettingsPage({
   if (settingsBridge && typeof settingsBridge.onCommand === "function") {
     try {
       const unsubscribe = settingsBridge.onCommand((command) => {
-        if (command?.command === "refresh") { void refresh(); return; }
+        if (command?.command === "settingsChanged" || command?.command === "refresh") { void refresh(); return; }
         if (command?.command === "tray") { void refresh(); return; }
         if (command?.command === "appearance"
             && SETTINGS_APPEARANCE_VALUES.includes(command.preference)
@@ -1214,9 +1112,23 @@ export async function mountSettingsPage({
     }
   }
 
+  const selectTab = (name, { focus = false, updateHash = false } = {}) => {
+    const selected = setTab(documentRef, name, { focus });
+    if (updateHash) windowRef.history?.replaceState?.({}, "", `#settings/${selected}`);
+  };
+  const syncTab = () => {
+    if (windowRef.location?.hash?.startsWith("#settings")) selectTab(initialTab(windowRef));
+  };
+  if (typeof windowRef?.addEventListener === "function") {
+    listen(windowRef, "hashchange", syncTab);
+    listen(windowRef, "popstate", syncTab);
+  }
+  listen(documentRef, "tibotattle:page-view", (event) => {
+    if (event.detail?.page === "settings") selectTab(event.detail.view);
+  });
   const tabs = [...documentRef.querySelectorAll("[data-settings-tab]")];
   for (const tab of tabs) {
-    listen(tab, "click", () => setTab(documentRef, tab.dataset.settingsTab, { focus: true }));
+    listen(tab, "click", () => selectTab(tab.dataset.settingsTab, { focus: true, updateHash: true }));
     listen(tab, "keydown", (event) => {
       if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault?.();
@@ -1226,7 +1138,7 @@ export async function mountSettingsPage({
         : event.key === "End"
           ? tabs.length - 1
           : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
-      setTab(documentRef, tabs[nextIndex].dataset.settingsTab, { focus: true });
+      selectTab(tabs[nextIndex].dataset.settingsTab, { focus: true, updateHash: true });
     });
   }
   listen(queryRequired(documentRef, "#settings-language"), "change", (event) => {
@@ -1239,53 +1151,35 @@ export async function mountSettingsPage({
   listen(queryRequired(documentRef, "#settings-appearance"), "change", (event) => {
     void invoke("setAppearance", event.target.value);
   });
-  listen(queryRequired(documentRef, "#settings-use-default-codex-folder"), "click", () => {
-    const roots = currentState.codexHomesForSettings?.activityRoots;
-    if (!Array.isArray(roots) || roots.length < 1) return;
-    const defaultRoot = roots.find(({ kind }) => kind === "default");
-    if (roots.length === 1) {
-      void invoke("useDefaultCodexHome");
-      return;
-    }
-    if (defaultRoot?.rootId === currentState.codexHomesForSettings?.primaryRootId) return;
-    if (defaultRoot) void invoke("setPrimaryCodexHome", { rootId: defaultRoot.rootId });
+  listen(queryRequired(documentRef, "#settings-choose-codex-folder"), "click", () => {
+    const primary = currentState.codexHomesForSettings?.activityRoots.find(
+      ({ rootId }) => rootId === currentState.codexHomesForSettings.primaryRootId,
+    );
+    if (primary?.kind === "custom") void invoke("editCodexHome", { rootId: primary.rootId });
+    else void invoke("chooseCodexHome");
   });
   listen(queryRequired(documentRef, "#settings-refresh-interval"), "change", (event) => {
-    void invoke("setRefreshInterval", Number(event.target.value));
+    const minutes = Number(event.target.value);
+    const seconds = minutes === -1 ? -1 : minutes * 60;
+    const valid = event.target.value.trim() !== "" && Number.isInteger(minutes) && validSettingsRefreshSeconds(seconds);
+    queryRequired(documentRef, "#settings-refresh-error").hidden = valid;
+    event.target.setAttribute("aria-invalid", String(!valid));
+    if (valid) void invoke("setRefreshInterval", seconds);
   });
   listen(queryRequired(documentRef, "#settings-start-at-login"), "change", (event) => {
     void invoke("setStartAtLogin", event.target.checked);
   });
-  listen(queryRequired(documentRef, "#settings-open-login-items"), "click", () => {
-    void invoke("openSystemSettings", "startup");
-  });
-  listen(queryRequired(documentRef, "#settings-refresh-login-status"), "click", () => {
-    void refresh();
-  });
-  listen(queryRequired(documentRef, "#settings-notifications-enabled"), "change", (event) => {
-    if (!currentState.notifications.canSet) return;
-    const enabled = event.target.checked === true;
-    const threshold = enabled
-      ? (currentState.notifications.threshold === "off" ? "ninety" : currentState.notifications.threshold)
-      : "off";
-    void invoke("setNotificationPreferences", { enabled, threshold });
-  });
   if (typeof windowRef?.addEventListener === "function") {
     listen(windowRef, "focus", () => { void refresh(); });
   }
-  for (const input of documentRef.querySelectorAll(
-    "input[name=\"settings-notification-threshold\"]",
-  )) {
-    listen(input, "change", (event) => {
-      if (!currentState.notifications.canSet || event.target.checked !== true) return;
-      const threshold = event.target.value;
-      if (!SETTINGS_NOTIFICATION_THRESHOLD_VALUES.includes(threshold)) return;
-      void invoke("setNotificationPreferences", {
-        enabled: threshold !== "off",
-        threshold,
-      });
-    });
-  }
+  listen(queryRequired(documentRef, "#settings-notification-threshold"), "change", (event) => {
+    if (!currentState.notifications.canSet) return;
+    const threshold = Number(event.target.value);
+    const valid = event.target.value.trim() !== "" && validSettingsNotificationThreshold(threshold);
+    queryRequired(documentRef, "#settings-threshold-error").hidden = valid;
+    event.target.setAttribute("aria-invalid", String(!valid));
+    if (valid) void invoke("setNotificationPreferences", { threshold });
+  });
   const testNotificationButton = documentRef.querySelector?.("#settings-test-notification");
   if (testNotificationButton) listen(testNotificationButton, "click", () => {
     void invoke("sendTestNotification");
@@ -1375,13 +1269,11 @@ export async function mountSettingsPage({
   return Object.freeze({
     refresh,
     teardown() {
+      disposed = true;
+      mountedSettingsPages.delete(documentRef);
       trayController.teardown();
       unsubscribeDesktopCommands();
       for (const remove of listeners.splice(0)) remove();
     },
   });
-}
-
-if (typeof document !== "undefined") {
-  void mountSettingsPage();
 }

@@ -94,7 +94,8 @@
         "claude-opus-5-5",
         "claude-sonnet-4-6",
         "claude-sonnet-5",
-        "gpt-6.1-sol"
+        "gpt-6.1-sol",
+        "gpt-5.1-codex-max"
       ]
     },
     "reasoningEffort": {
@@ -288,7 +289,8 @@
               "gpt-6-sol",
               "gpt-6-luna",
               "gpt-6.1-astra",
-              "gpt-6.1-sol"
+              "gpt-6.1-sol",
+              "gpt-5.1-codex-max"
             ]
           }
         }

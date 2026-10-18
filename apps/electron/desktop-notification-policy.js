@@ -3,7 +3,7 @@
  *
  * This module deliberately stops at the policy boundary.  It does not read
  * the filesystem, call Electron, ask for notification permission, schedule a
- * task, or deliver an operating-system notification.  A future adapter may
+ * task, or deliver an operating-system notification. The coordinator may
  * persist the validated state and turn the one semantic `notification` result
  * into a platform-local notification.
  *
@@ -14,11 +14,14 @@
  */
 
 export const DESKTOP_NOTIFICATION_POLICY_SCHEMA_VERSION =
-  "tibotattle-electron-notification-policy-v1";
+  "tibotattle-electron-notification-policy-v2";
+export const DESKTOP_LEGACY_NOTIFICATION_POLICY_SCHEMA_VERSION = "tibotattle-electron-notification-policy-v1";
 
 export const DESKTOP_NOTIFICATION_EVIDENCE_SCHEMA_VERSION =
   "tibotattle-notification-evidence-v2";
 
+// @deprecated Legacy policy helper modes remain available to retain dormant
+// behavior. Production settings and migrated policy records use a number.
 export const DESKTOP_NOTIFICATION_THRESHOLD_MODES = Object.freeze([
   "off",
   "ninety",
@@ -26,6 +29,7 @@ export const DESKTOP_NOTIFICATION_THRESHOLD_MODES = Object.freeze([
 ]);
 
 export const DESKTOP_NOTIFICATION_KEYS = Object.freeze({
+  // @deprecated Retained for historical receipts and dormant policy tests; production never enables reset alerts.
   RESET: "quota.reset",
   THRESHOLD: "quota.threshold",
 });
@@ -255,7 +259,8 @@ function assertUsedPercent(value) {
 }
 
 function assertThresholdMode(value) {
-  if (typeof value !== "string" || !THRESHOLD_MODE_SET.has(value)) {
+  if (!(Number.isInteger(value) && (value === -1 || (value >= 1 && value <= 100)))
+      && !THRESHOLD_MODE_SET.has(value)) {
     throw inputError("threshold mode is invalid", "malformed");
   }
   return value;
@@ -299,7 +304,7 @@ function parseHandledKey(value) {
     parseLaneKey(pieces.slice(1, 4).join("|"));
     canonicalDate(pieces[4], "handled key reset date");
     if (!Number.isInteger(Number(pieces[5]))
-        || ![80, 90].includes(Number(pieces[5]))
+        || Number(pieces[5]) < 1 || Number(pieces[5]) > 100
         || String(Number(pieces[5])) !== pieces[5]) {
       throw inputError("threshold handled key is invalid", "malformed");
     }
@@ -446,10 +451,11 @@ export function createDesktopNotificationPolicyState(options = {}) {
     schemaVersion: DESKTOP_NOTIFICATION_POLICY_SCHEMA_VERSION,
     preferences: {
       enabled: options.enabled ?? false,
-      resetEnabled: options.resetEnabled ?? true,
-      // Native opt-in selects both threshold alerts by default.  An explicit
-      // `off` remains available for a user who enabled consent but has not
-      // selected a threshold alert.
+      // @deprecated Only explicit dormant-policy callers can exercise reset
+      // alerts. The production coordinator additionally forces this to false.
+      resetEnabled: options.resetEnabled ?? false,
+      // Retain the legacy helper default for dormant callers. Production
+      // always supplies its explicit numeric preference.
       thresholdMode: options.thresholdMode
         ?? (options.enabled === true ? "eightyAndNinety" : "off"),
     },
@@ -472,6 +478,19 @@ export function serializeDesktopNotificationPolicyState(value) {
   return serialized;
 }
 
+/** Validate legacy state before migrating forward, retaining its receipts. */
+export function migrateDesktopNotificationPolicyState(value) {
+  if (!isPlainRecord(value) || value.schemaVersion !== DESKTOP_LEGACY_NOTIFICATION_POLICY_SCHEMA_VERSION) return value;
+  // Validate every legacy field before rewriting its version. Historical receipts remain intact.
+  const legacy = validateDesktopNotificationPolicyState({ ...value, schemaVersion: DESKTOP_NOTIFICATION_POLICY_SCHEMA_VERSION });
+  if (!THRESHOLD_MODE_SET.has(legacy.preferences.thresholdMode)) throw inputError("legacy threshold mode is invalid", "malformed_state");
+  return validateDesktopNotificationPolicyState({ ...legacy,
+    preferences: { ...legacy.preferences, resetEnabled: false,
+      enabled: legacy.preferences.enabled && legacy.preferences.thresholdMode !== "off",
+      thresholdMode: legacy.preferences.enabled && legacy.preferences.thresholdMode !== "off" ? 90 : -1 },
+  });
+}
+
 /** Parse and validate state bytes without accepting arbitrary JSON fields. */
 export function deserializeDesktopNotificationPolicyState(serialized) {
   if (typeof serialized !== "string") {
@@ -487,7 +506,7 @@ export function deserializeDesktopNotificationPolicyState(serialized) {
   } catch {
     throw inputError("notification state JSON is invalid", "malformed_state");
   }
-  return validateDesktopNotificationPolicyState(parsed);
+  return validateDesktopNotificationPolicyState(migrateDesktopNotificationPolicyState(parsed));
 }
 
 function validatedWindow(rawWindow, observedAt) {
@@ -578,7 +597,7 @@ function result(state, outcome, reason, notification = null) {
   if (notification !== null) {
     if (notification.key === DESKTOP_NOTIFICATION_KEYS.THRESHOLD) {
       if (!Number.isInteger(notification.thresholdPercent)
-          || ![80, 90].includes(notification.thresholdPercent)) {
+          || notification.thresholdPercent < 1 || notification.thresholdPercent > 100) {
         throw new Error("internal threshold notification is invalid");
       }
       notification = Object.freeze({
@@ -663,7 +682,9 @@ export function evaluateDesktopNotificationPolicy(stateValue, evidenceValue) {
   let workingHandledKeys = [...state.handledKeys];
   let sawFirstObservation = false;
   const candidates = [];
-  const thresholds = THRESHOLDS_BY_MODE[state.preferences.thresholdMode];
+  const thresholds = typeof state.preferences.thresholdMode === "number"
+    ? (state.preferences.thresholdMode === -1 ? [] : [state.preferences.thresholdMode])
+    : THRESHOLDS_BY_MODE[state.preferences.thresholdMode];
 
   for (const window of evidence.windows) {
     const key = laneKey(evidence.continuityKey, window.lane, window.durationMinutes);
@@ -697,14 +718,12 @@ export function evaluateDesktopNotificationPolicy(stateValue, evidenceValue) {
         resetAt: window.resetAt,
         resetIdentity: window.resetIdentity,
       };
-      if (scheduleChanged) {
-        const keep = eventKeyForReset(key, window.resetAt, window.resetIdentity);
-        const retained = workingHandledKeys.filter((handledKey) =>
-          !(handledKey.startsWith(`threshold|${key}|`)
-            || handledKey.startsWith(`reset|${key}|`))
-          || handledKey === keep);
-        workingHandledKeys = retained;
-      }
+      // A provider-identified new cycle rearms threshold alerts even when its
+      // reported reset timestamp happens to remain unchanged.
+      const keep = eventKeyForReset(key, window.resetAt, window.resetIdentity);
+      workingHandledKeys = workingHandledKeys.filter((handledKey) =>
+        !(handledKey.startsWith(`threshold|${key}|`)
+          || handledKey.startsWith(`reset|${key}|`)) || handledKey === keep);
       if (state.preferences.resetEnabled) {
         const eventKey = eventKeyForReset(key, window.resetAt, window.resetIdentity);
         if (!workingHandledKeys.includes(eventKey)) {

@@ -3,6 +3,7 @@ import {
   DESKTOP_ACTIONS,
   DESKTOP_APPEARANCES,
   DESKTOP_REFRESH_MODES,
+  isDesktopRefreshIntervalSeconds,
 } from "./desktop-contract.js";
 import {
   createDesktopAutomaticRefreshCadence,
@@ -39,11 +40,7 @@ export const DESKTOP_REFRESH_OPERATION_DEADLINE_MS = 243 * 60_000;
 export const DESKTOP_AUTOMATIC_DETAILED_REFRESH_INTERVAL_MS =
   DESKTOP_AUTOMATIC_REFRESH_CADENCE_INTERVAL_MS;
 
-const NOTIFICATION_THRESHOLDS = Object.freeze([
-  "off",
-  "ninety",
-  "eighty_and_ninety",
-]);
+const isNotificationThreshold = value => value === -1 || (Number.isInteger(value) && value >= 1 && value <= 100);
 
 const NOTIFICATION_STATES = new Set([
   "uninitialized",
@@ -95,7 +92,7 @@ const NOTIFICATION_REASONS = new Set([
 const UNAVAILABLE_NOTIFICATION_STATUS = Object.freeze({
   state: "state_unavailable",
   enabled: false,
-  threshold: "off",
+  threshold: -1,
   resetEnabled: false,
   delivery: "state_unavailable",
   lastOutcome: "state_unavailable",
@@ -248,10 +245,10 @@ function safeNotificationStatus(value) {
   return Object.freeze({
     state,
     enabled: ready && source.enabled === true,
-    threshold: ready && NOTIFICATION_THRESHOLDS.includes(source.threshold)
+    threshold: ready && isNotificationThreshold(source.threshold)
       ? source.threshold
-      : "off",
-    resetEnabled: ready && source.resetEnabled === true,
+      : -1,
+    resetEnabled: false,
     delivery,
     lastOutcome: NOTIFICATION_OUTCOMES.has(source.lastOutcome)
       ? source.lastOutcome
@@ -291,11 +288,11 @@ function fixedNotificationPreferences(value) {
     throw controllerError("desktop_notifications_invalid");
   }
   if (typeof value.enabled !== "boolean"
-      || !NOTIFICATION_THRESHOLDS.includes(value.threshold)) {
+      || !isNotificationThreshold(value.threshold)) {
     throw controllerError("desktop_notifications_invalid");
   }
   return Object.freeze({
-    enabled: value.enabled,
+    enabled: value.threshold !== -1,
     threshold: value.threshold,
   });
 }
@@ -327,6 +324,7 @@ function createTransientAutomaticRefreshCadence(clock) {
  * their failure/rollback behavior remains plain-Node testable.
  */
 export function createDesktopController({
+  windowBackgroundActions,
   settingsStore,
   platformServices,
   desktopSystemLocales = [],
@@ -350,6 +348,7 @@ export function createDesktopController({
   },
   automaticRefreshCadence,
   overviewRefreshOwnedByCompanion = false,
+  onRefreshIntervalChanged = async () => {},
   clock = () => Date.now(),
   setRecurringTimer = setTimeout,
   clearRecurringTimer = clearTimeout,
@@ -418,6 +417,7 @@ export function createDesktopController({
     openDashboardInBrowserAction,
     showDiagnosticsAction,
     revealLocalDataAction,
+    onRefreshIntervalChanged,
   })) {
     if (typeof value !== "function") throw new TypeError(`${name} is required`);
   }
@@ -441,6 +441,7 @@ export function createDesktopController({
   let refreshHeartbeatWatchdogTimer = null;
   let refreshDeadlineWatchdogTimer = null;
   let lastKnownRefreshIntervalSeconds = 300;
+  let refreshIntervalRevision = 0;
   let refreshLeaseCounter = 0;
   let activeRefreshLease = null;
   let activeRefreshMode = null;
@@ -645,27 +646,28 @@ export function createDesktopController({
   }
 
   function armAutomaticRefreshFollowup(seconds) {
-    refreshTimer = setRecurringTimer(() => {
+    if (lastKnownRefreshIntervalSeconds === -1) return;
+    scheduleRefreshDelay(() => {
       refreshTimer = null;
       if (automaticRefreshTickInFlight) {
         // A settings change may have armed a timer while the protected cadence
         // read was in flight. Preserve one timer and let that read publish the
         // next normal tick when it completes.
-        startRefreshTimer(seconds);
+        startRefreshTimer(lastKnownRefreshIntervalSeconds);
         return;
       }
-      if (!refreshInFlight) startRefreshTimer(seconds);
+      if (!refreshInFlight) startRefreshTimer(lastKnownRefreshIntervalSeconds);
     }, seconds * 1_000);
-    refreshTimer?.unref?.();
   }
 
   async function runAutomaticRefreshTick(seconds) {
     if (disposed || refreshInFlight || automaticRefreshTickInFlight) return;
     automaticRefreshTickInFlight = true;
+    const revision = refreshIntervalRevision;
     let followupArmed = false;
     try {
       if (!automaticRefreshHasLiveDashboard()) {
-        startRefreshTimer(seconds);
+        startRefreshTimer(lastKnownRefreshIntervalSeconds);
         followupArmed = true;
         return;
       }
@@ -692,7 +694,12 @@ export function createDesktopController({
         if (reservation === null) mode = "quick";
       }
 
-      if (disposed) return;
+      if (disposed || revision !== refreshIntervalRevision || lastKnownRefreshIntervalSeconds === -1) {
+        if (reservation !== null) {
+          try { await cadence.restoreAfterQuickJoin(reservation, { mode: "quick" }); } catch { /* Keep the conservative stamp. */ }
+        }
+        return;
+      }
       const delivered = emitDashboardCommand(
         createDesktopCommand("automaticRefresh", mode),
       );
@@ -707,7 +714,7 @@ export function createDesktopController({
             // Keep the consumed stamp when rollback cannot be proven.
           }
         }
-        startRefreshTimer(seconds);
+        startRefreshTimer(lastKnownRefreshIntervalSeconds);
         followupArmed = true;
         return;
       }
@@ -721,33 +728,54 @@ export function createDesktopController({
     } finally {
       automaticRefreshTickInFlight = false;
       if (!followupArmed && !disposed && !refreshInFlight && refreshTimer === null) {
-        startRefreshTimer(seconds);
+        startRefreshTimer(lastKnownRefreshIntervalSeconds);
       }
     }
   }
 
+  function scheduleRefreshDelay(callback, remaining) {
+    const delay = Math.min(remaining, 2_147_483_647);
+    const timer = setRecurringTimer(() => {
+      if (refreshTimer !== timer) return;
+      refreshTimer = null;
+      if (remaining > delay) scheduleRefreshDelay(callback, remaining - delay);
+      else callback();
+    }, delay);
+    refreshTimer = timer;
+    refreshTimer?.unref?.();
+  }
+
   function startRefreshTimer(seconds) {
     stopRefreshTimer();
-    // Companion owns the five-minute overview cadence. The shell only retains
-    // the existing low-frequency detailed-maintenance command and watchdogs.
-    if (overviewRefreshOwnedByCompanion) seconds = 3600;
+    if (!isDesktopRefreshIntervalSeconds(seconds)) return;
+    lastKnownRefreshIntervalSeconds = seconds;
+    // The companion follows the exact preference. Detailed shell maintenance
+    // never becomes more frequent than hourly and also respects disabled.
+    if (seconds === -1) return;
+    if (overviewRefreshOwnedByCompanion) seconds = Math.max(seconds, 3600);
     if (disposed || refreshInFlight
         || !Number.isSafeInteger(seconds)
         || seconds <= 0) return;
-    lastKnownRefreshIntervalSeconds = seconds;
-    refreshTimer = setRecurringTimer(() => {
+    scheduleRefreshDelay(() => {
       // The desktop cadence is deliberately one-shot. The renderer reports a
       // terminal requestRefresh finally before another timer is armed, so a
       // long accounting pass cannot be started again merely because the app
       // has been open longer than the configured interval.
       refreshTimer = null;
       if (automaticRefreshTickInFlight) {
-        startRefreshTimer(seconds);
+        startRefreshTimer(lastKnownRefreshIntervalSeconds);
         return;
       }
       void runAutomaticRefreshTick(seconds).catch(() => {});
     }, seconds * 1_000);
-    refreshTimer?.unref?.();
+  }
+
+  async function applyRefreshInterval(seconds) {
+    ++refreshIntervalRevision;
+    lastKnownRefreshIntervalSeconds = seconds;
+    stopRefreshTimer();
+    await onRefreshIntervalChanged(seconds);
+    if (!refreshInFlight) startRefreshTimer(seconds);
   }
 
   function readNotificationCoordinatorStatus() {
@@ -779,7 +807,7 @@ export function createDesktopController({
       : "unavailable";
     return Object.freeze({
       enabled: canSet && coordinatorStatus.enabled,
-      threshold: canSet ? coordinatorStatus.threshold : "off",
+      threshold: canSet ? coordinatorStatus.threshold : -1,
       canSet,
       state: coordinatorStatus.state,
       delivery: coordinatorStatus.delivery,
@@ -802,7 +830,7 @@ export function createDesktopController({
       // Ordinary settings are authoritative for the UI preference. Applying
       // them after loading the separate policy record starts a fresh policy
       // epoch when the two records disagree; it never resurrects baselines.
-      await coordinator.setPreferences(fixedNotificationPreferences(preferences));
+      await coordinator.setPreferences({ threshold: fixedNotificationPreferences(preferences).threshold });
     } catch {
       // Notification readiness is a capability, not a startup dependency.
       // The status projection remains closed and the dashboard can still run.
@@ -877,7 +905,7 @@ export function createDesktopController({
         if (typeof applyCodexHomes === "function") {
           activeCodexHomes = persistedCodexHomes;
           await applyCodexHomes(persistedCodexHomes, null);
-          startRefreshTimer(settings.refreshIntervalSeconds);
+          await applyRefreshInterval(settings.refreshIntervalSeconds);
           initialized = true;
           return snapshot();
         }
@@ -890,7 +918,7 @@ export function createDesktopController({
           path: primary?.kind === "custom" ? primary.path : null,
         });
         await applyCodexHome(activeCodexHome, null);
-        startRefreshTimer(settings.refreshIntervalSeconds);
+        await applyRefreshInterval(settings.refreshIntervalSeconds);
         initialized = true;
         return snapshot();
       }
@@ -922,7 +950,7 @@ export function createDesktopController({
       }
       activeCodexHome = initialHome;
       await applyCodexHome(initialHome, null);
-      startRefreshTimer(settings.refreshIntervalSeconds);
+      await applyRefreshInterval(settings.refreshIntervalSeconds);
       initialized = true;
       return snapshot();
     });
@@ -1195,6 +1223,28 @@ export function createDesktopController({
   }
 
   const handlers = Object.freeze({
+    async getApplicationMenu() {
+      return lifecycle().getApplicationMenu?.() ?? { menus: [] };
+    },
+    async openApplicationMenu(args) {
+      return lifecycle().openApplicationMenu?.(args) ?? false;
+    },
+    async getWindowBackground() {
+      if (!windowBackgroundActions) throw controllerError("desktop_background_unavailable");
+      return windowBackgroundActions.getWindowBackground();
+    },
+    async setWindowBackground(args) {
+      if (!windowBackgroundActions) throw controllerError("desktop_background_unavailable");
+      return windowBackgroundActions.setWindowBackground(args);
+    },
+    async chooseWindowBackground() {
+      if (!windowBackgroundActions) throw controllerError("desktop_background_unavailable");
+      return windowBackgroundActions.chooseWindowBackground();
+    },
+    async restoreWindowBackground() {
+      if (!windowBackgroundActions) throw controllerError("desktop_background_unavailable");
+      return windowBackgroundActions.restoreWindowBackground();
+    },
     async getSettings() {
       return snapshot();
     },
@@ -1298,7 +1348,7 @@ export function createDesktopController({
         const settings = await store.setRefreshInterval(seconds);
         // Do not replace an active lease with a timer. The terminal settle or
         // watchdog recovery will reread this persisted interval exactly once.
-        if (!refreshInFlight) startRefreshTimer(settings.refreshIntervalSeconds);
+        await applyRefreshInterval(settings.refreshIntervalSeconds);
         return snapshot();
       });
     },
@@ -1348,9 +1398,9 @@ export function createDesktopController({
         return Object.freeze({ status: "requested" });
       });
     },
-    async setNotificationPreferences({ enabled, threshold }) {
+    async setNotificationPreferences({ threshold }) {
       return enqueue(async () => {
-        const nextPreferences = fixedNotificationPreferences({ enabled, threshold });
+        const nextPreferences = fixedNotificationPreferences({ enabled: threshold !== -1, threshold });
         const previousSettings = await store.getSettings();
         const previousPreferences = fixedNotificationPreferences(previousSettings.notifications);
         const before = readNotificationCoordinatorStatus();
@@ -1360,7 +1410,7 @@ export function createDesktopController({
 
         let result;
         try {
-          result = await coordinator.setPreferences(nextPreferences);
+          result = await coordinator.setPreferences({ threshold: nextPreferences.threshold });
         } catch {
           throw controllerError("desktop_notifications_unavailable");
         }
@@ -1372,11 +1422,11 @@ export function createDesktopController({
         if (!accepted) throw controllerError("desktop_notifications_unavailable");
 
         try {
-          await store.setNotificationPreferences(nextPreferences);
+          await store.setNotificationPreferences({ threshold: nextPreferences.threshold });
         } catch {
           let rollback;
           try {
-            rollback = await coordinator.setPreferences(previousPreferences);
+            rollback = await coordinator.setPreferences({ threshold: previousPreferences.threshold });
           } catch {
             rollback = null;
           }

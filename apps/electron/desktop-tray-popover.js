@@ -487,7 +487,7 @@ export function createDesktopTrayPopover({
       skipTaskbar: true,
       show: false,
       title: currentModel.appName,
-      backgroundColor: "#f5f7f5",
+      backgroundColor: "#ffffff",
       ...supplied,
       webPreferences: {
         ...(supplied.webPreferences ?? {}),

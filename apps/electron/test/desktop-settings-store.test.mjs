@@ -55,7 +55,7 @@ test("settings store restores a valid persisted snapshot and rejects malformed u
     language: "zh-Hans",
     refreshIntervalSeconds: 900,
     startAtLogin: true,
-    notifications: { enabled: true, threshold: "ninety" },
+    notifications: { enabled: true, threshold: 90 },
   };
   const store = createDesktopSettingsStore({
     backend: {
@@ -98,9 +98,9 @@ test("settings writes are serialized and retain the last working state after fai
   const first = store.setLanguage("en");
   const second = store.setRefreshInterval(900);
   assert.equal((await first).language, "en");
-  assert.equal((await second).refreshIntervalSeconds, 300);
+  assert.equal((await second).refreshIntervalSeconds, 900);
   assert.equal((await store.getSettings()).language, "en");
-  assert.equal((await store.getSettings()).refreshIntervalSeconds, 300);
+  assert.equal((await store.getSettings()).refreshIntervalSeconds, 900);
   assert.equal(saves.length, 2);
   assert.equal(saves[1].language, "en");
 
@@ -112,7 +112,7 @@ test("settings writes are serialized and retain the last working state after fai
   assert.deepEqual(await store.getSettings(), projectDesktopSettingsPathFree({
     ...DESKTOP_DEFAULT_SETTINGS,
     language: "en",
-    refreshIntervalSeconds: 300,
+    refreshIntervalSeconds: 900,
   }));
   assert.equal((await store.setStartAtLogin(false)).startAtLogin, false);
 });
@@ -126,6 +126,34 @@ test("settings load failures fail soft to defaults without exposing backend deta
   });
   assert.deepEqual(await store.getSettings(), projectDesktopSettingsPathFree(DESKTOP_DEFAULT_SETTINGS));
   assert.equal(store.lastLoadFailed, true);
+});
+
+test("custom refresh minutes and threshold-only preferences survive reload", async () => {
+  let persisted = null;
+  const backend = { async load() { return persisted; }, async save(value) { persisted = clone(value); } };
+  const store = createDesktopSettingsStore({ backend });
+  assert.equal((await store.setRefreshInterval(420)).refreshIntervalSeconds, 420);
+  assert.deepEqual((await store.setNotificationPreferences({ threshold: 37 })).notifications, { enabled: true, threshold: 37 });
+  let reloaded = createDesktopSettingsStore({ backend });
+  assert.equal((await reloaded.getSettings()).refreshIntervalSeconds, 420);
+  assert.deepEqual((await reloaded.getSettings()).notifications, { enabled: true, threshold: 37 });
+  await reloaded.setRefreshInterval(-1);
+  await reloaded.setNotificationPreferences({ threshold: -1 });
+  reloaded = createDesktopSettingsStore({ backend });
+  assert.equal((await reloaded.getSettings()).refreshIntervalSeconds, -1);
+  assert.deepEqual((await reloaded.getSettings()).notifications, { enabled: false, threshold: -1 });
+});
+
+test("a future settings schema cannot be overwritten by the current reader", async () => {
+  let saves = 0;
+  const store = createDesktopSettingsStore({ backend: {
+    async load() { return { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v5" }; },
+    async save() { saves += 1; },
+  } });
+  await store.getSettings();
+  assert.equal(store.lastLoadFailed, true);
+  await assert.rejects(store.setRefreshInterval(420), { code: "desktop_settings_persistence_failed" });
+  assert.equal(saves, 0);
 });
 
 test("store migrates v1 once and retains the generated root ID", async () => {
@@ -148,7 +176,7 @@ test("store migrates v1 once and retains the generated root ID", async () => {
   });
   assert.equal((await store.getCodexHomesForSettings()).activityRoots[0].rootId, ROOT_A);
   assert.equal(saves.length, 1);
-  assert.equal(saves[0].schemaVersion, "tibotattle-desktop-settings-v3");
+  assert.equal(saves[0].schemaVersion, "tibotattle-desktop-settings-v4");
   assert.equal(saves[0].codexHomes.activityRoots[0].path, "D:\\Codex");
   assert.equal(store.lastLoadFailed, false);
 });

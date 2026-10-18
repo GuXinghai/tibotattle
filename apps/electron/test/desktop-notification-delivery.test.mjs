@@ -78,7 +78,7 @@ test("delivery vocabulary and semantic notification validator are closed", () =>
   const invalid = [
     null,
     [],
-    { key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD, thresholdPercent: 85 },
+    { key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD, thresholdPercent: 101 },
     { key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD, thresholdPercent: "90" },
     { key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD, thresholdPercent: 90, text: "raw" },
     { key: DESKTOP_NOTIFICATION_KEYS.RESET, thresholdPercent: 90 },
@@ -94,8 +94,8 @@ test("delivery vocabulary and semantic notification validator are closed", () =>
 test("packaged delivery maps each semantic output to complete localized copy", () => {
   const expectations = [
     ["en-US", "Quota usage reached 80%", "A fresh provider-reported observation crossed the 80% usage threshold."],
-    ["zh-Hans", "配额使用量已达到 80%", "最新的提供商报告观测已越过 80% 使用量阈值。"],
-    ["es", "El uso de la cuota alcanzó el 80 %", "Una observación reciente informada por el proveedor superó el umbral de uso del 80 %."],
+    ["zh-Hans", "额度使用量已达到 80%", "提供商报告的最新观测显示，额度用量已达到 80% 的提醒阈值。"],
+    ["es", "El uso de la cuota alcanzó el 80 %", "Una observación reciente informada por el proveedor alcanzó el umbral de uso del 80 %."],
   ];
   for (const [locale, title, body] of expectations) {
     const fake = fakeNotification();
@@ -104,6 +104,7 @@ test("packaged delivery maps each semantic output to complete localized copy", (
       app: PACKAGED_APP,
       platform: "win32",
       locale,
+      windowsIdentityReady: true,
     });
     assert.deepEqual(delivery.status(), { status: "ready" });
     assert.deepEqual(delivery.deliver({
@@ -120,6 +121,7 @@ test("packaged delivery maps each semantic output to complete localized copy", (
     app: PACKAGED_APP,
     platform: "win32",
     locale: "en-US",
+    windowsIdentityReady: true,
   });
   assert.deepEqual(resetDelivery.deliver({ key: DESKTOP_NOTIFICATION_KEYS.RESET }), {
     status: "delivered",
@@ -171,6 +173,16 @@ test("development and Windows identity gates do not claim delivery", () => {
     status: "delivered",
   });
   assert.equal(configured.state.showCalls, 1);
+});
+
+test("custom percentages reach localized native copy without a fixed 80 or 90 label", () => {
+  const fake = fakeNotification();
+  const delivery = createDesktopNotificationDelivery({ Notification: fake.Notification, app: PACKAGED_APP,
+    platform: "win32", windowsIdentityReady: true, locale: "en-US" });
+  for (const percent of [1, 37, 100]) {
+    assert.deepEqual(delivery.deliver({ key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD, thresholdPercent: percent }), { status: "delivered" });
+    assert.deepEqual(fake.state.constructorCalls.at(-1), { title: `Quota usage reached ${percent}%`, body: `A fresh provider-reported observation crossed the ${percent}% usage threshold.` });
+  }
 });
 
 

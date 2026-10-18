@@ -5,6 +5,7 @@ import {
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
 } from "../../src/platform/index.js";
 import { shellError } from "./errors.js";
+import { isDesktopRefreshIntervalSeconds } from "./desktop-contract.js";
 import { createCompanionReadyLineParser } from "./ready-line.js";
 import { createCompanionStartupErrorParser } from "../../src/local-companion-startup-error.js";
 
@@ -74,6 +75,7 @@ const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "USAGE_MONITOR_ACCOUNTING_SOURCE_MODE",
   "USAGE_MONITOR_RESOURCE_ROOT",
   "USAGE_MONITOR_STATE_ROOT",
+  "USAGE_MONITOR_REFRESH_INTERVAL_SECONDS",
   "USAGE_MONITOR_PREPARED_DIRECTORY",
   "USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION",
   "USAGE_MONITOR_TEST_LANE",
@@ -196,6 +198,7 @@ export function createCompanionSupervisor({
   let unexpectedExitHandler = onUnexpectedExit;
   let credentialBroker = null;
   let activeChildLifecycleObservation = null;
+  let refreshIntervalSeconds = null;
   const selectedAccountObservationBroker = attachWindowsAccountObservationBroker;
   const requiresNodeIpc = selectedAccountObservationBroker !== undefined;
   const credentialBrokerKind = selectedAccountObservationBroker !== undefined
@@ -377,9 +380,9 @@ export function createCompanionSupervisor({
         currentChild = spawnChild(command, [...args], {
           cwd,
           env: companionEnvironment(environment, parentPid, credentialBrokerKind),
-          // The fixed Windows account-observation broker is the only user of
-          // the inherited Node IPC channel.
-          stdio: selectedAccountObservationBroker
+          // Fixed schedule control and the credential broker share the
+          // inherited channel; neither exposes a general command transport.
+          stdio: selectedAccountObservationBroker || refreshIntervalSeconds !== null
             ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
           windowsHide: true,
         });
@@ -479,6 +482,23 @@ export function createCompanionSupervisor({
   return Object.freeze({
     start,
     stop,
+    setRefreshInterval(seconds) {
+      if (!isDesktopRefreshIntervalSeconds(seconds)) throw new TypeError("refresh interval is invalid");
+      refreshIntervalSeconds = seconds;
+      environment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS = String(seconds);
+      if (child === null || state !== "ready") return false;
+      if (typeof child.send !== "function" || child.connected === false) {
+        throw shellError("companion_refresh_interval_unavailable");
+      }
+      return new Promise((resolve, reject) => {
+        try {
+          child.send({ type: "tibotattle.refresh-interval.v1", seconds }, (error) => {
+            if (error) reject(shellError("companion_refresh_interval_unavailable"));
+            else resolve(true);
+          });
+        } catch { reject(shellError("companion_refresh_interval_unavailable")); }
+      });
+    },
     setUnexpectedExitHandler(handler) {
       if (handler !== undefined && typeof handler !== "function") {
         throw new TypeError("handler must be a function");

@@ -49,11 +49,15 @@ test("desktop commands contain only the fixed presentation vocabulary", () => {
     resolvedTheme: "dark",
   });
   assert.equal(Object.isFrozen(createDesktopCommand("refresh")), true);
+  assert.deepEqual(createDesktopCommand("windowFullscreen", true), { command: "windowFullscreen", fullscreen: true });
+  assert.deepEqual(createDesktopCommand("windowFullscreen", false), { command: "windowFullscreen", fullscreen: false });
 });
 
 test("desktop commands reject selectors, paths, URLs, extra keys, and prototypes", () => {
   for (const value of [
     null,
+    { command: "windowFullscreen", fullscreen: "true" },
+    { command: "windowFullscreen", fullscreen: true, action: "quit" },
     { command: "refresh", selector: "#refresh-button" },
     { command: "automaticRefresh", mode: "quick", reason: "unexpected" },
     { command: "automaticRefresh", mode: "background" },

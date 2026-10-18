@@ -1,3 +1,4 @@
+import { mountSettingsPage } from "./electron-settings.js";
 import {
   createObservationFreshnessClock,
   observationRecency,
@@ -102,7 +103,7 @@ function applyNativeAppearanceTheme(theme) {
   document.documentElement.style.colorScheme = theme;
   const themeColor = document.querySelector('meta[name="theme-color"]');
   if (themeColor) {
-    themeColor.content = theme === "dark" ? "#141a17" : "#f5f1e8";
+    themeColor.content = theme === "dark" ? "#161616" : "#fff";
   }
   return true;
 }
@@ -251,6 +252,8 @@ let localActionBusy = false;
 let activeLocalDashboardLoad = null;
 let localRefreshInProgress = false;
 let localRefreshCancelRequested = false;
+let sidebarRefreshSummaryTimer = null;
+let sidebarRefreshSummaryVersion = 0;
 let returnRefreshScheduled = false;
 let returnRefreshDeferrals = 0;
 // Electron's main process owns the recurring cadence. The renderer lifecycle
@@ -478,7 +481,29 @@ function localAnalysisMessageKey() {
     : "page.analysis.analyze";
 }
 
-// Keep phase, count and elapsed time in stable slots across refresh updates.
+function setSidebarRefreshSummary(key, { success = false } = {}) {
+  if ($("#refresh-button")?.getAttribute("data-sidebar-refresh") !== "true") return;
+  const summary = $("#sidebar-refresh-summary");
+  if (!summary) return;
+  const version = ++sidebarRefreshSummaryVersion;
+  if (sidebarRefreshSummaryTimer !== null) window.clearTimeout(sidebarRefreshSummaryTimer);
+  sidebarRefreshSummaryTimer = null;
+  if (key) {
+    if (summary.textContent !== t(key)) setLocalizedText(summary, key);
+    summary.hidden = false;
+  } else {
+    setRawText(summary, "");
+    summary.hidden = true;
+  }
+  if (success) sidebarRefreshSummaryTimer = window.setTimeout(() => {
+    if (version !== sidebarRefreshSummaryVersion) return;
+    sidebarRefreshSummaryTimer = null;
+    setRawText(summary, "");
+    summary.hidden = true;
+  }, 3_000);
+}
+
+// The sidebar shows only the phase; detailed controls retain their stable slots.
 function renderRefreshProgress(button, phase, { processed = null, selected = null, elapsedSeconds = null } = {}) {
   button.classList.add("refresh-progress");
   const label = node("span", "refresh-progress-phase", phase);
@@ -504,6 +529,21 @@ function renderRefreshProgress(button, phase, { processed = null, selected = nul
   ]);
   const phaseKey = phaseMessages.get(phase);
   if (phaseKey) setLocalizedText(label, phaseKey);
+  if (button.getAttribute("data-sidebar-refresh") === "true") {
+    button.classList.add("is-refreshing");
+    button.setAttribute("aria-busy", "true");
+    const action = t(localRefreshCancelRequested ? "page.analysis.cancelling" : "page.analysis.cancel");
+    button.title = `${action} · ${label.textContent}`;
+    button.setAttribute("aria-label", button.title);
+    if (phaseKey) setSidebarRefreshSummary(phaseKey);
+    else {
+      setSidebarRefreshSummary(null);
+      const summary = $("#sidebar-refresh-summary");
+      setRawText(summary, phase);
+      if (summary) summary.hidden = false;
+    }
+    return;
+  }
   const count = node("span", "refresh-progress-count");
   if (processed !== null && selected !== null) {
     const current = node("span", "refresh-progress-current", String(processed));
@@ -598,17 +638,25 @@ function updateLocalActionButtons() {
   const refreshActive = localRefreshInProgress;
   for (const selector of ["#refresh-button", "#setup-refresh"]) {
     const button = $(selector);
+    const sidebar = button.getAttribute("data-sidebar-refresh") === "true";
     // A refresh owns both visible controls for its whole lifetime. The
     // progress renderer and cancel action are deliberately independent of the
     // primary load lock, because a terminal dashboard reload can release that
     // lock before the refresh's finalizer clears its own lifecycle state.
-    button.disabled = localActionBusy || refreshActive || !allowed;
+    button.disabled = sidebar && refreshActive ? localRefreshCancelRequested : localActionBusy || refreshActive || !allowed;
     if (refreshActive && !button.classList.contains("refresh-progress")) {
       // Recover a progress affordance if a nested dashboard render released
       // the primary load lock after the refresh began.
       renderRefreshProgress(button, "Update running…");
     }
     if (!localActionBusy && !refreshActive) {
+      if (sidebar) {
+        button.classList.remove("refresh-progress", "is-refreshing");
+        button.removeAttribute("aria-busy");
+        button.setAttribute("aria-label", t(labelKey));
+        button.title = t(labelKey);
+        continue;
+      }
       setLocalizedText(button, labelKey);
       button.classList.remove("refresh-progress");
       button.removeAttribute("aria-label");
@@ -622,7 +670,7 @@ function updateLocalActionButtons() {
   const connectionCheck = $("#connection-check");
   if (connectionCheck) connectionCheck.disabled = localActionBusy;
   const cancel = $("#cancel-refresh");
-  cancel.hidden = !localRefreshInProgress;
+  cancel.hidden = $("#refresh-button").getAttribute("data-sidebar-refresh") === "true" || !localRefreshInProgress;
   cancel.disabled = localRefreshCancelRequested;
   setLocalizedText(cancel, localRefreshCancelRequested
     ? "page.analysis.cancelling" : "page.analysis.cancel");
@@ -791,6 +839,7 @@ function renderGlobalState() {
   const pill = $("#global-state");
   if (!pill) return;
   const state = localRefreshInProgress ? "updating" : globalState.state;
+  pill.hidden = state === "live" || $("#refresh-button")?.getAttribute("data-sidebar-refresh") === "true" && state === "updating";
   pill.className = `state-pill state-${state}`;
   pill.replaceChildren(
     node("span", "state-dot"),
@@ -9073,7 +9122,7 @@ async function loadLocalDashboard() {
   localActionBusy = true;
   const button = $("#refresh-button");
   if (localRefreshInProgress) renderRefreshProgress(button, "Loading evidence…");
-  else setLocalizedText(button, "refresh.progress.connecting");
+  else if (button.getAttribute("data-sidebar-refresh") !== "true") setLocalizedText(button, "refresh.progress.connecting");
   updateLocalActionButtons();
   try {
     const loadDashboardData = async () => {
@@ -9287,6 +9336,8 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
   let continuationLimitReached = false;
   let refreshLeaseSession = null;
   let refreshProgressClock = null;
+  let sidebarResultKey = "refresh.sidebar.failed";
+  let refreshSucceeded = false;
   localActionBusy = true;
   localRefreshInProgress = true;
   localRefreshCancelRequested = false;
@@ -9426,6 +9477,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     }
     cancelled = outcome === "cancelled";
     if (cancelled) {
+      sidebarResultKey = "refresh.sidebar.cancelled";
       refreshProgressClock.stop();
       refreshProgressClock = null;
       renderRefreshProgress(button, "Loading saved results…");
@@ -9434,6 +9486,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     }
     if (outcome === "failed"
         && finalErrorCode === "refresh_resource_limited") {
+      sidebarResultKey = "refresh.resourceTitle";
       refreshProgressClock.stop();
       refreshProgressClock = null;
       renderRefreshProgress(button, "Loading saved results…");
@@ -9446,6 +9499,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       return;
     }
     if (outcome === "degraded") {
+      sidebarResultKey = "refresh.sidebar.partial";
       refreshProgressClock.stop();
       refreshProgressClock = null;
       renderRefreshProgress(button, t("refresh.degradedLoading"));
@@ -9472,6 +9526,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     renderRefreshProgress(button, "Loading updated evidence…");
     if (await loadLocalDashboard() === false) return;
     publishRefreshResultNotice(finalRefreshState);
+    refreshSucceeded = true;
     if (detailed) scheduleReindexAutoContinuation();
   } catch (error) {
     if (dashboard) {
@@ -9484,6 +9539,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       });
     }
     if (!refreshAccepted && error?.status === 409) {
+      sidebarResultKey = "refresh.alreadyRunningTitle";
       // Another surface owns the shared controller. In particular, a quick
       // run is not proof that this request's detailed work was accepted. Do
       // not enqueue an escalation or turn a safe conflict into a failure.
@@ -9533,6 +9589,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     if (nativeEvidenceReloadPending) void reloadLocalEvidenceAfterNativeRefresh();
     updateLocalActionButtons();
     void refreshElectronCadenceHealth();
+    setSidebarRefreshSummary(refreshSucceeded ? "refresh.sidebar.succeeded" : sidebarResultKey, { success: refreshSucceeded });
     // The updating pill is derived from the renderer-owned lifecycle flag.
     // Restore the dashboard's last verified status after the refresh reaches a
     // terminal state so it cannot remain stuck on "Running" beside the idle
@@ -9881,7 +9938,8 @@ async function describeFailure({ surface, error, messages = {}, fallback }) {
 }
 
 $("#refresh-button").addEventListener("click", () => {
-  void requestRefresh();
+  if (localRefreshInProgress) void cancelLocalAnalysis();
+  else void requestRefresh();
 });
 $("#setup-refresh").addEventListener("click", () => {
   void requestRefresh({ detailed: true });
@@ -10385,6 +10443,9 @@ const allowancePage = mountAllowancePage({ documentRef: document, t, formatMoney
   stopPlayback: () => trendsHorizonView?.stop(),
   retry: () => $("#refresh-button").click(),
 });
+if (window.tibotattleDesktop?.version === "v1") {
+  void mountSettingsPage({ documentRef: document, windowRef: window, localizer: localization });
+}
 mountDashboardLayout({ documentRef: document, windowRef: window });
 mountDashboardNavigation({
   documentRef: document,

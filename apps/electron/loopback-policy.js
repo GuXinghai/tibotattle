@@ -160,6 +160,7 @@ export function installLoopbackNavigationPolicy({
   session,
   policy,
   allowNotificationPermission = false,
+  allowBackgroundResource = false,
 } = {}) {
   if (!webContents || typeof webContents.on !== "function") {
     throw new TypeError("webContents is required");
@@ -202,9 +203,25 @@ export function installLoopbackNavigationPolicy({
           && notificationPermissionWebContentsIds.has(contents?.id)
       );
       const notificationPermissionWebContentsIds = new Set();
-      const onBeforeRequest = (details, callback) => (
-        policy.handleBeforeRequest(details, callback)
-      );
+      const backgroundContents = new Map();
+      const onBeforeRequest = (details, callback) => {
+        if (typeof details?.url === "string" && details.url.startsWith("tibotattle-background:")) {
+          const contents = backgroundContents.get(details.webContentsId);
+          let allowed = false;
+          try {
+            const frame = details.frame;
+            const source = new URL(frame.url);
+            allowed = /^tibotattle-background:\/\/image\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(details.url)
+              && details.resourceType === "image" && details.method === "GET"
+              && contents?.mainFrame === frame && frame.parent === null
+              && source.origin === policy.origin && source.pathname === "/" && source.search === ""
+              && source.username === "" && source.password === "";
+          } catch { /* Missing/destroyed frames cannot read protected images. */ }
+          callback?.({ cancel: !allowed });
+          return allowed;
+        }
+        return policy.handleBeforeRequest(details, callback);
+      };
       session.setPermissionRequestHandler?.(onPermissionRequest);
       session.setPermissionCheckHandler?.(onPermissionCheck);
       session.webRequest?.onBeforeRequest?.(requestFilter, onBeforeRequest);
@@ -216,6 +233,7 @@ export function installLoopbackNavigationPolicy({
         onPermissionCheck,
         onBeforeRequest,
         notificationPermissionWebContentsIds,
+        backgroundContents,
       };
       sessionPolicyInstallations.set(session, sessionInstallation);
     } else if (sessionInstallation.policyOrigin !== (policy.origin ?? null)) {
@@ -235,6 +253,9 @@ export function installLoopbackNavigationPolicy({
         notificationPermissionWebContentsId,
       );
     }
+    if (allowBackgroundResource && Number.isSafeInteger(webContents.id)) {
+      sessionInstallation.backgroundContents.set(webContents.id, webContents);
+    }
   }
 
   let removed = false;
@@ -252,6 +273,7 @@ export function installLoopbackNavigationPolicy({
           notificationPermissionWebContentsId,
         );
       }
+      sessionInstallation.backgroundContents.delete(webContents.id);
       sessionInstallation.count -= 1;
       if (sessionInstallation.count > 0) return;
       session.setPermissionRequestHandler?.(null);

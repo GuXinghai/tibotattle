@@ -13,6 +13,7 @@ import {
   createAccountingPricer,
 } from "./replay-safe-accounting-cache.js";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
+import { projectRecordedTokenComponents } from "./reporting/index.js";
 
 export const CACHE_SWITCH_PROXIMITY_MS = 5 * 60_000;
 export const CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO = 0.5;
@@ -167,10 +168,6 @@ const ALLOWANCE_SCENARIOS = Object.freeze([
   "unresolved_as_fast",
 ]);
 
-function tokenCount(value) {
-  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
-}
-
 function observedTokenCount(value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
@@ -261,14 +258,14 @@ function compactionAwareParser(value) {
 }
 
 function componentsFor(row) {
-  return {
-    input_uncached_tokens: tokenCount(row.tokens_in_uncached),
-    input_cache_read_tokens: tokenCount(row.tokens_in_cache_read),
-    input_cache_write_tokens: tokenCount(row.tokens_in_cache_write),
-    output_text_tokens: tokenCount(row.tokens_out_text),
-    output_reasoning_tokens: tokenCount(row.tokens_out_reasoning),
-    output_combined_tokens: tokenCount(row.tokens_out_combined),
-  };
+  return projectRecordedTokenComponents({
+    input_uncached_tokens: row.tokens_in_uncached,
+    input_cache_read_tokens: row.tokens_in_cache_read,
+    input_cache_write_tokens: row.tokens_in_cache_write,
+    output_text_tokens: row.tokens_out_text,
+    output_reasoning_tokens: row.tokens_out_reasoning,
+    output_combined_tokens: row.tokens_out_combined,
+  });
 }
 
 function completeCacheComparison(row) {
@@ -474,7 +471,14 @@ function finalizeCoveredSubtotal(summary) {
 }
 
 function premiumFor(row, lostCacheTokens, pricer) {
-  const actualComponents = componentsFor(row);
+  const recorded = componentsFor(row);
+  if (!recorded.totalComplete || recorded.conflict) return null;
+  const actualComponents = { ...recorded.components };
+  // Match the main usage projection: the combined output is a duplicate alias
+  // when the observed split is selected, not an extra billable component.
+  if (actualComponents.output_combined_tokens === null) {
+    delete actualComponents.output_combined_tokens;
+  }
   const movedFromUncached = Math.min(
     actualComponents.input_uncached_tokens,
     lostCacheTokens,

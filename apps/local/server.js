@@ -1,6 +1,10 @@
 import { createWorkUsageService } from "../../src/application/index.js";
 import { createWorkUsageSnapshotStore } from "./work-usage-snapshots.js";
-import { createOverviewRefreshScheduler } from "./overview-refresh-scheduler.js";
+import {
+  attachOverviewRefreshIntervalChannel,
+  createOverviewRefreshScheduler,
+  validOverviewRefreshIntervalSeconds,
+} from "./overview-refresh-scheduler.js";
 import { companionStartupErrorLine } from "../../src/local-companion-startup-error.js";
 import { enrichWorkUsageRows } from "../../src/work-usage-display.js";
 import { createServer } from "node:http";
@@ -377,7 +381,7 @@ function securityHeaders({ report = false } = {}) {
   const scriptPolicy = report ? "'self' 'unsafe-inline'" : "'self'";
   return {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": `default-src 'none'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'none'; frame-ancestors 'none'; img-src 'self' data:; object-src 'none'; script-src ${scriptPolicy}; style-src 'self' 'unsafe-inline'`,
+    "Content-Security-Policy": `default-src 'none'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'none'; frame-ancestors 'none'; img-src 'self' data: tibotattle-background:; object-src 'none'; script-src ${scriptPolicy}; style-src 'self' 'unsafe-inline'`,
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
     "Referrer-Policy": "no-referrer",
@@ -1252,7 +1256,10 @@ function createPreparedLocalCompanionServer({
     }),
   });
 
-  const overviewScheduler = createOverviewRefreshScheduler({refresh,onError,clock});
+  const configuredRefreshInterval = environment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS;
+  const intervalSeconds = configuredRefreshInterval === undefined ? 300 : Number(configuredRefreshInterval);
+  if (!validOverviewRefreshIntervalSeconds(intervalSeconds)) throw new TypeError("refresh interval is invalid");
+  const overviewScheduler = createOverviewRefreshScheduler({ refresh, onError, clock, intervalSeconds });
   const workUsage = createWorkUsageService({ build: workUsageBuild, enrich: workUsageEnrich,
     snapshotStore: createWorkUsageSnapshotStore({
       snapshotFile: join(stateRoot, "work-usage-snapshot.json"),
@@ -1754,6 +1761,7 @@ function createPreparedLocalCompanionServer({
     server,
     dataStore,
     refresh,
+    setRefreshIntervalSeconds: (seconds) => overviewScheduler.setIntervalSeconds(seconds),
     [PARENT_WATCHDOG_PID]: parentWatchdogPid,
     async initialize() {
       await acquireInstanceLock();
@@ -1862,6 +1870,13 @@ if (process.argv[1]
       port: requestedPort,
       terminateProcessOnParentDeath: true,
     });
+    // Only the inherited parent channel can configure scheduling. This adds no
+    // HTTP mutation route and does not consume credential-broker messages.
+    const detachRefreshInterval = typeof process.send === "function"
+      ? attachOverviewRefreshIntervalChannel({ channel: process, scheduler: {
+        setIntervalSeconds: app.setRefreshIntervalSeconds,
+      } }) : () => {};
+    app.server.once("close", detachRefreshInterval);
     process.stdout.write(`USAGE_MONITOR_READY http://${app.host}:${app.port}/\n`);
     let closing = false;
     const close = () => {

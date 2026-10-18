@@ -28,7 +28,7 @@ function refreshElement(tagName = "button") {
     style: {},
     classList: {
       add: (name) => classes.add(name),
-      remove: (name) => classes.delete(name),
+      remove: (...names) => names.forEach(name => classes.delete(name)),
       contains: (name) => classes.has(name),
       toggle: (name, force) => {
         const enabled = force === undefined ? !classes.has(name) : Boolean(force);
@@ -51,6 +51,7 @@ function refreshElement(tagName = "button") {
 }
 
 function refreshHarness({
+  sidebar = false,
   rejection = null,
   native = false,
   electron = false,
@@ -96,6 +97,8 @@ function refreshHarness({
     localActionBusy: false,
     localRefreshInProgress: false,
     localRefreshCancelRequested: false,
+    sidebarRefreshSummaryTimer: null,
+    sidebarRefreshSummaryVersion: 0,
     reindexAutoContinuations: 0,
     lastReindexProgressReceipt: null,
     returnRefreshScheduled: false,
@@ -126,6 +129,7 @@ function refreshHarness({
     $: (selector) => {
       if (!buttons.has(selector)) {
         const button = refreshElement();
+        if (sidebar && selector === "#refresh-button") button.setAttribute("data-sidebar-refresh", "true");
         const replaceChildren = button.replaceChildren;
         button.replaceChildren = function (...children) {
           replaceChildren.call(this, ...children);
@@ -185,10 +189,12 @@ function refreshHarness({
     setLocalizedText(element, key) {
       element.textContent = translate(key, {}, "en-US");
     },
+    setRawText(element, value) { element.textContent = value; },
     t: (key, values = {}) => translate(key, values, "en-US"),
   });
   for (const name of [
     "localAnalysisMessageKey",
+    "setSidebarRefreshSummary",
     "renderRefreshProgress",
     "startRefreshProgressClock",
     "updateLocalActionButtons",
@@ -209,6 +215,63 @@ function refreshHarness({
   runInContext(productionFunction("scheduleReturningUserRefresh"), context);
   return { context, calls, routes, notices, timers, buttons, priorDashboard, progressFrames, globalStates };
 }
+
+test("sidebar refresh keeps its icon and cancellability while showing only the phase", () => {
+  const { context } = refreshHarness({ sidebar: true });
+  const button = context.$("#refresh-button");
+  const icon = refreshElement("svg");
+  button.append(icon);
+  context.localRefreshInProgress = true;
+  context.localActionBusy = true;
+  context.renderRefreshProgress(button, "Scanning local history…", { processed: 9, selected: 100, elapsedSeconds: 12 });
+  context.updateLocalActionButtons();
+  assert.equal(button.children[0], icon);
+  assert.equal(button.classList.contains("is-refreshing"), true);
+  assert.equal(button.disabled, false, "the same icon must remain available for safe cancellation");
+  assert.equal(context.$("#sidebar-refresh-summary").textContent, "Scanning local history…");
+  assert.equal(context.$("#cancel-refresh").hidden, true, "there is no duplicate cancel button");
+  context.localRefreshCancelRequested = true;
+  context.updateLocalActionButtons();
+  assert.equal(button.disabled, true, "only one cancellation request is sent");
+});
+
+test("sidebar success clears after 3000ms and stale timers cannot clear a later refresh", async () => {
+  const { context } = refreshHarness({ sidebar: true });
+  const scheduled = [];
+  context.window.setTimeout = (callback, delay) => { scheduled.push({ callback, delay }); return scheduled.length; };
+  await context.requestRefresh();
+  const summary = context.$("#sidebar-refresh-summary");
+  assert.equal(summary.textContent, "Refresh successful");
+  assert.equal(summary.hidden, false);
+  assert.equal(context.$("#refresh-button").classList.contains("is-refreshing"), false);
+  const successTimer = scheduled.at(-1);
+  assert.equal(successTimer.delay, 3_000);
+  context.renderRefreshProgress(context.$("#refresh-button"), "Scanning local history…");
+  successTimer.callback();
+  assert.equal(summary.textContent, "Scanning local history…");
+  assert.equal(summary.hidden, false);
+  context.setSidebarRefreshSummary("refresh.sidebar.succeeded", { success: true });
+  scheduled.at(-1).callback();
+  assert.equal(summary.textContent, "");
+  assert.equal(summary.hidden, true);
+});
+
+test("sidebar refresh never claims success after failure, cancellation, degradation or a failed reload", async () => {
+  for (const [refreshState, expected] of [
+    [{ status: "failed" }, "Refresh failed"],
+    [{ status: "cancelled" }, "Refresh cancelled"],
+    [{ status: "degraded" }, "Refresh incomplete"],
+  ]) {
+    const { context } = refreshHarness({ sidebar: true, refreshStates: [refreshState] });
+    await context.requestRefresh();
+    assert.equal(context.$("#sidebar-refresh-summary").textContent, expected);
+    assert.equal(context.$("#sidebar-refresh-summary").hidden, false);
+  }
+  const { context } = refreshHarness({ sidebar: true });
+  context.loadLocalDashboard = async () => false;
+  await context.requestRefresh();
+  assert.equal(context.$("#sidebar-refresh-summary").textContent, "Refresh failed");
+});
 
 test("dynamic progress and idle actions follow the selected language", () => {
   const { context } = refreshHarness();

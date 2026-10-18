@@ -311,6 +311,35 @@ one fixed IPC channel. Its refresh subset is dashboard-frame-only:
 | Renderer to main | `refreshHeartbeat` | Exact `{ lease }` with one positive safe integer; renews only the matching missing-heartbeat watchdog. |
 | Renderer to main | `refreshSettled` | Exact `{ lease }` with one positive safe integer; matching terminal settlement is idempotent. |
 
+### Application menu bridge
+
+The trusted dashboard top frame can call `getApplicationMenu()` for the five
+localized menu IDs and labels plus the native `fullscreen` boolean, and `openApplicationMenu({ menu, x, y })` to open
+the existing native submenu. IDs are limited to `file`, `edit`, `view`, `window`
+and `help`; coordinates must be integers from 0 through 16384 and are clamped
+to the live window content bounds. Unknown keys, remote pages, asset pages and
+subframes are rejected by the existing fixed-channel authorization boundary.
+No renderer-supplied menu items or commands are accepted. The titlebar retains
+native Windows caption controls and draggable regions.
+The closed main-to-renderer command `{ command: "windowFullscreen", fullscreen }`
+updates titlebar visibility on native fullscreen transitions; only a boolean is
+accepted and no renderer capability is added by this presentation event.
+
+### Local window background bridge
+
+The existing Electron `v1` channel adds four closed actions. `getWindowBackground`
+accepts no arguments and returns `{ status, background: { color, mask, imageUrl } }`
+only to the authorized dashboard top frame. `imageUrl` is null or an opaque
+local PNG/JPEG/WebP resource URL, never a filesystem path or remote URL. It is not
+part of generic settings diagnostics or any HTTP report.
+`setWindowBackground` accepts exactly `{ value: { color, mask, removeImage } }`:
+color is null or uppercase six-digit HEX, mask an integer from 0 to 90, and
+removeImage boolean. `chooseWindowBackground` and `restoreWindowBackground`
+accept no arguments. All three mutations are Settings-frame-only; the native
+picker exclusively owns file selection. The payload-free `windowBackground`
+desktop command invalidates the shared main renderer's presentation after a durable change.
+No new IPC channel or arbitrary filesystem capability is exposed.
+
 ## Process and provider protocols
 
 | Boundary | Caller | Contract |
@@ -385,3 +414,28 @@ snapshot, not fabricated intervals.
 - A deprecated route remains documented until the shipping compatibility window
   ends. An obsolete document is deleted once it no longer describes a retained
   contract or supplies enduring audit/recovery evidence.
+
+## Integrated desktop settings contracts
+
+The main dashboard top frame at the exact companion root owns Settings. All
+settings entry points route to `#settings/<category>`; hashes select UI, not
+authorization. Same-origin assets, remote pages, stale frames and subframes
+cannot invoke protected settings actions. Closed preload actions remain validated.
+`setNotificationPreferences` accepts only `{ threshold }` with an integer 1–100
+or -1. `setRefreshInterval` accepts `{ seconds }`, either -1 or positive safe
+whole minutes converted to seconds. Settings v4 and notification-policy v2 migrate
+older saved preferences forward; reset-delivery helpers remain deprecated and
+disconnected from production candidates.
+
+The companion receives the interval through the reviewed initial environment
+`USAGE_MONITOR_REFRESH_INTERVAL_SECONDS` and the closed process IPC message
+`{ type: "tibotattle.refresh-interval.v1", seconds }`. No new HTTP mutation route
+is introduced. Watchdogs and manual refresh keep their existing contracts.
+
+Background responses contain `imageUrl` instead of image bytes. The fixed
+`tibotattle-background://image/<opaque-id>` scheme serves only the current
+imported image with GET/HEAD, verifies protected chunks, and streams original
+bytes. The session permits image requests only from the registered trusted main
+top frame at the companion root; navigation and other request kinds remain denied.
+The browser CSP permits this image scheme without changing the no-referrer policy.
+Background metadata v2 migrates v1 in place; unknown future versions fail closed.

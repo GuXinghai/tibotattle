@@ -17,6 +17,7 @@ import {
 } from "./desktop-platform-services.js";
 import { createWindowsDesktopSettingsBackend } from "./desktop-settings-backends.js";
 import { createDesktopSettingsStore } from "./desktop-settings-store.js";
+import { createDesktopBackgroundController, createWindowsBackgroundRepository, createBackgroundImagePicker } from "./desktop-background.js";
 import { DESKTOP_APPEARANCES } from "./desktop-contract.js";
 import {
   isAbsoluteCodexPath,
@@ -589,6 +590,16 @@ export async function launchDesktopRuntime({
     windowsProtectedStateStore,
   });
   const store = settingsStore ?? createDesktopSettingsStore({ backend });
+  const backgroundRepository = windowsProtectedStateStore === null ? null : createWindowsBackgroundRepository(windowsProtectedStateStore);
+  const backgroundController = createDesktopBackgroundController({
+    repository: backgroundRepository,
+    chooseImage: createBackgroundImagePicker({ repository: backgroundRepository, dialog: runtime.dialog, nativeImage: runtime.nativeImage }),
+    notify: () => { lifecycle?.sendDashboardCommand?.({ command: "windowBackground" }); },
+  });
+
+  // The session request policy checks the exact requesting WebContents and
+  // trusted top frame. Keep no-referrer intact; no capability travels via headers.
+  runtime.protocol?.handle?.("tibotattle-background", request => backgroundController.handleResource(request));
 
   const windowsNotificationIdentityReady = prepareWindowsNotificationIdentity({
     app,
@@ -831,6 +842,7 @@ export async function launchDesktopRuntime({
   }
 
   controller = createDesktopController({
+    windowBackgroundActions: backgroundController.handlers,
     overviewRefreshOwnedByCompanion: true,
     settingsStore: store,
     platformServices: services,
@@ -844,6 +856,10 @@ export async function launchDesktopRuntime({
     sendDashboardCommand,
     onLanguageChanged: (value) => updateDesktopLanguage(value),
     onAppearanceChanged: updateDesktopAppearance,
+    onRefreshIntervalChanged: async seconds => {
+      childEnvironment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS = String(seconds);
+      await supervisor.setRefreshInterval(seconds);
+    },
     openDashboardInBrowserAction: openDashboardInBrowser,
     showDiagnosticsAction: showDesktopDiagnostics,
     revealLocalDataAction: revealLocalData,
@@ -970,6 +986,8 @@ export async function launchDesktopRuntime({
       updater?.dispose();
       ipcInstallation.dispose?.();
       await controller.dispose();
+      await backgroundController.drain();
+      runtime.protocol?.unhandle?.("tibotattle-background");
       // Drain first so a final status evaluation cannot race disposal. The
       // coordinator is idempotent, which also tolerates a future controller
       // implementation that owns the same disposal seam.
@@ -1003,6 +1021,9 @@ export async function launchDesktopRuntime({
         trustedSender: (sender, event) => lifecycle?.isAuthorizedDesktopSender?.(sender, event) === true,
         trustedFrame: (frame, event) => lifecycle?.isAuthorizedDesktopFrame?.(frame, event) === true,
         trustedAction: (action, event) => {
+          if (["setWindowBackground", "chooseWindowBackground", "restoreWindowBackground"].includes(action)) {
+            return lifecycle?.isAuthorizedSettingsFrame?.(event?.senderFrame, { sender: event?.sender }) === true;
+          }
           if (action === "sendTestNotification" || SETTINGS_CODEX_ROOT_ACTIONS.has(action)) {
             return lifecycle?.isAuthorizedSettingsFrame?.(
               event?.senderFrame,
@@ -1087,6 +1108,8 @@ export async function launchDesktopRuntime({
     hideWindow: lifecycle.hideWindow,
     toggleWindow: lifecycle.toggleWindow,
     sendDashboardCommand: lifecycle.sendDashboardCommand,
+    getApplicationMenu: lifecycle.getApplicationMenu,
+    openApplicationMenu: lifecycle.openApplicationMenu,
     navigateDashboardSection: lifecycle.navigateDashboardSection,
     setDesktopLanguage: lifecycle.setDesktopLanguage,
     setDesktopTrayPreferences: lifecycle.setDesktopTrayPreferences,

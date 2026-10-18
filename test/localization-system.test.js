@@ -206,11 +206,12 @@ test("browser catalogs preserve placeholders, plural forms, and legacy text has 
 
 test("Electron settings references resolve through the canonical catalogs", async () => {
   const [settingsHtml, settingsScript] = await Promise.all([
-    readFile(new URL("../apps/web/public/electron-settings.html", import.meta.url), "utf8"),
+    readFile(new URL("../apps/web/public/index.html", import.meta.url), "utf8"),
     readFile(new URL("../apps/web/public/electron-settings.js", import.meta.url), "utf8"),
   ]);
+  const settingsMarkup = settingsHtml.slice(settingsHtml.indexOf('id="settings-content"'), settingsHtml.indexOf("</main>", settingsHtml.indexOf('id="settings-content"')));
   const references = new Set();
-  for (const [, key] of settingsHtml.matchAll(
+  for (const [, key] of settingsMarkup.matchAll(
     /data-i18n(?:-(?:aria-label|title|placeholder))?="([^"]+)"/gu,
   )) {
     references.add(key);

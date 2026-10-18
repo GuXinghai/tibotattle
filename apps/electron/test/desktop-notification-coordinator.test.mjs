@@ -136,8 +136,8 @@ test("missing state is created and corrupt or unavailable state fails closed", a
     schemaVersion: DESKTOP_NOTIFICATION_COORDINATOR_SCHEMA_VERSION,
     state: "ready",
     enabled: false,
-    threshold: "off",
-    resetEnabled: true,
+    threshold: -1,
+    resetEnabled: false,
     delivery: "ready",
     lastOutcome: "initialized",
     lastReason: "none",
@@ -174,20 +174,20 @@ test("settings thresholds map exactly and preference changes start a new compari
   assert.throws(() => coordinator.setPreferences({ enabled: true, threshold: "ninety", extra: true }), TypeError);
   assert.throws(() => coordinator.setPreferences({ enabled: 1, threshold: "ninety" }), TypeError);
 
-  let result = await coordinator.setPreferences({ enabled: true, threshold: "eighty_and_ninety" });
+  let result = await coordinator.setPreferences({ threshold: 85 });
   assert.equal(result.outcome, "preferences_updated");
-  assert.equal(result.status.threshold, "eighty_and_ninety");
+  assert.equal(result.status.threshold, 85);
   assert.equal(result.status.enabled, true);
 
   result = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ usedPercent: 70 }) }));
   assert.equal(result.outcome, "first_observation");
   assert.equal(result.delivery, "not_attempted");
-  assert.equal(backend.stored.preferences.thresholdMode, "eightyAndNinety");
+  assert.equal(backend.stored.preferences.thresholdMode, 85);
 
-  await coordinator.setPreferences({ enabled: false, threshold: "off" });
+  await coordinator.setPreferences({ threshold: -1 });
   assert.equal(coordinator.status().enabled, false);
-  await coordinator.setPreferences({ enabled: true, threshold: "ninety" });
-  assert.equal(coordinator.status().threshold, "ninety");
+  await coordinator.setPreferences({ threshold: 90 });
+  assert.equal(coordinator.status().threshold, 90);
   result = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ usedPercent: 95 }) }));
   assert.equal(result.outcome, "first_observation");
   assert.equal(result.delivery, "not_attempted");
@@ -198,7 +198,7 @@ test("first observation, crossing, dedupe, replay, and save-before-delivery are 
   const backend = backendFixture({ events });
   const delivery = deliveryFixture({ events });
   const { coordinator } = await readyCoordinator({ backend, delivery });
-  await coordinator.setPreferences({ enabled: true, threshold: "ninety" });
+  await coordinator.setPreferences({ threshold: 90 });
   events.length = 0;
 
   let result = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence() }));
@@ -230,9 +230,64 @@ test("first observation, crossing, dedupe, replay, and save-before-delivery are 
   assert.equal(delivery.deliveries.length, 1);
 });
 
+test("custom threshold changes rebaseline without clearing historical receipts or repeating an unchanged preference", async () => {
+  const { coordinator, backend, delivery } = await readyCoordinator();
+  await coordinator.setPreferences({ threshold: 37 });
+  await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ usedPercent: 36 }) }));
+  const crossed = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ observedAt: OBSERVED_SECOND, usedPercent: 37 }) }));
+  assert.equal(crossed.notification.thresholdPercent, 37);
+  assert.equal(delivery.deliveries.length, 1);
+  const receipts = [...backend.stored.handledKeys];
+  assert.equal((await coordinator.setPreferences({ threshold: 37 })).outcome, "preferences_unchanged");
+  assert.equal(Object.keys(backend.stored.baselines).length, 1);
+  await coordinator.setPreferences({ threshold: 42 });
+  assert.deepEqual(backend.stored.handledKeys, receipts);
+  assert.equal(Object.keys(backend.stored.baselines).length, 0);
+  const first = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ observedAt: "2026-08-22T10:10:00.000Z", usedPercent: 99 }) }));
+  assert.equal(first.outcome, "first_observation");
+  assert.equal(delivery.deliveries.length, 1);
+});
+
+test("legacy reset-enabled state is migrated and cannot deliver a reset but rearms threshold alerts", async () => {
+  const lane = `${CONTINUITY}|primary|300`;
+  const handled = `threshold|${lane}|${RESET_AT}|90`;
+  const backend = backendFixture({ value: {
+    schemaVersion: "tibotattle-electron-notification-policy-v1",
+    preferences: { enabled: true, resetEnabled: true, thresholdMode: "ninety" },
+    baselines: { [lane]: { observedAt: OBSERVED_FIRST, usedPercent: 95, resetAt: RESET_AT, resetIdentity: null } },
+    handledKeys: [handled],
+  } });
+  const { coordinator, delivery } = await readyCoordinator({ backend });
+  assert.equal(backend.stored.schemaVersion, DESKTOP_NOTIFICATION_POLICY_SCHEMA_VERSION);
+  assert.equal(backend.stored.preferences.resetEnabled, false);
+  assert.deepEqual(backend.stored.handledKeys, [handled]);
+  const reset = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ observedAt: "2026-09-01T10:01:00.000Z", resetAt: "2026-09-08T10:00:00.000Z", usedPercent: 2 }) }));
+  assert.equal(reset.notification, undefined);
+  assert.equal(delivery.deliveries.length, 0);
+  const crossed = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ observedAt: "2026-09-01T10:02:00.000Z", resetAt: "2026-09-08T10:00:00.000Z", usedPercent: 91 }) }));
+  assert.equal(crossed.notification.thresholdPercent, 90);
+  assert.equal(delivery.deliveries.length, 1);
+  assert.equal(delivery.deliveries[0].key, DESKTOP_NOTIFICATION_KEYS.THRESHOLD);
+});
+
+test("a current policy record cannot reenable dormant reset delivery", async () => {
+  const backend = backendFixture({ value: {
+    schemaVersion: DESKTOP_NOTIFICATION_POLICY_SCHEMA_VERSION,
+    preferences: { enabled: true, resetEnabled: true, thresholdMode: 73 },
+    baselines: { [`${CONTINUITY}|primary|300`]: { observedAt: OBSERVED_FIRST, usedPercent: 50, resetAt: RESET_AT, resetIdentity: null } },
+    handledKeys: [],
+  } });
+  const { coordinator, delivery } = await readyCoordinator({ backend });
+  assert.equal(coordinator.status().resetEnabled, false);
+  const result = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ observedAt: "2026-09-01T10:01:00.000Z", resetAt: "2026-09-08T10:00:00.000Z", usedPercent: 1 }) }));
+  assert.equal(result.notification, undefined);
+  assert.equal(delivery.deliveries.length, 0);
+  assert.equal(backend.stored.preferences.resetEnabled, false);
+});
+
 test("reset precedence, nonfresh clearing, and invalid status never deliver", async () => {
   const { coordinator, delivery } = await readyCoordinator();
-  await coordinator.setPreferences({ enabled: true, threshold: "eighty_and_ninety" });
+  await coordinator.setPreferences({ threshold: 85 });
   await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ usedPercent: 70 }) }));
   let result = await coordinator.evaluate(shellStatus({
     notificationEvidence: evidence({
@@ -270,7 +325,7 @@ test("reset precedence, nonfresh clearing, and invalid status never deliver", as
 
 test("delivery unavailable or native failure is fixed and policy state remains committed", async () => {
   const unavailable = await readyCoordinator({ delivery: deliveryFixture({ status: "not_packaged", deliverStatus: "not_packaged" }) });
-  await unavailable.coordinator.setPreferences({ enabled: true, threshold: "ninety" });
+  await unavailable.coordinator.setPreferences({ threshold: 90 });
   await unavailable.coordinator.evaluate(shellStatus({ notificationEvidence: evidence() }));
   const result = await unavailable.coordinator.evaluate(shellStatus({
     notificationEvidence: evidence({ observedAt: OBSERVED_SECOND, usedPercent: 95 }),
@@ -280,7 +335,7 @@ test("delivery unavailable or native failure is fixed and policy state remains c
   assert.equal(unavailable.coordinator.status().lastDelivery, "not_packaged");
 
   const nativeFailure = await readyCoordinator({ delivery: deliveryFixture({ deliverStatus: new Error("private native error") }) });
-  await nativeFailure.coordinator.setPreferences({ enabled: true, threshold: "ninety" });
+  await nativeFailure.coordinator.setPreferences({ threshold: 90 });
   await nativeFailure.coordinator.evaluate(shellStatus({ notificationEvidence: evidence() }));
   const failed = await nativeFailure.coordinator.evaluate(shellStatus({
     notificationEvidence: evidence({ observedAt: OBSERVED_SECOND, usedPercent: 95 }),
@@ -299,7 +354,7 @@ test("save failure prevents delivery and does not advance in-memory policy state
   const backend = backendFixture({ events });
   const delivery = deliveryFixture({ events });
   const { coordinator } = await readyCoordinator({ backend, delivery });
-  await coordinator.setPreferences({ enabled: true, threshold: "ninety" });
+  await coordinator.setPreferences({ threshold: 90 });
   await coordinator.evaluate(shellStatus({ notificationEvidence: evidence() }));
   const before = backend.stored;
   backend.save = async () => {
@@ -344,7 +399,7 @@ test("concurrent operations serialize, callback exceptions are contained, and st
     },
   });
   const initialize = coordinator.initialize();
-  const preferences = coordinator.setPreferences({ enabled: true, threshold: "ninety" });
+  const preferences = coordinator.setPreferences({ threshold: 90 });
   const evaluation = coordinator.evaluate(shellStatus({ notificationEvidence: evidence() }));
   releaseLoad();
   assert.equal((await initialize).outcome, "initialized");

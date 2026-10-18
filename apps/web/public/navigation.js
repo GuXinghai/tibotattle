@@ -1,5 +1,5 @@
 /**
- * The four dashboard destinations. A page id is also its hash target: the
+ * The dashboard destinations. A page id is also its hash target: the
  * sidebar, the desktop shell's fixed section map and `#<page>/<view>` links all
  * use these values, so there is nothing to translate between them.
  */
@@ -8,6 +8,7 @@ export const DASHBOARD_PAGES = Object.freeze([
   "usage",
   "allowance",
   "performance",
+  "settings",
 ]);
 
 const DEFAULT_PAGE = "overview";

@@ -45,6 +45,8 @@ export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
     file: "desktop-shell.js",
     type: "text/javascript; charset=utf-8",
   }),
+  "/window-background.js": Object.freeze({ file: "window-background.js", type: "text/javascript; charset=utf-8" }),
+  "/window-background.css": Object.freeze({ file: "window-background.css", type: "text/css; charset=utf-8" }),
   "/electron-refresh-lifecycle.js": Object.freeze({
     file: "electron-refresh-lifecycle.js",
     type: "text/javascript; charset=utf-8",

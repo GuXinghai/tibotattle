@@ -45,6 +45,9 @@ export const LOCAL_INDEX_STORE_APPLICATION_ID = 0x554d4932;
 export const LOCAL_INDEX_STORE_USER_VERSION = 6;
 // A confirmed native response receipt repaired this derived model. Reparse clears it.
 export const EVENT_FLAG_RUNTIME_MODEL = 32;
+// Increment when reviewed identity additions can repair previously unknown
+// models. Only affected sources reparse, with a per-source committed receipt.
+export const LOCAL_INDEX_MODEL_RECOGNITION_VERSION = 1;
 // Names the shared extractor revision it was built with, so a change to the
 // extractor's semantics cannot leave facts that no reparse will replace.
 // test/local-index-refresh.test.js pins the two together.
@@ -80,6 +83,7 @@ const DIAGNOSTIC_CODES = new Set([
   "responseUsageEvents", "responseDuplicateCopies", "responseForeignThreadRecords", "responseModelUnattributed",
   "responseUnverifiedPrefixTurns",
   "responseModelsRecovered", "responseModelRecoveryVersion",
+  "modelRecognitionVersion",
 ]);
 
 // Extraction-level reasons first; the rest are discovery-level reasons, which
@@ -618,6 +622,15 @@ export function readPendingResponseModelRecoverySources(database, version) {
     LEFT JOIN source_diagnostic v ON v.source_id=d.source_id AND v.code='responseModelRecoveryVersion'
     WHERE d.code='responseModelUnattributed' AND d.count>0 AND COALESCE(v.count,0)<?`)
     .all(version).map(row => Number(row.source_id)));
+}
+
+export function readPendingModelRecognitionSources(database) {
+  return new Set(database.prepare(`SELECT DISTINCT u.source_id FROM usage_event u
+    JOIN source s ON s.id=u.source_id JOIN model m ON m.id=u.model_id
+    LEFT JOIN source_diagnostic v ON v.source_id=s.id AND v.code='modelRecognitionVersion'
+    WHERE m.model_id='unknown' AND u.source_offset<=s.scanned_bytes
+      AND COALESCE(v.count,0)<?`).all(LOCAL_INDEX_MODEL_RECOGNITION_VERSION)
+    .map(row => Number(row.source_id)));
 }
 
 export function readCommitSeq(database) {

@@ -52,6 +52,17 @@
   --surface-quiet: rgba(236, 230, 218, .5);
   --surface-sunken: #ebe5d8;
 
+  /* Three more surface roles that the app reskins to plain grey while the
+     public pages keep these cream equivalents: `--track` is the empty part of
+     a measured fill (progress, coverage and ranking bars), `--hover` is the
+     wash behind a pointer or `:focus-visible` on a row-like control, and
+     `--focus-ring` is the keyboard focus outline. They are separate from the
+     four surfaces above because a measured extent and an interaction state
+     are not panels. */
+  --track: #ebe5d8;
+  --hover: rgba(236, 230, 218, .5);
+  --focus-ring: rgba(49, 95, 132, .42);
+
   /* Radius ramp. `--radius-round` stays a separate idea: it is for dots and
      avatars, not a step on the ramp. */
   --radius-xs: 6px;
@@ -95,6 +106,7 @@
 
   /* Shell geometry shared by the header, sidebar and sticky offsets. */
   --topbar-height: 60px;
+  --desktop-titlebar-height: 0px;
   --sidebar-width: 216px;
   /* Both stacks lead with the platform's own UI face so that the dashboard
      matches the native chrome it is embedded in rather than competing with
@@ -110,6 +122,61 @@
   --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", sans-serif;
 }
 
+/*
+ * Monochrome dashboard appearance (owner direction, 2026-10-18).
+ *
+ * The desktop app renders on a plain white page with black text and grey
+ * chrome; the workload red/yellow/green is the only remaining hue. Every
+ * role below is still one custom property consumed by the rules further
+ * down, so this block stays the single entry point a future personalized
+ * theme colour or theme background would override - the tokens themselves
+ * are the theming surface, not the individual rules.
+ *
+ * The overrides are scoped to the app surfaces so the public release site
+ * (`body.community-site`) and the operator console
+ * (`body.admin-operator-page`) keep their own palettes from `:root`. The
+ * tray popup does not load this sheet; it carries its own `--tray-*` roles.
+ */
+body:not(.community-site):not(.admin-operator-page) {
+  --paper: #fff;
+  --paper-2: #fff;
+  --white: #fff;
+  --ink: #000;
+  --text: #000;
+  --muted: #000;
+  --line: rgba(0, 0, 0, .16);
+  --line-strong: rgba(0, 0, 0, .4);
+  --green: #000;
+  --green-2: #000;
+  --green-text: #000;
+  --chart-accent: #000;
+  --green-soft: #fff;
+  --rust: #000;
+  --rust-soft: #fff;
+  --amber: #000;
+  --amber-soft: #fff;
+  --blue: #000;
+  --blue-soft: #fff;
+  --action-bg: #fff;
+  --action-bg-hover: #f2f2f2;
+  --action-ink: #000;
+  --feature-bg: #fff;
+  --feature-ink: #000;
+  --feature-muted: #000;
+  --surface: #fff;
+  --surface-raised: #fff;
+  --surface-quiet: #fff;
+  --surface-sunken: #fff;
+  /* Neutral fills survive only where a fill carries a measured extent or an
+     interaction state - progress tracks, hover, pressed - never as a
+     decorative panel wash. */
+  --track: #ececec;
+  --hover: #f2f2f2;
+  --focus-ring: rgba(0, 0, 0, .62);
+  --shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 16px 40px rgba(0, 0, 0, .07);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, .05), 0 4px 14px rgba(0, 0, 0, .05);
+}
+
 * { box-sizing: border-box; }
 /* This padding is what every in-page anchor lands against, so the sticky
    header never covers the top of a section a pasted link points at. Targets
@@ -117,6 +184,9 @@
    drops each destination about a header's height too low. */
 html { scroll-behavior: smooth; scroll-padding-top: 95px; }
 body {
+  /* Resolve on body so its hidden-toolbar state updates every shell consumer. */
+  --dashboard-top-offset: calc(var(--desktop-titlebar-height) + var(--topbar-height));
+  --dashboard-available-height: calc(100dvh - var(--dashboard-top-offset));
   margin: 0;
   color: var(--ink);
   background: var(--paper);
@@ -127,7 +197,7 @@ body {
 }
 button, input, select { font: inherit; }
 button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, summary:focus-visible {
-  outline: 3px solid rgba(49, 95, 132, .42);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 
@@ -191,14 +261,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .topbar {
   position: sticky;
   z-index: 20;
-  top: 0;
+  top: var(--desktop-titlebar-height);
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   min-height: var(--topbar-height);
   padding: 0 max(24px, calc((100vw - 1320px) / 2));
   border-bottom: 1px solid var(--line);
-  background: rgba(245, 241, 232, .86);
+  background: color-mix(in srgb, var(--paper) 86%, transparent);
   backdrop-filter: saturate(1.4) blur(16px);
 }
 .brand {
@@ -227,14 +297,18 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   width: min(1520px, 100%);
-  min-height: calc(100vh - var(--topbar-height));
+  min-height: var(--dashboard-available-height);
   margin-inline: auto;
 }
 .dashboard-sidebar {
   position: sticky;
-  top: var(--topbar-height);
+  top: var(--dashboard-top-offset);
   align-self: start;
-  min-height: calc(100vh - var(--topbar-height));
+  display: flex;
+  flex-direction: column;
+  height: var(--dashboard-available-height);
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-5) var(--space-3);
   border-inline-end: 1px solid var(--line);
 }
@@ -446,7 +520,7 @@ body.native-dashboard #setup-card { display: none !important; }
   padding: .38rem .62rem;
   color: var(--green-text);
   background: var(--green-soft);
-  border: 1px solid rgba(23, 79, 69, .18);
+  border: 1px solid color-mix(in srgb, var(--green) 18%, transparent);
   border-radius: var(--radius-pill);
   font-size: .74rem;
   font-weight: var(--weight-semibold);
@@ -460,7 +534,7 @@ body.native-dashboard #setup-card { display: none !important; }
   padding: .38rem .62rem;
   color: var(--amber);
   background: var(--amber-soft);
-  border: 1px solid rgba(129, 87, 24, .22);
+  border: 1px solid color-mix(in srgb, var(--amber) 22%, transparent);
   border-radius: var(--radius-pill);
   font-size: .67rem;
   font-weight: var(--weight-bold);
@@ -541,10 +615,10 @@ body.native-dashboard #setup-card { display: none !important; }
   color: var(--blue);
 }
 .info-button:hover, .info-button[aria-expanded="true"] {
-  background: var(--green-soft);
+  background: var(--hover);
 }
 .info-button:focus-visible {
-  outline: 3px solid rgba(49, 95, 132, .35);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 .info-popover {
@@ -642,17 +716,17 @@ h1 {
   gap: 2rem;
   margin-bottom: 28px;
   padding: var(--pad-tile) var(--space-5);
-  border: 1px solid rgba(154, 106, 36, .25);
+  border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent);
   border-radius: var(--radius-md);
   background: var(--amber-soft);
 }
 .notice strong { font-size: .86rem; }
-.notice p { margin: .1rem 0 0; color: #735927; font-size: .78rem; }
-.notice-demo { border-color: rgba(49, 95, 132, .25); background: var(--blue-soft); }
-.notice-demo p { color: #31536d; }
-.notice-error { border-color: rgba(169, 73, 47, .25); background: var(--rust-soft); }
-.notice-info { border-color: rgba(49, 95, 132, .25); background: var(--blue-soft); }
-.notice-info p { color: #31536d; }
+.notice p { margin: .1rem 0 0; color: var(--amber); font-size: .78rem; }
+.notice-demo { border-color: color-mix(in srgb, var(--blue) 25%, transparent); background: var(--blue-soft); }
+.notice-demo p { color: var(--blue); }
+.notice-error { border-color: color-mix(in srgb, var(--rust) 25%, transparent); background: var(--rust-soft); }
+.notice-info { border-color: color-mix(in srgb, var(--blue) 25%, transparent); background: var(--blue-soft); }
+.notice-info p { color: var(--blue); }
 .notice-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
 .companion-setup {
@@ -736,7 +810,7 @@ h1 {
   display: block;
   padding: .65rem .8rem;
   border-inline-start: 3px solid var(--amber);
-  color: #6f5011 !important;
+  color: var(--amber) !important;
   background: var(--amber-soft);
 }
 .companion-setup-actions {
@@ -761,7 +835,7 @@ h1 {
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-.setup-card.needs-attention { border-color: rgba(154, 106, 36, .32); }
+.setup-card.needs-attention { border-color: color-mix(in srgb, var(--amber) 32%, transparent); }
 .setup-copy h2 {
   margin: 5px 0 9px;
   font-size: 1.65rem;
@@ -801,7 +875,7 @@ h1 {
   text-align: center;
 }
 .setup-checks li.missing::before {
-  border-color: rgba(154, 106, 36, .35);
+  border-color: color-mix(in srgb, var(--amber) 35%, transparent);
   color: var(--amber);
   content: "!";
 }
@@ -831,7 +905,7 @@ h1 {
   list-style: none;
   transition: background-color .12s ease;
 }
-.journey-disclosure > summary:hover { background: var(--green-soft); }
+.journey-disclosure > summary:hover { background: var(--hover); }
 .journey-disclosure[open] > summary { border-end-start-radius: 0; border-end-end-radius: 0; }
 .journey-disclosure > summary::-webkit-details-marker { display: none; }
 .journey-disclosure > summary::after {
@@ -942,14 +1016,14 @@ h2 {
 .metric-card .metric-value { display: block; margin: 22px 0 8px; font-family: var(--serif); font-size: 3.2rem; font-weight: var(--weight-regular); line-height: .9; }
 .metric-card .metric-value small { font-family: var(--sans); font-size: .9rem; }
 .metric-card p { margin-bottom: 0; color: var(--muted); font-size: .8rem; }
-.mini-progress { height: 6px; margin: 22px 0 11px; overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-sunken); }
+.mini-progress { height: 6px; margin: 22px 0 11px; overflow: hidden; border-radius: var(--radius-pill); background: var(--track); }
 .mini-progress i { display: block; height: 100%; border-radius: inherit; background: var(--green-2); }
 .metric-meta { display: flex; justify-content: space-between; color: var(--muted); font-size: .67rem; }
 .skeleton-card {
   min-height: 210px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
-  background: linear-gradient(100deg, rgba(255,255,255,.25) 35%, rgba(255,255,255,.8) 50%, rgba(255,255,255,.25) 65%);
+  background: linear-gradient(100deg, var(--hover) 35%, var(--surface) 50%, var(--hover) 65%);
   background-size: 300% 100%;
   animation: shimmer 1.5s infinite;
 }
@@ -978,13 +1052,13 @@ h2 {
   border-inline-start: 3px solid var(--blue);
   background: var(--blue-soft);
 }
-.index-progress-headline { margin: 0; color: #31536d; font-size: .8rem; font-weight: var(--weight-strong); }
-.index-progress-detail { margin: 0; color: #31536d; font-size: .74rem; line-height: 1.5; }
+.index-progress-headline { margin: 0; color: var(--blue); font-size: .8rem; font-weight: var(--weight-strong); }
+.index-progress-detail { margin: 0; color: var(--blue); font-size: .74rem; line-height: 1.5; }
 .index-progress-track {
   height: 7px;
   overflow: hidden;
   border-radius: var(--radius-pill);
-  background: rgba(49, 95, 132, .18);
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
 }
 .index-progress-track i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
 /* An active pass is the one state where motion is truthful: something really
@@ -998,7 +1072,7 @@ h2 {
   border-radius: var(--radius-sm);
   border-inline-start: 3px solid var(--rust);
   background: var(--rust-soft);
-  color: #784d25;
+  color: var(--rust);
   font-size: .74rem;
   line-height: 1.5;
 }
@@ -1006,7 +1080,7 @@ h2 {
 .evidence-warning.informational {
   border-inline-start-color: var(--blue);
   background: var(--blue-soft);
-  color: #31536d;
+  color: var(--blue);
 }
 @media (prefers-reduced-motion: reduce) {
   .index-progress.active .index-progress-track i { animation: none; }
@@ -1016,7 +1090,7 @@ h2 {
 .component-row { display: grid; grid-template-columns: 145px 1fr auto; gap: 12px; align-items: center; font-size: .73rem; }
 .component-row > span { color: var(--muted); }
 .component-row > strong { min-width: 66px; text-align: end; }
-.component-track { height: 7px; overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-sunken); }
+.component-track { height: 7px; overflow: hidden; border-radius: var(--radius-pill); background: var(--track); }
 .component-track i { display: block; height: 100%; border-radius: inherit; background: var(--blue); }
 .component-row:nth-child(2) i { background: var(--green-2); }
 .component-row:nth-child(3) i { background: var(--rust); }
@@ -1026,10 +1100,10 @@ h2 {
 .comparison-row { display: grid; grid-template-columns: 170px 1fr 64px; gap: 12px; align-items: center; font-size: .73rem; }
 .comparison-row span { color: var(--muted); }
 .comparison-row strong { text-align: end; }
-.bar-track { height: 13px; overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-sunken); }
+.bar-track { height: 13px; overflow: hidden; border-radius: var(--radius-pill); background: var(--track); }
 .bar-track i { display: block; height: 100%; border-radius: inherit; background: var(--green); }
 .comparison-row.calculated .bar-track i { background: var(--rust); }
-.plain-result { margin: 0; padding: var(--pad-tile); color: #31536d; background: var(--blue-soft); border-radius: var(--radius-sm); font-size: .8rem; }
+.plain-result { margin: 0; padding: var(--pad-tile); color: var(--blue); background: var(--blue-soft); border-radius: var(--radius-sm); font-size: .8rem; }
 /*
  * Fitted-rate facts as a compact stat row (owner-directed, 2026-08-10): the
  * figure leads in the display serif the other stat tiles use, and the short
@@ -1078,7 +1152,7 @@ h2 {
 .calibration-explanation { margin: 12px 0 0; }
 
 
-.segmented-control { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-sunken); }
+.segmented-control { display: inline-flex; padding: 3px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--track); }
 .segmented-control button { padding: .45rem .75rem; border: 0; border-radius: 7px; color: var(--muted); background: transparent; font-size: .78rem; font-weight: var(--weight-semibold); cursor: pointer; }
 .segmented-control button.active { color: var(--green); background: var(--surface-raised); box-shadow: 0 1px 2px rgba(31, 45, 39, .1), 0 0 0 1px var(--line); }
 .timeline-controls,
@@ -1138,7 +1212,7 @@ h2 {
   -webkit-user-select: text;
 }
 .chart-shell.interactive-chart { cursor: grab; touch-action: pan-y; outline: none; }
-.chart-shell.interactive-chart:focus-visible { outline: 3px solid rgba(38, 107, 91, .36); outline-offset: 4px; }
+.chart-shell.interactive-chart:focus-visible { outline: 3px solid color-mix(in srgb, var(--chart-accent) 45%, transparent); outline-offset: 4px; }
 .chart-shell.interactive-chart.is-pointer-active,
 .chart-shell.interactive-chart.is-pointer-active *,
 .chart-shell.interactive-chart.is-panning,
@@ -1179,14 +1253,14 @@ h2 {
 }
 .chart-tooltip-heading { font-size: 11px; font-weight: var(--weight-semibold); }
 .chart-tooltip-detail { font-size: 10px; opacity: .82; }
-.chart-grid { stroke: rgba(23, 33, 30, .1); stroke-width: 1; }
+.chart-grid { stroke: color-mix(in srgb, var(--ink) 10%, transparent); stroke-width: 1; }
 .chart-axis-label { fill: var(--muted); font-family: var(--sans); font-size: 10px; }
 .chart-line-observed { fill: none; stroke: var(--green); stroke-width: 2.7; vector-effect: non-scaling-stroke; }
 .chart-line-expected { fill: none; stroke: var(--rust); stroke-width: 2.4; vector-effect: non-scaling-stroke; }
 .chart-line-value { fill: none; stroke: var(--blue); stroke-width: 2.5; vector-effect: non-scaling-stroke; }
 .chart-point { vector-effect: non-scaling-stroke; }
 .chart-point.chart-line-value { fill: var(--white); stroke: var(--blue); }
-.chart-point:focus-visible { outline: 3px solid rgba(38, 107, 91, .55); outline-offset: 3px; }
+.chart-point:focus-visible { outline: 3px solid color-mix(in srgb, var(--chart-accent) 62%, transparent); outline-offset: 3px; }
 .chart-point-hit-target {
   fill: transparent !important;
   stroke: transparent !important;
@@ -1195,12 +1269,12 @@ h2 {
 }
 .chart-point-hit-target:focus-visible {
   opacity: 1 !important;
-  outline: 3px solid rgba(38, 107, 91, .55);
+  outline: 3px solid color-mix(in srgb, var(--chart-accent) 62%, transparent);
   outline-offset: 3px;
 }
 .chart-error-bar-line, .chart-error-bar-cap { vector-effect: non-scaling-stroke; }
-.chart-error-bar-weekly .chart-error-bar-line { stroke: rgba(49, 95, 132, .78); stroke-width: 1.8; }
-.chart-error-bar-weekly .chart-error-bar-cap { stroke: rgba(49, 95, 132, .78); stroke-width: 1.8; }
+.chart-error-bar-weekly .chart-error-bar-line { stroke: color-mix(in srgb, var(--blue) 78%, transparent); stroke-width: 1.8; }
+.chart-error-bar-weekly .chart-error-bar-cap { stroke: color-mix(in srgb, var(--blue) 78%, transparent); stroke-width: 1.8; }
 .chart-line-weekly-center {
   fill: none;
   stroke: var(--green);
@@ -1236,56 +1310,55 @@ h2 {
    above and draws in `currentColor`, so the swatch tracks the series stroke. */
 .legend-dot.allowance { color: var(--green); }
 .compact-legend { justify-content: flex-end; margin-top: var(--space-2); }
-.chart-area-confidence { fill: rgba(49, 95, 132, .14); }
-/* Five exclusion bands, five distinct hues, so a shaded region on the chart
-   maps to exactly one legend entry.
-
-   The hues were already distinct on paper; the alpha destroyed them. At .08
-   over the card's cream every band composited to within two to five RGB units
-   of every other, which is below the threshold at which a hue is a hue — the
-   whole key read as one grey. The washes sit at .16-.22 now, far enough apart
-   to be told apart, and the neutral was pulled off its green cast so it cannot
-   be confused with the teal.
-
-   Alpha is graded by how much of the plot a mechanism typically covers, not by
-   importance: "missing bracket" arrives in long collection gaps and is the
-   lightest, while "movement needs context" is usually a single window and is
-   the strongest. Each band also draws a top-edge tick at identity strength —
-   see `.chart-status-tick` below, which is what actually makes a lone window
-   visible. The legend swatch carries the tick's exact colour, so the key shows
-   the mark the reader is hunting for rather than the wash behind it. */
-.chart-status-missing { fill: rgba(99, 99, 104, .16); }
-.chart-status-reset { fill: rgba(31, 111, 168, .18); }
+.chart-area-confidence { fill: color-mix(in srgb, var(--blue) 14%, transparent); }
+/* Five exclusion bands, five grey levels, so a shaded region on the chart maps
+   to exactly one legend entry.
+ *
+ * Owner direction (2026-10-18): the dashboard is monochrome, so mechanism
+ * identity can no longer be carried by hue. It is carried by a grey ladder
+ * instead, mixed from `--ink` so the same rules flip with the theme: the wash
+ * is a light grey over the card, and the darker the tick, the later the band
+ * sits in the ladder. Order matters more than any single value - the steps are
+ * far enough apart (.14-.38 for washes, roughly twice that for ticks) to stay
+ * distinguishable once composited.
+ *
+ * Alpha is graded by how much of the plot a mechanism typically covers, not by
+ * importance: "missing bracket" arrives in long collection gaps and is the
+ * lightest, while "movement needs context" is usually a single window and is
+ * the strongest. Each band also draws a top-edge tick at identity strength -
+ * see `.chart-status-tick` below, which is what actually makes a lone window
+ * visible. The legend swatch carries the tick's exact colour, so the key shows
+ * the mark the reader is hunting for rather than the wash behind it. */
+.chart-status-missing { fill: color-mix(in srgb, var(--ink) 14%, transparent); }
+.chart-status-reset { fill: color-mix(in srgb, var(--ink) 20%, transparent); }
 /* "Quota weighting unavailable": a priced-cost gap, so the window carries no
    expected value to difference against. It is a counted exclusion mechanism
-   with its own message, but it had no hue and no legend entry, and so fell
-   through the renderer's old default into the violet that captions
-   "movement needs context". */
-.chart-status-weighting { fill: rgba(20, 120, 104, .18); }
-.chart-status-ambiguous { fill: rgba(124, 92, 173, .22); }
+   with its own message, its own legend entry and its own step on the ladder. */
+.chart-status-weighting { fill: color-mix(in srgb, var(--ink) 26%, transparent); }
+.chart-status-ambiguous { fill: color-mix(in srgb, var(--ink) 32%, transparent); }
 /* "Allowance exhausted": the pool is pegged at 100%, so no residual is
-   measurable across the span. Warmer than the neutral exclusions so a
-   deliberate suspension never reads as a data gap. */
-.chart-status-saturated { fill: rgba(176, 101, 43, .2); }
+   measurable across the span. It is the darkest wash in the ladder, so a
+   deliberate suspension never reads as an ordinary data gap. */
+.chart-status-saturated { fill: color-mix(in srgb, var(--ink) 38%, transparent); }
 
 /* Identity marker. A band is only as wide as the span it excludes, and at a
-   month's zoom a single excluded window is a fraction of a viewBox unit — no
+   month's zoom a single excluded window is a fraction of a viewBox unit - no
    alpha makes that readable, so widening the wash was never the fix (it would
    claim an exclusion lasted longer than it did). The renderer pairs every band
    with a fixed-minimum tick along the top edge instead, and these are its
-   colours: the same hue at roughly four times the wash, where the difference
-   between blue, teal and violet is unmistakable. */
-.chart-status-tick.chart-status-missing { fill: rgba(99, 99, 104, .58); }
-.chart-status-tick.chart-status-reset { fill: rgba(31, 111, 168, .62); }
-.chart-status-tick.chart-status-weighting { fill: rgba(20, 120, 104, .62); }
-.chart-status-tick.chart-status-ambiguous { fill: rgba(124, 92, 173, .66); }
-.chart-status-tick.chart-status-saturated { fill: rgba(176, 101, 43, .64); }
+   colours: the same grey at roughly twice the wash, where five separate marks
+   are unmistakable side by side. */
+.chart-status-tick.chart-status-missing { fill: color-mix(in srgb, var(--ink) 32%, transparent); }
+.chart-status-tick.chart-status-reset { fill: color-mix(in srgb, var(--ink) 44%, transparent); }
+.chart-status-tick.chart-status-weighting { fill: color-mix(in srgb, var(--ink) 56%, transparent); }
+.chart-status-tick.chart-status-ambiguous { fill: color-mix(in srgb, var(--ink) 68%, transparent); }
+.chart-status-tick.chart-status-saturated { fill: color-mix(in srgb, var(--ink) 80%, transparent); }
 
-.legend-dot.chart-status-missing { background: rgba(99, 99, 104, .58); }
-.legend-dot.chart-status-reset { background: rgba(31, 111, 168, .62); }
-.legend-dot.chart-status-weighting { background: rgba(20, 120, 104, .62); }
-.legend-dot.chart-status-ambiguous { background: rgba(124, 92, 173, .66); }
-.legend-dot.chart-status-saturated { background: rgba(176, 101, 43, .64); }
+.legend-dot.chart-status-missing { background: color-mix(in srgb, var(--ink) 32%, transparent); }
+.legend-dot.chart-status-reset { background: color-mix(in srgb, var(--ink) 44%, transparent); }
+.legend-dot.chart-status-weighting { background: color-mix(in srgb, var(--ink) 56%, transparent); }
+.legend-dot.chart-status-ambiguous { background: color-mix(in srgb, var(--ink) 68%, transparent); }
+.legend-dot.chart-status-saturated { background: color-mix(in srgb, var(--ink) 80%, transparent); }
 /* Two line series (a short stroke swatch) and five shaded-window categories
    share one key. The area swatches are filled squares — the shape the bands
    take on the chart — and a hairline separator sets the two groups apart, so
@@ -1331,11 +1404,11 @@ h2 {
 .chart-summary-grid span .info-button { margin-inline-start: .35rem; vertical-align: middle; }
 .chart-summary-grid strong { display: block; margin-top: var(--space-1); font-size: .84rem; }
 .timeline-confidence { margin: var(--space-4) 0 0; padding: var(--space-3) var(--pad-tile); color: var(--muted); border-inline-start: 3px solid var(--line); background: var(--surface-quiet); font-size: .75rem; }
-.timeline-confidence.low { color: #784d25; border-inline-start-color: var(--rust); background: var(--rust-soft); }
+.timeline-confidence.low { color: var(--rust); border-inline-start-color: var(--rust); background: var(--rust-soft); }
 /* A chart drawing less history than its own label claims. Marked like a low
    confidence note rather than a neutral caption: the reader is looking at a
    picture that understates its subject. */
-.series-coverage { margin: var(--space-4) 0 0; padding: var(--space-3) var(--pad-tile); color: #784d25; border-inline-start: 3px solid var(--rust); background: var(--rust-soft); font-size: .75rem; }
+.series-coverage { margin: var(--space-4) 0 0; padding: var(--space-3) var(--pad-tile); color: var(--rust); border-inline-start: 3px solid var(--rust); background: var(--rust-soft); font-size: .75rem; }
 /* Deviation-period detector panel. Each period is a bordered card whose
    inline-start accent names the direction: blue where observed quota outran
    priced usage (under-counted), amber where priced usage outran observed
@@ -1372,7 +1445,7 @@ h2 {
   border-radius: var(--radius-sm);
   cursor: pointer;
 }
-.divergence-period-toggle:hover { background: var(--surface-quiet); }
+.divergence-period-toggle:hover { background: var(--hover); }
 .divergence-period-breakdown { margin-top: 8px; }
 .divergence-period-breakdown[hidden] { display: none; }
 .divergence-breakdown-status { margin: 4px 0 0; color: var(--muted); font-size: .74rem; }
@@ -1431,8 +1504,11 @@ tbody tr:last-child td { border-bottom: 0; }
   --pace-accent: var(--green);
   --pace-accent-text: var(--green-text);
   --pace-accent-soft: var(--green-soft);
-  --pace-accent-edge: rgba(23, 79, 69, .24);
-  --pace-accent-wash: rgba(223, 236, 230, .8);
+  /* The card border and the wash are derived from the state's own accent, so
+     one state class still repaints the whole card and the public pages keep
+     their cream-and-forest values. */
+  --pace-accent-edge: color-mix(in srgb, var(--pace-accent) 24%, transparent);
+  --pace-accent-wash: color-mix(in srgb, var(--pace-accent-soft) 80%, transparent);
   display: grid;
   grid-template-columns: minmax(260px, 1fr) minmax(310px, .95fr);
   gap: 15px 24px;
@@ -1442,22 +1518,18 @@ tbody tr:last-child td { border-bottom: 0; }
   border: 1px solid var(--pace-accent-edge);
   border-inline-start: 4px solid var(--pace-accent);
   border-radius: var(--radius-md);
-  background: linear-gradient(100deg, var(--pace-accent-wash), rgba(255, 253, 247, .94));
+  background: linear-gradient(100deg, var(--pace-accent-wash), var(--surface-raised));
 }
 .weekly-pace-forecast[hidden] { display: none; }
 .weekly-pace-forecast.is-on-pace {
   --pace-accent: var(--blue);
   --pace-accent-text: var(--blue);
   --pace-accent-soft: var(--blue-soft);
-  --pace-accent-edge: rgba(49, 95, 132, .24);
-  --pace-accent-wash: rgba(226, 235, 243, .76);
 }
 .weekly-pace-forecast.is-over-pace {
   --pace-accent: var(--amber);
   --pace-accent-text: var(--amber);
   --pace-accent-soft: var(--amber-soft);
-  --pace-accent-edge: rgba(129, 87, 24, .26);
-  --pace-accent-wash: rgba(244, 234, 215, .8);
 }
 /* Past twice the sustainable pace the window ends with more dry hours than
    covered ones, which is a different message from "ease off". */
@@ -1465,15 +1537,34 @@ tbody tr:last-child td { border-bottom: 0; }
   --pace-accent: var(--rust);
   --pace-accent-text: var(--rust);
   --pace-accent-soft: var(--rust-soft);
-  --pace-accent-edge: rgba(151, 64, 42, .26);
-  --pace-accent-wash: rgba(244, 228, 222, .82);
 }
 .weekly-pace-forecast.is-insufficient {
   --pace-accent: var(--blue);
   --pace-accent-text: var(--blue);
   --pace-accent-soft: var(--blue-soft);
-  --pace-accent-edge: rgba(49, 95, 132, .24);
-  --pace-accent-wash: rgba(226, 235, 243, .76);
+}
+/*
+ * Monochrome pace urgency (owner direction, 2026-10-18).
+ *
+ * The app keeps the same four states and the same words; the ramp runs in
+ * greys instead of green -> blue -> amber -> rust. The level is the message:
+ * the darker the rule, the covered bar and the chip edge, the more urgent the
+ * state, and the card itself stays on the plain surface. `--ink` flips with
+ * the theme, so one block serves light and dark.
+ */
+body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast {
+  --pace-accent: color-mix(in srgb, var(--ink) 60%, transparent);
+  --pace-accent-text: var(--ink);
+  --pace-accent-soft: color-mix(in srgb, var(--ink) 12%, transparent);
+  --pace-accent-wash: var(--surface-raised);
+  background: var(--surface-raised);
+}
+body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-on-pace { --pace-accent: color-mix(in srgb, var(--ink) 45%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-insufficient { --pace-accent: color-mix(in srgb, var(--ink) 30%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-over-pace { --pace-accent: color-mix(in srgb, var(--ink) 80%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-over-pace.is-critical {
+  --pace-accent: var(--ink);
+  --pace-accent-soft: color-mix(in srgb, var(--ink) 18%, transparent);
 }
 .weekly-pace-forecast-state-chip,
 .weekly-pace-forecast-collecting-chip {
@@ -1483,7 +1574,7 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .weekly-pace-forecast-early-chip {
   color: var(--amber);
-  border-color: rgba(154, 106, 36, .2);
+  border-color: color-mix(in srgb, var(--amber) 20%, transparent);
   background: var(--amber-soft);
 }
 .weekly-pace-forecast-heading {
@@ -1652,8 +1743,8 @@ tbody tr:last-child td { border-bottom: 0; }
 .weekly-history-chart { overflow: visible; }
 .weekly-history-chart svg { min-width: 0; height: clamp(270px, 30vw, 330px); }
 .legend-dot.weekly-center { background: var(--green); }
-.legend-dot.weekly-range { height: 9px; background: rgba(49, 95, 132, .2); }
-.legend-dot.weekly-error-bar { height: 9px; width: 3px; border-radius: 2px; background: rgba(49, 95, 132, .78); }
+.legend-dot.weekly-range { height: 9px; background: color-mix(in srgb, var(--blue) 20%, transparent); }
+.legend-dot.weekly-error-bar { height: 9px; width: 3px; border-radius: 2px; background: color-mix(in srgb, var(--blue) 78%, transparent); }
 .legend-dot.weekly-mature {
   width: 9px;
   height: 9px;
@@ -1740,9 +1831,9 @@ tbody tr:last-child td { border-bottom: 0; }
 
 /* An expandable model row is a control, so it says so on hover and focus. */
 .model-row-expandable { cursor: pointer; }
-.model-row-expandable:hover > td { background: var(--surface-quiet); }
+.model-row-expandable:hover > td { background: var(--hover); }
 .model-row-expandable:focus-visible {
-  outline: 3px solid rgba(49, 95, 132, .42);
+  outline: 3px solid var(--focus-ring);
   outline-offset: -3px;
 }
 .model-disclosure-caret {
@@ -1811,7 +1902,7 @@ tbody tr:last-child td { border-bottom: 0; }
   cursor: help;
 }
 .cache-drop-thread-unavailable:focus-visible {
-  outline: 3px solid rgba(49, 95, 132, .42);
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 .cache-reuse-outcome {
@@ -1837,7 +1928,7 @@ tbody tr:last-child td { border-bottom: 0; }
   flex: 0 0 auto;
   border-radius: var(--radius-round);
   background: var(--blue);
-  box-shadow: 0 0 0 3px rgba(44, 88, 120, .14);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 14%, transparent);
 }
 .cache-reuse-summary {
   display: grid;
@@ -1999,7 +2090,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .coverage-row { display: grid; grid-template-columns: 145px 1fr 52px; gap: 12px; align-items: center; font-size: .73rem; }
 .coverage-row span { color: var(--muted); }
 .coverage-row strong { text-align: end; }
-.coverage-track { height: 8px; overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-sunken); }
+.coverage-track { height: 8px; overflow: hidden; border-radius: var(--radius-pill); background: var(--track); }
 .coverage-track i { display: block; height: 100%; border-radius: inherit; background: var(--green-2); }
 .issue-list { display: grid; gap: var(--space-2); }
 .issue {
@@ -2240,10 +2331,9 @@ footer p { margin: 0; }
 }
 
 @media (max-width: 900px) {
-  .dashboard-shell { display: block; min-height: 0; }
+  .dashboard-shell { display: block; }
   .dashboard-sidebar {
     position: static;
-    min-height: 0;
     padding: .65rem 24px;
     border-inline-end: 0;
     border-bottom: 1px solid var(--line);
@@ -3453,6 +3543,30 @@ footer p { margin: 0; }
 .allowance-series-5 { --allowance-color: #956218; }
 .allowance-series-6 { --allowance-color: #9d3c64; }
 .allowance-series-7 { --allowance-color: #546b22; }
+/*
+ * Monochrome model identity (owner direction, 2026-10-18).
+ *
+ * Every model and series class survives, and the identity hue becomes a grey
+ * level, so a chart holding several series still tells its lines apart and a
+ * model icon keeps an identity that is not just its neighbour's. The ladder is
+ * ordered by class name and shared by icons, swatches and strokes. The public
+ * release site and the operator console keep the colour classes above.
+ */
+body:not(.community-site):not(.admin-operator-page) .allowance-model-astra { --allowance-color: var(--ink); }
+body:not(.community-site):not(.admin-operator-page) .allowance-model-sol { --allowance-color: color-mix(in srgb, var(--ink) 86%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-model-review { --allowance-color: color-mix(in srgb, var(--ink) 74%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-model-terra { --allowance-color: color-mix(in srgb, var(--ink) 64%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-model-luna { --allowance-color: color-mix(in srgb, var(--ink) 54%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-model-classic { --allowance-color: color-mix(in srgb, var(--ink) 44%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-model-mini { --allowance-color: color-mix(in srgb, var(--ink) 44%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-0 { --allowance-color: var(--ink); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-1 { --allowance-color: color-mix(in srgb, var(--ink) 88%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-2 { --allowance-color: color-mix(in srgb, var(--ink) 76%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-3 { --allowance-color: color-mix(in srgb, var(--ink) 64%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-4 { --allowance-color: color-mix(in srgb, var(--ink) 52%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-5 { --allowance-color: color-mix(in srgb, var(--ink) 42%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-6 { --allowance-color: color-mix(in srgb, var(--ink) 32%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .allowance-series-7 { --allowance-color: color-mix(in srgb, var(--ink) 24%, transparent); }
 .community-site .community-allowance-chart .daily-legend-swatch.allowance-central { background: var(--allowance-color, var(--green)); }
 .community-allowance-chart .allowance-central-line,
 .community-allowance-chart .allowance-band-mark { stroke: var(--allowance-color, var(--green)); }
@@ -4346,67 +4460,70 @@ html.community-chart-modal-open body {
 
 
 /*
- * Forest Ink dark appearance.
+ * Monochrome dark appearance.
  *
- * The public dashboard remains light unless a trusted host explicitly sets
- * `data-theme="dark"` on the document element. The native app installs that
- * marker at document start, before this sheet paints, so there is no cream
- * flash when the Mac is using Dark appearance. These values deliberately
- * stay in the light design's cream-and-forest family: the hierarchy and
- * component shapes are unchanged; only their surface roles are remapped.
+ * The app surfaces stay light unless a trusted host explicitly sets
+ * `data-theme="dark"` on the document element. The desktop app installs that
+ * marker at document start, before this sheet paints, so there is no light
+ * flash when Windows is using a dark appearance. The dark remap is the exact
+ * inverse of the light tokens: black page, light text, grey chrome, and the
+ * same theme-specific workload red/yellow/green. The public release site and
+ * the operator console never set this marker and keep their own palettes.
+ *
+ * These tokens are declared on the app body, not on `html`, so they shadow
+ * the light app block at the same element and specificity level.
  */
 html[data-theme="dark"] {
   color-scheme: dark;
-  --paper: #141a17;
-  --paper-2: #101512;
-  --white: #f5f1e8;
-  --ink: #f5f1e8;
-  --text: #f5f1e8;
-  --muted: #bec5bd;
-  --line: rgba(245, 241, 232, .14);
-  --line-strong: rgba(245, 241, 232, .21);
-  --green: #76aa9c;
-  --green-2: #99c5ba;
-  --green-text: #99c5ba;
-  --chart-accent: #99c5ba;
-  --green-soft: rgba(118, 170, 156, .14);
-  --rust: #bd735f;
-  --rust-soft: rgba(189, 115, 95, .14);
-  --amber: #c5a46a;
-  --amber-soft: rgba(197, 164, 106, .14);
-  --blue: #7d9eb8;
-  --blue-soft: rgba(125, 158, 184, .14);
-  --action-bg: #76aa9c;
-  --action-bg-hover: #99c5ba;
-  --action-ink: #141a17;
-  --feature-bg: #2d7466;
-  --feature-ink: #fffef9;
-  --feature-muted: rgba(255, 254, 249, .76);
-  --surface: rgba(27, 37, 33, .9);
-  --surface-raised: #24322c;
-  --surface-quiet: rgba(27, 37, 33, .72);
-  --surface-sunken: #101512;
-  --shadow: 0 18px 50px rgba(0, 0, 0, .28);
-  --shadow-card: 0 10px 28px rgba(0, 0, 0, .18);
+  background: #161616;
+}
+html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) {
+  --paper: #161616;
+  --paper-2: #161616;
+  --white: #f2f2f2;
+  --ink: #f2f2f2;
+  --text: #f2f2f2;
+  --muted: #f2f2f2;
+  --line: rgba(255, 255, 255, .22);
+  --line-strong: rgba(255, 255, 255, .45);
+  --green: #f2f2f2;
+  --green-2: #f2f2f2;
+  --green-text: #f2f2f2;
+  --chart-accent: #f2f2f2;
+  --green-soft: #161616;
+  --rust: #f2f2f2;
+  --rust-soft: #161616;
+  --amber: #f2f2f2;
+  --amber-soft: #161616;
+  --blue: #f2f2f2;
+  --blue-soft: #161616;
+  --action-bg: #161616;
+  --action-bg-hover: #262626;
+  --action-ink: #f2f2f2;
+  --feature-bg: #161616;
+  --feature-ink: #f2f2f2;
+  --feature-muted: #f2f2f2;
+  --surface: #161616;
+  --surface-raised: #161616;
+  --surface-quiet: #161616;
+  --surface-sunken: #161616;
+  --track: #3a3a3a;
+  --hover: #262626;
+  --focus-ring: rgba(242, 242, 242, .68);
+  --shadow: 0 18px 50px rgba(0, 0, 0, .5);
+  --shadow-card: 0 10px 28px rgba(0, 0, 0, .32);
 }
 
 html[data-theme="dark"],
-html[data-theme="dark"] body,
-html[data-theme="dark"] body.community-site {
-  background:
-    radial-gradient(circle at 85% 4%, rgba(45, 116, 102, .13), transparent 27rem),
-    var(--paper);
-}
-
-html[data-theme="dark"] .topbar {
-  background: rgba(20, 26, 23, .92);
+html[data-theme="dark"] body {
+  background: var(--paper);
 }
 
 html[data-theme="dark"] .primary-nav a:hover,
 html[data-theme="dark"] .primary-nav a.active,
 html[data-theme="dark"] .state-pill,
 html[data-theme="dark"] .evidence-chip {
-  border-color: rgba(118, 170, 156, .24);
+  border-color: color-mix(in srgb, var(--green) 24%, transparent);
 }
 
 html[data-theme="dark"] .notice p,
@@ -4414,12 +4531,12 @@ html[data-theme="dark"] .timeline-confidence.low,
 html[data-theme="dark"] .series-coverage,
 html[data-theme="dark"] .evidence-warning,
 html[data-theme="dark"] .installer-unavailable {
-  color: #d7ba84;
+  color: var(--amber);
 }
 
 html[data-theme="dark"] .notice-error p,
 html[data-theme="dark"] .evidence-warning:not(.progress):not(.informational) {
-  color: #d89a88;
+  color: var(--rust);
 }
 
 html[data-theme="dark"] .notice-demo p,
@@ -4429,22 +4546,22 @@ html[data-theme="dark"] .index-progress-detail,
 html[data-theme="dark"] .evidence-warning.progress,
 html[data-theme="dark"] .evidence-warning.informational,
 html[data-theme="dark"] .plain-result {
-  color: #afc8db;
+  color: var(--blue);
 }
 
 html[data-theme="dark"] .metric-card.quota-card-spark {
-  border-color: rgba(125, 158, 184, .28);
-  background: linear-gradient(145deg, rgba(125, 158, 184, .13), rgba(36, 50, 44, .92));
+  border-color: var(--line);
+  background: var(--surface);
 }
 
-/* Forest Ink uses the selected balanced treatment: the metric retains one
-   confident brand band while the explanation stays part of the dark report. */
+/* The weekly hero keeps its one confident band in the dark theme: the metric
+   panel inverts, the explanation stays part of the report. */
 html[data-theme="dark"] .weekly-hero {
   gap: 0;
   padding: 0;
   overflow: hidden;
   color: var(--ink);
-  border: 1px solid rgba(118, 170, 156, .3);
+  border: 1px solid var(--line);
   background: var(--surface);
 }
 
@@ -4465,44 +4582,6 @@ html[data-theme="dark"] .weekly-hero > p {
   color: var(--muted);
 }
 
-html[data-theme="dark"] .weekly-pace-forecast {
-  background: linear-gradient(100deg, var(--pace-accent-wash), var(--surface));
-}
-
-html[data-theme="dark"] .weekly-pace-forecast:not(.is-on-pace):not(.is-over-pace):not(.is-insufficient) {
-  --pace-accent-edge: rgba(118, 170, 156, .28);
-  --pace-accent-wash: rgba(118, 170, 156, .13);
-}
-
-html[data-theme="dark"] .weekly-pace-forecast.is-on-pace,
-html[data-theme="dark"] .weekly-pace-forecast.is-insufficient {
-  --pace-accent-edge: rgba(125, 158, 184, .28);
-  --pace-accent-wash: rgba(125, 158, 184, .13);
-}
-
-html[data-theme="dark"] .weekly-pace-forecast.is-over-pace {
-  --pace-accent-edge: rgba(197, 164, 106, .28);
-  --pace-accent-wash: rgba(197, 164, 106, .13);
-}
-
-html[data-theme="dark"] .weekly-pace-forecast.is-over-pace.is-critical {
-  --pace-accent-edge: rgba(189, 115, 95, .28);
-  --pace-accent-wash: rgba(189, 115, 95, .13);
-}
-
-html[data-theme="dark"] .chart-grid {
-  stroke: rgba(245, 241, 232, .1);
-}
-
-html[data-theme="dark"] .chart-error-bar-weekly .chart-error-bar-line,
-html[data-theme="dark"] .chart-error-bar-weekly .chart-error-bar-cap {
-  stroke: rgba(125, 158, 184, .86);
-}
-
-html[data-theme="dark"] .chart-area-confidence {
-  fill: rgba(125, 158, 184, .14);
-}
-
 html[data-theme="dark"] .chart-point-weekly-mature {
   fill: var(--blue);
   stroke: var(--paper);
@@ -4514,8 +4593,6 @@ html[data-theme="dark"] .info-popover {
   box-shadow: 0 14px 30px rgba(0, 0, 0, .34);
 }
 
-
-
 html[data-theme="dark"] input:not([type="checkbox"]):not([type="radio"]),
 html[data-theme="dark"] select,
 html[data-theme="dark"] textarea {
@@ -4524,13 +4601,8 @@ html[data-theme="dark"] textarea {
   background-color: var(--surface-raised);
 }
 
-html[data-theme="dark"] .skeleton-card {
-  background: linear-gradient(100deg, rgba(245, 241, 232, .04) 35%, rgba(245, 241, 232, .13) 50%, rgba(245, 241, 232, .04) 65%);
-  background-size: 300% 100%;
-}
-
 html[data-theme="dark"] .noscript {
-  color: #141a17;
+  color: var(--paper);
   background: var(--rust);
 }
 
@@ -4547,6 +4619,9 @@ html[data-theme="dark"] .noscript {
 .cache-impact-bullets li + li { margin-top: var(--space-1); }
 .model-identity .model-usage-icon { width: 1.25rem; height: 1.25rem; display: inline-block; vertical-align: middle; margin-inline-end: .45rem; }
 .allowance-model-spark { --allowance-color: #996315; }
+/* The spark model's copper becomes a mid grey in the app; see the model
+   identity ladder above. */
+body:not(.community-site):not(.admin-operator-page) .allowance-model-spark { --allowance-color: color-mix(in srgb, var(--ink) 60%, transparent); }
 /* Local Projects & threads: shared paper surfaces, typography and controls. */
 .work-usage-toolbar, .work-usage-pagination { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
 .work-usage-period { display:flex; gap:6px; flex-wrap:wrap; }
@@ -4558,28 +4633,28 @@ html[data-theme="dark"] .noscript {
 .work-usage-find-field input { width:100%; }
 .work-usage-toolbar { align-items:flex-end; }
 .work-usage-toolbar .work-usage-find { margin:0; }
-.work-usage-grouping-button:focus-visible { outline:3px solid var(--dashboard-focus-ring, rgba(49,95,132,.42)); outline-offset:2px; }
+.work-usage-grouping-button:focus-visible { outline:3px solid var(--dashboard-focus-ring, var(--focus-ring)); outline-offset:2px; }
 .work-usage-toolbar { justify-content:flex-start; margin:24px 0 16px; }
 .work-usage-select { display:flex; flex-direction:column; gap:5px; font-size:12px; }
-.work-usage-select select, .work-usage-find input { background:var(--paper, #fffdf7); color:inherit; border:1px solid var(--line, #d8dbcf); border-radius:8px; padding:9px 12px; font:inherit; }
+.work-usage-select select, .work-usage-find input { background:var(--paper); color:inherit; border:1px solid var(--line); border-radius:8px; padding:9px 12px; font:inherit; }
 .work-usage-find { display:flex; gap:8px; margin:0 0 18px; }
 .work-usage-find input { flex:1; min-width:0; max-width:440px; }
-.work-usage-status, .work-usage-caption, .work-usage-notes, .work-usage-muted { color:var(--muted, #657167); font-size:13px; }
+.work-usage-status, .work-usage-caption, .work-usage-notes, .work-usage-muted { color:var(--muted); font-size:13px; }
 .work-usage-summary { display:grid; grid-template-columns:2fr 1fr 1fr; gap:16px; margin:24px 0; }
-.work-usage-card { padding:22px; border:1px solid var(--line, #d8dbcf); border-radius:12px; background:var(--paper, #fffdf7); }
+.work-usage-card { padding:22px; border:1px solid var(--line); border-radius:12px; background:var(--paper); }
 .work-usage-card span { display:block; font-size:13px; margin-bottom:10px; }
 .work-usage-card strong { display:block; font:clamp(24px, 3vw, 42px)/1.2 Georgia,serif; font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
 .work-usage-row-link { padding:0; border:0; background:none; color:inherit; text-align:start; font:inherit; font-weight:600; cursor:pointer; overflow-wrap:anywhere; }
 .work-usage-row-link:hover { text-decoration:underline; }
 .work-usage-value { font-variant-numeric:tabular-nums; font-weight:600; }
 .work-usage-muted { display:block; margin-top:5px; font-weight:400; }
-.work-usage-bar { height:4px; background:var(--line, #e0e4db); margin-top:8px; border-radius:4px; overflow:hidden; max-width:130px; }
-.work-usage-bar span { height:100%; display:block; background:var(--accent, #245c46); }
-.work-usage-date { font-size:12px; color:var(--muted, #657167); }
+.work-usage-bar { height:4px; background:var(--line); margin-top:8px; border-radius:4px; overflow:hidden; max-width:130px; }
+.work-usage-bar span { height:100%; display:block; background:var(--accent, var(--green)); }
+.work-usage-date { font-size:12px; color:var(--muted); }
 .work-usage-pagination { padding:20px 0; font-size:13px; }
-.work-usage-notes { border-top:1px solid var(--line, #d8dbcf); margin-top:24px; padding-top:14px; line-height:1.7; }
+.work-usage-notes { border-top:1px solid var(--line); margin-top:24px; padding-top:14px; line-height:1.7; }
 .work-usage-components { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
-.work-usage-components div { border:1px solid var(--line, #d8dbcf); border-radius:8px; padding:14px; }
+.work-usage-components div { border:1px solid var(--line); border-radius:8px; padding:14px; }
 .work-usage-components dt { font-size:12px; }
 .work-usage-components dd { margin:8px 0 0; font-size:20px; }
 .work-usage-empty { padding:32px 12px; }
@@ -4597,7 +4672,7 @@ html[data-theme="dark"] .noscript {
 .work-usage-project-toggle { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: var(--weight-semibold); text-align: start; cursor: pointer; }
 .work-usage-project-toggle .model-disclosure-caret { display: inline-block; font-size: 1.25em; }
 .work-usage-project-toggle[aria-expanded="true"] .model-disclosure-caret { transform: rotate(90deg); }
-.work-usage-project-toggle:focus-visible, .work-usage-row-link:focus-visible { outline: 3px solid rgba(49,95,132,.42); outline-offset: 3px; }
+.work-usage-project-toggle:focus-visible, .work-usage-row-link:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 3px; }
 .work-usage-table .work-usage-muted { font-size: .65rem; }
 .work-usage-child-controls { white-space: normal; }
 .work-usage-child-controls .table-pagination { margin: 0 0 8px; }
@@ -4749,12 +4824,12 @@ html[data-theme="dark"] .noscript {
 .dashboard-shell {
   --dashboard-control-height: 36px;
   --dashboard-card-gap: var(--space-5);
-  --dashboard-focus-ring: rgba(49, 95, 132, .42);
+  --dashboard-focus-ring: var(--focus-ring);
 }
 
 /* Report context belongs to the persistent app header. */
 body:not(.community-site) > .topbar {
-  grid-template-columns: auto auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 14px;
   padding-inline: 24px;
 }
@@ -4779,11 +4854,11 @@ body:not(.community-site) > .topbar {
 .reporting-period-details:not([open]) > p { display: none; }
 
 body:not(.community-site) > .topbar #refresh-button.refresh-progress { width: clamp(250px, calc(100vw - 750px), 360px); min-width: 250px; grid-template-columns: minmax(0, 1fr) max-content max-content; }
-body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { grid-template-columns: auto minmax(0, 1fr); }
+body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 760px) {
   body:not(.community-site) > .topbar { grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; padding-block: 10px; }
   .reporting-period-toolbar { grid-row: 2; grid-column: 1 / -1; }
-  body:not(.community-site) > .topbar .top-actions { grid-column: 2; grid-row: 1; }
+  body:not(.community-site) > .topbar .top-actions { grid-column: 1 / -1; grid-row: 1; }
 }
 @media (max-width: 760px) {
   body:not(.community-site) > .topbar { padding-inline: 14px; }
@@ -4837,7 +4912,7 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 }
 .dashboard-shell .segmented-control > button:hover:not(:disabled):not(.active):not([aria-pressed="true"]):not([aria-selected="true"]) {
   color: var(--ink);
-  background: rgba(255, 254, 249, .5);
+  background: var(--hover);
 }
 .dashboard-shell .segmented-control > button:is(.active, [aria-pressed="true"], [aria-selected="true"]) {
   color: var(--green);
@@ -5013,7 +5088,7 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 .dashboard-shell .dashboard-state-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--space-2); margin-top: var(--space-2); }
 .dashboard-shell :is(.dashboard-state-loading, .dashboard-state[data-state="loading"], .dashboard-state[data-state="updating"]) {
   border-style: solid;
-  border-color: rgba(44, 88, 120, .3);
+  border-color: color-mix(in srgb, var(--blue) 30%, transparent);
   background: var(--blue-soft);
 }
 .dashboard-shell .dashboard-state-indicator {
@@ -5025,14 +5100,14 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 }
 .dashboard-shell :is(.dashboard-state-error, .dashboard-state[data-state="error"]) {
   border-style: solid;
-  border-color: rgba(151, 64, 42, .32);
+  border-color: color-mix(in srgb, var(--rust) 32%, transparent);
   color: var(--rust);
   background: var(--rust-soft);
 }
 .dashboard-shell :is(.dashboard-state-empty, .dashboard-state[data-state="empty"]) { border-style: dashed; }
 .dashboard-shell :is(.dashboard-state-partial, .dashboard-state-stale, .dashboard-state[data-state="partial"], .dashboard-state[data-state="stale"]) {
   border-style: solid;
-  border-color: rgba(129, 87, 24, .3);
+  border-color: color-mix(in srgb, var(--amber) 30%, transparent);
   background: var(--amber-soft);
 }
 .dashboard-shell :is(.dashboard-state-unavailable, .dashboard-state[data-state="unavailable"], .dashboard-state[data-state="unknown"]) {
@@ -5268,9 +5343,9 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
   }
   .model-picker option > span { min-width: 0; overflow-wrap: anywhere; }
   .model-picker option::checkmark { order: 2; margin-inline-start: auto; color: var(--green); }
-  .model-picker option:checked { background: var(--green-soft); font-weight: var(--weight-semibold); }
-  .model-picker option:hover { background: var(--surface-quiet); }
-  .model-picker option:checked:hover { background: var(--green-soft); }
+  .model-picker option:checked { background: var(--track); font-weight: var(--weight-semibold); }
+  .model-picker option:hover { background: var(--hover); }
+  .model-picker option:checked:hover { background: var(--track); }
   .model-picker option:focus-visible { outline: 2px solid var(--dashboard-focus-ring); outline-offset: -2px; }
   .model-picker selectedcontent { display: flex; align-items: center; gap: 9px; min-width: 0; overflow: hidden; }
   .model-picker selectedcontent > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -5393,6 +5468,23 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 .quota-tank[data-flow="over"] { --tank-fluid: #d78112; --tank-glow: #ffe697; --tank-deep: #94510c; }
 .quota-tank[data-flow="critical"] { --tank-fluid: #df3c25; --tank-glow: #ffb65b; --tank-deep: #9e182c; }
 .quota-tank.stale { --tank-fluid: #929b91; --tank-glow: #d4d9cc; --tank-deep: #5a665b; }
+/*
+ * Monochrome tank (owner direction, 2026-10-18).
+ *
+ * The app draws the same vessel - glass, metal, fluid, glow - in greys, and
+ * the three flow states stay distinguishable by how dark the fluid runs:
+ * a healthy pool is mid grey, "over" is darker, "critical" is darkest, and a
+ * stale reading keeps the palest fluid of all so "no fresh reading" can never
+ * be mistaken for a severity. The public feature tour sets its own glass
+ * tokens above and is untouched.
+ */
+body:not(.community-site):not(.admin-operator-page) .quota-tank {
+  --tank-edge: #b8b8b8; --tank-metal: #e2e2e2; --tank-bright: #ffffff;
+  --tank-shadow: #707070; --tank-fluid: #6b6b6b; --tank-glow: #e8e8e8; --tank-deep: #3a3a3a;
+}
+body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="over"] { --tank-fluid: #4a4a4a; --tank-glow: #dcdcdc; --tank-deep: #242424; }
+body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="critical"] { --tank-fluid: #1c1c1c; --tank-glow: #cfcfcf; --tank-deep: #000000; }
+body:not(.community-site):not(.admin-operator-page) .quota-tank.stale { --tank-fluid: #a9a9a9; --tank-glow: #efefef; --tank-deep: #7c7c7c; }
 .quota-grid > .quota-tank.has-liquid-tank { --tank-height: 320px; padding: 10px 12px; gap: 4px; justify-content: flex-start; background: var(--surface-raised); }
 .quota-tank.has-liquid-tank .quota-tank-fuel { display: none; }
 /* Keep identity and period above the rocket, clear of the illustration. */
@@ -5418,19 +5510,21 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 }
 .quota-tank.has-liquid-tank .quota-tank-reset { align-items: center; text-align: center; }
 .quota-tank.has-liquid-tank > .allowance-timestamp { align-self: center; }
-.weekly-pace-forecast.is-over-pace.is-critical { --pace-accent: #d9432c; --pace-accent-text: #a72c1e; --pace-accent-soft: #fce8df; --pace-accent-wash: #fbe0d7; }
-html[data-theme="dark"] .weekly-pace-forecast.is-over-pace.is-critical { --pace-accent: #ff654b; --pace-accent-text: #ffac98; --pace-accent-soft: #532d28; --pace-accent-wash: #422821; }
-html[data-theme="dark"] .quota-tank { --tank-edge: #567568; --tank-metal: #334e42; --tank-bright: #bcebd1; --tank-shadow: #000b07; --tank-fluid: #28c89d; --tank-glow: #a3ffce; --tank-deep: #12664e; }
-html[data-theme="dark"] .quota-tank[data-flow="over"] { --tank-fluid: #ffb73f; --tank-glow: #ffe6a8; --tank-deep: #b06816; }
-html[data-theme="dark"] .quota-tank[data-flow="critical"] { --tank-fluid: #ff654b; --tank-glow: #ffd28c; --tank-deep: #ad2538; }
-html[data-theme="dark"] .quota-tank.stale { --tank-fluid: #8c9a8d; --tank-glow: #becbbf; --tank-deep: #435547; }
+/* Dark-theme tank: the same vessel, inverted, with the same grey ladder - the
+   fluid lightens instead of darkening, and "critical" is still the strongest
+   reading. The light app block above would otherwise beat these declarations,
+   so they repeat the app scope. */
+html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank { --tank-edge: #5a5a5a; --tank-metal: #3a3a3a; --tank-bright: #f2f2f2; --tank-shadow: #000000; --tank-fluid: #cfcfcf; --tank-glow: #f2f2f2; --tank-deep: #9a9a9a; }
+html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="over"] { --tank-fluid: #e6e6e6; --tank-glow: #ffffff; --tank-deep: #b3b3b3; }
+html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="critical"] { --tank-fluid: #ffffff; --tank-glow: #ffffff; --tank-deep: #d0d0d0; }
+html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank.stale { --tank-fluid: #9a9a9a; --tank-glow: #c0c0c0; --tank-deep: #707070; }
 
 
 /* Quiet motion control; the system preference needs no status message. */
 .allowance-motion-controls { display: flex; margin-inline-start: auto; min-height: 24px; }
 .allowance-motion-controls[hidden] { display: none; }
 .allowance-motion-controls button { display: grid; place-items: center; width: 28px; min-height: 28px; padding: 6px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); }
-.allowance-motion-controls button:hover { background: var(--surface-raised); color: var(--ink); }
+.allowance-motion-controls button:hover { background: var(--hover); color: var(--ink); }
 .allowance-motion-controls button > span { display: block; width: 10px; height: 12px; background: linear-gradient(to right, currentColor 0 3px, transparent 3px 7px, currentColor 7px 10px); }
 .allowance-motion-controls button[data-paused="true"] > span { background: currentColor; clip-path: polygon(0 0, 100% 50%, 0 100%); }
 .quota-tank-family { display: flex; align-items: center; justify-content: center; gap: 5px; }
@@ -5450,8 +5544,11 @@ html[data-theme="dark"] .quota-tank.stale { --tank-fluid: #8c9a8d; --tank-glow: 
 
 .weekly-pace-forecast-heading .panel-kicker { display: inline-flex; align-items: center; gap: 6px; }
 
-/* Selected time and its readouts stay compact, separate from data axes. */
-#timeline { --trends-above: #b87039; --trends-below: #547caf; }
+/* Selected time and its readouts stay compact, separate from data axes.
+   The two signed-difference fills are told apart by grey level rather than hue:
+   `--trends-above` is full ink and `--trends-below` a mid grey, matching the
+   sign key under the chart. */
+#timeline { --trends-above: var(--ink); --trends-below: color-mix(in srgb, var(--ink) 55%, transparent); }
 #timeline .trends-capacity-panel { overflow: hidden; }
 .trends-horizon { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px 24px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
 .trends-clock-content { display: grid; gap: 4px; flex: 1 1 190px; min-width: 0; color: var(--ink); }
@@ -5492,7 +5589,7 @@ html[data-theme="dark"] .quota-tank.stale { --tank-fluid: #8c9a8d; --tank-glow: 
 .trends-evidence-details > summary { cursor: pointer; font-size: 13px; color: var(--muted); padding: 8px 0; }
 .trends-analysis-details { margin-top: 20px; }
 .trends-analysis-details > summary { cursor: pointer; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-raised); color: var(--ink); font-size: 14px; font-weight: 600; }
-.trends-analysis-details > summary:hover { background: var(--surface-quiet); }
+.trends-analysis-details > summary:hover { background: var(--hover); }
 .trends-analysis-details > summary:focus-visible { outline: 2px solid var(--green-2); outline-offset: 3px; }
 #timeline .trends-comparison-panel, #timeline .trends-drift-panel { margin-top: 20px; }
 #timeline .calibration-legend { font-size: 10px; gap: 9px 14px; }
@@ -5524,11 +5621,14 @@ html[data-theme="dark"] .quota-tank.stale { --tank-fluid: #8c9a8d; --tank-glow: 
 .trends-reset-marker rect { fill: var(--surface-raised); stroke: var(--reset-marker-color); stroke-width: 1; }
 .trends-reset-marker text { fill: var(--reset-marker-color); font: bold 16px var(--sans); pointer-events: none; }
 .trends-reset-marker text.trends-reset-group-count { font-size: 11px; }
-.trends-reset-marker.banked_reset_used { --reset-marker-color: #7752a5; }
-.trends-reset-marker.unknown_reset, .trends-reset-marker.observed_reset { --reset-marker-color: #956008; }
-.trends-reset-marker.reset_credit_granted { --reset-marker-color: #296f97; }
-.trends-reset-marker.reset_credit_expired, .trends-reset-marker.window_change, .trends-reset-marker.mixed { --reset-marker-color: var(--muted); }
-.trends-reset-marker:focus rect, .trends-reset-marker:hover rect { stroke-width: 2.5; fill: var(--green-soft); }
+/* Reset kinds keep their letter and their tooltip; identity is a grey level
+   from full ink (a banked reset) down to a light grey, so the marker ladder
+   still reads without a hue. */
+.trends-reset-marker.banked_reset_used { --reset-marker-color: color-mix(in srgb, var(--ink) 74%, transparent); }
+.trends-reset-marker.unknown_reset, .trends-reset-marker.observed_reset { --reset-marker-color: color-mix(in srgb, var(--ink) 56%, transparent); }
+.trends-reset-marker.reset_credit_granted { --reset-marker-color: color-mix(in srgb, var(--ink) 40%, transparent); }
+.trends-reset-marker.reset_credit_expired, .trends-reset-marker.window_change, .trends-reset-marker.mixed { --reset-marker-color: color-mix(in srgb, var(--ink) 62%, transparent); }
+.trends-reset-marker:focus rect, .trends-reset-marker:hover rect { stroke-width: 2.5; fill: var(--hover); }
 .trends-event-detail { white-space: pre-line; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-quiet); color: var(--muted); font-size: 12px; }
 
 /* Compact findings keep the timeline primary; contributor details expand in place. */
@@ -5736,7 +5836,7 @@ body[data-dashboard-page] #overview-screen { display: block; }
   position: absolute; z-index: 100; top: calc(100% + 12px); right: 0;
   width: min(420px, calc(100vw - 32px)); max-height: 60vh; overflow: auto;
   padding: 18px; border: 1px solid var(--line); border-radius: 12px;
-  color: var(--ink); background: var(--surface, #fffefa);
+  color: var(--ink); background: var(--surface);
   box-shadow: 0 8px 24px rgb(0 0 0 / .15); font-size: 14px; line-height: 1.6;
 }
 .refresh-notice-content p { margin: 0; }
@@ -5750,7 +5850,7 @@ body[data-dashboard-page] #overview-screen { display: block; }
 #weekly .weekly-pace-forecast-title { font: var(--weight-semibold) 18px var(--sans); }
 #weekly .weekly-pace-track-covered::after { content: none; }
 @media (max-width: 900px) {
-  body[data-dashboard-page] .dashboard-sidebar { height: auto; padding-block: 4px; }
+  body[data-dashboard-page] .dashboard-sidebar { padding-block: 4px; }
   body[data-dashboard-page] .primary-nav a { min-height: 32px; padding-block: 6px; }
 }
 @media (max-width: 580px) {
@@ -5873,10 +5973,10 @@ body[data-dashboard-page] .dashboard-shell .table-wrap { max-height: none; }
 }
 /* Neutral dashboard roles follow the existing document theme without changing layout. */
 :root {
-  --neutral-page: #f5f5f5;
+  --neutral-page: #fff;
   --neutral-surface: #fff;
-  --neutral-ink: #111;
-  --neutral-muted: #666;
+  --neutral-ink: #000;
+  --neutral-muted: #000;
   --neutral-line: #ddd;
   --neutral-track: #e6e6e6;
   --neutral-hover: #f4f4f4;
@@ -5886,7 +5986,7 @@ body[data-dashboard-page] .dashboard-shell .table-wrap { max-height: none; }
 }
 html[data-theme="dark"] {
   --neutral-page: #161616;
-  --neutral-surface: #202020;
+  --neutral-surface: #161616;
   --neutral-ink: #f2f2f2;
   --neutral-muted: #b8b8b8;
   --neutral-line: #484848;
@@ -6043,7 +6143,7 @@ html[data-theme="dark"] body[data-dashboard-page="allowance"] { background:var(-
    ticks share the same 62px / 14px plot insets, including at narrow widths. */
 body[data-dashboard-page] #weekly-plan-control { display:none; }
 body[data-dashboard-page="allowance"] #weekly-plan-control:not([hidden]) { display:flex; margin:0; padding:0; }
-body[data-dashboard-page="allowance"] > .topbar { grid-template-columns:auto auto auto minmax(0,1fr); background:var(--neutral-page); border-color:var(--neutral-line); }
+body[data-dashboard-page="allowance"] > .topbar { grid-template-columns:auto auto minmax(0,1fr); background:var(--neutral-page); border-color:var(--neutral-line); }
 #weekly-plan-control > span { display:none; }
 #weekly-plan-control select { background:var(--neutral-surface); color:var(--neutral-ink); border:1px solid var(--neutral-line); min-height:36px; max-width:180px; }
 .allowance-simple > .dashboard-page-header #allowance-page-title { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
@@ -6082,7 +6182,92 @@ body[data-dashboard-page="allowance"] > .topbar { grid-template-columns:auto aut
 }
 @media(max-width:760px) {
  body[data-dashboard-page="allowance"] > .topbar { grid-template-columns:auto minmax(0,1fr); }
- body[data-dashboard-page="allowance"] #weekly-plan-control { grid-row:1; grid-column:2; justify-self:start; }
+ body[data-dashboard-page="allowance"] #weekly-plan-control { grid-row:1; grid-column:1; justify-self:start; }
  body[data-dashboard-page="allowance"] > .topbar .top-actions { grid-row:3; grid-column:1/-1; justify-self:end; }
  body[data-dashboard-page="allowance"] > .topbar .brand > span { display:inline; }
+}
+
+/* Persistent local actions: refresh immediately above Settings at the foot of
+   the navigation column. Summary text never replaces the icon or its focus. */
+.sidebar-actions { margin-top: auto; padding-top: 24px; display: flex; flex-direction: column; gap: 4px; }
+.sidebar-refresh-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.sidebar-action,
+#refresh-button.sidebar-action,
+#refresh-button.sidebar-action.refresh-progress {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; min-width: 44px; height: 44px; flex: 0 0 44px;
+  padding: 12px; border: 0; border-radius: 4px; background: transparent;
+  color: var(--neutral-ink, var(--ink)); box-shadow: none; cursor: pointer;
+}
+.sidebar-actions .sidebar-action[hidden] { display: none; }
+.sidebar-action svg { display: block; flex: none; }
+.sidebar-action:hover:not(:disabled) { outline: 1px solid currentColor; outline-offset: -6px; }
+.sidebar-action:focus-visible { outline: 2px solid var(--neutral-ink, var(--ink)); outline-offset: 1px; }
+.sidebar-action:disabled { cursor: default; opacity: .5; }
+.sidebar-refresh-summary { min-width: 0; color: var(--neutral-ink, var(--ink)); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+#refresh-button.is-refreshing svg { animation: sidebar-refresh-spin .9s linear infinite; }
+@keyframes sidebar-refresh-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { #refresh-button.is-refreshing svg { animation: none; } }
+/* An idle overview needs no empty status strip. Evidence warnings still keep
+   their own toolbar, and the report/plan controls remain on the other pages. */
+body.electron-dashboard:has(#reporting-period-toolbar[hidden]):has(#connection-notice[hidden]):has(#history-index-badge[hidden]):has(#global-state[hidden]) { --topbar-height: 0px; }
+body.electron-dashboard:has(#reporting-period-toolbar[hidden]):has(#connection-notice[hidden]):has(#history-index-badge[hidden]):has(#global-state[hidden]) > .topbar { display: none; }
+@media (max-width: 900px) {
+  body:not(.community-site):not(.admin-operator-page) .dashboard-shell { display: grid; grid-template-columns: 150px minmax(0, 1fr); }
+  body:not(.community-site):not(.admin-operator-page) .dashboard-sidebar { position: sticky; padding: 12px 8px; border-inline-end: 1px solid var(--neutral-line, var(--line)); border-bottom: 0; }
+  body:not(.community-site):not(.admin-operator-page) .primary-nav { display: grid; overflow: visible; }
+  body:not(.community-site):not(.admin-operator-page) .primary-nav a { width: 100%; white-space: normal; }
+}
+@media (max-width: 500px) {
+  body:not(.community-site):not(.admin-operator-page) .dashboard-shell { grid-template-columns: 120px minmax(0, 1fr); }
+  .sidebar-refresh-row { flex-wrap: wrap; }
+  .sidebar-refresh-summary { flex-basis: 100%; padding-inline: 8px; }
+}
+
+/* The trusted desktop main window has one menu/drag row. Windows retains its
+   native caption buttons; the overlay geometry reserves their complete area.
+   The row is transparent so a saved window background continues through it. */
+html.desktop-titlebar-active { --desktop-titlebar-height: 40px; }
+html.desktop-titlebar-active.desktop-titlebar-fullscreen { --desktop-titlebar-height: 0px; }
+html.desktop-titlebar-active body { padding-top: var(--desktop-titlebar-height); }
+.desktop-titlebar {
+  position: fixed;
+  z-index: 50;
+  top: env(titlebar-area-y, 0px);
+  left: env(titlebar-area-x, 0px);
+  width: env(titlebar-area-width, calc(100% - 138px));
+  height: 40px;
+  display: flex;
+  align-items: center;
+  padding-inline: 8px;
+  background: transparent;
+  color: #000;
+  -webkit-app-region: drag;
+  app-region: drag;
+  user-select: none;
+}
+.desktop-application-menu { display: flex; align-items: center; max-width: 100%; height: 100%; }
+.desktop-application-menu > button {
+  flex: 0 0 auto;
+  min-width: 32px;
+  height: 30px;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 13px;
+  line-height: 24px;
+  font-weight: 400;
+  white-space: nowrap;
+  cursor: default;
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+.desktop-application-menu > button:is(:hover, [aria-expanded="true"]) { background: rgb(0 0 0 / .08); }
+.desktop-application-menu > button:focus-visible { outline: 1px solid currentColor; outline-offset: -2px; }
+html.desktop-titlebar-fullscreen .desktop-titlebar { display: none; }
+@media (forced-colors: active) {
+  .desktop-titlebar { color: CanvasText; }
+  .desktop-application-menu > button:is(:hover, [aria-expanded="true"]) { outline: 1px solid Highlight; outline-offset: -2px; }
 }

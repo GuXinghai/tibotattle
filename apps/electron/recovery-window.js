@@ -87,21 +87,22 @@ const RECOVERY_HTML_PREFIX = `<!doctype html>
 <title>TiboTattle</title>
 <style>
 :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f6f7fb; color: #182033; }
-main { width: min(420px, calc(100vw - 48px)); padding: 32px; border: 1px solid #dfe3ee; border-radius: 18px; background: #fff; box-shadow: 0 18px 48px rgb(23 32 56 / 12%); }
-main:focus-visible, #detail:focus-visible { outline: 3px solid Highlight; outline-offset: 4px; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fff; color: #000; }
+main { width: min(420px, calc(100vw - 48px)); padding: 32px; border: 1px solid #ddd; border-radius: 18px; background: #fff; box-shadow: 0 18px 48px rgb(0 0 0 / 12%); }
+main:focus-visible, #detail:focus-visible { outline: 3px solid currentColor; outline-offset: 4px; }
 h1 { margin: 0 0 12px; font-size: 24px; letter-spacing: -.02em; }
 p { margin: 0; line-height: 1.5; }
-.detail { color: #5f687d; }
-.code { margin-top: 16px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #69738a; }
+.detail { color: #000; }
+.code { margin-top: 16px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #000; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 28px; }
-button { appearance: none; border: 1px solid #b7bfd2; border-radius: 9px; padding: 9px 14px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
-button.primary { border-color: #2d5be3; background: #2d5be3; color: #fff; }
+button { appearance: none; border: 1px solid #767676; border-radius: 9px; padding: 9px 14px; background: #fff; color: inherit; font: inherit; cursor: pointer; }
+button.primary { border-color: #000; background: #000; color: #fff; }
 button:disabled { cursor: default; opacity: .45; }
 @media (prefers-color-scheme: dark) {
-  body { background: #171a22; color: #eef1fb; }
-  main, button { background: #242936; border-color: #3b455b; }
-  .detail, .code { color: #aeb8cf; }
+  body { background: #161616; color: #f2f2f2; }
+  main, button { background: #161616; border-color: #484848; }
+  .detail, .code { color: #f2f2f2; }
+  button.primary { border-color: #f2f2f2; background: #f2f2f2; color: #161616; }
 }
 </style>
 </head>

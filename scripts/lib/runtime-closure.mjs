@@ -44,6 +44,7 @@ const RUNTIME_WEB_MODULE_ROOT = join(
 export const RUNTIME_WEB_MODULE_ENTRYPOINTS = Object.freeze([
   "apps/web/public/app.js",
   "apps/web/public/desktop-shell.js",
+  "apps/web/public/window-background.js",
   "apps/web/public/electron-tray-popup.js",
   "apps/web/public/electron-settings.js",
   "apps/web/public/electron-tray-settings.js",

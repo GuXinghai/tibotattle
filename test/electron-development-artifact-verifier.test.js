@@ -64,6 +64,7 @@ const SHELL_FILES = [
   "apps/electron/desktop-runtime.js",
   "apps/electron/desktop-settings-backends.js",
   "apps/electron/desktop-settings-store.js",
+  "apps/electron/desktop-background.js",
   "apps/electron/desktop-tray.js",
   "apps/electron/desktop-tray-popover.js",
   "apps/electron/desktop-tray-preferences.js",

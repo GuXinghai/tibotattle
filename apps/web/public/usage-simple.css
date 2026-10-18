@@ -31,7 +31,7 @@ body[data-dashboard-page="usage"] #accounting { display:contents; }
 #usage-screen .dashboard-page-status:empty, #usage-screen .work-usage-actions:not(:has(> :not([hidden]))) { display:none; }
 #usage-simple-views .dashboard-view-tabs, .usage-simple-metric { display:flex; gap:3px; margin:0; padding:0; border:0; background:transparent; }
 #usage-simple-views .dashboard-view-tabs button, .usage-simple-metric button { border:0; border-radius:5px; background:transparent; color:var(--neutral-muted); padding:8px 12px; font:inherit; box-shadow:none; }
-#usage-simple-views .dashboard-view-tabs button[aria-pressed="true"], .usage-simple-metric button[aria-pressed="true"] { background:var(--neutral-ink); color:var(--neutral-surface); box-shadow:none; }
+#usage-simple-views .dashboard-view-tabs button[aria-pressed="true"], .usage-simple-metric button[aria-pressed="true"] { background:transparent; color:var(--neutral-ink); text-decoration:underline; text-underline-offset:5px; font-weight:600; box-shadow:none; }
 .work-usage-compact .work-usage-ranking, .work-usage-detail-report .work-usage-ranking { display:block; }
 .work-usage-compact .work-usage-rank, .work-usage-detail-report .work-usage-rank, .usage-simple-model-row { display:grid; grid-template-columns:minmax(0,1fr) 125px 150px 14px; gap:12px; align-items:center; width:100%; margin:0; padding:15px 8px; border:0; border-bottom:1px solid var(--neutral-line); border-radius:0; background:transparent; text-align:left; font:inherit; color:var(--neutral-ink); }
 .work-usage-compact .work-usage-rank:hover, .work-usage-detail-report .work-usage-rank:hover, .usage-simple-model-row:hover { background:var(--neutral-hover); }

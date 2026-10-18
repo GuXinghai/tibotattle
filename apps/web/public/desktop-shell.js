@@ -28,8 +28,180 @@ const DASHBOARD_SECTION_HASHES = Object.freeze({
   usage: "#usage",
   allowance: "#allowance",
   performance: "#performance",
+  settings: "#settings/general",
 });
 const mountedDocuments = new WeakMap();
+const APPLICATION_MENU_IDS = new Set(["file", "edit", "view", "window", "help"]);
+
+// The renderer owns only the compact row and its keyboard entry points. Menu
+// commands, translated labels and accelerators stay in the native menu owner.
+function mountApplicationTitlebar(documentRef, windowRef, bridge) {
+  if (typeof bridge?.getApplicationMenu !== "function"
+      || typeof bridge?.openApplicationMenu !== "function"
+      || typeof documentRef?.createElement !== "function" || !documentRef.body) {
+    return { refresh() {}, setFullscreen() {}, teardown() {} };
+  }
+  const root = documentRef.documentElement;
+  const bar = documentRef.createElement("div");
+  bar.className = "desktop-titlebar";
+  const menubar = documentRef.createElement("div");
+  menubar.className = "desktop-application-menu";
+  menubar.setAttribute("role", "menubar");
+  bar.append(menubar);
+  documentRef.body.prepend(bar);
+  root.classList.add("desktop-titlebar-active");
+  let disposed = false;
+  let generation = 0;
+  let menus = [];
+  let buttons = [];
+  let previousFocus = null;
+  let altPressed = false;
+  let activePopup = null;
+  let nativeFullscreen = false;
+
+  const focusMenu = (index) => {
+    buttons.forEach((button, candidate) => { button.tabIndex = candidate === index ? 0 : -1; });
+    buttons[index]?.focus?.({ preventScroll: true });
+  };
+  const leaveMenubar = () => {
+    if (previousFocus) previousFocus.focus?.({ preventScroll: true });
+    else if (buttons.includes(documentRef.activeElement)) documentRef.activeElement.blur?.();
+    previousFocus = null;
+  };
+  const enterMenubar = (index = 0) => {
+    if (!buttons.includes(documentRef.activeElement)) previousFocus = documentRef.activeElement;
+    focusMenu(index);
+  };
+  const openMenu = async (index) => {
+    if (disposed || activePopup || !buttons[index]) return;
+    enterMenubar(index);
+    const button = buttons[index];
+    const rect = button.getBoundingClientRect();
+    const popup = {};
+    activePopup = popup;
+    button.setAttribute("aria-expanded", "true");
+    try {
+      await bridge.openApplicationMenu({
+        menu: menus[index].id,
+        x: Math.round(rect.left),
+        y: Math.round(rect.bottom),
+      });
+    } catch {
+      // A closing window or unavailable bridge leaves a usable keyboard row.
+    } finally {
+      if (activePopup === popup) activePopup = null;
+      if (!disposed) button.setAttribute("aria-expanded", "false");
+    }
+  };
+  const displayLabel = (label) => label.replace(/\(&([^&])\)/gu, "").replace(/&&|&/gu, (part) => part === "&&" ? "&" : "").trim();
+  const refresh = async () => {
+    if (disposed) return;
+    const requested = ++generation;
+    try {
+      const state = await bridge.getApplicationMenu();
+      if (disposed || requested !== generation || !Array.isArray(state?.menus)) return;
+      if (typeof state.fullscreen === "boolean") setFullscreen(state.fullscreen);
+      const next = state.menus;
+      if (next.length !== APPLICATION_MENU_IDS.size
+          || new Set(next.map((menu) => menu?.id)).size !== APPLICATION_MENU_IDS.size
+          || next.some((menu) => !APPLICATION_MENU_IDS.has(menu?.id)
+            || typeof menu.label !== "string" || !displayLabel(menu.label))) return;
+      const focusedId = menus[buttons.indexOf(documentRef.activeElement)]?.id;
+      menus = next;
+      buttons = next.map((menu, index) => {
+        const button = documentRef.createElement("button");
+        button.type = "button";
+        button.textContent = displayLabel(menu.label);
+        button.setAttribute("role", "menuitem");
+        button.setAttribute("aria-haspopup", "menu");
+        button.setAttribute("aria-expanded", "false");
+        button.tabIndex = index === 0 ? 0 : -1;
+        button.addEventListener("click", () => { void openMenu(index); });
+        return button;
+      });
+      menubar.replaceChildren(...buttons);
+      if (focusedId) focusMenu(menus.findIndex((menu) => menu.id === focusedId));
+    } catch {
+      // Preserve the last complete native menu labels on a transient failure.
+    }
+  };
+  const onKeyDown = (event) => {
+    if (event.key === "Alt" && !event.ctrlKey && !event.metaKey && !event.shiftKey) { altPressed = true; return; }
+    if (event.key !== "Alt") altPressed = false;
+    if (event.altKey && !event.ctrlKey && !event.metaKey && event.key?.length === 1) {
+      const key = event.key.toLowerCase();
+      const index = menus.findIndex((menu) => {
+        const mnemonic = /(?:^|[^&])&([^&])/u.exec(menu.label)?.[1];
+        return (mnemonic ?? menu.id[0]).toLowerCase() === key;
+      });
+      if (index >= 0) { event.preventDefault(); void openMenu(index); }
+      return;
+    }
+    if (event.key === "F10" && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+      event.preventDefault();
+      if (buttons.includes(documentRef.activeElement)) leaveMenubar();
+      else enterMenubar();
+      return;
+    }
+    const index = buttons.indexOf(documentRef.activeElement);
+    if (index < 0 || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
+        : (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
+      focusMenu(next);
+    } else if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) {
+      event.preventDefault();
+      void openMenu(index);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      leaveMenubar();
+    }
+  };
+  const onKeyUp = (event) => {
+    if (event.key !== "Alt" || !altPressed) return;
+    altPressed = false;
+    event.preventDefault();
+    if (buttons.includes(documentRef.activeElement)) leaveMenubar();
+    else enterMenubar();
+  };
+  const overlay = windowRef?.navigator?.windowControlsOverlay;
+  const syncFullscreen = () => {
+    const fullscreen = nativeFullscreen || Boolean(documentRef.fullscreenElement);
+    root.classList.toggle("desktop-titlebar-fullscreen", fullscreen);
+    if (fullscreen && buttons.includes(documentRef.activeElement)) leaveMenubar();
+  };
+  const setFullscreen = (fullscreen) => {
+    if (disposed || typeof fullscreen !== "boolean") return;
+    nativeFullscreen = fullscreen;
+    syncFullscreen();
+  };
+  const resetAlt = () => { altPressed = false; };
+  documentRef.addEventListener("keydown", onKeyDown);
+  documentRef.addEventListener("keyup", onKeyUp);
+  documentRef.addEventListener("fullscreenchange", syncFullscreen);
+  windowRef.addEventListener?.("blur", resetAlt);
+  windowRef.addEventListener?.("tibotattle:locale-change", refresh);
+  overlay?.addEventListener?.("geometrychange", syncFullscreen);
+  syncFullscreen();
+  void refresh();
+  return {
+    refresh,
+    setFullscreen,
+    teardown() {
+      disposed = true;
+      generation += 1;
+      documentRef.removeEventListener("keydown", onKeyDown);
+      documentRef.removeEventListener("keyup", onKeyUp);
+      documentRef.removeEventListener("fullscreenchange", syncFullscreen);
+      windowRef.removeEventListener?.("blur", resetAlt);
+      windowRef.removeEventListener?.("tibotattle:locale-change", refresh);
+      overlay?.removeEventListener?.("geometrychange", syncFullscreen);
+      bar.remove();
+      root.classList.remove("desktop-titlebar-active", "desktop-titlebar-fullscreen");
+    },
+  };
+}
 
 /**
  * Navigate to one of the dashboard's evidence views from a native menu or
@@ -37,8 +209,9 @@ const mountedDocuments = new WeakMap();
  * command reaches the page, and this local mapping keeps the renderer from
  * ever accepting an arbitrary selector, hash, path, or URL.
  */
-export function navigateToDashboardSection(_documentRef, windowRef, section) {
-  const hash = DASHBOARD_SECTION_HASHES[section];
+export function navigateToDashboardSection(_documentRef, windowRef, section, settingsSection = "general") {
+  if (section === "settings" && !["general", "tray", "notifications", "data", "about"].includes(settingsSection)) return false;
+  const hash = section === "settings" ? `#settings/${settingsSection}` : DASHBOARD_SECTION_HASHES[section];
   const location = windowRef?.location;
   if (typeof hash !== "string" || !location || typeof location !== "object") {
     return false;
@@ -129,12 +302,20 @@ function dispatchAppearanceOverride(windowRef, command) {
   return true;
 }
 
-function installCommandBridge(documentRef, windowRef, applyLanguage, applySidebar) {
+function installCommandBridge(documentRef, windowRef, applyLanguage, applySidebar, refreshMenu, setFullscreen) {
   const bridge = windowRef?.tibotattleDesktop;
   if (bridge?.version !== ELECTRON_API_VERSION
       || typeof bridge.onCommand !== "function") return () => {};
   const onCommand = (command) => {
     if (!command || typeof command !== "object") return;
+    if (command.command === "windowFullscreen") {
+      if (Reflect.ownKeys(command).length === 2 && Object.hasOwn(command, "fullscreen")
+          && typeof command.fullscreen === "boolean") {
+        setFullscreen(command.fullscreen);
+      }
+      return;
+    }
+    if (command.command === "settingsChanged") { void refreshMenu(); return; }
     if (command.command === "refresh") {
       documentRef.querySelector?.("#refresh-button")?.click?.();
       return;
@@ -146,9 +327,10 @@ function installCommandBridge(documentRef, windowRef, applyLanguage, applySideba
       return;
     }
     if (command.command === "dashboardSection") {
-      if (Reflect.ownKeys(command).length !== 2
-          || !Object.hasOwn(command, "section")) return;
-      navigateToDashboardSection(documentRef, windowRef, command.section);
+      const keys = Reflect.ownKeys(command);
+      if (!Object.hasOwn(command, "section") || keys.some((key) => !["command", "section", "settingsSection"].includes(key))
+          || (command.settingsSection !== undefined && command.section !== "settings")) return;
+      navigateToDashboardSection(documentRef, windowRef, command.section, command.settingsSection);
       return;
     }
     if (command.command === "sidebar") {
@@ -180,6 +362,7 @@ export function mountDesktopShell({
   settingsButton.hidden = false;
   const onSettings = () => openSettings(windowRef);
   const bridge = windowRef?.tibotattleDesktop;
+  const titlebar = mountApplicationTitlebar(documentRef, windowRef, bridge);
   const picker = documentRef.querySelector?.("[data-language-picker]");
   const applySidebar = (collapsed) => applySidebarState(documentRef, collapsed);
   const applyAppearance = (preference) => {
@@ -189,6 +372,7 @@ export function mountDesktopShell({
   };
   let applyingLanguage = false;
   const applyLanguage = (value) => {
+    if (LANGUAGE_VALUES.has(value)) void titlebar.refresh();
     if (!LANGUAGE_VALUES.has(value) || !picker) return;
     applyingLanguage = true;
     try {
@@ -216,12 +400,15 @@ export function mountDesktopShell({
     windowRef,
     applyLanguage,
     applySidebar,
+    titlebar.refresh,
+    titlebar.setFullscreen,
   );
   const mounted = Object.freeze({
     teardown() {
       settingsButton.removeEventListener?.("click", onSettings);
       picker?.removeEventListener?.("change", onLanguageChange);
       unsubscribeCommand();
+      titlebar.teardown();
       mountedDocuments.delete(documentRef);
     },
   });

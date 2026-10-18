@@ -857,6 +857,10 @@ export async function launchElectronShell({
 // a desktop launch. An actual Electron process is the only executable caller.
 if (process.versions.electron) {
   const runtime = await import("electron");
+  runtime.protocol.registerSchemesAsPrivileged([{
+    scheme: "tibotattle-background",
+    privileges: { standard: true, secure: true, stream: true },
+  }]);
   const startupDiagnostics = createDesktopStartupDiagnostics({ app: runtime?.app });
   let startupPreparation;
   try {

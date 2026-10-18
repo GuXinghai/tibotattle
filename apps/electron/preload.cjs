@@ -27,17 +27,13 @@ const WINDOWS_TEST_LANE_ENV = "USAGE_MONITOR_TEST_LANE";
 const WINDOWS_TEST_LANE = "windows-electron-smoke";
 const LANGUAGES = Object.freeze(["system", "en", "zh-Hans", "es"]);
 const APPEARANCES = Object.freeze(["system", "light", "dark"]);
-const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance"]);
+const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance", "settings"]);
+const SETTINGS_SECTIONS = Object.freeze(["general", "tray", "notifications", "data", "about"]);
 const AUTOMATIC_REFRESH_MODES = Object.freeze(["quick", "detailed"]);
-const REFRESH_INTERVALS = Object.freeze([60, 300, 900, 1800]);
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
-const NOTIFICATION_THRESHOLDS = Object.freeze([
-  "off",
-  "ninety",
-  "eighty_and_ninety",
-]);
 const SYSTEM_SETTINGS_TARGETS = Object.freeze(["startup", "notifications"]);
 const EXTERNAL_TARGETS = Object.freeze(["website", "github", "x"]);
+const APPLICATION_MENUS = Object.freeze(["file", "edit", "view", "window", "help"]);
 const CODEX_THREAD_URL_PATTERN =
   /^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CODEX_ROOT_LIMIT = 8;
@@ -155,6 +151,21 @@ function reorderCodexRootsMethod(action, value) {
 }
 
 function validDesktopCommand(value) {
+  if (value?.command === "settingsChanged") {
+    return exactObject(value, ["command"], "command") ? Object.freeze({ command: "settingsChanged" }) : null;
+  }
+  if (value?.command === "windowFullscreen") {
+    return exactObject(value, ["command", "fullscreen"], "command") && typeof value.fullscreen === "boolean"
+      ? Object.freeze({ command: "windowFullscreen", fullscreen: value.fullscreen }) : null;
+  }
+  if (value?.command === "dashboardSection" && value.section === "settings"
+      && exactObject(value, ["command", "section", "settingsSection"], "command")
+      && SETTINGS_SECTIONS.includes(value.settingsSection)) {
+    return Object.freeze({ command: "dashboardSection", section: "settings", settingsSection: value.settingsSection });
+  }
+  if (value?.command === "windowBackground") {
+    return exactObject(value, ["command"], "command") ? Object.freeze({ command: "windowBackground" }) : null;
+  }
   if (value?.command === "refresh") {
     return exactObject(value, ["command"], "command")
       ? Object.freeze({ command: "refresh" })
@@ -231,6 +242,22 @@ function installDesktopBridge() {
       subscribeToDesktopCommands,
     ),
     getSettings: (...values) => noArguments("getSettings", values),
+    getApplicationMenu: (...values) => noArguments("getApplicationMenu", values),
+    openApplicationMenu: (...values) => oneArgument("openApplicationMenu", values, value => {
+      if (!exactObject(value, ["menu", "x", "y"], "menu") || !APPLICATION_MENUS.includes(value.menu)
+          || [value.x, value.y].some(coordinate => !Number.isInteger(coordinate) || coordinate < 0 || coordinate > 16384)) return rejected("menu is invalid");
+      return invoke("openApplicationMenu", { menu: value.menu, x: value.x, y: value.y });
+    }),
+    getWindowBackground: (...values) => noArguments("getWindowBackground", values),
+    chooseWindowBackground: (...values) => noArguments("chooseWindowBackground", values),
+    restoreWindowBackground: (...values) => noArguments("restoreWindowBackground", values),
+    setWindowBackground: (...values) => oneArgument("setWindowBackground", values, value => {
+      if (!exactObject(value, ["color", "mask", "removeImage"], "background")
+          || !(value.color === null || typeof value.color === "string" && /^#[0-9A-F]{6}$/.test(value.color))
+          || !Number.isInteger(value.mask) || value.mask < 0 || value.mask > 90
+          || typeof value.removeImage !== "boolean") return rejected("background is invalid");
+      return invoke("setWindowBackground", { value: { ...value } });
+    }),
     getCodexHomesForSettings: (...values) => noArguments(
       "getCodexHomesForSettings",
       values,
@@ -279,12 +306,9 @@ function installDesktopBridge() {
     setRefreshInterval: (...values) => oneArgument(
       "setRefreshInterval",
       values,
-      (seconds) => enumMethod(
-        "setRefreshInterval",
-        seconds,
-        REFRESH_INTERVALS,
-        "seconds",
-      ),
+      (seconds) => seconds === -1 || (Number.isSafeInteger(seconds) && seconds > 0
+        && seconds % 60 === 0 && Number.isSafeInteger(seconds * 1000))
+        ? invoke("setRefreshInterval", { seconds }) : rejected("seconds is invalid"),
     ),
     setStartAtLogin: (...values) => oneArgument(
       "setStartAtLogin",
@@ -296,17 +320,14 @@ function installDesktopBridge() {
       "setNotificationPreferences",
       values,
       (preferences) => {
-        if (!exactObject(preferences, ["enabled", "threshold"], "preferences")) {
+        if (!exactObject(preferences, ["threshold"], "preferences")) {
           return rejected("notification preferences are invalid");
         }
-        if (typeof preferences.enabled !== "boolean") {
-          return rejected("enabled is invalid");
-        }
-        if (!NOTIFICATION_THRESHOLDS.includes(preferences.threshold)) {
+        if (!(preferences.threshold === -1 || (Number.isInteger(preferences.threshold)
+            && preferences.threshold >= 1 && preferences.threshold <= 100))) {
           return rejected("threshold is invalid");
         }
         return invoke("setNotificationPreferences", {
-          enabled: preferences.enabled,
           threshold: preferences.threshold,
         });
       },

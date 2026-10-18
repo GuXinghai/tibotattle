@@ -413,6 +413,7 @@ class FakeWindow extends EventEmitter {
     this.visible = false;
     this.destroyed = false;
     this.loaded = [];
+    this.webContents.getURL = () => this.loaded.at(-1) ?? "";
   }
 
   loadURL(url) {
@@ -813,6 +814,50 @@ test("loopback policy installs exact navigation handlers and removable listeners
   prevented = false;
   webContents.emit("will-navigate", { preventDefault() { prevented = true; } }, "https://example.test/");
   assert.equal(prevented, false);
+});
+
+test("protected background resources require a tracked dashboard image request and lose access on removal", () => {
+  const origin = "http://127.0.0.1:3456";
+  const session = {
+    setPermissionRequestHandler() {}, setPermissionCheckHandler() {},
+    webRequest: { onBeforeRequest(_filter, listener) { this.listener = listener; } },
+  };
+  const dashboard = new FakeWebContents();
+  dashboard.id = 41;
+  dashboard.mainFrame.url = `${origin}/#settings/general`;
+  const keeper = new FakeWebContents();
+  keeper.id = 42;
+  const policy = createLoopbackNavigationPolicy({ origin });
+  const installed = installLoopbackNavigationPolicy({ webContents: dashboard, session, policy, allowBackgroundResource: true });
+  const keeperInstallation = installLoopbackNavigationPolicy({ webContents: keeper, session, policy });
+  const valid = {
+    url: "tibotattle-background://image/11111111-1111-4111-8111-111111111111",
+    resourceType: "image", method: "GET", webContentsId: dashboard.id, frame: dashboard.mainFrame,
+  };
+  const check = (details, cancel) => {
+    const decisions = [];
+    session.webRequest.listener(details, (value) => decisions.push(value));
+    assert.deepEqual(decisions, [{ cancel }]);
+  };
+  check(valid, false);
+  for (const patch of [
+    { webContentsId: keeper.id }, { webContentsId: 999 }, { method: "POST" },
+    { resourceType: "mainFrame" }, { resourceType: "xhr" }, { frame: undefined },
+    { frame: { ...dashboard.mainFrame } },
+    { frame: { url: `${origin}/`, parent: dashboard.mainFrame, isMainFrame: false } },
+    { url: `${valid.url}?query` }, { url: `${valid.url}#fragment` },
+    { url: "tibotattle-background://image/invalid" },
+    { url: "tibotattle-background://other/11111111-1111-4111-8111-111111111111" },
+  ]) check({ ...valid, ...patch }, true);
+  for (const url of ["https://example.test/", `${origin}/app.js`, `${origin}/?query`, "http://127.0.0.1:3457/"]) {
+    dashboard.mainFrame.url = url;
+    check(valid, true);
+  }
+  dashboard.mainFrame.url = `${origin}/`;
+  installed.remove();
+  check(valid, true);
+  keeperInstallation.remove();
+  assert.equal(session.webRequest.listener, null);
 });
 
 test("loopback session denies Blob downloads and clipboard writes for every window", () => {
@@ -2029,12 +2074,11 @@ test("desktop lifecycle composes secure window, tray, single instance, retry, an
   const secondDashboard = dashboardWindowsForTest(windows)[1];
   assert.deepEqual(secondDashboard.loaded, ["http://127.0.0.1:4002/"]);
   assert.equal(lifecycle.showSettingsWindow(), true);
-  const settings = windows.at(-1);
-  settings.emit("ready-to-show");
-  assert.equal(settings.visible, true);
+  assert.equal(windows.length, 4, "Settings reuses the dashboard");
+  secondDashboard.emit("ready-to-show");
+  assert.equal(secondDashboard.visible, true);
   assert.equal(lifecycle.navigateDashboardSection("community"), true);
   assert.equal(secondDashboard.visible, true);
-  assert.equal(settings.visible, false);
   assert.deepEqual(secondDashboard.webContents.sent.at(-1), {
     channel: "tibotattle:desktop-command:v1",
     command: { command: "dashboardSection", section: "community" },
@@ -2508,206 +2552,69 @@ test("dashboard failure diagnostic retains its first closed failure and ignores 
   await lifecycle.dispose();
 });
 
-for (const failureMode of ["loadURL", "did-fail-load", "render-process-gone"]) {
-  test(`Settings ${failureMode} destroys the failed window and permits a fresh retry`, async () => {
-    const app = new FakeApp();
-    const windows = [];
-    const supervisor = {
-      setUnexpectedExitHandler() {},
-      async start() {
-        return { origin: "http://127.0.0.1:4081" };
-      },
-      async stop() {},
-    };
-    let failFirstSettingsLoad = failureMode === "loadURL";
-    class SettingsFailWindow extends FakeWindow {
-      constructor(options) {
-        super(options);
-        windows.push(this);
-      }
-
-      loadURL(url) {
-        this.loaded.push(url);
-        if (url.includes("electron-settings.html") && failFirstSettingsLoad) {
-          failFirstSettingsLoad = false;
-          return Promise.reject(new Error("private Settings load detail"));
-        }
-        return Promise.resolve();
-      }
-    }
-    const lifecycle = createDesktopLifecycle({
-      app,
-      BrowserWindow: SettingsFailWindow,
-      Tray: FakeTray,
-      Menu: { buildFromTemplate: (template) => ({ template }) },
-      icon: "empty-icon",
-      preloadPath: "/private/preload.cjs",
-      supervisor,
-    });
-
-    await lifecycle.start();
-    assert.equal(lifecycle.showSettingsWindow(), true);
-    const firstSettings = windows.find((candidate) => (
-      candidate.loaded[0]?.includes("electron-settings.html")
-    ));
-    assert.notEqual(firstSettings, undefined);
-    if (failureMode === "did-fail-load") {
-      firstSettings.webContents.emit(
-        failureMode,
-        {},
-        -2,
-        "private Settings detail",
-        "http://127.0.0.1:4081/electron-settings.html",
-        true,
-      );
-    } else if (failureMode === "render-process-gone") {
-      firstSettings.webContents.emit(failureMode, {}, {
-        reason: "crashed",
-        exitCode: 17,
-        privateDetail: "/private/secret",
-      });
-    } else {
-      await nextTick();
-    }
-    assert.equal(firstSettings.destroyed, true);
-    assert.equal(lifecycle.state.hasSettingsWindow, false);
-    assert.equal(lifecycle.state.started, true);
-    assert.equal(firstSettings.webContents.listenerCount("did-fail-load"), 0);
-    assert.equal(firstSettings.webContents.listenerCount("render-process-gone"), 0);
-    assert.doesNotMatch(firstSettings.loaded.join("\n"), /private|secret|detail/u);
-
-    assert.equal(lifecycle.showSettingsWindow(), true);
-    const replacement = windows.find((candidate) => (
-      candidate !== firstSettings
-        && candidate.loaded[0]?.includes("electron-settings.html")
-    ));
-    assert.notEqual(replacement, undefined);
-    replacement.emit("ready-to-show");
-    assert.equal(replacement.visible, true);
-    assert.equal(lifecycle.state.hasSettingsWindow, true);
-    await lifecycle.dispose();
-  });
-}
-
-test("Settings hide intent blocks late load completion until explicit reopen", async () => {
-  const app = new FakeApp();
+test("Settings requests before readiness use the dashboard without constructing another window", async () => {
   const windows = [];
-  const supervisor = {
-    setUnexpectedExitHandler() {},
-    async start() {
-      return { origin: "http://127.0.0.1:4082" };
-    },
-    async stop() {},
-  };
-  let resolveSettingsLoad;
-  class DeferredSettingsWindow extends FakeWindow {
-    constructor(options) {
-      super(options);
-      windows.push(this);
-    }
-
-    loadURL(url) {
-      this.loaded.push(url);
-      if (url.includes("electron-settings.html")) {
-        return new Promise((resolve) => {
-          resolveSettingsLoad = resolve;
-        });
-      }
-      return Promise.resolve();
-    }
-  }
   const lifecycle = createDesktopLifecycle({
-    app,
-    BrowserWindow: DeferredSettingsWindow,
+    app: new FakeApp(),
+    BrowserWindow: class extends FakeWindow {
+      constructor(options) { super(options); windows.push(this); }
+    },
     Tray: FakeTray,
     Menu: { buildFromTemplate: (template) => ({ template }) },
-    icon: "empty-icon",
-    preloadPath: "/private/preload.cjs",
-    supervisor,
+    icon: "empty-icon", preloadPath: "/private/preload.cjs",
+    supervisor: {
+      setUnexpectedExitHandler() {},
+      async start() { return { origin: "http://127.0.0.1:4082" }; },
+      async stop() {},
+    },
   });
-
   await lifecycle.start();
-  assert.equal(lifecycle.showSettingsWindow(), true);
-  const settings = windows.find((candidate) => (
-    candidate.loaded[0]?.includes("electron-settings.html")
-  ));
-  assert.notEqual(settings, undefined);
-  assert.equal(typeof resolveSettingsLoad, "function");
-  settings.emit("ready-to-show");
-  assert.equal(settings.visible, true);
-  assert.equal(lifecycle.hideSettingsWindow(), true);
-  assert.equal(settings.visible, false);
-
-  resolveSettingsLoad();
-  await nextTick();
-  assert.equal(settings.visible, false, "late load completion must respect the hidden intent");
-
-  assert.equal(lifecycle.showSettingsWindow(), true);
-  assert.equal(settings.visible, true, "an explicit reopen restores visibility");
+  const dashboard = dashboardWindowsForTest(windows)[0];
+  assert.equal(lifecycle.showSettingsWindow("tray"), true);
+  assert.equal(lifecycle.showSettingsWindow("notifications"), true);
+  assert.equal(windows.length, 2);
+  assert.equal(dashboard.webContents.sent.length, 0);
+  dashboard.emit("ready-to-show");
+  assert.deepEqual(dashboard.webContents.sent, [{
+    channel: "tibotattle:desktop-command:v1",
+    command: { command: "dashboardSection", section: "settings", settingsSection: "notifications" },
+  }]);
+  dashboard.emit("ready-to-show");
+  assert.equal(dashboard.webContents.sent.length, 1);
+  assert.equal(lifecycle.state.hasSettingsWindow, false);
   await lifecycle.dispose();
 });
 
-test("Settings close intent blocks deferred readiness until explicit reopen", async () => {
-  const app = new FakeApp();
+test("navigating away before dashboard readiness cancels an earlier Settings request", async () => {
   const windows = [];
-  const supervisor = {
-    setUnexpectedExitHandler() {},
-    async start() {
-      return { origin: "http://127.0.0.1:4083" };
-    },
-    async stop() {},
-  };
-  let resolveSettingsLoad;
-  class DeferredSettingsWindow extends FakeWindow {
-    constructor(options) {
-      super(options);
-      windows.push(this);
-    }
-
-    loadURL(url) {
-      this.loaded.push(url);
-      if (url.includes("electron-settings.html")) {
-        return new Promise((resolve) => {
-          resolveSettingsLoad = resolve;
-        });
-      }
-      return Promise.resolve();
-    }
-  }
   const lifecycle = createDesktopLifecycle({
-    app,
-    BrowserWindow: DeferredSettingsWindow,
+    app: new FakeApp(),
+    BrowserWindow: class extends FakeWindow {
+      constructor(options) { super(options); windows.push(this); }
+    },
     Tray: FakeTray,
     Menu: { buildFromTemplate: (template) => ({ template }) },
-    icon: "empty-icon",
-    preloadPath: "/private/preload.cjs",
-    supervisor,
-  });
-
-  await lifecycle.start();
-  assert.equal(lifecycle.showSettingsWindow(), true);
-  const settings = windows.find((candidate) => (
-    candidate.loaded[0]?.includes("electron-settings.html")
-  ));
-  assert.notEqual(settings, undefined);
-  assert.equal(typeof resolveSettingsLoad, "function");
-  let closePrevented = false;
-  settings.emit("close", {
-    preventDefault() {
-      closePrevented = true;
+    icon: "empty-icon", preloadPath: "/private/preload.cjs",
+    supervisor: {
+      setUnexpectedExitHandler() {},
+      async start() { return { origin: "http://127.0.0.1:4082" }; },
+      async stop() {},
     },
   });
-  assert.equal(closePrevented, true);
-  assert.equal(settings.visible, false);
-
-  settings.emit("ready-to-show");
-  assert.equal(settings.visible, false, "late readiness must respect the closed intent");
-  resolveSettingsLoad();
-  await nextTick();
-  assert.equal(settings.visible, false);
-
-  assert.equal(lifecycle.showSettingsWindow(), true);
-  assert.equal(settings.visible, true, "an explicit reopen restores visibility");
+  await lifecycle.start();
+  const dashboard = dashboardWindowsForTest(windows)[0];
+  assert.equal(lifecycle.showSettingsWindow("tray"), true);
+  assert.equal(lifecycle.navigateDashboardSection("usage"), true);
+  assert.equal(windows.length, 2);
+  assert.deepEqual(dashboard.webContents.sent.at(-1).command, { command: "dashboardSection", section: "usage" });
+  dashboard.emit("ready-to-show");
+  assert.deepEqual(dashboard.webContents.sent, [{
+    channel: "tibotattle:desktop-command:v1",
+    command: { command: "dashboardSection", section: "usage" },
+  }]);
+  dashboard.emit("ready-to-show");
+  assert.equal(dashboard.webContents.sent.length, 1);
+  assert.equal(lifecycle.state.hasSettingsWindow, false);
   await lifecycle.dispose();
 });
 
@@ -2771,415 +2678,127 @@ test("desktop lifecycle invalidates a dead companion, auto-restarts once, then r
   assert.equal(supervisor.starts, 3);
 });
 
-test("desktop lifecycle owns a bounded Settings window and authorizes only its top frame", async () => {
+test("Settings routes menu and tray entries to the dashboard and requires its exact live root frame", async () => {
   const app = new FakeApp();
-  const windows = [];
-  const trays = [];
-  const applicationMenus = [];
+  const windows = [], trays = [], menus = [];
   const supervisor = {
     starts: 0,
-    stops: 0,
-    exitHandler: null,
-    setUnexpectedExitHandler(handler) {
-      this.exitHandler = handler;
-    },
-    async start() {
-      this.starts += 1;
-      return { origin: `http://127.0.0.1:${4700 + this.starts}` };
-    },
-    async stop() {
-      this.stops += 1;
-    },
+    setUnexpectedExitHandler(handler) { this.exitHandler = handler; },
+    async start() { this.starts += 1; return { origin: `http://127.0.0.1:${4700 + this.starts}` }; },
+    async stop() {},
   };
   const lifecycle = createDesktopLifecycle({
     app,
     BrowserWindow: class extends FakeWindow {
-      constructor(options) {
-        super(options);
-        windows.push(this);
-      }
+      constructor(options) { super(options); windows.push(this); }
     },
     Tray: class extends FakeTray {
-      constructor(icon) {
-        super(icon);
-        trays.push(this);
-      }
+      constructor(icon) { super(icon); trays.push(this); }
     },
     Menu: {
       buildFromTemplate: (template) => ({ template }),
-      setApplicationMenu(menu) {
-        applicationMenus.push(menu);
-      },
+      setApplicationMenu(menu) { menus.push(menu); },
     },
-    platform: "win32",
-    icon: "empty-icon",
-    preloadPath: "/private/preload.cjs",
-    supervisor,
+    platform: "win32", desktopLocale: "en", icon: "empty-icon", preloadPath: "/private/preload.cjs", supervisor,
   });
-
   await lifecycle.start();
-  assert.deepEqual(lifecycle.state, {
-    started: true,
-    quitting: false,
-    preparingForUpdate: false,
-    primaryInstance: true,
-    hasWindow: true,
-    dashboardReady: false,
-    windowVisible: false,
-    hasRecoveryWindow: false,
-    recoveryWindowVisible: false,
-    recoveryStatus: null,
-    active: true,
-    hasTray: true,
-    hasSettingsWindow: false,
-    settingsWindowVisible: false,
-    origin: "http://127.0.0.1:4701",
-  });
-
-  assert.equal(lifecycle.showSettingsWindow(), true);
-  assert.equal(windows.length, 3);
-  const settings = windows.find((candidate) => (
-    candidate.loaded[0]?.includes("electron-settings.html")
-  ));
-  assert.notEqual(settings, undefined);
-  assert.deepEqual(settings.loaded, [
-    "http://127.0.0.1:4701/electron-settings.html#general",
-  ]);
-  assert.equal(settings.options.webPreferences.nodeIntegration, false);
-  assert.equal(settings.options.webPreferences.contextIsolation, true);
-  assert.equal(settings.options.webPreferences.sandbox, true);
-  assert.equal(settings.options.webPreferences.preload, "/private/preload.cjs");
-  settings.emit("ready-to-show");
-  assert.equal(settings.visible, true);
-  assert.equal(lifecycle.state.hasSettingsWindow, true);
-  assert.equal(lifecycle.state.settingsWindowVisible, true);
-
-  assert.equal(lifecycle.showSettingsWindow("about"), true);
-  assert.equal(windows.length, 3);
-  assert.deepEqual(settings.loaded, [
-    "http://127.0.0.1:4701/electron-settings.html#general",
-    "http://127.0.0.1:4701/electron-settings.html#about",
-  ]);
-  assert.equal(settings.visible, true);
-  assert.equal(lifecycle.showSettingsWindow("data"), true);
-  assert.deepEqual(settings.loaded, [
-    "http://127.0.0.1:4701/electron-settings.html#general",
-    "http://127.0.0.1:4701/electron-settings.html#about",
-    "http://127.0.0.1:4701/electron-settings.html#data",
-  ]);
-  assert.equal(settings.visible, true);
-  assert.throws(
-    () => lifecycle.showSettingsWindow("unsupported"),
-    /settings section is invalid/u,
-  );
-  assert.equal(windows.length, 3);
-
-  const projectsMenuItem = applicationMenus[0].template.find((item) => item.label === "View")
-    .submenu.find((item) => item.label === "Projects and Threads");
-  projectsMenuItem.click();
-  assert.equal(settings.visible, false);
-  assert.deepEqual(dashboardWindowsForTest(windows)[0].webContents.sent.at(-1), {
+  const dashboard = dashboardWindowsForTest(windows)[0];
+  dashboard.emit("ready-to-show");
+  const expectSection = (section) => assert.deepEqual(dashboard.webContents.sent.at(-1), {
     channel: "tibotattle:desktop-command:v1",
-    command: { command: "dashboardSection", section: "projects" },
+    command: { command: "dashboardSection", section: "settings", settingsSection: section },
   });
-  assert.equal(lifecycle.navigateDashboardSection("#projects"), false);
-
-  const aboutMenuItem = applicationMenus[0].template[0].submenu.find(
-    (item) => item.label === "About TiboTattle",
-  );
-  const settingsMenuItem = applicationMenus[0].template[0].submenu.find(
-    (item) => item.label === "Settings…",
-  );
-  assert.equal(typeof settingsMenuItem.click, "function");
-  settingsMenuItem.click();
-  assert.equal(settings.loaded.at(-1), "http://127.0.0.1:4701/electron-settings.html#general");
-  assert.equal(typeof aboutMenuItem.click, "function");
-  aboutMenuItem.click();
-  assert.equal(settings.loaded.at(-1), "http://127.0.0.1:4701/electron-settings.html#about");
-  const trayAboutItem = trays[0].menu.template.find(
-    (item) => item.label === "About TiboTattle",
-  );
-  const traySettingsItem = trays[0].menu.template.find(
-    (item) => item.label === "Settings…",
-  );
-  assert.equal(typeof traySettingsItem.click, "function");
-  traySettingsItem.click();
-  assert.equal(settings.loaded.at(-1), "http://127.0.0.1:4701/electron-settings.html#general");
-  assert.equal(typeof trayAboutItem.click, "function");
-  trayAboutItem.click();
-  assert.equal(settings.visible, true);
-
+  for (const section of ["general", "tray", "notifications", "data", "about"]) {
+    assert.equal(lifecycle.showSettingsWindow(section), true);
+    expectSection(section);
+    assert.equal(windows.length, 2);
+    assert.equal(dashboard.visible, true);
+  }
+  assert.throws(() => lifecycle.showSettingsWindow("unsupported"), /settings section is invalid/u);
+  assert.equal(lifecycle.state.hasSettingsWindow, false);
+  assert.equal(lifecycle.state.settingsWindowVisible, false);
+  for (const menu of [menus[0].template.flatMap((item) => item.submenu ?? []), trays[0].menu.template]) {
+    menu.find((item) => item.label === "Settings…").click();
+    expectSection("general");
+    menu.find((item) => item.label === "About TiboTattle").click();
+    expectSection("about");
+  }
+  assert.equal(lifecycle.navigateDashboardSection("usage"), true);
+  assert.equal(lifecycle.navigateDashboardSection("#usage"), false);
+  assert.deepEqual(dashboard.webContents.sent.at(-1).command, { command: "dashboardSection", section: "usage" });
   assert.equal(lifecycle.setDesktopLanguage("zh-Hans"), true);
-  const localizedApplicationMenu = applicationMenus.at(-1).template[0].submenu;
-  assert.ok(localizedApplicationMenu.some((item) => item.label === "关于 TiboTattle"));
-  assert.ok(trays[0].menu.template.some((item) => item.label === "打开 TiboTattle"));
+  assert.ok(menus.at(-1).template.flatMap((item) => item.submenu ?? []).some((item) => item.label === "\u5173\u4e8e TiboTattle"));
+  assert.ok(trays[0].menu.template.some((item) => item.label === "\u6253\u5f00 TiboTattle"));
   assert.equal(lifecycle.setDesktopLanguage("es"), true);
-  assert.ok(applicationMenus.at(-1).template[0].submenu.some((item) => item.label === "Acerca de TiboTattle"));
-
-  const dashboardCommands = [];
-  const settingsCommands = [];
-  dashboardWindowsForTest(windows)[0].webContents.send = (channel, command) => {
-    dashboardCommands.push([channel, command]);
-  };
-  settings.webContents.send = (channel, command) => {
-    settingsCommands.push([channel, command]);
-  };
-  assert.equal(lifecycle.sendDashboardCommand({ command: "language", value: "zh-Hans" }), true);
-  assert.deepEqual(dashboardCommands.at(-1), [
-    "tibotattle:desktop-command:v1",
-    { command: "language", value: "zh-Hans" },
-  ]);
-  assert.deepEqual(settingsCommands.at(-1), [
-    "tibotattle:desktop-command:v1",
-    { command: "language", value: "zh-Hans" },
-  ]);
-  assert.equal(lifecycle.sendDashboardCommand({ command: "refresh" }), true);
-  assert.deepEqual(dashboardCommands.at(-1), [
-    "tibotattle:desktop-command:v1",
-    { command: "refresh" },
-  ]);
-  assert.equal(settingsCommands.length, 1, "refresh must remain dashboard-only");
+  assert.ok(menus.at(-1).template.flatMap((item) => item.submenu ?? []).some((item) => item.label === "Acerca de TiboTattle"));
   assert.equal(lifecycle.refreshSettings(), true);
-  assert.deepEqual(settingsCommands.at(-1), [
-    "tibotattle:desktop-command:v1",
-    { command: "refresh" },
-  ]);
-  assert.equal(dashboardCommands.length, 2, "Settings refresh must not broadcast to the dashboard");
-
-  let closePrevented = false;
-  settings.emit("close", {
-    preventDefault() {
-      closePrevented = true;
-    },
-  });
-  assert.equal(closePrevented, true);
-  assert.equal(settings.visible, false);
-  assert.equal(settings.destroyed, false);
-  assert.equal(app.quitCalls, 0);
-
-  const primaryContents = dashboardWindowsForTest(windows)[0].webContents;
-  const settingsContents = settings.webContents;
-  settingsContents.getURL = () => settings.loaded.at(-1) ?? "";
-  assert.equal(lifecycle.isAuthorizedDesktopSender(primaryContents), true);
-  assert.equal(lifecycle.isAuthorizedDesktopSender(settingsContents), true);
-  assert.equal(lifecycle.isAuthorizedDashboardSender(primaryContents), true);
-  assert.equal(lifecycle.isAuthorizedDashboardSender(settingsContents), false);
-  assert.equal(lifecycle.isAuthorizedDesktopSender({}), false);
-  assert.equal(
-    lifecycle.isAuthorizedDesktopFrame(
-      primaryContents.mainFrame,
-      { sender: primaryContents },
-    ),
-    true,
-  );
-  assert.equal(
-    lifecycle.isAuthorizedDesktopFrame(
-      settingsContents.mainFrame,
-      { sender: settingsContents },
-    ),
-    true,
-  );
-  assert.equal(
-    lifecycle.isAuthorizedDashboardFrame(
-      primaryContents.mainFrame,
-      { sender: primaryContents },
-    ),
-    true,
-  );
-  assert.equal(
-    lifecycle.isAuthorizedDashboardFrame(
-      settingsContents.mainFrame,
-      { sender: settingsContents },
-    ),
-    false,
-  );
-  assert.equal(
-    lifecycle.isAuthorizedSettingsFrame(
-      settingsContents.mainFrame,
-      { sender: settingsContents },
-    ),
-    true,
-  );
-  assert.equal(
-    lifecycle.isAuthorizedSettingsFrame(
-      primaryContents.mainFrame,
-      { sender: primaryContents },
-    ),
-    false,
-  );
-  settingsContents.getURL = () => "http://user:pass@127.0.0.1:4701/electron-settings.html#general";
-  assert.equal(
-    lifecycle.isAuthorizedSettingsFrame(
-      settingsContents.mainFrame,
-      { sender: settingsContents },
-    ),
-    false,
-    "credentials in the live Settings URL must fail closed",
-  );
-  settingsContents.getURL = () => settings.loaded.at(-1) ?? "";
-  assert.equal(
-    lifecycle.isAuthorizedDesktopFrame(
-      { isMainFrame: false, parent: primaryContents.mainFrame },
-      { sender: primaryContents },
-    ),
-    false,
-  );
-  assert.equal(
-    lifecycle.isAuthorizedDesktopFrame(
-      primaryContents.mainFrame,
-      { sender: settingsContents },
-    ),
-    false,
-  );
-  assert.equal(lifecycle.isAuthorizedDesktopFrame(primaryContents.mainFrame), false);
-
-  // Companion failure invalidates the separate settings origin before the
-  // bounded automatic restart is queued.
-  lifecycle.showSettingsWindow("notifications");
-  assert.equal(lifecycle.state.hasSettingsWindow, true);
+  assert.deepEqual(dashboard.webContents.sent.at(-1).command, { command: "settingsChanged" });
+  const contents = dashboard.webContents, frame = contents.mainFrame, event = { sender: contents };
+  assert.equal(lifecycle.isAuthorizedDesktopSender(contents), true);
+  assert.equal(lifecycle.isAuthorizedDashboardSender(contents), true);
+  for (const hash of ["#overview", "#settings/notifications"]) {
+    contents.getURL = () => `http://127.0.0.1:4701/${hash}`;
+    assert.equal(lifecycle.isAuthorizedSettingsFrame(frame, event), true, "hash is not an authorization boundary");
+  }
+  for (const url of ["https://example.test/", "http://127.0.0.1:4702/", "http://localhost:4701/",
+    "http://127.0.0.1:4701/electron-settings.html", "http://127.0.0.1:4701/app.js",
+    "http://127.0.0.1:4701/?settings", "http://user:pass@127.0.0.1:4701/"]) {
+    contents.getURL = () => url;
+    assert.equal(lifecycle.isAuthorizedSettingsFrame(frame, event), false, url);
+    assert.equal(lifecycle.isAuthorizedDesktopFrame(frame, event), false, url);
+  }
+  contents.getURL = () => "http://127.0.0.1:4701/";
+  assert.equal(lifecycle.isAuthorizedSettingsFrame({ isMainFrame: false, parent: frame }, event), false);
+  assert.equal(lifecycle.isAuthorizedSettingsFrame({ isMainFrame: true, parent: null }, event), false);
+  assert.equal(lifecycle.isAuthorizedSettingsFrame(frame, { sender: {} }), false);
+  assert.equal(lifecycle.isAuthorizedSettingsFrame(frame), false);
   supervisor.exitHandler({ kind: "companion_exit" });
-  assert.equal(settings.destroyed, true);
-  assert.equal(lifecycle.state.hasSettingsWindow, false);
-  assert.equal(lifecycle.isAuthorizedDesktopSender(settingsContents), false);
-  await new Promise((resolve) => setImmediate(resolve));
-
-  lifecycle.showSettingsWindow();
-  const restartedSettings = windows.at(-1);
-  assert.notEqual(restartedSettings, settings);
-  restartedSettings.emit("ready-to-show");
-  await lifecycle.retry();
-  assert.equal(restartedSettings.destroyed, true);
-  assert.equal(lifecycle.state.hasSettingsWindow, false);
-
-  lifecycle.showSettingsWindow();
-  const finalSettings = windows.at(-1);
+  assert.equal(dashboard.destroyed, true);
+  assert.equal(lifecycle.isAuthorizedSettingsFrame(frame, event), false);
+  assert.equal(lifecycle.isAuthorizedDesktopSender(contents), false);
+  await nextTick();
+  const replacement = dashboardWindowsForTest(windows)[1];
+  replacement.emit("ready-to-show");
+  assert.equal(lifecycle.showSettingsWindow("data"), true);
+  assert.equal(windows.length, 4);
+  assert.deepEqual(replacement.webContents.sent.at(-1).command, {
+    command: "dashboardSection", section: "settings", settingsSection: "data",
+  });
+  assert.equal(lifecycle.isAuthorizedSettingsFrame(frame, event), false);
   await lifecycle.requestQuit();
-  assert.equal(finalSettings.destroyed, true);
-  assert.equal(lifecycle.state.hasSettingsWindow, false);
+  assert.equal(replacement.destroyed, true);
   assert.equal(app.quitCalls, 1);
 });
 
-test("desktop lifecycle clears a destroyed Settings window without reading invalidated Electron properties", async () => {
-  const app = new FakeApp();
-  const windows = [];
-  class DestroyedSettingsWindow extends FakeWindow {
-    get webContents() {
-      if (this.destroyed) throw new Error("Object has been destroyed");
-      return this._webContents;
-    }
-
-    set webContents(value) {
-      this._webContents = value;
-    }
-  }
-  const supervisor = {
-    setUnexpectedExitHandler() {},
-    async start() {
-      return { origin: "http://127.0.0.1:4711" };
-    },
-    async stop() {},
-  };
-  const lifecycle = createDesktopLifecycle({
-    app,
-    BrowserWindow: class extends DestroyedSettingsWindow {
-      constructor(options) {
-        super(options);
-        windows.push(this);
-      }
-    },
-    Tray: FakeTray,
-    Menu: { buildFromTemplate: (template) => ({ template }) },
-    icon: "empty-icon",
-    preloadPath: "/private/preload.cjs",
-    supervisor,
-  });
-
-  await lifecycle.start();
-  assert.equal(lifecycle.showSettingsWindow(), true);
-  const settings = windows.find((candidate) => (
-    candidate.loaded[0]?.includes("electron-settings.html")
-  ));
-  assert.notEqual(settings, undefined);
-  settings.destroyed = true;
-  assert.doesNotThrow(() => settings.emit("closed"));
-  assert.equal(lifecycle.state.hasSettingsWindow, false);
-  await lifecycle.dispose();
-});
-
-test("closing Settings retains the dashboard's shared-session loopback filtering", async () => {
-  const app = new FakeApp();
+test("Settings navigation retains shared-session loopback filtering", async () => {
   const windows = [];
   const sharedSession = {
-    setPermissionRequestHandler(handler) {
-      this.permissionHandler = handler;
-    },
-    setPermissionCheckHandler(handler) {
-      this.permissionCheckHandler = handler;
-    },
-    webRequest: {
-      onBeforeRequest(filter, listener) {
-        this.filter = filter;
-        this.listener = listener;
-      },
-    },
+    setPermissionRequestHandler() {}, setPermissionCheckHandler() {},
+    webRequest: { onBeforeRequest(filter, listener) { this.listener = listener; } },
   };
-  const supervisor = {
-    setUnexpectedExitHandler() {},
-    async start() {
-      return { origin: "http://127.0.0.1:4751" };
-    },
-    async stop() {},
-  };
-  class SharedSessionWindow extends FakeWindow {
-    constructor(options) {
-      super(options);
-      this.webContents.session = sharedSession;
-      windows.push(this);
-    }
-  }
   const lifecycle = createDesktopLifecycle({
-    app,
-    BrowserWindow: SharedSessionWindow,
-    Tray: FakeTray,
-    Menu: { buildFromTemplate: (template) => ({ template }) },
-    icon: "empty-icon",
-    preloadPath: "/private/preload.cjs",
-    supervisor,
+    app: new FakeApp(),
+    BrowserWindow: class extends FakeWindow {
+      constructor(options) { super(options); this.webContents.session = sharedSession; windows.push(this); }
+    },
+    Tray: FakeTray, Menu: { buildFromTemplate: (template) => ({ template }) },
+    icon: "empty-icon", preloadPath: "/private/preload.cjs",
+    supervisor: {
+      setUnexpectedExitHandler() {},
+      async start() { return { origin: "http://127.0.0.1:4751" }; },
+      async stop() {},
+    },
   });
-
   await lifecycle.start();
-  assert.equal(typeof sharedSession.webRequest.listener, "function");
-  const beforeSettingsClose = [];
-  sharedSession.webRequest.listener(
-    { url: "https://example.test/" },
-    (decision) => beforeSettingsClose.push(decision),
-  );
-  assert.deepEqual(beforeSettingsClose, [{ cancel: true }]);
-
+  dashboardWindowsForTest(windows)[0].emit("ready-to-show");
   assert.equal(lifecycle.showSettingsWindow(), true);
-  const settings = windows.find((candidate) => (
-    candidate.loaded[0]?.includes("electron-settings.html")
-  ));
-  assert.notEqual(settings, undefined);
-  settings.emit("closed");
-  assert.equal(lifecycle.state.hasSettingsWindow, false);
-
-  // The Settings release only drops its reference. The dashboard's
-  // session-level handler must continue to reject remote requests.
-  assert.equal(typeof sharedSession.webRequest.listener, "function");
-  const afterSettingsClose = [];
-  sharedSession.webRequest.listener(
-    { url: "https://example.test/" },
-    (decision) => afterSettingsClose.push(decision),
-  );
-  assert.deepEqual(afterSettingsClose, [{ cancel: true }]);
-  const dashboardRequest = [];
-  sharedSession.webRequest.listener(
-    { url: "http://127.0.0.1:4751/api/local/health" },
-    (decision) => dashboardRequest.push(decision),
-  );
-  assert.deepEqual(dashboardRequest, [{ cancel: false }]);
-
+  assert.equal(lifecycle.navigateDashboardSection("overview"), true);
+  assert.equal(windows.length, 2);
+  for (const [url, cancel] of [["https://example.test/", true], ["http://127.0.0.1:4751/api/local/health", false]]) {
+    const decisions = [];
+    sharedSession.webRequest.listener({ url }, (value) => decisions.push(value));
+    assert.deepEqual(decisions, [{ cancel }]);
+  }
   await lifecycle.dispose();
   assert.equal(sharedSession.webRequest.listener, null);
 });
@@ -3557,6 +3176,12 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "version",
     "onCommand",
     "getSettings",
+    "getApplicationMenu",
+    "openApplicationMenu",
+    "getWindowBackground",
+    "chooseWindowBackground",
+    "restoreWindowBackground",
+    "setWindowBackground",
     "getCodexHomesForSettings",
     "openSettings",
     "openTraySettings",
@@ -3591,6 +3216,17 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "refreshSettled",
   ]);
   assert.equal(bridge.version, "v1");
+  await bridge.getApplicationMenu();
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())).request, { action: "getApplicationMenu", args: {} });
+  await bridge.openApplicationMenu({ menu: "file", x: 12, y: 40 });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())).request, { action: "openApplicationMenu", args: { menu: "file", x: 12, y: 40 } });
+  for (const args of [{ menu: "quit", x: 0, y: 40 }, { menu: "file", x: -1, y: 40 },
+    { menu: "file", x: 0, y: NaN }, { menu: "file", x: 0, y: 40, command: "quit" }]) {
+    await assert.rejects(bridge.openApplicationMenu(args));
+  }
+  await assert.rejects(bridge.getApplicationMenu("file"));
+  await assert.rejects(bridge.openApplicationMenu());
+  await assert.rejects(bridge.openApplicationMenu({ menu: "file", x: 0, y: 40 }, {}));
   await assert.rejects(bridge.sendTestNotification({ body: "arbitrary" }));
   await bridge.sendTestNotification();
   assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())), {
@@ -3604,15 +3240,24 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   commandListener({}, { command: "refresh" });
   commandListener({}, { command: "automaticRefresh", mode: "quick" });
   commandListener({}, { command: "automaticRefresh", mode: "detailed" });
-  for (const section of ["overview", "usage", "allowance", "performance"]) {
+  for (const section of ["overview", "usage", "allowance", "performance", "settings"]) {
     commandListener({}, { command: "dashboardSection", section });
   }
   for (const section of ["weekly", "timeline", "accounting", "projects", "community", "#usage", "usage/", "Usage", ""]) {
     commandListener({}, { command: "dashboardSection", section });
   }
+  commandListener({}, { command: "dashboardSection", section: "settings", settingsSection: "notifications" });
+  commandListener({}, { command: "settingsChanged" });
+  commandListener({}, { command: "dashboardSection", section: "settings", settingsSection: "unknown" });
+  commandListener({}, { command: "dashboardSection", section: "usage", settingsSection: "general" });
+  commandListener({}, { command: "settingsChanged", extra: true });
   commandListener({}, { command: "dashboardSection", section: "usage", search: "unexpected" });
   commandListener({}, { command: "language", value: "es" });
   commandListener({}, { command: "sidebar", collapsed: true });
+  commandListener({}, { command: "windowFullscreen", fullscreen: true });
+  commandListener({}, { command: "windowFullscreen", fullscreen: false });
+  commandListener({}, { command: "windowFullscreen", fullscreen: "true" });
+  commandListener({}, { command: "windowFullscreen", fullscreen: true, extra: true });
   // Retired native-to-renderer commands must not cross the preload boundary.
   commandListener({}, { command: "hostedSignInReturn" });
   commandListener({}, { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" });
@@ -3629,8 +3274,13 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     { command: "dashboardSection", section: "usage" },
     { command: "dashboardSection", section: "allowance" },
     { command: "dashboardSection", section: "performance" },
+    { command: "dashboardSection", section: "settings" },
+    { command: "dashboardSection", section: "settings", settingsSection: "notifications" },
+    { command: "settingsChanged" },
     { command: "language", value: "es" },
     { command: "sidebar", collapsed: true },
+    { command: "windowFullscreen", fullscreen: true },
+    { command: "windowFullscreen", fullscreen: false },
   ]);
   unsubscribe();
   assert.equal(commandListeners.size, 0);
@@ -3652,8 +3302,7 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   await bridge.setRefreshInterval(300);
   await bridge.setStartAtLogin(true);
   await bridge.setNotificationPreferences({
-    enabled: true,
-    threshold: "ninety",
+    threshold: 90,
   });
   await bridge.openSystemSettings("notifications");
   await bridge.openExternal("github");
@@ -3712,7 +3361,7 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
       channel: "tibotattle:desktop:v1",
       request: {
         action: "setNotificationPreferences",
-        args: { enabled: true, threshold: "ninety" },
+        args: { threshold: 90 },
       },
     },
     {
@@ -3736,10 +3385,16 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     { channel: "tibotattle:desktop:v1", request: { action: "refreshSettled", args: { lease: 1 } } },
   ]);
   await assert.rejects(
-    bridge.setNotificationPreferences({ enabled: true, threshold: "ninety", extra: true }),
+    bridge.setNotificationPreferences({ threshold: 90, extra: true }),
     (error) => error?.name === "TypeError",
   );
   for (const operation of [
+    () => bridge.getWindowBackground("extra"),
+    () => bridge.chooseWindowBackground({ path: "unexpected" }),
+    () => bridge.restoreWindowBackground("extra"),
+    () => bridge.setWindowBackground({ color: "url(x)", mask: 35, removeImage: false }),
+    () => bridge.setWindowBackground({ color: "#FFFFFF", mask: 91, removeImage: false }),
+    () => bridge.setWindowBackground({ color: "#FFFFFF", mask: 35, removeImage: false, extra: true }),
     () => bridge.onCommand(() => {}, "extra"),
     () => bridge.setLanguage("en", "extra"),
     () => bridge.toggleSidebar("extra"),
@@ -3753,7 +3408,7 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     () => bridge.setRefreshInterval(300, "extra"),
     () => bridge.setStartAtLogin(true, "extra"),
     () => bridge.setNotificationPreferences(
-      { enabled: true, threshold: "ninety" },
+      { threshold: 90 },
       "extra",
     ),
     () => bridge.openSystemSettings("startup", "extra"),
@@ -3776,6 +3431,21 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     () => bridge.refreshSettled(0),
   ]) {
     await assert.rejects(operation(), (error) => error?.name === "TypeError");
+  }
+  for (const threshold of [-1, 1, 37, 100]) {
+    await bridge.setNotificationPreferences({ threshold });
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())).request.args, { threshold });
+  }
+  for (const threshold of [0, -2, 101, 1.5, "90", NaN, Infinity]) {
+    await assert.rejects(bridge.setNotificationPreferences({ threshold }), (error) => error?.name === "TypeError");
+  }
+  await assert.rejects(bridge.setNotificationPreferences({ enabled: true, threshold: 90 }), (error) => error?.name === "TypeError");
+  for (const seconds of [-1, 60, 2220, 86400 * 30]) {
+    await bridge.setRefreshInterval(seconds);
+    assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())).request.args, { seconds });
+  }
+  for (const seconds of [0, -2, 1, 61, 60.5, "300", Infinity, Number.MAX_SAFE_INTEGER]) {
+    await assert.rejects(bridge.setRefreshInterval(seconds), (error) => error?.name === "TypeError");
   }
   const validRootId = "11111111-1111-4111-8111-111111111111";
   for (const operation of [

@@ -219,6 +219,31 @@
 .cache-matrix-legend > .cache-matrix-less::before { background: #b06544; box-shadow: none; }
 .cache-matrix-note { margin-inline-start: auto; color: var(--muted, #57625c); }
 .cache-matrix-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/*
+ * Monochrome cache evidence (owner direction, 2026-10-18).
+ *
+ * The app keeps the two-outcome encoding - "reused" against "not reused" -
+ * and swaps the blue/orange pair for a dark grey against a light one, so the
+ * cells, the number ticks, the detail values and the legend all still read as
+ * two populations at a glance. The model picker's own identity colours follow
+ * the app's grey ladder for model icons. The public tour keeps the colour
+ * pair above.
+ */
+body:not(.community-site):not(.admin-operator-page) .cache-matrix {
+  --matrix-good: color-mix(in srgb, var(--ink) 88%, transparent);
+  --matrix-poor: color-mix(in srgb, var(--ink) 32%, transparent);
+}
+body:not(.community-site):not(.admin-operator-page) .cache-matrix .cache-matrix-legend > .cache-matrix-more::before { background: var(--matrix-good); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix .cache-matrix-legend > .cache-matrix-less::before { background: var(--matrix-poor); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker option:hover { background: var(--hover); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker option:checked,
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker option:checked:hover { background: var(--track); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker .allowance-model-astra { --matrix-model-color: var(--ink); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker .allowance-model-sol { --matrix-model-color: color-mix(in srgb, var(--ink) 76%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker .allowance-model-terra { --matrix-model-color: color-mix(in srgb, var(--ink) 64%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker .allowance-model-luna { --matrix-model-color: color-mix(in srgb, var(--ink) 52%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker .allowance-model-review { --matrix-model-color: color-mix(in srgb, var(--ink) 40%, transparent); }
+body:not(.community-site):not(.admin-operator-page) .cache-matrix-model-picker .allowance-model-spark { --matrix-model-color: color-mix(in srgb, var(--ink) 46%, transparent); }
 @media (max-width: 540px) {
   .cache-matrix-instrument-head { padding: 9px 14px 5px; gap: 8px; }
   .cache-matrix-model-field { width: 100%; margin-inline-start: 0; }

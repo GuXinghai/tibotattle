@@ -221,6 +221,21 @@ function platformServices() {
   };
 }
 
+function qualifyNotificationFixture(app) {
+  app.getName = () => "TiboTattle";
+  const originalGetPath = app.getPath.bind(app);
+  app.getPath = (name) => ({
+    appData: "C:\\Users\\adam\\AppData\\Roaming",
+    exe: "C:\\Users\\adam\\AppData\\Local\\Programs\\TiboTattle\\TiboTattle.exe",
+  })[name] ?? originalGetPath(name);
+  app.setAppUserModelId = () => {};
+  app.setToastActivatorCLSID = () => {};
+  return { readShortcutLink: () => ({
+        target: "C:\\Users\\adam\\AppData\\Local\\Programs\\TiboTattle\\TiboTattle.exe",
+        appUserModelId: distribution.PRODUCTION_ELECTRON_APP_ID,
+      }) };
+}
+
 function notificationBackendFixture({ value = null, events = [] } = {}) {
   let stored = value;
   return {
@@ -406,7 +421,7 @@ test("normal desktop never forwards retired upload environment variables", async
   } });
   assert.equal(fixture.spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN, undefined);
   assert.equal(fixture.spawnCalls[0].options.env.USAGE_MONITOR_ACCOUNTLESS_ORIGIN, undefined);
-  assert.deepEqual(fixture.spawnCalls[0].options.stdio, ["ignore", "pipe", "pipe"]);
+  assert.deepEqual(fixture.spawnCalls[0].options.stdio, ["ignore", "pipe", "pipe", "ipc"]);
   assert.equal(productionUpdaterLoads, 0, "ordinary desktop startup never loads the production updater");
   await fixture.desktop.lifecycle.requestQuit();
 });
@@ -473,6 +488,79 @@ test("runtime applies the persisted appearance before creating the first window"
     assert.equal(themeSourcesAtWindowCreation[0], appearance);
     await desktop.lifecycle.dispose();
   }
+});
+
+test("single-row titlebar reuses native menus and rejects non-dashboard menu IPC", async () => {
+  const ipcMain = { handle(_channel, handler) { this.handler = handler; }, removeHandler() {} };
+  const popups = [];
+  const nativeMenu = template => ({ items: template.map(item => ({ ...item,
+    ...(item.submenu ? { submenu: { popup(options) { popups.push(options); options.callback(); } } } : {}),
+  })) });
+  class ChromeWindow extends FakeWindow {
+    getContentSize() { return [1000, 700]; }
+    setMenuBarVisibility(value) { this.menuBarVisible = value; }
+  }
+  const { desktop } = await launchFixture({ load: async () => null, runtimeOverrides: {
+    ipcMain, BrowserWindow: ChromeWindow,
+    Menu: { buildFromTemplate: nativeMenu, setApplicationMenu() {} },
+  } });
+  const dashboard = FakeWindow.instances.find(candidate => candidate.options.webPreferences.preload === "/repo/apps/electron/preload.cjs");
+  dashboard.emit("ready-to-show");
+  assert.equal(dashboard.options.titleBarStyle, "hidden");
+  assert.deepEqual(dashboard.options.titleBarOverlay, { color: "#00000000", symbolColor: "#000000", height: 40 });
+  assert.equal(dashboard.menuBarVisible, false);
+  const event = { sender: dashboard.webContents, senderFrame: dashboard.webContents.mainFrame };
+  const metadata = await ipcMain.handler(event, { action: "getApplicationMenu", args: {} });
+  assert.deepEqual(metadata.menus.map(item => item.id), ["file", "edit", "view", "window", "help"]);
+  assert.ok(metadata.menus.every(item => Object.keys(item).join(",") === "id,label"));
+  const request = { action: "openApplicationMenu", args: { menu: "file", x: 16000, y: 16000 } };
+  assert.equal(await ipcMain.handler(event, request), true);
+  assert.equal(popups[0].window, dashboard);
+  assert.equal(popups[0].x, 999); assert.equal(popups[0].y, 699);
+  await assert.rejects(ipcMain.handler(event, { ...request, args: { menu: "quit", x: 0, y: 40 } }),
+    error => error.code === "desktop_ipc_invalid_request");
+  const requests = [request, { action: "getApplicationMenu", args: {} }];
+  for (const selected of requests) {
+    await assert.rejects(ipcMain.handler({ ...event, sender: {} }, selected), error => error.code === "desktop_ipc_untrusted_context");
+    await assert.rejects(ipcMain.handler({ ...event, senderFrame: { parent: event.senderFrame, isMainFrame: false } }, selected), error => error.code === "desktop_ipc_untrusted_context");
+    for (const url of ["https://example.test/", "http://127.0.0.1:4811/app.js", "http://127.0.0.1:4811/?query"]) {
+      dashboard.webContents.getURL = () => url;
+      await assert.rejects(ipcMain.handler(event, selected), error => error.code === "desktop_ipc_untrusted_context");
+    }
+    dashboard.webContents.getURL = () => "http://127.0.0.1:4811/";
+  }
+  assert.equal(popups.length, 1);
+  // Native transition events can precede the corresponding getter update.
+  dashboard.isFullScreen = () => false;
+  dashboard.emit("enter-full-screen");
+  assert.deepEqual(dashboard.webContents.commands.at(-1).value, { command: "windowFullscreen", fullscreen: true });
+  dashboard.isFullScreen = () => true;
+  assert.equal((await desktop.controller.handlers.getApplicationMenu()).fullscreen, true);
+  dashboard.emit("leave-full-screen");
+  assert.deepEqual(dashboard.webContents.commands.at(-1).value, { command: "windowFullscreen", fullscreen: false });
+  dashboard.isFullScreen = () => false;
+  await desktop.controller.handlers.setLanguage({ value: "zh-Hans" });
+  assert.equal(dashboard.menuBarVisible, false);
+  assert.equal((await ipcMain.handler(event, { action: "getApplicationMenu", args: {} })).menus[0].label, "文件");
+  await desktop.lifecycle.dispose();
+});
+
+test("window background mutations reject untrusted frames before any picker or persistence runs", async () => {
+  const ipcMain = { handle(_channel, handler) { this.handler = handler; }, removeHandler() {} };
+  const { desktop } = await launchFixture({ load: async () => null, runtimeOverrides: { ipcMain } });
+  const dashboard = FakeWindow.instances.find(candidate => candidate.options.webPreferences.preload === "/repo/apps/electron/preload.cjs");
+  dashboard.emit("ready-to-show");
+  const event = { sender: dashboard.webContents, senderFrame: dashboard.webContents.mainFrame };
+  for (const request of [
+    { action: "setWindowBackground", args: { value: { color: "#F0F9FF", mask: 35, removeImage: false } } },
+    { action: "chooseWindowBackground", args: {} },
+    { action: "restoreWindowBackground", args: {} },
+  ]) {
+    const childEvent = { sender: dashboard.webContents, senderFrame: { isMainFrame: false, parent: dashboard.webContents.mainFrame } };
+    await assert.rejects(ipcMain.handler(childEvent, request), error => error?.code === "desktop_ipc_untrusted_context");
+  }
+  await assert.rejects(ipcMain.handler(event, { action: "chooseWindowBackground", args: { path: "unexpected" } }), error => error?.code === "desktop_ipc_invalid_request");
+  await desktop.lifecycle.dispose();
 });
 
 test("runtime accepts Codex handoff only from the ready dashboard main frame", async () => {
@@ -887,17 +975,18 @@ test("runtime keeps policy persistence separate and delivers one localized cross
   const policyBackend = notificationBackendFixture({ events: policyEvents });
   const app = new FakeApp();
   app.isPackaged = true;
+  const notificationShell = qualifyNotificationFixture(app);
   const fixture = await launchFixture({
     app,
-    runtimeOverrides: { Notification: fake.Notification },
+    runtimeOverrides: { Notification: fake.Notification, shell: notificationShell },
+    environment: { USERPROFILE: "C:\\Users\\adam", USAGE_MONITOR_RESOURCE_ROOT: "/repo" },
     notificationBackend: policyBackend,
     load: async () => null,
   });
   assert.deepEqual(policyEvents.slice(0, 2), ["load", "save"]);
   await fixture.desktop.controller.handlers.setLanguage({ value: "es" });
   await fixture.desktop.notificationCoordinator.setPreferences({
-    enabled: true,
-    threshold: "ninety",
+    threshold: 90,
   });
   const first = await fixture.desktop.notificationCoordinator.evaluate(shellStatus({
     usedPercent: 40,
@@ -916,7 +1005,7 @@ test("runtime keeps policy persistence separate and delivers one localized cross
   assert.equal(duplicate.outcome, "no_crossing");
   assert.equal(fake.shown.length, 1);
   assert.equal(fake.shown[0].title, "El uso de la cuota alcanzó el 90 %");
-  assert.match(fake.shown[0].body, /superó el umbral/u);
+  assert.match(fake.shown[0].body, /umbral de uso del 90 %/u);
   assert.ok(policyEvents.includes("save"));
   const recovery = await fixture.desktop.notificationCoordinator.evaluate({
     schemaVersion: DESKTOP_SHELL_STATUS_SCHEMA_VERSION,
@@ -1123,7 +1212,7 @@ test("Windows qualification rejects injected notification persistence", async ()
 });
 
 
-test("runtime authorizes a manual notification test only from the live Settings frame", async () => {
+test("runtime grants Settings actions only to the trusted live dashboard top frame", async () => {
   const fake = fakeNotification();
   const ipcMain = {
     handler: null,
@@ -1131,46 +1220,56 @@ test("runtime authorizes a manual notification test only from the live Settings 
       assert.equal(channel, "tibotattle:desktop:v1");
       this.handler = handler;
     },
-    removeHandler() {
-      this.handler = null;
-    },
+    removeHandler() { this.handler = null; },
   };
   const app = new FakeApp();
   app.isPackaged = true;
+  const notificationShell = qualifyNotificationFixture(app);
   const { desktop } = await launchFixture({
     app,
     load: async () => null,
-    runtimeOverrides: { ipcMain, Notification: fake.Notification },
+    runtimeOverrides: {
+      ipcMain, Notification: fake.Notification,
+      shell: notificationShell,
+    },
+    environment: { USERPROFILE: "C:\\Users\\adam", USAGE_MONITOR_RESOURCE_ROOT: "/repo" },
   });
-  await desktop.controller.handlers.openSettings({});
-  const settings = FakeWindow.instances.find((candidate) => (
-    candidate.webContents.url.endsWith("/electron-settings.html#general")
-  ));
-  const dashboard = FakeWindow.instances.find((candidate) => candidate !== settings);
-  assert.notEqual(settings, undefined);
+  const dashboard = FakeWindow.instances.find((candidate) => candidate.webContents.url === "http://127.0.0.1:4811/");
   assert.notEqual(dashboard, undefined);
-
-  const settingsEvent = {
-    sender: settings.webContents,
-    senderFrame: settings.webContents.mainFrame,
-  };
-  const dashboardEvent = {
-    sender: dashboard.webContents,
-    senderFrame: dashboard.webContents.mainFrame,
-  };
-  await assert.rejects(
-    ipcMain.handler(dashboardEvent, { action: "sendTestNotification", args: {} }),
-    (error) => error?.code === "desktop_ipc_untrusted_context",
-  );
+  const before = FakeWindow.instances.length;
+  await desktop.controller.handlers.openSettings({});
+  assert.equal(FakeWindow.instances.length, before, "opening Settings must reuse the main window");
+  const trustedEvent = { sender: dashboard.webContents, senderFrame: dashboard.webContents.mainFrame };
   assert.deepEqual(
-    await ipcMain.handler(settingsEvent, { action: "sendTestNotification", args: {} }),
+    await ipcMain.handler(trustedEvent, { action: "sendTestNotification", args: {} }),
     { status: "requested" },
   );
   assert.equal(fake.shown.length, 1);
-  settings.webContents.url = "http://127.0.0.1:4811/other";
-  await assert.rejects(
-    ipcMain.handler(settingsEvent, { action: "sendTestNotification", args: {} }),
-    (error) => error?.code === "desktop_ipc_untrusted_context",
-  );
+  const hostileEvents = [
+    { sender: dashboard.webContents, senderFrame: { isMainFrame: false, parent: dashboard.webContents.mainFrame } },
+    { sender: dashboard.webContents, senderFrame: { isMainFrame: true, parent: null } },
+    { sender: {}, senderFrame: dashboard.webContents.mainFrame },
+  ];
+  for (const event of hostileEvents) {
+    await assert.rejects(ipcMain.handler(event, { action: "sendTestNotification", args: {} }),
+      (error) => error?.code === "desktop_ipc_untrusted_context");
+  }
+  for (const url of ["https://example.test/", "http://127.0.0.1:4812/", "http://127.0.0.1:4811/other",
+    "http://127.0.0.1:4811/electron-settings.html", "http://127.0.0.1:4811/?settings",
+    "http://user:pass@127.0.0.1:4811/"]) {
+    dashboard.webContents.url = url;
+    for (const request of [
+      { action: "sendTestNotification", args: {} },
+      { action: "getCodexHomesForSettings", args: {} },
+      { action: "chooseWindowBackground", args: {} },
+    ]) {
+      await assert.rejects(ipcMain.handler(trustedEvent, request),
+        (error) => error?.code === "desktop_ipc_untrusted_context", url);
+    }
+  }
+  dashboard.webContents.url = "http://127.0.0.1:4811/#settings/notifications";
+  const settings = await ipcMain.handler(trustedEvent, { action: "getSettings", args: {} });
+  assert.equal(settings.settings.notifications.delivery, "ready", "hash navigation does not revoke the trusted main frame");
+  assert.equal(fake.shown.length, 1);
   await desktop.lifecycle.dispose();
 });

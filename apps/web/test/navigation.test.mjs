@@ -7,7 +7,7 @@ import {
   parseDashboardHash,
 } from "../public/navigation.js";
 
-const PAGE_IDS = ["overview", "usage", "allowance", "performance"];
+const PAGE_IDS = ["overview", "usage", "allowance", "performance", "settings"];
 
 class FakeClassList {
   #values = new Set();
@@ -129,7 +129,7 @@ function changeHash(browser, hash, event = "hashchange") {
   browser.listeners.get(event)();
 }
 
-test("the dashboard has exactly four destinations and no compatibility aliases", () => {
+test("the dashboard has five destinations and no compatibility aliases", () => {
   assert.deepEqual([...DASHBOARD_PAGES], PAGE_IDS);
 
   for (const retired of [
@@ -278,4 +278,14 @@ test("teardown removes page and history listeners", () => {
   assert.equal(browser.listeners.has("popstate"), false);
   assert.equal(browser.links[1].click(), false);
   assertActivePage(browser, "overview");
+});
+
+test("settings category links deliver their view without exposing another page", () => {
+  const browser = fakeBrowser({ hash: "#settings/notifications" });
+  const teardown = mountDashboardNavigation(browser);
+  assertExactlyOneVisiblePage(browser, "settings");
+  assert.deepEqual(browser.viewRequests.at(-1), { page: "settings", view: "notifications" });
+  changeHash(browser, "#settings/data");
+  assert.deepEqual(browser.viewRequests.at(-1), { page: "settings", view: "data" });
+  teardown();
 });

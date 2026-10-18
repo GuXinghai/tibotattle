@@ -108,6 +108,7 @@ export const TELEMETRY_MODEL_IDS: readonly [
   "claude-opus-5",
   "claude-opus-5-5",
   "gpt-6.1-sol",
+  "gpt-5.1-codex-max",
 ];
 export type TelemetryModelId = typeof TELEMETRY_MODEL_IDS[number];
 
@@ -119,7 +120,7 @@ export interface ReviewedModelIdentity {
   readonly pricingStatus: "published" | "assumed_alias" | "unpriced";
   readonly priceModelId: Exclude<TelemetryModelId, "unknown"> | null;
 }
-export const REVIEWED_MODEL_CATALOG_VERSION: "reviewed-model-catalog-2026-09-29.1";
+export const REVIEWED_MODEL_CATALOG_VERSION: "reviewed-model-catalog-2026-10-19.1";
 export const REVIEWED_MODEL_CATALOG: readonly ReviewedModelIdentity[];
 export const REVIEWED_CODEX_MODEL_IDS: readonly Exclude<TelemetryModelId, "unknown">[];
 export const REVIEWED_CLAUDE_MODEL_IDS: readonly Exclude<TelemetryModelId, "unknown">[];

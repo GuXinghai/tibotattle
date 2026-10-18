@@ -146,3 +146,15 @@ test("platforms without tray titles hide text controls but retain tooltip select
   controller.update({ tray: TRAY_DEFAULTS, trayCapabilities: { title: true } });
   assert.equal(doc.root.all().find((n) => n.tagName === "label" && n.children.includes(metric)).hidden, false);
 });
+
+test("tray preview opens only in a modal and closes without changing saved preferences", async () => {
+  const doc = documentFixture(); let writes=0;
+  const controller = createTraySettingsController({documentRef:doc,bridge:{async setTrayPreferences(){writes++;},async restoreTrayDefaults(){writes++;}}});
+  const dialog=doc.root.all().find((node)=>node.tagName==="dialog");
+  let open=false; dialog.showModal=()=>{open=true;}; dialog.close=()=>{open=false;};
+  const button=doc.root.children[0]; assert.equal(button.tagName,"button");
+  await button.dispatch("click"); assert.equal(open,true);
+  await dialog.children[0].dispatch("click"); assert.equal(open,false);
+  assert.equal(writes,0);
+  await button.dispatch("click"); controller.teardown(); assert.equal(open,false);
+});

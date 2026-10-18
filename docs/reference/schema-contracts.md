@@ -115,7 +115,7 @@ allowance. Unknown labels are withheld or fingerprinted at the existing export
 boundary, never copied into admin labels. Legacy telemetry enum positions remain
 stable; newly reviewed values append.
 
-The export registry advances to `telemetry-v0.1-registry-2026-09-29.1` with its
+The export registry advances to `telemetry-v0.1-registry-2026-10-19.1` with its
 closed schema and generated compatibility dictionary. Disabled legacy upload
 contracts remain disabled; this vocabulary change does not enable contribution
 or alter consent. Reparse retained source before claiming to recover a model that

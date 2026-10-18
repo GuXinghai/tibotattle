@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
-    <meta name="theme-color" content="#f5f1e8">
+    <meta name="theme-color" content="#fff">
     <!--
       Release packaging replaces every empty release slot below only after it
       verifies the selected installer and social-preview artifacts. Keeping any
@@ -47,20 +47,19 @@
     >
     <title>TiboTattle</title>
     <link rel="stylesheet" href="./styles.css">
+    <link rel="stylesheet" href="./electron-settings.css">
     <link rel="stylesheet" href="./usage-simple.css">
   <link rel="stylesheet" href="./cache-reuse-matrix.css">
     <link rel="stylesheet" href="./model-performance.css">
     <script type="module" src="./app.js"></script>
     <script type="module" src="./desktop-shell.js"></script>
+    <link rel="stylesheet" href="./window-background.css">
+    <script type="module" src="./window-background.js"></script>
   </head>
   <body class="first-run" data-i18n-root>
     <a class="skip-link" href="#main" data-i18n-legacy-root>Skip to monitoring dashboard</a>
 
     <header class="topbar" data-i18n-legacy-root>
-      <a class="brand" href="#overview" aria-label="TiboTattle dashboard" data-i18n-aria-label="aria.tibotattleDashboard">
-        <img class="brand-icon" src="./tibotattle-icon.png" alt="">
-        <span>TiboTattle</span>
-      </a>
       <section class="reporting-period-toolbar" id="reporting-period-toolbar" aria-labelledby="reporting-period-label">
         <span class="sr-only" id="reporting-period-label" data-i18n="reporting.period">Reporting period</span>
         <div class="segmented-control" id="reporting-period-controls" role="group" aria-labelledby="reporting-period-label">
@@ -95,20 +94,6 @@
           <span class="state-dot" aria-hidden="true"></span>
           Connecting
         </span>
-        <button class="button button-secondary compact" id="refresh-button" type="button" disabled>
-          Analyze local usage
-        </button>
-        <button class="button button-quiet compact" id="cancel-refresh" type="button" hidden>
-          Cancel
-        </button>
-        <button
-          class="button button-quiet compact icon-button electron-only-control electron-settings-control"
-          hidden
-          id="electron-settings-button"
-          type="button"
-          aria-label="Settings" data-i18n-aria-label="electron.settings.heading"
-          title="Settings" data-i18n-title="electron.settings.heading"
-        ><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-2 .9-2.1-.7-2.5 4.3L4 11.4v2.2l-1.7 1.6 2.5 4.3 2.1-.7 2 .9.6 2.3h5l.6-2.3 2-.9 2.1.7 2.5-4.3-1.7-1.6v-2.2l1.7-1.6-2.5-4.3-2.1.7-2-.9L14.5 3z"/><circle cx="12" cy="12.5" r="3.2"/></svg></button>
       </div>
     </header>
 
@@ -120,6 +105,21 @@
           <a href="#allowance" data-nav="allowance" data-requires-evidence data-i18n="page.allowance.title">Allowance</a>
           <a href="#performance" data-nav="performance" data-i18n="page.performance.title">Model performance</a>
         </nav>
+        <div class="sidebar-actions">
+          <div class="sidebar-refresh-row">
+            <button class="sidebar-action" id="refresh-button" data-sidebar-refresh="true" type="button" aria-label="Refresh local usage" aria-describedby="sidebar-refresh-summary" disabled><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8.3 8.3 0 0 1 20 12M4 12a8.3 8.3 0 0 0 13.9 5.9"/></svg></button>
+            <span id="sidebar-refresh-summary" class="sidebar-refresh-summary" role="status" aria-live="polite" aria-atomic="true" hidden></span>
+          </div>
+          <button class="sidebar-action" id="cancel-refresh" type="button" hidden>Cancel</button>
+        <button
+          class="sidebar-action electron-only-control electron-settings-control"
+          hidden
+          id="electron-settings-button"
+          type="button"
+          aria-label="Settings" data-i18n-aria-label="electron.settings.heading"
+          title="Settings" data-i18n-title="electron.settings.heading"
+        ><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9.5 3-.6 2.3-2 .9-2.1-.7-2.5 4.3L4 11.4v2.2l-1.7 1.6 2.5 4.3 2.1-.7 2 .9.6 2.3h5l.6-2.3 2-.9 2.1.7 2.5-4.3-1.7-1.6v-2.2l1.7-1.6-2.5-4.3-2.1.7-2-.9L14.5 3z"/><circle cx="12" cy="12.5" r="3.2"/></svg></button>
+        </div>
       </aside>
       <div class="dashboard-content">
     <main id="main">
@@ -868,6 +868,135 @@
       <section class="dashboard-section dashboard-page-inactive model-performance" id="performance" aria-labelledby="performance-page-title" data-dashboard-page="performance" aria-hidden="true" inert data-i18n-skip></section>
       </div>
 
+<section class="settings-window dashboard-page-inactive" id="settings-content" data-dashboard-page="settings" aria-labelledby="settings-heading" aria-hidden="true" inert>
+<header class="settings-header"><h1 id="settings-heading" data-i18n="electron.settings.heading">Settings</h1><p class="settings-bridge-status" id="settings-bridge-status" role="status" aria-live="polite"></p></header>
+<nav class="settings-tabs" role="tablist" aria-label="Settings sections" data-i18n-aria-label="electron.settings.sections"><button class="settings-tab" id="settings-tab-general" type="button" role="tab" aria-controls="settings-panel-general" aria-selected="true" tabindex="0" data-settings-tab="general" data-i18n="electron.settings.tab.generalAppearance">General & appearance</button>
+<button class="settings-tab" id="settings-tab-tray" type="button" role="tab" aria-controls="settings-panel-tray" aria-selected="false" tabindex="-1" data-settings-tab="tray" data-i18n="electron.settings.tab.trayPanel">Tray & panel</button>
+<button class="settings-tab" id="settings-tab-notifications" type="button" role="tab" aria-controls="settings-panel-notifications" aria-selected="false" tabindex="-1" data-settings-tab="notifications" data-i18n="electron.settings.tab.notifications">Notifications</button>
+<button class="settings-tab" id="settings-tab-data" type="button" role="tab" aria-controls="settings-panel-data" aria-selected="false" tabindex="-1" data-settings-tab="data" data-i18n="electron.settings.tab.dataDiagnostics">Data & diagnostics</button>
+<button class="settings-tab" id="settings-tab-about" type="button" role="tab" aria-controls="settings-panel-about" aria-selected="false" tabindex="-1" data-settings-tab="about" data-i18n="electron.settings.tab.aboutUpdates">About & updates</button></nav>
+<div class="settings-panels"><section class="settings-panel" id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general" data-settings-panel="general" ><section class="settings-card" aria-labelledby="settings-language-title">
+            <div class="settings-card-copy">
+              <h3 id="settings-language-title" data-i18n="electron.settings.language.title">Language</h3>
+
+            </div>
+            <label class="settings-field" for="settings-language">
+
+              <select aria-labelledby="settings-language-title" id="settings-language" autocomplete="off">
+                <option value="system" data-i18n="language.system">System</option>
+                <option value="en" data-i18n="language.english">English</option>
+                <option value="zh-Hans" data-i18n="language.simplifiedChinese">Simplified Chinese</option>
+                <option value="es" data-i18n="language.spanish">Spanish</option>
+              </select>
+            </label>
+          </section><section class="settings-card settings-login-card" aria-labelledby="settings-login-title"><h3 id="settings-login-title" data-i18n="electron.settings.login.title">Start at login</h3><label class="settings-switch" for="settings-start-at-login"><input id="settings-start-at-login" type="checkbox" role="switch" aria-labelledby="settings-login-title"><span class="settings-switch-track" aria-hidden="true"><span></span></span></label></section><section class="settings-card" aria-labelledby="settings-appearance-title">
+            <div class="settings-card-copy">
+              <h3 id="settings-appearance-title" data-i18n="electron.settings.appearance.title">Appearance</h3>
+
+            </div>
+            <label class="settings-field" for="settings-appearance">
+
+              <select aria-labelledby="settings-appearance-title" id="settings-appearance" autocomplete="off">
+                <option value="system" data-i18n="appearance.system">System</option>
+                <option value="light" data-i18n="appearance.light">Light</option>
+                <option value="dark" data-i18n="appearance.dark">Dark</option>
+              </select>
+            </label>
+          </section><section class="settings-card window-background-controls" id="window-background-controls" aria-labelledby="window-background-title" hidden>
+            <h3 id="window-background-title" data-i18n="background.title">Window background</h3>
+            <div class="background-section"><div class="background-presets" data-background-presets role="group" aria-label="Background presets" data-i18n-aria-label="background.presets"></div></div>
+            <div class="background-section">
+              <div class="background-color-row">
+                <label><span data-i18n="background.palette">Palette</span><span class="background-color-chip" data-background-chip><input data-background-picker type="color" value="#ffffff" aria-label="Background color" data-i18n-aria-label="background.palette"></span></label>
+                <label class="background-hex">HEX<input data-background-hex type="text" maxlength="7" value="#FFFFFF" spellcheck="false" aria-label="HEX"></label>
+
+              <div class="background-rgb"><label>R<input data-background-rgb type="number" min="0" max="255" value="255"></label><label>G<input data-background-rgb type="number" min="0" max="255" value="255"></label><label>B<input data-background-rgb type="number" min="0" max="255" value="255"></label></div></div>
+              <p data-background-error role="alert" data-i18n="background.invalid" hidden>Enter a six-digit HEX color or RGB integers from 0 to 255.</p>
+            </div>
+            <div class="background-section">
+              <div class="background-image-actions"><button class="button button-quiet" data-background-choose type="button" data-i18n="background.choose">Choose image</button><button class="button button-quiet" data-background-remove type="button" data-i18n="background.remove" disabled>Remove</button></div>
+
+              <div class="background-image-options" data-background-image-options hidden><label><span data-i18n="background.mask">Light overlay</span><output>35%</output><input data-background-mask type="range" min="0" max="90" value="35" aria-label="Light overlay" data-i18n-aria-label="background.mask"></label></div>
+            </div>
+            <div class="background-footer"><p data-background-status role="status" aria-live="polite"></p></div>
+          </section></section>
+<section class="settings-panel" id="settings-panel-tray" role="tabpanel" aria-labelledby="settings-tab-tray" data-settings-panel="tray" hidden><div id="settings-tray-controls"></div></section>
+<section class="settings-panel" id="settings-panel-notifications" role="tabpanel" aria-labelledby="settings-tab-notifications" data-settings-panel="notifications" hidden><section class="settings-card" aria-labelledby="settings-thresholds-title"><h3 id="settings-thresholds-title" data-i18n="electron.settings.notifications.thresholdTitle">Usage alerts</h3><div class="settings-control-column"><label class="settings-numeric-field" for="settings-notification-threshold"><input id="settings-notification-threshold" type="number" min="-1" max="100" step="1" value="-1" aria-labelledby="settings-thresholds-title" aria-describedby="settings-threshold-hint settings-notifications-detail"><span>%</span></label><p id="settings-threshold-hint" data-i18n="electron.settings.notifications.thresholdHint">Alert when used allowance reaches this percentage; -1 disables alerts.</p><p id="settings-notifications-detail" role="status"></p><p id="settings-threshold-error" role="alert" hidden data-i18n="electron.settings.notifications.invalidThreshold">Enter an integer from 1 to 100, or -1 to disable alerts.</p></div></section><section class="settings-card" aria-labelledby="settings-notification-test-title">
+            <div class="settings-card-copy">
+              <h3 id="settings-notification-test-title" data-i18n="electron.settings.notifications.testTitle">Test delivery</h3>
+              <p data-i18n="electron.settings.notifications.testDetail">Send a test without changing alert settings or usage history. Your system may silence banners.</p>
+              <p id="settings-notification-test-status" class="settings-status" role="status" aria-live="polite"></p>
+            </div>
+            <button class="button button-secondary" id="settings-test-notification" type="button" disabled data-i18n="electron.settings.notifications.sendTest">Send test notification</button>
+          </section><section class="settings-card" aria-labelledby="settings-notification-permission-title">
+            <div class="settings-card-copy">
+              <h3 id="settings-notification-permission-title" data-i18n="electron.settings.notifications.permissionTitle">Operating system permission</h3>
+              <p id="settings-notification-status" class="settings-status" role="status" aria-live="polite" data-i18n="electron.settings.notifications.permission.unknown">Notification permission hasn't been confirmed.</p>
+            </div>
+            <button class="button button-secondary" id="settings-open-notification-settings" type="button" disabled>
+              <span data-i18n="electron.settings.notifications.openPermission">Open Notification Settings</span>
+            </button>
+          </section></section>
+<section class="settings-panel" id="settings-panel-data" role="tabpanel" aria-labelledby="settings-tab-data" data-settings-panel="data" hidden><section class="settings-card settings-roots-card" aria-labelledby="settings-codex-roots-title"><h3 id="settings-codex-roots-title">Codex folder (~/.codex)</h3><button class="button button-quiet" id="settings-choose-codex-folder" type="button" data-i18n="electron.settings.codexRoots.chooseLocation">Choose location</button><p class="settings-roots-status" id="settings-codex-roots-status" role="status" aria-live="polite"></p></section><section class="settings-card" aria-labelledby="settings-refresh-title"><h3 id="settings-refresh-title" data-i18n="electron.settings.refresh.minutesTitle">Refresh interval (-1 disables automatic refresh)</h3><label class="settings-numeric-field" for="settings-refresh-interval"><input id="settings-refresh-interval" type="number" step="1" value="5" aria-labelledby="settings-refresh-title" aria-describedby="settings-refresh-error"><span data-i18n="electron.settings.refresh.minutes">minutes</span></label><p class="settings-input-error" id="settings-refresh-error" role="alert" hidden data-i18n="electron.settings.refresh.invalid">Enter a positive number of minutes, or -1 to disable automatic refresh.</p></section><section class="settings-card settings-local-tools-card" aria-labelledby="settings-local-tools-title">
+            <div class="settings-card-copy">
+              <h3 id="settings-local-tools-title" data-i18n="electron.settings.localTools.title">Local tools</h3>
+
+            </div>
+            <div class="settings-actions" aria-label="Local tools" data-i18n-aria-label="electron.settings.localTools.actions">
+              <button class="button button-secondary" id="settings-open-dashboard-browser" type="button" data-i18n="electron.settings.localTools.openBrowser">
+                Open dashboard in browser
+              </button>
+
+              <button class="button button-quiet" id="settings-reveal-local-data" type="button" data-i18n="electron.settings.localTools.revealData">
+                Show local data
+              </button>
+            <button class="button button-quiet" id="settings-show-diagnostics" type="button" data-i18n="electron.settings.localTools.diagnostics">
+                Show diagnostics
+              </button></div></section></section>
+<section class="settings-panel" id="settings-panel-about" role="tabpanel" aria-labelledby="settings-tab-about" data-settings-panel="about" hidden>
+
+
+          <section class="settings-card settings-about-brand" aria-labelledby="settings-about-product-title">
+            <img class="settings-about-icon" src="./tibotattle-icon.png" alt="">
+            <div class="settings-about-brand-copy">
+              <h3 id="settings-about-product-title">TiboTattle</h3>
+              <p class="settings-value" id="settings-version">Version unavailable</p>
+              <p class="settings-value" id="settings-build">Build unavailable</p>
+            </div>
+          </section>
+
+          <section class="settings-card settings-updates-card" aria-labelledby="settings-updates-title">
+            <div class="settings-card-copy">
+              <h3 id="settings-updates-title" data-i18n="electron.settings.updates.title">Automatic updates</h3>
+              <p id="settings-updates-status" class="settings-status" role="status" aria-live="polite">
+                Update checks are unavailable in this development build.
+              </p>
+            </div>
+            <div class="settings-updates-controls">
+
+              <button class="button button-secondary" id="settings-check-for-updates" type="button">
+                Check for Updates…
+              </button>
+              <button class="button button-secondary" id="settings-download-update" type="button" hidden disabled>
+                Download Update
+              </button>
+              <button class="button button-primary" id="settings-install-update" type="button" hidden disabled>
+                Install and Restart
+              </button>
+            </div>
+          </section>
+
+          <section class="settings-card settings-auto-update-row"><label class="settings-switch" for="settings-automatic-updates">
+                <input id="settings-automatic-updates" type="checkbox" role="switch" disabled>
+                <span class="settings-switch-track" aria-hidden="true"><span></span></span>
+                <span data-i18n="electron.settings.updates.downloadLabel">Download verified updates automatically</span>
+              </label></section><nav class="settings-project-links" aria-label="Project links" data-i18n-aria-label="electron.settings.links">
+            <a href="https://tibotattle.com" data-external-target="website" data-i18n="electron.settings.link.website">Website</a>
+            <a href="https://github.com/adamallcock/tibotattle" data-external-target="github" data-i18n="electron.settings.link.github">GitHub</a>
+            <a href="https://x.com/adamallcock" data-external-target="x" data-i18n="electron.settings.link.x">X / Twitter</a>
+          </nav>
+        </section></div>
+<p class="settings-operation-status" id="settings-operation-status" role="status" aria-live="polite"></p></section>
     </main>
 
     <!--

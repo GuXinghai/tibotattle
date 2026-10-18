@@ -11,7 +11,7 @@ import {
 import { surfaceFiles } from "../../scripts/lib/surface-manifest.mjs";
 
 const ASSETS = ["weekly-api-intervals.js", "weekly-api-chart.js", "allowance-page.js", "usage-simple.css", "cache-reuse-matrix.js", "cache-reuse-matrix.css", "cache-reuse-metrics.js", "overview-workload.js", "allowance-trends.js", "codex-color.svg", "desktop-appearance.js", "desktop-shell.js", "electron-tray-popup.html", "electron-tray-popup.js",
-  "electron-tray-popup.css", "electron-settings.html", "electron-settings.js",
+  "window-background.js", "window-background.css", "electron-tray-popup.css", "electron-settings.html", "electron-settings.js",
   "electron-tray-settings.js", "electron-tray-preferences.js", "electron-settings.css", "icon-panel-left.svg", "icon-refresh-cw.svg", "icon-settings.svg"];
 
 test("Electron settings and bridge have a real loopback route and retained client/native asset closure", async () => {

@@ -75,8 +75,8 @@ function fixture({
   let notificationStatus = {
     state: "ready",
     enabled: false,
-    threshold: "off",
-    resetEnabled: true,
+    threshold: -1,
+    resetEnabled: false,
     delivery: "ready",
     lastOutcome: "initialized",
     lastReason: "none",
@@ -86,9 +86,10 @@ function fixture({
     initialize: async () => ({ status: notificationStatus }),
     status: () => notificationStatus,
     setPreferences: async (preferences) => {
+      assert.deepEqual(Object.keys(preferences), ["threshold"]);
       notificationStatus = {
         ...notificationStatus,
-        enabled: preferences.enabled,
+        enabled: preferences.threshold !== -1,
         threshold: preferences.threshold,
         lastOutcome: "preferences_updated",
       };
@@ -237,7 +238,7 @@ test("controller initializes persisted cadence and projects truthful settings st
         trayCapabilities: { title: false },
       notifications: {
         enabled: false,
-        threshold: "off",
+        threshold: -1,
         canSet: true,
         state: "ready",
         delivery: "ready",
@@ -245,7 +246,7 @@ test("controller initializes persisted cadence and projects truthful settings st
         lastReason: "none",
         lastDelivery: "not_attempted",
         permission: "unknown",
-        detail: "Local allowance alerts are ready. Alerts use fresh provider-reported evidence only.",
+        detail: "Allowance alerts are ready. They use fresh provider-reported data only.",
       },
     },
     about: {
@@ -287,15 +288,12 @@ test("controller implements every bounded bridge action and desktop command", as
   await value.controller.handlers.setLanguage({ value: "es" });
   await value.controller.handlers.setRefreshInterval({ seconds: 60 });
   await value.controller.handlers.setStartAtLogin({ enabled: true });
-  await value.controller.handlers.setNotificationPreferences({
-    enabled: false,
-    threshold: "off",
-  });
+  await value.controller.handlers.setNotificationPreferences({ threshold: -1 });
   const selected = await value.controller.handlers.chooseCodexHome({});
   assert.deepEqual(value.settingsWindows, ["general"]);
   assert.deepEqual(value.commands, [{ command: "language", value: "es" }]);
   assert.deepEqual(value.languageChanges, ["system", "es"]);
-  assert.equal(value.timers.at(-1).milliseconds, 300_000);
+  assert.equal(value.timers.at(-1).milliseconds, 60_000);
   assert.equal(value.cleared.length, 1);
   assert.equal(selected.settings.codexFolder.kind, "custom");
   assert.deepEqual(selected.settings.codexFolder, { kind: "custom" });
@@ -310,9 +308,9 @@ test("controller implements every bounded bridge action and desktop command", as
     value.persisted.codexHomes.activityRoots[0].rootId,
   );
   assert.equal(value.persisted.language, "es");
-  assert.equal(value.persisted.refreshIntervalSeconds, 300);
+  assert.equal(value.persisted.refreshIntervalSeconds, 60);
   assert.equal(value.persisted.startAtLogin, true);
-  assert.deepEqual(value.persisted.notifications, { enabled: false, threshold: "off" });
+  assert.deepEqual(value.persisted.notifications, { enabled: false, threshold: -1 });
 });
 
 test("controller invokes the bounded updater actions rather than returning a stale About snapshot", async () => {
@@ -510,9 +508,49 @@ test("changing the refresh interval during an active lease persists without armi
   const timerCount = value.timers.length;
   await value.controller.handlers.setRefreshInterval({ seconds: 60 });
   assert.equal(value.timers.length, timerCount);
-  assert.equal((await value.store.getSettings()).refreshIntervalSeconds, 300);
+  assert.equal((await value.store.getSettings()).refreshIntervalSeconds, 60);
   assert.equal(await value.controller.handlers.refreshSettled({ lease }), true);
-  assert.equal(value.timers.at(-1).milliseconds, 300_000);
+  assert.equal(value.timers.at(-1).milliseconds, 60_000);
+});
+
+test("refresh configuration reaches companion before timers and disables maintenance across settlement", async () => {
+  const intervals = [];
+  const value = fixture({ overviewRefreshOwnedByCompanion: true,
+    actionOverrides: { onRefreshIntervalChanged: async seconds => { intervals.push(seconds); } },
+  });
+  await value.controller.initialize();
+  assert.deepEqual(intervals, [300]);
+  await value.controller.handlers.setRefreshInterval({ seconds: 7200 });
+  assert.equal(value.timers.at(-1).milliseconds, 7_200_000);
+  const lease = await value.controller.handlers.refreshStarted({ mode: "quick" });
+  await value.controller.handlers.setRefreshInterval({ seconds: -1 });
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  await value.controller.handlers.refreshSettled({ lease });
+  assert.equal(value.controller.refreshStatus().state, "idle");
+  await value.controller.handlers.setRefreshInterval({ seconds: 120 });
+  assert.equal(value.timers.at(-1).milliseconds, 3_600_000);
+  assert.deepEqual(intervals, [300, 7200, -1, 120]); value.controller.dispose();
+});
+
+test("disabling periodic refresh while cadence is reading blocks the late command", async () => {
+  let complete;
+  const cadence = { automaticMode: () => new Promise(resolve => { complete = resolve; }),
+    recordDetailedAttempt: async () => null, restoreAfterQuickJoin: async () => false };
+  const value = fixture({ automaticRefreshCadence: cadence });
+  await value.controller.initialize(); value.timers.at(-1).callback();
+  await value.controller.handlers.setRefreshInterval({ seconds: -1 });
+  complete("quick"); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(value.commands.length, 0);
+  assert.equal(value.controller.refreshStatus().state, "idle"); value.controller.dispose();
+});
+
+test("desktop cadence chunks long positive minute intervals without timer overflow", async () => {
+  const value = fixture(); await value.controller.initialize();
+  await value.controller.handlers.setRefreshInterval({ seconds: 3_000_000 });
+  assert.equal(value.timers.at(-1).milliseconds, 2_147_483_647);
+  value.timers.at(-1).callback();
+  assert.equal(value.commands.length, 0);
+  assert.equal(value.timers.at(-1).milliseconds, 852_516_353); value.controller.dispose();
 });
 
 test("dashboard replacement releases an abandoned lease and rearms the cadence", async () => {
@@ -636,22 +674,16 @@ test("controller persists sidebar collapse and sends only the bounded presentati
 test("controller persists notification preferences only after coordinator confirmation", async () => {
   const value = fixture();
   await value.controller.initialize();
-  const enabled = await value.controller.handlers.setNotificationPreferences({
-    enabled: true,
-    threshold: "ninety",
-  });
+  const enabled = await value.controller.handlers.setNotificationPreferences({ threshold: 90 });
   assert.equal(enabled.settings.notifications.enabled, true);
-  assert.equal(enabled.settings.notifications.threshold, "ninety");
+  assert.equal(enabled.settings.notifications.threshold, 90);
   assert.deepEqual((await value.store.getSettings()).notifications, {
     enabled: true,
-    threshold: "ninety",
+    threshold: 90,
   });
-  const disabled = await value.controller.handlers.setNotificationPreferences({
-    enabled: false,
-    threshold: "off",
-  });
+  const disabled = await value.controller.handlers.setNotificationPreferences({ threshold: -1 });
   assert.equal(disabled.settings.notifications.enabled, false);
-  assert.equal(disabled.settings.notifications.threshold, "off");
+  assert.equal(disabled.settings.notifications.threshold, -1);
 });
 
 test("controller gates notification mutations when native delivery is unavailable", async () => {
@@ -659,8 +691,8 @@ test("controller gates notification mutations when native delivery is unavailabl
   value.notificationCoordinator.status = () => ({
     state: "ready",
     enabled: false,
-    threshold: "off",
-    resetEnabled: true,
+    threshold: -1,
+    resetEnabled: false,
     delivery: "not_packaged",
     lastOutcome: "initialized",
     lastReason: "none",
@@ -670,7 +702,7 @@ test("controller gates notification mutations when native delivery is unavailabl
   assert.equal(snapshot.settings.notifications.canSet, false);
   assert.equal(snapshot.settings.notifications.delivery, "not_packaged");
   await assert.rejects(
-    value.controller.handlers.setNotificationPreferences({ enabled: true, threshold: "ninety" }),
+    value.controller.handlers.setNotificationPreferences({ threshold: 90 }),
     (error) => error?.code === "desktop_notifications_unavailable",
   );
 });
@@ -686,12 +718,12 @@ test("controller rolls coordinator back when ordinary settings persistence fails
     },
   });
   const coordinator = {
-    state: { state: "ready", enabled: false, threshold: "off", delivery: "ready", lastOutcome: "initialized", lastReason: "none", lastDelivery: "not_attempted" },
+    state: { state: "ready", enabled: false, threshold: -1, delivery: "ready", lastOutcome: "initialized", lastReason: "none", lastDelivery: "not_attempted" },
     initialize: async () => ({}),
     status() { return this.state; },
     async setPreferences(next) {
       preferences.push(next);
-      this.state = { ...this.state, enabled: next.enabled, threshold: next.threshold };
+      this.state = { ...this.state, enabled: next.threshold !== -1, threshold: next.threshold };
       return { status: this.state };
     },
   };
@@ -718,14 +750,16 @@ test("controller rolls coordinator back when ordinary settings persistence fails
   });
   await controller.initialize();
   await assert.rejects(
-    controller.handlers.setNotificationPreferences({ enabled: true, threshold: "ninety" }),
+    controller.handlers.setNotificationPreferences({ threshold: 90 }),
     (error) => error?.code === "desktop_notifications_persistence_failed",
   );
-  assert.deepEqual(preferences.map(({ enabled, threshold }) => ({ enabled, threshold })), [
-    { enabled: false, threshold: "off" },
-    { enabled: true, threshold: "ninety" },
-    { enabled: false, threshold: "off" },
+  assert.deepEqual(preferences, [
+    { threshold: -1 },
+    { threshold: 90 },
+    { threshold: -1 },
   ]);
+  assert.deepEqual(coordinator.state, { state: "ready", enabled: false, threshold: -1, delivery: "ready", lastOutcome: "initialized", lastReason: "none", lastDelivery: "not_attempted" });
+  assert.deepEqual((await store.getSettings()).notifications, { enabled: false, threshold: -1 });
 });
 
 test("controller fails closed when notification rollback cannot be proven", async () => {
@@ -739,7 +773,7 @@ test("controller fails closed when notification rollback cannot be proven", asyn
   let status = {
     state: "ready",
     enabled: false,
-    threshold: "off",
+    threshold: -1,
     delivery: "ready",
     lastOutcome: "initialized",
     lastReason: "none",
@@ -750,7 +784,7 @@ test("controller fails closed when notification rollback cannot be proven", asyn
     status: () => status,
     setPreferences: async (next) => {
       calls += 1;
-      status = { ...status, enabled: next.enabled, threshold: next.threshold };
+      status = { ...status, enabled: next.threshold !== -1, threshold: next.threshold };
       if (calls === 3) return { status: { ...status, state: "state_unavailable", delivery: "state_unavailable" } };
       return { status };
     },
@@ -778,7 +812,7 @@ test("controller fails closed when notification rollback cannot be proven", asyn
   });
   await controller.initialize();
   await assert.rejects(
-    controller.handlers.setNotificationPreferences({ enabled: true, threshold: "ninety" }),
+    controller.handlers.setNotificationPreferences({ threshold: 90 }),
     (error) => error?.code === "desktop_notifications_rollback_failed",
   );
   const snapshot = await controller.handlers.getSettings();
