@@ -116,7 +116,46 @@ test("language rejection restores saved preference and notification tests do not
   mounted.teardown();
 });
 
-test("Settings asks permission when undecided and opens the system entry when denied", async () => {
-  const first=fixture({permission:"default"}); const mounted=await mount(first); await first.elements.get("#settings-open-notification-settings").fire("click"); assert.equal(first.calls.some(([name])=>name==="permission"),true); mounted.teardown();
-  const denied=fixture({permission:"denied"}); const second=await mount(denied); await denied.elements.get("#settings-open-notification-settings").fire("click"); assert.equal(denied.calls.some(([name,value])=>name==="system"&&value==="notifications"),true); second.teardown();
+test("notification permission stays main-process authoritative and settings remain reachable", async () => {
+  const notifications = (permission) => ({
+    enabled: false,
+    threshold: -1,
+    state: "ready",
+    delivery: "ready",
+    canSet: true,
+    permission,
+  });
+  const unknown = fixture({
+    permission: "granted",
+    settings: { notifications: notifications("unknown") },
+  });
+  const unknownPage = await mount(unknown);
+  const unknownButton = unknown.elements.get("#settings-open-notification-settings");
+  assert.equal(unknown.elements.get("#settings-notification-status").textContent,
+    "electron.settings.notifications.permission.unknown");
+  assert.equal(unknownButton.disabled, false);
+  assert.equal(unknownButton.textContent, "electron.settings.notifications.openPermission");
+  await unknownButton.fire("click");
+  assert.equal(unknown.calls.some(([name, value]) =>
+    name === "system" && value === "notifications"), true);
+  assert.equal(unknown.calls.some(([name]) => name === "permission"), false);
+  assert.equal(unknown.elements.get("#settings-notification-status").textContent,
+    "electron.settings.notifications.permission.unknown");
+  assert.equal(unknownButton.disabled, false);
+  unknownPage.teardown();
+
+  for (const permission of ["denied", "unavailable"]) {
+    const settings = fixture({
+      permission: permission === "denied" ? "denied" : "granted",
+      settings: { notifications: notifications(permission) },
+    });
+    const mounted = await mount(settings);
+    const button = settings.elements.get("#settings-open-notification-settings");
+    assert.equal(button.disabled, false);
+    assert.equal(button.textContent, "electron.settings.notifications.openPermission");
+    await button.fire("click");
+    assert.equal(settings.calls.some(([name, value]) =>
+      name === "system" && value === "notifications"), true);
+    mounted.teardown();
+  }
 });

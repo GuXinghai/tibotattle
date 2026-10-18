@@ -716,6 +716,7 @@ export function createDesktopLifecycle({
   function destroyWindow() {
     const hadDashboardWindow = window !== null;
     dashboardReady = false;
+    settleDashboardLoadFailure(dashboardLoadState, "companion_not_running");
     dashboardLoadState = null;
     windowReadyListenerCleanup?.();
     windowReadyListenerCleanup = null;
@@ -1091,6 +1092,7 @@ export function createDesktopLifecycle({
         createWindow();
         const dashboardLoad = dashboardLoadState;
         await dashboardLoad?.promise;
+        if (quitting || updatePreparing) throw shellError("companion_not_running");
         if (dashboardLoad?.failed) {
           throw shellError("companion_spawn_failed");
         }
@@ -1116,7 +1118,7 @@ export function createDesktopLifecycle({
             await supervisor.stop().catch(() => {});
         started = false;
         startupFailureStatus = status;
-        if (quitting) throw error;
+        if (quitting || updatePreparing) throw error;
         showRecoveryWindow(status);
         // A companion failure is a recoverable application state. Keep the
         // menu/tray and process alive so Retry and Quit remain available.
@@ -1238,6 +1240,7 @@ export function createDesktopLifecycle({
         createWindow();
         const dashboardLoad = dashboardLoadState;
         await dashboardLoad?.promise;
+        if (quitting || updatePreparing || epoch !== lifecycleEpoch) throw shellError("companion_busy");
         if (dashboardLoad?.failed) {
           throw shellError("companion_spawn_failed");
         }
@@ -1344,6 +1347,7 @@ export function createDesktopLifecycle({
     updateQuitRequested = false;
     updatePreparing = true;
     ++lifecycleEpoch;
+    settleDashboardLoadFailure(dashboardLoadState, "companion_not_running");
     stopDesktopStatusMonitor();
     const pendingStartup = startupAttemptPromise;
     const preparation = enqueueExclusive(async () => {
@@ -1399,6 +1403,9 @@ export function createDesktopLifecycle({
     clearInterval(trayMinuteTimer);
     trayMinuteTimer = null;
     ++lifecycleEpoch;
+    // Cancellation must unblock an exclusive retry before teardown can enter
+    // that same queue. Renderer load completion is not required for shutdown.
+    settleDashboardLoadFailure(dashboardLoadState, "companion_not_running");
     stopDesktopStatusMonitor();
     const pendingStartup = startupAttemptPromise;
     shutdownPromise = enqueueExclusive(async () => {
@@ -1426,13 +1433,16 @@ export function createDesktopLifecycle({
     trayMinuteTimer = null;
     updatePreparing = true;
     ++lifecycleEpoch;
+    settleDashboardLoadFailure(dashboardLoadState, "companion_not_running");
     stopDesktopStatusMonitor();
+    const pendingStartup = startupAttemptPromise;
     await enqueueExclusive(async () => {
       destroyWindow();
       destroyRecoveryWindow();
       destroyTrayPopover();
       tray?.destroy?.();
       tray = null;
+      await pendingStartup?.catch(() => {});
       await supervisor.stop().catch(() => {});
       supervisor.setUnexpectedExitHandler?.(undefined);
       for (const remove of listeners.splice(0)) remove();

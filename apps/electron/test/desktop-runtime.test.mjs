@@ -96,7 +96,7 @@ class FakeApp extends EventEmitter {
 
   getPath(name) {
     assert.equal(name, "userData");
-    return "/Users/adam/Library/Application Support/TiboTattle";
+    return "C:\\Users\\adam\\AppData\\Roaming\\TiboTattle";
   }
 
   quit() {
@@ -826,7 +826,7 @@ test("runtime wires safe browser, diagnostics, and local-data actions", async ()
   assert.deepEqual(external, ["http://127.0.0.1:4811/"]);
 
   assert.equal(await fixture.desktop.controller.handlers.revealLocalData({}), true);
-  assert.deepEqual(revealed, ["/Users/adam/Library/Application Support/TiboTattle/companion-state"]);
+  assert.deepEqual(revealed, ["C:\\Users\\adam\\AppData\\Roaming\\TiboTattle\\companion-state"]);
 
   assert.deepEqual(
     await fixture.desktop.controller.handlers.showDiagnostics({}),

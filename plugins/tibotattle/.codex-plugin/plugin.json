@@ -15,10 +15,10 @@
   "interface": {
     "displayName": "TiboTattle",
     "shortDescription": "Understand and improve your Codex usage.",
-    "longDescription": "Reads TiboTattle's content-free local evidence, explains usage patterns, and proposes measurable behavior experiments. It can also prepare and confirm an app install when a compatible release exists.",
+    "longDescription": "Reads TiboTattle's content-free local evidence, explains usage patterns, and proposes measurable behavior experiments.",
     "developerName": "Adam Allcock",
     "category": "Productivity",
-    "capabilities": ["Local usage analysis", "Evidence lookup", "Optional app installation"],
+    "capabilities": ["Local usage analysis", "Evidence lookup"],
     "websiteURL": "https://tibotattle.com",
     "defaultPrompt": [
       "How can I improve my Codex usage?",

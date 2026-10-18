@@ -10,7 +10,9 @@ import {
   prepareLocalCollectorState,
 } from "../src/local-collector-state.js";
 import {
+  isExactWeeklyPaceForecast,
   projectWeeklyPaceForecast,
+  projectWeeklyPaceOutlook,
   weeklyPaceSnapshotsFromCollectorRecord,
 } from "../src/weekly-pace-projection.js";
 import {
@@ -149,6 +151,50 @@ test("the local pace adapter refuses an unattributed or non-app-server current o
     observations,
     nowMs: NOW,
   }).status, "unavailable");
+});
+
+test("refused pace estimates always use the canonical public unavailable DTO", () => {
+  const current = quotaRecord({ observedAt: "2026-08-03T12:30:00.000Z", usedPercent: 30 });
+  for (const prior of [
+    quotaRecord({ observedAt: "2026-08-03T12:15:00.000Z", usedPercent: 40 }),
+    quotaRecord({ observedAt: "2026-08-03T12:15:00.000Z", usedPercent: 30 }),
+    quotaRecord({ observedAt: "2026-08-03T12:31:00.000Z", usedPercent: 29 }),
+    { ...quotaRecord({ observedAt: "2026-08-03T12:15:00.000Z", usedPercent: 20 }),
+      receivedAt: "2026-08-03T12:25:00.000Z" },
+  ]) {
+    const result = projectWeeklyPaceForecast({ currentRecord: current,
+      observations: weeklyPaceSnapshotsFromCollectorRecord(prior), nowMs: NOW });
+    assert.equal(result.status, "unavailable");
+    assert.ok(isExactWeeklyPaceForecast(result));
+    assert.deepEqual(result, projectWeeklyPaceForecast());
+  }
+});
+
+test("an observed exhausted pool stays distinct from absent evidence, including a flat 100% series", () => {
+  const current = quotaRecord({ observedAt: "2026-08-03T12:30:00.000Z", usedPercent: 100 });
+  for (const usedPercent of [null, 90, 100]) {
+    const observations = usedPercent === null ? [] : weeklyPaceSnapshotsFromCollectorRecord(
+      quotaRecord({ observedAt: "2026-08-03T12:15:00.000Z", usedPercent }));
+    const result = projectWeeklyPaceForecast({ currentRecord: current, observations, nowMs: NOW });
+    assert.equal(result.status, "exhausted");
+    assert.equal(result.hoursToExhaustion, 0);
+    assert.equal(result.etaAt, null);
+    assert.ok(isExactWeeklyPaceForecast(result));
+    const outlook = projectWeeklyPaceOutlook({ forecast: result, nowMs: NOW });
+    assert.equal(outlook.status, "exhausted");
+    assert.equal(outlook.remainingPercent, 0);
+    assert.equal(outlook.rates.ratio, null);
+    assert.equal(outlook.track.coveredFraction, 0);
+    assert.equal(outlook.critical, true);
+    assert.equal(outlook.projection.dryHours, outlook.projection.hoursToReset);
+    assert.deepEqual(normalizeDashboardPayload({ weekly: { paceForecast: result, paceOutlook: outlook } }).weekly.paceOutlook, outlook);
+  }
+  const stale = projectWeeklyPaceForecast({ currentRecord: current, nowMs: NOW + 31 * 60_000 });
+  assert.equal(stale.status, "unavailable");
+  assert.equal(projectWeeklyPaceOutlook({ forecast: stale, nowMs: NOW }).remainingPercent, null);
+  const nearly = projectWeeklyPaceForecast({ currentRecord: { ...current,
+    windows: [{ ...current.windows[0], usedPercent: 99.9999999 }] }, nowMs: NOW });
+  assert.notEqual(nearly.status, "exhausted");
 });
 
 test("local companion retains one safe observation as a non-predictive waiting state", async () => {

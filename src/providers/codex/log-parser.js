@@ -121,8 +121,8 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
       signal,
     )) {
       throwIfAborted(signal);
-      if (line === null) continue;
       ordinal += 1;
+      if (line === null) continue;
       if (!['"type":"thread_settings_applied"', '"type":"turn_context"',
         '"type":"session_meta"', '"type":"token_count"', '"type":"task_started"',
         '"type":"token_usage_record"','"type":"compacted"','"type":"model_reroute"'].some(needle => line.includes(needle))) continue;

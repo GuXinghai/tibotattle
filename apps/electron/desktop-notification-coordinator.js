@@ -599,6 +599,16 @@ export function createDesktopNotificationCoordinator(options = {}) {
       try {
         validatedStatus = validateDesktopShellStatus(statusValue);
       } catch {
+        const cleared = evaluateDesktopNotificationPolicy(state, staleEvidence()).state;
+        if (!equalState(cleared, state) && !await saveState(cleared)) {
+          return fixedResult({
+            outcome: "state_unavailable",
+            reason: "state_unavailable",
+            delivery: "state_unavailable",
+            status: currentStatus,
+          });
+        }
+        state = cleared;
         const nextStatus = publish(statusWithState(
           currentStatus,
           state,
@@ -614,6 +624,19 @@ export function createDesktopNotificationCoordinator(options = {}) {
           delivery: "not_attempted",
           status: nextStatus,
         });
+      }
+
+      // A running refresh has not supplied a terminal observation. Likewise,
+      // aging out an unchanged completed receipt is only clock passage. Neither
+      // may clear comparison baselines or initiate catch-up delivery.
+      if (validatedStatus.state === "analyzing"
+          || validatedStatus.notificationEvidenceStatus === "expired") {
+        const outcome = state.preferences.enabled ? "no_crossing" : "disabled";
+        const nextStatus = publish(statusWithState(
+          currentStatus, state, lifecycle, statusForDelivery(delivery),
+          outcome, "none", "not_attempted",
+        ));
+        return fixedResult({ outcome, reason: "none", delivery: "not_attempted", status: nextStatus });
       }
 
       const evidence = validatedStatus.state === "fresh"

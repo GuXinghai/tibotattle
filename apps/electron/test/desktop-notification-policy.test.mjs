@@ -414,6 +414,39 @@ test("crossing is based on the previous value, not merely being near a threshold
   });
 });
 
+test("simultaneous lane crossings coalesce into one threshold alert and remain handled after restart", () => {
+  const windows = (usedPercent) => [
+    windowValue({ usedPercent }),
+    windowValue({ lane: "secondary", durationMinutes: 10080, usedPercent }),
+  ];
+  const baseline = firstObservation({
+    thresholdMode: 90,
+    resetEnabled: false,
+    evidence: evidenceValue({ windows: windows(85) }),
+  }).state;
+  const crossed = evaluateDesktopNotificationPolicy(baseline, evidenceValue({
+    observedAt: "2026-08-22T10:05:00.000Z",
+    windows: windows(94),
+  }));
+  assert.deepEqual(crossed.notification, { key: DESKTOP_NOTIFICATION_KEYS.THRESHOLD, thresholdPercent: 90 });
+  assert.equal(crossed.state.handledKeys.length, 2);
+  assert.equal(crossed.state.handledKeys.some((key) => key.includes("|primary|300|")), true);
+  assert.equal(crossed.state.handledKeys.some((key) => key.includes("|secondary|10080|")), true);
+
+  let state = deserializeDesktopNotificationPolicyState(serializeDesktopNotificationPolicyState(crossed.state));
+  for (const [observedAt, usedPercent] of [
+    ["2026-08-22T10:05:00.000Z", 94],
+    ["2026-08-22T10:06:00.000Z", 95],
+    ["2026-08-22T10:07:00.000Z", 85],
+    ["2026-08-22T10:08:00.000Z", 94],
+  ]) {
+    const evaluated = evaluateDesktopNotificationPolicy(state, evidenceValue({ observedAt, windows: windows(usedPercent) }));
+    assert.equal(evaluated.notification, null);
+    assert.equal(evaluated.state.handledKeys.length, 2);
+    state = evaluated.state;
+  }
+});
+
 test("reset alerts take precedence and all same-refresh candidates are consumed", () => {
   let state = firstObservation({
     thresholdMode: "eightyAndNinety",

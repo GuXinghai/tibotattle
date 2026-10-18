@@ -1,7 +1,7 @@
 import {
   DESKTOP_APPEARANCES,
   DESKTOP_LANGUAGES,
-  DESKTOP_REFRESH_INTERVAL_SECONDS,
+  isDesktopRefreshIntervalSeconds,
 } from "./desktop-contract.js";
 
 const DIAGNOSTICS_SCHEMA_VERSION = "tibotattle-electron-diagnostics-v2";
@@ -144,7 +144,7 @@ function strictDiagnosticsRecord(diagnostics) {
   const settings = assertExactRecord(source.settings, SETTINGS_KEYS, "diagnostics.settings");
   if (!DESKTOP_LANGUAGES.includes(settings.language)
       || !DESKTOP_APPEARANCES.includes(settings.appearance)
-      || !DESKTOP_REFRESH_INTERVAL_SECONDS.includes(settings.refreshIntervalSeconds)
+      || !isDesktopRefreshIntervalSeconds(settings.refreshIntervalSeconds)
       || !["default", "custom"].includes(settings.codexFolder)
       || !LOGIN_STATUSES.has(settings.startAtLogin)
       || !NOTIFICATION_DELIVERIES.has(settings.notificationDelivery)) {
@@ -279,9 +279,8 @@ function safeSettingsState(value) {
     appearance: DESKTOP_APPEARANCES.includes(source.appearance)
       ? source.appearance
       : "system",
-    refreshIntervalSeconds: DESKTOP_REFRESH_INTERVAL_SECONDS.includes(
-      source.refreshIntervalSeconds,
-    ) ? source.refreshIntervalSeconds : 300,
+    refreshIntervalSeconds: isDesktopRefreshIntervalSeconds(source.refreshIntervalSeconds)
+      ? source.refreshIntervalSeconds : 300,
     codexFolder: source.codexFolder?.kind === "custom" ? "custom" : "default",
     startAtLogin: LOGIN_STATUSES.has(startAtLogin.status)
       ? startAtLogin.status

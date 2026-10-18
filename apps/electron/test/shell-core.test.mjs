@@ -931,6 +931,48 @@ test("loopback session denies Blob downloads and clipboard writes for every wind
   dashboardInstall.remove();
 });
 
+test("session permission grants are revoked on final release and restored only for a newly registered window", () => {
+  const session = {
+    setPermissionRequestHandler(handler) { this.request = handler; },
+    setPermissionCheckHandler(handler) { this.check = handler; },
+    webRequest: { onBeforeRequest() {} },
+  };
+  const contents = new FakeWebContents();
+  contents.id = 91;
+  const policy = createLoopbackNavigationPolicy({ origin: "http://127.0.0.1:3456" });
+  const first = installLoopbackNavigationPolicy({ webContents: contents, session, policy, allowNotificationPermission: true });
+  const second = installLoopbackNavigationPolicy({ webContents: contents, session, policy, allowNotificationPermission: true });
+  const deniedWindow = new FakeWebContents();
+  const denied = installLoopbackNavigationPolicy({ webContents: deniedWindow, session, policy });
+  const check = (target, expected) => {
+    const decisions = [];
+    session.request(target, "notifications", (allowed) => decisions.push(allowed));
+    assert.deepEqual(decisions, [expected]);
+    assert.equal(session.check(target, "notifications"), expected);
+    assert.equal(session.check(target, "media"), false);
+  };
+  check(contents, true);
+  check(deniedWindow, false);
+  first.remove();
+  first.remove();
+  check(contents, true);
+  second.remove();
+  check(contents, false);
+  denied.remove();
+  check(contents, false);
+  assert.equal(typeof session.request, "function");
+  assert.equal(typeof session.check, "function");
+
+  const replacement = new FakeWebContents();
+  replacement.id = contents.id;
+  const restored = installLoopbackNavigationPolicy({ webContents: replacement, session,
+    policy: createLoopbackNavigationPolicy({ origin: "http://127.0.0.1:3457" }), allowNotificationPermission: true });
+  check(contents, false);
+  check(replacement, true);
+  restored.remove();
+  check(replacement, false);
+});
+
 
 test("companion supervisor starts a live plain child without Node IPC", async (t) => {
   const childSource = [
@@ -2199,6 +2241,66 @@ test("desktop lifecycle installs no download handler and ignores the retired reg
   assert.equal(lifecycle.openLatestDownload, undefined);
   assert.equal(lifecycle.isAuthorizedDesktopDownloadContext, undefined);
   await lifecycle.requestQuit();
+});
+
+test("desktop lifecycle cancels pending dashboard loads before queued shutdown or update", async (t) => {
+  for (const stage of ["startup", "retry"]) {
+    for (const action of ["requestQuit", "dispose", "prepareForUpdate"]) {
+      await t.test(`${stage} ${action}`, async () => {
+        const app = new FakeApp();
+        const windows = [];
+        let hang = stage === "startup";
+        let finishLoad;
+        const supervisor = {
+          stops: 0,
+          async start() { return { origin: "http://127.0.0.1:4051" }; },
+          async stop() { ++this.stops; },
+        };
+        class PendingWindow extends FakeWindow {
+          constructor(options) { super(options); windows.push(this); }
+          loadURL(url) {
+            this.loaded.push(url);
+            if (hang && url === "http://127.0.0.1:4051/") {
+              return new Promise((resolve) => { finishLoad = resolve; });
+            }
+            return Promise.resolve();
+          }
+        }
+        const lifecycle = createDesktopLifecycle({
+          app, BrowserWindow: PendingWindow, Tray: FakeTray,
+          Menu: { buildFromTemplate: (template) => ({ template }) },
+          icon: "empty-icon", preloadPath: "/synthetic/preload.cjs", supervisor,
+        });
+        let pending = lifecycle.start();
+        if (stage === "retry") {
+          await pending;
+          hang = true;
+          pending = lifecycle.retry();
+        }
+        let pendingSettled = false;
+        pending.then(() => { pendingSettled = true; }, () => { pendingSettled = true; });
+        await nextTick();
+        assert.equal(typeof finishLoad, "function");
+        const dashboard = windows.at(-1);
+        let teardownSettled = false;
+        const teardown = lifecycle[action]();
+        teardown.then(() => { teardownSettled = true; });
+        await nextTick();
+        assert.equal(pendingSettled, true, "load must settle without Chromium completing navigation");
+        assert.equal(teardownSettled, true, "teardown must enter the queue after cancellation");
+        await teardown;
+        assert.ok(supervisor.stops > 0);
+        finishLoad();
+        dashboard.emit("ready-to-show");
+        await nextTick();
+        assert.equal(lifecycle.state.dashboardReady, false);
+        assert.equal(lifecycle.state.started, false);
+        assert.equal(dashboard.visible, false);
+        if (action === "requestQuit") assert.ok(app.quitCalls > 0);
+        if (action !== "dispose") await lifecycle.dispose();
+      });
+    }
+  }
 });
 
 test("desktop lifecycle keeps a visible recovery window after a startup exit", async () => {

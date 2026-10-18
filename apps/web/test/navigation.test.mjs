@@ -47,7 +47,7 @@ function fakeLink(nav) {
   };
 }
 
-function fakePage(name, { hidden = false } = {}) {
+function fakePage(name, { hidden = false, hasHeading = true } = {}) {
   const headingAttributes = new Map();
   const heading = {
     attributes: headingAttributes,
@@ -66,7 +66,7 @@ function fakePage(name, { hidden = false } = {}) {
     removeAttribute(name) { this.attributes.delete(name); },
     querySelector(selector) {
       assert.equal(selector, "h1, h2");
-      return heading;
+      return hasHeading ? heading : null;
     },
   };
 }
@@ -229,6 +229,20 @@ test("initial mount does not steal focus but later hash changes move it", () => 
   changeHash(browser, "#overview");
   changeHash(browser, "#allowance");
   assert.deepEqual(page.heading.focusOptions, { preventScroll: true });
+});
+
+test("page transitions focus the page heading after headingless controls for that page", () => {
+  const browser = fakeBrowser({ hash: "#usage" });
+  const allowanceControl = fakePage("allowance", { hasHeading: false });
+  browser.pages.unshift(allowanceControl);
+  mountDashboardNavigation(browser);
+
+  browser.links.find((link) => link.dataset.nav === "allowance").click();
+
+  const allowancePage = browser.pages.find((page) =>
+    page !== allowanceControl && page.dataset.dashboardPage === "allowance");
+  assert.equal(allowanceControl.heading.focusOptions, null);
+  assert.deepEqual(allowancePage.heading.focusOptions, { preventScroll: true });
 });
 
 test("repeated transitions and a navigation remount keep exactly one page visible", () => {

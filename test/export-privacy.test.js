@@ -81,6 +81,18 @@ test("privacy failures expose only fixed sensitive-pattern codes", () => {
   );
 });
 
+test("source canaries detect JSON-escaped quote, slash and newline values without exposing them", () => {
+  for (const sensitive of ['private-"quoted"-value', "private-\\escaped-value", "private-\nmultiline-value"]) {
+    const bundle = {
+      bundleId: `bundle:v1:${"a".repeat(64)}`, participantId: `participant:v1:${"b".repeat(64)}`,
+      coveredAt: {}, recordCounts: { usageEvents: 0, quotaSnapshots: 0, activityMarkers: 0 },
+      records: { usageEvents: [], quotaSnapshots: [], activityMarkers: [] }, leaked: sensitive,
+    };
+    assert.throws(() => verifyPrivacySafeBundle(bundle, { forbiddenSourceValues: [sensitive] }),
+      (error) => error.message.includes("source_value_canaries") && !error.message.includes(sensitive));
+  }
+});
+
 test("privacy gate accepts the implemented OpenAI collector quota family", () => {
   const snapshot = normalizeCodexCollectorQuotaCandidate(SECRET, {
     candidateVersion: "codex-collector-quota-candidate-v0.1",

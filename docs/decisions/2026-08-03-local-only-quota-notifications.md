@@ -29,6 +29,13 @@ The bridge also drops a direct receipt if it is more than five minutes old when
 the foreground refresh finishes (or appears to be from the future). This clock
 check can only suppress an alert; it is never itself an alert trigger.
 
+A running refresh supplies no new terminal observation. Polling during that
+refresh, or aging an unchanged receipt out after it was fresh at completion,
+neither evaluates a crossing nor clears its comparison baseline. The closed
+desktop status marks the latter case as `notificationEvidenceStatus: "expired"`.
+A missing, malformed or already stale receipt at completion, an invalid status,
+or a failed refresh still clears comparison baselines and cannot send an alert.
+
 ## Eligibility state machine
 
 ```text
@@ -99,6 +106,8 @@ At most one local notification is submitted for a single fresh provider
 observation. When one read crosses multiple configured thresholds, the highest
 crossed threshold is the one surfaced and every crossed threshold key is marked
 handled. A reset transition wins over threshold evaluation for its new window.
+This coalescing also applies across supported lanes from the same observation;
+handled keys record consumed crossings, not a separate delivery per lane.
 
 ## Deliberate non-goals
 

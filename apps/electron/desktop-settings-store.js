@@ -21,6 +21,7 @@ import {
   reorderCodexHomesConfiguration,
   setPrimaryCodexHomeInConfiguration,
 } from "./desktop-codex-roots.js";
+import { isDesktopSettingsBackendError } from "./desktop-settings-backends.js";
 
 const DEFAULT_BACKEND = Object.freeze({
   async load() {
@@ -109,6 +110,11 @@ function loadError() {
   return error;
 }
 
+function isInvalidBackendRecord(error) {
+  return isDesktopSettingsBackendError(error)
+    && ["desktop_settings_backend_corrupt", "desktop_settings_backend_too_large"].includes(error.code);
+}
+
 /**
  * A serialized, dependency-injected settings store.  It owns no filesystem
  * implementation: production chooses the backend appropriate to the host
@@ -127,8 +133,21 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
     if (loaded) return state;
     if (loadPromise !== null) return loadPromise;
     loadPromise = (async () => {
+      let stored;
       try {
-        const stored = await persistence.load();
+        stored = await persistence.load();
+      } catch (error) {
+        // An unavailable read is retriable. Do not publish defaults over an
+        // unread record, or permanently classify it as an invalid schema.
+        lastLoadError = loadError();
+        if (isInvalidBackendRecord(error)) {
+          writeBlocked = true;
+          loaded = true;
+        }
+        return state;
+      }
+      try {
+        lastLoadError = null;
         if (stored === null || stored === undefined) {
           state = defaultSettings();
         } else {
@@ -175,12 +194,18 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
   }
 
   async function save(next) {
-    if (writeBlocked) throw persistenceError();
+    if (writeBlocked || !loaded) throw persistenceError();
     const candidate = cloneSettings(next, idFactory);
+    let latest;
+    try {
+      latest = await persistence.load();
+    } catch (error) {
+      if (isInvalidBackendRecord(error)) writeBlocked = true;
+      throw persistenceError();
+    }
     try {
       // Another app version may have replaced the file after this process loaded it.
       // Revalidate its version before allowing this older reader to publish.
-      const latest = await persistence.load();
       if (latest !== null && latest !== undefined) validateDesktopSettingsSnapshot({ ...migrateDesktopSettingsSnapshot(latest, { idFactory }) });
     } catch {
       writeBlocked = true;

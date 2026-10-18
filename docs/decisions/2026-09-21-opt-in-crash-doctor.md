@@ -25,7 +25,11 @@ The doctor reports only the content-free projection and startup record below.
 The Electron main process also overwrites one owner-only, content-free startup
 result per launch in `startup-diagnostics/startup-diagnostic-v1.json` under the
 selected Electron user-data root, separate from migration-owned settings and
-companion state. Early recording therefore does not occupy a native handover
+companion state. Windows writes use the branded protected state store, with
+native owner-only DACL, owner, reparse-point, link and replacement-identity
+checks; POSIX mode bits are not a Windows permission gate. If that store is
+unavailable, this optional journal is omitted without an ordinary filesystem
+fallback. Early recording therefore does not occupy a native handover
 target. The independent doctor reads this location first, falling back to the older `desktop-settings` location only when the new
 record is absent; unsafe or invalid current evidence is not hidden by an older
 record. It contains only version/platform labels, timestamps, the

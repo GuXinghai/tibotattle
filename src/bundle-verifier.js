@@ -28,10 +28,12 @@ function normalizeLegacyByteSequence(value) {
 export function loadVerifiedLocalMetadataBundleBytes({
   bundleBytes,
   receiptBytes,
+  forbiddenSourceValues = [],
 } = {}) {
   return legacyVerifier.loadVerifiedLocalMetadataBundleBytes({
     bundleBytes: normalizeLegacyByteSequence(bundleBytes),
     receiptBytes: normalizeLegacyByteSequence(receiptBytes),
+    forbiddenSourceValues,
   });
 }
 

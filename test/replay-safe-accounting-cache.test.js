@@ -2456,14 +2456,14 @@ test("replay cache rejects the old prefix-priced version and unreviewed model cr
       components: { input_uncached_tokens: 1_000 },
     })]),
   });
-  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.21");
+  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.22");
   assert.doesNotThrow(() => assertReplaySafeAccountingCache(cache));
   const oldVersion = structuredClone(cache);
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.12";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.13";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
-  for(const version of ["0.19","0.20"]){oldVersion.schemaVersion="local-replay-safe-accounting-v"+version;assert.throws(()=>assertReplaySafeAccountingCache(oldVersion));}
+  for(const version of ["0.19","0.20","0.21"]){oldVersion.schemaVersion="local-replay-safe-accounting-v"+version;assert.throws(()=>assertReplaySafeAccountingCache(oldVersion));}
   for (const model of ["gpt-5.6", "gpt-5.5-pro", "gpt-5.5-future"]) {
     const invalidCrossing = structuredClone(cache);
     invalidCrossing.timeline[0].speedWeighting.unknown ??= {};
@@ -3339,6 +3339,37 @@ test("memoized accounting matches reviewed context boundaries and nullable obser
       assert.deepEqual(pricer(event, event.components), expected);
       assert.equal(expected.coverageStatus, totalInputContextTokens === null ? "unpriced" : "partially_priced");
       assert.equal(expected.totalUsd, totalInputContextTokens === null ? "0" : model === "gpt-6.1-sol" ? "0.015" : "0.075");
+    }
+  }
+});
+
+test("memoized tier pricing matches the public kernel at missing and published long-context boundaries", () => {
+  for (const apiServiceTier of ["standard", "priority", "ultrafast", "flex", "batch"]) {
+    const pricer = createAccountingPricer({ apiServiceTier });
+    for (const model of ["gpt-5.5", "gpt-5.5-codex", "gpt-5.4", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6.1-sol", "gpt-6-astra", "gpt-5.1-codex-max"]) {
+      // Revisit the short band after the long band to exercise warm plans in
+      // both directions. An absent Priority long card must never borrow short.
+      for (const totalInputContextTokens of [271_999, 272_000, 272_001, 300_000, 0, 271_999]) {
+        const event = usageEvent({ timestamp: "2026-10-18T00:00:00.000Z", model,
+          components: { input_uncached_tokens: 300_000, input_cache_read_tokens: 10_000,
+            output_text_tokens: 1_001, output_reasoning_tokens: 99 } });
+        delete event.components.output_combined_tokens;
+        delete event.componentAvailability.output_combined_tokens;
+        event.totalInputContextTokens = totalInputContextTokens;
+        const expected = priceCodexUsageEvent(event, { apiServiceTier });
+        const actual = pricer(event, event.components);
+        const label = `${model}/${apiServiceTier}/${totalInputContextTokens}`;
+        for (const key of ["totalUsd", "coverageStatus", "selectedPriceCardIds", "priceCardBreakdown", "warnings"]) {
+          assert.deepEqual(actual[key], expected[key], `${label}/${key}`);
+        }
+        assert.deepEqual(actual.components.map(({ metadata, ...row }) => row),
+          expected.components.filter(row => Number(row.quantity) > 0).map(({ metadata, ...row }) => row), label);
+        if (["gpt-5.5", "gpt-5.5-codex", "gpt-5.4"].includes(model)
+            && apiServiceTier === "priority" && totalInputContextTokens >= 272_000) {
+          assert.equal(actual.coverageStatus, "unpriced", label);
+          assert.equal(actual.totalUsd, "0", label);
+        }
+      }
     }
   }
 });

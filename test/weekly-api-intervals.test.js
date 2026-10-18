@@ -45,6 +45,25 @@ test('interleaved stale quota readings cannot count a rebound as a second deduct
   assert.deepEqual(conflict.rows.map(row=>row.quotaPp),[1,null,1]);
   assert.deepEqual(conflict.rows.map(row=>row.reason),[null,'quota_conflict',null]);
 });
+
+test('material falls with an unchanged schedule refuse the whole rebound interval',async()=>{
+ for(const readings of [[[0,91],[5,5],[10,80],[15,95],[20,96]],
+   [[0,91],[5,5],[6,95],[20,96]]]){
+  const result=await build(readings,[usage(2),usage(6),usage(12),usage(18)]);
+  assert.equal(result.rows[0].reason,'quota_conflict');
+  assert.equal(result.rows[0].weeklyUsd,null);
+  assert.equal(result.rows[0].quotaPp,null);
+  assert.equal(result.rows.at(-1).reason,null);
+  assert.equal(result.rows.at(-1).quotaPp,1);
+  assert.notEqual(result.rows[0].segment,result.rows.at(-1).segment);
+  assert.ok(validWeeklyApiIntervals(result));validateWeeklyApiIntervals(result);
+ }
+ const pending=await build([[0,91],[5,5],[10,80]],[usage(2),usage(8)]);
+ assert.equal(pending.rows[0].reason,'quota_conflict');
+ assert.equal(pending.rows[0].weeklyUsd,null);
+ const exactRebound=await build([[0,91],[5,5],[6,91]],[usage(2),usage(6)]);
+ assert.equal(exactRebound.rows[0].reason,'quota_conflict');
+});
 test('free approval reviews are excluded without modifying events; unknown speed stays explicit',async()=>{
  const events=[usage(3,'4',{review:true}),usage(4,'2',{speed:'unknown'}),usage(8,'7',{model:'codex-auto-review'})];
  const before=JSON.stringify(events);const r=(await build([[0,1],[10,3]],events)).rows[0];

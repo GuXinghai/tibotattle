@@ -21,6 +21,12 @@ export const LANE_REGRESSION_TEST_FILES = Object.freeze([
   "test/test-lanes.test.js",
 ]);
 
+// Keep discovery inclusive as focused Electron regression files are added.
+// These source contracts remain separate from packaged/native GUI gates.
+export const ELECTRON_TEST_ARGUMENTS = Object.freeze([
+  "--test-concurrency=1", "apps/electron/test/*.test.mjs",
+]);
+
 const ALL_EXPLICIT_TEST_FILES = Object.freeze([
   ...new Set([
     ...LANE_REGRESSION_TEST_FILES,
@@ -32,6 +38,7 @@ const LANE_ORDER = Object.freeze([
   "public-site",
   "worker",
   "i18n",
+  "electron",
   "full",
 ]);
 
@@ -43,6 +50,7 @@ const VALID_COMMANDS = new Set([
   "public-site",
   "worker",
   "i18n",
+  "electron",
 ]);
 
 // These paths belong only to the hosted/public build boundary. Shared browser
@@ -106,6 +114,7 @@ function isDocumentationPath(path) {
 }
 
 function classifyKnownPath(path, lanes) {
+  if (path.startsWith("apps/electron/test/") && path.endsWith(".test.mjs")) { lanes.add("electron"); return true; }
   if (PUBLIC_SITE_TOOL_PATHS.has(path)) { lanes.add("public-site"); return true; }
   if (WORKER_CONFIG_PATHS.has(path) || ["apps/worker/src/", "apps/worker/test/", "apps/worker/migrations/", "apps/worker/deletion-ledger-migrations/"]
     .some((prefix) => path.startsWith(prefix))) { lanes.add("worker"); return true; }
@@ -333,6 +342,10 @@ async function runNodeTests(arguments_, { environment = process.env } = {}) {
 }
 
 async function runLane(lane) {
+  if (lane === "electron") {
+    await runNodeTests(ELECTRON_TEST_ARGUMENTS);
+    return;
+  }
   const hosted = hostedLaneCommands(lane);
   if (hosted) {
     for (const args of hosted) await runCommand(NPM_COMMAND, args);
@@ -406,6 +419,7 @@ Lanes:
   changed         Select conservative lanes from branch plus active-worktree paths.
   plan            Print the selected lanes without running them.
   i18n            Run canonical browser and Electron localization parity gates.
+  electron        Run focused Electron source contracts serially.
   worker          Run the complete Worker owning gate, including dry builds.
   public-site     Run public-site/UI and Worker owning gates.
 

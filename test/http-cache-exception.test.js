@@ -53,8 +53,9 @@ test("scanner executable is pinned and verification precedes execution", async (
   const scanner = workflow.slice(workflow.indexOf("      - name: Run scanner"));
   assert.match(scanner, /shell: bash/);
   assert.match(scanner, /set -euo pipefail/);
-  assert.match(scanner, /https:\/\/github\.com\/google\/osv-scanner\/releases\/download\/v2\.5\.1\/osv-scanner_linux_amd64/);
-  assert.match(scanner, /f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be/);
+  assert.match(workflow, /runs-on: windows-2025/);
+  assert.match(scanner, /https:\/\/github\.com\/google\/osv-scanner\/releases\/download\/v2\.5\.1\/osv-scanner_windows_amd64\.exe/);
+  assert.match(scanner, /25e42f5ef6711fd8c0fb45390972205891dd44c6bd02ac93f0f63e8e98d9bfb6/);
   assert.match(scanner, /sha256sum --check --strict/);
   assert.ok(scanner.indexOf("sha256sum --check --strict") < scanner.indexOf('chmod 0700 "$scanner"'));
   assert.ok(scanner.indexOf('chmod 0700 "$scanner"') < scanner.indexOf('"$scanner" scan source --all-vulns --recursive ./'));

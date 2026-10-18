@@ -18,7 +18,10 @@ permissions:
 jobs:
   osv:
     name: Scan committed dependency locks
-    runs-on: ubuntu-latest
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: bash
     permissions:
       contents: read
     steps:
@@ -47,10 +50,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          scanner="${RUNNER_TEMP}/osv-scanner-2.5.1"
+          scanner="${RUNNER_TEMP}/osv-scanner-2.5.1.exe"
           curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 --connect-timeout 15 --max-time 120 \
-            https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_linux_amd64 \
+            https://github.com/google/osv-scanner/releases/download/v2.5.1/osv-scanner_windows_amd64.exe \
             --output "$scanner"
-          printf '%s  %s\n' 'f9f25499a2c8cc367b3af45df2ea7eeca7fbccceab9c35079968f4b3652194be' "$scanner" | sha256sum --check --strict
+          printf '%s  %s\n' '25e42f5ef6711fd8c0fb45390972205891dd44c6bd02ac93f0f63e8e98d9bfb6' "$scanner" | sha256sum --check --strict
           chmod 0700 "$scanner"
           "$scanner" scan source --all-vulns --recursive ./

@@ -369,6 +369,45 @@ test("the overview reports spare allowance when the window outlasts the pace", (
   assert.doesNotMatch(text, /allowance\.runout/u);
 });
 
+test("the overview reports only observed exhaustion and the time until reset", () => {
+  const { target, render } = overviewHarness();
+  const resetAt = resetIn(20);
+  const forecast = {
+    status: "exhausted",
+    currentUsedPercent: 100,
+    remainingPercent: 0,
+    resetsAt: resetAt,
+    etaAt: null,
+    hoursToExhaustion: 0,
+    observationCount: 3,
+    pace: { method: "median_adjacent_quota_slope" },
+  };
+  const payload = {
+    quotaWindows: [weeklyWindow()],
+    weekly: { paceForecast: forecast },
+  };
+
+  render(payload);
+  assert.equal(target.hidden, false);
+  assert.match(target.text(), /trends\.evidenceExhausted/u);
+  assert.match(target.text(), /trends\.evidenceExhaustedWhy/u);
+  assert.match(target.text(), /0%/u);
+  assert.match(target.text(), /allowance\.resetsIn/u);
+  assert.doesNotMatch(target.text(), /allowance\.rate|allowance\.runout|allowance\.spare\b/u);
+
+  for (const changes of [
+    { remainingPercent: 0.001 },
+    { etaAt: resetIn(1) },
+    { hoursToExhaustion: null },
+    { observationCount: 0 },
+    { pace: { method: "unreviewed_method" } },
+  ]) {
+    render({ ...payload, weekly: { paceForecast: { ...forecast, ...changes } } });
+    assert.match(target.text(), /allowance\.waitingTitle/u);
+    assert.doesNotMatch(target.text(), /trends\.evidenceExhausted/u);
+  }
+});
+
 test("the overview says it is waiting instead of inventing a rate", () => {
   const waiting = overviewHarness();
   waiting.render({ quotaWindows: [weeklyWindow()], weekly: {} });

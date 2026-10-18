@@ -198,3 +198,39 @@ test("aged display-only observations survive until reset without notification au
   const replacement = projectDesktopShellStatus({ refresh: { status: "idle" }, displayEvidence: displayEvidence({ windows: [] }), now: NOW });
   assert.equal(replacement.displayEvidence, undefined, "a new empty source snapshot does not borrow the previous observation");
 });
+
+test("only elapsed time after a valid completed direct receipt receives the closed expired marker", () => {
+  const receipt = {
+    schemaVersion: "tibotattle-notification-evidence-v2",
+    status: "fresh_provider_observation", provider: "openai_codex", source: "app_server_read", freshness: "fresh",
+    observedAt: "2026-09-05T11:54:00.000Z", continuityKey: "a".repeat(43),
+    windows: [{ lane: "primary", usedPercent: 85, durationMinutes: 300, resetAt: "2026-09-05T15:00:00.000Z", resetProofKind: "provider_reported_schedule_only" }],
+  };
+  const refresh = { status: "succeeded", finishedAt: "2026-09-05T11:54:01.000Z", result: { notificationEvidence: receipt } };
+  for (const display of [null, displayEvidence()]) {
+    const expired = projectDesktopShellStatus({ refresh, displayEvidence: display, now: NOW });
+    assert.equal(expired.notificationEvidence, null);
+    assert.equal(expired.notificationEvidenceStatus, "expired");
+    assert.deepEqual(validateDesktopShellStatus(expired), expired);
+  }
+  for (const change of [
+    { finishedAt: "2026-09-05T12:00:00.000Z" },
+    { finishedAt: undefined },
+    { result: {} },
+    { result: { notificationEvidence: { ...receipt, freshness: "stale" } } },
+    { result: { notificationEvidence: { ...receipt, extra: true } } },
+    { status: "failed" },
+  ]) {
+    assert.equal(projectDesktopShellStatus({ refresh: { ...refresh, ...change }, now: NOW }).notificationEvidenceStatus, undefined);
+  }
+  const expired = projectDesktopShellStatus({ refresh, now: NOW });
+  for (const change of [
+    { notificationEvidenceStatus: "fresh" },
+    { notificationEvidenceStatus: null },
+    { schemaVersion: "tibotattle-desktop-shell-status-v1" },
+    { state: "unavailable" },
+    { notificationEvidence: receipt },
+  ]) {
+    assert.throws(() => validateDesktopShellStatus({ ...expired, ...change }), TypeError);
+  }
+});

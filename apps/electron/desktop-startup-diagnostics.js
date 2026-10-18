@@ -1,7 +1,10 @@
-import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import {
+  createWindowsFilesystemAdapter,
+  createWindowsProtectedStateStore,
+  isWindowsProtectedStateStore,
+  isWindowsProtectedStateStoreError,
+} from "../../src/platform/index.js";
 
 import { safeShellCode } from "./errors.js";
 import {
@@ -69,34 +72,15 @@ function safeVersion(value) {
   return typeof value === "string" && SAFE_VERSION.test(value) ? value : "unknown";
 }
 
-async function writeOwnerOnlyRecord(rootPath, filename, record, uid) {
-  await mkdir(rootPath, { recursive: true, mode: 0o700 });
-  const root = await lstat(rootPath);
-  if (!root.isDirectory() || root.isSymbolicLink()
-      || (uid !== null && root.uid !== uid) || (root.mode & 0o022) !== 0) {
-    return false;
+function writeOwnerOnlyRecord(store, filename, record) {
+  let existing;
+  try { existing = store.inspect(filename); } catch (error) {
+    if (!isWindowsProtectedStateStoreError(error)
+        || error.code !== "windows_protected_state_store_missing") throw error;
   }
-  const temporary = join(rootPath, `.${filename}.${randomUUID()}.tmp`);
-  const finalPath = join(rootPath, filename);
-  let handle;
-  try {
-    handle = await open(temporary,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL
-        | (constants.O_NOFOLLOW ?? 0), 0o600);
-    await handle.writeFile(`${JSON.stringify(record)}\n`, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temporary, finalPath);
-    const directory = await open(rootPath, constants.O_RDONLY);
-    try { await directory.sync(); } finally { await directory.close(); }
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await handle?.close().catch(() => {});
-    await rm(temporary, { force: true }).catch(() => {});
-  }
+  if (existing) store.replaceJson(filename, existing.identity, record);
+  else store.createJson(filename, record);
+  return true;
 }
 
 /**
@@ -109,13 +93,14 @@ export function createDesktopStartupDiagnostics({
   rootPath,
   platform = process.platform,
   architecture = process.arch,
-  uid = typeof process.getuid === "function" ? process.getuid() : null,
+  windowsProtectedStateStore,
   now = () => new Date(),
 } = {}) {
   let phase = "bootstrap";
   let startedAt = null;
   let settled = false;
   let selectedRoot = null;
+  let selectedStore = null;
   let version = "unknown";
   try { version = safeVersion(app?.getVersion?.()); } catch { /* Optional metadata. */ }
 
@@ -133,7 +118,21 @@ export function createDesktopStartupDiagnostics({
     const recordedAt = timestamp();
     if (recordedAt === null) return false;
     try {
-      return await writeOwnerOnlyRecord(selectedRoot, DESKTOP_STARTUP_DIAGNOSTIC_FILE, {
+      if (platform !== "win32") return false;
+      if (selectedStore === null) {
+        const store = windowsProtectedStateStore ?? createWindowsProtectedStateStore({
+          adapter: createWindowsFilesystemAdapter({ platform, architecture }),
+          rootPath: selectedRoot,
+          maxBytes: 4096,
+        });
+        if (!isWindowsProtectedStateStore(store)
+            || resolve(store.rootPath).toLowerCase() !== selectedRoot.toLowerCase()) return false;
+        selectedStore = store;
+      }
+      // Native root-bound operations check protected owner-only DACLs,
+      // owner/reparse/link state and replacement identity on every write.
+      // POSIX mode bits do not represent the Windows security boundary.
+      return writeOwnerOnlyRecord(selectedStore, DESKTOP_STARTUP_DIAGNOSTIC_FILE, {
         schemaVersion: DESKTOP_STARTUP_DIAGNOSTIC_SCHEMA,
         recordedAt,
         startedAt,
@@ -144,7 +143,7 @@ export function createDesktopStartupDiagnostics({
         architecture: ["arm64", "x64", "ia32", "arm"].includes(architecture)
           ? architecture : "unknown",
         version,
-      }, uid);
+      });
     } catch {
       return false;
     }

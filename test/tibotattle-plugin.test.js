@@ -10,45 +10,10 @@ import {
   readMacOSBundleVersion,
 } from "../plugins/tibotattle/lib/installed-agent.mjs";
 import {
-  INSTALL_PLAN_SCHEMA_VERSION,
-  INSTALL_RECEIPT_SCHEMA_VERSION,
-  compareReleaseVersions,
-  createInstallationController,
-  readLatestReleaseManifest,
-  readPublishedCask,
-  selectInstallArtifact,
-} from "../plugins/tibotattle/lib/installation.mjs";
-import {
   TIBOTATTLE_TOOLS,
   createMcpRequestHandler,
   createToolRouter,
 } from "../plugins/tibotattle/mcp/server.mjs";
-
-const HASH = "a".repeat(64);
-const COMMIT = "b".repeat(40);
-
-function releaseManifest(version = MINIMUM_AGENT_RELEASE_VERSION) {
-  return {
-    schemaVersion: "usage-monitor-release-evidence-v1",
-    repository: "https://github.com/adamallcock/tibotattle",
-    version,
-    tag: `v${version}`,
-    commit: COMMIT,
-    artifacts: [{
-      platform: "macos",
-      architecture: "arm64",
-      format: "dmg",
-      version,
-      fileName: `TiboTattle-${version}-mac-arm64.dmg`,
-      bytes: 123456,
-      sha256: HASH,
-      source: {
-        repository: "https://github.com/adamallcock/tibotattle",
-        commit: COMMIT,
-      },
-    }],
-  };
-}
 
 test("plugin installation discovery selects the latest exact app candidate", async () => {
   const inspected = [];
@@ -222,181 +187,17 @@ test("plugin forwards opaque paging and evidence values without decoding them", 
   ]);
 });
 
-test("install planning refuses releases without the installed agent protocol", () => {
-  assert.equal(compareReleaseVersions("0.1.22", "0.1.23"), -1);
-  assert.equal(compareReleaseVersions("0.1.23", "0.1.23"), 0);
-  assert.throws(
-    () => selectInstallArtifact(releaseManifest("0.1.22"), {
-      platform: "darwin",
-      architecture: "arm64",
-    }),
-    (error) => error.code === "tibotattle_compatible_release_unavailable",
-  );
-});
-
-test("install planning rejects unsupported platforms before network access", async () => {
-  let clientRead = false;
-  let manifestRead = false;
-  const controller = createInstallationController({
-    client: {
-      status: async () => {
-        clientRead = true;
-        return { installation: "unsupported", compatibility: "unsupported" };
-      },
-    },
-    fetchManifest: async () => {
-      manifestRead = true;
-      return releaseManifest();
-    },
-    platform: "linux",
-    architecture: "x64",
-  });
-  await assert.rejects(
-    controller.plan(),
-    (error) => error.code === "tibotattle_install_platform_unsupported",
-  );
-  assert.equal(clientRead, false);
-  assert.equal(manifestRead, false);
-});
-
-test("release and cask readers accept only bounded canonical metadata", async () => {
-  const manifest = releaseManifest();
-  const requests = [];
-  const fetched = await readLatestReleaseManifest({
-    fetchImpl: async (url) => {
-      requests.push(String(url));
-      if (requests.length === 1) {
-        return new Response(JSON.stringify({
-          tag_name: "v0.1.23",
-          draft: false,
-          prerelease: false,
-          assets: [{
-            name: "release-manifest.json",
-            browser_download_url: "https://github.com/adamallcock/tibotattle/releases/download/v0.1.23/release-manifest.json",
-          }],
-        }));
-      }
-      return new Response(JSON.stringify(manifest));
-    },
-  });
-  assert.equal(fetched.commit, COMMIT);
-  assert.equal(requests.length, 2);
-
-  const cask = await readPublishedCask({
-    fetchImpl: async () => new Response([
-      'cask "tibotattle" do',
-      '  version "0.1.23"',
-      `  sha256 arm:   "${HASH}",`,
-      `         intel: "${"c".repeat(64)}"`,
-      "end",
-    ].join("\n")),
-  });
-  assert.equal(cask.version, "0.1.23");
-  assert.equal(cask.sha256.arm64, HASH);
-
-  await assert.rejects(
-    readPublishedCask({
-      fetchImpl: async () => new Response("small", {
-        headers: { "content-length": String(65 * 1024) },
-      }),
-    }),
-    (error) => error.code === "tibotattle_cask_lookup_failed",
-  );
-});
-
-test("install is bound to a single-use, expiring, exact release plan", async () => {
-  let installed = false;
-  const brewCalls = [];
-  const controller = createInstallationController({
-    client: {
-      async status() {
-        return installed
-          ? { installation: "present", compatibility: "compatible", releaseVersion: "0.1.23" }
-          : { installation: "absent", compatibility: "unavailable" };
-      },
-    },
-    fetchManifest: async () => releaseManifest(),
-    fetchCask: async () => ({ version: "0.1.23", sha256: { arm64: HASH } }),
-    tokenBytes: () => "c".repeat(48),
-    brew: async (args) => {
-      brewCalls.push(args);
-      installed = true;
-    },
-    platform: "darwin",
-    architecture: "arm64",
-  });
-  const plan = await controller.plan();
-  assert.equal(plan.schemaVersion, INSTALL_PLAN_SCHEMA_VERSION);
-  assert.equal(plan.status, "confirmation_required");
-  assert.equal(plan.artifactSha256, HASH);
-  const receipt = await controller.install({ confirmationToken: plan.confirmationToken });
-  assert.equal(receipt.schemaVersion, INSTALL_RECEIPT_SCHEMA_VERSION);
-  assert.equal(receipt.version, "0.1.23");
-  assert.deepEqual(brewCalls, [["install", "--cask", "adamallcock/tap/tibotattle"]]);
-  await assert.rejects(
-    controller.install({ confirmationToken: plan.confirmationToken }),
-    (error) => error.code === "tibotattle_install_confirmation_invalid",
-  );
-});
-
-test("install planning upgrades an older protocol-compatible app", async () => {
-  const controller = createInstallationController({
-    client: {
-      status: async () => ({
-        installation: "present",
-        compatibility: "compatible",
-        releaseVersion: "0.1.23",
-      }),
-    },
-    fetchManifest: async () => releaseManifest("0.1.24"),
-    fetchCask: async () => ({ version: "0.1.24", sha256: { arm64: HASH } }),
-    tokenBytes: () => "f".repeat(48),
-    platform: "darwin",
-    architecture: "arm64",
-  });
-  const plan = await controller.plan();
-  assert.equal(plan.status, "confirmation_required");
-  assert.equal(plan.action, "upgrade");
-  assert.equal(plan.version, "0.1.24");
-});
-
-test("install refuses cask drift after confirmation", async () => {
-  let caskRead = 0;
-  let brewCalled = false;
-  const controller = createInstallationController({
-    client: { status: async () => ({ installation: "absent", compatibility: "unavailable" }) },
-    fetchManifest: async () => releaseManifest(),
-    fetchCask: async () => {
-      caskRead += 1;
-      return caskRead === 1
-        ? { version: "0.1.23", sha256: { arm64: HASH } }
-        : { version: "0.1.24", sha256: { arm64: "d".repeat(64) } };
-    },
-    tokenBytes: () => "e".repeat(48),
-    brew: async () => { brewCalled = true; },
-    platform: "darwin",
-    architecture: "arm64",
-  });
-  const plan = await controller.plan();
-  await assert.rejects(
-    controller.install({ confirmationToken: plan.confirmationToken }),
-    (error) => error.code === "tibotattle_cask_release_mismatch",
-  );
-  assert.equal(brewCalled, false);
-});
-
-test("MCP tools keep read analysis separate from the destructive install tool", async () => {
-  const installTool = TIBOTATTLE_TOOLS.find((tool) => tool.name === "tibotattle_install");
-  assert.equal(installTool.annotations.readOnlyHint, false);
-  assert.equal(installTool.annotations.destructiveHint, true);
-  for (const name of [
+test("MCP exposes exactly four read-only tools and rejects retired installation calls", async () => {
+  const toolNames = [
     "tibotattle_status",
     "tibotattle_list_plans",
     "tibotattle_explain_usage",
     "tibotattle_get_evidence",
-    "tibotattle_install_plan",
-  ]) {
-    assert.equal(TIBOTATTLE_TOOLS.find((tool) => tool.name === name).annotations.readOnlyHint, true);
+  ];
+  assert.deepEqual(TIBOTATTLE_TOOLS.map((tool) => tool.name), toolNames);
+  for (const tool of TIBOTATTLE_TOOLS) {
+    assert.equal(tool.annotations.readOnlyHint, true);
+    assert.equal(tool.annotations.openWorldHint, false);
   }
 
   const calls = [];
@@ -407,10 +208,6 @@ test("MCP tools keep read analysis separate from the destructive install tool", 
         calls.push([command, input]);
         return { status: "available", nextCursor: "opaque-next" };
       },
-    },
-    installer: {
-      plan: async () => ({ status: "confirmation_required" }),
-      install: async () => ({ status: "installed" }),
     },
   });
   const result = await router("tibotattle_explain_usage", {
@@ -433,6 +230,9 @@ test("MCP tools keep read analysis separate from the destructive install tool", 
   assert.equal(rejected.isError, true);
   assert.equal(rejected.structuredContent.errorCode, "tibotattle_tool_input_invalid");
   assert.doesNotMatch(JSON.stringify(rejected), /private\/value/u);
+  const retired = await router("tibotattle_install", { confirmationToken: "synthetic-token" });
+  assert.equal(retired.isError, true);
+  assert.equal(retired.structuredContent.errorCode, "tibotattle_tool_unsupported");
 });
 
 test("MCP request handler lists tools and returns structured tool results", async () => {
@@ -443,7 +243,7 @@ test("MCP request handler lists tools and returns structured tool results", asyn
     }),
   });
   const listed = await handler({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-  assert.equal(listed.result.tools.length, 6);
+  assert.equal(listed.result.tools.length, 4);
   const called = await handler({
     jsonrpc: "2.0",
     id: 2,
@@ -457,7 +257,6 @@ test("MCP request handler lists tools and returns structured tool results", asyn
 test("unexpected plugin errors never echo sensitive error contents", async () => {
   const router = createToolRouter({
     client: { status: async () => { throw new Error("/Users/private/secret.sqlite"); } },
-    installer: {},
   });
   const result = await router("tibotattle_status", {});
   assert.equal(result.isError, true);

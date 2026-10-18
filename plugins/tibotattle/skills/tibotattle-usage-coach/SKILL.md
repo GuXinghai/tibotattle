@@ -1,6 +1,6 @@
 ---
 name: tibotattle-usage-coach
-description: Analyze private local TiboTattle usage evidence, give evidence-backed advice, and install or upgrade TiboTattle only when asked. Use for Codex usage drivers, improvements, data health, or comparable experiments.
+description: Analyze private local TiboTattle usage evidence and give evidence-backed advice. Use for Codex usage drivers, improvements, data health, or comparable experiments.
 ---
 
 # TiboTattle usage coach
@@ -15,9 +15,7 @@ API key, read session content, or create another usage ledger.
 2. If the platform is unsupported, explain that no private usage evidence was
    read and do not call another TiboTattle tool.
 3. If the app is absent or incompatible, explain that no private usage evidence
-   was read. Call `tibotattle_install_plan` only when the user asks to install or
-   upgrade TiboTattle. Call `tibotattle_install` only after the user confirms the
-   exact plan; pass its opaque confirmation token unchanged.
+   was read and that this plugin cannot install or upgrade the app.
 4. If data health is unavailable, give only the returned operational next step.
    If it is partial or stale, scope every claim to the stated coverage.
 

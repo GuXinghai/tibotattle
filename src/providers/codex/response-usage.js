@@ -121,13 +121,13 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
       }
       if (record?.type !== 'token_usage_record') return;
       pendingCheckpoint=null;
-      modern = true;
       if (!Number.isFinite(Date.parse(record.timestamp))) fail('codex_response_usage_timestamp_invalid');
       if (!id(p?.thread_id) || !id(p?.turn_id) || !id(p?.response_id)) fail('codex_response_usage_identity_invalid');
       if (own === null) fail('codex_response_usage_session_unattributed');
       // A copied ancestor response belongs to the original thread, never to
       // the child that happens to contain its replayed JSONL line.
       if (p.thread_id !== own) { diagnostics.foreignResponses++; foreignTurns.add(p.turn_id); return; }
+      modern = true;
       const raw = usage(p.usage), total = usage(p.turn_token_usage);
       const key = identityKey(JSON.stringify([p.thread_id, p.response_id]));
       if (typeof key !== 'string' || !/^[a-f0-9]{64}$/u.test(key)) fail('codex_response_usage_identity_invalid');

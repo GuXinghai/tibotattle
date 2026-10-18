@@ -1,33 +1,14 @@
 #!/usr/bin/env node
 
-import { readdir, readFile } from "node:fs/promises";
-import { dirname, extname, relative, resolve, sep } from "node:path";
+import { lstat, readdir, readFile } from "node:fs/promises";
+import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 export const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
 const FULL_COMMIT_SHA = /^[a-f0-9]{40}$/u;
-// Keep this an explicit allowlist rather than accepting any label with a
-// familiar prefix.  A repository-owned runner group can otherwise be named
-// `ubuntu-custom` and still pass a prefix-only check.  These are the standard
-// GitHub-hosted labels documented at:
-// https://docs.github.com/en/actions/reference/runners/github-hosted-runners
-const GITHUB_HOSTED_RUNNER_LABELS = new Set([
-  "ubuntu-slim",
-  "ubuntu-latest",
-  "ubuntu-22.04",
-  "ubuntu-24.04",
-  "ubuntu-26.04",
-  "ubuntu-22.04-arm",
-  "ubuntu-24.04-arm",
-  "ubuntu-26.04-arm",
-  "windows-latest",
-  "windows-2022",
-  "windows-2025",
-  "windows-2025-vs2026",
-  "windows-11-arm",
-  "windows-11-vs2026-arm",
-]);
+// The Windows-only repository policy selects one versioned hosted image.
+const GITHUB_HOSTED_RUNNER_LABELS = new Set(["windows-2025"]);
 const WORKFLOW_EXTENSIONS = new Set([".yml", ".yaml"]);
 
 function normalizePath(path) {
@@ -301,7 +282,7 @@ export function inspectWorkflowSource(source, { path = "workflow.yml" } = {}) {
       } else if (value.includes("${{")) {
         failures.push(`${path}:${lineNumber}: runner selector must be a static GitHub-hosted label`);
       } else if (invalidLabel !== undefined || labels.length !== 1) {
-        failures.push(`${path}:${lineNumber}: runner selector must be one static ubuntu-/windows- GitHub-hosted label`);
+        failures.push(`${path}:${lineNumber}: runner selector must be one static windows-2025 GitHub-hosted label`);
       }
     }
   }
@@ -314,10 +295,55 @@ export async function checkReleaseWorkflowPolicy({
 } = {}) {
   const root = resolve(repositoryRoot);
   const failures = [];
-  const files = await workflowFiles(root);
-  for (const file of files) {
+  const files = [];
+  const visited = new Set();
+  const active = new Set();
+  async function assertRepositoryFile(file) {
+    const local = relative(root, file);
+    if (isAbsolute(local) || local === ".." || local.startsWith(`..${sep}`)) throw new Error("local action escapes repository");
+    const parts = local.split(sep);
+    let cursor = root;
+    for (const part of parts) {
+      cursor = resolve(cursor, part);
+      if ((await lstat(cursor)).isSymbolicLink()) throw new Error("local action symlinks are forbidden");
+    }
+    if (!(await lstat(file)).isFile()) throw new Error("local action definition must be a regular file");
+  }
+  async function inspect(file) {
     const path = normalizePath(relative(root, file));
-    failures.push(...inspectWorkflowSource(await readFile(file, "utf8"), { path }));
+    if (active.has(file)) { failures.push(`${path}: local action reference cycle`); return; }
+    if (visited.has(file)) return;
+    await assertRepositoryFile(file);
+    active.add(file);
+    visited.add(file);
+    files.push(file);
+    const source = await readFile(file, "utf8");
+    failures.push(...inspectWorkflowSource(source, { path }));
+    for (const line of source.split(/\r?\n/u)) {
+      const entry = parseYamlKeyValue(line);
+      if (entry?.key !== "uses") continue;
+      const value = unquoteYamlScalar(entry.value);
+      if (!value.startsWith("./")) continue;
+      try {
+        if (value.includes("\\") || value.includes("${{") || value.includes("\0")
+            || value.split("/").includes("..")) throw new Error("local action path must stay within repository");
+        const directory = resolve(root, value);
+        let definition = null;
+        for (const filename of ["action.yml", "action.yaml"]) {
+          const candidate = resolve(directory, filename);
+          try { await assertRepositoryFile(candidate); definition = candidate; break; }
+          catch (error) { if (error.code !== "ENOENT") throw error; }
+        }
+        if (definition === null) throw new Error("local action definition is missing");
+        await inspect(definition);
+      } catch (error) {
+        failures.push(`${path}: ${error.code ? "local action definition is unavailable" : error.message}`);
+      }
+    }
+    active.delete(file);
+  }
+  for (const file of await workflowFiles(root)) {
+    await inspect(file);
   }
   if (failures.length > 0) {
     const error = new Error(`GitHub workflow policy failed:\n${failures.join("\n")}`);

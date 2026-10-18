@@ -2,10 +2,13 @@ import { describeLocalIndexGeneration } from "./local-index-companion-source.js"
 import { openLocalIndexCalibrationCorpus } from "./local-index-calibration.js";
 import { readLocalIndexReport } from "./local-index-report.js";
 import {
+  EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO,
+  EVENT_FLAG_PARTIAL,
   LOCAL_INDEX_PARSER_VERSION,
   LOCAL_INDEX_STORE_USER_VERSION,
   openLocalIndexStore,
 } from "./local-index-store.js";
+import { projectRecordedTokenComponents } from "./reporting/index.js";
 import {
   REPLAY_SAFE_CALIBRATION_INTERNALS,
   buildReplaySafeAccountingCache,
@@ -40,18 +43,15 @@ function nullableNonNegative(value) {
   return value === null || value === undefined ? null : nonNegative(value);
 }
 
-// The accounting reader reads an absent component as zero tokens. That is the
-// shipping index's contract for this consumer, kept so a cache built from this
-// store prices the same events the same way.
 function components(row) {
-  return {
-    input_uncached_tokens: nullableNonNegative(row.tokens_in_uncached) ?? 0,
-    input_cache_read_tokens: nullableNonNegative(row.tokens_in_cache_read) ?? 0,
-    input_cache_write_tokens: nullableNonNegative(row.tokens_in_cache_write) ?? 0,
-    output_text_tokens: nullableNonNegative(row.tokens_out_text) ?? 0,
-    output_reasoning_tokens: nullableNonNegative(row.tokens_out_reasoning) ?? 0,
-    output_combined_tokens: nullableNonNegative(row.tokens_out_combined) ?? 0,
-  };
+  return projectRecordedTokenComponents({
+    input_uncached_tokens: nullableNonNegative(row.tokens_in_uncached),
+    input_cache_read_tokens: nullableNonNegative(row.tokens_in_cache_read),
+    input_cache_write_tokens: nullableNonNegative(row.tokens_in_cache_write),
+    output_text_tokens: nullableNonNegative(row.tokens_out_text),
+    output_reasoning_tokens: nullableNonNegative(row.tokens_out_reasoning),
+    output_combined_tokens: nullableNonNegative(row.tokens_out_combined),
+  });
 }
 
 function instant(value) {
@@ -188,7 +188,7 @@ export function createLocalIndexAccountingScan({
         // see events in the same sequence.
         const usageStatement = database.prepare(`
           SELECT u.observed_at_ms, u.source_offset, u.event_key, u.tier_observed_at_ms,
-                 u.total_input_context,
+                 u.total_input_context, u.flags,
                  u.tokens_in_uncached, u.tokens_in_cache_read, u.tokens_in_cache_write,
                  u.tokens_out_text, u.tokens_out_reasoning, u.tokens_out_combined,
                  s.source_local, s.source_ordinal,
@@ -213,7 +213,8 @@ export function createLocalIndexAccountingScan({
           const inHistory = history !== null
             && observedAtMs >= history.startMs && observedAtMs <= history.endMs;
           if (!inWindow && !inHistory) continue;
-          const usageComponents = components(row);
+          const recorded = components(row);
+          const usageComponents = recorded.components;
           if (!Object.values(usageComponents).some((value) => value > 0)) continue;
           if (inWindow && usageAttribution === "required" && onUsage !== undefined) {
             // The builder falls back to attributing rows itself only when the
@@ -224,11 +225,26 @@ export function createLocalIndexAccountingScan({
           }
           const totalInputContext = nullableNonNegative(row.total_input_context);
           const tierObservedAtMs = nullableNonNegative(row.tier_observed_at_ms);
+          const flags = nonNegative(row.flags);
+          const componentAvailability = Object.fromEntries(Object.entries(usageComponents)
+            .map(([key, value]) => [key, value !== null]));
+          // A selected output representation supersedes its alias; absence of
+          // that alias is not a second missing observation.
+          if (usageComponents.output_combined_tokens === null) {
+            delete componentAvailability.output_combined_tokens;
+          }
+          if ((flags & EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO) !== 0) {
+            componentAvailability.input_cache_write_tokens = false;
+          }
           const usage = {
             timestamp,
             timestampMs: observedAtMs,
             model: row.model_id,
             components: usageComponents,
+            componentAvailability,
+            // Keep additive estimates, but never upgrade partial or
+            // contradictory source evidence to fully observed pricing.
+            pricingEvidenceIncomplete: recorded.conflict || (flags & EVENT_FLAG_PARTIAL) !== 0,
             tierSemantics: {
               billingSurface: row.billing_surface,
               codexSpeedMode: row.codex_speed_mode,

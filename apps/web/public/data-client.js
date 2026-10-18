@@ -5109,6 +5109,7 @@ function normalizeGradient(payload = {}) {
 
 const WEEKLY_PACE_FORECAST_SCHEMA_VERSION = "local-weekly-pace-forecast-v0.2";
 const WEEKLY_PACE_FORECAST_STATUSES = new Set([
+  "exhausted",
   "unavailable",
   "insufficient_observations",
   "available",
@@ -5195,7 +5196,13 @@ function normalizeWeeklyPaceForecast(value) {
       || !Number.isSafeInteger(value.observationCount)
       || value.observationCount < 0
       || value.observationCount > 8_192) return null;
-  if (value.status === "available") {
+  if (value.status === "exhausted") {
+    if (currentUsedPercent !== 100 || remainingPercent !== 0 || resetsAt === null
+        || value.pace.method !== WEEKLY_PACE_FORECAST_METHOD
+        || value.observationCount !== value.pace.sampleCount + 1
+        || elapsedHours === null || movementPp === null || !(hoursToReset > 0)
+        || etaAt !== null || hoursToExhaustion !== 0) return null;
+  } else if (value.status === "available") {
     if (currentUsedPercent === null
         || remainingPercent === null
         || resetsAt === null
@@ -5242,7 +5249,7 @@ function normalizeWeeklyPaceOutlook(value) {
   if (!hasExactKeys(value, ["schemaVersion", "status", "standing", "critical", "earlyEstimate",
     "remainingPercent", "resetsAt", "observationCount", "elapsedHours", "rates", "projection", "track"])
       || value.schemaVersion !== "local-weekly-pace-outlook-v0.1"
-      || !["unavailable", "collecting", "available"].includes(value.status)
+      || !["unavailable", "collecting", "available", "exhausted"].includes(value.status)
       || typeof value.critical !== "boolean" || typeof value.earlyEstimate !== "boolean"
       || !Number.isSafeInteger(value.observationCount)
       || value.observationCount < 0 || value.observationCount > 8_192
@@ -5274,7 +5281,17 @@ function normalizeWeeklyPaceOutlook(value) {
   } else {
     if (remainingPercent === null || resetsAt === null || elapsedHours === null
         || !(projection.hoursToReset > 0)) return null;
-    if (value.status === "collecting") {
+    if (value.status === "exhausted") {
+      if (remainingPercent !== 0 || value.standing !== "over" || !value.critical
+          || value.earlyEstimate || value.observationCount < 1
+          || rates.sustainablePercentagePointsPerHour !== 0
+          || [rates.activePercentagePointsPerHour, rates.overallPercentagePointsPerHour,
+            rates.headlinePercentagePointsPerHour, rates.ratio,
+            projectedExhaustionAt, track.activeExhaustionFraction].some(number=>number!==null)
+          || projection.coveredHours !== 0 || projection.sparePercent !== 0
+          || track.coveredFraction !== 0
+          || !approximatelyEqual(projection.dryHours,projection.hoursToReset)) return null;
+    } else if (value.status === "collecting") {
       if (value.standing !== null || value.critical || value.earlyEstimate
           || value.observationCount !== 1
           || [...Object.values(rates), ...Object.values(track), projection.coveredHours,

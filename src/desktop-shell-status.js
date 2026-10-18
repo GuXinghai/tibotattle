@@ -339,7 +339,7 @@ function cloneAllowance(value) {
   });
 }
 
-function closedOutput(state, allowance = null, notificationEvidence = null, displayEvidence = null) {
+function closedOutput(state, allowance = null, notificationEvidence = null, displayEvidence = null, notificationEvidenceStatus = null) {
   if (!STATUS_SET.has(state)) throw new TypeError("desktop shell state is invalid");
   if (!["fresh", "analyzing"].includes(state)) {
     allowance = null;
@@ -354,6 +354,7 @@ function closedOutput(state, allowance = null, notificationEvidence = null, disp
     allowance,
     notificationEvidence,
     ...(displayEvidence === null ? {} : { displayEvidence }),
+    ...(notificationEvidenceStatus === null ? {} : { notificationEvidenceStatus }),
   });
 }
 
@@ -469,7 +470,20 @@ export function projectDesktopShellStatus({
       currentDisplayEvidence,
     );
   }
-  return displayOnlyStatus();
+  // Clock passage after a valid terminal observation is not a new ineligible
+  // provider receipt. Preserve this distinction even if the display has also
+  // become stale. A read already stale when the refresh finished, or a missing
+  // or malformed terminal read, never receives this marker.
+  const finishedAt = canonicalInstant(refresh.finishedAt);
+  const wasFreshAtCompletion = finishedAt !== null
+    && now >= Date.parse(finishedAt)
+    && projectDesktopShellNotificationEvidence(refresh.result?.notificationEvidence, {
+      now: Date.parse(finishedAt),
+    }) !== null;
+  const displayStatus = displayOnlyStatus();
+  return wasFreshAtCompletion
+    ? Object.freeze({ ...displayStatus, notificationEvidenceStatus: "expired" })
+    : displayStatus;
 }
 
 export function validateDesktopShellStatus(value) {
@@ -479,12 +493,20 @@ export function validateDesktopShellStatus(value) {
     "schemaVersion",
     "state",
     ...(Object.hasOwn(value ?? {}, "displayEvidence") ? ["displayEvidence"] : []),
+    ...(Object.hasOwn(value ?? {}, "notificationEvidenceStatus") ? ["notificationEvidenceStatus"] : []),
   ])
       || ![DESKTOP_SHELL_STATUS_SCHEMA_VERSION, "tibotattle-desktop-shell-status-v1"].includes(value.schemaVersion)
       || !STATUS_SET.has(value.state)) {
     throw new TypeError("desktop shell status is invalid");
   }
   const display = value.displayEvidence === undefined ? null : projectDesktopShellDisplayEvidence(value.displayEvidence, { now: null });
+  if (Object.hasOwn(value, "notificationEvidenceStatus")
+      && (value.schemaVersion !== DESKTOP_SHELL_STATUS_SCHEMA_VERSION
+        || value.notificationEvidenceStatus !== "expired"
+        || !["fresh", "stale"].includes(value.state)
+        || value.notificationEvidence !== null)) {
+    throw new TypeError("desktop notification evidence status is invalid");
+  }
   if (value.displayEvidence !== undefined && (display === null || value.schemaVersion !== DESKTOP_SHELL_STATUS_SCHEMA_VERSION || !["fresh", "analyzing", "stale"].includes(value.state))) throw new TypeError("desktop display evidence is invalid");
   const evidence = ["fresh", "analyzing"].includes(value.state)
     ? projectDesktopShellNotificationEvidence(
@@ -511,5 +533,6 @@ export function validateDesktopShellStatus(value) {
     ["fresh", "analyzing"].includes(value.state) ? value.allowance : null,
     evidence,
     display,
+    value.notificationEvidenceStatus ?? null,
   ), schemaVersion: value.schemaVersion });
 }

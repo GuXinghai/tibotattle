@@ -631,33 +631,9 @@ function notificationPermissionMessageKey(notifications) {
     ?? NOTIFICATION_PERMISSION_MESSAGE_KEYS.unavailable;
 }
 
-function notificationPermissionFromValue(value) {
-  if (value === "granted") return "authorized";
-  if (value === "denied") return "denied";
-  if (value === "default") return "unknown";
-  return null;
-}
-
-function rendererNotificationPermission(windowRef) {
-  const notification = windowRef?.Notification;
-  if ((typeof notification !== "object" && typeof notification !== "function")
-      || notification === null) return null;
-  return notificationPermissionFromValue(notification.permission);
-}
-
-function withRendererNotificationPermission(state, windowRef) {
-  const permission = rendererNotificationPermission(windowRef);
-  if (permission === null) return state;
-  return Object.freeze({
-    ...state,
-    notifications: Object.freeze({ ...state.notifications, permission }),
-  });
-}
-
 function notificationPermissionActionKey(permission) {
   if (permission === "authorized") return "electron.settings.notifications.permissionAllowed";
-  if (permission === "denied") return "electron.settings.notifications.openPermission";
-  return "electron.settings.notifications.requestPermission";
+  return "electron.settings.notifications.openPermission";
 }
 
 function createSettingsElement(documentRef, tagName, className = "") {
@@ -756,8 +732,7 @@ function renderSettingsState(
     notificationPermissionActionKey(notificationPermission),
   );
   openNotificationSettings.disabled = !bridgeAvailable
-    || notificationPermission === "authorized"
-    || notificationPermission === "unavailable";
+    || notificationPermission === "authorized";
   thresholdInput.value = String(state.notifications.threshold);
   thresholdInput.disabled = !notificationReady;
   const automaticUpdatesReady = bridgeAvailable && state.about.automaticUpdates.canSet;
@@ -940,10 +915,7 @@ async function mountSettingsPageOnce({
         }
       }
       if (disposed) return currentState;
-      currentState = withRendererNotificationPermission(
-        normalizeSettingsState(next, rootsForSettings),
-        windowRef,
-      );
+      currentState = normalizeSettingsState(next, rootsForSettings);
       applyElectronAppearancePreference(currentState.appearance, { documentRef, windowRef });
       pageLocalizer?.setLanguagePreference?.(
         browserLanguagePreference(currentState.language),
@@ -1017,10 +989,7 @@ async function mountSettingsPageOnce({
         : await action(value);
       if (result !== undefined
           && (result?.settings !== undefined || result?.language !== undefined)) {
-        currentState = withRendererNotificationPermission(
-          normalizeSettingsState(result, currentState.codexHomesForSettings),
-          windowRef,
-        );
+        currentState = normalizeSettingsState(result, currentState.codexHomesForSettings);
       }
       if (actionName === "chooseCodexHome"
           || actionName === "addCodexHome"
@@ -1185,49 +1154,8 @@ async function mountSettingsPageOnce({
     void invoke("sendTestNotification");
   });
   listen(queryRequired(documentRef, "#settings-open-notification-settings"), "click", () => {
-    if (currentState.notifications.permission === "denied") {
-      void invoke("openSystemSettings", "notifications");
-      return;
-    }
-    const notification = windowRef?.Notification;
-    if ((typeof notification !== "object" && typeof notification !== "function")
-        || notification === null
-        || typeof notification.requestPermission !== "function"
-        || busy) {
-      currentState = Object.freeze({
-        ...currentState,
-        notifications: Object.freeze({ ...currentState.notifications, permission: "unavailable" }),
-      });
-      renderSettingsState(
-        documentRef,
-        currentState,
-        true,
-        pageLocalizer,
-        (nextAction, nextValue) => { void invoke?.(nextAction, nextValue); },
-      );
-      return;
-    }
-    busy = true;
-    Promise.resolve(notification.requestPermission())
-      .then((value) => {
-        const permission = notificationPermissionFromValue(value)
-          ?? rendererNotificationPermission(windowRef)
-          ?? "unknown";
-        currentState = Object.freeze({
-          ...currentState,
-          notifications: Object.freeze({ ...currentState.notifications, permission }),
-        });
-        renderSettingsState(
-          documentRef,
-          currentState,
-          true,
-          pageLocalizer,
-          (nextAction, nextValue) => { void invoke?.(nextAction, nextValue); },
-        );
-        setOperationStatus(documentRef, "");
-      })
-      .catch(() => { operationError(documentRef, pageLocalizer); })
-      .finally(() => { busy = false; });
+    if (currentState.notifications.permission === "authorized") return;
+    void invoke("openSystemSettings", "notifications");
   });
   listen(queryRequired(documentRef, "#settings-check-for-updates"), "click", () => {
     void invoke("checkForUpdates");

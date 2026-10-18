@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 
 import {
@@ -168,14 +170,15 @@ steps:
 `), []);
 });
 
-test("workflow policy allows only static GitHub-hosted runner labels", () => {
+test("workflow policy allows only the versioned Windows repository runner", () => {
   assert.deepEqual(inspectWorkflowSource(`
 jobs:
-  linux:
-    runs-on: ubuntu-24.04
   windows:
     runs-on: "windows-2025"
 `), []);
+  for (const runner of ["ubuntu-latest", "windows-latest", "ubuntu-24.04", "windows-2022", "windows-11-arm"]) {
+    assert.equal(inspectWorkflowSource(`jobs:\n  test:\n    runs-on: ${runner}\n`).length, 1);
+  }
 
   // macOS runners are outside the Windows-only release scope and fail closed.
   assert.equal(inspectWorkflowSource(`
@@ -198,6 +201,37 @@ jobs:
   assert.equal(failures.filter((failure) => failure.includes("pull_request_target")).length, 1);
   assert.equal(failures.filter((failure) => failure.includes("one static")).length, 2);
   assert.equal(failures.filter((failure) => failure.includes("static GitHub-hosted")).length, 1);
+});
+
+test("workflow policy recursively scans local actions and refuses missing, escaping and cyclic definitions", async () => {
+  const root = await mkdtemp(join(tmpdir(), "local-action-policy-"));
+  try {
+    await mkdir(join(root, ".github/workflows"), { recursive: true });
+    await mkdir(join(root, "tools/outer"), { recursive: true });
+    await mkdir(join(root, "tools/inner"), { recursive: true });
+    const workflow = join(root, ".github/workflows/test.yml");
+    await writeFile(workflow, "steps:\n  - uses: ./tools/outer\n");
+    await writeFile(join(root, "tools/outer/action.yml"), "runs:\n  using: composite\n  steps:\n    - uses: ./tools/inner\n");
+    const inner = join(root, "tools/inner/action.yaml");
+    await writeFile(inner, "runs:\n  using: composite\n  steps:\n    - uses: actions/example@main\n");
+    await assert.rejects(checkReleaseWorkflowPolicy({ repositoryRoot: root }), /full commit SHA/u);
+    await writeFile(inner, "runs:\n  using: composite\n  steps:\n    - uses: actions/example@0123456789012345678901234567890123456789\n");
+    const result = await checkReleaseWorkflowPolicy({ repositoryRoot: root });
+    assert.ok(result.files.includes("tools/inner/action.yaml"));
+    for (const [reference, message] of [["./tools/outer", /cycle/u], ["./missing", /missing/u], ["./../outside", /within repository/u]]) {
+      await writeFile(inner, `runs:\n  using: composite\n  steps:\n    - uses: ${reference}\n`);
+      await assert.rejects(checkReleaseWorkflowPolicy({ repositoryRoot: root }), message);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("release trust owns and triggers on Electron signing, publication, packaging and Worker configuration", async () => {
+  const owners = await readFile(new URL("../.github/CODEOWNERS", import.meta.url), "utf8");
+  const workflow = await readFile(new URL("../.github/workflows/release-trust-policy.yml", import.meta.url), "utf8");
+  for (const pattern of ["scripts/*electron*", "scripts/lib/*electron*", "scripts/lib/publication-file-digest.mjs", "apps/worker/wrangler.jsonc"]) {
+    assert.ok(owners.includes(`/${pattern} @adamallcock`));
+    assert.equal(workflow.split(`- "${pattern}"`).length - 1, 2, `${pattern} must trigger both PR and main checks`);
+  }
 });
 
 test("workflow policy rejects flow-style sensitive mappings instead of parsing them as trusted", () => {

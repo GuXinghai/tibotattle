@@ -53,8 +53,9 @@ export function mountDashboardNavigation({ documentRef, windowRef }) {
 
   function focusPageHeading(page) {
     const heading = pages
-      .find((element) => element.dataset.dashboardPage === page)
-      ?.querySelector?.("h1, h2");
+      .filter((element) => element.dataset.dashboardPage === page)
+      .map((element) => element.querySelector?.("h1, h2"))
+      .find(Boolean);
     if (!heading) return;
     heading.setAttribute?.("tabindex", "-1");
     heading.focus?.({ preventScroll: true });

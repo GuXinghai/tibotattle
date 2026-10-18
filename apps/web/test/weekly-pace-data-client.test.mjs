@@ -46,6 +46,26 @@ test("the browser retains the native pace outlook from the canonical companion p
   }
 });
 
+test("exhausted forecasts and outlooks preserve observed zero and reject invented pace geometry", () => {
+  const exhausted = forecast({ status: "exhausted", currentUsedPercent: 100, remainingPercent: 0,
+    etaAt: null, hoursToExhaustion: 0 });
+  const paceOutlook = projectWeeklyPaceOutlook({ forecast: exhausted, nowMs: Date.parse("2026-08-03T12:30:00.000Z") });
+  assert.equal(paceOutlook.status, "exhausted");
+  const normalized = normalizeDashboardPayload({ weekly: { paceForecast: exhausted, paceOutlook } });
+  assert.deepEqual(normalized.weekly.paceForecast, exhausted);
+  assert.deepEqual(normalized.weekly.paceOutlook, paceOutlook);
+  for (const invalid of [
+    { ...paceOutlook, remainingPercent: 1 },
+    { ...paceOutlook, critical: false },
+    { ...paceOutlook, rates: { ...paceOutlook.rates, ratio: Infinity } },
+    { ...paceOutlook, rates: { ...paceOutlook.rates, ratio: 2 } },
+    { ...paceOutlook, rates: { ...paceOutlook.rates, sustainablePercentagePointsPerHour: 1 } },
+    { ...paceOutlook, track: { ...paceOutlook.track, coveredFraction: 1 } },
+    { ...paceOutlook, projection: { ...paceOutlook.projection, dryHours: 1 } },
+  ]) assert.equal(normalizeDashboardPayload({ weekly: { paceOutlook: invalid } }).weekly.paceOutlook, null);
+  assert.equal(normalizeDashboardPayload({ weekly: { paceForecast: { ...exhausted, remainingPercent: 1 } } }).weekly.paceForecast, null);
+});
+
 test("the outlook boundary rejects private fields and invalid numeric or semantic states", () => {
   const valid = outlook();
   for (const paceOutlook of [

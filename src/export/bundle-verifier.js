@@ -153,6 +153,10 @@ export function createLocalMetadataBundleByteVerifier({
   return function loadVerifiedLocalMetadataBundleBytes({
     bundleBytes,
     receiptBytes,
+    // Only a caller still holding source values can repeat the source-canary
+    // scan. Standalone artifact reads verify the recorded receipt and the
+    // remaining privacy gates; the artifact never persists source values.
+    forbiddenSourceValues = [],
   } = {}) {
     const canonicalReceiptBytes = assertByteSequence(
       receiptBytes,
@@ -193,6 +197,7 @@ export function createLocalMetadataBundleByteVerifier({
     try {
       expectedReceipt = verifyPrivacySafeBundle(bundle, {
         createdAt: receipt.createdAt,
+        forbiddenSourceValues,
       });
     } catch {
       fail("privacy_gate");

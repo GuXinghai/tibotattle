@@ -8,6 +8,7 @@ import {
 import {
   createDesktopSettingsStore,
 } from "../desktop-settings-store.js";
+import { DesktopSettingsBackendError } from "../desktop-settings-backends.js";
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -126,6 +127,76 @@ test("settings load failures fail soft to defaults without exposing backend deta
   });
   assert.deepEqual(await store.getSettings(), projectDesktopSettingsPathFree(DESKTOP_DEFAULT_SETTINGS));
   assert.equal(store.lastLoadFailed, true);
+});
+
+test("transient pre-write reads remain retriable while invalid newer records stay blocked", async () => {
+  let stored = clone(DESKTOP_DEFAULT_SETTINGS);
+  let failRead = false;
+  let writes = 0;
+  const store = createDesktopSettingsStore({ backend: {
+    async load() { if (failRead) throw new Error("synthetic unavailable"); return stored; },
+    async save(next) { stored = clone(next); ++writes; },
+  } });
+  await store.getSettings();
+  failRead = true;
+  await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_persistence_failed" });
+  assert.equal(store.traySettingsStatus, "current");
+  assert.equal((await store.getSettings()).language, DESKTOP_DEFAULT_SETTINGS.language);
+  failRead = false;
+  assert.equal((await store.setLanguage("es")).language, "es");
+  assert.equal(writes, 1);
+  stored.schemaVersion = "tibotattle-desktop-settings-v5";
+  await assert.rejects(store.setLanguage("en"), { code: "desktop_settings_persistence_failed" });
+  stored = clone(DESKTOP_DEFAULT_SETTINGS);
+  await assert.rejects(store.setLanguage("en"), { code: "desktop_settings_persistence_failed" });
+  assert.equal(store.traySettingsStatus, "invalid");
+  assert.equal(writes, 1);
+});
+
+test("an initial unavailable read retries before mutating the recovered settings snapshot", async () => {
+  let unavailable = true;
+  let stored = { ...clone(DESKTOP_DEFAULT_SETTINGS), refreshIntervalSeconds: 600 };
+  let writes = 0;
+  const store = createDesktopSettingsStore({ backend: {
+    async load() { if (unavailable) throw new Error("synthetic read failure"); return stored; },
+    async save(next) { stored = clone(next); ++writes; },
+  } });
+  assert.equal((await store.getSettings()).refreshIntervalSeconds, 300);
+  await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_persistence_failed" });
+  assert.equal(writes, 0);
+  unavailable = false;
+  await store.setLanguage("es");
+  assert.equal(stored.refreshIntervalSeconds, 600);
+  assert.equal(stored.language, "es");
+  assert.equal(store.lastLoadFailed, false);
+});
+
+test("branded backend validation refusals stay invalid while a matching unbranded read failure can retry", async () => {
+  for (const phase of ["initial", "pre-write"]) {
+    for (const code of ["corrupt", "too_large"]) {
+      let failure = phase === "initial" ? new DesktopSettingsBackendError(code) : null;
+      let writes = 0;
+      const store = createDesktopSettingsStore({ backend: {
+        async load() { if (failure) throw failure; return null; },
+        async save() { ++writes; },
+      } });
+      await store.getSettings();
+      failure = new DesktopSettingsBackendError(code);
+      await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_persistence_failed" });
+      failure = null;
+      await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_persistence_failed" });
+      assert.equal(store.traySettingsStatus, "invalid");
+      assert.equal(writes, 0);
+    }
+  }
+  let failure = Object.assign(new Error("synthetic I/O failure"), { code: "desktop_settings_backend_corrupt" });
+  const store = createDesktopSettingsStore({ backend: {
+    async load() { if (failure) throw failure; return null; }, async save() {},
+  } });
+  await store.getSettings();
+  assert.equal(store.traySettingsStatus, "current");
+  failure = null;
+  assert.equal((await store.setLanguage("es")).language, "es");
 });
 
 test("custom refresh minutes and threshold-only preferences survive reload", async () => {

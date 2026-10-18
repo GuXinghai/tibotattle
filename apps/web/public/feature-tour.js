@@ -79,6 +79,6 @@ function renderDemoForecast(demo, t) {
   for (const [selector,hours] of [['[data-runout-time]',scenario.coveredHours],['[data-reset-time]',scenario.resetHours]]) {
     const time=card.querySelector(selector); time.textContent=t('site.features.in',{duration:duration(hours)});
     const date=new Date(Date.UTC(2026,8,16,0)+hours*3600000); time.dateTime=date.toISOString();
-    time.title=new Intl.DateTimeFormat(demo.ownerDocument.documentElement.lang||'en',{dateStyle:'medium',timeStyle:'short',timeZone:'America/New_York'}).format(date)+' EDT · example';
+    time.title=new Intl.DateTimeFormat(demo.ownerDocument.documentElement.lang||'en',{dateStyle:'medium',timeStyle:'short',timeZone:'America/New_York'}).format(date);
   }
 }

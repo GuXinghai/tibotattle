@@ -1,15 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFile } from "node:fs/promises";
 import {
   mergeChangedPaths,
   parseTestLaneArguments,
   selectTestLanes,
   hostedLaneCommands,
+  ELECTRON_TEST_ARGUMENTS,
 } from "../scripts/test-lanes.mjs";
 import {
   PORTABLE_TEST_FILES,
   PORTABLE_TEST_GROUPS,
 } from "../scripts/portable-test-manifest.mjs";
+
+test("Electron gate discovers every focused suite serially and joins the integrated product gate", async () => {
+  assert.deepEqual(ELECTRON_TEST_ARGUMENTS, ["--test-concurrency=1", "apps/electron/test/*.test.mjs"]);
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(manifest.scripts["product:electron:test"], `node --test ${ELECTRON_TEST_ARGUMENTS.join(" ")}`);
+  assert.ok(manifest.scripts["product:check"].split(" && ").includes("npm run product:electron:test"));
+  assert.equal(parseTestLaneArguments(["electron"]).command, "electron");
+  assert.deepEqual(selectTestLanes(["apps/electron/test/desktop-runtime.test.mjs"]).lanes, ["electron"]);
+  assert.deepEqual(selectTestLanes(["apps/electron/desktop-runtime.js"]).lanes, ["full"]);
+});
 
 test("portable manifest is explicit, unique, and excludes native release gates", () => {
   assert.equal(PORTABLE_TEST_FILES.length, new Set(PORTABLE_TEST_FILES).size);

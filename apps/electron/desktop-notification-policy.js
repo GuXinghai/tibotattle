@@ -802,6 +802,9 @@ export function evaluateDesktopNotificationPolicy(stateValue, evidenceValue) {
   }
 
   const chosen = [...candidates].sort(candidateSort)[0];
+  // One fixed, lane-free alert coalesces this observation's crossings. These
+  // keys record handled crossings, not a separate delivery for every lane;
+  // retaining all of them prevents a later read from replaying this alert.
   const handledKeys = pruneHandledKeys([
     ...workingState.handledKeys,
     ...candidates.map((candidate) => candidate.eventKey),

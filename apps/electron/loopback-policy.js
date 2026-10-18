@@ -46,6 +46,37 @@ export function parseCodexThreadURL(value) {
 // second window must not remove the first window's filtering).  Keep one
 // session-level installation alive until its last window releases it.
 const sessionPolicyInstallations = new WeakMap();
+const sessionPermissionInstallations = new WeakMap();
+
+/** Session permissions stay deny-by-default even after the final window closes. */
+export function installSessionPermissionPolicy({ session, webContents, allowNotificationPermission = false } = {}) {
+  if (session === null || session === undefined
+      || !["object", "function"].includes(typeof session)) {
+    return Object.freeze({ remove() {} });
+  }
+  let grants = sessionPermissionInstallations.get(session);
+  if (grants === undefined) {
+    grants = new Map();
+    const allowed = (contents, permission) => permission === "notifications" && grants.has(contents);
+    session.setPermissionRequestHandler?.((contents, permission, callback) => callback?.(allowed(contents, permission)));
+    session.setPermissionCheckHandler?.(allowed);
+    sessionPermissionInstallations.set(session, grants);
+  }
+  const grant = allowNotificationPermission && webContents !== null && webContents !== undefined;
+  if (grant) grants.set(webContents, (grants.get(webContents) ?? 0) + 1);
+  let removed = false;
+  return Object.freeze({
+    remove() {
+      if (removed) return;
+      removed = true;
+      if (!grant) return;
+      const count = grants.get(webContents) - 1;
+      if (count > 0) grants.set(webContents, count);
+      else grants.delete(webContents);
+      // Do not restore Electron's permissive defaults by setting handlers null.
+    },
+  });
+}
 
 function exactLoopbackOrigin(value) {
   if (typeof value !== "string") throw shellError("invalid_loopback_origin");
@@ -181,10 +212,6 @@ export function installLoopbackNavigationPolicy({
   webContents.setWindowOpenHandler?.(() => policy.handleWindowOpen());
 
   let sessionInstallation;
-  const notificationPermissionWebContentsId = allowNotificationPermission
-    && Number.isSafeInteger(webContents.id)
-    ? webContents.id
-    : null;
   const canTrackSession = session !== null
     && session !== undefined
     && (typeof session === "object" || typeof session === "function");
@@ -192,17 +219,6 @@ export function installLoopbackNavigationPolicy({
     sessionInstallation = sessionPolicyInstallations.get(session);
     if (sessionInstallation === undefined) {
       const requestFilter = { urls: ["<all_urls>"] };
-      const onPermissionRequest = (contents, permission, callback, details) => {
-        const allowed = permission === "notifications"
-          && notificationPermissionWebContentsIds.has(contents?.id);
-        if (allowed) callback?.(true);
-        else policy.handlePermissionRequest({ callback });
-      };
-      const onPermissionCheck = (contents, permission) => (
-        permission === "notifications"
-          && notificationPermissionWebContentsIds.has(contents?.id)
-      );
-      const notificationPermissionWebContentsIds = new Set();
       const backgroundContents = new Map();
       const onBeforeRequest = (details, callback) => {
         if (typeof details?.url === "string" && details.url.startsWith("tibotattle-background:")) {
@@ -222,17 +238,12 @@ export function installLoopbackNavigationPolicy({
         }
         return policy.handleBeforeRequest(details, callback);
       };
-      session.setPermissionRequestHandler?.(onPermissionRequest);
-      session.setPermissionCheckHandler?.(onPermissionCheck);
       session.webRequest?.onBeforeRequest?.(requestFilter, onBeforeRequest);
       sessionInstallation = {
         count: 0,
         policyOrigin: policy.origin ?? null,
         requestFilter,
-        onPermissionRequest,
-        onPermissionCheck,
         onBeforeRequest,
-        notificationPermissionWebContentsIds,
         backgroundContents,
       };
       sessionPolicyInstallations.set(session, sessionInstallation);
@@ -248,15 +259,11 @@ export function installLoopbackNavigationPolicy({
       throw new TypeError("session loopback policy origin conflict");
     }
     sessionInstallation.count += 1;
-    if (notificationPermissionWebContentsId !== null) {
-      sessionInstallation.notificationPermissionWebContentsIds.add(
-        notificationPermissionWebContentsId,
-      );
-    }
     if (allowBackgroundResource && Number.isSafeInteger(webContents.id)) {
       sessionInstallation.backgroundContents.set(webContents.id, webContents);
     }
   }
+  const permissionInstallation = installSessionPermissionPolicy({ session, webContents, allowNotificationPermission });
 
   let removed = false;
   return Object.freeze({
@@ -267,17 +274,11 @@ export function installLoopbackNavigationPolicy({
       webContents.off?.("will-redirect", onWillRedirect);
       webContents.off?.("will-frame-navigate", onWillFrameNavigate);
       webContents.off?.("will-attach-webview", onWillAttachWebview);
+      permissionInstallation.remove();
       if (sessionInstallation === undefined) return;
-      if (notificationPermissionWebContentsId !== null) {
-        sessionInstallation.notificationPermissionWebContentsIds.delete(
-          notificationPermissionWebContentsId,
-        );
-      }
       sessionInstallation.backgroundContents.delete(webContents.id);
       sessionInstallation.count -= 1;
       if (sessionInstallation.count > 0) return;
-      session.setPermissionRequestHandler?.(null);
-      session.setPermissionCheckHandler?.(null);
       session.webRequest?.onBeforeRequest?.(sessionInstallation.requestFilter, null);
       sessionPolicyInstallations.delete(session);
     },

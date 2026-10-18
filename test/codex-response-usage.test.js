@@ -9,6 +9,7 @@ import { extractRolloutUsage } from '../src/local-index-extract.js';
 import { localCodexLogScanner } from '../src/local-node-runtime.js';
 import { refreshCodexHome, withReadOnlyStore } from './helpers/local-index-rollout-store.js';
 import { openLocalIndexStore, createLocalIndexWriter } from '../src/local-index-store.js';
+import { assertSameFacts, v2Facts } from './helpers/local-index-facts.js';
 
 const at = n => new Date(Date.UTC(2026, 8, 3, 12, 0, n)).toISOString();
 const raw = (n = 1) => ({ input_tokens: 100 * n, cached_input_tokens: 80 * n,
@@ -98,10 +99,113 @@ test('legacy overlap needs known component agreement and handles only absent zer
 
 test('fork replay never charges the child and an in-flight setting change retains the captured request model', () => {
   const foreign = response(1, 'foreign', 1);foreign.payload.thread_id = 'synthetic-ancestor';
+  const foreignOnly = plan([meta, context, foreign]);
+  assert.equal(foreignOnly.modern, false);
+  assert.equal(foreignOnly.diagnostics.foreignResponses, 1);
   const r = plan([meta, context, foreign, rec(2, 'event_msg', { type: 'thread_settings_applied',
     thread_settings: { model: 'gpt-6-astra' } }), response(3, 'own', 1)]);
   assert.equal(r.diagnostics.foreignResponses, 1);assert.equal(r.responseAt(2), null);
+  assert.equal(r.modern, true);
   assert.equal(r.responseAt(4).model, 'gpt-6.1-sol');
+});
+
+test('oversized ignored lines keep response locators and legacy suppression aligned', async () => {
+  const ignored = rec(1, 'ignored', { padding: 'x'.repeat(4_096) });
+  const second = response(4, 'after-second-ignored-line', 3);
+  second.payload.usage = raw(2);
+  const secondLegacy = legacy(5, 3);
+  secondLegacy.payload.info.last_token_usage = raw(2);
+  const f = await fixture([meta, context, ignored, response(2, 'after-ignored-line', 1),
+    legacy(3, 1), ignored, second, secondLegacy]);
+  const resourceGuard = { limits: { maximumLineBytes: 1_024 }, observeSourceFile() {},
+    observeSourcePlan() {}, observeDirectoryEntry() {}, observeLine() {}, checkRuntime() {} };
+  try {
+    const scanned = [];
+    await localCodexLogScanner.scanCodexLogEvents({ codexHome: f.root,
+      startAt: at(0), endAt: at(59), resourceGuard, onUsage: event => scanned.push(event) });
+    assert.deepEqual(scanned.map(event => [event.timestamp, event.raw.input_tokens,
+      event.sourceRecordOrdinal]), [[at(2), 100, 4], [at(4), 200, 7]]);
+    const indexed = [];
+    await extractRolloutUsage(f.path, { size: (await stat(f.path)).size,
+      maximumLineBytes: 1_024, onEvent: event => indexed.push(event) });
+    assert.deepEqual(indexed.map(event => event.totalInputContextTokens), [100, 200]);
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
+test('foreign response prefixes permit legacy appends and healthy sources progress with cold parity', async () => {
+  const foreign = response(1, 'copied-ancestor-response', 1);
+  foreign.payload.thread_id = 'synthetic-ancestor';
+  foreign.payload.turn_id = 'synthetic-ancestor-turn';
+  const ownContext = rec(0, 'turn_context', { turn_id: context.payload.turn_id, model: 'gpt-6.1-sol' });
+  const foreignContext = rec(0, 'turn_context', { ...ownContext.payload,
+    turn_id: foreign.payload.turn_id });
+  const f = await fixture([meta, foreignContext, foreign, legacy(2, 1), ownContext, legacy(3, 2)]);
+  const healthyId = '20000000-0000-4000-8000-000000000002';
+  const healthyPath = join(f.root, 'sessions', `rollout-2026-09-03T12-00-00-${healthyId}.jsonl`);
+  const indexFile = join(f.root, 'index.sqlite');
+  const secretFile = join(f.root, 'salt');
+  try {
+    await writeFile(healthyPath, [rec(0, 'session_meta', { id: healthyId }), ownContext,
+      legacy(1, 1)].map(record => JSON.stringify(record)).join('\n') + '\n');
+    await refreshCodexHome(f.root, { indexFile, secretFile });
+    await appendFile(f.path, JSON.stringify(legacy(4, 3)) + '\n');
+    await appendFile(healthyPath, JSON.stringify(legacy(4, 2)) + '\n');
+    const refreshed = await refreshCodexHome(f.root, { indexFile, secretFile });
+    assert.equal(refreshed.sourcesResumed, 2);
+    assert.equal(withReadOnlyStore(indexFile, db => db.prepare(
+      'SELECT SUM(total_input_context) n FROM usage_event').get().n), 400);
+    const coldFile = join(f.root, 'cold.sqlite');
+    await refreshCodexHome(f.root, { indexFile: coldFile, secretFile });
+    assertSameFacts(v2Facts(indexFile), v2Facts(coldFile), 'foreign-prefix append vs cold');
+    const repeated = await refreshCodexHome(f.root, { indexFile, secretFile });
+    assert.equal(repeated.writeTransactions, 0);
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
+test('a missed modern append hint retries one full transaction and replaces source segments', async () => {
+  const f = await fixture([meta, context, legacy(1, 1), response(2, 'fallback-own-response', 1)]);
+  const indexFile = join(f.root, 'index.sqlite'), secretFile = join(f.root, 'salt');
+  try {
+    await refreshCodexHome(f.root, { indexFile, secretFile });
+    const prior = withReadOnlyStore(indexFile, db => db.prepare(
+      'SELECT id, scanned_bytes, source_ordinal, hex(source_local) local FROM source').get());
+    const commitSeq = () => withReadOnlyStore(indexFile, db => db.prepare(
+      'SELECT commit_seq FROM store_state WHERE id = 1').get().commit_seq);
+    const previousCommit = commitSeq();
+    // Simulate a missing classification hint. The extractor must still be the
+    // correctness boundary, and must request replay before emitting any facts.
+    const db = openLocalIndexStore(indexFile);
+    try { db.exec('UPDATE usage_event SET flags = flags & ~16'); } finally { db.close(); }
+    await appendFile(f.path, JSON.stringify(legacy(3, 1)) + '\n');
+    await assert.rejects(extractRolloutUsage(f.path, { size: (await stat(f.path)).size,
+      startOffset: prior.scanned_bytes, onEvent() { assert.fail('append replay must precede writes'); } }),
+    { code: 'codex_response_usage_rescan_required' });
+    const cancellation = new AbortController();
+    cancellation.abort();
+    await assert.rejects(refreshCodexHome(f.root, { indexFile, secretFile, signal: cancellation.signal }));
+    assert.equal(commitSeq(), previousCommit);
+    assert.equal(withReadOnlyStore(indexFile, db => db.prepare(
+      'SELECT scanned_bytes FROM source').get().scanned_bytes), prior.scanned_bytes);
+    const refreshed = await refreshCodexHome(f.root, { indexFile, secretFile });
+    assert.equal(refreshed.sourcesRescanned, 1);
+    assert.equal(refreshed.sourcesResumed, 0);
+    assert.equal(refreshed.writeTransactions, 2);
+    assert.equal(commitSeq(), previousCommit + 1);
+    const current = withReadOnlyStore(indexFile, db => db.prepare(
+      'SELECT id, scanned_bytes, source_ordinal, hex(source_local) local FROM source').get());
+    assert.equal(current.id, prior.id);
+    assert.equal(current.source_ordinal, prior.source_ordinal);
+    assert.equal(current.local, prior.local);
+    assert.equal(current.scanned_bytes, (await stat(f.path)).size);
+    const coldFile = join(f.root, 'cold.sqlite');
+    await refreshCodexHome(f.root, { indexFile: coldFile, secretFile });
+    assertSameFacts(v2Facts(indexFile), v2Facts(coldFile), 'fallback rescan vs cold');
+    const segments = file => withReadOnlyStore(file, store => store.prepare(
+      'SELECT segment, hex(digest) digest FROM source_segment ORDER BY segment').all());
+    assert.deepEqual(segments(indexFile), segments(coldFile));
+    const repeated = await refreshCodexHome(f.root, { indexFile, secretFile });
+    assert.equal(repeated.writeTransactions, 0);
+  } finally { await rm(f.root, { recursive: true }); }
 });
 
 test('index and provider count compaction and missing ordinary responses once; legacy-only turns survive', async () => {

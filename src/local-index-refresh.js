@@ -1232,9 +1232,10 @@ async function runRefresh({
       }
       const snapshots = createLineageSnapshots(component.members);
       try {
-        for (const plan of plans) {
+        for (let sourceIndex = 0; sourceIndex < plans.length; sourceIndex += 1) {
+          const plan = plans[sourceIndex];
           if (signal?.aborted) throw fixedError("local_index_aborted");
-          const { info, row, mode, reason } = plan;
+          const { info, row, mode } = plan;
           if (mode === "quarantined") {
             counts.sourcesQuarantined += 1;
             markUnavailable(info);
@@ -1245,6 +1246,9 @@ async function runRefresh({
             continue;
           }
           if (walPressure()) return;
+          // Reconciliation runs before emitting facts. If an append discovers
+          // own-response history missed by the classification hint, roll back
+          // and retry from the full source with fresh seeds and segment digests.
           writer.begin();
           try {
             const state = stateFor(info, row);
@@ -1407,6 +1411,11 @@ async function runRefresh({
             reportProgress();
           } catch (error) {
             writer.rollback();
+            if (mode === "append" && error?.code === "codex_response_usage_rescan_required") {
+              plan.mode = "rescan";
+              sourceIndex -= 1;
+              continue;
+            }
             throw error;
           }
         }

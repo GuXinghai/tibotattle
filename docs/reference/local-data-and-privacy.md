@@ -23,6 +23,21 @@ text have no allowed destination in contribution schemas, diagnostics, or
 public aggregates. Unknown fields are omitted; an input that cannot be safely
 projected is refused or shown as unavailable.
 
+Local metadata export deduplicates identical normalized activity-marker
+occurrences and rejects conflicting records with the same derived identifier.
+Privacy source-value canaries are compared in their canonical JSON encoding,
+including escaped characters. The public byte verifier can repeat that check
+only when its caller supplies the source values in memory. A standalone reload
+without those values checks the exact receipt, digest, schema and structural
+privacy rules; it cannot independently repeat a source-value canary check. Raw
+source values and their hashes are not added to persisted receipts.
+
+Electron session permission handlers remain deny-by-default after the final
+window releases its policy. Explicit notification grants belong only to the
+registered WebContents and are revoked on release. Recovery and tray windows
+also install the shared deny policy; closing them does not restore Electron's
+default permission behavior.
+
 ## Owner-selected window backgrounds
 
 Electron Settings can read one image chosen through the native file picker.

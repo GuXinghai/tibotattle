@@ -1,5 +1,5 @@
 import { addUsdStrings } from "@app-usagemonitor/accounting";
-import { classifyQuotaResetTimeline, classifyUsageAttribution, planEraForInterval,
+import { classifyUsageAttribution, planEraForInterval,
   planAttributionContextKey, QUOTA_RESET_CLASSIFICATION_POLICY } from "@app-usagemonitor/quota-analysis";
 
 export const WEEKLY_API_INTERVAL_VERSION = "weekly-api-interval-v1";
@@ -36,31 +36,26 @@ export async function buildWeeklyApiIntervals({ corpus, endMs, generation, finge
   }
   if (readings.size > MAX_ROWS) throw fail("weekly_api_resource_limit");
   const ordered = [...readings.values()].sort((a,b) => a.at-b.at || a.plan.localeCompare(b.plan));
-  const resetEvents = classifyQuotaResetTimeline(ordered.map(q => ({
-    observedAt: new Date(q.at).toISOString(), windows: [{ provider: "openai_codex", limitId: "codex",
-      planType: q.plan, windowDurationMins: 10080, resetsAt: Math.floor(q.reset/1000), usedPercent: q.used }],
-  })));
-  const resetByPlan=new Map(),resetCursor=new Map();
-  for(const e of resetEvents){const list=resetByPlan.get(e.planType)??[];list.push(Date.parse(e.observedAt));resetByPlan.set(e.planType,list);}
-  for(const list of resetByPlan.values())list.sort((a,b)=>a-b);
   const rows = [], anchors = new Map(); let segment = 0;
   for (const q of ordered) {
     signal?.throwIfAborted();
     const a = anchors.get(q.plan);
     if (!a) { anchors.set(q.plan, q); continue; }
     const era = planEraForInterval(index, { contextKey, intervalStartMs: a.at, observedAtMs: q.at });
-    const events=resetByPlan.get(q.plan)??[];let cursor=resetCursor.get(q.plan)??0,reset=false;
-    while(cursor<events.length&&events[cursor]<=q.at){if(events[cursor]>a.at)reset=true;cursor++;}
-    resetCursor.set(q.plan,cursor);
     const scheduleChanged = Math.abs(q.reset-a.reset) > QUOTA_RESET_CLASSIFICATION_POLICY.resetScheduleJitterMs;
+    // These historical readings have no account scope for reset classification.
+    // A material fall can still disqualify the interval without proving a reset.
+    // Keep the high-water anchor even on a rapid rebound, so the fall cannot
+    // turn duplicated usage into a new, apparently clean deduction.
+    if (a.used-q.used >= QUOTA_RESET_CLASSIFICATION_POLICY.materialDropPercentagePoints) a.tainted=true;
     const changedEra=era.status!=="matched"||era.era.planType!==q.plan;
-    let reason = changedEra ? "plan_conflict" : reset||scheduleChanged ? "reset_boundary"
+    let reason = changedEra ? "plan_conflict" : scheduleChanged ? "reset_boundary"
       : q.conflict||a.conflict||a.tainted ? "quota_conflict" : null;
     // Interleaved sessions can repeat an older integer reading. Only reset
     // evidence may lower the confirmed cycle baseline; counting its rebound
     // as another deduction would count the same quota twice. Retain the
     // original anchor and all usage until the next NEW high-water reading.
-    if(!changedEra&&!reset&&!scheduleChanged&&q.used<=a.used){
+    if(!changedEra&&!scheduleChanged&&q.used<=a.used){
       if(q.conflict)a.tainted=true;
       continue;
     }
@@ -75,7 +70,7 @@ export async function buildWeeklyApiIntervals({ corpus, endMs, generation, finge
   for (const [plan,a] of anchors) {
     const last = ordered.filter(q => q.plan === plan).at(-1);
     if (last?.at > a.at) rows.push({startMs:a.at,endMs:last.at,planType:plan,segment:++segment,
-      quotaPp:null,apiUsd:"0",weeklyUsd:null,reason:last.used<a.used?"quota_conflict":"awaiting_change",usageEvents:0,
+      quotaPp:null,apiUsd:"0",weeklyUsd:null,reason:a.tainted||last.used<a.used?"quota_conflict":"awaiting_change",usageEvents:0,
       unknownSpeedEvents:0,excludedReviewEvents:0,excludedReviewUsd:"0",priceCardIds:[]});
   }
   rows.sort((a,b)=>a.startMs-b.startMs || a.planType.localeCompare(b.planType));

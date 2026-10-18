@@ -521,7 +521,7 @@ function buildWeeklyPace(
         || !hasExactKeys(outlook.rates, rateKeys)
         || !hasExactKeys(outlook.projection, projectionKeys)
         || !hasExactKeys(outlook.track, trackKeys)) return invalid();
-    const status = ["unavailable", "collecting", "available"].includes(outlook.status)
+    const status = ["unavailable", "collecting", "available", "exhausted"].includes(outlook.status)
       ? outlook.status : "unavailable";
     const remainingPercent = boundedPercent(outlook.remainingPercent);
     const resetsAt = isoInstant(outlook.resetsAt);
@@ -574,6 +574,15 @@ function buildWeeklyPace(
     const ratio = nonNegativeNumber(rates?.ratio);
     const activeRate = nonNegativeNumber(rates?.activePercentagePointsPerHour);
     const overallRate = nonNegativeNumber(rates?.overallPercentagePointsPerHour);
+    const exhausted = status === "exhausted"
+      && standing === "over" && outlook.critical === true && outlook.earlyEstimate === false
+      && remainingPercent === 0 && observationCount !== null && observationCount >= 1
+      && observationCount <= 8_192 && elapsedHours !== null
+      && sustainableRate === 0 && coveredHours === 0 && sparePercent === 0
+      && coveredFraction === 0 && hoursToReset !== null
+      && approximatelyEqual(dryHours, hoursToReset)
+      && [activeRate, overallRate, headlineRate, ratio, projectedExhaustionAt,
+        activeExhaustionFraction].every(value=>value===null);
     const collecting = status === "collecting"
       && standing === null
       && outlook.critical === false
@@ -682,7 +691,7 @@ function buildWeeklyPace(
       : projectedExhaustionAt === null;
     if (!bound || !validNumbers || !exactBooleans || !projectedIsFresh
         || (projectedRaw !== null && projectedExhaustionAt === null)
-        || (!collecting && (!availableShape || !projectedMatches))) return invalid();
+        || (!collecting && !exhausted && (!availableShape || !projectedMatches))) return invalid();
     if (collecting) {
       return Object.freeze({
         status,
@@ -735,7 +744,7 @@ function buildWeeklyPace(
         overallPercentagePointsPerHour: headlineRate,
       },
       outlook: {
-        kind: projectedExhaustionAt === null ? "reset_first" : "exhaustion",
+        kind: exhausted ? "exhausted" : projectedExhaustionAt === null ? "reset_first" : "exhaustion",
         standing,
         ratio,
         critical: outlook.critical,
@@ -1296,7 +1305,9 @@ function renderWeeklyPace(documentRef, projection, t, numberFormatter, localForm
     && weeklyAllowance !== undefined;
   const unavailable = pace.status === "unavailable"
     && weeklyAllowance !== undefined;
-  setHidden(documentRef, "pace-section", !available && !insufficient && !unavailable);
+  const exhausted = pace.status === "exhausted" && pace.outlook?.kind === "exhausted"
+    && resetMatches;
+  setHidden(documentRef, "pace-section", !available && !insufficient && !unavailable && !exhausted);
   setHidden(documentRef, "pace-timeline", !detailed);
   setHidden(documentRef, "pace-evidence", !detailed || !pace.outlook.earlyEstimate);
   if (!available) {
@@ -1312,7 +1323,14 @@ function renderWeeklyPace(documentRef, projection, t, numberFormatter, localForm
     if (fill) fill.style.width = "0%";
     const marker = documentRef.getElementById("pace-active-marker");
     if (marker) marker.hidden = true;
-    if (insufficient) {
+    if (exhausted) {
+      if (section) section.dataset.paceTone = "critical";
+      setElementText(documentRef, "pace-state", t("trends.evidenceExhausted"));
+      setElementText(documentRef, "pace-headline", t("trends.evidenceExhausted"));
+      setElementText(documentRef, "pace-reset", t("electron.trayPopover.resets", {
+        time: resetCountdown(weeklyAllowance.resetInSeconds, t, numberFormatter),
+      }));
+    } else if (insufficient) {
       if (section) section.dataset.paceTone = "insufficient";
       setElementText(documentRef, "pace-state", t("weekly.headline.insufficient"));
       setElementText(documentRef, "pace-headline", t("electron.trayPopover.paceNeedsEvidence"));

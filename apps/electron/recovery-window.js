@@ -13,6 +13,7 @@ import {
   resolveDesktopLocale,
 } from "./desktop-copy.js";
 import { COMPANION_STARTUP_ERROR_CODES } from "../../src/local-companion-startup-error.js";
+import { installSessionPermissionPolicy } from "./loopback-policy.js";
 
 const RECOVERY_ACTIONS = Object.freeze(["retry", "settings", "diagnostics", "quit"]);
 const RECOVERY_STATUSES = Object.freeze([
@@ -226,7 +227,7 @@ function validAction(value) {
  */
 export function installRecoveryWindowPolicy({
   webContents,
-  session: _session,
+  session = webContents?.session,
   initialURL,
   onAction,
 } = {}) {
@@ -278,6 +279,7 @@ export function installRecoveryWindowPolicy({
   webContents.on("will-attach-webview", onWillAttachWebview);
   webContents.on("ipc-message", onIPCMessage);
   webContents.setWindowOpenHandler?.(() => ({ action: "deny" }));
+  const permissions = installSessionPermissionPolicy({ session, webContents });
 
   return Object.freeze({
     setAllowedURL(url) {
@@ -288,6 +290,7 @@ export function installRecoveryWindowPolicy({
     remove() {
       if (removed) return;
       removed = true;
+      permissions.remove();
       webContents.off?.("will-navigate", onWillNavigate);
       webContents.off?.("will-redirect", onWillRedirect);
       webContents.off?.("will-frame-navigate", onWillFrameNavigate);

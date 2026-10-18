@@ -47,6 +47,7 @@ const PUBLIC_FORECAST_PACE_KEYS = Object.freeze([
   "overallPercentagePointsPerHour",
 ]);
 const PUBLIC_FORECAST_STATUSES = new Set([
+  "exhausted",
   "unavailable",
   "insufficient_observations",
   "available",
@@ -145,6 +146,13 @@ export function isExactWeeklyPaceForecast(value) {
       || value.pace.method !== null
       || value.observationCount !== 0
       || value.hoursToReset !== null) return false;
+
+  if (value.status === "exhausted") {
+    return value.currentUsedPercent === 100 && value.remainingPercent === 0
+      && value.observationCount >= 1 && value.pace.elapsedHours !== null
+      && value.pace.movementPp !== null && value.hoursToReset > 0
+      && value.etaAt === null && value.hoursToExhaustion === 0;
+  }
 
   if (value.status === "available") {
     return value.currentUsedPercent !== null
@@ -280,8 +288,14 @@ function numberOrNull(value, { minimum = -Infinity, maximum = Infinity } = {}) {
   return finite(value, { minimum, maximum });
 }
 
-function publicForecast(result) {
-  const status = [
+function publicForecast(result, observedUsedPercent) {
+  // Exhaustion is an observed endpoint, not a pace extrapolation. A flat
+  // series at 100% still proves it; other analytical refusals stay unavailable.
+  const exhausted = observedUsedPercent === 100
+    && result?.hoursToReset > 0
+    && (result.status !== "unavailable"
+      || (result.refusalCodes?.length === 1 && result.refusalCodes[0] === "non_positive_pace"));
+  const status = exhausted ? "exhausted" : [
     "unavailable",
     "insufficient_observations",
     "available",
@@ -289,6 +303,9 @@ function publicForecast(result) {
   ].includes(result?.status)
     ? result.status
     : "unavailable";
+  // The analytical result retains private refusal evidence. The public v0.2
+  // unavailable shape is deliberately canonical and must pass its own validator.
+  if (status === "unavailable") return unavailableForecast();
   const pace = result?.pace && typeof result.pace === "object"
     && !Array.isArray(result.pace)
     ? result.pace
@@ -332,7 +349,7 @@ function publicForecast(result) {
     },
     observationCount: Math.min(MAX_OBSERVATION_COUNT, sampleCount + 1),
     etaAt: status === "available" ? etaAt : null,
-    hoursToExhaustion: status === "available"
+    hoursToExhaustion: status === "exhausted" ? 0 : status === "available"
       ? numberOrNull(result?.hoursToExhaustion, { minimum: 0 })
       : null,
     hoursToReset: numberOrNull(result?.hoursToReset, { minimum: 0 }),
@@ -455,6 +472,18 @@ export function projectWeeklyPaceOutlook({ forecast, nowMs = Date.now() } = {}) 
       || observationCount === null
       || elapsedHours === null
       || !(hoursToReset > 0)) return unavailable;
+
+  if (forecast.status === "exhausted") {
+    return {
+      ...unavailable,
+      status: "exhausted", standing: "over", critical: true,
+      remainingPercent: 0, resetsAt, observationCount, elapsedHours,
+      rates: { ...unavailable.rates, sustainablePercentagePointsPerHour: 0 },
+      projection: { ...unavailable.projection, hoursToReset,
+        coveredHours: 0, dryHours: hoursToReset, sparePercent: 0 },
+      track: { coveredFraction: 0, activeExhaustionFraction: null },
+    };
+  }
 
   if (forecast.status === "insufficient_observations"
       && observationCount === 1) {
@@ -588,7 +617,7 @@ export function projectWeeklyPaceForecast({
     return publicForecast(analyzeQuotaPace({
       currentSnapshot: current,
       observations: compatible,
-    }));
+    }), current.usedPercent);
   } catch {
     return unavailableForecast();
   }

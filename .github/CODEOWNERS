@@ -9,6 +9,11 @@
 /scripts/release-evidence.js @adamallcock
 /scripts/*release* @adamallcock
 /scripts/*attestation* @adamallcock
+/scripts/*electron* @adamallcock
+/scripts/lib/*electron* @adamallcock
+/scripts/lib/publication-file-digest.mjs @adamallcock
+/config/electron-production-distribution.cjs @adamallcock
+/apps/worker/wrangler.jsonc @adamallcock
 /apps/electron/electron-builder*.cjs @adamallcock
 /apps/web/public/docs.html @adamallcock
 /docs/verify-release.md @adamallcock

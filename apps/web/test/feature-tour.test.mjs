@@ -114,6 +114,28 @@ test('public feature copy resolves in all shipped languages', () => {
   }
 });
 
+test('pace demo time titles follow the active locale without an English example suffix', () => {
+  const f = paceFixture();
+  try {
+    for (const locale of ['en-US', 'zh-Hans', 'es']) {
+      f.doc.documentElement.lang = locale;
+      f.view.dispatchEvent(new Event('tibotattle:locale-change'));
+      for (const selector of ['[data-runout-time]', '[data-reset-time]']) {
+        const time = f.forecast.querySelector(selector);
+        const expected = new Intl.DateTimeFormat(locale, {
+          dateStyle: 'medium',
+          timeStyle: 'short',
+          timeZone: 'America/New_York',
+        }).format(new Date(time.dateTime));
+        assert.equal(time.title, expected);
+        assert.doesNotMatch(time.title, /EDT|example/u);
+      }
+    }
+  } finally {
+    f.dispose();
+  }
+});
+
 test('illustrative forecast keeps covered and empty time consistent with pace', async () => {
   const { demoForecastScenario } = await import('../public/feature-tour.js');
   const critical = demoForecastScenario('way');

@@ -771,11 +771,16 @@ export function createDesktopController({
   }
 
   async function applyRefreshInterval(seconds) {
-    ++refreshIntervalRevision;
+    const revision = ++refreshIntervalRevision;
     lastKnownRefreshIntervalSeconds = seconds;
     stopRefreshTimer();
-    await onRefreshIntervalChanged(seconds);
-    if (!refreshInFlight) startRefreshTimer(seconds);
+    try {
+      await onRefreshIntervalChanged(seconds);
+    } finally {
+      // Persistence already accepted the preference. A failed companion
+      // propagation must not strand shell maintenance until another change.
+      if (revision === refreshIntervalRevision && !refreshInFlight) startRefreshTimer(seconds);
+    }
   }
 
   function readNotificationCoordinatorStatus() {

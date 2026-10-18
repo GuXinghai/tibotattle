@@ -204,6 +204,18 @@ Changed modern files replay their retained prefix atomically. This includes a
 first modern append after an earlier legacy publication. Ordinary unchanged
 files still skip without a new transaction. Source-local segment hashing covers
 the publication pass, independently of the bounded reconciliation prepass.
+Foreign-thread response copies alone do not switch a source into own-response
+accounting. If append reconciliation requires a full replay, the transaction
+rolls back and retries that exact source once with replacement segments; it
+does not publish a partial append or loop indefinitely on the same failure.
+
+The accounting reader preserves nullable components and canonical output
+representation instead of substituting zero. Partial, assumed-zero and
+conflicting evidence cannot establish fully observed pricing. Derived replay
+caches use `local-replay-safe-accounting-v0.22`; older caches are rebuilt, not
+relabeled, and the durable index schema is unchanged. Context partitions come
+from reviewed model cards across tiers; a missing Priority long-context card
+remains unpriced rather than inheriting the short-context rate.
 
 The established model attribution remains when context and persisted settings
 are coherent at the response. A setting written shortly after its context does

@@ -228,6 +228,24 @@ test("popover policy accepts only top-frame fixed actions and blocks navigation"
   assert.deepEqual(calls, ["allowance", "usage"]);
 });
 
+test("tray popover session denies every permission before and after policy removal", () => {
+  const webContents = new FakeWebContents();
+  webContents.session = {
+    setPermissionRequestHandler(handler) { this.request = handler; },
+    setPermissionCheckHandler(handler) { this.check = handler; },
+  };
+  const policy = installDesktopTrayPopoverPolicy({ webContents, initialURL: "http://127.0.0.1:3456/electron-tray-popup.html", onAction() {} });
+  for (const remove of [false, true]) {
+    if (remove) policy.remove();
+    for (const permission of ["notifications", "geolocation", "media", "clipboard-read", "clipboard-sanitized-write"]) {
+      const decisions = [];
+      webContents.session.request(webContents, permission, (allowed) => decisions.push(allowed));
+      assert.deepEqual(decisions, [false]);
+      assert.equal(webContents.session.check(webContents, permission), false);
+    }
+  }
+});
+
 test("popover controller lazily positions, updates, routes, and destroys a trusted window", async () => {
   const preloadPath = await preloadFixture();
   const windows = [];

@@ -5,6 +5,8 @@ import {
   APP_OFFICIAL_PRICE_CARDS,
   APP_PRICE_REGISTRY_MANIFEST,
   OPENAI_PRICE_EVIDENCE_START_DATE,
+  priceCodexUsageEvent,
+  priceUsageEvent,
 } from "../packages/accounting/index.js";
 import {
   ANTHROPIC_OFFICIAL_PRICE_CARDS,
@@ -17,6 +19,8 @@ import {
 } from "../packages/accounting/src/price-registry.js";
 import { sha256Json } from "./helpers/pricing-hash.js";
 
+// Registry-content tests use RunCost directly. Public timestamp and exact-tier
+// policy is asserted separately through the accounting package below.
 function price({ provider, model, tier = "standard", pricedAt = "2026-07-26", components, totalInputTokens }) {
   return calculateCost({
     usageLedger: {
@@ -577,7 +581,7 @@ test("GPT-5.6 Terra and Luna pricing changes at the official July 30 boundary", 
   assert.equal(closed.effective.from, undefined);
 });
 
-test("OpenAI service_tier fast is priced only as an explicitly labeled Priority fallback", () => {
+test("low-level RunCost compatibility exposes its explicit fast-to-Priority fallback", () => {
   // OpenAI renamed API Priority processing to Fast mode on 2026-07-30, and
   // RunCost 0.2.1 resolves an OpenAI "fast" request onto Priority cards with
   // an explicit service_tier_resolution marker instead of pricing silently.
@@ -606,6 +610,57 @@ test("OpenAI service_tier fast is priced only as an explicitly labeled Priority 
         `openai:${model}:priority:${cardSuffix}:official-observed-2026-08-30`,
       ],
     }, model);
+  }
+});
+
+test("public kernel historical pricing requires canonical timestamps and exact API tiers", () => {
+  const event = { provider: "openai", model: "gpt-5.6-sol", apiTier: "priority",
+    components: { input_uncached_tokens: 1_000_000 }, totalInputContextTokens: 1_000 };
+  const pricingContext = { priceEpochBasis: "event_time_when_registry_has_effective_evidence" };
+  for (const timestamp of [undefined, "2026-08-21", "2026-08-21T00:00:00Z"]) {
+    const result = priceUsageEvent({ ...event, timestamp }, { priceCards: APP_OFFICIAL_PRICE_CARDS, pricingContext });
+    assert.equal(result.coverageStatus, "unpriced");
+    assert.equal(result.totalUsd, "0");
+    assert.ok(result.warnings.coverage.some(w => w.code === "historical_price_timestamp_missing"));
+  }
+  const timestamp = "2026-08-21T00:00:00.000Z";
+  const exact = priceUsageEvent({ ...event, timestamp }, { priceCards: APP_OFFICIAL_PRICE_CARDS, pricingContext });
+  assert.equal(exact.coverageStatus, "fully_priced");
+  assert.equal(exact.totalUsd, "8");
+  const fallback = priceUsageEvent({ ...event, timestamp, apiTier: "fast" }, { priceCards: APP_OFFICIAL_PRICE_CARDS, pricingContext });
+  assert.equal(fallback.coverageStatus, "unpriced");
+  assert.equal(fallback.totalUsd, "0");
+  assert.deepEqual(fallback.selectedPriceCardIds, []);
+  assert.ok(fallback.warnings.coverage.some(w => w.code === "service_tier_exact_card_missing"));
+});
+
+test("public Codex kernel selects reviewed epoch and context boundaries without inferred Priority prices", () => {
+  const components = { input_uncached_tokens: 1_000_000, output_text_tokens: 1_000_000 };
+  for (const [model, before, at, oldTotal, newTotal] of [
+    ["gpt-5.6-terra", "2026-07-29T23:59:59.999Z", "2026-07-30T00:00:00.000Z", "17.5", "14"],
+    ["gpt-5.6-luna", "2026-07-29T23:59:59.999Z", "2026-07-30T00:00:00.000Z", "7", "1.4"],
+    ["gpt-5.6-sol", "2026-08-20T23:59:59.999Z", "2026-08-21T00:00:00.000Z", "35", "24"],
+    ["gpt-6-astra", "2026-09-02T23:59:59.999Z", "2026-09-03T00:00:00.000Z", "0", "60"],
+  ]) {
+    for (const [timestamp, total] of [[before, oldTotal], [at, newTotal]]) {
+      const result = priceCodexUsageEvent({ timestamp, model, totalInputContextTokens: 1_000, components });
+      assert.equal(result.totalUsd, total, `${model}/${timestamp}`);
+      assert.equal(result.coverageStatus, total === "0" ? "unpriced" : "fully_priced");
+    }
+  }
+  for (const model of ["gpt-5.5", "gpt-5.5-codex", "gpt-5.4", "gpt-6.1-sol"]) {
+    for (const totalInputContextTokens of [271_999, 272_000, 272_001]) {
+      const result = priceCodexUsageEvent({ timestamp: "2026-10-18T00:00:00.000Z", model, totalInputContextTokens, components }, { apiServiceTier: "priority" });
+      const missing = model !== "gpt-6.1-sol" && totalInputContextTokens >= 272_000;
+      assert.equal(result.coverageStatus, missing ? "unpriced" : "fully_priced", `${model}/${totalInputContextTokens}`);
+      if (missing) {
+        assert.equal(result.totalUsd, "0");
+        assert.deepEqual(result.selectedPriceCardIds, []);
+        assert.ok(result.warnings.coverage.some(w => w.code === "long_context_rule_missing"));
+      } else if (model === "gpt-6.1-sol") {
+        assert.equal(result.totalUsd, totalInputContextTokens > 272_000 ? "38" : "24");
+      }
+    }
   }
 });
 

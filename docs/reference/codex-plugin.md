@@ -42,11 +42,14 @@ experiments; TiboTattle does not embed or call an LLM.
 | `tibotattle_explain_usage` | Run one bounded plan; pass `nextCursor` unchanged to page. |
 | `tibotattle_get_evidence` | Resolve one opaque evidence selector. |
 
-The tools above are read-only. Release lookup is the only network activity among
-them. The plugin does not install or upgrade the app. Plugin-to-app discovery is
-limited to the Windows x64 installation; other platforms receive an explicit
-unsupported result rather than an inferred path or generic command execution
-capability.
+The tools above are read-only and do not fetch release metadata. The plugin does
+not install or upgrade the app; its legacy Homebrew installation tools have
+been removed. Windows x64 is the only supported product platform, but the
+plugin's remaining installed-agent discovery still uses the legacy bundle
+adapter and returns unsupported on Windows. Windows discovery and packaged
+plugin qualification remain open; this document does not claim the current
+plugin is usable against an installed Windows app. The legacy adapter does not
+establish macOS product support.
 
 When more than one installed copy of the app is present, the plugin verifies each
 installed version and selects the latest semantic version before checking agent

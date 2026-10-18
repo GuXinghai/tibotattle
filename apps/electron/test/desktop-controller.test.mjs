@@ -182,6 +182,29 @@ async function fireAutomaticTimer(value, timer = value.timers.at(-1)) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("persisted cadence rearms after propagation failure and still respects disabled or active leases", async () => {
+  let failPropagation = false;
+  const value = fixture({ actionOverrides: {
+    onRefreshIntervalChanged: async () => { if (failPropagation) throw new Error("synthetic companion unavailable"); },
+  } });
+  await value.controller.initialize();
+  failPropagation = true;
+  await assert.rejects(value.controller.handlers.setRefreshInterval({ seconds: 600 }), /synthetic companion unavailable/u);
+  assert.equal(value.persisted.refreshIntervalSeconds, 600);
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, true);
+  assert.equal(value.timers.at(-1).milliseconds, 600_000);
+  const lease = await value.controller.handlers.refreshStarted({ mode: "quick" });
+  await assert.rejects(value.controller.handlers.setRefreshInterval({ seconds: 900 }));
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  await value.controller.handlers.refreshSettled({ lease });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(value.timers.at(-1).milliseconds, 900_000);
+  await assert.rejects(value.controller.handlers.setRefreshInterval({ seconds: -1 }));
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  assert.equal(value.persisted.refreshIntervalSeconds, -1);
+  value.controller.dispose();
+});
+
 function automaticCadenceBackend() {
   let stored = null;
   return {

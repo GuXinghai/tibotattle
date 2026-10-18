@@ -69,7 +69,7 @@ function canaryViolations(serialized, forbiddenSourceValues) {
   return forbiddenSourceValues.filter((value) =>
     typeof value === "string"
       && value.length >= 4
-      && serialized.includes(value)).length;
+      && serialized.includes(JSON.stringify(value).slice(1, -1))).length;
 }
 
 function providerCompatibilityViolations(bundle) {

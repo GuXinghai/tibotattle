@@ -5,13 +5,21 @@ import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Executable shell proof for the Ubuntu OSV job. Platform-neutral exception
+// Executable Bash control-flow proof for the OSV job. Platform-neutral exception
 // contracts remain in http-cache-exception.test.js and the root test suite.
 test("scanner shell retains download, checksum and direct scanner failure status", async () => {
   const workflow = await readFile(new URL("../.github/workflows/osv-scanner.yml", import.meta.url), "utf8");
   const match = workflow.match(/      - name: Run scanner\n        shell: bash\n        run: \|\n((?:          .*\n)+)/);
   assert.ok(match, "direct scanner run block must exist");
   const script = match[1].replace(/^ {10}/gm, "");
+  const windows = process.platform === "win32";
+  const bash = windows ? join(process.env.ProgramFiles ?? "C:\\Program Files", "Git", "bin", "bash.exe") : "/bin/bash";
+  const environmentSetup = windows ? `
+export MOCK_BIN="$(/usr/bin/cygpath -u "$MOCK_BIN")"
+export RUNNER_TEMP="$(/usr/bin/cygpath -u "$RUNNER_TEMP")"
+export TRACE_FILE="$(/usr/bin/cygpath -u "$TRACE_FILE")"
+export PATH="$MOCK_BIN:/usr/bin:/bin"
+` : "";
   const root = await mkdtemp(join(tmpdir(), "http-cache-scanner-shell-test-"));
   const trace = join(root, "trace");
   try {
@@ -39,10 +47,10 @@ exit "$CHECKSUM_RESULT"
       ...[1, 127, 128, 130, 0].map(code => [0, 0, code, code, "download\nchecksum\nscan\n"]),
     ]) {
       await writeFile(trace, "");
-      const result = spawnSync("/bin/bash", ["-c", script], {
-        env: { PATH: `${root}:/usr/bin:/bin`, RUNNER_TEMP: root, TRACE_FILE: trace,
+      const result = spawnSync(bash, ["--noprofile", "--norc", "-c", environmentSetup + script], {
+        env: { ...process.env, ...(windows ? {} : { PATH: `${root}:/usr/bin:/bin` }), MOCK_BIN: root, RUNNER_TEMP: root, TRACE_FILE: trace,
           DOWNLOAD_RESULT: String(download), CHECKSUM_RESULT: String(checksum), SCANNER_RESULT: String(scanner) },
-        encoding: "utf8", timeout: 5000,
+        encoding: "utf8", timeout: 5000, windowsHide: true,
       });
       assert.equal(result.error, undefined);
       assert.equal(result.status, expected, `failure status must survive: ${download}/${checksum}/${scanner}`);

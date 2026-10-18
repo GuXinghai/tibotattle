@@ -32,7 +32,7 @@ npm --prefix apps/worker ci
 
 The authoritative complete repository gate is `npm run check`. It composes
 root tests with architecture, Codex-contract, tool-inventory, documentation,
-schema-mirror, UI, release-site, local companion, and Worker
+schema-mirror, UI, Electron source contracts, release-site, local companion, and Worker
 checks. Installed-app qualification
 requires separate Windows hosts and signed artifacts;
 report an environment-blocked lane explicitly.
@@ -46,7 +46,14 @@ npm run codex:contract:check   # checked-in Codex plan/name contract parity
 npm run docs:check             # maintained docs, links, status, and current authority
 npm run product:worker:check   # hosted-service worker checks
 npm run architecture:check     # ownership/boundary enforcement
+npm run product:electron:test  # serial Electron source contracts; no GUI qualification
 ```
+
+The Electron lane discovers `apps/electron/test/*.test.mjs` and is included in
+`product:check`. Run individual affected cases while iterating; defining this
+aggregate gate does not replace native Windows qualification. Workflow policy
+requires the pinned `windows-2025` runner and recursively checks referenced local
+composite actions for the same immutable third-party action pins.
 
 Report any unavailable installed-artifact or hardware gate separately from
 the source and contract checks.

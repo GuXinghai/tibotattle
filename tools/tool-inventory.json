@@ -5,6 +5,19 @@
   "records": [
     {
       "classification": "build_release_operation",
+      "owner": "windows_legacy_state_recovery",
+      "canonicalPath": "scripts/copy-windows-legacy-state.mjs",
+      "stableAlias": null,
+      "stableAliasReason": "Explicit owner-directed dry-run, copy and journal resume CLI; not a shipped product command.",
+      "additionalAliases": [],
+      "callers": ["test/windows-legacy-state-copy-cli.test.js", "docs/runbooks/2026-10-13-windows-legacy-acl-copy.md"],
+      "decision": "retain_as_explicit_windows_legacy_state_recovery",
+      "provenance": "docs/runbooks/2026-10-13-windows-legacy-acl-copy.md",
+      "provenanceReason": null,
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
       "owner": "local_index",
       "canonicalPath": "scripts/verify-local-index-preservation.mjs",
       "stableAlias": null,

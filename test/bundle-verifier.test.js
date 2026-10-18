@@ -27,7 +27,7 @@ const {
 const SECRET = Buffer.alloc(32, 23);
 const BUNDLE_ID = `bundle:v1:${"5".repeat(64)}`;
 
-async function localPair({ marker = false, markerCount = marker ? 1 : 0 } = {}) {
+async function localPair({ marker = false, markerCount = marker ? 1 : 0, writeArtifacts = true } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-verify-"));
   const home = join(directory, "codex-home");
   await mkdir(join(home, "sessions"), { recursive: true });
@@ -53,7 +53,7 @@ async function localPair({ marker = false, markerCount = marker ? 1 : 0 } = {}) 
   });
   const bundleFile = join(directory, "review.umx.json");
   const receiptFile = `${bundleFile}.privacy-receipt.json`;
-  await writeLocalMetadataBundle({ ...result, outputFile: bundleFile, receiptFile });
+  if (writeArtifacts) await writeLocalMetadataBundle({ ...result, outputFile: bundleFile, receiptFile });
   return { directory, bundleFile, receiptFile, ...result };
 }
 
@@ -91,6 +91,21 @@ function capturedVerificationCode(verify, options) {
   }
   assert.fail("Expected bundle verification to fail");
 }
+
+test("byte verification can repeat source canaries only when the caller supplies in-memory source values", async () => {
+  const pair = await localPair({ writeArtifacts: false });
+  try {
+    const input = { bundleBytes: Buffer.from(stableJson(pair.bundle)), receiptBytes: Buffer.from(stableJson(pair.receipt)) };
+    for (const verify of [canonicalByteVerifier(), loadVerifiedLocalMetadataBundleBytes]) {
+      assert.equal(verify(input).summary.verdict, "passed");
+      assert.throws(() => verify({ ...input, forbiddenSourceValues: [pair.bundle.bundleId] }),
+        (error) => error instanceof BundleVerificationError && error.code === "privacy_gate" && !error.message.includes(pair.bundle.bundleId));
+      assert.equal(verify({ ...input, forbiddenSourceValues: ["synthetic-unretained-source-value"] }).summary.verdict, "passed");
+    }
+  } finally {
+    await rm(pair.directory, { recursive: true, force: true });
+  }
+});
 
 test("standalone verifier accepts an exact canonical owner-only pair", async () => {
   const pair = await localPair();

@@ -6509,6 +6509,42 @@ function weeklyPaceReading(data, now = Date.now()) {
     forecast.sampleCount,
     paceIntervals === null ? null : paceIntervals + 1,
   );
+  const canonicalResetAt = typeof forecast.resetsAt === "string"
+    && resetAt !== null
+    && new Date(resetAt).toISOString() === forecast.resetsAt;
+  const observedExhaustion = status === "exhausted"
+    && forecast.status === "exhausted"
+    && forecast.currentUsedPercent === 100
+    && forecast.remainingPercent === 0
+    && canonicalResetAt
+    && forecast.etaAt === null
+    && etaAt === null
+    && forecast.hoursToExhaustion === 0
+    && Number.isSafeInteger(forecast.observationCount)
+    && forecast.observationCount >= 1
+    && observations === forecast.observationCount
+    && hoursToReset !== null
+    && hoursToReset > 0
+    && pace.method === "median_adjacent_quota_slope";
+  if (observedExhaustion) {
+    return {
+      remaining: 0,
+      hoursToReset,
+      resetAt,
+      rates: { active: null, average: null, headline: null },
+      headlinePace: null,
+      observations,
+      paceElapsedHours: null,
+      collectingEvidence: false,
+      earlyEstimate: false,
+      available: false,
+      reachesResetFirst: false,
+      standing: null,
+      paceState: null,
+      projectedEtaAt: null,
+      exhausted: true,
+    };
+  }
   const paceElapsedHours = firstFiniteForecastNumber(pace.elapsedHours);
   // A single trusted snapshot cannot establish a rate, but it is useful to
   // say why the forecast is not visible yet. Do not surface an unbounded or
@@ -6565,8 +6601,9 @@ function weeklyPaceReading(data, now = Date.now()) {
   };
 }
 
-function weeklyPaceHeadlineText({ collectingEvidence, paceState, projectedEtaAt, standing }) {
+function weeklyPaceHeadlineText({ collectingEvidence, exhausted, paceState, projectedEtaAt, standing }) {
   if (collectingEvidence) return t("allowance.collectingTitle");
+  if (exhausted) return t("trends.evidenceExhausted");
   if (paceState === "over") {
     return projectedEtaAt === null
       ? t("allowance.beforeReset")
@@ -6575,8 +6612,9 @@ function weeklyPaceHeadlineText({ collectingEvidence, paceState, projectedEtaAt,
   return paceState === "on" ? t("allowance.nearReset") : t("allowance.spareTitle");
 }
 
-function weeklyPaceCopyText({ collectingEvidence, standing, earlyEstimate }) {
+function weeklyPaceCopyText({ collectingEvidence, exhausted, standing, earlyEstimate }) {
   if (collectingEvidence) return t("allowance.collectingCopy");
+  if (exhausted) return t("trends.evidenceExhaustedWhy");
   let copy;
   if (standing === null) {
     copy = t("allowance.slowCopy");
@@ -6640,7 +6678,7 @@ function renderOverviewPace(data) {
     return;
   }
 
-  const { standing, paceState, collectingEvidence, earlyEstimate, remaining,
+  const { standing, paceState, collectingEvidence, exhausted, earlyEstimate, remaining,
     hoursToReset, headlinePace } = reading;
   if (collectingEvidence) {
     element.classList.add("is-insufficient");
@@ -6704,7 +6742,7 @@ function renderWeeklyPaceForecast(data) {
   if (reading === null) return renderWeeklyPaceWaiting(card, data);
   const {
     remaining, hoursToReset, resetAt, rates, headlinePace, observations,
-    paceElapsedHours, collectingEvidence, earlyEstimate, available,
+    paceElapsedHours, collectingEvidence, exhausted, earlyEstimate, available,
     reachesResetFirst, standing, paceState, projectedEtaAt,
   } = reading;
   if (standing) {
@@ -6789,7 +6827,7 @@ function renderWeeklyPaceForecast(data) {
     addMetric(t("allowance.recentPace"), t("allowance.rate", { rate: formatDecimal(headlinePace, 1) }));
   }
 
-  const track = collectingEvidence
+  const track = collectingEvidence || exhausted
     ? null
     : weeklyPaceTrack(standing, hoursToReset, resetAt);
 
@@ -6818,9 +6856,11 @@ function renderWeeklyPaceForecast(data) {
     "weekly-pace-forecast",
     collectingEvidence
       ? "is-insufficient"
-      : paceState === "over"
-        ? "is-over-pace"
-        : paceState === "on" ? "is-on-pace" : "is-under-pace",
+      : exhausted
+        ? "is-exhausted"
+        : paceState === "over"
+          ? "is-over-pace"
+          : paceState === "on" ? "is-on-pace" : "is-under-pace",
     standing?.critical ? "is-critical" : "",
     earlyEstimate ? "is-early-estimate" : "",
     // Retained so the engine's own split stays inspectable from the DOM even
@@ -10475,7 +10515,7 @@ function startOverviewPublicationPolling() {
         if(status.overviewSchedule?.errorCode)throw Object.assign(new Error("overview_schedule_failed"),{code:status.overviewSchedule.errorCode});
         const next=status.refresh?.finishedAt;
         if(next&&next!==receipt){receipt=next;const displayed=await loadLocalDashboard();if(displayed!==false){
-          if(["failed","cancelled"].includes(status.refresh.status))showConnectionNotice({title:t("refresh.failedTitle"),copy:status.refresh.failureCode??status.refresh.errorCode??"refresh_failed",kind:"error"});
+          if(["failed","cancelled"].includes(status.refresh.status))showConnectionNotice({title:t("refresh.failedTitle"),copy:t("refresh.failedCopy"),kind:"error"});
           else publishRefreshResultNotice(status.refresh);}}
         failed=false;
       }

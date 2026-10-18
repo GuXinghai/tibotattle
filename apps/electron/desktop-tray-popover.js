@@ -16,6 +16,7 @@ import { desktopText } from "./desktop-copy.js";
 import {
   isAllowedCompanionURL,
   isExactLoopbackOrigin,
+  installSessionPermissionPolicy,
 } from "./loopback-policy.js";
 import {
   DESKTOP_TRAY_STATUS_STATES,
@@ -290,10 +291,12 @@ export function installDesktopTrayPopoverPolicy({
   webContents.on("will-attach-webview", onWillAttachWebview);
   webContents.on("ipc-message", onIPCMessage);
   webContents.setWindowOpenHandler?.(() => ({ action: "deny" }));
+  const permissions = installSessionPermissionPolicy({ session: webContents.session, webContents });
   return Object.freeze({
     remove() {
       if (removed) return;
       removed = true;
+      permissions.remove();
       webContents.off?.("will-navigate", onWillNavigate);
       webContents.off?.("will-redirect", onWillRedirect);
       webContents.off?.("will-frame-navigate", onWillFrameNavigate);

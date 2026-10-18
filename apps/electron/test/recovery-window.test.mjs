@@ -40,7 +40,10 @@ class FakeWebContents extends EventEmitter {
   constructor() {
     super();
     this.mainFrame = { isMainFrame: true, parent: null };
+    this.commands = [];
   }
+
+  send(channel, command) { this.commands.push({ channel, command }); }
 
   setWindowOpenHandler(handler) {
     this.windowOpenHandler = handler;
@@ -273,6 +276,24 @@ test("recovery Diagnostics accepts only an authorized main-frame IPC message", (
   policy.remove();
 });
 
+test("recovery session denies every permission before and after window policy removal", () => {
+  const webContents = new FakeWebContents();
+  const session = {
+    setPermissionRequestHandler(handler) { this.request = handler; },
+    setPermissionCheckHandler(handler) { this.check = handler; },
+  };
+  const policy = installRecoveryWindowPolicy({ webContents, session, initialURL: createRecoveryPageURL(), onAction() {} });
+  for (const remove of [false, true]) {
+    if (remove) policy.remove();
+    for (const permission of ["notifications", "geolocation", "media", "clipboard-read", "clipboard-sanitized-write"]) {
+      const decisions = [];
+      session.request(webContents, permission, (allowed) => decisions.push(allowed));
+      assert.deepEqual(decisions, [false]);
+      assert.equal(session.check(webContents, permission), false);
+    }
+  }
+});
+
 test("recovery status reload keeps deterministic focus on the non-actionable status region", () => {
   const html = decodeURIComponent(createRecoveryPageURL("companion_ready_invalid"));
   assert.match(html, /<main aria-labelledby="title">/u);
@@ -486,16 +507,18 @@ test("native updater signal releases each desktop window before Electron closes 
       },
     },
     {
-      name: "settings",
+      name: "dashboard settings section",
       async selectWindow({ lifecycle, windows }) {
         const started = await lifecycle.start();
         assert.equal(started.status, "ready");
+        const dashboard = dashboardWindows(windows)[0];
+        dashboard.emit("ready-to-show");
         assert.equal(lifecycle.showSettingsWindow(), true);
-        const settings = windows.find((candidate) => (
-          candidate.loaded[0]?.includes("electron-settings.html")
-        ));
-        settings.emit("ready-to-show");
-        return settings;
+        assert.equal(lifecycle.state.hasSettingsWindow, false);
+        assert.equal(dashboardWindows(windows).length, 1);
+        assert.deepEqual(dashboard.webContents.commands.at(-1).command,
+          { command: "dashboardSection", section: "settings", settingsSection: "general" });
+        return dashboard;
       },
     },
   ];

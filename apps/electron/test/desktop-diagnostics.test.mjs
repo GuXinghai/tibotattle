@@ -85,6 +85,19 @@ test("desktop diagnostics reduce runtime state to content-free enums and boolean
   });
 });
 
+test("desktop diagnostics preserve every refresh interval accepted by the current contract", () => {
+  for (const refreshIntervalSeconds of [-1, 120, 600]) {
+    const record = createDesktopDiagnostics({
+      settings: { refreshIntervalSeconds },
+    });
+    assert.equal(record.settings.refreshIntervalSeconds, refreshIntervalSeconds);
+    assert.equal(
+      JSON.parse(formatDesktopDiagnostics(record)).settings.refreshIntervalSeconds,
+      refreshIntervalSeconds,
+    );
+  }
+});
+
 test("desktop diagnostics fail closed when a caller tampers with privacy guarantees", () => {
   const record = createDesktopDiagnostics({ platform: "win32", architecture: "x64" });
   assert.throws(

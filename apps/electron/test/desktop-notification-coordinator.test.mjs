@@ -14,6 +14,7 @@ import {
 import {
   DESKTOP_SHELL_STATUS_SCHEMA_VERSION,
   DESKTOP_SHELL_NOTIFICATION_EVIDENCE_SCHEMA_VERSION,
+  projectDesktopShellStatus,
 } from "../../../src/desktop-shell-status.js";
 
 const RESET_AT = "2026-09-01T10:00:00.000Z";
@@ -246,6 +247,70 @@ test("custom threshold changes rebaseline without clearing historical receipts o
   const first = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ observedAt: "2026-08-22T10:10:00.000Z", usedPercent: 99 }) }));
   assert.equal(first.outcome, "first_observation");
   assert.equal(delivery.deliveries.length, 1);
+});
+
+test("running and age-only polls preserve baselines without delivery or writes, including restart", async () => {
+  const { coordinator, backend, delivery } = await readyCoordinator();
+  await coordinator.setPreferences({ threshold: 90 });
+  const receipt = {
+    status: "succeeded",
+    finishedAt: "2026-08-22T10:00:01.000Z",
+    result: { notificationEvidence: evidence({ usedPercent: 85 }) },
+  };
+  const project = (refresh, now) => projectDesktopShellStatus({ refresh, now: Date.parse(now) });
+  assert.equal((await coordinator.evaluate(project(receipt, "2026-08-22T10:00:02.000Z"))).outcome, "first_observation");
+  const savedBaseline = backend.stored;
+  let writes = 0;
+  const save = backend.save;
+  backend.save = async (state) => { writes += 1; return save(state); };
+  const polls = [
+    project({ status: "running", result: null }, "2026-08-22T10:01:00.000Z"),
+    project({ status: "running", result: { notificationEvidence: evidence({ observedAt: OBSERVED_SECOND, usedPercent: 94 }) } }, OBSERVED_SECOND),
+    project(receipt, "2026-08-22T10:05:02.000Z"),
+    project(receipt, "2026-08-22T10:06:00.000Z"),
+  ];
+  assert.equal(polls[2].state, "stale");
+  assert.equal(polls[2].notificationEvidenceStatus, "expired");
+  for (const poll of polls) {
+    const result = await coordinator.evaluate(poll);
+    assert.equal(result.outcome, "no_crossing");
+    assert.equal(result.delivery, "not_attempted");
+    assert.deepEqual(backend.stored, savedBaseline);
+  }
+  assert.equal(writes, 0);
+  assert.equal(delivery.deliveries.length, 0);
+
+  const restarted = await readyCoordinator({ backend, delivery });
+  const nextReceipt = {
+    status: "succeeded", finishedAt: "2026-08-22T10:06:01.000Z",
+    result: { notificationEvidence: evidence({ observedAt: "2026-08-22T10:06:00.000Z", usedPercent: 94 }) },
+  };
+  const crossed = await restarted.coordinator.evaluate(project(nextReceipt, "2026-08-22T10:06:02.000Z"));
+  assert.equal(crossed.notification.thresholdPercent, 90);
+  assert.equal(delivery.deliveries.length, 1);
+  await restarted.coordinator.evaluate(project(nextReceipt, "2026-08-22T10:12:00.000Z"));
+  assert.equal(delivery.deliveries.length, 1);
+});
+
+test("failed, missing, malformed and stale-at-completion observations still break comparison continuity", async () => {
+  const missing = { ...shellStatus(), notificationEvidence: null };
+  const invalid = { ...shellStatus(), unexpectedField: true };
+  const staleAtCompletion = projectDesktopShellStatus({
+    refresh: { status: "succeeded", finishedAt: "2026-08-22T10:06:00.000Z", result: { notificationEvidence: evidence() } },
+    now: Date.parse("2026-08-22T10:07:00.000Z"),
+  });
+  assert.equal(staleAtCompletion.notificationEvidenceStatus, undefined);
+  for (const gap of [shellStatus({ state: "stale" }), shellStatus({ state: "unavailable" }), missing, invalid, staleAtCompletion]) {
+    const { coordinator, backend, delivery } = await readyCoordinator();
+    await coordinator.setPreferences({ threshold: 90 });
+    await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ usedPercent: 85 }) }));
+    const gapResult = await coordinator.evaluate(gap);
+    assert.ok(["ineligible", "status_invalid"].includes(gapResult.outcome));
+    assert.equal(Object.keys(backend.stored.baselines).length, 0);
+    const next = await coordinator.evaluate(shellStatus({ notificationEvidence: evidence({ observedAt: "2026-08-22T10:08:00.000Z", usedPercent: 94 }) }));
+    assert.equal(next.outcome, "first_observation");
+    assert.equal(delivery.deliveries.length, 0);
+  }
 });
 
 test("legacy reset-enabled state is migrated and cannot deliver a reset but rearms threshold alerts", async () => {

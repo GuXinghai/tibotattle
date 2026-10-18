@@ -4,7 +4,6 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 
 import { createInstalledAgentClient, TiboTattlePluginError } from "../lib/installed-agent.mjs";
-import { createInstallationController } from "../lib/installation.mjs";
 
 const SERVER_VERSION = "0.1.0";
 const MAX_REQUEST_BYTES = 128 * 1024;
@@ -68,30 +67,6 @@ export const TIBOTATTLE_TOOLS = Object.freeze([
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
   },
-  {
-    name: "tibotattle_install_plan",
-    description: "Prepare an exact, expiring plan for installing or upgrading a compatible TiboTattle release. This reads public release metadata but does not install anything.",
-    inputSchema: NO_INPUT,
-    annotations: { readOnlyHint: true, openWorldHint: true },
-  },
-  {
-    name: "tibotattle_install",
-    description: "Install or upgrade TiboTattle with Homebrew using an unchanged confirmation token from tibotattle_install_plan. Call only after the user explicitly confirms that exact plan.",
-    inputSchema: {
-      type: "object",
-      required: ["confirmationToken"],
-      properties: {
-        confirmationToken: { type: "string", minLength: 32, maxLength: 128 },
-      },
-      additionalProperties: false,
-    },
-    annotations: {
-      readOnlyHint: false,
-      destructiveHint: true,
-      idempotentHint: false,
-      openWorldHint: true,
-    },
-  },
 ]);
 
 function errorResult(error) {
@@ -140,10 +115,8 @@ function validateQueryInput(raw) {
   return input;
 }
 
-export function createToolRouter({ client, installer } = {}) {
-  if (client === undefined || installer === undefined) {
-    throw new TypeError("client and installer are required");
-  }
+export function createToolRouter({ client } = {}) {
+  if (client === undefined) throw new TypeError("client is required");
   return async function callTool(name, rawInput = {}) {
     try {
       if (name === "tibotattle_status") {
@@ -165,17 +138,6 @@ export function createToolRouter({ client, installer } = {}) {
           throw new TiboTattlePluginError("tibotattle_tool_input_invalid", "Evidence selector is invalid");
         }
         return successResult(await client.invoke("explain-usage-evidence", input));
-      }
-      if (name === "tibotattle_install_plan") {
-        exactInput(rawInput, []);
-        return successResult(await installer.plan());
-      }
-      if (name === "tibotattle_install") {
-        const input = exactInput(rawInput, ["confirmationToken"], ["confirmationToken"]);
-        if (typeof input.confirmationToken !== "string") {
-          throw new TiboTattlePluginError("tibotattle_tool_input_invalid", "Install confirmation is invalid");
-        }
-        return successResult(await installer.install(input));
       }
       throw new TiboTattlePluginError(
         "tibotattle_tool_unsupported",
@@ -221,8 +183,7 @@ export function createMcpRequestHandler({ callTool } = {}) {
 
 export async function runStdioServer({ input = process.stdin, output = process.stdout } = {}) {
   const client = createInstalledAgentClient();
-  const installer = createInstallationController({ client });
-  const handle = createMcpRequestHandler({ callTool: createToolRouter({ client, installer }) });
+  const handle = createMcpRequestHandler({ callTool: createToolRouter({ client }) });
   input.setEncoding("utf8");
   let buffer = "";
   for await (const chunk of input) {

@@ -703,7 +703,11 @@ test("retained parser suffixes retain cache continuity coverage after the v21 re
   const retainedV16 = retainedV15.map((version) => version.replace("v15", "v16"))
     .flatMap((version) => [version, `${version}-cache-write-zero`]);
   const retainedV17 = retainedV16.map((version) => version.replace("v16", "v17"));
+  const retainedV18 = retainedV17.map((version) => version.replace("v17", "v18"));
+  const retainedV19 = retainedV18.map((version) => version.replace("v18", "v19"));
+  const retainedV20 = retainedV19.map((version) => version.replace("v19", "v20"));
   for (const parserVersion of [...retainedV15, ...retainedV16, ...retainedV17,
+    ...retainedV18, ...retainedV19, ...retainedV20,
     ...currentV18.flatMap((version) => [version, `${version}-cache-write-zero`])]) {
     const continuity = analyzeCacheContinuityRows([continuityRow({
       parser_version: parserVersion,
@@ -726,9 +730,8 @@ test("retained parser suffixes retain cache continuity coverage after the v21 re
   }
 
   for (const parserVersion of [
-    "unified-rollout-typed-v20",
-    "unified-rollout-typed-v20-partial",
     "unified-rollout-typed-v17-future",
+    "unified-rollout-typed-v22",
   ]) {
     const continuity = analyzeCacheContinuityRows([continuityRow({
       parser_version: parserVersion,

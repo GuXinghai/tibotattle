@@ -135,8 +135,10 @@ import {
 // v0.20: independently fenced historical-plan comparison projections. Rebuild
 // older caches; historical absence must not be mistaken for absent source usage.
 // v0.21: preserve observed quota outside comparable intervals independently.
+// v0.22: rebuild prices with model-wide context partitions and preserve nullable
+// local-index components, contradictory output and partial/assumed provenance.
 export const REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION =
-  "local-replay-safe-accounting-v0.21";
+  "local-replay-safe-accounting-v0.22";
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
   "codex-primary-allowance-capacity-v0.1";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
@@ -1125,7 +1127,7 @@ function flushExactUsd(target, key) {
 export function createAccountingPricer({ apiServiceTier = "standard" } = {}) {
   const plans = new Map();
   const contextFloors = new Map();
-  const price = (event, components) => {
+  const priceObservedComponents = (event, components) => {
     // Incomplete observations need the full ledger's coverage and context
     // checks. Zero-filled display totals cannot establish an exact unit plan.
     if (COMPONENT_KEYS.some((name) => (
@@ -1137,13 +1139,15 @@ export function createAccountingPricer({ apiServiceTier = "standard" } = {}) {
         apiServiceTier, priceEpochBasis: "event_time",
       });
     }
-    // Derive the threshold from the public reviewed cards. Older models begin
+    // Derive the threshold across the model's public reviewed cards. A tier
+    // can omit a long-context card; that missing band must still reach the
+    // kernel rather than reusing the tier's short-context template.
+    // Older models begin
     // the long band at 272,000; GPT6 models begin at 272,001. The representative
     // template must itself belong to the keyed band.
     if (!contextFloors.has(event.model)) {
       const floors = new Set(APP_OFFICIAL_PRICE_CARDS
         .filter((card) => card.provider === "openai"
-          && card.service_tier === apiServiceTier
           && (card.model === event.model || card.aliases?.includes(event.model)))
         .flatMap((card) => card.components
           .filter((component) => component.unit === "token")
@@ -1184,10 +1188,8 @@ export function createAccountingPricer({ apiServiceTier = "standard" } = {}) {
     let plan = plans.get(key);
     if (plan === undefined) {
       const templateComponents = Object.fromEntries(
-        COMPONENT_KEYS.map((name) => [
-          name,
-          name === "output_combined_tokens" ? 0 : 1,
-        ]),
+        COMPONENT_KEYS.filter(name => name !== "output_combined_tokens")
+          .map((name) => [name, 1]),
       );
       const template = priceCodexUsageEvent({
         ...event,
@@ -1218,10 +1220,11 @@ export function createAccountingPricer({ apiServiceTier = "standard" } = {}) {
           rows,
           // A fast-priced event uses only fully priced components, so the
           // template's unpriced-component warnings do not describe it. The
-          // empty shape mirrors the full pricer's warnings object.
+          // coverage list mirrors the full pricer's warnings object; identity
+          // provenance such as an explicit alias remains informative.
           warnings: template.coverageStatus === "fully_priced"
             ? template.warnings
-            : { coverage: [], informational: [] },
+            : { coverage: [], informational: template.warnings.informational },
           selectedPriceCardIds: template.selectedPriceCardIds,
         }
         : null;
@@ -1316,6 +1319,22 @@ export function createAccountingPricer({ apiServiceTier = "standard" } = {}) {
       enumerable: false,
     });
     return priced;
+  };
+  const price = (event, components) => {
+    const priced = priceObservedComponents(event, components);
+    if (!event.pricingEvidenceIncomplete || priced.coverageStatus !== "fully_priced") return priced;
+    return {
+      ...priced,
+      coverageStatus: priced.components.some(row => row.pricingStatus === "priced" && Number(row.quantity) > 0)
+        ? "partially_priced" : "unpriced",
+      warnings: {
+        ...priced.warnings,
+        coverage: [...(priced.warnings?.coverage ?? []), {
+          code: "component_observation_unavailable",
+          message: "Source component evidence was partial or contradictory; observed component estimates remain additive.",
+        }],
+      },
+    };
   };
   const tierPricers = new Map();
   price.forApiTier = (tier, event, components) => {

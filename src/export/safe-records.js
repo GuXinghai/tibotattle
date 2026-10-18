@@ -610,7 +610,7 @@ function normalizeActivityMarker(secret, marker, bounds) {
   return safe;
 }
 
-function summarizeActivityMarkerPlan(secret, activityMarkers, bounds, {
+function normalizedActivityMarkerRecords(secret, activityMarkers, bounds, {
   maximumRecords = DEFAULT_EXPORT_RESOURCE_LIMITS.maximumExportSetRecords,
 } = {}) {
   if (!Array.isArray(activityMarkers)) throw new TypeError("Activity markers must be an array");
@@ -641,6 +641,11 @@ function summarizeActivityMarkerPlan(secret, activityMarkers, bounds, {
     .map((value) => JSON.parse(value))
     .sort((left, right) => left.observedTime.localeCompare(right.observedTime)
       || left.markerId.localeCompare(right.markerId));
+  return records;
+}
+
+function summarizeActivityMarkerPlan(secret, activityMarkers, bounds, options = {}) {
+  const records = normalizedActivityMarkerRecords(secret, activityMarkers, bounds, options);
   const digest = createHash("sha256")
     .update("app-usagemonitor/export-activity-plan/v1\0")
     .update(stableJson(records))
@@ -771,9 +776,10 @@ async function scanCodexSafeRecords({
   // rollout group; terminate once with a fixed, content-free reason instead.
   assertCompleteCodexDiscovery(scan);
   assertCompleteCodexContent(scan);
-  for (const marker of activityMarkers) {
-    const normalized = normalizeActivityMarker(secret, marker, bounds);
-    if (normalized) await emitSafeRecord(onRecord, resourceGuard, "activityMarker", normalized);
+  for (const normalized of normalizedActivityMarkerRecords(secret, activityMarkers, bounds, {
+    maximumRecords: resourceGuard.limits.maximumOutputRecords,
+  })) {
+    await emitSafeRecord(onRecord, resourceGuard, "activityMarker", normalized);
   }
 
   const leftoverToolCalls = [...toolCountsByScope.values()]

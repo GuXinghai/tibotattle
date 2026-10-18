@@ -525,6 +525,33 @@ test("weekly pace renders only for a current allowance bound to its valid outloo
   assert.equal(mismatchedDocument.getElementById("pace-section").hidden, true);
 });
 
+test("a bound exhausted weekly pool renders a critical observed state without a forecast ratio", () => {
+  const data = fixture();
+  Object.assign(data.quotaWindows[1], { usedPercent: 100, remainingPercent: 0 });
+  const outlook = data.weekly.paceOutlook;
+  Object.assign(outlook, { status: "exhausted", standing: "over", critical: true, remainingPercent: 0 });
+  outlook.rates = { activePercentagePointsPerHour: null, overallPercentagePointsPerHour: null,
+    headlinePercentagePointsPerHour: null, sustainablePercentagePointsPerHour: 0, ratio: null };
+  Object.assign(outlook.projection, { coveredHours: 0, dryHours: 74, sparePercent: 0, projectedExhaustionAt: null });
+  Object.assign(outlook.track, { coveredFraction: 0, activeExhaustionFraction: null });
+  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
+  assert.equal(projection.weeklyPace.status, "exhausted");
+  assert.equal(projection.weeklyPace.outlook.kind, "exhausted");
+  const documentRef = new FakeDocument();
+  renderTrayPopup(documentRef, projection);
+  assert.equal(documentRef.getElementById("pace-section").hidden, false);
+  assert.equal(documentRef.getElementById("pace-section").dataset.paceTone, "critical");
+  assert.equal(documentRef.getElementById("pace-state").textContent, "Allowance already exhausted");
+  assert.equal(documentRef.getElementById("pace-timeline").hidden, true);
+  assert.equal(documentRef.getElementById("pace-explanation").textContent, "");
+  assert.match(documentRef.getElementById("pace-reset").textContent, /Resets in/u);
+  const badRatio = structuredClone(data);
+  badRatio.weekly.paceOutlook.rates.ratio = 2;
+  assert.equal(createTrayPopupProjection(badRatio, { now: NOW }).weeklyPace.status, "unavailable");
+  data.quotaWindows[1].remainingPercent = 1;
+  assert.equal(createTrayPopupProjection(data, { now: NOW }).weeklyPace.status, "unavailable");
+});
+
 test("switching usage history range preserves the same current weekly pace", () => {
   const data = fixture();
   const seven = createTrayPopupProjection(data, { now: NOW, range: "7d", timeZone: "UTC" });

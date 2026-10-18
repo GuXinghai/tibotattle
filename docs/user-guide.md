@@ -546,6 +546,12 @@ uses an ellipsis instead of a combined reset count. An unknown type means the
 evidence does not establish the reset mechanism.
 Plan-incompatible allowance events stay excluded.
 
+A material backwards allowance reading also prevents a clean capacity estimate
+across its rebound, even when the reported reset schedule is unchanged. It is
+shown as conflicting evidence rather than a confirmed reset. A current exact
+100% used reading has a distinct exhausted state; it is not treated as missing
+pace evidence and does not invent an exhaustion timestamp.
+
 **When usage and allowance disagree** lists sustained divergence periods as compact
 rows ranked by their largest signed percentage-point gap. The gap accumulates from the cycle comparison
 anchor, not just within the listed period. **View on charts** focuses all views

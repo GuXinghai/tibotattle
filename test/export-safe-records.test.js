@@ -7,6 +7,7 @@ import { localMetadataExport, localSafeRecords } from
   "../src/local-node-runtime.js";
 import { createExportResourceGuard } from "../src/export-resource-policy.js";
 import { stableJson } from "../src/storage.js";
+import { loadVerifiedLocalMetadataBundleBytes } from "../src/bundle-verifier.js";
 
 const {
   normalizeActivityMarker,
@@ -97,6 +98,25 @@ function marker() {
     content: "PRIVATE_MARKER_CANARY",
   };
 }
+
+test("duplicate activity occurrences are collapsed before bundle publication and conflicting occurrences fail", async () => {
+  const home = await safeRecordFixture();
+  try {
+    const options = { startAt: START_AT, endAt: END_AT, codexHome: home, secret: SECRET, createdAt: END_AT };
+    const result = await buildLocalMetadataBundle({ ...options, activityMarkers: [marker(), marker()] });
+    assert.equal(result.bundle.recordCounts.activityMarkers, 1);
+    assert.equal(result.bundle.records.activityMarkers.length, 1);
+    const verified = loadVerifiedLocalMetadataBundleBytes({
+      bundleBytes: Buffer.from(stableJson(result.bundle)),
+      receiptBytes: Buffer.from(stableJson(result.receipt)),
+    });
+    assert.equal(verified.summary.verdict, "passed");
+    assert.equal(verified.summary.recordCounts.activityMarkers, 1);
+    await assert.rejects(buildLocalMetadataBundle({ ...options, activityMarkers: [marker(), { ...marker(), observedAt: "2026-07-24T12:06:00.000Z" }] }), /Activity marker occurrence conflicts/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
 
 function canonicalCollection(envelopes, diagnostics) {
   const usageEvents = envelopes
