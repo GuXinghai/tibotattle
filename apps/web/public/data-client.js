@@ -4362,7 +4362,7 @@ function decodePlanTimelineUsage(row) {
   };
 }
 
-function normalizeLocalTimeline(value = {}) {
+function normalizeLocalTimeline(value = {}, accounting = {}) {
   const hasWeightingEncoding = Object.hasOwn(
     value,
     "allowanceWeightingEncoding"
@@ -4385,13 +4385,26 @@ function normalizeLocalTimeline(value = {}) {
   );
   let weeklyApiIntervals = normalizeWeeklyApiIntervals(value.weeklyApiIntervals);
   const intervalScope = planScoped.planScope ?? allowanceCapacity.planScope;
-  const intervalGeneration=intervalScope?.sourceGeneration??value.history?.generation;
-  const intervalFingerprint=intervalScope?.sourceGenerationFingerprint??value.history?.generationFingerprint;
-  if(weeklyApiIntervals.status==='available'
-    && (intervalGeneration==null||intervalFingerprint==null
-      ||weeklyApiIntervals.sourceGeneration!==String(intervalGeneration)
-      ||weeklyApiIntervals.sourceFingerprint!==intervalFingerprint)) {
-    weeklyApiIntervals={status:'unavailable',reason:'weekly_api_source_mismatch',rows:[]};
+  // Unified intervals belong to the accounting snapshot, independently of
+  // whether a current or historical plan has enough evidence for a quota fit.
+  // Never substitute a quota scope when unified provenance is unverified.
+  const unified = accounting?.sourceMode === "unified";
+  const accountingSource = unified && accounting.generationMatched === true
+    ? normalizeCacheDiagnosticsSource({
+      generation: accounting.generation,
+      generationFingerprint: accounting.generationFingerprint,
+    }) : null;
+  const intervalGeneration = unified ? accountingSource?.generation
+    : intervalScope?.sourceGeneration ?? value.history?.generation;
+  const intervalFingerprint = unified ? accountingSource?.generationFingerprint
+    : intervalScope?.sourceGenerationFingerprint ?? value.history?.generationFingerprint;
+  if (weeklyApiIntervals.status === "available") {
+    const reason = intervalGeneration == null || intervalFingerprint == null
+      ? "weekly_api_source_unavailable"
+      : weeklyApiIntervals.sourceGeneration !== String(intervalGeneration)
+        || weeklyApiIntervals.sourceFingerprint !== intervalFingerprint
+        ? "weekly_api_source_mismatch" : null;
+    if (reason) weeklyApiIntervals = {status: "unavailable", reason, rows: []};
   }
   const historicalPlanComparisons = [];
   const candidates = array(value.historicalPlanComparisons);
@@ -5704,7 +5717,7 @@ export function normalizeDashboardPayload(payload = {}, fragments = {}) {
         other: count(overview?.collector?.recordCounts?.other, 0)
       }
     },
-    timeline: normalizeLocalTimeline(overview?.timeline),
+    timeline: normalizeLocalTimeline(overview?.timeline, overview?.accounting),
     accounting: normalizeLocalAccounting(overview?.accounting, {
       allowImplicitDemoProjection: mode === "demo"
     }),

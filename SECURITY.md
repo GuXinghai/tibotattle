@@ -46,7 +46,7 @@ The local refresh reads selected Codex session folders, local Codex
 configuration and lineage state, the installed Codex app-server account/quota
 methods, and owner-only derived state. Undisclosed source access, retention of prompt/response content, unsafe derived artifacts, or unintended network transmission is in scope.
 
-The desktop app is local-only and sends no usage data. Community sharing, contribution upload, and hosted sign-in were removed on 2026-10-13 ([decision](docs/decisions/2026-10-13-desktop-sharing-removal.md)). The earlier [accountless Electron sharing policy](docs/decisions/2026-09-04-accountless-sharing-policy.md) is historical.
+Desktop usage analysis stays local and sends no usage data. Community sharing, contribution upload, and TiboTattle hosted sign-in were removed on 2026-10-13 ([decision](docs/decisions/2026-10-13-desktop-sharing-removal.md)). The optional [X reader](docs/decisions/2026-10-20-optional-x-reader.md) uses a separate authenticated session and protected public-post cache; its network requests do not contain local usage data. The earlier [accountless Electron sharing policy](docs/decisions/2026-09-04-accountless-sharing-policy.md) is historical.
 
 The interactive local cache-drop tables also resolve explicit display names,
 worker nicknames, and parent links from bounded read-only Codex thread metadata

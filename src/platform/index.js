@@ -1,4 +1,8 @@
 export { createSourceFileAccess } from './source-file-access.js';
+export {
+  createWindowsBrowserProfileStore, isWindowsBrowserProfileStore,
+  isWindowsBrowserProfileStoreError, WindowsBrowserProfileStoreError,
+} from './windows-browser-profile-store.js';
 export { createCompressedTimingReader, timingLogicalSourcePath } from './compressed-timing-reader.js';
 export {
   copyWindowsLegacyState, classifyWindowsLegacyStateMigrationFailure,

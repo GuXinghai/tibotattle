@@ -113,6 +113,7 @@ function liveWeeklyQuota(windows){
   return windows.filter(q=>Number(q.durationMinutes??q.windowDurationMinutes??q.windowMinutes)===10080
     &&(q.limitId===null||q.limitId===undefined||q.limitId==="codex")).map(q=>({
       atMs:Date.parse(q.observedAt),usedPercent:Number.isFinite(q.usedPercent)?q.usedPercent:100-q.remainingPercent,
+      planType:q.planType??'unknown',limitId:'codex',resetAtMs:Date.parse(q.resetAt??q.resetsAt),
       resetKey:`${Date.parse(q.resetAt??q.resetsAt)}:${q.planType??"unknown"}:codex`,
     })).filter(q=>Number.isFinite(q.atMs)&&Number.isFinite(q.usedPercent)&&!q.resetKey.startsWith("NaN:"));
 }
@@ -186,19 +187,30 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         && (q.limitId===undefined || q.limitId===null || q.limitId==="codex"))
         .sort((a,b)=>Date.parse(b.observedAt)-Date.parse(a.observedAt))[0];
       const plan = current?.planType && current.planType!=="unknown" ? current.planType : capacity?.planScope?.planType ?? null;
-      const quota = database.prepare(`SELECT DISTINCT q.observed_at_ms, q.used_percent, q.resets_at_ms, q.plan_type, q.limit_id
-        FROM quota_occurrence q WHERE q.duration_mins=10080 AND q.admission='admitted'
+      const quotaSelect=`SELECT DISTINCT q.observed_at_ms,q.used_percent,q.resets_at_ms,q.plan_type,q.limit_id,
+        CASE WHEN a.status='available' THEN hex(a.scope_local) ELSE NULL END AS account_key
+        FROM quota_occurrence q LEFT JOIN usage_event u ON u.source_id=q.source_id AND u.source_offset=q.source_offset
+        LEFT JOIN account_scope a ON a.id=u.account_scope_id`;
+      const quotaRows = database.prepare(`${quotaSelect}
+        WHERE q.duration_mins=10080 AND q.admission='admitted'
         AND (q.observed_at_ms>=? OR q.resets_at_ms>=?) AND q.observed_at_ms<=? AND q.limit_id='codex' AND ${committedPredicate("q")}
-        ORDER BY q.observed_at_ms`).all(evidenceFrom,evidenceFrom,nowMs)
-        .filter((q)=>plan===null || q.plan_type===null || q.plan_type==="unknown" || q.plan_type===plan)
+        ORDER BY q.observed_at_ms`).all(evidenceFrom,evidenceFrom,nowMs);
+      // A preceding anchor establishes the visible era, without importing
+      // future labels or rewriting any unknown historical source occurrence.
+      const anchor=database.prepare(`SELECT MAX(q.observed_at_ms) AS at FROM quota_occurrence q
+        WHERE q.duration_mins=10080 AND q.admission='admitted' AND q.limit_id='codex'
+        AND q.plan_type IS NOT NULL AND q.plan_type<>'unknown' AND q.observed_at_ms<? AND ${committedPredicate('q')}`).get(evidenceFrom).at;
+      if(anchor!==null)quotaRows.push(...database.prepare(`${quotaSelect} WHERE q.observed_at_ms=?
+        AND q.duration_mins=10080 AND q.admission='admitted' AND q.limit_id='codex' AND ${committedPredicate('q')}`).all(anchor));
+      const quota = quotaRows
         .map((q)=>({atMs:q.observed_at_ms,usedPercent:q.used_percent,
-          resetAtMs:q.resets_at_ms,planType:q.plan_type&&q.plan_type!=="unknown"?q.plan_type:plan??"unknown",limitId:"codex",
-          resetKey:`${q.resets_at_ms}:${q.plan_type&&q.plan_type!=="unknown"?q.plan_type:plan??"unknown"}:codex`}));
+          resetAtMs:q.resets_at_ms,planType:q.plan_type??'unknown',limitId:'codex',accountKey:q.account_key||undefined,
+          resetKey:`${q.resets_at_ms}:${q.plan_type??'unknown'}:codex`}));
       if (current) {
         const atMs=Date.parse(current.observedAt), resetAtMs=Date.parse(current.resetAt ?? current.resetsAt);
         const usedPercent=Number.isFinite(current.usedPercent)?current.usedPercent:100-current.remainingPercent;
         if(Number.isFinite(atMs)&&Number.isFinite(resetAtMs)&&Number.isFinite(usedPercent)) quota.push({atMs,usedPercent,
-          resetAtMs,planType:current.planType??plan??"unknown",limitId:"codex",resetKey:`${resetAtMs}:${current.planType??plan??"unknown"}:codex`});
+          resetAtMs,planType:current.planType??"unknown",limitId:"codex",resetKey:`${resetAtMs}:${current.planType??"unknown"}:codex`});
       }
       const pricer=createAccountingPricer();
       const usage=[],pricingRecords=[];let pricingIssueCount=0;
@@ -255,7 +267,7 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const comparisonBaseline=savedBaseline?{...savedBaseline,
         resetKey:`${savedBaseline.resetAtMs}:${savedBaseline.planType}:${savedBaseline.limitId}`}:null;
       stage="aggregation";
-      const state=analyzeWorkload({nowMs,events,usage,quota,capacity:cap,capacityHistory:validHistory,liveSinceMs,sourceFresh,timeZone,
+      const state=analyzeWorkload({nowMs,events,usage,quota,estimationPlanType:plan,capacity:cap,capacityHistory:validHistory,liveSinceMs,sourceFresh,timeZone,
         comparisonCapacityUsd,comparisonBaseline,
         comparisonQuota:quotaEvidence?.observations??[],comparisonResetEvents:quotaEvidence?.resetEvents??[],
         comparisonContinuityThroughMs:quotaEvidence?.continuityThroughMs??null,

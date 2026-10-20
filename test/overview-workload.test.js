@@ -4,6 +4,65 @@ import {analyzeWorkload,clusterWorkload,taskWorkIntervals,unionWorkIntervals} fr
 import {codexWorkLifecycle} from "../src/providers/codex/logs.js";
 const M=60000,nowMs=Date.parse("2026-10-15T12:00:00Z");
 const event=(kind,atMs,extra={})=>({key:"task",session:"session",kind,atMs,...extra});
+const planQuota=(minutes,usedPercent,planType,extra={})=>({atMs:nowMs-minutes*M,usedPercent,planType,
+  limitId:'codex',resetAtMs:nowMs+10080*M,resetKey:`original-${planType}`,...extra});
+
+test('plan periods recover old-plan history and mark inference without borrowing old rates',()=>{
+  const quota=[planQuota(120,20,'prolite'),planQuota(90,25,'unknown'),planQuota(61,30,'prolite'),
+    planQuota(60,0,'pro'),planQuota(0,2,'unknown')],before=structuredClone(quota);
+  const input={nowMs,quota,estimationPlanType:'pro',events:[event('start',nowMs-120*M),event('complete',nowMs)]};
+  const v=analyzeWorkload(input),daily=v.daily.at(-1);
+  assert.deepEqual(quota,before);assert.equal(v.schemaVersion,'overview-workload-v4');
+  assert.equal(daily.plans.find(p=>p.planType==='prolite').unclassified,10);
+  assert.equal(daily.plans.find(p=>p.planType==='pro').unclassified,2);
+  assert.ok(daily.plans.every(p=>p.inferred));assert.equal(v.planAttribution.inferredObservations,2);
+  assert.equal(v.coverage.actualPp,12);assert.equal(v.coverage.estimationPp,2);
+  assert.equal(v.coverage.estimationWorkMs,60*M);assert.equal(v.workHours.at(-1).hours,49);
+  assert.equal(v.workHours.at(-1).inferred,true);
+  assert.deepEqual(analyzeWorkload({...input,quota:quota.toReversed()}).daily,v.daily);
+});
+
+test('unknown observations never backfill the first anchor or cross conflicting labels',()=>{
+  const v=analyzeWorkload({nowMs,quota:[planQuota(60,10,'unknown'),planQuota(50,11,'prolite'),
+    planQuota(40,12,'prolite'),planQuota(30,13,'prolite'),planQuota(30,13,'pro'),planQuota(20,14,'unknown'),
+    planQuota(10,15,'pro'),planQuota(0,16,'unknown')]});
+  assert.equal(v.planAttribution.unresolvedObservations,3);
+  assert.equal(v.daily.at(-1).unclassified,2);
+  assert.ok(v.errors.some(e=>e.code==='quota_observation_conflict'));
+});
+
+test('explicit account changes break inference and same-plan estimation continuity',()=>{
+  const v=analyzeWorkload({nowMs,events:[event('start',nowMs-120*M),event('complete',nowMs)],quota:[
+    planQuota(120,10,'pro',{accountKey:'private-account-a'}),planQuota(60,30,'pro',{accountKey:'private-account-a'}),
+    planQuota(50,31,'unknown',{accountKey:'private-account-b'}),planQuota(40,0,'pro',{accountKey:'private-account-b'}),
+    planQuota(0,2,'pro',{accountKey:'private-account-b'})]});
+  assert.equal(v.planAttribution.unresolvedObservations,1);assert.equal(v.coverage.estimationPp,2);
+  assert.equal(v.coverage.estimationWorkMs,40*M);assert.doesNotMatch(JSON.stringify(v),/private-account/);
+});
+
+test('returning to a previous plan starts a new rate sample period',()=>{
+  const v=analyzeWorkload({nowMs,estimationPlanType:'prolite',events:[event('start',nowMs-180*M),event('complete',nowMs)],
+    quota:[planQuota(180,0,'prolite'),planQuota(125,40,'prolite'),planQuota(120,0,'pro'),planQuota(65,2,'pro'),
+      planQuota(60,0,'prolite'),planQuota(0,3,'prolite')]});
+  assert.equal(v.coverage.actualPp,45);assert.equal(v.coverage.estimationPp,3);
+  assert.equal(v.workHours.at(-1).ratePpPerHour,3);assert.equal(v.workHours.at(-1).hours,97/3);
+});
+
+test('a new plan with a single observation cannot borrow historical hours or a crossing current rate',()=>{
+  const v=analyzeWorkload({nowMs,estimationPlanType:'pro',sourceFresh:true,liveSinceMs:nowMs-120*M,
+    events:[event('start',nowMs-120*M)],usage:[{session:'session',atMs:nowMs-M,priced:true,usd:1}],
+    capacity:{usd:100,availableAtMs:nowMs-120*M},quota:[planQuota(120,10,'prolite'),planQuota(30,40,'prolite'),planQuota(5,0,'pro')]});
+  assert.ok(v.workHours.every(r=>r.hours===null));assert.equal(v.current.ratePpPerHour,null);
+});
+
+test('an explicit label wins over its identical unknown duplicate regardless of input order',()=>{
+  const quota=[planQuota(10,0,'pro'),planQuota(0,1,'unknown'),planQuota(0,1,'pro')];
+  for(const values of[quota,quota.toReversed()]){
+    const v=analyzeWorkload({nowMs,quota:values});
+    assert.equal(v.planAttribution.inferredObservations,0);assert.equal(v.daily.at(-1).inferred,false);
+    assert.equal(v.daily.at(-1).unclassified,1);
+  }
+});
 test("task work includes model, tools and necessary waiting, including failed and cancelled tasks",()=>{
   for(const kind of ["complete","abort"]){
     const result=taskWorkIntervals([event("start",nowMs-10*M),event(kind,nowMs)],{nowMs});

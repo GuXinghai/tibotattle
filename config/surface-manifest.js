@@ -59,6 +59,11 @@ const SHARED_WEB_FILES = Object.freeze([
   "apps/web/public/tibotattle-icon.png",
   "apps/web/public/ui-format.js",
   "apps/web/public/work-usage-view.js",
+  "apps/web/public/x-reader.js",
+  "apps/web/public/x-reader-integration.js",
+  "apps/web/public/x-reader.css",
+  "apps/web/public/vendor/hls.light.min.js",
+  "apps/web/public/vendor/hls.js.LICENSE",
 ]);
 
 const HISTORY_FREE_EXPORT_ONLY_WEB_FILES = Object.freeze([

@@ -507,6 +507,7 @@ test("single-row titlebar reuses native menus and rejects non-dashboard menu IPC
   const dashboard = FakeWindow.instances.find(candidate => candidate.options.webPreferences.preload === "/repo/apps/electron/preload.cjs");
   dashboard.emit("ready-to-show");
   assert.equal(dashboard.options.titleBarStyle, "hidden");
+  assert.equal(dashboard.options.webPreferences.backgroundThrottling, false);
   assert.deepEqual(dashboard.options.titleBarOverlay, { color: "#00000000", symbolColor: "#000000", height: 40 });
   assert.equal(dashboard.menuBarVisible, false);
   const event = { sender: dashboard.webContents, senderFrame: dashboard.webContents.mainFrame };
@@ -568,10 +569,12 @@ test("runtime accepts Codex handoff only from the ready dashboard main frame", a
   const ipcMain = {
     handler: null,
     handle(channel, handler) {
+      if (channel === "tibotattle:x-reader:v1") { this.xHandler = handler; return; }
       assert.equal(channel, "tibotattle:desktop:v1");
       this.handler = handler;
     },
     removeHandler(channel) {
+      if (channel === "tibotattle:x-reader:v1") { this.xHandler = null; return; }
       assert.equal(channel, "tibotattle:desktop:v1");
       this.handler = null;
     },
@@ -599,6 +602,10 @@ test("runtime accepts Codex handoff only from the ready dashboard main frame", a
     senderFrame: dashboard.webContents.mainFrame,
   };
   const dashboardOrigin = "http://127.0.0.1:4811";
+  await assert.rejects(ipcMain.xHandler(
+    { sender: dashboard.webContents, senderFrame: { url: 'https://x.com/' } },
+    { action: 'getXStatus', args: {} },
+  ), error => error.code === 'x_untrusted_context');
   dashboard.webContents.url = `${dashboardOrigin}/#section`;
   assert.equal(
     desktop.lifecycle.isAuthorizedCodexThreadNavigation(
@@ -1217,6 +1224,7 @@ test("runtime grants Settings actions only to the trusted live dashboard top fra
   const ipcMain = {
     handler: null,
     handle(channel, handler) {
+      if (channel === "tibotattle:x-reader:v1") { this.xHandler = handler; return; }
       assert.equal(channel, "tibotattle:desktop:v1");
       this.handler = handler;
     },

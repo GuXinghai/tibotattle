@@ -381,7 +381,7 @@ function securityHeaders({ report = false } = {}) {
   const scriptPolicy = report ? "'self' 'unsafe-inline'" : "'self'";
   return {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": `default-src 'none'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'none'; frame-ancestors 'none'; img-src 'self' data: tibotattle-background:; object-src 'none'; script-src ${scriptPolicy}; style-src 'self' 'unsafe-inline'`,
+    "Content-Security-Policy": `default-src 'none'; base-uri 'none'; connect-src 'self' tibotattle-x-media:; font-src 'self' data:; form-action 'none'; frame-ancestors 'none'; img-src 'self' data: tibotattle-background: tibotattle-x-media:; media-src tibotattle-x-media: blob:; object-src 'none'; script-src ${scriptPolicy}; style-src 'self' 'unsafe-inline'; worker-src 'none'`,
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
     "Referrer-Policy": "no-referrer",

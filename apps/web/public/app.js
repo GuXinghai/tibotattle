@@ -1,4 +1,5 @@
 import { mountSettingsPage } from "./electron-settings.js";
+import { mountDesktopXReader } from "./x-reader-integration.js";
 import {
   createObservationFreshnessClock,
   observationRecency,
@@ -48,7 +49,7 @@ import {
 import {
   mountDashboardNavigation,
 } from "./navigation.js";
-import { resolveElectronStartupAppearance } from "./desktop-appearance.js";
+import { isElectronDashboard, resolveElectronStartupAppearance } from "./desktop-appearance.js";
 import {
   renderInstallerJourney as renderSharedInstallerJourney,
 } from "./install-cta.js";
@@ -277,6 +278,7 @@ const PUBLIC_QUOTA_REFRESH_ERROR_CODES = new Set([
   "collection_failed",
 ]);
 let dashboardUnavailableState = null;
+const pendingEvidenceControls = new Map();
 let lastObservationPresentationStatus = null;
 
 const $ = (selector) => document.querySelector(selector);
@@ -457,7 +459,31 @@ function setJourneyState(state) {
   $("#companion-setup").hidden = state !== "first-run" || isLoopbackDashboard();
   const hasEvidence = state === "local-ready" || state === "demo-mode";
   for (const element of document.querySelectorAll("[data-requires-evidence]")) {
-    element.hidden = !hasEvidence;
+    element.hidden = !hasEvidence && !isElectronDashboard(document, window);
+  }
+}
+
+// Desktop navigation and layout do not depend on evidence availability. Only
+// the data controls wait; restore their initial state before their owners render.
+function renderDesktopEvidenceState(state) {
+  if (!isElectronDashboard(document, window)) return;
+  allowancePage?.setLoadState(state);
+  for (const element of document.querySelectorAll("[data-requires-evidence]")) {
+    element.hidden = false;
+    if (!element.hasAttribute("data-nav")) element.setAttribute("aria-busy", String(state === "loading"));
+  }
+  for (const status of document.querySelectorAll("[data-dashboard-load-status]")) {
+    status.hidden = state === "ready";
+    setLocalizedText(status, state === "error" ? "dashboard.unavailable.dashboardTitle" : "refresh.progress.saved");
+  }
+  if (state === "ready") {
+    for (const [control, disabled] of pendingEvidenceControls) control.disabled = disabled;
+    pendingEvidenceControls.clear();
+  } else {
+    for (const control of document.querySelectorAll("[data-requires-evidence] button:not([data-dashboard-retry]), [data-requires-evidence] input, [data-requires-evidence] select, #reporting-period-controls button")) {
+      if (!pendingEvidenceControls.has(control)) pendingEvidenceControls.set(control, control.disabled);
+      control.disabled = true;
+    }
   }
 }
 
@@ -633,6 +659,8 @@ function startRefreshProgressClock(button, phase, options = {}) {
 }
 
 function updateLocalActionButtons() {
+  allowancePage?.setLoadState(localRefreshInProgress || activeLocalDashboardLoad?.pending
+    ? "loading" : dashboardReadFailed ? "error" : "ready");
   const allowed = localAnalysisAllowed();
   const labelKey = localAnalysisMessageKey();
   const refreshActive = localRefreshInProgress;
@@ -919,6 +947,7 @@ function hideConnectionNotice() {
 }
 
 function renderDashboardUnavailableState(kind) {
+  if (!dashboard) renderDesktopEvidenceState("error");
   // The last accounting rows remain visible during a failed refresh.
   resetCacheDropThreadLinks(cacheDropThreadLinks.dashboard);
   const companionCopy = isLoopbackDashboard()
@@ -1371,6 +1400,7 @@ async function refreshElectronCadenceHealth() {
 }
 
 function renderDashboard(data) {
+  renderDesktopEvidenceState("ready");
   renderReportingPeriod(data);
   dashboardUnavailableState = null;
   dashboard = data;
@@ -9149,6 +9179,7 @@ function markLocalDashboardReady() {
 
 async function loadLocalDashboard() {
   const previousDashboard = dashboard;
+  if (!previousDashboard) renderDesktopEvidenceState("loading");
   const loadToken = ++cacheDropThreadLinks.loadToken;
   const load = {
     previousBusy: activeLocalDashboardLoad?.pending
@@ -9782,7 +9813,7 @@ function startElectronStartupRefresh() {
       && Number.isFinite(generatedMs)
       && new Date(generatedMs).toISOString() === generatedAt
       && ageMs >= 0 && ageMs < 60 * 60_000;
-    const workloadReady = ["overview-workload-v2","overview-workload-v3"].includes(dashboard?.workload?.schemaVersion)
+    const workloadReady = ["overview-workload-v2","overview-workload-v3","overview-workload-v4"].includes(dashboard?.workload?.schemaVersion)
       && !["unavailable", "stale"].includes(dashboard.workload.status);
     const startupRefreshOptions = freshIndex && workloadReady ? {} : { detailed: true };
     void requestRefresh(startupRefreshOptions);
@@ -10433,7 +10464,9 @@ function mountDashboardLayout({ documentRef, windowRef }) {
       host.insertBefore(empty, bar.nextSibling);
     }
     if (empty) {
-      const emptyText = t("dashboard.views.empty");
+      const emptyText = t(isElectronDashboard(documentRef, windowRef) && !dashboard
+        ? dashboardReadFailed ? "dashboard.unavailable.dashboardTitle" : "refresh.progress.saved"
+        : "dashboard.views.empty");
       if (empty.textContent !== emptyText) empty.textContent = emptyText;
       if (empty.hidden !== visible) empty.hidden = visible;
     }
@@ -10481,11 +10514,12 @@ const allowancePage = mountAllowancePage({ documentRef: document, t, formatMoney
   },
   selectTime: value => trendsHorizonView?.select(value, true),
   stopPlayback: () => trendsHorizonView?.stop(),
-  retry: () => $("#refresh-button").click(),
+  retry: () => dashboardReadFailed ? void loadLocalDashboard() : $("#refresh-button").click(),
 });
 if (window.tibotattleDesktop?.version === "v1") {
   void mountSettingsPage({ documentRef: document, windowRef: window, localizer: localization });
 }
+const desktopXReader = mountDesktopXReader({ documentRef: document, windowRef: window, translate: t, locale: localization.locale() });
 mountDashboardLayout({ documentRef: document, windowRef: window });
 mountDashboardNavigation({
   documentRef: document,
@@ -10493,6 +10527,7 @@ mountDashboardNavigation({
 });
 
 async function bootstrapDashboard() {
+  renderDesktopEvidenceState("loading");
   renderSharedInstallerJourney(document, {
     formatLocale: getFormattingLocale(),
     translateMessage: t,

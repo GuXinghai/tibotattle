@@ -73,6 +73,19 @@ const SHELL_FILES = [
   "apps/electron/desktop-windows-accountless-credential.js",
   "apps/electron/desktop-update-preferences.js",
   "apps/electron/desktop-updater.js",
+  "apps/electron/desktop-x-contract.js",
+  "apps/electron/desktop-x-import.js",
+  "apps/electron/desktop-x-ipc.js",
+  "apps/electron/desktop-x-page-adapter.js",
+  "apps/electron/desktop-x-repository.js",
+  "apps/electron/desktop-x-service.js",
+  "apps/electron/desktop-x-session-health.js",
+  "apps/electron/x-import/contract.js",
+  "apps/electron/x-import/manifest.json",
+  "apps/electron/x-import/popup.html",
+  "apps/electron/x-import/popup.js",
+  "apps/electron/x-import/NativeHost.cs",
+  "apps/electron/x-import/TiboTattleXImport.exe",
   "apps/electron/errors.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
@@ -99,6 +112,7 @@ const SHELL_FILES = [
   "src/platform/windows-credential-operation-audit.js",
   "src/platform/windows-credential-audit-file-guard.js",
   "src/platform/windows-protected-sqlite.js",
+  "src/platform/windows-browser-profile-store.js",
 ];
 const KEYTAR = Object.freeze({
   "win32-x64": "node_modules/@github/keytar/prebuilds/win32-x64/keytar.node",
@@ -125,7 +139,7 @@ function sha256(bytes) {
 function payloadDigest(rows) {
   const hash = createHash("sha256");
   let bytes = 0;
-  for (const row of [...rows].sort((left, right) => left.path.localeCompare(right.path))) {
+  for (const row of [...rows].sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)))) {
     bytes += row.bytes;
     hash.update(`F\0${row.path}\0${row.bytes}\0${row.sha256}\0${row.kind}\0`);
   }
@@ -249,7 +263,7 @@ async function makeFixture(
       path,
       sha256: sha256(bytes),
     }))
-    .sort((left, right) => left.path.localeCompare(right.path));
+    .sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
   const runtimeManifest = {
     schemaVersion: "usage-monitor-electron-runtime-v0.1",
     target: targetSpec.platform,
@@ -361,6 +375,7 @@ test("verifies closed release-operation and legacy-read extensions without enabl
   const extensions = {
     releaseOperation: { approved: true, contractVersion: "windows-release-operation-storage-v1" },
     legacyStateRead: { approved: true, contractVersion: "windows-legacy-state-read-v1" },
+    browserProfile: { approved: true, contractVersion: "windows-browser-profile-v1" },
   };
   await withFixture("win32-x64", { bindingManifestMutation: sidecar => Object.assign(sidecar, extensions) }, async fixture => {
     assert.equal((await verify(fixture, "win32-x64")).status, FIXED_STATUS.verified);

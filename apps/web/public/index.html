@@ -51,6 +51,7 @@
     <link rel="stylesheet" href="./usage-simple.css">
   <link rel="stylesheet" href="./cache-reuse-matrix.css">
     <link rel="stylesheet" href="./model-performance.css">
+    <link rel="stylesheet" href="./x-reader.css">
     <script type="module" src="./app.js"></script>
     <script type="module" src="./desktop-shell.js"></script>
     <link rel="stylesheet" href="./window-background.css">
@@ -104,6 +105,7 @@
           <a href="#usage" data-nav="usage" data-i18n="page.usage.title">Usage &amp; costs</a>
           <a href="#allowance" data-nav="allowance" data-requires-evidence data-i18n="page.allowance.title">Allowance</a>
           <a href="#performance" data-nav="performance" data-i18n="page.performance.title">Model performance</a>
+          <a href="#x" data-nav="x" data-desktop-only="true" data-i18n="x.title" hidden>X updates</a>
         </nav>
         <div class="sidebar-actions">
           <div class="sidebar-refresh-row">
@@ -123,27 +125,8 @@
       </aside>
       <div class="dashboard-content">
     <main id="main">
+      <section id="x-content" class="dashboard-page-inactive" data-dashboard-page="x" data-desktop-only="true" aria-hidden="true" inert hidden data-i18n-skip></section>
       <div id="overview-screen">
-
-      <section
-        class="dashboard-boot-state"
-        id="dashboard-boot-state"
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        aria-busy="true"
-      >
-        <div class="dashboard-boot-card">
-          <span class="state-pill state-connecting">
-            <span class="state-dot" aria-hidden="true"></span>
-            Connecting
-          </span>
-          <strong class="dashboard-boot-title">Loading saved results…</strong>
-          <p class="dashboard-boot-copy">
-            Checking the summary on this device. Nothing is sent.
-          </p>
-        </div>
-      </section>
 
       <div class="dashboard-page-header" data-dashboard-page="overview">
         <div>
@@ -252,6 +235,7 @@
       </details>
 
       <section class="dashboard-section" id="overview" aria-labelledby="overview-title" data-dashboard-page="overview" data-requires-evidence>
+        <p class="dashboard-load-status" data-dashboard-load-status role="status" data-i18n="refresh.progress.saved">Loading saved results…</p>
         <div class="sr-only">
           <div>
             <h2 id="overview-title">Where your allowance stands</h2>
@@ -874,6 +858,7 @@
 <button class="settings-tab" id="settings-tab-tray" type="button" role="tab" aria-controls="settings-panel-tray" aria-selected="false" tabindex="-1" data-settings-tab="tray" data-i18n="electron.settings.tab.trayPanel">Tray & panel</button>
 <button class="settings-tab" id="settings-tab-notifications" type="button" role="tab" aria-controls="settings-panel-notifications" aria-selected="false" tabindex="-1" data-settings-tab="notifications" data-i18n="electron.settings.tab.notifications">Notifications</button>
 <button class="settings-tab" id="settings-tab-data" type="button" role="tab" aria-controls="settings-panel-data" aria-selected="false" tabindex="-1" data-settings-tab="data" data-i18n="electron.settings.tab.dataDiagnostics">Data & diagnostics</button>
+<button class="settings-tab" id="settings-tab-x" type="button" role="tab" aria-controls="settings-panel-x" aria-selected="false" tabindex="-1" data-settings-tab="x" data-desktop-only="true" data-i18n="x.title" hidden>X updates</button>
 <button class="settings-tab" id="settings-tab-about" type="button" role="tab" aria-controls="settings-panel-about" aria-selected="false" tabindex="-1" data-settings-tab="about" data-i18n="electron.settings.tab.aboutUpdates">About & updates</button></nav>
 <div class="settings-panels"><section class="settings-panel" id="settings-panel-general" role="tabpanel" aria-labelledby="settings-tab-general" data-settings-panel="general" ><section class="settings-card" aria-labelledby="settings-language-title">
             <div class="settings-card-copy">
@@ -953,6 +938,7 @@
             <button class="button button-quiet" id="settings-show-diagnostics" type="button" data-i18n="electron.settings.localTools.diagnostics">
                 Show diagnostics
               </button></div></section></section>
+<section class="settings-panel" id="settings-panel-x" role="tabpanel" aria-labelledby="settings-tab-x" data-settings-panel="x" hidden data-i18n-skip></section>
 <section class="settings-panel" id="settings-panel-about" role="tabpanel" aria-labelledby="settings-tab-about" data-settings-panel="about" hidden>
 
 

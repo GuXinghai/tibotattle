@@ -8,8 +8,11 @@ confident answer.
 
 Personal analysis runs locally and works without an account. Raw source logs do
 not leave your machine, and prompts, responses, file paths, and raw account
-identifiers do not enter TiboTattle's derived artifacts. The desktop app is local-only: it sends no usage data and has no community sharing, contribution upload, or hosted sign-in. See the [removal decision](docs/decisions/2026-10-13-desktop-sharing-removal.md).
+identifiers do not enter TiboTattle's derived artifacts. Desktop usage analysis stays local: it sends no usage data and has no community sharing, contribution upload, or TiboTattle hosted sign-in. See the [removal decision](docs/decisions/2026-10-13-desktop-sharing-removal.md).
 Local analysis remains available independently of hosted service availability.
+The optional [X reader](docs/decisions/2026-10-20-optional-x-reader.md) connects
+to X in a separate session and stores public posts in its own protected cache;
+it does not send local usage data.
 
 
 > **The name:** TiboTattle is named with affection for the Codex community and
@@ -21,13 +24,18 @@ Local analysis remains available independently of hosted service availability.
 
 - **Allowance tracks** — observed 7-day (and secondary) quota remaining, with
   reset times, reconstructed from local observations.
-  Overview shows seven-day remaining allowance, daily consumption, task work
-  hours, current workload and actual-versus-expected consumption. Work includes
+  Overview shows seven-day remaining allowance, daily consumption, estimated
+  remaining work hours, current workload and actual-versus-expected consumption. Work includes
   tools and necessary waiting; parallel tasks count once. Historical work-hour
   rates use observed quota deductions; current rates use API-equivalent usage.
   The single-account, continuous-subscription scenario is an analysis assumption,
   not retrospective verification of account identity. The detailed pace forecast
   remains on the Allowance page.
+  Historical consumption retains every observed plan period. Missing plan labels
+  can inherit the preceding explicit plan under the marked period assumption;
+  source records remain unchanged. Conflicts and explicit account changes break
+  inference. Daily bars separate plans, and remaining-hour estimates use only the
+  current plan period, never a previous plan's quota-per-hour rate.
 - **API-price-equivalent usage** — replay-safe totals split into cached input,
   uncached input, reasoning output, and output text, priced from a pinned
   public price registry.
@@ -47,6 +55,22 @@ Local analysis remains available independently of hosted service availability.
   covers them.
 - **A tray icon** — where the allowance stands without opening the app,
   including a Check for Updates entry in builds that ship the updater.
+- **An optional X reader** — Tibo's posts, replies, reposts and media with
+  local/Pacific publication times, separate refresh settings and opt-in
+  notifications. Connect through X's webpage or explicitly import an existing
+  Chrome session. Logout and cache clearing are separate actions.
+
+The desktop opens its main window directly, without a startup page. Navigation
+stays available while saved results load in the selected page. Background colors
+apply first; local wallpaper appears only after decoding, without blocking the
+window. Loading, empty results and read failures have distinct states.
+The Allowance chart reserves its plot area while data is unavailable, without
+showing zero-valued axes or an empty-result verdict. During a same-plan refresh,
+the previous report stays visible with an update status; diagnostics remain in details.
+Weekly intervals verify their source against the unified accounting snapshot,
+independently of quota-fit availability. The plan selector keeps historical
+plans available after an upgrade; each plan's intervals and estimates remain
+separate, and intervals with uncertain plan attribution stay explicitly unavailable.
 
 ## Install (Windows x64)
 

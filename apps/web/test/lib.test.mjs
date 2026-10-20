@@ -4752,30 +4752,9 @@ test("native dashboard readiness follows both first-render outcomes", async () =
 
   const marker = appSource.slice(markerStart, markerEnd);
   const loader = appSource.slice(loadStart, loadEnd);
-  const bootSurface = html.match(
-    /<section[^>]*id="dashboard-boot-state"[^>]*>[\s\S]*?<\/section>/u,
-  )?.[0] ?? "";
-  assert.ok(bootSurface, "the native dashboard has a static boot surface");
-  assert.match(bootSurface, /role="status"/u);
-  assert.match(bootSurface, /aria-live="polite"/u);
-  assert.match(bootSurface, /aria-busy="true"/u);
-  assert.match(bootSurface, /Loading saved results…/u);
-  assert.match(
-    bootSurface,
-    /Checking the summary on this device\. Nothing is sent\./u,
-  );
-  const bootOpeningTag = bootSurface.match(/^<section[\s\S]*?>/u)?.[0] ?? "";
-  assert.doesNotMatch(bootOpeningTag, /\shidden(?:\s|=|>)/u);
-  assert.doesNotMatch(bootSurface, /data-requires-evidence/u);
-  assert.match(styles, /\.dashboard-boot-state \{ display: none; \}/u);
-  assert.match(
-    styles,
-    /html\.native-dashboard:not\(\[data-local-dashboard-ready="true"\]\) \.dashboard-boot-state,[\s\S]*?display: grid;/u,
-  );
-  assert.match(
-    styles,
-    /@media \(max-width: 520px\)[\s\S]*?\.dashboard-boot-card \.state-pill \{[\s\S]*?width: max-content;[\s\S]*?font-size: \.67rem;/u,
-  );
+  assert.doesNotMatch(html, /dashboard-boot-state/u);
+  assert.doesNotMatch(styles, /dashboard-boot/u);
+  assert.match(html, /data-dashboard-load-status/u);
   assert.match(
     marker,
     /document\.documentElement\.dataset\.localDashboardReady = "true";/u,
@@ -4895,6 +4874,7 @@ async function createDashboardStartupHarness({
     nativeEvidenceReloadPending: false,
     dashboardReadFailure,
     dashboardReadFailed: false,
+    renderDesktopEvidenceState() {},
     reloadLocalEvidenceAfterNativeRefresh() {},
     diagnosticErrorCode: () => "report_load_failed",
     t: key => translate(key),

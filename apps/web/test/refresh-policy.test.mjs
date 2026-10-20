@@ -73,7 +73,7 @@ function refreshHarness({
     createTextNode: (textContent) => ({ textContent }),
   };
   const priorDashboard = {
-    workload: detailedSnapshot ? {schemaVersion:"overview-workload-v2",status:"available"} : null,
+    workload: detailedSnapshot ? {schemaVersion:"overview-workload-v4",status:"available"} : null,
     mode: "local",
     state: "stale",
     activity: { lastScanAt: "2026-09-02T00:00:00.000Z" },
@@ -162,6 +162,7 @@ function refreshHarness({
     historyProgressReceipt: () => "prior-generation",
     currentHistoryContinuationDecision: () => ({ terminalGap: false }),
     localAnalysisAllowed: () => true,
+    allowancePage: {setLoadState() {}},
     runsInsideNativeDashboard: () => native,
     runsInsideElectronDashboard: () => electron,
     refreshAccountingStatus,
@@ -215,6 +216,16 @@ function refreshHarness({
   runInContext(productionFunction("scheduleReturningUserRefresh"), context);
   return { context, calls, routes, notices, timers, buttons, priorDashboard, progressFrames, globalStates };
 }
+
+test("allowance loading follows the existing primary-read and refresh owners through failure and retry", () => {
+  const { context } = refreshHarness({ sidebar: true });
+  const states=[];context.allowancePage.setLoadState=state=>states.push(state);
+  context.localRefreshInProgress=true;context.updateLocalActionButtons();
+  context.localRefreshInProgress=false;context.dashboardReadFailed=true;context.updateLocalActionButtons();
+  context.activeLocalDashboardLoad={pending:true};context.updateLocalActionButtons();
+  context.activeLocalDashboardLoad=null;context.dashboardReadFailed=false;context.updateLocalActionButtons();
+  assert.deepEqual(states,['loading','error','loading','ready']);
+});
 
 test("sidebar refresh keeps its icon and cancellability while showing only the phase", () => {
   const { context } = refreshHarness({ sidebar: true });

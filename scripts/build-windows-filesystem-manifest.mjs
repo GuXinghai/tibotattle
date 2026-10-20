@@ -23,6 +23,7 @@ import {
   WINDOWS_SOURCE_READ_CONTRACT, WINDOWS_SOURCE_READ_METHODS, WINDOWS_SOURCE_READ_APPROVED,
   WINDOWS_RELEASE_OPERATION_CONTRACT, WINDOWS_RELEASE_OPERATION_METHODS,
   WINDOWS_LEGACY_STATE_READ_CONTRACT, WINDOWS_LEGACY_STATE_READ_METHODS,
+  WINDOWS_BROWSER_PROFILE_CONTRACT, WINDOWS_BROWSER_PROFILE_METHODS,
 } from "../src/platform/windows-filesystem.js";
 
 const require = createRequire(import.meta.url);
@@ -96,6 +97,11 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
   const hasSourceRead = native.sourceReadContractVersion !== undefined;
   const hasReleaseOperation = native.protectedDirectoryGuardContractVersion !== undefined;
   const hasLegacyStateRead = native.legacyStateReadContractVersion !== undefined;
+  const hasBrowserProfile = native.browserProfileContractVersion !== undefined;
+  if (hasBrowserProfile && (native.browserProfileContractVersion !== WINDOWS_BROWSER_PROFILE_CONTRACT
+      || !WINDOWS_BROWSER_PROFILE_METHODS.every(name => typeof native[name] === 'function'))) {
+    throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_BROWSER_PROFILE');
+  }
   if (hasLegacyStateRead && (native.legacyStateReadContractVersion !== WINDOWS_LEGACY_STATE_READ_CONTRACT
       || !WINDOWS_LEGACY_STATE_READ_METHODS.every(name => typeof native[name] === 'function'))) {
     throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_LEGACY_STATE_READ');
@@ -109,6 +115,9 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
     throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_SOURCE_READ');
   }
   return Object.freeze({
+    ...(hasBrowserProfile ? { browserProfile: {
+      contractVersion: WINDOWS_BROWSER_PROFILE_CONTRACT, approved: true,
+    } } : {}),
     ...(hasLegacyStateRead ? { legacyStateRead: {
       contractVersion: WINDOWS_LEGACY_STATE_READ_CONTRACT, approved: true,
     } } : {}),

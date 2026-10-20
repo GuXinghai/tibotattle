@@ -1,13 +1,16 @@
 const COLORS = {heavy:"var(--workload-heavy)",medium:"var(--workload-medium)",light:"var(--workload-light)",composite:"var(--neutral-ink)",unclassified:"var(--neutral-muted)"};
 const LEVELS=["heavy","medium","light","composite"];
+const PLAN_LABELS={free:'Free',go:'Go',plus:'Plus',pro:'Pro 10×',prolite:'Pro 5×',promax:'Pro Max 25×',team:'Team',business:'Business',enterprise:'Enterprise',edu:'Edu'};
 const finite=(v)=>typeof v==="number"&&Number.isFinite(v);
 const instant=(v)=>typeof v==="string"&&Number.isFinite(Date.parse(v));
 const views=new WeakMap();
 // Closed projection: never spread companion records into DOM-facing state.
 export function normalizeOverviewWorkload(value) {
-  if(!value||!["overview-workload-v2","overview-workload-v3"].includes(value.schemaVersion))return null;
+  if(!value||!["overview-workload-v2","overview-workload-v3","overview-workload-v4"].includes(value.schemaVersion))return null;
   const scalar=(x)=>finite(x)&&x>=0?x:null;
   const rows=(x)=>Array.isArray(x)?x:[];
+  const plan=(x)=>Object.hasOwn(PLAN_LABELS,x)?x:'unknown';
+  const levels=x=>Object.fromEntries(["heavy","medium","light","unclassified"].map(k=>[k,scalar(x[k])]));
   return {schemaVersion:value.schemaVersion,status:["available","partial","stale","unavailable"].includes(value.status)?value.status:"unavailable",
     generatedAt:instant(value.generatedAt)?value.generatedAt:null,
     pricingDetails:{total:Number.isSafeInteger(value.pricingDetails?.total)&&value.pricingDetails.total>=0?value.pricingDetails.total:0,
@@ -23,9 +26,12 @@ export function normalizeOverviewWorkload(value) {
       stage:["work","quota","pricing","index","aggregation","publish"].includes(x.stage)?x.stage:"index"})),
     allowance:{remainingPercent:scalar(value.allowance?.remainingPercent),observedAt:instant(value.allowance?.observedAt)?value.allowance.observedAt:null,
       points:rows(value.allowance?.points).filter(x=>instant(x?.at)).map(x=>({at:x.at,remainingPercent:scalar(x.remainingPercent),breakBefore:x.breakBefore===true}))},
-    workHours:LEVELS.map(level=>{const x=rows(value.workHours).find(x=>x.level===level);return {level,hours:scalar(x?.hours)};}),
+    planAttribution:{estimationPlanType:plan(value.planAttribution?.estimationPlanType),
+      inferredObservations:Number.isSafeInteger(value.planAttribution?.inferredObservations)&&value.planAttribution.inferredObservations>=0?value.planAttribution.inferredObservations:0},
+    workHours:LEVELS.map(level=>{const x=rows(value.workHours).find(x=>x.level===level);return {level,hours:scalar(x?.hours),inferred:x?.inferred===true};}),
     daily:rows(value.daily).slice(-7).filter(x=>/^\d{4}-\d{2}-\d{2}$/u.test(x?.date??"")).map(x=>({date:x.date,covered:x.covered===true,
-      ...Object.fromEntries(["heavy","medium","light","unclassified"].map(k=>[k,scalar(x[k])]))})),
+      ...levels(x),inferred:x.inferred===true,
+      plans:rows(x.plans).slice(0,10).filter(p=>p&&typeof p==='object').map(p=>({planType:plan(p.planType),covered:p.covered===true,inferred:p.inferred===true,...levels(p)}))})),
     current:{state:["working","idle","unknown"].includes(value.current?.state)?value.current.state:"unknown",
       level:["heavy","medium","light","unclassified"].includes(value.current?.level)?value.current.level:null,
       hours:scalar(value.current?.hours),ratePpPerHour:scalar(value.current?.ratePpPerHour)},
@@ -42,6 +48,7 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
   const node=(tag,cls,text)=>{const el=doc.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=text;return el;};
   const num=(x,digits=1)=>finite(x)?new Intl.NumberFormat(locale,{maximumFractionDigits:digits}).format(x):"—";
   const hour=(x)=>finite(x)?t("workload.hours",{value:num(x)}):"—";
+  const planLabel=p=>PLAN_LABELS[p]??t('workload.unknown');
   const svgNode=(name,attrs={})=>{const el=doc.createElementNS("http://www.w3.org/2000/svg",name);for(const[k,v]of Object.entries(attrs))el.setAttribute(k,String(v));return el;};
   const time=(at)=>new Intl.DateTimeFormat(locale,{hour:"2-digit",minute:"2-digit"}).format(new Date(at));
   const card=(key)=>{const c=node("article","workload-card");c.dataset.workloadCard=key;c.append(node("h3","",t(`workload.title.${key}`)));return c;};
@@ -74,22 +81,34 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
   const allowance=card("allowance"),value=node("div","workload-remaining");value.append(node("span","",t("workload.current")),node("strong","",w?.allowance?.remainingPercent===null||!w?"—":`${num(w.allowance.remainingPercent)}%`));
   allowance.append(value,lineChart(w?.allowance?.points??[],"allowance","remainingPercent",[0,100]));grid.append(allowance);
   const workHours=card("hours"),maxHours=Math.max(0,...(w?.workHours??[]).map(x=>x.hours??0));
-  for(const level of LEVELS){const val=w?.workHours?.find(x=>x.level===level)?.hours??null;
+  for(const level of LEVELS){const item=w?.workHours?.find(x=>x.level===level),val=item?.hours??null;
     const row=node("div",`workload-hours-row ${level==="composite"?"is-composite":""}`);row.dataset.level=level;
     const track=node("div","workload-hour-track"),fill=node("i");fill.style.width=`${maxHours>0&&val!==null?100*val/maxHours:0}%`;fill.style.backgroundColor=COLORS[level];track.append(fill);
-    row.append(node("span","",t(`workload.level.${level}`)),track,node("strong","",hour(val)));workHours.append(row);}
+    row.append(node("span","",t(`workload.level.${level}`)),track,node("strong","",`${hour(val)}${item?.inferred&&val!==null?' *':''}`));workHours.append(row);}
+  if(w?.schemaVersion==='overview-workload-v4'){
+    workHours.append(node('p','',t('workload.estimateScope',{plan:planLabel(w.planAttribution.estimationPlanType)})));
+    if(w.workHours.every(x=>x.hours===null))workHours.append(node('p','',t('workload.estimateCollecting')));
+  }
   grid.append(workHours);
   const daily=card("daily"),svg=svgNode("svg",{viewBox:"0 0 640 210",role:"img","aria-label":t("workload.title.daily")});
-  const days=w?.daily??[],total=d=>["heavy","medium","light","unclassified"].reduce((s,k)=>s+(d[k]??0),0),max=Math.max(1,...days.map(total));
+  const days=w?.daily??[],groups=d=>d.plans?.length?d.plans:[d],total=d=>["heavy","medium","light","unclassified"].reduce((s,k)=>s+(d[k]??0),0),max=Math.max(1,...days.flatMap(d=>groups(d).map(total)));
   for(let i=0;i<=4;i++){const yy=174-i*154/4;svg.append(svgNode("line",{x1:46,x2:622,y1:yy,y2:yy,stroke:"var(--neutral-line)"}));const label=svgNode("text",{x:38,y:yy+4,"text-anchor":"end"});label.textContent=num(max*i/4);svg.append(label);}
   const unit=svgNode("text",{x:46,y:12});unit.textContent=t("workload.points");svg.append(unit);
-  days.forEach((d,i)=>{let top=174;const x=60+i*80;
-    if(d.covered){for(const level of["light","medium","heavy","unclassified"]){const h=(d[level]??0)/max*154;if(h<=0)continue;
-      const rect=svgNode("rect",{x,y:top-h,width:42,height:h,fill:COLORS[level],"shape-rendering":"crispEdges"});const title=svgNode("title");title.textContent=`${d.date} · ${t(`workload.level.${level}`)} ${num(d[level])} ${t("workload.points")}`;rect.append(title);svg.append(rect);top-=h;}}
+  days.forEach((d,i)=>{const x=60+i*80;
+    if(d.covered){const plans=groups(d),width=42/plans.length;
+      plans.forEach((p,j)=>{let top=174;
+        for(const level of["light","medium","heavy","unclassified"]){const h=(p[level]??0)/max*154;if(h<=0)continue;
+          const rect=svgNode("rect",{x:x+j*width,y:top-h,width:Math.max(1,width-1),height:h,fill:COLORS[level],"shape-rendering":"crispEdges"});
+          const title=svgNode("title");title.textContent=`${d.date} · ${p.planType?planLabel(p.planType)+' · ':''}${t(`workload.level.${level}`)} ${num(p[level])} ${t("workload.points")}${p.inferred?' · '+t('workload.inferred'):''}`;
+          rect.append(title);svg.append(rect);top-=h;}
+        if(p.planType){const label=svgNode('text',{x:x+(j+.5)*width,y:187,'text-anchor':'middle','font-size':plans.length>1?9:11});
+          label.textContent=planLabel(p.planType).replace('Pro ','')+(p.inferred?'*':'');svg.append(label);}
+      });}
     else{const missing=svgNode("text",{x:x+21,y:164,"text-anchor":"middle"});missing.textContent="—";svg.append(missing);}
     const label=svgNode("text",{x:x+21,y:202,"text-anchor":"middle"});label.textContent=d.date.slice(5);svg.append(label);});
   daily.append(svg);const legend=node("div","workload-legend");
-  for(const level of["heavy","medium","light"]){const label=node("span"),dot=node("i");dot.style.backgroundColor=COLORS[level];label.append(dot,doc.createTextNode(t(`workload.level.${level}`)));legend.append(label);}daily.append(legend);grid.append(daily);
+  for(const level of["heavy","medium","light","unclassified"]){const label=node("span"),dot=node("i");dot.style.backgroundColor=COLORS[level];label.append(dot,doc.createTextNode(t(`workload.level.${level}`)));legend.append(label);}daily.append(legend);
+  grid.append(daily);
   const current=card("current"),c=w?.current;
   const label=c?.state==="idle"?t("workload.idle"):c?.state==="working"?t(`workload.level.${c.level??"unclassified"}`):t("workload.unknown");
   const main=node("strong","workload-current-value",label);if(c?.state==="working")main.style.color=COLORS[c.level]??"var(--neutral-ink)";current.append(main);

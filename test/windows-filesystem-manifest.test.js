@@ -13,9 +13,21 @@ import {
   buildWindowsFilesystemBindingManifest,
   createWindowsFilesystemBindingManifest,
 } from "../scripts/build-windows-filesystem-manifest.mjs";
-import { WINDOWS_RELEASE_OPERATION_METHODS, WINDOWS_LEGACY_STATE_READ_METHODS } from "../src/platform/windows-filesystem.js";
+import { WINDOWS_RELEASE_OPERATION_METHODS, WINDOWS_LEGACY_STATE_READ_METHODS, WINDOWS_BROWSER_PROFILE_METHODS } from "../src/platform/windows-filesystem.js";
 
 const BYTES = Buffer.from("reviewed native bytes", "utf8");
+
+test('browser profile manifest requires both bounded repair and access inspection', () => {
+  const extension = { browserProfileContractVersion: 'windows-browser-profile-v1',
+    ...Object.fromEntries(WINDOWS_BROWSER_PROFILE_METHODS.map(name => [name, () => {}])) };
+  const result = createWindowsFilesystemBindingManifest({ bytes: BYTES, binding: binding(extension) });
+  assert.deepEqual(result.browserProfile, { contractVersion: 'windows-browser-profile-v1', approved: true });
+  assert.equal(result.approvedPolicy.productionSafe, false);
+  for (const name of WINDOWS_BROWSER_PROFILE_METHODS) {
+    assert.throws(() => createWindowsFilesystemBindingManifest({ bytes: BYTES,
+      binding: binding({ ...extension, [name]: undefined }) }), { code: 'WINDOWS_FILESYSTEM_MANIFEST_INVALID_BROWSER_PROFILE' });
+  }
+});
 
 test('legacy copy manifest binds all frozen read and streaming copy methods', () => {
   const extension = { legacyStateReadContractVersion: 'windows-legacy-state-read-v1',

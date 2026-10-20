@@ -72,6 +72,10 @@ export const WINDOWS_LEGACY_STATE_READ_METHODS = Object.freeze([
   'copyLegacyStateFile',
   'legacyStateRootsDisjoint',
 ]);
+export const WINDOWS_BROWSER_PROFILE_CONTRACT = 'windows-browser-profile-v1';
+export const WINDOWS_BROWSER_PROFILE_METHODS = Object.freeze([
+  'prepareBrowserProfile', 'inspectBrowserProfile',
+]);
 
 const MANIFEST_KEYS = Object.freeze([
   "schemaVersion",
@@ -162,8 +166,13 @@ function assertBindingManifest(manifest) {
   const releaseOperation = manifest.releaseOperation;
   const hasLegacyStateRead = Object.hasOwn(manifest, 'legacyStateRead');
   const legacyStateRead = manifest.legacyStateRead;
+  const hasBrowserProfile = Object.hasOwn(manifest, 'browserProfile');
+  const browserProfile = manifest.browserProfile;
   const valid = manifestKeys.length === MANIFEST_KEYS.length + (hasSourceRead ? 1 : 0)
-    + (hasReleaseOperation ? 1 : 0) + (hasLegacyStateRead ? 1 : 0)
+    + (hasReleaseOperation ? 1 : 0) + (hasLegacyStateRead ? 1 : 0) + (hasBrowserProfile ? 1 : 0)
+    && (!hasBrowserProfile || (browserProfile !== null && typeof browserProfile === 'object'
+      && !Array.isArray(browserProfile) && Object.keys(browserProfile).sort().join(',') === 'approved,contractVersion'
+      && browserProfile.contractVersion === WINDOWS_BROWSER_PROFILE_CONTRACT && browserProfile.approved === true))
     && (!hasLegacyStateRead || (legacyStateRead !== null && typeof legacyStateRead === 'object'
       && !Array.isArray(legacyStateRead) && Object.keys(legacyStateRead).sort().join(',') === 'approved,contractVersion'
       && legacyStateRead.contractVersion === WINDOWS_LEGACY_STATE_READ_CONTRACT && legacyStateRead.approved === true))
@@ -232,6 +241,7 @@ function assertBindingManifest(manifest) {
     approvedPolicy: Object.freeze({ ...approvedPolicy }),
     requiredMethods: Object.freeze([...requiredMethods]),
     ...(hasSourceRead ? { sourceRead: Object.freeze({ ...sourceRead }) } : {}),
+    ...(hasBrowserProfile ? { browserProfile: Object.freeze({ ...browserProfile }) } : {}),
   });
 }
 
@@ -322,6 +332,10 @@ function verifyBindingIntegrity({
       || !WINDOWS_LEGACY_STATE_READ_METHODS.every(name => typeof binding[name] === 'function'))) {
     throw failure('MANIFEST_BINDING_MISMATCH');
   }
+  if (manifest.browserProfile && (binding.browserProfileContractVersion !== WINDOWS_BROWSER_PROFILE_CONTRACT
+      || !WINDOWS_BROWSER_PROFILE_METHODS.every(name => typeof binding[name] === 'function'))) {
+    throw failure('MANIFEST_BINDING_MISMATCH');
+  }
   return Object.freeze({ binding, manifest });
 }
 
@@ -403,6 +417,12 @@ export function loadWindowsLegacyStateReadBinding(options = {}) {
   return binding;
 }
 
+export function loadWindowsBrowserProfileBinding(options = {}) {
+  const { binding, manifest } = loadVerifiedWindowsFilesystemBinding(options);
+  if (manifest.browserProfile?.approved !== true) throw failure('BROWSER_PROFILE_UNQUALIFIED');
+  return binding;
+}
+
 function fixedOperationError(code) {
   const error = new Error("Windows filesystem operation failed");
   error.code = code;
@@ -458,6 +478,7 @@ export function createWindowsFilesystemAdapter({
   if (platform !== "win32") return null;
   let native;
   let approvedPolicy = null;
+  let browserProfileApproved = false;
   if (binding === null) {
     const loadOptions = {
       platform,
@@ -467,10 +488,16 @@ export function createWindowsFilesystemAdapter({
     const verified = loadVerifiedWindowsFilesystemBinding(loadOptions);
     native = verified.binding;
     approvedPolicy = verified.manifest.approvedPolicy;
+    browserProfileApproved = verified.manifest.browserProfile?.approved === true;
   } else {
     native = assertBinding(binding);
   }
   const adapter = Object.freeze({
+    ...(browserProfileApproved ? {
+      browserProfileContractVersion: WINDOWS_BROWSER_PROFILE_CONTRACT,
+      prepareBrowserProfile(path) { return call(native, 'prepareBrowserProfile', [path]); },
+      inspectBrowserProfile(path) { return call(native, 'inspectBrowserProfile', [path]); },
+    } : {}),
     productionSafe: approvedPolicy?.productionSafe === true
       && native.productionSafe === true
       && native.pathWalkRaceSafe === true,

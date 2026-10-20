@@ -10,6 +10,33 @@ import {readLocalIndexWorkload,readWorkloadQuotaEvidence,workloadStateStore} fro
 import {commitLocalCollectorState} from "../src/local-collector-state.js";
 const at=Date.parse("2026-09-01T00:00:00Z"),M=60000;
 const line=(atMs,type,payload)=>JSON.stringify({timestamp:new Date(atMs).toISOString(),type,payload})+"\n";
+
+test('reader preserves old-plan history, infers unknown labels and leaves persisted occurrences unchanged',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const file=w.receipt.sources[0],indexFile=join(w.state,'plan-periods.sqlite');
+    const sessionId=JSON.parse((await readFile(file,'utf8')).split('\n')[0]).payload.id;
+    const reset= Math.floor((at+10*24*60*M)/1000);
+    const q=(minute,used,plan)=>line(at+minute*M,'event_msg',{type:'token_count',
+      rate_limits:{limit_id:'codex',...(plan===null?{}:{plan_type:plan}),secondary:{used_percent:used,window_minutes:10080,resets_at:reset}}});
+    await writeFile(file,line(at,'session_meta',{id:sessionId})+
+      line(at,'event_msg',{type:'task_started',turn_id:'synthetic-plan-period-task'})+
+      q(0,20,'prolite')+q(30,25,null)+q(59,30,'prolite')+q(60,0,'pro')+q(120,2,null)+
+      line(at+120*M,'event_msg',{type:'task_complete',turn_id:'synthetic-plan-period-task',duration_ms:120*M}));
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const facts=()=>{const db=openLocalIndexStore(indexFile,{readOnly:true});try{return db.prepare('SELECT * FROM quota_occurrence ORDER BY source_offset,slot_order').all();}finally{db.close();}};
+    const before=facts();assert.equal(before.length,5);
+    const options={indexFile,nowMs:at+120*M,timeZone:'UTC',quotaWindows:[{limitId:'codex',durationMinutes:10080,
+      planType:'pro',usedPercent:2,observedAt:new Date(at+119*M).toISOString(),resetAt:new Date(reset*1000).toISOString()}]};
+    const v=readLocalIndexWorkload(options);
+    assert.equal(v.schemaVersion,'overview-workload-v4',JSON.stringify(v.errors));
+    assert.equal(v.daily.at(-1).plans.find(p=>p.planType==='prolite').unclassified,10);
+    assert.equal(v.daily.at(-1).plans.find(p=>p.planType==='pro').unclassified,2);
+    assert.equal(v.planAttribution.inferredObservations,2);assert.equal(v.coverage.estimationPp,2);
+    assert.deepEqual(facts(),before);assert.deepEqual(readLocalIndexWorkload(options).daily,v.daily);
+    assert.doesNotMatch(JSON.stringify(v),/synthetic-plan-period-task|source_offset|accountKey/);
+  }finally{w.cleanup();}
+});
 test("quota evidence uses only recorded direct scoped reads and never returns account handles or payloads",async()=>{
   const w=createWorkspace({files:1,events:1}),stateFile=join(w.state,"evidence.sqlite");
   const record=(minutes,scope="synthetic-account-a",source="app_server_read")=>({schemaVersion:"0.3",kind:"codex_quota_snapshot",

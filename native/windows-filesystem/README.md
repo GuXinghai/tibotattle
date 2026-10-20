@@ -273,3 +273,52 @@ are required in addition to model-performance qualification; see the
 [issue #208 plan](../../docs/plans/2026-09-22-windows-project-task-names.md).
 The Windows metadata assertions run against the real native adapter; any
 non-native or simulated result does not qualify the native Windows binding.
+
+## Chromium browser profiles
+
+`windows-browser-profile-v1` is a separate, manifest-bound capability exposed
+through `createWindowsBrowserProfileStore`. It does not change the generic
+protected-record policy: `ensureDirectory` and record files still use their
+protected, non-inheriting owner DACLs. Browser profile directories instead have
+current-owner full access with object/container inheritance so Chromium-created
+Cookie databases retain owner access alongside Chromium's sandbox capability.
+No encryption settings, Cookie bytes, expiry, or account state are changed.
+
+Before Chromium opens a profile, `prepareBrowserProfile` traverses at most 4096
+objects and 32 descendant levels. All components are handle-relative; held
+ancestors and accepted descendants deny delete sharing. Every object must have
+the current owner, an allow-only closed ACL, no reparse point, and (for files)
+exactly one link. Migration accepts current-owner, current-logon, SYSTEM, and
+named application capability ACEs only; it replaces them with owner-only DACLs and
+inheriting directory ACEs. Broad grants, foreign owners, unknown principals and
+denies are refused. Named capabilities must have Chromium's
+`S-1-15-3-1024` plus eight hash DWORDs shape; shared well-known capabilities
+such as InternetClient are refused. Legacy capability-only objects are opened with the owner's
+implicit READ_CONTROL/WRITE_DAC rights and kernel reparse rejection before their
+individual DACL is changed. That traversal-only change is non-inheriting and
+uses handle-bound `SetKernelObjectSecurity`, avoiding propagation to unvalidated
+children. Inheriting ACEs are applied only after the bounded tree passes checks.
+Parent-relative reopens retain both pinned handles
+and compare object IDs. No privilege escalation or JavaScript ACL fallback is
+used. A failure can leave earlier objects repaired; those owner-only changes
+are retryable, while all file content remains untouched. This is not a
+transaction against a hostile same-owner writer creating new names; application
+lifecycle must keep Chromium closed during repair.
+
+`inspectBrowserProfile` is non-mutating and checks only the profile root,
+`Network`, `Cookies` and existing SQLite journal/WAL/SHM files. It does not scan
+mutable browser caches during normal operation. Reads and write access are
+checked separately without reading payloads. Current-owner full access must
+remain present, with inheriting access on directories; safe sandbox capability
+ACEs are accepted. Chromium holds its active Cookie database exclusively; only
+the exact Windows sharing-violation result permits metadata-only inspection,
+which validates the owner/DACL and read-only attribute and reports
+`cookieDatabaseBusy: true`. Permission denial is never treated as that lock.
+The metadata-only result does not claim a successful database data read/write.
+Fixed errors and aggregate existence/byte counts are
+returned, never paths, SIDs, Cookie values or encryption material. Access
+inspection cannot establish successful decryption: the Electron service must
+verify encrypted persistence and restoration separately and report uncertainty.
+Native source tests, encrypted Electron restart tests, installed artifacts and
+signed releases remain separate gates; general production/path-walk flags stay
+disabled.

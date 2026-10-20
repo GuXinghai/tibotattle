@@ -43,26 +43,38 @@ test("floating copies share only the imported image, track cover coordinates and
     getClientRects: () => [1], getBoundingClientRect: () => ({ left: 200, top: 120 }) };
   const picker = { style: style() };
   let image, disconnected = false, command, unsubscribed = false;
+  const images = [];
+  const background = { color: "#F0F9FF", mask: 35, imageUrl: "tibotattle-background://image/12345678-1234-4234-8234-123456789abc" };
   const listeners = new Map(), frames = new Map();
   let nextFrame = 0;
   const windowRef = {
     innerWidth: 800, innerHeight: 600,
-    tibotattleDesktop: { version: "v1", getWindowBackground: async () => ({ status: "ready", background: { color: "#F0F9FF", mask: 35, imageUrl: "tibotattle-background://image/12345678-1234-4234-8234-123456789abc" } }), onCommand: callback => { command = callback; return () => { unsubscribed = true; }; } },
+    tibotattleDesktop: { version: "v1", getWindowBackground: async () => ({ status: "ready", background: { ...background } }), onCommand: callback => { command = callback; return () => { unsubscribed = true; }; } },
     MutationObserver: class { observe() {} disconnect() { disconnected = true; } },
-    Image: class { constructor() { image = this; this.naturalWidth = 1000; this.naturalHeight = 600; } },
+    Image: class {
+      constructor() { image = this; images.push(this); this.naturalWidth = 1000; this.naturalHeight = 600; }
+      decode() { return new Promise((resolve, reject) => { this.decoded = resolve; this.failed = reject; }); }
+    },
     getComputedStyle: () => ({ height: "211.333px", boxSizing: "border-box", paddingTop: "5px", paddingBottom: "5px", borderTopWidth: "0.666667px", borderBottomWidth: "0.666667px" }),
     addEventListener: (name, callback) => listeners.set(name, callback),
     removeEventListener: name => listeners.delete(name),
     requestAnimationFrame: callback => { const id = ++nextFrame; frames.set(id, callback); return id; },
     cancelAnimationFrame: id => frames.delete(id),
   };
-  const documentRef = { documentElement: root, body: { prepend() {} }, querySelector: () => null,
+  const documentRef = { readyState: "interactive", documentElement: root, body: { prepend() {} }, querySelector: () => null,
     createElement: () => layer, querySelectorAll: selector => selector === "select:open" ? [picker] : [surface] };
   const mounted = await mountWindowBackground({ documentRef, windowRef });
   const flush = () => { const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(callback => callback()); };
-  assert.equal(root.style.getPropertyValue("--window-background-mask"), 0.35);
+  assert.equal(root.style.getPropertyValue("--window-background-mask"), 0);
+  assert.equal(layer.style.backgroundImage, "none");
   assert.equal(root.style.getPropertyValue("--window-background-copy-image"), "none");
-  image.onload(); flush();
+  assert.equal(image.src, undefined, "wallpaper cannot hold up the document load gate");
+  const documentLoaded = listeners.get("load"); listeners.delete("load");
+  documentRef.readyState = "complete"; documentLoaded();
+  const loading = image.onload();
+  assert.equal(layer.style.backgroundImage, "none", "a loaded but undecoded image stays hidden");
+  image.decoded(); await loading; flush();
+  assert.equal(root.style.getPropertyValue("--window-background-mask"), 0.35);
   assert.equal(picker.style.getPropertyValue("--window-background-picker-height"), "200px");
   assert.equal(root.style.getPropertyValue("--window-background-copy-image"), `url("${image.src}")`);
   assert.equal(surface.style.getPropertyValue("--window-background-copy-size"), "1000px 600px");
@@ -86,7 +98,25 @@ test("floating copies share only the imported image, track cover coordinates and
   listeners.get("resize")(); listeners.get("resize")();
   assert.equal(frames.size, 1); flush(); assert.equal(frames.size, 0);
   assert.equal(typeof command, "function");
+  // A failed image leaves the saved color and does not change persisted settings.
+  background.imageUrl = "tibotattle-background://image/22345678-1234-4234-8234-123456789abc";
+  command({ command: "windowBackground" }); await Promise.resolve();
+  const failed = image.onload(); image.failed(new Error("synthetic decode failure")); await failed;
+  assert.equal(layer.style.backgroundImage, "none");
+  assert.equal(root.style.getPropertyValue("--window-background-color"), "#F0F9FF");
+  assert.equal(root.style.getPropertyValue("--window-background-mask"), 0);
+  // A late image cannot overwrite a more recent selection.
+  background.imageUrl = "tibotattle-background://image/32345678-1234-4234-8234-123456789abc";
+  command({ command: "windowBackground" }); await Promise.resolve();
+  const obsolete = image, obsoleteLoad = obsolete.onload();
+  background.imageUrl = "tibotattle-background://image/42345678-1234-4234-8234-123456789abc";
+  command({ command: "windowBackground" }); await Promise.resolve();
+  obsolete.decoded(); await obsoleteLoad;
+  assert.equal(layer.style.backgroundImage, "none");
+  const disposedLoad = image.onload();
   mounted.teardown();
+  image.decoded(); await disposedLoad;
+  assert.equal(layer.style.backgroundImage, "none", "teardown invalidates pending decoding");
   assert.equal(disconnected, true); assert.equal(unsubscribed, true);
   assert.equal(listeners.size, 0); assert.equal(frames.size, 0);
 });

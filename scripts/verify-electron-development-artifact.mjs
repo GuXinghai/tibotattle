@@ -43,6 +43,7 @@ import {
   WINDOWS_SOURCE_READ_CONTRACT,
   WINDOWS_RELEASE_OPERATION_CONTRACT,
   WINDOWS_LEGACY_STATE_READ_CONTRACT,
+  WINDOWS_BROWSER_PROFILE_CONTRACT,
 } from "../src/platform/windows-filesystem.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
@@ -104,6 +105,19 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/desktop-windows-accountless-credential.js",
   "apps/electron/desktop-update-preferences.js",
   "apps/electron/desktop-updater.js",
+  "apps/electron/desktop-x-contract.js",
+  "apps/electron/desktop-x-import.js",
+  "apps/electron/desktop-x-ipc.js",
+  "apps/electron/desktop-x-page-adapter.js",
+  "apps/electron/desktop-x-repository.js",
+  "apps/electron/desktop-x-service.js",
+  "apps/electron/desktop-x-session-health.js",
+  "apps/electron/x-import/contract.js",
+  "apps/electron/x-import/manifest.json",
+  "apps/electron/x-import/popup.html",
+  "apps/electron/x-import/popup.js",
+  "apps/electron/x-import/NativeHost.cs",
+  "apps/electron/x-import/TiboTattleXImport.exe",
   "apps/electron/errors.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
@@ -129,6 +143,7 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "src/platform/windows-credential-operation-audit.js",
   "src/platform/windows-credential-audit-file-guard.js",
   "src/platform/windows-protected-sqlite.js",
+  "src/platform/windows-browser-profile-store.js",
 ]);
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const INVENTORY_KINDS = new Set([
@@ -606,6 +621,7 @@ function validateNativeManifestShape(value) {
     ["sourceRead", WINDOWS_SOURCE_READ_CONTRACT, WINDOWS_SOURCE_READ_APPROVED],
     ["releaseOperation", WINDOWS_RELEASE_OPERATION_CONTRACT, true],
     ["legacyStateRead", WINDOWS_LEGACY_STATE_READ_CONTRACT, true],
+    ["browserProfile", WINDOWS_BROWSER_PROFILE_CONTRACT, true],
   ];
   const manifestKeys = [...WINDOWS_NATIVE_MANIFEST_KEYS,
     ...extensions.filter(([name]) => Object.hasOwn(value, name)).map(([name]) => name)];

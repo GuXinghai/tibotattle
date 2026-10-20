@@ -90,13 +90,13 @@ function placeholders(value) {
 test("Electron localization is generated, bounded, and ownership-stable", async () => {
   assert.equal(await checkI18nElectronCopy(), true);
   assert.equal(I18N_ELECTRON_COPY_FILE.replaceAll("\\", "/").endsWith("apps/electron/desktop-copy.js"), true);
-  assert.equal(DESKTOP_SHARED_KEYS.length, 39);
-  assert.equal(Object.keys(DESKTOP_OVERLAY_MESSAGES).length, 109);
+  assert.equal(DESKTOP_SHARED_KEYS.length, 49);
+  assert.equal(Object.keys(DESKTOP_OVERLAY_MESSAGES).length, 111);
   assert.deepEqual(Object.keys(DESKTOP_OVERRIDES).sort(), [...OVERRIDE_KEYS].sort());
   assert.deepEqual(DESKTOP_SHARED_KEYS, desktopOwnership.DESKTOP_SHARED_KEYS);
   assert.deepEqual(DESKTOP_OVERLAY_MESSAGES, desktopOwnership.DESKTOP_OVERLAY_MESSAGES);
   assert.deepEqual(DESKTOP_OVERRIDES, desktopOwnership.DESKTOP_OVERRIDES);
-  assert.equal(Object.keys(DESKTOP_MESSAGES).length, 151);
+  assert.equal(Object.keys(DESKTOP_MESSAGES).length, 163);
   assert.deepEqual(
     Object.fromEntries(CRASH_COPY_KEYS.map((key) => [key, DESKTOP_OVERLAY_MESSAGES[key]])),
     EXPECTED_CRASH_COPY,

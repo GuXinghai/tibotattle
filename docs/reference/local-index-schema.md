@@ -269,7 +269,7 @@ source cursor are provisional; recovery and source replacement remove them with
 the other affected facts. Work includes tools and necessary waiting, and parallel
 intervals count once. Inference performance timing remains independent.
 
-Workload policy `task-workload-v5` projects, rather than rewrites, these facts.
+Workload policy `task-workload-v6` projects, rather than rewrites, these facts.
 Retained unambiguous ancestry identifies copied task boundaries, including
 paginated forks; a copied completion must also match the ancestor's reported
 duration. New child work remains included, and unsupported/cyclic ancestry does
@@ -295,13 +295,27 @@ timestamp. This is an observed-consumption policy, not proof that a provider
 cannot issue a credit within a reset cycle.
 
 Overview groups committed usage timestamps into five-minute bins without
-splitting fifteen-minute display rollups. The `overview-workload-v3` comparison
+splitting fifteen-minute display rollups. The `overview-workload-v4` comparison
 reports two startup totals in percentage points, without a rolling display
 window or relative-ratio curve. Actual consumption sums only within each reset
 identity, retaining the high watermark; unmatched usage across reset boundaries
 and simultaneous quota conflicts remain explicit. Expected consumption uses
 the same covered intervals and the first known capacity frozen for that startup.
-The seven-day cards keep their existing range and current-plan filter. Startup
+The seven-day history retains all plan periods. The
+[owner-approved overview policy](../decisions/2026-10-19-overview-plan-period-inference.md)
+`observed-plan-period-v1` assigns a missing plan label from the most
+recent preceding explicit plan observation in the same quota family. It does
+not fill before the first anchor, override explicit labels, or infer account
+identity. Conflicting simultaneous labels or explicit account changes break
+continuity. This is a marked, recomputable projection; stored occurrences and
+the strict startup comparison evidence remain unchanged. The reader retains a
+preceding committed anchor for a period that starts outside the display range.
+The response reports inferred/unresolved observations, per-day plan groups and
+inferred markers. Same-day plan groups render separately, and pairing never
+crosses plan-period or reset boundaries. Remaining-hour rates use only the most
+recent period matching the current plan; sparse samples remain unavailable.
+Browser readers accept v2/v3 last-good results and the current v4 projection.
+Startup
 reads extend beyond seven days when necessary. Its startup identity, frozen
 capacity and capacity history persist in `private/overview-workload-state.json`
 as `overview-workload-state-v3`, including the first accepted startup quota

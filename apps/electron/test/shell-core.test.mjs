@@ -2943,6 +2943,21 @@ test("desktop lifecycle cancels an in-flight retry before quit and serializes sh
   assert.equal(app.quitCalls, 1);
 });
 
+test("desktop quit waits for session persistence before destroying the window or quitting", async () => {
+  const app = new FakeApp(); let finish; let drains = 0;
+  const drained = new Promise(resolve => { finish = resolve; });
+  const supervisor = { setUnexpectedExitHandler() {}, async start() { return { origin: 'http://127.0.0.1:4600' }; }, async stop() {} };
+  const lifecycle = createDesktopLifecycle({ app, BrowserWindow: FakeWindow, Tray: FakeTray,
+    Menu: { buildFromTemplate: template => ({ template }) }, icon: 'empty-icon', preloadPath: '/synthetic/preload.cjs', supervisor,
+    beforeQuit: async () => { drains++; await drained; } });
+  await lifecycle.start();
+  const quitting = lifecycle.requestQuit();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(drains, 1); assert.equal(app.quitCalls, 0);
+  finish(); await quitting; assert.equal(app.quitCalls, 1);
+  await lifecycle.requestQuit(); assert.equal(drains, 1);
+});
+
 test("Electron entry quits explicitly when composition fails before lifecycle ownership", async () => {
   const app = new FakeApp();
   const events = [];

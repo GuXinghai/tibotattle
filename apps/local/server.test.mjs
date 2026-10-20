@@ -432,6 +432,12 @@ test("loopback server exposes only fixed API, static, and report routes", async 
     });
     assert.equal(health.headers.get("access-control-allow-origin"), null);
     assert.match(health.headers.get("content-security-policy"), /default-src 'none'/);
+    const csp = health.headers.get("content-security-policy");
+    assert.match(csp, /connect-src 'self' tibotattle-x-media:;/);
+    assert.match(csp, /img-src 'self' data: tibotattle-background: tibotattle-x-media:;/);
+    assert.match(csp, /media-src tibotattle-x-media: blob:;/);
+    assert.match(csp, /worker-src 'none'/);
+    assert.doesNotMatch(csp, /https:|\*|connect-src[^;]*blob:|script-src[^;]*blob:/);
 
     await app.snapshotReady;
     const desktopStatus = await fetch(`${base}/api/local/desktop-status`);

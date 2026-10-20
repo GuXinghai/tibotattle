@@ -88,7 +88,29 @@ test("v3 partial comparison keeps confirmed cylinders and visibly qualifies inco
   assert.equal(card.all().filter(x=>x.tagName==="rect").length,2);
   assert.ok(card.textContent.includes("仅显示已确认的累计"));assert.ok(root.textContent.includes("comparison_reset_gap"));
   assert.ok(card.textContent.includes("2 百分点"));
-  assert.equal(normalizeOverviewWorkload({...p,schemaVersion:"overview-workload-v4"}),null);
+  assert.equal(normalizeOverviewWorkload({...p,schemaVersion:"overview-workload-v5"}),null);
+});
+
+test('v4 plan groups retain inferred labels, separate same-day plans and qualify estimated hours',()=>{
+  const root=documentFixture(),p=payload();p.schemaVersion='overview-workload-v4';
+  p.planAttribution={estimationPlanType:'pro',inferredObservations:2,secret:'never-render'};
+  p.workHours=p.workHours.map(x=>({...x,inferred:true}));
+  p.daily[0].inferred=true;p.daily[0].plans=[
+    {planType:'prolite',covered:true,inferred:true,heavy:4,medium:0,light:0,unclassified:0},
+    {planType:'pro',covered:true,inferred:false,heavy:1,medium:0,light:0,unclassified:0}];
+  const n=normalizeOverviewWorkload(p);assert.doesNotMatch(JSON.stringify(n),/never-render/);render(root,p);
+  const daily=root.all().find(x=>x.dataset.workloadCard==='daily'),hours=root.all().find(x=>x.dataset.workloadCard==='hours');
+  assert.match(hours.textContent,/预计剩余工时|当前套餐时段/);assert.match(hours.textContent,/Pro 10×/);
+  assert.match(hours.textContent,/\*/);assert.match(daily.textContent,/5×\*/);assert.match(daily.textContent,/10×/);
+  assert.doesNotMatch(hours.textContent,/含按套餐时段推定/);
+  assert.equal(daily.all().filter(x=>x.tagName==='p').length,0);const bars=daily.all().filter(x=>x.tagName==='rect');
+  assert.equal(bars.length,2);assert.notEqual(bars[0].attrs.x,bars[1].attrs.x);
+  assert.equal(Number(bars[0].attrs.height),4*Number(bars[1].attrs.height));
+  p.workHours=[];render(root,p);assert.match(root.textContent,/正在采集当前套餐时段的样本/);
+  p.daily[0].plans[0].planType='<script>secret';
+  assert.equal(normalizeOverviewWorkload(p).daily[0].plans[0].planType,'unknown');
+  for(const locale of['en-US','zh-Hans','es'])for(const key of['workload.inferred','workload.planGroups','workload.estimateScope','workload.estimateCollecting'])
+    assert.notEqual(translate(key,{plan:'synthetic'},locale),key);
 });
 test("stale results keep timestamp and classified errors visible",()=>{
   const root=documentFixture(),p=payload();p.status="stale";p.errors=[{stage:"index",code:"source_unreadable",private:"never display"}];render(root,p);

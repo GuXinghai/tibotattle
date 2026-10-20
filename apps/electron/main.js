@@ -860,6 +860,9 @@ if (process.versions.electron) {
   runtime.protocol.registerSchemesAsPrivileged([{
     scheme: "tibotattle-background",
     privileges: { standard: true, secure: true, stream: true },
+  }, {
+    scheme: "tibotattle-x-media",
+    privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true },
   }]);
   const startupDiagnostics = createDesktopStartupDiagnostics({ app: runtime?.app });
   let startupPreparation;

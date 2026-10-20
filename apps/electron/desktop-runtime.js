@@ -11,6 +11,11 @@ import { createDesktopController } from "./desktop-controller.js";
 import { createDesktopDeepLinkQueue } from "./desktop-deep-links.js";
 import { createDesktopLifecycle } from "./desktop-lifecycle.js";
 import { installDesktopIpc } from "./desktop-ipc.js";
+import { installDesktopXIpc } from "./desktop-x-ipc.js";
+import { createDesktopXRepository } from "./desktop-x-repository.js";
+import { createDesktopXService } from "./desktop-x-service.js";
+import { createDesktopXImport } from "./desktop-x-import.js";
+import { X_SESSION_ERRORS, xError } from "./desktop-x-contract.js";
 import {
   createDesktopPlatformServices,
   validateDesktopCodexHome,
@@ -51,6 +56,7 @@ import { createDesktopUpdatePreferences, createDesktopUpdatePreferencesBackend }
 import {
   createWindowsFilesystemAdapter,
   createWindowsProtectedStateStore,
+  createWindowsBrowserProfileStore,
 } from "../../src/platform/index.js";
 
 const DESKTOP_SETTINGS_DIRECTORY = "desktop-settings";
@@ -634,6 +640,102 @@ export async function launchDesktopRuntime({
   let facade = null;
   let controller;
   let ipcInstallation = createNoopIpcInstallation();
+  let xIpcInstallation = createNoopIpcInstallation();
+  let xService;
+  let xImport;
+  let xMediaProtocol;
+  let xInitializationError = null;
+  let xShutdownPromise;
+  let resolveXInitialization;
+  const xInitialized = new Promise(resolve => { resolveXInitialization = resolve; });
+  function drainXSession() {
+    if (!xShutdownPromise) xShutdownPromise = (async () => {
+      try { await xService?.dispose(); }
+      catch (error) {
+        const code = X_SESSION_ERRORS.includes(error?.code) ? error.code : "session_persist_failed";
+        const options = { locale: activeDesktopLocale, systemLocales: desktopSystemLocales };
+        const title = desktopText("x.title", {}, options);
+        const message = desktopText(`x.${code}`, {}, options);
+        if (typeof runtime.dialog?.showErrorBox === "function") runtime.dialog.showErrorBox(title, message);
+        else if (typeof runtime.dialog?.showMessageBox === "function") await runtime.dialog.showMessageBox({ type: "error", title, message });
+        else throw xError(code);
+      }
+    })();
+    return xShutdownPromise;
+  }
+  // Chromium snapshots protocol loaders when a document is created. Register
+  // this lightweight handler before the dashboard's first navigation; compose
+  // storage/authentication later without delaying the main window.
+  if (platform === "win32" && app.isPackaged === true && typeof runtime.protocol?.handle === "function") {
+    runtime.protocol.handle("tibotattle-x-media", async request => {
+      await xInitialized;
+      return xService ? xService.resourceHandler(request) : new Response(null, { status: 503 });
+    });
+    xMediaProtocol = runtime.protocol;
+  }
+  // Install a narrow capability before showing the main frame. Its storage and
+  // network owners are composed after that frame is visible, independently of
+  // the companion's first data response.
+  const xPort = Object.fromEntries([
+    "getStatus", "listPosts", "getPost", "refresh", "beginLogin", "cancelLogin",
+    "getSettings", "setSettings", "logout", "clearCache",
+  ].map(name => [name, async (...args) => {
+    await xInitialized;
+    if (!xService) {
+      if (name === "getStatus") return { auth: "disconnected", operation: "error", error: xInitializationError ?? "storage_unavailable", loginMethod: null, cacheBytes: 0, notificationsAvailable: false };
+      throw xError(xInitializationError ?? "storage_unavailable");
+    }
+    return xService[name](...args);
+  }]));
+  function initializeXReader() {
+    try {
+      if (xShutdownPromise) return;
+      // Only the reviewed packaged runtime enables persistent X credentials;
+      // its build gate verifies CookieEncryption on the exact executable.
+      if (platform !== "win32" || app.isPackaged !== true
+          || !runtime.session?.fromPath || !windowsProtectedStateStore || !xMediaProtocol) return;
+      const adapter = createWindowsFilesystemAdapter({ platform: "win32", architecture });
+      const protectedStore = path => createWindowsProtectedStateStore({ adapter, rootPath: path });
+      const repository = createDesktopXRepository({
+        store: protectedStore(join(settingsRootPath, "x-reader")),
+        createSessionStore: id => createWindowsBrowserProfileStore({ adapter, rootPath: join(settingsRootPath, "x-sessions", id) }),
+      });
+      const importPort = {
+        begin: () => xImport.begin(), cancel: () => xImport?.cancel(), status: () => xImport?.status(),
+      };
+      const deliverX = notificationDelivery.status().status === "ready" ? async value => {
+        if (notificationDelivery.status().status !== "ready"
+            || !Number.isSafeInteger(value?.posts) || value.posts < 0
+            || !Number.isSafeInteger(value?.replies) || value.replies < 0
+            || value.posts + value.replies < 1
+            || typeof value.latestId !== "string" || !/^[0-9]{1,24}$/.test(value.latestId)) return;
+        const options = { locale: activeDesktopLocale, systemLocales: desktopSystemLocales };
+        const notification = new runtime.Notification({
+          title: desktopText("x.notification.title", {}, options),
+          body: desktopText("x.notification.body", { posts: value.posts, replies: value.replies }, options),
+        });
+        notification.on("click", () => {
+          lifecycle.navigateDashboardSection("x");
+          lifecycle.sendDashboardCommand({ command: "xPost", id: value.latestId });
+        });
+        notification.show();
+      } : undefined;
+      xService = createDesktopXService({
+        runtime, repository, importBridge: importPort, notify: deliverX,
+        allowedOrigin: () => supervisor.state?.origin,
+      });
+      xImport = createDesktopXImport({
+        protectedStore: protectedStore(join(settingsRootPath, "x-import")),
+        onImport: (cookies, permit) => xService.importCookies(cookies, permit),
+      });
+    } catch (error) {
+      // An unavailable optional reader must not prevent offline local analysis.
+      xInitializationError = X_SESSION_ERRORS.includes(error?.code) ? error.code : "storage_unavailable";
+      xImport?.dispose();
+      void xService?.dispose().catch(() => { xInitializationError = "session_persist_failed"; });
+      xService = undefined;
+    } finally { resolveXInitialization(); }
+  }
   let cleanupPromise = null;
   let removeNativeThemeListener = () => {};
 
@@ -968,6 +1070,7 @@ export async function launchDesktopRuntime({
       preloadPath: paths.preloadPath,
       supervisor,
       ...selectedLifecycleOptions,
+      beforeQuit: drainXSession,
       platform,
     });
   } catch (error) {
@@ -985,6 +1088,10 @@ export async function launchDesktopRuntime({
       removeNativeThemeListener = () => {};
       updater?.dispose();
       ipcInstallation.dispose?.();
+      xIpcInstallation.dispose?.();
+      xImport?.dispose();
+      await drainXSession();
+      xMediaProtocol?.unhandle?.("tibotattle-x-media");
       await controller.dispose();
       await backgroundController.drain();
       runtime.protocol?.unhandle?.("tibotattle-background");
@@ -1015,6 +1122,16 @@ export async function launchDesktopRuntime({
     // window. The renderer remains unauthorized until its BrowserWindow and
     // top frame exist.
     if (runtime.ipcMain?.handle) {
+      xIpcInstallation = installDesktopXIpc({
+        ipcMain: runtime.ipcMain,
+        service: xPort,
+        importBridge: { configure: async () => {
+          await xInitialized;
+          if (!xImport) throw new Error("X import unavailable");
+          return xImport.configure();
+        } },
+        authorize: event => lifecycle?.isAuthorizedSettingsFrame?.(event?.senderFrame, { sender: event?.sender }) === true,
+      });
       ipcInstallation = installDesktopIpc({
         ipcMain: runtime.ipcMain,
         handlers: controller.handlers,
@@ -1070,6 +1187,7 @@ export async function launchDesktopRuntime({
     }
     await markStartupPhase("lifecycle");
     await lifecycle.start();
+    initializeXReader();
     if (productionDistribution !== undefined) {
       await markStartupPhase("updater");
       // Electron's built-in autoUpdater lacks electron-updater's explicit
@@ -1140,6 +1258,7 @@ export async function launchDesktopRuntime({
     supervisor,
     controller,
     notificationCoordinator,
+    xService,
     settingsStore: store,
     settingsBackend: backend,
     ipc: ipcInstallation,

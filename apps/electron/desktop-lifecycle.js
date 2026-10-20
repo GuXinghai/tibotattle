@@ -43,6 +43,7 @@ const DEFAULT_WINDOW_OPTIONS = Object.freeze({
 });
 
 const SETTINGS_SECTIONS = Object.freeze([
+  "x",
   "general",
   "data",
   "notifications",
@@ -51,6 +52,7 @@ const SETTINGS_SECTIONS = Object.freeze([
 ]);
 
 const DASHBOARD_SECTIONS = Object.freeze([
+  "x",
   "overview",
   "usage",
   "allowance",
@@ -114,6 +116,7 @@ export function createDesktopLifecycle({
   onDesktopStatus,
   desktopStatusMonitorOptions = {},
   openDashboardExternal,
+  beforeQuit = async () => {},
 } = {}) {
   if (!app || typeof app.on !== "function") throw new TypeError("app is required");
   if (nativeAutoUpdater !== undefined
@@ -123,6 +126,7 @@ export function createDesktopLifecycle({
   assertFunction(BrowserWindow, "BrowserWindow");
   assertFunction(supervisor?.start, "supervisor.start");
   assertFunction(supervisor?.stop, "supervisor.stop");
+  assertFunction(beforeQuit, "beforeQuit");
   if (typeof preloadPath !== "string" || preloadPath.length === 0) {
     throw new TypeError("preloadPath is required");
   }
@@ -815,6 +819,8 @@ export function createDesktopLifecycle({
       autoHideMenuBar: false,
       webPreferences: {
         ...(windowOptions.webPreferences ?? {}),
+        // Local A/B candidate: keep dashboard timers and animations active while unfocused.
+        backgroundThrottling: false,
         preload: preloadPath,
         nodeIntegration: false,
         contextIsolation: true,
@@ -845,6 +851,7 @@ export function createDesktopLifecycle({
       policy,
       allowNotificationPermission: true,
       allowBackgroundResource: true,
+      allowXMediaResource: true,
     });
     let resolveDashboardLoad;
     let rejectDashboardLoad;
@@ -1409,6 +1416,9 @@ export function createDesktopLifecycle({
     stopDesktopStatusMonitor();
     const pendingStartup = startupAttemptPromise;
     shutdownPromise = enqueueExclusive(async () => {
+      // Session owners finish durable writes and report failures while the app
+      // can still show a native error. This hook does not delay startup.
+      await beforeQuit();
       destroyWindow();
       destroyRecoveryWindow();
       destroyTrayPopover();

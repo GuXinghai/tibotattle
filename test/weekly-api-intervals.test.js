@@ -109,6 +109,19 @@ test('source/version/closed-shape validation parity and cancellation',async()=>{
  }
  const controller=new AbortController();controller.abort();await assert.rejects(build([[0,0],[10,1]],[],{signal:controller.signal}),{name:'AbortError'});
 });
+
+test('Pro Lite to Pro upgrades preserve each plan and refuse intervals spanning a plan change',async()=>{
+ const result=await build([[0,0,'prolite'],[10,1,'prolite'],[20,0,'pro'],[30,1,'pro'],
+  [40,2,'prolite'],[50,2,'pro'],[60,3,'pro']],
+  [usage(5,'1',{plan:'prolite'}),usage(25,'2',{plan:'pro'}),usage(35,'1',{plan:'prolite'}),
+   usage(45,'2',{plan:'pro'}),usage(55,'3',{plan:'pro'})]);
+ validateWeeklyApiIntervals(result);
+ assert.equal(result.rows.find(r=>r.planType==='prolite'&&r.startMs===start).weeklyUsd,100);
+ assert.equal(result.rows.find(r=>r.planType==='pro'&&r.startMs===start+20*minute).weeklyUsd,200);
+ const crossing=result.rows.find(r=>r.planType==='prolite'&&r.startMs===start+10*minute);
+ assert.equal(crossing.reason,'plan_conflict');assert.equal(crossing.weeklyUsd,null);
+ assert.equal(result.rows.at(-1).planType,'pro');assert.equal(result.rows.at(-1).weeklyUsd,300);
+});
 test('production calibration projects exact intervals before transition derivation consumes snapshot storage',async()=>{
  const events=[usage(5,'1')],c=corpus([[0,0],[10,1]],events);
  Object.assign(c,{retainedUsageEvents:events.length,usageMetadataBytes:0,usageMetadataCapacity:events.length,

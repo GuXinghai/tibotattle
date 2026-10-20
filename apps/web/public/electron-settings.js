@@ -799,7 +799,7 @@ function initialTab(windowRef) {
   const candidate = typeof windowRef?.location?.hash === "string"
     ? windowRef.location.hash.replace(/^#settings\/?/u, "")
     : "";
-  return ["general", "tray", "data", "notifications", "about"].includes(candidate)
+  return ["general", "tray", "data", "notifications", "x", "about"].includes(candidate)
     ? candidate
     : "general";
 }

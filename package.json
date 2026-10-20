@@ -117,6 +117,7 @@
     "ajv": "^8.20.0",
     "ccusage": "20.0.18",
     "electron-updater": "6.8.9",
+    "hls.js": "1.7.3",
     "runcost": "0.2.1"
   },
   "engines": {

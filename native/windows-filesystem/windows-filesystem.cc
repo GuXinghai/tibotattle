@@ -809,7 +809,8 @@ bool OpenRelativeComponent(
     PSECURITY_DESCRIPTOR securityDescriptor,
     HANDLE* result,
     ULONG_PTR* information,
-    Failure* failure) {
+    Failure* failure,
+    bool synchronous = true) {
   if (component.empty()
       || component.size() > static_cast<std::size_t>(USHRT_MAX / sizeof(wchar_t))) {
     *failure = InvalidPath();
@@ -828,7 +829,9 @@ bool OpenRelativeComponent(
   objectAttributes.Length = sizeof(objectAttributes);
   objectAttributes.RootDirectory = parent;
   objectAttributes.ObjectName = &name;
-  objectAttributes.Attributes = kObjCaseInsensitive;
+  // The owner-repair metadata open cannot ask for READ_ATTRIBUTES. Fail in
+  // the kernel if that component itself is a reparse point instead.
+  objectAttributes.Attributes = kObjCaseInsensitive | (synchronous ? 0 : 0x00001000 /* OBJ_DONT_REPARSE */);
   objectAttributes.SecurityDescriptor = securityDescriptor;
   NativeIoStatusBlock ioStatus{};
   const NativeNtStatus status = createFile(
@@ -840,7 +843,7 @@ bool OpenRelativeComponent(
       FILE_ATTRIBUTE_NORMAL,
       shareMode,
       disposition,
-      createOptions | kFileOpenReparsePoint | kFileSynchronousIoNonalert,
+      createOptions | kFileOpenReparsePoint | (synchronous ? kFileSynchronousIoNonalert : 0),
       nullptr,
       0);
   if (status < 0 || *result == nullptr || *result == INVALID_HANDLE_VALUE) {
@@ -1067,12 +1070,13 @@ bool BuildOwnerOnlyObjectSecurity(
     std::vector<BYTE>* ownerSid,
     PACL* acl,
     PSECURITY_DESCRIPTOR* descriptor,
-    SECURITY_ATTRIBUTES* attributes) {
+    SECURITY_ATTRIBUTES* attributes,
+    DWORD inheritance = NO_INHERITANCE) {
   if (!GetCurrentUserSid(ownerSid)) return false;
   EXPLICIT_ACCESSW entry{};
   entry.grfAccessPermissions = accessMask;
   entry.grfAccessMode = SET_ACCESS;
-  entry.grfInheritance = NO_INHERITANCE;
+  entry.grfInheritance = inheritance;
   entry.Trustee.TrusteeForm = TRUSTEE_IS_SID;
   entry.Trustee.TrusteeType = TRUSTEE_IS_USER;
   entry.Trustee.ptstrName = reinterpret_cast<LPWSTR>(ownerSid->data());
@@ -3316,6 +3320,359 @@ napi_value ReleaseAccountlessInstallationCredentialMutexCallback(
   return undefined;
 }
 
+// Chromium owns profile descendants and grants its network sandbox a capability
+// SID. Unlike protected records, browser directories must propagate the current
+// owner's access to files Chromium creates. This boundary is deliberately
+// separate from SetOwnerOnlyDacl/ensureDirectory and never returns file content.
+constexpr std::size_t kBrowserProfileMaximumEntries = 4096;
+constexpr std::size_t kBrowserProfileMaximumDepth = 32;
+
+bool IsCurrentLogonSid(PSID sid) {
+  HANDLE token = nullptr;
+  if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+  DWORD length = 0;
+  GetTokenInformation(token, TokenGroups, nullptr, 0, &length);
+  std::vector<BYTE> bytes(length);
+  const bool read = length > 0 && GetTokenInformation(token, TokenGroups, bytes.data(), length, &length);
+  CloseHandle(token);
+  if (!read) return false;
+  const auto* groups = reinterpret_cast<TOKEN_GROUPS*>(bytes.data());
+  for (DWORD i = 0; i < groups->GroupCount; ++i) {
+    if ((groups->Groups[i].Attributes & SE_GROUP_LOGON_ID) == SE_GROUP_LOGON_ID
+        && IsSidEqual(sid, groups->Groups[i].Sid)) return true;
+  }
+  return false;
+}
+
+bool IsBrowserCapabilitySid(PSID sid) {
+  const SID_IDENTIFIER_AUTHORITY appAuthority = SECURITY_APP_PACKAGE_AUTHORITY;
+  // Chromium's named sandbox capabilities contain the named-capability RID
+  // and eight hash DWORDs. Do not accept shared well-known capabilities such
+  // as InternetClient as a substitute for that application-specific principal.
+  return IsValidSid(sid) && *GetSidSubAuthorityCount(sid) == 10
+      && std::memcmp(GetSidIdentifierAuthority(sid), &appAuthority, sizeof(appAuthority)) == 0
+      && *GetSidSubAuthority(sid, 0) == SECURITY_CAPABILITY_BASE_RID
+      && *GetSidSubAuthority(sid, 1) == 1024;
+}
+
+bool ValidateBrowserProfileSecurity(HANDLE handle, bool migration, bool directory, Failure* failure,
+    bool kernelRejectedReparse = false) {
+  FILE_STANDARD_INFO standard{};
+  if (!GetFileInformationByHandleEx(handle, FileStandardInfo, &standard, sizeof(standard))) {
+    *failure = FromLastError(); failure->stage = "browser_profile_standard_metadata"; return false;
+  }
+  // Owner-only READ_CONTROL/WRITE_DAC repair opens use OBJ_DONT_REPARSE;
+  // ordinary opens validate attributes through this same held handle.
+  bool reparse = false;
+  if (!kernelRejectedReparse && !HasReparsePoint(handle, &reparse)) { *failure = FromLastError(); return false; }
+  if (reparse) { *failure = ReparsePoint(); return false; }
+  if ((standard.Directory != FALSE) != directory) {
+    *failure = directory ? NotDirectory() : NotRegularFile(); return false;
+  }
+  if (!directory && standard.NumberOfLinks != 1) { *failure = HardLink(); return false; }
+  std::vector<BYTE> user;
+  if (!GetCurrentUserSid(&user)) { *failure = OperationFailed(); return false; }
+  PSID owner = nullptr;
+  PACL acl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  const DWORD status = GetSecurityInfo(handle, SE_FILE_OBJECT,
+      OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &acl, nullptr, &descriptor);
+  if (status != ERROR_SUCCESS) { SetLastError(status); *failure = FromLastError(); return false; }
+  bool valid = owner && IsSidEqual(owner, user.data()) && acl != nullptr;
+  DWORD ownerMask = 0;
+  bool ownerInheritance = false;
+  ACL_SIZE_INFORMATION size{};
+  valid = valid && GetAclInformation(acl, &size, sizeof(size), AclSizeInformation);
+  for (DWORD i = 0; valid && i < size.AceCount; ++i) {
+    void* raw = nullptr;
+    if (!GetAce(acl, i, &raw)) { valid = false; break; }
+    const auto* ace = static_cast<ACCESS_ALLOWED_ACE*>(raw);
+    const DWORD offset = FIELD_OFFSET(ACCESS_ALLOWED_ACE, SidStart);
+    if (ace->Header.AceType != ACCESS_ALLOWED_ACE_TYPE || ace->Header.AceSize < offset + 8) {
+      valid = false; break;
+    }
+    PSID sid = const_cast<DWORD*>(&ace->SidStart);
+    if (!IsValidSid(sid) || GetLengthSid(sid) > ace->Header.AceSize - offset) { valid = false; break; }
+    if (IsSidEqual(sid, user.data())) {
+      if ((ace->Header.AceFlags & INHERIT_ONLY_ACE) == 0) ownerMask |= ace->Mask;
+      if ((ace->Header.AceFlags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE))
+          == (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)
+          && (ace->Header.AceFlags & (INHERIT_ONLY_ACE | NO_PROPAGATE_INHERIT_ACE)) == 0) ownerInheritance = true;
+    } else if (!IsBrowserCapabilitySid(sid)
+        && !(migration && (IsWellKnownSid(sid, WinLocalSystemSid) || IsCurrentLogonSid(sid)))) {
+      valid = false;
+    }
+  }
+  if (!migration) valid = valid && (ownerMask & FILE_ALL_ACCESS) == FILE_ALL_ACCESS
+      && (!directory || ownerInheritance);
+  LocalFree(descriptor);
+  if (!valid) *failure = SecurityPolicy("browser_profile_acl");
+  return valid;
+}
+
+bool SetBrowserProfileDacl(HANDLE handle, bool directory, bool propagate = true) {
+  std::vector<BYTE> user;
+  PACL acl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  SECURITY_ATTRIBUTES attributes{};
+  if (!BuildOwnerOnlyObjectSecurity(FILE_ALL_ACCESS, &user, &acl, &descriptor, &attributes,
+      directory ? SUB_CONTAINERS_AND_OBJECTS_INHERIT : NO_INHERITANCE)) return false;
+  // The open handle, not a second path lookup, is the mutation authority.
+  const DWORD status = propagate
+      ? SetSecurityInfo(handle, SE_FILE_OBJECT,
+        DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION, nullptr, nullptr, acl, nullptr)
+      : SetKernelObjectSecurity(handle, DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+        descriptor) ? ERROR_SUCCESS : GetLastError();
+  FreeOwnerOnlySecurity(acl, descriptor);
+  SetLastError(status);
+  return status == ERROR_SUCCESS;
+}
+
+struct BrowserProfileEntry {
+  HANDLE handle = INVALID_HANDLE_VALUE;
+  bool directory = false;
+  bool cookies = false;
+  std::size_t depth = 0;
+};
+struct BrowserProfileHandles {
+  std::vector<BrowserProfileEntry> entries;
+  ~BrowserProfileHandles() { for (auto& entry : entries) CloseHandle(entry.handle); }
+};
+
+bool EnumerateBrowserProfile(
+    BrowserProfileHandles* held, bool migration, Failure* failure, std::size_t* cookieBytes) {
+  std::vector<BYTE> buffer(64 * 1024);
+  for (std::size_t parentIndex = 0; parentIndex < held->entries.size(); ++parentIndex) {
+    const auto parent = held->entries[parentIndex];
+    if (!parent.directory) continue;
+    bool restart = true;
+    for (;;) {
+      if (!GetFileInformationByHandleEx(parent.handle,
+          restart ? FileIdBothDirectoryRestartInfo : FileIdBothDirectoryInfo,
+          buffer.data(), static_cast<DWORD>(buffer.size()))) {
+        if (GetLastError() == ERROR_NO_MORE_FILES) break;
+        *failure = FromLastError(); failure->stage = "browser_profile_enumeration"; return false;
+      }
+      restart = false;
+      std::size_t offset = 0;
+      for (;;) {
+        if (offset + FIELD_OFFSET(FILE_ID_BOTH_DIR_INFO, FileName) > buffer.size()) {
+          *failure = OperationFailed(); return false;
+        }
+        const auto* item = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(buffer.data() + offset);
+        if ((item->FileNameLength % sizeof(wchar_t)) != 0
+            || item->FileNameLength > buffer.size() - offset - FIELD_OFFSET(FILE_ID_BOTH_DIR_INFO, FileName)) {
+          *failure = OperationFailed(); return false;
+        }
+        const std::wstring name(item->FileName, item->FileNameLength / sizeof(wchar_t));
+        if (name != L"." && name != L"..") {
+          if (held->entries.size() >= kBrowserProfileMaximumEntries || parent.depth >= kBrowserProfileMaximumDepth) {
+            *failure = {"BROWSER_PROFILE_BOUND_EXCEEDED"}; return false;
+          }
+          if (name.empty() || name.find_first_of(L"\\/:") != std::wstring::npos
+              || name.find(L'\0') != std::wstring::npos) { *failure = InvalidPath(); return false; }
+          if ((item->FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
+            *failure = ReparsePoint(); return false;
+          }
+          const bool directory = (item->FileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+          HANDLE child = INVALID_HANDLE_VALUE;
+          const DWORD access = READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE
+              | (directory ? FILE_LIST_DIRECTORY : (migration ? 0 : FILE_READ_DATA | FILE_WRITE_DATA))
+              | (migration ? WRITE_DAC : 0);
+          if (!OpenRelativeComponent(parent.handle, name, access,
+              FILE_SHARE_READ | (migration ? 0 : FILE_SHARE_WRITE), kFileOpen,
+              directory ? kFileDirectoryFile : kFileNonDirectoryFile,
+              nullptr, &child, nullptr, failure)) {
+            if (!migration || failure->code != AccessDenied().code
+                || !OpenRelativeComponent(parent.handle, name,
+                  READ_CONTROL | WRITE_DAC,
+                  FILE_SHARE_READ, kFileOpen, directory ? kFileDirectoryFile : kFileNonDirectoryFile,
+                  nullptr, &child, nullptr, failure, false)) { failure->stage = "browser_profile_owner_open"; return false; }
+            // Legacy capability-only directories cannot be enumerated first.
+            // Verify the owner/closed ACL, then repair only this pinned object.
+            if (!ValidateBrowserProfileSecurity(child, true, directory, failure, true)) { CloseHandle(child); return false; }
+            // Traversal-only repair MUST NOT propagate an ACE into descendants
+            // which have not yet passed owner/link/ACL validation.
+            if (!SetBrowserProfileDacl(child, false, false)) { CloseHandle(child); *failure = FromLastError(); failure->stage = "browser_profile_traversal_repair"; return false; }
+            HANDLE traversable = INVALID_HANDLE_VALUE;
+            // Both the parent and exact child remain held without delete
+            // sharing. Reopen relative to that pinned parent and compare IDs;
+            // never resolve the absolute path again after the DACL update.
+            if (!OpenRelativeComponent(parent.handle, name, access, FILE_SHARE_READ, kFileOpen,
+                directory ? kFileDirectoryFile : kFileNonDirectoryFile, nullptr, &traversable, nullptr, failure)) {
+              CloseHandle(child); failure->stage = "browser_profile_handle_reopen"; return false;
+            }
+            FILE_ID_INFO before{}, after{};
+            const bool same = GetFileInformationByHandleEx(child, FileIdInfo, &before, sizeof(before))
+                && GetFileInformationByHandleEx(traversable, FileIdInfo, &after, sizeof(after))
+                && before.VolumeSerialNumber == after.VolumeSerialNumber
+                && std::memcmp(before.FileId.Identifier, after.FileId.Identifier, sizeof(before.FileId.Identifier)) == 0;
+            CloseHandle(child);
+            child = traversable;
+            if (!same) { CloseHandle(child); *failure = IdentityMismatch(); return false; }
+          }
+          // Keep each accepted name pinned until the bounded traversal and ACL
+          // update finish; refuse links/foreign principals before its mutation.
+          held->entries.push_back({child, directory, parent.depth == 1 && name == L"Cookies", parent.depth + 1});
+          if (!ValidateBrowserProfileSecurity(child, migration, directory, failure)) { failure->stage = "browser_profile_child_validation"; return false; }
+          if (held->entries.back().cookies) {
+            LARGE_INTEGER bytes{};
+            if (!GetFileSizeEx(child, &bytes) || bytes.QuadPart < 0) { *failure = OperationFailed(); failure->stage = "browser_profile_cookie_metadata"; return false; }
+            *cookieBytes = static_cast<std::size_t>(bytes.QuadPart);
+          }
+        }
+        if (item->NextEntryOffset == 0) break;
+        if (item->NextEntryOffset < FIELD_OFFSET(FILE_ID_BOTH_DIR_INFO, FileName)
+            || item->NextEntryOffset > buffer.size() - offset) { *failure = OperationFailed(); return false; }
+        offset += item->NextEntryOffset;
+      }
+    }
+  }
+  return true;
+}
+
+bool InspectBrowserCookieStorage(BrowserProfileHandles* held, Failure* failure,
+    bool* cookiePresent, std::size_t* cookieBytes, bool* cookieBusy) {
+  HANDLE network = INVALID_HANDLE_VALUE;
+  if (!OpenRelativeComponent(held->entries[0].handle, L"Network",
+      FILE_TRAVERSE | FILE_ADD_FILE | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, kFileOpen, kFileDirectoryFile,
+      nullptr, &network, nullptr, failure)) {
+    if (failure->code == NotFound().code) return true;
+    failure->stage = "browser_profile_network_read"; return false;
+  }
+  held->entries.push_back({network, true, false, 1});
+  if (!ValidateBrowserProfileSecurity(network, false, true, failure)) return false;
+  for (const auto* name : { L"Cookies", L"Cookies-journal", L"Cookies-wal", L"Cookies-shm" }) {
+    HANDLE file = INVALID_HANDLE_VALUE;
+    bool sharingLocked = false;
+    if (!OpenRelativeComponent(network, name, FILE_READ_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, kFileOpen, kFileNonDirectoryFile,
+        nullptr, &file, nullptr, failure)) {
+      if (failure->code == NotFound().code) continue;
+      if (GetLastError() != ERROR_SHARING_VIOLATION
+          || !OpenRelativeComponent(network, name, FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, kFileOpen, kFileNonDirectoryFile,
+            nullptr, &file, nullptr, failure)) {
+        failure->stage = "browser_profile_cookie_read"; return false;
+      }
+      sharingLocked = true;
+      *cookieBusy = true;
+    }
+    held->entries.push_back({file, false, name == std::wstring(L"Cookies"), 2});
+    if (!ValidateBrowserProfileSecurity(file, false, false, failure)) return false;
+    DWORD attributes = 0;
+    if (!GetFileAttributesFromHandle(file, &attributes)) { *failure = FromLastError(); return false; }
+    if ((attributes & FILE_ATTRIBUTE_READONLY) != 0) {
+      *failure = AccessDenied(); failure->stage = "browser_profile_cookie_write"; return false;
+    }
+    // Health checks coexist with Chromium's delete-sharing SQLite handles.
+    // Bind metadata to the held handles and reject a changed identity between
+    // the independent read/write opens; no payloads or DACLs are mutated here.
+    HANDLE writer = INVALID_HANDLE_VALUE;
+    if (!sharingLocked && !OpenRelativeComponent(network, name, FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | READ_CONTROL | SYNCHRONIZE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, kFileOpen, kFileNonDirectoryFile,
+        nullptr, &writer, nullptr, failure)) {
+      if (GetLastError() != ERROR_SHARING_VIOLATION) {
+        failure->stage = "browser_profile_cookie_write"; return false;
+      }
+      *cookieBusy = true;
+    }
+    if (writer != INVALID_HANDLE_VALUE) {
+      HandleIdentity left, right;
+      const bool same = GetIdentity(file, &left) && GetIdentity(writer, &right) && EqualIdentity(left, right);
+      CloseHandle(writer);
+      if (!same) { *failure = IdentityMismatch(); return false; }
+    }
+    if (held->entries.back().cookies) {
+      LARGE_INTEGER bytes{};
+      if (!GetFileSizeEx(file, &bytes) || bytes.QuadPart < 0) { *failure = OperationFailed(); return false; }
+      *cookiePresent = true;
+      *cookieBytes = static_cast<std::size_t>(bytes.QuadPart);
+    }
+  }
+  return true;
+}
+
+napi_value BrowserProfileCallback(napi_env env, napi_callback_info info, bool migration) {
+  std::vector<napi_value> arguments;
+  std::wstring path;
+  if (!GetArguments(env, info, &arguments, 1) || !GetString(env, arguments[0], &path))
+    return ThrowFailure(env, InvalidConfiguration());
+  ParsedPath parsed;
+  Failure failure = OperationFailed();
+  if (!ParsePath(path, &parsed)) return ThrowFailure(env, InvalidPath());
+  RelativeHandles prepared;
+  HandleIdentity preparedIdentity;
+  if (migration) {
+    if (!EnsureDirectoryPath(parsed, &prepared.final, &preparedIdentity, &failure)) return ThrowFailure(env, failure);
+    // Newly-created directory handles carry DELETE for failure cleanup; close
+    // that handle before acquiring the non-delete-sharing migration handle.
+    // Its recorded identity must still match before any profile mutation.
+    CloseHandle(prepared.final);
+    prepared.final = INVALID_HANDLE_VALUE;
+  }
+  RelativeHandles opened;
+  OpenRelativeOptions options;
+  options.finalDirectoryKnown = true;
+  options.finalDirectory = true;
+  options.access = kDirectoryTraversalAccess | (migration ? WRITE_DAC : FILE_ADD_FILE);
+  options.shareMode = FILE_SHARE_READ | (migration ? 0 : FILE_SHARE_WRITE);
+  options.protectedAncestorDepth = parsed.components.size();
+  options.protectedAncestorShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  bool missing = false;
+  if (!OpenRelativePath(parsed, options, &opened, &missing, &failure)
+      || missing || !ResolveFinalPath(opened.final, &parsed)) return ThrowFailure(env, failure);
+  if (migration) {
+    HandleIdentity observed;
+    if (!GetIdentity(opened.final, &observed) || !EqualIdentity(preparedIdentity, observed))
+      return ThrowFailure(env, IdentityMismatch());
+  }
+  SecuritySnapshot rootSecurity;
+  if (!ReadSecurity(opened.final, &rootSecurity) || !rootSecurity.daclProtected)
+    return ThrowFailure(env, SecurityPolicy("browser_profile_root_protection"));
+  if (!ValidateBrowserProfileSecurity(opened.final, migration, true, &failure)) return ThrowFailure(env, failure);
+  BrowserProfileHandles held;
+  held.entries.push_back({opened.releaseFinal(), true, false, 0});
+  std::size_t cookieBytes = 0;
+  bool cookiePresent = false;
+  bool cookieBusy = false;
+  if (migration) {
+    if (!EnumerateBrowserProfile(&held, true, &failure, &cookieBytes)) return ThrowFailure(env, failure);
+    cookiePresent = std::any_of(held.entries.begin(), held.entries.end(), [](const auto& entry) { return entry.cookies; });
+  } else if (!InspectBrowserCookieStorage(&held, &failure, &cookiePresent, &cookieBytes, &cookieBusy)) return ThrowFailure(env, failure);
+  if (migration) {
+    // Each object is preflighted before its mutation. Legacy directories may
+    // already have needed owner-only repair to permit bounded enumeration.
+    // A partial OS failure retains owner-only ACLs and is explicitly retriable.
+    // Child names cannot be replaced while their non-delete-sharing handles live.
+    for (auto& entry : held.entries) {
+      if (!SetBrowserProfileDacl(entry.handle, entry.directory)
+          || !ValidateBrowserProfileSecurity(entry.handle, false, entry.directory, &failure)) {
+        if (failure.code == OperationFailed().code) failure = FromLastError();
+        return ThrowFailure(env, failure);
+      }
+    }
+  }
+  napi_value result, value;
+  napi_create_object(env, &result);
+  napi_create_uint32(env, static_cast<uint32_t>(held.entries.size()), &value);
+  napi_set_named_property(env, result, "entries", value);
+  napi_get_boolean(env, cookiePresent, &value);
+  napi_set_named_property(env, result, "cookieDatabasePresent", value);
+  napi_get_boolean(env, cookieBusy, &value);
+  napi_set_named_property(env, result, "cookieDatabaseBusy", value);
+  napi_create_double(env, static_cast<double>(cookieBytes), &value);
+  napi_set_named_property(env, result, "cookieDatabaseBytes", value);
+  return result;
+}
+napi_value PrepareBrowserProfileCallback(napi_env env, napi_callback_info info) {
+  return BrowserProfileCallback(env, info, true);
+}
+napi_value InspectBrowserProfileCallback(napi_env env, napi_callback_info info) {
+  return BrowserProfileCallback(env, info, false);
+}
+
 void DefineMethod(napi_env env, napi_value exports, const char* name, napi_callback callback) {
   napi_value function;
   napi_create_function(env, name, NAPI_AUTO_LENGTH, callback, nullptr, &function);
@@ -3327,6 +3684,11 @@ void DefineMethod(napi_env env, napi_value exports, const char* name, napi_callb
 NAPI_MODULE_INIT() {
   DefineMethod(env, exports, "inspectPath", InspectPathCallback);
   DefineMethod(env, exports, "ensureDirectory", EnsureDirectoryCallback);
+  DefineMethod(env, exports, "prepareBrowserProfile", PrepareBrowserProfileCallback);
+  DefineMethod(env, exports, "inspectBrowserProfile", InspectBrowserProfileCallback);
+  napi_value browserProfileVersion;
+  napi_create_string_utf8(env, "windows-browser-profile-v1", NAPI_AUTO_LENGTH, &browserProfileVersion);
+  napi_set_named_property(env, exports, "browserProfileContractVersion", browserProfileVersion);
   DefineMethod(env, exports, "readFile", ReadFileCallback);
   DefineMethod(env, exports, "createFile", CreateFileCallback);
   DefineMethod(env, exports, "deleteFile", DeleteFileCallback);

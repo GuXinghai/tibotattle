@@ -5,6 +5,29 @@ export const ELECTRON_LOOPBACK_HOST = "127.0.0.1";
 const CODEX_THREAD_URL_PATTERN =
   /^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CODEX_THREAD_URL_PREFIX = "codex://threads/";
+const X_MEDIA_RESOURCE_PATTERN = /^tibotattle-x-media:\/\/resource\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const BLOB_MEDIA_PATH_PATTERN = /^\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+
+function trustedDashboardResourceFrame(details, contents, origin) {
+  try {
+    const frame = details.frame;
+    const source = new URL(frame.url);
+    return contents?.mainFrame === frame && frame.parent === null
+      && source.origin === origin && source.pathname === "/" && source.search === ""
+      && source.username === "" && source.password === "";
+  } catch { return false; }
+}
+
+function isDashboardMediaBlob(url, origin) {
+  try {
+    if (!url.startsWith("blob:")) return false;
+    const inner = new URL(url.slice(5));
+    return inner.origin === origin && BLOB_MEDIA_PATH_PATTERN.test(inner.pathname)
+      && inner.search === "" && inner.hash === ""
+      && inner.username === "" && inner.password === ""
+      && `blob:${inner.href}` === url;
+  } catch { return false; }
+}
 
 /**
  * Parse the one canonical Codex thread target accepted by the host. This is
@@ -192,6 +215,7 @@ export function installLoopbackNavigationPolicy({
   policy,
   allowNotificationPermission = false,
   allowBackgroundResource = false,
+  allowXMediaResource = false,
 } = {}) {
   if (!webContents || typeof webContents.on !== "function") {
     throw new TypeError("webContents is required");
@@ -220,7 +244,21 @@ export function installLoopbackNavigationPolicy({
     if (sessionInstallation === undefined) {
       const requestFilter = { urls: ["<all_urls>"] };
       const backgroundContents = new Map();
+      const xMediaContents = new Map();
       const onBeforeRequest = (details, callback) => {
+        if (typeof details?.url === "string" && (details.url.startsWith("tibotattle-x-media:") || details.url.startsWith("blob:"))) {
+          const contents = xMediaContents.get(details.webContentsId);
+          const permittedMethod = ["GET", "HEAD"].includes(details.method);
+          const permittedResource = X_MEDIA_RESOURCE_PATTERN.test(details.url)
+            && ["image", "media", "xhr"].includes(details.resourceType);
+          // MSE object URLs are only playable media, never scripts, frames,
+          // workers, downloads, or fetch destinations for arbitrary bytes.
+          const permittedBlob = details.resourceType === "media" && isDashboardMediaBlob(details.url, policy.origin);
+          const allowed = permittedMethod && (permittedResource || permittedBlob)
+            && trustedDashboardResourceFrame(details, contents, policy.origin);
+          callback?.({ cancel: !allowed });
+          return allowed;
+        }
         if (typeof details?.url === "string" && details.url.startsWith("tibotattle-background:")) {
           const contents = backgroundContents.get(details.webContentsId);
           let allowed = false;
@@ -245,6 +283,7 @@ export function installLoopbackNavigationPolicy({
         requestFilter,
         onBeforeRequest,
         backgroundContents,
+        xMediaContents,
       };
       sessionPolicyInstallations.set(session, sessionInstallation);
     } else if (sessionInstallation.policyOrigin !== (policy.origin ?? null)) {
@@ -262,6 +301,9 @@ export function installLoopbackNavigationPolicy({
     if (allowBackgroundResource && Number.isSafeInteger(webContents.id)) {
       sessionInstallation.backgroundContents.set(webContents.id, webContents);
     }
+    if (allowXMediaResource && Number.isSafeInteger(webContents.id)) {
+      sessionInstallation.xMediaContents.set(webContents.id, webContents);
+    }
   }
   const permissionInstallation = installSessionPermissionPolicy({ session, webContents, allowNotificationPermission });
 
@@ -277,6 +319,7 @@ export function installLoopbackNavigationPolicy({
       permissionInstallation.remove();
       if (sessionInstallation === undefined) return;
       sessionInstallation.backgroundContents.delete(webContents.id);
+      sessionInstallation.xMediaContents.delete(webContents.id);
       sessionInstallation.count -= 1;
       if (sessionInstallation.count > 0) return;
       session.webRequest?.onBeforeRequest?.(sessionInstallation.requestFilter, null);

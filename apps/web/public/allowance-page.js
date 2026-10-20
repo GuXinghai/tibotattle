@@ -264,13 +264,14 @@ export function mountAllowancePage({ documentRef, t, formatMoney, formatPp,
     else if(dialog.open) dialog.close();
   });
   return {
+    setLoadState(state) {chart.setLoadState(state);},
     update(next) {
       if(scope===next.scope && data.generatedAt && Date.parse(next.generatedAt)<Date.parse(data.generatedAt)){
         chart.update({period:next.period,planType:next.planType,projection:next.weeklyApi,
           generatedAt:next.generatedAt,endMs:next.endMs,startMs:next.startMs});return;
       }
       if(scope===next.scope && data.weeklyApi?.status==='available' && next.weeklyApi?.status==='unavailable'
-          && /^weekly_api_(projection_failed|resource_limit|pricing_invalid|quota_invalid)$/.test(next.weeklyApi.reason)) {
+          && /^weekly_api_(source_pending|intervals_unavailable|projection_failed|resource_limit|pricing_invalid|quota_invalid)$/.test(next.weeklyApi.reason)) {
         next={...data,intervalUpdateFailure:next.weeklyApi.reason};
       }
       const changedReport=data.weeklyApi!==next.weeklyApi||data.generatedAt!==next.generatedAt;

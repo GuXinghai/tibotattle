@@ -4,6 +4,7 @@
  * use these values, so there is nothing to translate between them.
  */
 export const DASHBOARD_PAGES = Object.freeze([
+  "x",
   "overview",
   "usage",
   "allowance",
@@ -47,8 +48,10 @@ export function parseDashboardHash(hash) {
  * with `parseDashboardHash`) if the first hash must select a view.
  */
 export function mountDashboardNavigation({ documentRef, windowRef }) {
-  const links = [...documentRef.querySelectorAll("[data-nav]")];
-  const pages = [...documentRef.querySelectorAll("[data-dashboard-page]")];
+  const desktopX = windowRef.tibotattleDesktop?.version === 'v1' && typeof windowRef.tibotattleDesktop.getXStatus === 'function';
+  const available = element => element.dataset.desktopOnly !== 'true' || desktopX;
+  const links = [...documentRef.querySelectorAll("[data-nav]")].filter(available);
+  const pages = [...documentRef.querySelectorAll("[data-dashboard-page]")].filter(available);
   let activePage = null;
 
   function focusPageHeading(page) {
@@ -97,7 +100,7 @@ export function mountDashboardNavigation({ documentRef, windowRef }) {
   function syncNavigationFromHash() {
     const { page: target, view } = parseDashboardHash(windowRef.location.hash);
     const hadActivePage = activePage !== null;
-    const page = target ?? activePage ?? DEFAULT_PAGE;
+    const page = (pages.some(element=>element.dataset.dashboardPage===target)?target:null) ?? activePage ?? DEFAULT_PAGE;
     if (setPage(page, { focusHeading: hadActivePage })) {
       if (target !== null && view !== null) requestView(page, view);
       if (hadActivePage) windowRef.scrollTo?.({ top: 0, behavior: "instant" });

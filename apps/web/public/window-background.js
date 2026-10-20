@@ -34,7 +34,7 @@ export async function mountWindowBackground({ documentRef = globalThis.document,
   documentRef.body.prepend(layer);
   let state = { color: null, mask: 35, imageUrl: null }, busy = false, disposed = false;
   let readVersion = 0, tail = Promise.resolve(), draftVersion = 0, patchTimer = null;
-  let imageSize = null, imageVersion = 0, copyFrame = null;
+  let imageSize = null, imageVersion = 0, copyFrame = null, displayedImage = null, pendingImageStart = null;
   const copySurfaces = "dialog[open], .info-popover, .performance-tooltip, .refresh-notice-content, [popover]:popover-open, .work-usage-dialog-header, .model-performance-dialog-header";
   // Only the imported wallpaper is copied. Never sample the page, text or charts.
   // Paint containment gives each surface a fixed decoration that survives its
@@ -122,22 +122,49 @@ export async function mountWindowBackground({ documentRef = globalThis.document,
     // Only a validated opaque local resource URL reaches this style. Keep the same
     // decoded image through mask/color edits and every resize.
     const imageStyle = state.imageUrl ? `url("${state.imageUrl}")` : "none";
-    root.style.setProperty("--window-background-image", imageStyle);
-    root.style.setProperty("--window-background-mask", state.imageUrl ? state.mask / 100 : 0);
+    const imageReady = displayedImage !== null && displayedImage === state.imageUrl;
+    root.style.setProperty("--window-background-image", imageReady ? imageStyle : "none");
+    root.style.setProperty("--window-background-mask", imageReady ? state.mask / 100 : 0);
     if (oldImage !== state.imageUrl) {
-      layer.style.backgroundImage = imageStyle;
+      if (pendingImageStart) windowRef.removeEventListener("load", pendingImageStart);
+      pendingImageStart = null;
+      displayedImage = null;
+      layer.style.backgroundImage = "none";
       imageSize = null;
       const version = ++imageVersion;
       root.style.setProperty("--window-background-copy-image", "none");
       if (state.imageUrl) {
+        const imageUrl = state.imageUrl;
         const image = new windowRef.Image();
-        image.onload = () => {
-          if (disposed || version !== imageVersion || !image.naturalWidth || !image.naturalHeight) return;
-          imageSize = { width: image.naturalWidth, height: image.naturalHeight };
-          root.style.setProperty("--window-background-copy-image", imageStyle);
-          scheduleCopies();
+        const failed = () => {
+          if (!disposed && version === imageVersion && controls) status("background.unavailable");
         };
-        image.src = state.imageUrl;
+        image.onerror = failed;
+        image.onload = async () => {
+          try {
+            if (typeof image.decode === "function") await image.decode();
+            if (disposed || version !== imageVersion || imageUrl !== state.imageUrl) return;
+            if (!image.naturalWidth || !image.naturalHeight) { failed(); return; }
+            imageSize = { width: image.naturalWidth, height: image.naturalHeight };
+            displayedImage = imageUrl;
+            // Establish cover coordinates before exposing either wallpaper or copies.
+            positionCopies();
+            layer.style.backgroundImage = imageStyle;
+            root.style.setProperty("--window-background-image", imageStyle);
+            root.style.setProperty("--window-background-mask", state.mask / 100);
+            root.style.setProperty("--window-background-copy-image", imageStyle);
+          } catch { failed(); }
+        };
+        const startImage = () => {
+          pendingImageStart = null;
+          if (!disposed && version === imageVersion) image.src = imageUrl;
+        };
+        // Images requested during document loading participate in its load event.
+        // Start afterwards so Electron's existing loadURL gate never waits for wallpaper.
+        if (["loading", "interactive"].includes(documentRef.readyState)) {
+          pendingImageStart = startImage;
+          windowRef.addEventListener("load", startImage, { once: true });
+        } else startImage();
       }
     }
     scheduleCopies();
@@ -223,7 +250,7 @@ export async function mountWindowBackground({ documentRef = globalThis.document,
     if (command.command === "windowBackground") void read();
   });
   await read();
-  return { teardown() { disposed = true; ++readVersion; ++imageVersion; copyObserver.disconnect(); if (copyFrame !== null) windowRef.cancelAnimationFrame(copyFrame); windowRef.removeEventListener("resize", scheduleCopies); windowRef.removeEventListener("scroll", scheduleCopies, true); for (const event of pickerEvents) windowRef.removeEventListener(event, scheduleCopies, true); if (patchTimer !== null) windowRef.clearTimeout(patchTimer); windowRef?.removeEventListener?.("tibotattle:locale-change", localeChanged); unsubscribe?.(); layer.remove(); } };
+  return { teardown() { disposed = true; ++readVersion; ++imageVersion; copyObserver.disconnect(); if (copyFrame !== null) windowRef.cancelAnimationFrame(copyFrame); if (pendingImageStart) windowRef.removeEventListener("load", pendingImageStart); windowRef.removeEventListener("resize", scheduleCopies); windowRef.removeEventListener("scroll", scheduleCopies, true); for (const event of pickerEvents) windowRef.removeEventListener(event, scheduleCopies, true); if (patchTimer !== null) windowRef.clearTimeout(patchTimer); windowRef?.removeEventListener?.("tibotattle:locale-change", localeChanged); unsubscribe?.(); layer.remove(); } };
 }
 
 if (typeof document !== "undefined") void mountWindowBackground();

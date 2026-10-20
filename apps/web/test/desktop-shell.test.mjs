@@ -123,6 +123,14 @@ test("desktop command bridge forwards only the closed automatic refresh mode", (
   mounted.teardown();
 });
 
+test('X notification navigation accepts only a fixed decimal post ID',()=>{
+  const{commandListeners,events,windowRef}=fakeWindow();const mounted=mountDesktopShell({documentRef:fakeDocument(),windowRef});
+  commandListeners[0]({command:'xPost',id:'123456789'});assert.equal(windowRef.location.hash,'#x');
+  assert.deepEqual(events.filter(event=>event.type==='tibotattle-x-open-post').map(event=>event.detail),[{id:'123456789'}]);
+  for(const command of [{command:'xPost',id:'https://x.com'},{command:'xPost',id:12},{command:'xPost',id:'123',url:'https://other.invalid'}])commandListeners[0](command);
+  assert.equal(events.filter(event=>event.type==='tibotattle-x-open-post').length,1);mounted.teardown();
+});
+
 test("desktop startup reapplies the persisted forced appearance", async () => {
   const { events, windowRef } = fakeWindow();
   windowRef.matchMedia = () => ({ matches: true });
@@ -140,6 +148,21 @@ test("desktop startup reapplies the persisted forced appearance", async () => {
     detail: { preference: "light", resolvedTheme: "light" },
   }]);
   mounted.teardown();
+});
+
+test("a delayed saved preference cannot overwrite a newer command or a disposed shell", async () => {
+  for (const action of ["appearance", "teardown"]) {
+    const { events, commandListeners, windowRef } = fakeWindow();
+    let resolveSettings;
+    windowRef.tibotattleDesktop.getSettings = () => new Promise(resolve => { resolveSettings = resolve; });
+    const mounted = mountDesktopShell({ documentRef: fakeDocument(), windowRef });
+    if (action === "teardown") mounted.teardown();
+    else commandListeners[0]({ command: "appearance", preference: "dark", resolvedTheme: "dark" });
+    resolveSettings({ settings: { appearance: "light" } });
+    await Promise.resolve();
+    assert.deepEqual(events.map(event => event.detail.resolvedTheme), action === "teardown" ? [] : ["dark"]);
+    mounted.teardown();
+  }
 });
 
 test("retired share-card commands are ignored and never become renderer events", () => {

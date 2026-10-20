@@ -24,6 +24,7 @@ const DESKTOP_LANGUAGE_BY_PICKER_VALUE = Object.freeze(
   ),
 );
 const DASHBOARD_SECTION_HASHES = Object.freeze({
+  x: "#x",
   overview: "#overview",
   usage: "#usage",
   allowance: "#allowance",
@@ -210,7 +211,7 @@ function mountApplicationTitlebar(documentRef, windowRef, bridge) {
  * ever accepting an arbitrary selector, hash, path, or URL.
  */
 export function navigateToDashboardSection(_documentRef, windowRef, section, settingsSection = "general") {
-  if (section === "settings" && !["general", "tray", "notifications", "data", "about"].includes(settingsSection)) return false;
+  if (section === "settings" && !["general", "tray", "notifications", "data", "x", "about"].includes(settingsSection)) return false;
   const hash = section === "settings" ? `#settings/${settingsSection}` : DASHBOARD_SECTION_HASHES[section];
   const location = windowRef?.location;
   if (typeof hash !== "string" || !location || typeof location !== "object") {
@@ -256,15 +257,17 @@ function applySidebarState(documentRef, collapsed) {
   return true;
 }
 
-function readPersistedSettings(bridge, applyLanguage, applySidebar, applyAppearance) {
+function readPersistedSettings(bridge, applyLanguage, applySidebar, applyAppearance, isCurrent) {
   if (typeof bridge?.getSettings !== "function") return;
   void bridge.getSettings().then((state) => {
+    if (!isCurrent()) return;
     const candidate = state?.settings?.language ?? state?.language;
-    applyLanguage(candidate);
     const sidebarCollapsed = state?.settings?.sidebarCollapsed ?? state?.sidebarCollapsed;
-    applySidebar(sidebarCollapsed);
     const appearance = state?.settings?.appearance ?? state?.appearance;
     applyAppearance(appearance);
+    applySidebar(sidebarCollapsed);
+    // Language dispatch may redraw the page. Apply the other saved preferences first.
+    applyLanguage(candidate);
   }).catch(() => {});
 }
 
@@ -302,7 +305,7 @@ function dispatchAppearanceOverride(windowRef, command) {
   return true;
 }
 
-function installCommandBridge(documentRef, windowRef, applyLanguage, applySidebar, refreshMenu, setFullscreen) {
+function installCommandBridge(documentRef, windowRef, applyLanguage, applySidebar, refreshMenu, setFullscreen, appearanceChanged) {
   const bridge = windowRef?.tibotattleDesktop;
   if (bridge?.version !== ELECTRON_API_VERSION
       || typeof bridge.onCommand !== "function") return () => {};
@@ -316,6 +319,13 @@ function installCommandBridge(documentRef, windowRef, applyLanguage, applySideba
       return;
     }
     if (command.command === "settingsChanged") { void refreshMenu(); return; }
+    if (command.command === 'xPost') {
+      if (Reflect.ownKeys(command).length !== 2 || typeof command.id !== 'string' || !/^[0-9]{1,24}$/u.test(command.id)) return;
+      if (navigateToDashboardSection(documentRef, windowRef, 'x') && typeof windowRef.CustomEvent === 'function') {
+        windowRef.dispatchEvent(new windowRef.CustomEvent('tibotattle-x-open-post', { detail: { id: command.id } }));
+      }
+      return;
+    }
     if (command.command === "refresh") {
       documentRef.querySelector?.("#refresh-button")?.click?.();
       return;
@@ -338,7 +348,7 @@ function installCommandBridge(documentRef, windowRef, applyLanguage, applySideba
       return;
     }
     if (command.command === "appearance") {
-      dispatchAppearanceOverride(windowRef, command);
+      if (dispatchAppearanceOverride(windowRef, command)) appearanceChanged();
       return;
     }
     if (command.command !== "language" || !LANGUAGE_VALUES.has(command.value)) return;
@@ -362,16 +372,20 @@ export function mountDesktopShell({
   settingsButton.hidden = false;
   const onSettings = () => openSettings(windowRef);
   const bridge = windowRef?.tibotattleDesktop;
+  let disposed = false;
+  let preferenceVersion = 0;
   const titlebar = mountApplicationTitlebar(documentRef, windowRef, bridge);
   const picker = documentRef.querySelector?.("[data-language-picker]");
-  const applySidebar = (collapsed) => applySidebarState(documentRef, collapsed);
+  const applySidebar = (collapsed) => { ++preferenceVersion; return applySidebarState(documentRef, collapsed); };
   const applyAppearance = (preference) => {
+    ++preferenceVersion;
     const resolvedTheme = resolveDesktopAppearance(preference, { windowRef });
     if (resolvedTheme === null) return false;
     return dispatchAppearanceOverride(windowRef, { preference, resolvedTheme });
   };
   let applyingLanguage = false;
   const applyLanguage = (value) => {
+    ++preferenceVersion;
     if (LANGUAGE_VALUES.has(value)) void titlebar.refresh();
     if (!LANGUAGE_VALUES.has(value) || !picker) return;
     applyingLanguage = true;
@@ -394,7 +408,9 @@ export function mountDesktopShell({
   };
   settingsButton.addEventListener("click", onSettings);
   picker?.addEventListener?.("change", onLanguageChange);
-  readPersistedSettings(bridge, applyLanguage, applySidebar, applyAppearance);
+  const initialPreferenceVersion = preferenceVersion;
+  readPersistedSettings(bridge, applyLanguage, applySidebar, applyAppearance,
+    () => !disposed && preferenceVersion === initialPreferenceVersion);
   const unsubscribeCommand = installCommandBridge(
     documentRef,
     windowRef,
@@ -402,9 +418,11 @@ export function mountDesktopShell({
     applySidebar,
     titlebar.refresh,
     titlebar.setFullscreen,
+    () => { ++preferenceVersion; },
   );
   const mounted = Object.freeze({
     teardown() {
+      disposed = true;
       settingsButton.removeEventListener?.("click", onSettings);
       picker?.removeEventListener?.("change", onLanguageChange);
       unsubscribeCommand();

@@ -67,9 +67,17 @@ styles. Collection retains companion readiness, bounded refresh, cancellation
 and host-owned cadence. Settings and accountless sharing use their existing
 versioned preload actions; no separate dashboard mode or presentation flags
 are required.
-The dashboard contains no social sign-in, legacy consent/pairing or device
+The dashboard contains no TiboTattle hosted sign-in, legacy consent/pairing or device
 disconnect UI. Legacy backend contracts remain available to their existing
 consumers, independently of this presentation change.
+
+The optional [X reader](../decisions/2026-10-20-optional-x-reader.md) is owned by
+Electron and uses its own authenticated webpage adapter, protected public-post
+cache, session directories and refresh scheduler. It consumes no usage-index
+content. The trusted dashboard receives validated reader models and opaque
+post-associated media references through the restricted desktop bridge; the
+remote X webpage has no access to that bridge. This is separate from the
+retired TiboTattle hosted sign-in and contribution paths.
 
 ## Local trust boundary
 

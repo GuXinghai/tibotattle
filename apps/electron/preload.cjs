@@ -27,8 +27,8 @@ const WINDOWS_TEST_LANE_ENV = "USAGE_MONITOR_TEST_LANE";
 const WINDOWS_TEST_LANE = "windows-electron-smoke";
 const LANGUAGES = Object.freeze(["system", "en", "zh-Hans", "es"]);
 const APPEARANCES = Object.freeze(["system", "light", "dark"]);
-const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance", "settings"]);
-const SETTINGS_SECTIONS = Object.freeze(["general", "tray", "notifications", "data", "about"]);
+const DASHBOARD_SECTIONS = Object.freeze(["overview", "usage", "allowance", "performance", "settings", "x"]);
+const SETTINGS_SECTIONS = Object.freeze(["general", "tray", "notifications", "data", "x", "about"]);
 const AUTOMATIC_REFRESH_MODES = Object.freeze(["quick", "detailed"]);
 const MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
 const SYSTEM_SETTINGS_TARGETS = Object.freeze(["startup", "notifications"]);
@@ -81,6 +81,13 @@ function invoke(action, args) {
     action,
     args: Object.freeze({ ...args }),
   }));
+}
+
+function invokeX(action, args = {}) {
+  return ipcRenderer.invoke('tibotattle:x-reader:v1', { action, args });
+}
+function xNoArguments(action, values) {
+  return values.length === 0 ? invokeX(action) : rejected('X operation takes no arguments');
 }
 
 function installTrustedCodexThreadLinkNavigation() {
@@ -151,6 +158,10 @@ function reorderCodexRootsMethod(action, value) {
 }
 
 function validDesktopCommand(value) {
+  if (value?.command === "xPost") {
+    return exactObject(value, ["command", "id"], "command") && typeof value.id === "string" && /^[0-9]{1,24}$/.test(value.id)
+      ? Object.freeze({ command: "xPost", id: value.id }) : null;
+  }
   if (value?.command === "settingsChanged") {
     return exactObject(value, ["command"], "command") ? Object.freeze({ command: "settingsChanged" }) : null;
   }
@@ -366,6 +377,31 @@ function installDesktopBridge() {
     ),
     showDiagnostics: (...values) => noArguments("showDiagnostics", values),
     revealLocalData: (...values) => noArguments("revealLocalData", values),
+    getXStatus: (...values) => xNoArguments('getXStatus', values),
+    refreshX: (...values) => xNoArguments('refreshX', values),
+    getXSettings: (...values) => xNoArguments('getXSettings', values),
+    cancelXLogin: (...values) => xNoArguments('cancelXLogin', values),
+    configureXImport: (...values) => xNoArguments('configureXImport', values),
+    logoutX: (...values) => xNoArguments('logoutX', values),
+    clearXCache: (...values) => xNoArguments('clearXCache', values),
+    listXPosts: (...values) => oneArgument('listXPosts', values, query => {
+      const keys = Object.hasOwn(query ?? {}, 'cursor') ? ['tab', 'cursor'] : ['tab'];
+      if (!exactObject(query, keys) || !['posts','replies','reposts','media'].includes(query.tab)
+          || (keys.length === 2 && (typeof query.cursor !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/u.test(query.cursor)))) return rejected('X query is invalid');
+      return invokeX('listXPosts', { ...query });
+    }),
+    getXPost: (...values) => oneArgument('getXPost', values, query => exactObject(query, ['id'])
+      && typeof query.id === 'string' && /^[0-9]{1,24}$/u.test(query.id)
+      ? invokeX('getXPost', { id: query.id }) : rejected('X post is invalid')),
+    beginXLogin: (...values) => oneArgument('beginXLogin', values, query => exactObject(query, ['method'])
+      && ['web','session'].includes(query.method) ? invokeX('beginXLogin', { method: query.method }) : rejected('X login is invalid')),
+    setXSettings: (...values) => oneArgument('setXSettings', values, value => {
+      if (!exactObject(value, ['refreshMinutes','proxyMode','proxyPort','notifyPosts','notifyReplies'])
+          || !(value.refreshMinutes === -1 || (Number.isSafeInteger(value.refreshMinutes) && value.refreshMinutes > 0 && value.refreshMinutes <= 2147483647))
+          || !['system','local'].includes(value.proxyMode) || !Number.isInteger(value.proxyPort) || value.proxyPort < 1 || value.proxyPort > 65535
+          || typeof value.notifyPosts !== 'boolean' || typeof value.notifyReplies !== 'boolean') return rejected('X settings are invalid');
+      return invokeX('setXSettings', { value: { ...value } });
+    }),
     getRefreshStatus: (...values) => noArguments("getRefreshStatus", values),
     refreshStarted: (...values) => oneArgument(
       "refreshStarted",

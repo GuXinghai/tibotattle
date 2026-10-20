@@ -387,41 +387,11 @@ body.native-dashboard .dashboard-shell {
   width: 100%;
   min-height: 0;
 }
-/* The AppKit shell marks this document before page scripts run. Give that
-   otherwise blank interval one static, truthful surface, then let the
-   existing first-result marker remove it. The normal browser keeps its
-   current dashboard-first rendering because this surface is native-only. */
-.dashboard-boot-state { display: none; }
-html.native-dashboard:not([data-local-dashboard-ready="true"]) .dashboard-boot-state,
-html:not([data-local-dashboard-ready="true"]) body.native-dashboard .dashboard-boot-state {
-  display: grid;
-  min-height: clamp(280px, 72vh, 560px);
-  padding: clamp(28px, 7vw, 72px) 0;
-  place-items: center;
-}
-.dashboard-boot-card {
-  display: grid;
-  gap: var(--space-4);
-  width: min(34rem, 100%);
-  padding: clamp(24px, 5vw, 40px);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-card);
-}
-.dashboard-boot-card .state-pill { margin-bottom: var(--space-1); }
-.dashboard-boot-title {
-  font-size: clamp(1.55rem, 3vw, 2.2rem);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -.025em;
-  line-height: 1.1;
-}
-.dashboard-boot-copy {
-  max-width: 29rem;
-  margin-bottom: 0;
-  color: var(--muted);
-  font-size: .88rem;
-}
+.dashboard-load-status { display: none; }
+html.electron-dashboard .dashboard-load-status { display: block; min-block-size: 1.5em; }
+/* The current desktop Overview is the workload report. Do not flash the
+   retired metric panels while its first saved result is being read. */
+html.electron-dashboard #overview > :is(.overview-allowances, .overview-panels) { display: none; }
 html.native-dashboard main,
 html.native-dashboard footer,
 body.native-dashboard main,
@@ -922,8 +892,8 @@ h1 {
   font-size: 1.35rem;
   font-weight: var(--weight-display);
 }
-body.first-run [data-requires-evidence],
-body.needs-local-setup [data-requires-evidence],
+html:not(.electron-dashboard) body.first-run [data-requires-evidence],
+html:not(.electron-dashboard) body.needs-local-setup [data-requires-evidence],
 body.first-run .journey-progressive,
 body.needs-local-setup .journey-progressive {
   display: none !important;
@@ -2410,15 +2380,6 @@ footer p { margin: 0; }
     gap: 0;
     overflow: hidden;
     font-size: 0;
-  }
-  /* The toolbar saves space with a dot at this width. The boot card has the
-     room — and its whole purpose is to name the state — so keep its label. */
-  .dashboard-boot-card .state-pill {
-    width: max-content;
-    height: auto;
-    padding: .38rem .62rem;
-    gap: .45rem;
-    font-size: .67rem;
   }
   .primary-nav a {
     flex: 0 0 auto;
@@ -6159,6 +6120,9 @@ body[data-dashboard-page="allowance"] > .topbar { grid-template-columns:auto aut
 .weekly-api-canvas { position:relative; min-width:0; }
 .weekly-api-canvas svg { width:100%; height:auto; display:block; touch-action:pan-y; }
 .weekly-api-canvas svg text { fill:var(--neutral-muted); font:11px var(--sans); }
+.weekly-api-state { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; text-align:center; padding:20px; }
+.weekly-api-state p { margin:0; }
+.weekly-api-state[hidden],.weekly-api-time[hidden] { display:none; }
 .weekly-api-grid { stroke:var(--neutral-line); stroke-width:1; }
 .weekly-api-line { stroke:var(--neutral-ink); stroke-width:1.8; stroke-linejoin:round; }
 .weekly-api-raw { stroke:var(--neutral-muted); stroke-width:1; opacity:.35; }

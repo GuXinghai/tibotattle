@@ -63,6 +63,36 @@ The retained local state is preserved untouched: the saved sharing choice (`desk
 
 The hosted service's contribution, enrollment, publication, and erasure contracts are a separate deployed surface. They do not describe desktop behavior.
 
+## Optional X reader
+
+The desktop's [optional X reader](../decisions/2026-10-20-optional-x-reader.md)
+uses an isolated X session. Its user-selected webpage login or Chrome extension
+import does not access coding-agent credentials or Chrome's encrypted cookie
+database. Imports use Native Messaging and a protected local transport only
+after the user requests them. Passwords, cookies, authentication responses and
+tokens never enter the dashboard, ordinary logs, clipboard or test fixtures.
+Persistent candidate sessions require verified Electron cookie encryption and
+owner-protected session directories; those properties need artifact/runtime
+qualification, not only source assertions.
+
+Validated public post text, public author names/handles, publication times,
+reply/quote relationships and media references are stored in a protected X
+cache separate from the usage index. This owner-approved public-content cache
+is not permission to retain coding-agent session content. It is not exported,
+uploaded, sent to telemetry or added to accounting results. Login replacement
+isolates the visible scope and archives the prior cache. Explicit cache
+clearing removes post payloads from all scopes, retaining login metadata,
+settings and notification baselines. Logout affects only the app's X session,
+leaving Chrome's login and the independently managed reading cache intact.
+
+The dashboard reads media through opaque post-associated resource references;
+it cannot provide arbitrary remote URLs or local paths. Only the trusted main
+frame can use the media scheme. Same-origin MSE blobs are media-only and HLS
+workers are disabled. Media is fetched on demand, not promised for offline
+playback. X requests use their own system/loopback proxy choice and timer; they
+do not upload usage data or change local-analysis scheduling. `-1` stops timed
+refresh and background keepalive; user-triggered page reads remain available.
+
 ## Normal refresh sources
 
 | Provider | Exact source | What is read | What is retained by TiboTattle | Network boundary | Removal/reset |
@@ -325,6 +355,7 @@ reconciliation. Opt-out stops future uploads and retains accepted history.
 | `https://admin.tibotattle.com` | Owner operations only, including explicitly targeted participant erasure. | Cloudflare Access owner assertion and bounded admin reads/actions with CSRF on mutations. The app is not an admin client. |
 | Legacy Google or Apple identity endpoints | A legacy client starts hosted sign-in in the system browser; the shared dashboard has no sign-in controls. | Provider-controlled sign-in. The provider callback goes to TiboTattle's Worker, not loopback. |
 | Artifact URL from the verified update feed | User/automatic updater downloads an update. | Standard artifact request; signature, length, and digest/provenance gates remain separate. |
+| X and its webpage assets; controlled media on `pbs.twimg.com`, `video.twimg.com`, `abs.twimg.com` | Optional X login, authenticated reading, refresh and media playback. | The isolated X session's ordinary webpage requests and validated media reads. No coding-agent usage, local paths or derived accounting data. See the [reader decision](../decisions/2026-10-20-optional-x-reader.md). |
 
 The loopback companion is not a general proxy. It forwards only fixed routes
 and bounded headers listed in [`api-surface.md`](./api-surface.md).

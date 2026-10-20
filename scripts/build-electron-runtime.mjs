@@ -67,6 +67,7 @@ import {
 } from "./lib/electron-builder-package-json.mjs";
 import { extractEsmImports } from "./lib/esm-imports.mjs";
 import { RELEASE_VERSION } from "../config/release-manifest.js";
+import { buildDesktopXImportNative } from "../apps/electron/desktop-x-import.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
@@ -182,6 +183,19 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "apps/electron/desktop-windows-accountless-credential.js",
   "apps/electron/desktop-update-preferences.js",
   "apps/electron/desktop-updater.js",
+  "apps/electron/desktop-x-contract.js",
+  "apps/electron/desktop-x-import.js",
+  "apps/electron/desktop-x-ipc.js",
+  "apps/electron/desktop-x-page-adapter.js",
+  "apps/electron/desktop-x-repository.js",
+  "apps/electron/desktop-x-service.js",
+  "apps/electron/desktop-x-session-health.js",
+  "apps/electron/x-import/contract.js",
+  "apps/electron/x-import/manifest.json",
+  "apps/electron/x-import/popup.html",
+  "apps/electron/x-import/popup.js",
+  "apps/electron/x-import/NativeHost.cs",
+  "apps/electron/x-import/TiboTattleXImport.exe",
   "apps/electron/errors.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
@@ -207,6 +221,7 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "src/platform/windows-credential-operation-audit.js",
   "src/platform/windows-credential-audit-file-guard.js",
   "src/platform/windows-protected-sqlite.js",
+  "src/platform/windows-browser-profile-store.js",
 ]);
 // Existing outputs are authenticated against their own complete manifest and
 // payload before replacement. Keep this stable identity subset separate from
@@ -1628,6 +1643,9 @@ export async function buildElectronRuntime({
 
     if (includeElectronShell) {
       for (const relativePath of ELECTRON_SHELL_RUNTIME_FILES) {
+        // This reviewed native executable is generated only in staging from
+        // the captured C# source, before manifest inventory/hashing.
+        if (relativePath === "apps/electron/x-import/TiboTattleXImport.exe") continue;
         const result = await stageUniqueRepositoryFile({
           repositoryRoot: REPOSITORY_ROOT,
           stagingRoot: temporaryRoot,
@@ -1635,6 +1653,16 @@ export async function buildElectronRuntime({
           kind: ELECTRON_SHELL_KIND,
         });
         if (result) staged.push(result);
+      }
+      try {
+        await buildDesktopXImportNative({
+          sourceDirectory: outputPath(temporaryRoot, "apps/electron/x-import"),
+          outputPath: outputPath(temporaryRoot, "apps/electron/x-import/TiboTattleXImport.exe"),
+        });
+        await captureRegularFile(outputPath(temporaryRoot, "apps/electron/x-import/TiboTattleXImport.exe"), "X import native relay");
+        staged.push({ kind: ELECTRON_SHELL_KIND, path: "apps/electron/x-import/TiboTattleXImport.exe" });
+      } catch {
+        fail("X_IMPORT_NATIVE_BUILD", "X import relay requires the Windows x64 build toolchain");
       }
     }
 

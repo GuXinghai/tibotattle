@@ -25,6 +25,7 @@ import {
   loadWindowsSourceReadBinding,
   loadWindowsReleaseOperationBinding, WINDOWS_RELEASE_OPERATION_METHODS,
   loadWindowsLegacyStateReadBinding, WINDOWS_LEGACY_STATE_READ_METHODS,
+  loadWindowsBrowserProfileBinding, WINDOWS_BROWSER_PROFILE_METHODS,
   WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../src/platform/windows-filesystem.js";
@@ -46,6 +47,30 @@ const IDENTITY = Object.freeze({
   linkCount: 1,
 });
 const BINDING_BYTES = Buffer.from("reviewed native binding bytes", "utf8");
+
+test('browser profile loader binds complete methods and closed approval without enabling general filesystem policy', () => {
+  const native = binding({ browserProfileContractVersion: 'windows-browser-profile-v1',
+    ...Object.fromEntries(WINDOWS_BROWSER_PROFILE_METHODS.map(name => [name, () => ({ entries: 1,
+      cookieDatabasePresent: false, cookieDatabaseBusy: false, cookieDatabaseBytes: 0 })])) });
+  const sidecar = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: native });
+  const options = { platform: 'win32', architecture: 'x64',
+    bindingPath: 'C:\\checkout\\native\\windows-filesystem\\build\\Release\\windows_filesystem.node',
+    readManifest: () => JSON.stringify(sidecar), readBindingBytes: () => BINDING_BYTES, requireBinding: () => native };
+  assert.equal(loadWindowsBrowserProfileBinding(options), native);
+  assert.equal(createWindowsFilesystemAdapter(options).browserProfileContractVersion, 'windows-browser-profile-v1');
+  assert.equal(createWindowsFilesystemAdapter(options).productionSafe, false);
+  assert.throws(() => loadWindowsBrowserProfileBinding({ ...options, readManifest: () => JSON.stringify(manifest()) }),
+    { code: 'WINDOWS_FILESYSTEM_BROWSER_PROFILE_UNQUALIFIED' });
+  for (const name of WINDOWS_BROWSER_PROFILE_METHODS) {
+    assert.throws(() => loadWindowsBrowserProfileBinding({ ...options, requireBinding: () => ({ ...native, [name]: undefined }) }),
+      { code: 'WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH' });
+  }
+  for (const browserProfile of [{ ...sidecar.browserProfile, approved: false },
+    { ...sidecar.browserProfile, extra: true }, { ...sidecar.browserProfile, contractVersion: 'future' }]) {
+    assert.throws(() => loadWindowsBrowserProfileBinding({ ...options, readManifest: () => JSON.stringify({ ...sidecar, browserProfile }) }),
+      { code: 'WINDOWS_FILESYSTEM_INVALID_MANIFEST' });
+  }
+});
 
 test('legacy copy loader refuses absent, edited and incomplete native capabilities', () => {
   const native = binding({ protectedDirectoryGuardContractVersion: 'windows-protected-directory-guard-v1',

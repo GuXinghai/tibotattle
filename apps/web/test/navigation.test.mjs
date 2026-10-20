@@ -129,8 +129,8 @@ function changeHash(browser, hash, event = "hashchange") {
   browser.listeners.get(event)();
 }
 
-test("the dashboard has five destinations and no compatibility aliases", () => {
-  assert.deepEqual([...DASHBOARD_PAGES], PAGE_IDS);
+test("the dashboard has five shared destinations plus desktop X, and no compatibility aliases", () => {
+  assert.deepEqual([...DASHBOARD_PAGES], ['x',...PAGE_IDS]);
 
   for (const retired of [
     "community", "weekly", "trends", "method", "projects",
@@ -145,6 +145,12 @@ test("the dashboard has five destinations and no compatibility aliases", () => {
     mountDashboardNavigation(browser);
     assertExactlyOneVisiblePage(browser, "overview");
   }
+});
+
+test('X navigation is available only through the desktop capability',()=>{
+  const browser=fakeBrowser({hash:'#x'}),xPage=fakePage('x'),xLink=fakeLink('x');xPage.dataset.desktopOnly='true';xLink.dataset.desktopOnly='true';
+  browser.pages.push(xPage);browser.links.push(xLink);const unmount=mountDashboardNavigation(browser);assert.equal(xLink.attributes.has('aria-current'),false);assert.equal(browser.links[0].attributes.get('aria-current'),'page');unmount();
+  browser.windowRef.tibotattleDesktop={version:'v1',getXStatus(){}};const unmountDesktop=mountDashboardNavigation(browser);assert.equal(xLink.attributes.get('aria-current'),'page');unmountDesktop();
 });
 
 test("each page id is its own hash and selects that page", () => {

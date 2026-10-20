@@ -17,13 +17,17 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
   const error=make('div','weekly-api-error');error.setAttribute('role','status');error.append(notice,retry);error.hidden=true;
   const canvas=make('div','weekly-api-canvas'),svg=documentRef.createElementNS('http://www.w3.org/2000/svg','svg');
   svg.setAttribute('role','img');svg.setAttribute('aria-labelledby',title.id);
+  const statePanel=make('div','weekly-api-state'),stateText=make('p');statePanel.setAttribute('role','status');
+  const stateRetry=make('button','allowance-simple-link');stateRetry.type='button';stateRetry.id='weekly-api-state-retry';
+  stateRetry.dataset.dashboardRetry='true';
+  stateRetry.onclick=()=>onRetry();statePanel.append(stateText,stateRetry);
   const slider=make('input','weekly-api-time');slider.id='weekly-api-time';slider.type='range';
   slider.min='0';slider.max='1000000';slider.step='1';
-  canvas.append(svg,slider);root.append(head,summary,error,canvas);
+  canvas.append(svg,slider,statePanel);root.append(head,summary,error,canvas);
   const ns=(tag,attrs,text)=>{const el=documentRef.createElementNS('http://www.w3.org/2000/svg',tag);
     for(const [k,v]of Object.entries(attrs))el.setAttribute(k,String(v));if(text!==undefined)el.textContent=text;return el;};
   let data=null,rows=[],domain=null,selected=null,selectionScope=null,smoother=null,renderError=null;
-  let width=900,guide=null,publishedAt=null,locale=null;const preferences=new Map();
+  let width=900,guide=null,publishedAt=null,locale=null,labelLocale=null,loadState='loading';const preferences=new Map();
   const preferenceKey='tibotattle.weekly-api-sigma';
   try{
     const saved=JSON.parse(documentRef.defaultView.localStorage.getItem(preferenceKey)??'{}');
@@ -32,23 +36,35 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
   const currentSigma=()=>Number(sigma.value);
   const latestValid=()=>rows.findLast(r=>r.reason===null);
   const atX=at=>62+(at-domain.start)/(domain.end-domain.start)*(width-76);
+  const pending=code=>/^weekly_api_(source_pending|intervals_unavailable)$/.test(code??'');
+  const canSmooth=()=>!renderError||pending(renderError);
   function showError(code){
     renderError=code;error.hidden=!code;
-    const kind=/smoothing/.test(code??'')?'smoothing':/mismatch|valid/.test(code??'')?'validation'
+    const kind=code==='weekly_api_source_unavailable'?'sourceUnavailable'
+      :code==='weekly_api_source_mismatch'?'sourceMismatch'
+      :/smoothing/.test(code??'')?'smoothing':/mismatch|valid/.test(code??'')?'validation'
       :/regressed|stale/.test(code??'')?'stale':/resource/.test(code??'')?'resource'
       :/intervals_unavailable|source_pending/.test(code??'')?'pending':'projection';
-    notice.textContent=code?t(`allowance.interval.failure.${kind}`,{code}):'';
+    notice.textContent=code?t(`allowance.interval.failure.${kind}`):'';
     retry.textContent=t('allowance.interval.retry');
+  }
+  function labels(){
+    title.textContent=t('allowance.interval.title');labelText.textContent=t('allowance.interval.smoothing');details.textContent=t('allowance.interval.details');
+    slider.setAttribute('aria-label',t('trends.explore'));stateRetry.textContent=t('allowance.interval.retry');
+    const selectedSigma=sigma.value;
+    sigma.replaceChildren(...SIGMAS.map(n=>{const option=make('option','',n?t('allowance.interval.minutes',{value:n}):t('allowance.interval.off'));option.value=n;return option;}));
+    sigma.value=selectedSigma||'60';labelLocale=documentRef.documentElement.lang;
+    showError(renderError);
   }
   function read(at){
     selected=Math.max(domain.start,Math.min(domain.end,at));
     const row=intervalAt(rows,selected),raw=row?.reason===null?row.weeklyUsd:null;
     let smooth=raw;
-    try{if(!renderError&&smoother)smooth=smoother(selected,currentSigma());}
+    try{if(canSmooth()&&smoother)smooth=smoother(selected,currentSigma());}
     catch(e){showError(e.code??'weekly_api_smoothing_failed');}
     value.textContent=smooth===null?'—':formatMoney(smooth);
     qualifier.replaceChildren();
-    if(currentSigma()&&!renderError)qualifier.append(make('span','',t('allowance.interval.smoothed')));
+    if(currentSigma()&&canSmooth())qualifier.append(make('span','',t('allowance.interval.smoothed')));
     if(row){
       const text=row.reason?t(`allowance.interval.reason.${row.reason}`)
         :currentSigma()?`${t('allowance.interval.raw')}: ${formatMoney(raw)}`:'';
@@ -61,10 +77,39 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
     slider.setAttribute('aria-valuetext',`${formatInstant(selected)} · ${value.textContent}`);
   }
   function draw(){
-    if(!domain)return;
     width=Math.max(244,canvas.clientWidth||900);svg.setAttribute('viewBox',`0 0 ${width} 300`);
-    svg.replaceChildren();
-    const visible=rows.filter(r=>r.endMs>domain.start&&r.startMs<domain.end),valid=visible.filter(r=>r.reason===null);
+    svg.replaceChildren();guide=null;
+    const visible=domain?rows.filter(r=>r.endMs>domain.start&&r.startMs<domain.end):[],valid=visible.filter(r=>r.reason===null);
+    const unavailable=data?.projection?.status!=='available';
+    const noPlot=unavailable||!valid.length;
+    const loading=(pending(renderError)||!data)&&loadState==='loading';
+    // Keep the plot's viewBox and summary space, but never draw a fabricated
+    // zero axis, selection thumb or empty-data verdict for unavailable evidence.
+    let state='ready';
+    if(noPlot){
+      if(loading)state='loading';
+      else if((renderError&&!pending(renderError))||(loadState==='error'&&unavailable))state='error';
+      else state=unavailable?'unavailable':'empty';
+    }
+    root.dataset.state=state;
+    root.setAttribute('aria-busy',String(loading));
+    summary.style.visibility=noPlot?'hidden':'';summary.setAttribute('aria-hidden',String(noPlot));
+    statePanel.hidden=!noPlot;svg.setAttribute('aria-hidden',String(noPlot));
+    slider.hidden=noPlot;slider.disabled=noPlot;sigma.disabled=noPlot;details.disabled=!data;
+    error.hidden=noPlot||!renderError;
+    retry.hidden=loadState==='loading'&&pending(renderError);
+    if(!unavailable&&pending(renderError))notice.textContent=t(loadState==='loading'
+      ?'allowance.interval.updating':'allowance.interval.failure.stale');
+    if(noPlot){
+      stateText.textContent=t(state==='loading'?'allowance.interval.loading'
+        :state==='empty'?'allowance.interval.empty'
+        :state==='error'&&(!renderError||pending(renderError))?'allowance.interval.readFailed'
+        :'allowance.interval.failure.pending');
+      if(state==='error'&&renderError&&!pending(renderError))stateText.textContent=notice.textContent;
+      stateRetry.hidden=!['error','unavailable'].includes(state)||loadState==='loading';
+      stateRetry.disabled=loadState==='loading';
+      value.textContent='—';qualifier.replaceChildren();return;
+    }
     const maximum=valid.reduce((v,r)=>Math.max(v,r.weeklyUsd),1)*1.08;
     const y=v=>252-v/maximum*218;
     for(let i=0;i<=4;i++){
@@ -83,8 +128,8 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
       const start=Math.max(row.startMs,domain.start),end=Math.min(row.endMs,domain.end);
       path+=`${prior&&prior.segment===row.segment&&prior.endMs===row.startMs?'L':'M'}${atX(start)},${y(row.weeklyUsd)}H${atX(end)}`;prior=row;
     }
-    svg.append(ns('path',{d:path,fill:'none',class:currentSigma()&&!renderError?'weekly-api-raw':'weekly-api-line'}));
-    if(currentSigma()&&!renderError&&smoother){
+    svg.append(ns('path',{d:path,fill:'none',class:currentSigma()&&canSmooth()?'weekly-api-raw':'weekly-api-line'}));
+    if(currentSigma()&&canSmooth()&&smoother){
       try{
         let smoothed='';const sampleCount=Math.min(1200,Math.max(240,Math.ceil(width)));
         // Each segment has its own path. Include its exact endpoints even if
@@ -104,17 +149,16 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
         svg.append(ns('path',{d:smoothed,fill:'none',class:'weekly-api-line'}));
       }catch(e){showError(e.code??'weekly_api_smoothing_failed');svg.querySelector('path')?.setAttribute('class','weekly-api-line');}
     }
-    if(!valid.length)svg.append(ns('text',{x:62+(width-76)/2,y:135,'text-anchor':'middle'},t('allowance.interval.empty')));
     guide=ns('line',{x1:atX(selected??domain.end),x2:atX(selected??domain.end),y1:24,y2:252,class:'weekly-api-guide'});svg.append(guide);
-    slider.disabled=!visible.length;
     read(selected??domain.end);
   }
-  slider.oninput=()=>read(domain.start+Number(slider.value)/1e6*(domain.end-domain.start));
+  slider.oninput=()=>{if(!slider.disabled)read(domain.start+Number(slider.value)/1e6*(domain.end-domain.start));};
   svg.addEventListener('pointerdown',event=>{
-    if(!domain)return;const rect=svg.getBoundingClientRect();
+    if(!domain||slider.disabled)return;const rect=svg.getBoundingClientRect();
     read(domain.start+Math.max(0,Math.min(1,((event.clientX-rect.left)*width/rect.width-62)/(width-76)))*(domain.end-domain.start));
   });
   sigma.onchange=()=>{
+    if(!data||sigma.disabled)return;
     preferences.set(data.period,currentSigma());
     try{documentRef.defaultView.localStorage.setItem(preferenceKey,JSON.stringify(Object.fromEntries(preferences)));}catch{/* Optional display preference. */}
     showError(data.failure??(data.projection?.status==='unavailable'?data.projection.reason:null));draw();
@@ -122,10 +166,14 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
   const resize=()=>{if(root.isConnected&&canvas.clientWidth&&Math.abs(canvas.clientWidth-width)>1)draw();};
   documentRef.defaultView.addEventListener('resize',resize);
   if(documentRef.defaultView.ResizeObserver)new documentRef.defaultView.ResizeObserver(resize).observe(canvas);
-  return {root,update(next){
+  labels();draw();
+  return {root,setLoadState(state){
+    if(loadState===state&&labelLocale===documentRef.documentElement.lang)return;
+    loadState=state;labels();draw();
+  },update(next){
     const scope=`${next.period}:${next.planType}`;
     if(selectionScope===scope&&publishedAt&&next.generatedAt&&Date.parse(next.generatedAt)<Date.parse(publishedAt)){
-      showError('weekly_api_report_regressed');return;
+      showError('weekly_api_report_regressed');if(root.dataset.state!=='ready')draw();return;
     }
     if(data&&data.projection===next.projection&&selectionScope===scope&&data.endMs===next.endMs
       &&data.startMs===next.startMs&&data.failure===next.failure&&locale===documentRef.documentElement.lang)return;
@@ -133,8 +181,7 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
     if(selectionScope!==scope)selected=null;
     data=next;selectionScope=scope;publishedAt=next.generatedAt;locale=documentRef.documentElement.lang;
     rows=next.projection?.rows??[];
-    title.textContent=t('allowance.interval.title');labelText.textContent=t('allowance.interval.smoothing');details.textContent=t('allowance.interval.details');
-    sigma.replaceChildren(...SIGMAS.map(n=>{const option=make('option','',n?t('allowance.interval.minutes',{value:n}):t('allowance.interval.off'));option.value=n;return option;}));
+    labels();
     sigma.value=String(preferences.get(next.period)??(next.period==='24h'?30:next.period==='7d'?60:120));
     slider.setAttribute('aria-label',t('trends.explore'));
     domain=weeklyApiDomain(next.period,next.endMs,next.startMs);

@@ -1,4 +1,9 @@
 export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
+  "/x-reader.js": Object.freeze({ file: "x-reader.js", type: "text/javascript; charset=utf-8" }),
+  "/x-reader-integration.js": Object.freeze({ file: "x-reader-integration.js", type: "text/javascript; charset=utf-8" }),
+  "/x-reader.css": Object.freeze({ file: "x-reader.css", type: "text/css; charset=utf-8" }),
+  "/vendor/hls.light.min.js": Object.freeze({ file: "vendor/hls.light.min.js", type: "text/javascript; charset=utf-8" }),
+  "/vendor/hls.js.LICENSE": Object.freeze({ file: "vendor/hls.js.LICENSE", type: "text/plain; charset=utf-8" }),
   "/weekly-api-intervals.js": Object.freeze({ file: "weekly-api-intervals.js", type: "text/javascript; charset=utf-8" }),
   "/weekly-api-chart.js": Object.freeze({ file: "weekly-api-chart.js", type: "text/javascript; charset=utf-8" }),
   "/usage-simple.css": Object.freeze({ file: "usage-simple.css", type: "text/css; charset=utf-8" }),
