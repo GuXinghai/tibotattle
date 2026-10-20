@@ -227,9 +227,9 @@ function recordPrefixKind(line) {
 }
 
 export function rolloutContentQuarantineReason(outcome) {
-  if (outcome?.read?.partialDeferred === true) {
-    return "codex_rollout_tail_incomplete";
-  }
+  // A stable EOF without a newline is not a malformed complete record. The
+  // reader never emits that tail: publish only its verified complete prefix,
+  // leaving the cursor and carried counters before the deferred bytes.
   if (Number(outcome?.diagnostics?.malformedAccountingRecords ?? 0) > 0
       || Number(outcome?.diagnostics?.malformedUsageRecords ?? 0) > 0) {
     return "codex_rollout_content_invalid";

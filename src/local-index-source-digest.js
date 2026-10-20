@@ -272,8 +272,10 @@ export function classifyFromStat(info, row, expectedParserVersion) {
   const rowSize = Number(row.size_bytes);
   const scanned = Number(row.scanned_bytes);
   const quarantined = row.quarantine_code !== null;
+  const deferred = rowSize - scanned;
   if (scanned > rowSize
-      || (!quarantined && scanned !== rowSize)
+      || (!quarantined && scanned !== rowSize
+        && !(deferred > 0 && Number(row.deferred_tail_bytes) === deferred))
       || (quarantined && scanned !== 0)) {
     return { mode: "rescan", reason: "cursor_invalid" };
   }

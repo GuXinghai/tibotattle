@@ -72,7 +72,7 @@ export const WINDOWS_LEGACY_STATE_READ_METHODS = Object.freeze([
   'copyLegacyStateFile',
   'legacyStateRootsDisjoint',
 ]);
-export const WINDOWS_BROWSER_PROFILE_CONTRACT = 'windows-browser-profile-v1';
+export const WINDOWS_BROWSER_PROFILE_CONTRACT = 'windows-browser-profile-v2';
 export const WINDOWS_BROWSER_PROFILE_METHODS = Object.freeze([
   'prepareBrowserProfile', 'inspectBrowserProfile',
 ]);

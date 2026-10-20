@@ -38,7 +38,7 @@ test('X messages reach the real canonical browser localization facade',()=>{
 });
 
 test('reader and settings show each local session failure while retaining readable cache',async()=>{
-  const messages={session_permission_failed:'无法访问已保存',session_write_failed:'无法写入',session_persist_failed:'无法将 X 会话保存',session_read_failed:'无法读取已保存',session_decrypt_failed:'解密不可用',session_restore_failed:'无法恢复已保存',session_clear_failed:'未能完整清除'};
+  const messages={session_profile_limit:'X 会话超出安全处理范围',session_permission_failed:'无法访问已保存',session_write_failed:'无法写入',session_persist_failed:'无法将 X 会话保存',session_read_failed:'无法读取已保存',session_decrypt_failed:'解密不可用',session_restore_failed:'无法恢复已保存',session_clear_failed:'未能完整清除'};
   for(const[error,message]of Object.entries(messages)){
     const status={auth:'disconnected',operation:'error',error};
     const f=dom();const b=bridge({getXStatus:async()=>status,listXPosts:async()=>({items:[post()],source:'cache',status})});
@@ -108,11 +108,32 @@ test('detail comments expose loading, empty and retry states with a fixed return
   const opening=mounted.openPost('123');await flush();assert.ok(fixture.container.textContent.includes('正在加载评论…'));
   const back=walk(fixture.container).find(el=>el.getAttribute('aria-label')==='返回');assert.equal(back.parentElement.className,'x-reader-back-slot');assert.equal(back.parentElement.parentElement.className,'x-reader-toolbar');assert.equal(back.hidden,false);
   const content=walk(fixture.container).find(el=>el.className==='x-reader-scroll');content.scrollTop=900;assert.equal(back.parentElement===content,false);
-  finish({post:post(),replies:[],source:'cache',status:{auth:'ready',operation:'offline'}});await opening;
+  finish({post:post(),replies:[],source:'cache',outcome:'failed',error:'offline',status:{auth:'ready',operation:'offline'}});await opening;
   assert.ok(fixture.container.textContent.includes('评论加载失败'));assert.equal(fixture.container.textContent.includes('暂无评论'),false);
   const retry=walk(fixture.container).find(el=>el.className==='x-reader-replies-status').children.find(el=>el.tagName==='button');await retry.dispatch('click');await flush();assert.ok(fixture.container.textContent.includes('正在加载评论…'));
   finish({post:post(),replies:[],source:'live',status:{auth:'ready',operation:'idle'}});await flush();assert.ok(fixture.container.textContent.includes('暂无评论'));assert.equal(fixture.container.textContent.includes('正在加载评论…'),false);
   await back.dispatch('click');assert.equal(back.hidden,true);mounted.dispose();
+});
+
+test('cached detail replies remain readable without inheriting unrelated operation failures',async()=>{
+  for(const operation of ['loading','offline','error','parser_changed']){
+    const fixture=dom();const mounted=mountXReader({container:fixture.container,bridge:bridge({getXPost:async()=>({post:post(),replies:[post('124',{text:'Saved reply'})],source:'cache',status:{auth:'ready',operation}})})});
+    await mounted.show();await mounted.openPost('123');await flush();
+    assert.ok(fixture.container.textContent.includes('Saved reply'));
+    const replyStatus=walk(fixture.container).find(el=>el.className==='x-reader-replies-status');
+    assert.equal(replyStatus.textContent,'显示已保存的内容');assert.equal(replyStatus.children.some(el=>el.tagName==='button'),false);
+    assert.equal(fixture.container.textContent.includes('评论加载失败'),false);mounted.dispose();
+  }
+});
+
+test('live detail outcome ignores shared background errors and explicit detail failure retains saved replies',async()=>{
+  const fixture=dom();let fail=false;
+  const mounted=mountXReader({container:fixture.container,bridge:bridge({getXPost:async()=>({post:post(),replies:[post('124',{text:'Readable reply'})],source:fail?'cache':'live',outcome:fail?'failed':'live',error:fail?'offline':null,status:{auth:'ready',operation:'error'}})})});
+  await mounted.show();await mounted.openPost('123');
+  assert.equal(fixture.container.textContent.includes('评论加载失败'),false);
+  fail=true;await mounted.openPost('123');
+  assert.ok(fixture.container.textContent.includes('Readable reply'));assert.ok(fixture.container.textContent.includes('评论加载失败'));
+  assert.ok(find(fixture.container,'重试'));mounted.dispose();
 });
 
 test('returning during a comment request ignores late replies',async()=>{

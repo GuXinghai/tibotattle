@@ -35,7 +35,7 @@ Do not:
   sidecars, or the device salt;
 - use **Erase local data** or **Reset identity and device** as a diagnosis or
   repair;
-- open a store whose `user_version` is above 6 with a build that does not know
+- open a store whose `user_version` is above 7 with a build that does not know
   that version, or open any store writable with an older build;
 - copy the store without its sidecars, or copy it without the device salt;
 - hand-edit `usage_rollup`, `work_rollup`, `cache_candidate` or
@@ -65,7 +65,7 @@ guess between the installed and CLI roots.
 | Code or observation | Meaning | First action |
 | --- | --- | --- |
 | `local_index_family_mismatch` | Wrong `application_id`, or an unsupported predecessor version. Not a store this build can open. | Preserve. Find where the file came from before anything else. Do not relabel. |
-| `local_index_newer_version` | `user_version` above 6. Written by a newer build. | Install the newer compatible build. Do not open it with this build. |
+| `local_index_newer_version` | `user_version` above 7. Written by a newer build. | Install the newer compatible build. Do not open it with this build. |
 | `local_index_file_invalid` | Not a single-link regular file, a symbolic link, or an unsafe directory. | Check ownership and links. Do not chmod, replace or recreate the file. |
 | `local_index_unavailable` | The file cannot be opened or stat'ed. | Check that the file exists, is not locked by another process, and that the disk has space. |
 | `local_index_journal_mode_refused` | WAL mode could not be set. | Confirm the store sits on a local volume. |
@@ -74,6 +74,7 @@ guess between the installed and CLI roots.
 | `local_unified_index_legacy_ordinals_unavailable` | The store has no sources and the retired v1 file named by the seed cannot be read. | Keep the v1 file. Read section 8 before any new store is built. |
 | `local_unified_index_generation_invalid` | A refresh committed, but the companion could not describe the result. | Run the audit (section 6) and read `commit_log`. |
 | Audit `consistent: false` | Derived tables disagree with the committed facts. | Preserve a copy. Do not patch in place (section 6). |
+| Source `deferredTailBytes` diagnostic | The last JSONL line has not finished; committed prefix facts remain readable. | Wait for the original writer to complete the line, then refresh. Do not edit logs or clear the store. |
 | Source `quarantine_code` set | One source's facts are withheld. This is a source problem, not a database fault. | Inspect `source_diagnostic` for that source. Retained facts stay. |
 
 ## 3. Freeze and preserve
@@ -175,7 +176,7 @@ PRAGMA user_version;                         -- expect 5 (a retained v4 copy sta
 SELECT key, value FROM meta
   WHERE key IN ('family', 'parser_version', 'rollup_basis');
   -- family: local-index-store
-  -- current parser_version: local-index-rollout-typed-v2+unified-rollout-typed-v19
+  -- current parser_version: local-index-rollout-typed-v3+unified-rollout-typed-v21
 SELECT commit_seq FROM store_state;
 SELECT seq, committed_at_ms, kind, sources_changed
   FROM commit_log ORDER BY seq DESC LIMIT 5;

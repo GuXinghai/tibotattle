@@ -43,6 +43,15 @@ current owner's access without changing stored content. Unsafe or inaccessible
 state stops restoration with a visible local error. Generic record-store ACLs
 remain unchanged.
 
+If the 4096-entry inspection bound is exceeded, the profile capability v2 may
+prune only `Cache`, `Code Cache` and `Service Worker/CacheStorage`. Each operation
+retains handle-bound owner, ACL, hardlink and reparse checks. A pass has an 8192
+operation budget and can resume; the complete remaining tree must still pass
+the original inspection before Chromium opens it. Partial disposable-cache
+cleanup may precede a later failure. Cookies, durable site state and cached
+posts are excluded. Overflow or unfinished cleanup has its own visible error,
+not a misleading permissions diagnosis.
+
 Read, write, persistence, decryption-unavailable, restore, permission and clear
 failures have fixed content-free reader/settings messages. A candidate flushes
 and checks local storage before replacing the previous login. An encrypted
@@ -59,6 +68,13 @@ contracts still require separate installed-artifact acceptance.
 Logout stops this app's X requests and clears its own login state. It does not
 log Chrome out. Cache clearing is a separate explicit action. Server revocation
 or account verification may still require the user to reconnect.
+
+An owner-protected, bounded session registry records candidates before Chromium
+opens them and retains explicit cleanup intent across interruptions. Startup
+cleans registered abandoned sessions; explicit logout also works when restoring
+the active session failed. Cleanup is acknowledged only after local clearing
+and the saved active pointer are reconciled. An unreadable initial repository
+blocks mutation until a successful reload; defaults cannot replace unread state.
 
 ## Reader, cache and network boundary
 
@@ -77,12 +93,19 @@ the new scope. Explicit cache clearing removes current and archived post
 payloads while retaining settings, login metadata and notification baselines.
 Display windows do not delete accumulated cached content.
 
+Cache snapshots and envelopes use version 2, with forward-only reads of version
+1. Scope archives avoid repeating an identical disconnected snapshot; differing
+history remains retained. Incomplete fresh text cannot replace complete text,
+but validated fresh author and media data can still update that post.
+
 Detail reads wait for the matching detail response or verified reply relations;
 a cached main card alone cannot establish that comments finished loading.
 Successful detail reads are reused for up to one minute, then revalidated on
 the next opening. Loading, failed reads and confirmed empty replies have
 separate reader states, with retry available after failure. The detail return
 control stays outside the scrolling content, without a repeated page heading.
+Detail freshness/failure is specific to that read; unrelated list failures do
+not turn readable cached replies into a failed comments request.
 
 The local dashboard cannot request arbitrary remote media. It receives opaque
 `tibotattle-x-media://resource/<UUID>` references associated with validated posts.
@@ -93,6 +116,12 @@ to opaque resource references. No arbitrary URL or filesystem relay is added.
 MSE blob URLs are restricted to media from that same main frame and origin.
 HLS uses the locally packaged player with workers disabled; remote scripts,
 blob workers, child frames and new-window navigation remain denied.
+
+Media renewal matches stable upstream asset IDs across URL changes and reorders.
+Legacy positional IDs remain readable but cannot automatically rebind a different
+asset. Transient renewal permits up to three attempts per resource per minute,
+with concurrent renewal shared. Both GET and HEAD enforce the media type
+allowlist; range failures retain only validated unsatisfied-range metadata.
 
 X requests use the system proxy or an explicitly selected loopback proxy port.
 This does not alter system proxy settings or usage-analysis networking.
@@ -110,6 +139,10 @@ available cached content.
 
 Notifications are opt-in and concern only Tibo's new posts or replies. First
 observations establish a baseline; subsequent checks deduplicate by post ID.
+Each notification category has an independent initial floor and up to 1024
+recent seen IDs. Late arrivals above that floor remain eligible; evicting old
+IDs advances the floor, so older history never replays. Version 1 baselines
+migrate conservatively to their category maximum without replaying history.
 Notification availability still depends on the existing Windows identity and
 permission gates. Synthetic contract tests do not prove system delivery.
 

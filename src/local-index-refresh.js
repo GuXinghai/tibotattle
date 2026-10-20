@@ -1360,6 +1360,8 @@ async function runRefresh({
             const diagnostics = {
               ...outcome.diagnostics,
               oversizedLines: outcome.read.oversizedLines,
+              deferredTailBytes: outcome.read.partialDeferred
+                ? Number(info.size) - outcome.read.nextOffset : 0,
               contradictedLeadingSnapshotsSkipped: sink.suppressedFor(state),
             };
             const quarantineReason = rolloutContentQuarantineReason(outcome);

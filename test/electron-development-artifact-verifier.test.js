@@ -375,7 +375,7 @@ test("verifies closed release-operation and legacy-read extensions without enabl
   const extensions = {
     releaseOperation: { approved: true, contractVersion: "windows-release-operation-storage-v1" },
     legacyStateRead: { approved: true, contractVersion: "windows-legacy-state-read-v1" },
-    browserProfile: { approved: true, contractVersion: "windows-browser-profile-v1" },
+    browserProfile: { approved: true, contractVersion: "windows-browser-profile-v2" },
   };
   await withFixture("win32-x64", { bindingManifestMutation: sidecar => Object.assign(sidecar, extensions) }, async fixture => {
     assert.equal((await verify(fixture, "win32-x64")).status, FIXED_STATUS.verified);

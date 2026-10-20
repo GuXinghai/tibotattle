@@ -4,7 +4,8 @@ export const X_TABS = Object.freeze(['posts', 'replies', 'reposts', 'media']);
 export const X_DEFAULT_SETTINGS = Object.freeze({ refreshMinutes: 5, proxyMode: 'system', proxyPort: 10809, notifyPosts: false, notifyReplies: false });
 export const X_RESOURCE_SCHEME = 'tibotattle-x-media';
 // Closed local failures: never carry a filesystem path, cookie or native message.
-export const X_SESSION_ERRORS = Object.freeze(['session_write_failed', 'session_persist_failed', 'session_read_failed', 'session_decrypt_failed', 'session_restore_failed', 'session_permission_failed', 'session_clear_failed']);
+export const X_SESSION_ERRORS = Object.freeze(['session_write_failed', 'session_persist_failed', 'session_read_failed', 'session_decrypt_failed', 'session_restore_failed', 'session_permission_failed', 'session_profile_limit', 'session_clear_failed']);
+export const X_NOTIFICATION_SEEN_LIMIT = 1024;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
 export function xError(code) { const error = new Error(code); error.code = code; return error; }
 export function validateXSettings(value, partial = false) {
@@ -20,6 +21,27 @@ export function validateXSettings(value, partial = false) {
   return out;
 }
 export function validateXId(id) { if (typeof id !== 'string' || !/^[0-9]{1,24}$/.test(id)) throw xError('invalid_post_id'); return id; }
+/** Version-one arrays are migrated conservatively: no historical notifications. */
+export function validateXNotificationBaseline(value, version = 2) {
+  if (!plain(value) || Object.keys(value).sort().join(',') !== 'posts,replies') throw xError('invalid_x_state');
+  const result = {};
+  for (const kind of ['posts', 'replies']) {
+    const raw = value[kind];
+    if (version === 1) {
+      if (!Array.isArray(raw) || new Set(raw).size !== raw.length) throw xError('invalid_x_state');
+      for (const id of raw) validateXId(id);
+      result[kind] = { floor: raw.length ? raw.reduce((a, b) => BigInt(a) > BigInt(b) ? a : b) : null, seen: [] };
+    } else {
+      if (version !== 2 || !plain(raw) || Object.keys(raw).sort().join(',') !== 'floor,seen' || !Array.isArray(raw.seen) || raw.seen.length > X_NOTIFICATION_SEEN_LIMIT || new Set(raw.seen).size !== raw.seen.length) throw xError('invalid_x_state');
+      if (raw.floor !== null) validateXId(raw.floor);
+      if (raw.floor === null && raw.seen.length) throw xError('invalid_x_state');
+      let prior = raw.floor;
+      for (const id of raw.seen) { validateXId(id); if (prior === null || BigInt(id) <= BigInt(prior)) throw xError('invalid_x_state'); prior = id; }
+      result[kind] = { floor: raw.floor, seen: [...raw.seen] };
+    }
+  }
+  return result;
+}
 export function validateXQuery(query = {}) {
   if (!plain(query) || Object.keys(query).some(key => !['tab', 'cursor'].includes(key)) || !X_TABS.includes(query.tab ?? 'posts') || query.cursor !== undefined && (typeof query.cursor !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(query.cursor))) throw xError('invalid_query');
   return { tab: query.tab ?? 'posts', cursor: query.cursor };
@@ -59,11 +81,14 @@ export function validateXPost(value, depth = 0) {
   if (value.author.avatar && isXMediaUrl(value.author.avatar)) author.avatar = value.author.avatar;
   const media = value.media.map((item, index) => {
     if (!plain(item) || !['image', 'video', 'gif'].includes(item.type) || !isXMediaUrl(item.url)) throw xError('invalid_post');
-    const result = { id: String(index), type: item.type, url: item.url };
+    const id = item.id === undefined ? String(index) : item.id;
+    if (typeof id !== 'string' || !/^(?:[0-9]{1,24}|media-[0-9]{1,24})$/.test(id)) throw xError('invalid_post');
+    const result = { id, type: item.type, url: item.url };
     if (item.poster && isXMediaUrl(item.poster)) result.poster = item.poster;
     if (['image/jpeg', 'image/png', 'image/webp', 'video/mp4', 'application/x-mpegURL', 'application/vnd.apple.mpegurl'].includes(item.mimeType)) result.mimeType = item.mimeType;
     return result;
   });
+  if (new Set(media.map(item => item.id)).size !== media.length) throw xError('invalid_post');
   const result = { id: value.id, author, createdAt: new Date(value.createdAt).toISOString(), text: value.text, complete: value.complete, kind: value.kind, media };
   if (value.replyTo && /^[0-9]{1,24}$/.test(value.replyTo)) result.replyTo = value.replyTo;
   if (value.quotedPost && depth === 0) result.quotedPost = validateXPost(value.quotedPost, 1);

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createDesktopXPageAdapter } from './desktop-x-page-adapter.js';
 import { createDesktopXSessionHealth, sessionError } from './desktop-x-session-health.js';
-import { isXMediaUrl, isXPageUrl, normalizeXCookieImport, validateXId, validateXPost, validateXQuery, validateXSettings, X_DEFAULT_SETTINGS, X_RESOURCE_SCHEME, X_SESSION_ERRORS, X_TABS, xError } from './desktop-x-contract.js';
+import { isXMediaUrl, isXPageUrl, normalizeXCookieImport, validateXId, validateXPost, validateXQuery, validateXSettings, validateXNotificationBaseline, X_DEFAULT_SETTINGS, X_NOTIFICATION_SEEN_LIMIT, X_RESOURCE_SCHEME, X_SESSION_ERRORS, X_TABS, xError } from './desktop-x-contract.js';
 
 const safeErrors = new Set(['offline', 'expired', 'challenge', 'rate_limited', 'parser_changed', 'pagination_pending', 'cancelled', 'invalid_import', 'no_logged_in_session', 'import_failed', 'storage_unavailable', 'proxy_failed', ...X_SESSION_ERRORS]);
 const clone = value => structuredClone(value);
@@ -12,10 +12,13 @@ const pageSize = 30;
 /** Main-process X owner. No auth state or remote content reaches diagnostics. */
 export function createDesktopXService({ runtime, repository, importBridge, notify, onUpdate = () => {}, allowedOrigin = () => null, clock = () => Date.now(), timers = { setTimeout, clearTimeout }, adapterFactory = createDesktopXPageAdapter, loginTimeoutMs = 10 * 60 * 1000 } = {}) {
   let disposed = false; let generation = 0; let loginGeneration = 0; let task; let taskKey; let taskGeneration; let taskAbort; let candidate; let active; let loginReturnAuth; let timer; let timerDue; let failures = 0; let saveQueue = Promise.resolve();
-  let state = { version: 1, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: emptyLists(), notificationBaseline: { posts: [], replies: [] } };
+  let state = { version: 2, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: emptyLists(), notificationBaseline: validateXNotificationBaseline({ posts: [], replies: [] }, 1) };
   let status = { auth: 'disconnected', operation: 'idle', loginMethod: null, lastUpdated: null, error: null, nextRefreshAt: null, notificationsAvailable: typeof notify === 'function' };
   let restorePromise; let settingsQueue = Promise.resolve(); let importGrantGeneration = null;
   let sessionFailure = null;
+  let stateLoaded = false;
+  let promotionWork;
+  const cleanupTasks = new Set(); const cleanupFailures = new Map();
   const sessionHealth = createDesktopXSessionHealth({ runtime, repository, clock });
   const posts = new Map(); const cursors = new Map(); const resources = new Map(); const resourceKeys = new Map(); const details = new Set(); const exhausted = new Set(); const visitedTabs = new Set();
   const liveTabs = new Set(); const tabUpdatedAt = new Map(); const detailUpdatedAt = new Map();
@@ -40,6 +43,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   };
   const snapshot = () => ({ ...state, posts: [...posts.values()], settings: { ...state.settings }, lists: clone(state.lists), notificationBaseline: clone(state.notificationBaseline) });
   const persist = () => {
+    if (!stateLoaded) return Promise.reject(xError('storage_unavailable'));
     const value = snapshot();
     saveQueue = saveQueue.catch(() => {}).then(async () => {
       try { return await repository.write(value); }
@@ -47,6 +51,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     });
     return saveQueue;
   };
+  const requireLoadedState = async () => { await ready; if (!stateLoaded) throw xError('storage_unavailable'); if (disposed) throw xError('cancelled'); };
   const current = token => !disposed && token === generation;
   const cancelTimer = () => { if (timer !== undefined) timers.clearTimeout(timer); timer = undefined; timerDue = undefined; status.nextRefreshAt = null; };
   function schedule(retryAt) {
@@ -73,7 +78,9 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     session.setPermissionCheckHandler(() => false);
     session.on?.('will-download', event => event.preventDefault());
   }
-  async function createContext(partitionId, show = false) {
+  async function openSession(partitionId) {
+    try { await repository.registerSession(partitionId); }
+    catch (error) { throw sessionError(error, 'session_persist_failed'); }
     let path;
     try { path = await repository.getSessionPath(partitionId); }
     catch (error) { throw sessionError(error, 'session_permission_failed'); }
@@ -82,6 +89,11 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     try { session = runtime.session.fromPath(path, { cache: true }); }
     catch (error) { throw sessionError(error, 'session_read_failed'); }
     await configureSession(session);
+    if (disposed) throw xError('cancelled');
+    return session;
+  }
+  async function createContext(partitionId, show = false) {
+    const session = await openSession(partitionId);
     const win = new runtime.BrowserWindow({ width: 1120, height: 840, minWidth: 640, minHeight: 480, show, title: 'X 登录', autoHideMenuBar: true, webPreferences: { session, nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, webviewTag: false, allowRunningInsecureContent: false, backgroundThrottling: false } });
     win.setMenu?.(null);
     const wc = win.webContents;
@@ -96,22 +108,43 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     win.on('close', event => { if (candidate?.context === context) { event.preventDefault(); cancelLogin(); } else if (active === context) { event.preventDefault(); win.hide(); } });
     return context;
   }
+  async function clearPartition(partitionId, context, { acknowledge = true } = {}) {
+    try {
+      await repository.queueSessionCleanup(partitionId);
+      const session = context?.session ?? await openSession(partitionId);
+      // A cancelled import/checkpoint may still be completing its native write.
+      // Wait only for that mutation, never the enclosing authentication task.
+      await context?.authenticationWrite?.catch(() => {});
+      if (context) { context.adapter.dispose(); if (!context.win.isDestroyed()) context.win.destroy(); }
+      await sessionHealth.clear(session, partitionId);
+      if (acknowledge) await repository.completeSessionCleanup(partitionId);
+      cleanupFailures.delete(partitionId);
+    } catch (error) {
+      const failure = sessionError(error, 'session_clear_failed'); cleanupFailures.set(partitionId, failure);
+      update({ error: failure.code, operation: 'error' }); throw failure;
+    }
+  }
   async function destroyContext(context, clear = false) {
     if (!context) return;
+    if (clear) return clearPartition(context.partitionId, context, { acknowledge: state.activePartition !== context.partitionId });
+    await context.authenticationWrite;
     context.adapter.dispose();
     if (!context.win.isDestroyed()) context.win.destroy();
-    try { if (clear) await sessionHealth.clear(context.session, context.partitionId); else await sessionHealth.flush(context.session, context.partitionId); }
+    try { await sessionHealth.flush(context.session, context.partitionId); }
     catch (error) { const failure = sessionError(error, clear ? 'session_clear_failed' : 'session_persist_failed'); update({ error: failure.code, operation: 'error' }); throw failure; }
   }
   // Cancellation cannot become asynchronous. Cleanup failures remain visible
   // through the same sticky local error instead of an unhandled rejection.
-  const discardContext = context => destroyContext(context, true).catch(error => { update({ error: error.code, operation: 'error' }); });
+  const discardContext = context => {
+    const work = destroyContext(context, true); cleanupTasks.add(work);
+    return work.catch(error => { update({ error: error.code, operation: 'error' }); }).finally(() => { cleanupTasks.delete(work); });
+  };
   const stopTask = () => { generation++; taskAbort?.abort(); taskAbort = undefined; for (const controller of mediaTransfers) controller.abort(); mediaTransfers.clear(); if (active && !active.win.isDestroyed()) active.win.webContents.stop(); };
   function registerResource(url, ownerId, role = null, trail = []) {
     if (!isXMediaUrl(url)) return undefined;
     const key = `${state.authScope ?? 'cache'}\n${ownerId}\n${url}\n${JSON.stringify([role, trail])}`;
     if (resourceKeys.has(key)) return `${X_RESOURCE_SCHEME}://resource/${resourceKeys.get(key)}`;
-    const id = randomUUID(); resourceKeys.set(key, id); resources.set(id, { url, ownerId, role, trail, scope: state.authScope, recoveryAttempted: false });
+    const id = randomUUID(); resourceKeys.set(key, id); resources.set(id, { url, ownerId, role, trail, scope: state.authScope, recoveryAttempts: 0, recoveryWindow: clock() });
     return `${X_RESOURCE_SCHEME}://resource/${id}`;
   }
   function dto(post, ownerId = post?.id) {
@@ -124,7 +157,14 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     return value;
   }
   function cacheResults(result, tab) {
-    for (const raw of result.posts) { const post = validateXPost(raw); const before = posts.get(post.id); if (before?.complete && !post.complete) continue; posts.set(post.id, post); }
+    const merge = (before, incoming) => {
+      if (!incoming) return before;
+      const value = { ...incoming };
+      if (before?.id === incoming.id && before.complete && !incoming.complete) { value.text = before.text; value.complete = true; }
+      if (before?.quotedPost || incoming.quotedPost) value.quotedPost = merge(before?.quotedPost, incoming.quotedPost);
+      return value;
+    };
+    for (const raw of result.posts) { const post = validateXPost(raw); posts.set(post.id, validateXPost(merge(posts.get(post.id), post))); }
     if (tab) {
       const ids = new Set(state.lists[tab]);
       for (const post of result.posts) ids.add(post.id);
@@ -150,14 +190,21 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   }
   async function notifyNew(result, observedKinds = ['posts', 'replies']) {
     const counts = { posts: 0, replies: 0 }; let latestId = null;
-    const observedIds = result.posts.filter(post => post.author.handle.toLowerCase() === 'thsottiaux' && post.kind !== 'repost').map(post => post.id);
     for (const kind of ['posts', 'replies']) {
       if (!observedKinds.includes(kind)) continue;
       const ids = [...new Set(result.posts.filter(post => post.author.handle.toLowerCase() === 'thsottiaux' && post.kind === (kind === 'posts' ? 'post' : 'reply')).map(post => post.id))];
-      const prior = new Set(state.notificationBaseline[kind]); const initialized = prior.has('0');
-      const watermark = [...prior].reduce((maximum, id) => BigInt(id) > maximum ? BigInt(id) : maximum, 0n);
-      if (initialized && state.settings[kind === 'posts' ? 'notifyPosts' : 'notifyReplies']) for (const id of ids) if (!prior.has(id) && BigInt(id) > watermark) { counts[kind]++; if (!latestId || BigInt(id) > BigInt(latestId)) latestId = id; }
-      state.notificationBaseline[kind] = [...new Set(['0', ...prior, ...observedIds])];
+      const baseline = state.notificationBaseline[kind];
+      if (baseline.floor === null) {
+        baseline.floor = ids.reduce((maximum, id) => BigInt(id) > BigInt(maximum) ? id : maximum, '0');
+        continue;
+      }
+      const prior = new Set(baseline.seen);
+      const fresh = ids.filter(id => BigInt(id) > BigInt(baseline.floor) && !prior.has(id));
+      if (state.settings[kind === 'posts' ? 'notifyPosts' : 'notifyReplies']) for (const id of fresh) { counts[kind]++; if (!latestId || BigInt(id) > BigInt(latestId)) latestId = id; }
+      const seen = [...new Set([...prior, ...fresh])].sort((a, b) => BigInt(a) < BigInt(b) ? -1 : 1);
+      const removed = seen.splice(0, Math.max(0, seen.length - X_NOTIFICATION_SEEN_LIMIT));
+      if (removed.length) baseline.floor = removed.at(-1);
+      baseline.seen = seen;
     }
     // Persist the dedup state before displaying; a failed write cannot generate duplicates.
     await persist();
@@ -183,26 +230,35 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     loginGeneration++; importGrantGeneration = null;
     importBridge?.cancel?.();
     const old = candidate; candidate = undefined;
-    if (old) { old.cancelled = true; timers.clearTimeout(old.timer); if (old.context !== active) void discardContext(old.context); else old.context.win.hide(); }
+    if (old) { old.cancelled = true; timers.clearTimeout(old.timer); old.context.win.hide(); if (old.context !== active) void discardContext(old.context); }
     update({ auth: active ? loginReturnAuth ?? 'ready' : state.activePartition ? 'expired' : 'disconnected', loginMethod: null, operation: 'idle', error: null }); loginReturnAuth = undefined;
     if (active) schedule();
     return getStatus();
   }
-  async function promote(context, attempt) {
+  function promote(context, attempt) {
+    const work = promoteCandidate(context, attempt); promotionWork = work;
+    return work.finally(() => { if (promotionWork === work) promotionWork = undefined; });
+  }
+  async function promoteCandidate(context, attempt) {
+    await requireLoadedState();
     if (disposed || attempt !== loginGeneration || candidate?.context !== context) throw xError('cancelled');
-    await sessionHealth.verify(context.session, context.partitionId);
-    await sessionHealth.checkpoint(context.session, context.partitionId);
+    context.authenticationWrite = (async () => { await sessionHealth.verify(context.session, context.partitionId); await sessionHealth.checkpoint(context.session, context.partitionId); })();
+    await context.authenticationWrite;
     if (disposed || attempt !== loginGeneration || candidate?.context !== context) throw xError('cancelled');
     const oldActive = active; const oldState = snapshot();
-    state.activePartition = context.partitionId; state.authScope = randomUUID(); state.notificationBaseline = { posts: [], replies: [] };
+    state.activePartition = context.partitionId; state.authScope = randomUUID(); state.notificationBaseline = validateXNotificationBaseline({ posts: [], replies: [] }, 1);
     posts.clear(); state.posts = []; state.lists = emptyLists();
     const restorePrevious = () => { const settings = state.settings; state = { ...oldState, settings }; posts.clear(); for (const post of oldState.posts) posts.set(post.id, post); };
     try { await persist(); } catch { restorePrevious(); throw xError('storage_unavailable'); }
     if (disposed || attempt !== loginGeneration) { if (state.activePartition === context.partitionId) { restorePrevious(); await persist(); } throw xError('cancelled'); }
+    try { await repository.retainSession(context.partitionId); }
+    catch (error) { restorePrevious(); await persist(); throw sessionError(error, 'session_persist_failed'); }
+    if (disposed || attempt !== loginGeneration || candidate?.context !== context) { restorePrevious(); await persist(); throw xError('cancelled'); }
     active = context; candidate = undefined; stopTask(); resources.clear(); resourceKeys.clear(); cursors.clear(); details.clear(); liveTabs.clear(); tabUpdatedAt.clear(); detailUpdatedAt.clear();
     loginReturnAuth = undefined;
     context.win.hide(); sessionFailure = null;
     if (oldActive && oldActive !== context) await discardContext(oldActive);
+    else if (oldState.activePartition && oldState.activePartition !== context.partitionId) await clearPartition(oldState.activePartition);
     update({ auth: 'ready', operation: 'idle', loginMethod: null, error: null }); schedule();
     queueMicrotask(() => { void refresh({ reason: 'login' }); });
     return getStatus();
@@ -229,7 +285,8 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     return context;
   }
   async function beginLogin({ method } = {}) {
-    await ready;
+    await requireLoadedState();
+    await drainSessionCleanup();
     if (!['web', 'session'].includes(method)) throw xError('invalid_login_method');
     if (method === 'web' && status.auth === 'challenge' && candidate?.context) {
       candidate.context.win.show();
@@ -251,7 +308,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     return getStatus();
   }
   async function importCookies(cookieSetters, permit) {
-    await ready;
+    await requireLoadedState();
     if (disposed || status.loginMethod !== 'session' || status.auth !== 'authorizing' || candidate) throw xError('import_not_requested');
     const attempt = loginGeneration;
     // Revalidate trusted bridge output at the session mutation boundary.
@@ -260,7 +317,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     let context;
     try {
       context = await startCandidate(attempt, false);
-      for (const cookie of cookies) { if (attempt !== loginGeneration || disposed || permit?.isCurrent?.() === false || permit?.isValid?.() === false) throw xError('cancelled'); try { await context.session.cookies.set(cookie); } catch (error) { throw sessionError(error, 'session_write_failed'); } }
+      for (const cookie of cookies) { if (attempt !== loginGeneration || disposed || permit?.isCurrent?.() === false) throw xError('cancelled'); try { context.authenticationWrite = context.session.cookies.set(cookie); await context.authenticationWrite; } catch (error) { throw sessionError(error, 'session_write_failed'); } }
       const actual = await sessionHealth.readCookies(context.session, { domain: 'x.com' });
       if (!cookies.every(cookie => actual.some(item => item.name === cookie.name && item.path === cookie.path && item.value === cookie.value && item.secure === cookie.secure && item.httpOnly === cookie.httpOnly && item.sameSite === cookie.sameSite && item.hostOnly === !Object.hasOwn(cookie, 'domain') && (!Object.hasOwn(cookie, 'expirationDate') || Math.abs(item.expirationDate - cookie.expirationDate) < 2)))) throw xError('session_write_failed');
       cookies.length = 0; actual.length = 0;
@@ -300,13 +357,24 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   async function getPost({ id } = {}) {
     validateXId(id); await ready;
     const detailAge = clock() - Date.parse(detailUpdatedAt.get(id) ?? '');
-    if (active && status.auth === 'ready' && (!details.has(id) || !posts.get(id)?.complete || !Number.isFinite(detailAge) || detailAge >= 60000)) await runTask(async (signal, token) => { const result = await active.adapter.load({ id, signal }); if (!current(token)) throw xError('cancelled'); cacheResults(result); details.add(id); detailUpdatedAt.set(id, new Date(clock()).toISOString()); await persist(); }, { key: `detail:${id}` });
+    let failed = false; let error = null;
+    if (active && status.auth === 'ready' && (!details.has(id) || !posts.get(id)?.complete || !Number.isFinite(detailAge) || detailAge >= 60000)) {
+      const result = await runTask(async (signal, token) => {
+        try {
+          const result = await active.adapter.load({ id, signal }); if (!current(token)) throw xError('cancelled');
+          cacheResults(result); if (!posts.has(id)) throw xError('parser_changed');
+          await persist(); details.add(id); detailUpdatedAt.set(id, new Date(clock()).toISOString()); return true;
+        } catch (failure) { error = safeErrors.has(failure?.code) ? failure.code : 'offline'; throw failure; }
+      }, { key: `detail:${id}` });
+      failed = result !== true;
+    }
     const post = dto(posts.get(id)); const replies = [...posts.values()].filter(value => value.replyTo === id).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).map(value => dto(value));
     const updatedAt = detailUpdatedAt.get(id) ?? null;
-    return { post, replies, source: details.has(id) && status.auth === 'ready' && status.operation === 'idle' ? 'live' : 'cache', status: { ...getStatus(), lastUpdated: updatedAt }, updatedAt };
+    const source = !failed && details.has(id) && status.auth === 'ready' ? 'live' : 'cache';
+    return { post, replies, source, outcome: failed ? 'failed' : source, error: failed ? error ?? 'offline' : null, status: { ...getStatus(), lastUpdated: updatedAt }, updatedAt };
   }
   async function applySettings(patch) {
-    await ready; const next = { ...state.settings, ...validateXSettings(patch, true) }; const previous = state.settings;
+    await requireLoadedState(); const next = { ...state.settings, ...validateXSettings(patch, true) }; const previous = state.settings;
     if (disposed) throw xError('cancelled');
     const proxyChanged = next.proxyMode !== previous.proxyMode || next.proxyPort !== previous.proxyPort;
     const previousBaseline = clone(state.notificationBaseline);
@@ -318,7 +386,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
       }
     }
     state.settings = next;
-    for (const kind of ['Posts', 'Replies']) if (next[`notify${kind}`] !== previous[`notify${kind}`]) state.notificationBaseline[kind.toLowerCase()] = [];
+    for (const kind of ['Posts', 'Replies']) if (next[`notify${kind}`] !== previous[`notify${kind}`]) state.notificationBaseline[kind.toLowerCase()] = { floor: null, seen: [] };
     try { await persist(); }
     catch { state.settings = previous; state.notificationBaseline = previousBaseline; if (proxyChanged && active) await configureSession(active.session, previous).catch(() => {}); schedule(); throw xError('storage_unavailable'); }
     if (proxyChanged && active) queueMicrotask(() => { void refresh({ reason: 'proxy' }); });
@@ -326,15 +394,21 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   }
   function setSettings(patch) { const validated = validateXSettings(patch, true); const work = settingsQueue.catch(() => {}).then(() => applySettings(validated)); settingsQueue = work; return work; }
   async function logout() {
-    await ready; cancelLogin(); stopTask(); cancelTimer(); const old = active;
-    try { await destroyContext(old, true); }
+    await requireLoadedState(); cancelLogin(); stopTask(); cancelTimer();
+    await promotionWork?.catch(() => {});
+    await restorePromise;
+    const old = active; const partitionId = state.activePartition ?? old?.partitionId;
+    try { if (partitionId) await clearPartition(partitionId, old, { acknowledge: false }); }
     catch (error) { markFailure(error); throw error; }
-    active = undefined; state.activePartition = null; state.authScope = null; state.notificationBaseline = { posts: [], replies: [] }; resources.clear(); resourceKeys.clear(); cursors.clear(); details.clear(); liveTabs.clear(); tabUpdatedAt.clear(); detailUpdatedAt.clear();
-    try { await persist(); } catch (error) { const failure = sessionError(error, 'session_persist_failed'); markFailure(failure); throw failure; }
+    active = undefined; const oldPartition = state.activePartition; const oldScope = state.authScope; const oldBaseline = state.notificationBaseline;
+    state.activePartition = null; state.authScope = null; state.notificationBaseline = validateXNotificationBaseline({ posts: [], replies: [] }, 1); resources.clear(); resourceKeys.clear(); cursors.clear(); details.clear(); liveTabs.clear(); tabUpdatedAt.clear(); detailUpdatedAt.clear();
+    try { await persist(); } catch (error) { state.activePartition = oldPartition; state.authScope = oldScope; state.notificationBaseline = oldBaseline; const failure = sessionError(error, 'session_persist_failed'); markFailure(failure); throw failure; }
+    try { if (partitionId) await repository.completeSessionCleanup(partitionId); await Promise.allSettled([...cleanupTasks]); if (cleanupFailures.size) throw cleanupFailures.values().next().value; }
+    catch (error) { const failure = sessionError(error, 'session_clear_failed'); markFailure(failure); throw failure; }
     sessionFailure = null; update({ auth: 'disconnected', operation: 'idle', error: null, loginMethod: null }); return getStatus();
   }
   async function clearCache() {
-    await ready; stopTask(); posts.clear(); state.posts = []; state.lists = emptyLists(); resources.clear(); resourceKeys.clear(); cursors.clear(); details.clear(); exhausted.clear(); liveTabs.clear(); tabUpdatedAt.clear(); detailUpdatedAt.clear();
+    await requireLoadedState(); stopTask(); posts.clear(); state.posts = []; state.lists = emptyLists(); resources.clear(); resourceKeys.clear(); cursors.clear(); details.clear(); exhausted.clear(); liveTabs.clear(); tabUpdatedAt.clear(); detailUpdatedAt.clear();
     await saveQueue.catch(() => {}); await repository.clearCache(); await persist(); update({ ...(status.auth === 'restoring' && active ? { auth: 'ready' } : {}), operation: 'idle', error: null }); schedule(); return getStatus();
   }
   async function readPlaylist(response) {
@@ -347,8 +421,12 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     if (!current(token) || reference.scope !== state.authScope || !active || status.auth !== 'ready') return false;
     if (reference.url !== failedUrl) return true;
     if (reference.recoveryPromise) return reference.recoveryPromise;
-    if (reference.recoveryAttempted || !reference.role || reference.trail.length > 3) return false;
-    reference.recoveryAttempted = true;
+    if (!reference.role || reference.trail.length > 3) return false;
+    // Old positional references cannot prove the identity of reordered media.
+    if (reference.role.type !== 'avatar' && !/^media-[0-9]{1,24}$/.test(reference.role.mediaId)) return false;
+    if (clock() - reference.recoveryWindow >= 60000) { reference.recoveryWindow = clock(); reference.recoveryAttempts = 0; }
+    if (reference.recoveryAttempts >= 3) return false;
+    reference.recoveryAttempts++;
     reference.recoveryPromise = (async () => {
       const key = `${token}:${reference.scope}:${reference.ownerId}`;
       let recovery = mediaRecovery.get(key);
@@ -422,18 +500,26 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
         if (await recoverMedia(reference, resourceGeneration, attemptedUrl, signal)) response = await fetchMedia(reference.url);
       }
       if (!current(resourceGeneration) || reference.scope !== state.authScope) { await response.body?.cancel().catch(() => {}); return new Response(null, { status: 404 }); }
-      if (![200, 206].includes(response.status)) return new Response(null, { status: response.status === 416 ? 416 : 502 });
+      if (response.status === 416) {
+        const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
+        const contentRange = response.headers.get('content-range');
+        if (/^bytes \*\/[0-9]+$/.test(contentRange ?? '')) headers['Content-Range'] = contentRange;
+        return new Response(null, { status: 416, headers });
+      }
+      if (![200, 206].includes(response.status)) return new Response(null, { status: 502 });
       const type = response.headers.get('content-type') ?? '';
+      const mime = type.split(';', 1)[0].trim().toLowerCase();
+      const playlist = ['application/vnd.apple.mpegurl', 'application/x-mpegurl', 'audio/mpegurl', 'audio/x-mpegurl'].includes(mime) || mime === 'application/octet-stream' && new URL(reference.url).pathname.endsWith('.m3u8');
+      if (!playlist && !/^(?:image\/(?:jpeg|png|webp|gif|avif)|video\/(?:mp4|mp2t)|audio\/(?:mpeg|mp4|aac|ogg|webm)|application\/octet-stream)$/.test(mime)) return new Response(null, { status: 502 });
       const outputHeaders = { 'Content-Type': type, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
       for (const key of ['content-length', 'content-range', 'accept-ranges']) if (response.headers.has(key)) outputHeaders[key] = response.headers.get(key);
       if (request.method === 'HEAD') return new Response(null, { status: response.status, headers: outputHeaders });
-      if (/mpegurl/i.test(type) || new URL(reference.url).pathname.endsWith('.m3u8')) {
+      if (playlist) {
         const text = await readPlaylist(response); if (!text) return new Response(null, { status: 502 });
         const convert = (raw, line, attribute) => { const url = new URL(raw, reference.url); if (!isXMediaUrl(url.href) || url.hostname !== new URL(reference.url).hostname || reference.trail.length >= 3) throw xError('invalid_resource'); return registerResource(url.href, reference.ownerId, reference.role, [...reference.trail, { line, attribute }]); };
         const rewritten = text.split(/\r?\n/).map((line, index) => { let attribute = 0; return line.startsWith('#') ? line.replace(/URI="([^"]+)"/g, (_all, raw) => `URI="${convert(raw, index, attribute++)}"`) : line.trim() ? convert(line.trim(), index, null) : line; }).join('\n');
         delete outputHeaders['content-length']; outputHeaders['Content-Type'] = 'application/vnd.apple.mpegurl'; return new Response(rewritten, { status: 200, headers: outputHeaders });
       }
-      if (!/^(image\/(jpeg|png|webp|gif|avif)|video\/mp4|audio\/|application\/octet-stream|video\/mp2t)/i.test(type)) return new Response(null, { status: 502 });
       if (!response.body) return new Response(null, { status: response.status, headers: outputHeaders });
       const reader = response.body.getReader();
       // Electron 43 does not abort protocol Request.signal when a video seeks
@@ -481,22 +567,47 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
       if (current(token)) { update({ auth: active ? 'ready' : 'disconnected' }); markFailure(error); }
     }
   }
+  async function drainSessionCleanup() {
+    if (state.activePartition) await repository.registerSession(state.activePartition);
+    const registry = await repository.listSessionCleanup();
+    for (const id of registry.partitions) {
+      if (id === state.activePartition && !registry.pendingClear.includes(id)) continue;
+      if (id === candidate?.context.partitionId && !registry.pendingClear.includes(id)) continue;
+      const context = active?.partitionId === id ? active : candidate?.context.partitionId === id ? candidate.context : undefined;
+      await clearPartition(id, context, { acknowledge: false });
+      if (id === state.activePartition) {
+        const previous = { activePartition: state.activePartition, authScope: state.authScope, notificationBaseline: state.notificationBaseline };
+        state.activePartition = null; state.authScope = null; state.notificationBaseline = validateXNotificationBaseline({ posts: [], replies: [] }, 1);
+        try { await persist(); } catch (error) { Object.assign(state, previous); throw error; }
+        if (active?.partitionId === id) active = undefined;
+      }
+      await repository.completeSessionCleanup(id);
+    }
+  }
   const ready = (async () => {
     try {
       const saved = await repository.read(); if (disposed) return;
-      if (saved) { state = { ...state, ...saved, settings: { ...X_DEFAULT_SETTINGS, ...validateXSettings(saved.settings) } }; for (const raw of saved.posts ?? []) { const post = validateXPost(raw); posts.set(post.id, post); } }
+      if (saved) {
+        const settings = { ...X_DEFAULT_SETTINGS, ...validateXSettings(saved.settings) };
+        const baseline = validateXNotificationBaseline(saved.notificationBaseline, saved.version ?? 1);
+        const savedPosts = (saved.posts ?? []).map(validateXPost);
+        state = { ...state, ...saved, version: 2, settings, notificationBaseline: baseline }; for (const post of savedPosts) posts.set(post.id, post);
+      }
+      stateLoaded = true;
+      await drainSessionCleanup(); if (disposed) return;
       if (state.activePartition) queueMicrotask(() => { restorePromise = restore(); });
       emit();
-    } catch { update({ auth: 'disconnected', operation: 'error', error: 'storage_unavailable' }); }
+    } catch (error) { update({ auth: 'disconnected', operation: 'error', error: X_SESSION_ERRORS.includes(error?.code) ? error.code : 'storage_unavailable' }); }
   })();
-  return { ready, getStatus, status: getStatus, settings: () => clone(state.settings), getSettings: async () => { await ready; return { settings: clone(state.settings), cacheBytes: repository.cacheBytes ?? 0 }; }, setSettings, listPosts, getPost, refresh, beginLogin, cancelLogin, importCookies, logout, clearCache, resourceHandler, resume,
+  return { ready, getStatus, status: getStatus, settings: () => clone(state.settings), getSettings: async () => { await requireLoadedState(); return { settings: clone(state.settings), cacheBytes: repository.cacheBytes ?? 0 }; }, setSettings, listPosts, getPost, refresh, beginLogin, cancelLogin, importCookies, logout, clearCache, resourceHandler, resume,
     inspectRuntime: () => ({ activeWebContentsId: active?.win.webContents.id ?? null, candidateWebContentsId: candidate?.context.win.webContents.id ?? null, status: getStatus() }),
     async dispose() {
       if (disposed) return; disposed = true; cancelTimer(); stopTask(); loginGeneration++; importBridge?.cancel?.(); runtime.powerMonitor?.removeListener?.('resume', resume);
+      await promotionWork?.catch(() => {});
       const a = active; const c = candidate?.context; active = undefined; candidate = undefined;
-      const results = await Promise.allSettled([destroyContext(a), c === a ? Promise.resolve() : destroyContext(c, true), saveQueue]);
+      const results = await Promise.allSettled([destroyContext(a), c === a ? Promise.resolve() : destroyContext(c, true), saveQueue, ...cleanupTasks]);
       const failure = results.find(result => result.status === 'rejected');
-      if (failure) { const error = sessionError(failure.reason, 'session_persist_failed'); update({ error: error.code, operation: 'error' }); disposed = true; throw error; }
+      if (failure || cleanupFailures.size) { const error = sessionError(failure?.reason ?? cleanupFailures.values().next().value, 'session_persist_failed'); update({ error: error.code, operation: 'error' }); disposed = true; throw error; }
       disposed = true;
     },
   };

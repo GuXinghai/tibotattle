@@ -20,6 +20,21 @@ test('X projection recognizes repost ownership, keeps original detail ID, and om
   assert.equal(projectXPageData({ timeline: { instructions: [] } }).recognized, true);
 });
 
+test('network media identity follows the upstream asset across reorder and URL renewal', () => {
+  const first = { id_str: '801', type: 'video', video_info: { variants: [{ content_type: 'video/mp4', url: 'https://video.twimg.com/first.mp4?token=old' }] } };
+  const second = { rest_id: '802', type: 'photo', media_url_https: 'https://pbs.twimg.com/media/second.jpg' };
+  const item = tweet();
+  item.legacy.extended_entities = { media: [first, second] };
+  const before = projectXPageData({ item }).posts[0].media;
+  item.legacy.extended_entities.media = [second, { ...first, video_info: { variants: [{ content_type: 'video/mp4', url: 'https://video.twimg.com/renewed.mp4?token=new' }] } }];
+  const after = projectXPageData({ item }).posts[0].media;
+  assert.deepEqual(before.map(media => media.id), ['media-801', 'media-802']);
+  assert.deepEqual(after.map(media => media.id), ['media-802', 'media-801']);
+  assert.notEqual(before[0].url, after[1].url);
+  item.legacy.extended_entities.media = [{ ...second, rest_id: undefined }, { ...second, rest_id: 'invalid' }];
+  assert.deepEqual(projectXPageData({ item }).posts[0].media.map(media => media.id), ['0', '1']);
+});
+
 test('missing cursor metadata does not prove the end of a timeline', () => {
   assert.equal(projectXPageData({ entries: [tweet()] }).exhausted, false);
   assert.equal(projectXPageData({ timeline: { instructions: [] } }).exhausted, false);
@@ -105,10 +120,10 @@ test('X adapter distinguishes explicit authentication challenges and ordinary pa
 });
 test('X loaded public tweet props recover lazy avatar/video without reading viewer or raw HTML', () => {
   const originalDocument = globalThis.document; const originalLocation = globalThis.location;
-  const loaded = { id_str: '123', user: { name: 'Example', screen_name: 'thsottiaux', profile_image_url_https: 'https://pbs.twimg.com/profile_images/example.jpg', privateIgnored: 'must-not-project' }, full_text: 'Synthetic public post', created_at: '2026-10-19T14:59:00.000Z', entities: { media: [{ type: 'video', media_url_https: 'https://pbs.twimg.com/media/poster.jpg', video_info: { variants: [{ content_type: 'video/mp4', bitrate: 1000, url: 'https://video.twimg.com/clip.mp4' }] } }] } };
+  const loaded = { id_str: '123', user: { name: 'Example', screen_name: 'thsottiaux', profile_image_url_https: 'https://pbs.twimg.com/profile_images/example.jpg', privateIgnored: 'must-not-project' }, full_text: 'Synthetic public post', created_at: '2026-10-19T14:59:00.000Z', entities: { media: [{ id_str: '803', type: 'video', media_url_https: 'https://pbs.twimg.com/media/poster.jpg', video_info: { variants: [{ content_type: 'video/mp4', bitrate: 1000, url: 'https://video.twimg.com/clip.mp4' }] } }] } };
   const article = { __reactFiber$synthetic: { memoizedProps: { tweet: loaded, viewerUser: { privateIgnored: 'must-not-project' } }, return: null } };
   globalThis.document = { querySelectorAll: () => [article], querySelector: () => null, body: { innerText: '' } }; globalThis.location = { pathname: '/thsottiaux/media' };
-  try { const result = inspectXDocument(); assert.equal(result.posts.length, 1); assert.equal(result.posts[0].author.avatar, loaded.user.profile_image_url_https); assert.equal(result.posts[0].media[0].type, 'video'); assert.equal(result.posts[0].media[0].url, 'https://video.twimg.com/clip.mp4'); assert.equal(JSON.stringify(result).includes('must-not-project'), false); }
+  try { const result = inspectXDocument(); assert.equal(result.posts.length, 1); assert.equal(result.posts[0].author.avatar, loaded.user.profile_image_url_https); assert.equal(result.posts[0].media[0].id, 'media-803'); assert.equal(result.posts[0].media[0].type, 'video'); assert.equal(result.posts[0].media[0].url, 'https://video.twimg.com/clip.mp4'); assert.equal(JSON.stringify(result).includes('must-not-project'), false); }
   finally { if (originalDocument === undefined) delete globalThis.document; else globalThis.document = originalDocument; if (originalLocation === undefined) delete globalThis.location; else globalThis.location = originalLocation; }
 });
 test('X detail waits for in-flight body projection and DOM does not replace network media/avatar/replies', async () => {

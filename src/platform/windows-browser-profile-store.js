@@ -3,7 +3,7 @@ import { isWindowsFilesystemAdapter, WINDOWS_BROWSER_PROFILE_CONTRACT } from './
 
 const STORES = new WeakSet();
 const ERRORS = new WeakSet();
-const CODES = new Set(['invalid_configuration', 'unavailable', 'security_policy', 'bound_exceeded', 'prepare_failed', 'read_failed', 'write_failed']);
+const CODES = new Set(['invalid_configuration', 'unavailable', 'security_policy', 'bound_exceeded', 'cache_cleanup_pending', 'prepare_failed', 'read_failed', 'write_failed']);
 
 export class WindowsBrowserProfileStoreError extends Error {
   constructor(code) {
@@ -20,6 +20,7 @@ export function isWindowsBrowserProfileStoreError(value) { return Boolean(value 
 function mapFailure(error, fallback) {
   if (error?.windowsFilesystemStage === 'browser_profile_cookie_write') return new WindowsBrowserProfileStoreError('write_failed');
   if (error?.code === 'WINDOWS_FILESYSTEM_BROWSER_PROFILE_BOUND_EXCEEDED') return new WindowsBrowserProfileStoreError('bound_exceeded');
+  if (error?.code === 'WINDOWS_FILESYSTEM_BROWSER_PROFILE_CACHE_CLEANUP_PENDING') return new WindowsBrowserProfileStoreError('cache_cleanup_pending');
   if (['SECURITY_POLICY', 'REPARSE_POINT', 'HARD_LINK', 'IDENTITY_MISMATCH', 'INVALID_PATH', 'NOT_DIRECTORY', 'NOT_REGULAR_FILE']
     .some(code => error?.code === `WINDOWS_FILESYSTEM_${code}`)) return new WindowsBrowserProfileStoreError('security_policy');
   return new WindowsBrowserProfileStoreError(fallback);

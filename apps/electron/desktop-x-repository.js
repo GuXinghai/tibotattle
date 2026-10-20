@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { isWindowsProtectedStateStore, isWindowsProtectedStateStoreError, isWindowsBrowserProfileStore, isWindowsBrowserProfileStoreError } from '../../src/platform/index.js';
-import { X_DEFAULT_SETTINGS, X_TABS, validateXId, validateXPost, validateXSettings, xError } from './desktop-x-contract.js';
+import { X_DEFAULT_SETTINGS, X_TABS, validateXId, validateXPost, validateXSettings, validateXNotificationBaseline, xError } from './desktop-x-contract.js';
 
 const POINTER = 'x-reader-v1.json';
 const JOURNAL = 'x-reader-pending-v1.json';
+const SESSION_CLEANUP = 'x-session-registry-v1.json';
+const MAX_PENDING_SESSIONS = 64;
 const CHUNK_BYTES = 256 * 1024;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value) && [Object.prototype, null].includes(Object.getPrototypeOf(value));
@@ -19,6 +21,7 @@ function checkpoint(value) {
 const checkpointName = id => `x-session-checkpoint-${sessionId(id)}.json`;
 function profileError(error) {
   if (!isWindowsBrowserProfileStoreError(error)) return xError('session_permission_failed');
+  if (['windows_browser_profile_bound_exceeded', 'windows_browser_profile_cache_cleanup_pending'].includes(error.code)) return xError('session_profile_limit');
   if (error.code === 'windows_browser_profile_write_failed') return xError('session_write_failed');
   return xError(error.code === 'windows_browser_profile_read_failed' ? 'session_read_failed' : 'session_permission_failed');
 }
@@ -28,26 +31,34 @@ function ids(value) {
   return value.map(id => { validateXId(id); if (found.has(id)) invalid(); found.add(id); return id; });
 }
 function emptySnapshot() {
-  return { version: 1, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: Object.fromEntries(X_TABS.map(tab => [tab, []])), notificationBaseline: { posts: [], replies: [] } };
+  return { version: 2, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: Object.fromEntries(X_TABS.map(tab => [tab, []])), notificationBaseline: { posts: { floor: null, seen: [] }, replies: { floor: null, seen: [] } } };
 }
 function snapshot(value) {
-  if (!exact(value, ['version', 'settings', 'activePartition', 'authScope', 'posts', 'lists', 'notificationBaseline']) || value.version !== 1 || !Array.isArray(value.posts) || !exact(value.lists, X_TABS) || !exact(value.notificationBaseline, ['posts', 'replies'])) invalid();
+  if (!exact(value, ['version', 'settings', 'activePartition', 'authScope', 'posts', 'lists', 'notificationBaseline']) || ![1, 2].includes(value.version) || !Array.isArray(value.posts) || !exact(value.lists, X_TABS) || !exact(value.notificationBaseline, ['posts', 'replies'])) invalid();
   const posts = value.posts.map(post => validateXPost(post));
   const postIds = new Set(posts.map(post => post.id));
   if (posts.length !== postIds.size) invalid();
   const lists = Object.fromEntries(X_TABS.map(tab => [tab, ids(value.lists[tab])]));
   if (Object.values(lists).some(list => list.some(id => !postIds.has(id)))) invalid();
-  return { version: 1, settings: validateXSettings(value.settings), activePartition: value.activePartition === null ? null : sessionId(value.activePartition), authScope: value.authScope === null ? null : sessionId(value.authScope), posts, lists, notificationBaseline: { posts: ids(value.notificationBaseline.posts), replies: ids(value.notificationBaseline.replies) } };
+  return { version: 2, settings: validateXSettings(value.settings), activePartition: value.activePartition === null ? null : sessionId(value.activePartition), authScope: value.authScope === null ? null : sessionId(value.authScope), posts, lists, notificationBaseline: validateXNotificationBaseline(value.notificationBaseline, value.version) };
 }
 function envelope(value) {
-  if (!exact(value, ['version', 'current', 'archives']) || value.version !== 1 || !Array.isArray(value.archives)) invalid();
-  return { version: 1, current: snapshot(value.current), archives: value.archives.map(snapshot) };
+  if (!exact(value, ['version', 'current', 'archives']) || ![1, 2].includes(value.version) || !Array.isArray(value.archives)) invalid();
+  return { version: 2, current: snapshot(value.current), archives: value.archives.map(snapshot) };
 }
 function descriptor(value) {
   if (!exact(value, ['version', 'generation', 'chunks', 'bytes', 'sha256']) || value.version !== 1 || !UUID.test(value.generation) || !Number.isSafeInteger(value.chunks) || value.chunks < 1 || !Number.isSafeInteger(value.bytes) || value.bytes < 1 || value.chunks !== Math.ceil(value.bytes / CHUNK_BYTES) || !/^[0-9a-f]{64}$/.test(value.sha256)) invalid();
   return value;
 }
 const chunkName = (record, index) => `x-cache-${record.generation}-${index}.bin`;
+function cleanupRecord(value) {
+  if (!exact(value, ['version', 'partitions', 'pendingClear']) || value.version !== 1 || !Array.isArray(value.partitions) || value.partitions.length > MAX_PENDING_SESSIONS || !Array.isArray(value.pendingClear)) invalid();
+  const partitions = value.partitions.map(sessionId);
+  const pendingClear = value.pendingClear.map(sessionId);
+  if (new Set(partitions).size !== partitions.length || new Set(pendingClear).size !== pendingClear.length || pendingClear.some(id => !partitions.includes(id))) invalid();
+  return { version: 1, partitions, pendingClear };
+}
+const publicCache = value => JSON.stringify({ posts: value.posts, lists: value.lists });
 
 /** Storage-neutral logic; production composition must use the branded factory below. */
 export function createXRepository({ storage, sessionPath, sessionHealth = async () => {} }) {
@@ -58,10 +69,45 @@ export function createXRepository({ storage, sessionPath, sessionHealth = async 
   const pointer = async () => { const value = await storage.readJson(POINTER); return value === null ? null : descriptor(value); };
   const measure = value => { cacheBytes = [value.current, ...value.archives].reduce((sum, item) => sum + (item.posts.length ? Buffer.byteLength(JSON.stringify({ posts: item.posts, lists: item.lists })) : 0), 0); };
   const exclusive = action => storage.withLease ? storage.withLease(action) : action();
+  async function pendingSessions() {
+    try { const value = await storage.readJson(SESSION_CLEANUP); return value === null ? { version: 1, partitions: [], pendingClear: [] } : cleanupRecord(value); }
+    catch { throw xError('session_read_failed'); }
+  }
+  async function savePendingSessions(value) {
+    try {
+      const safe = cleanupRecord(value);
+      await storage.writeJson(SESSION_CLEANUP, safe);
+      const saved = cleanupRecord(await storage.readJson(SESSION_CLEANUP));
+      if (JSON.stringify(saved) !== JSON.stringify(safe)) invalid();
+    } catch { throw xError('session_persist_failed'); }
+  }
+  function acknowledgeSession(id, cleared) {
+    const selected = sessionId(id);
+    return enqueue(() => exclusive(async () => {
+      const pending = await pendingSessions();
+      if (cleared) {
+        // Only the session owner calls this after clearing and verifying cookies.
+        // Keep the receipt if checkpoint deletion or acknowledgement fails.
+        try { const name = checkpointName(selected); await storage.remove(name); if (await storage.readJson(name) !== null) throw xError('session_clear_failed'); }
+        catch { throw xError('session_clear_failed'); }
+      }
+      if (cleared ? pending.partitions.includes(selected) : pending.pendingClear.includes(selected)) await savePendingSessions({ version: 1, partitions: cleared ? pending.partitions.filter(id => id !== selected) : pending.partitions, pendingClear: pending.pendingClear.filter(id => id !== selected) });
+    }));
+  }
+  function registerSession(id, clear) {
+    const selected = sessionId(id);
+    return enqueue(() => exclusive(async () => {
+      const pending = await pendingSessions();
+      const registered = pending.partitions.includes(selected);
+      if (!registered && pending.partitions.length >= MAX_PENDING_SESSIONS) throw xError('session_persist_failed');
+      if (registered && (!clear || pending.pendingClear.includes(selected))) return;
+      await savePendingSessions({ version: 1, partitions: registered ? pending.partitions : [...pending.partitions, selected], pendingClear: clear && !pending.pendingClear.includes(selected) ? [...pending.pendingClear, selected] : pending.pendingClear });
+    }));
+  }
   async function loadEnvelope() {
     for (let attempt = 0; attempt < 2; attempt++) {
       const selected = await pointer();
-      if (selected === null) { const value = { version: 1, current: emptySnapshot(), archives: [] }; measure(value); return value; }
+      if (selected === null) { const value = { version: 2, current: emptySnapshot(), archives: [] }; measure(value); return value; }
       try {
         const chunks = [];
         for (let index = 0; index < selected.chunks; index++) {
@@ -108,7 +154,12 @@ export function createXRepository({ storage, sessionPath, sessionHealth = async 
       for (const post of value.posts) merged.set(post.id, post);
       value.posts = [...merged.values()];
     }
-    if (preservePosts && value.authScope !== old.authScope && (old.authScope !== null || old.posts.length > 0)) durable.archives.push(old);
+    if (preservePosts && value.authScope !== old.authScope && (old.authScope !== null || old.posts.length > 0)) {
+      // Logout deliberately leaves a readable cache. It already belongs to the
+      // authenticated archive; logging in again must not archive a second copy.
+      const duplicateLogoutCache = old.authScope === null && durable.archives.some(archived => publicCache(archived) === publicCache(old));
+      if (!duplicateLogoutCache) durable.archives.push(old);
+    }
     if (clearArchives) {
       for (const archived of durable.archives) { archived.posts = []; archived.lists = Object.fromEntries(X_TABS.map(tab => [tab, []])); }
     }
@@ -131,6 +182,11 @@ export function createXRepository({ storage, sessionPath, sessionHealth = async 
     clearCache: () => enqueue(() => exclusive(async () => { const value = await load(); value.posts = []; value.lists = Object.fromEntries(X_TABS.map(tab => [tab, []])); return commit(value, false, true); })),
     getSessionPath: async id => sessionPath(sessionId(id)),
     checkSessionHealth: async id => sessionHealth(sessionId(id)),
+    listSessionCleanup: () => enqueue(async () => { const { partitions, pendingClear } = await pendingSessions(); return clone({ partitions, pendingClear }); }),
+    registerSession: id => registerSession(id, false),
+    queueSessionCleanup: id => registerSession(id, true),
+    completeSessionCleanup: id => acknowledgeSession(id, true),
+    retainSession: id => acknowledgeSession(id, false),
     readSessionCheckpoint: id => {
       const name = checkpointName(id);
       return enqueue(async () => {
@@ -159,8 +215,8 @@ export function createDesktopXRepository({ store, createSessionStore }) {
   return createXRepository({
     storage: {
       withLease: action => store.withOperationLease('x-state-operation.lock', action),
-      async readJson(name) { const found = await record(name); if (!found) return null; if (found.data.length > 4096) invalid(); return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(found.data)); },
-      async writeJson(name, value) { if (Buffer.byteLength(JSON.stringify(value)) > 4096) invalid(); const found = await record(name); if (found) await store.replaceJson(name, found.identity, value); else await store.createJson(name, value); },
+      async readJson(name) { const found = await record(name); if (!found) return null; if (found.data.length > (name === SESSION_CLEANUP ? 8192 : 4096)) invalid(); return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(found.data)); },
+      async writeJson(name, value) { if (Buffer.byteLength(JSON.stringify(value)) > (name === SESSION_CLEANUP ? 8192 : 4096)) invalid(); const found = await record(name); if (found) await store.replaceJson(name, found.identity, value); else await store.createJson(name, value); },
       async create(name, bytes) { await store.create(name, bytes); },
       async read(name) { const found = await record(name); if (!found) invalid(); return found.data; },
       async remove(name) { const found = await record(name); if (found) await store.delete(name, found.identity); },

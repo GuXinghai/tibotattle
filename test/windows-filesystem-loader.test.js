@@ -49,7 +49,7 @@ const IDENTITY = Object.freeze({
 const BINDING_BYTES = Buffer.from("reviewed native binding bytes", "utf8");
 
 test('browser profile loader binds complete methods and closed approval without enabling general filesystem policy', () => {
-  const native = binding({ browserProfileContractVersion: 'windows-browser-profile-v1',
+  const native = binding({ browserProfileContractVersion: 'windows-browser-profile-v2',
     ...Object.fromEntries(WINDOWS_BROWSER_PROFILE_METHODS.map(name => [name, () => ({ entries: 1,
       cookieDatabasePresent: false, cookieDatabaseBusy: false, cookieDatabaseBytes: 0 })])) });
   const sidecar = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: native });
@@ -57,7 +57,7 @@ test('browser profile loader binds complete methods and closed approval without 
     bindingPath: 'C:\\checkout\\native\\windows-filesystem\\build\\Release\\windows_filesystem.node',
     readManifest: () => JSON.stringify(sidecar), readBindingBytes: () => BINDING_BYTES, requireBinding: () => native };
   assert.equal(loadWindowsBrowserProfileBinding(options), native);
-  assert.equal(createWindowsFilesystemAdapter(options).browserProfileContractVersion, 'windows-browser-profile-v1');
+  assert.equal(createWindowsFilesystemAdapter(options).browserProfileContractVersion, 'windows-browser-profile-v2');
   assert.equal(createWindowsFilesystemAdapter(options).productionSafe, false);
   assert.throws(() => loadWindowsBrowserProfileBinding({ ...options, readManifest: () => JSON.stringify(manifest()) }),
     { code: 'WINDOWS_FILESYSTEM_BROWSER_PROFILE_UNQUALIFIED' });
@@ -66,7 +66,8 @@ test('browser profile loader binds complete methods and closed approval without 
       { code: 'WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH' });
   }
   for (const browserProfile of [{ ...sidecar.browserProfile, approved: false },
-    { ...sidecar.browserProfile, extra: true }, { ...sidecar.browserProfile, contractVersion: 'future' }]) {
+    { ...sidecar.browserProfile, extra: true }, { ...sidecar.browserProfile, contractVersion: 'future' },
+    { ...sidecar.browserProfile, contractVersion: 'windows-browser-profile-v1' }]) {
     assert.throws(() => loadWindowsBrowserProfileBinding({ ...options, readManifest: () => JSON.stringify({ ...sidecar, browserProfile }) }),
       { code: 'WINDOWS_FILESYSTEM_INVALID_MANIFEST' });
   }

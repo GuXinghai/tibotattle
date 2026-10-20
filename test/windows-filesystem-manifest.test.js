@@ -18,10 +18,10 @@ import { WINDOWS_RELEASE_OPERATION_METHODS, WINDOWS_LEGACY_STATE_READ_METHODS, W
 const BYTES = Buffer.from("reviewed native bytes", "utf8");
 
 test('browser profile manifest requires both bounded repair and access inspection', () => {
-  const extension = { browserProfileContractVersion: 'windows-browser-profile-v1',
+  const extension = { browserProfileContractVersion: 'windows-browser-profile-v2',
     ...Object.fromEntries(WINDOWS_BROWSER_PROFILE_METHODS.map(name => [name, () => {}])) };
   const result = createWindowsFilesystemBindingManifest({ bytes: BYTES, binding: binding(extension) });
-  assert.deepEqual(result.browserProfile, { contractVersion: 'windows-browser-profile-v1', approved: true });
+  assert.deepEqual(result.browserProfile, { contractVersion: 'windows-browser-profile-v2', approved: true });
   assert.equal(result.approvedPolicy.productionSafe, false);
   for (const name of WINDOWS_BROWSER_PROFILE_METHODS) {
     assert.throws(() => createWindowsFilesystemBindingManifest({ bytes: BYTES,

@@ -42,7 +42,7 @@ import {
 
 export const LOCAL_INDEX_STORE_FAMILY = "local-index-store";
 export const LOCAL_INDEX_STORE_APPLICATION_ID = 0x554d4932;
-export const LOCAL_INDEX_STORE_USER_VERSION = 6;
+export const LOCAL_INDEX_STORE_USER_VERSION = 7;
 // A confirmed native response receipt repaired this derived model. Reparse clears it.
 export const EVENT_FLAG_RUNTIME_MODEL = 32;
 // Increment when reviewed identity additions can repair previously unknown
@@ -51,7 +51,7 @@ export const LOCAL_INDEX_MODEL_RECOGNITION_VERSION = 1;
 // Names the shared extractor revision it was built with, so a change to the
 // extractor's semantics cannot leave facts that no reparse will replace.
 // test/local-index-refresh.test.js pins the two together.
-export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v2+unified-rollout-typed-v21";
+export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v3+unified-rollout-typed-v21";
 
 // Append-only: ordinals are the on-disk and wire representation.
 export const REASONING_EFFORTS = Object.freeze([
@@ -84,6 +84,7 @@ const DIAGNOSTIC_CODES = new Set([
   "responseUnverifiedPrefixTurns",
   "responseModelsRecovered", "responseModelRecoveryVersion",
   "modelRecognitionVersion",
+  "deferredTailBytes",
 ]);
 
 // Extraction-level reasons first; the rest are discovery-level reasons, which
@@ -462,7 +463,7 @@ function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
     throw fixedError("local_index_newer_version");
   }
   if (userVersion < LOCAL_INDEX_STORE_USER_VERSION
-        && !(allowWorkloadPredecessor && [4,5].includes(userVersion))) {
+        && !(allowWorkloadPredecessor && [4,5,6].includes(userVersion))) {
     throw fixedError("local_index_family_mismatch");
   }
 }
@@ -542,6 +543,8 @@ export function openLocalIndexStore(file, {
   let database;
   try {
     database = new DatabaseSync(path, { readOnly, timeout: 5_000 });
+    // Reject newer/foreign files before any write-mode connection pragmas.
+    if (existed) assertFamily(database, { allowWorkloadPredecessor: true });
     configure(database, { readOnly, bulkLoad });
     if (!existed) initialize(database);
     if (existed && !readOnly
@@ -552,6 +555,22 @@ export function openLocalIndexStore(file, {
         database.exec(SCHEMA);
         database.exec(ROLLUP_TRIGGER_SCHEMA);
         database.exec("PRAGMA user_version=6");
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    }
+    if (existed && !readOnly
+        && database.prepare("PRAGMA user_version").get().user_version === 6) {
+      // v7 changes the meaning of a committed cursor, not the physical tables:
+      // a validated complete prefix may stop before a deferred trailing line.
+      // Keep every fact, ordinal and per-source parser stamp for scoped replay.
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) throw fixedError("local_index_family_mismatch");
+        database.prepare("UPDATE meta SET value=? WHERE key='parser_version'").run(LOCAL_INDEX_PARSER_VERSION);
+        database.exec("PRAGMA user_version=7");
         database.exec("COMMIT");
       } catch (error) {
         database.exec("ROLLBACK");
@@ -1226,7 +1245,9 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
 /** Load the whole catalog (a few thousand rows) for in-memory comparison. */
 export function loadCatalog(database) {
   const catalog = new Map();
-  const rows = database.prepare("SELECT * FROM source").all();
+  const rows = database.prepare(`SELECT s.*, COALESCE(d.count, 0) AS deferred_tail_bytes
+    FROM source s LEFT JOIN source_diagnostic d
+      ON d.source_id=s.id AND d.code='deferredTailBytes'`).all();
   for (const row of rows) {
     catalog.set(Buffer.from(row.source_local).toString("hex"), row);
   }

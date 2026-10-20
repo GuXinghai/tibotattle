@@ -94,7 +94,7 @@ test("work lifecycle survives cold, incremental, replay and forward migration wi
     const saltBefore=await readFile(w.secretFile);
     await refreshLocalIndex(options);
     db=openLocalIndexStore(indexFile,{readOnly:true});
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version,6);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version,7);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);db.close();
     assert.deepEqual(await readFile(w.secretFile),saltBefore);
     const result=readLocalIndexWorkload({indexFile,nowMs:at+11*M,sourceFresh:true});

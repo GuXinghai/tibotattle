@@ -3326,6 +3326,9 @@ napi_value ReleaseAccountlessInstallationCredentialMutexCallback(
 // separate from SetOwnerOnlyDacl/ensureDirectory and never returns file content.
 constexpr std::size_t kBrowserProfileMaximumEntries = 4096;
 constexpr std::size_t kBrowserProfileMaximumDepth = 32;
+// Overflow recovery is a bounded, resumable deletion pass over fixed disposable
+// cache names only. Durable browser state still uses the unchanged tree bound.
+constexpr std::size_t kBrowserProfileCacheMaximumOperations = 8192;
 
 bool IsCurrentLogonSid(PSID sid) {
   HANDLE token = nullptr;
@@ -3438,6 +3441,139 @@ struct BrowserProfileHandles {
   std::vector<BrowserProfileEntry> entries;
   ~BrowserProfileHandles() { for (auto& entry : entries) CloseHandle(entry.handle); }
 };
+
+struct BrowserCacheBudget {
+  std::size_t operations = 0;
+  bool spend(Failure* failure) {
+    if (operations >= kBrowserProfileCacheMaximumOperations) {
+      *failure = {"BROWSER_PROFILE_CACHE_CLEANUP_PENDING"};
+      failure->stage = "browser_profile_cache_budget";
+      return false;
+    }
+    ++operations;
+    return true;
+  }
+};
+
+// This helper is private to the three constant cache roots below. The caller
+// holds every ancestor without delete sharing. Legacy ACL repair is local to
+// the validated handle and never propagates to unvalidated descendants.
+bool OpenBrowserCacheChild(HANDLE parent, const std::wstring& name, bool directory,
+    bool deletion, ScopedHandle* child, BrowserCacheBudget* budget, Failure* failure) {
+  const DWORD access = READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE | WRITE_DAC
+      | (directory ? FILE_LIST_DIRECTORY : 0) | (deletion ? DELETE : 0);
+  const ULONG kind = directory ? kFileDirectoryFile : kFileNonDirectoryFile;
+  if (!budget->spend(failure)) return false;
+  if (!OpenRelativeComponent(parent, name, access, FILE_SHARE_READ, kFileOpen,
+      kind, nullptr, &child->handle, nullptr, failure)) {
+    if (failure->code != AccessDenied().code || !budget->spend(failure)
+        || !OpenRelativeComponent(parent, name, READ_CONTROL | WRITE_DAC,
+          FILE_SHARE_READ, kFileOpen, kind, nullptr, &child->handle, nullptr, failure, false)) {
+      failure->stage = "browser_profile_cache_open"; return false;
+    }
+    if (!ValidateBrowserProfileSecurity(child->handle, true, directory, failure, true)) return false;
+    FILE_ID_INFO expected{};
+    if (!GetFileInformationByHandleEx(child->handle, FileIdInfo, &expected, sizeof(expected))
+        || !SetBrowserProfileDacl(child->handle, false, false)) {
+      *failure = FromLastError(); failure->stage = "browser_profile_cache_repair"; return false;
+    }
+    ScopedHandle reopened;
+    if (!budget->spend(failure)) return false;
+    if (!OpenRelativeComponent(parent, name, access, FILE_SHARE_READ, kFileOpen,
+        kind, nullptr, &reopened.handle, nullptr, failure)) {
+      failure->stage = "browser_profile_cache_reopen"; return false;
+    }
+    FILE_ID_INFO observed{};
+    if (!GetFileInformationByHandleEx(reopened.handle, FileIdInfo, &observed, sizeof(observed))
+        || expected.VolumeSerialNumber != observed.VolumeSerialNumber
+        || std::memcmp(expected.FileId.Identifier, observed.FileId.Identifier, sizeof(expected.FileId.Identifier)) != 0) {
+      *failure = IdentityMismatch(); return false;
+    }
+    CloseHandle(child->handle);
+    child->handle = reopened.release();
+  }
+  if (!ValidateBrowserProfileSecurity(child->handle, true, directory, failure)) {
+    failure->stage = "browser_profile_cache_validation"; return false;
+  }
+  return true;
+}
+
+bool PruneBrowserCache(HANDLE directory, std::size_t depth, BrowserCacheBudget* budget,
+    std::vector<BYTE>* buffer, Failure* failure) {
+  for (;;) {
+    if (!budget->spend(failure)) return false;
+    bool restart = true;
+    bool found = false;
+    std::wstring name;
+    DWORD attributes = 0;
+    // Restart after each deletion: directory enumeration is not a durable
+    // cursor under mutation. One fixed buffer and the depth bound limit memory.
+    for (;;) {
+      if (!GetFileInformationByHandleEx(directory,
+          restart ? FileIdBothDirectoryRestartInfo : FileIdBothDirectoryInfo,
+          buffer->data(), static_cast<DWORD>(buffer->size()))) {
+        if (GetLastError() == ERROR_NO_MORE_FILES) break;
+        *failure = FromLastError(); failure->stage = "browser_profile_cache_enumeration"; return false;
+      }
+      restart = false;
+      std::size_t offset = 0;
+      for (;;) {
+        if (offset + FIELD_OFFSET(FILE_ID_BOTH_DIR_INFO, FileName) > buffer->size()) {
+          *failure = OperationFailed(); return false;
+        }
+        const auto* item = reinterpret_cast<FILE_ID_BOTH_DIR_INFO*>(buffer->data() + offset);
+        if ((item->FileNameLength % sizeof(wchar_t)) != 0
+            || item->FileNameLength > buffer->size() - offset - FIELD_OFFSET(FILE_ID_BOTH_DIR_INFO, FileName)) {
+          *failure = OperationFailed(); return false;
+        }
+        name.assign(item->FileName, item->FileNameLength / sizeof(wchar_t));
+        if (name != L"." && name != L"..") { attributes = item->FileAttributes; found = true; break; }
+        if (item->NextEntryOffset == 0) break;
+        if (item->NextEntryOffset < FIELD_OFFSET(FILE_ID_BOTH_DIR_INFO, FileName)
+            || item->NextEntryOffset > buffer->size() - offset) { *failure = OperationFailed(); return false; }
+        offset += item->NextEntryOffset;
+      }
+      if (found) break;
+      if (!budget->spend(failure)) return false;
+    }
+    if (!found) return true;
+    if (depth >= kBrowserProfileMaximumDepth) { *failure = {"BROWSER_PROFILE_BOUND_EXCEEDED"}; return false; }
+    if (name.empty() || name.find_first_of(L"\\/:") != std::wstring::npos || name.find(L'\0') != std::wstring::npos) {
+      *failure = InvalidPath(); return false;
+    }
+    if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) { *failure = ReparsePoint(); return false; }
+    const bool isDirectory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    ScopedHandle child;
+    if (!OpenBrowserCacheChild(directory, name, isDirectory, true, &child, budget, failure)) return false;
+    if (isDirectory && !PruneBrowserCache(child.handle, depth + 1, budget, buffer, failure)) return false;
+    if (!budget->spend(failure)) return false;
+    if (!MarkHandleForDeletion(child.handle)) {
+      *failure = FromLastError(); failure->stage = "browser_profile_cache_delete"; return false;
+    }
+    // The destructor closes the exact validated handle and completes deletion.
+  }
+}
+
+bool PruneDisposableBrowserCaches(HANDLE root, Failure* failure) {
+  BrowserCacheBudget budget;
+  std::vector<BYTE> buffer(64 * 1024);
+  for (const auto* name : { L"Cache", L"Code Cache" }) {
+    ScopedHandle cache;
+    if (!OpenBrowserCacheChild(root, name, true, false, &cache, &budget, failure)) {
+      if (failure->code == NotFound().code) continue;
+      return false;
+    }
+    // Retain the cache root itself; only validated disposable descendants go.
+    if (!PruneBrowserCache(cache.handle, 1, &budget, &buffer, failure)) return false;
+  }
+  ScopedHandle serviceWorker;
+  if (!OpenBrowserCacheChild(root, L"Service Worker", true, false, &serviceWorker, &budget, failure))
+    return failure->code == NotFound().code;
+  ScopedHandle cacheStorage;
+  if (!OpenBrowserCacheChild(serviceWorker.handle, L"CacheStorage", true, false, &cacheStorage, &budget, failure))
+    return failure->code == NotFound().code;
+  return PruneBrowserCache(cacheStorage.handle, 2, &budget, &buffer, failure);
+}
 
 bool EnumerateBrowserProfile(
     BrowserProfileHandles* held, bool migration, Failure* failure, std::size_t* cookieBytes) {
@@ -3638,7 +3774,24 @@ napi_value BrowserProfileCallback(napi_env env, napi_callback_info info, bool mi
   bool cookiePresent = false;
   bool cookieBusy = false;
   if (migration) {
-    if (!EnumerateBrowserProfile(&held, true, &failure, &cookieBytes)) return ThrowFailure(env, failure);
+    if (!EnumerateBrowserProfile(&held, true, &failure, &cookieBytes)) {
+      if (failure.code != "BROWSER_PROFILE_BOUND_EXCEEDED") return ThrowFailure(env, failure);
+      // Release traversal children before requesting cache DELETE handles, but
+      // retain the authenticated root and all its already-held ancestors.
+      for (std::size_t i = 1; i < held.entries.size(); ++i) CloseHandle(held.entries[i].handle);
+      held.entries.resize(1);
+      const bool cleanupComplete = PruneDisposableBrowserCaches(held.entries[0].handle, &failure);
+      if (!cleanupComplete && failure.code != "BROWSER_PROFILE_CACHE_CLEANUP_PENDING") return ThrowFailure(env, failure);
+      cookieBytes = 0;
+      failure = OperationFailed();
+      if (!EnumerateBrowserProfile(&held, true, &failure, &cookieBytes)) {
+        if (!cleanupComplete && failure.code == "BROWSER_PROFILE_BOUND_EXCEEDED") {
+          failure = {"BROWSER_PROFILE_CACHE_CLEANUP_PENDING"};
+          failure.stage = "browser_profile_cache_budget";
+        }
+        return ThrowFailure(env, failure);
+      }
+    }
     cookiePresent = std::any_of(held.entries.begin(), held.entries.end(), [](const auto& entry) { return entry.cookies; });
   } else if (!InspectBrowserCookieStorage(&held, &failure, &cookiePresent, &cookieBytes, &cookieBusy)) return ThrowFailure(env, failure);
   if (migration) {
@@ -3687,7 +3840,7 @@ NAPI_MODULE_INIT() {
   DefineMethod(env, exports, "prepareBrowserProfile", PrepareBrowserProfileCallback);
   DefineMethod(env, exports, "inspectBrowserProfile", InspectBrowserProfileCallback);
   napi_value browserProfileVersion;
-  napi_create_string_utf8(env, "windows-browser-profile-v1", NAPI_AUTO_LENGTH, &browserProfileVersion);
+  napi_create_string_utf8(env, "windows-browser-profile-v2", NAPI_AUTO_LENGTH, &browserProfileVersion);
   napi_set_named_property(env, exports, "browserProfileContractVersion", browserProfileVersion);
   DefineMethod(env, exports, "readFile", ReadFileCallback);
   DefineMethod(env, exports, "createFile", CreateFileCallback);

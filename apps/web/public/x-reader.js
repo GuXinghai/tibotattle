@@ -3,6 +3,7 @@
 export const X_READER_COPY = {
   'en-US': {
     session_permission_failed:"Cannot access the saved X session. Its folder permissions need repair.",
+    session_profile_limit:"The X session exceeds its safe preparation limit or cache cleanup is incomplete. Retry; saved login and posts are preserved.",
     session_write_failed:"Could not write the X session. The previous login is preserved.",
     session_persist_failed:"Could not save the X session to disk. Login may not survive a restart.",
     session_read_failed:"Could not read the saved X session. Saved posts are still available.",
@@ -28,6 +29,7 @@ export const X_READER_COPY = {
   },
   'zh-Hans': {
     session_permission_failed:"无法访问已保存的 X 会话，请修复会话目录权限。",
+    session_profile_limit:"X 会话超出安全处理范围，或缓存清理尚未完成。请重试；已保存的登录和动态仍保留。",
     session_write_failed:"无法写入 X 会话，已保留原有登录。",
     session_persist_failed:"无法将 X 会话保存到磁盘，重启后可能无法恢复登录。",
     session_read_failed:"无法读取已保存的 X 会话，仍可阅读已缓存的内容。",
@@ -53,6 +55,7 @@ export const X_READER_COPY = {
   },
   es: {
     session_permission_failed:"No se puede acceder a la sesión X guardada. Es necesario reparar los permisos de su carpeta.",
+    session_profile_limit:"La sesión X supera el límite seguro o la limpieza de caché está incompleta. Reintenta; se conservan el inicio de sesión y las publicaciones.",
     session_write_failed:"No se pudo escribir la sesión X. Se conserva el inicio de sesión anterior.",
     session_persist_failed:"No se pudo guardar la sesión X en disco. Es posible que no se restaure al reiniciar.",
     session_read_failed:"No se pudo leer la sesión X guardada. El contenido guardado sigue disponible.",
@@ -80,11 +83,11 @@ export const X_READER_COPY = {
 const TABS = ['posts','replies','reposts','media'];
 const AUTH = ['disconnected','restoring','authorizing','ready','expired','challenge'];
 const OPERATIONS = ['idle','loading','offline','rate_limited','error','parser_changed'];
-const SESSION_ERRORS = new Set(['session_permission_failed','session_write_failed','session_persist_failed','session_read_failed','session_decrypt_failed','session_restore_failed','session_clear_failed','storage_unavailable']);
+const SESSION_ERRORS = new Set(['session_profile_limit','session_permission_failed','session_write_failed','session_persist_failed','session_read_failed','session_decrypt_failed','session_restore_failed','session_clear_failed','storage_unavailable']);
 function sessionFailureKey(value) {
   if (SESSION_ERRORS.has(value?.code)) return value.code;
   // IPC errors may retain only their fixed message, with Electron's prefix.
-  const match = typeof value?.message === 'string' ? value.message.match(/\b(session_permission_failed|session_write_failed|session_persist_failed|session_read_failed|session_decrypt_failed|session_restore_failed|session_clear_failed|storage_unavailable)\b/u) : null;
+  const match = typeof value?.message === 'string' ? value.message.match(/\b(session_profile_limit|session_permission_failed|session_write_failed|session_persist_failed|session_read_failed|session_decrypt_failed|session_restore_failed|session_clear_failed|storage_unavailable)\b/u) : null;
   return match?.[1] ?? null;
 }
 const ID = /^[0-9]{1,25}$/u;
@@ -243,7 +246,7 @@ export function mountXReader(options) {
     for(const[tab,control]of tabButtons){control.setAttribute('aria-selected',String(active===tab&&!detail));control.tabIndex=active===tab?0:-1;}
     back.hidden=!detail;
     if(detail){if(detail.post)appendCard(detail.post,false);else children.push(node('p','',t(detail.failed?'failed':'loading')));
-      if(detail.loading||detail.failed||!detail.replies?.length){const message=node('div','x-reader-replies-status',t(detail.loading?'repliesLoading':detail.failed?'repliesFailed':'repliesEmpty'));message.setAttribute('role','status');message.setAttribute('aria-live','polite');message.setAttribute('aria-busy',String(Boolean(detail.loading)));if(detail.failed)message.append(button(t('retry'),()=>void openDetail(detail.id)));children.push(message);}
+      if(detail.loading||detail.failed||detail.cached||!detail.replies?.length){const message=node('div','x-reader-replies-status',t(detail.loading?'repliesLoading':detail.failed?'repliesFailed':detail.cached?'stale':'repliesEmpty'));message.setAttribute('role','status');message.setAttribute('aria-live','polite');message.setAttribute('aria-busy',String(Boolean(detail.loading)));if(detail.failed)message.append(button(t('retry'),()=>void openDetail(detail.id)));children.push(message);}
       for(const reply of detail.replies??[])appendCard(reply);}
     else {const record=records.get(active);if(!record.items.length&&status.auth==='ready')children.push(node('p','x-reader-empty',t(!record.loaded&&loading?'loading':status.operation==='error'?'failed':record.loaded?'empty':'loading')));for(const post of record.items)appendCard(post);if(record.cursor)children.push(button(t('more'),()=>void loadList({append:true}),'x-reader-more'));}
     for(const mounted of existing.values())if(mounted&&!retained.has(mounted.article))mounted.release();
@@ -254,7 +257,7 @@ export function mountXReader(options) {
     renderStatus();
   }
   async function openDetail(id){if(!ID.test(id)||!shown)return;if(!detail)detailScroll=content.scrollTop;const prior=detail?.id===id?detail:null;const token=generation,request=++detailRequest;++listRequest;loading=false;detail={id,post:prior?.post??full.get(id)??records.get(active).items.find(item=>item.id===id)??null,replies:prior?.replies??[],loading:true};renderContent({preserve:Boolean(prior)});content.scrollTop=0;
-    try{const value=await bridge.getXPost({id});if(token!==generation||request!==detailRequest||!shown||detail?.id!==id)return;const post=normalizeXPost(value.post);if(post?.complete)full.set(id,post);detail={id,post:post??detail.post,replies:normalizeItems(value.replies),failed:!post||value.source==='cache'||value.status?.operation&&value.status.operation!=='idle',loading:false};if(value.status)setStatus(value.status);renderContent({preserve:true});prefetch();}
+    try{const value=await bridge.getXPost({id});if(token!==generation||request!==detailRequest||!shown||detail?.id!==id)return;const post=normalizeXPost(value.post);if(post?.complete)full.set(id,post);detail={id,post:post??detail.post,replies:normalizeItems(value.replies),failed:!post||value.outcome==='failed',cached:value.source==='cache'||value.outcome==='cache',loading:false};if(value.status)setStatus(value.status);renderContent({preserve:true});prefetch();}
     catch(error){if(token===generation&&request===detailRequest&&shown){if(sessionFailureKey(error))setStatus({...status,operation:'error',error:sessionFailureKey(error)});detail.failed=true;detail.loading=false;renderContent({preserve:true});}}
   }
   function enqueue(id){if(queued.has(id)||full.has(id)||autoTried.has(id))return;queued.add(id);pump();}

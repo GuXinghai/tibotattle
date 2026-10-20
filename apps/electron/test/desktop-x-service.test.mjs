@@ -6,7 +6,7 @@ import { X_DEFAULT_SETTINGS } from '../desktop-x-contract.js';
 
 const partition = '26d7264f-3422-4a24-985e-940ef42782ac';
 const scope = 'b8ea1e27-7bcf-4b38-bd10-2fbde8bf6e74';
-const post = (id = '123', kind = 'post') => ({ id, author: { name: 'Example', handle: 'thsottiaux', avatar: 'https://pbs.twimg.com/profile_images/example.jpg' }, createdAt: '2026-10-19T14:59:00.000Z', text: 'Synthetic public post', complete: true, kind, media: [{ id: '0', type: 'video', url: 'https://video.twimg.com/master.m3u8', mimeType: 'application/x-mpegURL' }] });
+const post = (id = '123', kind = 'post') => ({ id, author: { name: 'Example', handle: 'thsottiaux', avatar: 'https://pbs.twimg.com/profile_images/example.jpg' }, createdAt: '2026-10-19T14:59:00.000Z', text: 'Synthetic public post', complete: true, kind, media: [{ id: 'media-1', type: 'video', url: 'https://video.twimg.com/master.m3u8', mimeType: 'application/x-mpegURL' }] });
 const initial = (extra = {}) => ({ version: 1, settings: { ...X_DEFAULT_SETTINGS }, activePartition: partition, authScope: scope, posts: [], lists: { posts: [], replies: [], reposts: [], media: [] }, notificationBaseline: { posts: [], replies: [] }, ...extra });
 const flush = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
 function fixture(saved = initial(), overrides = {}) {
@@ -15,10 +15,10 @@ function fixture(saved = initial(), overrides = {}) {
     const cookies = existing ? ['auth_token', 'ct0'].map(name => ({ name, value: 'synthetic', domain: '.x.com', path: '/', secure: true })) : [];
     return { setProxy: async () => {}, setPermissionRequestHandler() {}, setPermissionCheckHandler() {}, on() {}, closeAllConnections: async () => {}, clearStorageData: async () => { cookies.length = 0; }, cookies: { set: async value => { const index = cookies.findIndex(cookie => cookie.name === value.name && cookie.domain === value.domain); const cookie = { ...value, hostOnly: !value.domain }; if (index < 0) cookies.push(cookie); else cookies[index] = cookie; }, get: async filter => cookies.filter(cookie => filter?.domain ? cookie.domain?.replace(/^\./, '') === filter.domain : filter?.url ? cookie.url === filter.url : true).map(cookie => ({ ...cookie })), flushStore: async () => {} }, fetch: async () => new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nvariant.m3u8', { headers: { 'content-type': 'application/vnd.apple.mpegurl' } }) };
   }
-  const session = makeSession(true); const sessions = new Map([[`C:\\synthetic\\${partition}`, session]]); const checkpoints = new Map();
+  const session = makeSession(true); const sessions = new Map([[`C:\\synthetic\\${partition}`, session]]); const checkpoints = new Map(); const partitions = new Set(); const pendingClear = new Set();
   class Window extends EventEmitter { constructor() { super(); this.destroyed = false; this.webContents = new EventEmitter(); this.webContents.setWindowOpenHandler = () => {}; this.webContents.stop = () => {}; this.webContents.id = windows.length + 1; windows.push(this); } setMenu() {} hide() {} show() {} isDestroyed() { return this.destroyed; } destroy() { this.destroyed = true; } async loadURL() {} }
   const runtime = { BrowserWindow: Window, safeStorage: { isEncryptionAvailable: () => true }, session: { fromPath: path => { if (!sessions.has(path)) sessions.set(path, makeSession()); return sessions.get(path); } }, powerMonitor: new EventEmitter() };
-  const repository = { read: async () => disk, write: async value => { disk = structuredClone(value); }, clearCache: async () => { disk.posts = []; disk.lists = { posts: [], replies: [], reposts: [], media: [] }; }, getSessionPath: async id => `C:\\synthetic\\${id}`, checkSessionHealth: async () => ({ cookieDatabasePresent: true, cookieDatabaseBytes: 20480 }), readSessionCheckpoint: async id => checkpoints.get(id) ?? null, writeSessionCheckpoint: async (id, proof) => { checkpoints.set(id, structuredClone(proof)); }, cacheBytes: 0 };
+  const repository = { read: async () => disk, write: async value => { disk = structuredClone(value); }, clearCache: async () => { disk.posts = []; disk.lists = { posts: [], replies: [], reposts: [], media: [] }; }, getSessionPath: async id => `C:\\synthetic\\${id}`, checkSessionHealth: async () => ({ cookieDatabasePresent: true, cookieDatabaseBytes: 20480 }), readSessionCheckpoint: async id => checkpoints.get(id) ?? null, writeSessionCheckpoint: async (id, proof) => { checkpoints.set(id, structuredClone(proof)); }, registerSession: async id => { partitions.add(id); }, listSessionCleanup: async () => ({ partitions: [...partitions], pendingClear: [...pendingClear] }), queueSessionCleanup: async id => { partitions.add(id); pendingClear.add(id); }, retainSession: async id => { pendingClear.delete(id); }, completeSessionCleanup: async id => { checkpoints.delete(id); partitions.delete(id); pendingClear.delete(id); }, cacheBytes: 0 };
   const timers = { setTimeout(callback, ms) { const id = ++sequence; scheduled.set(id, { callback, ms }); return id; }, clearTimeout(id) { scheduled.delete(id); } };
   const bridge = { begin: async () => ({ extensionDirectory: 'C:\\synthetic-extension' }), cancel() {}, status: () => ({ connectionStatus: 'ready' }) };
   const service = createDesktopXService({ runtime, repository, clock: () => time, timers, allowedOrigin: () => 'http://127.0.0.1:12345', importBridge: bridge, notify: value => notifications.push(value), adapterFactory: () => ({ load: async args => { loads.push(args); return adapterLoad(args); }, inspect: async () => ({ accountMenu: true }), dispose() {} }), ...overrides });
@@ -44,7 +44,7 @@ test('failed candidate cookie flush cannot publish or replace an existing active
   await f.service.importCookies([cookie('auth_token'), cookie('ct0')], { isCurrent: () => true }); await flush();
   assert.equal(f.disk().activePartition, partition); assert.equal(f.disk().authScope, scope);
   assert.equal(f.service.getStatus().error, 'session_persist_failed'); assert.equal(f.service.getStatus().operation, 'error');
-  await f.service.dispose();
+  await assert.rejects(f.service.dispose(), { code: 'session_clear_failed' });
 });
 
 test('local session error is sticky across settings/cache success, and clears only after healthy retry', async () => {
@@ -214,7 +214,7 @@ test('X media expiration refreshes the associated post once for concurrent media
   f.session.fetch = async url => { fetched.push(url); return url.includes('fresh') ? new Response('synthetic', { headers: { 'content-type': url.endsWith('.jpg') ? 'image/jpeg' : 'video/mp4' } }) : new Response(null, { status: 403 }); };
   const status = f.service.getStatus(); const responses = await Promise.all([f.service.resourceHandler(new Request(rows.items[0].media[0].src)), f.service.resourceHandler(new Request(rows.items[0].media[0].src)), f.service.resourceHandler(new Request(rows.items[0].media[0].poster))]);
   assert.deepEqual(responses.map(response => response.status), [200, 200, 200]); assert.equal(f.loads.length - before, 1); assert.equal(f.service.getStatus().operation, status.operation); assert.equal(f.service.getStatus().error, status.error); assert.equal(fetched.filter(url => url.includes('fresh')).length, 3);
-  f.session.fetch = async () => new Response(null, { status: 410 }); const count = f.loads.length; assert.equal((await f.service.resourceHandler(new Request(rows.items[0].media[0].src))).status, 502); assert.equal(f.loads.length, count); await f.service.dispose();
+  f.session.fetch = async () => new Response(null, { status: 410 }); const count = f.loads.length; for (let i = 0; i < 4; i++) assert.equal((await f.service.resourceHandler(new Request(rows.items[0].media[0].src))).status, 502); assert.equal(f.loads.length - count, 2, 'three attempts total per minute, including the successful recovery'); await f.service.dispose();
 });
 test('X media expiration resolves HLS segment roles through the refreshed controlled playlist', async () => {
   const f = fixture(); await f.service.ready; await flush(); const rows = await f.service.listPosts({ tab: 'replies' }); await flush();
@@ -275,4 +275,55 @@ test('X proxy changes, logout, and disposal abort in-flight media without waitin
     if (action === 'proxy') await f.service.setSettings({ proxyMode: 'local', proxyPort: 10808 }); else await f.service[action]();
     assert.equal(signal.aborted, true, action); await reader.cancel(); await f.service.dispose();
   }
+});
+
+
+test('partial content refresh retains full text while updating stable media, avatar and quote', async () => {
+  const f = fixture(); await f.service.ready; await flush();
+  const partial = { ...post(), text: 'Short', complete: false, author: { ...post().author, avatar: 'https://pbs.twimg.com/profile_images/fresh.jpg' }, media: [{ id: 'media-2', type: 'image', url: 'https://pbs.twimg.com/media/fresh.jpg' }] };
+  f.setLoad(async () => ({ authenticated: true, posts: [partial], exhausted: true })); await f.service.refresh();
+  const saved = f.disk().posts.find(p => p.id === '123'); assert.equal(saved.text, post().text); assert.equal(saved.complete, true); assert.equal(saved.media[0].id, 'media-2'); assert.equal(saved.author.avatar, partial.author.avatar);
+  await f.service.dispose();
+});
+
+test('detail result is independent of unrelated list failure, and offline cache is readable', async () => {
+  const f = fixture(); await f.service.ready; await flush(); assert.equal((await f.service.getPost({ id: '123' })).outcome, 'live');
+  f.setLoad(async () => { throw Object.assign(new Error('Synthetic'), { code: 'offline' }); }); await f.service.refresh();
+  assert.equal((await f.service.getPost({ id: '123' })).outcome, 'live');
+  await f.service.logout(); const cached = await f.service.getPost({ id: '123' }); assert.equal(cached.outcome, 'cache'); assert.equal(cached.error, null); await f.service.dispose();
+});
+
+test('media retries transient recovery, matches stable identity after reorder, refuses legacy positional rebinding', async () => {
+  for (const stable of [true, false]) {
+    const f = fixture(); const old = post(); old.media[0].id = stable ? 'media-1' : '0';
+    f.setLoad(async () => ({ authenticated: true, posts: [old], exhausted: true })); await f.service.ready; await flush();
+    const src = (await f.service.listPosts({ tab: 'replies' })).items[0].media[0].src; await flush();
+    let attempts = 0; f.setLoad(async () => { attempts++; if (attempts === 1) throw Object.assign(new Error('Synthetic'), { code: 'offline' });
+      const fresh = post(); fresh.media = [{ id: 'media-2', type: 'video', url: 'https://video.twimg.com/wrong.mp4' }, { id: 'media-1', type: 'video', url: 'https://video.twimg.com/right.mp4' }]; return { posts: [fresh], exhausted: true }; });
+    const fetched = []; f.session.fetch = async url => { fetched.push(url); return url.endsWith('right.mp4') ? new Response('ok', { headers: { 'content-type': 'video/mp4' } }) : new Response(null, { status: 403 }); };
+    assert.equal((await f.service.resourceHandler(new Request(src))).status, 502);
+    const recovered = await f.service.resourceHandler(new Request(src)); assert.equal(recovered.status, stable ? 200 : 502); await recovered.body?.cancel();
+    assert.equal(attempts, stable ? 2 : 0); assert.equal(fetched.some(url => url.endsWith('wrong.mp4')), false); await f.service.dispose();
+  }
+});
+
+test('HEAD validates media type and 416 preserves only a valid unsatisfied range', async () => {
+  const f = fixture(); await f.service.ready; await flush(); const src = (await f.service.listPosts({ tab: 'replies' })).items[0].media[0].src; await flush();
+  for (const type of ['text/html', 'image/png-malicious', 'application/x-mpegurl-evil']) { f.session.fetch = async () => new Response(null, { headers: { 'content-type': type } }); assert.equal((await f.service.resourceHandler(new Request(src, { method: 'HEAD' }))).status, 502); }
+  for (const range of ['bytes */1024', 'invalid']) {
+    f.session.fetch = async () => new Response(null, { status: 416, headers: { 'content-range': range } });
+    const response = await f.service.resourceHandler(new Request(src)); assert.equal(response.status, 416); assert.equal(response.headers.get('content-range'), range === 'invalid' ? null : range); assert.equal(response.headers.get('access-control-allow-origin'), 'http://127.0.0.1:12345');
+  }
+  await f.service.dispose();
+});
+
+test('notifications keep independent bounded categories and accept late arrivals above the initial baseline', async () => {
+  const f = fixture(initial({ settings: { ...X_DEFAULT_SETTINGS, notifyPosts: true, notifyReplies: true } })); await f.service.ready; await flush();
+  f.setLoad(async ({ tab }) => ({ authenticated: true, posts: tab === 'posts' ? [post('200')] : [post('150', 'reply')], exhausted: true })); await f.service.refresh();
+  assert.deepEqual(f.notifications.at(-1), { posts: 1, replies: 1, latestId: '200' });
+  f.setLoad(async () => ({ authenticated: true, posts: [post('140', 'reply')], exhausted: true })); await f.service.refresh();
+  assert.equal(f.notifications.at(-1).latestId, '140'); const count = f.notifications.length; await f.service.refresh(); assert.equal(f.notifications.length, count);
+  f.setLoad(async () => ({ authenticated: true, posts: Array.from({ length: 1100 }, (_, i) => post(String(1000+i))), exhausted: true })); await f.service.refresh();
+  assert.equal(f.disk().version, 2); assert.equal(f.disk().notificationBaseline.posts.seen.length, 1024); assert.equal(f.disk().notificationBaseline.replies.seen.length, 2);
+  await f.service.dispose();
 });

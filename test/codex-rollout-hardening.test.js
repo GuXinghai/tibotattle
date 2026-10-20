@@ -17,6 +17,8 @@ import test from "node:test";
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
 import { lineageComponents } from "../src/local-index-batching.js";
 import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
+import { openLocalIndexStore } from "../src/local-index-store.js";
+import { readLocalIndexCoverage } from "../src/local-index-report.js";
 import { withStableRolloutSource } from "../src/rollout-source-snapshot.js";
 import { createCodexLogSources } from "../src/providers/codex/log-sources.js";
 import { createLocalCodexLogPorts } from "../src/platform/local-codex-log-ports.js";
@@ -351,15 +353,20 @@ test("an oversized token record without a complete counter prefix quarantines in
   }
 });
 
-test("an unfinished JSONL tail never publishes facts, skips unchanged, and heals when newline-terminated", async () => {
+test("an unfinished JSONL tail defers only the final record, skips unchanged, and heals when newline-terminated", async () => {
   const { root, source } = await rolloutHome(
     `${sessionMeta()}\n${turnContext()}\n${tokenCount()}`,
   );
   try {
     const built = await build(root, 2);
-    assert.equal(built.sourcesQuarantined, 1);
-    assert.deepEqual(storeQuarantineCodes(root), ["codex_rollout_tail_incomplete"]);
+    assert.equal(built.sourcesQuarantined, 0);
+    assert.deepEqual(storeQuarantineCodes(root), []);
     assert.equal(storeEventCount(root), 0);
+    withReadOnlyStore(storePath(root), db => {
+      const coverage = readLocalIndexCoverage(db);
+      assert.equal(coverage.rolloutIssueCounts.codex_rollout_tail_incomplete, 1);
+      assert.equal(coverage.indexedSourceBytes, Buffer.byteLength(`${sessionMeta()}\n${turnContext()}\n`));
+    });
 
     const unchanged = await ingest(root);
     assert.equal(unchanged.unchanged, true);
@@ -1289,4 +1296,79 @@ test("a logical parent cycle is quarantined instead of receiving arbitrary accou
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+
+test("deferred append preserves verified history, cursor and counters across retries and reopening", async () => {
+  const prefix = `${sessionMeta()}\n${turnContext()}\n${tokenCount()}\n`;
+  const next = tokenCount(250, { last: 150, timestamp: "2026-07-25T00:00:02.000Z" });
+  const { root, source } = await rolloutHome(prefix);
+  const checkpoint = () => withReadOnlyStore(storePath(root), db => ({
+    source: db.prepare("SELECT scanned_bytes, carry_total_input, quarantine_code FROM source").get(),
+    events: db.prepare("SELECT source_offset,tokens_in_uncached FROM usage_event ORDER BY source_offset").all(),
+    coverage: readLocalIndexCoverage(db),
+    deferred: db.prepare("SELECT count FROM source_diagnostic WHERE code='deferredTailBytes'").get()?.count ?? 0,
+  }));
+  try {
+    await build(root); const before = checkpoint();
+    await appendFile(source, next.slice(0, 60));
+    const deferred = await ingest(root); const during = checkpoint();
+    assert.equal(deferred.usageEventsRemoved, 0); assert.deepEqual(during.events, before.events); assert.deepEqual(during.source, before.source); assert.equal(during.deferred, 60);
+    assert.equal(during.coverage.indexedSourceBytes, Buffer.byteLength(prefix)); assert.equal(during.coverage.rolloutIssueCounts.codex_rollout_tail_incomplete, 1);
+    const unchanged = await ingest(root); assert.equal(unchanged.unchanged, true); assert.deepEqual(checkpoint(), during);
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(refreshCodexHome(root, { signal: controller.signal }), { code: 'codex_log_scan_aborted' }); assert.deepEqual(checkpoint(), during);
+    await appendFile(source, next.slice(60)); await ingest(root); assert.deepEqual(checkpoint().events, before.events); assert.equal(checkpoint().source.carry_total_input, 100);
+    await appendFile(source, "\n"); await ingest(root); const after = checkpoint();
+    assert.deepEqual(after.events.map(e => Number(e.tokens_in_uncached)), [100, 150]); assert.equal(after.source.carry_total_input, 250); assert.equal(after.deferred, 0); assert.equal(after.coverage.rolloutIssueCounts.codex_rollout_tail_incomplete, undefined);
+    await ingest(root); assert.deepEqual(checkpoint(), after);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("cold worker prefixes and incremental prefixes agree while malformed completed records still quarantine", async () => {
+  const prefix = `${sessionMeta()}\n${turnContext()}\n${tokenCount()}\n`;
+  const tail = tokenCount(250, { last: 150 });
+  for (const workers of [1, 2]) {
+    const { root, source } = await rolloutHome(prefix + tail);
+    try {
+      const cold = await build(root, workers); assert.equal(cold.mode, workers === 2 ? "lanes" : "sequential"); assert.equal(storeEventCount(root), 1); assert.deepEqual(storeQuarantineCodes(root), []);
+      await ingest(root); assert.equal(storeEventCount(root), 1);
+      await appendFile(source, "\n"); await ingest(root); assert.equal(storeEventCount(root), 2);
+      // A malformed complete record is not an ordinary pending tail, even
+      // when another unterminated record follows it.
+      await appendFile(source, '{"type":"event_msg","payload":{"type":"token_count"}\n' + tail.slice(0, 30));
+      await ingest(root); assert.deepEqual(storeQuarantineCodes(root), ['codex_rollout_content_invalid']); assert.equal(storeEventCount(root), 0);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  }
+});
+
+
+test("a changed committed prefix is rescanned instead of retaining stale history under a deferred tail", async () => {
+  const first = `${sessionMeta()}\n${turnContext()}\n${tokenCount()}\n`;
+  const { root, source } = await rolloutHome(first);
+  try {
+    await build(root); await appendFile(source, tokenCount(250).slice(0, 40)); await ingest(root); assert.equal(storeEventCount(root), 1);
+    await writeFile(source, `${sessionMeta()}\n${turnContext()}\n${tokenCount(200)}\n` + tokenCount(300).slice(0, 40));
+    await ingest(root);
+    withReadOnlyStore(storePath(root), db => assert.deepEqual(db.prepare('SELECT tokens_in_uncached FROM usage_event').all().map(r => Number(r.tokens_in_uncached)), [200]));
+    await writeFile(source, `${sessionMeta()}\n${turnContext()}\n` + '{"type":"event_msg","payload":{"type":"token_count"}\n' + tokenCount().slice(0, 20));
+    await ingest(root); assert.equal(storeEventCount(root), 0); assert.deepEqual(storeQuarantineCodes(root), ['codex_rollout_content_invalid']);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+
+test("upgrading a legacy tail quarantine restores only complete original records without editing the source", async () => {
+  const prefix = `${sessionMeta()}\n${turnContext()}\n${tokenCount()}\n`;
+  const tail = tokenCount(250, { last: 150 }); const original = prefix + tail;
+  const { root, source } = await rolloutHome(original);
+  try {
+    await build(root);
+    // Model the old defect in a disposable synthetic index, never user state.
+    const db = openLocalIndexStore(storePath(root));
+    db.exec("BEGIN IMMEDIATE; DELETE FROM usage_event; UPDATE source SET scanned_bytes=0,quarantine_code='codex_rollout_tail_incomplete',parser_version='local-index-rollout-typed-v2+unified-rollout-typed-v21'; PRAGMA user_version=6; COMMIT"); db.close();
+    await ingest(root); assert.equal(storeEventCount(root), 1); assert.deepEqual(storeQuarantineCodes(root), []);
+    const handle = await open(source, 'r'); try { assert.equal(await handle.readFile('utf8'), original); } finally { await handle.close(); }
+    await ingest(root); assert.equal(storeEventCount(root), 1);
+    await appendFile(source, "\n"); await ingest(root); assert.equal(storeEventCount(root), 2);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

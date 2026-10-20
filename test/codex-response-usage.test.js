@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, appendFile, stat, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, appendFile, copyFile, rename, stat, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createResponseUsagePlan } from '../src/providers/codex/logs.js';
@@ -362,4 +362,21 @@ test('persistent response identity suppresses physical copies and rejects change
       writer.rollback();assert.equal(db.prepare('SELECT COUNT(*) n FROM usage_event').get().n,1);
     }finally{db.close();}
   }finally{await rm(f.root,{recursive:true});}
+});
+
+
+test('deferred modern response tails preserve reconciled history through rescan, copies and rotation', async () => {
+  const f = await fixture([meta, context, legacy(1, 1), response(2, 'synthetic-first', 1)]);
+  const options = { indexFile: join(f.root, 'index.sqlite'), workerCount: 1 };
+  const facts = () => withReadOnlyStore(options.indexFile, db => db.prepare('SELECT hex(event_key) AS id,tokens_in_uncached,tokens_in_cache_read,tokens_out_combined FROM usage_event ORDER BY event_key').all());
+  try {
+    await refreshCodexHome(f.root, options); const before = facts(); assert.equal(before.length, 1);
+    const next = JSON.stringify(response(3, 'synthetic-next', 2)); await appendFile(f.path, next);
+    await refreshCodexHome(f.root, options); assert.deepEqual(facts(), before); await refreshCodexHome(f.root, options); assert.deepEqual(facts(), before);
+    await appendFile(f.path, '\n'); await refreshCodexHome(f.root, options); const completed = facts(); assert.equal(completed.length, 2);
+    const archive = join(f.root, 'archived_sessions'); await mkdir(archive);
+    const copy = join(archive, f.path.split(/[\\/]/).at(-1)); await copyFile(f.path, copy);
+    await refreshCodexHome(f.root, options); assert.deepEqual(facts(), completed);
+    await rename(f.path, join(f.root, 'retained-source')); await refreshCodexHome(f.root, options); assert.deepEqual(facts(), completed);
+  } finally { await rm(f.root, { recursive: true, force: true }); }
 });

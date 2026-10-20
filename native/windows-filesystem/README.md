@@ -276,7 +276,7 @@ non-native or simulated result does not qualify the native Windows binding.
 
 ## Chromium browser profiles
 
-`windows-browser-profile-v1` is a separate, manifest-bound capability exposed
+`windows-browser-profile-v2` is a separate, manifest-bound capability exposed
 through `createWindowsBrowserProfileStore`. It does not change the generic
 protected-record policy: `ensureDirectory` and record files still use their
 protected, non-inheriting owner DACLs. Browser profile directories instead have
@@ -304,6 +304,29 @@ used. A failure can leave earlier objects repaired; those owner-only changes
 are retryable, while all file content remains untouched. This is not a
 transaction against a hostile same-owner writer creating new names; application
 lifecycle must keep Chromium closed during repair.
+
+If that traversal exceeds its unchanged bound, preparation releases descendant
+handles while retaining the authenticated root and ancestors, then attempts one
+bounded cleanup pass. Only descendants of the fixed `Cache`, `Code Cache` and
+`Service Worker/CacheStorage` directories are disposable; their roots, Cookie
+databases, service-worker registrations, other site state, and the separate X
+reading cache are retained. Cleanup resolves each child relative to pinned
+handles, checks current ownership, the same closed migration ACL, single-link
+regular files and absence of reparse points before marking that exact handle
+for deletion. Legacy ACL repair is non-inheriting and handle-bound. No arbitrary
+delete-tree API is exported, and generic protected-record policy is unchanged.
+
+Cleanup has a depth limit of 32, one 64 KiB enumeration buffer and at most 8192
+enumeration/open/deletion operations per preparation call. After the pass,
+preparation rechecks the complete remaining profile against the 4096-entry
+limit. If cleanup exhausted its budget and the tree still exceeds that limit,
+it returns the distinct `windows_browser_profile_cache_cleanup_pending` error;
+the next preparation resumes from the remaining files. Validated disposable
+files already removed are not rolled back. Unsafe descendants fail closed and
+remain untouched, while previously deleted safe cache files stay deleted.
+Durable-state overflow still returns `windows_browser_profile_bound_exceeded`.
+This recovery is not a replacement for retention policy or runtime cache limits,
+and it is never permitted while Chromium has the profile open.
 
 `inspectBrowserProfile` is non-mutating and checks only the profile root,
 `Network`, `Cookies` and existing SQLite journal/WAL/SHM files. It does not scan

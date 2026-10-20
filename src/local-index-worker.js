@@ -326,6 +326,8 @@ async function run() {
           malformedRateLimitRecords:
             outcome.diagnostics.malformedRateLimitRecords,
           partialLines: outcome.diagnostics.partialLines,
+          deferredTailBytes: outcome.read.partialDeferred
+            ? Number(source.size) - outcome.read.nextOffset : 0,
           salvagedRecords: outcome.diagnostics.salvagedRecords,
           compactionEvents: outcome.diagnostics.compactionEvents,
           responseUsageEvents: outcome.diagnostics.responseUsageEvents,

@@ -180,6 +180,11 @@ test("stat classification follows the consistency table", () => {
   assert.deepEqual(classify({ birthtimeMs: 2_500 }), { mode: "rescan", reason: "identity_changed" });
   assert.deepEqual(classify({}, { parser_version: "p0" }), { mode: "rescan", reason: "parser_version" });
   assert.deepEqual(classify({}, { scanned_bytes: 400 }), { mode: "rescan", reason: "cursor_invalid" });
+  const deferred = { scanned_bytes: 400, deferred_tail_bytes: 100 };
+  assert.equal(classify({}, deferred).mode, "skip");
+  assert.equal(classify({ size: 800 }, deferred).mode, "append");
+  assert.deepEqual(classify({}, { ...deferred, deferred_tail_bytes: 99 }), { mode: "rescan", reason: "cursor_invalid" });
+  assert.deepEqual(classify({ size: 300 }, deferred), { mode: "rescan", reason: "shrink" });
   assert.deepEqual(classify({ size: 800, compressed: true }), { mode: "rescan", reason: "compressed_changed" });
   const quarantined = { quarantine_code: "codex_rollout_content_invalid", scanned_bytes: 0 };
   assert.equal(classify({}, quarantined).mode, "quarantined");

@@ -17,7 +17,9 @@ function tweetPost(raw, depth = 0) {
     const variant = mp4 ?? hls;
     const url = type === 'image' ? item.media_url_https : variant?.url;
     if (!isXMediaUrl(url)) continue;
-    media.push({ id: String(media.length), type, url, ...(isXMediaUrl(item.media_url_https) ? { poster: item.media_url_https } : {}), mimeType: type === 'image' ? 'image/jpeg' : variant.content_type });
+    const upstreamId = item.id_str ?? item.rest_id;
+    const id = typeof upstreamId === 'string' && /^[0-9]{1,24}$/.test(upstreamId) ? `media-${upstreamId}` : String(media.length);
+    media.push({ id, type, url, ...(isXMediaUrl(item.media_url_https) ? { poster: item.media_url_https } : {}), mimeType: type === 'image' ? 'image/jpeg' : variant.content_type });
   }
   const result = { id: source.rest_id, author, createdAt: body.created_at, text: note?.text ?? body.full_text ?? '', complete: Boolean(note?.text) || !body.truncated && !source.note_tweet?.is_expandable, kind: retweeted?.legacy ? 'repost' : body.in_reply_to_status_id_str ? 'reply' : 'post', media };
   if (body.in_reply_to_status_id_str) result.replyTo = body.in_reply_to_status_id_str;
@@ -75,7 +77,9 @@ export function inspectXDocument() {
       const variant = variants.filter(value => value.content_type === 'video/mp4' && mediaUrl(value.url)).sort((a, b) => (b.bitrate ?? 0) - (a.bitrate ?? 0))[0] ?? variants.find(value => /mpegurl/i.test(value.content_type) && mediaUrl(value.url));
       const url = type === 'image' ? item.media_url_https : variant?.url;
       if (!mediaUrl(url)) continue;
-      media.push({ id: String(media.length), type, url, ...(mediaUrl(item.media_url_https) ? { poster: item.media_url_https } : {}), ...(type === 'image' ? { mimeType: 'image/jpeg' } : { mimeType: variant.content_type }) });
+      const upstreamId = item.id_str ?? item.rest_id;
+      const id = typeof upstreamId === 'string' && /^[0-9]{1,24}$/.test(upstreamId) ? `media-${upstreamId}` : String(media.length);
+      media.push({ id, type, url, ...(mediaUrl(item.media_url_https) ? { poster: item.media_url_https } : {}), ...(type === 'image' ? { mimeType: 'image/jpeg' } : { mimeType: variant.content_type }) });
     }
     const note = source.note_tweet?.note_tweet_results?.result ?? source.note_tweet;
     const date = new Date(source.created_at);
@@ -93,6 +97,8 @@ export function inspectXDocument() {
     const authorNode = article.querySelector('[data-testid="User-Name"]');
     const name = authorNode?.querySelector('a span')?.textContent ?? match[1];
     const text = article.querySelector('[data-testid="tweetText"]')?.innerText ?? '';
+    // DOM positions are display-only identities. Recovery must never treat them
+    // as evidence that a newly loaded asset is the same media.
     const media = [...article.querySelectorAll('[data-testid="tweetPhoto"] img')].slice(0, 16).map((image, index) => ({ id: String(index), type: 'image', url: image.currentSrc || image.src }));
     const avatar = article.querySelector('[data-testid^="UserAvatar-Container"] img')?.src;
     // Action links point to this same post; they are not a reply relationship.

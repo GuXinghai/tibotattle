@@ -762,7 +762,7 @@ export function readLocalIndexCoverage(database) {
            COALESCE(SUM(CASE WHEN presence = 'present' THEN size_bytes ELSE 0 END), 0) AS present_bytes,
            COALESCE(SUM(quarantine_code IS NULL AND presence = 'present'), 0) AS indexed,
            COALESCE(SUM(CASE WHEN quarantine_code IS NULL AND presence = 'present'
-                             THEN size_bytes ELSE 0 END), 0) AS indexed_bytes,
+                             THEN scanned_bytes ELSE 0 END), 0) AS indexed_bytes,
            COALESCE(SUM(quarantine_code IS NOT NULL), 0) AS skipped,
            COALESCE(SUM(CASE WHEN quarantine_code IS NOT NULL THEN size_bytes ELSE 0 END), 0) AS skipped_bytes
     FROM source`).get();
@@ -772,6 +772,12 @@ export function readLocalIndexCoverage(database) {
     WHERE quarantine_code IS NOT NULL GROUP BY quarantine_code`).iterate()) {
     issues[row.code] = Number(row.count);
   }
+  const deferredSources = Number(database.prepare(`
+    SELECT COUNT(*) AS n FROM source s JOIN source_diagnostic d ON d.source_id = s.id
+    WHERE s.quarantine_code IS NULL AND s.presence = 'present'
+      AND d.code = 'deferredTailBytes' AND d.count > 0
+      AND d.count = s.size_bytes - s.scanned_bytes`).get().n);
+  if (deferredSources > 0) issues.codex_rollout_tail_incomplete = (issues.codex_rollout_tail_incomplete ?? 0) + deferredSources;
   const skippedThreads = Number(database.prepare(`
     SELECT COUNT(DISTINCT session_id) AS n FROM source
     WHERE quarantine_code IS NOT NULL AND session_id IS NOT NULL`).get().n);

@@ -29,8 +29,8 @@ local-only and never leave the owner-only file.
 | File name | `local-index-store-v1.sqlite` | Stable machine path in the state root. The `v1` is a name, not the schema version. |
 | `PRAGMA application_id` | `1431128370` (`0x554D4932`) | Format guard. A mismatch fails with `local_index_family_mismatch`. |
 | `meta.family` | `local-index-store` | Logical family, written once at creation. |
-| `PRAGMA user_version` | `6` | Physical version. A writer migrates 4 or 5 forward transactionally; read-only open requires 6. |
-| Parser stamp | `local-index-rollout-typed-v2+unified-rollout-typed-v21` | Reconciles exact response usage with legacy spend; an unverified first-response prefix remains partial evidence. Existing sources reparse once. Original records and retained absent-source facts remain untouched. |
+| `PRAGMA user_version` | `7` | Cursor-format version. A writer migrates 4, 5 or 6 forward transactionally; read-only open requires 7. |
+| Parser stamp | `local-index-rollout-typed-v3+unified-rollout-typed-v21` | Reconciles exact response usage with legacy spend; an unverified first-response prefix remains partial evidence. Existing sources reparse once. Original records and retained absent-source facts remain untouched. |
 | Telemetry publication parser label | `unified-rollout-typed-v21` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint retain store provenance; no hosted schema is widened. |
 | Commit sequence | `store_state.commit_seq` | Monotonic publication counter. Readers key their caches and the companion generation id off it. |
 
@@ -38,15 +38,15 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
 
 - A wrong `application_id` refuses the file with `local_index_family_mismatch`.
   `meta.family` is written at creation; the open path does not re-check it.
-- A `user_version` greater than 6 fails with `local_index_newer_version`. The
+- A `user_version` greater than 7 fails with `local_index_newer_version`. The
   file is not opened writable and must not be relabelled.
-- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6.
+- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6, then upgrades the cursor contract to 7 without deleting facts. A version-6 writer upgrades directly to 7.
   Refresh first performs a bounded read-only identity inspection accepting only
-  the reviewed v4/v5 predecessors or current v6, validates the existing device salt,
+  the reviewed v4/v5/v6 predecessors or current v7, validates the existing device salt,
   and only then opens the writer. This inspection exposes no database handle or
   old-format projection and makes no schema changes. Missing salt, foreign state,
   and newer versions are refused before any migration or salt creation.
-  Earlier versions and read-only version-4/version-5 opens fail with
+  Earlier versions and read-only version-4/version-5/version-6 opens fail with
   `local_index_family_mismatch`; readers never migrate state.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it
   fails with `local_index_journal_mode_refused`.
@@ -381,6 +381,17 @@ rollout header, what to do with a file:
   `codex_rollout_filename_identity_mismatch` and
   `codex_rollout_generation_ambiguous`. A quarantined source has no committed
   facts (`scanned_bytes` is 0) and is retried when its stat tuple changes.
+- A stable unterminated JSONL tail is deferred rather than quarantining its
+  valid complete prefix. `scanned_bytes` stops at the last complete line,
+  `size_bytes` records the observed full size, and the closed diagnostic
+  `deferredTailBytes` equals their difference. The tail contributes no facts,
+  carried totals or lineage snapshots. Malformed complete accounting records,
+  invalid headers, replacements and lineage failures retain their integrity checks.
+  Compressed-source discovery and complete-export scans remain strict.
+- Coverage counts only `scanned_bytes` as indexed bytes and includes deferred
+  sources in `rolloutIssueCounts.codex_rollout_tail_incomplete`. They are not
+  reported as wholly skipped or fully parsed; unknown response coverage stays
+  explicit. Legacy tail quarantine codes remain readable for forward recovery.
 
 ## Invariants
 
@@ -422,7 +433,7 @@ reads only what changed:
 | New source | Full read, registration with a new ordinal, one commit. |
 | Same size, same stat | Skip. |
 | Same size, different mtime or ctime | Rescan (`same_size_changed`). |
-| Larger, not quarantined | Append from `scanned_bytes` after the head, boundary and tail digests match (`append`). |
+| Larger, not quarantined (including a deferred tail) | Append from `scanned_bytes` after the head, boundary and tail digests match (`append`). |
 | Smaller, or cursor inconsistent | Rescan (`shrink`, `cursor_invalid`). |
 | Identity changed (`file_id`, birth time) | Rescan (`identity_changed`). |
 | Append candidate whose head, boundary or open-tail digests no longer match, or that cannot be read | Rescan (`boundary_changed`). |
@@ -436,6 +447,14 @@ at least one complete segment and no quarantine is verified at least every 7
 days, whether or not it grew. A forced verification (`verify.force`) checks
 every closed segment regardless of age. The companion does not pass it; it is
 available to a direct `refreshLocalIndex` call.
+
+An unchanged deferred tail skips without rereading it. A changed tail resumes
+only after identity/stat and committed-prefix digest checks; a mismatching
+prefix rescans instead of retaining stale facts. The cursor can remain below
+`size_bytes` only with the exact persisted deferred-byte diagnostic. Completing
+the newline atomically publishes the record, new cursor, totals and digests;
+repeated refreshes do not count it again. A v7 store refuses older readers and
+writers through the version gate; do not relabel it to run an older app.
 
 Cold builds read new sources in parallel lanes. Those lanes write facts beyond
 their cursor before the cursor moves, and `repairProvisional` clears the
