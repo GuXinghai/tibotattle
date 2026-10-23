@@ -1,8 +1,8 @@
-import { validateXId, validateXQuery, validateXSettings, X_SESSION_ERRORS } from './desktop-x-contract.js';
+import { validateXDetailQuery, validateXQuery, validateXSettings, X_SESSION_ERRORS } from './desktop-x-contract.js';
 
 export const X_IPC_CHANNEL = 'tibotattle:x-reader:v1';
-const EMPTY = new Set(['getXStatus', 'refreshX', 'cancelXLogin', 'getXSettings', 'logoutX', 'clearXCache', 'configureXImport']);
-const ACTIONS = new Set([...EMPTY, 'listXPosts', 'getXPost', 'beginXLogin', 'setXSettings']);
+const EMPTY = new Set(['getXStatus', 'cancelXLogin', 'getXSettings', 'logoutX', 'clearXCache', 'configureXImport']);
+const ACTIONS = new Set([...EMPTY, 'refreshX', 'listXPosts', 'getXPost', 'beginXLogin', 'setXSettings']);
 function exact(value, keys) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     && Object.getPrototypeOf(value) === Object.prototype
@@ -17,8 +17,10 @@ export function validateXDesktopRequest(request) {
     const keys = Object.hasOwn(args ?? {}, 'cursor') ? ['tab', 'cursor'] : ['tab'];
     if (!exact(args, keys)) throw rejected('x_invalid_request');
     validateXQuery(args);
+  } else if (action === 'refreshX') {
+    if (!exact(args, ['tab'])) throw rejected('x_invalid_request'); validateXQuery(args);
   } else if (action === 'getXPost') {
-    if (!exact(args, ['id'])) throw rejected('x_invalid_request'); validateXId(args.id);
+    if (!exact(args, Object.hasOwn(args ?? {}, 'cursor') ? ['id', 'cursor'] : Object.hasOwn(args ?? {}, 'force') ? ['id', 'force'] : ['id'])) throw rejected('x_invalid_request'); validateXDetailQuery(args);
   } else if (action === 'beginXLogin') {
     if (!exact(args, ['method']) || !['web', 'session'].includes(args.method)) throw rejected('x_invalid_request');
   } else {
@@ -32,7 +34,7 @@ export function installDesktopXIpc({ ipcMain, service, importBridge, authorize }
     getXStatus: () => service.getStatus(),
     listXPosts: args => service.listPosts(args),
     getXPost: args => service.getPost(args),
-    refreshX: () => service.refresh(),
+    refreshX: args => service.refresh({ tab: args.tab, reason: 'manual' }),
     beginXLogin: args => service.beginLogin(args),
     cancelXLogin: () => service.cancelLogin(),
     getXSettings: () => service.getSettings(),

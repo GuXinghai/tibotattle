@@ -15,6 +15,11 @@ This decision governs source behavior, not installed or published release proof.
 
 ## Login and session ownership
 
+Before the first status response and while saved state is being read, the
+reader reports checking login instead of showing a disconnected login chooser.
+The chooser appears only after absence of a session or a restoration failure
+is established. Cached reading and main-window display do not wait for recovery.
+
 The reader offers an isolated X webpage login or a user-initiated Chrome
 session import. A Chrome extension uses the official cookies and Native
 Messaging interfaces only after the user chooses import. The app does not
@@ -34,6 +39,35 @@ directories. Candidate packaging must enable and verify Electron's
 `EnableCookieEncryption` fuse before storing persistent imported cookies;
 enabling it is a one-way cookie-storage migration, not a portable backup or
 session-acceptance guarantee.
+
+Login failures also preserve the previous authentication state: a failed new
+attempt cannot relabel an expired or challenged session as connected. Returning
+to the login chooser invalidates pending results, including results delivered
+after asynchronous candidate cleanup. Reader and settings expose failures even
+when no posts are cached; webpage timeout and generic login failure are distinct
+from session import failure.
+
+Session login exposes closed, content-free progress steps: local bridge check,
+waiting for Chrome import, input validation, candidate preparation, Cookie write
+and readback, X connection, authenticated-page verification, saving and success.
+Steps advance at their actual operation boundaries without artificial delays or
+percentages. Fast steps may finish between UI polls. Failure keeps the failed
+step alongside its safe reason, including validation rejected by the authorized
+Chrome import gate; unrelated or unpermitted bridge requests cannot change that
+failure state. Expired import authorization has a separate prompt. Verification
+challenges retain the candidate and offer an explicit action to open its X
+window. Reader and settings consume the same progress; cancellation clears it
+and late results cannot restore it. These transient fields do not persist in
+settings or contain Cookie values, upstream responses or account information.
+
+Local X error diagnostics are kept separately in the owner-protected
+`x-diagnostics/x-errors-v1.json` record, bounded to the latest 16 errors and
+64 KiB across application restarts. They preserve original
+platform error codes, numeric errno, recognized native error messages, bounded
+cause chains and source basenames with line/column locations. Arbitrary upstream
+messages, authentication responses, URLs, absolute paths, credentials and post
+content are omitted rather than guessed safe. These records never enter the
+reader IPC or clipboard diagnostics. Recording failures cannot change login state.
 
 Browser profiles use a separate native current-owner policy with inheritable
 child access, rather than the non-inheriting protected-record policy. Before
@@ -93,6 +127,33 @@ the new scope. Explicit cache clearing removes current and archived post
 payloads while retaining settings, login metadata and notification baselines.
 Display windows do not delete accumulated cached content.
 
+Post details support explicit reply continuation through the existing trusted
+detail IPC with an optional bounded opaque cursor. Handles are process-local,
+scoped to the parent post and invalidated by session/task cancellation or cache
+clearing; at most 64 detail continuation states are retained. The most recently
+completed handle can be replayed without another fetch. Source continuation
+uses the normal X page's bounded scrolling, including reopening the parent
+after another detail has used the source window. No arbitrary upstream cursor,
+URL or request parameters are accepted from the renderer.
+
+Only direct replies belong to a detail's main list. Clicking a reply opens
+that reply's discussion with independent continuation and termination; Back
+restores the parent detail and scroll position. Root timeline instructions and
+nested conversation-module instructions are parsed separately. An explicit
+Bottom termination wins over a residual cursor in that same scope. A branch
+ending cannot terminate the parent list. Missing metadata, repeated results or
+no progress remain retryable and never imply completion; displayed completion
+means only the replies currently visible to the authenticated account. Retrieved
+replies merge by post ID without deleting accumulated cache. Source/fixture
+validation does not qualify traversal of a real multi-page X conversation or
+the packaged reader.
+
+Reply continuation starts automatically when the reader reaches the reserved
+footer space. Normal paging has no load-more button; each current reply request
+shows one loading message. A failed continuation pauses automatic retries and
+offers a retry button. The footer space remains present while idle, loading or
+finished, and service continuation handles remain the sole paging authority.
+
 Cache snapshots and envelopes use version 2, with forward-only reads of version
 1. Scope archives avoid repeating an identical disconnected snapshot; differing
 history remains retained. Incomplete fresh text cannot replace complete text,
@@ -130,6 +191,33 @@ and its assets; no usage data accompanies them. X can apply its own access,
 retention and session controls.
 
 ## Refresh and acceptance
+
+Manual refresh targets only the selected tab or focal discussion. Detail refresh
+bypasses the 60-second reuse window, replaces that discussion's displayed order
+and continuation on success, and retains the old view on failure. Replies follow
+X's returned timeline order, not a local time/like sort; continuation appends
+unique IDs. Ordered reply lists are stored per discussion in cache schema v3.
+Legacy caches retain content without inventing an authoritative reply order;
+the next successful detail read establishes it. Old cached posts are retained
+even when absent from a fresh ordered list. There is no detail polling or
+background "new replies" check. The existing posts/replies scheduler remains
+independent of the current view and is not postponed by successful manual reads.
+Focused validation covers order replacement/append, migration, forced reads,
+scoped IPC, failures and navigation races; no full suite or packaging is required
+for this source change, and real X/Electron acceptance remains outstanding.
+
+Timeline tabs and detail replies reserve at least 200 CSS pixels at the end,
+including after the final page. Continuation requests start when the beginning
+of this space enters the scrollport, including filling a short viewport.
+Loading, retry and end controls occupy that same reserved space rather than
+adding a new row below the content when loading begins.
+The continuation control announces loading and remains available as a keyboard
+and manual fallback. Requests remain single-flight. Failed or duplicate-only
+pages pause automatic continuation until an explicit retry or fresh read;
+they never imply the end of the list. Hidden readers cannot auto-page, and
+disposing the reader removes its scroll, media-load and resize listeners.
+Focused synthetic reader tests cover these boundaries; actual Electron scrolling
+and real X multi-page reads remain separate runtime acceptance gates.
 
 The reader has its own main-process interval, defaulting to five minutes.
 `-1` disables periodic requests; page opening and manual refresh remain usable.

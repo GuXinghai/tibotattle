@@ -25,6 +25,7 @@ function points(bins) {
     values.sort((a, b) => a - b);
     const supported = values.length >= 5;
     return { at, n: values.length,
+      mean: values.reduce((sum, value) => sum + value, 0) / values.length,
       p10: supported ? quantile(values, .1) : null,
       p25: supported ? quantile(values, .25) : null,
       median: quantile(values, .5),
@@ -77,7 +78,7 @@ export function modelPerformanceProjection(rows, { period = 'all', speedMode = '
     }
     if (count(r.ttft)) { m.ttftTurns++; add(m.latency, at, r.ttft / 1000); }
   }
-  return { schemaVersion: 5, method: 5, status: 'ready', collecting: false, stale: false,
+  return { schemaVersion: 6, method: 5, status: 'ready', collecting: false, stale: false,
     updatedAt: new Date(now).toISOString(), period, speedMode, excludedUnknownTurns, interval, start, end, historyProgress,
     models: [...LABELS.keys()].filter(id => groups.has(id)).map(id => {
       const { speed, latency, toolFree, ...m } = groups.get(id);

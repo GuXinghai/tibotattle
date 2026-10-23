@@ -3,10 +3,6 @@ import { homedir } from "node:os";
 import distribution from "../../config/electron-production-distribution.cjs";
 
 import { createCompanionSupervisor } from "./companion-supervisor.js";
-import {
-  createDesktopAutomaticRefreshCadence,
-  createDesktopAutomaticRefreshCadenceBackend,
-} from "./desktop-automatic-refresh-cadence.js";
 import { createDesktopController } from "./desktop-controller.js";
 import { createDesktopDeepLinkQueue } from "./desktop-deep-links.js";
 import { createDesktopLifecycle } from "./desktop-lifecycle.js";
@@ -14,6 +10,7 @@ import { installDesktopIpc } from "./desktop-ipc.js";
 import { installDesktopXIpc } from "./desktop-x-ipc.js";
 import { createDesktopXRepository } from "./desktop-x-repository.js";
 import { createDesktopXService } from "./desktop-x-service.js";
+import { createDesktopXDiagnostics } from "./desktop-x-diagnostics.js";
 import { createDesktopXImport } from "./desktop-x-import.js";
 import { X_SESSION_ERRORS, xError } from "./desktop-x-contract.js";
 import {
@@ -574,17 +571,6 @@ export async function launchDesktopRuntime({
       windowsProtectedStateStore,
     })
     : null;
-  const runtimeAutomaticRefreshCadence = automaticRefreshCadence
-    ?? (!injectedSettings
-      && windowsProtectedStateStore !== null
-      ? createDesktopAutomaticRefreshCadence({
-        backend: createDesktopAutomaticRefreshCadenceBackend({
-          platform,
-          rootPath: settingsRootPath,
-          windowsProtectedStateStore,
-        }),
-      })
-      : undefined);
   const policyBackend = createNotificationPolicyBackend({
     app,
     platform,
@@ -696,6 +682,7 @@ export async function launchDesktopRuntime({
           || !runtime.session?.fromPath || !windowsProtectedStateStore || !xMediaProtocol) return;
       const adapter = createWindowsFilesystemAdapter({ platform: "win32", architecture });
       const protectedStore = path => createWindowsProtectedStateStore({ adapter, rootPath: path });
+      const xDiagnostic = createDesktopXDiagnostics({ store: protectedStore(join(settingsRootPath, "x-diagnostics")) });
       const repository = createDesktopXRepository({
         store: protectedStore(join(settingsRootPath, "x-reader")),
         createSessionStore: id => createWindowsBrowserProfileStore({ adapter, rootPath: join(settingsRootPath, "x-sessions", id) }),
@@ -721,7 +708,7 @@ export async function launchDesktopRuntime({
         notification.show();
       } : undefined;
       xService = createDesktopXService({
-        runtime, repository, importBridge: importPort, notify: deliverX,
+        runtime, repository, importBridge: importPort, notify: deliverX, onDiagnostic: xDiagnostic,
         allowedOrigin: () => supervisor.state?.origin,
       });
       xImport = createDesktopXImport({
@@ -958,14 +945,15 @@ export async function launchDesktopRuntime({
     sendDashboardCommand,
     onLanguageChanged: (value) => updateDesktopLanguage(value),
     onAppearanceChanged: updateDesktopAppearance,
-    onRefreshIntervalChanged: async seconds => {
+    onRefreshIntervalChanged: async (seconds, paused) => {
       childEnvironment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS = String(seconds);
-      await supervisor.setRefreshInterval(seconds);
+      childEnvironment.USAGE_MONITOR_REFRESH_PAUSED = String(paused);
+      await supervisor.setRefreshInterval(seconds, paused);
     },
     openDashboardInBrowserAction: openDashboardInBrowser,
     showDiagnosticsAction: showDesktopDiagnostics,
     revealLocalDataAction: revealLocalData,
-    automaticRefreshCadence: runtimeAutomaticRefreshCadence,
+    automaticRefreshCadence,
   });
 
   // Load persisted settings before starting the child. This is what makes a
@@ -1154,6 +1142,7 @@ export async function launchDesktopRuntime({
             ) === true;
           }
           if (action !== "getRefreshStatus"
+              && action !== "setRefreshPaused"
               && action !== "refreshStarted"
               && action !== "refreshHeartbeat"
               && action !== "refreshSettled"

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { readCodexSelectedRolloutNames, readCodexLocalThreadMetadata, readCodexLocalThreadAncestry,
-  readCodexLocalRepositoryOrigins } from "../src/platform/local-codex-thread-store.js";
+  readCodexLocalRepositoryOrigins, readCodexLocalThreadUsageRelations } from "../src/platform/local-codex-thread-store.js";
 
 const ROOT = "11111111-1111-4111-8111-111111111111";
 const WORKER = "22222222-2222-4222-8222-222222222222";
@@ -85,6 +85,28 @@ function wrappedDatabase(factory) {
     return factory(db);
   };
 }
+
+test("origin diagnostics distinguish a missing selected row, busy database and unsupported schema", async t => {
+  const f = await fixture(t), absent = "55555555-5555-4555-8555-555555555555", events = [];
+  const onOriginDiagnostic = value => events.push(value);
+  const result = await readCodexLocalThreadUsageRelations(f.home, [ROOT, absent], { ...f.options, includeOriginEvidence: true, onOriginDiagnostic });
+  assert.equal(result.get(ROOT).originKnown, true);
+  assert.equal(result.get(absent).originKnown, false);
+  assert.ok(events.some(row => row.code === "thread_row_missing" && row.count === 1));
+  events.length = 0;
+  const busy = await readCodexLocalThreadUsageRelations(f.home, [ROOT], { ...f.options, includeOriginEvidence: true, onOriginDiagnostic,
+    databaseFactory: () => { throw Object.assign(new Error(PRIVATE), { errcode: 5 }); } });
+  assert.equal(busy.get(ROOT).originKnown, false);
+  assert.ok(events.some(row => row.code === "metadata_database_busy"));
+  assert.equal(events.some(row => row.code === "thread_row_missing"), false, "an unread database is not a missing row");
+  events.length = 0;
+  const db = new DatabaseSync(f.path); db.exec("DROP TABLE threads"); db.close();
+  const unsupported = await readCodexLocalThreadUsageRelations(f.home, [ROOT], { ...f.options, includeOriginEvidence: true, onOriginDiagnostic });
+  assert.equal(unsupported.get(ROOT).originKnown, false);
+  assert.ok(events.some(row => row.code === "metadata_schema_unsupported"));
+  assert.doesNotMatch(JSON.stringify(events), new RegExp(`${PRIVATE}|${ROOT}|state_5`));
+  assert.equal(f.leases.size, 0);
+});
 
 test("Windows source metadata preserves selected names, bounded title opt-in, ancestry and origins", async t => {
   const f = await fixture(t);

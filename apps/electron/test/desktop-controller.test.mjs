@@ -182,6 +182,42 @@ async function fireAutomaticTimer(value, timer = value.timers.at(-1)) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("pause persists before propagation and initialization restores it without losing cadence", async () => {
+  const propagated = [];
+  const value = fixture({ actionOverrides: {
+    onRefreshIntervalChanged: async (seconds, paused) => propagated.push([seconds, paused]),
+  } });
+  await value.controller.initialize();
+  const paused = await value.controller.handlers.setRefreshPaused({ paused: true });
+  assert.equal(paused.settings.refreshPaused, true);
+  assert.deepEqual(propagated.at(-1), [300, true]);
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  await value.controller.handlers.setRefreshInterval({ seconds: 420 });
+  assert.deepEqual(propagated.at(-1), [420, true]);
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  const restored = fixture({ settingsLoad: async () => value.persisted,
+    actionOverrides: { onRefreshIntervalChanged: async (seconds, paused) => propagated.push([seconds, paused]) } });
+  await restored.controller.initialize();
+  assert.deepEqual(propagated.at(-1), [420, true]);
+  assert.equal(restored.timers.length, 0);
+  await restored.controller.handlers.setRefreshPaused({ paused: false });
+  assert.deepEqual(propagated.at(-1), [420, false]);
+  assert.equal(restored.timers.at(-1).milliseconds, 420_000);
+  await value.controller.dispose(); await restored.controller.dispose();
+});
+
+test("pause propagation failures remain visible after the durable choice is saved", async () => {
+  let fail = false;
+  const value = fixture({ overviewRefreshOwnedByCompanion: true, actionOverrides: {
+    onRefreshIntervalChanged: async () => { if (fail) throw new Error("synthetic propagation failure"); },
+  } });
+  await value.controller.initialize(); fail = true;
+  await assert.rejects(value.controller.handlers.setRefreshPaused({ paused: true }), /synthetic propagation failure/);
+  assert.equal(value.persisted.refreshPaused, true);
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  await value.controller.dispose();
+});
+
 test("persisted cadence rearms after propagation failure and still respects disabled or active leases", async () => {
   let failPropagation = false;
   const value = fixture({ actionOverrides: {
@@ -221,11 +257,16 @@ function automaticCadenceBackend() {
   };
 }
 
-test("production companion owns the five-minute timer while the shell retains hourly maintenance", async () => {
-  const value = fixture({ overviewRefreshOwnedByCompanion: true });
+test("production companion exclusively owns business scheduling without opening the legacy cadence", async () => {
+  const value = fixture({ overviewRefreshOwnedByCompanion: true,
+    automaticRefreshCadence: new Proxy({}, { get() { throw new Error("legacy cadence must remain unopened"); } }),
+  });
   await value.controller.initialize();
-  assert.equal(value.timers.length, 1);
-  assert.equal(value.timers[0].milliseconds, 3_600_000);
+  assert.equal(value.timers.length, 0);
+  assert.equal(value.controller.refreshStatus().scheduleOwner, "companion");
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  assert.deepEqual(value.commands, []);
+  await value.controller.dispose();
 });
 
 test("controller initializes persisted cadence and projects truthful settings state", async () => {
@@ -249,6 +290,7 @@ test("controller initializes persisted cadence and projects truthful settings st
           primaryRootId: DESKTOP_DEFAULT_SETTINGS.codexHomes.primaryRootId,
         },
         refreshIntervalSeconds: 300,
+        refreshPaused: false,
         startAtLogin: {
           status: "disabled",
           canSet: true,
@@ -536,7 +578,7 @@ test("changing the refresh interval during an active lease persists without armi
   assert.equal(value.timers.at(-1).milliseconds, 60_000);
 });
 
-test("refresh configuration reaches companion before timers and disables maintenance across settlement", async () => {
+test("companion configuration persists and propagates without shell scheduling across settlement", async () => {
   const intervals = [];
   const value = fixture({ overviewRefreshOwnedByCompanion: true,
     actionOverrides: { onRefreshIntervalChanged: async seconds => { intervals.push(seconds); } },
@@ -544,15 +586,70 @@ test("refresh configuration reaches companion before timers and disables mainten
   await value.controller.initialize();
   assert.deepEqual(intervals, [300]);
   await value.controller.handlers.setRefreshInterval({ seconds: 7200 });
-  assert.equal(value.timers.at(-1).milliseconds, 7_200_000);
+  assert.equal(value.timers.length, 0);
   const lease = await value.controller.handlers.refreshStarted({ mode: "quick" });
   await value.controller.handlers.setRefreshInterval({ seconds: -1 });
   assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
   await value.controller.handlers.refreshSettled({ lease });
   assert.equal(value.controller.refreshStatus().state, "idle");
   await value.controller.handlers.setRefreshInterval({ seconds: 120 });
-  assert.equal(value.timers.at(-1).milliseconds, 3_600_000);
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  assert.equal(value.timers.length, 2, "only the lease watchdogs were created");
   assert.deepEqual(intervals, [300, 7200, -1, 120]); value.controller.dispose();
+});
+
+test("companion propagation failure cannot authorize a shell business fallback", async () => {
+  let unavailable = false;
+  const value = fixture({ overviewRefreshOwnedByCompanion: true,
+    actionOverrides: { onRefreshIntervalChanged: async () => {
+      if (unavailable) throw new Error("synthetic companion unavailable");
+    } },
+  });
+  await value.controller.initialize();
+  unavailable = true;
+  await assert.rejects(value.controller.handlers.setRefreshInterval({ seconds: 60 }), /synthetic companion unavailable/u);
+  assert.equal(value.persisted.refreshIntervalSeconds, 60);
+  assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+  assert.equal(value.timers.length, 0);
+  assert.deepEqual(value.commands, []);
+  await value.controller.dispose();
+});
+
+test("companion-owned lease recovery preserves watchdog bounds without scheduling another writer", async () => {
+  for (const reason of ["heartbeat_timeout", "operation_deadline", "dashboard_replaced"]) {
+    const value = fixture({ overviewRefreshOwnedByCompanion: true });
+    await value.controller.initialize();
+    const lease = await value.controller.handlers.refreshStarted({ mode: "detailed" });
+    const [heartbeat, deadline] = value.timers;
+    assert.equal(heartbeat.milliseconds, DESKTOP_DETAILED_REFRESH_HEARTBEAT_TIMEOUT_MS);
+    assert.equal(deadline.milliseconds, DESKTOP_REFRESH_OPERATION_DEADLINE_MS);
+    assert.equal(await value.controller.handlers.refreshHeartbeat({ lease }), true);
+    const renewedHeartbeat = value.timers.at(-1);
+    assert.equal(value.cleared.includes(deadline), false, "heartbeat cannot renew absolute deadline");
+    if (reason === "heartbeat_timeout") renewedHeartbeat.callback();
+    else if (reason === "operation_deadline") deadline.callback();
+    else value.controller.reconcileDashboardSession();
+    await new Promise(resolve => setImmediate(resolve));
+    const status = value.controller.refreshStatus();
+    assert.equal(status.lastRecoveryReason, reason);
+    assert.equal(status.activeLease, false);
+    assert.equal(status.cadenceTimerArmed, false);
+    assert.equal(status.heartbeatWatchdogArmed, false);
+    assert.equal(status.deadlineWatchdogArmed, false);
+    if (reason !== "heartbeat_timeout") assert.ok(value.cleared.includes(renewedHeartbeat));
+    if (reason !== "operation_deadline") assert.ok(value.cleared.includes(deadline));
+    assert.equal(await value.controller.handlers.refreshSettled({ lease }), false);
+    const replacement = await value.controller.handlers.refreshStarted({ mode: "detailed" });
+    heartbeat.callback(); deadline.callback(); renewedHeartbeat.callback();
+    assert.equal(value.controller.refreshStatus().activeLease, true, "late callbacks cannot clear the replacement lease");
+    assert.equal(await value.controller.handlers.refreshSettled({ lease: replacement }), true);
+    const settledTimerCount = value.timers.length;
+    assert.equal(await value.controller.handlers.refreshSettled({ lease: replacement }), true);
+    assert.equal(value.timers.length, settledTimerCount, "settlement remains idempotent");
+    assert.equal(value.controller.refreshStatus().cadenceTimerArmed, false);
+    assert.deepEqual(value.commands, []);
+    await value.controller.dispose();
+  }
 });
 
 test("disabling periodic refresh while cadence is reading blocks the late command", async () => {

@@ -3,7 +3,8 @@
  *
  * Local companion contract:
  *   GET  /api/local/{onboarding,overview,gradient,weekly,quality}
- *   POST /api/local/refresh/quick (automatic/lightweight observation refresh)
+ *   POST /api/local/refresh/overview (ordinary quota and usage refresh)
+ *   POST /api/local/refresh/quick    (explicit quota-only capability)
  *   POST /api/local/refresh       (explicit detailed-accounting rebuild)
  *
  * Hosted browser-session contract:
@@ -2670,6 +2671,11 @@ function normalizeCacheCoveredSubtotal(value, pricedDrops, completePremium) {
 }
 
 function cacheCoveredSubtotalsMatch(total, rows) {
+  if (rows.some(row => row.estimateEvidence?.method !== total.estimateEvidence?.method)) return false;
+  for (const key of ["responsePairs", "unresolvedIncrementPairs"]) {
+    if (rows.reduce((sum, row) => sum + (row.observationUnits?.[key] ?? 0), 0)
+        !== (total.observationUnits?.[key] ?? 0)) return false;
+  }
   if (total.coveredSubtotal === null) return true;
   if (rows.some((row) => row.pricedDrops > 0 && row.coveredSubtotal === null)) return false;
   // These strings have already passed the closed, nine-decimal validator.
@@ -2682,6 +2688,28 @@ function cacheCoveredSubtotalsMatch(total, rows) {
     row.coveredSubtotal === null ? 0n : nanos(row.coveredSubtotal)
   ), 0n);
   return sum === nanos(total.coveredSubtotal);
+}
+
+function normalizeCacheEstimateEvidence(value) {
+  const legacy = value == null;
+  const method = legacy ? "adjacent_cache_read_decrease_legacy_half_threshold" : value.method;
+  if (!legacy && (Object.keys(value).length !== 5 || value.schemaVersion !== 1
+      || !["adjacent_cache_read_decrease", "adjacent_cache_read_decrease_legacy_half_threshold"].includes(method)
+      || value.reusablePrefixStatus !== "unverified"
+      || value.verifiedLossTokens !== null || value.verifiedPremiumUsd !== null)) return null;
+  return { schemaVersion: 1, method, reusablePrefixStatus: "unverified",
+    verifiedLossTokens: null, verifiedPremiumUsd: null };
+}
+
+function normalizeCacheObservationUnits(value, drops) {
+  if (value == null) return { responsePairs: 0, unresolvedIncrementPairs: drops };
+  const responsePairs = Number.isSafeInteger(value.responsePairs) && value.responsePairs >= 0
+    ? value.responsePairs : null;
+  const unresolvedIncrementPairs = Number.isSafeInteger(value.unresolvedIncrementPairs) && value.unresolvedIncrementPairs >= 0
+    ? value.unresolvedIncrementPairs : null;
+  return Object.keys(value).length === 2 && responsePairs !== null
+    && unresolvedIncrementPairs !== null && responsePairs + unresolvedIncrementPairs === drops
+    ? { responsePairs, unresolvedIncrementPairs } : null;
 }
 
 function normalizeCacheSwitchBreakdown(value, includeOrderingCoverage = false) {
@@ -2737,7 +2765,12 @@ function normalizeCacheSwitchBreakdown(value, includeOrderingCoverage = false) {
     value?.coveredSubtotal, pricedDrops, premium
   );
   if (value?.coveredSubtotal != null && coveredSubtotal === null) return null;
+  const estimateEvidence = normalizeCacheEstimateEvidence(value?.estimateEvidence);
+  const observationUnits = normalizeCacheObservationUnits(value?.observationUnits, cacheReadDrops);
+  if (estimateEvidence === null || observationUnits === null) return null;
   return {
+    estimateEvidence,
+    observationUnits,
     configurationChanges,
     proximateConfigurationChanges,
     uncoveredConfigurationChanges,
@@ -2884,7 +2917,7 @@ export function normalizeCacheDropThreadLinks(value) {
   return { schemaVersion: LOCAL_CACHE_DROP_THREAD_LINKS_SCHEMA, status: "available", generation, entries };
 }
 
-function normalizeCacheSwitchRecent(rows, maximumRows) {
+function normalizeCacheSwitchRecent(rows, maximumRows, method) {
   return array(rows)
     // Bound work before parsing and sorting as well as bounding the output.
     .slice(0, CACHE_SWITCH_RECENT_LIMIT * 2)
@@ -2923,8 +2956,8 @@ function normalizeCacheSwitchRecent(rows, maximumRows) {
           || gapSeconds === null
           || gapSeconds > CACHE_SWITCH_PROXIMITY_CEILING_SECONDS
           || previousCacheReadTokens <= currentCacheReadTokens
-          || currentCacheReadTokens
-            > previousCacheReadTokens * CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO
+          || (method !== "adjacent_cache_read_decrease" && currentCacheReadTokens
+            > previousCacheReadTokens * CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO)
           || lostCacheTokens <= 0
           || lostCacheTokens > previousCacheReadTokens - currentCacheReadTokens) {
         return [];
@@ -2990,10 +3023,8 @@ function normalizeCacheSwitchSummary(value) {
     standardApiPremiumUsd: totals.estimatedPremiumUsd,
     allowanceWeighting,
     byChangeType,
-    recent: normalizeCacheSwitchRecent(value?.recent, totals.cacheReadDrops),
-    allowanceImpact: totals.estimatedPremiumUsd === null
-      ? unavailableAllowanceImpact("weighting_evidence_incomplete")
-      : normalizeCacheSwitchAllowanceImpact(value?.allowanceImpact)
+    recent: normalizeCacheSwitchRecent(value?.recent, totals.cacheReadDrops, totals.estimateEvidence.method),
+    allowanceImpact: unavailableAllowanceImpact("reusable_prefix_unverified")
   };
 }
 
@@ -3060,9 +3091,7 @@ function normalizeCacheSwitchImpact(value) {
         periodId: period.periodId,
         periodLabel: text(period.periodLabel, "Recorded period"),
         ...summary,
-        allowanceImpact: period.periodId === "7d"
-          ? summary.allowanceImpact
-          : unavailableAllowanceImpact("period_denominator_mismatch"),
+        allowanceImpact: unavailableAllowanceImpact("reusable_prefix_unverified"),
         proximityCeilingSeconds: CACHE_SWITCH_PROXIMITY_CEILING_SECONDS,
         maximumRetainedCacheRatio: CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO,
         recentDetailLimit: CACHE_SWITCH_RECENT_LIMIT,
@@ -3082,9 +3111,7 @@ function normalizeCacheSwitchImpact(value) {
     periodId,
     periodLabel: text(value.periodLabel, "Recorded period"),
     ...selected,
-    allowanceImpact: periodId === "7d"
-      ? selected.allowanceImpact
-      : unavailableAllowanceImpact("period_denominator_mismatch"),
+    allowanceImpact: unavailableAllowanceImpact("reusable_prefix_unverified"),
     proximityCeilingSeconds: CACHE_SWITCH_PROXIMITY_CEILING_SECONDS,
     maximumRetainedCacheRatio: CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO,
     recentDetailLimit: CACHE_SWITCH_RECENT_LIMIT,
@@ -3115,6 +3142,12 @@ function normalizeCacheContinuityBreakdown(value, includeOrderingCoverage = fals
     + normalized.contextContractedReturns
     + normalized.insufficientEvidenceReturns
     + normalized.uncoveredReturns;
+  const estimateEvidence = normalizeCacheEstimateEvidence(value?.estimateEvidence);
+  const observationUnits = normalizeCacheObservationUnits(value?.observationUnits, normalized.cacheReadDrops);
+  if (estimateEvidence === null || observationUnits === null) return null;
+  const expectedDrops = normalized.reusedHalfOrLessReturns
+    + (estimateEvidence.method === "adjacent_cache_read_decrease"
+      ? normalized.reusedBetweenHalfAndPreviousReturns : 0);
   if (!new Set(["complete", "incomplete"]).has(coverageStatus)
       || partition !== normalized.sameConfigurationReturns
       || normalized.cacheReadDrops > normalized.comparableReturns
@@ -3123,7 +3156,7 @@ function normalizeCacheContinuityBreakdown(value, includeOrderingCoverage = fals
       || normalized.matchedOrExceededReturns
         + normalized.reusedBetweenHalfAndPreviousReturns
           !== normalized.reusedMoreThanHalfReturns
-      || normalized.cacheReadDrops !== normalized.reusedHalfOrLessReturns
+      || normalized.cacheReadDrops !== expectedDrops
       || normalized.pricedDrops + normalized.unpricedDrops
         !== normalized.cacheReadDrops
       || (normalized.cacheReadDrops === 0 && normalized.lostCacheTokens !== 0)
@@ -3144,6 +3177,8 @@ function normalizeCacheContinuityBreakdown(value, includeOrderingCoverage = fals
   );
   if (value?.coveredSubtotal != null && coveredSubtotal === null) return null;
   return {
+    estimateEvidence,
+    observationUnits,
     ...normalized,
     ...(includeOrderingCoverage ? { orderingCoverageGaps } : {}),
     coverageStatus,
@@ -3152,7 +3187,7 @@ function normalizeCacheContinuityBreakdown(value, includeOrderingCoverage = fals
   };
 }
 
-function normalizeCacheContinuityRecent(rows, maximumRows) {
+function normalizeCacheContinuityRecent(rows, maximumRows, method) {
   return array(rows)
     .slice(0, CACHE_SWITCH_RECENT_LIMIT * 2)
     .flatMap((row) => {
@@ -3180,8 +3215,8 @@ function normalizeCacheContinuityRecent(rows, maximumRows) {
           || currentCacheReadTokens === null
           || lostCacheTokens === null
           || previousCacheReadTokens <= currentCacheReadTokens
-          || currentCacheReadTokens
-            > previousCacheReadTokens * CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO
+          || (method !== "adjacent_cache_read_decrease" && currentCacheReadTokens
+            > previousCacheReadTokens * CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO)
           || lostCacheTokens <= 0
           || lostCacheTokens > previousCacheReadTokens - currentCacheReadTokens) {
         return [];
@@ -3231,9 +3266,7 @@ function normalizeCacheContinuityModels(value, total) {
     cohorts.push({
       model,
       ...summary,
-      allowanceImpact: value.periodId === "7d"
-        ? summary.allowanceImpact
-        : unavailableAllowanceImpact("period_denominator_mismatch")
+      allowanceImpact: unavailableAllowanceImpact("reusable_prefix_unverified")
     });
   }
   if (!cacheContinuityCohortsMatch(total, cohorts)) return null;
@@ -3329,10 +3362,8 @@ function normalizeCacheContinuitySummary(value, includeModels = true) {
     postCompactionCacheReadDrops,
     byGapBand,
     byOutcomeBucket,
-    recent: normalizeCacheContinuityRecent(value?.recent, totals.cacheReadDrops),
-    allowanceImpact: totals.estimatedPremiumUsd === null
-      ? unavailableAllowanceImpact("weighting_evidence_incomplete")
-      : normalizeCacheSwitchAllowanceImpact(value?.allowanceImpact)
+    recent: normalizeCacheContinuityRecent(value?.recent, totals.cacheReadDrops, totals.estimateEvidence.method),
+    allowanceImpact: unavailableAllowanceImpact("reusable_prefix_unverified")
   };
   return {
     ...summary,
@@ -3447,9 +3478,7 @@ function normalizeCacheContinuityImpact(value) {
         periodId: period.periodId,
         periodLabel: text(period.periodLabel, "Recorded period"),
         ...summary,
-        allowanceImpact: period.periodId === "7d"
-          ? summary.allowanceImpact
-          : unavailableAllowanceImpact("period_denominator_mismatch"),
+        allowanceImpact: unavailableAllowanceImpact("reusable_prefix_unverified"),
         minimumGapSeconds: CACHE_CONTINUITY_MINIMUM_GAP_SECONDS,
         maximumRetainedCacheRatio: CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO,
         outcomeDisplayMaximumGapSeconds:
@@ -3471,9 +3500,7 @@ function normalizeCacheContinuityImpact(value) {
     periodId,
     periodLabel: text(value.periodLabel, "Recorded period"),
     ...selected,
-    allowanceImpact: periodId === "7d"
-      ? selected.allowanceImpact
-      : unavailableAllowanceImpact("period_denominator_mismatch"),
+    allowanceImpact: unavailableAllowanceImpact("reusable_prefix_unverified"),
     minimumGapSeconds: CACHE_CONTINUITY_MINIMUM_GAP_SECONDS,
     maximumRetainedCacheRatio: CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO,
     outcomeDisplayMaximumGapSeconds:
@@ -4636,6 +4663,16 @@ function normalizeLocalModelUsage(rows) {
 function normalizeStaleAccountingServe(value) {
   const provenance = normalizeStaleProvenance(value);
   if (provenance === null) return null;
+  if (provenance.reason === "local_unified_index_generation_mismatch") {
+    const generation = value.sourceGeneration;
+    if (!((Number.isSafeInteger(generation) && generation >= 1)
+        || (typeof generation === "string" && generation.length > 0 && generation.length <= 256))
+        || typeof value.sourceGenerationFingerprint !== "string"
+        || value.sourceGenerationFingerprint.length === 0
+        || value.sourceGenerationFingerprint.length > 256) return null;
+    provenance.sourceGeneration = generation;
+    provenance.sourceGenerationFingerprint = value.sourceGenerationFingerprint;
+  }
   const periods = array(value.periods).flatMap((period) => (
     ["24h", "7d", "30d", "all"].includes(period?.periodId)
       && typeof period.periodLabel === "string"
@@ -4902,6 +4939,10 @@ function normalizeHistoryCoverage(value = {}) {
   const indexedBytes = count(value?.indexedBytes, null);
   const skippedSourceBytes = count(value?.skippedSourceBytes, null);
   const responseUnverifiedPrefixTurns = count(value?.responseUnverifiedPrefixTurns, null);
+  const cumulativePrefixUnattributed = Number.isSafeInteger(value?.cumulativePrefixUnattributed)
+      && value.cumulativePrefixUnattributed >= 0
+    ? value.cumulativePrefixUnattributed
+    : null;
   const generatedAt = canonicalInstant(value?.generatedAt);
   const coveredStartAt = canonicalInstant(value?.coveredAt?.startAt);
   const coveredEndAt = canonicalInstant(value?.coveredAt?.endAt);
@@ -4982,6 +5023,7 @@ function normalizeHistoryCoverage(value = {}) {
   // “Complete” is a claim about the whole archive, so a malformed or
   // internally inconsistent browser payload must fail closed to partial.
   const complete = value?.status === "complete"
+    && !(responseUnverifiedPrefixTurns > 0 || cumulativePrefixUnattributed > 0)
     && ["complete", "idle"].includes(phase)
     && errorCode === null
     && coherent
@@ -5014,6 +5056,10 @@ function normalizeHistoryCoverage(value = {}) {
       ? "unknown"
       : responseUnverifiedPrefixTurns > 0 ? "partial" : "complete",
     responseUnverifiedPrefixTurns,
+    cumulativeUsageCoverageStatus: cumulativePrefixUnattributed === null
+      ? "unknown"
+      : cumulativePrefixUnattributed > 0 ? "partial" : "complete",
+    cumulativePrefixUnattributed,
     errorCode,
     coveredAt: {
       startAt: coveredStartAt ?? "",
@@ -5581,6 +5627,22 @@ function normalizeQuality(payload = {}) {
   };
 }
 
+function normalizeQuotaFreshness(value) {
+  if (value === undefined) return null;
+  const unavailable = { status: "unavailable", latestObservedAt: null, ageSeconds: null,
+    staleAfterSeconds: null, source: null };
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || !["live", "stale", "unavailable"].includes(value.status)
+      || value.source !== "content_free_collector_state"
+      || value.staleAfterSeconds !== 1800
+      || !(value.ageSeconds === null || Number.isFinite(value.ageSeconds) && value.ageSeconds >= 0)) return unavailable;
+  const latestObservedAt = value.latestObservedAt === null ? null : canonicalInstant(value.latestObservedAt);
+  if (value.latestObservedAt !== null && latestObservedAt === null
+      || value.status === "live" && (latestObservedAt === null || value.ageSeconds === null)) return unavailable;
+  return { status: value.status, latestObservedAt, ageSeconds: value.ageSeconds,
+    staleAfterSeconds: value.staleAfterSeconds, source: value.source };
+}
+
 export function normalizeDashboardPayload(payload = {}, fragments = {}) {
   const overview = payload?.overview ?? fragments.overview ?? payload;
   const freshness = overview?.freshness ?? {};
@@ -5639,6 +5701,7 @@ export function normalizeDashboardPayload(payload = {}, fragments = {}) {
       accountingStatus: text(freshness?.accountingStatus, ""),
       accountingAgeSeconds: finite(freshness?.accountingAgeSeconds, null)
     },
+    quotaFreshness: normalizeQuotaFreshness(overview?.quotaFreshness),
     quotaWindows,
     activity: {
       ...(overview?.activity ?? overview?.live?.activity ?? {}),
@@ -5865,7 +5928,8 @@ export class LocalCompanionClient {
     return normalizeDashboardPayload({}, fragments);
   }
 
-  modelPerformance(period = "all", { signal, endAt, speedMode = "standard", onDiagnostics = () => {} } = {}) {
+  modelPerformance(period = "all", { signal, endAt, speedMode = "standard",
+    onDiagnostics = () => {}, onSourceDiagnostics = () => {} } = {}) {
     if (!["1", "7", "30", "all"].includes(period)) throw new RangeError("Unsupported display period");
     if (!["standard", "fast", "ultrafast"].includes(speedMode)) throw new RangeError("Unsupported speed mode");
     const query = new URLSearchParams({ period, speedMode });
@@ -5886,7 +5950,24 @@ export class LocalCompanionClient {
           || codes.some(code => !allowed.includes(code))) {
         throw Object.assign(new Error('Invalid performance diagnostics'), { code: 'timing_contract_invalid' });
       }
+      const sourceRaw = response.headers?.get('X-TiboTattle-Performance-Source-Diagnostics') ?? '';
+      const sourceAllowed = ['recovery_source_missing', 'recovery_source_read_failed',
+        'recovery_source_not_discovered', 'source_identity_changed', 'source_truncated_during_read',
+        'source_grew_during_read', 'source_metadata_changed_during_read', 'source_changed_unknown'];
+      let sourceDetails;
+      try {
+        if (sourceRaw.length > 1024) throw new Error();
+        sourceDetails = sourceRaw === '' ? [] : JSON.parse(sourceRaw);
+        if (!Array.isArray(sourceDetails) || sourceDetails.length > sourceAllowed.length
+            || sourceDetails.some(row => !row || typeof row !== 'object' || Array.isArray(row)
+              || Object.keys(row).length !== 2 || !sourceAllowed.includes(row.code)
+              || !Number.isSafeInteger(row.count) || row.count < 1 || row.count > 1_000_000_000)
+            || new Set(sourceDetails.map(row => row.code)).size !== sourceDetails.length) throw new Error();
+      } catch {
+        throw Object.assign(new Error('Invalid performance source diagnostics'), { code: 'timing_contract_invalid' });
+      }
       onDiagnostics(codes);
+      onSourceDiagnostics(sourceDetails);
       return response;
     };
     return fetchJson(fetchPerformance, `${LOCAL_ROOT}/model-performance?${query}`, {

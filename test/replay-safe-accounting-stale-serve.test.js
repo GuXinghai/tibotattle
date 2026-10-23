@@ -15,6 +15,11 @@ import {
 } from "../src/local-collector-state.js";
 import { buildLocalCompanionSnapshot } from "../src/local-companion-data.js";
 import { normalizeDashboardPayload, selectAllowancePlanPopulation } from "../apps/web/public/data-client.js";
+import { createWorkspace } from "./helpers/local-index-facts.js";
+import { refreshLocalIndex } from "../src/local-index-refresh.js";
+import { buildLocalIndexAccountingCache } from "../src/local-index-accounting-cache.js";
+import { readLocalIndexGenerationIdentity } from "../src/local-index-companion-source.js";
+import { appendSyntheticCodexEvents } from "../src/synthetic-codex-rollout-corpus.js";
 
 // Serve-stale-labeled (2026-08-19). A cache whose semantic identity mismatches
 // the current code — the exact state every updater enters, because a schema
@@ -138,6 +143,53 @@ function snapshotOptions(root, stateFile) {
     now: () => NOW,
   };
 }
+
+test("a newer index serves prior generation costs with original provenance and no old allowance inputs", async () => {
+  const workspace = createWorkspace({ files: 1, events: 5, days: 1 });
+  const indexFile = join(workspace.state, "index.sqlite");
+  const stateFile = join(workspace.state, "collector.sqlite");
+  const nowMs = Date.parse("2026-09-03T12:00:00.000Z");
+  const options = { codexHome: workspace.codexHome, indexFile,
+    secretFile: workspace.secretFile, workerCount: 1 };
+  try {
+    await refreshLocalIndex(options);
+    const originalGeneration = readLocalIndexGenerationIdentity({ indexFile });
+    const cache = await buildLocalIndexAccountingCache({ indexFile,
+      codexHome: workspace.codexHome, expectedGeneration: originalGeneration, now: () => nowMs - 60_000 });
+    await writeLocalCollectorAccountingCache({ stateFile, cache });
+    appendSyntheticCodexEvents(workspace.receipt.sources, {
+      seed: 31, events: 2, atMs: nowMs - 30_000, fillerBytesPerEvent: 0,
+    });
+    await refreshLocalIndex(options);
+    const currentGeneration = readLocalIndexGenerationIdentity({ indexFile });
+    assert.notEqual(currentGeneration.id, originalGeneration.id);
+    const snapshot = await buildLocalCompanionSnapshot({
+      ...snapshotOptions(workspace.root, stateFile), unifiedIndexFile: indexFile,
+      now: () => nowMs,
+    });
+    assert.equal(snapshot.overview.freshness.accountingStatus, "unavailable");
+    const served = snapshot.overview.accounting.staleServe;
+    assert.equal(served.reason, "local_unified_index_generation_mismatch");
+    assert.equal(served.sourceGeneration, cache.sourceDescriptor.generation);
+    assert.equal(served.sourceGenerationFingerprint, originalGeneration.fingerprint);
+    assert.equal(served.computedAt, cache.generatedAt);
+    assert.deepEqual(served.coveredAt, cache.coveredAt);
+    const originalAll = cache.periods.find(row => row.id === "all");
+    assert.equal(served.periods.find(row => row.periodId === "all").events, originalAll.events);
+    assert.equal(snapshot.overview.timeline.allowanceCapacity.stale, undefined);
+    assert.notEqual(snapshot.overview.timeline.allowanceCapacity.status, "available");
+    assert.equal(snapshot.weekly.stale, undefined);
+    const dashboard = normalizeDashboardPayload({ ...snapshot.overview, weekly: snapshot.weekly });
+    assert.deepEqual(dashboard.accounting.staleServe, served);
+    const malformed = structuredClone(snapshot.overview);
+    delete malformed.accounting.staleServe.sourceGenerationFingerprint;
+    assert.equal(normalizeDashboardPayload(malformed).accounting.staleServe, null);
+    const retained = await readLocalCollectorAccountingCache({ stateFile });
+    assert.deepEqual(retained.cache.sourceDescriptor, cache.sourceDescriptor,
+      "serving a stale result never relabels its durable generation");
+    assert.equal(retained.cache.generatedAt, cache.generatedAt);
+  } finally { workspace.cleanup(); }
+});
 
 test("a semantics-outdated cache is returned on the explicit stale channel with provenance", async () => {
   const root = await fixtureRoot();

@@ -11,7 +11,12 @@ import {
   readLocalIndexCacheCandidateRows,
   readLocalIndexCacheCandidateRowsExact,
 } from "../src/local-index-report.js";
-import { createLocalIndexWriter, openLocalIndexStore } from "../src/local-index-store.js";
+import {
+  createLocalIndexWriter,
+  EVENT_FLAG_PARTIAL,
+  EVENT_FLAG_RESPONSE_USAGE,
+  openLocalIndexStore,
+} from "../src/local-index-store.js";
 
 function generator(seed) {
   let state = seed >>> 0;
@@ -174,6 +179,10 @@ test("materialized candidates equal the exact reader, including future-dated and
       const fast = readLocalIndexCacheCandidateRows(database, futureLimit);
       sameRows(fast, exact, `seed ${seed}`);
       assert.ok(exact.some((row) => row.ordering_coverage_gap === 0), "candidates present");
+      for (const row of exact.filter((candidate) => candidate.ordering_coverage_gap === 1)) {
+        assert.equal(row.current_observation_is_response, null);
+        assert.equal(row.previous_observation_is_response, null);
+      }
       if (exact.some((row) => row.ordering_coverage_gap === 1)) withSentinel += 1;
       const futureRows = Number(database.prepare(
         "SELECT COUNT(*) AS n FROM usage_event WHERE observed_at_ms > ?",
@@ -191,6 +200,48 @@ test("materialized candidates equal the exact reader, including future-dated and
   }
   assert.ok(withFuture >= 3, "future-dated requests were exercised");
   assert.ok(withSentinel >= 3, "spanning sessions were exercised");
+});
+
+test("candidate readers preserve response identity evidence on both sides of mixed legacy pairs", () => {
+  const futureLimit = Date.UTC(2026, 8, 1) + 60 * 86_400_000;
+  const { database, cleanup } = openTemporaryStore();
+  try {
+    const { writer, sources } = populate(database, generator(91), {
+      sources: 1, sessions: 1, eventsPerSource: 12,
+    });
+    const offsets = database.prepare(`
+      SELECT source_offset FROM usage_event
+      WHERE COALESCE(tokens_in_uncached, 0) + COALESCE(tokens_in_cache_read, 0)
+        + COALESCE(tokens_in_cache_write, 0) > 0
+      ORDER BY source_offset LIMIT 4`).all().map((row) => Number(row.source_offset));
+    assert.equal(offsets.length, 4);
+    const flags = [EVENT_FLAG_RESPONSE_USAGE, EVENT_FLAG_PARTIAL,
+      EVENT_FLAG_RESPONSE_USAGE | EVENT_FLAG_PARTIAL, 0];
+    writer.begin();
+    for (const [index, offset] of offsets.entries()) {
+      database.prepare("UPDATE usage_event SET flags = ? WHERE source_id = ? AND source_offset = ?")
+        .run(flags[index], sources[0].id, offset);
+      writer.writeBoundary({
+        sourceId: sources[0].id, sourceOffset: offset,
+        compactionBefore: false, turnContextBefore: true, compactedAtMs: null,
+      });
+    }
+    writer.commit();
+    cursorTo(database, sources[0].id, sources[0].size + 10);
+    const exact = readLocalIndexCacheCandidateRowsExact(database, futureLimit);
+    const materialized = readLocalIndexCacheCandidateRows(database, futureLimit);
+    sameRows(materialized, exact, "mixed observation evidence");
+    for (const rows of [exact, materialized]) {
+      for (let index = 1; index < offsets.length; index += 1) {
+        const row = rows.find((candidate) => candidate.current_source_offset === offsets[index]);
+        assert.ok(row, `pair at offset ${offsets[index]}`);
+        assert.equal(row.current_observation_is_response, index === 2 ? 1 : 0);
+        assert.equal(row.previous_observation_is_response, index === 2 ? 0 : 1);
+      }
+    }
+  } finally {
+    cleanup();
+  }
 });
 
 test("a build in flight is read as its committed prefix", () => {

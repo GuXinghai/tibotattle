@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createContext, runInContext } from 'node:vm';
-import { comparisonReading, retainedPageIndex, dashboardReadFailure, observedAllowancePoints } from '../public/allowance-page.js';
+import { comparisonReading, retainedPageIndex, dashboardReadFailure, observedAllowancePoints, mountAllowancePage } from '../public/allowance-page.js';
 import { translate, SUPPORTED_LOCALES } from '../public/localization.js';
 import { LocalCompanionClient } from '../public/data-client.js';
 
@@ -92,4 +92,62 @@ test('compact allowance actions have matching translations in all shipped locale
     const full=`allowance.simple.${key}`;
     assert.notEqual(translate(full,{value:'72%'},locale),full);
   }
+});
+
+test('a prior calibration annotation follows its estimate into details instead of labeling the primary chart', () => {
+  class Element {
+    constructor(tag = 'div') {
+      this.tagName = tag; this.children = []; this.dataset = {}; this.style = {}; this.attributes = new Map();
+      this.className = ''; this.value = ''; this.scrollTop = 0; this.clientWidth = 900;
+      this.classList = {add: name => {this.className += ` ${name}`;}};
+    }
+    get childNodes() { return this.children; }
+    remove() { if (this.parentElement) this.parentElement.children.splice(this.parentElement.children.indexOf(this), 1); this.parentElement = null; }
+    append(...nodes) { for (const node of nodes) {node.remove(); node.parentElement = this; this.children.push(node);} }
+    prepend(...nodes) { for (const node of [...nodes].reverse()) {node.remove(); node.parentElement = this; this.children.unshift(node);} }
+    before(...nodes) { const parent = this.parentElement; for (const node of nodes) {node.remove(); node.parentElement = parent; parent.children.splice(parent.children.indexOf(this), 0, node);} }
+    after(...nodes) { for (const node of [...nodes].reverse()) {node.remove(); node.parentElement = this.parentElement; this.parentElement.children.splice(this.parentElement.children.indexOf(this) + 1, 0, node);} }
+    replaceChildren(...nodes) { for (const child of [...this.children]) child.remove(); this.append(...nodes); }
+    contains(node) { return this === node || this.children.some(child => child.contains(node)); }
+    setAttribute(key, value) { this.attributes.set(key, String(value)); }
+    getAttribute(key) { return this.attributes.get(key) ?? null; }
+    addEventListener() {}
+    querySelector(selector) {
+      return this.children.find(child => selector.startsWith('.') ? child.className.split(/\s+/).includes(selector.slice(1)) : child.tagName === selector)
+        ?? this.children.map(child => child.querySelector(selector)).find(Boolean) ?? null;
+    }
+    showModal() { this.open = true; }
+  }
+  const body = new Element('body'), nodes = new Map();
+  const add = (selector, parent = body) => {
+    const node = new Element();
+    if (selector.startsWith('#')) node.id = selector.slice(1); else node.className = selector.slice(1);
+    parent.append(node); nodes.set(selector, node); return node;
+  };
+  const root = add('#allowance-screen'), header = add('.dashboard-page-header', root);
+  const note = add('#weekly-stale-note', header), capacity = add('.trends-capacity-panel', root);
+  const comparison = add('.trends-comparison-panel', root);
+  for (const selector of ['#allowance-timeline-chart','.trends-time-controls','#usage-group-controls',
+    '#trends-activity-label','#usage-timeline-chart','#usage-timeline-empty','.chart-navigation',
+    '#trends-replay','#trends-latest','#usage-timeline-summary','#usage-timeline-coverage']) add(selector, capacity);
+  for (const selector of ['#difference-timeline-chart','.chart-heading','.calibration-legend','#timeline-chart',
+    '#timeline-coverage','#residual-coverage','.trends-evidence-details']) add(selector, comparison);
+  for (const selector of ['.allowance-equivalent','#allowance-window-control','.trends-drift-panel',
+    '.divergence-panel','.trends-exact-panel','#weekly-plan-control','.topbar']) add(selector, root);
+  const documentRef = {querySelector: selector => nodes.get(selector) ?? null,
+    createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag),
+    createComment: () => new Element('#comment'), addEventListener() {}, documentElement: {lang: 'en-US'},
+    defaultView: {addEventListener() {}, dispatchEvent() {}, localStorage: {getItem: () => null}}};
+  const page = mountAllowancePage({documentRef, t: key => key, formatMoney: String, formatPp: String,
+    formatInstant: String, formatPercent: String, formatReset: String, selectTime() {}, stopPlayback() {}});
+  assert.equal(header.contains(note), false, 'a stale calibration cannot label the primary interval view');
+  assert.equal(note.parentElement.dataset.allowanceDetail, 'estimate');
+  const dialog = root.children.find(node => node.id === 'allowance-detail-dialog');
+  assert.equal(dialog.contains(note), false, 'details stay hidden until requested');
+  page.open('estimate');
+  assert.equal(dialog.open, true);
+  assert.equal(dialog.contains(note), true);
+  assert.equal(dialog.contains(nodes.get('.allowance-equivalent')), true, 'provenance accompanies the retained estimate');
+  page.open('complete');
+  assert.equal(dialog.contains(note), false, 'the annotation cannot leak into interval-only details');
 });

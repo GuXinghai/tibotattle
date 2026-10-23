@@ -4,6 +4,8 @@ import {
   canonicalRateLimitSnapshot,
   codexSessionMetaIdentity,
   codexTierObservation,
+  CODEX_WORK_LIFECYCLE_EVENT_TYPES,
+  codexWorkLifecycle,
   cumulativeSnapshotKey,
   createResponseUsagePlan,
   deltaComponentPresence,
@@ -50,7 +52,8 @@ const RELEVANT_NEEDLES = Object.freeze([
   '"type":"session_meta"', '"type":"turn_context"',
   '"type":"thread_settings_applied"', '"type":"token_count"',
   '"type":"token_usage_record"',
-  '"type":"task_started"', '"type":"task_complete"', '"type":"custom_tool_call"',
+  '"type":"compacted"', '"type":"model_reroute"',
+  ...CODEX_WORK_LIFECYCLE_EVENT_TYPES.map(type=>`"type":"${type}"`), '"type":"custom_tool_call"',
   '"type":"function_call"', '"type":"web_search_call"', '"type":"file_search_call"',
   '"type":"code_interpreter_call"', '"type":"shell_call"', '"type":"computer_call"',
   '"type":"mcp_call"', '"type":"apply_patch_call"', '"type":"local_shell_call"',
@@ -148,6 +151,16 @@ function tierSemantics(tierEvent) {
     tierSource: tierEvent?.tierState.tierSource ?? "unobserved",
     tierObservedAt: tierEvent ? new Date(tierEvent.eventTimeMs).toISOString() : null,
   };
+}
+
+function responseTierSemantics(response) {
+  const captured = response.requestTier;
+  return captured === null || captured === undefined ? tierSemantics(null)
+    : normalizeProviderTier(captured.rawTier, {
+      billingSurface: "chatgpt_subscription",
+      tierSource: captured.tierSource,
+      tierObservedAt: captured.timestamp,
+    });
 }
 
 function addRecord(batch, recordType, record, resourceGuard) {
@@ -420,14 +433,14 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
           contentInvalid();
         }
       } else if (record.type === "event_msg"
-          && (record.payload?.type === "task_started" || record.payload?.type === "task_complete")) {
+          && CODEX_WORK_LIFECYCLE_EVENT_TYPES.includes(record.payload?.type)) {
         if (timestampMs <= bounds.endMs) {
-          const turnId = record.payload?.turn_id;
-          if (typeof turnId !== "string" || turnId.length === 0) {
+          const work=codexWorkLifecycle(record);
+          if (work===null) {
             batch.diagnostics.add("malformed_task_events");
           } else {
-            const taskKey = safeKey(secret, "checkpoint-task", { sourceKey: source.sourceKey, turnId });
-            if (record.payload.type === "task_started") {
+            const taskKey = safeKey(secret, "checkpoint-task", { sourceKey: source.sourceKey, turnId:work.taskId });
+            if (work.kind === "start") {
               if (!openTasks.has(taskKey)) {
                 openTasks.add(taskKey);
                 if (!pendingTaskDeletes.delete(taskKey)) pendingTaskAdds.add(taskKey);
@@ -454,22 +467,37 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
         }
       } else if (record.type === 'token_usage_record') {
         const response = responsePlan.responseAt(entry.lineOrdinal);
-        if (response && timestampMs >= bounds.startMs && timestampMs <= bounds.endMs
-            && !pendingResponses.has(response.key) && !workspace.hasSeenOccurrence('usage_event', response.key)) {
+        if (response && !pendingResponses.has(response.key)) {
+          if (workspace.hasSeenOccurrence('usage_event', response.key)) {
+            // The identity alone cannot prove that another physical source
+            // retained the same canonical usage. Versioned private proofs
+            // make conflicting copies fail rather than select scan order.
+            if (!workspace.hasSeenOccurrence('usage_event', response.verificationKey)) {
+              const error = new Error("codex_response_usage_identity_conflict");
+              error.code = "codex_response_usage_identity_conflict";
+              throw error;
+            }
+            if (lineCounts.lines >= maximumLinesPerBatch) await flush();
+            continue;
+          }
           pendingResponses.add(response.key);
           batch.seenOccurrences.push({ kind: 'usage_event', occurrenceKey: response.key, lineOrdinal: entry.lineOrdinal });
-          const presence = tokenComponentPresence(response.raw);
-          if (response.cacheWriteAssumedZero) presence.cache_write_input_tokens = false;
-          const tier = response.model === null ? null : workspace.sourceTierAt(source.sourceKey, timestampMs);
-          addRecord(batch, 'usageEvent', normalizeCodexUsageEvent(secret, {
-            timestamp: record.timestamp, modelDeclaration: safeExportModelDeclaration(secret, response.model),
-            raw: response.raw, rawAvailability: presence, components: canonicalComponents(response.raw),
-            componentAvailability: canonicalComponentAvailability(presence, response.raw),
-            tierSemantics: tierSemantics(tier), surfaceClassification: source.rolloutInfo.lineage.surfaceClassification,
-            sourceScopeId, ...(sourceOccurrenceScopeId === null ? {} : { sourceOccurrenceScopeId }),
-            sourceRecordOrdinal: entry.lineOrdinal,
-          }, state.pendingToolCounts), resourceGuard);
-          state.pendingToolCounts = createEmptySafeToolClassCounts();
+          batch.seenOccurrences.push({ kind: 'usage_event', occurrenceKey: response.verificationKey, lineOrdinal: entry.lineOrdinal });
+          // Prove identity before the display-period filter: a changed date
+          // must not hide a conflicting physical copy outside the window.
+          if (timestampMs >= bounds.startMs && timestampMs <= bounds.endMs) {
+            const presence = tokenComponentPresence(response.raw);
+            if (response.cacheWriteAssumedZero) presence.cache_write_input_tokens = false;
+            addRecord(batch, 'usageEvent', normalizeCodexUsageEvent(secret, {
+              timestamp: record.timestamp, modelDeclaration: safeExportModelDeclaration(secret, response.model),
+              raw: response.raw, rawAvailability: presence, components: canonicalComponents(response.raw),
+              componentAvailability: canonicalComponentAvailability(presence, response.raw),
+              tierSemantics: responseTierSemantics(response), surfaceClassification: source.rolloutInfo.lineage.surfaceClassification,
+              sourceScopeId, ...(sourceOccurrenceScopeId === null ? {} : { sourceOccurrenceScopeId }),
+              sourceRecordOrdinal: entry.lineOrdinal,
+            }, state.pendingToolCounts), resourceGuard);
+            state.pendingToolCounts = createEmptySafeToolClassCounts();
+          }
         }
       } else if (record.type === "event_msg" && record.payload?.type === "token_count") {
         const info = record.payload?.info;
@@ -544,8 +572,14 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
                 usagePresence = lastPresence;
               }
             } else if (first) {
-              usage = last ?? delta;
-              usagePresence = last ? lastPresence : deltaPresence;
+              // A first total is an unknown historical prefix. It anchors
+              // later deltas but establishes spend only when last is present.
+              usage = last;
+              usagePresence = lastPresence;
+              if (last === null && total.total_tokens > 0
+                  && !responsePlan.suppressLegacyAt(entry.lineOrdinal)) {
+                batch.diagnostics.add("cumulative_prefix_unattributed");
+              }
             } else if (delta.total_tokens > 0) {
               if (last && sameUsage(last, delta)) {
                 usage = last;
@@ -574,7 +608,7 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
             const modelDeclaration = explicitModel !== null && explicitModel !== undefined
               ? safeExportModelDeclaration(secret, explicitModel)
               : (state.currentModel ?? safeExportModelDeclaration(secret, null));
-            const tier = workspace.sourceTierAt(source.sourceKey, timestampMs);
+            const tier = workspace.sourceTierAt(source.sourceKey, timestampMs, entry.lineOrdinal);
             addRecord(batch, "usageEvent", normalizeCodexUsageEvent(secret, {
               timestamp: record.timestamp,
               modelDeclaration,
@@ -658,6 +692,7 @@ async function populateCheckpointedCodexSources({
     }
   } catch (error) {
     if (error instanceof ExportSourcePlanError
+        || error?.code === "codex_response_usage_identity_conflict"
         || (error instanceof ExportWorkspaceError && error.code === "export_workspace_database_changed")) {
       workspace.markPoisoned("source_integrity");
     }

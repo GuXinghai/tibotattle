@@ -1,6 +1,7 @@
 /** Closed, content-free control contracts for the isolated X reader. */
 export const X_TARGET = 'thsottiaux';
 export const X_TABS = Object.freeze(['posts', 'replies', 'reposts', 'media']);
+export const X_LOGIN_STAGES = Object.freeze(['checking_bridge', 'waiting_import', 'validating', 'preparing', 'writing', 'connecting', 'verifying', 'challenge', 'saving', 'complete']);
 export const X_DEFAULT_SETTINGS = Object.freeze({ refreshMinutes: 5, proxyMode: 'system', proxyPort: 10809, notifyPosts: false, notifyReplies: false });
 export const X_RESOURCE_SCHEME = 'tibotattle-x-media';
 // Closed local failures: never carry a filesystem path, cookie or native message.
@@ -45,6 +46,10 @@ export function validateXNotificationBaseline(value, version = 2) {
 export function validateXQuery(query = {}) {
   if (!plain(query) || Object.keys(query).some(key => !['tab', 'cursor'].includes(key)) || !X_TABS.includes(query.tab ?? 'posts') || query.cursor !== undefined && (typeof query.cursor !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(query.cursor))) throw xError('invalid_query');
   return { tab: query.tab ?? 'posts', cursor: query.cursor };
+}
+export function validateXDetailQuery(query = {}) {
+  if (!plain(query) || Object.keys(query).some(key => !['id', 'cursor', 'force'].includes(key)) || query.cursor !== undefined && (typeof query.cursor !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(query.cursor)) || Object.hasOwn(query, 'force') && typeof query.force !== 'boolean' || query.force !== undefined && query.cursor !== undefined) throw xError('invalid_query');
+  return { id: validateXId(query.id), cursor: query.cursor, force: query.force === true };
 }
 export function isXPageUrl(value) {
   try { const url = new URL(value); return url.protocol === 'https:' && url.hostname === 'x.com' && !url.port && !url.username && !url.password; } catch { return false; }

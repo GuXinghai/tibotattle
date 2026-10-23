@@ -36,6 +36,7 @@ const UPDATE_KEYS = Object.freeze([
   "language",
   "appearance",
   "refreshIntervalSeconds",
+  "refreshPaused",
   "startAtLogin",
   "notifications",
   "sidebarCollapsed",
@@ -59,6 +60,7 @@ function defaultSettings() {
     language: DESKTOP_DEFAULT_SETTINGS.language,
     appearance: DESKTOP_DEFAULT_SETTINGS.appearance,
     refreshIntervalSeconds: DESKTOP_DEFAULT_SETTINGS.refreshIntervalSeconds,
+    refreshPaused: DESKTOP_DEFAULT_SETTINGS.refreshPaused,
     startAtLogin: DESKTOP_DEFAULT_SETTINGS.startAtLogin,
     notifications: { ...DESKTOP_DEFAULT_SETTINGS.notifications },
     sidebarCollapsed: DESKTOP_DEFAULT_SETTINGS.sidebarCollapsed,
@@ -74,6 +76,7 @@ function cloneSettings(settings, idFactory) {
     language: migrated.language,
     appearance: migrated.appearance,
     refreshIntervalSeconds: migrated.refreshIntervalSeconds,
+    refreshPaused: migrated.refreshPaused,
     startAtLogin: migrated.startAtLogin,
     notifications: { ...migrated.notifications },
     sidebarCollapsed: migrated.sidebarCollapsed,
@@ -254,6 +257,7 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
       return {
         ...current,
         codexHomes,
+        refreshPaused: patch.refreshPaused === undefined ? current.refreshPaused : patch.refreshPaused,
         tray: patch.tray === undefined ? current.tray : patch.tray,
         language: patch.language === undefined ? current.language : patch.language,
         appearance: patch.appearance === undefined ? current.appearance : patch.appearance,
@@ -305,6 +309,11 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
       throw new TypeError("seconds is invalid");
     }
     return enqueueUpdate((current) => ({ ...current, refreshIntervalSeconds: seconds }));
+  }
+
+  async function setRefreshPaused(paused) {
+    if (typeof paused !== "boolean") throw new TypeError("paused is invalid");
+    return enqueueUpdate(current => ({ ...current, refreshPaused: paused }));
   }
 
   async function setStartAtLogin(enabled) {
@@ -391,6 +400,7 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
     setLanguage,
     setAppearance,
     setRefreshInterval,
+    setRefreshPaused,
     setStartAtLogin,
     setNotificationPreferences,
     setSidebarCollapsed,

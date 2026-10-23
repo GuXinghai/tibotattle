@@ -33,6 +33,11 @@ const TURN_SCHEMA = `(key BLOB PRIMARY KEY, source INTEGER NOT NULL, offset INTE
   turn_duration INTEGER, speed_mode TEXT, speed_mode_source TEXT,
   api_service_tier TEXT) WITHOUT ROWID`;
 const safe = (ok, code) => { if (!ok) throw new Error(code); };
+function timingSourceError(message, recoveryReason) {
+  const error = new Error(message);
+  Object.defineProperty(error, 'recoveryReason', { value: recoveryReason });
+  return error;
+}
 
 // Parser methods identify the HMAC/keying semantics of each projection.  The
 // SQLite schema method is separate so older writers cannot reopen a migrated
@@ -272,7 +277,9 @@ export async function ingestTimingFile(store, path, { maxBytes = CHUNK, signal, 
   } catch (error) {
     if (old && (old.rebuild_kind !== 'none'
         || old.parser_version !== store.parserVersion && old.replay_parser_version === store.parserVersion)) {
-      throw new Error('source_recovery_failed');
+      throw timingSourceError('source_recovery_failed',
+        ['ENOENT', 'WINDOWS_FILESYSTEM_NOT_FOUND'].includes(error?.code)
+          ? 'recovery_source_missing' : 'recovery_source_read_failed');
     }
     throw error;
   }
@@ -338,7 +345,7 @@ export async function ingestTimingFile(store, path, { maxBytes = CHUNK, signal, 
     });
   } catch (e) {
     const reported = recoveryAttempt && e?.message === 'source_changed'
-      ? new Error('source_recovery_failed') : e;
+      ? timingSourceError('source_recovery_failed', e.recoveryReason ?? 'source_changed_unknown') : e;
     primaryError = reported;
     setAttemptedBytes(reported, attemptedBytes);
     throw reported;
@@ -416,7 +423,8 @@ async function ingestCompressedTimingFile(store, path, { sourceKey, old, maxByte
       remaining: slice.exhausted ? Math.max(0, slice.end - result.cursor) : 1 };
   } catch (error) {
     primaryError = error;
-    const reported = error?.message === 'source_changed' ? Object.assign(new Error('source_recovery_failed'), { code: 'source_recovery_failed' }) : error;
+    const reported = error?.message === 'source_changed' ? Object.assign(
+      timingSourceError('source_recovery_failed', error.recoveryReason ?? 'source_changed_unknown'), { code: 'source_recovery_failed' }) : error;
     setAttemptedBytes(reported, attemptedBytes); throw reported;
   } finally {
     try { await handle?.close(); } catch (error) { if (!primaryError) throw error; }
@@ -489,8 +497,10 @@ export function timingReport(store) {
 
 async function verifyTimingSource(store, path, handle, before) {
   const after = snapshot(await handle.stat()), named = snapshot(await store.filesystem.namedStat(path, handle));
-  safe(sameFile(before, after) && sameFile(before, named)
-    && before.size === after.size && before.mtime === after.mtime && before.ctime === after.ctime, 'source_changed');
+  if (!sameFile(before, after) || !sameFile(before, named)) throw timingSourceError('source_changed', 'source_identity_changed');
+  if (after.size < before.size) throw timingSourceError('source_changed', 'source_truncated_during_read');
+  if (after.size > before.size) throw timingSourceError('source_changed', 'source_grew_during_read');
+  if (before.mtime !== after.mtime || before.ctime !== after.ctime) throw timingSourceError('source_changed', 'source_metadata_changed_during_read');
   return after;
 }
 

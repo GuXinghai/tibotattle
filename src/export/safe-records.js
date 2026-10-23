@@ -32,6 +32,7 @@ const DIAGNOSTIC_CODES = Object.freeze({
   malformedLines: "malformed_lines",
   malformedTimestamps: "malformed_timestamps",
   malformedUsageRecords: "malformed_usage_records",
+  cumulativePrefixUnattributed: "cumulative_prefix_unattributed",
   missingRateLimitRecords: "missing_rate_limit_records",
   malformedRateLimitRecords: "malformed_rate_limit_records",
   replayedEventsSkipped: "replayed_events_skipped",

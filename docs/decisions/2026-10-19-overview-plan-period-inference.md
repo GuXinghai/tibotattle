@@ -25,8 +25,26 @@ never crosses a reset or plan-period boundary. Remaining work hours use only
 the latest period of the current plan and retain inferred-sample markers;
 unavailable samples do not borrow another period's rate.
 
-This exception applies only to overview history and explicitly qualified
-estimates. The strict startup comparison, provider normalization, raw local
+As approved on 2026-10-19, this exception applied only to overview history and explicitly qualified
+estimates. At that time the strict startup comparison, provider normalization, raw local
 index, accounting ledger, calibration and other report attribution do not gain
 inferred account or plan evidence. The current projection and compatibility
 contract are maintained in the [local index schema reference](../reference/local-index-schema.md).
+
+On 2026-10-21 the owner approved first-quota-change historical segmentation.
+Repeated equal balances retain their interval's original anchor. Closed intervals
+use complete priced usage for date/class allocation; uncertain cross-day totals
+remain separate by plan at the bottom of Overview. Unclosed tails do not supply
+zero-consumption rate samples. Weekly cycle resolution is shared with the strict
+startup comparison, without granting inferred history its identity authority.
+This changes the recomputable projection, not original observations or prices.
+
+On 2026-10-23 the owner requested that the startup actual-versus-expected
+comparison reuse the overview's plan-observation logic. That comparison now
+shares the same preceding-anchor projection and marks accepted pairs that use
+inferred plan attribution. This supersedes its exclusion above, solely for plan
+labels. Account continuity, explicit plan/family changes, conflicts and reset
+authority retain their checks. A projected plan cannot authorize an otherwise
+ambiguous reset. The saved baseline retains its source label so a later refresh
+cannot mistake an inferred label for an explicit observation. Raw index facts,
+the accounting ledger and calibration attribution remain unchanged.

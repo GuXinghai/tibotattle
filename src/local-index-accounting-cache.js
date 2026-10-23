@@ -1,6 +1,6 @@
 import { describeLocalIndexGeneration } from "./local-index-companion-source.js";
 import { openLocalIndexCalibrationCorpus } from "./local-index-calibration.js";
-import { readLocalIndexReport } from "./local-index-report.js";
+import { iterateLocalIndexUsageGroups, readLocalIndexReportMetadata } from "./local-index-report.js";
 import {
   EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO,
   EVENT_FLAG_PARTIAL,
@@ -140,6 +140,9 @@ export function createLocalIndexAccountingScan({
     startAt,
     endAt,
     onUsage,
+    onUsageGroup,
+    usageBoundaryMs = [],
+    declaredSpeedBaselines = [],
     onRateLimitSnapshot,
     indexedHistory,
     usageAttribution = "none",
@@ -159,7 +162,7 @@ export function createLocalIndexAccountingScan({
     }
     try {
       return await withReadSnapshotAsync(database, async ({ commitSeq }) => {
-        const report = readLocalIndexReport(database, { nowMs: endMs, declaredSpeedBaselines: [] });
+        const report = readLocalIndexReportMetadata(database, { nowMs: endMs });
         const generation = describeLocalIndexGeneration(database, report, commitSeq);
         if (generation === null) throw fixedError("local_unified_index_coverage_unavailable");
         const coverage = coverageFor(database, generation, report);
@@ -174,6 +177,7 @@ export function createLocalIndexAccountingScan({
         let sequence = 0;
         let sinceYield = 0;
         const deliver = async (callback, value) => {
+          throwIfAborted(signal);
           const pending = callback(value);
           if (pending !== undefined && pending !== null) await pending;
           sinceYield += 1;
@@ -207,7 +211,61 @@ export function createLocalIndexAccountingScan({
                    s.source_local,
                    u.source_offset,
                    u.event_key`);
-        for (const row of usageStatement.iterate(scanStartMs, scanEndMs)) {
+        // Weighted delivery is explicit: legacy consumers retain their ordered
+        // per-event stream and its exact source provenance.
+        const grouped = typeof onUsageGroup === "function"
+          && (indexedHistory === undefined || typeof indexedHistory.onUsageGroup === "function");
+        const speedBoundaries = declaredSpeedBaselines.flatMap((row) => [
+          Date.parse(row?.firstSeenAt), Date.parse(row?.lastSeenAt),
+          Date.parse(row?.lastSeenAt) + 1,
+        ]);
+        const groups = grouped ? iterateLocalIndexUsageGroups(database, {
+          startMs: scanStartMs, endMs: scanEndMs, accounting: true,
+          boundaryMs: [startMs, endMs, history?.startMs, history?.endMs,
+            ...usageBoundaryMs, ...speedBoundaries],
+        }) : null;
+        function* usageRows() {
+          if (!grouped) {
+            yield* usageStatement.iterate(scanStartMs, scanEndMs);
+            return;
+          }
+          for (const group of groups) {
+            const { record, row } = group;
+            if (!group.aggregate) {
+              yield { ...row, model_id: record.model,
+                billing_surface: record.tierSemantics.billingSurface,
+                codex_speed_mode: record.tierSemantics.codexSpeedMode,
+                api_service_tier: record.tierSemantics.apiServiceTier,
+                tier_source: record.tierSemantics.tierSource,
+                surface: record.surfaceClassification.surface,
+                thread_source: record.surfaceClassification.threadSource,
+                agent_scope: record.surfaceClassification.agentScope,
+                lineage_disposition: record.surfaceClassification.lineageDisposition };
+              continue;
+            }
+            const c = record.components;
+            yield {
+              observed_at_ms: group.observedMs, model_id: record.model,
+              total_input_context: record.totalInputContextTokens,
+              tokens_in_uncached: c.input_uncached_tokens,
+              tokens_in_cache_read: c.input_cache_read_tokens,
+              tokens_in_cache_write: c.input_cache_write_tokens,
+              tokens_out_text: c.output_text_tokens,
+              tokens_out_reasoning: c.output_reasoning_tokens,
+              tokens_out_combined: c.output_combined_tokens,
+              flags: 0, tier_observed_at_ms: null, eventCount: group.eventCount,
+              billing_surface: record.tierSemantics.billingSurface,
+              codex_speed_mode: record.tierSemantics.codexSpeedMode,
+              api_service_tier: record.tierSemantics.apiServiceTier,
+              tier_source: record.tierSemantics.tierSource,
+              surface: record.surfaceClassification.surface,
+              thread_source: record.surfaceClassification.threadSource,
+              agent_scope: record.surfaceClassification.agentScope,
+              lineage_disposition: record.surfaceClassification.lineageDisposition,
+            };
+          }
+        }
+        for (const row of usageRows()) {
           const { ms: observedAtMs, iso: timestamp } = instant(row.observed_at_ms);
           const inWindow = observedAtMs >= startMs && observedAtMs <= endMs;
           const inHistory = history !== null
@@ -216,7 +274,7 @@ export function createLocalIndexAccountingScan({
           const recorded = components(row);
           const usageComponents = recorded.components;
           if (!Object.values(usageComponents).some((value) => value > 0)) continue;
-          if (inWindow && usageAttribution === "required" && onUsage !== undefined) {
+          if (inWindow && usageAttribution === "required" && (grouped || onUsage !== undefined)) {
             // The builder falls back to attributing rows itself only when the
             // calibration source declined the store, which it never does for
             // one that holds usage. Refuse rather than deliver unattributed
@@ -263,22 +321,25 @@ export function createLocalIndexAccountingScan({
           if (totalInputContext !== null) {
             usage.totalInputContextTokens = totalInputContext;
           }
-          const sourceOffset = nonNegative(row.source_offset);
-          const sourceOrdinal = nullableNonNegative(row.source_ordinal);
-          usage.sourceLocal = Buffer.from(row.source_local);
-          usage.sourceRecordOrdinal = sourceOffset;
-          usage.sourceOffset = sourceOffset;
-          if (sourceOrdinal !== null) {
-            usage.sourceRolloutOrdinal = sourceOrdinal;
-            usage.sourceOrdinal = sourceOrdinal;
+          if (row.eventCount !== undefined) usage.eventCount = nonNegative(row.eventCount);
+          if (row.source_offset !== undefined) {
+            const sourceOffset = nonNegative(row.source_offset);
+            const sourceOrdinal = nullableNonNegative(row.source_ordinal);
+            usage.sourceLocal = Buffer.from(row.source_local);
+            usage.sourceRecordOrdinal = sourceOffset;
+            usage.sourceOffset = sourceOffset;
+            if (sourceOrdinal !== null) {
+              usage.sourceRolloutOrdinal = sourceOrdinal;
+              usage.sourceOrdinal = sourceOrdinal;
+            }
           }
-          if (inWindow && onUsage !== undefined) {
+          if (inWindow && (grouped || onUsage !== undefined)) {
             usage.sequence = sequence++;
-            await deliver(onUsage, usage);
+            await deliver(grouped ? onUsageGroup : onUsage, usage);
           }
           if (inHistory && indexedHistory !== undefined) {
             if (usage.sequence === undefined) usage.sequence = sequence++;
-            await deliver(indexedHistory.onUsage, usage);
+            await deliver(grouped ? indexedHistory.onUsageGroup : indexedHistory.onUsage, usage);
           }
         }
 

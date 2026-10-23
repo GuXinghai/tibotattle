@@ -31,10 +31,10 @@ export const DESKTOP_DETAILED_REFRESH_HEARTBEAT_TIMEOUT_MS = 10 * 60_000;
 
 // The browser owns a 241-minute polling window. This independent deadline is
 // never renewed by heartbeat, so even a live but broken renderer cannot reserve
-// the desktop cadence indefinitely.
+// a renderer lease indefinitely.
 export const DESKTOP_REFRESH_OPERATION_DEADLINE_MS = 243 * 60_000;
 
-// Native foreground refreshes reserve at most one detailed attempt per hour.
+// Legacy shell-owned refreshes reserve at most one detailed attempt per hour.
 // Keep this host-side constant separate from the user-configured quick timer:
 // a short cadence must never turn into repeated expensive accounting passes.
 export const DESKTOP_AUTOMATIC_DETAILED_REFRESH_INTERVAL_MS =
@@ -426,7 +426,10 @@ export function createDesktopController({
   }
   if (typeof clock !== "function") throw new TypeError("clock is required");
 
-  const cadence = automaticRefreshCadence === undefined
+  // The actual desktop runtime delegates business scheduling to the companion.
+  // Keep the former cadence only for explicitly shell-owned embedded callers;
+  // do not even open its protected state in the companion-owned composition.
+  const cadence = overviewRefreshOwnedByCompanion ? null : automaticRefreshCadence === undefined
     ? createTransientAutomaticRefreshCadence(clock)
     : assertPort(automaticRefreshCadence, [
       "automaticMode",
@@ -567,7 +570,7 @@ export function createDesktopController({
       let seconds = lastKnownRefreshIntervalSeconds;
       try {
         const settings = await store.getSettings();
-        seconds = settings.refreshIntervalSeconds;
+        seconds = settings.refreshPaused === true ? -1 : settings.refreshIntervalSeconds;
       } catch {
         // Recovery must not lose cadence because the settings backend is
         // briefly unavailable. The latest successfully armed interval remains
@@ -624,6 +627,7 @@ export function createDesktopController({
       : null;
     return Object.freeze({
       schemaVersion: "tibotattle-desktop-refresh-status-v1",
+      scheduleOwner: overviewRefreshOwnedByCompanion ? "companion" : "electron",
       state: disposed
         ? "disposed"
         : activeRefreshLease !== null
@@ -661,7 +665,7 @@ export function createDesktopController({
   }
 
   async function runAutomaticRefreshTick(seconds) {
-    if (disposed || refreshInFlight || automaticRefreshTickInFlight) return;
+    if (overviewRefreshOwnedByCompanion || disposed || refreshInFlight || automaticRefreshTickInFlight) return;
     automaticRefreshTickInFlight = true;
     const revision = refreshIntervalRevision;
     let followupArmed = false;
@@ -749,10 +753,10 @@ export function createDesktopController({
     stopRefreshTimer();
     if (!isDesktopRefreshIntervalSeconds(seconds)) return;
     lastKnownRefreshIntervalSeconds = seconds;
-    // The companion follows the exact preference. Detailed shell maintenance
-    // never becomes more frequent than hourly and also respects disabled.
-    if (seconds === -1) return;
-    if (overviewRefreshOwnedByCompanion) seconds = Math.max(seconds, 3600);
+    // A renderer lease is observation/recovery only in the current runtime.
+    // Settlement and watchdog recovery must never start a second business
+    // scheduler alongside the companion's single-writer controller.
+    if (overviewRefreshOwnedByCompanion || seconds === -1) return;
     if (disposed || refreshInFlight
         || !Number.isSafeInteger(seconds)
         || seconds <= 0) return;
@@ -772,14 +776,17 @@ export function createDesktopController({
 
   async function applyRefreshInterval(seconds) {
     const revision = ++refreshIntervalRevision;
-    lastKnownRefreshIntervalSeconds = seconds;
+    const settings = await store.getSettings();
+    const paused = settings.refreshPaused === true;
+    lastKnownRefreshIntervalSeconds = paused ? -1 : seconds;
     stopRefreshTimer();
     try {
-      await onRefreshIntervalChanged(seconds);
+      await onRefreshIntervalChanged(seconds, paused);
     } finally {
-      // Persistence already accepted the preference. A failed companion
-      // propagation must not strand shell maintenance until another change.
-      if (revision === refreshIntervalRevision && !refreshInFlight) startRefreshTimer(seconds);
+      // Persistence already accepted the preference. Only legacy shell-owned
+      // callers rearm here; companion propagation failures remain visible to
+      // the caller and cannot authorize a fallback business timer.
+      if (revision === refreshIntervalRevision && !refreshInFlight) startRefreshTimer(paused ? -1 : seconds);
     }
   }
 
@@ -880,6 +887,7 @@ export function createDesktopController({
           ? {}
           : { codexHomes: codexHomesSummary(codexHomes) }),
         refreshIntervalSeconds: settings.refreshIntervalSeconds,
+        refreshPaused: settings.refreshPaused === true,
         startAtLogin: Object.freeze({
           ...login,
           canOpenSettings: true,
@@ -1345,6 +1353,14 @@ export function createDesktopController({
             resolvedTheme,
           }));
         }
+        return snapshot();
+      });
+    },
+    async setRefreshPaused({ paused }) {
+      return enqueue(async () => {
+        const settings = await store.setRefreshPaused(paused);
+        await applyRefreshInterval(settings.refreshIntervalSeconds);
+        emitDashboardCommand(createDesktopCommand("settingsChanged"));
         return snapshot();
       });
     },

@@ -67,8 +67,9 @@ async function fixture({ replayTool = false, responseRecords = false, responseOn
   await mkdir(sessions, { recursive: true });
   await mkdir(join(home, "archived_sessions"), { recursive: true });
 
-  // Tier records are deliberately not in timestamp order.  The first usage
-  // must nevertheless resolve to fast/priority and the second to standard.
+  // Tier records are deliberately not in timestamp order. A preceding
+  // future-dated standard setting blocks older tiers for the first usage;
+  // the second usage can observe that standard setting.
   const parent = [
     JSON.stringify({ timestamp: "2026-07-24T12:00:00.000Z", type: "session_meta", payload: { id: "PRIVATE_PARENT" } }),
     // Current Codex appends same-thread metadata updates (for example, git or
@@ -177,6 +178,126 @@ function workspaceEnvelopes(workspace) {
   })));
 }
 
+async function checkpointRecordsFixture(records, { additionalRecords = [], ...options } = {}) {
+  const root = await mkdtemp(join(tmpdir(), "usage-monitor-checkpoint-tier-"));
+  const home = join(root, "codex");
+  await mkdir(join(home, "sessions"), { recursive: true });
+  await writeFile(join(home, "sessions", `rollout-2026-07-24T12-00-00-${records[0].payload.id}.jsonl`),
+    records.map((record) => JSON.stringify(record)).join("\n") + "\n");
+  for (const [index, source] of additionalRecords.entries()) {
+    await writeFile(join(home, "sessions", `rollout-2026-07-24T12-01-0${index}-${source[0].payload.id}_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa${index}.jsonl`),
+      source.map((record) => JSON.stringify(record)).join("\n") + "\n");
+  }
+  try {
+    return await checkpointResult({ root, home, label: "synthetic", maximumLinesPerBatch: 1, ...options });
+  } finally {
+    await rm(root, { recursive: true });
+  }
+}
+
+test("checkpoint response tiers stay captured at the request across later settings and resume", async () => {
+  const timestamp = "2026-07-24T12:00:01.000Z";
+  for (const capturedTier of ["priority", undefined]) {
+    const result = await checkpointRecordsFixture([
+      { timestamp, type: "session_meta", payload: { id: "synthetic-tier-thread" } },
+      { timestamp, type: "turn_context", payload: { turn_id: "synthetic-tier-turn", model: "gpt-5.6-sol",
+        ...(capturedTier === undefined ? {} : { service_tier: capturedTier }) } },
+      { timestamp, type: "event_msg", payload: { type: "thread_settings_applied", thread_settings: { service_tier: "default" } } },
+      { timestamp, type: "token_usage_record", payload: { thread_id: "synthetic-tier-thread", turn_id: "synthetic-tier-turn",
+        response_id: "synthetic-tier-response", usage: usage({ input: 10 }), turn_token_usage: usage({ input: 10 }) } },
+    ], { interruptAfterBatch: 6 });
+    const events = result.records.filter((item) => item.recordType === "usageEvent");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].record.speedMode, capturedTier === undefined ? "unknown" : "fast");
+  }
+});
+
+test("checkpoint legacy tiers cannot read a later setting at the same or an earlier timestamp", async () => {
+  const timestamp = "2026-07-24T12:00:01.000Z";
+  for (const laterTimestamp of [timestamp, "2026-07-24T12:00:00.000Z"]) {
+    const result = await checkpointRecordsFixture([
+      { timestamp, type: "session_meta", payload: { id: "synthetic-tier-thread" } },
+      { timestamp, type: "turn_context", payload: { model: "gpt-5.6-sol", service_tier: "priority" } },
+      JSON.parse(tokenCount(timestamp, usage({ input: 10 }), usage({ input: 10 }), 1)),
+      { timestamp: laterTimestamp, type: "event_msg", payload: { type: "thread_settings_applied", thread_settings: { service_tier: "default" } } },
+    ]);
+    const events = result.records.filter((item) => item.recordType === "usageEvent");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].record.speedMode, "fast");
+  }
+});
+
+test("checkpoint legacy tiers do not revive older settings after preceding future settings", async () => {
+  const timestamp = "2026-07-24T12:00:01.000Z";
+  const result = await checkpointRecordsFixture([
+    { timestamp, type: "session_meta", payload: { id: "synthetic-future-tier-thread" } },
+    { timestamp, type: "turn_context", payload: { model: "gpt-5.6-sol", service_tier: "priority" } },
+    { timestamp: "2026-07-24T12:00:03.000Z", type: "event_msg", payload: { type: "thread_settings_applied", thread_settings: { service_tier: "default" } } },
+    JSON.parse(tokenCount(timestamp, usage({ input: 10 }), usage({ input: 10 }), 1)),
+  ]);
+  const events = result.records.filter((item) => item.recordType === "usageEvent");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].record.speedMode, "unknown");
+});
+
+test("checkpoint legacy total-only prefixes anchor later deltas without charging unknown history", async () => {
+  const timestamp = "2026-07-24T12:00:01.000Z";
+  const result = await checkpointRecordsFixture([
+    { timestamp, type: "session_meta", payload: { id: "synthetic-total-prefix-thread" } },
+    { timestamp, type: "turn_context", payload: { model: "gpt-5.6-sol", service_tier: "priority" } },
+    JSON.parse(tokenCount(timestamp, usage({ input: 1000 }), null, 1)),
+    JSON.parse(tokenCount("2026-07-24T12:00:02.000Z", usage({ input: 1020 }), null, 2)),
+  ], { interruptAfterBatch: 8 });
+  const events = result.records.filter((item) => item.recordType === "usageEvent");
+  assert.equal(events.length, 1);
+  assert.equal(events[0].record.totalInputContextTokens, 20);
+  assert.ok(result.diagnostics.some((item) => item.code === "cumulative_prefix_unattributed" && item.count === 1));
+});
+
+test("checkpoint compaction recovery uses only independent agreeing prior tier evidence", async () => {
+  const timestamp = "2026-07-24T12:00:01.000Z";
+  const payload = { thread_id: "synthetic-compactor-thread", turn_id: "synthetic-compactor-turn",
+    response_id: "synthetic-compactor-response", usage: usage({ input: 10 }), turn_token_usage: usage({ input: 10 }) };
+  for (const priorTier of ["priority", undefined, "default"]) {
+    const result = await checkpointRecordsFixture([
+      { timestamp, type: "session_meta", payload: { id: payload.thread_id } },
+      { timestamp, type: "event_msg", payload: { type: "task_started", turn_id: payload.turn_id } },
+      { timestamp, type: "token_usage_record", payload },
+      { timestamp, type: "compacted", payload: { compaction_response_id: payload.response_id,
+        latest_token_usage_record: payload, resume_metadata: { previous_turn_settings: { model: "gpt-5.6-sol",
+          ...(priorTier === undefined ? {} : { service_tier: priorTier }) } } } },
+      { timestamp, type: "turn_context", payload: { turn_id: payload.turn_id, model: "gpt-5.6-sol", service_tier: "priority" } },
+    ]);
+    const events = result.records.filter((item) => item.recordType === "usageEvent");
+    assert.equal(events.length, 1);
+    assert.equal(events[0].record.modelId, "gpt-5.6-sol");
+    assert.equal(events[0].record.speedMode, priorTier === "priority" ? "fast" : "unknown");
+  }
+});
+
+test("checkpoint cross-source response proofs deduplicate exact copies and reject conflicts before date filtering", async () => {
+  const timestamp = "2026-07-24T12:00:01.000Z";
+  const records = [
+    { timestamp, ordinal: 0, type: "session_meta", payload: { id: "11111111-1111-4111-8111-111111111111", history_mode: "paginated" } },
+    { timestamp, type: "turn_context", payload: { turn_id: "synthetic-proof-turn", model: "gpt-5.6-sol", service_tier: "priority" } },
+    { timestamp, type: "token_usage_record", payload: { thread_id: "11111111-1111-4111-8111-111111111111", turn_id: "synthetic-proof-turn",
+      response_id: "synthetic-proof-response", usage: usage({ input: 10 }), turn_token_usage: usage({ input: 10 }) } },
+  ];
+  const exact = await checkpointRecordsFixture(records, { additionalRecords: [records], interruptAfterBatch: 8 });
+  assert.equal(exact.records.filter((item) => item.recordType === "usageEvent").length, 1);
+  const conflicting = structuredClone(records);
+  conflicting[2].payload.usage = usage({ input: 11 });
+  conflicting[2].payload.turn_token_usage = usage({ input: 11 });
+  await assert.rejects(checkpointRecordsFixture(records, { additionalRecords: [conflicting] }),
+    { code: "codex_response_usage_identity_conflict" });
+  const outside = structuredClone(records);
+  outside[2].timestamp = "2026-07-24T12:10:01.000Z";
+  for (const [first, second] of [[records, outside], [outside, records]]) {
+    await assert.rejects(checkpointRecordsFixture(first, { additionalRecords: [second] }),
+      { code: "codex_response_usage_identity_conflict" });
+  }
+});
+
 test("checkpoint and provider readers exclude foreign-thread response copies across replay and resume", async () => {
   const value = await fixture({ responseRecords: true });
   try {
@@ -270,6 +391,7 @@ async function checkpointResult({ root, home, label, maximumLinesPerBatch, inter
     const databaseBytes = await readFile(workspace.databaseFile);
     return {
       records: workspaceEnvelopes(workspace),
+      openTasks:plan.sources.reduce((n,source)=>n+workspace.sourceOpenTaskKeys(source.sourceKey).length,0),
       diagnostics: workspace.scanDiagnostics().codes,
       privateCanariesPresent: PRIVATE_CHECKPOINT_CANARIES
         .filter((canary) => databaseBytes.includes(Buffer.from(canary))),
@@ -278,6 +400,20 @@ async function checkpointResult({ root, home, label, maximumLinesPerBatch, inter
     workspace.close();
   }
 }
+
+test('checkpoint task cancellation shares lifecycle validation and survives resume across the terminal',async()=>{
+  const stamp='2026-07-24T12:00:01Z';
+  for(const [turnId,expected] of [['synthetic-task',0],['another-task',1],['synthetic\u0000task',1]]){
+    const result=await checkpointRecordsFixture([
+      {timestamp:stamp,type:'session_meta',payload:{id:'synthetic-cancel-thread'}},
+      {timestamp:stamp,type:'turn_context',payload:{model:'gpt-5.6-sol'}},
+      {timestamp:stamp,type:'event_msg',payload:{type:'task_started',turn_id:'synthetic-task'}},
+      {timestamp:'2026-07-24T12:00:02Z',type:'event_msg',payload:{type:'turn_aborted',turn_id:turnId}},
+    ],{interruptAfterBatch:3});
+    assert.equal(result.openTasks,expected);
+    assert.equal(result.diagnostics.some(x=>x.code==='malformed_task_events'),turnId.includes('\u0000'));
+  }
+});
 
 test("checkpoint scanner has byte-for-byte logical parity with the legacy scanner across batches and resumes", async () => {
   const value = await fixture();
@@ -293,7 +429,7 @@ test("checkpoint scanner has byte-for-byte logical parity with the legacy scanne
       { code: "malformed_lines", count: 1 },
     ]);
     assert.deepEqual(usageEvents.map((item) => item.record.speedMode).sort(), [
-      "fast", "standard", "standard", "unknown",
+      "standard", "standard", "unknown", "unknown",
     ]);
     assert.equal(usageEvents.some((item) => item.record.toolClassCounts.localShell === 1), true);
     assert.equal(usageEvents.some((item) => item.record.toolClassCounts.hostedShell === 1), true);

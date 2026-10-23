@@ -5,6 +5,7 @@ import './model-performance-worker.js';
 import { createModelPerformanceSnapshotStore, isCompleteModelPerformanceSnapshot,
   isSettledModelPerformanceSnapshot,
   readModelPerformanceSnapshotEntry, modelPerformanceSourceScope, modelPerformanceSnapshotKey,
+  readModelPerformanceSourceDiagnostics,
   MODEL_PERFORMANCE_SPEED_MODES as SPEED_MODES,
   MODEL_PERFORMANCE_MAX_WINDOWS as MAX_WINDOWS, MODEL_PERFORMANCE_PERIODS as PERIODS,
   MODEL_PERFORMANCE_DIAGNOSTICS } from './model-performance-snapshots.js';
@@ -27,6 +28,7 @@ export function createModelPerformanceController({ directory, codexHome,
   const workerDirectory = timingRoot === undefined ? directory : join(timingRoot, `source-${sourceScope}`);
   let worker = null, idle = null, closed = false, failedAt = 0, stopping = null;
   let restoration = null, writing = null, pending = null;
+  let sourceDiagnostics = [];
   let lastPersistedAt = null, revision = 0, savedRevision = -1, sourceRevision = null;
   function invalidateCachedProjection(nextSourceRevision) {
     if (sourceRevision === nextSourceRevision) return false;
@@ -37,7 +39,7 @@ export function createModelPerformanceController({ directory, codexHome,
     settled.clear(); cache.clear(); revision++; savedRevision = -1;
     return true;
   }
-  const empty = (period, speedMode, status) => ({ schemaVersion: 5, method: 5, status, collecting: false, stale: false,
+  const empty = (period, speedMode, status) => ({ schemaVersion: 6, method: 5, status, collecting: false, stale: false,
     updatedAt: null, period, speedMode, excludedUnknownTurns: 0, interval: 'day', start: null, end: Date.now(), historyProgress: null, models: [] });
   function restore() {
     restoration ??= (async () => {
@@ -140,11 +142,14 @@ export function createModelPerformanceController({ directory, codexHome,
           return;
         }
         if (message?.type === 'diagnostics' && Array.isArray(message.codes)) {
+          const sourceDetails = readModelPerformanceSourceDiagnostics(message.sourceDetails === undefined ? [] : message.sourceDetails);
+          if (sourceDetails === null) { fail('timing_projection_failed'); return; }
           for (const code of ['timing_scan_failed', 'timing_store_failed', 'timing_projection_failed', 'timing_history_unavailable', 'timing_source_recovery_failed',
             'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported']) diagnostics.delete(code);
           if (message.codes.length > MODEL_PERFORMANCE_DIAGNOSTICS.length
               || message.codes.some(code => !MODEL_PERFORMANCE_DIAGNOSTICS.includes(code))) { fail('timing_projection_failed'); return; }
           message.codes.forEach(onDiagnostic);
+          sourceDiagnostics = sourceDetails;
           return;
         }
         if (message?.type === 'snapshots' && Array.isArray(message.values)) {
@@ -189,6 +194,7 @@ export function createModelPerformanceController({ directory, codexHome,
   }
   return {
     diagnostics: () => [...diagnostics],
+    sourceDiagnostics: () => sourceDiagnostics.map(row => ({ ...row })),
     async read(period, { endAt, speedMode = 'standard' } = {}) {
       if (!PERIODS.includes(period)) throw new Error('invalid_timing_period');
       if (!SPEED_MODES.includes(speedMode)) throw new Error('invalid_timing_speed_mode');

@@ -93,6 +93,7 @@ test('all compatible speed observations form one percentile distribution', () =>
   assert.deepEqual(speed[0].points[0], {
     at: Math.floor(NOW / DAY) * DAY,
     n: 5,
+    mean: 300,
     p10: 140,
     p25: 200,
     median: 300,
@@ -112,13 +113,13 @@ test('output speed adds tool-free fallback once per turn and computes percentile
   assert.equal(model.toolFreeTurns, 1);
   assert.equal(model.timedResponses, 5);
   assert.deepEqual(model.speed[0].points[0], {
-    at: Math.floor(NOW / DAY) * DAY, n: 6,
+    at: Math.floor(NOW / DAY) * DAY, n: 6, mean: 530 / 6,
     p10: 65, p25: 100, median: 100, p75: 100, p90: 100,
   });
   assert.equal(model.speed[0].points[0].median, 100);
   assert.equal(model.ttft[0].median, 5);
   assert.deepEqual(model.toolFree[0], {
-    at: Math.floor(NOW / DAY) * DAY, n: 1,
+    at: Math.floor(NOW / DAY) * DAY, n: 1, mean: 30,
     p10: null, p25: null, median: 30, p75: null, p90: null,
   });
 });
@@ -147,7 +148,57 @@ test('five percentile summary resists extremes without manufacturing missing bin
   assert.equal(points.length, 2); assert.equal(points[0].median, 0);
   assert.deepEqual([points[0].p10, points[0].p25, points[0].p75, points[0].p90], [null, null, null, null]);
   assert.equal(points[1].median, 3); assert.equal(points[1].p10, 1.4);
+  assert.equal(points[0].mean, 0);
+  assert.equal(points[1].mean, 20002);
   assert.equal(points[1].p25, 2); assert.equal(points[1].p75, 4); assert.ok(Math.abs(points[1].p90 - 60001.6) < 1e-9);
+});
+
+test('means average turn samples equally within each bin and metric population', () => {
+  const rows = [row({ sample_tokens: 10, sample_duration: 1000, ttft: 0 }),
+    row({ sample_tokens: 900, sample_duration: 9000, ttft: 10000 }),
+    row({ at: NOW - 2 * DAY, sample_tokens: 50, ttft: null }),
+    row({ speed_mode: 'fast', sample_tokens: 99999 }),
+    row({ sample_tokens: null, ttft: 20000 })];
+  const result = modelPerformanceProjection(rows, { now: NOW });
+  assert.equal(result.schemaVersion, 6);
+  assert.equal(result.method, 5, 'per-turn measurement method is unchanged');
+  const model = result.models[0];
+  assert.deepEqual(model.speed[0].points.map(p => [p.n, p.mean]), [[1, 50], [2, 55]]);
+  assert.deepEqual(model.ttft.map(p => [p.n, p.mean]), [[3, 10]]);
+  for (const change of [p => { delete p.mean; }, p => { p.mean = NaN; },
+    p => { p.mean = -1; }, p => { p.mean = Infinity; }, p => { p.mean = 1e9 + 1; }]) {
+    const invalid = structuredClone(result); change(invalid.models[0].speed[0].points[0]);
+    assert.equal(isModelPerformanceSnapshot(invalid), false);
+  }
+});
+
+test('schema-5 caches without means remain untouched until actual samples rebuild them', async t => {
+  const fixture = await snapshotFixture(t);
+  const envelope = JSON.parse(await readFile(fixture.file, 'utf8'));
+  envelope.schemaVersion = 'local-model-performance-snapshot-v5';
+  for (const value of envelope.snapshot.values) {
+    value.schemaVersion = 5;
+    for (const model of value.models) for (const p of [...model.speed.flatMap(s => s.points), ...model.ttft, ...model.toolFree]) delete p.mean;
+  }
+  envelope.digest = createHash('sha256').update(JSON.stringify(envelope.snapshot)).digest('hex');
+  const oldFile = join(fixture.options.directory, `model-performance-snapshot-${modelPerformanceSourceScope(fixture.options.codexHome)}.json`);
+  const old = JSON.stringify(envelope); await writeFile(oldFile, old);
+  await rm(fixture.file);
+  let controller = fixture.create();
+  try {
+    assert.equal((await controller.read('all')).status, 'loading');
+    assert.equal(await readFile(oldFile, 'utf8'), old);
+  } finally { await controller.close(); }
+  assert.equal(await readFile(oldFile, 'utf8'), old);
+  controller = fixture.create();
+  try {
+    await controller.read('all');
+    fixture.worker().emit('message', { type: 'snapshots', values: fixture.complete });
+  } finally { await controller.close(); }
+  const rebuilt = JSON.parse(await readFile(fixture.file, 'utf8'));
+  assert.equal(rebuilt.schemaVersion, 'local-model-performance-snapshot-v6');
+  assert.deepEqual(rebuilt.snapshot.values, fixture.complete);
+  assert.equal(await readFile(oldFile, 'utf8'), old, 'older writers use a separate cache path');
 });
 test('all history uses bounded weekly bins and excludes missing or invalid samples', () => {
   const rows = [row({ at: NOW - 400 * DAY }), row({ sample_tokens: NaN, ttft: null }),
@@ -162,7 +213,7 @@ test('all history uses bounded weekly bins and excludes missing or invalid sampl
 test('history scan progress is explicit and fails closed', () => {
   const historyProgress = { checked: 629, total: 9026 };
   const result = modelPerformanceProjection([], { now: NOW, historyProgress });
-  assert.equal(result.schemaVersion, 5);
+  assert.equal(result.schemaVersion, 6);
   assert.equal(result.method, 5);
   assert.equal(result.historyProgress, historyProgress);
   for (const invalid of [
@@ -244,7 +295,7 @@ async function snapshotFixture(t) {
   worker.emit('message', { type: 'snapshots', values: complete });
   await initial.close();
   return { root, options, create, complete, worker: () => worker,
-    file: join(options.directory, `model-performance-snapshot-${modelPerformanceSourceScope(options.codexHome)}.json`) };
+    file: join(options.directory, `model-performance-snapshot-v6-${modelPerformanceSourceScope(options.codexHome)}.json`) };
 }
 test('saved complete measurements are immediately available after restart with a blocked worker', async t => {
   const fixture = await snapshotFixture(t);
@@ -296,7 +347,7 @@ test('combined speed and its fallback subset persist when an additive refresh fa
     await controller.close();
     controller = fixture.create();
     let result = await controller.read('all');
-    assert.equal(result.schemaVersion, 5);
+    assert.equal(result.schemaVersion, 6);
     assert.equal(result.method, 5);
     assert.equal(result.models[0].speedTurns, 2);
     assert.equal(result.models[0].speed[0].points[0].n, 2);
@@ -400,7 +451,7 @@ test('pinned retained cache is bounded to twelve exact windows plus twelve live 
     }
     await controller.close();
     const receipt = JSON.parse(await readFile(fixture.file, 'utf8'));
-    assert.equal(receipt.schemaVersion, 'local-model-performance-snapshot-v5');
+    assert.equal(receipt.schemaVersion, 'local-model-performance-snapshot-v6');
     assert.equal(receipt.snapshot.values.length, 24);
     assert.equal(receipt.snapshot.values.filter(value => Object.hasOwn(value, 'requestKey')).length, 12);
     assert.equal(receipt.snapshot.values.some(value => value.requestKey === `1:standard:${NOW}`), false);
@@ -432,7 +483,7 @@ test('prior eight-window receipts restore unchanged and expand to the complete r
     fixture.worker().emit('message', { type: 'snapshots', values: [...fixture.complete, ...pinned] });
     await controller.close();
     const expanded = JSON.parse(await readFile(fixture.file, 'utf8'));
-    assert.equal(expanded.schemaVersion, 'local-model-performance-snapshot-v5');
+    assert.equal(expanded.schemaVersion, 'local-model-performance-snapshot-v6');
     assert.equal(expanded.snapshot.values.length, 24);
     controller = fixture.create();
     for (const value of pinned) {
@@ -491,7 +542,7 @@ test('pinned cache receipts reject mismatched keys and rolling bounds even with 
 test('complete measurements persist immediately, then hourly, and flush the latest value on close', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'model-speed-cadence-')));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const directory = join(root, 'timing'), file = join(directory, `model-performance-snapshot-${modelPerformanceSourceScope(join(root, 'codex'))}.json`);
+  const directory = join(root, 'timing'), file = join(directory, `model-performance-snapshot-v6-${modelPerformanceSourceScope(join(root, 'codex'))}.json`);
   let now = NOW, worker;
   const writeCompletions = [];
   const options = { directory, codexHome: join(root, 'codex'), platform: 'darwin', snapshotNow: () => now,
@@ -612,7 +663,7 @@ test('old independent-distribution receipts are preserved until combined samples
     fixture.worker().emit('message', { type: 'snapshots', values: fixture.complete });
   } finally { await controller.close(); }
   const rebuilt = JSON.parse(await readFile(fixture.file, 'utf8'));
-  assert.equal(rebuilt.schemaVersion, 'local-model-performance-snapshot-v5');
+  assert.equal(rebuilt.schemaVersion, 'local-model-performance-snapshot-v6');
   assert.deepEqual(rebuilt.snapshot.values, fixture.complete);
 });
 test('source changes, corrupted receipts and incompatible schemas fail closed without waiting for the worker', async t => {
@@ -817,7 +868,7 @@ test('actual worker persists separate Codex sources and preserves the unscoped l
       }
     }
     let result = await readReady(controller);
-    assert.equal(result.schemaVersion, 5);
+    assert.equal(result.schemaVersion, 6);
     assert.deepEqual(result.historyProgress, { checked: 4, total: 4 });
     assert.equal(result.excludedUnknownTurns, 1);
     for (const period of ['1', '7', '30', 'all']) for (const speedMode of ['standard', 'fast', 'ultrafast']) {
@@ -932,14 +983,14 @@ test('standard, fast, and ultrafast evidence have independent counts and distrib
     fast.models[0].ttftTurns, fast.models[0].timedResponses], [2, 2, 2, 2]);
   assert.equal(fast.models[0].ttft[0].median, .1);
   assert.deepEqual(fast.models[0].speed[0].points[0], {
-    at: Math.floor(NOW / DAY) * DAY, n: 2, median: 1000,
+    at: Math.floor(NOW / DAY) * DAY, n: 2, mean: 1000, median: 1000,
     p10: null, p25: null, p75: null, p90: null,
   });
   assert.deepEqual([ultrafast.models[0].turns, ultrafast.models[0].speedTurns,
     ultrafast.models[0].ttftTurns, ultrafast.models[0].timedResponses], [2, 2, 2, 2]);
   assert.equal(ultrafast.models[0].ttft[0].median, .2);
   assert.deepEqual(ultrafast.models[0].speed[0].points[0], {
-    at: Math.floor(NOW / DAY) * DAY, n: 2, median: 1900,
+    at: Math.floor(NOW / DAY) * DAY, n: 2, mean: 1900, median: 1900,
     p10: null, p25: null, p75: null, p90: null,
   });
   assert.throws(() => modelPerformanceProjection(rows, { now: NOW, speedMode: 'unknown' }));
@@ -1034,6 +1085,6 @@ test('unseparated prior snapshots remain untouched until mode-qualified measurem
     fixture.worker().emit('message', { type: 'snapshots', values: fixture.complete });
   } finally { await controller.close(); }
   const rebuilt = JSON.parse(await readFile(fixture.file, 'utf8'));
-  assert.equal(rebuilt.schemaVersion, 'local-model-performance-snapshot-v5');
+  assert.equal(rebuilt.schemaVersion, 'local-model-performance-snapshot-v6');
   assert.deepEqual(rebuilt.snapshot.values, fixture.complete);
 });

@@ -4,6 +4,7 @@ import {
   codexSessionMetaIdentity,
   codexTierObservation,
   codexWorkLifecycle,
+  CODEX_WORK_LIFECYCLE_EVENT_TYPES,
   cumulativeSnapshotKey,
   createResponseUsagePlan,
   projectCompactionUsageLine,
@@ -150,7 +151,7 @@ const IGNORED_RECORD_KINDS = new Set([
 function classifiedRecordKind(type, eventType = null) {
   if (type === "event_msg") {
     if (eventType === null) return null;
-    if (["task_started", "task_complete", "turn_aborted"].includes(eventType)) return "work";
+    if (CODEX_WORK_LIFECYCLE_EVENT_TYPES.includes(eventType)) return "work";
     return eventType === "token_count" || eventType === "thread_settings_applied"
       ? eventType : "other";
   }
@@ -686,6 +687,7 @@ export async function extractRolloutUsage(path, {
     forkReplayEventsSkipped: 0,
     unattributedForkReplayEventsSkipped: 0,
     cumulativeCounterRegressions: 0,
+    cumulativePrefixUnattributed: 0,
     tierEvents: 0,
     compactionEvents: 0,
     modelSeededFromLineage: 0,
@@ -1065,6 +1067,10 @@ export async function extractRolloutUsage(path, {
           if (last && last.total_tokens > 0) usage = last;
         } else if (first) {
           usage = last;
+          if (last === null && total.total_tokens > 0
+              && !responsePlan.suppressLegacyAt(lineEndOffset)) {
+            diagnostics.cumulativePrefixUnattributed += 1;
+          }
         } else if (delta.total_tokens > 0) {
           if (last && (sameUsage(last, delta)
               || chargePerTurnOnly

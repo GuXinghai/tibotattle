@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createLocalRefreshTimer } from "./local-refresh-timing.js";
 import { lstat, readFile } from "node:fs/promises";
 import { validWeeklyApiIntervals, unavailableWeeklyApiIntervals } from "./weekly-api-intervals.js";
 import {
@@ -16,6 +17,7 @@ import {
 import {
   FIVE_HOUR_WINDOW_MINUTES,
   SEVEN_DAY_WINDOW_MINUTES,
+  WORKLOAD_POLICY,
 } from "@app-usagemonitor/quota-analysis";
 import { codexPrimaryAllowanceBasis } from "./codex-primary-allowance-basis.js";
 import {
@@ -32,7 +34,10 @@ import {
   KNOWN_SURFACES,
   KNOWN_TOOL_CLASSES,
   newUsagePeriod,
+  orderQuotaWindows,
+  quotaWindowProjection,
   safeSpeedWeighting,
+  validObservedAt,
 } from "./local-companion-usage-model.js";
 import { defaultLocalUnifiedIndexPath } from "./local-device-salt.js";
 import {
@@ -47,12 +52,15 @@ import {
 } from "./replay-safe-accounting-cache.js";
 import {
   defaultLocalCollectorStatePath,
+  forEachLocalCollectorRecord,
   prepareLocalCollectorState,
   readLocalCollectorState,
 } from "./local-collector-state.js";
 import {
   RECENT_COLLECTOR_PERIOD_LABEL,
   RECENT_TIMELINE_DAYS,
+  localCollectorQuotaPublicationScope,
+  localCollectorQuotaRecordScopeToken,
 } from "./local-collector-projection.js";
 import {
   readLocalCollectorProjectionOffMain,
@@ -73,6 +81,7 @@ export const LOCAL_COMPANION_SCHEMA_VERSION = "local-companion-v0.1";
 
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024;
 const MAX_SAFE_TEXT_LENGTH = 2_000;
+const snapshotQuotaPublicationScopes = new WeakMap();
 
 // The bounded recent collector window. This bound applies only when the
 // unified local index is unavailable: the collector is a bounded recent state
@@ -993,7 +1002,13 @@ function staleReplaySafeProvenance(staleCache) {
     stale: true,
     reason: staleCache.reason === "local_unified_index_schema_newer"
       ? "local_unified_index_schema_newer"
+      : staleCache.reason === "cache_generation_mismatch"
+        ? "local_unified_index_generation_mismatch"
       : "cache_accounting_semantics_outdated",
+    ...(staleCache.reason === "cache_generation_mismatch" ? {
+      sourceGeneration: staleCache.sourceGeneration,
+      sourceGenerationFingerprint: staleCache.sourceGenerationFingerprint,
+    } : {}),
     schemaVersion: staleCache.schemaVersion,
     computedAt: staleCache.computedAt,
     coveredAt: {
@@ -1189,33 +1204,10 @@ function projectCachePremiumWeighting(value) {
   };
 }
 
-function cacheAllowanceScenario(premium, capacity) {
-  if (premium === null || capacity === null
-      || premium.basisId !== capacity.basisId
-      || !Number.isFinite(premium.quotaWeightedPremiumUsd)
-      || !Number.isFinite(capacity.medianCapacityUsd)
-      || capacity.medianCapacityUsd <= 0) return null;
-  const plausible = capacity.plausibleRangeUsd;
-  if (!Number.isFinite(plausible?.lower) || plausible.lower <= 0
-      || !Number.isFinite(plausible?.upper)
-      || plausible.upper < plausible.lower) return null;
-  const round = (value) => Number(value.toFixed(6));
-  return {
-    basisId: premium.basisId,
-    quotaWeightedPremiumUsd: premium.quotaWeightedPremiumUsd,
-    medianCapacityUsd: capacity.medianCapacityUsd,
-    medianPercentagePoints: round(
-      (100 * premium.quotaWeightedPremiumUsd) / capacity.medianCapacityUsd,
-    ),
-    plausibleRangePercentagePoints: {
-      lower: round(
-        (100 * premium.quotaWeightedPremiumUsd) / plausible.upper,
-      ),
-      upper: round(
-        (100 * premium.quotaWeightedPremiumUsd) / plausible.lower,
-      ),
-    },
-  };
+// Token counts do not establish the reusable prefix or avoidable loss. No
+// current local evidence contract supports converting this scenario to quota.
+export function cacheSwitchAllowanceImpact() {
+  return unavailableCacheSwitchAllowance("reusable_prefix_unverified");
 }
 
 function projectCacheCoveredSubtotal(value, pricedDrops) {
@@ -1242,108 +1234,8 @@ function projectCacheCoveredSubtotal(value, pricedDrops) {
 function projectCacheImpactBreakdown(value) {
   return Object.fromEntries(Object.entries(value ?? {}).map(([key, summary]) => [
     key,
-    {
-      ...summary,
-      coveredSubtotal: projectCacheCoveredSubtotal(
-        summary.coveredSubtotal,
-        summary.pricedDrops,
-      ),
-    },
+    { ...summary, coveredSubtotal: projectCacheCoveredSubtotal(summary.coveredSubtotal, summary.pricedDrops) },
   ]));
-}
-
-export function cacheSwitchAllowanceImpact(period, allowanceCapacity) {
-  if (period?.coverageStatus === "incomplete" || period?.unpricedDrops > 0) {
-    return unavailableCacheSwitchAllowance(period.coverageStatus === "incomplete"
-      ? "weighting_evidence_incomplete" : "price_coverage_incomplete");
-  }
-  // The retained capacity estimate is weekly. Applying that denominator to a
-  // 24-hour, 30-day, or all-history premium would manufacture a percentage of
-  // one week's allowance from a differently sized numerator.
-  if (period?.periodId !== "7d") {
-    return unavailableCacheSwitchAllowance("period_denominator_mismatch");
-  }
-  const weighting = period?.allowanceWeighting;
-  if (!weighting || !["complete", "range"].includes(weighting.status)) {
-    return unavailableCacheSwitchAllowance(
-      weighting?.reasonCode ?? "weighting_evidence_incomplete",
-    );
-  }
-  if (!allowanceCapacity
-      || !["available", "range"].includes(allowanceCapacity.status)) {
-    return unavailableCacheSwitchAllowance("capacity_unavailable");
-  }
-  // The current weekly fit is historical and account-unattributed. Require
-  // that provenance to be explicit so the UI's "may combine accounts"
-  // qualifier can never be separated from the percentage-point conversion.
-  if (allowanceCapacity.accountAttribution?.status
-        !== "historical_unattributed"
-      || allowanceCapacity.accountAttribution?.maySpanMultipleAccounts
-        !== true) {
-    return unavailableCacheSwitchAllowance(
-      "weekly_calibration_account_scope_unverified",
-    );
-  }
-  if (weighting.basisFamilyId !== allowanceCapacity.basisFamilyId) {
-    return unavailableCacheSwitchAllowance("basis_mismatch");
-  }
-  const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
-    scenario,
-    cacheAllowanceScenario(
-      weighting.scenarios?.[scenario] ?? null,
-      allowanceCapacity.scenarios?.[scenario] ?? null,
-    ),
-  ]));
-  if (weighting.status === "complete") {
-    const scenario = weighting.selectedScenario;
-    if (allowanceCapacity.status !== "available"
-        || allowanceCapacity.selectedScenario !== scenario
-        || scenarios[scenario] === null) {
-      return unavailableCacheSwitchAllowance("basis_mismatch");
-    }
-    const selected = scenarios[scenario];
-    return {
-      status: "complete",
-      reason: null,
-      basisFamilyId: weighting.basisFamilyId,
-      selectedScenario: scenario,
-      medianPercentagePoints: selected.medianPercentagePoints,
-      percentagePointRange: null,
-      plausibleRangePercentagePoints:
-        selected.plausibleRangePercentagePoints,
-      scenarios,
-      interpretation: CACHE_SWITCH_ALLOWANCE_INTERPRETATION,
-    };
-  }
-  if (allowanceCapacity.status !== "range"
-      || scenarios.unresolved_as_standard === null
-      || scenarios.unresolved_as_fast === null) {
-    return unavailableCacheSwitchAllowance("basis_mismatch");
-  }
-  const medians = ALLOWANCE_SCENARIOS.map(
-    (scenario) => scenarios[scenario].medianPercentagePoints,
-  );
-  const plausibleEndpoints = ALLOWANCE_SCENARIOS.flatMap((scenario) => [
-    scenarios[scenario].plausibleRangePercentagePoints.lower,
-    scenarios[scenario].plausibleRangePercentagePoints.upper,
-  ]);
-  return {
-    status: "range",
-    reason: null,
-    basisFamilyId: weighting.basisFamilyId,
-    selectedScenario: null,
-    medianPercentagePoints: null,
-    percentagePointRange: {
-      lower: Math.min(...medians),
-      upper: Math.max(...medians),
-    },
-    plausibleRangePercentagePoints: {
-      lower: Math.min(...plausibleEndpoints),
-      upper: Math.max(...plausibleEndpoints),
-    },
-    scenarios,
-    interpretation: CACHE_SWITCH_ALLOWANCE_INTERPRETATION,
-  };
 }
 
 function cacheSwitchImpactProjection(
@@ -1416,6 +1308,8 @@ function cacheSwitchImpactProjection(
     uncoveredConfigurationChanges: selected.uncoveredConfigurationChanges,
     orderingCoverageGaps: selected.orderingCoverageGaps ?? 0,
     coverageStatus: selected.coverageStatus,
+    estimateEvidence: selected.estimateEvidence,
+    observationUnits: selected.observationUnits,
     cacheReadDrops: selected.cacheReadDrops,
     lostCacheTokens: selected.lostCacheTokens,
     pricedDrops: selected.pricedDrops,
@@ -1556,6 +1450,8 @@ function cacheContinuityImpactProjection(
       selected.reusedBetweenHalfAndPreviousReturns,
     orderingCoverageGaps: selected.orderingCoverageGaps ?? 0,
     coverageStatus: selected.coverageStatus,
+    estimateEvidence: selected.estimateEvidence,
+    observationUnits: selected.observationUnits,
     cacheReadDrops: selected.cacheReadDrops,
     lostCacheTokens: selected.lostCacheTokens,
     pricedDrops: selected.pricedDrops,
@@ -2154,6 +2050,13 @@ function unifiedHistoryState({ cache, unified, cacheErrorCode, generationReady }
   ) && unified.responseUnverifiedPrefixTurns >= 0
     ? unified.responseUnverifiedPrefixTurns
     : null;
+  const cumulativePrefixUnattributed = Number.isSafeInteger(
+    unified?.cumulativePrefixUnattributed,
+  ) && unified.cumulativePrefixUnattributed >= 0
+    ? unified.cumulativePrefixUnattributed
+    : null;
+  const prefixCoveragePartial = responseUnverifiedPrefixTurns > 0
+    || cumulativePrefixUnattributed > 0;
   const coveredAt = safeHistoryCoveredAt(history?.coverage?.coveredAt);
   const errorCode = available
     ? null
@@ -2187,7 +2090,7 @@ function unifiedHistoryState({ cache, unified, cacheErrorCode, generationReady }
         period: null,
       },
     coverage: {
-      status: available && !partialTerminal ? "complete" : "partial",
+      status: available && !partialTerminal && !prefixCoveragePartial ? "complete" : "partial",
       phase: partialTerminal
         ? "partial_terminal"
         : available
@@ -2216,6 +2119,10 @@ function unifiedHistoryState({ cache, unified, cacheErrorCode, generationReady }
         ? "unknown"
         : responseUnverifiedPrefixTurns > 0 ? "partial" : "complete",
       responseUnverifiedPrefixTurns,
+      cumulativeUsageCoverageStatus: cumulativePrefixUnattributed === null
+        ? "unknown"
+        : cumulativePrefixUnattributed > 0 ? "partial" : "complete",
+      cumulativePrefixUnattributed,
     },
   };
 }
@@ -2252,13 +2159,16 @@ export async function buildLocalCompanionSnapshot({
   workloadSourceFresh = false,
   workloadErrors = [],
   now = () => Date.now(),
+  onTiming = null,
+  monotonicClock = undefined,
 } = {}) {
+  const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
   const nowMs = now();
   if (!Number.isFinite(nowMs)) throw new TypeError("now must return a finite epoch timestamp");
   // Make a legacy installation converge before any snapshot readers race to
   // inspect it. Once complete this is a cheap receipt check; it never revives
   // JSON as an active state backend.
-  await prepareLocalCollectorState({ stateFile: collectorStateFile, clock: () => nowMs });
+  await timing.measure("snapshot_prepare_state", () => prepareLocalCollectorState({ stateFile: collectorStateFile, clock: () => nowMs }));
   const declaredSpeedBaselines = Array.isArray(codexSpeedBaselines)
     ? codexSpeedBaselines
     : [];
@@ -2278,7 +2188,7 @@ export async function buildLocalCompanionSnapshot({
     initialReplaySafeAccounting,
     unified,
   ] = await Promise.all([
-      readReplaySafeAccountingCache({
+      timing.measure("snapshot_accounting_read", () => readReplaySafeAccountingCache({
         stateFile: collectorStateFile,
         now: () => nowMs,
         maximumAgeMs: MAX_REPLAY_SAFE_CACHE_AGE_MS,
@@ -2286,8 +2196,8 @@ export async function buildLocalCompanionSnapshot({
         // supplies its immutable generation below. This first read is merely a
         // cheap cache-presence probe; never label it as a bound unified read.
         contextBehavior: "source_native",
-      }),
-      unifiedProjectionReader(
+      })),
+      timing.measure("snapshot_index_projection", () => unifiedProjectionReader(
         {
           indexFile: unifiedIndexFile,
           nowMs,
@@ -2295,7 +2205,7 @@ export async function buildLocalCompanionSnapshot({
           mode: unifiedProjectionMode,
         },
         { signal, reuse: unifiedProjectionReuse },
-      ),
+      )),
     ]);
   const unifiedProjectionAvailable = unified.status === "available";
   const unifiedGenerationReady = unifiedProjectionAvailable
@@ -2323,14 +2233,15 @@ export async function buildLocalCompanionSnapshot({
       // projection. Once that projection has supplied its immutable
       // generation descriptor, this cheap second SQLite read binds the cache
       // to exactly that publication before any totals are selected.
-      replaySafeAccounting = await readReplaySafeAccountingCache({
+      replaySafeAccounting = await timing.measure("snapshot_accounting_read", () => readReplaySafeAccountingCache({
         stateFile: collectorStateFile,
         now: () => nowMs,
         maximumAgeMs: MAX_REPLAY_SAFE_CACHE_AGE_MS,
         sourceMode: "unified",
         contextBehavior: "source_native",
         expectedGeneration: unified.generation,
-      });
+        includeStaleGeneration: true,
+      }));
     }
   }
   let replaySafeCache = ["available", "stale"].includes(
@@ -2371,7 +2282,7 @@ export async function buildLocalCompanionSnapshot({
   const [gradient, quality, collector] = await Promise.all([
     projectArtifact(root, "gradient"),
     projectArtifact(root, "quality"),
-    collectorProjectionReader({
+    timing.measure("snapshot_collector_projection", () => collectorProjectionReader({
       stateFile: collectorStateFile,
       nowMs,
       // The unified index replaces the collector-row usage replay entirely;
@@ -2380,10 +2291,10 @@ export async function buildLocalCompanionSnapshot({
       // is not real spend.
       summarizeUsageEvents: false,
       declaredSpeedBaselines,
-    }, { signal }),
+    }, { signal })),
   ]);
   // Serve-stale-labeled (2026-08-19): when the prior cache was refused ONLY
-  // because the accounting semantics version changed — the state every
+  // because the generation or accounting semantics version changed — the state every
   // updater enters — its projections are served explicitly marked stale
   // instead of vanishing into "$0.00 / Insufficient evidence / Not
   // comparable" until the local rebuild lands (hours at owner scale). Each
@@ -2392,7 +2303,7 @@ export async function buildLocalCompanionSnapshot({
   // current. A fresh account with no prior cache has no stale channel and
   // keeps today's honest empty states.
   const staleReplaySafe =
-    replaySafeAccounting.errorCode === "cache_accounting_semantics_outdated"
+    ["cache_accounting_semantics_outdated", "cache_generation_mismatch"].includes(replaySafeAccounting.errorCode)
       && replaySafeAccounting.staleCache !== undefined
       ? replaySafeAccounting.staleCache
       : lastAuthoritativeReplaySafeCache(
@@ -2414,7 +2325,9 @@ export async function buildLocalCompanionSnapshot({
     replaySafeCache?.allowanceCapacityByScenario,
     replaySafeCache?.sourceDescriptor,
   );
-  if (staleProvenance !== null) {
+  // A generation mismatch can include changed plan/account evidence. Serve
+  // its historical costs below, but never reuse its allowance inputs.
+  if (staleProvenance !== null && staleReplaySafe.reason !== "cache_generation_mismatch") {
     // The stale artifact retains the same scalar/calibration validation as a
     // current cache: a block whose shape those validators refuse projects
     // "unavailable" and stays withheld exactly as today, so only structurally
@@ -2617,7 +2530,8 @@ export async function buildLocalCompanionSnapshot({
   // A recent usage record cannot refresh an older provider allowance read.
   // Keep each quota window tied to the age of its own observation.
   const quotaFreshnessStatus = Number.isSafeInteger(quotaObservedAtMs)
-    && Math.max(0, nowMs - quotaObservedAtMs) <= MAX_COLLECTOR_LIVE_AGE_MS
+    && quotaObservedAtMs <= nowMs
+    && nowMs - quotaObservedAtMs <= MAX_COLLECTOR_LIVE_AGE_MS
     ? "live" : "stale";
   const quotaTimeline = unifiedAvailable
     ? unified.timeline.quota
@@ -2827,6 +2741,11 @@ export async function buildLocalCompanionSnapshot({
       "Historical response coverage is partial. Recorded response amounts remain counted; earlier usage remains unavailable.",
     );
   }
+  if (historyCoverage.cumulativeUsageCoverageStatus === "partial") {
+    warnings.push(
+      "Historical cumulative usage starts with an unattributed prefix. Later observed usage remains counted; the prefix cannot be assigned a request time, model or price.",
+    );
+  }
   const thirtyDayUsage = usage.find((period) => period.id === "30d");
   if (OPENAI_PRICE_EVIDENCE_START_DATE !== null
       && (thirtyDayUsage?.pricingCoverage.unpricedEvents ?? 0)
@@ -2843,7 +2762,7 @@ export async function buildLocalCompanionSnapshot({
         warnings.push(isInformationalTerminalHistoryGap(historyCoverage)
           ? `Indexed-history totals include ${historyCoverage.indexedSourceCount} of ${historyCoverage.sourceCount} verified sources. ${historyCoverage.skippedSourceCount} sources across ${historyCoverage.skippedThreadCount} threads did not pass local validation, so this result has limited history coverage; missing usage remains unavailable rather than zero.`
           : `Indexed-history totals include ${historyCoverage.indexedSourceCount} of ${historyCoverage.sourceCount} verified sources. ${historyCoverage.skippedSourceCount} sources across ${historyCoverage.skippedThreadCount} threads did not pass local validation. This is a material coverage gap; missing usage remains unavailable rather than zero.`);
-      } else {
+      } else if (historyCoverage.phase !== "complete") {
         warnings.push(
           `Indexed-history totals currently cover ${historyCoverage.indexedSourceCount}/${historyCoverage.sourceCount} discovered sources and expand as later foreground refreshes advance the index.`,
         );
@@ -2896,10 +2815,13 @@ export async function buildLocalCompanionSnapshot({
   const workloadStore=workloadStateStore(unifiedIndexFile);
   if(previousWorkload===null){try{storedWorkloadState=await workloadStore.read();}catch{workloadStateError="workload_state_read_failed";}}
   let quotaEvidence;
-  try{quotaEvidence=await readWorkloadQuotaEvidence({stateFile:collectorStateFile,
-    fromMs:workloadLiveSinceMs??nowMs,nowMs});}
-  catch(error){quotaEvidence={errorCode:["quota_history_too_large","quota_history_invalid"].includes(error?.code)?error.code:"quota_history_read_failed"};}
+  try{quotaEvidence=await readWorkloadQuotaEvidence({stateFile:collectorStateFile,signal,
+    fromMs:workloadLiveSinceMs??nowMs,nowMs,
+    historyFromMs:Math.max(0,nowMs-WORKLOAD_POLICY.historyMs-WORKLOAD_POLICY.comparisonWindowMs
+      -WORKLOAD_POLICY.comparisonDeadlineUncertaintyMs)});}
+  catch(error){if(signal?.aborted)throw error;quotaEvidence={errorCode:["quota_history_too_large","quota_history_invalid"].includes(error?.code)?error.code:"quota_history_read_failed"};}
   const workload = readLocalIndexWorkload({ indexFile: unifiedIndexFile, nowMs,
+    signal,
     quotaEvidence,
     storedState: storedWorkloadState,
     declaredSpeedBaselines: codexSpeedBaselines,
@@ -2916,7 +2838,7 @@ export async function buildLocalCompanionSnapshot({
     if(/^runtime_evidence_[a-z_]{1,60}$/u.test(error?.code??'')&&workload.pricingDetails?.capture)workload.pricingDetails.capture.status='failed';
   }
   if(workloadErrors.length&&workload.status==="available")workload.status="partial";
-  return {
+  const snapshot = {
     schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
     mode: "real_local_evidence",
     generatedAt: new Date(nowMs).toISOString(),
@@ -2956,6 +2878,14 @@ export async function buildLocalCompanionSnapshot({
         exportableCoveredAt,
       },
       quota,
+      quotaFreshness: {
+        status: quota.windows.length > 0 ? quotaFreshnessStatus : "unavailable",
+        latestObservedAt: quota.observedAt,
+        ageSeconds: Number.isFinite(quotaObservedAtMs) && quotaObservedAtMs <= nowMs
+          ? Math.floor((nowMs - quotaObservedAtMs) / 1_000) : null,
+        staleAfterSeconds: MAX_COLLECTOR_LIVE_AGE_MS / 1_000,
+        source: "content_free_collector_state",
+      },
       quotaWindows: quota.windows.map((window) => ({
         ...window,
         observedAt: quota.observedAt,
@@ -3313,6 +3243,8 @@ export async function buildLocalCompanionSnapshot({
     weekly,
     quality,
   };
+  snapshotQuotaPublicationScopes.set(snapshot, localCollectorQuotaPublicationScope(collector));
+  return snapshot;
 }
 
 // The purposes the snapshot builder answers with a DEFERRED unified
@@ -3579,7 +3511,7 @@ function desktopShellCandidateWins(candidate, previous) {
 
 function desktopShellDisplayEvidence(snapshot) {
   const overview = snapshot?.overview;
-  const freshness = overview?.freshness;
+  const freshness = overview?.quotaFreshness ?? overview?.freshness;
   const sourceWindows = Array.isArray(overview?.quotaWindows)
     ? overview.quotaWindows
     : [];
@@ -3599,7 +3531,7 @@ function desktopShellDisplayEvidence(snapshot) {
     : null;
   return Object.freeze({
     evidenceStatus: snapshot?.mode === "real_local_evidence"
-        && overview?.evidenceStatus === "available"
+        && (overview?.quota?.status === "available" || overview?.evidenceStatus === "available")
       ? "available"
       : "unavailable",
     freshness: Object.freeze({
@@ -3612,8 +3544,96 @@ function desktopShellDisplayEvidence(snapshot) {
   });
 }
 
+// A quota projection is deliberately separate from the history builder. The
+// public collector cursor filters by kind in SQLite; no usage rows, timeline,
+// accounting cache or calibration are read here. Work is linear in quota rows,
+// with bounded retained memory and cooperative cancellation between batches.
+export async function readLocalCompanionQuota({
+  root = process.cwd(),
+  collectorStateFile = defaultLocalCollectorStatePath(root),
+  signal = null,
+  now = () => Date.now(),
+} = {}) {
+  if (signal !== null && (typeof signal !== "object"
+      || typeof signal.aborted !== "boolean"
+      || typeof signal.addEventListener !== "function")) {
+    throw new TypeError("signal must be an AbortSignal or null");
+  }
+  const nowMs = now();
+  if (!Number.isFinite(nowMs)) throw new TypeError("now must return a finite epoch timestamp");
+  let latest = null;
+  let latestScope = null;
+  let count = 0;
+  await forEachLocalCollectorRecord({
+    stateFile: collectorStateFile,
+    kinds: ["codex_quota_snapshot"],
+    onRecord: async (record) => {
+      if (signal?.aborted) throw fixedError("local_companion_snapshot_reload_aborted");
+      count += 1;
+      if (count > 5_000_000) throw fixedError("collector_invalid_size");
+      const observedMs = validObservedAt(record);
+      if (record.schemaVersion === "0.3" && record.kind === "codex_quota_snapshot"
+          && record.provider === "openai_codex"
+          && canonicalDesktopShellDisplayInstant(record.observedAt) !== null
+          && observedMs !== null) {
+        if (latest === null || record.observedAt > latest.observedAt) {
+          latest = record;
+          latestScope = localCollectorQuotaRecordScopeToken(record);
+        } else if (record.observedAt === latest.observedAt
+            && localCollectorQuotaRecordScopeToken(record) !== latestScope) {
+          // Two identities at one timestamp are ambiguous, even when their
+          // displayed percentages happen to agree.
+          latestScope = null;
+        }
+      }
+      if (count % 256 === 0) await new Promise((resolve) => setImmediate(resolve));
+    },
+  });
+  if (signal?.aborted) throw fixedError("local_companion_snapshot_reload_aborted");
+  const windows = orderQuotaWindows((Array.isArray(latest?.windows) ? latest.windows : []).flatMap((window) => {
+    const projected = quotaWindowProjection(window);
+    return projected === null ? [] : [projected];
+  }));
+  // This token never enters a dashboard, receipt or persisted snapshot. Unknown
+  // attribution remains unknown; it never borrows the previous observation.
+  const scopeToken = latestScope;
+  const observedAt = latest?.observedAt ?? null;
+  const ageSeconds = observedAt === null || Date.parse(observedAt) > nowMs ? null
+    : Math.floor((nowMs - Date.parse(observedAt)) / 1_000);
+  return {
+    scopeToken,
+    quota: {
+      status: windows.length > 0 ? "available" : "unavailable",
+      observedAt,
+      accountAttribution: scopeToken === null ? "unattributed" : "attributed_pseudonymous",
+      windows,
+    },
+    quotaWindows: windows.map((window) => ({
+      ...window,
+      observedAt,
+      status: ageSeconds !== null && ageSeconds <= MAX_COLLECTOR_LIVE_AGE_MS / 1_000
+        ? "live" : "stale",
+    })),
+    quotaFreshness: {
+      status: windows.length === 0 ? "unavailable"
+        : ageSeconds !== null && ageSeconds <= MAX_COLLECTOR_LIVE_AGE_MS / 1_000 ? "live" : "stale",
+      latestObservedAt: observedAt,
+      ageSeconds,
+      staleAfterSeconds: MAX_COLLECTOR_LIVE_AGE_MS / 1_000,
+      source: "content_free_collector_state",
+    },
+  };
+}
+
 export class LocalCompanionDataStore {
   #builder;
+  #quotaReader;
+  #requestSequence = 0;
+  #latestReloadRequest = 0;
+  #latestQuotaRequest = 0;
+  #publishedSequence = 0;
+  #quotaPublication = null;
+  #snapshotQuotaScopeToken = null;
   #snapshotFile;
   #snapshotReader;
   #snapshotWriter;
@@ -3625,6 +3645,7 @@ export class LocalCompanionDataStore {
 
   constructor({
     builder = buildLocalCompanionSnapshot,
+    quotaReader = builder === buildLocalCompanionSnapshot ? readLocalCompanionQuota : null,
     snapshotFile = null,
     snapshotReader = readAuthoritativeDashboardSnapshot,
     snapshotWriter = writeAuthoritativeDashboardSnapshot,
@@ -3632,6 +3653,9 @@ export class LocalCompanionDataStore {
     snapshotWriteIntervalMs = 60 * 60 * 1_000,
   } = {}) {
     if (typeof builder !== "function") throw new TypeError("builder must be a function");
+    if (quotaReader !== null && typeof quotaReader !== "function") {
+      throw new TypeError("quotaReader must be a function or null");
+    }
     if (snapshotFile !== null && typeof snapshotFile !== "string") {
       throw new TypeError("snapshotFile must be a string or null");
     }
@@ -3649,6 +3673,7 @@ export class LocalCompanionDataStore {
       throw new TypeError("snapshotWriteIntervalMs must be a positive integer");
     }
     this.#builder = builder;
+    this.#quotaReader = quotaReader;
     this.#snapshotFile = snapshotFile;
     this.#snapshotReader = snapshotReader;
     this.#snapshotWriter = snapshotWriter;
@@ -3670,7 +3695,8 @@ export class LocalCompanionDataStore {
   }
 
   async reload(options) {
-    const { returnOverview = true, ...builderOptions } = options ?? {};
+    const { returnOverview = true, isCurrent = null, ...builderOptions } = options ?? {};
+    const timing = createLocalRefreshTimer({ onTiming: builderOptions.onTiming ?? null, clock: builderOptions.monotonicClock });
     if (typeof returnOverview !== "boolean") {
       throw new TypeError("options.returnOverview must be a boolean");
     }
@@ -3684,27 +3710,117 @@ export class LocalCompanionDataStore {
     if (signal?.aborted === true) {
       throw fixedError("local_companion_snapshot_reload_aborted");
     }
+    if (isCurrent !== null && typeof isCurrent !== "function") {
+      throw new TypeError("options.isCurrent must be a function or null");
+    }
+    const sequence = ++this.#requestSequence;
+    this.#latestReloadRequest = sequence;
     const previousWorkload=this.#snapshot?.overview?.workload;
-    const candidate = await this.#builder(previousWorkload
-      ? {...builderOptions,previousWorkload} : builderOptions);
+    const candidate = await timing.measure("snapshot_build", () => this.#builder(previousWorkload
+      ? {...builderOptions,previousWorkload} : builderOptions));
     // Cancellation may arrive while an off-main projection is finishing. Do
     // not publish the candidate after the controller has cancelled its run.
     if (signal?.aborted === true) {
       throw fixedError("local_companion_snapshot_reload_aborted");
     }
+    if (sequence !== this.#latestReloadRequest || isCurrent?.() === false) {
+      throw fixedError("local_companion_snapshot_publication_superseded");
+    }
     if (!candidate || candidate.schemaVersion !== LOCAL_COMPANION_SCHEMA_VERSION) {
       throw fixedError("snapshot_invalid");
     }
-    this.#snapshot = this.#withRetainedProjection(
+    let next = timing.measureSync("snapshot_clone", () => this.#withRetainedProjection(
       structuredClone(candidate),
       builderOptions,
-    );
+    ));
+    let persistenceCandidate = candidate;
+    const latestQuota = this.#quotaPublication;
+    const candidateScope = snapshotQuotaPublicationScopes.get(candidate) ?? null;
+    const candidateObservedAt = candidate.overview?.quota?.observedAt;
+    const matchingScope = latestQuota?.scopeToken !== null
+      && latestQuota?.scopeToken !== undefined
+      && candidateScope?.scopeToken === latestQuota.scopeToken
+      && candidateScope.observedAt === candidateObservedAt;
+    const olderQuota = latestQuota !== null
+      && Date.parse(candidateObservedAt ?? "") < Date.parse(latestQuota.component.quota.observedAt);
+    const sameQuota = latestQuota !== null
+      && candidateObservedAt === latestQuota.component.quota.observedAt;
+    let publishedScopeToken = candidateScope?.scopeToken ?? null;
+    if (sequence < this.#publishedSequence || olderQuota || (sameQuota && matchingScope)) {
+      // Only a directly observed scope and the exact observation represented
+      // by the builder bind a historical candidate. Attribution status alone,
+      // or an unknown identity, cannot establish account continuity.
+      if (!matchingScope) {
+        throw fixedError("local_companion_snapshot_publication_scope_changed");
+      }
+      next = this.#withQuotaComponent(next, latestQuota.component);
+      persistenceCandidate = this.#withQuotaComponent(candidate, latestQuota.component);
+      publishedScopeToken = latestQuota.scopeToken;
+    } else if (latestQuota?.component.quota.observedAt !== candidate.overview?.quota?.observedAt
+        || candidateScope?.scopeToken !== latestQuota?.scopeToken) {
+      this.#quotaPublication = null;
+    }
+    this.#snapshot = next;
+    this.#snapshotQuotaScopeToken = publishedScopeToken;
+    this.#publishedSequence = Math.max(sequence, this.#publishedSequence);
     this.#desktopShellDisplayEvidence = desktopShellDisplayEvidence(this.#snapshot);
-    await this.#persistAuthoritativeSnapshot(candidate);
+    await timing.measure("snapshot_persist", () => this.#persistAuthoritativeSnapshot(persistenceCandidate));
     // Refresh orchestration needs publication, not another deep copy of the
     // retained timeline. Accessors and ordinary reload callers still receive
     // isolated copies; the builder never sees this presentation-only option.
     return returnOverview ? this.getOverview() : undefined;
+  }
+
+  async publishQuota(options = {}) {
+    const { signal = null, isCurrent = null, returnOverview = false,
+      purpose: _purpose, ...readerOptions } = options;
+    if (signal !== null && (typeof signal !== "object"
+        || typeof signal.aborted !== "boolean"
+        || typeof signal.addEventListener !== "function")) {
+      throw new TypeError("options.signal must be an AbortSignal or null");
+    }
+    if (isCurrent !== null && typeof isCurrent !== "function") {
+      throw new TypeError("options.isCurrent must be a function or null");
+    }
+    if (typeof returnOverview !== "boolean") throw new TypeError("options.returnOverview must be a boolean");
+    if (signal?.aborted) throw fixedError("local_companion_snapshot_reload_aborted");
+    const sequence = ++this.#requestSequence;
+    this.#latestQuotaRequest = sequence;
+    if (this.#quotaReader === null) throw fixedError("local_companion_quota_reader_unavailable");
+    const result = await this.#quotaReader({ ...readerOptions, signal });
+    if (signal?.aborted) throw fixedError("local_companion_snapshot_reload_aborted");
+    const observedAt = result?.quota?.observedAt ?? null;
+    if (sequence !== this.#latestQuotaRequest || sequence < this.#latestReloadRequest
+        || isCurrent?.() === false) return { published: false, observedAt };
+    if (this.#snapshot === null) throw fixedError("snapshot_unavailable");
+    if (result?.quota?.status !== "available" || !Array.isArray(result.quotaWindows)
+        || result.quotaWindows.length === 0
+        || canonicalDesktopShellDisplayInstant(observedAt) === null) {
+      return { published: false, observedAt: null };
+    }
+    const previousAt = this.#snapshot.overview?.quota?.observedAt ?? null;
+    const scopeToken = result.scopeToken ?? null;
+    if (previousAt !== null && (Date.parse(observedAt) < Date.parse(previousAt)
+        || (observedAt === previousAt && scopeToken === this.#snapshotQuotaScopeToken))) {
+      return { published: false, observedAt: previousAt };
+    }
+    const component = structuredClone({
+      quota: result.quota,
+      quotaWindows: result.quotaWindows,
+      quotaFreshness: result.quotaFreshness,
+    });
+    this.#snapshot = this.#withQuotaComponent(this.#snapshot, component);
+    this.#quotaPublication = { sequence, scopeToken, component };
+    this.#snapshotQuotaScopeToken = scopeToken;
+    this.#publishedSequence = sequence;
+    this.#desktopShellDisplayEvidence = desktopShellDisplayEvidence(this.#snapshot);
+    // Collector persistence owns quota durability. This publication does not
+    // turn old usage into a newly evaluated authoritative history receipt.
+    return { published: true, observedAt };
+  }
+
+  #withQuotaComponent(snapshot, component) {
+    return { ...snapshot, overview: { ...snapshot.overview, ...component } };
   }
 
   async #restoreLastAuthoritativeSnapshot() {

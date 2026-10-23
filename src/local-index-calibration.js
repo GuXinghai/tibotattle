@@ -27,8 +27,7 @@ const {
   declaredSpeedModeAt,
   deriveBoundedWeeklyCalibrationSeries,
   eventProjection,
-  fitCompositionFromCorpusStream,
-  fitHistoricalPlanTimelines,
+  fitPlanCompositionsFromCorpus,
   historicalPlanComparisonReceipts,
   fixedError,
   planScopedTimelineReceipt,
@@ -606,20 +605,27 @@ export async function buildCalibrationLayer({
   };
   const calibrationAttribution = calibrationCorpus.planAttribution;
   try {
+    if (!Array.isArray(calibrationAttribution.summary.planTypes)
+        || calibrationAttribution.summary.planTypes.length > 16) {
+      throw fixedError("accounting_transition_derivation_limit_exceeded");
+    }
     // The composition fit is optional enrichment: a failure completes the
     // layer with `composition: null` and records why.
     try {
-      const compositionResult = await fitCompositionFromCorpusStream({
+      const fits = await fitPlanCompositionsFromCorpus({
         forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
         weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
         endMs,
         signal,
         checkRuntimeMemory,
         planAttributionIndex: calibrationAttribution.index,
-        selectedPlanType: calibrationAttribution.summary.latestPlanType,
         declaredSpeedBaselines: baselines,
-      });
-      ({ planScopedTimeline: planScopedTimelineDraft, ...composition } = compositionResult);
+      }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType);
+      historicalPlanDrafts = fits.historicalPlanDrafts;
+      compositionFitFailure = fits.compositionFitFailure;
+      if (fits.compositionResult !== null) {
+        ({ planScopedTimeline: planScopedTimelineDraft, ...composition } = fits.compositionResult);
+      }
     } catch (error) {
       compositionFitFailure = {
         status: "fit_failed",
@@ -628,13 +634,6 @@ export async function buildCalibrationLayer({
     }
     throwIfAborted(signal);
     checkRuntimeMemory();
-    historicalPlanDrafts = await fitHistoricalPlanTimelines({
-      forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
-      weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
-      endMs, signal, checkRuntimeMemory,
-      planAttributionIndex: calibrationAttribution.index,
-      declaredSpeedBaselines: baselines,
-    }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType);
     try {
       if (sourceMode === "unified" && generation != null && generationFingerprint != null) {
         await calibrationCorpus.loadWeeklyApiOrigins?.(codexHome);

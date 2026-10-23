@@ -10,6 +10,14 @@ const cookies = () => [cookie('auth_token'), cookie('ct0')];
 const preflight = gate => gate.handle({ version: 1, type: 'import-preflight' });
 const request = (permit, value = cookies()) => ({ version: 1, type: 'x-cookie-import', permit, cookies: value });
 
+test('only an authorized import exposes validation failure and a retry clears it',async()=>{
+  const gate=createXImportRequestGate({onImport:async()=>({code:'verification_pending'})});gate.begin();
+  await gate.handle(request('b'.repeat(64),[]));assert.equal(gate.status().failure,null);
+  const permit=(await preflight(gate)).permit;await gate.handle(request(permit,[]));assert.equal(gate.status().failure,'invalid_import');
+  const retry=(await preflight(gate)).permit;await gate.handle(request(retry));assert.equal(gate.status().failure,null);
+  gate.cancel();assert.equal(gate.status().failure,null);
+});
+
 test('preflight never imports; only an active short-lived one-use permit can deliver cookies', async () => {
   let at = 0, calls = 0;
   const gate = createXImportRequestGate({ now: () => at, token: () => 'a'.repeat(64), onImport: async value => { calls++; assert.equal(value[0].httpOnly, true); } });

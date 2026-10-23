@@ -2,12 +2,14 @@ import { randomInt, randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
+import { createLocalRefreshTimer, createLocalRefreshTimingRecorder, reportLocalRefreshReuseDiagnostic } from "./local-refresh-timing.js";
 import {
   createResetEventClassifier,
   isValidQuotaWindowDuration,
 } from "@app-usagemonitor/quota-analysis";
 import { selectProductionAccountObservationSecret } from "./account-observation-production.js";
 import { runCollectorOnce } from "./passive-collector.js";
+import { createLocalIndexAccountingReuse } from "./local-index-accounting-reuse.js";
 import {
   REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION,
   readReplaySafeAccountingCache,
@@ -116,6 +118,25 @@ const UNIFIED_INDEX_PUBLIC_ERROR_CODES = new Set([
   "local_unified_index_publication_busy",
   "local_unified_index_model_recovery_stalled",
   "codex_response_usage_checkpoint_conflict",
+  "codex_response_usage_invalid",
+  "codex_response_usage_timestamp_invalid",
+  "codex_response_usage_identity_invalid",
+  "codex_response_usage_session_unattributed",
+  "codex_response_usage_identity_conflict",
+  "codex_response_usage_chain_incomplete",
+  "codex_response_usage_legacy_conflict",
+  "codex_response_usage_legacy_scope_unattributed",
+  "codex_response_usage_resource_limit",
+  "codex_response_usage_rescan_required",
+  "local_index_aborted",
+  "local_index_worker_failed",
+  "local_index_wal_limit",
+  "local_index_candidate_replay_required",
+  "local_index_candidate_unfinished",
+  "local_index_journal_mode_refused",
+  "local_index_quarantine_invalid",
+  "local_index_transaction_open",
+  "local_index_transaction_required",
   "local_unified_index_publication_timed_out",
   "local_unified_index_publication_failed",
   "local_index_maintenance_failed",
@@ -190,7 +211,7 @@ function safeUnifiedIndexPublicErrorCode(value) {
 // A five-hour refresh_resource_limited loop once wrote NOTHING to
 // diagnostics-v0.1.log: the terminal classification lived only in the
 // in-memory refresh state, so once the dashboard moved on there was zero
-// local trail. Every terminal refresh failure now files one bounded note —
+// local trail. Every settled failed or degraded refresh files one bounded note —
 // codes and a step name only, matching the log's privacy posture.
 //
 // Rate limit: a scheduler retry loop repeats an identical failure signature
@@ -211,7 +232,7 @@ const DIAGNOSTIC_REFERENCE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 
 /**
  * The onTerminalFailure sink for LocalCompanionRefreshController: shapes a
- * terminal refresh failure into one bounded diagnostics note and rate-limits
+ * settled failed or degraded refresh into one bounded diagnostics note and rate-limits
  * it. Everything written is either chosen from a fixed set (surface, step),
  * identifier-shaped and pattern-checked (codes), or minted here (the
  * reference). No message text, path, or payload can pass through.
@@ -746,6 +767,7 @@ export function createLocalCollectorRefreshRunner({
   // used to backfill anything earlier. Returns the covering windows.
   recordCodexSpeedBaseline = null,
   clock = () => Date.now(),
+  monotonicClock = () => performance.now(),
 } = {}) {
   if (typeof selectAccountObservationSecret !== "function") {
     throw new TypeError("selectAccountObservationSecret must be a function");
@@ -794,11 +816,22 @@ export function createLocalCollectorRefreshRunner({
   // bounded keyed-fingerprint checkpoint is committed with the existing
   // collector state so an ordinary companion restart preserves continuity.
   const resetEventClassifier = createResetEventClassifier();
+  const calculationReuse = createLocalIndexAccountingReuse({
+    indexFile: unifiedIndexFile, codexHome, stateFile,
+  });
   return async function refreshLocalCollector({
     signal = null,
     onProgress = null,
+    onQuotaReady = null,
+    onTiming = null,
+    onReuseDiagnostic = null,
+    onOriginDiagnostic = null,
     mode = "detailed",
   } = {}) {
+    const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
+    if (onQuotaReady !== null && typeof onQuotaReady !== "function") {
+      throw new TypeError("onQuotaReady must be a function");
+    }
     if (onProgress !== null && typeof onProgress !== "function") {
       throw new TypeError("onProgress must be a function");
     }
@@ -830,6 +863,7 @@ export function createLocalCollectorRefreshRunner({
     // here is never allowed to block collection: it simply leaves those turns
     // to the stated preference, or unknown.
     let declaredSpeedBaselines = [];
+    const finishSetup = timing.start("refresh_setup");
     if (recordCodexSpeedBaseline !== null) {
       try {
         const recorded = await recordCodexSpeedBaseline();
@@ -879,12 +913,27 @@ export function createLocalCollectorRefreshRunner({
     // transaction with a much smaller read budget. It therefore publishes
     // only after a durable bounded pass, while leaving the same checkpoint
     // resumable.
-    let result = await runCollector({
-      ...collectorOptions,
-      maximumRecentRunBytes: EARLY_HEADLINE_RECENT_RUN_BYTES,
-      maximumRecentTailBytes: EARLY_HEADLINE_RECENT_TAIL_BYTES,
-      maximumRecentPreludeBytes: EARLY_HEADLINE_RECENT_PRELUDE_BYTES,
-      maximumBufferedLineBytes: EARLY_HEADLINE_BUFFERED_LINE_BYTES,
+    let result;
+    finishSetup();
+    try {
+      result = await timing.measure("quota_collect", () => runCollector({
+        ...collectorOptions,
+        maximumRecentRunBytes: EARLY_HEADLINE_RECENT_RUN_BYTES,
+        maximumRecentTailBytes: EARLY_HEADLINE_RECENT_TAIL_BYTES,
+        maximumRecentPreludeBytes: EARLY_HEADLINE_RECENT_PRELUDE_BYTES,
+        maximumBufferedLineBytes: EARLY_HEADLINE_BUFFERED_LINE_BYTES,
+      }));
+    } catch (error) {
+      // Only reviewed provider transport failures are soft. Durable state,
+      // permissions, integrity and cancellation failures keep their old gate.
+      if (signal?.aborted === true || !PUBLIC_REFRESH_ERROR_CODES.has(error?.code)) throw error;
+      result = { refresh: { attempted: true, recordWritten: false, errorCode: error.code } };
+    }
+    await onQuotaReady?.({
+      attempted: result?.refresh?.attempted === true,
+      recordWritten: result?.refresh?.recordWritten === true,
+      errorCode: result?.refresh?.errorCode
+        ? safeCollectorErrorCode(result.refresh.errorCode) : null,
     });
     if (result?.refresh?.recordWritten === true && !result.refresh.errorCode) {
       hasReadQuota = true;
@@ -946,7 +995,7 @@ export function createLocalCollectorRefreshRunner({
       // block collection or quota reporting: the snapshot degrades honestly
       // to the bounded window and says so.
       try {
-        unifiedIndex = publicUnifiedIndexResult(await refreshUnifiedIndex({
+        unifiedIndex = publicUnifiedIndexResult(await timing.measure("index_refresh", () => refreshUnifiedIndex({
           codexHome,
           ...(unifiedIndexFile === null ? {} : { indexFile: unifiedIndexFile }),
           ...(unifiedIndexSecretFile === null
@@ -956,7 +1005,7 @@ export function createLocalCollectorRefreshRunner({
             ? {}
             : { onProgress: publishUnifiedIndexProgress }),
           signal,
-        }));
+        })));
       } catch (error) {
         unifiedIndex = {
           status: "failed",
@@ -967,6 +1016,7 @@ export function createLocalCollectorRefreshRunner({
     const unifiedAccountingReady = unifiedGenerationAuthoritative(unifiedIndex);
     let accounting = null;
     let accountingRefreshStatus = null;
+    let accountingRetainedGeneration = false;
     let accountingRebuildDeferred = null;
     let accountingUnavailableCode = accountingMayRun
         && !unifiedAccountingReady
@@ -978,6 +1028,24 @@ export function createLocalCollectorRefreshRunner({
     if (refreshAccounting !== null
         && accountingMayRun
         && unifiedAccountingReady) {
+      let calculationProof = null;
+      try {
+        if (signal?.aborted !== true) {
+          calculationProof = await timing.measure("reuse_proof_before", () => calculationReuse.readProof({
+            generation: unifiedIndex.generation, declaredSpeedBaselines, signal, onTiming, monotonicClock, onReuseDiagnostic, onOriginDiagnostic,
+          }));
+          accounting = await timing.measure("reuse_check", () => calculationReuse.reuse({
+            proof: calculationProof, nowMs: clock(),
+            maximumAgeMs: MAX_REUSABLE_ACCOUNTING_CACHE_AGE_MS, signal, onReuseDiagnostic,
+          }));
+        }
+        if (accounting !== null) accountingRefreshStatus = "reused";
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        // A missing or changing proof is an ordinary cache miss. Preserve the
+        // existing authoritative reader/rebuild path and its last-good state.
+        reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, "lookup", "operation_failed");
+      }
       // A provider quota observation does not alter replay-safe token
       // accounting. Reuse a current cache when no rollout usage record was
       // added, while the collector state continues to supply the fresh quota
@@ -988,35 +1056,41 @@ export function createLocalCollectorRefreshRunner({
       // off: within this window we serve the retained cache rather than re-run
       // the doomed pass on every scheduler tick and blank the surface again.
       const withinRebuildBackoff = clock() < accountingRebuildDeferUntilMs;
-      if ((collectorWroteNoRolloutUsage || withinRebuildBackoff)
+      const existingCalculationProven = unifiedIndexFile === null || stateFile === null
+        || calculationReuse.matches(calculationProof);
+      if (accounting === null
+          && (collectorWroteNoRolloutUsage || withinRebuildBackoff)
+          && (withinRebuildBackoff || existingCalculationProven)
           && signal?.aborted !== true) {
         try {
-          const existing = await readAccountingCache({
+          const existing = await timing.measure("cache_read", () => readAccountingCache({
             ...(stateFile === null ? {} : { stateFile }),
             now: clock,
             sourceMode: "unified",
             contextBehavior: "source_native",
             expectedGeneration: unifiedIndex.generation,
-            // During backoff a labelled estimate beats a blank surface, so the
-            // ordinary reuse-age gate is lifted (a valid cache then reads
-            // "available" regardless of age). Outside backoff the gate stays,
-            // so a cache older than the reuse age is not silently reused.
-            ...(withinRebuildBackoff
-              ? {}
-              : { maximumAgeMs: MAX_REUSABLE_ACCOUNTING_CACHE_AGE_MS }),
-          });
+            maximumAgeMs: MAX_REUSABLE_ACCOUNTING_CACHE_AGE_MS,
+            ...(withinRebuildBackoff ? { includeStaleGeneration: true } : {}),
+          }));
+          const retained = withinRebuildBackoff
+            && existing?.staleCache?.reason === "cache_generation_mismatch"
+            ? existing.staleCache.cache : null;
+          const selected = ["available", "stale"].includes(existing?.status)
+            ? existing.cache : retained;
           if (signal?.aborted !== true
-              && existing?.status === "available"
-              && existing.cache?.schemaVersion
+              && (existing?.status === "available" || withinRebuildBackoff)
+              && selected?.schemaVersion
                 === REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
-              && (withinRebuildBackoff || existing.cache?.weeklyApiIntervals?.status === "available")
-              && unifiedAccountingCacheHasZeroFallback(existing.cache)) {
-            accounting = existing.cache;
-            // No new usage -> the reused cache still covers every event, so it
-            // is exact ("reused"). Otherwise it is served only because the
-            // rebuild is backed off, so it is a deferred (possibly stale)
-            // estimate the surface labels as pending.
+              && (withinRebuildBackoff || selected?.weeklyApiIntervals?.status === "available")
+              && unifiedAccountingCacheHasZeroFallback(selected)) {
+            accounting = selected;
+            accountingRetainedGeneration = retained !== null;
+            // Zero new collector rows do not prove age, origin or speed
+            // inputs. A backoff result remains deferred unless it also
+            // satisfies every ordinary reuse gate.
             accountingRefreshStatus = collectorWroteNoRolloutUsage
+                && existingCalculationProven && existing?.status === "available"
+                && selected?.weeklyApiIntervals?.status === "available"
               ? "reused"
               : "deferred";
           }
@@ -1040,7 +1114,7 @@ export function createLocalCollectorRefreshRunner({
         }
         let rebuilt = null;
         try {
-          rebuilt = await refreshAccounting({
+          rebuilt = await timing.measure("accounting_rebuild", () => refreshAccounting({
             codexHome,
             ...(stateFile === null ? {} : { stateFile }),
             now: clock,
@@ -1054,7 +1128,9 @@ export function createLocalCollectorRefreshRunner({
             contextBehavior: "source_native",
             declaredSpeedBaselines,
             signal,
-          });
+            onTiming,
+            monotonicClock,
+          }));
         } catch (error) {
           if (error?.name === "AbortError") throw error;
           // Resource limits are terminal refresh safety stops, not ordinary
@@ -1096,12 +1172,16 @@ export function createLocalCollectorRefreshRunner({
                 sourceMode: "unified",
                 contextBehavior: "source_native",
                 expectedGeneration: unifiedIndex.generation,
+                includeStaleGeneration: true,
               });
-              if (existing?.status === "available"
-                  && existing.cache?.schemaVersion
+              const retained = existing?.staleCache?.reason === "cache_generation_mismatch"
+                ? existing.staleCache.cache : null;
+              const selected = existing?.status === "available" ? existing.cache : retained;
+              if (selected?.schemaVersion
                     === REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
-                  && unifiedAccountingCacheHasZeroFallback(existing.cache)) {
-                accounting = existing.cache;
+                  && unifiedAccountingCacheHasZeroFallback(selected)) {
+                accounting = selected;
+                accountingRetainedGeneration = retained !== null;
                 accountingRefreshStatus = "deferred";
               } else {
                 accountingUnavailableCode =
@@ -1124,6 +1204,16 @@ export function createLocalCollectorRefreshRunner({
           }
           if (accounting !== null) {
             accountingRefreshStatus = "rebuilt";
+            try {
+              const after = await timing.measure("reuse_proof_after", () => calculationReuse.readProof({
+                generation: unifiedIndex.generation, declaredSpeedBaselines, signal, onTiming, monotonicClock,
+                onReuseDiagnostic, onOriginDiagnostic, diagnosticPhase: "proof_after",
+              }));
+              timing.measureSync("reuse_remember", () => calculationReuse.remember({ cache: accounting, before: calculationProof, after, onReuseDiagnostic }));
+            } catch (error) {
+              if (error?.name === "AbortError") throw error;
+              reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, "remember", "operation_failed");
+            }
             // A successful rebuild clears any prior budget-miss backoff and
             // ends the deferral streak.
             accountingRebuildDeferUntilMs = 0;
@@ -1170,7 +1260,8 @@ export function createLocalCollectorRefreshRunner({
             generationFingerprint:
               accounting.sourceDescriptor?.generationFingerprint ?? null,
             generationMatched:
-              accounting.sourceDescriptor?.generationMatched === true,
+              accounting.sourceDescriptor?.generationMatched === true
+                && !accountingRetainedGeneration,
             fallbackCount:
               safeCount(accounting.sourceDescriptor?.fallbackCount),
             diagnosticsAvailable:
@@ -1429,6 +1520,10 @@ export const LOCAL_COMPANION_REFRESH_CANCEL_SETTLEMENT_MS = 30_000;
 const LOCAL_COMPANION_REFRESH_CANCEL_SETTLEMENT_MAX_MS = 60_000;
 const CANCEL_SETTLEMENT_EXPIRED = Symbol("cancel_settlement_expired");
 
+function refreshCapabilities(mode) {
+  return { quota: true, usage: mode !== "quick", resetDetails: mode === "detailed" };
+}
+
 export class LocalCompanionRefreshController {
   #accountingTimeoutMs;
   #abortController = null;
@@ -1451,6 +1546,11 @@ export class LocalCompanionRefreshController {
   #timeoutMs;
   #timeoutMsForRun;
   #monotonicClock;
+  #pendingRequest = null;
+  #reason = null;
+  #quota = { status: "skipped", errorCode: null, publishedAt: null };
+  #usage = { status: "skipped" };
+  #timing = null;
 
   constructor({
     runner,
@@ -1464,7 +1564,7 @@ export class LocalCompanionRefreshController {
     setTimeoutImpl = setTimeout,
     clearTimeoutImpl = clearTimeout,
     createRefreshId = randomUUID,
-    // Observer for terminal refresh failures. Receives only the bounded
+    // Observer for settled failed or degraded refresh outcomes. Receives only the bounded
     // identity the failed state itself carries — errorCode, and failedStep /
     // failureCode when known — so a sink can file a content-free diagnostics
     // note. Never invoked for success, cancellation, or non-terminal states,
@@ -1556,7 +1656,45 @@ export class LocalCompanionRefreshController {
   }
 
   getStatus() {
-    return structuredClone(this.#state);
+    const capabilities = this.#state.mode === null ? null : refreshCapabilities(this.#state.mode);
+    const usage = { ...this.#usage };
+    if (capabilities?.usage && !["running", "cancelling"].includes(this.#state.status)) {
+      usage.status = ["succeeded", "degraded"].includes(this.#state.status)
+        ? (this.#state.result?.unifiedIndex?.status === "failed"
+            || this.#state.result?.accounting?.status === "unavailable" ? "failed"
+          : this.#state.result?.accounting?.refreshStatus === "deferred"
+            || this.#state.result?.accountingRebuildDeferred ? "deferred"
+          : this.#state.result?.accounting?.refreshStatus === "reused" ? "reused" : "succeeded")
+        : this.#state.status === "cancelled" ? "cancelled" : "failed";
+    }
+    const quota = { ...this.#quota };
+    if (quota.status === "running" && !["running", "cancelling"].includes(this.#state.status)) {
+      quota.status = this.#state.status === "cancelled" ? "cancelled"
+        : this.#state.status === "failed" ? "failed" : "skipped";
+    }
+    return structuredClone({ ...this.#state, timing: this.#timing?.snapshot() ?? null, running: this.#inFlight !== null,
+      capabilities, reason: this.#reason, quota, usage,
+      pending: this.#pendingRequest === null ? null : { mode: this.#pendingRequest.mode,
+        capabilities: refreshCapabilities(this.#pendingRequest.mode) } });
+  }
+
+  request({ mode = "detailed", reason = "manual" } = {}) {
+    if (!LOCAL_REFRESH_MODES.has(mode) || !["manual", "automatic", "startup"].includes(reason)) {
+      throw new TypeError("refresh request is invalid");
+    }
+    if (this.#inFlight === null) {
+      const started = this.start({ mode, reason });
+      return { started, joined: false, pending: false, refresh: this.getStatus() };
+    }
+    const rank = { quick: 0, overview: 1, detailed: 2 };
+    const needsFollowUp = rank[mode] > rank[this.#state.mode];
+    if (needsFollowUp && this.#state.status === "running") {
+      if (this.#pendingRequest === null || rank[mode] > rank[this.#pendingRequest.mode]) {
+        this.#pendingRequest = { mode, reason };
+      }
+    }
+    return { started: false, joined: !needsFollowUp,
+      pending: needsFollowUp && this.#pendingRequest !== null, refresh: this.getStatus() };
   }
 
   isRunning() {
@@ -1565,6 +1703,7 @@ export class LocalCompanionRefreshController {
   whenSettled() { return this.#inFlight ?? Promise.resolve(); }
 
   cancel() {
+    this.#pendingRequest = null;
     if (this.#inFlight === null
         || this.#abortController === null
         || this.#state.status !== "running"
@@ -1589,7 +1728,7 @@ export class LocalCompanionRefreshController {
   #notifyTerminalFailure() {
     if (this.#onTerminalFailure === null
         || this.#failureNotified
-        || this.#state.status !== "failed") return;
+        || !["failed", "degraded"].includes(this.#state.status)) return;
     this.#failureNotified = true;
     const { errorCode, failedStep, failureCode } = this.#state;
     try {
@@ -1624,7 +1763,8 @@ export class LocalCompanionRefreshController {
     }
   }
 
-  start({ mode = "detailed" } = {}) {
+  start({ mode = "detailed", reason = "manual" } = {}) {
+    if (!["manual", "automatic", "startup"].includes(reason)) throw new TypeError("refresh reason is invalid");
     if (!LOCAL_REFRESH_MODES.has(mode)) {
       throw new TypeError("mode must be quick or detailed");
     }
@@ -1644,11 +1784,17 @@ export class LocalCompanionRefreshController {
       );
     }
     const startedAt = this.#clock();
+    const runTiming = createLocalRefreshTimingRecorder({ clock: this.#monotonicClock });
+    const timer = createLocalRefreshTimer({ onTiming: runTiming.record, clock: this.#monotonicClock });
     const refreshId = this.#createRefreshId();
     if (typeof refreshId !== "string"
         || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(refreshId)) {
       throw new TypeError("createRefreshId must return a UUID");
     }
+    this.#timing = runTiming;
+    this.#reason = reason;
+    this.#quota = { status: "running", errorCode: null, publishedAt: null };
+    this.#usage = { status: mode === "quick" ? "skipped" : "pending" };
     this.#cancelRequested = false;
     this.#failureNotified = false;
     this.#degradedNotified = false;
@@ -1672,6 +1818,7 @@ export class LocalCompanionRefreshController {
     // settlement does not rebuild the same snapshot again; a failed or absent
     // progress reload deliberately leaves this false and gets a terminal retry.
     let quickResultReloadPublished = false;
+    let quotaReadyReceived = false;
     const timeoutStartedAt = this.#monotonicClock();
     const controller = new AbortController();
     this.#abortController = controller;
@@ -1680,6 +1827,7 @@ export class LocalCompanionRefreshController {
           || this.#cancelRequested
           || !["running", "cancelling"].includes(this.#state.status)) return;
       timedOut = true;
+      this.#pendingRequest = null;
       controller.abort();
       this.#state = {
         status: "failed",
@@ -1719,10 +1867,46 @@ export class LocalCompanionRefreshController {
       );
       cancellationSettlementTimeout.unref?.();
     };
+    const isCurrent = () => this.#state.refreshId === refreshId
+      && this.#state.status === "running" && !this.#cancelRequested
+      && !timedOut && !controller.signal.aborted;
+    const publishQuota = async () => {
+      if (!isCurrent()) return;
+      try {
+        const options = { purpose: "quick", returnOverview: false, signal: controller.signal,
+          isCurrent };
+        const hasQuotaPublisher = typeof this.#dataStore.publishQuota === "function";
+        const published = await timer.measure("quota_publish", () => hasQuotaPublisher
+          ? this.#dataStore.publishQuota(options)
+          : this.#dataStore.reload(options));
+        if (!isCurrent()) return;
+        if (hasQuotaPublisher && published?.published !== true) {
+          this.#quota = { status: "skipped", errorCode: null, publishedAt: null };
+          return;
+        }
+        const publishedAt = new Date(this.#clock()).toISOString();
+        this.#state = { ...this.#state, quickResultAt: publishedAt };
+        this.#quota = { status: "published", errorCode: null, publishedAt };
+        quickResultReloadPublished = true;
+      } catch {
+        if (isCurrent()) this.#quota = { ...this.#quota, status: "failed", errorCode: "quota_publication_failed" };
+      }
+    };
     const runnerWork = Promise.resolve()
-      .then(() => this.#runner({
+      .then(() => timer.measure("refresh_runner", () => this.#runner({
         signal: controller.signal,
         mode,
+        onTiming: runTiming.record,
+        onReuseDiagnostic: runTiming.recordReuse,
+        onOriginDiagnostic: runTiming.recordOrigin,
+        onQuotaReady: async (quota) => {
+          if (!isCurrent()) return;
+          quotaReadyReceived = true;
+          if (quota?.recordWritten === true && !quota.errorCode) await publishQuota();
+          else this.#quota = { status: quota?.attempted === true ? "failed" : "skipped",
+            errorCode: quota?.errorCode ? safeCollectorErrorCode(quota.errorCode) : null, publishedAt: null };
+          if (isCurrent() && mode !== "quick") this.#usage = { status: "running" };
+        },
         onProgress: async (progress) => {
           if (this.#state.refreshId !== refreshId
               || timedOut
@@ -1741,32 +1925,17 @@ export class LocalCompanionRefreshController {
             accountingDeadlineApplied = true;
             armTimeoutFromStart(this.#accountingTimeoutMs);
           }
-          let quickResultAt = this.#state.quickResultAt;
-          let quickResultReloaded = false;
-          if (mode !== "overview" && projected.phase === "quick_result"
-              && !this.#cancelRequested) {
-            try {
-              await this.#dataStore.reload({
-                purpose: "quick",
-                returnOverview: false,
-                signal: controller.signal,
-              });
-              quickResultAt = new Date(this.#clock()).toISOString();
-              quickResultReloaded = true;
-            } catch {
-              // Keep the previous good dashboard. Deep accounting can still
-              // complete and publish a fully verified replacement.
-            }
-          }
-          if (timedOut) return;
-          this.#state = {
-            ...this.#state,
-            progress: projected,
-            quickResultAt,
-          };
-          if (quickResultReloaded) quickResultReloadPublished = true;
+          // Older injected runners only have the reviewed headline marker.
+          // Production runners report durable quota success independently.
+          if (!quotaReadyReceived && projected.phase === "quick_result") await publishQuota();
+          if (!isCurrent()) return;
+          if (mode !== "quick" && (quotaReadyReceived
+              || projected.kind === UNIFIED_INDEX_PROGRESS_KIND
+              || projected.kind === ACCOUNTING_PROGRESS_KIND
+              || projected.phase === "quick_result")) this.#usage = { status: "running" };
+          this.#state = { ...this.#state, progress: projected };
         },
-      }));
+      })));
     const work = Promise.race([runnerWork, cancellationSettlement])
       .then(async (result) => {
         if (this.#cancelRequested) {
@@ -1814,8 +1983,9 @@ export class LocalCompanionRefreshController {
           return;
         }
         if (!(mode === "quick" && quickResultReloadPublished)) {
-          await this.#dataStore.reload({
+          await timer.measure("snapshot_reload", () => this.#dataStore.reload({
             purpose: mode === "overview" ? "overview" : mode === "quick" ? "quick" : "full",
+            isCurrent,
             workloadSourceFresh: result?.unifiedIndex?.status === "ingested",
             workloadErrors: [
               ...(result?.quotaRefresh?.errorCode ? [{code:"quota_read_failed",stage:"quota"}] : []),
@@ -1823,10 +1993,12 @@ export class LocalCompanionRefreshController {
             ],
             returnOverview: false,
             signal: controller.signal,
+            onTiming: runTiming.record,
+            monotonicClock: this.#monotonicClock,
             ...(mode === "detailed" || mode === "overview"
               ? { unifiedProjectionReuse: reusableUnifiedProjection(result) }
               : {}),
-          });
+          }));
         }
         // A cancellation/deadline can arrive while reload yields. Do not turn
         // that terminal outcome into success or wake an uploader afterward.
@@ -1834,7 +2006,14 @@ export class LocalCompanionRefreshController {
           throw new Error("Refresh interrupted during snapshot reload");
         }
         const finalProgress = publicIndexingResult(result?.indexing);
-        const degradation = unifiedIndexDegradation(result);
+        const degradation = unifiedIndexDegradation(result)
+          ?? ((quotaReadyReceived && this.#quota.status === "failed") || result?.quotaRefresh?.errorCode
+            ? { failedStep: "collector", failureCode: safeCollectorErrorCode(
+              result?.quotaRefresh?.errorCode ?? this.#quota.errorCode,
+            ) } : null);
+        if (!quotaReadyReceived && result?.quotaRefresh?.errorCode) {
+          this.#quota = { status: "failed", errorCode: safeCollectorErrorCode(result.quotaRefresh.errorCode), publishedAt: null };
+        }
         this.#state = {
           status: degradation === null ? "succeeded" : "degraded",
           refreshId: this.#state.refreshId,
@@ -1850,6 +2029,7 @@ export class LocalCompanionRefreshController {
           errorCode: degradation === null ? null : "refresh_degraded",
           ...(degradation ?? {}),
         };
+        this.#notifyTerminalFailure();
         // A budget miss is a SOFT outcome: the run succeeded serving the
         // retained cache. File the degraded-event note (kept from the incident)
         // now that the terminal-failure path no longer sees it.
@@ -1922,12 +2102,19 @@ export class LocalCompanionRefreshController {
         this.#notifyTerminalFailure();
       })
       .finally(() => {
+        runTiming.finish();
         this.#clearTimeoutImpl(timeout);
         this.#clearTimeoutImpl(cancellationSettlementTimeout);
         this.#abortController = null;
         this.#beginCancellationSettlement = null;
         this.#cancelRequested = false;
         this.#inFlight = null;
+        const next = this.#pendingRequest;
+        this.#pendingRequest = null;
+        if (next !== null && !timedOut) {
+          this.start(next);
+          return this.#inFlight;
+        }
       });
     armTimeoutFromStart(selectedTimeoutMs);
     this.#inFlight = work;

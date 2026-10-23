@@ -51,12 +51,46 @@ Overview contains five cards: remaining weekly allowance over seven days, plan
 work hours, seven daily consumption bars, current workload, and actual consumption
 relative to expected. It does not show an exhaustion date or countdown.
 
+Completed local setup stays hidden on Overview; setup that still needs attention
+remains available. The plan picker marks the current observed plan as **Current**,
+and **Refreshed** shows the age of the latest quota observation, not the time the
+page was opened. Out-of-date observations keep their explicit warning.
+
 Work hours include the whole task: thinking, tools, tests and necessary waiting.
 Parallel tasks count once; time between tasks is excluded. Heavy, medium and light
 loads are clustered from recent API-equivalent usage per work hour. Historical
 remaining hours use actual quota deductions; current workload uses the last
 fifteen minutes of API-equivalent usage and task work time. These are local
 analysis estimates under a single-account, continuous-subscription assumption.
+
+Actual consumption relative to expected uses the same observed plan periods as
+overview history. A missing plan label after a preceding explicit observation
+inherits that period's plan; comparisons using such labels carry the inferred
+attribution note. This does not infer an account, cross an explicit plan change,
+resolve conflicting observations or prove an uncertain reset. Actual and
+expected subtotals use the same accepted intervals. The title's small **Since**
+timestamp identifies the startup boundary; the former separate startup and
+partial-coverage paragraphs are omitted. Unpaired-interval errors remain in the
+diagnostic details. Stored observations remain unchanged.
+
+Only matched task completion/interruption records or a valid reported duration
+establish historical task time. An old unfinished task cannot borrow later
+tasks' receipts as its ending. Missing endings remain uncertain; independently
+proven parallel work can still establish their shared wall-time coverage.
+Explicitly conflicting boundaries remain errors. Uncertain time is excluded
+from rate estimates and classification, while recorded consumption is retained.
+Fresh tasks observed starting during this run can contribute ongoing time.
+When a parent task has its own complete start/end pair, a fork's cancellation
+does not invalidate that parent's work. Child tasks still retain their own
+cancellations; conflicting completions or missing ownership remain explicit.
+
+Classification fits three duration-weighted groups, each with at least three
+five-minute bucket samples and at least one minute of total work. Identical
+intensities stay together. The fitted boundaries classify both history and
+current load; insufficient evidence leaves consumption unclassified. Known
+zero-cost work remains eligible. Large values are not automatically removed or
+capped. The classes are relative to the recent window, not provider-defined
+workload categories, and can change as that window changes.
 
 All overview cards publish together on a five-minute cadence. Manual refresh uses
 the same pipeline and restarts the countdown when work settles. First history
@@ -71,12 +105,50 @@ evidence before Codex removes its diagnostic logs. Capture does not change the
 dashboard's five-minute publication cadence. Closing TiboTattle stops capture;
 it cannot recover upstream logs that have already been removed.
 
-Daily bar totals are observed quota movement; colours allocate it using local
-usage. Grey portions are unclassified. Observation gaps and resets are not
-smoothed away. The relative-consumption chart compares quota deduction with
+Daily bar totals allocate closed quota changes using priced local usage. Equal
+balances update freshness without moving the allocation start; the first lower
+balance closes the interval. A later deduction may therefore redistribute
+consumption across earlier dates. The unfinished tail does not count as zero
+consumption in historical work-hour rates. Reset, account and plan boundaries
+remain separate; missing models and prices are not guessed.
+
+Unclassified same-day consumption remains in that day's bar. A cross-day
+interval without reliable daily weights appears instead in **Cross-day
+unallocated consumption**, at the very bottom of Overview after all cards and
+diagnostics. Its collapsed summary separates plans; expand it for times and
+reasons. No records means no extra area. At most twenty interval details are
+shown, while totals include every interval. Known consumption is never counted
+in both places. Observation gaps and resets are not smoothed away.
+The relative-consumption chart compares quota deduction with
 API-equivalent usage divided by fitted weekly capacity; it does not correct the
 current workload rate. Detailed usage, allowance and performance analysis remain
 available on their respective pages.
+
+The existing **Current workload** card shows **Short-term load** over the last
+fifteen elapsed minutes, using API-price-equivalent amount per evidenced work
+hour and the historical light/medium/heavy classifier. Parallel work time counts
+once; idle gaps are not working hours. This needs at least one minute of evidenced
+work and complete usage and work-boundary coverage. When a grade cannot be fitted
+but API intensity is known, its numeric USD/work-hour value remains visible.
+Remaining work hours use this short-term intensity and fitted capacity, respecting
+plan boundaries. These are estimates, not observed subscription charges.
+
+**Quota consumption trend** uses actual quota decreases over the trailing sixty
+minutes, divided by the elapsed time between observations, in percentage points
+per hour. It does not use API prices or active work time. Both endpoints must be
+inside the window and belong to the current plan period and reset cycle; a shorter
+observed span can produce a value without waiting sixty minutes. Unknown plan
+labels use the existing marked plan-period projection, with `*` on inferred
+values. Conflicts, identity changes,
+resets and stale regressions cannot create a cross-boundary decrease. Unchanged
+integer readings alone do not establish a measured zero consumption rate.
+
+In this card missing or idle values display `-`, without an explanatory hint;
+specific failures remain available in diagnostic details. Completed work leaves
+the short-term window naturally. The existing refresh cadence is unchanged and
+no process detector or background polling is added. Older saved projections retain
+their historical cards as stale until refresh; their recent values are not
+reinterpreted under the new windows or units.
 
 The forecast names its pace assessment, estimated run-out, reset countdown and
 any time without allowance. Its static timeline represents time until reset, not quota
@@ -122,6 +194,12 @@ detached evidence.
   available. Unknown plan, reset, or coverage stays explicit.
 - **Source coverage** tells you which local inputs were available. A missing
   source is not “no usage.”
+
+An initial cumulative usage snapshot may include earlier requests that cannot
+be assigned a model, time or price. It establishes a baseline; the observed
+later subtotal remains available with partial coverage. Unknown prefix evidence
+is not zero usage. Source repairs and synthetic checks do not, by themselves,
+verify the retained historical ledger or establish a provider bill.
 
 Display windows do not delete older local history. The dashboard may show a
 shorter horizon while the local index retains the evidence needed for replay,
@@ -183,29 +261,58 @@ account or discard earlier evidence.
 This is an estimated API value, not the subscription price, and does not authorize
 mixing personal Plus and Pro allowance histories.
 
-Switching and cache-drop overheads estimate the API-equivalent premium in
-observed comparisons, not a proven cause or a bill. A labelled covered subtotal
-includes only comparisons with usable ordering and prices. Sessions whose
-request order cannot be proven, and comparisons without prices, remain excluded
-and disclosed; that subtotal is not the whole-period total or a percentage of
-your allowance. A subtotal with no priceable comparisons stays unavailable,
-not a zero-valued placeholder.
+Cache analysis shows a conditional API-equivalent estimate based on decreases
+between adjacent cache-read token counts. The currently reusable prefix, **C\***,
+is unverified: a change in counts does not prove that the requests had the same
+prefix, that more input was cacheable, or why the counts changed. The amount is
+neither actual avoidable loss nor a lower bound on that loss. It is not a bill,
+the lifetime cost of switching models, or a percentage of your allowance.
 
-Cache-overhead pricing uses the same output-representation selection as the
+These diagnostics follow the shared **Reporting period**. The monetary scenario
+uses positive decreases in adjacent cache-read counts, capped by the current
+non-cache-read input. It reprices that assumed token quantity as cached input
+at the current request's model, event date and input-context band, with the
+reported speed or the stated speed assumption. This conditional repricing does
+not establish **C\*** or reconstruct a request to the previous model. The 50%
+threshold only classifies the ratio of cache-read counts; it does not limit which
+positive decreases enter the estimate. The switching lens uses a five-minute
+window to identify nearby configuration changes. That window is an analysis
+choice, not a cache lifetime or TTL.
+
+The allocation assumes ordinary input first, followed by cache-write tokens.
+When writes are included, the difference also depends on the write price
+category and lifetime. Treating a write as something that could have been a
+cache read is a separate assumption, not something proven by precise pricing.
+
+A labelled covered subtotal includes only comparisons with usable ordering and
+prices. Sessions whose request order cannot be proven, and comparisons without
+prices, remain excluded and disclosed; the subtotal does not establish a
+whole-period loss. Older token-usage increments are not individual request
+records and do not establish request-level cache evidence. Compaction, context
+contraction and insufficient comparison evidence remain excluded. A subtotal
+with no priceable comparisons stays unavailable, not a zero-valued placeholder.
+
+Conditional cache repricing uses the same output-representation selection as the
 main usage totals: matching combined output is not charged again alongside
 text and reasoning output. Missing or contradictory output evidence remains
 unpriced; incomplete ordering still limits the result to a covered subtotal.
 
-The **Cache reuse between turns** memory matrix compares follow-up turns with
-unchanged model and settings across nine time gaps, ending at **24h+**. The
-percentage above each column is the share that reused more than half of the
-previous cached input; **n** is the number of checked follow-ups. Light counts
-use one shared count scale, with partly filled lights for remainders. Hover,
-tap, or use the arrow keys to inspect percentages, counts, lost reuse and
-Standard API-equivalent estimates. The model picker filters complete comparison
-aggregates and retains your choice when the reporting period changes. Missing
+The **Cache-read counts between turns** memory matrix compares follow-up turns with
+unchanged model and settings using its source's time-gap groups. The percentage
+above each column is the share whose cache-read token count exceeded half the
+previous request's count; **n** is the number of checked follow-ups. This ratio
+does not establish that prefix content was reused between those requests.
+Light counts use one shared count scale, with partly filled lights for
+remainders. Hover, tap, or use the arrow keys to inspect percentages, counts,
+adjacent cache-read decreases and conditional Standard API-equivalent estimates.
+The model picker filters complete comparison aggregates and retains your choice
+when the reporting period changes. Missing
 model breakdowns and periods without eligible follow-ups remain explicit;
-zero eligible follow-ups does not mean a 0% cache reuse rate.
+zero eligible follow-ups does not establish a percentage in either count group.
+Local turn comparisons retain their measured 1–6 hour, 1–3 day and 3-day-plus
+groups. The community curve uses separate 1–2 and 2–6 hour groups and ends at
+seven days. Each chart shows its source's original groups; local long gaps
+are not truncated or split to fit the community curve.
 
 The **Thread name** column in both recent cache-drop tables opens the associated
 Codex thread. A worker row shows a parent-name link and a separate bracketed
@@ -236,6 +343,11 @@ and comparison tools. The calibration headline inside that dialog remains the
 median of its qualifying plan population. The shared five-minute refresh and
 manual refresh publish matching chart/detail versions, preserving usable old
 results with an explicit failure status when an update fails.
+The primary chart retains a previous curve only when a usable interval report
+has already been displayed for the same plan and period. An older calibration
+summary does not supply that curve: its previous-version label stays beside the
+calibration estimate in **Complete details**. If no usable curve is available
+while intervals are recalculated, the main chart says so explicitly.
 Updating local usage can advance the displayed reporting dates when a new
 accounting snapshot becomes available.
 
@@ -274,8 +386,17 @@ and bands summarize the combined population. Reasoning tokens are included once.
 **First-token latency** uses independently available turn timing, so its sample
 count can be larger. Missing evidence remains unavailable, never zero.
 
-The plots show daily or weekly medians and percentile bands where enough
-observations exist.
+The plots show daily or weekly statistics: the solid line is the median (P50),
+and the dashed straight-segment line is the arithmetic mean of the same measured
+turns, with equal weight per turn. Speed means average per-turn token rates, not
+total tokens divided by total duration. Percentile bands appear with at least
+five observations. The legend toggles each layer; tooltips and detail tables
+include both mean and median. Missing dates break all lines and bands.
+Older aggregate caches lack means and are rebuilt from retained timing evidence;
+means are never inferred from percentiles. Schema-6 caches use a separate
+versioned filename so older app instances cannot overwrite them. Prior receipts
+are preserved. The underlying timing store and
+measurement method are unchanged.
 
 Sweep horizontally anywhere in a chart to inspect the same date across the charts.
 Use arrow keys after focusing a chart point, or Escape to dismiss the tooltip.
@@ -299,9 +420,10 @@ a secondary dialog. Close the preview with its Close button or Escape.
 The categories are General & appearance, Tray & panel, Notifications,
 Data & diagnostics, and About & updates. Data & diagnostics accepts a positive
 whole number of minutes for periodic overview refresh, or `-1` to disable
-periodic overview and maintenance refresh. The default is five minutes. Manual
-refresh, startup initialization and necessary state observations remain available.
-Detailed maintenance retains its independent hourly minimum when enabled.
+periodic local refresh. The default is five minutes after the preceding run
+settles. Manual refresh, a permission-checked startup freshness check and state
+observation remain available. One companion schedule owns collection; there is
+no separate hourly desktop maintenance timer.
 
 Notifications accepts one used-allowance percentage from 1 to 100; `-1` disables
 usage reminders. There is no master switch. A fresh provider observation must
@@ -315,7 +437,14 @@ active to rearm used-allowance reminders for a new cycle.
 
 Legacy disabled/off preferences migrate to `-1`; both the old 90% and 80%+90%
 modes migrate to 90%. Settings and notification policy use forward-only versions
-v4 and v2 respectively, preserving unknown future state instead of overwriting it.
+v5 and v2 respectively, preserving unknown future state instead of overwriting it.
+
+The pause icon above local Refresh cancels current local collection and blocks
+automatic, startup, and manual collection until resumed. Its choice survives
+restart without changing the configured interval. Resume schedules the next
+normal interval; it does not replay missed ticks. Saved reports remain readable
+and X keeps its independent refresh schedule. Cancellation settles through the
+existing bounded refresh controller before another writer can run.
 
 ## Customize the window background
 
@@ -364,15 +493,16 @@ format is shared with the popup: countdown or local clock time. Both-window
 mode keeps just the two remaining percentages to limit width. Windows uses its tray icon, tooltip and popup surfaces; this does not change the
 platform qualification status.
 
-Show, hide and reorder Allowances, Weekly pace, Local usage and Cache reuse.
+Show, hide and reorder Allowances, Weekly pace, Local usage and Cache-read comparison.
 Select a 7-day or 30-day popup history range, comfortable or compact spacing,
 and which totals to display: tokens, API-equivalent cost and usage changes.
 You can hide the usage chart; keep either a chart or a total when Local usage
 is enabled. The header, status and essential actions always remain available.
 
-Cache reuse uses the dashboard's comparable-follow-up denominator: the share
-that reused more than half of the previous cached input. It is not the share
-of all tokens that were cached. No comparable follow-ups produces an explicit
+Cache-read comparison uses the dashboard's comparable-follow-up denominator:
+the share whose reported cache-read count exceeds half the previous count.
+This compares counts; it does not establish which prefix tokens were reused
+or what could have been cached. No comparable follow-ups produces an explicit
 empty state. Incomplete coverage and retained historical data remain labeled.
 API-equivalent cost is a reference estimate, not a subscription charge.
 
@@ -463,7 +593,11 @@ and detailed Usage-and-costs and Trends evidence together. A valid
 generation-bound accounting cache is reused; a changed generation is
 recalculated. There is no separate detailed-accounting button. The app keeps
 verified prior figures visible, with their current freshness state, while work
-is in progress. If another refresh is already running, the shared controller
+is in progress. If an accounting rebuild exceeds its resource budget, retained
+cost figures stay explicitly stale or deferred with their original calculation
+time; a later check with no new records does not make them current. Retained
+figures from an older index do not supply the current plan's allowance estimate.
+If another refresh is already running, the shared controller
 keeps that single operation authoritative. Desktop controls follow its progress;
 the browser shows an informational notice without starting a second operation.
 
@@ -579,11 +713,14 @@ updated details load; temporary lookup failures do not erase that result.
 Do not repeatedly relaunch during a detailed pass; that can make progress appear
 to restart even when source data is intact.
 
-During an explicit or hourly detailed pass, **Calculating accounting…** means
+During a local refresh, **Calculating accounting…** means
 the app is calculating and preparing the updated dashboard. It replaces the
 file counter: a small number of changed files does not mean all the unchanged
 files are being read again. Only the terminal refresh status establishes
-completion.
+completion. A new allowance observation can appear while usage is still being
+calculated; the refresh icon stays busy until the run settles. Automatic and
+manual runs share the same status. The allowance observation time does not mean
+that all historical accounting has finished.
 
 If the dashboard stays blank or reports a schema/index error:
 

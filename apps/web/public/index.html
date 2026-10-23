@@ -109,6 +109,10 @@
         </nav>
         <div class="sidebar-actions">
           <div class="sidebar-refresh-row">
+            <button class="sidebar-action" id="pause-refresh-button" type="button" hidden disabled aria-label="Pause local refresh" aria-pressed="false"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g data-pause-glyph><path d="M8 5v14M16 5v14"/></g><g data-resume-glyph hidden><path d="m8 5 11 7-11 7z"/></g></svg></button>
+            <span id="sidebar-pause-summary" class="sidebar-refresh-summary" role="status" aria-live="polite" hidden></span>
+          </div>
+          <div class="sidebar-refresh-row">
             <button class="sidebar-action" id="refresh-button" data-sidebar-refresh="true" type="button" aria-label="Refresh local usage" aria-describedby="sidebar-refresh-summary" disabled><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8.3 8.3 0 0 1 20 12M4 12a8.3 8.3 0 0 0 13.9 5.9"/></svg></button>
             <span id="sidebar-refresh-summary" class="sidebar-refresh-summary" role="status" aria-live="polite" aria-atomic="true" hidden></span>
           </div>
@@ -134,7 +138,7 @@
           <p class="page-description" data-i18n="page.overview.description">Your current allowance and recent usage at a glance.</p>
         </div>
         <div class="freshness-card" aria-live="polite">
-          <span>Latest observation</span>
+          <span data-i18n="dashboard.freshness.observation">Refreshed</span>
           <strong id="latest-observation">Checking…</strong>
           <small id="data-source"></small>
           <small id="automatic-refresh-health" class="automatic-refresh-health" hidden></small>
@@ -491,22 +495,22 @@
           <summary data-i18n="usageSimple.cache">Cache analysis</summary>
         <div class="metric-grid cache-impact-summary" id="cache-impact-summary" hidden></div>
         <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details" id="cache-switch-details" hidden>
-          <summary data-i18n="accounting.cacheSwitch.detailsSummary">See possible switch overhead</summary>
+          <summary data-i18n="accounting.cacheSwitch.detailsSummary">See switch-adjacent difference scenarios</summary>
           <p class="annotation cache-impact-sample" id="cache-switch-sample" hidden></p>
           <p class="annotation" data-i18n="accounting.cacheSwitch.detailsExplanation">
-            These recent rows pair a model or reasoning change with a large
-            cache-read drop within five minutes. The drop was observed. Its link
-            to the setting change is inferred.
+            Adjacent usage observations near setting changes are compared within
+            five minutes. Count decreases do not establish a reusable prefix or
+            actual avoidable loss. The amount is a conditional repricing scenario.
           </p>
           <div class="table-wrap">
             <table>
-              <caption class="sr-only" data-i18n="accounting.cacheSwitch.tableCaption">Recent covered switch-overhead comparisons at Standard API rates; not a period total</caption>
+              <caption class="sr-only" data-i18n="accounting.cacheSwitch.tableCaption">Recent conditional cache-read difference scenarios at Standard API rates; not actual loss</caption>
               <thead>
                 <tr>
                   <th data-i18n="accounting.cacheDropThread.column">Thread name</th>
                   <th data-i18n="accounting.cacheSwitch.column.change">Configuration change</th>
                   <th data-i18n="accounting.cacheSwitch.column.cacheRead">Cache read</th>
-                  <th data-i18n="accounting.cacheSwitch.column.lostTokens">Est. lost reuse</th>
+                  <th data-i18n="accounting.cacheSwitch.column.lostTokens">Cache-read count decrease</th>
                   <th data-i18n="accounting.cacheSwitch.column.apiEquivalent" >API equivalent</th>
                 </tr>
               </thead>
@@ -527,18 +531,18 @@
           <div class="cache-reuse-summary">
             <header class="cache-reuse-title">
               <p class="panel-kicker" data-i18n="accounting.cacheContinuity.outcome.eyebrow">Cache</p>
-              <h3 id="cache-reuse-outcome-heading" data-i18n="accounting.cacheContinuity.outcome.heading">Cache reuse between turns</h3>
+              <h3 id="cache-reuse-outcome-heading" data-i18n="accounting.cacheContinuity.outcome.heading">Cache-read counts between turns</h3>
               <p data-i18n="accounting.cacheContinuity.outcome.subtitle">Follow-up turns with the same model and settings, grouped by time since the previous turn.</p>
             </header>
           </div>
           <div id="cache-reuse-matrix"></div>
         </section>
         <details class="panel advanced-diagnostics evidence-disclosure cache-switch-details cache-continuity-details" id="cache-continuity-details" hidden>
-          <summary data-i18n="accounting.cacheContinuity.detailsSummary">See recent large cache drops</summary>
+          <summary data-i18n="accounting.cacheContinuity.detailsSummary">See recent cache-read count decreases</summary>
           <p class="annotation cache-impact-sample" id="cache-continuity-sample" hidden></p>
           <div class="table-wrap">
             <table class="cache-continuity-recent-table">
-              <caption class="sr-only" data-i18n="accounting.cacheContinuity.tableCaption">Recent covered cache-continuity comparisons at Standard API rates; not a period total</caption>
+              <caption class="sr-only" data-i18n="accounting.cacheContinuity.tableCaption">Recent same-settings count-difference scenarios at Standard rates; not actual loss</caption>
               <thead>
                 <tr>
                   <th data-i18n="accounting.cacheDropThread.column">Thread name</th>
@@ -985,15 +989,6 @@
 <p class="settings-operation-status" id="settings-operation-status" role="status" aria-live="polite"></p></section>
     </main>
 
-    <!--
-      Owner-directed 2026-08-08: the "Dashboard contract: …" line is gone from
-      the user-facing footer. The contract version stays discoverable to
-      machines through the payload itself (data.schemaVersion); it was never a
-      fact a reader acts on.
-    -->
-    <footer data-i18n-legacy-root>
-      <p>TiboTattle · not affiliated with OpenAI or Thibault Sottiaux</p>
-    </footer>
       </div>
     </div>
 

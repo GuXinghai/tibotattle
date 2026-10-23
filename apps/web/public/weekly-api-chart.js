@@ -101,7 +101,8 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
     if(!unavailable&&pending(renderError))notice.textContent=t(loadState==='loading'
       ?'allowance.interval.updating':'allowance.interval.failure.stale');
     if(noPlot){
-      stateText.textContent=t(state==='loading'?'allowance.interval.loading'
+      stateText.textContent=t(state==='loading'?(data&&pending(renderError)
+        ?'allowance.interval.recalculating':'allowance.interval.loading')
         :state==='empty'?'allowance.interval.empty'
         :state==='error'&&(!renderError||pending(renderError))?'allowance.interval.readFailed'
         :'allowance.interval.failure.pending');

@@ -47,6 +47,7 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
     "chooseWindowBackground",
     "restoreWindowBackground",
     "setRefreshInterval",
+    "setRefreshPaused",
     "setStartAtLogin",
     "setNotificationPreferences",
     "sendTestNotification",
@@ -76,6 +77,15 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
   assert.equal(Object.isFrozen(DESKTOP_DEFAULT_SETTINGS), true);
   assert.equal(Object.isFrozen(DESKTOP_DEFAULT_SETTINGS.codexHomes), true);
   assert.equal(Object.isFrozen(DESKTOP_DEFAULT_SETTINGS.notifications), true);
+});
+
+test("refresh pause has a closed boolean contract and requires the current setting field", () => {
+  for (const paused of [true, false]) assert.equal(createDesktopRequest("setRefreshPaused", { paused }).args.paused, paused);
+  for (const paused of [0, 1, "true", null, undefined]) assert.throws(() => createDesktopRequest("setRefreshPaused", { paused }), TypeError);
+  assert.throws(() => createDesktopRequest("setRefreshPaused", { paused: true, extra: true }), TypeError);
+  const missing = { ...DESKTOP_DEFAULT_SETTINGS }; delete missing.refreshPaused;
+  assert.throws(() => validateDesktopSettingsSnapshot(missing), TypeError);
+  assert.throws(() => validateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, refreshPaused: 1 }), TypeError);
 });
 
 test("application menu requests accept only fixed menus and bounded integer coordinates", () => {
@@ -247,6 +257,7 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
     language: "system",
     appearance: "system",
     refreshIntervalSeconds: 300,
+    refreshPaused: false,
     startAtLogin: false,
     notifications: { enabled: false, threshold: -1 },
     sidebarCollapsed: false,
@@ -370,6 +381,7 @@ test("numeric settings reject fractional and unsafe values and migrate legacy ch
   assert.throws(() => createDesktopRequest("setNotificationPreferences", { enabled: true, threshold: 90 }), TypeError);
   for (const [enabled, mode, expected] of [[false, "ninety", -1], [true, "off", -1], [true, "ninety", 90], [true, "eighty_and_ninety", 90]]) {
     const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v3", notifications: { enabled, threshold: mode } };
+    delete legacy.refreshPaused;
     const migrated = migrateDesktopSettingsSnapshot(legacy);
     assert.equal(migrated.schemaVersion, DESKTOP_SETTINGS_SCHEMA_VERSION);
     assert.deepEqual(migrated.notifications, { enabled: expected !== -1, threshold: expected });

@@ -259,7 +259,14 @@ async function retryMetadataDatabaseCloses() {
   }
 }
 
-async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, usageRelations = false, allowTitleFallback = false, signal, filesystem, databaseFactory } = {}) {
+function reportOriginDiagnostic(observer, code, count = 1) {
+  if (typeof observer !== "function") return;
+  try { Promise.resolve(observer(Object.freeze({ code, count }))).catch(() => {}); }
+  catch { /* Optional diagnostics never change protected metadata access. */ }
+}
+
+async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, usageRelations = false, allowTitleFallback = false, signal, filesystem, databaseFactory, onOriginDiagnostic = null } = {}) {
+  const report = (code, count) => reportOriginDiagnostic(onOriginDiagnostic, code, count);
   const databaseFile = join(codexHome, "state_5.sqlite");
   let database;
   let guard;
@@ -268,18 +275,19 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
     await retryMetadataDatabaseCloses();
     slot = reserveMetadataDatabaseSlot();
     guard = await filesystem.guardDatabase(databaseFile);
-    if (!await guard.validate()) return new Map();
+    if (!await guard.validate()) { report("metadata_database_changed"); return new Map(); }
     database = databaseFactory(guard.databasePath, { readOnly: true, timeout: 500 });
-    if (!await guard.validate()) return new Map();
+    if (!await guard.validate()) { report("metadata_database_changed"); return new Map(); }
     database.exec("BEGIN");
     if (database.prepare(
       "SELECT type FROM sqlite_master WHERE name = 'threads'",
-    ).get()?.type !== "table") return new Map();
+    ).get()?.type !== "table") { report("metadata_schema_unsupported"); return new Map(); }
     const info = database.prepare("PRAGMA table_info(threads)").all();
     if (!info.some((column) => column.name === "id" && column.pk > 0)) {
-      return new Map();
+      report("metadata_schema_unsupported"); return new Map();
     }
     const columns = new Set(info.map((column) => column.name));
+    if (!columns.has("source") || !columns.has("thread_source")) report("metadata_origin_columns_missing");
     // Titles may contain opening-message text. Only the owner-approved local
     // Projects & threads display opts into this bounded fallback. Ancestry and
     // other callers keep the existing title-free contract.
@@ -300,10 +308,12 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
       (allowTitleFallback && !ancestryOnly && typeof row.display_title === "string"
         ? displayName(row.display_title.replace(/\s+/gu, " ")) : null);
     const parentIds = new Set();
+    let missingRows = 0, invalidRows = 0;
     for (const id of ids) {
       signal?.throwIfAborted();
       const row = statement.get(id);
-      if (row === undefined || threadId(row.id) !== id) continue;
+      if (row === undefined) { missingRows++; continue; }
+      if (threadId(row.id) !== id) { invalidRows++; continue; }
       const source = parseThreadSource(row.source);
       const threadStoreAutoReview = isAutoReviewThreadSource(row.thread_source);
       const sourceAutoReview = isAutoReviewSource(source);
@@ -326,7 +336,7 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
     }
     for (const id of parentIds) {
       signal?.throwIfAborted();
-      if (result.size + parentIds.size > 50_000) return new Map();
+      if (result.size + parentIds.size > 50_000) { report("metadata_parent_limit"); return new Map(); }
       if (result.has(id)) continue;
       const row = statement.get(id);
       if (row !== undefined && threadId(row.id) === id) {
@@ -346,13 +356,22 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
         result.set(id, { name: selectedName(row), nickname: null, parentId, origin: review ? "auto_review" : null });
       }
     }
-    return await guard.validate() ? result : new Map();
-  } catch {
+    if (!await guard.validate()) { report("metadata_database_changed"); return new Map(); }
+    report("thread_row_missing", missingRows);
+    report("thread_row_invalid", invalidRows);
+    return result;
+  } catch (error) {
     signal?.throwIfAborted();
+    const code = error?.code;
+    report(["ENOENT", "WINDOWS_FILESYSTEM_NOT_FOUND"].includes(code) ? "metadata_database_missing"
+      : ["SQLITE_BUSY", "SQLITE_LOCKED"].includes(code) || [5, 6].includes(error?.errcode) ? "metadata_database_busy"
+      : ["EACCES", "EPERM"].includes(code) || typeof code === "string" && code.startsWith("WINDOWS_FILESYSTEM_") ? "metadata_access_refused"
+      : "metadata_read_failed");
     // Local display metadata is optional. Never expose paths or SQLite errors.
     return new Map();
   } finally {
-    await closeMetadataDatabase(database, guard, slot);
+    try { await closeMetadataDatabase(database, guard, slot); }
+    catch (error) { report("metadata_close_failed"); throw error; }
   }
 }
 
@@ -476,14 +495,21 @@ export async function readCodexLocalThreadMetadata(codexHome, threadIds, {
 export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
   platform = process.platform, loadWindowsBinding, databaseFactory = openMetadataDatabase, signal,
   includeOriginEvidence = false,
+  onOriginDiagnostic = null,
 } = {}) {
+  const report = (code, count) => reportOriginDiagnostic(onOriginDiagnostic, code, count);
   const filesystem = createLocalCodexMetadataFilesystem({ platform, loadWindowsBinding });
-  if (!Array.isArray(threadIds) || threadIds.length > 25_000 || !await filesystem.validHome(codexHome)) return new Map();
+  if (!Array.isArray(threadIds) || threadIds.length > 25_000) { report("metadata_invalid_request"); return new Map(); }
+  if (!await filesystem.validHome(codexHome)) { report("metadata_home_unavailable"); return new Map(); }
   const ids = [...new Set(threadIds.map(threadId))];
-  if (ids.includes(null)) return new Map();
+  if (ids.includes(null)) { report("metadata_invalid_request"); return new Map(); }
+  report("requested", ids.length);
   const selected = await readSelectedThreadMetadata(codexHome, ids, {
-    ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal,
+    ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal, onOriginDiagnostic,
   });
+  const known = ids.filter(id => selected.has(id)).length;
+  report("known", known);
+  report("unknown", ids.length - known);
   return new Map(ids.map(id => {
     let current = id;
     const seen = new Set();

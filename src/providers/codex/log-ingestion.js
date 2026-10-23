@@ -80,6 +80,7 @@ export function createCodexLogIngestion({
     throwIfAborted(signal);
     const excludedSessions = new Set(excludeSessionIds.filter((value) => typeof value === "string" && value.length > 0));
     const seenEvents = new Set();
+    const seenResponses = new Map();
     const seenToolCalls = new Set();
     const diagnostics = {
       filesScanned: rolloutInfos.length,
@@ -95,6 +96,7 @@ export function createCodexLogIngestion({
       contradictedLeadingSnapshotsSkipped: 0,
       lastVsCumulativeMismatches: 0,
       responseUnverifiedPrefixTurns: 0,
+      cumulativePrefixUnattributed: 0,
       duplicateSnapshotsSkipped: 0,
       replayedEventsSkipped: 0,
       forkReplayEventsSkipped: 0,
@@ -385,6 +387,7 @@ export function createCodexLogIngestion({
           startMs,
           endMs,
           seenEvents,
+          seenResponses,
           seenToolCalls,
           onUsage,
           onRateLimitSnapshot,

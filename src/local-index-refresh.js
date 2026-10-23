@@ -665,7 +665,7 @@ async function runRefresh({
   }
   const counts = {
     usageEvents: 0, quotaOccurrences: 0, sourcesSkipped: 0, sourcesNew: 0,
-    sourcesResumed: 0, sourcesRescanned: 0, sourcesQuarantined: 0,
+    sourcesResumed: 0, sourcesRescanned: 0, sourcesSemanticNoop: 0, sourcesQuarantined: 0,
     sourcesAbsent: 0, bytesScanned: 0, usageEventsRemoved: 0,
     sourcesVerified: 0, bytesVerified: 0, verificationMismatches: 0,
     discoverySourcesRejected: 0,
@@ -1104,18 +1104,25 @@ async function runRefresh({
   if (deferred === null) createLocalIndexSecondaryIndexes(database);
   if(deferred===null&&modelRecoveryPending>0)deferred={reason:'model_attribution_recovery',pendingSources:modelRecoveryPending};
 
-  // 4. Sources that vanished keep their facts and become absent.
+  // 4. Reconcile discovery presence independently of fact changes. An
+  // unchanged source can reappear after a narrower discovery window.
   const discovered = new Set([
     ...infos.map(hexOf),
     ...discoveryReceipt.quarantined.map(hexOf),
   ]);
   const absent = [...catalog.entries()]
     .filter(([hex, row]) => !discovered.has(hex) && row.presence !== "absent");
-  if (absent.length > 0) {
+  const reappeared = [...catalog.entries()]
+    .filter(([hex, row]) => discovered.has(hex) && row.presence === "absent");
+  if (absent.length > 0 || reappeared.length > 0) {
+    if (signal?.aborted) throw fixedError("local_index_aborted");
     writer.begin();
     try {
+      let restored = 0;
+      for (const [, row] of reappeared) restored += writer.markPresent(Number(row.id));
       for (const [, row] of absent) writer.markAbsent(Number(row.id));
-      writer.commit({ kind: "refresh", sourcesChanged: absent.length });
+      writer.commit({ kind: "refresh", sourcesChanged: absent.length + restored,
+        bumpSeq: absent.length + restored > 0 });
     } catch (error) {
       writer.rollback();
       throw error;
@@ -1249,6 +1256,7 @@ async function runRefresh({
           // Reconciliation runs before emitting facts. If an append discovers
           // own-response history missed by the classification hint, roll back
           // and retry from the full source with fresh seeds and segment digests.
+          const countsBeforeCandidate = { ...counts };
           writer.begin();
           try {
             const state = stateFor(info, row);
@@ -1263,7 +1271,9 @@ async function runRefresh({
               continue;
             }
             const resuming = mode === "append";
-            if (!resuming && row !== undefined) {
+            const candidate = !resuming && row !== undefined && plan.candidateDisabled !== true
+              && writer.beginSourceCandidate(state.sourceId);
+            if (!resuming && row !== undefined && !candidate) {
               counts.usageEventsRemoved += writer.deleteSourceFacts(state.sourceId);
               if (replacementSessions.has(sessionIdFor(info))) {
                 writer.clearLineageSnapshots(state.sessionId);
@@ -1364,6 +1374,12 @@ async function runRefresh({
                 ? Number(info.size) - outcome.read.nextOffset : 0,
               contradictedLeadingSnapshotsSkipped: sink.suppressedFor(state),
             };
+            if (candidate) {
+              if (rolloutContentQuarantineReason(outcome) !== null) throw fixedError("local_index_candidate_replay_required");
+              writer.finishSourceCandidate();
+              counts.usageEvents = countsBeforeCandidate.usageEvents;
+              counts.sourcesSemanticNoop += 1;
+            }
             const quarantineReason = rolloutContentQuarantineReason(outcome);
             if (quarantineReason !== null) {
               counts.usageEventsRemoved += writer.deleteSourceFacts(state.sourceId);
@@ -1413,8 +1429,17 @@ async function runRefresh({
             reportProgress();
           } catch (error) {
             writer.rollback();
+            if (error?.code === "local_index_candidate_replay_required") {
+              plan.candidateDisabled = true;
+              sink.discardSource(sourceStates.get(info));
+              sourceStates.delete(info);
+              Object.assign(counts, countsBeforeCandidate);
+              sourceIndex -= 1;
+              continue;
+            }
             if (mode === "append" && error?.code === "codex_response_usage_rescan_required") {
               plan.mode = "rescan";
+              plan.candidateDisabled = true;
               sourceIndex -= 1;
               continue;
             }

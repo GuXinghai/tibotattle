@@ -42,7 +42,7 @@ import {
 
 export const LOCAL_INDEX_STORE_FAMILY = "local-index-store";
 export const LOCAL_INDEX_STORE_APPLICATION_ID = 0x554d4932;
-export const LOCAL_INDEX_STORE_USER_VERSION = 7;
+export const LOCAL_INDEX_STORE_USER_VERSION = 8;
 // A confirmed native response receipt repaired this derived model. Reparse clears it.
 export const EVENT_FLAG_RUNTIME_MODEL = 32;
 // Increment when reviewed identity additions can repair previously unknown
@@ -51,7 +51,7 @@ export const LOCAL_INDEX_MODEL_RECOGNITION_VERSION = 1;
 // Names the shared extractor revision it was built with, so a change to the
 // extractor's semantics cannot leave facts that no reparse will replace.
 // test/local-index-refresh.test.js pins the two together.
-export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v3+unified-rollout-typed-v21";
+export const LOCAL_INDEX_PARSER_VERSION = "local-index-rollout-typed-v3+unified-rollout-typed-v22";
 
 // Append-only: ordinals are the on-disk and wire representation.
 export const REASONING_EFFORTS = Object.freeze([
@@ -76,6 +76,7 @@ const DIAGNOSTIC_CODES = new Set([
   "malformedRateLimitRecords", "partialLines", "salvagedRecords",
   "turnContexts", "tokenCounts", "forkReplayEventsSkipped",
   "unattributedForkReplayEventsSkipped", "cumulativeCounterRegressions",
+  "cumulativePrefixUnattributed",
   "tierEvents", "modelSeededFromLineage", "tierSeededFromLineage",
   "modelMissing", "oversizedLines", "contradictedLeadingSnapshotsSkipped",
   "toolRecords", "toolEvents", "toolRecordsSkipped",
@@ -124,7 +125,8 @@ const SCHEMA = `
   -- Monotonic publication counter. Readers key every cache off it.
   CREATE TABLE IF NOT EXISTS store_state(
     id INTEGER PRIMARY KEY CHECK(id = 1),
-    commit_seq INTEGER NOT NULL) STRICT;
+    commit_seq INTEGER NOT NULL,
+    calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)) STRICT;
 
   -- One short summary per refresh; the newest 100 are kept.
   CREATE TABLE IF NOT EXISTS commit_log(
@@ -463,7 +465,7 @@ function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
     throw fixedError("local_index_newer_version");
   }
   if (userVersion < LOCAL_INDEX_STORE_USER_VERSION
-        && !(allowWorkloadPredecessor && [4,5,6].includes(userVersion))) {
+        && !(allowWorkloadPredecessor && [4,5,6,7].includes(userVersion))) {
     throw fixedError("local_index_family_mismatch");
   }
 }
@@ -490,6 +492,77 @@ export function readLocalIndexIdentityBeforeMigration(file) {
   } finally { database?.close(); }
 }
 
+// Dependency matrix for the calculation proof. Every fact field, dimension,
+// identity and physical ordering is material. Source byte/digest/verification
+// metadata is publication-only; completeness transitions remain material.
+// All diagnostics are conservative inputs except these extraction counters,
+// which only describe physical work and ride in the fresh publication envelope.
+const CALCULATION_METADATA_DIAGNOSTICS = [
+  "relevantLines", "turnContexts", "tokenCounts", "tierEvents", "toolRecords",
+  "responseDuplicateCopies", "responseForeignThreadRecords",
+];
+function installCalculationRevisionTriggers(database) {
+  const tables = ["usage_event", "usage_event_boundary", "quota_occurrence",
+    "quota_observation", "tool_class_fact", "work_lifecycle_fact", "lineage_snapshot",
+    "model", "tier_semantics", "surface_class",
+    "account_scope", "session", "work_directory"];
+  for (const table of tables) {
+    const columns = database.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name);
+    for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
+      // Newly interned dimensions are inert until a fact/source references them.
+      // Nullable UNIQUE keys can allocate an unused duplicate on replay.
+      if (operation === "INSERT" && ["model", "tier_semantics", "surface_class", "account_scope", "session", "work_directory"].includes(table)) continue;
+      const when = operation === "UPDATE"
+        ? `WHEN ${columns.map(name => `OLD.${name} IS NOT NEW.${name}`).join(" OR ")}` : "";
+      database.exec(`CREATE TRIGGER calculation_${table}_${operation.toLowerCase()}
+        AFTER ${operation} ON ${table} ${when} BEGIN
+        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END`);
+    }
+  }
+  const sourceColumns = ["source_local", "source_ordinal", "session_id", "surface_id",
+    "presence", "parser_version", "quarantine_code", "snapshots_persisted",
+    "carry_model", "carry_effort", "carry_tier_raw", "carry_tier_observed_at_ms",
+    "carry_work_directory_id", "compacted_at_ms", "compaction_offset", "turn_context_pending"];
+  for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
+    const when = operation === "UPDATE" ? `WHEN ${sourceColumns.map(name => `OLD.${name} IS NOT NEW.${name}`).join(" OR ")}
+      OR (OLD.scanned_bytes = OLD.size_bytes) IS NOT (NEW.scanned_bytes = NEW.size_bytes)
+      OR (OLD.scanned_bytes IS NOT NEW.scanned_bytes AND (
+        ${["usage_event", "usage_event_boundary", "quota_occurrence", "tool_class_fact", "work_lifecycle_fact"].map(table => `EXISTS(SELECT 1 FROM ${table} WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes))`).join(" OR ")}
+      ))
+      OR (CASE WHEN json_valid(OLD.lineage_json) THEN json_remove(OLD.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE OLD.lineage_json END)
+        IS NOT (CASE WHEN json_valid(NEW.lineage_json) THEN json_remove(NEW.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE NEW.lineage_json END)` : "";
+    database.exec(`CREATE TRIGGER calculation_source_${operation.toLowerCase()}
+      AFTER ${operation} ON source ${when} BEGIN
+      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END`);
+    const benign = CALCULATION_METADATA_DIAGNOSTICS.map(code => `'${code}'`).join(",");
+    const condition = operation === "INSERT" ? `NEW.code NOT IN (${benign})`
+      : operation === "DELETE" ? `OLD.code NOT IN (${benign})`
+        : `(OLD.code NOT IN (${benign}) OR NEW.code NOT IN (${benign})) AND (OLD.code IS NOT NEW.code OR OLD.count IS NOT NEW.count)`;
+    database.exec(`CREATE TRIGGER calculation_diagnostic_${operation.toLowerCase()}
+      AFTER ${operation} ON source_diagnostic WHEN ${condition} BEGIN
+      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END`);
+  }
+}
+
+function retireRuntimeCaptureRevisionTriggers(database) {
+  // Capture queues receipts without changing published accounting inputs.
+  // Foreground reconciliation changes usage_event, whose triggers still fence
+  // reuse. Earlier v8 stores also installed triggers on the receipt queue;
+  // retire only those triggers, without resetting revisions or rewriting facts.
+  const names = ["insert", "update", "delete"].map(operation =>
+    `calculation_runtime_model_evidence_${operation}`);
+  if (!database.prepare(`SELECT 1 FROM sqlite_master WHERE type='trigger'
+    AND tbl_name='runtime_model_evidence' AND name IN (?,?,?) LIMIT 1`).get(...names)) return;
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    for (const name of names) database.exec(`DROP TRIGGER IF EXISTS ${name}`);
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function initialize(database) {
   database.exec("BEGIN IMMEDIATE");
   try {
@@ -508,6 +581,7 @@ function initialize(database) {
     database.exec(PAIRING_TRIGGER_SCHEMA);
     database.exec(WORK_ROLLUP_TRIGGER_SCHEMA);
     database.prepare("INSERT INTO store_state(id, commit_seq) VALUES (1, 0)").run();
+    installCalculationRevisionTriggers(database);
     database.exec(`
       PRAGMA application_id=${LOCAL_INDEX_STORE_APPLICATION_ID};
       PRAGMA user_version=${LOCAL_INDEX_STORE_USER_VERSION};
@@ -577,7 +651,21 @@ export function openLocalIndexStore(file, {
         throw error;
       }
     }
+    if (existed && !readOnly
+        && database.prepare("PRAGMA user_version").get().user_version === 7) {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        database.exec("ALTER TABLE store_state ADD COLUMN calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)");
+        installCalculationRevisionTriggers(database);
+        database.exec("PRAGMA user_version=8");
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    }
     assertFamily(database);
+    if (!readOnly) retireRuntimeCaptureRevisionTriggers(database);
     if (!readOnly && !evidenceOnly) {
       // A registry revision that moved a context threshold invalidates the
       // key; the rollups are regrouped from the facts, never from rollouts.
@@ -650,6 +738,10 @@ export function readPendingModelRecognitionSources(database) {
     WHERE m.model_id='unknown' AND u.source_offset<=s.scanned_bytes
       AND COALESCE(v.count,0)<?`).all(LOCAL_INDEX_MODEL_RECOGNITION_VERSION)
     .map(row => Number(row.source_id)));
+}
+
+export function readCalculationRevision(database) {
+  return Number(database.prepare("SELECT calculation_revision FROM store_state WHERE id=1").get().calculation_revision);
 }
 
 export function readCommitSeq(database) {
@@ -744,7 +836,7 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
   database.exec('CREATE TEMP TABLE IF NOT EXISTS prior_response_usage(event_key BLOB PRIMARY KEY,u INTEGER,c INTEGER,w INTEGER,o INTEGER,r INTEGER) WITHOUT ROWID');
   void deviceSalt;
   const statements = {
-    response: database.prepare('SELECT tokens_in_uncached u,tokens_in_cache_read c,tokens_in_cache_write w,tokens_out_combined o,tokens_out_reasoning r FROM usage_event WHERE event_key=? AND (flags & 16)<>0 LIMIT 1'),
+    response: database.prepare('SELECT source_id,observed_at_ms at,model_id model,tier_id tier,tier_observed_at_ms tier_at,(flags & 4) assumed,tokens_in_uncached u,tokens_in_cache_read c,tokens_in_cache_write w,tokens_out_combined o,tokens_out_reasoning r FROM usage_event WHERE event_key=? AND (flags & 16)<>0 LIMIT 1'),
     priorResponse: database.prepare('SELECT u,c,w,o,r FROM prior_response_usage WHERE event_key=?'),
     preserveResponses: database.prepare('INSERT OR IGNORE INTO prior_response_usage SELECT event_key,tokens_in_uncached,tokens_in_cache_read,tokens_in_cache_write,tokens_out_combined,tokens_out_reasoning FROM usage_event WHERE source_id=? AND source_offset>=? AND source_offset<=(SELECT scanned_bytes FROM source WHERE id=?) AND (flags & 16)<>0'),
     hasUsage: database.prepare('SELECT 1 FROM usage_event WHERE source_id=? AND source_offset=?'),
@@ -860,10 +952,9 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
     segment: database.prepare(`
       INSERT INTO source_segment(source_id, segment, digest) VALUES (?, ?, ?)
       ON CONFLICT(source_id, segment) DO UPDATE SET digest = excluded.digest`),
-    deleteDiagnostics: database.prepare("DELETE FROM source_diagnostic WHERE source_id = ?"),
     diagnostic: database.prepare(`
       INSERT INTO source_diagnostic(source_id, code, count) VALUES (?, ?, ?)
-      ON CONFLICT(source_id, code) DO UPDATE SET count = excluded.count`),
+      ON CONFLICT(source_id, code) DO UPDATE SET count = excluded.count WHERE count IS NOT excluded.count`),
     selectSource: database.prepare("SELECT id, source_ordinal FROM source WHERE source_local = ?"),
     insertSource: database.prepare(`
       INSERT INTO source(
@@ -888,6 +979,18 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
   const sessionIds = new Map();
   const workDirectoryIds = new Map();
   const quotaIds = new Map();
+  // Bounded SQLite TEMP staging, only for sources without quota or lineage.
+  // Those reconciliation classes keep the existing conservative full replay.
+  const candidateStatements = new Map();
+  const candidateTables = ["usage_event", "usage_event_boundary", "tool_class_fact", "work_lifecycle_fact"];
+  const candidateStatementNames = ["usage", "boundary", "toolFact", "workFact", "hasUsage"];
+  let candidateSource = null;
+  function stopCandidate() {
+    if (candidateSource === null) return;
+    for (const [name, original] of candidateStatements) statements[name] = original;
+    candidateStatements.clear();
+    candidateSource = null;
+  }
   let transaction = false;
   let transactions = 0;
   let eventsAdded = 0;
@@ -902,6 +1005,14 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
     const cached = cache.get(key);
     if (cached !== undefined) return cached;
     assertTransaction();
+    // SQLite UNIQUE treats NULL as distinct. Reuse the reviewed IS-based
+    // lookup before inserting so replay cannot accumulate unused dimensions.
+    const existing = select();
+    if (existing !== undefined) {
+      const id = Number(existing.id);
+      cache.set(key, id);
+      return id;
+    }
     insert();
     const id = Number(select().id);
     cache.set(key, id);
@@ -917,9 +1028,42 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       eventsAdded = 0;
       eventsRemoved = 0;
     },
+    beginSourceCandidate(sourceId) {
+      assertTransaction();
+      if (database.prepare("SELECT 1 FROM quota_occurrence WHERE source_id=? LIMIT 1").get(sourceId)
+          || database.prepare("SELECT 1 FROM lineage_snapshot WHERE session_id=(SELECT session_id FROM source WHERE id=?) LIMIT 1").get(sourceId)) return false;
+      for (const table of candidateTables) {
+        const schema = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name=?").get(table).sql;
+        database.exec(schema.replace(`CREATE TABLE ${table}`, `CREATE TEMP TABLE IF NOT EXISTS candidate_${table}`).replace(/ REFERENCES [a-z_]+(?: ON DELETE CASCADE)?/g, ""));
+        database.exec(`DELETE FROM candidate_${table}`);
+      }
+      candidateSource = sourceId;
+      for (const name of candidateStatementNames) {
+        const original = statements[name];
+        let sql = original.sourceSQL;
+        for (const table of candidateTables) sql = sql.replace(new RegExp(`\\b${table}\\b`, "g"), `candidate_${table}`);
+        candidateStatements.set(name, original);
+        statements[name] = database.prepare(sql);
+      }
+      return true;
+    },
+    finishSourceCandidate() {
+      assertTransaction();
+      if (candidateSource === null) return false;
+      const sourceId = candidateSource;
+      const equal = candidateTables.every(table =>
+        database.prepare(`SELECT 1 FROM (SELECT * FROM ${table} WHERE source_id=? EXCEPT SELECT * FROM candidate_${table}) LIMIT 1`).get(sourceId) === undefined
+        && database.prepare(`SELECT 1 FROM (SELECT * FROM candidate_${table} EXCEPT SELECT * FROM ${table} WHERE source_id=?) LIMIT 1`).get(sourceId) === undefined);
+      stopCandidate();
+      if (!equal) throw fixedError("local_index_candidate_replay_required");
+      // No durable usage/rollup/pairing rows were deleted or reinserted.
+      eventsAdded = 0;
+      return true;
+    },
     /** Commit and publish. Returns the new `commit_seq`. */
     commit({ kind = "refresh", sourcesChanged = 1, bumpSeq = true } = {}) {
       assertTransaction();
+      if (candidateSource !== null) throw fixedError("local_index_candidate_unfinished");
       let seq = null;
       try {
         if (bumpSeq) {
@@ -940,7 +1084,11 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
     },
     rollback() {
       if (!transaction) return;
-      try { database.exec("ROLLBACK"); } finally { transaction = false; }
+      stopCandidate();
+      try { database.exec("ROLLBACK"); } finally {
+        transaction = false;
+        for (const cache of [modelIds, tierIds, surfaceIds, scopeIds, sessionIds, workDirectoryIds, quotaIds]) cache.clear();
+      }
     },
     get inTransaction() { return transaction; },
     /** Write transactions begun on this writer; the no-change gate reads it. */
@@ -1006,6 +1154,7 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       return statements.selectWorkDirectoryPath.get(Number(id))?.path ?? null;
     },
     internQuota(observation) {
+      if (candidateSource !== null) throw fixedError("local_index_candidate_replay_required");
       const key = `${observation.observedAtMs}\0${observation.limitId}\0${observation.slot}`
         + `\0${observation.planType ?? ""}\0${observation.usedPercent ?? ""}`
         + `\0${observation.resetsAtMs ?? ""}\0${observation.durationMins ?? ""}`;
@@ -1073,7 +1222,17 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
           if (old.u !== event.tokensInUncached || old.c !== event.tokensInCacheRead
               || old.w !== event.tokensInCacheWrite || old.o !== event.tokensOutCombined
               || old.r !== event.tokensOutReasoning) throw fixedError('codex_response_usage_identity_conflict');
-          if (active) return 0;
+          if (active && !(candidateSource === event.sourceId && Number(active.source_id) === event.sourceId)) {
+            // A duplicate physical source cannot choose the response's date,
+            // model, speed or availability by arrival order. Re-evaluating the
+            // canonical source itself remains a versioned, atomic correction.
+            if (active.at !== event.observedAtMs || active.model !== event.modelId
+                || active.tier !== event.tierId || active.tier_at !== (event.tierObservedAtMs ?? null)
+                || active.assumed !== (event.cacheWriteAssumedZero ? EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO : 0)) {
+              throw fixedError('codex_response_usage_identity_conflict');
+            }
+            return 0;
+          }
         }
       }
       const flags = (event.partial ? EVENT_FLAG_PARTIAL : 0)
@@ -1126,14 +1285,16 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
         fact.sessionId, fact.taskKey, fact.observedAtMs, fact.kind, fact.durationMs).changes);
     },
     addLineageSnapshot(sessionId, snapshotLocalKey) {
+      if (candidateSource !== null) throw fixedError("local_index_candidate_replay_required");
       assertTransaction();
       statements.lineageSnapshot.run(sessionId, Buffer.from(snapshotLocalKey));
     },
     clearLineageSnapshots(sessionId) {
       assertTransaction();
-      statements.deleteLineageSnapshots.run(sessionId);
+      if (candidateSource === null) statements.deleteLineageSnapshots.run(sessionId);
     },
     loadSettledQuotaWindows(sourceId) {
+      if (candidateSource !== null) return [];
       return statements.settledQuota.all(sourceId).map((row) => ({
         provider: row.provider,
         planType: row.planType,
@@ -1218,7 +1379,11 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
         }
       }
       if (state.diagnostics !== undefined) {
-        statements.deleteDiagnostics.run(sourceId);
+        const retained = new Set(Object.entries(state.diagnostics ?? {}).filter(([code, value]) =>
+          DIAGNOSTIC_CODES.has(code) && Number.isSafeInteger(Number(value)) && Number(value) >= 0).map(([code]) => code));
+        for (const row of database.prepare("SELECT code FROM source_diagnostic WHERE source_id=?").all(sourceId)) {
+          if (!retained.has(row.code)) database.prepare("DELETE FROM source_diagnostic WHERE source_id=? AND code=?").run(sourceId, row.code);
+        }
         for (const [code, value] of Object.entries(state.diagnostics ?? {})) {
           if (!DIAGNOSTIC_CODES.has(code)) continue;
           const count = Number(value);
@@ -1233,6 +1398,11 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       database.prepare(`
         UPDATE source SET verified_at_ms = ?, verified_bytes = scanned_bytes
         WHERE id = ?`).run(verifiedAtMs, sourceId);
+    },
+
+    markPresent(sourceId) {
+      assertTransaction();
+      return Number(database.prepare("UPDATE source SET presence = 'present' WHERE id = ? AND presence = 'absent'").run(sourceId).changes);
     },
 
     markAbsent(sourceId) {

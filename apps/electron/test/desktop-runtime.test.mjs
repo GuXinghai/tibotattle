@@ -843,7 +843,8 @@ test("runtime wires safe browser, diagnostics, and local-data actions", async ()
   assert.equal(copied.length, 1);
   assert.equal(copied[0], dialogs[0].detail);
   assert.match(dialogs[0].detail, /tibotattle-electron-diagnostics-v2/u);
-  assert.match(dialogs[0].detail, /"cadenceTimerArmed": true/u);
+  assert.match(dialogs[0].detail, /"scheduleOwner": "companion"/u);
+  assert.match(dialogs[0].detail, /"cadenceTimerArmed": false/u);
   assert.doesNotMatch(dialogs[0].detail, /Users|127\.0\.0\.1|codex-first/u);
   await fixture.desktop.lifecycle.dispose();
 });
@@ -1270,6 +1271,7 @@ test("runtime grants Settings actions only to the trusted live dashboard top fra
       { action: "sendTestNotification", args: {} },
       { action: "getCodexHomesForSettings", args: {} },
       { action: "chooseWindowBackground", args: {} },
+      { action: "setRefreshPaused", args: { paused: true } },
     ]) {
       await assert.rejects(ipcMain.handler(trustedEvent, request),
         (error) => error?.code === "desktop_ipc_untrusted_context", url);

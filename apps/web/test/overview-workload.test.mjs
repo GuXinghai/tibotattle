@@ -18,6 +18,79 @@ const payload=()=>({schemaVersion:"overview-workload-v2",status:"available",gene
   daily:[{date:"2026-10-15",covered:true,heavy:2,medium:1,light:1,unclassified:0}],
   current:{state:"working",level:"heavy",ratePpPerHour:4.2,hours:15.7},comparison:{startedAtMs:Date.parse("2026-10-15T10:00:00Z"),actualPp:2,expectedPp:1}});
 const render=(root,value)=>renderOverviewWorkload(root,normalizeOverviewWorkload(value),{translate:(key,values)=>translate(key,values,"zh-Hans"),locale:"zh-CN"});
+const currentPayload=()=>({...payload(),schemaVersion:'overview-workload-v7',
+  unallocated:{totalIntervals:0,plans:[],records:[],truncated:false},
+  current:{windowMinutes:15,state:'working',level:'heavy',usdPerWorkHour:4.2,ratePpPerHour:4.2,hours:15.7},
+  trend:{windowMinutes:60,state:'available',ratePpPerHour:1,observedFrom:'2026-10-15T11:40:00Z',
+    observedThrough:'2026-10-15T12:00:00Z',coveredMinutes:20,inferred:false}});
+
+test('API workload and numeric quota trend occupy the existing card with distinct units',()=>{
+  const root=documentFixture();render(root,currentPayload());
+  assert.equal(root.all().filter(x=>x.dataset.workloadCard).length,5);
+  const current=root.all().find(x=>x.dataset.workloadCard==='current');
+  const windows=current.all().filter(x=>x.dataset.workloadWindow);
+  assert.deepEqual(windows.map(x=>x.dataset.workloadWindow),['shortTerm','trend']);
+  assert.match(windows[0].textContent,/短期负载（15分钟）重度/);
+  assert.match(windows[1].textContent,/额度消耗趋势（60分钟）1 点／小时/);
+  assert.equal(windows[0].children[0].children[0].tagName,'span');
+  assert.equal(windows[1].children[0].children[0].tagName,'span');
+  assert.match(current.textContent,/API 等值强度US\$4.2／工时/);
+  assert.match(current.textContent,/按短期负载可继续工作15.7 小时/);
+  assert.doesNotMatch(current.textContent,/66 小时/);
+  const p=currentPayload();p.trend.inferred=true;render(root,p);
+  assert.equal(root.all().find(x=>x.dataset.workloadWindow==='trend').children[1].textContent,'1 点／小时 *');
+});
+
+test('v7 sanitizes each recent window and never relabels old or stale grades',()=>{
+  const p=currentPayload();p.current.secret='never-project';
+  assert.doesNotMatch(JSON.stringify(normalizeOverviewWorkload(p)),/never-project/);
+  for(const patch of [{status:'stale'},{status:'unavailable'},
+    {schemaVersion:'overview-workload-v5'},{schemaVersion:'overview-workload-v6'},{current:{...p.current,windowMinutes:5}}]){
+    const v=normalizeOverviewWorkload({...p,...patch});
+    assert.equal(v.current.state,'unknown');assert.equal(v.current.level,null);assert.equal(v.current.ratePpPerHour,null);
+  }
+  const old=normalizeOverviewWorkload({...p,schemaVersion:'overview-workload-v5'});
+  assert.equal(old.status,'stale');assert.equal(old.trend.ratePpPerHour,null);
+  const partial=normalizeOverviewWorkload({...p,status:'partial',trend:{windowMinutes:60,state:'unknown',level:'heavy',hours:8}});
+  assert.equal(partial.current.level,'heavy');assert.equal(partial.trend.ratePpPerHour,null);
+  assert.ok(!Object.hasOwn(partial.trend,'hours'));assert.ok(!Object.hasOwn(partial.trend,'level'));
+  assert.equal(normalizeOverviewWorkload({...p,current:{...p.current,hours:Infinity}}).current.hours,null);
+});
+
+test('missing recent values show only dashes while concrete errors remain visible',()=>{
+  const root=documentFixture(),p=currentPayload();p.current.level='unclassified';p.current.usdPerWorkHour=null;p.current.ratePpPerHour=null;
+  p.trend={windowMinutes:60,state:'unknown'};p.errors=[{code:'quota_history_read_failed',stage:'quota'},{code:'price_missing',stage:'pricing'}];render(root,p);
+  const windows=root.all().filter(x=>x.dataset.workloadWindow);
+  for(const w of windows){assert.equal(w.children[1].textContent,'-');assert.ok(w.all().every(x=>!x.style.color));}
+  assert.doesNotMatch(root.textContent,/数据不足|无负载|尚未观测/);
+  assert.match(root.textContent,/quota_history_read_failed/);assert.match(root.textContent,/price_missing/);
+  for(const locale of ['en-US','zh-Hans','es'])for(const key of ['workload.shortTerm','workload.trend','workload.windowMinutes','workload.quotaRateValue'])
+    assert.notEqual(translate(key,{minutes:15,value:2},locale),key);
+});
+
+test('unclassified API intensity retains observed values including zero without an invented grade',()=>{
+  const root=documentFixture(),p=currentPayload();p.current.level='unclassified';p.current.hours=null;
+  for(const value of [0,2.5]){
+    p.current.usdPerWorkHour=value;render(root,p);
+    const current=root.all().find(x=>x.dataset.workloadCard==='current');
+    const main=current.all().find(x=>x.dataset.workloadWindow==='shortTerm').children[1];
+    assert.equal(main.textContent,`US$${value}／工时`);assert.ok(!main.style.color);
+    assert.doesNotMatch(current.textContent,/数据不足|未分类/);
+  }
+  assert.match(root.all().find(x=>x.dataset.workloadCard==='hours').textContent,/当前套餐时段/);
+});
+
+test('quota trend refuses invalid coverage and stale values without hiding specific failures',()=>{
+  const p=currentPayload();p.errors=[{code:'quota_observation_conflict',stage:'quota'}];
+  const root=documentFixture();
+  for(const patch of [{windowMinutes:15},{ratePpPerHour:0},{ratePpPerHour:Infinity},
+    {observedFrom:'2026-10-15T10:59:59Z'},{observedThrough:'2026-10-15T12:00:01Z'},
+    {observedFrom:p.trend.observedThrough},{coveredMinutes:60}]){
+    render(root,{...p,trend:{...p.trend,...patch}});
+    assert.equal(root.all().find(x=>x.dataset.workloadWindow==='trend').children[1].textContent,'-');
+    assert.match(root.textContent,/quota_observation_conflict/);
+  }
+});
 test("overview SVG and inline colours follow the document theme without rerendering evidence",()=>{
   const root=documentFixture(),p=payload();
   p.allowance.points=[{at:"2026-10-15T11:00:00Z",remainingPercent:70},{at:"2026-10-15T12:00:00Z",remainingPercent:66}];
@@ -41,12 +114,15 @@ test("approved overview contains exactly five cards and common-scale hour bars",
   const daily=root.all().find(x=>x.dataset.workloadCard==="daily");
   assert.equal(daily.all().filter(x=>x.tagName==="rect").length,3);
   assert.ok(daily.all().filter(x=>x.tagName==="rect").every(x=>x.attrs["shape-rendering"]==="crispEdges"));
-  assert.doesNotMatch(root.textContent,/包含今天|换算说明|模型运行|最近 15 分钟|本段累计/u);
+  assert.doesNotMatch(root.textContent,/包含今天|换算说明|模型运行|本段累计/u);
 });
 test("startup comparison has two common-scale cylinders, explicit zero and missing values",()=>{
-  const root=documentFixture(),p=payload();render(root,p);
+  const root=documentFixture(),p=payload();p.comparison.startedAtMs=new Date(2026,9,23,3,34).getTime();render(root,p);
   const card=root.all().find(x=>x.dataset.workloadCard==="comparison");
-  assert.ok(card.textContent.includes("启动后累计"));assert.ok(card.textContent.includes("实际消耗"));assert.ok(card.textContent.includes("预期消耗"));
+  assert.equal(card.children[0].tagName,'h3');
+  assert.equal(card.children[0].children[0].tagName,'small');
+  assert.equal(card.children[0].children[0].textContent,'自10/23 03:34');
+  assert.doesNotMatch(card.textContent,/启动后累计/);assert.ok(card.textContent.includes("实际消耗"));assert.ok(card.textContent.includes("预期消耗"));
   assert.equal(card.all().filter(x=>x.tagName==="polyline").length,0);
   const bars=card.all().filter(x=>x.tagName==="rect");assert.equal(bars.length,2);
   assert.equal(Number(bars[0].attrs.height),2*Number(bars[1].attrs.height));
@@ -56,11 +132,28 @@ test("startup comparison has two common-scale cylinders, explicit zero and missi
   assert.equal(sparse.all().filter(x=>x.tagName==="rect").length,0);
   assert.equal(normalizeOverviewWorkload({...p,schemaVersion:"overview-workload-v1"}),null);
 });
-test("idle hides current rate and hours but retains historical hour rows",()=>{
-  const root=documentFixture(),p=payload();p.current={state:"idle"};render(root,p);
+test("idle shows a dash, hides pace rows and retains historical hour rows",()=>{
+  const root=documentFixture(),p={...payload(),schemaVersion:'overview-workload-v7',
+    unallocated:{totalIntervals:0,plans:[],records:[],truncated:false},
+    current:{windowMinutes:15,state:'idle'},trend:{windowMinutes:60,state:'unknown'}};render(root,p);
   const current=root.all().find(x=>x.dataset.workloadCard==="current");
-  assert.ok(current.textContent.includes("无负载"));assert.ok(!current.textContent.includes("当前速率"));
+  assert.equal(current.all().filter(x=>x.dataset.workloadWindow)[0].children[1].textContent,'-');
+  assert.doesNotMatch(current.textContent,/无负载|数据不足|API 等值强度/);
   assert.equal(root.all().filter(x=>x.dataset.level).length,4);
+});
+
+test('startup comparison discloses inherited plan attribution and projects only its boolean marker',()=>{
+  const root=documentFixture(),p=currentPayload();
+  p.comparison={...p.comparison,inferred:true,accountKey:'never-render'};
+  const normalized=normalizeOverviewWorkload(p);
+  assert.equal(normalized.comparison.inferred,true);assert.doesNotMatch(JSON.stringify(normalized),/never-render/);
+  render(root,p);
+  const card=root.all().find(x=>x.dataset.workloadCard==='comparison');
+  assert.match(card.textContent,/含按套餐时段推定的归属/);
+  for(const inferred of [undefined,false,'true']){
+    p.comparison.inferred=inferred;render(root,p);
+    assert.doesNotMatch(root.all().find(x=>x.dataset.workloadCard==='comparison').textContent,/含按套餐时段推定/);
+  }
 });
 
 test('pricing diagnostics stay below every card, disclose real fields, paginate and retain state on refresh',()=>{
@@ -80,15 +173,15 @@ test('pricing detail normalization drops arbitrary fields and retains missing nu
  assert.equal(out.records[0].model,'unknown');assert.equal(out.capture.status,'pending');assert.doesNotMatch(JSON.stringify(out),/private|script/u);
 });
 
-test("v3 partial comparison keeps confirmed cylinders and visibly qualifies incomplete coverage",()=>{
+test("v3 partial comparison keeps cylinders and error details without the removed coverage paragraph",()=>{
   const root=documentFixture(),p=payload();p.schemaVersion="overview-workload-v3";
   p.comparison.coverage="partial";p.status="partial";p.errors=[{code:"comparison_reset_gap",stage:"quota"}];
   render(root,p);
   const card=root.all().find(x=>x.dataset.workloadCard==="comparison");
   assert.equal(card.all().filter(x=>x.tagName==="rect").length,2);
-  assert.ok(card.textContent.includes("仅显示已确认的累计"));assert.ok(root.textContent.includes("comparison_reset_gap"));
+  assert.doesNotMatch(card.textContent,/仅显示已确认的累计|部分区间尚未计入/);assert.ok(root.textContent.includes("comparison_reset_gap"));
   assert.ok(card.textContent.includes("2 百分点"));
-  assert.equal(normalizeOverviewWorkload({...p,schemaVersion:"overview-workload-v5"}),null);
+  assert.equal(normalizeOverviewWorkload({...p,schemaVersion:"overview-workload-v6"}),null);
 });
 
 test('v4 plan groups retain inferred labels, separate same-day plans and qualify estimated hours',()=>{
@@ -119,5 +212,40 @@ test("stale results keep timestamp and classified errors visible",()=>{
 test("non-finite hour values remain unavailable and every locale has the new labels",()=>{
   const p=payload();p.workHours[0].hours=Infinity;assert.equal(normalizeOverviewWorkload(p).workHours[0].hours,null);
   for(const locale of["en-US","zh-Hans","es"])for(const key of["workload.title.hours","workload.title.comparison","workload.idle"])
+    assert.notEqual(translate(key,{},locale),key);
+});
+
+const unallocated=(count=1)=>({totalIntervals:count,plans:[{planType:'pro',pp:count,intervals:count}],
+  records:Array.from({length:Math.min(20,count)},()=>({from:'2026-10-14T23:00:00Z',to:'2026-10-15T01:00:00Z',
+    planType:'pro',pp:1,reason:'price_missing',inferred:true,secret:'never-project'})),truncated:count>20});
+
+test('v5 unallocated summary is last, compact, collapsible and focus-stable through refresh',()=>{
+  const root=documentFixture(),p={...payload(),schemaVersion:'overview-workload-v5',unallocated:unallocated(21)};
+  p.errors=[{code:'price_missing',stage:'pricing'}];p.pricingDetails={total:1,records:[]};
+  const normalized=normalizeOverviewWorkload(p);assert.doesNotMatch(JSON.stringify(normalized),/never-project/);
+  render(root,p);let footer=root.children.at(-1);
+  assert.equal(footer.tagName,'details');assert.match(footer.className,/workload-unallocated/);
+  assert.match(footer.children[0].textContent,/跨天未分配.*21 百分点.*21 个区间/);
+  assert.equal(footer.open,false);assert.match(footer.textContent,/20 \/ 21/);
+  assert.equal(root.children[0].className,'workload-grid');assert.equal(root.children.at(-2).tagName,'details');
+  footer.open=true;footer.listeners.toggle();footer.children[0].focus();render(root,p);footer=root.children.at(-1);
+  assert.equal(footer.open,true);assert.equal(root.ownerDocument.activeElement,footer.children[0]);
+  p.unallocated={totalIntervals:0,plans:[],records:[],truncated:false};render(root,p);
+  assert.ok(!root.all().some(n=>n.className?.includes('workload-unallocated')));
+});
+
+test('v5 refuses malformed unallocated totals, timestamps and reasons, and old caches remain visibly stale',()=>{
+  const p={...payload(),schemaVersion:'overview-workload-v5',unallocated:unallocated()};
+  assert.equal(normalizeOverviewWorkload(p).status,'stale');
+  for(const bad of [{...unallocated(),totalIntervals:2},{...unallocated(),plans:[{planType:'pro',pp:2,intervals:1}]},
+    {...unallocated(),records:[{...unallocated().records[0],reason:'private-error'}]},
+    {...unallocated(),records:[{...unallocated().records[0],to:'invalid'}]},
+    {...unallocated(),plans:[{planType:'pro',pp:Infinity,intervals:1}]}])
+    assert.equal(normalizeOverviewWorkload({...p,unallocated:bad}),null);
+  for(const version of ['overview-workload-v2','overview-workload-v3','overview-workload-v4']){
+    const old=normalizeOverviewWorkload({...p,schemaVersion:version});assert.equal(old.status,'stale');assert.equal(old.unallocated,null);
+  }
+  for(const locale of ['en-US','zh-Hans','es'])for(const key of ['workload.unallocated.title','workload.unallocated.group',
+    'workload.unallocated.history_incomplete','workload.unallocated.price_missing','workload.unallocated.usage_missing','workload.unallocated.limited'])
     assert.notEqual(translate(key,{},locale),key);
 });

@@ -29,24 +29,25 @@ local-only and never leave the owner-only file.
 | File name | `local-index-store-v1.sqlite` | Stable machine path in the state root. The `v1` is a name, not the schema version. |
 | `PRAGMA application_id` | `1431128370` (`0x554D4932`) | Format guard. A mismatch fails with `local_index_family_mismatch`. |
 | `meta.family` | `local-index-store` | Logical family, written once at creation. |
-| `PRAGMA user_version` | `7` | Cursor-format version. A writer migrates 4, 5 or 6 forward transactionally; read-only open requires 7. |
-| Parser stamp | `local-index-rollout-typed-v3+unified-rollout-typed-v21` | Reconciles exact response usage with legacy spend; an unverified first-response prefix remains partial evidence. Existing sources reparse once. Original records and retained absent-source facts remain untouched. |
-| Telemetry publication parser label | `unified-rollout-typed-v21` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint retain store provenance; no hosted schema is widened. |
+| `PRAGMA user_version` | `8` | Format version. A writer migrates 4, 5, 6 or 7 forward transactionally; read-only open requires 8. |
+| Parser stamp | `local-index-rollout-typed-v3+unified-rollout-typed-v22` | Bounds legacy overlap by occurrence, rejects conflicting response copies and retains captured request speed. Existing present sources reparse under the new semantics; original records and retained absent-source facts remain untouched. |
+| Telemetry publication parser label | `unified-rollout-typed-v22` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint retain store provenance; no hosted schema is widened. |
 | Commit sequence | `store_state.commit_seq` | Monotonic publication counter. Readers key their caches and the companion generation id off it. |
+| Calculation revision | `store_state.calculation_revision` | Monotonic semantic-change counter, committed with facts. Equality can support a calculation reuse proof; it does not replace the publication fence. |
 
 Fail-closed rules, in the order `openLocalIndexStore` applies them:
 
 - A wrong `application_id` refuses the file with `local_index_family_mismatch`.
   `meta.family` is written at creation; the open path does not re-check it.
-- A `user_version` greater than 7 fails with `local_index_newer_version`. The
+- A `user_version` greater than 8 fails with `local_index_newer_version`. The
   file is not opened writable and must not be relabelled.
-- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6, then upgrades the cursor contract to 7 without deleting facts. A version-6 writer upgrades directly to 7.
+- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6, then upgrades the cursor contract to 7 without deleting facts. Version 7 advances to 8 by atomically adding the calculation revision and its semantic-change triggers; interrupted installation rolls back and can be retried.
   Refresh first performs a bounded read-only identity inspection accepting only
-  the reviewed v4/v5/v6 predecessors or current v7, validates the existing device salt,
+  the reviewed v4/v5/v6/v7 predecessors or current v8, validates the existing device salt,
   and only then opens the writer. This inspection exposes no database handle or
   old-format projection and makes no schema changes. Missing salt, foreign state,
   and newer versions are refused before any migration or salt creation.
-  Earlier versions and read-only version-4/version-5/version-6 opens fail with
+  Earlier versions and read-only version-4/version-5/version-6/version-7 opens fail with
   `local_index_family_mismatch`; readers never migrate state.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it
   fails with `local_index_journal_mode_refused`.
@@ -84,6 +85,14 @@ The running companion samples every 30 seconds, up to four batches per tick;
 each batch reads at most 1,000 log rows and 8 MiB, with a 1 MiB individual-body
 ceiling. Backlog ticks wait one second; three consecutive failures suspend this
 timer until a global refresh retries it. No UI report is published by the timer.
+Queued receipts do not advance `calculation_revision`: accounting reads the
+published usage facts, not this queue. Applying or retracting a model repair at
+the foreground boundary updates `usage_event` and advances both the calculation
+revision and publication sequence. A validated writable v8 open atomically
+retires only the three earlier `calculation_runtime_model_evidence_*` triggers
+when present. Read-only opens never perform this correction. It preserves all
+receipts, facts, cursors, revision values and the v8 physical schema; repeated
+opens do not repeat the DDL.
 Missing logs, capture failures, replacement and observed coverage gaps remain
 distinct. Closing the companion stops capture and cannot protect upstream logs
 from cleanup while it is closed.
@@ -160,8 +169,11 @@ store with sources is opened for writing: `usage_event_observed`,
   logical parent, `4` cache-write count assumed zero, `8` status-only quota
   report with no spend, `16` reconciled per-response usage. Response identities
   use device-local digests and the partial `usage_event_response_identity` index;
-  duplicate physical copies do not add spend. A changed quantity under one
-  response identity fails with `codex_response_usage_identity_conflict`.
+  duplicate physical copies do not add spend. Conflicting quantities, dates,
+  models, tier evidence or component availability across physical copies fail
+  with `codex_response_usage_identity_conflict`; enumeration order cannot select
+  their price. Re-evaluating the same source can correct its attribution under
+  the versioned reparse policy while preserving its response quantities.
 - `quota_observation` is unique on `(observed_at_ms, limit_id, slot)`. When two
   sources report the same tuple, the whole reading with the higher
   `used_percent` wins, then the later `resets_at_ms`, so arrival order cannot
@@ -186,6 +198,12 @@ store with sources is opened for writing: `usage_event_observed`,
   evidence; `responseModelRecoveryVersion` records the completed evaluation
   version, including evaluations that remain unknown. Both move atomically
   with the source cursor and facts; cancellation/failure commits neither.
+  `cumulativePrefixUnattributed` counts initial positive legacy cumulative
+  snapshots without an independently reported latest increment. Such a snapshot
+  establishes a baseline, not a request's model, time or charge. Later supported
+  deltas remain countable. Coverage readers report null for unevaluated sources;
+  a known positive prefix count survives alongside older sources and prevents a
+  complete-history claim.
 
 ### Response and legacy reconciliation
 
@@ -194,11 +212,32 @@ compaction and ordinary responses absent from `token_count`. The first response
 in a physical turn may start after a nonnegative cumulative prefix; that prefix
 is not charged and increments `responseUnverifiedPrefixTurns`. Every later
 response must continue the chain exactly. A legacy spend row is suppressed only
-when its known per-response components match modern evidence; unmatched overlap
-fails visibly. Legacy quota observations and legacy-only turns remain. Identical
+when all its known per-response components match a distinct occurrence in a
+complete modern turn. Matching consumes a vector occurrence once; several equal
+legacy rows cannot all disappear against one response. A narrow continuation
+exception accepts one preceding, same-thread/turn checkpoint whose retained
+response ID is the compaction response ID and does not occur in the ordinary
+response stream. Its explicit six-component raw and turn totals must equal the
+first response's cumulative prefix. Each suppressed legacy row must be adjacent
+to a distinct ordinary response at the same instant, with explicit latest usage
+and a valid preceding thread-cumulative delta both equal to that response's raw
+usage. Repeated, late, incomplete or contradictory checkpoint evidence does not
+qualify. The checkpoint prefix is not charged, priced or marked complete;
+`responseUnverifiedPrefixTurns` and model/speed uncertainty remain unchanged.
+Other unknown-prefix overlap, missing per-response vectors and unmatched overlap
+fail visibly. Legacy quota
+observations and legacy-only turns remain. Identical
 Token vectors with distinct response identities are distinct calls. Compaction
 checkpoint copies and ancestor responses in forked physical history are not
 new calls; cumulative thread/turn snapshots are never summed as spend.
+
+The [2026-10-22 ledger audit](../reviews/2026-10-22-main-ledger-accuracy-audit.md)
+identified reproducible overlap and attribution defects. The
+[normalization repair record](../reviews/2026-10-22-ledger-normalization-fixes.md)
+records source fixes and synthetic validation, not a revalidated historical
+ledger. A total-only row overlapping a modern turn remains a conservative
+conflict: paginated files can inherit a cumulative baseline, so the first
+physical row cannot safely be discarded merely because it is first.
 
 Changed modern files replay their retained prefix atomically. This includes a
 first modern append after an earlier legacy publication. Ordinary unchanged
@@ -209,11 +248,18 @@ accounting. If append reconciliation requires a full replay, the transaction
 rolls back and retries that exact source once with replacement segments; it
 does not publish a partial append or loop indefinitely on the same failure.
 
+This continuation exception only admits previously rejected sources. It does
+not change facts, identities or attribution for previously accepted inputs, so
+the existing parser/model-recovery stamps remain valid. A rejected source has
+no successful new cursor to invalidate; its next ordinary retry re-evaluates
+the preserved source. No database format or accounting-cache relabel is needed.
+
 The accounting reader preserves nullable components and canonical output
 representation instead of substituting zero. Partial, assumed-zero and
 conflicting evidence cannot establish fully observed pricing. Derived replay
-caches use `local-replay-safe-accounting-v0.22`; older caches are rebuilt, not
-relabeled, and the durable index schema is unchanged. Context partitions come
+caches use `local-replay-safe-accounting-v0.24`; older caches are rebuilt, not
+relabeled. All six-place monetary margins use exact decimal accumulation and
+half-up rounding, independent of whether events are grouped. Context partitions come
 from reviewed model cards across tiers; a missing Priority long-context card
 remains unpriced rather than inheriting the short-context rate.
 
@@ -230,7 +276,25 @@ model agrees. Different prior/replacement models or observed rerouting remain
 unknown when recovery is needed. A checkpoint quantity/turn conflict fails explicitly with
 `codex_response_usage_checkpoint_conflict`. Later UI/parent settings never fill
 these gaps. Speed attribution remains independently evidenced by the captured
-request context; later speed changes are not borrowed.
+request context. Its explicit unknown value cannot fall back to a later mutable
+setting. A fresh captured request can survive an in-flight speed change; reuse
+after that change needs new evidence. Legacy settings apply only to preceding
+physical records, with ordinal order breaking equal timestamps. A preceding
+future-dated setting leaves speed unknown instead of borrowing an older value.
+Compactor speed recovery requires independent prior-settings evidence agreeing
+with the replacement context; the replacement alone proves no earlier speed.
+
+The provider scanner is `codex-log-scan-v13` and the checkpoint scanner is
+`codex-export-checkpoint-scan-v0.9`. Both reuse the provider's closed task
+lifecycle normalizer and treat completion and cancellation as terminal within
+the source's own task scope. Malformed terminals remain diagnostic, not closures;
+future terminals cannot close an earlier window. Changed scanner compatibility
+prevents old open-task checkpoints from resuming under the new semantics.
+The checkpoint workspace retains a private,
+domain-separated proof alongside each opaque response identity; identical copies
+deduplicate and conflicting evidence poisons that workspace. Old proofless
+checkpoints fail version compatibility rather than silently resuming. These
+semantic revisions do not change the physical index schema version 8.
 
 Unknown models and missing/conflicting evidence remain model `unknown`, with
 unknown tier and unpriced amounts; Token counts remain available.
@@ -269,25 +333,48 @@ source cursor are provisional; recovery and source replacement remove them with
 the other affected facts. Work includes tools and necessary waiting, and parallel
 intervals count once. Inference performance timing remains independent.
 
-Workload policy `task-workload-v6` projects, rather than rewrites, these facts.
+Workload policy `task-workload-v12` projects, rather than rewrites, these facts.
 Retained unambiguous ancestry identifies copied task boundaries, including
 paginated forks; a copied completion must also match the ancestor's reported
 duration. New child work remains included, and unsupported/cyclic ancestry does
-not establish replay. Complete ordered timestamp boundaries define work even
+not establish replay. One shared ownership resolver applies this evidence to
+replay, branch cancellation and child continuation. When an ancestor has exactly
+one own start and one own completion with valid time order, descendant branch
+aborts do not create another ending for that completed ancestor. The abort facts
+remain stored and are not relabeled as copied events. Genuine child task
+cancellation remains work; missing ancestor completion, unrelated sessions,
+multiple own terminals, differing completions and ambiguous ancestry retain the
+existing continuation or conflict behavior. Complete ordered timestamp boundaries define work even
 when the reported timer differs by seconds. Missing starts still require a
 valid reported duration; reversed or unpaired conflicting boundaries remain
 errors. The projection reports replay and duration-difference counts.
+An orphan contributes no historical continuous-work interval without terminal
+evidence. Later same-session task starts bound its observation context, not an
+inferred completion. Its uncertain context excludes already-proven parallel
+union coverage; explicit boundary conflicts remain fail-closed. Fresh tasks
+starting during this run remain provisionally active only while no newer task
+context supersedes them. Session receipts cannot reactivate an old orphan.
+Incomplete work cannot train or receive a workload class or current pace.
+The deterministic three-partition fit keeps equal intensities atomic and uses
+its fitted cuts for all assignments, retaining minimum bin-count and duration
+constraints. Unsupported three-class fits remain unavailable. This changes the
+projection policy only: lifecycle and usage facts remain intact, with
+uncertainty surfaced as `work_boundary_incomplete`.
 The reader supplements its display-window lookback with committed older facts
 for the same tasks in established ancestor sessions. Lookups share the reporting
 transaction, use batches of at most 128 task keys and refuse more than 100,000
 supplementary candidate facts. Older evidence establishes replay only; output
-work intervals remain clipped to the seven-day display range. Missing,
+displayed work coverage remains clipped to the seven-day range; complete change
+intervals retain their earlier work context for rate denominators. Missing,
 ambiguous or cyclic lineage never justifies deduplication.
 
 Quota consumption is the increase beyond each reset/plan track's previously
 observed high watermark. A lower stale snapshot never replaces its pairing
 anchor and its rebound cannot be charged again. Relevant pre-window evidence
-seeds the watermark without allocating pre-window consumption. Conflicting
+seeds the watermark. Equal balances refresh observation freshness but do not
+move the first-change anchor. Only a positive quota change closes an interval;
+its complete usage denominator is retained before presentation is clipped.
+Pending zero-change tails do not contribute historical rate samples. Conflicting
 same-time readings remain errors and break allocation coverage. Regressed
 observations remain in the store, appear as chart gaps and are counted in the
 projection's `adjustments`; the latest accepted observation retains its actual
@@ -295,7 +382,7 @@ timestamp. This is an observed-consumption policy, not proof that a provider
 cannot issue a credit within a reset cycle.
 
 Overview groups committed usage timestamps into five-minute bins without
-splitting fifteen-minute display rollups. The `overview-workload-v4` comparison
+splitting fifteen-minute display rollups. The `overview-workload-v7` comparison
 reports two startup totals in percentage points, without a rolling display
 window or relative-ratio curve. Actual consumption sums only within each reset
 identity, retaining the high watermark; unmatched usage across reset boundaries
@@ -307,22 +394,87 @@ The seven-day history retains all plan periods. The
 recent preceding explicit plan observation in the same quota family. It does
 not fill before the first anchor, override explicit labels, or infer account
 identity. Conflicting simultaneous labels or explicit account changes break
-continuity. This is a marked, recomputable projection; stored occurrences and
-the strict startup comparison evidence remain unchanged. The reader retains a
+continuity. This is a marked, recomputable projection; stored occurrences remain
+unchanged. Since the owner's 2026-10-23 decision, the startup comparison also
+uses this same plan-period helper over its combined index, direct-read and saved
+baseline observations. Its `comparison.inferred` boolean marks accepted pairs
+with inherited labels and is disclosed beside the comparison. A missing label
+after an explicit anchor alone no longer freezes cumulative totals. This grants
+no account identity or reset authority. The reader retains a
 preceding committed anchor for a period that starts outside the display range.
 The response reports inferred/unresolved observations, per-day plan groups and
 inferred markers. Same-day plan groups render separately, and pairing never
 crosses plan-period or reset boundaries. Remaining-hour rates use only the most
 recent period matching the current plan; sparse samples remain unavailable.
-Browser readers accept v2/v3 last-good results and the current v4 projection.
+The v5 result adds `segmentation` (`first-quota-drop-v1`) and `unallocated`.
+Each segmentation plan reports `closedIntervals`, `observedPp`, `dailyPp`,
+`outsidePp` and `unallocatedPp`; the last three conserve the observed total
+within floating point tolerance. Plans are not pooled. Complete priced usage
+allocates by local date and existing five-minute workload class. Incomplete
+pricing never assigns unknown weight to known usages. Same-day fallback stays
+unclassified in its daily group; an unassignable cross-day interval stays only
+in `unallocated`. Its groups contain plan, total points and interval count;
+at most twenty records expose only from/to, plan, points, inferred flag and a
+closed reason (`history_incomplete`, `price_missing`, `usage_missing`). The
+truncation flag does not truncate aggregate totals. The UI renders this section
+last, outside all cards and diagnostics, with native keyboard disclosure.
+
+History and startup comparison share chronological plan-period and weekly cycle
+resolution, including the anchored five-minute deadline tolerance and validated
+reset events, while keeping separate accumulation and identity policies. History
+reset evidence has its own lookback and must not establish an older startup
+account. A seven-day plus five-minute preceding context supplements the rolling
+seven-day analysis. Usage reads refuse more than one million rows; quota and
+initial work reads refuse more than one hundred thousand rows. Older plan anchors
+can establish attribution but cannot turn omitted usage into zero. Incomplete
+contexts qualify allocation and exclude affected hour samples. Read-only
+analysis never refreshes or rewrites facts. Cancellation propagates; failures
+preserve a marked last-good result.
+
+The `overview-workload-v7` projection uses `current.windowMinutes: 15` for
+API-equivalent workload. Receipt bounds are start-exclusive/end-inclusive;
+`usdPerWorkHour` divides priced usage by clipped parallel union work time. At
+least one minute of evidenced work is required. Incomplete history, unpriced
+records and stale source evidence cannot produce a confident intensity or grade.
+Numeric intensity can be known without fitted classification cuts. Completed
+work can retain a grade until it leaves the window; idle requires complete evidence
+with no recent work or usage. Capacity conversions still honor the plan boundary.
+
+`trend.windowMinutes: 60` is independently observed quota consumption. Its state
+is `available` or `unknown`; `ratePpPerHour` divides a positive observed quota
+decrease by elapsed hours between `observedFrom` and `observedThrough`.
+`coveredMinutes` describes that actual span, which can be shorter than sixty
+minutes. Both endpoints must be inside the window and in one current plan period
+and unexpired reset cycle. The shared marked plan projection supplies `inferred`;
+identity changes, conflicts and ambiguous resets start a new pairing baseline.
+Stale regressions and duplicates do not manufacture a decrease. Repeated identical
+integers alone leave the rate unknown. Missing prices or work time cannot suppress
+an independently evidenced quota trend. No API grade or work-hours forecast is
+attached to this trend. Missing current-card values render as `-` without hint
+text; specific errors remain in diagnostics.
+The task-boundary detector retains its independent fifteen-minute unresolved
+lookback. Neither window adds a scheduler or alters historical accounting.
+
+Browser readers accept v2–v6 last-good results as stale, retaining v5+ unallocated
+summaries without mixing older daily bars with new summaries. Legacy current
+grades and trend units are not reinterpreted, and stale/unavailable
+projections cannot display fresh recent grades or estimates. The next refresh
+replaces the whole result with v7. Workload projections are recomputed and no independent durable
+segmentation anchor or SQLite migration is introduced. Startup state remains v3.
 Startup
 reads extend beyond seven days when necessary. Its startup identity, frozen
 capacity and capacity history persist in `private/overview-workload-state.json`
 as `overview-workload-state-v3`, including the first accepted startup quota
 baseline even when it came from a direct live read. Subsequent refreshes retain
-that baseline instead of replacing it with a later indexed occurrence. V1/v2
+that baseline instead of replacing it with a later indexed occurrence. A
+baseline retains its source plan label, including `unknown`; projection never
+persists an inherited label as an explicit observation. V1/v2
 reads preserve capacity history, while writes are forward-only and refuse an
-unknown newer state. The same state
+unknown newer state. Capacity history retains every validated plan and version;
+plan selection and display-window slicing affect calculation inputs only.
+The existing 4096-entry bound refuses a further version with a visible
+resource-limit outcome and retains the last-good state rather than pruning it.
+The same state
 root, using the existing validated Windows protected private boundary. The
 outer legacy state directory need not be rewritten. Write failures are visible
 publication errors.
@@ -353,8 +505,10 @@ cleared. A confirmed reset permits subsequent new-cycle pairs even when the
 boundary itself has a gap; ambiguous pairing stops until a confirmed reset.
 Missing prices retain the known priced subtotal and remain explicit errors.
 `comparison.coverage` is `complete`, `partial` or `unavailable`, and
-`confirmedThrough` identifies the last confirmed pair. The UI visibly qualifies
-partial subtotals; they are never presented as a complete cumulative total.
+`confirmedThrough` identifies the last confirmed pair. The comparison title
+includes a small startup timestamp. The owner removed the separate startup and
+partial-coverage paragraphs on 2026-10-23; the partial flag and unpaired-interval
+errors remain in the projection and diagnostic details.
 The browser accepts retained v2 snapshots and current v3, and refuses unknown
 future versions. Private startup state remains v3. Seven-day and current-load
 cards keep their existing data and semantics.
@@ -453,7 +607,7 @@ only after identity/stat and committed-prefix digest checks; a mismatching
 prefix rescans instead of retaining stale facts. The cursor can remain below
 `size_bytes` only with the exact persisted deferred-byte diagnostic. Completing
 the newline atomically publishes the record, new cursor, totals and digests;
-repeated refreshes do not count it again. A v7 store refuses older readers and
+repeated refreshes do not count it again. A v8 store refuses older readers and
 writers through the version gate; do not relabel it to run an older app.
 
 Cold builds read new sources in parallel lanes. Those lanes write facts beyond
@@ -573,8 +727,53 @@ SQLite's native lock wait may delay cancellation until its five-second timeout.
 There is no staged generation, snapshot file or publication pointer. A commit
 is the publication. The companion's generation descriptor uses `commit_seq` as
 its id and `generation-v2-<64 hex>` as its fingerprint, computed from the
-committed snapshot. Projection caches are valid only while that fingerprint is
-unchanged.
+committed snapshot. Companion-only projection caches also require unchanged
+options and proven time-window membership. Work-usage projections additionally
+read external thread and repository metadata; the database proof alone cannot
+retain a completed work-usage result. Identical in-flight reads can still share
+one build. Rediscovered unchanged sources restore `present` in a transaction
+without replaying retained facts; that transition advances publication and
+calculation revisions.
+
+The v8 `calculation_revision` advances transactionally for material fact,
+dimension, ownership/order, coverage and diagnostic changes. Metadata-only
+cursor/stat updates may leave it unchanged; the global publication sequence
+still advances. Background runtime-evidence capture is an unapplied queue and
+does not invalidate accounting; its eventual usage-fact repairs do. Eligible
+quota-free, lineage-snapshot-free rescans compare
+bounded temporary candidate tables against all existing fact columns. An equal
+candidate retains durable facts; uncertain quota/lineage reconciliation follows
+the existing full replay path. Genuine changes may require candidate extraction
+followed by replay. No source evidence is removed by this optimization.
+
+The refresh runner retains one bounded process-local calculation proof. Reuse
+requires the same semantic revision, database identity, applicable speed
+windows and independently checked known origin evidence. It validates the cache,
+preserves its original evaluation time and age, and composes fresh publication
+metadata through the existing atomic writer. A restart, unknown origin, changed
+input or expired age forces rebuilding outside explicitly labelled budget
+backoff. This proof does not persist identities or relax generation checks.
+Budget backoff does not itself qualify a result as reused. A validated old
+generation can be read only through an explicit stale channel, retaining its
+original generation, fingerprint, calculation time and coverage. Its cache
+never becomes current, and its allowance inputs do not feed the current plan.
+
+Accounting uses the existing rollup traversal only for safe whole groups;
+partial/assumed-zero/conflicting evidence and time or speed-boundary buckets
+remain event-based. Group quantities are summed once and event counts weighted
+separately. Its initial generation/coverage read uses a metadata projection,
+without constructing or pricing a presentation report. Metadata event counts
+sum committed whole-bucket counts and inspect the future-cutoff bucket exactly;
+observed-time bounds use the same queries as the full report. A stale rollup
+basis still refuses the read. Current and historical plan fits share one ordered calibration
+traversal while retaining separate results and failures; weekly intervals and
+transition ranges keep their own required passes and bounds.
+
+The reuse proof reads its minimum and maximum usage timestamps with separate
+index-boundary subqueries in one statement and snapshot. A failed live
+generation/file/revision check, including an ordinary identity read failure,
+clears the retained process proof. It cannot subsequently authorize the
+runner's durable-cache fallback; cancellation still propagates.
 
 The derived Work Usage saved-report cache retains the latest covered instant
 per reporting period and account scope. Completing an older exact-window query

@@ -39,7 +39,8 @@ async function flush() {
   await new Promise(setImmediate);
 }
 
-test("real renderer, preload, IPC, and controller complete two automatic refresh cycles", async () => {
+for (const overviewRefreshOwnedByCompanion of [false, true]) {
+test(`real renderer, preload, IPC, and controller complete two ${overviewRefreshOwnedByCompanion ? "companion-observed" : "legacy shell automatic"} refresh cycles`, async () => {
   const mainClock = scheduler();
   let nowMs = Date.parse("2026-09-21T12:00:00.000Z");
   const commands = [];
@@ -50,6 +51,7 @@ test("real renderer, preload, IPC, and controller complete two automatic refresh
     },
   });
   const controller = createDesktopController({
+    overviewRefreshOwnedByCompanion,
     settingsStore: store,
     platformServices: {
       loginItemStatus: () => ({ status: "disabled", canSet: true, detail: "disabled" }),
@@ -129,18 +131,23 @@ test("real renderer, preload, IPC, and controller complete two automatic refresh
   const bridge = exposed.tibotattleDesktop;
   assert.equal(Object.isFrozen(bridge), true);
 
-  for (const [index, expectedMode] of ["quick", "detailed"].entries()) {
+  const expectedModes = overviewRefreshOwnedByCompanion ? ["detailed", "detailed"] : ["quick", "detailed"];
+  for (const [index, expectedMode] of expectedModes.entries()) {
     if (index === 1) nowMs += 60 * 60_000;
-    const cadenceTimer = mainClock.latest(300_000);
-    mainClock.fire(cadenceTimer);
-    await flush();
-    const command = commands.at(-1);
-    assert.deepEqual(command, { command: "automaticRefresh", mode: expectedMode });
+    if (!overviewRefreshOwnedByCompanion) {
+      const cadenceTimer = mainClock.latest(300_000);
+      mainClock.fire(cadenceTimer);
+      await flush();
+      assert.deepEqual(commands.at(-1), { command: "automaticRefresh", mode: expectedMode });
+    } else {
+      assert.equal(mainClock.latest(300_000), undefined);
+      assert.equal(mainClock.latest(3_600_000), undefined);
+    }
 
     const rendererClock = scheduler();
     const session = createElectronRefreshLease({
       bridge,
-      mode: command.mode,
+      mode: expectedMode,
       schedule: rendererClock.schedule,
       cancel: rendererClock.cancel,
     });
@@ -149,10 +156,13 @@ test("real renderer, preload, IPC, and controller complete two automatic refresh
     rendererClock.fire(rendererClock.latest(ELECTRON_REFRESH_HEARTBEAT_INTERVAL_MS));
     await flush();
     assert.equal(await session.finish(), true);
-    assert.equal((await bridge.getRefreshStatus()).state, "scheduled");
+    const status = await bridge.getRefreshStatus();
+    assert.equal(status.state, overviewRefreshOwnedByCompanion ? "idle" : "scheduled");
+    assert.equal(status.scheduleOwner, overviewRefreshOwnedByCompanion ? "companion" : "electron");
+    assert.equal(status.cadenceTimerArmed, !overviewRefreshOwnedByCompanion);
   }
 
-  assert.equal(commands.length, 2);
+  assert.equal(commands.length, overviewRefreshOwnedByCompanion ? 0 : 2);
   assert.deepEqual(
     ipcRequests.filter(({ action }) => [
       "refreshStarted",
@@ -160,7 +170,7 @@ test("real renderer, preload, IPC, and controller complete two automatic refresh
       "refreshSettled",
     ].includes(action)),
     [
-      { action: "refreshStarted", args: { mode: "quick" } },
+      { action: "refreshStarted", args: { mode: expectedModes[0] } },
       { action: "refreshHeartbeat", args: { lease: 1 } },
       { action: "refreshSettled", args: { lease: 1 } },
       { action: "refreshStarted", args: { mode: "detailed" } },
@@ -168,5 +178,13 @@ test("real renderer, preload, IPC, and controller complete two automatic refresh
       { action: "refreshSettled", args: { lease: 2 } },
     ],
   );
+  const paused = await bridge.setRefreshPaused(true);
+  assert.equal(paused.settings.refreshPaused, true);
+  assert.equal((await bridge.getRefreshStatus()).cadenceTimerArmed, false);
+  await assert.rejects(bridge.setRefreshPaused("true"));
+  const resumed = await bridge.setRefreshPaused(false);
+  assert.equal(resumed.settings.refreshIntervalSeconds, 300);
+  assert.equal(resumed.settings.refreshPaused, false);
   await controller.dispose();
 });
+}

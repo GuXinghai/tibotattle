@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, writeFile, readFile, rename, rm, realpath, copyFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { appendFileSync } from 'node:fs';
 import { createParser, createToolFreeParser, digest, METHOD, TOOL_FREE_METHOD, MAX_STATE_BYTES, INFERENCE_TIMING_PARSER_VERSION } from '../src/providers/codex/logs.js';
 import { openTimingStore, ingestTimingFile, readTimingRows, createWindowsFilesystemAdapter } from '../src/platform/index.js';
 import { modelPerformanceSupplementDirectory } from '../apps/local/model-performance-worker.js';
@@ -141,6 +142,31 @@ async function setup(t) {
   return { dir, file, primary };
 }
 
+test('recovery diagnostics distinguish concurrent append, missing source and refusal without losing saved rows', async t => {
+  const { file, primary } = await setup(t);
+  await writeFile(file, lines(fixture()));
+  await ingestTimingFile(primary, file);
+  const before = readTimingRows(primary), source = { ...primary.db.prepare('SELECT cursor,rebuild_kind FROM source').get() };
+  appendFileSync(file, '{}\n');
+  let grew = false;
+  await assert.rejects(ingestTimingFile(primary, file, { onReadLine: () => {
+    if (!grew) { grew = true; appendFileSync(file, '{}\n'); }
+  } }), error => error.message === 'source_recovery_failed' && error.recoveryReason === 'source_grew_during_read' && error.attemptedBytes > 0);
+  assert.deepEqual(readTimingRows(primary), before);
+  assert.deepEqual({ ...primary.db.prepare('SELECT cursor,rebuild_kind FROM source').get() }, source);
+  assert.equal(primary.db.prepare('SELECT COUNT(*) AS n FROM parser_replay_turn').get().n, 0);
+  await ingestTimingFile(primary, file);
+  primary.db.exec("UPDATE source SET rebuild_kind='late'");
+  const refused = { ...primary, filesystem: { ...primary.filesystem, openSource: async () => {
+    throw Object.assign(new Error('private-synthetic-path'), { code: 'EACCES' });
+  } } };
+  await assert.rejects(ingestTimingFile(refused, file), error => error.message === 'source_recovery_failed' && error.recoveryReason === 'recovery_source_read_failed');
+  const moved = file + '.moved'; await rename(file, moved);
+  try { await assert.rejects(ingestTimingFile(primary, file), error => error.message === 'source_recovery_failed' && error.recoveryReason === 'recovery_source_missing'); }
+  finally { await rename(moved, file); }
+  assert.deepEqual(readTimingRows(primary), before);
+});
+
 test('additive sidecar resumes and joins without changing original rows, version or turn counts', async t => {
   const { dir, file, primary } = await setup(t);
   await writeFile(file, lines(fixture()), { mode: 0o600 }); await ingestTimingFile(primary, file);
@@ -243,8 +269,8 @@ test('real worker backfills the supplement beside saved measurements and preserv
       }
     } finally { await controller.close(); }
   }
-  const snapshotFile = join(options.directory, `model-performance-snapshot-${modelPerformanceSourceScope(codexHome)}.json`);
-  const emptySnapshotFile = join(options.directory, `model-performance-snapshot-${modelPerformanceSourceScope(emptyHome)}.json`);
+  const snapshotFile = join(options.directory, `model-performance-snapshot-v6-${modelPerformanceSourceScope(codexHome)}.json`);
+  const emptySnapshotFile = join(options.directory, `model-performance-snapshot-v6-${modelPerformanceSourceScope(emptyHome)}.json`);
   assert.notEqual(snapshotFile, emptySnapshotFile);
   const originalSnapshot = await readFile(snapshotFile, 'utf8');
   const emptySnapshot = await readFile(emptySnapshotFile, 'utf8');

@@ -373,6 +373,41 @@ function normalizedContinuityImpact(value) {
   }).accounting.cacheContinuityImpact;
 }
 
+function cacheEstimateEvidence(method = "adjacent_cache_read_decrease") {
+  return { schemaVersion: 1, method, reusablePrefixStatus: "unverified",
+    verifiedLossTokens: null, verifiedPremiumUsd: null };
+}
+
+function withCacheEvidence(value, method = "adjacent_cache_read_decrease", unresolvedPairs = 0) {
+  if (Array.isArray(value)) return value.map((row) => withCacheEvidence(row, method, unresolvedPairs));
+  if (value === null || typeof value !== "object") return value;
+  const result = Object.fromEntries(Object.entries(value).map(([key, row]) =>
+    [key, withCacheEvidence(row, method, unresolvedPairs)]));
+  if (Number.isSafeInteger(value.cacheReadDrops)) {
+    result.estimateEvidence = cacheEstimateEvidence(method);
+    const unresolvedIncrementPairs = Math.min(value.cacheReadDrops, unresolvedPairs);
+    result.observationUnits = { responsePairs: value.cacheReadDrops - unresolvedIncrementPairs,
+      unresolvedIncrementPairs };
+  }
+  return result;
+}
+
+function continuityWithSmallDecrease(method = "adjacent_cache_read_decrease", counted = true) {
+  const selected = continuityPeriod();
+  for (const row of [selected, selected.byGapBand.under_one_minute,
+    selected.byOutcomeBucket.under_one_minute]) {
+    Object.assign(row, { reusedMoreThanHalfReturns: 1, reusedHalfOrLessReturns: 0,
+      reusedBetweenHalfAndPreviousReturns: 1, lostCacheTokens: counted ? 2_000 : 0,
+      cacheReadDrops: counted ? 1 : 0, pricedDrops: counted ? 1 : 0,
+      estimatedPremiumUsd: counted ? 0.01 : 0 });
+  }
+  selected.standardApiPremiumUsd = selected.estimatedPremiumUsd;
+  selected.allowanceWeighting = premiumWeighting(counted ? 0.01 : 0, counted ? 0.025 : 0, counted ? 1 : 0);
+  selected.recent = counted
+    ? [continuityRecentRow({ currentCacheReadTokens: 8_000, lostCacheTokens: 2_000 })] : [];
+  return withCacheEvidence(continuityImpact({ ...selected, periods: [selected] }), method);
+}
+
 function switchSubtotalPeriod({ ordering = 1, unpriced = 0 } = {}) {
   const selected = period();
   const pricedDrops = selected.cacheReadDrops - unpriced;
@@ -465,10 +500,8 @@ test("cache-switch evidence is bounded and projects no local identifiers", () =>
     JSON.stringify(result),
     /secret-session|secret-event|private\/rollout|sessionLocal|eventKey|rolloutPath/u,
   );
-  assert.deepEqual(result.allowanceImpact.plausibleRangePercentagePoints, {
-    lower: 0.1,
-    upper: 0.3,
-  });
+  assert.deepEqual(result.allowanceImpact,
+    unavailableAllowanceImpact("reusable_prefix_unverified"));
 });
 
 test("cache-continuity evidence has no timing floor and drops local identifiers", () => {
@@ -513,6 +546,200 @@ test("cache-continuity evidence has no timing floor and drops local identifiers"
     ],
     [0, 60, 259_200, null],
   );
+});
+
+test("cache estimates retain unverified evidence and identify legacy increment observations", () => {
+  for (const [normalize, make] of [
+    [normalizedImpact, impact], [normalizedContinuityImpact, continuityImpact],
+  ]) {
+    const legacy = normalize(make());
+    assert.equal(legacy.status, "available");
+    assert.deepEqual(legacy.estimateEvidence,
+      cacheEstimateEvidence("adjacent_cache_read_decrease_legacy_half_threshold"));
+    assert.deepEqual(legacy.observationUnits,
+      { responsePairs: 0, unresolvedIncrementPairs: legacy.cacheReadDrops });
+
+    const source = withCacheEvidence(make());
+    const before = structuredClone(source);
+    const current = normalize(source);
+    assert.equal(current.status, "available");
+    assert.deepEqual(current.estimateEvidence, cacheEstimateEvidence());
+    assert.deepEqual(current.observationUnits,
+      { responsePairs: current.cacheReadDrops, unresolvedIncrementPairs: 0 });
+    assert.deepEqual(current.periods[0].estimateEvidence, current.estimateEvidence);
+    assert.deepEqual(current.periods[0].observationUnits, current.observationUnits);
+    assert.deepEqual(source, before, "browser validation must not mutate evidence");
+  }
+});
+
+test("all positive continuity decreases are priced independently of the half-count classification", () => {
+  const source = continuityWithSmallDecrease();
+  const result = normalizedContinuityImpact(source);
+  assert.equal(result.status, "available");
+  assert.equal(result.reusedHalfOrLessReturns, 0);
+  assert.equal(result.reusedBetweenHalfAndPreviousReturns, 1);
+  assert.equal(result.cacheReadDrops, 1);
+  assert.equal(result.pricedDrops, 1);
+  assert.equal(result.estimatedPremiumUsd, 0.01);
+  assert.equal(result.recent.length, 1);
+  assert.equal(result.recent[0].currentCacheReadTokens, 8_000);
+  assert.equal(result.byOutcomeBucket.under_one_minute.cacheReadDrops, 1);
+
+  const legacy = withCacheEvidence(source, "adjacent_cache_read_decrease_legacy_half_threshold");
+  assert.equal(normalizedContinuityImpact(legacy).status, "unavailable",
+    "new positive-decrease counts cannot be relabelled as a legacy half-threshold result");
+  const omitted = structuredClone(source);
+  delete omitted.estimateEvidence;
+  assert.equal(normalizedContinuityImpact(omitted).status, "unavailable",
+    "missing methodology cannot silently upgrade a legacy snapshot");
+  const undercounted = continuityWithSmallDecrease("adjacent_cache_read_decrease", false);
+  assert.equal(normalizedContinuityImpact(undercounted).status, "unavailable");
+  const legacyHalfThreshold = continuityWithSmallDecrease("adjacent_cache_read_decrease_legacy_half_threshold", false);
+  const older = normalizedContinuityImpact(legacyHalfThreshold);
+  assert.equal(older.status, "available", "legacy snapshots retain their original half-threshold meaning");
+  assert.equal(older.cacheReadDrops, 0);
+  assert.equal(older.estimatedPremiumUsd, 0);
+});
+
+test("new switch scenarios retain small-decrease details while legacy detail selection stays bounded", () => {
+  const selected = period();
+  selected.lostCacheTokens = 50_000;
+  selected.byChangeType.model_only.lostCacheTokens = 50_000;
+  selected.recent = Array.from({ length: 40 }, (_, index) => recentRow(index,
+    { currentCacheReadTokens: 8_000, lostCacheTokens: 2_000 }));
+  const source = impact({ ...selected, periods: [selected] });
+  const current = normalizedImpact(withCacheEvidence(source));
+  assert.equal(current.status, "available");
+  assert.equal(current.recent.length, 25);
+  assert.equal(current.recent[0].currentCacheReadTokens, 8_000);
+  assert.equal(current.recent[0].lostCacheTokens, 2_000);
+  const legacy = normalizedImpact(withCacheEvidence(source,
+    "adjacent_cache_read_decrease_legacy_half_threshold"));
+  assert.equal(legacy.status, "available");
+  assert.equal(legacy.recent.length, 0,
+    "older methodology must not claim newly admitted small-decrease details");
+});
+
+test("cache estimates reject forged certainty, unknown methods and open evidence contracts", () => {
+  const malformedEvidence = [
+    { ...cacheEstimateEvidence(), schemaVersion: 2 },
+    { ...cacheEstimateEvidence(), method: "verified_prefix_loss" },
+    { ...cacheEstimateEvidence(), reusablePrefixStatus: "verified" },
+    { ...cacheEstimateEvidence(), verifiedLossTokens: 0 },
+    { ...cacheEstimateEvidence(), verifiedPremiumUsd: 0 },
+    { ...cacheEstimateEvidence(), verifiedLossTokens: 8_000 },
+    { ...cacheEstimateEvidence(), verifiedPremiumUsd: 0.01 },
+    { ...cacheEstimateEvidence(), privateEvidence: "PRIVATE_EVIDENCE_SENTINEL" },
+    Object.fromEntries(Object.entries(cacheEstimateEvidence()).filter(([key]) => key !== "verifiedLossTokens")),
+  ];
+  for (const [normalize, make, partition] of [
+    [normalizedImpact, impact, (value) => value.byChangeType.model_only],
+    [normalizedContinuityImpact, continuityImpact, (value) => value.byOutcomeBucket.under_one_minute],
+  ]) {
+    for (const evidence of malformedEvidence) {
+      for (const target of [(value) => value, partition]) {
+        const source = withCacheEvidence(make());
+        target(source).estimateEvidence = evidence;
+        const result = normalize(source);
+        assert.equal(result.status, "unavailable", JSON.stringify(evidence));
+        assert.doesNotMatch(JSON.stringify(result), /PRIVATE_EVIDENCE_SENTINEL/u);
+      }
+    }
+  }
+});
+
+test("cache observation units are closed counts that must account for every admitted decrease", () => {
+  for (const [normalize, make, partition] of [
+    [normalizedImpact, impact, (value) => value.byChangeType.model_only],
+    [normalizedContinuityImpact, continuityImpact, (value) => value.byGapBand.under_one_minute],
+  ]) {
+    for (const target of [(value) => value, partition]) {
+      for (const units of [
+        { responsePairs: 0, unresolvedIncrementPairs: 0 },
+        { responsePairs: 1, unresolvedIncrementPairs: 100 },
+        { responsePairs: -1, unresolvedIncrementPairs: 1 },
+        { responsePairs: 0.5, unresolvedIncrementPairs: 0.5 },
+        { responsePairs: "1", unresolvedIncrementPairs: 0 },
+        { responsePairs: Number.MAX_SAFE_INTEGER + 1, unresolvedIncrementPairs: 0 },
+        { responsePairs: 1 },
+        { responsePairs: 1, unresolvedIncrementPairs: 0, unknownUnits: 1 },
+      ]) {
+        const source = withCacheEvidence(make());
+        target(source).observationUnits = units;
+        assert.equal(normalize(source).status, "unavailable", JSON.stringify(units));
+      }
+    }
+    const mixed = withCacheEvidence(make(), "adjacent_cache_read_decrease", 1);
+    const normalized = normalize(mixed);
+    assert.equal(normalized.status, "available");
+    assert.deepEqual(normalized.observationUnits, mixed.observationUnits);
+  }
+});
+
+test("cache evidence methods and observation units remain consistent across partitions", () => {
+  for (const [normalize, make, partitions] of [
+    [normalizedImpact, impact, [
+      (value) => value.byChangeType.model_only,
+      (value) => value.byChangeType.reasoning_only,
+    ]],
+    [normalizedContinuityImpact, continuityImpact, [
+      (value) => value.byGapBand.under_one_minute,
+      (value) => value.byOutcomeBucket.under_one_minute,
+      (value) => value.byOutcomeBucket.over_three_days,
+    ]],
+  ]) {
+    for (const partition of partitions) {
+      const mixedMethods = withCacheEvidence(make());
+      partition(mixedMethods).estimateEvidence =
+        cacheEstimateEvidence("adjacent_cache_read_decrease_legacy_half_threshold");
+      assert.equal(normalize(mixedMethods).status, "unavailable",
+        "an aggregate cannot silently combine two counting methodologies, even in an empty bucket");
+    }
+    const inconsistentUnits = withCacheEvidence(make());
+    const active = partitions[0](inconsistentUnits);
+    active.observationUnits.responsePairs -= 1;
+    active.observationUnits.unresolvedIncrementPairs += 1;
+    assert.equal(normalize(inconsistentUnits).status, "unavailable",
+      "per-row unit totals must also agree with the aggregate's source-unit partition");
+  }
+});
+
+test("optional model filters cannot change the aggregate's estimate method or observation units", () => {
+  const selected = withCacheEvidence(continuityPeriod());
+  const source = continuityImpact({ ...selected, periods: [selected],
+    byModel: [{ ...structuredClone(selected), model: "gpt-5.6-sol" }] });
+  assert.equal(normalizedContinuityImpact(source).byModel.length, 1);
+  for (const mutate of [
+    (row) => { row.estimateEvidence = cacheEstimateEvidence("adjacent_cache_read_decrease_legacy_half_threshold"); },
+    (row) => { row.observationUnits = { responsePairs: 0, unresolvedIncrementPairs: 1 }; },
+    (row) => { row.estimateEvidence.verifiedLossTokens = 1; },
+  ]) {
+    const invalid = structuredClone(source);
+    mutate(invalid.byModel[0]);
+    const result = normalizedContinuityImpact(invalid);
+    assert.equal(result.status, "available");
+    assert.equal(result.byModel, null,
+      "reject a contradictory optional filter while retaining validated all-model evidence");
+    assert.deepEqual(result.estimateEvidence, cacheEstimateEvidence());
+    assert.deepEqual(result.observationUnits, { responsePairs: 1, unresolvedIncrementPairs: 0 });
+  }
+});
+
+test("unverified cache scenarios never become allowance losses even with a supplied weekly conversion", () => {
+  for (const [normalize, make] of [
+    [normalizedImpact, impact], [normalizedContinuityImpact, continuityImpact],
+  ]) {
+    for (const source of [make(), withCacheEvidence(make())]) {
+      const result = normalize(source);
+      assert.equal(result.status, "available");
+      assert.deepEqual(result.allowanceImpact,
+        unavailableAllowanceImpact("reusable_prefix_unverified"));
+      assert.deepEqual(result.periods[0].allowanceImpact,
+        unavailableAllowanceImpact("reusable_prefix_unverified"));
+      assert.notEqual(result.standardApiPremiumUsd, null,
+        "withholding an unsupported allowance claim must retain the conditional API estimate");
+    }
+  }
 });
 
 test("cache-continuity normalization fails closed on methodology and partitions", () => {
@@ -815,6 +1042,8 @@ test("non-weekly periods cannot carry a weekly allowance conversion", () => {
     assert.equal(result.status, "available");
     assert.equal(result.allowanceImpact.status, "unavailable");
     assert.equal(result.periods[0].allowanceImpact.status, "unavailable");
+    assert.equal(result.allowanceImpact.reason, "reusable_prefix_unverified");
+    assert.equal(result.periods[0].allowanceImpact.reason, "reusable_prefix_unverified");
   }
 });
 
@@ -1344,7 +1573,7 @@ test("subtotal notes explain the ordering gap, Standard counterfactual and exclu
       },
     });
     const text = children.join("");
-    assert.match(text, /no material cache-read drop observed/u);
+    assert.match(text, /no eligible positive cache-read count decrease/u);
     assert.doesNotMatch(text, /\$|API equivalent|allowance|percentage|subtotal/iu);
   }
 });
@@ -1422,9 +1651,9 @@ test("the history selector reads the analyzer's all-indexed period", async () =>
 
 test("cache-impact UI copy has three-locale parity and collapsed evidence tables", async () => {
   const expectedLabels = [
-    "Possible switch overhead",
-    "可能的切换开销",
-    "Posible coste adicional al cambiar",
+    "Switch-adjacent difference scenario",
+    "切换附近的缓存差价情景",
+    "Escenario de diferencia junto al cambio",
   ];
   assert.deepEqual(
     SUPPORTED_LOCALES.map((locale) => (
@@ -1439,6 +1668,8 @@ test("cache-impact UI copy has three-locale parity and collapsed evidence tables
       "accounting.cacheImpact.subtotalStandard",
       "accounting.cacheImpact.subtotalStandardOnly",
       "accounting.cacheImpact.subtotalUnpriced",
+      "accounting.cacheImpact.evidenceUnknown",
+      "accounting.cacheImpact.bulletIncrement",
       "accounting.cacheContinuity.outcome.readoutSubtotal",
       "accounting.cacheContinuity.outcome.readoutSubtotalUnpriced",
     ]) {
@@ -1465,13 +1696,10 @@ test("cache-impact UI copy has three-locale parity and collapsed evidence tables
       /accounting\.cacheSwitch/u,
     );
   }
-  assert.match(
-    translate("accounting.cacheSwitch.allowanceRange", {
-      lower: "1",
-      upper: "2",
-    }, "en"),
-    /may combine accounts/u,
-  );
+  assert.match(translate("accounting.cacheImpact.evidenceUnknown", {}, "en"),
+    /Actual avoidable loss is unknown/u);
+  assert.match(translate("accounting.cacheImpact.evidenceUnknown", {}, "en"),
+    /neither actual loss nor a lower bound/u);
   for (const locale of SUPPORTED_LOCALES) {
     assert.doesNotMatch(
       translate("accounting.cacheSwitch.noteIncompleteOrdering", {
@@ -1500,11 +1728,11 @@ test("cache-impact UI copy has three-locale parity and collapsed evidence tables
   assert.match(html, /id="cache-switch-pagination"/u);
   assert.match(html, /id="cache-switch-page-prev"/u);
   assert.match(html, /id="cache-switch-page-next"/u);
-  assert.match(html, /Est\. lost reuse/u);
+  assert.match(html, /Cache-read count decrease/u);
   assert.match(html, /API equivalent/u);
   assert.equal(
     translate("accounting.cacheSwitch.column.lostTokens", {}, "en"),
-    "Est. lost reuse",
+    "Cache-read count decrease",
   );
   assert.equal(
     translate("accounting.cacheSwitch.column.apiEquivalent", {}, "en"),
@@ -1512,9 +1740,9 @@ test("cache-impact UI copy has three-locale parity and collapsed evidence tables
   );
 
   const expectedContinuityLabels = [
-    "Possible cache-continuity overhead",
-    "可能的缓存连续性开销",
-    "Posible coste adicional de continuidad de caché",
+    "Same-settings difference scenario",
+    "设置不变时的缓存差价情景",
+    "Escenario de diferencia sin cambiar ajustes",
   ];
   assert.deepEqual(
     SUPPORTED_LOCALES.map((locale) => (
@@ -1527,9 +1755,9 @@ test("cache-impact UI copy has three-locale parity and collapsed evidence tables
       translate("accounting.cacheContinuity.detailsSummary", {}, locale)
     )),
     [
-      "See recent large cache drops",
-      "查看近期缓存大幅下降",
-      "Ver las caídas grandes de caché recientes",
+      "See recent cache-read count decreases",
+      "查看近期缓存读取量下降",
+      "Ver disminuciones recientes de lectura",
     ],
   );
   for (const locale of SUPPORTED_LOCALES) {
@@ -1629,7 +1857,7 @@ test("cache-impact UI copy has three-locale parity and collapsed evidence tables
     "cache outcome is a first-class section before the recent-evidence disclosure",
   );
   assert.doesNotMatch(continuityDetails, /id="cache-reuse-outcome"/u);
-  assert.match(continuityDetails, /See recent large cache drops/u);
+  assert.match(continuityDetails, /See recent cache-read count decreases/u);
   assert.match(continuityOutcome, /id="cache-reuse-matrix"/u);
   assert.match(html, /href=".\/cache-reuse-matrix.css"/u);
   assert.doesNotMatch(continuityOutcome, /cache-reuse-(?:canvas|readout|metrics)/u);
@@ -1711,5 +1939,5 @@ test("non-weekly model cohorts cannot retain a weekly allowance conversion", () 
   const result = normalizedContinuityImpact(continuityImpact({ periodId: "30d", byModel: [selected] }));
   assert.equal(result.byModel.length, 1);
   assert.equal(result.byModel[0].allowanceImpact.status, "unavailable");
-  assert.equal(result.byModel[0].allowanceImpact.reason, "period_denominator_mismatch");
+  assert.equal(result.byModel[0].allowanceImpact.reason, "reusable_prefix_unverified");
 });

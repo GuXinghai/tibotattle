@@ -1,4 +1,5 @@
 import { speedApiPrice, addSpeedApiCost, speedApiCostSummary } from "./speed-api-cost.js";
+import { createLocalRefreshTimer } from "./local-refresh-timing.js";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -51,7 +52,7 @@ import {
 } from "@app-usagemonitor/quota-analysis";
 import { TELEMETRY_PLAN_TYPES } from "@app-usagemonitor/telemetry-contract";
 import {
-  addComponentCosts,
+  addComponentCosts as addComponentCostsApproximate,
   emptyComponentCosts,
   SPARK_QUOTA_LIMIT_IDS,
 } from "./local-companion-usage-model.js";
@@ -137,8 +138,10 @@ import {
 // v0.21: preserve observed quota outside comparable intervals independently.
 // v0.22: rebuild prices with model-wide context partitions and preserve nullable
 // local-index components, contradictory output and partial/assumed provenance.
+// v0.23: derive every displayed monetary margin from exact decimal accumulation
+// so weighted groups and individual events have identical half-up rounding.
 export const REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION =
-  "local-replay-safe-accounting-v0.22";
+  "local-replay-safe-accounting-v0.24";
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
   "codex-primary-allowance-capacity-v0.1";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
@@ -1051,9 +1054,10 @@ function addComponents(target, source) {
 
 function addDimension(target, key, event) {
   const row = target[key] ?? target.unknown;
-  row.events += 1;
+  row.events += event.eventCount ?? 1;
   row.totalTokens += event.totalTokens;
   row.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
+  addProjectedUsd(row, "apiPriceEquivalentUsd", event.priced);
 }
 
 const FAST_PRICE_SCALE = 1_000_000_000;
@@ -1084,6 +1088,44 @@ const SCALED_TOTAL = Symbol("pricedUsdScaledTotals");
 // leaves it on the row under this non-enumerable symbol and the second reuses
 // it rather than pricing the row again.
 const PROJECTED_EVENT = Symbol("projectedUsageEvent");
+
+// Every numeric monetary margin is a projection of exact decimal evidence.
+// A binary-float fold can cross a six-place half boundary when the same rows
+// are grouped differently. Keep the shared event/group path exact without
+// exposing a second ledger field in the persisted schema.
+const PROJECTED_USD = new WeakMap();
+
+function addProjectedUsd(target, key, priced) {
+  let fields = PROJECTED_USD.get(target);
+  if (fields === undefined) {
+    fields = new Map();
+    PROJECTED_USD.set(target, fields);
+  }
+  let sum = fields.get(key);
+  if (sum === undefined) {
+    sum = { exact: "0" };
+    fields.set(key, sum);
+  }
+  const scaled = priced?.[SCALED_TOTAL]?.totalUsd ?? null;
+  addExactUsd(sum, "exact", priced?.totalUsd ?? "0", scaled);
+}
+
+function roundedProjectedUsd(target, key) {
+  const sum = PROJECTED_USD.get(target)?.get(key);
+  if (sum === undefined) return roundedMoney(target[key]);
+  flushExactUsd(sum, "exact");
+  return roundedExactMoney(sum.exact);
+}
+
+function addComponentCosts(target, components, priced) {
+  addComponentCostsApproximate(target, components, priced);
+  for (const row of priced?.components ?? []) {
+    if (row.pricingStatus === "priced" && target[row.name] !== undefined
+        && Number.isFinite(Number(row.costUsd)) && Number(row.costUsd) >= 0) {
+      addProjectedUsd(target[row.name], "costUsd", { totalUsd: row.costUsd });
+    }
+  }
+}
 
 function bigIntNanoUsdString(value) {
   const whole = value / 1_000_000_000n;
@@ -1346,6 +1388,12 @@ export function createAccountingPricer({ apiServiceTier = "standard" } = {}) {
 }
 
 function eventProjection(event, price) {
+  // Aggregate quantities are already summed. Weight only occurrence counters;
+  // pricing, components and exact-money additions still run exactly once.
+  const eventCount = event.eventCount ?? 1;
+  if (!Number.isSafeInteger(eventCount) || eventCount < 1) {
+    throw fixedError("accounting_usage_group_invalid");
+  }
   const components = emptyComponents();
   addComponents(components, event.components);
   const separatedOutput = components.output_text_tokens
@@ -1402,6 +1450,7 @@ function eventProjection(event, price) {
   const cost = Number(priced.totalUsd);
   return {
     timestamp: event.timestamp,
+    eventCount,
     model,
     fastModeFamily: speedModeModelFamilyKey(model, event.tierSemantics?.codexSpeedMode, {
       eventTime: event.timestamp,
@@ -2150,8 +2199,9 @@ function addSpeedWeighting(crossing, event) {
   const cell = row[family] ??= {
     events: 0, apiPriceEquivalentUsd: 0,
   };
-  cell.events += 1;
+  cell.events += event.eventCount ?? 1;
   cell.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
+  addProjectedUsd(cell, "apiPriceEquivalentUsd", event.priced);
 }
 
 function addDeclaredSpeedWeighting(crossing, event) {
@@ -2167,8 +2217,9 @@ function addDeclaredSpeedWeighting(crossing, event) {
   const cell = row[family] ??= {
     events: 0, apiPriceEquivalentUsd: 0,
   };
-  cell.events += 1;
+  cell.events += event.eventCount ?? 1;
   cell.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
+  addProjectedUsd(cell, "apiPriceEquivalentUsd", event.priced);
 }
 
 function finalizeSpeedWeighting(crossing) {
@@ -2176,7 +2227,7 @@ function finalizeSpeedWeighting(crossing) {
     speed,
     Object.fromEntries(Object.entries(families).map(([family, cell]) => [
       family,
-      { ...cell, apiPriceEquivalentUsd: roundedMoney(cell.apiPriceEquivalentUsd) },
+      { ...cell, apiPriceEquivalentUsd: roundedProjectedUsd(cell, "apiPriceEquivalentUsd") },
     ])),
   ]));
 }
@@ -2192,7 +2243,7 @@ function compactSpeedWeighting(crossing) {
       if (cell.events === 0 && cell.apiPriceEquivalentUsd === 0) continue;
       selected[family] = {
         events: cell.events,
-        apiPriceEquivalentUsd: roundedMoney(cell.apiPriceEquivalentUsd),
+        apiPriceEquivalentUsd: roundedProjectedUsd(cell, "apiPriceEquivalentUsd"),
       };
     }
     if (Object.keys(selected).length > 0) compact[speed] = selected;
@@ -2207,8 +2258,9 @@ function addEvent(period, event) {
   }
   let speedPriced = speedApiPrice(event.speedPricingEvent, event.speedPricingComponents, event.priced, event.declaredSpeed, event.speedPricer);
   if (event.combinedOnly && speedPriced !== event.priced) speedPriced = { ...speedPriced, components: speedPriced.components.map(row => row.name === "output_text_tokens" ? { ...row, name: "output_combined_tokens" } : row) };
-  addSpeedApiCost(period, event.components, speedPriced);
-  period.events += 1;
+  const eventCount = event.eventCount ?? 1;
+  addSpeedApiCost(period, event.components, speedPriced, eventCount);
+  period.events += eventCount;
   period.totalTokens += event.totalTokens;
   period.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
   const scaledTotals = event.priced?.[SCALED_TOTAL] ?? null;
@@ -2229,7 +2281,7 @@ function addEvent(period, event) {
       events: 0,
       costUsd: "0",
     };
-    row.events += item.events ?? 0;
+    row.events += (item.events ?? 0) * eventCount;
     const cardScaled = scaledTotals?.byCard.get(item.priceCardId);
     addExactUsd(
       row,
@@ -2261,19 +2313,20 @@ function addEvent(period, event) {
       unpricedEvents: 0,
     },
   };
-  model.events += 1;
+  model.events += eventCount;
   model.totalTokens += event.totalTokens;
   model.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
+  addProjectedUsd(model, "apiPriceEquivalentUsd", event.priced);
   addComponents(model.components, event.components);
   addComponentCosts(model.componentCosts, event.components, event.priced);
-  addSpeedApiCost(model, event.components, speedPriced);
+  addSpeedApiCost(model, event.components, speedPriced, eventCount);
   model.pricingCoverage[
     event.pricingCoverageStatus === "fully_priced"
       ? "fullyPricedEvents"
       : event.pricingCoverageStatus === "partially_priced"
         ? "partiallyPricedEvents"
         : "unpricedEvents"
-  ] += 1;
+  ] += eventCount;
   addDimension(period.bySpeed, event.speed, event);
   addSpeedWeighting(period.speedWeighting, event);
   addDeclaredSpeedWeighting(period.declaredSpeedWeighting, event);
@@ -2282,11 +2335,11 @@ function addEvent(period, event) {
   addDimension(period.byAgentScope, event.agentScope, event);
   addDimension(period.byLineage, event.lineage, event);
   if (event.pricingCoverageStatus === "fully_priced") {
-    period.pricingCoverage.fullyPricedEvents += 1;
+    period.pricingCoverage.fullyPricedEvents += eventCount;
   } else if (event.pricingCoverageStatus === "partially_priced") {
-    period.pricingCoverage.partiallyPricedEvents += 1;
+    period.pricingCoverage.partiallyPricedEvents += eventCount;
   } else {
-    period.pricingCoverage.unpricedEvents += 1;
+    period.pricingCoverage.unpricedEvents += eventCount;
   }
 }
 
@@ -2319,7 +2372,7 @@ function finalizeDimension(dimension) {
     key,
     {
       ...row,
-      apiPriceEquivalentUsd: roundedMoney(row.apiPriceEquivalentUsd),
+      apiPriceEquivalentUsd: roundedProjectedUsd(row, "apiPriceEquivalentUsd"),
     },
   ]));
 }
@@ -2368,18 +2421,18 @@ function finalizePeriod(period) {
     componentCosts: Object.fromEntries(
       Object.entries(period.componentCosts).map(([key, row]) => [
         key,
-        { ...row, costUsd: roundedMoney(row.costUsd) },
+        { ...row, costUsd: roundedProjectedUsd(row, "costUsd") },
       ]),
     ),
     byModel: Object.values(period.byModel)
       .map((row) => ({
         ...row,
         ...speedApiCostSummary(row),
-        apiPriceEquivalentUsd: roundedMoney(row.apiPriceEquivalentUsd),
+        apiPriceEquivalentUsd: roundedProjectedUsd(row, "apiPriceEquivalentUsd"),
         componentCosts: Object.fromEntries(
           Object.entries(row.componentCosts).map(([key, cost]) => [
             key,
-            { ...cost, costUsd: roundedMoney(cost.costUsd) },
+            { ...cost, costUsd: roundedProjectedUsd(cost, "costUsd") },
           ]),
         ),
       }))
@@ -2532,9 +2585,11 @@ function addTimelineEvent(buckets, event) {
   const startMs = Math.floor(observedMs / TIMELINE_BUCKET_MS)
     * TIMELINE_BUCKET_MS;
   const bucket = buckets.get(startMs) ?? newTimelineBucket(startMs);
-  bucket.usageEvents += 1;
+  const eventCount = event.eventCount ?? 1;
+  bucket.usageEvents += eventCount;
   bucket.totalTokens += event.totalTokens;
   bucket.apiPriceEquivalentUsd += event.apiPriceEquivalentUsd;
+  addProjectedUsd(bucket, "apiPriceEquivalentUsd", event.priced);
   addSpeedWeighting(bucket.speedWeighting, event);
   addDeclaredSpeedWeighting(bucket.declaredSpeedWeighting, event);
   addComponents(bucket.components, event.components);
@@ -2544,7 +2599,7 @@ function addTimelineEvent(buckets, event) {
       : event.pricingCoverageStatus === "partially_priced"
         ? "partiallyPricedEvents"
         : "unpricedEvents"
-  ] += 1;
+  ] += eventCount;
   buckets.set(startMs, bucket);
 }
 
@@ -2556,7 +2611,7 @@ function finalizeTimeline(buckets) {
       endAt: new Date(bucket.startMs + TIMELINE_BUCKET_MS).toISOString(),
       usageEvents: bucket.usageEvents,
       totalTokens: bucket.totalTokens,
-      apiPriceEquivalentUsd: roundedMoney(bucket.apiPriceEquivalentUsd),
+      apiPriceEquivalentUsd: roundedProjectedUsd(bucket, "apiPriceEquivalentUsd"),
       speedWeighting: compactSpeedWeighting(bucket.speedWeighting),
       declaredSpeedWeighting: compactSpeedWeighting(
         bucket.declaredSpeedWeighting,
@@ -3263,8 +3318,7 @@ function compositionFitFailureReason(error) {
 // The composition fit, taking the usage corpus as a row visitor so the corpus
 // is never resident. It folds rows in the same order with the same cadence as
 // the per-event fold it replaced.
-async function fitCompositionFromCorpusStream({
-  forEachUsageRow,
+function createCompositionFitConsumer({
   weeklyRateLimitSnapshots,
   endMs,
   signal = null,
@@ -3309,7 +3363,7 @@ async function fitCompositionFromCorpusStream({
   const recentMix = {};
   const recentCostsByBin = new Map();
   let processed = 0;
-  await forEachUsageRow(async (row) => {
+  const consume = async (row) => {
     processed += 1;
     if (processed % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
       throwIfAborted(signal);
@@ -3384,123 +3438,190 @@ async function fitCompositionFromCorpusStream({
       }
       recentCosts.set(model, (recentCosts.get(model) ?? 0) + costUsd);
     }
-  });
-  const quotaRows = [];
-  // Use admitted plan-preserving snapshots, not the generic timeline whose
-  // same-instant collapse may already have chosen a different plan's row.
-  const scopedQuota = new Map();
-  for (const row of weeklyRateLimitSnapshots) {
-    processed += 1;
-    if (processed % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
-      throwIfAborted(signal);
-      checkRuntimeMemory();
-      await cooperativeYield();
-    }
-    if (!Array.isArray(row)) continue;
-    const observedAtMs = Number(row[1]);
-    const resetsAtSeconds = Number(row[7]);
-    const usedPercent = Number(row[8]);
-    if (!Number.isFinite(observedAtMs)
-        || !Number.isFinite(resetsAtSeconds)
-        || !Number.isFinite(usedPercent)) continue;
-    if (row[3] !== planType) continue;
-    const sevenDay = row[6] === WEEKLY_WINDOW_MINUTES;
-    if (!planTimelineResourceLimited && row[2] === "openai_codex"
-        && row[4] === "codex" && sevenDay
-        && usedPercent >= 0 && usedPercent <= 100) {
-      const match = planEraForInterval(attributionIndex, { contextKey, observedAtMs });
-      if (match.status === "matched" && match.era.planType === planType) {
-        const prior = scopedQuota.get(observedAtMs);
-        if (prior === null) {
-          // Once contradictory, later repeated rows cannot restore a winner.
-        } else if (prior && (prior[1] !== resetsAtSeconds || prior[2] !== usedPercent)) {
-          scopedQuota.set(observedAtMs, null);
-          invalidPlanScopedBuckets.add(Math.floor(observedAtMs / TIMELINE_BUCKET_MS) * TIMELINE_BUCKET_MS);
-          checkPlanTimelineSize();
-        } else scopedQuota.set(observedAtMs, [observedAtMs, resetsAtSeconds, usedPercent]);
-        if (scopedQuota.size > MAX_PLAN_TIMELINE_ROWS || planTimelineResourceLimited) {
-          planTimelineResourceLimited = true;
-          scopedQuota.clear();
+  };
+  const finish = async () => {
+    const quotaRows = [];
+    // Use admitted plan-preserving snapshots, not the generic timeline whose
+    // same-instant collapse may already have chosen a different plan's row.
+    const scopedQuota = new Map();
+    for (const row of weeklyRateLimitSnapshots) {
+      processed += 1;
+      if (processed % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
+        throwIfAborted(signal);
+        checkRuntimeMemory();
+        await cooperativeYield();
+      }
+      if (!Array.isArray(row)) continue;
+      const observedAtMs = Number(row[1]);
+      const resetsAtSeconds = Number(row[7]);
+      const usedPercent = Number(row[8]);
+      if (!Number.isFinite(observedAtMs)
+          || !Number.isFinite(resetsAtSeconds)
+          || !Number.isFinite(usedPercent)) continue;
+      if (row[3] !== planType) continue;
+      const sevenDay = row[6] === WEEKLY_WINDOW_MINUTES;
+      if (!planTimelineResourceLimited && row[2] === "openai_codex"
+          && row[4] === "codex" && sevenDay
+          && usedPercent >= 0 && usedPercent <= 100) {
+        const match = planEraForInterval(attributionIndex, { contextKey, observedAtMs });
+        if (match.status === "matched" && match.era.planType === planType) {
+          const prior = scopedQuota.get(observedAtMs);
+          if (prior === null) {
+            // Once contradictory, later repeated rows cannot restore a winner.
+          } else if (prior && (prior[1] !== resetsAtSeconds || prior[2] !== usedPercent)) {
+            scopedQuota.set(observedAtMs, null);
+            invalidPlanScopedBuckets.add(Math.floor(observedAtMs / TIMELINE_BUCKET_MS) * TIMELINE_BUCKET_MS);
+            checkPlanTimelineSize();
+          } else scopedQuota.set(observedAtMs, [observedAtMs, resetsAtSeconds, usedPercent]);
+          if (scopedQuota.size > MAX_PLAN_TIMELINE_ROWS || planTimelineResourceLimited) {
+            planTimelineResourceLimited = true;
+            scopedQuota.clear();
+          }
         }
       }
+      // Composition and the selected-plan comparison remain seven-day
+      // contracts. The five-hour observations share the attribution index and
+      // calibration pass, but must not become duplicate quota points in the
+      // seven-day capacity fit.
+      if (!sevenDay) continue;
+      quotaRows.push({
+        observedAtMs,
+        planType: typeof row[3] === "string" ? row[3] : "unknown",
+        resetsAtMs: resetsAtSeconds * 1_000,
+        usedPercent,
+      });
     }
-    // Composition and the selected-plan comparison remain seven-day
-    // contracts. The five-hour observations share the attribution index and
-    // calibration pass, but must not become duplicate quota points in the
-    // seven-day capacity fit.
-    if (!sevenDay) continue;
-    quotaRows.push({
-      observedAtMs,
-      planType: typeof row[3] === "string" ? row[3] : "unknown",
-      resetsAtMs: resetsAtSeconds * 1_000,
-      usedPercent,
+    // One aggregated row per (bin, model): O(bins x models), not O(events).
+    const usageRows = [];
+    for (const binStartMs of new Set([...binCosts.keys(), ...recentCostsByBin.keys()])) {
+      const lookup = planEraForInterval(attributionIndex, {
+        contextKey, observedAtMs: binStartMs + grainMs - 1, intervalStartMs: binStartMs,
+      });
+      if (lookup.status !== "matched" || lookup.era.planType !== planType) excludedBins.add(binStartMs);
+      if (excludedBins.has(binStartMs)) continue;
+      for (const [model, costUsd] of binCosts.get(binStartMs) ?? []) {
+        usageRows.push({ observedAtMs: binStartMs, model, costUsd });
+      }
+      // Later conflicting rows can invalidate a whole bin. The recent model mix
+      // must use the same eligible bins as the fit, not an already-added subtotal.
+      for (const [model, costUsd] of recentCostsByBin.get(binStartMs) ?? []) {
+        recentMix[model] = (recentMix[model] ?? 0) + costUsd;
+      }
+    }
+    binCosts.clear();
+    recentCostsByBin.clear();
+    const { observations, voidedBinCount, poolCount } =
+      buildCompositionObservations({ usageRows, quotaRows: quotaRows.filter((row) => (
+        !excludedBins.has(Math.floor(row.observedAtMs / grainMs) * grainMs)
+      )) });
+    const fit = calibrateCompositionCapacities(observations);
+    const blendedRecentMixUsd = fit.status === "fitted"
+      ? blendedCompositionCapacityUsd(recentMix, {
+        capacityUsdByModel: fit.capacityUsdByModel,
+        fallbackCapacityUsd: fit.singleConstantUsd,
+      })
+      : null;
+    const planScopedTimeline = finalizePlanScopedTimelineDraft({
+      buckets: planScopedBuckets,
+      invalidBuckets: invalidPlanScopedBuckets,
+      attributionIndex,
+      contextKey,
+      planType,
+      diagnostics: planScopedDiagnostics,
+      endMs,
+      resourceLimited: planTimelineResourceLimited,
+      quota: [...scopedQuota.values()].filter((row) => row !== null).sort((a, b) => a[0] - b[0]),
     });
-  }
-  // One aggregated row per (bin, model): O(bins x models), not O(events).
-  const usageRows = [];
-  for (const binStartMs of new Set([...binCosts.keys(), ...recentCostsByBin.keys()])) {
-    const lookup = planEraForInterval(attributionIndex, {
-      contextKey, observedAtMs: binStartMs + grainMs - 1, intervalStartMs: binStartMs,
-    });
-    if (lookup.status !== "matched" || lookup.era.planType !== planType) excludedBins.add(binStartMs);
-    if (excludedBins.has(binStartMs)) continue;
-    for (const [model, costUsd] of binCosts.get(binStartMs) ?? []) {
-      usageRows.push({ observedAtMs: binStartMs, model, costUsd });
-    }
-    // Later conflicting rows can invalidate a whole bin. The recent model mix
-    // must use the same eligible bins as the fit, not an already-added subtotal.
-    for (const [model, costUsd] of recentCostsByBin.get(binStartMs) ?? []) {
-      recentMix[model] = (recentMix[model] ?? 0) + costUsd;
-    }
-  }
-  binCosts.clear();
-  recentCostsByBin.clear();
-  const { observations, voidedBinCount, poolCount } =
-    buildCompositionObservations({ usageRows, quotaRows: quotaRows.filter((row) => (
-      !excludedBins.has(Math.floor(row.observedAtMs / grainMs) * grainMs)
-    )) });
-  const fit = calibrateCompositionCapacities(observations);
-  const blendedRecentMixUsd = fit.status === "fitted"
-    ? blendedCompositionCapacityUsd(recentMix, {
+    return {
+      planType,
+      attributionExcludedBins: excludedBins.size,
+      status: fit.status,
+      grainHours: MODEL_COMPOSITION_POLICY.grainMs / 3_600_000,
+      observationCount: fit.observationCount,
+      voidedBinCount,
+      poolCount,
       capacityUsdByModel: fit.capacityUsdByModel,
-      fallbackCapacityUsd: fit.singleConstantUsd,
-    })
-    : null;
-  const planScopedTimeline = finalizePlanScopedTimelineDraft({
-    buckets: planScopedBuckets,
-    invalidBuckets: invalidPlanScopedBuckets,
-    attributionIndex,
-    contextKey,
-    planType,
-    diagnostics: planScopedDiagnostics,
-    endMs,
-    resourceLimited: planTimelineResourceLimited,
-    quota: [...scopedQuota.values()].filter((row) => row !== null).sort((a, b) => a[0] - b[0]),
+      modelCostShares: fit.modelCostShares,
+      r2: fit.r2,
+      singleConstantUsd: fit.singleConstantUsd,
+      singleConstantR2: fit.singleConstantR2,
+      // Why a fit was ACCEPTED or REJECTED. Without this a fallback_blended
+      // reaches the dashboard with no recoverable reason, and recovering it costs
+      // a full re-run of the kernel against the corpus (2026-08-20). The gate at
+      // model-composition.js reads these exact fields, so persisting them is what
+      // makes the decision auditable after the fact.
+      identification: fit.identification ?? null,
+      blendedRecentMixUsd: Number.isFinite(blendedRecentMixUsd)
+        ? Number(blendedRecentMixUsd.toFixed(2))
+        : null,
+      recentMixDays: COMPOSITION_RECENT_MIX_DAYS,
+      planScopedTimeline,
+    };
+  };
+  return { consume, finish };
+}
+
+async function fitCompositionFromCorpusStream(options) {
+  const consumer = createCompositionFitConsumer(options);
+  await options.forEachUsageRow(consumer.consume);
+  return consumer.finish();
+}
+
+// Fit every admitted plan over one ordered corpus traversal. Each consumer
+// retains only its bounded aggregates, never another full event collection.
+// Per-plan failures remain optional enrichment failures; a failed shared read
+// invalidates all unfinished fits, and cancellation always escapes.
+async function fitPlanCompositionsFromCorpus(options, planTypes, currentPlanType) {
+  if (!Array.isArray(planTypes) || planTypes.length > 16) {
+    throw fixedError("accounting_transition_derivation_limit_exceeded");
+  }
+  const historical = [...new Set(planTypes)].sort()
+    .filter(plan => plan !== currentPlanType && plan !== "unknown");
+  const lanes = [currentPlanType, ...historical].map(planType => {
+    try {
+      return { planType, consumer: createCompositionFitConsumer({ ...options, selectedPlanType: planType }), failure: null };
+    } catch (error) {
+      throwIfAborted(options.signal);
+      if (error?.name === "AbortError") throw error;
+      return { planType, consumer: null, failure: compositionFitFailureReason(error) };
+    }
   });
+  const failed = (lane, error) => {
+    throwIfAborted(options.signal);
+    if (error?.name === "AbortError") throw error;
+    lane.failure = compositionFitFailureReason(error);
+    lane.consumer = null;
+  };
+  throwIfAborted(options.signal);
+  options.checkRuntimeMemory?.();
+  try {
+    await options.forEachUsageRow(async row => {
+      for (const lane of lanes) {
+        if (lane.consumer === null) continue;
+        try { await lane.consumer.consume(row); }
+        catch (error) { failed(lane, error); }
+      }
+    });
+  } catch (error) {
+    for (const lane of lanes) if (lane.consumer !== null) failed(lane, error);
+    throwIfAborted(options.signal);
+    if (error?.name === "AbortError") throw error;
+  }
+  for (const lane of lanes) {
+    throwIfAborted(options.signal);
+    options.checkRuntimeMemory?.();
+    if (lane.consumer === null) continue;
+    try { lane.result = await lane.consumer.finish(); }
+    catch (error) { failed(lane, error); }
+    finally { lane.consumer = null; }
+  }
+  const current = lanes[0];
   return {
-    planType,
-    attributionExcludedBins: excludedBins.size,
-    status: fit.status,
-    grainHours: MODEL_COMPOSITION_POLICY.grainMs / 3_600_000,
-    observationCount: fit.observationCount,
-    voidedBinCount,
-    poolCount,
-    capacityUsdByModel: fit.capacityUsdByModel,
-    modelCostShares: fit.modelCostShares,
-    r2: fit.r2,
-    singleConstantUsd: fit.singleConstantUsd,
-    singleConstantR2: fit.singleConstantR2,
-    // Why a fit was ACCEPTED or REJECTED. Without this a fallback_blended
-    // reaches the dashboard with no recoverable reason, and recovering it costs
-    // a full re-run of the kernel against the corpus (2026-08-20). The gate at
-    // model-composition.js reads these exact fields, so persisting them is what
-    // makes the decision auditable after the fact.
-    identification: fit.identification ?? null,
-    blendedRecentMixUsd: Number.isFinite(blendedRecentMixUsd)
-      ? Number(blendedRecentMixUsd.toFixed(2))
-      : null,
-    recentMixDays: COMPOSITION_RECENT_MIX_DAYS,
-    planScopedTimeline,
+    compositionResult: current.result ?? null,
+    compositionFitFailure: current.failure === null ? null : { status: "fit_failed", reason: current.failure },
+    historicalPlanDrafts: lanes.slice(1).map(lane => ({
+      planType: lane.planType, draft: lane.result?.planScopedTimeline ?? null, failure: lane.failure,
+    })),
   };
 }
 
@@ -3529,7 +3650,10 @@ export async function buildReplaySafeAccountingCache({
   // content-free work counters (row and attribution-read counts) once the
   // corpus has been fully consumed.
   onCalibrationCorpusMetrics = null,
+  onTiming = null,
+  monotonicClock = undefined,
 } = {}) {
+  const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
   if (typeof scan !== "function") {
     throw fixedError("accounting_source_required");
   }
@@ -3708,13 +3832,15 @@ export async function buildReplaySafeAccountingCache({
   let scanned;
   let unifiedCoverage = null;
   try {
-    scanned = await scan({
+    const scanOptions = {
       startAt: new Date(startMs).toISOString(),
       endAt: new Date(endMs).toISOString(),
       codexHome,
       resourceGuard: scanResourceGuard,
       signal,
-      indexedHistory: { onUsage: historyOnUsage },
+      indexedHistory: { onUsage: historyOnUsage, onUsageGroup: historyOnUsage },
+      usageBoundaryMs: Object.values(starts),
+      declaredSpeedBaselines: baselines,
       onUsage: (rawEvent) => {
         throwIfAborted(signal);
         const observedAt = canonicalInstant(rawEvent?.timestamp);
@@ -3790,7 +3916,9 @@ export async function buildReplaySafeAccountingCache({
           }
         }
       },
-    });
+    };
+    scanOptions.onUsageGroup = scanOptions.onUsage;
+    scanned = await timing.measure("accounting_scan", () => scan(scanOptions));
     unifiedCoverage = normalizeUnifiedCoverage(scanned, expectedGeneration);
   } catch (error) {
     const bounded = accountingScanResourceError(error);
@@ -3906,14 +4034,14 @@ export async function buildReplaySafeAccountingCache({
   // The full-history calibration corpus. Without it the only honest outputs
   // are a typed failure or a calibration falsely labelled complete-but-empty;
   // fail closed, and the next refresh reopens it from scratch.
-  const calibrationCorpus = await calibrationSource.open({
+  const calibrationCorpus = await timing.measure("accounting_corpus_open", () => calibrationSource.open({
     endMs,
     limits,
     declaredSpeedBaselines: baselines,
     signal,
     checkRuntimeMemory,
     expectedGeneration: unifiedCoverage?.generation ?? null,
-  });
+  }));
   if (calibrationCorpus === null) {
     throw fixedError("accounting_calibration_corpus_unavailable");
   }
@@ -3932,6 +4060,10 @@ export async function buildReplaySafeAccountingCache({
     endAt: new Date(endMs).toISOString(),
   };
   const calibrationAttribution = calibrationCorpus.planAttribution;
+    if (!Array.isArray(calibrationAttribution.summary.planTypes)
+        || calibrationAttribution.summary.planTypes.length > 16) {
+      throw fixedError("accounting_transition_derivation_limit_exceeded");
+    }
   try {
     // The composition fit reads the same compact corpus the derivation below
     // will consume, so it must run first. It is strictly optional enrichment:
@@ -3942,18 +4074,20 @@ export async function buildReplaySafeAccountingCache({
     // dies here re-runs the same doomed pass on every scheduler tick while the
     // on-disk cache stays a rejected older artifact.
     try {
-      const compositionResult = await fitCompositionFromCorpusStream({
+      const fits = await timing.measure("accounting_fit", () => fitPlanCompositionsFromCorpus({
         forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
         weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
         endMs,
         signal,
         checkRuntimeMemory,
         planAttributionIndex: calibrationAttribution.index,
-        selectedPlanType: calibrationAttribution.summary.latestPlanType,
         declaredSpeedBaselines: baselines,
-      });
-      ({ planScopedTimeline: planScopedTimelineDraft, ...composition } =
-        compositionResult);
+      }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType));
+      historicalPlanDrafts = fits.historicalPlanDrafts;
+      compositionFitFailure = fits.compositionFitFailure;
+      if (fits.compositionResult !== null) {
+        ({ planScopedTimeline: planScopedTimelineDraft, ...composition } = fits.compositionResult);
+      }
     } catch (error) {
       compositionFitFailure = {
         status: "fit_failed",
@@ -3962,20 +4096,13 @@ export async function buildReplaySafeAccountingCache({
     }
     throwIfAborted(signal);
     checkRuntimeMemory();
-    historicalPlanDrafts = await fitHistoricalPlanTimelines({
-      forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
-      weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
-      endMs, signal, checkRuntimeMemory,
-      planAttributionIndex: calibrationAttribution.index,
-      declaredSpeedBaselines: baselines,
-    }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType);
     // Transition derivation consumes and releases the snapshot array. Project
     // exact intervals before that ownership transfer, not from an emptied list.
     if (selectedSourceMode === "unified") {
       try {
-        await calibrationCorpus.loadWeeklyApiOrigins?.(codexHome);
-        weeklyApiIntervals = await buildWeeklyApiIntervals({ corpus: calibrationCorpus, endMs,
-          generation: unifiedCoverage?.generation, fingerprint: unifiedCoverage?.generationFingerprint, signal });
+        await timing.measure("accounting_weekly_origins", () => calibrationCorpus.loadWeeklyApiOrigins?.(codexHome));
+        weeklyApiIntervals = await timing.measure("accounting_weekly_intervals", () => buildWeeklyApiIntervals({ corpus: calibrationCorpus, endMs,
+          generation: unifiedCoverage?.generation, fingerprint: unifiedCoverage?.generationFingerprint, signal }));
       } catch (error) {
         throwIfAborted(signal);
         if (error?.name === "AbortError") throw error;
@@ -3984,7 +4111,7 @@ export async function buildReplaySafeAccountingCache({
       }
     }
     try {
-      transitionSeries = await deriveBoundedWeeklyCalibrationSeries({
+      transitionSeries = await timing.measure("accounting_transitions", () => deriveBoundedWeeklyCalibrationSeries({
         startAt: calibrationCoveredAt.startAt,
         endAt: calibrationCoveredAt.endAt,
         usageCorpus: {
@@ -4000,7 +4127,7 @@ export async function buildReplaySafeAccountingCache({
         resourceCheck: checkRuntimeMemory,
         planAttributionIndex: calibrationAttribution.index,
         limits,
-      });
+      }));
     } catch (error) {
       if (error?.name === "AbortError"
           || error?.code === "transition_derivation_aborted") {
@@ -4022,7 +4149,7 @@ export async function buildReplaySafeAccountingCache({
     // release the read handle. The one-shot reader ran the same checks at its
     // end; streaming widens the window they cover, not their meaning.
     const corpusMetrics = calibrationCorpus.metrics();
-    await calibrationCorpus.finish();
+    await timing.measure("accounting_corpus_finish", () => calibrationCorpus.finish());
     if (onCalibrationCorpusMetrics !== null) {
       onCalibrationCorpusMetrics(corpusMetrics);
     }
@@ -4030,6 +4157,7 @@ export async function buildReplaySafeAccountingCache({
     calibrationCorpus.dispose();
     throw error;
   }
+  return timing.measureSync("accounting_finalize", () => {
   const weeklyCalibrationDataset = {
     attribution: calibrationAttribution.summary,
     parserVersion: PARSER_VERSION,
@@ -4183,6 +4311,7 @@ export async function buildReplaySafeAccountingCache({
     cache.planScopedTimeline = unavailablePlanTimeline("plan_scoped_resource_limit");
   }
   return cache;
+  });
 }
 
 export async function refreshReplaySafeAccountingCache({
@@ -4220,6 +4349,7 @@ export async function refreshReplaySafeAccountingCache({
     throw new TypeError("buildCache must be a function or null");
   }
   const selectedStateFile = stateFile ?? defaultReplaySafeAccountingCachePath();
+  const timing = createLocalRefreshTimer({ onTiming: options.onTiming, clock: options.monotonicClock });
   const selectedSourceMode = normalizeAccountingSourceMode(sourceMode);
   const selectedContextBehavior = normalizeContextBehavior(contextBehavior);
   if (expectedGeneration !== null
@@ -4236,7 +4366,7 @@ export async function refreshReplaySafeAccountingCache({
   // Converge legacy state before spending a potentially substantial index
   // read. A live old JSON collector or an unverified parity mismatch must
   // fail before we derive a cache that cannot be committed safely.
-  await prepareLocalCollectorState({ stateFile: selectedStateFile });
+  await timing.measure("accounting_prepare_state", () => prepareLocalCollectorState({ stateFile: selectedStateFile }));
   let cache;
   try {
     cache = await (buildCache ?? buildReplaySafeAccountingCache)({
@@ -4296,20 +4426,20 @@ export async function refreshReplaySafeAccountingCache({
   // Validate the complete derived artifact before publication. The write is
   // atomic, but atomicity alone would preserve a newly-created invalid cache;
   // fail closed here so a bad build leaves the prior valid state untouched.
-  assertReplaySafeAccountingCache(cache);
-  if (Buffer.byteLength(serializeLocalCollectorAccountingCache(cache)) > MAX_CACHE_BYTES) {
-    throw fixedError("cache_invalid_size");
-  }
+  timing.measureSync("accounting_validate", () => {
+    assertReplaySafeAccountingCache(cache);
+    if (Buffer.byteLength(serializeLocalCollectorAccountingCache(cache)) > MAX_CACHE_BYTES) throw fixedError("cache_invalid_size");
+  });
   // A timeout/cancel can arrive after the build has returned a valid artifact
   // but before its atomic publication. Recheck at the final durable boundary
   // so a run already reported as stopped cannot replace the retained cache
   // behind that terminal state.
   throwIfAborted(options.signal ?? null);
-  await writeLocalCollectorAccountingCache({
+  await timing.measure("accounting_publish", () => writeLocalCollectorAccountingCache({
     stateFile: selectedStateFile,
     cache,
     signal: options.signal ?? null,
-  });
+  }));
   return cache;
 }
 
@@ -5245,6 +5375,7 @@ export async function readReplaySafeAccountingCache({
   sourceMode = null,
   expectedGeneration = null,
   contextBehavior = null,
+  includeStaleGeneration = false,
 } = {}) {
   if (cacheFile !== undefined) {
     throw new TypeError("cacheFile was retired; use stateFile");
@@ -5255,6 +5386,9 @@ export async function readReplaySafeAccountingCache({
   }
   if (now !== null && typeof now !== "function") {
     throw new TypeError("now must be a function or null");
+  }
+  if (typeof includeStaleGeneration !== "boolean") {
+    throw new TypeError("includeStaleGeneration must be a boolean");
   }
   if (maximumAgeMs !== null
       && (!Number.isSafeInteger(maximumAgeMs) || maximumAgeMs < 0)) {
@@ -5379,10 +5513,31 @@ export async function readReplaySafeAccountingCache({
     if (storedGenerations.length === 0
         || expectedTokens.length === 0
         || !generationMatchesExpected(expectedGeneration, storedGenerations)) {
+      // A retained result never satisfies the current-generation contract.
+      // Only a fully validated, zero-fallback artifact with a checked clock
+      // may additionally travel on the explicitly stale channel.
+      let retained = null;
+      if (includeStaleGeneration && now !== null && descriptor.fallbackCount === 0) {
+        const nowMs = now();
+        if (!Number.isFinite(nowMs)) throw new TypeError("now must return a finite epoch timestamp");
+        if (Date.parse(parsed.coveredAt.endAt) <= nowMs) {
+          retained = {
+            stale: true,
+            reason: "cache_generation_mismatch",
+            schemaVersion: parsed.schemaVersion,
+            computedAt: parsed.generatedAt,
+            coveredAt: { ...parsed.coveredAt },
+            sourceGeneration: descriptor.generation,
+            sourceGenerationFingerprint: descriptor.generationFingerprint,
+            cache: parsed,
+          };
+        }
+      }
       return {
         status: "unavailable",
         errorCode: "cache_generation_mismatch",
         cache: null,
+        ...(retained === null ? {} : { staleCache: retained }),
       };
     }
   }
@@ -5449,10 +5604,13 @@ export const REPLAY_SAFE_CALIBRATION_INTERNALS = Object.freeze({
   eventProjection,
   fitCompositionFromCorpusStream,
   fitHistoricalPlanTimelines,
+  fitPlanCompositionsFromCorpus,
   historicalPlanComparisonReceipts,
   fixedError,
   planScopedTimelineReceipt,
   projectBoundedWeeklyCalibrationSummary,
+  publicDiagnostics,
+  MAX_CACHE_BYTES,
   safeModel,
   throwIfAborted,
   transitionResourceLimits,

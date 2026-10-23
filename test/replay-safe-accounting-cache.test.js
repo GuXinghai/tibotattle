@@ -289,6 +289,43 @@ test("unified cache history is attached only after a matching second generation 
   assert.equal(cache.history.period.events, 1);
 });
 
+test("prior-generation accounting is opt-in, clock-checked and isolated from current authority", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "usage-monitor-retained-generation-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const stateFile = join(directory, "collector.sqlite");
+  const cache = await refreshReplaySafeAccountingCache({ stateFile,
+    sourceMode: "unified", expectedGeneration: "generation-test-1",
+    scan: completeUnifiedScanner([]), now: () => NOW });
+  const request = { stateFile, sourceMode: "unified", contextBehavior: "source_native",
+    expectedGeneration: "generation-test-2", now: () => NOW };
+  const strict = await readReplaySafeAccountingCacheImpl(request);
+  assert.equal(strict.cache, null);
+  assert.equal(strict.staleCache, undefined);
+  const retained = await readReplaySafeAccountingCacheImpl({ ...request, includeStaleGeneration: true });
+  assert.equal(retained.status, "unavailable");
+  assert.equal(retained.errorCode, "cache_generation_mismatch");
+  assert.equal(retained.cache, null);
+  assert.equal(retained.staleCache.reason, "cache_generation_mismatch");
+  assert.equal(retained.staleCache.sourceGeneration, cache.sourceDescriptor.generation);
+  assert.equal(retained.staleCache.sourceGenerationFingerprint, cache.sourceDescriptor.generationFingerprint);
+  assert.equal(retained.staleCache.computedAt, cache.generatedAt);
+  assert.deepEqual(retained.staleCache.cache, cache);
+  for (const now of [null, () => NOW - 1]) {
+    const refused = await readReplaySafeAccountingCacheImpl({ ...request, now, includeStaleGeneration: true });
+    assert.equal(refused.cache, null);
+    assert.equal(refused.staleCache, undefined, "unknown or future clock cannot qualify retained results");
+  }
+  for (const change of [
+    { priceRegistryVersion: "synthetic-obsolete-prices" },
+    { sourceDescriptor: { ...cache.sourceDescriptor, fallbackCount: 1 } },
+  ]) {
+    await writeLocalCollectorAccountingCache({ stateFile, cache: { ...cache, ...change } });
+    const refused = await readReplaySafeAccountingCacheImpl({ ...request, includeStaleGeneration: true });
+    assert.equal(refused.cache, null);
+    assert.equal(refused.staleCache, undefined, "stale generation must not bypass price or fallback validation");
+  }
+});
+
 test("cache reads invalidate when the unified generation no longer matches", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-generation-reuse-"));
   const stateFile = join(directory, "local-collector-state-v1.sqlite");
@@ -2456,14 +2493,14 @@ test("replay cache rejects the old prefix-priced version and unreviewed model cr
       components: { input_uncached_tokens: 1_000 },
     })]),
   });
-  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.22");
+  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.24");
   assert.doesNotThrow(() => assertReplaySafeAccountingCache(cache));
   const oldVersion = structuredClone(cache);
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.12";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.13";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
-  for(const version of ["0.19","0.20","0.21"]){oldVersion.schemaVersion="local-replay-safe-accounting-v"+version;assert.throws(()=>assertReplaySafeAccountingCache(oldVersion));}
+  for(const version of ["0.19","0.20","0.21","0.22","0.23"]){oldVersion.schemaVersion="local-replay-safe-accounting-v"+version;assert.throws(()=>assertReplaySafeAccountingCache(oldVersion));}
   for (const model of ["gpt-5.6", "gpt-5.5-pro", "gpt-5.5-future"]) {
     const invalidCrossing = structuredClone(cache);
     invalidCrossing.timeline[0].speedWeighting.unknown ??= {};

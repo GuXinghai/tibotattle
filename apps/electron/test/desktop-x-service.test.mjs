@@ -9,6 +9,107 @@ const scope = 'b8ea1e27-7bcf-4b38-bd10-2fbde8bf6e74';
 const post = (id = '123', kind = 'post') => ({ id, author: { name: 'Example', handle: 'thsottiaux', avatar: 'https://pbs.twimg.com/profile_images/example.jpg' }, createdAt: '2026-10-19T14:59:00.000Z', text: 'Synthetic public post', complete: true, kind, media: [{ id: 'media-1', type: 'video', url: 'https://video.twimg.com/master.m3u8', mimeType: 'application/x-mpegURL' }] });
 const initial = (extra = {}) => ({ version: 1, settings: { ...X_DEFAULT_SETTINGS }, activePartition: partition, authScope: scope, posts: [], lists: { posts: [], replies: [], reposts: [], media: [] }, notificationBaseline: { posts: [], replies: [] }, ...extra });
 const flush = async () => { for (let i = 0; i < 12; i++) await new Promise(resolve => setImmediate(resolve)); };
+const importCookies = () => ['auth_token','ct0'].map(name => ({url:'https://x.com/',domain:'.x.com',name,value:'synthetic',path:'/',secure:true,httpOnly:name==='auth_token',sameSite:'no_restriction'}));
+
+test('initial login status stays checking until saved state is read, including read failures',async()=>{
+  for(const failed of [false,true]){
+    let finishRead,rejectRead;
+    const f=fixture(undefined,{repository:{read:()=>new Promise((resolve,reject)=>{finishRead=resolve;rejectRead=reject;}),listSessionCleanup:async()=>({partitions:[],pendingClear:[]})}});
+    assert.equal(f.service.getStatus().auth,'restoring');
+    if(failed)rejectRead(new Error('synthetic'));else finishRead(null);
+    await f.service.ready;
+    assert.equal(f.service.getStatus().auth,'disconnected');assert.equal(f.service.getStatus().operation,failed?'error':'idle');
+    assert.equal(f.service.getStatus().error,failed?'storage_unavailable':null);await f.service.dispose();
+  }
+});
+
+test('initial saved-session recovery never reports a disconnected intermediate state',async()=>{
+  const observed=[];const f=fixture(initial(),{onUpdate:value=>observed.push(value.auth)});
+  assert.equal(f.service.getStatus().auth,'restoring');await f.service.ready;await flush();
+  assert.equal(f.service.getStatus().auth,'ready');assert.equal(observed.includes('disconnected'),false);await f.service.dispose();
+});
+
+test('reply continuation deduplicates pages, retries no progress and separates branch exhaustion',async()=>{
+  const f=fixture();await f.service.ready;await flush();
+  const reply=(id,parent='123')=>({...post(id,'reply'),replyTo:parent});
+  f.setLoad(async()=>({posts:[post(),reply('124')],exhausted:false}));
+  const first=await f.service.getPost({id:'123'});assert.equal(first.hasMore,true);assert.equal(first.repliesExhausted,false);
+  await assert.rejects(f.service.getPost({id:'124',cursor:first.nextCursor}),{code:'invalid_cursor'});
+  const retry=await f.service.getPost({id:'123',cursor:first.nextCursor});assert.equal(retry.outcome,'failed');assert.equal(retry.error,'pagination_pending');assert.equal(retry.nextCursor,first.nextCursor);
+  f.setLoad(async args=>{if(args.id==='124')return{posts:[reply('124'),reply('126','124')],exhausted:true};assert.equal(args.more,true);assert.ok(args.knownReplies.includes('124'));return{posts:[reply('124'),reply('125'),reply('126','124')],exhausted:true};});
+  const last=await f.service.getPost({id:'123',cursor:first.nextCursor});assert.deepEqual(last.replies.map(post=>post.id),['124','125']);assert.equal(last.nextCursor,null);assert.equal(last.repliesExhausted,true);
+  const reads=f.loads.length;assert.equal((await f.service.getPost({id:'123',cursor:first.nextCursor})).repliesExhausted,true);assert.equal(f.loads.length,reads,'replay returns the completed page rather than fetching twice');
+  const branch=await f.service.getPost({id:'124'});assert.deepEqual(branch.replies.map(post=>post.id),['126']);assert.equal(branch.repliesExhausted,true);
+  assert.equal((await f.service.getPost({id:'123'})).repliesExhausted,true);await f.service.dispose();
+});
+
+test('clearing cache rejects late reply pages and invalidates their handles',async()=>{
+  const f=fixture();await f.service.ready;await flush();f.setLoad(async()=>({posts:[post()],exhausted:false}));const first=await f.service.getPost({id:'123'});
+  let release;f.setLoad(()=>new Promise(resolve=>{release=resolve;}));const pending=f.service.getPost({id:'123',cursor:first.nextCursor});await flush();
+  await f.service.clearCache();release({posts:[{...post('124','reply'),replyTo:'123'}],exhausted:true});await pending;
+  assert.deepEqual(f.disk().posts,[]);await assert.rejects(f.service.getPost({id:'123',cursor:first.nextCursor}),{code:'invalid_cursor'});await f.service.dispose();
+});
+
+test('discussion order follows returned pages, forced refresh replaces it and retains archived posts',async()=>{
+  const f=fixture();await f.service.ready;await flush();
+  const reply=id=>({...post(id,'reply'),replyTo:'123',createdAt:`2026-10-19T${id==='124'?'12':'11'}:00:00.000Z`});
+  f.setLoad(async()=>({posts:[post(),reply('124'),reply('125')],exhausted:false}));
+  const first=await f.service.getPost({id:'123'});assert.deepEqual(first.replies.map(p=>p.id),['124','125']);
+  const scheduled=f.service.getStatus().nextRefreshAt;const count=f.loads.length;
+  await f.service.getPost({id:'123'});assert.equal(f.loads.length,count,'ordinary entry still reuses 60-second cache');
+  f.setLoad(async()=>({posts:[reply('125'),reply('126'),reply('124')],exhausted:true}));
+  const page=await f.service.getPost({id:'123',cursor:first.nextCursor});assert.deepEqual(page.replies.map(p=>p.id),['124','125','126']);
+  f.setLoad(async()=>({posts:[post(),reply('126'),reply('125')],exhausted:false}));
+  const fresh=await f.service.getPost({id:'123',force:true});assert.deepEqual(fresh.replies.map(p=>p.id),['126','125']);
+  assert.ok(f.disk().posts.some(p=>p.id==='124'));assert.deepEqual(f.disk().replyLists['123'],['126','125']);
+  await assert.rejects(f.service.getPost({id:'123',cursor:first.nextCursor}),{code:'invalid_cursor'});
+  assert.equal(f.service.getStatus().nextRefreshAt,scheduled,'manual detail does not postpone timer');
+  f.setLoad(async args=>{assert.deepEqual(args.knownReplies,['126','125']);return{posts:[reply('124')],exhausted:true};});
+  assert.deepEqual((await f.service.getPost({id:'123',cursor:fresh.nextCursor})).replies.map(p=>p.id),['126','125','124']);
+  f.setLoad(async()=>{throw Object.assign(new Error('synthetic'),{code:'offline'});});
+  const failed=await f.service.getPost({id:'123',force:true});assert.equal(failed.outcome,'failed');assert.deepEqual(failed.replies.map(p=>p.id),['126','125','124']);
+  await f.service.dispose();
+  const reopened=fixture({...f.disk(),activePartition:null});await reopened.service.ready;
+  const offline=await reopened.service.getPost({id:'123'});assert.equal(offline.source,'cache');assert.deepEqual(offline.replies.map(p=>p.id),['126','125','124']);assert.equal(reopened.loads.length,0);await reopened.service.dispose();
+});
+
+test('manual list refresh fetches only its tab and keeps the background timer deadline',async()=>{
+  const f=fixture();await f.service.ready;await flush();const start=f.loads.length,deadline=f.service.getStatus().nextRefreshAt;
+  f.advance(1000);await f.service.refresh({tab:'media',reason:'manual'});
+  assert.deepEqual(f.loads.slice(start).map(q=>q.tab),['media']);assert.equal(f.service.getStatus().nextRefreshAt,deadline);
+  await f.service.dispose();
+});
+
+test('Session progress follows actual preparation, verification and persistence boundaries',async()=>{
+  const observed=[];const f=fixture(initial(),{onUpdate:status=>{if(status.loginStage&&observed.at(-1)!==status.loginStage)observed.push(status.loginStage);}});
+  await f.service.ready;await flush();await f.service.beginLogin({method:'session'});
+  await f.service.importCookies(importCookies(),{isCurrent:()=>true});await flush();
+  assert.deepEqual(observed,['checking_bridge','waiting_import','validating','preparing','writing','connecting','verifying','saving','complete']);
+  assert.equal(f.service.getStatus().auth,'ready');assert.equal(f.service.getStatus().loginFailureStage,null);await f.service.dispose();
+});
+
+test('Session failures retain the failed step and cancellation clears it',async()=>{
+  for(const step of ['validating','writing','connecting','saving']){
+    const f=fixture();await f.service.ready;await flush();
+    if(step==='writing'||step==='saving'){
+      const open=f.runtime.session.fromPath;f.runtime.session.fromPath=path=>{const session=open(path);if(!path.endsWith(partition)){if(step==='writing')session.cookies.set=async()=>{throw new Error('synthetic');};else session.cookies.flushStore=async()=>{throw new Error('synthetic');};}return session;};
+    }
+    if(step==='connecting'){const Window=f.runtime.BrowserWindow;f.runtime.BrowserWindow=class extends Window{async loadURL(){throw new Error('net::ERR_PROXY_CONNECTION_FAILED');}};}
+    await f.service.beginLogin({method:'session'});
+    await f.service.importCookies(step==='validating'?[]:importCookies(),{isCurrent:()=>true}).catch(()=>{});await flush();
+    assert.equal(f.service.getStatus().loginFailureStage,step,step);assert.equal(f.service.getStatus().operation,'error',step);
+    f.service.cancelLogin();assert.equal(f.service.getStatus().loginStage,null);assert.equal(f.service.getStatus().loginFailureStage,null);
+    await f.service.dispose().catch(()=>{});
+  }
+});
+
+test('Session challenge can reopen its existing candidate without switching login method',async()=>{
+  const f=fixture(initial(),{adapterFactory:()=>({load:async()=>({authenticated:true,posts:[],exhausted:true}),inspect:async()=>{throw Object.assign(new Error('challenge'),{code:'challenge'});},dispose(){}})});
+  await f.service.ready;await flush();await f.service.beginLogin({method:'session'});await f.service.importCookies(importCookies(),{isCurrent:()=>true});await flush();
+  assert.equal(f.service.getStatus().loginStage,'challenge');const count=f.windows.length;
+  await f.service.beginLogin({method:'web'});assert.equal(f.windows.length,count);assert.equal(f.service.getStatus().loginMethod,'session');assert.equal(f.service.getStatus().loginStage,'challenge');
+  f.service.cancelLogin();await f.service.dispose();
+});
 function fixture(saved = initial(), overrides = {}) {
   let disk = structuredClone(saved); let time = 1000000; const scheduled = new Map(); let sequence = 0; const windows = []; const notifications = []; const loads = []; let adapterLoad = async () => ({ authenticated: true, posts: [post()], exhausted: true });
   function makeSession(existing = false) {
@@ -135,7 +236,7 @@ test('X disabled cadence restores no remote page, permits first visit, and resum
   assert.equal((await f.service.listPosts({ tab: 'posts' })).source, 'cache'); await flush(); assert.equal(f.loads.length, 1); assert.equal(f.scheduled.size, 0); await f.service.dispose();
 });
 test('X candidate timeout and cancellation of late authentication preserve the existing session', async () => {
-  const timed = fixture(initial(), { loginTimeoutMs: 0 }); await timed.service.ready; await flush(); await timed.service.beginLogin({ method: 'web' }); await flush(); assert.equal(timed.disk().activePartition, partition); assert.equal(timed.service.getStatus().auth, 'ready'); await timed.service.dispose();
+  const timed = fixture(initial(), { loginTimeoutMs: 0 }); await timed.service.ready; await flush(); await timed.service.beginLogin({ method: 'web' }); await flush(); assert.equal(timed.disk().activePartition, partition); assert.equal(timed.service.getStatus().auth, 'ready'); assert.equal(timed.service.getStatus().error, 'login_timeout'); assert.equal(timed.service.getStatus().operation, 'error'); await timed.service.dispose();
   let complete;
   const f = fixture(initial(), { adapterFactory: () => ({ load: async () => ({ authenticated: true, posts: [post()], exhausted: true }), inspect: () => new Promise(resolve => { complete = resolve; }), dispose() {} }) });
   await f.service.ready; await flush(); await f.service.beginLogin({ method: 'session' });
@@ -152,7 +253,54 @@ test('X candidate navigation failure closes the blank window promptly and keeps 
   assert.equal(f.service.getStatus().auth, 'ready');
   assert.equal(f.service.getStatus().loginMethod, null);
   assert.equal(f.service.getStatus().error, 'offline');
+  assert.equal(f.service.getStatus().operation, 'error');
   assert.equal(f.disk().activePartition, partition);
+  await f.service.dispose();
+});
+
+test('failed X relogin preserves expired or challenged authentication instead of reporting connected', async () => {
+  for (const auth of ['expired', 'challenge']) for (const method of ['web', 'session']) {
+    const bridge = { begin: async () => { throw new Error('synthetic bridge failure'); }, cancel() {}, status: () => null };
+    const f = fixture(initial(), { importBridge: bridge }); await f.service.ready; await flush();
+    f.setLoad(async () => { throw Object.assign(new Error('synthetic'), { code: auth }); });
+    await f.service.refresh(); assert.equal(f.service.getStatus().auth, auth);
+    if (method === 'web') {
+      const Window = f.runtime.BrowserWindow;
+      f.runtime.BrowserWindow = class extends Window { async loadURL() { throw new Error('synthetic navigation failure'); } };
+      // A challenged active window is reused without navigation. Reject its
+      // verification to exercise the same failure recovery for that route.
+      if (auth === 'challenge') f.session.cookies.get = async () => { throw Object.assign(new Error('synthetic read failure'), { code: 'session_read_failed' }); };
+    }
+    await f.service.beginLogin({ method }); await flush();
+    assert.equal(f.service.getStatus().auth, auth); assert.equal(f.service.getStatus().operation, 'error');
+    assert.equal(f.service.getStatus().error, method === 'session' ? 'import_failed' : auth === 'challenge' ? 'session_read_failed' : 'offline'); assert.equal(f.scheduled.size, 0);
+    if (method === 'web' && auth === 'challenge') await assert.rejects(f.service.dispose(), { code: 'session_read_failed' });
+    else await f.service.dispose();
+  }
+});
+
+test('cancelled X login cannot publish its ordinary failure after asynchronous cleanup', async () => {
+  const f = fixture(initial({ activePartition: null, authScope: null })); await f.service.ready; await flush();
+  let release;
+  const fromPath = f.runtime.session.fromPath;
+  f.runtime.session.fromPath = path => { const session = fromPath(path); session.clearStorageData = () => new Promise(resolve => { release = resolve; }); return session; };
+  const Window = f.runtime.BrowserWindow;
+  f.runtime.BrowserWindow = class extends Window { async loadURL() { throw new Error('synthetic navigation failure'); } };
+  await f.service.beginLogin({ method: 'web' }); await flush(); assert.equal(typeof release, 'function');
+  f.service.cancelLogin(); assert.equal(f.service.getStatus().error, null);
+  release(); await flush();
+  assert.equal(f.service.getStatus().auth, 'disconnected'); assert.equal(f.service.getStatus().operation, 'idle'); assert.equal(f.service.getStatus().error, null);
+  await f.service.dispose();
+});
+
+test('X web setup failures stay distinct from import failures and diagnostic observers cannot alter login state', async () => {
+  const diagnostics = []; const failure = new Error('synthetic window failure');
+  const f = fixture(initial({ activePartition: null, authScope: null }), { onDiagnostic(stage, error) { diagnostics.push({ stage, error }); throw new Error('synthetic observer failure'); } });
+  await f.service.ready; await flush();
+  f.runtime.BrowserWindow = class { constructor() { throw failure; } };
+  await f.service.beginLogin({ method: 'web' }); await flush();
+  assert.equal(f.service.getStatus().auth, 'disconnected'); assert.equal(f.service.getStatus().operation, 'error'); assert.equal(f.service.getStatus().error, 'login_failed');
+  assert.equal(diagnostics.length, 1); assert.equal(diagnostics[0].stage, 'login_web'); assert.equal(diagnostics[0].error, failure);
   await f.service.dispose();
 });
 test('X list freshness reflects real successful retrieval and failure fallback, not memory presence', async () => {
@@ -234,7 +382,7 @@ test('X expired Session grant returns to login selection without touching an exi
     const bridge = { status: () => gate, begin: async () => { gate = { code: 'import_ready', pending: true, importing: false }; return gate; }, cancel() { gate = { code: 'bridge_ready', pending: false, importing: false }; } };
     const f = fixture(initial({ activePartition: existing ? partition : null, authScope: existing ? scope : null }), { importBridge: bridge });
     await f.service.ready; await flush(); await f.service.beginLogin({ method: 'session' }); assert.equal(f.service.getStatus().auth, 'authorizing');
-    gate = { code: 'import_ready', pending: false, importing: false }; const expired = f.service.getStatus(); assert.equal(expired.auth, existing ? 'ready' : 'disconnected'); assert.equal(expired.operation, 'error'); assert.equal(expired.error, 'import_failed'); assert.equal(expired.loginMethod, null); assert.equal(f.disk().activePartition, existing ? partition : null);
+    gate = { code: 'import_ready', pending: false, importing: false }; const expired = f.service.getStatus(); assert.equal(expired.auth, existing ? 'ready' : 'disconnected'); assert.equal(expired.operation, 'error'); assert.equal(expired.error, 'import_expired'); assert.equal(expired.loginFailureStage, 'waiting_import'); assert.equal(expired.loginMethod, null); assert.equal(f.disk().activePartition, existing ? partition : null);
     assert.equal((await f.service.beginLogin({ method: 'session' })).auth, 'authorizing'); assert.equal(f.service.getStatus().auth, 'authorizing'); f.service.cancelLogin(); await f.service.dispose();
   }
 });
@@ -324,6 +472,6 @@ test('notifications keep independent bounded categories and accept late arrivals
   f.setLoad(async () => ({ authenticated: true, posts: [post('140', 'reply')], exhausted: true })); await f.service.refresh();
   assert.equal(f.notifications.at(-1).latestId, '140'); const count = f.notifications.length; await f.service.refresh(); assert.equal(f.notifications.length, count);
   f.setLoad(async () => ({ authenticated: true, posts: Array.from({ length: 1100 }, (_, i) => post(String(1000+i))), exhausted: true })); await f.service.refresh();
-  assert.equal(f.disk().version, 2); assert.equal(f.disk().notificationBaseline.posts.seen.length, 1024); assert.equal(f.disk().notificationBaseline.replies.seen.length, 2);
+  assert.equal(f.disk().version, 3); assert.equal(f.disk().notificationBaseline.posts.seen.length, 1024); assert.equal(f.disk().notificationBaseline.replies.seen.length, 2);
   await f.service.dispose();
 });

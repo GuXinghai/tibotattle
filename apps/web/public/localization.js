@@ -183,6 +183,7 @@ export const WEB_MESSAGES = Object.freeze({
       || key.startsWith("dashboard.overview.")
       || key.startsWith("dashboard.views.")
       || key === "dashboard.notice.details"
+      || key === "dashboard.freshness.observation"
       || key === "dashboard.pricing.speedNote"
       || key.startsWith("appearance.")
       || key.startsWith("background.")
@@ -192,7 +193,9 @@ export const WEB_MESSAGES = Object.freeze({
       || key.startsWith("trends.")
       || key.startsWith("electron.")
       || key.startsWith("weekly.")
+      || key.startsWith("accounting.staleServe.")
       || key.startsWith("accounting.cacheImpact.bullet")
+      || key === "accounting.cacheImpact.evidenceUnknown"
       || key.startsWith("accounting.cacheContinuity.matrix."))
     .map((key) => [key, SUPPORTED_LOCALES.map((locale) => CATALOGS[locale][key])])),
   "dashboard.title": ["Usage overview", "使用概览", "Resumen de uso"],
@@ -260,10 +263,9 @@ export const WEB_MESSAGES = Object.freeze({
   "dashboard.quota.providerPlanUnavailable": ["Provider-reported plan unavailable", "提供方报告的方案不可用", "Plan informado por el proveedor no disponible"],
   "shareCard.showInFinder": ["Show in Finder", "在访达中显示", "Mostrar en Finder"],
   "dashboard.quota.stale": ["Out of date", "已过期", "Desactualizado"],
-  "dashboard.freshness.observation": ["Latest observation", "最新观测", "Última observación"],
   "dashboard.freshness.stale": ["Observation out of date", "观测数据已过期", "Observación desactualizada"],
-  "dashboard.refresh.recovering": ["Automatic refresh is recovering. The next scheduled update will resume once the safety timer releases this pass.", "自动刷新正在恢复。安全计时器释放本次任务后，将恢复下一次计划更新。", "La actualización automática se está recuperando. La siguiente actualización programada se reanudará cuando el temporizador de seguridad libere esta ejecución."],
-  "dashboard.refresh.waitingForRecovery": ["Automatic refresh is waiting for safety recovery before the next scheduled update.", "自动刷新正在等待安全恢复，然后再进行下一次计划更新。", "La actualización automática espera la recuperación de seguridad antes de la siguiente actualización programada."],
+  "dashboard.refresh.recovering": ["The refresh connection is recovering. The local service continues to own the active task and its schedule.", "刷新连接正在恢复。当前任务和刷新计划仍由本地服务负责。", "La conexión de actualización se está recuperando. El servicio local sigue a cargo de la tarea activa y su programación."],
+  "dashboard.refresh.waitingForRecovery": ["Waiting to restore the refresh connection. The active task has not been restarted.", "正在等待恢复刷新连接，当前任务未被重新启动。", "Esperando a restablecer la conexión de actualización. La tarea activa no se ha reiniciado."],
   "dashboard.stale.observationTitle": ["Results need an update", "结果需要更新", "Los resultados necesitan actualizarse"],
   "dashboard.stale.observationCopy": ["Showing the last available results. Update local usage to check for newer measurements.", "显示最近可用的结果。更新本地用量，查看是否有新的测量数据。", "Se muestran los últimos resultados disponibles. Actualiza el uso local para comprobar si hay mediciones más recientes."],
   "dashboard.quota.remaining": ["{value} remaining", "剩余 {value}", "{value} restante"],
@@ -361,41 +363,6 @@ export const WEB_MESSAGES = Object.freeze({
     "正在加载已验证的部分证据…",
     "Cargando evidencia parcial verificada…",
   ],
-  "refresh.degradedTitle": [
-    "Local analysis complete with limited history coverage",
-    "本地分析已完成，历史覆盖范围有限",
-    "Análisis local completo con cobertura de historial limitada",
-  ],
-  "refresh.degradedCopy": [
-    "Verified totals remain available. TiboTattle left out {sources} across {threads} that did not pass local validation; no missing usage is shown as zero. Update again after the source files change, or whenever you want to check.",
-    "已验证的总计仍然可用。TiboTattle 未包含 {threads} 中未通过本地验证的 {sources}；任何缺失用量都不会显示为零。来源文件发生变化后，或你想再次检查时，可以再次更新。",
-    "Los totales verificados siguen disponibles. TiboTattle dejó fuera {sources} de {threads} que no superaron la validación local; ningún uso ausente se muestra como cero. Actualiza de nuevo cuando cambien los archivos de origen o cuando quieras comprobarlo.",
-  ],
-  "refresh.degradedGenericCopy": [
-    "The summary is available, but the full history index could not be updated ({code}). Existing results have been kept. Automatic retries have stopped; you can retry manually.",
-    "概要仍然可用，但完整历史索引更新失败（{code}）。已保留已有结果，并停止自动重试；你可以手动重试。",
-    "El resumen sigue disponible, pero no se pudo actualizar el índice del historial completo ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; puedes reintentar manualmente.",
-  ],
-  "refresh.history.publicationBusyCopy": [
-    "The index is being published, so this operation could not finish ({code}). Existing results have been kept. Automatic retries have stopped; retry manually after publication finishes.",
-    "索引正在发布，本次操作暂时无法完成（{code}）。已保留已有结果，并停止自动重试；请稍后手动重试。",
-    "El índice se está publicando y esta operación no pudo finalizar ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; reintenta manualmente cuando termine la publicación.",
-  ],
-  "refresh.history.publicationTimedOutCopy": [
-    "The full history index update exceeded its time limit ({code}). Existing results have been kept. Automatic retries have stopped; wait for report loading to finish, then retry manually. If this persists, restart TiboTattle and try again.",
-    "完整历史索引更新超时（{code}）。已保留已有结果，并停止自动重试；请等报表加载结束后手动重试。若仍失败，请重启 TiboTattle 后再试。",
-    "La actualización del índice del historial completo superó el tiempo límite ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; espera a que terminen de cargar los informes y reintenta manualmente. Si el problema persiste, reinicia TiboTattle e inténtalo de nuevo.",
-  ],
-  "refresh.history.publicationFailedCopy": [
-    "The summary is available, but the new full history index could not replace the existing index file ({code}). Existing results have been kept. Automatic retries have stopped; you can retry manually. If this persists, check that TiboTattle can write to its data folder.",
-    "概要仍然可用，但新生成的完整历史索引无法替换已有索引文件（{code}）。已保留已有结果，并停止自动重试；你可以手动重试。若仍失败，请检查 TiboTattle 的数据文件夹是否可写。",
-    "El resumen sigue disponible, pero el nuevo índice del historial completo no pudo reemplazar el archivo del índice existente ({code}). Se conservaron los resultados existentes. Los reintentos automáticos se han detenido; puedes reintentar manualmente. Si el problema persiste, comprueba que TiboTattle pueda escribir en su carpeta de datos.",
-  ],
-  "refresh.history.sourceChangedCopy": [
-    "The summary is available, but Codex source files changed while the full history index was being built ({code}). The new index was not published, and existing results have been kept. Automatic retries have stopped; retry manually when the source files are no longer changing.",
-    "概要仍然可用，但构建完整历史索引期间，Codex 来源文件发生了变化（{code}）。本次未发布新索引，已有结果已保留，并停止自动重试；请等来源文件稳定后手动重试。",
-    "El resumen sigue disponible, pero los archivos de origen de Codex cambiaron mientras se construía el índice del historial completo ({code}). El nuevo índice no se publicó y se conservaron los resultados existentes. Los reintentos automáticos se han detenido; reintenta manualmente cuando los archivos de origen dejen de cambiar.",
-  ],
   "refresh.alreadyRunningTitle": ["An update is already running", "更新正在进行中", "Ya hay una actualización en curso"],
   "refresh.alreadyRunningCopy": [
     "This request did not start another update. Your current results remain available; when the current update finishes, choose Refresh again if detailed accounting still needs updating.",
@@ -416,18 +383,8 @@ export const WEB_MESSAGES = Object.freeze({
   // running. Deliberately not alert-styled: the numbers are the user's own
   // history, merely computed by the prior semantics, and the recalculation is
   // automatic. The "retrying" variant appears once the rebuild has deferred
-  // repeatedly, wiring the live rebuild state into the same label instead of
-  // adding a second banner.
-  "accounting.staleServe.recalculating": [
-    "Computed by the previous version — recalculating now.",
-    "由先前版本计算——正在重新计算。",
-    "Calculado por la versión anterior — recalculando ahora.",
-  ],
-  "accounting.staleServe.retrying": [
-    "Computed by the previous version — the recalculation is being retried.",
-    "由先前版本计算——正在重试重新计算。",
-    "Calculado por la versión anterior — se está reintentando el recálculo.",
-  ],
+  // repeatedly. Previous-version labels are canonical and do not imply work
+  // is currently running; activity belongs to the refresh control.
   "accounting.staleServe.newerBuild": [
     "Last verified by a compatible build — this older build cannot refresh the newer local history.",
     "由兼容版本完成上次验证——此旧版本无法刷新较新的本地历史记录。",
@@ -464,23 +421,23 @@ export const WEB_MESSAGES = Object.freeze({
   "accounting.cacheImpact.subtotalStandard": ["Standard API equivalent for the same covered/priced drops: {amount}.", "同一组已覆盖且已定价下降的 Standard API 等价金额：{amount}。", "Equivalente de API Standard de las mismas caídas con cobertura y precio: {amount}."],
   "accounting.cacheImpact.subtotalStandardOnly": ["Subtotal shown at Standard API rates: {amount}; speed-priced accounting is unavailable.", "按 Standard API 费率显示小计：{amount}；按速度档定价的核算不可用。", "Subtotal con tarifas de API Standard: {amount}; la contabilidad según velocidad no está disponible."],
   "accounting.cacheImpact.subtotalUnpriced": ["Drops excluded for incomplete prices: {unpriced}.", "因价格不完整而排除的下降：{unpriced} 次。", "Caídas excluidas por precios incompletos: {unpriced}."],
-  "accounting.cacheSwitch.metricLabel": ["Possible switch overhead", "可能的切换开销", "Posible coste adicional al cambiar"],
-  "accounting.cacheSwitch.metricExplanation": ["A material drop means cache-read tokens fell to half or less of the previous request within five minutes, and the previous request had cache reads. The drop itself is observed. Its link to the nearby model or reasoning change is inferred. The headline applies the recorded or selected Codex speed and the reviewed API price multiplier to the conservative Standard-price premium. It is not a bill or a provider-published allowance.", "大幅下降是指在具有先前缓存读取证据的前提下，缓存读取 Token 在五分钟内降至上一请求的一半或更少。缓存读取量的下降是观测结果；它与相邻模型或推理强度更改之间的关系是推断结果。标题金额会把已记录或所选的 Codex 速度以及经审核的 API 价格倍数应用于保守的 Standard 价格溢价。它不是账单或提供方公布的额度。", "Una caída material significa que los tokens de lectura de caché bajaron como máximo a la mitad de la solicitud anterior en cinco minutos, y requiere evidencia previa de lectura de caché. La caída se observa; su relación con el cambio adyacente se infiere. La cifra principal aplica la velocidad de Codex registrada o seleccionada y el multiplicador de precio de API revisado a la prima conservadora con precio Standard. No es una factura ni una cuota publicada por el proveedor."],
+  "accounting.cacheSwitch.metricLabel": ["Switch-adjacent difference scenario", "切换附近的缓存差价情景", "Escenario de diferencia junto al cambio"],
+  "accounting.cacheSwitch.metricExplanation": ["Conditional API-price equivalent of positive adjacent cache-read count decreases near a model or reasoning change. Five minutes is an analysis window, not cache lifetime. The prior count is an assumed baseline, not a verified reusable prefix. Current model, request date, total input context and recorded or selected speed stay fixed. Actual avoidable loss is unknown; this is neither a bill nor a proven lower bound.", "模型或推理设置变化附近，正向缓存读取量差值的条件 API 等价估算。五分钟是分析邻近窗口，不是缓存有效期。前次计数仅是假设基准，未验证本次可复用前缀。计价固定本次模型、请求日期、总输入上下文和已记录或所选速度。实际可避免损失未知；此值不是账单，也不是已证明的损失下界。", "Equivalente condicional de API de las disminuciones positivas entre lecturas adyacentes cerca de un cambio de modelo o razonamiento. Cinco minutos es una ventana de análisis, no la duración de la caché. El contador anterior es una base supuesta, no un prefijo reutilizable verificado. Se mantienen el modelo, fecha, contexto total y velocidad actuales. La pérdida evitable real es desconocida; no es una factura ni un límite inferior demostrado."],
   "accounting.cacheSwitch.noteUnavailable": ["This period was not evaluated.", "此期间未进行评估。", "Este período no se evaluó."],
   "accounting.cacheSwitch.noteIncomplete": ["Whole-period total unavailable. Configuration changes without compaction-aware boundary coverage: {uncovered}.", "整个期间的总额不可用。缺少可识别上下文压缩的边界覆盖的配置更改：{uncovered} 次。", "Total del período completo no disponible. Cambios de configuración sin cobertura de límites que reconozca las compactaciones: {uncovered}."],
   "accounting.cacheSwitch.noteIncompleteOrdering": ["Partial estimate; excluded sessions with uncertain event order: {ordering}.", "部分估算；因事件顺序不确定而排除的会话：{ordering} 个。", "Estimación parcial; sesiones excluidas por un orden de eventos incierto: {ordering}."],
   "accounting.cacheSwitch.noteIncompleteCombined": ["Whole-period total unavailable. Configuration changes without compaction-aware boundaries: {uncovered}; sessions without exact local event order: {ordering}.", "整个期间的总额不可用。缺少可识别上下文压缩的边界的配置更改：{uncovered} 次；缺少精确本地事件顺序的会话：{ordering} 个。", "Total del período completo no disponible. Cambios de configuración sin límites que reconozcan las compactaciones: {uncovered}; sesiones sin orden local exacto de eventos: {ordering}."],
-  "accounting.cacheSwitch.noteZero": ["{proximate} proximate configuration changes recorded · no material cache-read drop observed", "记录了 {proximate} 次相近的配置更改 · 未观测到缓存读取量大幅下降", "Se registraron {proximate} cambios de configuración próximos · no se observó ninguna caída material de lectura de caché"],
-  "accounting.cacheSwitch.noteObserved": ["{drops} material cache-read drops among {proximate} proximate configuration changes.", "{proximate} 次相近的配置更改中有 {drops} 次缓存读取量大幅下降。", "{drops} caídas materiales de lectura de caché entre {proximate} cambios de configuración próximos."],
+  "accounting.cacheSwitch.noteZero": ["{proximate} proximate setting changes · no eligible positive cache-read count decrease", "{proximate} 次相近设置变化 · 未观测到符合条件的正向缓存读取量差值", "{proximate} cambios próximos · ninguna disminución positiva apta de lectura"],
+  "accounting.cacheSwitch.noteObserved": ["{drops} positive cache-read count decreases among {proximate} proximate setting changes.", "{proximate} 次相近设置变化中有 {drops} 次正向缓存读取量差值。", "{drops} disminuciones positivas de lectura entre {proximate} cambios próximos."],
   "accounting.cacheSwitch.notePartialPricing": ["Only {priced} of {total} drops had reviewed pricing; the whole-period total is unavailable.", "{total} 次下降中只有 {priced} 次有经审核的价格；整个期间的总额不可用。", "Solo {priced} de {total} caídas tenían precios revisados; el total del período completo no está disponible."],
   "accounting.cacheSwitch.noteUnpriced": ["No complete price estimate is available for these drops.", "这些下降没有完整的价格估算。", "No hay una estimación de precio completa para estas caídas."],
   "accounting.cacheSwitch.allowanceMedian": ["Conditional historical allowance estimate (may combine accounts): about {median} percentage points.", "条件性历史额度估计（可能合并多个账户）：约 {median} 个百分点。", "Estimación histórica condicional de cuota (puede combinar cuentas): unos {median} puntos porcentuales."],
   "accounting.cacheSwitch.allowanceRange": ["Conditional historical allowance range (may combine accounts): {lower}–{upper} percentage points.", "条件性历史额度范围（可能合并多个账户）：{lower}–{upper} 个百分点。", "Intervalo histórico condicional de cuota (puede combinar cuentas): {lower}–{upper} puntos porcentuales."],
   "accounting.cacheSwitch.standardPremium": ["Standard-rate accounting equivalent before speed-mode weighting: {amount}.", "应用速度模式加权前的 Standard 费率记账等价值：{amount}。", "Equivalente contable con tarifa Standard antes de la ponderación por modo de velocidad: {amount}."],
-  "accounting.cacheSwitch.detailsSummary": ["See possible switch overhead", "查看可能的切换开销", "Ver el posible coste adicional al cambiar"],
-  "accounting.cacheSwitch.detailsExplanation": ["These recent rows pair a model or reasoning change with a large cache-read drop within five minutes. The drop was observed. Its link to the setting change is inferred. Effort labels describe the recorded request settings, not confirmed backend updates. Astra may keep cache across supported reasoning updates. Ultra’s delegation mode is a separate setting.", "这些近期记录将相邻的模型或推理强度更改与五分钟内观测到的缓存读取量大幅下降配对。缓存读取量的变化是观测结果；它与设置更改之间的关系是推断结果。推理标签表示已记录的请求设置，不代表已确认的后端更新。Astra 可在受支持的推理更新期间保留缓存；Ultra 的委派模式仍属于不同的设置。", "Estas filas recientes emparejan un cambio adyacente de modelo o razonamiento con una caída material observada de lectura de caché en un plazo de cinco minutos. El cambio de lectura de caché se observa; su relación con el cambio de configuración se infiere. Los niveles describen la configuración registrada de la solicitud, no actualizaciones confirmadas del servidor. Astra puede conservar la caché con actualizaciones de razonamiento compatibles; el modo de delegación de Ultra sigue siendo una configuración distinta."],
-  "accounting.cacheSwitch.detailsEmpty": ["No qualifying material cache-read drops in this period.", "此期间没有符合条件的缓存读取量大幅下降。", "No hay caídas materiales de lectura de caché que cumplan los requisitos en este período."],
-  "accounting.cacheSwitch.tableCaption": ["Recent covered switch-overhead comparisons at Standard API rates; not a period total", "近期已覆盖的切换开销比较，按 Standard API 费率计算；并非期间总额", "Comparaciones recientes con cobertura del coste al cambiar, con tarifas de API Standard; no es un total del período"],
+  "accounting.cacheSwitch.detailsSummary": ["See switch-adjacent difference scenarios", "查看切换附近的缓存差价情景", "Ver escenarios de diferencia junto al cambio"],
+  "accounting.cacheSwitch.detailsExplanation": ["Adjacent usage observations near setting changes are compared within five minutes. The count decrease is observed; a reusable prefix and avoidable loss are not. The conditional scenario reprices the decrease at the current request model and context, moving uncached input before cache writes. Old usage increments may span multiple requests.", "比较设置变化五分钟内的相邻用量记录。计数下降是观测结果，但可复用前缀和可避免损失未验证。条件情景固定本次模型及上下文，先将普通输入差值、再将写入差值按缓存读取价重定价。旧版用量增量可能覆盖多次请求。", "Se comparan observaciones de uso adyacentes a cambios en cinco minutos. La disminución se observa; el prefijo reutilizable y la pérdida evitable no están verificados. El escenario usa el modelo y contexto actuales y reasigna primero entrada ordinaria y luego escrituras a lectura. Los incrementos antiguos pueden abarcar varias solicitudes."],
+  "accounting.cacheSwitch.detailsEmpty": ["No eligible positive cache-read count decreases in this period.", "此期间没有符合条件的正向缓存读取量差值。", "No hay disminuciones positivas aptas de lectura en este período."],
+  "accounting.cacheSwitch.tableCaption": ["Recent conditional cache-read difference scenarios at Standard API rates; not actual loss", "近期缓存读取差值的条件情景，按 Standard API 费率计算；不是实际损失", "Escenarios condicionales recientes con tarifas Standard; no son pérdidas reales"],
   "accounting.cacheDropThread.column": ["Thread name", "会话名称", "Nombre de la conversación"],
   "accounting.cacheDropThread.unavailable": ["Thread unavailable", "会话不可用", "Conversación no disponible"],
   "accounting.cacheDropThread.fallback": ["Thread {id}", "会话 {id}", "Conversación {id}"],
@@ -490,7 +447,7 @@ export const WEB_MESSAGES = Object.freeze({
   "accounting.cacheDropThread.open": ["Open {name} in Codex. {time}", "在 Codex 中打开 {name}。{time}", "Abrir {name} en Codex. {time}"],
   "accounting.cacheSwitch.column.change": ["Configuration change", "配置更改", "Cambio de configuración"],
   "accounting.cacheSwitch.column.cacheRead": ["Cache read", "缓存读取", "Lectura de caché"],
-  "accounting.cacheSwitch.column.lostTokens": ["Est. lost reuse", "估算的复用损失", "Reutilización perdida estimada"],
+  "accounting.cacheSwitch.column.lostTokens": ["Cache-read count decrease", "缓存读取量差值", "Disminución de lectura de caché"],
   "accounting.cacheSwitch.column.apiEquivalent": ["API equivalent", "API 等价金额", "Equivalente de API"],
   "accounting.cacheSwitch.change.model": ["Model: {previous} → {current}", "模型：{previous} → {current}", "Modelo: {previous} → {current}"],
   "accounting.cacheSwitch.change.reasoning": ["Reasoning: {previous} → {current}", "推理强度：{previous} → {current}", "Razonamiento: {previous} → {current}"],
@@ -504,40 +461,40 @@ export const WEB_MESSAGES = Object.freeze({
   "accounting.cacheSwitch.effort.max": ["Max", "Max", "Máximo"],
   "accounting.cacheSwitch.effort.ultra": ["Ultra", "Ultra", "Ultra"],
   "accounting.cacheSwitch.effort.unknown": ["Unknown", "未知", "Desconocido"],
-  "accounting.cacheContinuity.metricLabel": ["Possible cache-continuity overhead", "可能的缓存连续性开销", "Posible coste adicional de continuidad de caché"],
-  "accounting.cacheContinuity.metricExplanation": ["A conservative estimate of large cache-read drops between adjacent user turns when the model, reasoning, routing and surface stayed the same. Elapsed time is context, not an eligibility rule. The headline uses the recorded or selected Codex speed weighting when available, and otherwise shows the Standard API equivalent before speed-mode weighting. Recorded compactions, contracted contexts and incomplete boundary coverage are excluded or withheld. It is not a bill or a provider-published allowance.", "保守估算：在相邻用户轮次之间，有效模型、推理强度、路由和界面均未改变，但缓存读取量大幅下降。经过时间仅作为证据，而不是资格规则。如有可用的已记录或所选 Codex 速度权重，标题金额会采用该权重；否则显示应用速度模式加权前的 Standard API 等价金额。已记录的上下文压缩、收缩的上下文以及不完整的边界覆盖会被排除或暂缓显示。它不是账单或提供方公布的额度。", "Estimación conservadora de caídas materiales de lectura de caché entre turnos adyacentes sin cambios de modelo, razonamiento, enrutamiento ni superficie. El tiempo es evidencia, no una regla de inclusión. La cifra principal usa la ponderación de velocidad de Codex registrada o seleccionada cuando está disponible y, en caso contrario, muestra el equivalente de API Standard antes de la ponderación por modo de velocidad; las compactaciones, los contextos reducidos y la cobertura incompleta se excluyen o se omiten. No es una factura ni una cuota publicada por el proveedor."],
+  "accounting.cacheContinuity.metricLabel": ["Same-settings difference scenario", "设置不变时的缓存差价情景", "Escenario de diferencia sin cambiar ajustes"],
+  "accounting.cacheContinuity.metricExplanation": ["Conditional API-price equivalent of positive cache-read count decreases between adjacent user turns with unchanged settings. Counts do not prove shared prefix content or how many tokens could have been reused. Compactions, contracted contexts and missing evidence remain excluded. Speed assumptions and price coverage qualify the amount. Actual avoidable loss is unknown; this is not a measured loss or a proven lower bound.", "设置不变的相邻用户轮次之间，正向缓存读取量差值的条件 API 等价估算。计数不能证明前缀内容相同，也不能证明本次原本可复用多少 Token。压缩、上下文收缩和证据不足仍会排除；金额受速度假设和价格覆盖限制。实际可避免损失未知；此值不是实测损失，也不是已证明的损失下界。", "Equivalente condicional de API de disminuciones positivas de lectura entre turnos adyacentes sin cambiar ajustes. Los contadores no prueban contenido compartido ni cuántos tokens podían reutilizarse. Se excluyen compactación, contextos reducidos y evidencia insuficiente. El importe depende de supuestos de velocidad y cobertura de precios. La pérdida evitable real es desconocida; no es una pérdida medida ni un límite inferior demostrado."],
   "accounting.cacheContinuity.noteUnavailable": ["This period was not evaluated.", "此期间未进行评估。", "Este período no se evaluó."],
   "accounting.cacheContinuity.noteIncomplete": ["Whole-period total unavailable. Returns without compaction-aware boundary coverage: {uncovered}.", "整个期间的总额不可用。缺少可识别上下文压缩的边界覆盖的返回：{uncovered} 次。", "Total del período completo no disponible. Retornos sin cobertura de límites que reconozca las compactaciones: {uncovered}."],
   "accounting.cacheContinuity.noteIncompleteOrdering": ["Partial estimate; excluded sessions with uncertain event order: {ordering}.", "部分估算；因事件顺序不确定而排除的会话：{ordering} 个。", "Estimación parcial; sesiones excluidas por un orden de eventos incierto: {ordering}."],
   "accounting.cacheContinuity.noteIncompleteCombined": ["Whole-period total unavailable. Returns without compaction-aware boundaries: {uncovered}; sessions without exact local event order: {ordering}.", "整个期间的总额不可用。缺少可识别上下文压缩的边界的返回：{uncovered} 次；缺少精确本地事件顺序的会话：{ordering} 个。", "Total del período completo no disponible. Retornos sin límites que reconozcan las compactaciones: {uncovered}; sesiones sin orden local exacto de eventos: {ordering}."],
-  "accounting.cacheContinuity.noteZero": ["{comparable} comparable same-configuration turn pairs · no material cache-read drop observed", "{comparable} 对配置相同的可比较轮次 · 未观测到缓存读取量大幅下降", "{comparable} pares de turnos comparables con la misma configuración · no se observó ninguna caída material de lectura de caché"],
-  "accounting.cacheContinuity.noteObserved": ["{drops} material cache-read drops among {comparable} comparable same-configuration turn pairs.", "{comparable} 对配置相同的可比较轮次中有 {drops} 次缓存读取量大幅下降。", "{drops} caídas materiales de lectura de caché entre {comparable} pares de turnos comparables con la misma configuración."],
+  "accounting.cacheContinuity.noteZero": ["{comparable} comparable same-settings observations · no eligible positive cache-read count decrease", "{comparable} 对设置相同的可比较记录 · 未观测到正向缓存读取量差值", "{comparable} pares comparables con los mismos ajustes · ninguna disminución positiva de lectura"],
+  "accounting.cacheContinuity.noteObserved": ["{drops} positive cache-read count decreases among {comparable} comparable same-settings observations.", "{comparable} 对设置相同的可比较记录中有 {drops} 次正向缓存读取量差值。", "{drops} disminuciones positivas de lectura entre {comparable} pares comparables sin cambiar ajustes."],
   "accounting.cacheContinuity.noteUnpriced": ["Only {priced} of {total} drops had reviewed pricing; the whole-period total is unavailable.", "{total} 次下降中只有 {priced} 次有经审核的价格；整个期间的总额不可用。", "Solo {priced} de {total} caídas tenían precios revisados; el total del período completo no está disponible."],
-  "accounting.cacheContinuity.noteCompaction": ["Kept separate: {drops} large drops across {requests} requests after compaction. No cost is assigned to the old prefix.", "单独列出：{requests} 次上下文压缩后请求中有 {drops} 次大幅下降；未分配旧前缀成本。", "Se mantienen aparte: {drops} caídas materiales en {requests} solicitudes posteriores a una compactación; no se asigna un coste al prefijo anterior."],
+  "accounting.cacheContinuity.noteCompaction": ["Kept separate: {drops} count decreases across {requests} observations after compaction. No old-prefix cost is assigned.", "单独列出：{requests} 次压缩后记录中有 {drops} 次计数下降；不分配旧前缀成本。", "Se mantienen aparte: {drops} disminuciones entre {requests} observaciones tras compactar. No se asigna coste al prefijo anterior."],
   "accounting.cacheContinuity.noteStandardFallback": ["Headline shown at Standard API rates before speed-mode weighting.", "标题按应用速度模式加权前的 Standard API 费率显示。", "La cifra principal se muestra con tarifas de API Standard antes de la ponderación por modo de velocidad."],
-  "accounting.cacheContinuity.detailsSummary": ["See recent large cache drops", "查看近期缓存大幅下降", "Ver las caídas grandes de caché recientes"],
+  "accounting.cacheContinuity.detailsSummary": ["See recent cache-read count decreases", "查看近期缓存读取量下降", "Ver disminuciones recientes de lectura"],
   "accounting.cacheContinuity.outcome.eyebrow": ["Cache", "缓存", "Caché"],
-  "accounting.cacheContinuity.outcome.heading": ["Cache reuse between turns", "轮次之间的缓存复用", "Reutilización de caché entre turnos"],
+  "accounting.cacheContinuity.outcome.heading": ["Cache-read counts between turns", "轮次之间的缓存读取量", "Lecturas de caché entre turnos"],
   "accounting.cacheContinuity.outcome.subtitle": ["Follow-up turns with the same model and settings, grouped by time since the previous turn.", "按距上一个轮次的时间，对模型和设置相同的后续轮次进行分组。", "Turnos de seguimiento con el mismo modelo y la misma configuración, agrupados por el tiempo desde el turno anterior."],
-  "accounting.cacheContinuity.outcome.moreLabel": ["reused more than half", "复用了超过一半", "reutilizaron más de la mitad"],
-  "accounting.cacheContinuity.outcome.lessLabel": ["reused half or less", "复用了一半或更少", "reutilizaron la mitad o menos"],
-  "accounting.cacheContinuity.outcome.overheadLabel": ["estimated overhead from cache drops", "缓存下降的估算开销", "coste estimado de las caídas de caché"],
+  "accounting.cacheContinuity.outcome.moreLabel": ["cache-read count above 50% of previous", "缓存读取量大于前次50%", "lectura superior al 50% anterior"],
+  "accounting.cacheContinuity.outcome.lessLabel": ["cache-read count at most 50% of previous", "缓存读取量不超过前次50%", "lectura de hasta el 50% anterior"],
+  "accounting.cacheContinuity.outcome.overheadLabel": ["conditional cache-read difference estimate", "缓存读取量差值的条件估算", "estimación condicional de diferencia"],
   "accounting.cacheContinuity.outcome.overheadBasis": ["Standard API equivalent", "Standard API 等价金额", "Equivalente de API Standard"],
   "accounting.cacheContinuity.outcome.followUps": ["{count} follow-ups", "{count} 个后续轮次", "{count} seguimientos"],
-  "accounting.cacheContinuity.outcome.howToRead": ["How to read this: {percent} of checked follow-ups reused more than half of the previous turn's cache. Of those, {matched} reused at least as much cached context as before, and {between} reused between half and the previous amount.", "读法：已检查的后续轮次中，有 {percent} 复用了上一个轮次一半以上的缓存。其中，{matched} 个复用的缓存上下文不少于之前，{between} 个复用了之前缓存量的一半到全部。", "Cómo leerlo: el {percent} de los seguimientos comprobados reutilizó más de la mitad de la caché del turno anterior. De ellos, {matched} reutilizaron al menos tanto contexto en caché como antes; {between} reutilizaron entre la mitad y la cantidad anterior."],
-  "accounting.cacheContinuity.outcome.laneMore": ["REUSED MORE THAN HALF", "复用了超过一半", "REUTILIZÓ MÁS DE LA MITAD"],
-  "accounting.cacheContinuity.outcome.laneLess": ["REUSED HALF OR LESS", "复用了一半或更少", "REUTILIZÓ LA MITAD O MENOS"],
+  "accounting.cacheContinuity.outcome.howToRead": ["{percent} of checked follow-ups reported a cache-read count above half the previous count. Of those, {matched} reported at least the previous count and {between} reported between half and the previous count. Matching prefix content is not established.", "已检查的后续轮次中，{percent} 的缓存读取量大于前次一半。其中 {matched} 次不少于前次计数，{between} 次介于前次一半与全部之间。这不能证明前缀内容匹配。", "El {percent} informó una lectura superior a la mitad del contador anterior: {matched} alcanzaron al menos el anterior y {between} quedaron entre la mitad y el anterior. Esto no establece contenido de prefijo coincidente."],
+  "accounting.cacheContinuity.outcome.laneMore": ["CACHE READS ABOVE 50% OF PREVIOUS", "缓存读取量大于前次50%", "LECTURA SUPERIOR AL 50% ANTERIOR"],
+  "accounting.cacheContinuity.outcome.laneLess": ["CACHE READS AT MOST 50% OF PREVIOUS", "缓存读取量不超过前次50%", "LECTURA DE HASTA EL 50% ANTERIOR"],
   "accounting.cacheContinuity.outcome.lanePercent": ["{percent} of follow-ups", "占后续轮次的 {percent}", "{percent} de los seguimientos"],
   "accounting.cacheContinuity.outcome.axisLabel": ["Time since previous turn (log scale)", "距上一个轮次的时间（对数刻度）", "Tiempo desde el turno anterior (escala logarítmica)"],
-  "accounting.cacheContinuity.outcome.canvasLabel": ["Cache reuse by time. Each hex stands for {unit} checked follow-ups, and a partly filled hex shows the remainder. {more} follow-ups reused more than half of the previous cache read and {less} reused half or less. Use the left and right arrow keys to inspect time ranges.", "按时间显示缓存复用。每个六边形代表 {unit} 个已检查的后续轮次；部分填充表示余数。{more} 个后续轮次复用了上一次缓存读取的一半以上，{less} 个复用了一半或更少。使用左右方向键查看各时间范围。", "Reutilización de caché por tiempo. Cada hexágono representa {unit} seguimientos comprobados; uno parcialmente lleno muestra el resto. {more} seguimientos reutilizaron más de la mitad de la lectura anterior y {less} reutilizaron la mitad o menos. Use las flechas izquierda y derecha para revisar los intervalos."],
+  "accounting.cacheContinuity.outcome.canvasLabel": ["Cache-read count ratios by time. Each hex represents {unit} observations. {more} report more than half the previous count and {less} report half or less. Partial cells show the remainder. Prefix equivalence is unverified. Use arrow keys to inspect.", "按时间显示缓存读取量比例。每个六边形代表 {unit} 条记录，{more} 条大于前次一半，{less} 条不超过前次一半。部分填充表示余数；前缀等价未验证。使用方向键查看。", "Proporciones de lectura por tiempo. Cada hexágono representa {unit} observaciones: {more} superan la mitad anterior y {less} no. Las celdas parciales indican el resto. El prefijo no está verificado. Use las flechas."],
   "accounting.cacheContinuity.outcome.readoutChecked": ["{count} follow-ups checked", "已检查 {count} 个后续轮次", "{count} seguimientos comprobados"],
-  "accounting.cacheContinuity.outcome.readoutMore": ["{count} reused more than half · {percent}", "{count} 个复用了超过一半 · {percent}", "{count} reutilizaron más de la mitad · {percent}"],
-  "accounting.cacheContinuity.outcome.readoutLess": ["{count} reused half or less · {percent}", "{count} 个复用了一半或更少 · {percent}", "{count} reutilizaron la mitad o menos · {percent}"],
-  "accounting.cacheContinuity.outcome.readoutLost": ["Estimated lost reuse: {tokens} tokens", "估算的复用损失：{tokens} 个 Token", "Reutilización perdida estimada: {tokens} tokens"],
+  "accounting.cacheContinuity.outcome.readoutMore": ["{count} cache-read counts above 50% of previous · {percent}", "{count} 次缓存读取量大于前次50% · {percent}", "{count} lecturas superiores al 50% anterior · {percent}"],
+  "accounting.cacheContinuity.outcome.readoutLess": ["{count} cache-read counts at most 50% of previous · {percent}", "{count} 次缓存读取量不超过前次50% · {percent}", "{count} lecturas de hasta el 50% anterior · {percent}"],
+  "accounting.cacheContinuity.outcome.readoutLost": ["Conditional cache-read count decrease: {tokens} tokens", "条件情景中的缓存读取量差值：{tokens} 个 Token", "Disminución condicional de lectura: {tokens} tokens"],
   "accounting.cacheContinuity.outcome.readoutApi": ["Standard API equivalent: {amount}", "Standard API 等价金额：{amount}", "Equivalente de API Standard: {amount}"],
   "accounting.cacheContinuity.outcome.readoutSubtotal": ["Covered subtotal at Standard rates: {amount} · {priced} priced drops.", "按 Standard 费率计算的已覆盖小计：{amount} · {priced} 次已定价下降。", "Subtotal con cobertura y tarifas Standard: {amount} · {priced} caídas con precio."],
   "accounting.cacheContinuity.outcome.readoutSubtotalUnpriced": ["Covered subtotal at Standard rates: {amount} · {priced} priced drops. Excludes {unpriced} unpriced drops.", "按 Standard 费率计算的已覆盖小计：{amount} · {priced} 次已定价下降。排除了 {unpriced} 次未定价下降。", "Subtotal con cobertura y tarifas Standard: {amount} · {priced} caídas con precio. Excluye {unpriced} caídas sin precio."],
-  "accounting.cacheContinuity.outcome.coverage.partial": ["Costs cover verified, priced comparisons only; this is not a complete period total.", "成本仅涵盖已验证且已定价的比较；这不是整个期间的总额。", "Los costes cubren solo comparaciones verificadas y con precio; no es un total completo del período."],
+  "accounting.cacheContinuity.outcome.coverage.partial": ["The scenario includes covered, priced comparisons only. Prefix equivalence and actual avoidable loss remain unverified.", "情景仅计入已覆盖且已定价的比较；前缀等价及实际可避免损失仍未验证。", "El escenario incluye solo comparaciones con cobertura y precio. La equivalencia del prefijo y la pérdida evitable real no están verificadas."],
   "accounting.cacheContinuity.outcome.coverage.ordering": ["Excluded sessions with uncertain event order: {count}.", "因事件顺序不确定而排除的会话：{count} 个。", "Sesiones excluidas por un orden de eventos incierto: {count}."],
   "accounting.cacheContinuity.outcome.coverage.boundary": ["Excluded follow-ups without reliable boundary coverage: {count}.", "缺乏可靠边界覆盖而排除的后续轮次：{count} 个。", "Turnos posteriores excluidos por falta de cobertura fiable de límites: {count}."],
   "accounting.cacheContinuity.outcome.coverage.pricing": ["Excluded drops without supported prices: {count}.", "因缺乏受支持价格而排除的下降：{count} 次。", "Caídas excluidas por falta de precios compatibles: {count}."],
@@ -556,7 +513,7 @@ export const WEB_MESSAGES = Object.freeze({
   "accounting.cacheContinuity.outcome.bucket.overThreeDays": ["3 days or more", "3 天或更久", "3 días o más"],
   "accounting.cacheContinuity.detailsEmpty": ["No qualifying material cache-read drops in this period.", "此期间没有符合条件的缓存读取量大幅下降。", "No hay caídas materiales de lectura de caché que cumplan los requisitos en este período."],
   "accounting.cacheContinuity.recentHeading": ["Recent large cache drops", "近期缓存大幅下降", "Caídas grandes de caché recientes"],
-  "accounting.cacheContinuity.tableCaption": ["Recent covered cache-continuity comparisons at Standard API rates; not a period total", "近期已覆盖的缓存连续性比较，按 Standard API 费率计算；并非期间总额", "Comparaciones recientes con cobertura de continuidad de caché, con tarifas de API Standard; no es un total del período"],
+  "accounting.cacheContinuity.tableCaption": ["Recent same-settings count-difference scenarios at Standard rates; not actual loss", "近期设置不变时的计数差值情景，按 Standard 费率计算；不是实际损失", "Escenarios recientes sin cambiar ajustes con tarifas Standard; no son pérdidas reales"],
   "accounting.cacheContinuity.column.gap": ["Time between turns", "轮次间隔", "Tiempo entre turnos"],
   "accounting.cacheContinuity.column.configuration": ["Configuration", "配置", "Configuración"],
   "accounting.cacheContinuity.column.cacheRead": ["Cache read", "缓存读取", "Lectura de caché"],
@@ -818,7 +775,6 @@ export const WEB_MESSAGES = Object.freeze({
   "weekly.plan.label": ["Plan", "方案", "Plan"],
   "weekly.plan.aria": ["Allowance history plan", "额度历史方案", "Plan del historial de cuota"],
   "weekly.plan.unknown": ["Plan unreported", "未报告方案", "Plan no informado"],
-  "weekly.plan.latestOption": ["{plan} · latest observed", "{plan} · 最近观测", "{plan} · último observado"],
   "weekly.plan.historyOption": ["{plan} · history", "{plan} · 历史", "{plan} · historial"],
   "weekly.plan.conditional": ["History is grouped by the plan recorded at the time. Earlier account identity is unverified.", "历史记录按当时报告的方案分组。早期账户身份尚未验证。", "El historial se agrupa por el plan registrado en ese momento. La identidad de las cuentas anteriores no está verificada."],
   "weekly.plan.historicalConditional": ["Showing {plan} history; the earlier account identity is unverified. Current allowance and pace apply only to the latest observed plan.", "显示 {plan} 历史记录，早期账户身份尚未验证。当前额度和使用速度仅适用于最近观测的方案。", "Se muestra el historial de {plan}, sin verificar la identidad de las cuentas anteriores. La cuota y el ritmo actuales solo corresponden al último plan observado."],
@@ -2241,7 +2197,6 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Prepare and review last 24 hours": ["准备并审阅最近 24 小时", "Preparar y revisar las últimas 24 horas"],
   "API-price estimate": ["API 价格估计", "Estimación de precio de API"],
   "Named with affection for the Codex community. Not affiliated with or endorsed by OpenAI or Thibault Sottiaux — and we will happily rename if asked. Your tokens tattle only to you.": ["这个名字是对 Codex 社区的亲切致意。它与 OpenAI 或 Thibault Sottiaux 没有隶属或认可关系；如被要求，我们会乐意更名。你的 Token 只向你“告密”。", "Nombrado con afecto por la comunidad de Codex. No está afiliado a OpenAI ni a Thibault Sottiaux, ni cuenta con su respaldo; cambiaremos el nombre con gusto si nos lo piden. Tus tokens solo te cuentan a ti."],
-  "TiboTattle · not affiliated with OpenAI or Thibault Sottiaux": ["TiboTattle · 与 OpenAI 或 Thibault Sottiaux 无关", "TiboTattle · sin afiliación con OpenAI ni con Thibault Sottiaux"],
   "Insufficient": ["不足", "Insuficiente"],
   "There is not yet a matched quota-and-cost window to compare.": ["尚无可比较的匹配额度与成本窗口。", "Aún no hay una ventana de cuota y coste coincidente para comparar."],
   "Not estimable": ["无法估算", "No estimable"],
@@ -2543,6 +2498,7 @@ export function createBrowserLocalization({
         || typeof windowRef?.MutationObserver !== "function"
         || observer !== null) return;
     observer = new windowRef.MutationObserver((mutations) => {
+      let legacyDirty = false;
       for (const mutation of mutations) {
         if (mutation.type === "attributes") {
           localizeElementAttributes(mutation.target);
@@ -2553,7 +2509,7 @@ export function createBrowserLocalization({
               && isInsideLegacyRoot(mutation.target.parentElement)
               && !isSkippedLocalizationElement(mutation.target.parentElement)) {
             registerLegacyText(mutation.target.parentElement);
-            localizeRegisteredLegacyText();
+            legacyDirty = true;
           }
           continue;
         }
@@ -2567,11 +2523,11 @@ export function createBrowserLocalization({
             registerLegacyText(node.parentElement);
           }
         }
-        // Registration remembers the English source but does not render it.
-        // Translate this batch now; the resulting characterData notification
-        // settles without another write because unchanged values are skipped.
-        localizeRegisteredLegacyText();
+        legacyDirty = true;
       }
+      // Register every mutation before one global pass, including cleanup after
+      // removals. Translation's own characterData delivery settles without writes.
+      if (legacyDirty) localizeRegisteredLegacyText();
     });
     observer.observe(documentRef.documentElement, {
       attributes: true,

@@ -321,6 +321,11 @@ function installDesktopBridge() {
         && seconds % 60 === 0 && Number.isSafeInteger(seconds * 1000))
         ? invoke("setRefreshInterval", { seconds }) : rejected("seconds is invalid"),
     ),
+    setRefreshPaused: (...values) => oneArgument(
+      "setRefreshPaused", values,
+      (paused) => typeof paused === "boolean"
+        ? invoke("setRefreshPaused", { paused }) : rejected("paused is invalid"),
+    ),
     setStartAtLogin: (...values) => oneArgument(
       "setStartAtLogin",
       values,
@@ -378,7 +383,8 @@ function installDesktopBridge() {
     showDiagnostics: (...values) => noArguments("showDiagnostics", values),
     revealLocalData: (...values) => noArguments("revealLocalData", values),
     getXStatus: (...values) => xNoArguments('getXStatus', values),
-    refreshX: (...values) => xNoArguments('refreshX', values),
+    refreshX: (...values) => oneArgument('refreshX', values, query => exactObject(query, ['tab']) && ['posts','replies','reposts','media'].includes(query.tab)
+      ? invokeX('refreshX', { tab: query.tab }) : rejected('X refresh is invalid')),
     getXSettings: (...values) => xNoArguments('getXSettings', values),
     cancelXLogin: (...values) => xNoArguments('cancelXLogin', values),
     configureXImport: (...values) => xNoArguments('configureXImport', values),
@@ -390,9 +396,11 @@ function installDesktopBridge() {
           || (keys.length === 2 && (typeof query.cursor !== 'string' || !/^[A-Za-z0-9_-]{1,160}$/u.test(query.cursor)))) return rejected('X query is invalid');
       return invokeX('listXPosts', { ...query });
     }),
-    getXPost: (...values) => oneArgument('getXPost', values, query => exactObject(query, ['id'])
+    getXPost: (...values) => oneArgument('getXPost', values, query => exactObject(query, Object.hasOwn(query ?? {}, 'cursor') ? ['id','cursor'] : Object.hasOwn(query ?? {}, 'force') ? ['id','force'] : ['id'])
+      && (query.cursor === undefined || typeof query.cursor === 'string' && /^[A-Za-z0-9_-]{1,160}$/u.test(query.cursor))
+      && (!Object.hasOwn(query, 'force') || typeof query.force === 'boolean')
       && typeof query.id === 'string' && /^[0-9]{1,24}$/u.test(query.id)
-      ? invokeX('getXPost', { id: query.id }) : rejected('X post is invalid')),
+      ? invokeX('getXPost', { ...query }) : rejected('X post is invalid')),
     beginXLogin: (...values) => oneArgument('beginXLogin', values, query => exactObject(query, ['method'])
       && ['web','session'].includes(query.method) ? invokeX('beginXLogin', { method: query.method }) : rejected('X login is invalid')),
     setXSettings: (...values) => oneArgument('setXSettings', values, value => {

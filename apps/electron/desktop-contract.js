@@ -22,7 +22,7 @@ import {
 
 export const DESKTOP_BRIDGE_VERSION = "v1";
 export const DESKTOP_IPC_CHANNEL = "tibotattle:desktop:v1";
-export const DESKTOP_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v4";
+export const DESKTOP_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v5";
 export const DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v3";
 export const DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v2";
 export const DESKTOP_LEGACY_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v1";
@@ -108,6 +108,7 @@ export const DESKTOP_ACTIONS = Object.freeze([
   "chooseWindowBackground",
   "restoreWindowBackground",
   "setRefreshInterval",
+  "setRefreshPaused",
   "setStartAtLogin",
   "setNotificationPreferences",
   "sendTestNotification",
@@ -151,6 +152,7 @@ const ACTION_ARGUMENT_KEYS = Object.freeze({
   chooseWindowBackground: Object.freeze([]),
   restoreWindowBackground: Object.freeze([]),
   setRefreshInterval: Object.freeze(["seconds"]),
+  setRefreshPaused: Object.freeze(["paused"]),
   setStartAtLogin: Object.freeze(["enabled"]),
   setNotificationPreferences: Object.freeze(["threshold"]),
   sendTestNotification: Object.freeze([]),
@@ -181,6 +183,7 @@ export const DESKTOP_DEFAULT_SETTINGS = Object.freeze({
   language: "system",
   appearance: "system",
   refreshIntervalSeconds: 300,
+  refreshPaused: false,
   startAtLogin: false,
   notifications: DEFAULT_NOTIFICATIONS,
   sidebarCollapsed: false,
@@ -294,6 +297,9 @@ export function validateDesktopRequest(request) {
     case "setRefreshInterval":
       assertSeconds(args.seconds);
       break;
+    case "setRefreshPaused":
+      assertBoolean(args.paused, "paused");
+      break;
     case "setStartAtLogin":
     case "setAutomaticDownload":
       assertBoolean(args.enabled, "enabled");
@@ -347,6 +353,7 @@ const SETTINGS_KEYS = Object.freeze([
   "language",
   "appearance",
   "refreshIntervalSeconds",
+  "refreshPaused",
   "startAtLogin",
   "notifications",
   "sidebarCollapsed",
@@ -371,6 +378,7 @@ function validateSettingsScalarFields(snapshot) {
   assertEnum(snapshot.language, DESKTOP_LANGUAGES, "language");
   assertEnum(snapshot.appearance, DESKTOP_APPEARANCES, "appearance");
   assertSeconds(snapshot.refreshIntervalSeconds);
+  assertBoolean(snapshot.refreshPaused, "refreshPaused");
   assertBoolean(snapshot.startAtLogin, "startAtLogin");
   assertExactKeys(snapshot.notifications, ["enabled", "threshold"], "notifications");
   assertBoolean(snapshot.notifications.enabled, "notifications.enabled");
@@ -384,7 +392,7 @@ function validateSettingsScalarFields(snapshot) {
 }
 
 /**
- * Validate the persisted v4 settings schema with a versioned tray preference.  This does not resolve or
+ * Validate the persisted v5 settings schema with a persistent refresh pause. This does not resolve or
  * inspect paths; path policy belongs to the injected main-process picker and
  * platform validator.  A missing custom path therefore remains valid so its
  * configured root can report partial/LKG coverage after reload.
@@ -405,6 +413,7 @@ export function validateDesktopSettingsSnapshot(snapshot) {
     language: snapshot.language,
     appearance: snapshot.appearance,
     refreshIntervalSeconds: snapshot.refreshIntervalSeconds,
+    refreshPaused: snapshot.refreshPaused,
     startAtLogin: snapshot.startAtLogin,
     notifications: Object.freeze({ ...snapshot.notifications }),
     sidebarCollapsed,
@@ -429,6 +438,7 @@ export function validateDesktopSettingsProjection(snapshot) {
     language: snapshot.language,
     appearance: snapshot.appearance,
     refreshIntervalSeconds: snapshot.refreshIntervalSeconds,
+    refreshPaused: snapshot.refreshPaused,
     startAtLogin: snapshot.startAtLogin,
     notifications: Object.freeze({ ...snapshot.notifications }),
     sidebarCollapsed,
@@ -445,6 +455,7 @@ export function projectDesktopSettingsPathFree(snapshot) {
     language: validated.language,
     appearance: validated.appearance,
     refreshIntervalSeconds: validated.refreshIntervalSeconds,
+    refreshPaused: validated.refreshPaused,
     startAtLogin: validated.startAtLogin,
     notifications: { ...validated.notifications },
     sidebarCollapsed: validated.sidebarCollapsed,
@@ -481,7 +492,7 @@ function isLegacySettingsShape(snapshot) {
 }
 
 /**
- * Migrate legacy root, presentation, and notification choices forward to v4. `idFactory` is injected by
+ * Migrate legacy root, presentation, and notification choices forward to v5. `idFactory` is injected by
  * the main process so IDs are opaque and testable; successful store loading
  * persists the result, making the generated ID stable across later reloads.
  * Both the historic Electron object form and the native launcher's scalar
@@ -496,12 +507,17 @@ function migrateLegacyNotificationPreferences(value) {
 }
 
 export function migrateDesktopSettingsSnapshot(snapshot, { idFactory } = {}) {
+  if (isPlainRecord(snapshot) && snapshot.schemaVersion === "tibotattle-desktop-settings-v4") {
+    if (!hasExactKeys(snapshot, SETTINGS_KEYS.filter(key => key !== "refreshPaused"))) throw new TypeError("legacy settings has unexpected keys");
+    return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION, refreshPaused: false });
+  }
   if (isPlainRecord(snapshot) && [DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION, DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION].includes(snapshot.schemaVersion)) {
+    const previousKeys = SETTINGS_KEYS.filter(key => key !== "refreshPaused");
     const expected = snapshot.schemaVersion === DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION
-      ? SETTINGS_KEYS.filter((key) => (key !== "tray" && key !== "sidebarCollapsed") || Object.hasOwn(snapshot, key)) : SETTINGS_KEYS;
+      ? previousKeys.filter((key) => (key !== "tray" && key !== "sidebarCollapsed") || Object.hasOwn(snapshot, key)) : previousKeys;
     if (!hasExactKeys(snapshot, expected)) throw new TypeError("legacy settings has unexpected keys");
     if (!DESKTOP_REFRESH_INTERVAL_SECONDS.includes(snapshot.refreshIntervalSeconds)) throw new TypeError("legacy seconds is invalid");
-    return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION,
+    return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION, refreshPaused: false,
       notifications: migrateLegacyNotificationPreferences(snapshot.notifications),
       sidebarCollapsed: snapshot.sidebarCollapsed ?? false, tray: migrateDesktopTrayPreferences(snapshot.tray) });
   }
@@ -524,6 +540,7 @@ export function migrateDesktopSettingsSnapshot(snapshot, { idFactory } = {}) {
       ? DESKTOP_DEFAULT_SETTINGS.language
       : snapshot.language,
     appearance,
+    refreshPaused: false,
     refreshIntervalSeconds: snapshot.refreshIntervalSeconds === undefined
       ? DESKTOP_DEFAULT_SETTINGS.refreshIntervalSeconds
       : snapshot.refreshIntervalSeconds,

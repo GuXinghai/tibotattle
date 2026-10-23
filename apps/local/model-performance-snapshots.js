@@ -4,6 +4,26 @@ import { createValidatedSnapshotStore } from '../../src/platform/index.js';
 
 export const MODEL_PERFORMANCE_PERIODS = Object.freeze(['1', '7', '30', 'all']);
 export const MODEL_PERFORMANCE_DIAGNOSTIC_HEADER = 'X-TiboTattle-Performance-Diagnostics';
+export const MODEL_PERFORMANCE_SOURCE_DIAGNOSTIC_HEADER = 'X-TiboTattle-Performance-Source-Diagnostics';
+export const MODEL_PERFORMANCE_SOURCE_DIAGNOSTICS = Object.freeze([
+  'recovery_source_missing', 'recovery_source_read_failed', 'recovery_source_not_discovered',
+  'source_identity_changed', 'source_truncated_during_read', 'source_grew_during_read',
+  'source_metadata_changed_during_read', 'source_changed_unknown',
+]);
+export function readModelPerformanceSourceDiagnostics(value) {
+  if (!Array.isArray(value) || value.length > MODEL_PERFORMANCE_SOURCE_DIAGNOSTICS.length
+      || value.some(row => !row || Object.keys(row).sort().join() !== 'code,count'
+        || !MODEL_PERFORMANCE_SOURCE_DIAGNOSTICS.includes(row.code)
+        || !Number.isSafeInteger(row.count) || row.count < 1 || row.count > 1_000_000_000)
+      || new Set(value.map(row => row.code)).size !== value.length) return null;
+  return value.map(row => ({ code: row.code, count: row.count }));
+}
+export function modelPerformanceSourceDiagnosticHeader(value) {
+  const rows = readModelPerformanceSourceDiagnostics(value);
+  if (!rows?.length) return null;
+  const header = JSON.stringify(rows);
+  return Buffer.byteLength(header) <= 1024 ? header : null;
+}
 export const MODEL_PERFORMANCE_DIAGNOSTICS = Object.freeze([
   'timing_worker_failed', 'timing_scan_failed', 'timing_store_failed',
   'timing_projection_failed', 'timing_snapshot_read_failed',
@@ -35,7 +55,7 @@ const exact = (value, keys) => value !== null && typeof value === 'object' && !A
 export function isModelPerformanceSnapshot(value) {
   if (!exact(value, ['schemaVersion', 'method', 'status', 'collecting', 'stale', 'updatedAt',
     'period', 'speedMode', 'excludedUnknownTurns', 'interval', 'start', 'end', 'historyProgress', 'models'])
-      || value.schemaVersion !== 5 || value.method !== 5 || value.status !== 'ready'
+      || value.schemaVersion !== 6 || value.method !== 5 || value.status !== 'ready'
       || typeof value.collecting !== 'boolean' || typeof value.stale !== 'boolean'
       || !MODEL_PERFORMANCE_SPEED_MODES.includes(value.speedMode) || !count(value.excludedUnknownTurns)
       || !MODEL_PERFORMANCE_PERIODS.includes(value.period) || !['day', 'week'].includes(value.interval)
@@ -52,10 +72,10 @@ export function isModelPerformanceSnapshot(value) {
     if (!Array.isArray(points) || points.length > 2048) return false;
     let previous = -1, total = 0;
     for (const point of points) {
-      if (!exact(point, ['at', 'n', 'p10', 'p25', 'median', 'p75', 'p90']) || !timestamp(point.at)
+      if (!exact(point, ['at', 'n', 'mean', 'p10', 'p25', 'median', 'p75', 'p90']) || !timestamp(point.at)
           || point.at <= previous || point.at > value.end || (value.start !== null && point.at < value.start - step)
           || !count(point.n) || point.n < 1 || !Number.isFinite(point.median) || point.median < 0
-          || point.median > 1e9) return false;
+          || point.median > 1e9 || !Number.isFinite(point.mean) || point.mean < 0 || point.mean > 1e9) return false;
       if (point.n < 5 ? [point.p10, point.p25, point.p75, point.p90].some(n => n !== null)
         : ![point.p10, point.p25, point.p75, point.p90].every(Number.isFinite)
           || point.p10 < 0 || point.p10 > point.p25 || point.p25 > point.median
@@ -126,9 +146,9 @@ export function createModelPerformanceSnapshotStore({ directory, codexHome, now 
   let scopeMismatch = false, readDiagnosed = false;
   const createStore = snapshotFile => createValidatedSnapshotStore({
     snapshotFile,
-    // Earlier receipts combine speed modes. Rebuild from retained turn evidence;
-    // never relabel old aggregates as measurements for a single mode.
-    schemaVersion: 'local-model-performance-snapshot-v5',
+    // Earlier receipts lack arithmetic means (and may combine speed modes).
+    // Rebuild from retained turn evidence; never infer means from percentiles.
+    schemaVersion: 'local-model-performance-snapshot-v6',
     maximumBytes: 4 * 1024 * 1024,
     now,
     onReadDiagnostic: code => {
@@ -147,7 +167,9 @@ export function createModelPerformanceSnapshotStore({ directory, codexHome, now 
         && entries.filter(entry => entry.key !== modelPerformanceSnapshotKey(entry.snapshot.period, entry.snapshot.speedMode)).length <= MODEL_PERFORMANCE_MAX_WINDOWS;
     },
   });
-  const store = createStore(join(directory, `model-performance-snapshot-${source}.json`));
+  // Separate cache generations so an older running app cannot overwrite v6.
+  // Keep prior receipts and the underlying timing databases untouched.
+  const store = createStore(join(directory, `model-performance-snapshot-v6-${source}.json`));
   const legacy = createStore(join(directory, 'model-performance-snapshot.json'));
   return {
     async read() {

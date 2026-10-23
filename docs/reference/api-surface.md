@@ -246,24 +246,138 @@ requests to the hosted Worker.
 | `GET` | `/api/local/overview` | Dashboard | Loopback read | Reads the current derived overview snapshot. | Local companion |
 | `GET` | `/api/local/cache-drop-thread-links` | Local dashboard only | Same-origin custom-header read | Ephemeral, generation-bound names and Codex thread IDs for recent cache-drop rows; no query parameters, persistence, or export. | Local companion |
 | `POST` | `/api/local/work-usage/query` | Local dashboard only | Same-origin custom-header read; closed 4 KiB JSON | Cancellable, read-only project/worktree/thread reports over a pinned index; optional canonical ISO `endAt` pins the selected period and rejects older snapshot substitution; bounded process-local snapshots with closed `touch` lease renewal, per-thread model/component breakdowns and transient display metadata; optional `search` (at most 100 characters) finds project/task names before pagination with totals and share denominators covering every matching row before pagination; optional `sourceSnapshotId` anchors related period/scope queries to an available report and its canonical generation; no export. During revalidation an available saved reply has `retained`, `refreshing`, `namesAvailable` and a separate `refreshSnapshotId`; saved figures retain their original bounds and have no paging cursor. Names survive document reload only in process memory; durable snapshots contain anonymous usage figures. | Local reporting |
-| `GET` | `/api/local/model-performance` | Model performance page | Loopback read | Requires one `period` value: `1`, `7`, `30`, or `all`; optional canonical ISO `endAt` pins exact rolling bounds (never a future instant); optional `speedMode=standard|fast|ultrafast` (default `standard`) filters before aggregation; returns schema-5/method-5 bounded local timing aggregates, with the selected `speedMode` and period-scoped `excludedUnknownTurns`, including tool-free fallback estimates in Output speed with one sample per turn, restores validated saved measurements before starting work, and renews an independent background scan lease. Optional `X-TiboTattle-Performance-Diagnostics` carries at most fourteen unique allowlisted codes within 512 bytes for timing worker/scan/store/projection, unavailable historical source, compressed source read/decode/resource/unsupported/recovery, or snapshot read/validation/source-mismatch/write failures, separately from the unchanged measurement body and durable snapshot. No accounting or network effect. | Local timing |
+| `GET` | `/api/local/model-performance` | Model performance page | Loopback read | Requires one `period` value: `1`, `7`, `30`, or `all`; optional canonical ISO `endAt` pins exact rolling bounds (never a future instant); optional `speedMode=standard|fast|ultrafast` (default `standard`) filters before aggregation; returns schema-6/method-5 bounded local timing aggregates with per-bin arithmetic means and percentiles, with the selected `speedMode` and period-scoped `excludedUnknownTurns`, including tool-free fallback estimates in Output speed with one sample per turn, restores validated saved measurements before starting work, and renews an independent background scan lease. Optional `X-TiboTattle-Performance-Diagnostics` carries at most fourteen unique allowlisted codes within 512 bytes for timing worker/scan/store/projection, unavailable historical source, compressed source read/decode/resource/unsupported/recovery, or snapshot read/validation/source-mismatch/write failures, separately from the unchanged measurement body and durable snapshot. No accounting or network effect. | Local timing |
 | `GET` | `/api/local/gradient` | Dashboard | Loopback read | Reads the derived cost/quota gradient. | Local analysis |
 | `GET` | `/api/local/weekly` | Dashboard | Loopback read | Reads derived weekly capacity and pace evidence. | Local analysis |
 | `GET` | `/api/local/weekly-pace-outlook` | Native shell | Loopback read | Reads the bounded account-scoped weekly pace presentation projection. The closed outlook v0.1 and live forecast v0.2 distinguish observed `exhausted` from unavailable evidence, using zero remaining allowance and null extrapolated ETA; unavailable forecasts retain their canonical empty shape. | Local analysis |
 | `GET` | `/api/local/quality` | Dashboard | Loopback read | Reads monitoring-quality evidence. | Local analysis |
 | `GET` | `/api/local/timeline/window-breakdown` | Dashboard | Loopback read | Reads a bounded `from`/`to` timeline window. | Local analysis |
-| `GET`, `POST` | `/api/local/refresh` | Dashboard/native shell | Loopback mutation | GET reads refresh state, closed `mode` (`null`, `quick`, `detailed`, `overview`) and actual `startedAt`; POST explicitly advances retained history and recalculates generation-bound detailed accounting before full publication. A 409 returns the in-flight receipt. | Refresh controller |
+| `GET`, `POST` | `/api/local/refresh` | Dashboard/native shell | Loopback mutation | GET reads refresh state, closed `mode` (`null`, `quick`, `detailed`, `overview`) and actual `startedAt`; POST explicitly advances retained history and recalculates generation-bound detailed accounting before full publication. A new run returns 202; joined or merged-pending requests return 200 with the actual in-flight receipt. | Refresh controller |
 | `POST` | `/api/local/refresh/quick` | Dashboard/native shell | Loopback mutation | Refreshes current quota/headline evidence without advancing the unified index or rebuilding detailed accounting; the last authoritative detailed projection remains available with current freshness truth fields. | Refresh controller |
-| `POST` | `/api/local/refresh/overview` | Dashboard/companion scheduler | Loopback mutation | Joins or starts one quota, incremental usage/work and overview publication pass using the existing bounded index deadline (ordinary incremental or cold index); an actual accounting rebuild may extend the total deadline once. Completion resets the sole five-minute overview timer. | Refresh controller |
+| `POST` | `/api/local/refresh/overview` | Dashboard/companion scheduler | Loopback mutation | Joins or starts one quota, incremental usage/work and overview publication pass using the existing bounded index deadline (ordinary incremental or cold index); an actual accounting rebuild may extend the total deadline once. Settlement resets the companion-owned timer (default five minutes; configurable or disabled). | Refresh controller |
 | `POST` | `/api/local/refresh/cancel` | Dashboard/native shell | Loopback mutation | Requests cancellation; published prior state remains intact. | Refresh controller |
+
+Model-performance responses may additionally carry
+`X-TiboTattle-Performance-Source-Diagnostics`: at most 1,024 bytes of closed
+`{code,count}` rows. Fixed codes distinguish growth, truncation, identity or
+metadata change during a read, missing/unreadable recovery sources, undiscovered
+recovery checkpoints and a change whose original cause is unknown. Counts are
+positive integers; each logical source is counted once per reason across the
+primary and supplemental stores. Details are process-local and cleared when
+that source recovers; no source digest, ID, path, raw exception or content is
+included in the header or persisted measurement snapshot. Measurement response
+bodies and the existing general diagnostic codes are unchanged.
+
+The dashboard keeps dated prior measurements while retrying a recoverable
+source-change warning. It revalidates after 5, 10, 20 and 30 seconds, with at most
+four automatic retries for the same period, speed and exact reporting window.
+During retries the compact status shows only “Retrying”, without an additional
+cause sentence, timestamp or cancel action, and disappears after successful
+recovery. Source reasons remain available in measurement details. An older
+companion's generic recovery warning may retry, but does not establish growth.
+Missing, unreadable, undiscovered, replaced or
+truncated recovery sources and mixed hard failures stay explicit errors; request,
+JSON and contract failures end the retry sequence with their fixed error code.
+Exhaustion preserves the original recovery error and reason counts and offers
+manual retry. Success clears old warnings; cancellation, hiding or changing scope
+fences queued and late work. Cold-history polling retains its independent budget.
+Each retry gap stays below the one-minute idle lease, while the total backoff
+spans the worker's one-minute rediscovery cadence. These reads renew the existing
+scan lease; they do not bypass source consistency
+checks, force history recalculation or change the worker's rediscovery cadence.
+
+Settled `failed` and `degraded` refreshes retain reviewed fixed error codes in
+`failureCode` and their component result. Response identity, cumulative-chain,
+checkpoint and legacy-overlap conflicts remain distinct; arbitrary internal
+strings collapse to a fixed generic code. Both outcomes write the existing
+bounded local diagnostic note, rate-limited by code, step and detail signature.
+Quota success cannot hide a usage failure. UI failure text does not claim that
+the independent refresh scheduler has stopped; automatic work follows the
+configured interval and pause settings.
+
+All three refresh POST routes return `request: {started, joined, pending}` beside
+`refresh`, the actual active run receipt. A stronger request during weaker work
+merges into at most one pending follow-up; it does not relabel the current run.
+Cancellation clears pending work. State reads include `running` for actual execution ownership (a timed-out run may
+remain locked while its writer settles), and retain `refreshId`, actual `mode`,
+`reason` (`startup`, `automatic`, `manual`), `capabilities` (`quota`, `usage`,
+`resetDetails` booleans), nullable `pending` (`mode`, `capabilities`), and
+`quickResultAt` for independently published quota. Optional `timing` is `null`
+before the first run, then a process-local `local-refresh-timing-v1` receipt.
+It contains `totalMs` (`null` until settlement or if the monotonic clock is
+unavailable) and bounded `stages` entries with closed `stage` names, `wallMs`,
+`calls`, `failed` and `cancelled` counts. Only completed spans are reported;
+unreached stages are absent, never fabricated as zero. Parent stages include
+their children and asynchronous stages may overlap, so their durations must
+not be summed as total refresh time. Timings contain no source/thread IDs,
+paths, content or raw errors, are not added to the accounting cache, and are
+replaced on the next accepted run. Observer failures cannot affect refresh.
+The same receipt has bounded `reuse` rows (`phase`, closed `code`, `calls`)
+for before/after proof, lookup and retention decisions. Codes distinguish
+unknown origins, missing retained state, changed inputs, expiry and identity
+fences; operation failures expose no raw exception. They diagnose future runs
+only and do not change any reuse eligibility or accounting result.
+Bounded `origins` rows (`phase`, closed `code`, `count`) distinguish requested,
+known and unknown threads, missing/invalid metadata rows, schema/read/guard/
+busy/close failures and unresolved threads with or without indexed usage.
+Only `proof_before` and `proof_after` phases are admitted. Counters are integers
+between 0 and 25,000; observed zero counts remain distinct from absent evidence.
+Metadata failure counters count failed attempts; thread counters count selected
+threads. No raw IDs, file paths or underlying exception text are admitted.
+`quota` has `status`
+(`running`, `published`, `failed`, `skipped`, `cancelled`), nullable closed
+`errorCode` and `publishedAt`; `usage.status` is `pending`, `running`,
+`succeeded`, `failed`, `skipped`, `reused`, `deferred` or `cancelled`.
+These component states do not change the closed top-level run-state vocabulary.
+A published quota does not imply settled usage. `overviewSchedule` reports
+`nextAt`, `errorCode`, and the applied `intervalSeconds`; `-1` disables the
+periodic schedule, while permission-checked startup and manual requests remain.
+
+The overview's optional `quotaFreshness` describes quota observation alone
+(`status`, `latestObservedAt`, nullable `ageSeconds`, `staleAfterSeconds`,
+`source`). Usage `freshness` and accounting evaluation/generation metadata keep
+their own evidence times. Future quota observations are stale with unknown age;
+cache re-reading cannot manufacture a new provider observation.
+
+The overview's `pricing.historyCoverage` distinguishes indexed availability from
+complete usage evidence. `responseUnverifiedPrefixTurns` and
+`cumulativePrefixUnattributed` are nullable nonnegative integer counts. Their
+independent `responseUsageCoverageStatus` and `cumulativeUsageCoverageStatus`
+are `unknown`, `partial` or `complete`; missing or older-parser evidence is not
+zero. A known positive count makes overall history coverage partial while
+leaving the observed accounting subtotal available. These fields do not prove
+that every historical request or price has been recovered.
+
 
 The overview includes `accounting.trayCacheSummary` (schema version 1): exactly
 one `7d` and one `30d` entry with availability, comparable follow-up count,
-follow-ups reusing more than half, reuse percentage and coverage status. It is a
+follow-ups with cache-read counts above half the previous count, the percentage
+in that group and coverage status. The legacy field names do not prove matching
+prefix content. It is a
 bounded projection of the existing cache-continuity calculation. A zero
 comparable count has a null percentage; unavailable evidence has null counts.
 Consumers retain the parent accounting scope and freshness. This adds no
 collection, transcript access or independent retention authority.
+
+The overview's cache-switch and cache-continuity summaries expose
+`estimateEvidence` (schema version 1). The current method is
+`adjacent_cache_read_decrease`: the amount reprices eligible positive decreases
+in adjacent cache-read counts. It is a conditional API-equivalent scenario,
+not observed avoidable loss or a proven lower bound. `reusablePrefixStatus` is
+`unverified`; `verifiedLossTokens` and `verifiedPremiumUsd` are null. Price or
+ordering completeness must not promote that evidence. `observationUnits`
+partitions counted decreases into `responsePairs` (both observations have
+response identities) and `unresolvedIncrementPairs`. Even a response pair does
+not establish prefix equivalence. Unknown methods, claimed verified losses and
+inconsistent partitions fail closed at the browser boundary.
+
+The half-count outcome groups retain their own denominator. Under the current
+method, `cacheReadDrops` includes smaller positive decreases as well; it equals
+`reusedHalfOrLessReturns + reusedBetweenHalfAndPreviousReturns` for continuity.
+Legacy snapshots without this metadata retain their half-threshold counts and
+are explicitly labelled `adjacent_cache_read_decrease_legacy_half_threshold`.
+Neither method can produce an allowance-loss percentage: `allowanceImpact`
+is unavailable with reason `reusable_prefix_unverified`.
 
 The development source exposes **Model performance** at `#performance` in the
 web and native navigation. Its timing route remains usable without a completed
@@ -423,13 +537,19 @@ authorization. Same-origin assets, remote pages, stale frames and subframes
 cannot invoke protected settings actions. Closed preload actions remain validated.
 `setNotificationPreferences` accepts only `{ threshold }` with an integer 1–100
 or -1. `setRefreshInterval` accepts `{ seconds }`, either -1 or positive safe
-whole minutes converted to seconds. Settings v4 and notification-policy v2 migrate
+whole minutes converted to seconds. `setRefreshPaused` accepts only `{ paused }`
+with a boolean, from the trusted dashboard main frame. Settings v5 preserves
+`refreshPaused` separately from the interval; v4 migrates with pause disabled.
+Settings v5 and notification-policy v2 migrate
 older saved preferences forward; reset-delivery helpers remain deprecated and
 disconnected from production candidates.
 
 The companion receives the interval through the reviewed initial environment
-`USAGE_MONITOR_REFRESH_INTERVAL_SECONDS` and the closed process IPC message
-`{ type: "tibotattle.refresh-interval.v1", seconds }`. No new HTTP mutation route
+`USAGE_MONITOR_REFRESH_INTERVAL_SECONDS` and `USAGE_MONITOR_REFRESH_PAUSED` (boolean
+string), and the closed process IPC message
+`{ type: "tibotattle.refresh-interval.v2", seconds, paused }`. Pause prevents
+all scheduler submissions and cancels the active run and queued follow-up.
+No new HTTP mutation route
 is introduced. Watchdogs and manual refresh keep their existing contracts.
 
 Background responses contain `imageUrl` instead of image bytes. The fixed

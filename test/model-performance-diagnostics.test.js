@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {createModelPerformanceController} from '../apps/local/model-performance-controller.js';
 import {modelPerformanceProjection} from '../src/reporting/index.js';
-import {createModelPerformanceSnapshotStore,modelPerformanceSourceScope,isCompleteModelPerformanceSnapshot} from '../apps/local/model-performance-snapshots.js';
-import {modelPerformanceHistoryState} from '../apps/local/model-performance-worker.js';
+import {createModelPerformanceSnapshotStore,modelPerformanceSourceScope,isCompleteModelPerformanceSnapshot,modelPerformanceSourceDiagnosticHeader,readModelPerformanceSourceDiagnostics} from '../apps/local/model-performance-snapshots.js';
+import {modelPerformanceHistoryState,modelPerformanceSourceRecoveryReason,modelPerformanceRecoveryDiagnostics} from '../apps/local/model-performance-worker.js';
 import {mkdtemp,readFile,writeFile,rm,copyFile} from 'node:fs/promises';
 import {join} from 'node:path';import {tmpdir} from 'node:os';
 
@@ -18,7 +18,7 @@ function fixture(store={read:async()=>null,write:async()=>true}){
   const worker=new Worker(),controller=createModelPerformanceController({directory:'synthetic',codexHome:'synthetic',workerFactory:()=>worker,snapshotStoreFactory:()=>store});
   return {worker,controller};
 }
-test('collection failures retain a completed v5 snapshot and diagnostics recover independently',async()=>{
+test('collection failures retain a completed v6 snapshot and diagnostics recover independently',async()=>{
   const {worker,controller}=fixture();
   try {
     await controller.read('all');worker.emit('message',{type:'snapshots',values:[snapshot()]});
@@ -64,7 +64,7 @@ test('intact snapshots for another source are distinct from real corruption, inc
   const a=createModelPerformanceSnapshotStore({directory:root,codexHome:join(root,'source-a')});
   assert.equal(await a.write([snapshot()]),true);
   const file=join(root,'model-performance-snapshot.json');
-  await copyFile(join(root,`model-performance-snapshot-${modelPerformanceSourceScope(join(root,'source-a'))}.json`),file);
+  await copyFile(join(root,`model-performance-snapshot-v6-${modelPerformanceSourceScope(join(root,'source-a'))}.json`),file);
   const codes=[],b=createModelPerformanceSnapshotStore({directory:root,codexHome:join(root,'source-b'),onDiagnostic:code=>codes.push(code)});
   assert.equal(await b.read(),null);assert.deepEqual(codes,['timing_snapshot_scope_mismatch']);
   const envelope=JSON.parse(await readFile(file,'utf8'));
@@ -76,7 +76,7 @@ test('intact snapshots for another source are distinct from real corruption, inc
 
 test('source-specific writes preserve both another source and the legacy receipt; current corruption cannot fall back',async t=>{
   const root=await mkdtemp(join(tmpdir(),'performance-isolation-'));t.after(()=>rm(root,{recursive:true,force:true}));
-  const home=join(root,'source-a'),file=join(root,`model-performance-snapshot-${modelPerformanceSourceScope(home)}.json`);
+  const home=join(root,'source-a'),file=join(root,`model-performance-snapshot-v6-${modelPerformanceSourceScope(home)}.json`);
   const a=createModelPerformanceSnapshotStore({directory:root,codexHome:home});await a.write([snapshot()]);
   const bytes=await readFile(file),legacy=join(root,'model-performance-snapshot.json');await copyFile(file,legacy);await rm(file);
   assert.ok(await a.read(),'matching legacy receipt remains usable');
@@ -91,7 +91,7 @@ test('a finished partial scan saves its stale state and recovers the old-source 
   const root=await mkdtemp(join(tmpdir(),'performance-recovery-'));t.after(()=>rm(root,{recursive:true,force:true}));
   const oldHome=join(root,'old-source'),home=join(root,'current-source');
   const old=createModelPerformanceSnapshotStore({directory:root,codexHome:oldHome});await old.write([snapshot()]);
-  const legacy=join(root,'model-performance-snapshot.json');await copyFile(join(root,`model-performance-snapshot-${modelPerformanceSourceScope(oldHome)}.json`),legacy);
+  const legacy=join(root,'model-performance-snapshot.json');await copyFile(join(root,`model-performance-snapshot-v6-${modelPerformanceSourceScope(oldHome)}.json`),legacy);
   const original=await readFile(legacy),worker=new Worker();
   const controller=createModelPerformanceController({directory:root,codexHome:home,workerFactory:()=>worker});
   await controller.read('all');assert.deepEqual(controller.diagnostics(),['timing_snapshot_scope_mismatch']);
@@ -138,4 +138,33 @@ test('source recovery errors remain visible with old results and clear after rec
       assert.deepEqual(controller.diagnostics(), []);
     }
   } finally { await controller.close(); }
+});
+
+test('source details distinguish concurrent append, missing recovery and unknown history without leaking IDs', async () => {
+  assert.equal(modelPerformanceSourceRecoveryReason({recoveryReason:'private-source'}),null);
+  assert.equal(modelPerformanceSourceRecoveryReason({message:'source_recovery_failed'}),'source_changed_unknown');
+  assert.equal(modelPerformanceSourceRecoveryReason({message:'source_recovery_failed',recoveryReason:'source_grew_during_read'}),'source_grew_during_read');
+  const failures=new Map([['private-source',new Set(['source_grew_during_read'])]]);
+  const sources=[{digest:'private-missing',rebuilding:true},{digest:'private-missing',rebuilding:true},{digest:'saved-complete',rebuilding:false}];
+  const details=modelPerformanceRecoveryDiagnostics(failures,sources,new Set());
+  assert.deepEqual(details,[{code:'source_grew_during_read',count:1},{code:'recovery_source_not_discovered',count:1}]);
+  assert.doesNotMatch(JSON.stringify(details),/private|saved-complete/);
+  const header=modelPerformanceSourceDiagnosticHeader(details);
+  assert.ok(Buffer.byteLength(header)<=1024);assert.deepEqual(JSON.parse(header),details);
+  for(const value of [null,[{code:'private',count:1}],[{code:'source_grew_during_read',count:1,path:'private'}],
+    [{code:'source_grew_during_read',count:0}], [{code:'source_grew_during_read',count:-1}],
+    [{code:'source_grew_during_read',count:1.5}], [{code:'source_grew_during_read',count:1_000_000_001}], [...details,...details]]) {
+    assert.equal(readModelPerformanceSourceDiagnostics(value),null);
+    assert.equal(modelPerformanceSourceDiagnosticHeader(value),null);
+  }
+  const {worker,controller}=fixture();
+  try{await controller.read('all');worker.emit('message',{type:'diagnostics',codes:['timing_source_recovery_failed'],sourceDetails:details});
+    const result=controller.sourceDiagnostics();result[0].count=999;
+    assert.deepEqual(controller.sourceDiagnostics(),details);
+    worker.emit('message',{type:'diagnostics',codes:[],sourceDetails:[]});
+    assert.deepEqual(controller.sourceDiagnostics(),[]);
+    worker.emit('message',{type:'diagnostics',codes:[],sourceDetails:[{code:'private',count:1}]});
+    assert.ok(controller.diagnostics().includes('timing_projection_failed'));
+    assert.doesNotMatch(JSON.stringify(controller.sourceDiagnostics()),/private/);
+  }finally{await controller.close();}
 });

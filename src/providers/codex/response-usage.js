@@ -9,6 +9,7 @@ const id = value => typeof value === 'string' && value.length > 0 && value.lengt
   && !/[\u0000-\u001f\u007f]/u.test(value);
 const same = (a, b) => KEYS.every(k => a[k] === b[k]);
 const LEGACY_MATCH_KEYS = KEYS.filter(k => k !== 'cache_write_input_tokens');
+const rawKey = value => JSON.stringify(KEYS.map(k => value[k]));
 const zero = () => Object.fromEntries(KEYS.map(k => [k, 0]));
 export const RESPONSE_MODEL_RECOVERY_VERSION = 1;
 function fail(code) { const error = new Error(code); error.code = code; throw error; }
@@ -30,6 +31,10 @@ function difference(total, response) {
   if (Object.values(prior).some(n => !Number.isSafeInteger(n) || n < 0)) return null;
   try { return usage(prior); } catch { return null; }
 }
+function explicitUsage(value) {
+  if (!KEYS.every(k => Number.isSafeInteger(value?.[k]))) return null;
+  try { return usage(value); } catch { return null; }
+}
 
 export function createResponseUsagePlan({ identityKey, maximumResponses = 100_000,
   maximumRecords = 250_000 } = {}) {
@@ -39,14 +44,14 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
     throw new TypeError('Response usage limits are invalid');
   }
   const responses = new Map(), turns = new Map(), legacy = new Map(), foreignTurns = new Set(), checkpoints=new Map();
-  let own = null, activeTurn = null, settingsModel = null, records = 0, modern = false, legacyTotal = null;
-  let settingsRevision=0,pendingCheckpoint=null,settingsTier=null;
+  let own = null, activeTurn = null, settingsModel = null, records = 0, modern = false, legacyTotal = null, legacyTotalAt = NaN;
+  let settingsRevision=0,pendingCheckpoint=null,settingsTier=null,tierRevision=0;
   const diagnostics = { responses: 0, duplicateResponses: 0, foreignResponses: 0,
     unattributedModels: 0, unverifiedPrefixTurns: 0, modelsRecovered:0 };
   function turn(key) {
     let t = turns.get(key);
     if (!t) { t = { total: zero(), model: null, modelAt: null, hasResponses: false,
-      unverifiedPrefix: false,context:null,lastResponseRecord:-1,routingSeen:false }; turns.set(key, t); }
+      unverifiedPrefix: false,context:null,tierContext:null,lastResponseRecord:-1,routingSeen:false }; turns.set(key, t); }
     return t;
   }
   return {
@@ -64,7 +69,9 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
         const key=identityKey(JSON.stringify([own,latest.response_id]));
         const cp={raw:usage(latest.usage),total:usage(latest.turn_token_usage),turn:latest.turn_id,
           previousModel:id(p.resume_metadata?.previous_turn_settings?.model)?p.resume_metadata.previous_turn_settings.model:null,
-          at:Date.parse(record.timestamp),record:records,context:null};
+          previousTier:codexTierObservation({type:'turn_context',payload:p.resume_metadata?.previous_turn_settings}),
+          at:Date.parse(record.timestamp),record:records,context:null,
+          explicit:explicitUsage(latest.usage)!==null&&explicitUsage(latest.turn_token_usage)!==null};
         const list=checkpoints.get(key)??[];list.push(cp);checkpoints.set(key,list);pendingCheckpoint=cp;
         return;
       }
@@ -74,10 +81,16 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
           const t=turn(activeTurn),replacement=pendingCheckpoint?.turn===activeTurn;
           const tier=codexTierObservation(record);
           const context={model:id(p.model)?p.model:null,at:Date.parse(record.timestamp),record:records,
-            settingsRevision,direct:!replacement,validAtCapture:!settingsModel||settingsModel===p.model,
-            tier:tier?.status==='observed'?{rawTier:tier.rawTier,tierSource:tier.tierSource,timestamp:record.timestamp}:replacement?null:settingsTier};
+            settingsRevision,tierRevision,direct:!replacement,validAtCapture:!settingsModel||settingsModel===p.model,
+            tier:tier?.status==='observed'?{rawTier:tier.rawTier,tierSource:tier.tierSource,timestamp:record.timestamp}
+              :tier?.status==='malformed'||replacement||!settingsTier
+                ||Date.parse(settingsTier.timestamp)>Date.parse(record.timestamp)?null:settingsTier};
           if(replacement)pendingCheckpoint.context=context;
-          t.model=context.model;t.modelAt=context.at;t.context=context;
+          t.model=context.model;t.modelAt=context.at;t.context=context;t.tierContext=context;
+        } else if(activeTurn) {
+          // An unusable request context supplies no tier association. Keep the
+          // independent model policy, but never revive an older tier context.
+          turn(activeTurn).tierContext=null;
         }
         pendingCheckpoint=null;
         return;
@@ -94,8 +107,13 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
           settingsModel=p.thread_settings.model;
         }
         const tier=codexTierObservation(record);
-        if(tier?.status==='observed')settingsTier={rawTier:tier.rawTier,tierSource:tier.tierSource,timestamp:record.timestamp};
-        else if(tier?.status==='malformed')settingsTier=null;
+        if(tier?.status==='observed'){
+          if(!settingsTier||settingsTier.rawTier!==tier.rawTier)tierRevision++;
+          settingsTier=Number.isFinite(Date.parse(record.timestamp))
+            ?{rawTier:tier.rawTier,tierSource:tier.tierSource,timestamp:record.timestamp}:null;
+        } else if(tier?.status==='malformed'){
+          tierRevision++;settingsTier=null;
+        }
         return;
       }
       if(record?.type==='event_msg'&&p?.type==='model_reroute'){
@@ -105,15 +123,20 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
       if (record?.type === 'event_msg' && p?.type === 'token_count') {
         const last = p.info?.last_token_usage;
         const total = p.info?.total_token_usage;
+        const before = explicitUsage(legacyTotal), after = explicitUsage(total), beforeAt = legacyTotalAt;
         const unchanged = total && legacyTotal && Number.isSafeInteger(total.total_tokens)
           && total.total_tokens >= 0 && KEYS.every(k => (total[k] ?? null) === (legacyTotal[k] ?? null));
-        if (total) legacyTotal = Object.fromEntries(KEYS.map(k => [k, total[k] ?? null]));
+        if (total) {
+          legacyTotal = Object.fromEntries(KEYS.map(k => [k, total[k] ?? null]));
+          legacyTotalAt = Date.parse(record.timestamp);
+        }
         // UI/quota status can repeat the previous response after a new turn
         // starts. Its unchanged cumulative counters establish no new spend.
         if (unchanged) return;
         if (last?.input_tokens > 0 || last?.output_tokens > 0
             || (last == null && p.info?.total_token_usage?.total_tokens > 0)) {
-          legacy.set(locator, { turn: activeTurn,
+          legacy.set(locator, { turn: activeTurn, record:records, at:Date.parse(record.timestamp),
+            delta:before&&after&&beforeAt<=Date.parse(record.timestamp)?difference(after,before):null,
             last: last ? Object.fromEntries(KEYS.map(k => [k,
               Number.isSafeInteger(last[k]) ? last[k] : null])) : null });
         }
@@ -133,7 +156,9 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
       if (typeof key !== 'string' || !/^[a-f0-9]{64}$/u.test(key)) fail('codex_response_usage_identity_invalid');
       const previous = responses.get(key);
       if (previous) {
-        if (previous.turn !== p.turn_id || !same(previous.raw, raw) || !same(previous.total, total)) {
+        if (previous.turn !== p.turn_id || !same(previous.raw, raw) || !same(previous.total, total)
+            || previous.observedAtMs !== Date.parse(record.timestamp)
+            || previous.cacheWriteAssumedZero !== (p.usage.cache_write_input_tokens == null)) {
           fail('codex_response_usage_identity_conflict');
         }
         diagnostics.duplicateResponses++; return;
@@ -174,8 +199,14 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
       // invalidate a model already coherent when usage was persisted.
       const model=originalModel??(context&&context.at<=Date.parse(record.timestamp)&&!t.routingSeen&&(frozenRequest||sameSettings)
         ?context.model:null);
+      const tierContext=t.tierContext;
+      const frozenTier=tierContext?.direct&&tierContext.record>t.lastResponseRecord
+        &&(t.hasResponses||!t.unverifiedPrefix);
+      const capturedTier=tierContext?.direct&&tierContext.at<=Date.parse(record.timestamp)
+        &&(frozenTier||tierContext.tierRevision===tierRevision);
+      const requestTier=capturedTier?tierContext.tier:null;
       t.total = total; t.hasResponses = true;t.lastResponseRecord=records;
-      responses.set(key, { key, locator, raw, total, turn: p.turn_id, model,originalModel,record:records,requestTier:context?.tier??null,
+      responses.set(key, { key, locator, raw, total, turn: p.turn_id, model,originalModel,record:records,requestTier,
         cacheWriteAssumedZero: p.usage.cache_write_input_tokens == null,
         observedAtMs: Date.parse(record.timestamp) });
       diagnostics.responses++;
@@ -183,18 +214,27 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
     finish() {
       for(const [key,list]of checkpoints){
         const r=responses.get(key);if(!r)continue;
-        const candidates=[];
+        const candidates=[],tierCandidates=[];
         for(const cp of list){
           if(cp.turn!==r.turn||!same(cp.raw,r.raw)||!same(cp.total,r.total))fail('codex_response_usage_checkpoint_conflict');
           const context=cp.context;
-          candidates.push(!turns.get(r.turn)?.routingSeen&&cp.record>r.record&&cp.at>=r.observedAtMs&&context&&context.record>cp.record&&context.at>=cp.at
-            &&cp.previousModel&&cp.previousModel===context.model?cp.previousModel:null);
+          const candidate=!turns.get(r.turn)?.routingSeen&&cp.record>r.record&&cp.at>=r.observedAtMs&&context&&context.record>cp.record&&context.at>=cp.at
+            &&cp.previousModel&&cp.previousModel===context.model?cp.previousModel:null;
+          candidates.push(candidate);
+          // The replacement context describes the resumed request. Only an
+          // independent prior-settings declaration agreeing with it can attest
+          // the earlier compactor's tier, and every checkpoint must agree.
+          tierCandidates.push(candidate&&cp.previousTier?.status==='observed'
+            &&context.tier&&cp.previousTier.rawTier===context.tier.rawTier
+            ?{rawTier:cp.previousTier.rawTier,tierSource:cp.previousTier.tierSource,
+              timestamp:new Date(cp.at).toISOString()}:null);
         }
         // The replacement may be a different model from the compactor, and a
         // previous-model attempt may fall back. Never choose either side then.
         if(r.originalModel===null){
           r.model=candidates.length&&candidates.every(m=>m&&m===candidates[0])?candidates[0]:null;
-          r.requestTier=list[0]?.context?.tier??null;
+          r.requestTier=tierCandidates.length&&tierCandidates.every(t=>t&&t.rawTier===tierCandidates[0]?.rawTier)
+            ?tierCandidates[0]:null;
         }
       }
       diagnostics.unattributedModels=0;diagnostics.modelsRecovered=0;
@@ -205,21 +245,69 @@ export function createResponseUsagePlan({ identityKey, maximumResponses = 100_00
       const byLocator = new Map([...responses.values()].map(r => [r.locator, {
         key:r.key,locator:r.locator,raw:r.raw,model:r.model,
         cacheWriteAssumedZero:r.cacheWriteAssumedZero,observedAtMs:r.observedAtMs,
-        ...(r.model!==null&&r.originalModel!==r.model?{requestTier:r.requestTier}:{}),
+        requestTier:r.model===null?null:r.requestTier,
+        verificationKey:identityKey(JSON.stringify(['codex-response-evidence/v1',r.key,
+          r.turn,r.raw,r.total,r.observedAtMs,r.cacheWriteAssumedZero,r.model,
+          r.model===null||r.requestTier===null?null:[r.requestTier.rawTier,
+            r.requestTier.tierSource,Date.parse(r.requestTier.timestamp)]])),
       }]));
       const suppressed = new Set();
       const byTurn = new Map();
-      for (const r of responses.values()) { const list = byTurn.get(r.turn) ?? []; list.push(r); byTurn.set(r.turn, list); }
+      const responsesByTurn = new Map(), checkpointsByTurn = new Map();
+      for (const r of responses.values()) {
+        const counts=byTurn.get(r.turn)??new Map(),key=rawKey(r.raw);
+        counts.set(key,(counts.get(key)??0)+1);byTurn.set(r.turn,counts);
+        if (turns.get(r.turn).unverifiedPrefix) {
+          const rows=responsesByTurn.get(r.turn)??[];rows.push(r);responsesByTurn.set(r.turn,rows);
+        }
+      }
+      for (const [key, list] of checkpoints) {
+        for (const cp of list) {
+          const rows=checkpointsByTurn.get(cp.turn)??[];
+          rows.push({key,...cp});checkpointsByTurn.set(cp.turn,rows);
+        }
+      }
+      const continuationPairs = new Map(), claimedContinuations = new Set();
+      for (const [turnId, rows] of responsesByTurn) {
+        if (!turns.get(turnId).unverifiedPrefix) continue;
+        const anchors=checkpointsByTurn.get(turnId)??[], first=rows[0];
+        if (anchors.length!==1) continue;
+        const cp=anchors[0], prefix=difference(first.total,first.raw);
+        // A retained compactor is a baseline only. Require a single exact,
+        // preceding, otherwise unrepresented response covering this prefix.
+        // This does not attribute, price or emit that historical prefix.
+        if (!cp.explicit||responses.has(cp.key)||cp.record>=first.record||cp.at>first.observedAtMs
+            ||!Number.isFinite(cp.at)||!same(cp.raw,cp.total)||!same(cp.total,prefix)) continue;
+        for (const r of rows) {
+          for (const position of [r.record-1,r.record+1]) {
+            const pairs=continuationPairs.get(position)??[];
+            pairs.push({response:r,checkpoint:cp});continuationPairs.set(position,pairs);
+          }
+        }
+      }
       for (const [locator, item] of legacy) {
         if (item.turn !== null && turns.get(item.turn)?.hasResponses) {
-          if (item.last && byTurn.get(item.turn).some(response =>
-            LEGACY_MATCH_KEYS.every(k => item.last[k] !== null
-              && item.last[k] === response.raw[k])
-              && (item.last.cache_write_input_tokens === response.raw.cache_write_input_tokens
-                || (item.last.cache_write_input_tokens === null
-                  && response.raw.cache_write_input_tokens === 0)))) {
-            suppressed.add(locator);
-          } else fail('codex_response_usage_legacy_conflict');
+          // Equal token vectors do not establish equal occurrences. An unknown
+          // prefix cannot prove which legacy rows overlap; a complete turn can
+          // consume each exact response vector at most once.
+          if(turns.get(item.turn).unverifiedPrefix) {
+            // Counter differences, latest increments, order and instant must
+            // independently corroborate each adjacent pair. Vector equality
+            // alone cannot identify an occurrence in an unknown prefix.
+            const pairs=(continuationPairs.get(item.record)??[]).filter(({response:r,checkpoint:cp}) =>
+              r.turn===item.turn&&cp.record<item.record&&cp.at<=item.at
+              &&!r.cacheWriteAssumedZero&&item.last&&KEYS.every(k=>item.last[k]!==null)
+              &&item.at===r.observedAtMs&&item.delta&&same(item.delta,r.raw)&&same(item.last,r.raw));
+            if(pairs.length!==1||claimedContinuations.has(pairs[0].response.key))fail('codex_response_usage_legacy_conflict');
+            claimedContinuations.add(pairs[0].response.key);
+          }
+          if(!item.last
+            ||!LEGACY_MATCH_KEYS.every(k=>item.last[k]!==null))fail('codex_response_usage_legacy_conflict');
+          const counts=byTurn.get(item.turn),key=rawKey({...item.last,
+            cache_write_input_tokens:item.last.cache_write_input_tokens??0});
+          const remaining=counts.get(key)??0;
+          if(remaining===0)fail('codex_response_usage_legacy_conflict');
+          counts.set(key,remaining-1);suppressed.add(locator);
         } else if (item.turn !== null && foreignTurns.has(item.turn)) {
           suppressed.add(locator);
         }

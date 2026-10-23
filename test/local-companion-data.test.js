@@ -29,6 +29,7 @@ import {
 import { readLocalIndexProjection } from "../src/local-index-backend.js";
 import { usageProjection } from "../src/local-companion-usage-model.js";
 import { readLocalIndexWindowBreakdown } from "../src/local-index-window-breakdown.js";
+import { refreshLocalIndexAccountingCache } from "../src/local-index-accounting-cache.js";
 
 const ARTIFACT_FILES = {
   gradient: "2026-07-24-simple-quota-gradient-artifact.json",
@@ -1085,6 +1086,7 @@ test("response usage stays exact and exposes an unverified prefix through the pu
   try {
     const stateDirectory = join(root, ".usage-monitor");
     const indexFile = join(stateDirectory, "response-prefix-index.sqlite");
+    const collectorStateFile = join(stateDirectory, "response-prefix-collector.sqlite");
     const sessions = join(root, "sessions");
     await mkdir(sessions);
     const at = "2026-09-29T12:00:00.000Z";
@@ -1096,13 +1098,15 @@ test("response usage stays exact and exposes an unverified prefix through the pu
       { timestamp: at, type: "session_meta", payload: { id } },
       { timestamp: at, type: "event_msg", payload: { type: "task_started", turn_id: turnId } },
       { timestamp: at, type: "turn_context", payload: { turn_id: turnId, model: "gpt-6.1-sol" } },
-      { timestamp: at, type: "event_msg", payload: { type: "token_count", info: {
-        last_token_usage: usage, total_token_usage: cumulative,
-      } } },
       { timestamp: at, type: "token_usage_record", payload: {
         thread_id: id, turn_id: turnId, response_id: "synthetic-response-coverage-id",
         usage, turn_token_usage: cumulative, thread_token_usage: cumulative,
       } },
+      { timestamp: at, type: "event_msg", payload: { type: "token_count", rate_limits: {
+        limit_id: "codex", plan_type: "pro",
+        secondary: { used_percent: 1, window_minutes: 10_080,
+          resets_at: Date.parse("2026-10-03T12:00:00.000Z") / 1000 },
+      } } },
     ];
     await writeFile(join(sessions, "rollout-2026-09-29T12-00-00-response-prefix.jsonl"),
       `${records.map(JSON.stringify).join("\n")}\n`);
@@ -1112,9 +1116,6 @@ test("response usage stays exact and exposes an unverified prefix through the pu
       { timestamp: at, type: "session_meta", payload: { id: completeId } },
       { timestamp: at, type: "event_msg", payload: { type: "task_started", turn_id: completeTurnId } },
       { timestamp: at, type: "turn_context", payload: { turn_id: completeTurnId, model: "gpt-6.1-sol" } },
-      { timestamp: at, type: "event_msg", payload: { type: "token_count", info: {
-        last_token_usage: usage, total_token_usage: usage,
-      } } },
       { timestamp: at, type: "token_usage_record", payload: {
         thread_id: completeId, turn_id: completeTurnId, response_id: "synthetic-response-complete-id",
         usage, turn_token_usage: usage, thread_token_usage: usage,
@@ -1128,7 +1129,7 @@ test("response usage stays exact and exposes an unverified prefix through the pu
       secretFile: join(stateDirectory, "response-prefix-device-salt"),
       workerCount: 1,
     });
-    assert.equal(built.usageEvents, 2);
+    assert.equal(built.usageEvents, 3); // Includes the quota-only source observation.
 
     const companion = await readLocalIndexCompanionProjection({
       indexFile, nowMs: Date.parse("2026-09-29T13:00:00.000Z"),
@@ -1139,16 +1140,26 @@ test("response usage stays exact and exposes an unverified prefix through the pu
     assert.equal(total.events, 2);
     assert.equal(total.totalTokens, 220);
 
+    await refreshLocalIndexAccountingCache({
+      stateFile: collectorStateFile, indexFile, expectedGeneration: companion.generation,
+      now: () => Date.parse("2026-09-29T13:00:00.000Z"),
+    });
     const snapshot = await buildLocalCompanionSnapshot({
       root,
+      collectorStateFile,
       unifiedIndexFile: indexFile,
       now: () => Date.parse("2026-09-29T13:00:00.000Z"),
     });
     assert.equal(snapshot.overview.pricing.historyCoverage.responseUsageCoverageStatus, "partial");
     assert.equal(snapshot.overview.pricing.historyCoverage.responseUnverifiedPrefixTurns, 1);
+    assert.equal(snapshot.overview.pricing.historyCoverage.status, "partial");
+    assert.equal(snapshot.overview.pricing.historyCoverage.cumulativePrefixUnattributed, 0);
+    assert.equal(snapshot.overview.pricing.historyCoverage.cumulativeUsageCoverageStatus, "complete");
+    assert.equal(snapshot.overview.pricing.historyPeriodStatus, "available");
     assert.ok(snapshot.overview.warnings.some((warning) => (
       warning === "Historical response coverage is partial. Recorded response amounts remain counted; earlier usage remains unavailable."
     )));
+    assert.ok(snapshot.overview.warnings.every((warning) => !warning.includes("expand as later foreground refreshes")));
 
     // Keep the positive diagnostic from the current parser when a different
     // retained source has not yet been checked by that parser.
@@ -1183,6 +1194,91 @@ test("response usage stays exact and exposes an unverified prefix through the pu
   } finally {
     await rm(root, { recursive: true });
   }
+});
+
+test("legacy cumulative prefixes remain unallocated through index, snapshot and browser coverage", async () => {
+  const root = await fixtureRoot();
+  try {
+    const stateDirectory = join(root, ".usage-monitor");
+    const indexFile = join(stateDirectory, "legacy-prefix-index.sqlite");
+    const collectorStateFile = join(stateDirectory, "legacy-prefix-collector.sqlite");
+    const sessions = join(root, "sessions");
+    await mkdir(sessions);
+    const at = "2026-09-29T12:00:00.000Z";
+    const later = "2026-09-29T12:01:00.000Z";
+    const nowMs = Date.parse("2026-09-29T13:00:00.000Z");
+    const records = [
+      { timestamp: at, type: "session_meta", payload: { id: "synthetic-legacy-prefix-session" } },
+      { timestamp: at, type: "turn_context", payload: { model: "gpt-6.1-sol" } },
+      { timestamp: at, type: "event_msg", payload: { type: "token_count", info: {
+        total_token_usage: rolloutUsage(1000),
+      } } },
+      { timestamp: later, type: "event_msg", payload: { type: "token_count", info: {
+        total_token_usage: rolloutUsage(1100),
+      }, rate_limits: {
+        limit_id: "codex", plan_type: "pro",
+        secondary: { used_percent: 1, window_minutes: 10_080,
+          resets_at: Date.parse("2026-10-03T12:00:00.000Z") / 1000 },
+      } } },
+    ];
+    await writeFile(join(sessions, "rollout-2026-09-29T12-00-00-legacy-prefix.jsonl"),
+      `${records.map(JSON.stringify).join("\n")}\n`);
+    await writeFile(join(sessions, "rollout-2026-09-29T12-00-00-complete-coverage.jsonl"),
+      `${JSON.stringify({ timestamp: at, type: "session_meta", payload: { id: "synthetic-complete-coverage-session" } })}\n`);
+    await refreshLocalIndex({
+      codexHome: root, indexFile,
+      secretFile: join(stateDirectory, "legacy-prefix-device-salt"), workerCount: 1,
+    });
+    const companion = await readLocalIndexCompanionProjection({ indexFile, nowMs });
+    assert.equal(companion.cumulativePrefixUnattributed, 1);
+    assert.equal(companion.responseUnverifiedPrefixTurns, 0);
+    const total = companion.usage.find((period) => period.id === "all");
+    assert.equal(total.events, 1);
+    assert.equal(total.totalTokens, 100);
+    await refreshLocalIndexAccountingCache({
+      stateFile: collectorStateFile, indexFile,
+      expectedGeneration: companion.generation, now: () => nowMs,
+    });
+    const snapshot = await buildLocalCompanionSnapshot({
+      root, collectorStateFile, unifiedIndexFile: indexFile, now: () => nowMs,
+    });
+    assert.equal(snapshot.overview.pricing.historyPeriodStatus, "available");
+    assert.equal(snapshot.overview.accounting.totalTokens, 100);
+    assert.ok(snapshot.overview.warnings.some((warning) => warning.startsWith("Historical cumulative usage starts with an unattributed prefix.")));
+    assert.ok(snapshot.overview.warnings.every((warning) => !warning.includes("expand as later foreground refreshes")));
+    const { normalizeDashboardPayload } = await import("../apps/web/public/data-client.js");
+    const normalized = normalizeDashboardPayload(snapshot.overview);
+    for (const coverage of [snapshot.overview.pricing.historyCoverage, normalized.pricing.historyCoverage]) {
+      assert.equal(coverage.status, "partial");
+      assert.equal(coverage.cumulativePrefixUnattributed, 1);
+      assert.equal(coverage.cumulativeUsageCoverageStatus, "partial");
+      assert.equal(coverage.responseUsageCoverageStatus, "complete");
+    }
+
+    const database = openLocalIndexStore(indexFile);
+    try {
+      database.prepare("UPDATE source SET parser_version = ? WHERE path LIKE '%complete-coverage.jsonl'")
+        .run("local-index-rollout-typed-v3+unified-rollout-typed-v21");
+    } finally { database.close(); }
+    assert.equal((await readLocalIndexCompanionProjection({ indexFile, nowMs }))
+      .cumulativePrefixUnattributed, 1, "a different old source cannot erase known partial evidence");
+
+    const oldDatabase = openLocalIndexStore(indexFile);
+    try {
+      oldDatabase.prepare("UPDATE source SET parser_version = ?")
+        .run("local-index-rollout-typed-v3+unified-rollout-typed-v21");
+    } finally { oldDatabase.close(); }
+    assert.equal((await readLocalIndexCompanionProjection({ indexFile, nowMs }))
+      .cumulativePrefixUnattributed, null);
+    const older = await buildLocalCompanionSnapshot({
+      root, collectorStateFile, unifiedIndexFile: indexFile, now: () => nowMs,
+    });
+    for (const coverage of [older.overview.pricing.historyCoverage,
+      normalizeDashboardPayload(older.overview).pricing.historyCoverage]) {
+      assert.equal(coverage.cumulativePrefixUnattributed, null);
+      assert.equal(coverage.cumulativeUsageCoverageStatus, "unknown");
+    }
+  } finally { await rm(root, { recursive: true }); }
 });
 
 test("closed v2 real-data projection exposes no session, account, path or filename identifiers", async () => {

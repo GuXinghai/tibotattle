@@ -33,7 +33,7 @@ export function exampleModelSpeeds(period='all', speedMode='standard') {
   const speeds=[62,58,71,47,53,79,66,60,39,51,68,57,74,82,63,48,44,59,70,76,64,55,41,67,50,61,78,69,56,65];
   const latency=[1.4,2.1,1.1,3.8,1.7,.9,1.6,2.3,4.9,2.6,1.3,1.8,1.2,.8,2.7,1.9,3.4,1.5,2.2,1.1,1.8,3.1,2.4,1.2,4.2,1.7,.9,1.4,2.8,1.6];
   if (!['standard','fast','ultrafast'].includes(speedMode)) throw new RangeError('Unsupported speed mode');
-  return {schemaVersion:5,method:5,speedMode,excludedUnknownTurns:0,status:'ready',collecting:false,stale:false,updatedAt:new Date(end+86400000-1).toISOString(),period,interval:'day',start,end,historyProgress:null,
+  return {schemaVersion:6,method:5,speedMode,excludedUnknownTurns:0,status:'ready',collecting:false,stale:false,updatedAt:new Date(end+86400000-1).toISOString(),period,interval:'day',start,end,historyProgress:null,
     models:speedMode!=='standard'?[]:[
       ['gpt-6-astra','Astra'],['gpt-6.1-sol','GPT-6.1 Sol'],['gpt-6-sol','GPT-6 Sol'],['gpt-6-luna','GPT-6 Luna'],
       ['gpt-5.6-terra','Terra'],['gpt-5.6-sol','Sol'],['gpt-5.6-luna','Luna'],
@@ -42,9 +42,9 @@ export function exampleModelSpeeds(period='all', speedMode='standard') {
         const j=(i+index*9)%30, n=Math.max(3,Math.round(count*(index ? .62 : 1)));
         const at=end-(29-i)*86400000, median=speeds[j]+index*8;
         const spread=[.24,.37,.18,.43,.29,.21,.34][(i+index)%7];
-        const speed={at,n,p10:median*(1-spread*1.6),p25:median*(1-spread*.7),median,p75:median*(1+spread),p90:median*(1+spread*1.9)};
+        const speed={at,n,mean:median*(1+spread*.2),p10:median*(1-spread*1.6),p25:median*(1-spread*.7),median,p75:median*(1+spread),p90:median*(1+spread*1.9)};
         const mid=latency[(i+index*7)%30]*(index ? .85 : 1), measured=Math.max(2,n-1-i%4);
-        const ttft={at,n:measured,p10:mid*.32,p25:mid*.64,median:mid,p75:mid*(1.35+spread),p90:mid*(2.1+spread*3)};
+        const ttft={at,n:measured,mean:measured < 3 ? mid : mid*(1+spread),p10:mid*.32,p25:mid*.64,median:mid,p75:mid*(1.35+spread),p90:mid*(2.1+spread*3)};
         for (const point of [speed,ttft]) if (point.n < 5) {
           for (const key of ['p10','p25','p75','p90']) point[key] = null;
         }

@@ -18,6 +18,7 @@ import {
 import { codexTierObservation, normalizeProviderTier } from "./tier-normalization.js";
 import { createResponseUsagePlan } from './response-usage.js';
 import { projectCompactionUsageLine } from './compaction-usage-receipt.js';
+import { CODEX_WORK_LIFECYCLE_EVENT_TYPES, codexWorkLifecycle } from './work-lifecycle.js';
 
 // Tolerance when deciding that a cumulative delta "materially exceeds" the
 // co-reported per-turn `last_token_usage`. The counters are exact integers
@@ -130,7 +131,9 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
       try {
         record = JSON.parse(line);
       } catch {
-        if (line.includes('"type":"token_usage_record"')) throw new Error('codex_response_usage_invalid');
+        if (line.includes('"type":"token_usage_record"')) {
+          const error = new Error('codex_response_usage_invalid');error.code = error.message;throw error;
+        }
         continue;
       }
       responseReconciliation?.observe(record, ordinal);
@@ -155,18 +158,29 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
       diagnostics.tierSettingCounts[normalized.codexSpeedMode] = (diagnostics.tierSettingCounts[normalized.codexSpeedMode] ?? 0) + 1;
       timeline.push({ ordinal, rawTier, tierSource: observation.tierSource, timestamp: record.timestamp, timestampMs });
     }
-    return timeline.sort((left, right) => left.timestampMs - right.timestampMs || left.ordinal - right.ordinal);
+    // Build chronological state only from the physical prefix already read.
+    // Equal timestamps retain source order; a later line cannot backfill an
+    // earlier request even when the clock ties or moves backwards.
+    let effective = null;
+    return timeline.map((observation) => {
+      if (effective === null || observation.timestampMs >= effective.timestampMs) {
+        effective = observation;
+      }
+      return { ordinal: observation.ordinal, effective };
+    });
   }
 
-  function tierAt(timeline, timestampMs, inheritedTier = null) {
+  function tierAt(timeline, timestampMs, inheritedTier = null, ordinal = Infinity) {
     let lower = 0;
     let upper = timeline.length;
     while (lower < upper) {
       const middle = Math.floor((lower + upper) / 2);
-      if (timeline[middle].timestampMs <= timestampMs) lower = middle + 1;
+      if (timeline[middle].ordinal <= ordinal) lower = middle + 1;
       else upper = middle;
     }
-    return lower === 0 ? inheritedTier : timeline[lower - 1];
+    const current = lower === 0 ? null : timeline[lower - 1].effective;
+    return current === null ? inheritedTier
+      : current.timestampMs <= timestampMs ? current : null;
   }
 
   async function collectHistorySeed(source, {
@@ -275,6 +289,7 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
     startMs,
     endMs,
     seenEvents,
+    seenResponses = new Map(),
     seenToolCalls,
     onUsage,
     onRateLimitSnapshot,
@@ -415,15 +430,15 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
         continue;
       }
 
-      if (record.type === "event_msg" && (record.payload?.type === "task_started" || record.payload?.type === "task_complete")) {
+      if (record.type === "event_msg" && CODEX_WORK_LIFECYCLE_EVENT_TYPES.includes(record.payload?.type)) {
         if (timestampMs > endMs) continue;
-        const turnId = record.payload?.turn_id;
-        if (typeof turnId !== "string" || turnId.length === 0) {
+        const work=codexWorkLifecycle(record);
+        if (work===null) {
           diagnostics.malformedTaskEvents += 1;
-        } else if (record.payload.type === "task_started") {
-          openTaskIds.add(turnId);
+        } else if (work.kind === "start") {
+          openTaskIds.add(work.taskId);
         } else {
-          openTaskIds.delete(turnId);
+          openTaskIds.delete(work.taskId);
         }
         continue;
       }
@@ -465,14 +480,22 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
       }
       if (record.type === 'token_usage_record') {
         const response = responsePlan.responseAt(sourceRecordOrdinal);
-        if (!response || timestampMs < startMs || timestampMs > endMs) continue;
+        if (!response) continue;
         const key = `response:${response.key}`;
-        if (seenEvents.has(key)) continue;
+        const prior = seenResponses.get(key);
+        if (prior !== undefined && prior !== response.verificationKey) {
+          const error = new Error('codex_response_usage_identity_conflict');
+          error.code = error.message;
+          throw error;
+        }
+        if (prior !== undefined) continue;
+        seenResponses.set(key, response.verificationKey);
+        if (timestampMs < startMs || timestampMs > endMs) continue;
         seenEvents.add(key);
         const presence = tokenComponentPresence(response.raw);
         if (response.cacheWriteAssumedZero) presence.cache_write_input_tokens = false;
         const tier = response.model === null ? null : Object.hasOwn(response,'requestTier')
-          ?response.requestTier:tierAt(tierTimeline, timestampMs, seedTier);
+          ?response.requestTier:tierAt(tierTimeline, timestampMs, seedTier, sourceRecordOrdinal);
         await onUsage({ timestamp: record.timestamp, model: response.model ?? 'unknown',
           raw: response.raw, rawAvailability: presence, components: canonicalComponents(response.raw),
           componentAvailability: canonicalComponentAvailability(presence, response.raw),
@@ -562,8 +585,15 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
             usagePresence = lastPresence;
           }
         } else if (firstCumulativeRecord) {
-          usage = last ?? delta;
-          usagePresence = last ? lastPresence : deltaPresence;
+          // A first cumulative snapshot locates no individual request or its
+          // historical model/time. Anchor it, keep the coverage gap explicit,
+          // and charge only an independently reported latest increment.
+          usage = last;
+          usagePresence = lastPresence;
+          if (last === null && total.total_tokens > 0
+              && !responsePlan.suppressLegacyAt(sourceRecordOrdinal)) {
+            diagnostics.cumulativePrefixUnattributed += 1;
+          }
         } else if (delta.total_tokens > 0) {
           if (last && sameUsage(last, delta)) {
             usage = last;
@@ -604,7 +634,7 @@ export function createCodexLogParser({ lineReader, createSha256 }) {
         continue;
       }
       seenEvents.add(eventKey);
-      const effectiveTier = tierAt(tierTimeline, timestampMs, seedTier);
+      const effectiveTier = tierAt(tierTimeline, timestampMs, seedTier, sourceRecordOrdinal);
       await onUsage({
         timestamp: record.timestamp,
         model,

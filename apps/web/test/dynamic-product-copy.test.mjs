@@ -27,7 +27,9 @@ test("recognized evidence warnings localize while unknown text retains the raw b
       setRawText(target, text) { target.textContent = text; target.setAttribute("data-i18n-skip", ""); },
     });
     runInContext(productionFunction("evidenceWarningTarget") + "\n" + productionFunction("renderEvidenceWarnings"), context);
-    context.renderEvidenceWarnings({ warnings: [warning, "Ready"] });
+    context.renderEvidenceWarnings({ warnings: [warning,
+      "History indexing is still advancing. Complete historical totals stay hidden until an indexed aggregate is available.", "Ready"] });
+    assert.equal(list.children.length, 2, "the redundant indexing notice is omitted without hiding other warnings");
     assert.equal(list.children[0].textContent, translate("dashboard.warning.loading", {}, locale));
     assert.equal(list.children[0].attributes["data-i18n-skip"], undefined);
     assert.equal(list.children[0].className, "evidence-warning informational");
@@ -82,8 +84,13 @@ test("retained last-completed figures state their age, never background work", (
     context.renderStaleServeNote(note, true, "local_unified_index_deferred", null);
     assert.equal(note.key, "accounting.staleServe.lastCompletedUndated");
 
-    // The previous-version cache keeps its own label and live rebuild state.
+    // Provenance cannot infer that a rebuild is running after a failed refresh.
     context.renderStaleServeNote(note, true, "local_unified_index_deferred");
     assert.equal(note.key, "accounting.staleServe.recalculating");
+    assert.doesNotMatch(note.textContent, /recalculating now|正在重新计算|recalculando ahora/u);
+    context.accountingRebuildRetrying = () => true;
+    context.renderStaleServeNote(note, true, "local_unified_index_deferred");
+    assert.equal(note.key, "accounting.staleServe.retrying");
+    assert.doesNotMatch(note.textContent, /being retried|正在重试|se está reintentando/u);
   }
 });

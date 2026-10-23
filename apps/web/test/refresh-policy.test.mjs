@@ -3,11 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createContext, runInContext } from "node:vm";
 import { SUPPORTED_LOCALES, translate, translatePlural } from "../public/localization.js";
-import { historyCoverageNoticeKind, refreshAccountingStatus, refreshQuickResultStatus } from "../public/lib.js";
+import { createRefreshPollingBudget, historyCoverageNoticeKind, refreshAccountingStatus, refreshNeedsContinuation, refreshQuickResultStatus } from "../public/lib.js";
 import { observationRecency } from "../public/dashboard-ui.js";
+import { LocalCompanionClient } from "../public/data-client.js";
+import { LocalCompanionRefreshController } from "../../../src/local-companion-refresh.js";
 import { createDomHelpers } from "../public/ui-format.js";
 import { createElectronRefreshLease } from "../public/electron-refresh-lifecycle.js";
-import { DESKTOP_AUTOMATIC_REFRESH_CADENCE_INTERVAL_MS } from "../../electron/desktop-automatic-refresh-cadence.js";
 
 const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 
@@ -95,16 +96,21 @@ function refreshHarness({
     Date: class extends Date { static now() { return now; } },
     dashboard: priorDashboard,
     localActionBusy: false,
+    accountingRebuildDeferral: null,
     localRefreshInProgress: false,
+    localRefreshPaused: false,
+    localRefreshPauseReady: true,
+    localRefreshSubmissionPending: false,
+    localRefreshObserverActive: false,
+    localRefreshStatusVersion: 0,
+    lastObservedRefreshPublication: null, lastOverviewScheduleError: null,
+    overviewPublicationReadPending: false,
+    overviewPublicationPollingStarted: false,
     localRefreshCancelRequested: false,
     sidebarRefreshSummaryTimer: null,
     sidebarRefreshSummaryVersion: 0,
     reindexAutoContinuations: 0,
     lastReindexProgressReceipt: null,
-    returnRefreshScheduled: false,
-    returnRefreshDeferrals: 0,
-    electronStartupRefreshTriggered: false,
-    electronStartupRefreshDeferred: false,
     activeLocalDashboardLoad: null,
     nativeEvidenceReloadPending: false,
     dashboardReadFailed: false,
@@ -144,8 +150,8 @@ function refreshHarness({
     },
     localClient: {
       async refresh() {
-        calls.push("quick");
-        routes.push("/api/local/refresh/quick");
+        calls.push("overview");
+        routes.push("/api/local/refresh/overview");
         if (rejection) throw rejection;
       },
       async recalculateDetailedAccounting() {
@@ -186,6 +192,7 @@ function refreshHarness({
     refreshNeedsContinuation: () => false,
     scheduleReindexAutoContinuation: () => calls.push("continuation-check"),
     loadLocalDashboard: async () => calls.push("reload"),
+    loadQuickResultDashboard: async () => calls.push("quick-reload"),
     describeFailure: async () => { calls.push("diagnostic"); return { text: "An update could not be started." }; },
     setLocalizedText(element, key) {
       element.textContent = translate(key, {}, "en-US");
@@ -203,6 +210,7 @@ function refreshHarness({
     runInContext(productionFunction(name), context);
   }
   runInContext(productionFunction("refreshElectronCadenceHealth"), context);
+  runInContext(productionFunction("quotaObservationRecency"), context);
   runInContext(productionFunction("dashboardObservationPresentation"), context);
   runInContext(productionFunction("renderObservationConnectionState"), context);
   runInContext(productionFunction("quotaRefreshDisposition"), context);
@@ -213,7 +221,8 @@ function refreshHarness({
   runInContext(productionFunction("publishRefreshResultNotice"), context);
   runInContext(productionFunction("loadLocalDashboardSecondaryState"), context);
   runInContext(productionFunction("requestRefresh"), context);
-  runInContext(productionFunction("scheduleReturningUserRefresh"), context);
+  runInContext(productionFunction("observeOverviewPublication"), context);
+  runInContext(productionFunction("handleElectronAutomaticRefresh"), context);
   return { context, calls, routes, notices, timers, buttons, priorDashboard, progressFrames, globalStates };
 }
 
@@ -225,6 +234,18 @@ test("allowance loading follows the existing primary-read and refresh owners thr
   context.activeLocalDashboardLoad={pending:true};context.updateLocalActionButtons();
   context.activeLocalDashboardLoad=null;context.dashboardReadFailed=false;context.updateLocalActionButtons();
   assert.deepEqual(states,['loading','error','loading','ready']);
+});
+
+test("paused local refresh rejects submissions and disables refresh without blocking read-only reports", async () => {
+  const { context, calls } = refreshHarness({ sidebar: true });
+  context.localRefreshPaused = true;
+  context.updateLocalActionButtons();
+  assert.equal(context.$("#refresh-button").disabled, true);
+  await context.requestRefresh();
+  assert.deepEqual(calls, []);
+  context.localRefreshPaused = false;
+  context.updateLocalActionButtons();
+  assert.equal(context.$("#refresh-button").disabled, false);
 });
 
 test("sidebar refresh keeps its icon and cancellability while showing only the phase", () => {
@@ -537,8 +558,6 @@ test("dashboard reload reads the latest quota result from refresh status", async
   for (const name of [
     "renderLocalOnboarding",
     "renderAccounting",
-    "startElectronStartupRefresh",
-    "scheduleReturningUserRefresh",
     "scheduleLocalReadinessPoll",
   ]) harness.context[name] = () => {};
 
@@ -570,7 +589,7 @@ test("history publication failures explain the fixed cause in every language and
         },
       });
       const notice = harness.notices.at(-1);
-      assert.equal(notice.titleKey, "refresh.degradedQuotaFailureTitle");
+      assert.equal(notice.titleKey, "refresh.usageQuotaFailureTitle");
       assert.equal(notice.kind, "error");
       assert.equal(noticeCopy(harness, notice), `${translate(copyKey, { code }, locale)} ${translate("refresh.quota.appServerUnavailableCopy", {}, locale)}`);
       assert.ok(noticeCopy(harness, notice).includes(code), locale);
@@ -593,10 +612,42 @@ test("source changes explain that no new history index was published", () => {
       result: { unifiedIndex: { status: "failed", errorCode: code } },
     });
     const notice = harness.notices.at(-1);
-    assert.equal(notice.titleKey, "refresh.degradedTitle");
+    assert.equal(notice.titleKey, "refresh.usageFailureTitle");
     assert.equal(noticeCopy(harness, notice), translate("refresh.history.sourceChangedCopy", { code }, locale));
     assert.match(noticeCopy(harness, notice), /not published|未发布|no se publicó/u);
   }
+});
+
+test("usage failures cannot claim completion, mask accounting failure or claim retries stopped", () => {
+  for (const locale of SUPPORTED_LOCALES) {
+    for (const [failedStep, result, copyKey] of [
+      ['unified_index', { unifiedIndex: { status: 'failed', errorCode: 'codex_response_usage_legacy_conflict' } }, 'refresh.history.usageEvidenceCopy'],
+      ['unified_index', { unifiedIndex: { status: 'failed' } }, 'refresh.degradedGenericCopy'],
+      ['unified_index', { unifiedIndex: { status: 'failed', generation: { skippedSourceCount: 2 } } }, 'refresh.degradedGenericCopy'],
+      ['accounting', { accounting: { status: 'unavailable' } }, 'refresh.accounting.failureCopy'],
+    ]) {
+      const harness = refreshHarness();
+      harness.context.t = (key, values = {}) => translate(key, values, locale);
+      const failureCode = result.unifiedIndex?.errorCode ?? 'accounting_unified_read_failed';
+      harness.context.publishRefreshResultNotice({ status: 'degraded', failedStep, failureCode, result });
+      const notice = harness.notices.at(-1);
+      assert.equal(notice.titleKey, 'refresh.usageFailureTitle');
+      assert.equal(notice.kind, 'error');
+      assert.equal(noticeCopy(harness, notice), translate(copyKey, { code: failureCode }, locale));
+      assert.doesNotMatch(noticeCopy(harness, notice), /retries have stopped|停止自动重试|se han detenido/u);
+      assert.match(noticeCopy(harness, notice), /refresh settings|刷新设置|ajustes/u);
+    }
+  }
+});
+
+test("quota-only degradation cannot invent a history failure or limited coverage", () => {
+  const harness = refreshHarness();
+  harness.context.publishRefreshResultNotice({ status: 'degraded', failedStep: 'collector', result: {
+    quotaRefresh: { attempted: true, recordWritten: false, errorCode: 'app_server_unavailable' },
+  } });
+  const notice = harness.notices.at(-1);
+  assert.equal(notice.titleKey, 'refresh.quota.failureTitle');
+  assert.equal(noticeCopy(harness, notice), translate('refresh.quota.appServerUnavailableCopy'));
 });
 
 test("partial source coverage is unchanged and cannot be mislabeled as a publication failure", () => {
@@ -605,9 +656,11 @@ test("partial source coverage is unchanged and cannot be mislabeled as a publica
     refreshId: "refresh-partial-source",
     status: "degraded",
     failureCode: "local_unified_index_publication_timed_out",
-    result: { unifiedIndex: { status: "partial", generation: { skippedSourceCount: 1, skippedThreadCount: 1 } } },
+    failedStep: "unified_index",
+    result: { unifiedIndex: { status: "ingested", generation: { status: "partial", skippedSourceCount: 1, skippedThreadCount: 1 } } },
   });
   const notice = harness.notices.at(-1);
+  assert.equal(notice.titleKey, 'refresh.degradedTitle');
   assert.match(noticeCopy(harness, notice), /left out 1 rollout source across 1 affected thread/u);
   assert.equal(noticeCopy(harness, notice).includes("within the time limit"), false);
 });
@@ -668,8 +721,8 @@ test("global refresh uses the bounded overview path while setup retains explicit
       // A DOM event cannot accidentally supply the quick/default options.
       harness.buttons.get(selector).click({ type: "click", detailed: false });
       await new Promise(setImmediate);
-      assert.deepEqual(harness.calls, selector==="#refresh-button" ? ["quick","status","reload"] : ["detailed", "status", "reload", "continuation-check"]);
-      assert.deepEqual(harness.routes, [selector==="#refresh-button" ? "/api/local/refresh/quick" : "/api/local/refresh"]);
+      assert.deepEqual(harness.calls, selector==="#refresh-button" ? ["overview","status","reload"] : ["detailed", "status", "reload", "continuation-check"]);
+      assert.deepEqual(harness.routes, [selector==="#refresh-button" ? "/api/local/refresh/overview" : "/api/local/refresh"]);
       assert.equal(harness.context.localActionBusy, false);
       assert.equal(harness.context.localRefreshInProgress, false);
       assert.equal(harness.context.dashboard, harness.priorDashboard,
@@ -678,234 +731,65 @@ test("global refresh uses the bounded overview path while setup retains explicit
   }
 });
 
-test("the shared default and automatic browser return refresh stay quick", async () => {
+test("ordinary refresh requests overview while the companion owns startup and return scheduling", async () => {
   const direct = refreshHarness();
   await direct.context.requestRefresh();
-  assert.deepEqual(direct.calls, ["quick", "status", "reload"]);
-  assert.deepEqual(direct.routes, ["/api/local/refresh/quick"]);
-
-  const returning = refreshHarness();
-  returning.context.scheduleReturningUserRefresh();
-  assert.equal(returning.timers.length, 1);
-  returning.timers[0]();
-  await new Promise(setImmediate);
-  assert.deepEqual(returning.calls, ["quick", "status", "reload"]);
-  assert.deepEqual(returning.routes, ["/api/local/refresh/quick"]);
-
-  const native = refreshHarness({ native: true });
-  native.context.scheduleReturningUserRefresh();
-  assert.deepEqual(native.timers, [], "the native host retains sole cadence ownership");
-  assert.deepEqual(native.calls, []);
+  assert.deepEqual(direct.calls, ["overview", "status", "reload"]);
+  assert.deepEqual(direct.routes, ["/api/local/refresh/overview"]);
+  assert.equal(source.includes("function startElectronStartupRefresh("), false);
+  assert.equal(source.includes("function scheduleReturningUserRefresh("), false);
 });
 
-test("Electron automatic refresh events honor the host-selected mode", async () => {
-  const quick = refreshHarness({ electron: true });
-  runInContext(productionFunction("handleElectronAutomaticRefresh"), quick.context);
-  runInContext(
-    "handleElectronAutomaticRefresh({ detail: { mode: 'quick' } });",
-    quick.context,
-  );
-  await new Promise(setImmediate);
-  assert.deepEqual(quick.routes, ["/api/local/refresh/quick"]);
-
-  const detailed = refreshHarness({ electron: true });
-  runInContext(productionFunction("handleElectronAutomaticRefresh"), detailed.context);
-  runInContext(
-    "handleElectronAutomaticRefresh({ detail: { mode: 'detailed' } });",
-    detailed.context,
-  );
-  await new Promise(setImmediate);
-  assert.deepEqual(detailed.routes, ["/api/local/refresh"]);
-
-  const ignored = refreshHarness({ electron: true });
-  runInContext(productionFunction("handleElectronAutomaticRefresh"), ignored.context);
-  for (const expression of [
-    "handleElectronAutomaticRefresh({ detail: { mode: 'quick', extra: true } });",
-    "handleElectronAutomaticRefresh({ detail: { mode: 'background' } });",
-    "handleElectronAutomaticRefresh({ detail: ['quick'] });",
-  ]) {
-    runInContext(expression, ignored.context);
-  }
-  await new Promise(setImmediate);
-  assert.deepEqual(ignored.calls, []);
-});
-
-test("Electron startup performs one guarded detailed refresh without a trusted projection", async () => {
+test("legacy Electron automatic events observe state without submitting work", async () => {
   const harness = refreshHarness({ electron: true });
-  runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-
-  assert.equal(harness.context.startElectronStartupRefresh(), true);
-  assert.equal(harness.context.electronStartupRefreshTriggered, true);
-  assert.equal(harness.context.startElectronStartupRefresh(), false);
+  runInContext("handleElectronAutomaticRefresh({ detail: { mode: 'quick' } });", harness.context);
   await new Promise(setImmediate);
+  assert.deepEqual(harness.calls, ["status"]);
+  assert.deepEqual(harness.routes, []);
+  runInContext("handleElectronAutomaticRefresh({ detail: { mode: 'quick', extra: true } });", harness.context);
+  await new Promise(setImmediate);
+  assert.deepEqual(harness.calls, ["status"]);
+});
 
-  assert.deepEqual(harness.calls, ["detailed", "status", "reload", "continuation-check"]);
-  assert.deepEqual(harness.routes, ["/api/local/refresh"]);
-  assert.equal(harness.context.localActionBusy, false);
+test("an automatically started run owns busy state and quota publication before usage completes", async () => {
+  const partial = { refreshId: "refresh-auto", mode: "overview", status: "running", running: true,
+    quickResultAt: "2026-10-21T00:00:00.000Z", quota: { status: "published" }, usage: { status: "running" } };
+  const harness = refreshHarness({ sidebar: true, refreshStates: [
+    partial,
+    { ...partial, status: "succeeded", running: false, finishedAt: "2026-10-21T00:01:00.000Z", usage: { status: "succeeded" } },
+  ] });
+  let release;
+  const loaded = new Promise(resolve => { release = resolve; });
+  harness.context.loadQuickResultDashboard = async () => { harness.calls.push("quick-reload"); await loaded; };
+  const observation = harness.context.observeOverviewPublication();
+  await new Promise(setImmediate);
+  assert.equal(harness.context.localRefreshInProgress, true);
+  assert.equal(harness.buttons.get("#refresh-button").classList.contains("is-refreshing"), true);
+  assert.equal(harness.buttons.get("#refresh-button").getAttribute("aria-busy"), "true");
+  assert.deepEqual(harness.routes, []);
+  assert.equal(harness.calls.includes("reload"), false, "partial publication cannot be announced as completed");
+  await harness.context.observeOverviewPublication();
+  assert.equal(harness.calls.filter(call => call === "status").length, 1, "joining does not start a second polling owner");
+  release();
+  await observation;
+  assert.deepEqual(harness.calls, ["status", "quick-reload", "status", "reload"]);
   assert.equal(harness.context.localRefreshInProgress, false);
+  await harness.context.observeOverviewPublication();
+  assert.equal(harness.calls.filter(call => call === "reload").length, 1, "the final receipt is consumed once");
 });
 
-test("Electron startup stays quick when a trusted detailed projection is present", async () => {
-  const harness = refreshHarness({ electron: true, detailedSnapshot: true });
-  runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-
-  assert.equal(harness.context.startElectronStartupRefresh(), true);
-  await new Promise(setImmediate);
-
-  assert.deepEqual(harness.calls, ["quick", "status", "reload"]);
-  assert.deepEqual(harness.routes, ["/api/local/refresh/quick"]);
-});
-
-test("Electron startup only trusts recent unified publication evidence", async (t) => {
-  const now = Date.parse("2026-09-22T12:00:00.000Z");
-  const interval = DESKTOP_AUTOMATIC_REFRESH_CADENCE_INTERVAL_MS;
-  for (const [name, edit, expected] of [
-    ["just under hourly cadence", (data) => {
-      data.timeline.history.generatedAt = new Date(now - interval + 1).toISOString();
-    }, "quick"],
-    ["at hourly cadence", (data) => {
-      data.timeline.history.generatedAt = new Date(now - interval).toISOString();
-    }, "detailed"],
-    ["stale despite fresh quota and accounting", (data) => {
-      data.timeline.history.generatedAt = new Date(now - 3 * interval).toISOString();
-      data.generatedAt = data.accounting.generatedAt = data.activity.lastScanAt = new Date(now).toISOString();
-    }, "detailed"],
-    ["missing publication", (data) => { delete data.timeline.history.generatedAt; }, "detailed"],
-    ["null publication", (data) => { data.timeline.history.generatedAt = null; }, "detailed"],
-    ["malformed publication", (data) => { data.timeline.history.generatedAt = "invalid"; }, "detailed"],
-    ["noncanonical publication", (data) => { data.timeline.history.generatedAt = "2026-09-22"; }, "detailed"],
-    ["future publication", (data) => {
-      data.timeline.history.generatedAt = new Date(now + 1).toISOString();
-    }, "detailed"],
-    ["unavailable projection", (data) => { data.accounting.projection.status = "unavailable"; }, "detailed"],
-    ["mismatched generation", (data) => { data.accounting.generationMatched = false; }, "detailed"],
-    ["collector timeline", (data) => { data.timeline.history.source = "recent_collector_window"; }, "detailed"],
-    ["loading history", (data) => { data.timeline.history.status = "loading"; }, "detailed"],
-    ["available partial history", (data) => { data.timeline.history.status = "partial"; }, "quick"],
-  ]) {
-    await t.test(name, async () => {
-      const harness = refreshHarness({ electron: true, detailedSnapshot: true, now });
-      edit(harness.priorDashboard);
-      runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-      assert.equal(harness.context.startElectronStartupRefresh(), true);
-      assert.equal(harness.context.startElectronStartupRefresh(), false);
-      await new Promise(setImmediate);
-      assert.equal(harness.calls[0], expected);
-      assert.equal(harness.routes.length, 1);
-    });
-  }
-});
-
-test("short Electron relaunches eventually ingest old history without resetting its freshness", async () => {
-  const publishedMs = Date.parse("2026-09-22T12:00:00.000Z");
-  const interval = DESKTOP_AUTOMATIC_REFRESH_CADENCE_INTERVAL_MS;
-  for (const [age, expected] of [
-    [interval / 2, "quick"],
-    [interval - 1, "quick"],
-    [interval, "detailed"],
-    [interval + 1, "detailed"],
-  ]) {
-    const harness = refreshHarness({ electron: true, detailedSnapshot: true, now: publishedMs + age });
-    harness.priorDashboard.timeline.history.generatedAt = new Date(publishedMs).toISOString();
-    runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-    harness.context.startElectronStartupRefresh();
-    await new Promise(setImmediate);
-    assert.equal(harness.calls[0], expected);
-    assert.equal(harness.priorDashboard.timeline.history.generatedAt, new Date(publishedMs).toISOString(),
-      "starting or completing a renderer refresh cannot manufacture a publication timestamp");
-  }
-});
-
-test("Electron startup evaluates publication evidence after its barrier clears", async () => {
+test("submission pending is not a running controller and cannot be cancelled", async () => {
+  const harness = refreshHarness({ sidebar: true });
   let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  const harness = refreshHarness({ electron: true, detailedSnapshot: true });
-  harness.context.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__ = {
-    version: "v1",
-    waitForStartupRefresh: () => gate,
-  };
-  runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-  harness.context.startElectronStartupRefresh();
-  await new Promise(setImmediate);
-  assert.deepEqual(harness.calls, []);
-  harness.priorDashboard.timeline.history.generatedAt = null;
+  harness.context.localClient.refresh = () => new Promise(resolve => { release = resolve; });
+  const submission = harness.context.requestRefresh();
+  assert.equal(harness.context.localRefreshSubmissionPending, true);
+  assert.equal(harness.context.localRefreshInProgress, false);
+  assert.equal(harness.buttons.get("#refresh-button").classList.contains("is-refreshing"), false);
+  assert.equal(harness.buttons.get("#refresh-button").disabled, true);
   release();
-  await new Promise(setImmediate);
-  assert.equal(harness.calls[0], "detailed");
-  assert.equal(harness.routes.length, 1);
-});
-
-test("qualified Electron startup waits for the preload smoke barrier", async () => {
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  const harness = refreshHarness({ electron: true });
-  harness.context.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__ = {
-    version: "v1",
-    waitForStartupRefresh: () => gate,
-  };
-  runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-
-  assert.equal(harness.context.startElectronStartupRefresh(), true);
-  await new Promise(setImmediate);
-  assert.deepEqual(harness.calls, [], "the renderer waits for qualified observation");
-
-  release();
-  await new Promise(setImmediate);
-  await new Promise(setImmediate);
-  assert.deepEqual(harness.calls, ["detailed", "status", "reload", "continuation-check"]);
-  assert.deepEqual(harness.routes, ["/api/local/refresh"]);
-});
-
-test("qualified Electron startup deferred by the initial dashboard lock runs once it clears", async () => {
-  let release;
-  const gate = new Promise((resolve) => { release = resolve; });
-  const harness = refreshHarness({ electron: true });
-  harness.context.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__ = {
-    version: "v1",
-    waitForStartupRefresh: () => gate,
-  };
-  runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-
-  harness.context.localActionBusy = true;
-  harness.context.activeLocalDashboardLoad = { pending: true };
-  assert.equal(harness.context.startElectronStartupRefresh(), true);
-  release();
-  await new Promise(setImmediate);
-  await new Promise(setImmediate);
-  assert.deepEqual(harness.calls, [], "the lock cannot consume the one startup pass");
-  assert.equal(harness.context.electronStartupRefreshTriggered, false);
-  assert.equal(harness.context.electronStartupRefreshDeferred, true);
-
-  harness.context.localActionBusy = false;
-  harness.context.electronStartupRefreshDeferred = false;
-  assert.equal(harness.context.startElectronStartupRefresh(), true);
-  await new Promise(setImmediate);
-  await new Promise(setImmediate);
-  assert.deepEqual(harness.routes, ["/api/local/refresh"]);
-  assert.equal(harness.context.electronStartupRefreshTriggered, true);
-
-  const startupFinalizer = source.match(/localActionBusy = load\.previousBusy;\n\s*updateLocalActionButtons\(\);\n\s*if \(electronStartupRefreshDeferred\) \{\n\s*electronStartupRefreshDeferred = false;\n\s*startElectronStartupRefresh\(\);/u);
-  assert.ok(startupFinalizer,
-    "the real dashboard owner retries the deferred launch pass after releasing its lock");
-});
-
-test("a non-bootstrap busy owner keeps Electron's existing one-shot suppression", async () => {
-  const harness = refreshHarness({ electron: true });
-  harness.context.localActionBusy = true;
-  runInContext(productionFunction("startElectronStartupRefresh"), harness.context);
-
-  assert.equal(harness.context.startElectronStartupRefresh(), true);
-  await new Promise(setImmediate);
-  assert.deepEqual(harness.calls, []);
-  assert.equal(harness.context.electronStartupRefreshTriggered, true);
-  assert.equal(harness.context.electronStartupRefreshDeferred, false);
-});
-
-test("a deferred Electron startup pass suppresses the browser return timer", () => {
-  const harness = refreshHarness({ electron: true });
-  harness.context.electronStartupRefreshDeferred = true;
-  harness.context.scheduleReturningUserRefresh();
-  assert.deepEqual(harness.timers, []);
+  await submission;
+  assert.equal(harness.context.localRefreshSubmissionPending, false);
 });
 
 test("accepted Electron refreshes acquire and settle the main-process lease", async () => {
@@ -933,11 +817,11 @@ test("accepted Electron refreshes acquire and settle the main-process lease", as
   await harness.context.requestRefresh();
   await new Promise(setImmediate);
 
-  assert.deepEqual(harness.calls, ["quick", "status", "reload"]);
-  assert.deepEqual(lifecycle, [["started", "quick"], ["settled", 41]]);
+  assert.deepEqual(harness.calls, ["overview", "status", "reload"]);
+  assert.deepEqual(lifecycle, [["started", "detailed"], ["settled", 41]]);
 });
 
-test("a stranded main-process lease is visible until cadence recovery is armed", async () => {
+test("a stranded main-process lease reports connection recovery", async () => {
   let status = {
     schemaVersion: "tibotattle-desktop-refresh-status-v1",
     activeLease: true,
@@ -952,7 +836,7 @@ test("a stranded main-process lease is visible until cadence recovery is armed",
   await harness.context.refreshElectronCadenceHealth();
   const health = harness.context.$("#automatic-refresh-health");
   assert.equal(health.hidden, false);
-  assert.match(health.textContent, /waiting for safety recovery/u);
+  assert.equal(health.textContent, translate("dashboard.refresh.waitingForRecovery", {}, "en-US"));
 
   status = { ...status, activeLease: false, cadenceTimerArmed: true };
   await harness.context.refreshElectronCadenceHealth();
@@ -967,7 +851,7 @@ test("a late Electron lease is settled with the preload's numeric contract", asy
     electron: true,
     bridge: {
       refreshStarted: (mode) => {
-        assert.equal(mode, "quick");
+        assert.equal(mode, "detailed");
         return started;
       },
       refreshHeartbeat: () => true,
@@ -1071,4 +955,290 @@ test("a degraded refresh notice is composed again in the new language after a sw
   assert.match(notice.copyFn(), /更新超时/u);
   assert.equal(/exceeded its time limit/u.test(notice.copyFn()), false,
     "no English sentence survives in the Chinese notice");
+});
+
+
+test("lost status transport retains last confirmed busy state and reconnects without resubmitting", async () => {
+  const harness = refreshHarness({ sidebar: true });
+  let readCount = 0;
+  harness.context.localClient.refreshStatus = async () => {
+    readCount += 1;
+    if (readCount <= 8) throw new Error("synthetic disconnect");
+    return { refresh: { refreshId: "refresh-reconnect", status: "succeeded", running: false,
+      finishedAt: "2026-10-21T00:01:00.000Z" } };
+  };
+  await harness.context.requestRefresh({ observeOnly: true,
+    initialRefresh: { refreshId: "refresh-reconnect", status: "running", running: true } });
+  assert.equal(harness.context.localRefreshInProgress, true);
+  assert.equal(harness.context.localRefreshObserverActive, false);
+  assert.equal(harness.context.localActionBusy, false);
+  assert.equal(harness.buttons.get("#refresh-button").classList.contains("is-refreshing"), true);
+  assert.equal(harness.buttons.get("#sidebar-refresh-summary").textContent, translate("refresh.progress.reconnecting", {}, "en-US"));
+  assert.deepEqual(harness.notices, [], "unreadable status is not evidence of backend failure");
+  await harness.context.observeOverviewPublication();
+  assert.equal(harness.context.localRefreshInProgress, false);
+  assert.deepEqual(harness.routes, []);
+  assert.equal(harness.calls.filter(call => call === "reload").length, 1);
+});
+
+test("partial quota publication does not hide a later failed usage phase", async () => {
+  const initial = { refreshId: "refresh-partial", mode: "overview", status: "running", running: true,
+    quickResultAt: "2026-10-21T00:00:00.000Z", quota: { status: "published" }, usage: { status: "running" } };
+  const harness = refreshHarness({ sidebar: true, refreshStates: [
+    { ...initial, running: false, status: "failed", usage: { status: "failed" },
+      finishedAt: "2026-10-21T00:01:00.000Z", errorCode: "refresh_failed" },
+  ] });
+  await harness.context.requestRefresh({ observeOnly: true, initialRefresh: initial });
+  assert.deepEqual(harness.calls, ["quick-reload", "status", "diagnostic"]);
+  assert.equal(harness.context.localRefreshInProgress, false);
+  assert.equal(harness.buttons.get("#sidebar-refresh-summary").textContent, "Refresh failed");
+  assert.equal(harness.notices.at(-1).title, translate("refresh.failedTitle", {}, "en-US"));
+});
+
+test("optional status reads started before a manual request cannot overwrite its notice", async () => {
+  const harness = refreshHarness();
+  let release;
+  harness.context.localClient.health = async () => null;
+  harness.context.localClient.onboarding = async () => null;
+  harness.context.localClient.refreshStatus = () => new Promise(resolve => { release = resolve; });
+  harness.context.scheduleLocalReadinessPoll = () => {};
+  const secondary = harness.context.loadLocalDashboardSecondaryState({ isCurrent: () => true });
+  await new Promise(setImmediate);
+  harness.context.localRefreshStatusVersion += 1;
+  release({ refresh: { refreshId: "old", status: "succeeded", result: {
+    quotaRefresh: { attempted: true, recordWritten: false, errorCode: "temporary_disconnect" } } } });
+  await secondary;
+  assert.deepEqual(harness.notices, []);
+});
+
+
+test("companion scheduling does not require a shell business timer", async () => {
+  let status = { schemaVersion: "tibotattle-desktop-refresh-status-v1",
+    activeLease: false, cadenceTimerArmed: false, scheduleOwner: "companion" };
+  const harness = refreshHarness({ electron: true, bridge: { getRefreshStatus: async () => status } });
+  await harness.context.refreshElectronCadenceHealth();
+  const health = harness.context.$("#automatic-refresh-health");
+  assert.equal(health.hidden, true);
+  status = { ...status, activeLease: true };
+  await harness.context.refreshElectronCadenceHealth();
+  assert.equal(health.hidden, false);
+  assert.equal(health.textContent, translate("dashboard.refresh.recovering", {}, "en-US"));
+});
+
+
+test("a pending detailed request observes its follow-up instead of completing at the joined quota run", async () => {
+  const weak = { refreshId: "refresh-weak", mode: "quick", status: "running", running: true,
+    pending: { mode: "detailed" }, quota: { status: "running" } };
+  const harness = refreshHarness({ sidebar: true, refreshStates: [
+    { ...weak, running: false, status: "succeeded", finishedAt: "2026-10-21T00:00:01.000Z" },
+    { refreshId: "refresh-detail", mode: "detailed", status: "running", running: true,
+      quickResultAt: "2026-10-21T00:00:02.000Z", quota: { status: "published" }, usage: { status: "running" } },
+    { refreshId: "refresh-detail", mode: "detailed", status: "succeeded", running: false,
+      finishedAt: "2026-10-21T00:00:03.000Z", usage: { status: "reused" } },
+  ] });
+  harness.context.localClient.recalculateDetailedAccounting = async () => ({
+    request: { started: false, joined: true, pending: true }, refresh: weak,
+  });
+  await harness.context.requestRefresh({ detailed: true });
+  assert.deepEqual(harness.calls, ["status", "status", "quick-reload", "status", "reload", "continuation-check"]);
+  assert.equal(harness.context.lastObservedRefreshPublication, "refresh-detail::2026-10-21T00:00:03.000Z");
+  assert.equal(harness.context.localRefreshInProgress, false);
+  assert.equal(harness.buttons.get("#sidebar-refresh-summary").textContent, "Refresh successful");
+});
+
+
+test("real client normalization keeps newly published quota freshness separate from old usage", async () => {
+  const now = Date.parse("2026-10-21T12:00:00.000Z");
+  const usageAt = "2026-10-20T00:00:00.000Z";
+  const quotaAt = "2026-10-21T11:59:50.000Z";
+  const overview = { mode: "local", freshness: { status: "stale", latestObservedAt: usageAt,
+    ageSeconds: 129600, staleAfterSeconds: 1800, accountingStatus: "stale" },
+    quotaFreshness: { status: "live", latestObservedAt: quotaAt, ageSeconds: 10,
+      staleAfterSeconds: 1800, source: "content_free_collector_state", privateExtra: "omitted" },
+    quotaWindows: [{ limitId: "codex", durationMinutes: 300, observedAt: quotaAt,
+      usedPercent: 25, remainingPercent: 75, status: "live" }] };
+  const requests = [];
+  const client = new LocalCompanionClient({ fetchImpl: async url => {
+    requests.push(url);
+    return new Response(JSON.stringify(url.endsWith("/overview") ? overview : {}), { headers: { "content-type": "application/json" } });
+  } });
+  const loaded = await client.load();
+  const harness = refreshHarness({ now });
+  const usageRecency = observationRecency(loaded, now);
+  const quotaRecency = harness.context.quotaObservationRecency(loaded);
+  const presented = harness.context.dashboardObservationPresentation(loaded, usageRecency);
+  assert.equal(requests.includes("/api/local/overview"), true);
+  assert.equal(loaded.freshness.latestObservedAt, usageAt);
+  assert.equal(loaded.quotaFreshness.latestObservedAt, quotaAt);
+  assert.equal(Object.hasOwn(loaded.quotaFreshness, "privateExtra"), false);
+  assert.equal(usageRecency.status, "stale");
+  assert.equal(quotaRecency.status, "current");
+  assert.equal(quotaRecency.ageSeconds, 10);
+  assert.equal(presented.freshness.latestObservedAt, usageAt);
+  assert.equal(presented.quotaWindows[0].status, "live", "old usage cannot stale a newly published quota card");
+
+  harness.context.lastObservationPresentationStatus = null;
+  harness.context.formatAge = value => `${value}s`;
+  harness.context.formatLocal = value => value;
+  harness.context.renderQuotaCards = value => { harness.context.lastQuotaPresentation = value; };
+  harness.context.renderWeeklyPaceForecast = () => {};
+  harness.context.renderOverviewPace = () => {};
+  const freshnessCard = harness.context.$(".freshness-card");
+  freshnessCard.dataset = {};
+  const freshnessLabel = refreshElement("span");
+  freshnessLabel.dataset = {};
+  freshnessCard.querySelector = () => freshnessLabel;
+  runInContext(productionFunction("renderLiveObservationPresentation"), harness.context);
+  harness.context.renderLiveObservationPresentation(loaded, usageRecency);
+  assert.equal(harness.context.$("#latest-observation").textContent, "10s");
+  assert.equal(harness.context.$("#data-source").textContent, quotaAt);
+  assert.equal(harness.context.lastQuotaPresentation.quotaWindows[0].status, "live");
+
+  overview.quotaFreshness = { ...overview.quotaFreshness,
+    latestObservedAt: "2026-10-21T12:01:00.000Z", status: "stale", ageSeconds: null };
+  const future = await client.load();
+  assert.equal(harness.context.quotaObservationRecency(future).status, "unknown");
+  assert.equal(harness.context.quotaObservationRecency(future).ageSeconds, null);
+  assert.equal(harness.context.dashboardObservationPresentation(future, usageRecency).quotaWindows[0].status, "stale");
+  harness.context.renderLiveObservationPresentation(future, usageRecency);
+  assert.equal(harness.context.$("#latest-observation").textContent, translate("page.observation.noTimestamp", {}, "en-US"));
+  assert.equal(harness.context.lastQuotaPresentation.quotaWindows[0].status, "stale");
+  overview.quotaFreshness.source = "unreviewed_source";
+  const invalid = await client.load();
+  assert.equal(invalid.quotaFreshness.status, "unavailable");
+  assert.equal(harness.context.quotaObservationRecency(invalid).status, "unknown");
+  delete overview.quotaFreshness;
+  const legacy = await client.load();
+  assert.equal(legacy.quotaFreshness, null);
+  assert.equal(harness.context.quotaObservationRecency(legacy).latestObservedAt, usageAt);
+});
+
+
+test("real controller timeout ends observation only after its writer settles", async t => {
+  for (const initialMode of ["quick", "detailed"]) await t.test(initialMode, async () => {
+  const entered = Promise.withResolvers();
+  const work = Promise.withResolvers();
+  let expire;
+  let runs = 0;
+  const controller = new LocalCompanionRefreshController({
+    runner: async () => { runs += 1; entered.resolve(); await work.promise; return {}; },
+    dataStore: { async reload() {} }, timeoutMs: 1000,
+    monotonicClock: () => 0,
+    setTimeoutImpl(callback) { expire = callback; return { unref() {} }; },
+    clearTimeoutImpl() {},
+  });
+  controller.start({ mode: initialMode });
+  await entered.promise;
+  const accepted = controller.request({ mode: "detailed" });
+  assert.equal(accepted.pending, initialMode === "quick");
+  assert.equal(accepted.refresh.mode, initialMode);
+  assert.equal(accepted.refresh.pending?.mode ?? null, initialMode === "quick" ? "detailed" : null);
+  const harness = refreshHarness({ sidebar: true });
+  let submissions = 0;
+  let statusReads = 0;
+  harness.context.createRefreshPollingBudget = createRefreshPollingBudget;
+  harness.context.refreshNeedsContinuation = refreshNeedsContinuation;
+  harness.context.localClient.recalculateDetailedAccounting = async () => {
+    submissions += 1;
+    return { request: { started: accepted.started, joined: accepted.joined, pending: accepted.pending }, refresh: accepted.refresh };
+  };
+  harness.context.localClient.refreshStatus = async () => {
+    statusReads += 1;
+    if (statusReads === 1) {
+      expire();
+      const timedOut = controller.getStatus();
+      assert.equal(timedOut.status, "failed");
+      assert.equal(timedOut.running, true, "the actual controller still owns the unsettled writer");
+      assert.equal(timedOut.pending, null, "timeout revoked the actual pending request");
+      return { refresh: timedOut };
+    }
+    if (statusReads === 2) {
+      assert.equal(harness.context.localRefreshInProgress, true);
+      assert.equal(harness.context.$("#refresh-button").classList.contains("is-refreshing"), true);
+      work.resolve();
+      await controller.whenSettled();
+      const settled = controller.getStatus();
+      assert.equal(settled.status, "failed");
+      assert.equal(settled.running, false);
+      assert.equal(settled.pending, null);
+      return { refresh: settled };
+    }
+    throw new Error("The settled controller must not be polled as pending work.");
+  };
+  try {
+    await harness.context.requestRefresh({ detailed: true });
+    assert.equal(statusReads, 2, "an actual terminal receipt ends observation without another polling budget");
+    assert.equal(submissions, 1, "the failed weak run cannot trigger a replacement detailed request");
+    assert.equal(runs, 1, "the companion did not run the revoked pending work");
+    assert.equal(harness.context.localRefreshInProgress, false);
+    assert.equal(harness.context.localRefreshObserverActive, false);
+    assert.equal(harness.context.$("#sidebar-refresh-summary").textContent, "Refresh failed");
+    assert.equal(harness.notices.at(-1).title, translate("refresh.failedTitle", {}, "en-US"));
+  } finally {
+    work.resolve();
+    await controller.whenSettled();
+  }
+  });
+});
+
+
+test("real bounded timeout waits for settlement and a joined continuation does not spend its continuation budget", async () => {
+  const firstEntered = Promise.withResolvers();
+  const firstWork = Promise.withResolvers();
+  const secondWork = Promise.withResolvers();
+  const paused = { mode: "recent_7d", status: "bounded_pause", phase: "paused",
+    boundedBy: "modified_at_and_collection_start", filesDiscovered: 2, filesSelected: 2,
+    filesProcessed: 1, recordsWritten: 1,
+    coveredAt: { startAt: "2026-10-20T00:00:00.000Z", endAt: null } };
+  let runs = 0;
+  let expire;
+  const controller = new LocalCompanionRefreshController({
+    runner: async ({ onProgress }) => {
+      runs += 1;
+      if (runs === 1) { await onProgress(paused); firstEntered.resolve(); await firstWork.promise; }
+      else await secondWork.promise;
+      return {};
+    },
+    dataStore: { async reload() {} }, timeoutMs: 1000, monotonicClock: () => 0,
+    setTimeoutImpl(callback) { expire = callback; return { unref() {} }; }, clearTimeoutImpl() {},
+  });
+  controller.start({ mode: "detailed" });
+  await firstEntered.promise;
+  const harness = refreshHarness({ sidebar: true });
+  const budget = createRefreshPollingBudget({ now: () => 0 });
+  harness.context.createRefreshPollingBudget = () => budget;
+  harness.context.refreshNeedsContinuation = refreshNeedsContinuation;
+  let submissions = 0;
+  let statusReads = 0;
+  harness.context.localClient.recalculateDetailedAccounting = async () => {
+    submissions += 1;
+    if (submissions === 2) {
+      assert.equal(controller.getStatus().running, false, "the old writer must release before any continuation request");
+      assert.equal(controller.start({ mode: "detailed" }), true, "another surface wins the continuation race");
+    }
+    const receipt = controller.request({ mode: "detailed" });
+    assert.equal(receipt.joined, true);
+    return { request: { started: receipt.started, joined: receipt.joined, pending: receipt.pending }, refresh: receipt.refresh };
+  };
+  harness.context.localClient.refreshStatus = async () => {
+    statusReads += 1;
+    if (statusReads === 1) expire();
+    if (statusReads === 2) {
+      assert.equal(submissions, 1, "bounded_pause cannot submit again while its timed-out writer is still owned");
+      firstWork.resolve(); await controller.whenSettled();
+    }
+    if (statusReads === 3) { secondWork.resolve(); await controller.whenSettled(); }
+    if (statusReads > 3) throw new Error("Unexpected repeated observer read");
+    return { refresh: controller.getStatus() };
+  };
+  try {
+    await harness.context.requestRefresh({ detailed: true });
+    assert.equal(statusReads, 3);
+    assert.equal(submissions, 2);
+    assert.equal(budget.continuations, 0, "HTTP 200 joined is observation of existing work, not a started continuation");
+    assert.equal(harness.context.localRefreshInProgress, false);
+    assert.equal(harness.context.$("#sidebar-refresh-summary").textContent, "Refresh successful");
+  } finally {
+    firstWork.resolve(); secondWork.resolve(); await controller.whenSettled();
+  }
 });

@@ -17,6 +17,7 @@ import {
 } from "../src/local-collector-state.js";
 import {
   readLocalCollectorProjection,
+  localCollectorQuotaPublicationScope,
 } from "../src/local-collector-projection.js";
 import {
   readLocalCollectorProjectionOffMain,
@@ -180,6 +181,52 @@ test("missing and unavailable collector states retain their closed outcomes acro
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("quota account publication evidence crosses the worker internally without entering its projection DTO", async () => {
+  const record = { ...quotaRecord(), provider: "openai_codex", accountScope: {
+    status: "available", version: "openai-account-v1", scopeId: "synthetic-account-a",
+  } };
+  const { root, stateFile } = await createCollectorState("collector-publication-scope-", [record]);
+  try {
+    const direct = await readLocalCollectorProjection(stateFile, NOW_MS, { summarizeUsageEvents: false });
+    const offMain = await readLocalCollectorProjectionOffMain({ stateFile, nowMs: NOW_MS,
+      summarizeUsageEvents: false });
+    const scope = localCollectorQuotaPublicationScope(direct);
+    assert.match(scope.scopeToken, /^[a-f0-9]{64}$/u);
+    assert.equal(scope.observedAt, record.observedAt);
+    assert.deepEqual(localCollectorQuotaPublicationScope(offMain), scope);
+    assert.equal(Object.isFrozen(localCollectorQuotaPublicationScope(offMain)), true);
+    for (const projection of [direct, offMain]) {
+      assert.equal(JSON.stringify(projection).includes(scope.scopeToken), false);
+      assert.doesNotMatch(JSON.stringify(projection), /scopeId|scopeToken|synthetic-account/u);
+    }
+    await commitLocalCollectorState({ stateFile, checkpoint: {}, records: [{
+      ...record, eventKey: "quota-conflicting-scope", accountScope: {
+        status: "available", version: "openai-account-v1", scopeId: "synthetic-account-b",
+      },
+    }] });
+    const conflicting = await readLocalCollectorProjectionOffMain({ stateFile, nowMs: NOW_MS,
+      summarizeUsageEvents: false });
+    assert.equal(localCollectorQuotaPublicationScope(conflicting), null);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a worker cannot attach malformed or expanded account publication metadata", async () => {
+  class MalformedScopeWorker extends EventEmitter {
+    constructor() {
+      super();
+      queueMicrotask(() => this.emit("message", { type: "result", result: {},
+        quotaPublicationScope: { observedAt: new Date(NOW_MS).toISOString(),
+          scopeToken: "a".repeat(64), unexpected: "omitted" } }));
+    }
+    terminate() { this.emit("exit", 1); return Promise.resolve(1); }
+  }
+  await assert.rejects(readLocalCollectorProjectionOffMain({
+    stateFile: "synthetic-unused-path", nowMs: NOW_MS,
+  }, { WorkerClass: MalformedScopeWorker }), { code: "local_collector_projection_worker_failed" });
 });
 
 test("large synchronous collector traversal leaves the companion event loop responsive", {

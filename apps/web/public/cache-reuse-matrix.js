@@ -1,7 +1,7 @@
 import { compareModelPresentation, modelThemeIcon, modelUsagePresentation } from "./model-visuals.js";
 
 const PREFIX = "accounting.cacheContinuity.matrix.";
-const BUCKETS = Object.freeze([
+const HOSTED_BUCKETS = Object.freeze([
   ["under_one_minute", "underOneMinute", 0, 60],
   ["one_to_two_minutes", "oneToTwoMinutes", 60, 120],
   ["two_to_five_minutes", "twoToFiveMinutes", 120, 300],
@@ -16,6 +16,16 @@ const BUCKETS = Object.freeze([
   // ended in an unbounded `over_three_days`, which this cannot claim.
   ["over_twenty_four_hours", "twentyFourHoursPlus", 86_400, 604_800],
 ]);
+// Local turn comparisons have a different measured partition and retain
+// long gaps. Render those original buckets without splitting the 1–6h band
+// or imposing the hosted seven-day lookback on the open-ended local tail.
+const LOCAL_BUCKETS = Object.freeze([
+  ...HOSTED_BUCKETS.slice(0, 6),
+  ["one_to_six_hours", "oneToSixHours", 3_600, 21_600],
+  ["six_to_twenty_four_hours", "sixToTwentyFourHours", 21_600, 86_400],
+  ["one_to_three_days", "oneToThreeDays", 86_400, 259_200],
+  ["over_three_days", "overThreeDays", 259_200, null],
+]);
 const COUNT_FIELDS = [
   "comparableReturns", "reusedMoreThanHalfReturns", "reusedHalfOrLessReturns",
   "matchedOrExceededReturns", "reusedBetweenHalfAndPreviousReturns",
@@ -24,27 +34,41 @@ const COUNT_FIELDS = [
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 const amount = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
 const sum = (values) => values.reduce((total, value) => total + value, 0);
-const validCounts = (row) => row && COUNT_FIELDS.every((field) => count(row[field]))
+const method = (row) => {
+  const e = row?.estimateEvidence;
+  if (e == null) return "adjacent_cache_read_decrease_legacy_half_threshold";
+  return Object.keys(e).length === 5 && e.schemaVersion === 1
+    && ["adjacent_cache_read_decrease", "adjacent_cache_read_decrease_legacy_half_threshold"].includes(e.method)
+    && e.reusablePrefixStatus === "unverified" && e.verifiedLossTokens === null
+    && e.verifiedPremiumUsd === null ? e.method : null;
+};
+const validCounts = (row) => row && method(row) !== null && COUNT_FIELDS.every((field) => count(row[field]))
   && row.reusedMoreThanHalfReturns + row.reusedHalfOrLessReturns === row.comparableReturns
   && row.matchedOrExceededReturns + row.reusedBetweenHalfAndPreviousReturns === row.reusedMoreThanHalfReturns
   && row.cacheReadDrops === row.reusedHalfOrLessReturns
+    + (method(row) === "adjacent_cache_read_decrease"
+      ? row.reusedBetweenHalfAndPreviousReturns : 0)
   && row.pricedDrops + row.unpricedDrops === row.cacheReadDrops;
 
 export function cacheReuseMatrixBuckets(impact) {
-  if (!validCounts(impact) || !impact.byOutcomeBucket) return null;
+  if (!validCounts(impact) || !impact.byOutcomeBucket
+      || typeof impact.byOutcomeBucket !== "object" || Array.isArray(impact.byOutcomeBucket)) return null;
+  const keys = Object.keys(impact.byOutcomeBucket);
+  const buckets = [HOSTED_BUCKETS, LOCAL_BUCKETS].find(definitions =>
+    keys.length === definitions.length && definitions.every(([id]) => keys.includes(id)));
+  if (!buckets) return null;
   const rows = [];
-  for (const [id, label, startSeconds, endSeconds] of BUCKETS) {
+  for (const [id, label, startSeconds, endSeconds] of buckets) {
     const row = impact.byOutcomeBucket[id];
-    if (!validCounts(row) || row.startSeconds !== startSeconds || row.endSeconds !== endSeconds
+    if (!validCounts(row) || method(row) !== method(impact)
+      || row.startSeconds !== startSeconds || row.endSeconds !== endSeconds
       || !["complete", "incomplete"].includes(row.coverageStatus)
       || !(row.estimatedPremiumUsd === null || amount(row.estimatedPremiumUsd))) return null;
     rows.push({ ...row, id, label });
   }
   if (COUNT_FIELDS.some((field) => sum(rows.map((row) => row[field])) !== impact[field])) return null;
-  // Every bucket is rendered as measured. The previous vocabulary ended in two
-  // day-scale buckets that were merged back together for display; this one ends
-  // in the single bucket the evidence is actually cut into, so there is nothing
-  // to merge and nothing that could disagree with what was measured.
+  // Both sources are rendered as measured; no regrouping can invent a missing
+  // hour-scale split or silently change which long gaps were admitted.
   return rows;
 }
 
@@ -416,8 +440,10 @@ export function createCacheReuseMatrix({
     // A model cohort must be a subset of the period cohort. This also keeps
     // the fixed evidence unit bounded if a response is internally inconsistent.
     const periodRows = cacheReuseMatrixBuckets(impact);
-    if (model && rows && (!periodRows || rows.some((row, i) =>
-      COUNT_FIELDS.some((field) => row[field] > periodRows[i][field])))) rows = null;
+    if (model && rows && (!periodRows || method(currentImpact) !== method(impact) || rows.some((row, i) =>
+      row.id !== periodRows[i].id || row.startSeconds !== periodRows[i].startSeconds
+        || row.endSeconds !== periodRows[i].endSeconds
+        || COUNT_FIELDS.some((field) => row[field] > periodRows[i][field])))) rows = null;
     const unavailable = !rows;
     const noEvidence = !unavailable && currentImpact.comparableReturns === 0;
     empty.hidden = !unavailable && !noEvidence;

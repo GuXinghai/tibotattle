@@ -5,7 +5,9 @@ const probeUrl = 'https://tibotattle.invalid/';
 const probeName = '__Host-TiboTattlePersistence';
 const digest = value => createHash('sha256').update(value).digest('hex');
 export function sessionError(error, fallback) {
-  return xError(X_SESSION_ERRORS.includes(error?.code) ? error.code : fallback);
+  const failure = xError(X_SESSION_ERRORS.includes(error?.code) ? error.code : fallback);
+  if (error && typeof error === 'object') Object.defineProperty(failure, 'cause', { value: error });
+  return failure;
 }
 
 /** A synthetic, non-authentication cookie detects Chromium's otherwise silent

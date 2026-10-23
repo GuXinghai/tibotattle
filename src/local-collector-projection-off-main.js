@@ -5,6 +5,7 @@ import {
 } from "./local-collector-projection-off-main-worker.js";
 import {
   readLocalCollectorProjection,
+  bindLocalCollectorQuotaPublicationScope,
 } from "./local-collector-projection.js";
 
 const WORKER_ERROR = "local_collector_projection_worker_failed";
@@ -158,8 +159,14 @@ export async function readLocalCollectorProjectionOffMain(
 
     signal?.addEventListener?.("abort", abort, { once: true });
     worker.on("message", (message) => {
-      if (message?.type === "result" && Object.keys(message).length === 2) {
-        selectTerminal({ result: message.result });
+      if (message?.type === "result"
+          && Object.keys(message).sort().join("\0") === "quotaPublicationScope\0result\0type"
+          && message.result !== null && typeof message.result === "object"
+          && !Array.isArray(message.result)) {
+        const validScope = bindLocalCollectorQuotaPublicationScope(message.result, message.quotaPublicationScope);
+        if (message.quotaPublicationScope !== null && !validScope) {
+          selectTerminal({ error: fixedError(WORKER_ERROR) }, { terminate: true });
+        } else selectTerminal({ result: message.result });
       } else if (message?.type === "error" && Object.keys(message).length === 2) {
         selectTerminal({ error: fixedError(safeErrorCode(message.code)) });
       } else {

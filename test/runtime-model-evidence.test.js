@@ -6,6 +6,7 @@ import {readCodexRuntimeLogBatch} from '../src/platform/index.js';
 import {openLocalIndexStore,LOCAL_INDEX_STORE_USER_VERSION} from '../src/local-index-store.js';
 import {refreshLocalIndex} from '../src/local-index-refresh.js';import {auditRollups} from '../src/local-index-rollup.js';import {auditPairing} from '../src/local-index-pairing.js';
 import {createWorkspace} from './helpers/local-index-facts.js';
+import {readLocalIndexGenerationIdentity} from '../src/local-index-companion-source.js';
 const thread='10000000-0000-4000-8000-000000000002',at=Date.parse('2026-10-01T00:00:00.000Z'),identity='a'.repeat(64);
 const usage={input_tokens:100,cached_input_tokens:80,cache_write_input_tokens:0,output_tokens:10,reasoning_output_tokens:4,total_tokens:110};
 const line=(n,type,payload)=>JSON.stringify({timestamp:new Date(at+n).toISOString(),type,payload})+'\n';
@@ -41,8 +42,15 @@ test('context, exact success and explicit fallback remain different evidence cla
 
 test('exact receipt persists, reprices once, retains tokens and repairs rollups without replay',async()=>{
  const w=await fixture();try{
+  const originalIdentity=readLocalIndexGenerationIdentity({indexFile:w.indexFile});
   const before=facts(w.indexFile);const first=await captureRuntimeModelEvidence(options(w,[row()]));assert.equal(first.applied,0);assert.equal(first.capturedNow,1);
+  assert.deepEqual(readLocalIndexGenerationIdentity({indexFile:w.indexFile}),originalIdentity,
+   'queued receipts do not change the published accounting inputs');
   assert.equal(reconcileRuntimeModelEvidence({indexFile:w.indexFile}).applied,1);
+  const repairedIdentity=readLocalIndexGenerationIdentity({indexFile:w.indexFile});
+  assert.ok(repairedIdentity.calculationRevision>originalIdentity.calculationRevision);
+  assert.ok(repairedIdentity.id>originalIdentity.id);
+  assert.notEqual(repairedIdentity.fingerprint,originalIdentity.fingerprint);
   assert.deepEqual(facts(w.indexFile),before);
   const db=openLocalIndexStore(w.indexFile,{readOnly:true});try{
    assert.equal(db.prepare('SELECT m.model_id FROM usage_event u JOIN model m ON m.id=u.model_id').get().model_id,'gpt-6-astra');
@@ -57,7 +65,10 @@ test('exact receipt persists, reprices once, retains tokens and repairs rollups 
 test('later conflicting success retracts only the model inferred from runtime evidence',async()=>{
  const w=await fixture();try{const before=facts(w.indexFile);
   await captureRuntimeModelEvidence(options(w,[row()]));reconcileRuntimeModelEvidence({indexFile:w.indexFile});
+  const repairedIdentity=readLocalIndexGenerationIdentity({indexFile:w.indexFile});
   await captureRuntimeModelEvidence(options(w,[row(),row(2,'gpt-6.1-sol')]));const result=reconcileRuntimeModelEvidence({indexFile:w.indexFile});
+  assert.ok(readLocalIndexGenerationIdentity({indexFile:w.indexFile}).calculationRevision>repairedIdentity.calculationRevision,
+   'retracting an applied repair still invalidates calculations');
   assert.equal(result.errorCode,'runtime_evidence_conflict');assert.deepEqual(facts(w.indexFile),before);
   const db=openLocalIndexStore(w.indexFile,{readOnly:true});try{
    assert.equal(db.prepare('SELECT m.model_id FROM usage_event u JOIN model m ON m.id=u.model_id').get().model_id,'unknown');
@@ -99,7 +110,11 @@ test('background evidence writes never recover or delete a foreground provisiona
 });
 
 test('v5 forward migration preserves facts and adds only the new evidence store',async()=>{
- const w=await fixture();try{const before=facts(w.indexFile),db=openLocalIndexStore(w.indexFile);db.exec('DROP TABLE runtime_model_evidence; PRAGMA user_version=5');db.close();
+ const w=await fixture();try{const before=facts(w.indexFile),db=openLocalIndexStore(w.indexFile);
+  // Reconstruct the actual predecessor on synthetic state: v5 did not have
+  // v8 calculation triggers or its revision column.
+  for(const trigger of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all())db.exec(`DROP TRIGGER ${trigger.name}`);
+  db.exec('ALTER TABLE store_state DROP COLUMN calculation_revision; DROP TABLE runtime_model_evidence; PRAGMA user_version=5');db.close();
   assert.throws(()=>openLocalIndexStore(w.indexFile,{readOnly:true}),{code:'local_index_family_mismatch'});
   const migrated=openLocalIndexStore(w.indexFile);migrated.close();assert.deepEqual(facts(w.indexFile),before);
  }finally{w.cleanup();}

@@ -16,13 +16,13 @@ const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.
 
 /** Credential-bearing requests stay exclusively in the main process. */
 export function createXImportRequestGate({ onImport, now = Date.now, token = () => randomBytes(32).toString('hex') }) {
-  let generation = 0, pending = null, disposed = false;
-  const cancel = () => { generation++; pending = null; };
+  let generation = 0, pending = null, disposed = false, failure = null;
+  const cancel = () => { generation++; pending = null; failure = null; };
   const current = candidate => !disposed && pending === candidate && generation === candidate.generation && now() < candidate.expiresAt;
   return Object.freeze({
     begin() { if (disposed) return reply('bridge_unavailable'); cancel(); pending = { generation, expiresAt: now() + 120000, ticket: null, busy: false }; return reply('import_ready'); },
     cancel,
-    status() { return { pending: Boolean(pending && current(pending)), importing: Boolean(pending && current(pending) && pending.busy) }; },
+    status() { return { pending: Boolean(pending && current(pending)), importing: Boolean(pending && current(pending) && pending.busy), failure }; },
     dispose() { disposed = true; cancel(); },
     async handle(message) {
       if (disposed || !message || message.version !== 1) return reply('invalid_import');
@@ -34,7 +34,7 @@ export function createXImportRequestGate({ onImport, now = Date.now, token = () 
       if (!exactKeys(message, ['version', 'type', 'permit', 'cookies']) || message.type !== 'x-cookie-import' || typeof message.permit !== 'string' || !/^[a-f0-9]{64}$/.test(message.permit)) return reply('invalid_import');
       const candidate = pending;
       if (!candidate || !current(candidate) || candidate.busy || candidate.ticket !== message.permit) return reply('import_expired');
-      candidate.ticket = null; candidate.busy = true;
+      candidate.ticket = null; candidate.busy = true; failure = null;
       let cookies = [];
       try {
         cookies = normalizeXImportCookies(message.cookies);
@@ -43,7 +43,9 @@ export function createXImportRequestGate({ onImport, now = Date.now, token = () 
         if (result === false || result?.ok === false) return reply('import_failed');
         pending = null; return reply(result?.code === 'verification_pending' ? 'verification_pending' : 'imported');
       } catch (error) {
-        return reply(['invalid_import', 'no_logged_in_session'].includes(error?.message) ? error.message : 'import_failed');
+        const code = ['invalid_import', 'no_logged_in_session'].includes(error?.message) ? error.message : 'import_failed';
+        if (current(candidate)) failure = code;
+        return reply(code);
       } finally {
         cookies.length = 0;
         if (Array.isArray(message.cookies)) message.cookies.length = 0;
@@ -120,10 +122,10 @@ export function createDesktopXImport({ protectedStore, onImport, sourceDirectory
           }).catch(() => channel?.destroy());
         }, () => { clearTimeout(timeout); channel?.destroy(); reject(new Error('x_import_unavailable')); });
         channel.on('data', reader);
-        channel.on('error', () => { clearTimeout(timeout); reject(new Error('x_import_unavailable')); });
+        channel.on('error', cause => { clearTimeout(timeout); reject(new Error('x_import_unavailable', { cause })); });
         channel.once('close', () => { clearTimeout(timeout); reject(new Error('x_import_unavailable')); });
       });
-    })().catch(() => { stop(); code = 'bridge_unavailable'; throw new Error('x_import_unavailable'); });
+    })().catch(cause => { stop(); code = 'bridge_unavailable'; throw new Error('x_import_unavailable', { cause }); });
     return starting;
   }
   function status() { return Object.freeze({ configured, code, ...gate.status(), extensionId: X_IMPORT_EXTENSION_ID, extensionDirectory: configured ? protectedStore.rootPath : null }); }

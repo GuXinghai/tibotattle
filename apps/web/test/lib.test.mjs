@@ -2,7 +2,7 @@ import { retainedPageIndex, dashboardReadFailure } from "../public/allowance-pag
 import test from "node:test";
 import assert from "node:assert/strict";
 import { webcrypto } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile as readRawFile } from "node:fs/promises";
 import { buildAllowanceTrends } from "../public/allowance-trends.js";
 import { createContext, runInContext } from "node:vm";
 import { FAST_MODE_QUOTA_MULTIPLIERS } from "@app-usagemonitor/accounting";
@@ -131,6 +131,13 @@ import {
   TELEMETRY_PLAN_DISPLAY_NAMES,
   TELEMETRY_PLAN_TYPES,
 } from "../public/telemetry-shared.generated.js";
+
+// Source extraction asserts code behavior, independently of Git's LF/CRLF
+// working-tree representation. Leave byte reads unchanged.
+async function readFile(...arguments_) {
+  const value = await readRawFile(...arguments_);
+  return typeof value === "string" ? value.replace(/\r\n/g, "\n") : value;
+}
 
 class FakeSvgElement {
   constructor(tagName, renderedWidth = 0) {
@@ -1737,6 +1744,7 @@ test("history coverage only becomes complete from coherent archive evidence", ()
     sourceBytes: 100,
     indexedBytes: 100,
     responseUnverifiedPrefixTurns: 0,
+    cumulativePrefixUnattributed: 0,
   };
   assert.equal(
     normalizeDashboardPayload({ pricing: { historyCoverage: complete } })
@@ -1749,6 +1757,23 @@ test("history coverage only becomes complete from coherent archive evidence", ()
     } } }).pricing.historyCoverage.responseUsageCoverageStatus,
     "partial",
   );
+  for (const [field, statusField] of [
+    ["responseUnverifiedPrefixTurns", "responseUsageCoverageStatus"],
+    ["cumulativePrefixUnattributed", "cumulativeUsageCoverageStatus"],
+  ]) {
+    const normalized = normalizeDashboardPayload({ pricing: { historyCoverage: {
+      ...complete, [field]: 1, [statusField]: "complete",
+    } } }).pricing.historyCoverage;
+    assert.equal(normalized.status, "partial");
+    assert.equal(normalized[statusField], "partial");
+  }
+  for (const invalid of [undefined, null, "0", "1", false, true, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    const normalized = normalizeDashboardPayload({ pricing: { historyCoverage: {
+      ...complete, cumulativePrefixUnattributed: invalid, cumulativeUsageCoverageStatus: "complete",
+    } } }).pricing.historyCoverage;
+    assert.equal(normalized.cumulativePrefixUnattributed, null);
+    assert.equal(normalized.cumulativeUsageCoverageStatus, "unknown");
+  }
   const olderReader = { ...complete };
   delete olderReader.responseUnverifiedPrefixTurns;
   assert.deepEqual(
@@ -1815,6 +1840,8 @@ test("history coverage only becomes complete from coherent archive evidence", ()
       coveredAt: complete.coveredAt,
       responseUsageCoverageStatus: "unknown",
       responseUnverifiedPrefixTurns: null,
+      cumulativeUsageCoverageStatus: "unknown",
+      cumulativePrefixUnattributed: null,
     },
   );
   assert.equal(
@@ -4810,26 +4837,20 @@ test("native dashboard readiness does not wait on secondary companion reads", as
   assert.doesNotMatch(secondary, /contribution|consent|prepare/iu);
 });
 
-test("the primary dashboard owner resumes one deferred Electron startup pass after releasing its lock", async () => {
+test("the primary dashboard owner releases readiness without scheduling renderer startup work", async () => {
   const primary = dashboardStartupDeferred();
-  const harness = await createDashboardStartupHarness({
-    client: { load: () => primary.promise },
-  });
-  harness.context.electronStartupRefreshDeferred = true;
-
+  const harness = await createDashboardStartupHarness({ client: { load: () => primary.promise } });
   const loading = harness.context.loadLocalDashboard();
   await settleDashboardStartupTasks();
   assert.equal(harness.context.localActionBusy, true);
-  assert.equal(harness.context.electronStartupRefreshDeferred, true);
-  assert.equal(harness.state.startupRefreshChecks, 0,
-    "the launch pass remains deferred while the primary owner is busy");
-
   primary.resolve({ marker: "primary", mode: "real_local_evidence" });
   await loading;
+  await settleDashboardStartupTasks();
   assert.equal(harness.context.localActionBusy, false);
-  assert.equal(harness.context.electronStartupRefreshDeferred, false);
-  assert.equal(harness.state.startupRefreshChecks, 1,
-    "the real loader retries exactly once after restoring its previous busy state");
+  assert.equal(harness.context.document.documentElement.dataset.localDashboardReady, "true");
+  assert.equal(harness.state.startupRefreshChecks, 0);
+  assert.equal(harness.state.returnRefreshChecks, 0,
+    "optional readiness reads observe the companion instead of creating business timers");
 });
 
 function dashboardStartupDeferred() {
@@ -4885,7 +4906,8 @@ async function createDashboardStartupHarness({
     },
     localActionBusy: initialBusy,
     localRefreshInProgress: false,
-    electronStartupRefreshDeferred: false,
+    localRefreshStatusVersion: 0,
+    localAnalysisAllowed: () => true,
     localCompanionHealth: initialHealth,
     localOnboarding: null,
     dashboard: null,
@@ -4908,10 +4930,8 @@ async function createDashboardStartupHarness({
       ...Object.fromEntries(Object.entries(client).filter(([key]) => key !== "load")),
     },
     runsInsideNativeDashboard: () => true,
-    // The extracted startup harness exercises the loader without evaluating
-    // Electron's launch coordinator. Keep that path explicitly inert so the
-    // optional onboarding callback remains faithful to the browser/native
-    // readiness tests.
+    // Keep retired renderer scheduling observable: optional readiness reads
+    // must not invoke either of these compatibility test spies.
     startElectronStartupRefresh: () => {
       state.startupRefreshChecks += 1;
       return true;
@@ -5358,7 +5378,7 @@ test("local analysis exposes quick results and cancel-safe progress", async () =
   assert.match(appSource, /refreshProgressClock\.update\(phase, \{ processed, selected \}\)/u);
   assert.match(appSource, /const accountingStatus = outcome === "running"/u);
   assert.match(appSource, /const collectorProgress = progress\?\.kind === undefined/u);
-  assert.match(appSource, /if \(collectorProgress\s*&& progress\?\.phase === "quick_result"/u);
+  assert.match(appSource, /if \(\(refresh\.quickResultAt \|\| \(collectorProgress && progress\?\.phase === "quick_result"/u);
   assert.match(appSource, /const countedProgress = collectorProgress \|\| unifiedIndexScanning/u);
   assert.match(appSource, /outcome === "cancelling"[\s\S]*?accountingStatus !== null/u);
   assert.doesNotMatch(appSource, /Verified summary ready|Preparing verified summary/u);
@@ -5388,7 +5408,13 @@ test("timeline keeps time, uncertainty, and primary navigation explicit", async 
   ]) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
-  assert.deepEqual([...html.matchAll(/data-nav="([a-z]+)"/gu)].map((match) => match[1]), ["overview", "usage", "allowance", "performance"]);
+  const navigation = [...html.matchAll(/<a\b[^>]*\bdata-nav="([a-z]+)"[^>]*>/gu)];
+  const desktopOnly = (link) => /\bdata-desktop-only="true"/u.test(link[0]);
+  assert.deepEqual(navigation.filter((link) => !desktopOnly(link)).map((link) => link[1]),
+    ["overview", "usage", "allowance", "performance"]);
+  assert.deepEqual(navigation.filter(desktopOnly).map((link) => link[1]), ["x"]);
+  assert.match(navigation.find(desktopOnly)[0], /\shidden(?:\s|>)/u,
+    "the optional desktop X entry stays hidden until its capability is available");
   assert.doesNotMatch(html, /data-nav="data"/u);
   assert.match(html, /id="residual-time-heading">Local time/);
   assert.doesNotMatch(html, /Exact local \/ UTC time/);
@@ -7296,9 +7322,7 @@ function firstArguments(source, call) {
 test("a refresh finished by the native shell makes the page re-read its evidence", async () => {
   const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
 
-  // Inside the app window the page's own return-visit refresh stands down, so
-  // nothing else moves the rendered numbers off the snapshot the document
-  // loaded with. This listener is the only thing that does.
+  // Preserve the legacy shell evidence signal alongside status observation.
   assert.match(
     appSource,
     /window\.addEventListener\("tibotattle:local-evidence-updated", \(\) => \{\s*\n\s*void reloadLocalEvidenceAfterNativeRefresh\(\);/u,
@@ -7313,12 +7337,9 @@ test("a refresh finished by the native shell makes the page re-read its evidence
     appSource,
     /async function reloadLocalEvidenceAfterNativeRefresh\(\) \{[\s\S]*?if \(nativeEvidenceReloadInFlight \|\| localRefreshInProgress \|\| localActionBusy\) \{\s*\n\s*nativeEvidenceReloadPending = true;\s*\n\s*return;/u,
   );
-  // And the reason the shell has to send that signal at all is unchanged: the
-  // web return-visit timer must not race the native one.
-  assert.match(
-    appSource,
-    /function scheduleReturningUserRefresh\(\) \{[\s\S]*?if \(runsInsideNativeDashboard\(\)\) return;/u,
-  );
+  assert.doesNotMatch(appSource, /function scheduleReturningUserRefresh\(/u,
+    "the companion owns return and startup collection scheduling");
+  assert.match(appSource, /async function observeOverviewPublication\(/u);
 });
 
 test("a chart says so when its series does not reach back as far as its label", async () => {

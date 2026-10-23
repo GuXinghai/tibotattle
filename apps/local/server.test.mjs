@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { LocalCompanionClient } from "../web/public/data-client.js";
 import { once } from "node:events";
 import { createWindowsProcessExitObserver } from "../../test/helpers/windows-process-exit-observer.js";
 import { request as httpRequest } from "node:http";
@@ -157,6 +158,78 @@ test("unchanged unified projections reuse only within exact generation, time, an
   assert.equal(reads, 6);
 });
 
+test("work usage rereads external metadata for ordinary and exact-window projections", async () => {
+  const fingerprint = `generation-v2-${"a".repeat(64)}`;
+  for (const exactWindow of [false, true]) {
+    let external = { project: "synthetic-project-a", family: "synthetic-family-a", autoReview: false };
+    let reads = 0;
+    const reader = createCachedLocalUnifiedProjectionReader({
+      reader: async () => {
+        reads += 1;
+        return { companion: { status: "available", generation: { fingerprint } },
+          workUsage: { status: "available", metadata: { ...external } } };
+      },
+      readGeneration: async () => fingerprint,
+      validUntil: async () => assert.fail("database membership cannot prove external metadata"),
+    });
+    try {
+      const options = { indexFile: "synthetic-index", mode: "full", nowMs: 100,
+        includeWorkUsage: true, exactWindow };
+      const first = await reader(options);
+      external = { project: "synthetic-project-b", family: "synthetic-family-b", autoReview: true };
+      // Even the exact same reporting instant cannot prove external metadata.
+      const second = await reader({ ...options, nowMs: exactWindow ? 100 : 101 });
+      assert.equal(reads, 2);
+      assert.equal(first.workUsage.metadata.autoReview, false);
+      assert.deepEqual(second.workUsage.metadata, external);
+      external = { project: null, family: null, autoReview: false };
+      const deferred = await reader({ ...options, mode: "deferred", nowMs: 102 });
+      assert.equal(reads, 3);
+      assert.deepEqual(deferred.workUsage.metadata, external);
+    } finally { await reader.close(); }
+  }
+});
+
+test("work usage shares only in-flight builds and preserves subscriber cancellation", async () => {
+  const fingerprint = `generation-v2-${"a".repeat(64)}`;
+  const builds = [];
+  const reader = createCachedLocalUnifiedProjectionReader({
+    reader: async (_options, { signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new Error("synthetic_build_aborted")), { once: true });
+      builds.push({ signal, resolve });
+    }),
+    readGeneration: async () => fingerprint,
+    validUntil: async () => assert.fail("work usage has no completed-cache proof"),
+  });
+  const options = { indexFile: "synthetic-index", mode: "full", nowMs: 100, includeWorkUsage: true };
+  const result = { companion: { status: "available", generation: { fingerprint } },
+    workUsage: { status: "available", metadata: { autoReview: true } } };
+  try {
+    const cancelled = new AbortController();
+    const first = reader(options, { signal: cancelled.signal });
+    const rejected = assert.rejects(first, { code: "local_unified_companion_projection_aborted" });
+    const second = reader(options);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(builds.length, 1);
+    cancelled.abort();
+    await rejected;
+    assert.equal(builds[0].signal.aborted, false);
+    builds[0].resolve(result);
+    const delivered = await second;
+    assert.deepEqual(delivered, result);
+    delivered.workUsage.metadata.autoReview = false;
+    assert.equal(result.workUsage.metadata.autoReview, true);
+    const last = new AbortController();
+    const third = reader(options, { signal: last.signal });
+    const lastRejected = assert.rejects(third, { code: "local_unified_companion_projection_aborted" });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(builds.length, 2);
+    last.abort();
+    await lastRejected;
+    assert.equal(builds[1].signal.aborted, true);
+  } finally { await reader.close(); }
+});
+
 test("semantic open target is stable by default and accepts only reviewed identities", () => {
   assert.equal(configuredSemanticOpenTarget({}), PRODUCT_BRAND.appOpenURL);
   assert.equal(
@@ -220,6 +293,10 @@ function fakeStore() {
         schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
         mode: "real_local_evidence",
         evidenceStatus: "available",
+        quotaWindows: [{ observedAt: new Date().toISOString() }],
+        accounting: { generationMatched: true },
+        timeline: { history: { source: "unified_local_index", status: "complete", generatedAt: new Date().toISOString() } },
+        workload: { status: "available" },
       };
     },
     getDesktopShellDisplayEvidence() {
@@ -407,6 +484,48 @@ child.once("exit", () => {
 });
 setTimeout(() => process.exit(3), 15_000);
 `;
+
+test("loopback exposes only closed timing stages without changing refresh state", async () => {
+  const files = await fixture();
+  const app = await startLocalCompanionServer({ ...files, dataStore: fakeStore(), port: 0,
+    onboardingProvider: async () => ({}),
+    refreshRunner: async ({ onTiming, onReuseDiagnostic, onOriginDiagnostic }) => {
+      onTiming({ stage: "quota_collect", wallMs: 4.25, outcome: "completed" });
+      onTiming({ stage: "private-path", wallMs: 10, outcome: "completed" });
+      onTiming({ stage: "quota_collect", wallMs: 10, outcome: "completed", path: "synthetic-private" });
+      onReuseDiagnostic({ phase: "proof_before", code: "origins_unknown" });
+      onReuseDiagnostic({ phase: "lookup", code: "private-source" });
+      onReuseDiagnostic({ phase: "lookup", code: "expired", path: "synthetic-private" });
+      onOriginDiagnostic({ phase: "proof_before", code: "requested", count: 3 });
+      onOriginDiagnostic({ phase: "proof_before", code: "thread_row_missing", count: 1 });
+      onOriginDiagnostic({ phase: "proof_before", code: "known", count: 2, path: "synthetic-private" });
+      return {};
+    },
+  });
+  try {
+    await app.snapshotReady;
+    const base = `http://127.0.0.1:${app.port}`;
+    const idle = await (await fetch(`${base}/api/local/refresh`)).json();
+    assert.equal(idle.refresh.timing, null);
+    const response = await fetch(`${base}/api/local/refresh`, { method: "POST",
+      headers: { Origin: base, "Content-Type": "application/json", "X-Usage-Monitor-Local": "1" }, body: "{}" });
+    assert.equal(response.status, 202);
+    await app.refresh.whenSettled();
+    const value = await (await fetch(`${base}/api/local/refresh`)).json();
+    assert.equal(value.refresh.status, "succeeded");
+    assert.equal(value.refresh.timing.schemaVersion, "local-refresh-timing-v1");
+    assert.ok(Number.isFinite(value.refresh.timing.totalMs));
+    assert.deepEqual(value.refresh.timing.stages.find(row => row.stage === "quota_collect"), {
+      stage: "quota_collect", wallMs: 4.25, calls: 1, failed: 0, cancelled: 0,
+    });
+    assert.doesNotMatch(JSON.stringify(value.refresh.timing), /private/);
+    assert.deepEqual(value.refresh.timing.reuse, [{ phase: "proof_before", code: "origins_unknown", calls: 1 }]);
+    assert.deepEqual(value.refresh.timing.origins, [
+      { phase: "proof_before", code: "requested", count: 3 },
+      { phase: "proof_before", code: "thread_row_missing", count: 1 },
+    ]);
+  } finally { await app.close(); await rm(files.root, { recursive: true }); }
+});
 
 test("loopback server exposes only fixed API, static, and report routes", async () => {
   const files = await fixture();
@@ -666,6 +785,39 @@ test("loopback schedule honors disabled startup and live interval changes withou
   } finally {
     await app.close(); await rm(files.root, { recursive: true });
   }
+});
+
+test("loopback persistent pause blocks startup and every refresh route, then cancels pending work", async () => {
+  const files = await fixture(), gate = deferred(); let calls = 0;
+  const app = await startLocalCompanionServer({ ...files, dataStore: fakeStore(), port: 0,
+    environment: { USAGE_MONITOR_REFRESH_INTERVAL_SECONDS: "420", USAGE_MONITOR_REFRESH_PAUSED: "true" },
+    refreshRunner: async () => { calls++; await gate.promise; return {}; },
+  });
+  try {
+    await app.snapshotReady; await new Promise(setImmediate);
+    const base = `http://127.0.0.1:${app.port}`;
+    const post = route => fetch(`${base}/api/local/${route}`, { method: "POST", body: "{}",
+      headers: { Origin: base, "Content-Type": "application/json", "X-Usage-Monitor-Local": "1" } }).then(response => response.json());
+    const status = () => fetch(`${base}/api/local/refresh`).then(response => response.json());
+    assert.equal((await status()).overviewSchedule.paused, true);
+    for (const route of ["refresh", "refresh/overview", "refresh/quick"]) assert.equal((await post(route)).request.started, false);
+    assert.equal(calls, 0);
+    app.setRefreshPaused(false);
+    await post("refresh/quick"); await post("refresh");
+    assert.equal((await status()).refresh.pending.mode, "detailed");
+    app.setRefreshPaused(true);
+    const cancelling = await status();
+    assert.equal(cancelling.refresh.pending, null);
+    assert.equal(cancelling.refresh.status, "cancelling");
+    assert.equal(cancelling.overviewSchedule.nextAt, null);
+    gate.resolve(); await app.refresh.whenSettled(); await new Promise(setImmediate);
+    assert.equal(calls, 1);
+    assert.equal((await status()).overviewSchedule.nextAt, null);
+    app.setRefreshPaused(false);
+    const resumed = (await status()).overviewSchedule;
+    assert.equal(resumed.intervalSeconds, 420);
+    assert.ok(Date.parse(resumed.nextAt) > Date.now() + 419_000);
+  } finally { gate.resolve(); await app.close(); await rm(files.root, { recursive: true }); }
 });
 
 test("preview companion stamps only the preview semantic-open route", async () => {
@@ -1431,6 +1583,9 @@ test("startup defers history while full and overview refreshes publish the compl
   try {
     app = await startLocalCompanionServer({
       environment: {},
+      // This case drives manual publication. Automatic startup is covered by
+      // its own tests and must not race the manual request's 202 receipt.
+      onboardingProvider: async () => ({}),
       resourceRoot: files.resourceRoot,
       stateRoot: files.stateRoot,
       homeDirectory: join(files.root, "home"),
@@ -1476,7 +1631,7 @@ test("startup defers history while full and overview refreshes publish the compl
       },
       body: "{}",
     });
-    assert.equal(started.status, 202);
+    assert.equal(started.status, 202, JSON.stringify(await started.clone().json()));
     // This checks publication ordering, not a one-second performance target.
     // Join the controller's completion before asserting its terminal HTTP state.
     await app.refresh.whenSettled();
@@ -1562,7 +1717,7 @@ test("server rejects forged hosts and requires same-origin refresh authorization
       headers: authorizedHeaders,
       body: "{}",
     });
-    assert.equal(duplicate.status, 409);
+    assert.equal(duplicate.status, 200);
     const duplicatePayload = await duplicate.json();
     assert.equal(
       duplicatePayload.refresh.refreshId,
@@ -2550,6 +2705,45 @@ test("diagnostic notes are bounded, fixed-vocabulary, and land in a local log", 
   }
 });
 
+test("a degraded index failure keeps its fixed HTTP code and a bounded rate-limited diagnostic note", async () => {
+  const files = await fixture();
+  const diagnosticsLogFile = join(files.stateRoot, 'diagnostics-v0.1.log');
+  const app = await startLocalCompanionServer({
+    resourceRoot: files.resourceRoot, stateRoot: files.stateRoot, codexHome: files.codexHome,
+    staticRoot: files.staticRoot, dataStore: fakeStore(), diagnosticsLogFile,
+    clock: () => Date.parse('2026-10-22T12:00:00.000Z'), port: 0,
+    refreshRunner: async () => ({ unifiedIndex: { status: 'failed',
+      errorCode: 'codex_response_usage_legacy_conflict', message: 'synthetic private payload' } }),
+  });
+  try {
+    const base = `http://127.0.0.1:${app.port}`;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const response = await fetch(`${base}/api/local/refresh`, { method: 'POST', body: '{}',
+        headers: { 'Content-Type': 'application/json', 'X-Usage-Monitor-Local': '1', Origin: base } });
+      assert.equal(response.status, 202);
+      const started = (await response.json()).refresh;
+      await waitFor(async () => {
+        const {refresh} = await fetch(`${base}/api/local/refresh`).then(r => r.json());
+        return refresh.refreshId === started.refreshId && refresh.status === 'degraded';
+      });
+      const {refresh} = await fetch(`${base}/api/local/refresh`).then(r => r.json());
+      assert.equal(refresh.failureCode, 'codex_response_usage_legacy_conflict');
+      assert.equal(refresh.result.unifiedIndex.errorCode, refresh.failureCode);
+      assert.equal(JSON.stringify(refresh).includes('synthetic private payload'), false);
+    }
+    await waitFor(async () => {
+      try { return (await readFile(diagnosticsLogFile, 'utf8')).includes('\n'); } catch { return false; }
+    });
+    const text = await readFile(diagnosticsLogFile, 'utf8');
+    const notes = text.trimEnd().split('\n').map(line => JSON.parse(line));
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].code, 'refresh_degraded');
+    assert.equal(notes[0].step, 'unified_index');
+    assert.equal(notes[0].detail, 'codex_response_usage_legacy_conflict');
+    assert.equal(text.includes('synthetic private payload'), false);
+  } finally { await app.close();await rm(files.root, {recursive: true}); }
+});
+
 test("a terminal refresh failure files one bounded, rate-limited diagnostics note", async () => {
   const files = await fixture();
   const diagnosticsLogFile = join(files.stateRoot, "diagnostics-v0.1.log");
@@ -2728,4 +2922,130 @@ test("the diagnostics log is bounded and keeps one previous generation", async (
     await app.close();
     await rm(files.root, { recursive: true });
   }
+});
+
+
+test("real browser client joins loopback runs, retains actual capability and observes quota publication", async () => {
+  const files = await fixture(), store = fakeStore();
+  const usage = deferred(), published = deferred(); const modes = [];
+  store.publishQuota = async ({ isCurrent }) => {
+    assert.equal(isCurrent(), true); return { published: true, observedAt: "2026-10-21T00:00:00.000Z" };
+  };
+  const app = await startLocalCompanionServer({ ...files, dataStore: store,
+    onboardingProvider: async () => ({}), port: 0,
+    refreshRunner: async ({ mode, onQuotaReady }) => {
+      modes.push(mode);
+      await onQuotaReady({ attempted: true, recordWritten: true, errorCode: null });
+      published.resolve(); if (mode === "overview") await usage.promise; return {};
+    },
+  });
+  try {
+    const base = `http://127.0.0.1:${app.port}`;
+    const client = new LocalCompanionClient({ fetchImpl: (path, options = {}) => fetch(`${base}${path}`, {
+      ...options, headers: { ...options.headers, ...(options.method === "POST" ? { Origin: base } : {}) },
+    }) });
+    const first = await client.refresh(); await published.promise;
+    assert.equal(first.refresh.mode, "overview"); assert.equal(first.request.started, true);
+    assert.deepEqual(first.refresh.capabilities, { quota: true, usage: true, resetDetails: false });
+    const joined = await client.refresh(); assert.equal(joined.request.joined, true);
+    assert.equal(joined.refresh.refreshId, first.refresh.refreshId);
+    const running = await client.refreshStatus();
+    assert.equal(running.refresh.status, "running"); assert.equal(running.refresh.quota.status, "published");
+    assert.ok(running.refresh.quickResultAt); assert.equal(running.refresh.usage.status, "running");
+    const detail = await client.recalculateDetailedAccounting();
+    assert.equal(detail.request.pending, true); assert.equal(detail.refresh.mode, "overview");
+    assert.equal(detail.refresh.pending.mode, "detailed");
+    usage.resolve(); await app.refresh.whenSettled();
+    assert.deepEqual(modes, ["overview", "detailed"]);
+    const final = await client.refreshStatus();
+    assert.equal(final.refresh.mode, "detailed"); assert.equal(final.refresh.status, "succeeded");
+    assert.ok(Date.parse(final.overviewSchedule.nextAt) >= Date.parse(final.refresh.finishedAt) + 300000);
+  } finally { usage.resolve(); await app.close(); await rm(files.root, { recursive: true }); }
+});
+
+test("companion startup checks once after last-good, respects onboarding and allows disabled-period startup", async t => {
+  for (const allowed of [false, true]) await t.test(allowed ? "allowed" : "onboarding blocked", async () => {
+    const files = await fixture(), store = fakeStore(); let initialized = false, checks = 0; const reasons = [];
+    store.initialize = async () => { initialized = true; };
+    store.getOverview = () => ({});
+    const app = await startLocalCompanionServer({ ...files, dataStore: store, port: 0,
+      environment: { USAGE_MONITOR_REFRESH_INTERVAL_SECONDS: "-1" },
+      onboardingProvider: async () => {
+        assert.equal(initialized, true); checks++;
+        return allowed ? { source: { status: "ready", sessionsReadable: true, rolloutFilesObserved: 1 },
+          state: { writable: true }, capabilities: { explicitRefresh: true } } : {};
+      },
+      refreshRunner: async () => { reasons.push("startup"); return {}; },
+    });
+    try {
+      await app.snapshotReady; await waitFor(() => checks === 1); await new Promise(setImmediate);
+      if (allowed) await app.refresh.whenSettled();
+      assert.equal(checks, 1); assert.deepEqual(reasons, allowed ? ["startup"] : []);
+      if (allowed) assert.equal(app.refresh.getStatus().reason, "startup");
+      const base = `http://127.0.0.1:${app.port}`;
+      const status = await fetch(`${base}/api/local/refresh`).then(response => response.json());
+      assert.equal(status.overviewSchedule.nextAt, null); assert.equal(status.overviewSchedule.intervalSeconds, -1);
+      await fetch(`${base}/api/local/onboarding`);
+      assert.equal(reasons.length, allowed ? 1 : 0);
+    } finally { await app.close(); await rm(files.root, { recursive: true }); }
+  });
+});
+
+
+test("loopback stronger requests during quota-only work merge once and cancel clears the demand", async () => {
+  const files = await fixture(), store = fakeStore(), quota = deferred(); let calls = 0;
+  const app = await startLocalCompanionServer({ ...files, dataStore: store, port: 0,
+    onboardingProvider: async () => ({}),
+    refreshRunner: async ({ mode }) => { assert.equal(mode, "quick"); calls++; await quota.promise; return {}; },
+  });
+  try {
+    const base = `http://127.0.0.1:${app.port}`;
+    const post = route => fetch(`${base}/api/local/${route}`, { method: "POST", body: "{}",
+      headers: { "Content-Type": "application/json", "X-Usage-Monitor-Local": "1", Origin: base } }).then(response => response.json());
+    const first = await post("refresh/quick");
+    const overview = await post("refresh/overview");
+    assert.equal(overview.request.pending, true); assert.equal(overview.request.joined, false);
+    assert.equal(overview.refresh.refreshId, first.refresh.refreshId);
+    assert.equal(overview.refresh.capabilities.usage, false);
+    assert.equal(overview.refresh.pending.mode, "overview");
+    await post("refresh"); const merged = await post("refresh");
+    assert.equal(merged.refresh.mode, "quick"); assert.equal(merged.refresh.pending.mode, "detailed");
+    const cancelled = await post("refresh/cancel");
+    assert.equal(cancelled.refresh.pending, null); assert.equal(cancelled.refresh.status, "cancelling");
+    quota.resolve(); await app.refresh.whenSettled(); await new Promise(setImmediate);
+    assert.equal(app.refresh.getStatus().status, "cancelled"); assert.equal(calls, 1);
+  } finally { quota.resolve(); await app.close(); await rm(files.root, { recursive: true }); }
+});
+
+
+test("loopback timeout exposes the actual writer lock until the original runner settles", async () => {
+  const files = await fixture(), store = fakeStore(), writer = deferred(); let calls = 0;
+  const app = await startLocalCompanionServer({ ...files, dataStore: store, port: 0,
+    environment: { USAGE_MONITOR_REFRESH_INTERVAL_SECONDS: "-1" },
+    onboardingProvider: async () => ({}), refreshTimeoutMs: 1000, refreshTimeoutMsForRun: () => 1000,
+    refreshRunner: async () => { calls++; await writer.promise; return {}; },
+  });
+  try {
+    const base = `http://127.0.0.1:${app.port}`;
+    const client = new LocalCompanionClient({ fetchImpl: (path, options = {}) => fetch(`${base}${path}`, {
+      ...options, headers: { ...options.headers, ...(options.method === "POST" ? { Origin: base } : {}) },
+    }) });
+    assert.equal((await client.refreshStatus()).refresh.running, false);
+    const started = await client.refresh();
+    assert.equal(started.refresh.running, true);
+    let timedOut;
+    await waitFor(async () => { timedOut = await client.refreshStatus(); return timedOut.refresh.status === "failed"; }, 3000);
+    assert.equal(timedOut.refresh.errorCode, "refresh_timed_out");
+    assert.equal(timedOut.refresh.running, true);
+    const joined = await client.refresh();
+    assert.equal(joined.refresh.refreshId, started.refresh.refreshId);
+    assert.equal(joined.refresh.running, true); assert.equal(joined.request.started, false);
+    assert.equal(calls, 1);
+    writer.resolve(); await app.refresh.whenSettled();
+    const settled = await client.refreshStatus();
+    assert.equal(settled.refresh.status, "failed");
+    assert.equal(settled.refresh.errorCode, "refresh_timed_out");
+    assert.equal(settled.refresh.running, false); assert.equal(calls, 1);
+    assert.equal(store.reloads, 0);
+  } finally { writer.resolve(); await app.close(); await rm(files.root, { recursive: true }); }
 });

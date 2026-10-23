@@ -119,6 +119,10 @@ test("setup dialog keeps live details across readiness refreshes and restores co
   h.update();
   assert.equal(h.card.open, false);
   assert.equal(h.card.dataset.setupMode, "ready");
+  assert.equal(h.card.hidden, true, "a ready setup does not occupy Overview");
+  h.context.dashboard.collector.indexing = { status: "bounded_pause", filesProcessed: 1, filesSelected: 3 };
+  h.update();
+  assert.equal(h.card.hidden, false, "an actionable setup remains reachable");
   h.open();
   assert.equal(h.dialog.open, true);
   assert.deepEqual(h.content.children, [h.body], "move the actual detail nodes, not a stale copy");
@@ -135,8 +139,12 @@ test("setup dialog keeps live details across readiness refreshes and restores co
   assert.equal(h.content.children[0], h.body);
   h.context.dashboard.collector.indexing = null;
   h.update();
+  h.settleLayout();
+  assert.equal(h.card.hidden, true);
+  assert.equal(h.dialog.open, false, "resolved setup closes its no-longer-visible disclosure");
   assert.equal(h.card.open, false);
   h.update({ ...h.ready, stateWritable: false, stateStatus: "unwritable" });
+  assert.equal(h.card.hidden, false);
   assert.equal(h.card.open, false);
   assert.equal(h.card.dataset.setupMode, "attention");
   assert.equal(h.get("#setup-title").textContent, translate("setup.state.unwritableTitle", {}, "en-US"));
@@ -144,10 +152,11 @@ test("setup dialog keeps live details across readiness refreshes and restores co
   h.context.dashboard.collector.indexing = { status: "recent_7d_indexing" };
   h.update();
   assert.equal(h.card.open, false, "ready setup stays compact while collection runs in the header");
-  h.dialog.close();
   assert.deepEqual(h.card.children, [h.summary, h.body]);
   assert.equal(h.content.children.length, 0);
   assert.equal(h.summary.focused, true);
+  h.context.dashboard.collector.indexing = { status: "bounded_pause", filesProcessed: 1, filesSelected: 3 };
+  h.update();
   h.open();
   h.update({ state: "unavailable" });
   h.settleLayout();

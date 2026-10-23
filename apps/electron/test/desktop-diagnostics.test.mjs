@@ -35,6 +35,7 @@ test("desktop diagnostics reduce runtime state to content-free enums and boolean
     },
     refresh: {
       schemaVersion: "tibotattle-desktop-refresh-status-v1",
+      scheduleOwner: "companion",
       state: "running",
       mode: "detailed",
       cadenceTimerArmed: false,
@@ -65,6 +66,7 @@ test("desktop diagnostics reduce runtime state to content-free enums and boolean
   });
   assert.deepEqual(record.refresh, {
     schemaVersion: "tibotattle-desktop-refresh-status-v1",
+    scheduleOwner: "companion",
     state: "running",
     mode: "detailed",
     cadenceTimerArmed: false,
@@ -96,6 +98,17 @@ test("desktop diagnostics preserve every refresh interval accepted by the curren
       refreshIntervalSeconds,
     );
   }
+});
+
+test("desktop diagnostics keep scheduling ownership separate from the shell timer", () => {
+  const record = createDesktopDiagnostics({ refresh: { scheduleOwner: "companion", cadenceTimerArmed: false } });
+  assert.equal(record.refresh.scheduleOwner, "companion");
+  assert.equal(record.refresh.cadenceTimerArmed, false);
+  assert.equal(JSON.parse(formatDesktopDiagnostics(record)).refresh.scheduleOwner, "companion");
+  assert.equal(createDesktopDiagnostics({ refresh: { scheduleOwner: "private-path" } }).refresh.scheduleOwner, "unknown");
+  assert.throws(() => formatDesktopDiagnostics({
+    ...record, refresh: { ...record.refresh, scheduleOwner: "private-path" },
+  }), TypeError);
 });
 
 test("desktop diagnostics fail closed when a caller tampers with privacy guarantees", () => {

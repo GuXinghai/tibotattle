@@ -4,11 +4,11 @@ import { normalizeModelPerformance, performanceSegments, performanceDomain, perf
 import { LocalCompanionClient } from '../public/data-client.js';
 import { translate, SUPPORTED_LOCALES } from '../public/localization.js';
 const DAY = 86400000;
-const point = (at = 2 * DAY, n = 5) => ({ at, n,
+const point = (at = 2 * DAY, n = 5) => ({ at, n, mean: n < 3 ? 50 : 55,
   p10: n < 5 ? null : 30, p25: n < 5 ? null : 40, median: 50,
   p75: n < 5 ? null : 60, p90: n < 5 ? null : 70 });
 function payload() {
-  return { schemaVersion: 5, method: 5, speedMode: 'standard', excludedUnknownTurns: 0, status: 'ready', collecting: false, stale: false, updatedAt: '2026-09-09T12:00:00.000Z', period: 'all', interval: 'day', start: DAY, end: 9 * DAY, historyProgress: null,
+  return { schemaVersion: 6, method: 5, speedMode: 'standard', excludedUnknownTurns: 0, status: 'ready', collecting: false, stale: false, updatedAt: '2026-09-09T12:00:00.000Z', period: 'all', interval: 'day', start: DAY, end: 9 * DAY, historyProgress: null,
     models: [{ id: 'gpt-5.6-sol', label: 'Sol', turns: 20, speedTurns: 10, ttftTurns: 15, timedResponses: 45, toolFreeTurns: 0, toolFree: [],
       speed: [{ method: 'speed', points: [point(), point(3 * DAY)] }], ttft: [point(), point(3 * DAY), point(4 * DAY)] }] };
 }
@@ -42,7 +42,7 @@ test('combined DTO accepts fallback subsets and refuses impossible or cross-vers
   const data = combinedPayload();
   assert.equal(normalizeModelPerformance(data), data);
   for (const mutate of [
-    x => { x.method = 4; }, x => { x.schemaVersion = 3; }, x => { x.schemaVersion = 4; },
+    x => { x.method = 4; }, x => { x.schemaVersion = 3; }, x => { x.schemaVersion = 4; }, x => { x.schemaVersion = 5; },
     x => { x.models[0].toolFreeTurns = 13; },
     x => { x.models[0].toolFree[0].at = 5 * DAY; },
     x => { x.models[0].toolFree[0].n = 3; },
@@ -100,6 +100,11 @@ test('malformed, private, unknown, duplicate and excessive evidence fails closed
     x => { x.models[0].speedTurns = 2; },
     x => { x.models[0].ttftTurns = 30; },
     x => { x.models[0].speed[0].points[0].median = NaN; },
+    x => { x.models[0].speed[0].points[0].mean = NaN; },
+    x => { x.models[0].speed[0].points[0].mean = Infinity; },
+    x => { x.models[0].speed[0].points[0].mean = -1; },
+    x => { x.models[0].ttft[0].mean = 1e9 + 1; },
+    x => { delete x.models[0].speed[0].points[0].mean; },
     x => { x.models[0].speed[0].points[0].p10 = 45; },
     x => { x.models[0].speed[0].points[0].p75 = 30; },
     x => { x.models[0].speed[0].points[0].p90 = 55; },
@@ -134,7 +139,7 @@ test('client requests only an enum period, is abortable, and reports endpoint fa
 });
 test('every supported locale preserves coverage and measurement meaning', () => {
   for (const locale of SUPPORTED_LOCALES) {
-    for (const key of ['title', 'speedEmpty', 'ttftEmpty', 'methodology', 'variance', 'speedSummary', 'latencySummary', 'combinedSpeedSummary', 'combinedSpeedMethodology', 'combinedSpeedEmpty', 'combinedMethodology', 'outerBand', 'innerBand', 'medianP50', 'percentileValues', 'percentilesUnavailable', 'buildingHistory', 'unavailable', 'stale', 'mode', 'standard', 'fast', 'ultrafast', 'standardNote', 'fastNote', 'ultrafastNote', 'unknownMode', 'modeEmpty']) {
+    for (const key of ['title', 'speedEmpty', 'ttftEmpty', 'methodology', 'variance', 'speedSummary', 'latencySummary', 'combinedSpeedSummary', 'combinedSpeedMethodology', 'combinedSpeedEmpty', 'combinedMethodology', 'outerBand', 'innerBand', 'medianP50', 'mean', 'percentileValues', 'percentilesUnavailable', 'buildingHistory', 'unavailable', 'stale', 'mode', 'standard', 'fast', 'ultrafast', 'standardNote', 'fastNote', 'ultrafastNote', 'unknownMode', 'modeEmpty']) {
       const value = translate(`performance.${key}`, {}, locale);
       assert.notEqual(value, `performance.${key}`);
     }
@@ -213,7 +218,11 @@ function focusHarness() {
     navigate: (shown) => { inactive = !shown; visibilityObserver?.(); },
     find: key => root.all().find(node => node.dataset.performanceFocus === key),
     timerIds: () => [...timers.keys()], timerDelay: id => timerDelays.get(id),
-    runTimer: id => timers.get(id)?.(),
+    runTimer: id => {
+      const callback = timers.get(id);
+      timers.delete(id); timerDelays.delete(id);
+      return callback?.();
+    },
     setDocumentHidden: hidden => { documentRef.hidden = hidden; documentVisibilityObserver?.(); } };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
@@ -812,7 +821,8 @@ test('one Fast observation shows its own coverage, hollow points and no percenti
   dom.show(); await controller.refresh(); dom.find('mode-fast').listeners.click(); await settle();
   const nodes = dom.root.all();
   assert.equal(nodes.filter(node => node.className === 'performance-point').length, 2);
-  assert.equal(nodes.filter(node => node.attributes.fill === 'var(--surface-raised)').length, 2);
+  assert.equal(nodes.filter(node => node.tagName === 'circle' && node.attributes.fill === 'var(--surface-raised)').length, 2);
+  assert.equal(nodes.filter(node => node.className === 'performance-mean-point' && node.attributes.fill === 'var(--surface-raised)').length, 2);
   assert.equal(nodes.some(node => node.className?.startsWith('performance-percentile-band ')), false);
   assert.equal(nodes.some(node => node.className === 'performance-median-line'), false);
   dom.find('measurements').listeners.click();
@@ -963,7 +973,7 @@ test('compact controls preserve complete statistics in one dialog including fall
   assert.equal(rows()['Full-turn estimates'],'2'); assert.equal(rows()['Unknown speed mode'],'17');
   dom.find('detail-tab-toolFree').listeners.click();
   const cells = dom.root.all().filter(n=>n.tagName==='td').map(n=>n.textContent);
-  assert.deepEqual(cells.slice(1),['2','—','—','50','—','—']);
+  assert.deepEqual(cells.slice(1),['2','50','—','—','50','—','—']);
   dom.find('detail-close').listeners.click(); assert.equal(dom.documentRef.activeElement,dom.find('measurements'));
   c.destroy();
 });
@@ -996,6 +1006,32 @@ test('shared layer toggles leave data intact and a missing date never borrows an
   assert.equal(JSON.stringify(data),original);c.destroy();
 });
 
+test('mean uses straight segments, breaks missing bins, fits the axis and toggles independently', async () => {
+  const dom = focusHarness(), data = payload();
+  data.models[0].speed[0].points = [point(DAY), { ...point(3 * DAY), mean: 300 }];
+  const original = JSON.stringify(data);
+  const c = mountModelPerformance({ ...dom, client: { modelPerformance: async () => data }, t: (k,v) => translate(k,v,'en-US') });
+  dom.show(); await c.refresh();
+  const meanLines = () => dom.root.all().filter(n => n.className === 'performance-mean-line');
+  assert.equal(meanLines().length, 2, 'only adjacent latency dates connect');
+  assert.ok(meanLines().every(n => / L/u.test(n.attributes.d) && !/ C/u.test(n.attributes.d)));
+  const meanPoints = dom.root.all().filter(n => n.className === 'performance-mean-point');
+  assert.equal(meanPoints.length, 5);
+  assert.ok(meanPoints.every(n => Number(n.attributes.y) >= 21 && Number(n.attributes.y) <= 214), 'mean above P90 stays inside the plot');
+  dom.find('point-speed-speed-259200000').focus();
+  assert.ok(dom.root.all().some(n => n.className === 'sr-only performance-readout' && n.textContent?.includes('Mean 300')));
+  assert.ok(dom.root.all().some(n => n.className === 'performance-tooltip-value' && n.textContent === `300 ${translate('performance.speedShortUnit', {}, 'en-US')}`));
+  dom.find('layer-mean').focus(); dom.find('layer-mean').listeners.click();
+  assert.equal(meanLines().length, 0);
+  assert.equal(dom.root.all().some(n => n.className === 'performance-mean-point'), false);
+  assert.equal(dom.root.all().filter(n => n.className === 'performance-median-line').length, 2);
+  assert.equal(dom.documentRef.activeElement, dom.find('layer-mean'));
+  dom.find('layer-mean').listeners.click();
+  assert.equal(meanLines().length, 2);
+  assert.equal(JSON.stringify(data), original);
+  c.destroy();
+});
+
 test('ready reports have no recurring timer and loading requests stop at the bounded budget',async()=>{
   const dom=focusHarness();let data=payload(),calls=0;
   const c=mountModelPerformance({...dom,sharedReporting:true,reportingWindow:{period:'all',startAt:null,endAt:new Date(data.end).toISOString()},client:{modelPerformance:async()=>{calls++;return data;}},t:(k,v)=>translate(k,v,'en-US')});
@@ -1005,8 +1041,8 @@ test('ready reports have no recurring timer and loading requests stop at the bou
   assert.equal(calls,25,'one completed report plus at most 24 pending reads');c.destroy();
 });
 
-test('request diagnostics are closed and separate from the v5 DTO',async()=>{
-  const run=async raw=>{const seen=[];const client=new LocalCompanionClient({fetchImpl:async()=>({ok:true,status:200,headers:{get:()=>raw},json:async()=>payload()})});const value=await client.modelPerformance('all',{onDiagnostics:codes=>seen.push(codes)});assert.deepEqual(Object.keys(value),Object.keys(payload()));return seen;};
+test('request diagnostics are closed and separate from the v6 DTO',async()=>{
+  const run=async raw=>{const seen=[];const client=new LocalCompanionClient({fetchImpl:async()=>({ok:true,status:200,headers:{get:name=>name==='X-TiboTattle-Performance-Diagnostics'?raw:null},json:async()=>payload()})});const value=await client.modelPerformance('all',{onDiagnostics:codes=>seen.push(codes)});assert.deepEqual(Object.keys(value),Object.keys(payload()));return seen;};
   assert.deepEqual(await run('timing_scan_failed,timing_snapshot_write_failed'),[['timing_scan_failed','timing_snapshot_write_failed']]);
   assert.deepEqual(await run('timing_history_unavailable'),[['timing_history_unavailable']]);
   const sourceCodes=['timing_source_decode_failed','timing_source_read_failed','timing_source_limit','timing_source_unsupported'];
@@ -1065,4 +1101,183 @@ test('a failed first request still exposes its bounded diagnostic code without i
   assert.ok(dom.root.all().some(n=>n.textContent==='timing_parse_failed · request'));
   assert.equal(dom.root.all().some(n=>n.className==='performance-detail-row'&&n.children[0].textContent==='Speed measurements'),false);
   c.destroy();
+});
+
+test('source diagnostic headers are closed, bounded and separate from the measurement body', async () => {
+  const codes = ['recovery_source_missing', 'recovery_source_read_failed', 'recovery_source_not_discovered',
+    'source_identity_changed', 'source_truncated_during_read', 'source_grew_during_read',
+    'source_metadata_changed_during_read', 'source_changed_unknown'];
+  const run = async raw => {
+    const seen = [];
+    const client = new LocalCompanionClient({ fetchImpl: async () => ({ ok: true, status: 200,
+      headers: { get: name => name === 'X-TiboTattle-Performance-Source-Diagnostics' ? raw : '' },
+      json: async () => payload() }) });
+    const data = await client.modelPerformance('all', { onSourceDiagnostics: rows => seen.push(rows) });
+    assert.deepEqual(data, payload());
+    return seen;
+  };
+  assert.deepEqual(await run(null), [[]], 'old companions remain compatible');
+  const rows = codes.map((code, i) => ({ code, count: i + 1 }));
+  assert.deepEqual(await run(JSON.stringify(rows)), [rows]);
+  const valid = { code: 'source_grew_during_read', count: 1 };
+  for (const raw of ['{', 'null', '{}', ' '.repeat(1025),
+    ...[[valid, valid], [{ ...valid, path: 'synthetic-private-path' }], [{ count: 1 }],
+      [{ code: 'unknown', count: 1 }], ...[0, -1, 1.5, 1_000_000_001, '1', null].map(count => [{ ...valid, count }])]
+      .map(value => JSON.stringify(value))]) {
+    await assert.rejects(run(raw), { code: 'timing_contract_invalid' });
+  }
+});
+
+function sourceRecoveryHarness({ codes = ['timing_source_recovery_failed'],
+  details = [{ code: 'source_grew_during_read', count: 1 }], locale = 'zh-CN' } = {}) {
+  const dom = focusHarness(), state = { codes, details, data: payload(), error: null, calls: 0 };
+  const controller = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(state.data.end).toISOString() },
+    client: { modelPerformance: async (_, options) => {
+      state.calls++;
+      if (state.error) throw state.error;
+      options.onDiagnostics(state.codes); options.onSourceDiagnostics(state.details);
+      return { ...state.data, speedMode: options.speedMode };
+    } }, t: (key, values) => translate(key, values, locale) });
+  const status = () => dom.root.all().find(node => node.dataset.state);
+  const text = () => dom.root.all().map(node => node.textContent ?? '').join('\n');
+  return { ...dom, controller, state, status, text };
+}
+
+test('growth warnings retain charts, back off and clear unchanged measurements and old warnings on recovery', async () => {
+  const h = sourceRecoveryHarness(); h.show(); await h.controller.refresh();
+  assert.equal(h.status().dataset.state, 'retrying'); assert.equal(h.status().textContent, '正在重试');
+  assert.equal(h.root.all().find(node => node.className === 'performance-actions').children.length, 1);
+  assert.equal(h.find('cancel'), undefined); assert.equal(hasPanel(h), true);
+  h.find('measurements').listeners.click(); assert.match(h.text(), /source_grew_during_read · 1/);
+  for (const delay of [5000, 10000]) {
+    const timers = h.timerIds(); assert.equal(timers.length, 1); assert.equal(h.timerDelay(timers[0]), delay);
+    h.runTimer(timers[0]); await settle(); assert.equal(hasPanel(h), true);
+  }
+  h.state.codes = []; h.state.details = [];
+  h.runTimer(h.timerIds()[0]); await settle();
+  assert.equal(h.status(), undefined); assert.equal(h.timerIds().length, 0);
+  assert.doesNotMatch(h.text(), /source_grew_during_read|timing_source_recovery_failed/);
+  // A later independent incident gets a fresh budget.
+  h.state.codes = ['timing_source_recovery_failed'];
+  h.state.details = [{ code: 'source_grew_during_read', count: 1 }];
+  await h.controller.refresh(); assert.equal(h.timerDelay(h.timerIds()[0]), 5000);
+  h.controller.destroy();
+});
+
+test('persistent source changes exhaust four retries and expose the original error and source reason', async () => {
+  const h = sourceRecoveryHarness(); h.show(); await h.controller.refresh();
+  for (const delay of [5000, 10000, 20000, 30000]) {
+    assert.equal(h.timerIds().length, 1); assert.equal(h.timerDelay(h.timerIds()[0]), delay);
+    h.runTimer(h.timerIds()[0]); await settle();
+  }
+  assert.equal(h.state.calls, 5); assert.equal(h.timerIds().length, 0);
+  assert.equal(h.status().dataset.state, 'error'); assert.match(h.text(), /计时源恢复失败.*已达自动重试次数上限/);
+  assert.doesNotMatch(h.text(), /正在重试|等待日志稳定/); assert.equal(hasPanel(h), true);
+  h.find('measurements').listeners.click(); assert.match(h.text(), /source_grew_during_read · 1/);
+  h.find('retry').listeners.click(); await settle();
+  assert.equal(h.status().dataset.state, 'retrying'); assert.equal(h.timerDelay(h.timerIds()[0]), 5000);
+  h.controller.destroy();
+});
+
+test('missing, unreadable, replaced and truncated sources stay explicit and mixed errors never hide behind retrying', async () => {
+  for (const code of ['recovery_source_missing', 'recovery_source_read_failed', 'recovery_source_not_discovered',
+    'source_identity_changed', 'source_truncated_during_read']) {
+    const h = sourceRecoveryHarness({ details: [{ code: 'source_grew_during_read', count: 1 }, { code, count: 2 }] });
+    h.state.data = { ...h.state.data, collecting: true, stale: true };
+    h.show(); await h.controller.refresh();
+    assert.equal(h.status().dataset.state, 'error'); assert.equal(h.timerIds().length, 0);
+    assert.ok(h.text().includes(translate(`performance.source.${code}`, {}, 'zh-CN')));
+    assert.doesNotMatch(h.text(), /正在重试|等待日志稳定/); assert.equal(hasPanel(h), true);
+    h.controller.destroy();
+  }
+  const h = sourceRecoveryHarness({ codes: ['timing_source_recovery_failed', 'timing_source_decode_failed'] });
+  h.show(); await h.controller.refresh(); assert.equal(h.status().dataset.state, 'error');
+  assert.match(h.status().textContent, /压缩计时来源格式错误/);
+  assert.equal(h.timerIds().length, 0); h.controller.destroy();
+});
+
+test('an old companion recovery warning retries without inventing growth evidence or old measurements', async () => {
+  const h = sourceRecoveryHarness({ details: [] }); h.show(); await h.controller.refresh();
+  assert.equal(h.status().dataset.state, 'retrying'); assert.doesNotMatch(h.text(), /等待日志稳定/);
+  h.controller.destroy();
+  const cold = sourceRecoveryHarness(); cold.state.data = { ...cold.state.data, status: 'loading', models: [] };
+  cold.show(); await cold.controller.refresh(); assert.equal(hasPanel(cold), false);
+  assert.equal(cold.status().textContent, '正在重试'); assert.equal(cold.find('cancel'), undefined);
+  assert.doesNotMatch(cold.text(), /保留旧测量/);
+  cold.controller.destroy();
+});
+
+test('request and contract failures interrupt retries, remain explicit and keep the prior graphs', async () => {
+  for (const error of [new Error('synthetic network failure'), new SyntaxError('synthetic invalid JSON')]) {
+    const h = sourceRecoveryHarness(); h.show(); await h.controller.refresh(); h.state.error = error;
+    h.runTimer(h.timerIds()[0]); await settle();
+    assert.equal(h.status().dataset.state, 'error'); assert.equal(h.timerIds().length, 0);
+    assert.match(h.text(), error instanceof SyntaxError ? /响应解析失败/ : /请求失败/);
+    assert.doesNotMatch(h.text(), /正在重试/); assert.equal(hasPanel(h), true);
+    h.controller.destroy();
+  }
+});
+
+test('cancel, navigation, document hiding and destroy clear queued retries', async () => {
+  for (const stop of [h => h.controller.cancel(), h => h.navigate(false),
+    h => h.setDocumentHidden(true), h => h.controller.destroy()]) {
+    const h = sourceRecoveryHarness(); h.show(); await h.controller.refresh();
+    stop(h); assert.equal(h.timerIds().length, 0); await settle(); assert.equal(h.state.calls, 1);
+    h.controller.destroy();
+  }
+});
+
+test('a speed or exact-window change fences retry causes and starts a new budget', async () => {
+  for (const change of [h => h.find('mode-fast').listeners.click(), h => {
+    h.state.data = { ...h.state.data, end: h.state.data.end + 1000 };
+    h.controller.setReportingWindow({ period: 'all', startAt: null, endAt: new Date(h.state.data.end).toISOString() });
+  }]) {
+    const h = sourceRecoveryHarness(); h.show(); await h.controller.refresh();
+    const oldTimer = h.timerIds()[0]; h.state.codes = []; h.state.details = [];
+    change(h); await settle();
+    assert.equal(h.status(), undefined); assert.equal(h.timerIds().length, 0);
+    h.runTimer(oldTimer); await settle(); assert.equal(h.state.calls, 2);
+    assert.doesNotMatch(h.text(), /source_grew_during_read|正在重试/); h.controller.destroy();
+  }
+});
+
+test('revalidating before a queued retry runs does not consume its attempt budget', async () => {
+  const h = sourceRecoveryHarness(); h.show(); await h.controller.refresh();
+  for (let i = 0; i < 5; i++) {
+    await h.controller.refresh(); assert.equal(h.status().dataset.state, 'retrying');
+    assert.equal(h.timerIds().length, 1); assert.equal(h.timerDelay(h.timerIds()[0]), 5000);
+  }
+  h.controller.destroy();
+});
+
+test('cancelling an in-flight retry fences a client that ignores its abort signal', async () => {
+  const dom = focusHarness(), late = Promise.withResolvers(); let calls = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async (_, options) => {
+      options.onDiagnostics(['timing_source_recovery_failed']);
+      options.onSourceDiagnostics([{ code: 'source_grew_during_read', count: 1 }]);
+      return ++calls === 1 ? payload() : late.promise;
+    } }, t: (key, values) => translate(key, values, 'zh-CN') });
+  dom.show(); await c.refresh(); dom.runTimer(dom.timerIds()[0]); await settle();
+  assert.equal(dom.root.all().find(node => node.dataset.state).textContent, '正在重试');
+  assert.equal(dom.find('cancel'), undefined);
+  c.cancel(); late.resolve(payload()); await settle();
+  assert.equal(dom.timerIds().length, 0); assert.equal(hasPanel(dom), true);
+  assert.equal(dom.root.all().find(node => node.dataset.state).dataset.state, 'cancelled'); c.destroy();
+});
+
+test('malformed source diagnostics reject a retry rather than silently accepting fresh-looking measurements', async () => {
+  const dom = focusHarness(); let bad = false;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: new LocalCompanionClient({ fetchImpl: async () => ({ ok: true, status: 200,
+      headers: { get: name => name === 'X-TiboTattle-Performance-Diagnostics' ? 'timing_source_recovery_failed'
+        : bad ? '[{"code":"source_grew_during_read","count":1,"private":"omitted"}]'
+          : '[{"code":"source_grew_during_read","count":1}]' }, json: async () => payload() }) }),
+    t: (key, values) => translate(key, values, 'zh-CN') });
+  dom.show(); await c.refresh(); bad = true; dom.runTimer(dom.timerIds()[0]); await settle();
+  assert.equal(dom.timerIds().length, 0); assert.equal(hasPanel(dom), true);
+  assert.match(dom.root.all().find(node => node.dataset.state).textContent, /测量校验失败/); c.destroy();
 });

@@ -9,8 +9,8 @@ function validLease(value) {
 
 /**
  * Coordinate one renderer-owned refresh with Electron main. The local
- * companion still owns the operation itself; this bounded lease only prevents
- * the shell cadence from overlapping it and keeps that reservation recoverable.
+ * companion owns the operation and business schedule. This bounded lease
+ * preserves shell connection recovery while the renderer observes the run.
  */
 export function createElectronRefreshLease({
   bridge,

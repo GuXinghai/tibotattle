@@ -16,11 +16,38 @@ import {
   CODEX_SPEED_BASELINE_SCHEMA_VERSION,
   CodexSpeedBaselineError,
   codexServiceTierSpeedMode,
-  createCodexSpeedBaselineController,
+  createCodexSpeedBaselineController as createProductionController,
   declaredSpeedModeAt,
 } from "../src/codex-speed-baseline.js";
 
 const MAXIMUM_WINDOWS = 64;
+
+// These bookkeeping fixtures are seeded with Node filesystem operations,
+// which do not establish protected Windows DACLs. Inject the text-storage
+// port so ledger assertions exercise the seeded document; native protection
+// is covered separately by windows-owner-only-state-security.test.js.
+function createCodexSpeedBaselineController(options) {
+  return createProductionController({
+    ...options,
+    storage: {
+      async readSettingsText({ settingsFile, maximumBytes }) {
+        let text;
+        try { text = await readFile(settingsFile, "utf8"); }
+        catch (error) {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        }
+        assert.ok(Buffer.byteLength(text, "utf8") <= maximumBytes);
+        return text;
+      },
+      async writeSettingsText({ settingsFile, text, maximumBytes }) {
+        assert.ok(Buffer.byteLength(text, "utf8") <= maximumBytes);
+        await mkdir(dirname(settingsFile), { recursive: true });
+        await writeFile(settingsFile, text, "utf8");
+      },
+    },
+  });
+}
 
 async function configRoot(contents) {
   const root = await mkdtemp(join(tmpdir(), "codex-speed-baseline-ledger-"));

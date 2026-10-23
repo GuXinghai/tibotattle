@@ -63,7 +63,7 @@ test('the closed browser contract rejects malformed evidence and every new statu
  assert.equal(normalizeWeeklyApiIntervals(undefined).reason,'weekly_api_intervals_unavailable');
  assert.equal(normalizeWeeklyApiIntervals({rows:[],privatePath:'synthetic'}).reason,'weekly_api_validation_failed');
  for(const locale of SUPPORTED_LOCALES)for(const name of ['title','details','off','smoothing','reason.review_origin_unresolved',
-  'loading','updating','readFailed','failure.smoothing','failure.validation','failure.sourceUnavailable','failure.sourceMismatch','failure.stale','failure.resource','failure.pending','failure.projection']){
+  'loading','recalculating','updating','readFailed','failure.smoothing','failure.validation','failure.sourceUnavailable','failure.sourceMismatch','failure.stale','failure.resource','failure.pending','failure.projection']){
   const key=`allowance.interval.${name}`;assert.notEqual(translate(key,{code:'synthetic',value:30},locale),key);
  }
 });
@@ -95,12 +95,12 @@ test('loading, unavailable, failure and confirmed empty states never render fabr
  };
  check('loading','Loading interval data…',false);
  chart.update(data({projection:{status:'unavailable',reason:'weekly_api_source_pending',rows:[]}}));
- check('loading','Loading interval data…',false);
+ check('loading','Recalculating interval data; no previous chart is available to display.',false);
  chart.setLoadState('ready');
  check('unavailable','Interval data is unavailable for now',true);
  find('weekly-api-state-retry').onclick();assert.deepEqual(calls,['retry']);
  chart.setLoadState('error');check('error','Interval data could not be loaded',true);
- chart.setLoadState('loading');check('loading','Loading interval data…',false);
+ chart.setLoadState('loading');check('loading','Recalculating interval data; no previous chart is available to display.',false);
  chart.update(data({projection:{status:'unavailable',reason:'weekly_api_validation_failed',rows:[]}}));
  check('error','Interval validation failed',false);
  chart.setLoadState('ready');check('error','Interval validation failed',true);
@@ -128,6 +128,25 @@ test('saved language applies to loading and unavailable states before any data e
  assert.equal(find('weekly-api-sigma').children[0].textContent,'不平滑');
  chart.setLoadState('error');
  assert.equal(chart.root.children.at(-1).children[2].children[0].textContent,'无法读取区间数据');
+});
+
+test('pending recalculation without a prior curve stays explicit in every shipped locale',()=>{
+ const {chart,find,documentRef}=fixture();
+ for(const locale of SUPPORTED_LOCALES){
+  documentRef.documentElement.lang=locale;chart.setLoadState('loading');
+  for(const reason of ['weekly_api_source_pending','weekly_api_intervals_unavailable']){
+   chart.update(data({projection:{status:'unavailable',reason,rows:[]}}));
+   const canvas=chart.root.children.at(-1),panel=canvas.children[2];
+   assert.equal(panel.children[0].textContent,translate('allowance.interval.recalculating',{},locale));
+   assert.equal(canvas.children[0].children.length,0,'a retained summary cannot invent a curve or zero axis');
+   assert.equal(find('weekly-api-time').disabled,true);
+   assert.equal(chart.root.children[2].hidden,true,'no previous-report-retained notice accompanies an absent curve');
+  }
+ }
+ chart.setLoadState('ready');chart.update(data());
+ assert.equal(chart.root.dataset.state,'ready');
+ assert.equal(chart.root.children.at(-1).children[2].hidden,true);
+ assert.equal(find('weekly-api-time').disabled,false);
 });
 
 test('retained evidence stays selectable through updates and raw diagnostics stay out of the primary status',()=>{

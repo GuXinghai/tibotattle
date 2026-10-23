@@ -17,26 +17,25 @@ const STATE_SCHEMA="overview-workload-state-v3";
 
 // Private, bounded projection: account handles are compared here and never
 // returned. The comparison stops at a change or loss of established identity.
-export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs}) {
-  if(typeof stateFile!=="string"||!stateFile||!Number.isSafeInteger(fromMs)||!Number.isSafeInteger(nowMs)||fromMs>nowMs)
+export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs,historyFromMs=fromMs,signal=null}) {
+  if(typeof stateFile!=="string"||!stateFile||!Number.isSafeInteger(fromMs)||!Number.isSafeInteger(historyFromMs)
+    ||!Number.isSafeInteger(nowMs)||fromMs>nowMs||historyFromMs>nowMs)
     throw new TypeError("Invalid workload quota evidence input");
-  const observations=[],resetEvents=[];
+  signal?.throwIfAborted();
+  const observations=[],resetEvents=[],historyResetEvents=[];
   let scope=null,continuityThroughMs=null,count=0;
   const result=await forEachLocalCollectorRecord({stateFile,kinds:["codex_quota_snapshot"],orderBy:"observed_at",
     onRecord:async record=>{
       if(++count>100_000)throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
       if(count%256===0)await setImmediate();
+      signal?.throwIfAborted();
       const atMs=Date.parse(record.observedAt);
-      if(record.source!=="app_server_read"||!Number.isSafeInteger(atMs)||atMs<fromMs||atMs>nowMs)return;
+      if(record.source!=="app_server_read"||!Number.isSafeInteger(atMs)||atMs<Math.min(fromMs,historyFromMs)||atMs>nowMs)return;
       if(!Array.isArray(record.windows)||record.windows.length>256
         ||record.resetEvents!==undefined&&(!Array.isArray(record.resetEvents)||record.resetEvents.length>2304))
         throw Object.assign(new Error("quota_history_invalid"),{code:"quota_history_invalid"});
       const identity=record.accountScope?.status==="available"&&typeof record.accountScope.scopeId==="string"
         ?record.accountScope.scopeId:null;
-      if(scope!==null&&identity!==scope){continuityThroughMs??=atMs;return;}
-      if(identity===null)return;
-      scope??=identity;
-      if(continuityThroughMs!==null)return;
       const windows=[];
       for(const raw of Array.isArray(record.windows)?record.windows:[]){
         const q=quotaWindowProjection(raw);
@@ -44,18 +43,32 @@ export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs}) {
         const resetAtMs=Date.parse(q.resetAt);
         const value={atMs,usedPercent:q.usedPercent,resetAtMs,planType:q.planType,limitId:q.limitId,
           resetKey:`${resetAtMs}:${q.planType}:${q.limitId}`};
-        observations.push(value);windows.push(value);
-        if(observations.length>100_000)throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
+        windows.push(value);
       }
+      const events=[];
       for(const raw of Array.isArray(record.resetEvents)?record.resetEvents:[]){
         const event=normalizeQuotaResetEvent(raw);
         if(!event)throw Object.assign(new Error("quota_history_invalid"),{code:"quota_history_invalid"});
         if(event&&["scheduled_reset","unknown_reset","banked_reset_used"].includes(event.kind)
           &&event.provider==="openai_codex"&&event.limitId==="codex"&&event.windowDurationMins===10080
-          &&Date.parse(event.observedAt)===atMs&&windows.some(q=>q.planType===event.planType))resetEvents.push(event);
+          &&Date.parse(event.observedAt)===atMs&&windows.some(q=>q.planType===event.planType))events.push(event);
       }
+      // History reset evidence and this process's strict comparison have
+      // different ranges. Reading earlier history must not bind the startup
+      // comparison to a previous account or suppress its newer observations.
+      if(identity!==null&&atMs>=historyFromMs)historyResetEvents.push(...events);
+      if(historyResetEvents.length>100_000)
+        throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
+      if(atMs<fromMs)return;
+      if(scope!==null&&identity!==scope){continuityThroughMs??=atMs;return;}
+      if(identity===null)return;
+      scope??=identity;
+      if(continuityThroughMs!==null)return;
+      observations.push(...windows);resetEvents.push(...events);
+      if(observations.length>100_000||resetEvents.length>100_000)
+        throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
     }});
-  return {status:result.status,observations,resetEvents,continuityThroughMs};
+  return {status:result.status,observations,resetEvents,historyResetEvents,continuityThroughMs};
 }
 function validBaseline(b){return b===null||b&&Object.keys(b).length===5
   &&["atMs","usedPercent","resetAtMs","planType","limitId"].every(k=>Object.hasOwn(b,k))
@@ -102,7 +115,7 @@ export function workloadState(result){return{schemaVersion:STATE_SCHEMA,
     planType:result.comparison.planType,baseline:result.comparison.baseline},capacityHistory:result.capacityHistory};}
 
 const SAFE_ERRORS = new Set(["local_index_newer_version", "local_index_family_mismatch",
-  "local_index_unavailable", "price_missing", "numeric_invalid"]);
+  "local_index_unavailable", "price_missing", "numeric_invalid", "workload_context_too_large"]);
 function failure(code, previous, nowMs, liveQuota, stage) {
   const error = { code: SAFE_ERRORS.has(code) ? code : stage==="aggregation"?"aggregation_failed":"workload_read_failed", stage, retryable: true };
   const fallback=analyzeWorkload({nowMs,quota:liveQuota});
@@ -174,15 +187,20 @@ function completeWorkAncestry(database, rows, ancestors, beforeMs) {
 /** Read only committed content-free facts. A failure never erases last-good analytics. */
 export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], capacity = null,
   previous = null, storedState = null, liveSinceMs = nowMs, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
-  sourceFresh = false, declaredSpeedBaselines = [], quotaEvidence = null } = {}) {
+  sourceFresh = false, declaredSpeedBaselines = [], quotaEvidence = null, signal = null } = {}) {
   let database,stage="index";
   const liveQuota=liveWeeklyQuota(quotaWindows);
   try {
+    signal?.throwIfAborted();
     database = openLocalIndexStore(indexFile,{readOnly:true});
     return withReadSnapshot(database,({commitSeq})=>{
       const from = Math.max(0,nowMs-WORKLOAD_POLICY.historyMs);
       const comparisonFrom=Math.max(0,Math.min(nowMs,liveSinceMs));
-      const evidenceFrom=Math.min(from,comparisonFrom);
+      // One preceding weekly cycle closes intervals crossing the seven-day
+      // display boundary. A still older anchor is identity/context evidence,
+      // never proof that omitted usage was zero.
+      const evidenceFrom=Math.max(0,Math.min(from-WORKLOAD_POLICY.comparisonWindowMs
+        -WORKLOAD_POLICY.comparisonDeadlineUncertaintyMs,comparisonFrom));
       const current = quotaWindows.filter((q)=>Number(q.windowMinutes ?? q.windowDurationMinutes ?? q.durationMinutes)===10080
         && (q.limitId===undefined || q.limitId===null || q.limitId==="codex"))
         .sort((a,b)=>Date.parse(b.observedAt)-Date.parse(a.observedAt))[0];
@@ -193,15 +211,17 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         LEFT JOIN account_scope a ON a.id=u.account_scope_id`;
       const quotaRows = database.prepare(`${quotaSelect}
         WHERE q.duration_mins=10080 AND q.admission='admitted'
-        AND (q.observed_at_ms>=? OR q.resets_at_ms>=?) AND q.observed_at_ms<=? AND q.limit_id='codex' AND ${committedPredicate("q")}
-        ORDER BY q.observed_at_ms`).all(evidenceFrom,evidenceFrom,nowMs);
+        AND q.observed_at_ms>=? AND q.observed_at_ms<=? AND q.limit_id='codex' AND ${committedPredicate("q")}
+        ORDER BY q.observed_at_ms LIMIT 100001`).all(evidenceFrom,nowMs);
+      if(quotaRows.length>100_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
       // A preceding anchor establishes the visible era, without importing
       // future labels or rewriting any unknown historical source occurrence.
       const anchor=database.prepare(`SELECT MAX(q.observed_at_ms) AS at FROM quota_occurrence q
         WHERE q.duration_mins=10080 AND q.admission='admitted' AND q.limit_id='codex'
         AND q.plan_type IS NOT NULL AND q.plan_type<>'unknown' AND q.observed_at_ms<? AND ${committedPredicate('q')}`).get(evidenceFrom).at;
       if(anchor!==null)quotaRows.push(...database.prepare(`${quotaSelect} WHERE q.observed_at_ms=?
-        AND q.duration_mins=10080 AND q.admission='admitted' AND q.limit_id='codex' AND ${committedPredicate('q')}`).all(anchor));
+        AND q.duration_mins=10080 AND q.admission='admitted' AND q.limit_id='codex' AND ${committedPredicate('q')} LIMIT 100001`).all(anchor));
+      if(quotaRows.length>100_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
       const quota = quotaRows
         .map((q)=>({atMs:q.observed_at_ms,usedPercent:q.used_percent,
           resetAtMs:q.resets_at_ms,planType:q.plan_type??'unknown',limitId:'codex',accountKey:q.account_key||undefined,
@@ -213,11 +233,13 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
           resetAtMs,planType:current.planType??"unknown",limitId:"codex",resetKey:`${resetAtMs}:${current.planType??"unknown"}:codex`});
       }
       const pricer=createAccountingPricer();
-      const usage=[],pricingRecords=[];let pricingIssueCount=0;
+      const usage=[],pricingRecords=[];let pricingIssueCount=0,usageRows=0;
       for(const r of database.prepare(`SELECT u.*,m.model_id,t.codex_speed_mode,t.api_service_tier
         FROM usage_event u JOIN model m ON m.id=u.model_id JOIN tier_semantics t ON t.id=u.tier_id
         WHERE u.observed_at_ms>=? AND u.observed_at_ms<=? AND ${committedPredicate("u")}
         ORDER BY u.observed_at_ms,u.source_id,u.source_offset`).iterate(evidenceFrom,nowMs)) {
+        if(++usageRows>1_000_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
+        if(usageRows%1024===0)signal?.throwIfAborted();
         const record={observedAt:new Date(r.observed_at_ms).toISOString(),model:r.model_id,
           totalInputContextTokens:r.total_input_context,components:{input_uncached_tokens:r.tokens_in_uncached,
             input_cache_read_tokens:r.tokens_in_cache_read,input_cache_write_tokens:r.tokens_in_cache_write,
@@ -232,29 +254,35 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
           totalInputContextTokens:r.total_input_context});
         const priced=p.pricingCoverageStatus==="fully_priced"&&Number.isFinite(weighted.usd);
         usage.push({atMs:r.observed_at_ms,session:String(r.session_id),usd:weighted.usd,priced});
-        if(!priced){pricingIssueCount++;if(pricingRecords.length<2000)pricingRecords.push({at:record.observedAt,
+        if(!priced&&r.observed_at_ms>=from){pricingIssueCount++;if(pricingRecords.length<2000)pricingRecords.push({at:record.observedAt,
           model:p.model,reason:p.model==='unknown'?'model_unknown':'price_incomplete',tokens:p.totalTokens,
           inputUncached:r.tokens_in_uncached,cacheRead:r.tokens_in_cache_read,
           output:r.tokens_out_combined??(r.tokens_out_text===null||r.tokens_out_reasoning===null?null:r.tokens_out_text+r.tokens_out_reasoning)});}
       }
       const ancestors=workAncestors(database);
-      const workFrom=from-24*3600000;
+      const workFrom=Math.max(0,evidenceFrom-24*3600000);
       const workRows=database.prepare(`SELECT w.* FROM work_lifecycle_fact w
         WHERE w.observed_at_ms>=? AND w.observed_at_ms<=? AND ${committedPredicate("w")}
-        ORDER BY w.observed_at_ms,w.source_id,w.source_offset`).all(workFrom,nowMs);
+        ORDER BY w.observed_at_ms,w.source_id,w.source_offset LIMIT 100001`).all(workFrom,nowMs);
+      if(workRows.length>100_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
       const events=completeWorkAncestry(database,workRows,ancestors,workFrom)
         .map((e)=>({key:Buffer.from(e.task_key).toString("hex"),session:String(e.session_id),
           kind:e.kind,atMs:e.observed_at_ms,durationMs:e.duration_ms,ancestors:ancestors.get(String(e.session_id))??[]}));
       const selected=capacity?.status==="available"&&capacity.planScope?.planType===plan?capacity.scenarios?.[capacity.selectedScenario]:null;
       const previousState=previous??storedState;
-      const previousCapacity=previousState?.capacityHistory?.filter((c)=>c.planType===plan
-        &&validState({schemaVersion:STATE_SCHEMA,comparison:{startedAtMs:0,capacityUsd:null,planType:null,baseline:null},capacityHistory:[c]}))??[];
-      const history=[...previousCapacity];
+      // A display plan/window selects calculation inputs, not retained evidence.
+      const retainedHistory=previousState?.capacityHistory?.filter((c)=>
+        validState({schemaVersion:STATE_SCHEMA,comparison:{startedAtMs:0,capacityUsd:null,planType:null,baseline:null},capacityHistory:[c]}))??[];
+      const history=retainedHistory.filter(c=>c.planType===plan);
       if(selected && Number.isFinite(selected.medianCapacityUsd)) {
         const last=history.at(-1);
-        if(!last||last.usd!==selected.medianCapacityUsd||last.version!==selected.cohortId)
-          history.push({usd:selected.medianCapacityUsd,availableAtMs:Math.min(nowMs,Date.parse(capacity.computedAt)||nowMs),planType:plan,version:selected.cohortId,basisId:selected.basisId});
+        if(!last||last.usd!==selected.medianCapacityUsd||last.version!==selected.cohortId){
+          const entry={usd:selected.medianCapacityUsd,availableAtMs:Math.min(nowMs,Date.parse(capacity.computedAt)||nowMs),planType:plan,version:selected.cohortId,basisId:selected.basisId};
+          history.push(entry);retainedHistory.push(entry);
+        }
       }
+      if(retainedHistory.length>4096)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
+      retainedHistory.sort((a,b)=>a.availableAtMs-b.availableAtMs);
       history.sort((a,b)=>a.availableAtMs-b.availableAtMs);
       const before=history.filter(x=>x.availableAtMs<from).at(-1);
       const validHistory=[...(before?[before]:[]),...history.filter(x=>x.availableAtMs>=from)];
@@ -268,6 +296,7 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         resetKey:`${savedBaseline.resetAtMs}:${savedBaseline.planType}:${savedBaseline.limitId}`}:null;
       stage="aggregation";
       const state=analyzeWorkload({nowMs,events,usage,quota,estimationPlanType:plan,capacity:cap,capacityHistory:validHistory,liveSinceMs,sourceFresh,timeZone,
+        usageCoverageFromMs:evidenceFrom,quotaResetEvents:quotaEvidence?.historyResetEvents??quotaEvidence?.resetEvents??[],
         comparisonCapacityUsd,comparisonBaseline,
         comparisonQuota:quotaEvidence?.observations??[],comparisonResetEvents:quotaEvidence?.resetEvents??[],
         comparisonContinuityThroughMs:quotaEvidence?.continuityThroughMs??null,
@@ -281,16 +310,18 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         for(const key of ["actualPp","expectedPp"]){const known=previous.comparison[key];
           if(Number.isFinite(known)&&known>=0)state.comparison[key]=Math.max(known,state.comparison[key]??0);
         }
+        state.comparison.inferred ||= previous.comparison.inferred===true;
         state.comparison.coverage="partial";
       }
       state.comparison.planType=plan;
       const malformed=Number(database.prepare("SELECT COALESCE(SUM(count),0) AS n FROM source_diagnostic WHERE code='malformedWorkRecords'").get().n);
       if(malformed>0){state.errors.push({code:"work_record_unsupported",stage:"work",count:malformed});state.status="partial";}
       state.sourceGeneration=commitSeq;
-      state.capacityHistory=validHistory;
+      state.capacityHistory=retainedHistory;
       return state;
     });
   } catch(error) {
+    if(signal?.aborted)throw error;
     const value=failure(error?.code,previous,nowMs,liveQuota,stage);
     const newest=liveQuota.filter(q=>q.atMs<=nowMs).at(-1);
     if(newest&&(!previous?.allowance?.observedAt||newest.atMs>Date.parse(previous.allowance.observedAt))) {

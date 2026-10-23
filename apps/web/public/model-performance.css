@@ -30,6 +30,8 @@
 .performance-axis-line { stroke:var(--line); stroke-width:1; }
 .performance-date-grid { opacity:.35; }
 .performance-median-line { stroke-width:2; fill:none; }
+.performance-mean-line { stroke-width:2; stroke-dasharray:6 4; fill:none; pointer-events:none; }
+.performance-mean-point { pointer-events:none; }
 .performance-percentile-range { stroke-width:1; opacity:.15; pointer-events:none; }
 .performance-quartile-range { stroke-width:3; opacity:.2; pointer-events:none; }
 .performance-cursor { stroke:var(--muted); stroke-width:1; stroke-dasharray:3 4; pointer-events:none; }
@@ -39,6 +41,7 @@
 .performance-legend button[aria-pressed="false"] { opacity:.4; }
 .performance-key { display:inline-block; width:20px; background:currentColor; }
 .performance-key-median { height:2px; }
+.performance-key-mean { height:0; border-top:2px dashed currentColor; background:transparent; }
 .performance-key-inner { height:10px; opacity:.22; }
 .performance-key-outer { height:12px; opacity:.1; }
 .performance-empty { display:flex; min-height:180px; align-items:center; justify-content:center; margin:0; color:var(--muted); font-size:.9rem; }

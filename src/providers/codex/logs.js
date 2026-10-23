@@ -2,7 +2,7 @@ import { createCodexLogIngestion } from "./log-ingestion.js";
 import { createCodexLogParser } from "./log-parser.js";
 import { createCodexLogSources } from "./log-sources.js";
 
-export const CODEX_LOG_SCAN_VERSION = "codex-log-scan-v11";
+export const CODEX_LOG_SCAN_VERSION = "codex-log-scan-v13";
 
 const FILESYSTEM_METHODS = Object.freeze([
   "defaultCodexHome",
@@ -133,7 +133,7 @@ export {
   parseCodexRolloutFilename,
 } from "./log-sources.js";
 export { classifySessionSurface } from "./surface-classification.js";
-export { codexWorkLifecycle } from "./work-lifecycle.js";
+export { CODEX_WORK_LIFECYCLE_EVENT_TYPES, codexWorkLifecycle } from "./work-lifecycle.js";
 export { createResponseUsagePlan } from "./response-usage.js";
 export { projectCompactionUsageLine } from './compaction-usage-receipt.js';
 export { RESPONSE_MODEL_RECOVERY_VERSION } from './response-usage.js';

@@ -121,13 +121,13 @@ test("disposable Windows source is created with current-user owner and fixed err
 });
 
 test("packaged Windows timing smoke requires a complete ready source scan", () => {
-  const ready = { schemaVersion: 5, method: 5, speedMode: "standard", excludedUnknownTurns: 0,
+  const ready = { schemaVersion: 6, method: 5, speedMode: "standard", excludedUnknownTurns: 0,
     status: "ready", collecting: false,
     stale: false, period: "all", models: [{ id: "gpt-5.6-sol", turns: 1,
-      speed: [{ points: [{ median: 13.3 }] }], ttft: [{ median: 1 }] }],
+      speed: [{ points: [{ median: 13.3, mean: 13.3 }] }], ttft: [{ median: 1, mean: 1 }] }],
     historyProgress: { checked: 1, total: 1 } };
   assert.equal(verifyWindowsNormalCandidateModelPerformance(ready), true);
-  for (const value of [null, { ...ready, schemaVersion: 2 }, { ...ready, schemaVersion: 4 }, { ...ready, method: 3 },
+  for (const value of [null, { ...ready, schemaVersion: 2 }, { ...ready, schemaVersion: 4 }, { ...ready, schemaVersion: 5 }, { ...ready, method: 3 },
     { ...ready, speedMode: "fast" }, { ...ready, speedMode: undefined },
     { ...ready, excludedUnknownTurns: 1 }, { ...ready, excludedUnknownTurns: undefined },
     { ...ready, status: "unavailable" },
@@ -137,6 +137,8 @@ test("packaged Windows timing smoke requires a complete ready source scan", () =
     { ...ready, historyProgress: { checked: 0, total: 0 } },
     { ...ready, models: null }, { ...ready, models: [] },
     { ...ready, models: [{ ...ready.models[0], speed: [] }] },
+    { ...ready, models: [{ ...ready.models[0], speed: [{ points: [{ median: 13.3 }] }] }] },
+    { ...ready, models: [{ ...ready.models[0], ttft: [{ median: 1, mean: NaN }] }] },
     { ...ready, models: [{ ...ready.models[0], ttft: [] }] }]) {
     assert.equal(verifyWindowsNormalCandidateModelPerformance(value), false);
   }

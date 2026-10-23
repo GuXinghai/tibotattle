@@ -934,15 +934,18 @@ function buildWorkspaceApi(database, directory, {
         SELECT 1 FROM source_snapshots WHERE source_key = ? AND kind = ? AND snapshot_key = ? LIMIT 1
       `).get(sourceKey, kind, snapshotKey));
     },
-    sourceTierAt(sourceKey, timestampMs) {
-      if (!validSha256(sourceKey) || !Number.isSafeInteger(timestampMs)) fail("schema");
+    sourceTierAt(sourceKey, timestampMs, lineOrdinal = Number.MAX_SAFE_INTEGER) {
+      if (!validSha256(sourceKey) || !Number.isSafeInteger(timestampMs)
+          || !Number.isSafeInteger(lineOrdinal) || lineOrdinal < 1) fail("schema");
       const row = database.prepare(`
         SELECT tier_index, event_time_ms, line_ordinal, tier_state_json
         FROM source_tier_events
-        WHERE source_key = ? AND event_time_ms <= ?
+        WHERE source_key = ? AND line_ordinal <= ?
         ORDER BY event_time_ms DESC, line_ordinal DESC LIMIT 1
-      `).get(sourceKey, timestampMs);
-      return row ? {
+      `).get(sourceKey, lineOrdinal);
+      // Match the live reader's monotonically accepted setting state. A
+      // preceding future-dated setting cannot revive an older declaration.
+      return row && Number(row.event_time_ms) <= timestampMs ? {
         tierIndex: Number(row.tier_index),
         eventTimeMs: Number(row.event_time_ms),
         lineOrdinal: Number(row.line_ordinal),

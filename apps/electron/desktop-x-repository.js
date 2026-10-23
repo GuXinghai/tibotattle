@@ -31,20 +31,31 @@ function ids(value) {
   return value.map(id => { validateXId(id); if (found.has(id)) invalid(); found.add(id); return id; });
 }
 function emptySnapshot() {
-  return { version: 2, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: Object.fromEntries(X_TABS.map(tab => [tab, []])), notificationBaseline: { posts: { floor: null, seen: [] }, replies: { floor: null, seen: [] } } };
+  return { version: 3, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: Object.fromEntries(X_TABS.map(tab => [tab, []])), replyLists: {}, notificationBaseline: { posts: { floor: null, seen: [] }, replies: { floor: null, seen: [] } } };
 }
 function snapshot(value) {
-  if (!exact(value, ['version', 'settings', 'activePartition', 'authScope', 'posts', 'lists', 'notificationBaseline']) || ![1, 2].includes(value.version) || !Array.isArray(value.posts) || !exact(value.lists, X_TABS) || !exact(value.notificationBaseline, ['posts', 'replies'])) invalid();
+  if (!exact(value, ['version', 'settings', 'activePartition', 'authScope', 'posts', 'lists', ...(value?.version === 3 ? ['replyLists'] : []), 'notificationBaseline']) || ![1, 2, 3].includes(value.version) || !Array.isArray(value.posts) || !exact(value.lists, X_TABS) || !exact(value.notificationBaseline, ['posts', 'replies'])) invalid();
   const posts = value.posts.map(post => validateXPost(post));
   const postIds = new Set(posts.map(post => post.id));
   if (posts.length !== postIds.size) invalid();
   const lists = Object.fromEntries(X_TABS.map(tab => [tab, ids(value.lists[tab])]));
   if (Object.values(lists).some(list => list.some(id => !postIds.has(id)))) invalid();
-  return { version: 2, settings: validateXSettings(value.settings), activePartition: value.activePartition === null ? null : sessionId(value.activePartition), authScope: value.authScope === null ? null : sessionId(value.authScope), posts, lists, notificationBaseline: validateXNotificationBaseline(value.notificationBaseline, value.version) };
+  const replyLists = {};
+  if (value.version === 3) {
+    if (!plain(value.replyLists)) invalid();
+    const byId = new Map(posts.map(post => [post.id, post]));
+    for (const [parent, replies] of Object.entries(value.replyLists)) {
+      validateXId(parent); if (!postIds.has(parent)) invalid();
+      const ordered = ids(replies);
+      if (ordered.some(id => byId.get(id)?.replyTo !== parent)) invalid();
+      replyLists[parent] = ordered;
+    }
+  }
+  return { version: 3, settings: validateXSettings(value.settings), activePartition: value.activePartition === null ? null : sessionId(value.activePartition), authScope: value.authScope === null ? null : sessionId(value.authScope), posts, lists, replyLists, notificationBaseline: validateXNotificationBaseline(value.notificationBaseline, Math.min(value.version, 2)) };
 }
 function envelope(value) {
-  if (!exact(value, ['version', 'current', 'archives']) || ![1, 2].includes(value.version) || !Array.isArray(value.archives)) invalid();
-  return { version: 2, current: snapshot(value.current), archives: value.archives.map(snapshot) };
+  if (!exact(value, ['version', 'current', 'archives']) || ![1, 2, 3].includes(value.version) || !Array.isArray(value.archives)) invalid();
+  return { version: 3, current: snapshot(value.current), archives: value.archives.map(snapshot) };
 }
 function descriptor(value) {
   if (!exact(value, ['version', 'generation', 'chunks', 'bytes', 'sha256']) || value.version !== 1 || !UUID.test(value.generation) || !Number.isSafeInteger(value.chunks) || value.chunks < 1 || !Number.isSafeInteger(value.bytes) || value.bytes < 1 || value.chunks !== Math.ceil(value.bytes / CHUNK_BYTES) || !/^[0-9a-f]{64}$/.test(value.sha256)) invalid();
@@ -58,7 +69,7 @@ function cleanupRecord(value) {
   if (new Set(partitions).size !== partitions.length || new Set(pendingClear).size !== pendingClear.length || pendingClear.some(id => !partitions.includes(id))) invalid();
   return { version: 1, partitions, pendingClear };
 }
-const publicCache = value => JSON.stringify({ posts: value.posts, lists: value.lists });
+const publicCache = value => JSON.stringify({ posts: value.posts, lists: value.lists, replyLists: value.replyLists });
 
 /** Storage-neutral logic; production composition must use the branded factory below. */
 export function createXRepository({ storage, sessionPath, sessionHealth = async () => {} }) {
@@ -67,7 +78,7 @@ export function createXRepository({ storage, sessionPath, sessionHealth = async 
   let tail = Promise.resolve();
   const enqueue = action => { const result = tail.then(action); tail = result.catch(() => {}); return result; };
   const pointer = async () => { const value = await storage.readJson(POINTER); return value === null ? null : descriptor(value); };
-  const measure = value => { cacheBytes = [value.current, ...value.archives].reduce((sum, item) => sum + (item.posts.length ? Buffer.byteLength(JSON.stringify({ posts: item.posts, lists: item.lists })) : 0), 0); };
+  const measure = value => { cacheBytes = [value.current, ...value.archives].reduce((sum, item) => sum + (item.posts.length ? Buffer.byteLength(JSON.stringify({ posts: item.posts, lists: item.lists, replyLists: item.replyLists })) : 0), 0); };
   const exclusive = action => storage.withLease ? storage.withLease(action) : action();
   async function pendingSessions() {
     try { const value = await storage.readJson(SESSION_CLEANUP); return value === null ? { version: 1, partitions: [], pendingClear: [] } : cleanupRecord(value); }
@@ -107,7 +118,7 @@ export function createXRepository({ storage, sessionPath, sessionHealth = async 
   async function loadEnvelope() {
     for (let attempt = 0; attempt < 2; attempt++) {
       const selected = await pointer();
-      if (selected === null) { const value = { version: 2, current: emptySnapshot(), archives: [] }; measure(value); return value; }
+      if (selected === null) { const value = { version: 3, current: emptySnapshot(), archives: [] }; measure(value); return value; }
       try {
         const chunks = [];
         for (let index = 0; index < selected.chunks; index++) {
@@ -161,7 +172,7 @@ export function createXRepository({ storage, sessionPath, sessionHealth = async 
       if (!duplicateLogoutCache) durable.archives.push(old);
     }
     if (clearArchives) {
-      for (const archived of durable.archives) { archived.posts = []; archived.lists = Object.fromEntries(X_TABS.map(tab => [tab, []])); }
+      for (const archived of durable.archives) { archived.posts = []; archived.lists = Object.fromEntries(X_TABS.map(tab => [tab, []])); archived.replyLists = {}; }
     }
     durable.current = value;
     const previous = await pointer();
@@ -179,7 +190,7 @@ export function createXRepository({ storage, sessionPath, sessionHealth = async 
   return Object.freeze({
     read: () => enqueue(load),
     write: value => { const safe = snapshot(value); return enqueue(() => exclusive(() => commit(safe, true))); },
-    clearCache: () => enqueue(() => exclusive(async () => { const value = await load(); value.posts = []; value.lists = Object.fromEntries(X_TABS.map(tab => [tab, []])); return commit(value, false, true); })),
+    clearCache: () => enqueue(() => exclusive(async () => { const value = await load(); value.posts = []; value.lists = Object.fromEntries(X_TABS.map(tab => [tab, []])); value.replyLists = {}; return commit(value, false, true); })),
     getSessionPath: async id => sessionPath(sessionId(id)),
     checkSessionHealth: async id => sessionHealth(sessionId(id)),
     listSessionCleanup: () => enqueue(async () => { const { partitions, pendingClear } = await pendingSessions(); return clone({ partitions, pendingClear }); }),

@@ -1,19 +1,20 @@
 import { randomUUID } from 'node:crypto';
 import { createDesktopXPageAdapter } from './desktop-x-page-adapter.js';
 import { createDesktopXSessionHealth, sessionError } from './desktop-x-session-health.js';
-import { isXMediaUrl, isXPageUrl, normalizeXCookieImport, validateXId, validateXPost, validateXQuery, validateXSettings, validateXNotificationBaseline, X_DEFAULT_SETTINGS, X_NOTIFICATION_SEEN_LIMIT, X_RESOURCE_SCHEME, X_SESSION_ERRORS, X_TABS, xError } from './desktop-x-contract.js';
+import { isXMediaUrl, isXPageUrl, normalizeXCookieImport, validateXDetailQuery, validateXPost, validateXQuery, validateXSettings, validateXNotificationBaseline, X_DEFAULT_SETTINGS, X_NOTIFICATION_SEEN_LIMIT, X_RESOURCE_SCHEME, X_SESSION_ERRORS, X_TABS, X_LOGIN_STAGES, xError } from './desktop-x-contract.js';
 
-const safeErrors = new Set(['offline', 'expired', 'challenge', 'rate_limited', 'parser_changed', 'pagination_pending', 'cancelled', 'invalid_import', 'no_logged_in_session', 'import_failed', 'storage_unavailable', 'proxy_failed', ...X_SESSION_ERRORS]);
+const safeErrors = new Set(['offline', 'expired', 'challenge', 'rate_limited', 'parser_changed', 'pagination_pending', 'cancelled', 'invalid_import', 'no_logged_in_session', 'import_failed', 'import_expired', 'import_bridge_failed', 'login_failed', 'login_timeout', 'storage_unavailable', 'proxy_failed', ...X_SESSION_ERRORS]);
 const clone = value => structuredClone(value);
 const emptyLists = () => Object.fromEntries(X_TABS.map(tab => [tab, []]));
 const MAX_TIMEOUT = 2147483647;
 const pageSize = 30;
 
 /** Main-process X owner. No auth state or remote content reaches diagnostics. */
-export function createDesktopXService({ runtime, repository, importBridge, notify, onUpdate = () => {}, allowedOrigin = () => null, clock = () => Date.now(), timers = { setTimeout, clearTimeout }, adapterFactory = createDesktopXPageAdapter, loginTimeoutMs = 10 * 60 * 1000 } = {}) {
+export function createDesktopXService({ runtime, repository, importBridge, notify, onUpdate = () => {}, onDiagnostic = () => {}, allowedOrigin = () => null, clock = () => Date.now(), timers = { setTimeout, clearTimeout }, adapterFactory = createDesktopXPageAdapter, loginTimeoutMs = 10 * 60 * 1000 } = {}) {
   let disposed = false; let generation = 0; let loginGeneration = 0; let task; let taskKey; let taskGeneration; let taskAbort; let candidate; let active; let loginReturnAuth; let timer; let timerDue; let failures = 0; let saveQueue = Promise.resolve();
-  let state = { version: 2, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: emptyLists(), notificationBaseline: validateXNotificationBaseline({ posts: [], replies: [] }, 1) };
-  let status = { auth: 'disconnected', operation: 'idle', loginMethod: null, lastUpdated: null, error: null, nextRefreshAt: null, notificationsAvailable: typeof notify === 'function' };
+  let state = { version: 3, replyLists: {}, settings: { ...X_DEFAULT_SETTINGS }, activePartition: null, authScope: null, posts: [], lists: emptyLists(), notificationBaseline: validateXNotificationBaseline({ posts: [], replies: [] }, 1) };
+  // Reading saved state is part of checking login, not proof of disconnection.
+  let status = { auth: 'restoring', operation: 'idle', loginMethod: null, loginStage: null, loginFailureStage: null, lastUpdated: null, error: null, nextRefreshAt: null, notificationsAvailable: typeof notify === 'function' };
   let restorePromise; let settingsQueue = Promise.resolve(); let importGrantGeneration = null;
   let sessionFailure = null;
   let stateLoaded = false;
@@ -22,15 +23,16 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   const sessionHealth = createDesktopXSessionHealth({ runtime, repository, clock });
   const posts = new Map(); const cursors = new Map(); const resources = new Map(); const resourceKeys = new Map(); const details = new Set(); const exhausted = new Set(); const visitedTabs = new Set();
   const liveTabs = new Set(); const tabUpdatedAt = new Map(); const detailUpdatedAt = new Map();
-  const mediaRecovery = new Map();
+  const mediaRecovery = new Map(); const replyPages = new Map();
   const mediaTransfers = new Set();
+  const diagnose = (stage, error) => { try { onDiagnostic(stage, error); } catch { /* Diagnostics do not own login state. */ } };
   const getStatus = () => {
     const bridge = importBridge?.status?.() ?? null;
     // The existing UI polls status. Reconcile only the bridge's definite grant
     // expiry, without a timer, network inference, or recursive observer call.
     if (!disposed && !candidate && status.auth === 'authorizing' && status.loginMethod === 'session' && importGrantGeneration === loginGeneration && bridge?.code === 'import_ready' && bridge.pending === false && bridge.importing === false) {
       loginGeneration++; importGrantGeneration = null;
-      status = { ...status, auth: active ? loginReturnAuth ?? 'ready' : state.activePartition ? 'expired' : 'disconnected', operation: 'error', error: 'import_failed', loginMethod: null };
+      status = { ...status, auth: active ? loginReturnAuth ?? 'ready' : state.activePartition ? 'expired' : 'disconnected', operation: 'error', error: 'import_expired', loginMethod: null, loginStage: null, loginFailureStage: 'waiting_import' };
       loginReturnAuth = undefined;
       if (status.auth === 'ready') queueMicrotask(() => { if (!disposed && status.auth === 'ready' && status.loginMethod === null) schedule(); });
     }
@@ -40,6 +42,9 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   const update = patch => {
     if (X_SESSION_ERRORS.includes(patch.error)) sessionFailure = patch.error;
     status = { ...status, ...patch, ...(sessionFailure ? { error: sessionFailure, operation: 'error' } : {}) }; emit();
+  };
+  const loginProgress = (stage, attempt) => {
+    if (!disposed && attempt === loginGeneration && status.loginMethod === 'session' && X_LOGIN_STAGES.includes(stage)) update({ loginStage: stage, loginFailureStage: null, operation: 'idle', error: null });
   };
   const snapshot = () => ({ ...state, posts: [...posts.values()], settings: { ...state.settings }, lists: clone(state.lists), notificationBaseline: clone(state.notificationBaseline) });
   const persist = () => {
@@ -66,6 +71,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   function markFailure(error) {
     const code = safeErrors.has(error?.code) ? error.code : 'offline';
     if (code === 'cancelled') return;
+    status.loginStage = null; status.loginFailureStage = null;
     if (X_SESSION_ERRORS.includes(code)) { cancelTimer(); liveTabs.clear(); update({ operation: 'error', error: code }); return; }
     liveTabs.clear();
     failures = Math.min(2, failures + 1);
@@ -80,14 +86,14 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   }
   async function openSession(partitionId) {
     try { await repository.registerSession(partitionId); }
-    catch (error) { throw sessionError(error, 'session_persist_failed'); }
+    catch (error) { diagnose('session_persist', error); throw sessionError(error, 'session_persist_failed'); }
     let path;
     try { path = await repository.getSessionPath(partitionId); }
-    catch (error) { throw sessionError(error, 'session_permission_failed'); }
+    catch (error) { diagnose('session_open', error); throw sessionError(error, 'session_permission_failed'); }
     if (disposed) throw xError('cancelled');
     let session;
     try { session = runtime.session.fromPath(path, { cache: true }); }
-    catch (error) { throw sessionError(error, 'session_read_failed'); }
+    catch (error) { diagnose('session_read', error); throw sessionError(error, 'session_read_failed'); }
     await configureSession(session);
     if (disposed) throw xError('cancelled');
     return session;
@@ -120,6 +126,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
       if (acknowledge) await repository.completeSessionCleanup(partitionId);
       cleanupFailures.delete(partitionId);
     } catch (error) {
+      diagnose('session_clear', error);
       const failure = sessionError(error, 'session_clear_failed'); cleanupFailures.set(partitionId, failure);
       update({ error: failure.code, operation: 'error' }); throw failure;
     }
@@ -131,7 +138,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     context.adapter.dispose();
     if (!context.win.isDestroyed()) context.win.destroy();
     try { await sessionHealth.flush(context.session, context.partitionId); }
-    catch (error) { const failure = sessionError(error, clear ? 'session_clear_failed' : 'session_persist_failed'); update({ error: failure.code, operation: 'error' }); throw failure; }
+    catch (error) { diagnose('session_persist', error); const failure = sessionError(error, clear ? 'session_clear_failed' : 'session_persist_failed'); update({ error: failure.code, operation: 'error' }); throw failure; }
   }
   // Cancellation cannot become asynchronous. Cleanup failures remain visible
   // through the same sticky local error instead of an unhandled rejection.
@@ -139,7 +146,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     const work = destroyContext(context, true); cleanupTasks.add(work);
     return work.catch(error => { update({ error: error.code, operation: 'error' }); }).finally(() => { cleanupTasks.delete(work); });
   };
-  const stopTask = () => { generation++; taskAbort?.abort(); taskAbort = undefined; for (const controller of mediaTransfers) controller.abort(); mediaTransfers.clear(); if (active && !active.win.isDestroyed()) active.win.webContents.stop(); };
+  const stopTask = () => { generation++; replyPages.clear(); taskAbort?.abort(); taskAbort = undefined; for (const controller of mediaTransfers) controller.abort(); mediaTransfers.clear(); if (active && !active.win.isDestroyed()) active.win.webContents.stop(); };
   function registerResource(url, ownerId, role = null, trail = []) {
     if (!isXMediaUrl(url)) return undefined;
     const key = `${state.authScope ?? 'cache'}\n${ownerId}\n${url}\n${JSON.stringify([role, trail])}`;
@@ -223,7 +230,7 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
       }
       if (!tab || ['posts', 'replies'].includes(tab)) await notifyNew({ posts: combined }, tab === 'posts' ? ['posts'] : ['posts', 'replies']); else await persist();
       return true;
-    }, { key: `refresh:${tab ?? 'all'}` });
+    }, { key: `refresh:${tab ?? 'all'}`, scheduleAfter: !(reason === 'manual' && tab) });
     return { status: getStatus(), reason };
   }
   function cancelLogin() {
@@ -231,9 +238,17 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     importBridge?.cancel?.();
     const old = candidate; candidate = undefined;
     if (old) { old.cancelled = true; timers.clearTimeout(old.timer); old.context.win.hide(); if (old.context !== active) void discardContext(old.context); }
-    update({ auth: active ? loginReturnAuth ?? 'ready' : state.activePartition ? 'expired' : 'disconnected', loginMethod: null, operation: 'idle', error: null }); loginReturnAuth = undefined;
+    update({ auth: active ? loginReturnAuth ?? 'ready' : state.activePartition ? 'expired' : 'disconnected', loginMethod: null, loginStage: null, loginFailureStage: null, operation: 'idle', error: null }); loginReturnAuth = undefined;
     if (active) schedule();
     return getStatus();
+  }
+  function failLogin(error, attempt, fallback = 'import_failed') {
+    if (disposed || attempt !== loginGeneration) return;
+    const code = safeErrors.has(error?.code) ? error.code : fallback;
+    const auth = active ? loginReturnAuth ?? 'ready' : state.activePartition ? 'expired' : 'disconnected';
+    loginReturnAuth = undefined;
+    update({ auth, loginMethod: null, loginFailureStage: code === 'cancelled' ? null : status.loginStage, loginStage: null, operation: code === 'cancelled' ? 'idle' : 'error', error: code === 'cancelled' ? null : code });
+    if (auth === 'ready') schedule();
   }
   function promote(context, attempt) {
     const work = promoteCandidate(context, attempt); promotionWork = work;
@@ -242,12 +257,13 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
   async function promoteCandidate(context, attempt) {
     await requireLoadedState();
     if (disposed || attempt !== loginGeneration || candidate?.context !== context) throw xError('cancelled');
+    loginProgress('saving', attempt);
     context.authenticationWrite = (async () => { await sessionHealth.verify(context.session, context.partitionId); await sessionHealth.checkpoint(context.session, context.partitionId); })();
     await context.authenticationWrite;
     if (disposed || attempt !== loginGeneration || candidate?.context !== context) throw xError('cancelled');
     const oldActive = active; const oldState = snapshot();
     state.activePartition = context.partitionId; state.authScope = randomUUID(); state.notificationBaseline = validateXNotificationBaseline({ posts: [], replies: [] }, 1);
-    posts.clear(); state.posts = []; state.lists = emptyLists();
+    posts.clear(); state.posts = []; state.lists = emptyLists(); state.replyLists = {};
     const restorePrevious = () => { const settings = state.settings; state = { ...oldState, settings }; posts.clear(); for (const post of oldState.posts) posts.set(post.id, post); };
     try { await persist(); } catch { restorePrevious(); throw xError('storage_unavailable'); }
     if (disposed || attempt !== loginGeneration) { if (state.activePartition === context.partitionId) { restorePrevious(); await persist(); } throw xError('cancelled'); }
@@ -259,24 +275,36 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     context.win.hide(); sessionFailure = null;
     if (oldActive && oldActive !== context) await discardContext(oldActive);
     else if (oldState.activePartition && oldState.activePartition !== context.partitionId) await clearPartition(oldState.activePartition);
-    update({ auth: 'ready', operation: 'idle', loginMethod: null, error: null }); schedule();
+    update({ auth: 'ready', operation: 'idle', loginMethod: null, loginStage: status.loginMethod === 'session' ? 'complete' : null, loginFailureStage: null, error: null }); schedule();
     queueMicrotask(() => { void refresh({ reason: 'login' }); });
     return getStatus();
   }
   async function awaitAuthentication(context, attempt, { navigate = true } = {}) {
     if (navigate) {
+      loginProgress('connecting', attempt);
       try { await context.win.loadURL('https://x.com/home'); }
-      catch { throw xError(disposed || attempt !== loginGeneration ? 'cancelled' : 'offline'); }
+      catch (cause) { const error = xError(disposed || attempt !== loginGeneration ? 'cancelled' : 'offline'); error.cause = cause; throw error; }
     }
+    loginProgress('verifying', attempt);
     const start = clock();
+    let verificationFailure;
     while (!disposed && attempt === loginGeneration && candidate?.context === context && clock() - start < loginTimeoutMs) {
       try {
         const check = await context.adapter.inspect();
+        if (disposed || attempt !== loginGeneration || candidate?.context !== context) throw xError('cancelled');
         if (check.accountMenu) return await promote(context, attempt);
-      } catch (error) { if (X_SESSION_ERRORS.includes(error?.code) || error?.code === 'storage_unavailable' || error?.code === 'cancelled') throw error; if (error.code === 'challenge') update({ auth: 'challenge', operation: 'idle', error: 'challenge' }); }
+      } catch (error) {
+        if (disposed || attempt !== loginGeneration || candidate?.context !== context) throw xError('cancelled');
+        if (X_SESSION_ERRORS.includes(error?.code) || error?.code === 'storage_unavailable' || error?.code === 'cancelled') { if (error?.code !== 'cancelled') diagnose('login_verify', error); throw error; }
+        if (!['expired', 'challenge'].includes(error?.code)) verificationFailure = error;
+        if (error.code === 'challenge') { loginProgress('challenge', attempt); update({ auth: 'challenge', operation: 'idle', error: 'challenge' }); }
+      }
       await new Promise(resolve => { const handle = timers.setTimeout(resolve, 1000); handle?.unref?.(); });
     }
-    throw xError(attempt === loginGeneration ? 'import_failed' : 'cancelled');
+    const failure = xError(attempt === loginGeneration ? 'login_timeout' : 'cancelled');
+    if (verificationFailure) failure.cause = verificationFailure;
+    if (failure.code === 'login_timeout') diagnose('login_timeout', failure);
+    throw failure;
   }
   async function startCandidate(attempt, show) {
     const context = await createContext(randomUUID(), show);
@@ -290,20 +318,20 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     if (!['web', 'session'].includes(method)) throw xError('invalid_login_method');
     if (method === 'web' && status.auth === 'challenge' && candidate?.context) {
       candidate.context.win.show();
-      update({ auth: 'authorizing', loginMethod: 'web', operation: 'idle', error: null });
+      update({ auth: 'authorizing', loginMethod: status.loginMethod ?? 'web', operation: 'idle', error: null });
       return getStatus();
     }
     const challengeContext = method === 'web' && status.auth === 'challenge' ? active : undefined;
     const previousAuth = ['expired', 'challenge'].includes(status.auth) ? status.auth : 'ready';
     cancelLogin(); stopTask(); cancelTimer(); const attempt = ++loginGeneration;
     loginReturnAuth = previousAuth;
-    update({ auth: 'authorizing', operation: 'idle', loginMethod: method, error: null });
+    update({ auth: 'authorizing', operation: 'idle', loginMethod: method, loginStage: method === 'session' ? 'checking_bridge' : null, loginFailureStage: null, error: null });
     if (method === 'session') {
-      try { const bridge = await importBridge?.begin?.(); if (!bridge) throw xError('import_failed'); if (attempt === loginGeneration && bridge.code === 'import_ready' && bridge.pending === true) importGrantGeneration = attempt; return { ...getStatus(), bridge }; } catch { if (attempt === loginGeneration) update({ auth: active ? 'ready' : 'disconnected', error: 'import_failed', loginMethod: null }); return getStatus(); }
+      try { const bridge = await importBridge?.begin?.(); if (!bridge) throw xError('import_failed'); if (attempt === loginGeneration && !disposed) { if (bridge.code === 'import_ready' && bridge.pending === true) importGrantGeneration = attempt; loginProgress('waiting_import', attempt); if (bridge.code === 'bridge_unavailable') update({ operation: 'error', error: 'import_bridge_failed', loginFailureStage: 'checking_bridge' }); } return { ...getStatus(), bridge }; } catch (error) { diagnose('login_bridge', error); failLogin(error, attempt); return getStatus(); }
     }
     void (async () => {
       try { const context = challengeContext ?? await startCandidate(attempt, true); if (challengeContext) { candidate = { attempt, context }; context.win.show(); } await awaitAuthentication(context, attempt, { navigate: !challengeContext }); }
-      catch (error) { if (attempt === loginGeneration && !disposed) { const old = candidate; candidate = undefined; if (old && old.context !== active) await discardContext(old.context); else old?.context.win.hide(); update({ auth: active ? 'ready' : 'disconnected', operation: 'idle', loginMethod: null, error: safeErrors.has(error.code) ? error.code : 'import_failed' }); if (active) schedule(); } }
+      catch (error) { if (error?.code !== 'cancelled') diagnose('login_web', error); if (attempt === loginGeneration && !disposed) { const old = candidate; candidate = undefined; if (old && old.context !== active) await discardContext(old.context); else old?.context.win.hide(); failLogin(error, attempt, 'login_failed'); } }
     })();
     return getStatus();
   }
@@ -311,12 +339,14 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     await requireLoadedState();
     if (disposed || status.loginMethod !== 'session' || status.auth !== 'authorizing' || candidate) throw xError('import_not_requested');
     const attempt = loginGeneration;
-    // Revalidate trusted bridge output at the session mutation boundary.
-    const wire = { version: 1, type: 'x-cookie-import', cookies: cookieSetters.map(cookie => ({ domain: cookie.domain ?? new URL(cookie.url).hostname, hostOnly: !Object.hasOwn(cookie, 'domain'), httpOnly: cookie.httpOnly, name: cookie.name, path: cookie.path, sameSite: cookie.sameSite, secure: cookie.secure, session: !Object.hasOwn(cookie, 'expirationDate'), value: cookie.value, ...(Object.hasOwn(cookie, 'expirationDate') ? { expirationDate: cookie.expirationDate } : {}) })) };
-    const cookies = normalizeXCookieImport(wire, clock() / 1000); wire.cookies.length = 0;
-    let context;
+    let context; let cookies = [];
     try {
+      loginProgress('validating', attempt);
+      const wire = { version: 1, type: 'x-cookie-import', cookies: cookieSetters.map(cookie => ({ domain: cookie.domain ?? new URL(cookie.url).hostname, hostOnly: !Object.hasOwn(cookie, 'domain'), httpOnly: cookie.httpOnly, name: cookie.name, path: cookie.path, sameSite: cookie.sameSite, secure: cookie.secure, session: !Object.hasOwn(cookie, 'expirationDate'), value: cookie.value, ...(Object.hasOwn(cookie, 'expirationDate') ? { expirationDate: cookie.expirationDate } : {}) })) };
+      cookies = normalizeXCookieImport(wire, clock() / 1000); wire.cookies.length = 0;
+      loginProgress('preparing', attempt);
       context = await startCandidate(attempt, false);
+      loginProgress('writing', attempt);
       for (const cookie of cookies) { if (attempt !== loginGeneration || disposed || permit?.isCurrent?.() === false) throw xError('cancelled'); try { context.authenticationWrite = context.session.cookies.set(cookie); await context.authenticationWrite; } catch (error) { throw sessionError(error, 'session_write_failed'); } }
       const actual = await sessionHealth.readCookies(context.session, { domain: 'x.com' });
       if (!cookies.every(cookie => actual.some(item => item.name === cookie.name && item.path === cookie.path && item.value === cookie.value && item.secure === cookie.secure && item.httpOnly === cookie.httpOnly && item.sameSite === cookie.sameSite && item.hostOnly === !Object.hasOwn(cookie, 'domain') && (!Object.hasOwn(cookie, 'expirationDate') || Math.abs(item.expirationDate - cookie.expirationDate) < 2)))) throw xError('session_write_failed');
@@ -325,12 +355,13 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
       // bridge has a short transport timeout; only the UI check can promote.
       const deadline = timers.setTimeout(() => { if (attempt === loginGeneration && candidate?.context === context) context.win.show(); }, 12000); deadline?.unref?.();
       void awaitAuthentication(context, attempt).catch(async error => {
+        if (error?.code !== 'cancelled') diagnose('login_import', error);
         if (candidate?.context === context) candidate = undefined;
         if (active !== context) await discardContext(context);
-        if (attempt === loginGeneration && !disposed) { update({ auth: active ? loginReturnAuth ?? 'ready' : 'disconnected', loginMethod: null, error: safeErrors.has(error.code) ? error.code : 'import_failed' }); loginReturnAuth = undefined; if (active) schedule(); }
+        failLogin(error, attempt);
       }).finally(() => { timers.clearTimeout(deadline); });
       return { ok: true, code: 'verification_pending' };
-    } catch (error) { cookies.length = 0; if (candidate?.context === context) candidate = undefined; if (context && active !== context) await discardContext(context); if (attempt === loginGeneration && !disposed) { update({ auth: active ? 'ready' : 'disconnected', loginMethod: null, error: safeErrors.has(error.code) ? error.code : 'import_failed' }); if (active) schedule(); } throw xError(safeErrors.has(error.code) ? error.code : 'import_failed'); }
+    } catch (error) { if (error?.code !== 'cancelled') diagnose('login_import', error); cookies.length = 0; if (candidate?.context === context) candidate = undefined; if (context && active !== context) await discardContext(context); failLogin(error, attempt); const failure = xError(safeErrors.has(error.code) ? error.code : 'import_failed'); failure.cause = error; throw failure; }
   }
   async function listPosts(query = {}) {
     const { tab, cursor } = validateXQuery(query); await ready;
@@ -354,24 +385,46 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     const updatedAt = tabUpdatedAt.get(tab) ?? null;
     return { items, nextCursor: next, hasMore: Boolean(next), source: liveTabs.has(tab) ? 'live' : 'cache', status: { ...getStatus(), lastUpdated: updatedAt }, updatedAt };
   }
-  async function getPost({ id } = {}) {
-    validateXId(id); await ready;
+  async function getPost(query = {}) {
+    const { id, cursor, force } = validateXDetailQuery(query); await ready;
+    if (cursor && replyPages.get(id)?.cursor !== cursor && replyPages.get(id)?.previousCursor !== cursor) throw xError('invalid_cursor');
+    const replayed = cursor && replyPages.get(id)?.previousCursor === cursor;
     const detailAge = clock() - Date.parse(detailUpdatedAt.get(id) ?? '');
     let failed = false; let error = null;
-    if (active && status.auth === 'ready' && (!details.has(id) || !posts.get(id)?.complete || !Number.isFinite(detailAge) || detailAge >= 60000)) {
+    if (active && status.auth === 'ready' && !replayed && (force || cursor || !replyPages.has(id) || !details.has(id) || !posts.get(id)?.complete || !Number.isFinite(detailAge) || detailAge >= 60000)) {
       const result = await runTask(async (signal, token) => {
         try {
-          const result = await active.adapter.load({ id, signal }); if (!current(token)) throw xError('cancelled');
+          if (cursor && replyPages.get(id)?.cursor !== cursor) throw xError('invalid_cursor');
+          const knownReplies = state.replyLists[id] ?? [...posts.values()].filter(post => post.replyTo === id).map(post => post.id);
+          const knownReplyIds = new Set(knownReplies);
+          const result = await active.adapter.load({ id, signal, ...(cursor ? { more: true, knownReplies } : {}) }); if (!current(token)) throw xError('cancelled');
           cacheResults(result); if (!posts.has(id)) throw xError('parser_changed');
-          await persist(); details.add(id); detailUpdatedAt.set(id, new Date(clock()).toISOString()); return true;
+          if (cursor && !result.exhausted && !result.posts.some(post => post.replyTo === id && !knownReplyIds.has(post.id))) throw xError('pagination_pending');
+          const previousOrder = state.replyLists[id];
+          const incomingOrder = result.posts.filter(post => post.replyTo === id).map(post => post.id);
+          state.replyLists[id] = [...new Set([...(cursor ? previousOrder ?? knownReplies : []), ...incomingOrder])];
+          try { await persist(); } catch (failure) {
+            if (current(token)) { if (previousOrder) state.replyLists[id] = previousOrder; else delete state.replyLists[id]; }
+            throw failure;
+          }
+          if (!current(token)) throw xError('cancelled');
+          replyPages.delete(id); replyPages.set(id, { cursor: result.exhausted ? null : randomUUID(), previousCursor: cursor ?? null, exhausted: result.exhausted === true });
+          if (replyPages.size > 64) replyPages.delete(replyPages.keys().next().value);
+          details.add(id); detailUpdatedAt.set(id, new Date(clock()).toISOString()); return true;
         } catch (failure) { error = safeErrors.has(failure?.code) ? failure.code : 'offline'; throw failure; }
-      }, { key: `detail:${id}` });
+      }, { key: `detail:${id}:${cursor ?? (force ? 'refresh' : 'head')}`, scheduleAfter: false });
       failed = result !== true;
     }
-    const post = dto(posts.get(id)); const replies = [...posts.values()].filter(value => value.replyTo === id).sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt)).map(value => dto(value));
+    const post = dto(posts.get(id));
+    // Preserve the adapter's timeline order per discussion; the retained post
+    // archive is not the currently displayed reply ranking. Legacy caches have
+    // no order metadata and remain readable until a fresh detail establishes it.
+    const replyIds = state.replyLists[id] ?? [...posts.values()].filter(value => value.replyTo === id).map(value => value.id);
+    const replies = replyIds.map(replyId => dto(posts.get(replyId))).filter(Boolean);
     const updatedAt = detailUpdatedAt.get(id) ?? null;
     const source = !failed && details.has(id) && status.auth === 'ready' ? 'live' : 'cache';
-    return { post, replies, source, outcome: failed ? 'failed' : source, error: failed ? error ?? 'offline' : null, status: { ...getStatus(), lastUpdated: updatedAt }, updatedAt };
+    const page = replyPages.get(id); const nextCursor = active && status.auth === 'ready' ? page?.cursor ?? null : null;
+    return { post, replies, nextCursor, hasMore: Boolean(nextCursor), repliesExhausted: page?.exhausted === true, source, outcome: failed ? 'failed' : source, error: failed ? error ?? 'offline' : null, status: { ...getStatus(), lastUpdated: updatedAt }, updatedAt };
   }
   async function applySettings(patch) {
     await requireLoadedState(); const next = { ...state.settings, ...validateXSettings(patch, true) }; const previous = state.settings;
@@ -405,10 +458,10 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
     try { await persist(); } catch (error) { state.activePartition = oldPartition; state.authScope = oldScope; state.notificationBaseline = oldBaseline; const failure = sessionError(error, 'session_persist_failed'); markFailure(failure); throw failure; }
     try { if (partitionId) await repository.completeSessionCleanup(partitionId); await Promise.allSettled([...cleanupTasks]); if (cleanupFailures.size) throw cleanupFailures.values().next().value; }
     catch (error) { const failure = sessionError(error, 'session_clear_failed'); markFailure(failure); throw failure; }
-    sessionFailure = null; update({ auth: 'disconnected', operation: 'idle', error: null, loginMethod: null }); return getStatus();
+    sessionFailure = null; update({ auth: 'disconnected', operation: 'idle', error: null, loginMethod: null, loginStage: null, loginFailureStage: null }); return getStatus();
   }
   async function clearCache() {
-    await requireLoadedState(); stopTask(); posts.clear(); state.posts = []; state.lists = emptyLists(); resources.clear(); resourceKeys.clear(); cursors.clear(); details.clear(); exhausted.clear(); liveTabs.clear(); tabUpdatedAt.clear(); detailUpdatedAt.clear();
+    await requireLoadedState(); stopTask(); posts.clear(); state.posts = []; state.lists = emptyLists(); state.replyLists = {}; resources.clear(); resourceKeys.clear(); cursors.clear(); details.clear(); exhausted.clear(); liveTabs.clear(); tabUpdatedAt.clear(); detailUpdatedAt.clear();
     await saveQueue.catch(() => {}); await repository.clearCache(); await persist(); update({ ...(status.auth === 'restoring' && active ? { auth: 'ready' } : {}), operation: 'idle', error: null }); schedule(); return getStatus();
   }
   async function readPlaylist(response) {
@@ -589,13 +642,14 @@ export function createDesktopXService({ runtime, repository, importBridge, notif
       const saved = await repository.read(); if (disposed) return;
       if (saved) {
         const settings = { ...X_DEFAULT_SETTINGS, ...validateXSettings(saved.settings) };
-        const baseline = validateXNotificationBaseline(saved.notificationBaseline, saved.version ?? 1);
-        const savedPosts = (saved.posts ?? []).map(validateXPost);
-        state = { ...state, ...saved, version: 2, settings, notificationBaseline: baseline }; for (const post of savedPosts) posts.set(post.id, post);
+        const baseline = validateXNotificationBaseline(saved.notificationBaseline, Math.min(saved.version ?? 1, 2));
+        const savedPosts = (saved.posts ?? []).map(post => validateXPost(post));
+        state = { ...state, ...saved, version: 3, replyLists: saved.replyLists ?? {}, settings, notificationBaseline: baseline }; for (const post of savedPosts) posts.set(post.id, post);
       }
       stateLoaded = true;
       await drainSessionCleanup(); if (disposed) return;
       if (state.activePartition) queueMicrotask(() => { restorePromise = restore(); });
+      else update({ auth: 'disconnected' });
       emit();
     } catch (error) { update({ auth: 'disconnected', operation: 'error', error: X_SESSION_ERRORS.includes(error?.code) ? error.code : 'storage_unavailable' }); }
   })();

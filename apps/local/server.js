@@ -24,6 +24,7 @@ import {
   LOCAL_COMPANION_SCHEMA_VERSION,
   LocalCompanionDataStore,
   buildLocalCompanionSnapshot,
+  readLocalCompanionQuota,
 } from "../../src/local-companion-data.js";
 import {
   resolveLocalLegacyReportReadPath,
@@ -33,6 +34,7 @@ import {createRuntimeModelEvidenceCapture} from '../../src/local-index-runtime-m
 import {
   createModelPerformanceController,
 } from "./model-performance-controller.js";
+import { MODEL_PERFORMANCE_SOURCE_DIAGNOSTIC_HEADER, modelPerformanceSourceDiagnosticHeader } from "./model-performance-snapshots.js";
 import {
   createCodexSpeedBaselineController,
 } from "../../src/codex-speed-baseline.js";
@@ -145,11 +147,13 @@ export function createCachedLocalUnifiedProjectionReader({
     options.indexFile, options.declaredSpeedBaselines ?? [],
     options.includeWorkUsage === true, options.exactWindow === true, options.codexHome ?? null, options.secretFile ?? null,
   ]);
-  // A completed full result stays valid for exactly the publication it was
-  // built from and within its proven time-membership bound.
+  // The database proof covers the companion calculations only. Work usage
+  // also reads external repository and thread metadata, so it can share an
+  // in-flight build but must not reuse a completed result under this proof.
   const validCached = (options, key, fingerprint) => {
     const nowMs = options.nowMs;
-    return cached && key === cached.key && fingerprint === cached.generationFingerprint
+    return !options.includeWorkUsage && cached
+      && key === cached.key && fingerprint === cached.generationFingerprint
       && (!options.exactWindow || nowMs === cached.projectedAtMs)
       && Number.isFinite(nowMs) && nowMs >= cached.projectedAtMs && nowMs < cached.validUntilMs
       ? cached.projection
@@ -181,7 +185,7 @@ export function createCachedLocalUnifiedProjectionReader({
     // Exact timestamps can share immediately. Different timestamps use the
     // finished cache only after its time-membership proof has completed.
     const buildKey = JSON.stringify([key, expectedFingerprint, nowMs]);
-    const earlier = [...pending.values()].find(item => item.key === key
+    const earlier = !options.includeWorkUsage && [...pending.values()].find(item => item.key === key
       && expectedFingerprint !== null && item.fingerprint === expectedFingerprint
       && item.nowMs < nowMs && !item.controller.signal.aborted);
     if (earlier) {
@@ -197,8 +201,7 @@ export function createCachedLocalUnifiedProjectionReader({
         const projection = await reader(options, { ...controls, signal: selected.controller.signal });
         const companion = projection?.companion ?? projection;
         const generationFingerprint = companion?.generation?.fingerprint;
-        if (companion?.status === "available"
-            && (!options.includeWorkUsage || projection?.workUsage?.status === "available")
+        if (!options.includeWorkUsage && companion?.status === "available"
             && /^generation-v2-[0-9a-f]{64}$/u.test(generationFingerprint ?? "")
             && Number.isFinite(nowMs)) {
           const validUntilMs = await validUntil({
@@ -988,6 +991,10 @@ function createPreparedLocalCompanionServer({
   },
   dataStore = new LocalCompanionDataStore({
     snapshotFile: statePaths.authoritativeDashboardSnapshotFile,
+    quotaReader: (options) => readLocalCompanionQuota({
+      root: resourceRoot, collectorStateFile: statePaths.collectorStateFile,
+      ...options,
+    }),
     builder: async ({
       purpose = "full",
       signal = null,
@@ -995,6 +1002,8 @@ function createPreparedLocalCompanionServer({
       previousWorkload = null,
       workloadSourceFresh = false,
       workloadErrors = [],
+      onTiming = null,
+      monotonicClock = undefined,
     } = {}) => buildLocalCompanionSnapshot({
       root: resourceRoot,
       collectorStateFile: statePaths.collectorStateFile,
@@ -1011,6 +1020,8 @@ function createPreparedLocalCompanionServer({
       workloadErrors:[...workloadErrors,...(runtimeModelEvidence.status().errorCode
         ?[{code:runtimeModelEvidence.status().errorCode,stage:'index'}]:[])],
       signal,
+      onTiming,
+      monotonicClock,
       allowDevelopmentArtifactFallback:
         environment.USAGE_MONITOR_DEVELOPMENT_ARTIFACT_FALLBACK === "1",
       // Timestamped declared baselines. They fill only the turns the rollout
@@ -1192,6 +1203,8 @@ function createPreparedLocalCompanionServer({
           overviewScheduler.start();
           snapshotState = { status: "ready", errorCode: null };
           announceSnapshotOutcome();
+          // Last-good is readable before the one lifecycle startup intent.
+          void requestStartupRefresh();
         } catch (error) {
           snapshotState = {
             status: "failed",
@@ -1240,7 +1253,7 @@ function createPreparedLocalCompanionServer({
     clock,
     // Five hours of refresh_resource_limited loops once left zero local
     // trail: the terminal classification lived only in this controller's
-    // in-memory state. Every terminal refresh failure now files one bounded,
+    // in-memory state. Every settled failed or degraded refresh files one bounded,
     // rate-limited diagnostics note — codes, step, and timestamp only.
     onTerminalFailure: createTerminalRefreshFailureRecorder({
       recordNote: recordDiagnosticNote,
@@ -1258,8 +1271,40 @@ function createPreparedLocalCompanionServer({
 
   const configuredRefreshInterval = environment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS;
   const intervalSeconds = configuredRefreshInterval === undefined ? 300 : Number(configuredRefreshInterval);
+  const configuredRefreshPause = environment.USAGE_MONITOR_REFRESH_PAUSED;
+  if (configuredRefreshPause !== undefined && !["true", "false"].includes(configuredRefreshPause)) throw new TypeError("refresh pause is invalid");
+  const refreshPaused = configuredRefreshPause === "true";
   if (!validOverviewRefreshIntervalSeconds(intervalSeconds)) throw new TypeError("refresh interval is invalid");
-  const overviewScheduler = createOverviewRefreshScheduler({ refresh, onError, clock, intervalSeconds });
+  const canAutomaticallyRefresh = async () => {
+    const onboarding = projectLocalOnboarding(await onboardingProvider());
+    return !shutdownRequested && onboarding.status === "ready"
+      && onboarding.capabilities.explicitRefresh;
+  };
+  let startupRefreshChecked = false;
+  const requestStartupRefresh = async () => {
+    if (startupRefreshChecked) return;
+    startupRefreshChecked = true;
+    try {
+      if (!await canAutomaticallyRefresh() || overviewScheduler.status().paused) return;
+      const overview = dataStore.getOverview();
+      const now = clock();
+      const fresh = (value, maximumAge) => {
+        const observed = typeof value === "string" ? Date.parse(value) : NaN;
+        return Number.isFinite(observed) && now >= observed && now - observed < maximumAge;
+      };
+      const quotaFresh = Array.isArray(overview?.quotaWindows) && overview.quotaWindows.length > 0
+        && overview.quotaWindows.every(window => fresh(window.observedAt,
+          (intervalSeconds === -1 ? 300 : intervalSeconds) * 1_000));
+      const usageFresh = overview?.accounting?.generationMatched === true
+        && overview?.timeline?.history?.source === "unified_local_index"
+        && ["complete", "partial"].includes(overview.timeline.history.status)
+        && fresh(overview.timeline.history.generatedAt, 60 * 60_000)
+        && !["unavailable", "stale", undefined].includes(overview?.workload?.status);
+      if (!quotaFresh || !usageFresh) overviewScheduler.submit({ reason: "startup" });
+    } catch { onError("overview_refresh_startup_check_failed"); }
+  };
+  const overviewScheduler = createOverviewRefreshScheduler({ refresh, onError, clock, intervalSeconds, paused: refreshPaused,
+    canAutomaticallyRefresh });
   const workUsage = createWorkUsageService({ build: workUsageBuild, enrich: workUsageEnrich,
     snapshotStore: createWorkUsageSnapshotStore({
       snapshotFile: join(stateRoot, "work-usage-snapshot.json"),
@@ -1533,6 +1578,8 @@ function createPreparedLocalCompanionServer({
           const snapshot = await readModelPerformance(period, { speedMode, ...(endAt === null ? {} : { endAt }) });
           const diagnostics = modelPerformanceController?.diagnostics() ?? [];
           if (diagnostics.length) response.setHeader('X-TiboTattle-Performance-Diagnostics', diagnostics.join(','));
+          const sourceDetails = modelPerformanceSourceDiagnosticHeader(modelPerformanceController?.sourceDiagnostics() ?? []);
+          if (sourceDetails !== null) response.setHeader(MODEL_PERFORMANCE_SOURCE_DIAGNOSTIC_HEADER, sourceDetails);
           send(response, 200, snapshot);
         } catch {
           sendError(response, 503, "model_performance_unavailable");
@@ -1609,30 +1656,19 @@ function createPreparedLocalCompanionServer({
           response,
           "refresh_not_authorized",
         )) return;
-        if (!refresh.start({ mode: "detailed" })) {
-          // Keep the terminal receipt's opaque run identifier available to a
-          // first-party native caller that joined an already-running explicit
-          // refresh. It contains no account or evidence data and lets the
-          // caller reject a later, unrelated terminal receipt.
-          send(response, 409, {
-            schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
-            error: { code: "refresh_in_progress" },
-            refresh: refresh.getStatus(),
-          });
-          return;
-        }
-        send(response, 202, {
+        const { refresh: actualRefresh, ...receipt } = overviewScheduler.submit({ mode: "detailed" });
+        send(response, receipt.started ? 202 : 200, {
           schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
-          refresh: refresh.getStatus(),
+          request: receipt, refresh: actualRefresh,
         });
-        overviewScheduler.observe();
         return;
       }
       if (path === "/api/local/refresh/overview") {
         if (request.method !== "POST") { sendError(response,405,"method_not_allowed"); return; }
         if (!await authorizeLocalMutation(request,response,"refresh_not_authorized")) return;
-        const accepted=overviewScheduler.request();
-        send(response,accepted?202:200,{schemaVersion:LOCAL_COMPANION_SCHEMA_VERSION,refresh:refresh.getStatus()});
+        const { refresh: actualRefresh, ...receipt } = overviewScheduler.submit();
+        send(response, receipt.started ? 202 : 200, {schemaVersion:LOCAL_COMPANION_SCHEMA_VERSION,
+          request:receipt,refresh:actualRefresh});
         return;
       }
       if (path === "/api/local/refresh/quick") {
@@ -1645,17 +1681,10 @@ function createPreparedLocalCompanionServer({
           response,
           "refresh_not_authorized",
         )) return;
-        if (!refresh.start({ mode: "quick" })) {
-          send(response, 409, {
-            schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
-            error: { code: "refresh_in_progress" },
-            refresh: refresh.getStatus(),
-          });
-          return;
-        }
-        send(response, 202, {
+        const { refresh: actualRefresh, ...receipt } = overviewScheduler.submit({ mode: "quick" });
+        send(response, receipt.started ? 202 : 200, {
           schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
-          refresh: refresh.getStatus(),
+          request: receipt, refresh: actualRefresh,
         });
         return;
       }
@@ -1673,8 +1702,10 @@ function createPreparedLocalCompanionServer({
           sendError(response, 409, "refresh_not_running");
           return;
         }
+        overviewScheduler.observe();
         send(response, 202, {
           schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
+          request: { started: false, joined: true, pending: false },
           refresh: refresh.getStatus(),
         });
         return;
@@ -1762,6 +1793,7 @@ function createPreparedLocalCompanionServer({
     dataStore,
     refresh,
     setRefreshIntervalSeconds: (seconds) => overviewScheduler.setIntervalSeconds(seconds),
+    setRefreshPaused: (paused) => overviewScheduler.setPaused(paused),
     [PARENT_WATCHDOG_PID]: parentWatchdogPid,
     async initialize() {
       await acquireInstanceLock();
@@ -1875,6 +1907,7 @@ if (process.argv[1]
     const detachRefreshInterval = typeof process.send === "function"
       ? attachOverviewRefreshIntervalChannel({ channel: process, scheduler: {
         setIntervalSeconds: app.setRefreshIntervalSeconds,
+        setPaused: app.setRefreshPaused,
       } }) : () => {};
     app.server.once("close", detachRefreshInterval);
     process.stdout.write(`USAGE_MONITOR_READY http://${app.host}:${app.port}/\n`);

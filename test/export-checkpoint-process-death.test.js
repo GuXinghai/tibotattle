@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { localExportSourcePipeline, localExportWorkspace } from
   "../src/local-node-runtime.js";
 import { stableJson } from "../src/storage.js";
@@ -17,7 +18,7 @@ const START_AT = "2026-07-24T11:00:00.000Z";
 const END_AT = "2026-07-24T13:00:00.000Z";
 const CREATED_AT = "2026-07-24T13:00:00.000Z";
 const PRIVATE_CANARY = "PROCESS_DEATH_PRIVATE_PROMPT_DO_NOT_EXPORT";
-const WORKER = new URL("../scripts/test-fixtures/checkpoint-crash-worker.js", import.meta.url);
+const WORKER = fileURLToPath(new URL("../scripts/test-fixtures/checkpoint-crash-worker.js", import.meta.url));
 
 function cumulativeUsage(total) {
   return {
@@ -31,7 +32,7 @@ function cumulativeUsage(total) {
 }
 
 function runWorker(environment) {
-  return spawnSync(process.execPath, [WORKER.pathname], {
+  return spawnSync(process.execPath, [WORKER], {
     cwd: process.cwd(),
     env: { ...process.env, ...environment },
     encoding: "utf8",
@@ -41,7 +42,7 @@ function runWorker(environment) {
 
 function killAfterCommittedAcknowledgement(environment) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [WORKER.pathname], {
+    const child = spawn(process.execPath, [WORKER], {
       cwd: process.cwd(),
       env: { ...process.env, ...environment },
       stdio: ["ignore", "pipe", "pipe"],

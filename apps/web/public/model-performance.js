@@ -21,6 +21,13 @@ const PERIOD_CACHE_TTL_MS = 300_000;
 // while the document is visible instead of giving up after ten seconds.
 const PRELOAD_MAX_ATTEMPTS = 24;
 const preloadRetryDelay = attempt => Math.min(30_000, 5_000 * 2 ** attempt);
+// Source recovery has its own budget: it must not spend the cold-history
+// polling budget or turn a persistent warning into endless foreground work.
+// Span the worker's one-minute rediscovery cadence while keeping every gap
+// below its one-minute idle lease. Reads do not force a history scan.
+const SOURCE_RETRY_DELAYS = [5_000, 10_000, 20_000, 30_000];
+const RETRYABLE_SOURCE_CHANGES = ['source_grew_during_read',
+  'source_metadata_changed_during_read', 'source_changed_unknown'];
 const SPEED_METHOD = "speed";
 const SPEED_MODES = ["standard", "fast", "ultrafast"];
 const MODEL_NAMES = Object.freeze({
@@ -42,7 +49,7 @@ export { reportingRequestPeriod } from "./dashboard-ui.js";
 /** A closed, bounded display contract: never pass arbitrary source text to DOM. */
 export function normalizeModelPerformance(value) {
   if (!exact(value, ["schemaVersion", "method", "status", "collecting", "stale", "updatedAt", "period", "interval", "start", "end", "historyProgress", "speedMode", "excludedUnknownTurns", "models"])
-      || value.schemaVersion !== 5 || value.method !== 5
+      || value.schemaVersion !== 6 || value.method !== 5
       || !SPEED_MODES.includes(value.speedMode) || !count(value.excludedUnknownTurns)
       || !["ready", "loading", "unavailable"].includes(value.status)
       || typeof value.collecting !== "boolean" || typeof value.stale !== "boolean" || !PERIODS.includes(value.period)
@@ -59,10 +66,10 @@ export function normalizeModelPerformance(value) {
     if (!Array.isArray(points) || points.length > 2048) return false;
     let previous = -1, total = 0;
     for (const point of points) {
-      if (!exact(point, ["at", "n", "p10", "p25", "median", "p75", "p90"]) || !timestamp(point.at)
+      if (!exact(point, ["at", "n", "mean", "p10", "p25", "median", "p75", "p90"]) || !timestamp(point.at)
           || point.at <= previous || point.at > value.end || (value.start !== null && point.at < value.start - step)
           || !count(point.n) || point.n < 1 || !Number.isFinite(point.median) || point.median < 0
-          || point.median > 1e9) return false;
+          || point.median > 1e9 || !Number.isFinite(point.mean) || point.mean < 0 || point.mean > 1e9) return false;
       if (point.n < 5 ? [point.p10, point.p25, point.p75, point.p90].some(value => value !== null)
         : ![point.p10, point.p25, point.p75, point.p90].every(Number.isFinite)
           || point.p10 < 0 || point.p10 > point.p25 || point.p25 > point.median
@@ -182,10 +189,18 @@ export function mountModelPerformance(options = {}) {
   let reportingWindow = sharedReporting ? normalizeReportingWindow(options.reportingWindow) : null;
   let modelId = Object.hasOwn(MODEL_NAMES, saved.model) ? saved.model : null;
   let speedMode = SPEED_MODES.includes(saved.speedMode) ? saved.speedMode : "standard";
-  let diagnostics = [], failureCode = null, pendingAttempts = 0;
+  let diagnostics = [], sourceDiagnostics = [], failureCode = null, pendingAttempts = 0;
+  let sourceRetryKey = null, sourceRetryAttempts = 0, retrying = false, retryExhausted = false;
   const pendingResult = () => (payload?.status === 'loading' || payload?.collecting)
     && !diagnostics.some(code => code === 'timing_worker_failed' || code === 'timing_projection_failed');
   const diagnosticsByKey = new Map();
+  const sourceDiagnosticsByKey = new Map();
+  const resetSourceRetry = () => {
+    sourceRetryKey = null; sourceRetryAttempts = 0; retrying = false; retryExhausted = false;
+  };
+  const recoverableSourceWarning = () => diagnostics.includes('timing_source_recovery_failed')
+    && diagnostics.every(code => code === 'timing_source_recovery_failed')
+    && sourceDiagnostics.every(row => RETRYABLE_SOURCE_CHANGES.includes(row.code));
   let payload = null, loading = false, failed = false, cancelled = false, request = 0, timer = null;
   let retainedWindowKey = null;
   let retainedWindowUnavailable = false;
@@ -277,7 +292,7 @@ export function mountModelPerformance(options = {}) {
     const svg = svgElement("svg", { viewBox: `0 0 ${width} 256`, role: "group", "aria-label": translate(metric) });
     formatters();
     const { start, end } = domain;
-    const scale = performanceYScale(points.map(point => point.p90 ?? point.median));
+    const scale = performanceYScale(points.flatMap(point => [point.p90 ?? point.median, point.mean]));
     const axisNumber = new Intl.NumberFormat(locale(), { maximumFractionDigits: metric === "latency" ? Math.min(20, scale.digits) : 0 });
     const plotLeft = 50, plotRight = width - 14, plotWidth = plotRight - plotLeft;
     const x = value => plotLeft + Math.max(0, Math.min(1, (value - start) / Math.max(1, end - start))) * plotWidth;
@@ -309,7 +324,7 @@ export function mountModelPerformance(options = {}) {
     const percentileValues = point => point.p10 === null ? translate("percentilesUnavailable") : translate("percentileValues", {
       p10: metricNumber(point.p10, metric), p25: metricNumber(point.p25, metric), p75: metricNumber(point.p75, metric), p90: metricNumber(point.p90, metric),
     });
-    const formatPoint = (point) => translate("point", { date: fullDateFormat.format(point.at), method: translate(metric), median: metricNumber(point.median, metric), percentiles: percentileValues(point), count: number(point.n) });
+    const formatPoint = (point) => translate("point", { date: fullDateFormat.format(point.at), method: translate(metric), median: metricNumber(point.median, metric), mean: number(point.mean), percentiles: percentileValues(point), count: number(point.n) });
     const cursor = svgElement("line", { x1: 0, x2: 0, y1: 24, y2: 214, class: "performance-cursor", visibility: "hidden" });
     const markers = [];
     for (const item of series) {
@@ -332,6 +347,9 @@ export function mountModelPerformance(options = {}) {
         }
         if (layers.median) svg.append(svgElement("path", { d: curve(a, b, "median"), fill: "none", stroke: color,
           class: `performance-median-line${segment.dashed ? " performance-median-line-gap" : ""}` }));
+        if (layers.mean) svg.append(svgElement("path", {
+          d: `M${x(a.at)},${y(a.mean)} L${x(b.at)},${y(b.mean)}`, fill: "none", stroke: color, class: "performance-mean-line",
+        }));
       }
       for (const point of item.points) {
         const cx = x(point.at), cy = y(point.median);
@@ -343,6 +361,11 @@ export function mountModelPerformance(options = {}) {
         marker.append(svgElement("circle", {
           cx, cy, r: 4,
           fill: point.n < 5 ? "var(--surface-raised)" : color, stroke: color, "stroke-width": 1.8, visibility: layers.median ? 'visible' : 'hidden',
+        }));
+        if (layers.mean) marker.append(svgElement("rect", {
+          x: cx - 3, y: y(point.mean) - 3, width: 6, height: 6,
+          fill: point.n < 5 ? "var(--surface-raised)" : color, stroke: color, "stroke-width": 1.5,
+          class: "performance-mean-point",
         }));
         if (point.p10 !== null && layers.outer) svg.append(svgElement("line", { x1: cx, x2: cx, y1: y(point.p10), y2: y(point.p90), stroke: color, class: "performance-percentile-range" }));
         if (point.p10 !== null && layers.inner) svg.append(svgElement("line", { x1: cx, x2: cx, y1: y(point.p25), y2: y(point.p75), stroke: color, class: "performance-quartile-range" }));
@@ -374,7 +397,8 @@ export function mountModelPerformance(options = {}) {
       const matches = series.flatMap((item, i) => {
         const point = byDate[i].get(at);
         if (!point) return [];
-        highlights[i].setAttribute("cx", x(at)); highlights[i].setAttribute("cy", y(point.median)); highlights[i].setAttribute("visibility", "visible");
+        highlights[i].setAttribute("cx", x(at)); highlights[i].setAttribute("cy", y(layers.median ? point.median : point.mean));
+        highlights[i].setAttribute("visibility", layers.median || layers.mean ? "visible" : "hidden");
         return [{ point, method: item.method }];
       });
       tooltip.replaceChildren(element("strong", "performance-tooltip-date", fullDateFormat.format(at)));
@@ -385,6 +409,8 @@ export function mountModelPerformance(options = {}) {
         const unit = translate(metric === "latency" ? "latencyShortUnit" : "speedShortUnit");
         row.append(element("span", "performance-tooltip-method", method === "ttft" ? translate("latency") : translate("medianP50")),
           element("strong", "performance-tooltip-value", `${metricNumber(point.median, metric)} ${unit}`));
+        row.append(element("span", "", translate("mean")),
+          element("strong", "performance-tooltip-value", `${number(point.mean)} ${unit}`));
         const distribution = element("div", "performance-tooltip-percentiles");
         if (point.p10 === null) distribution.append(element("span", "performance-tooltip-detail", 'P10 / P25 / P75 / P90 —'));
         else for (const [label, value] of [["P90", point.p90], ["P75", point.p75], ["P25", point.p25], ["P10", point.p10]]) {
@@ -421,7 +447,7 @@ export function mountModelPerformance(options = {}) {
   }
   let dialog = null, dialogBody = null, dialogTitle = null, dialogView = null, dialogPage = 0, dialogOpener = null;
   let pageContent = null;
-  const layers = { median: true, inner: true, outer: true };
+  const layers = { median: true, mean: true, inner: true, outer: true };
   const button = (label, key, action, className = 'performance-text-button') => {
     const node = element('button', className, label); node.type = 'button';
     node.dataset.performanceFocus = key; node.addEventListener('click', action); return node;
@@ -485,6 +511,7 @@ export function mountModelPerformance(options = {}) {
       kv(translate('unknownTurns'), payload?.status === 'ready' ? number(payload.excludedUnknownTurns) : '—');
       if (payload?.historyProgress) kv(translate('historyProgress'), `${number(payload.historyProgress.checked)} / ${number(payload.historyProgress.total)}`);
       for (const code of diagnostics) kv(translate(`error.${code}`), `${code} · ${runtimeStage(code)}`);
+      for (const { code, count } of sourceDiagnostics) kv(translate(`source.${code}`), `${code} · ${number(count)}`);
       if (failed && failureCode && !diagnostics.includes(failureCode)) kv(translate(`error.${failureCode}`), `${failureCode} · ${runtimeStage(failureCode)}`);
     } else {
       const points = [...pointsFor(model, dialogView)].reverse(), pages = Math.max(1, Math.ceil(points.length / 10));
@@ -494,11 +521,11 @@ export function mountModelPerformance(options = {}) {
       dialogBody.append(context);
       const wrap = element('div', 'performance-detail-table'), table = element('table');
       const thead = element('thead'), header = element('tr');
-      for (const key of [translate('date'), translate('sampleTurns'), 'P10', 'P25', 'P50', 'P75', 'P90']) header.append(element('th', '', key));
+      for (const key of [translate('date'), translate('sampleTurns'), translate('mean'), 'P10', 'P25', 'P50', 'P75', 'P90']) header.append(element('th', '', key));
       thead.append(header); const tbody = element('tbody');
       for (const point of points.slice(dialogPage * 10, dialogPage * 10 + 10)) {
         const tr = element('tr');
-        for (const value of [fullDateFormat.format(point.at), number(point.n), ...['p10', 'p25', 'median', 'p75', 'p90'].map(key => point[key] === null ? '—' : number(point[key]))]) tr.append(element('td', '', value));
+        for (const value of [fullDateFormat.format(point.at), number(point.n), ...['mean', 'p10', 'p25', 'median', 'p75', 'p90'].map(key => point[key] === null ? '—' : number(point[key]))]) tr.append(element('td', '', value));
         tbody.append(tr);
       }
       table.append(thead, tbody); wrap.append(table); dialogBody.append(wrap);
@@ -523,7 +550,7 @@ export function mountModelPerformance(options = {}) {
       const periods = element('div', 'segmented-control performance-periods');
       for (const value of STANDALONE_PERIODS) {
         const b = button(translate(value === 'all' ? 'all' : `days${value}`), `period-${value}`, () => {
-          if (period === value) return; closeDetails(); selectedInterval = null; pendingAttempts = 0;
+          if (period === value) return; closeDetails(); selectedInterval = null; pendingAttempts = 0; resetSourceRetry();
           period = value; payload = cachedPayload(value); remember(); render(); refresh();
         }); b.setAttribute('aria-pressed', String(period === value)); periods.append(b);
       }
@@ -544,28 +571,31 @@ export function mountModelPerformance(options = {}) {
     for (const value of SPEED_MODES) {
       const b = button(translate(value), `mode-${value}`, () => {
         if (value === speedMode) return;
-        closeDetails(); selectedInterval = null; speedMode = value; pendingAttempts = 0;
+        closeDetails(); selectedInterval = null; speedMode = value; pendingAttempts = 0; resetSourceRetry();
         request++; scopeGeneration++; cancelPending(); cancelPreloadWaits();
         preloadPromise = null; preloadComplete = false; foregroundKey = null;
         windowRef.clearTimeout(timer); timer = null; retainedWindowKey = null; retainedWindowUnavailable = false;
-        payload = cachedPayload(selectedRequestPeriod()); diagnostics = [];
+        payload = cachedPayload(selectedRequestPeriod());
         loading = false; failed = false; cancelled = false; scopeUnavailable = false; remember(); render(); refresh();
       }); b.setAttribute('aria-pressed', String(value === speedMode)); modes.append(b);
     }
-    const details = button(translate('measurements'), 'measurements', () => openDetails('measurements', 'measurements')); details.disabled = !payload && !failed && !diagnostics.length;
+    const details = button(translate('measurements'), 'measurements', () => openDetails('measurements', 'measurements')); details.disabled = !payload && !failed && !diagnostics.length && !sourceDiagnostics.length;
     toolbar.append(select, modes, details); append(toolbar);
-    const state = cancelled ? 'cancelled' : failed || diagnostics.length ? 'error' : retainedWindowUnavailable ? 'unavailable'
+    const state = cancelled ? 'cancelled' : retrying ? 'retrying' : failed || diagnostics.length || sourceDiagnostics.length ? 'error' : retainedWindowUnavailable ? 'unavailable'
       : payload?.status === 'unavailable' ? 'unavailable' : payload?.stale ? 'stale' : loading && !payload ? 'loading'
       : payload?.collecting || payload?.status === 'loading' ? 'updating' : sharedReporting && !reportingWindow ? 'waiting' : '';
     if (state) {
       const actions = element('div', 'performance-actions'), status = element('p', 'performance-status'); status.setAttribute('role', 'status'); status.dataset.state = state;
-      const code = failed ? failureCode : diagnostics[0];
+      const code = failed ? failureCode : diagnostics.find(value => value !== 'timing_source_recovery_failed') ?? diagnostics[0];
+      const sourceFailure = sourceDiagnostics.find(row => !RETRYABLE_SOURCE_CHANGES.includes(row.code));
       status.textContent = state === 'error' ? translate(`error.${code || 'timing_request_failed'}`)
         : state === 'waiting' ? reportTranslate('waiting') : translate(state === 'updating' ? 'collectingCompact' : `status.${state}`);
+      if (state === 'error' && sourceFailure) status.textContent += ` · ${translate(`source.${sourceFailure.code}`)}`;
+      if (retryExhausted && state === 'error') status.textContent += ` · ${translate('retryExhausted')}`;
       if (payload?.updatedAt && ['error','stale','unavailable'].includes(state)) status.textContent += ` · ${instant(payload.updatedAt)}`;
       actions.append(status);
-      if (loading) actions.append(button(translate('cancel'), 'cancel', cancelRefresh));
-      else if (['error','unavailable','stale'].includes(state)) actions.append(button(translate('retry'), 'retry', () => { pendingAttempts = 0; refresh(); }));
+      if (loading && !retrying) actions.append(button(translate('cancel'), 'cancel', cancelRefresh));
+      else if (['error','unavailable','stale'].includes(state)) actions.append(button(translate('retry'), 'retry', () => { pendingAttempts = 0; resetSourceRetry(); refresh(); }));
       append(actions);
     }
     if (models.length) {
@@ -585,7 +615,7 @@ export function mountModelPerformance(options = {}) {
       }
       append(panel);
       const legend = element('div', 'performance-legend');
-      for (const [key, label] of [['median','P50'],['inner','P25–P75'],['outer','P10–P90']]) {
+      for (const [key, label] of [['median','P50'],['mean',translate('mean')],['inner','P25–P75'],['outer','P10–P90']]) {
         const b = button('', `layer-${key}`, () => { layers[key] = !layers[key]; render(); }); b.setAttribute('aria-pressed', String(layers[key]));
         b.append(element('i', `performance-key performance-key-${key}`), element('span', '', label)); legend.append(b);
       }
@@ -597,7 +627,12 @@ export function mountModelPerformance(options = {}) {
   }
   const cacheKeyFor = (value, mode = speedMode, window = reportingWindow) => `${mode}::${sharedReporting
     ? `${window?.period ?? "waiting"}:${window?.startAt ?? ""}:${window?.endAt ?? ""}::${value}` : value}`;
-  const cachedPayload = value => { diagnostics = diagnosticsByKey.get(cacheKeyFor(value)) ?? []; return readyPeriods.get(cacheKeyFor(value))?.payload ?? null; };
+  const cachedPayload = value => {
+    const key = cacheKeyFor(value);
+    diagnostics = diagnosticsByKey.get(key) ?? [];
+    sourceDiagnostics = sourceDiagnosticsByKey.get(key) ?? [];
+    return readyPeriods.get(key)?.payload ?? null;
+  };
   const cacheFresh = entry => entry && Date.now() - entry.cachedAt < PERIOD_CACHE_TTL_MS;
   const preloadTargets = () => {
     if (!sharedReporting) return PRELOAD_PERIODS.map(value => ({ value, mode: speedMode, window: null }));
@@ -625,6 +660,7 @@ export function mountModelPerformance(options = {}) {
   const invalidateScope = (sourcePeriod, unavailable, sourceKey) => {
     if (retainedWindowKey !== reportingKey() || payload?.status !== "ready") retainedWindowKey = null;
     scopeGeneration++;
+    windowRef.clearTimeout(timer); timer = null; resetSourceRetry();
     scopeUnavailable = true;
     preloadComplete = false;
     cancelPreloadWaits();
@@ -690,10 +726,11 @@ export function mountModelPerformance(options = {}) {
     const record = { controller, promise: null, speculative };
     const promise = (async () => {
       try {
-        let responseDiagnostics = [];
+        let responseDiagnostics = [], responseSourceDiagnostics = [];
         const result = normalizeModelPerformance(await client.modelPerformance(value, {
           signal: controller.signal, speedMode: expectedMode,
           onDiagnostics: codes => { responseDiagnostics = codes; },
+          onSourceDiagnostics: details => { responseSourceDiagnostics = details; },
           ...(expectedEndAt ? { endAt: expectedEndAt } : {}),
         }));
         if (!result || result.period !== value || result.speedMode !== expectedMode
@@ -713,7 +750,11 @@ export function mountModelPerformance(options = {}) {
         }
         diagnosticsByKey.set(cacheKey, responseDiagnostics);
         while (diagnosticsByKey.size > MAX_READY_PERIODS) diagnosticsByKey.delete(diagnosticsByKey.keys().next().value);
-        if (expectedMode === speedMode && value === selectedRequestPeriod()) diagnostics = responseDiagnostics;
+        sourceDiagnosticsByKey.set(cacheKey, responseSourceDiagnostics);
+        while (sourceDiagnosticsByKey.size > MAX_READY_PERIODS) sourceDiagnosticsByKey.delete(sourceDiagnosticsByKey.keys().next().value);
+        if (expectedMode === speedMode && value === selectedRequestPeriod()) {
+          diagnostics = responseDiagnostics; sourceDiagnostics = responseSourceDiagnostics;
+        }
         if (result.status === "unavailable") invalidateScope(value, result, cacheKey);
         else {
           scopeUnavailable = false;
@@ -833,13 +874,14 @@ export function mountModelPerformance(options = {}) {
     const targetPeriod = selectedRequestPeriod();
     if (!targetPeriod) return;
     const targetKey = cacheKeyFor(targetPeriod);
+    if (sourceRetryKey !== targetKey) { resetSourceRetry(); sourceRetryKey = targetKey; }
     foregroundKey = targetKey;
-    const hadFailure = failed || retainedWindowUnavailable || diagnostics.length > 0;
+    const hadFailure = failed || retrying || retainedWindowUnavailable || diagnostics.length > 0 || sourceDiagnostics.length > 0;
     retainedWindowUnavailable = false;
     if (retainedWindowKey === reportingKey() && payload?.status === "ready")
       payload = { ...payload, collecting: true, stale: true };
     scopeUnavailable = false;
-    loading = true; failed = false; cancelled = false; windowRef.clearTimeout(timer);
+    loading = true; failed = false; cancelled = false; windowRef.clearTimeout(timer); timer = null;
     // A cached period remains visible while its replacement is fetched.
     if (!payload || hadFailure) render();
     let changed = false, shouldWarm = false;
@@ -858,12 +900,27 @@ export function mountModelPerformance(options = {}) {
     } finally {
       if (foregroundKey === targetKey && request === current) foregroundKey = null;
       if (request === current && lifecycle === startedLifecycle && !destroyed) {
-        if (!failed && pendingResult() && pendingAttempts >= PRELOAD_MAX_ATTEMPTS - 1) {
+        const recoveryWarning = !failed && payload?.status !== 'unavailable' && recoverableSourceWarning();
+        retrying = recoveryWarning && sourceRetryAttempts < SOURCE_RETRY_DELAYS.length;
+        retryExhausted = recoveryWarning && !retrying;
+        if (retryExhausted) { failed = true; failureCode = 'timing_source_recovery_failed'; }
+        if (!failed && !diagnostics.length && !sourceDiagnostics.length) resetSourceRetry();
+        if (!failed && !recoveryWarning && pendingResult() && pendingAttempts >= PRELOAD_MAX_ATTEMPTS - 1) {
           failed = true; failureCode = 'timing_timeout';
         }
-        loading = false; if (changed || failed || diagnostics.length || hadFailure || !payload) render();
+        loading = false; if (changed || failed || diagnostics.length || sourceDiagnostics.length || hadFailure || !payload) render();
         if (visible()) {
-          if (!failed && pendingResult() && pendingAttempts < PRELOAD_MAX_ATTEMPTS - 1) {
+          if (retrying) {
+            const retryScope = scopeGeneration;
+            timer = windowRef.setTimeout(() => {
+              timer = null;
+              if (!visible() || destroyed || lifecycle !== startedLifecycle
+                  || scopeGeneration !== retryScope || sourceRetryKey !== targetKey) return;
+              sourceRetryAttempts++;
+              void refresh();
+            }, SOURCE_RETRY_DELAYS[sourceRetryAttempts]);
+          } else if (!failed && !sourceDiagnostics.length && !diagnostics.includes('timing_source_recovery_failed')
+              && pendingResult() && pendingAttempts < PRELOAD_MAX_ATTEMPTS - 1) {
             timer = windowRef.setTimeout(refresh, preloadRetryDelay(pendingAttempts++));
           }
           if (shouldWarm && !scopeUnavailable) void warmOtherPeriods();
@@ -872,7 +929,8 @@ export function mountModelPerformance(options = {}) {
     }
   }
   function cancelRefresh() {
-    if (!loading) return;
+    if (!loading && !retrying) return;
+    resetSourceRetry();
     request++;
     const key = foregroundKey;
     const entry = key ? pendingPeriods.get(key) : null;
@@ -893,6 +951,8 @@ export function mountModelPerformance(options = {}) {
     else {
       closeDetails();
       windowRef.clearTimeout(timer);
+      timer = null;
+      resetSourceRetry();
       request++;
       loading = false;
       foregroundKey = null;
@@ -905,6 +965,8 @@ export function mountModelPerformance(options = {}) {
   const documentVisibilityChanged = () => {
     if (documentRef.hidden) {
       windowRef.clearTimeout(timer);
+      timer = null;
+      resetSourceRetry();
       lifecycle++;
       cancelPending();
       cancelPreloadWaits();
@@ -936,6 +998,7 @@ export function mountModelPerformance(options = {}) {
     }
     request++;
     pendingAttempts = 0;
+    resetSourceRetry();
     scopeGeneration++;
     cancelPending();
     cancelPreloadWaits();
@@ -948,9 +1011,8 @@ export function mountModelPerformance(options = {}) {
     failed = false;
     cancelled = false;
     scopeUnavailable = false;
-    payload = next === null
-      ? null
-      : readyPeriods.get(cacheKeyFor(selectedRequestPeriod()))?.payload ?? null;
+    payload = next === null ? null : cachedPayload(selectedRequestPeriod());
+    if (next === null) { diagnostics = []; sourceDiagnostics = []; }
     retainedWindowKey = null;
     retainedWindowUnavailable = false;
     if (!payload && previousPayload) {
@@ -984,6 +1046,7 @@ export function mountModelPerformance(options = {}) {
       destroyed = true;
       lifecycle++;
       readyPeriods.clear();
+      diagnosticsByKey.clear(); sourceDiagnosticsByKey.clear(); resetSourceRetry();
       payload = null;
       observer.disconnect();
       resizeObserver?.disconnect();

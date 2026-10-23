@@ -62,6 +62,7 @@ const PRIVACY_KEYS = Object.freeze([
 ]);
 const REFRESH_KEYS = Object.freeze([
   "schemaVersion",
+  "scheduleOwner",
   "state",
   "mode",
   "cadenceTimerArmed",
@@ -76,6 +77,7 @@ const REFRESH_KEYS = Object.freeze([
   "lastRecoveryReason",
 ]);
 const REFRESH_STATES = new Set(["scheduled", "running", "idle", "disposed"]);
+const REFRESH_SCHEDULE_OWNERS = new Set(["companion", "electron", "unknown"]);
 const REFRESH_MODES = new Set(["quick", "detailed"]);
 const REFRESH_RECOVERY_REASONS = new Set([
   "heartbeat_timeout",
@@ -153,6 +155,7 @@ function strictDiagnosticsRecord(diagnostics) {
 
   const refresh = assertExactRecord(source.refresh, REFRESH_KEYS, "diagnostics.refresh");
   if (refresh.schemaVersion !== "tibotattle-desktop-refresh-status-v1"
+      || !REFRESH_SCHEDULE_OWNERS.has(refresh.scheduleOwner)
       || !REFRESH_STATES.has(refresh.state)
       || (refresh.mode !== null && !REFRESH_MODES.has(refresh.mode))
       || (refresh.activeLeaseAgeSeconds !== null
@@ -212,6 +215,7 @@ function strictDiagnosticsRecord(diagnostics) {
     },
     refresh: {
       schemaVersion: refresh.schemaVersion,
+      scheduleOwner: refresh.scheduleOwner,
       state: refresh.state,
       mode: refresh.mode,
       cadenceTimerArmed: refresh.cadenceTimerArmed,
@@ -298,6 +302,7 @@ function safeRefreshState(value) {
   const safeInstant = (candidate) => validInstant(candidate) ? candidate : null;
   return Object.freeze({
     schemaVersion: "tibotattle-desktop-refresh-status-v1",
+    scheduleOwner: REFRESH_SCHEDULE_OWNERS.has(source.scheduleOwner) ? source.scheduleOwner : "unknown",
     state: REFRESH_STATES.has(source.state) ? source.state : "idle",
     mode: REFRESH_MODES.has(source.mode) ? source.mode : null,
     cadenceTimerArmed: safeBoolean(source.cadenceTimerArmed),

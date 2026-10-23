@@ -27,8 +27,15 @@ import {
   ROLLUP_BUCKET_MS,
   rollupBasisCurrent,
   storedContextStarts,
+  rollupKeyExpressions,
 } from "./local-index-rollup.js";
-import { LOCAL_INDEX_PARSER_VERSION, readCommitSeq } from "./local-index-store.js";
+import {
+  EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO,
+  EVENT_FLAG_PARTIAL,
+  EVENT_FLAG_RESPONSE_USAGE,
+  LOCAL_INDEX_PARSER_VERSION,
+  readCommitSeq,
+} from "./local-index-store.js";
 import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 
 // The report read over the local index store.
@@ -77,15 +84,18 @@ function loadDimensions(database) {
   const models = new Map(database.prepare("SELECT id, model_id FROM model").all()
     .map((row) => [Number(row.id), row.model_id]));
   const tiers = new Map(database.prepare(
-    "SELECT id, codex_speed_mode, api_service_tier FROM tier_semantics",
+    "SELECT id, billing_surface, codex_speed_mode, api_service_tier, tier_source FROM tier_semantics",
   ).all().map((row) => [Number(row.id), {
+    billingSurface: row.billing_surface,
     codexSpeedMode: row.codex_speed_mode,
     apiServiceTier: row.api_service_tier,
+    tierSource: row.tier_source,
   }]));
   const surfaces = new Map(database.prepare(
-    "SELECT id, surface, agent_scope, lineage_disposition FROM surface_class",
+    "SELECT id, surface, thread_source, agent_scope, lineage_disposition FROM surface_class",
   ).all().map((row) => [Number(row.id), {
     surface: row.surface,
+    threadSource: row.thread_source,
     agentScope: row.agent_scope,
     lineageDisposition: row.lineage_disposition,
   }]));
@@ -123,6 +133,152 @@ export function hasProvisionalFacts(database) {
 }
 
 /**
+ * Stream existing rollups and exact boundary events through one owned facade.
+ * Quantities are already summed; only event counters use `eventCount`.
+ * Accounting opts into conservative fallback for evidence absent from the key.
+ * The caller owns the read snapshot and must consume this iterator within it.
+ */
+export function* iterateLocalIndexUsageGroups(database, {
+  startMs = Number.NEGATIVE_INFINITY,
+  endMs = Number.POSITIVE_INFINITY,
+  boundaryMs = [],
+  expandedBuckets = new Set(),
+  accounting = false,
+} = {}) {
+  if (!rollupBasisCurrent(database)) throw fixedError("local_index_rollup_basis_stale");
+  const starts = storedContextStarts(database);
+  const dimensions = loadDimensions(database);
+  const expanded = new Set(expandedBuckets);
+  for (const at of [startMs, endMs, ...boundaryMs]) {
+    if (Number.isFinite(at)) expanded.add(bucketOf(at));
+  }
+  if (accounting) {
+    // Flags are not represented in rollup v1. Expand the entire affected
+    // bucket, so mixed evidence is never silently upgraded by aggregation.
+    const expressions = rollupKeyExpressions("u");
+    for (const row of database.prepare(`
+      SELECT DISTINCT ${expressions.bucket_ms} AS bucket_ms FROM usage_event u
+      WHERE u.observed_at_ms >= ? AND u.observed_at_ms <= ?
+        AND (u.flags & ?) != 0 AND ${committedPredicate("u")}`)
+      .iterate(startMs, endMs, EVENT_FLAG_PARTIAL | EVENT_FLAG_CACHE_WRITE_ASSUMED_ZERO)) {
+      expanded.add(Number(row.bucket_ms));
+    }
+    // Keep contradictory output evidence and groups too large for an exact
+    // JavaScript token projection on their source-event path.
+    for (const row of database.prepare(`SELECT DISTINCT bucket_ms FROM usage_rollup
+      WHERE events > 0 AND bucket_ms >= ? AND bucket_ms <= ?
+        AND ((shape & 4096) != 0 OR
+          in_uncached + in_cache_read + in_cache_write + out_text + out_reasoning + out_combined
+            > 9007199254740991)`)
+      .iterate(Number.isFinite(startMs) ? bucketOf(startMs) : startMs, endMs)) {
+      expanded.add(Number(row.bucket_ms));
+    }
+  }
+  // 1. Whole buckets, from the rollups.
+  const rollupRows = database.prepare(`
+    SELECT bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape,
+           ctx_class, events, in_uncached, in_cache_read, in_cache_write,
+           out_text, out_reasoning, out_combined
+    FROM usage_rollup
+    WHERE events > 0 AND bucket_ms >= ? AND bucket_ms <= ?
+    ORDER BY bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class`);
+  for (const row of rollupRows.iterate(Number.isFinite(startMs) ? bucketOf(startMs) : startMs, endMs)) {
+    const bucketMs = Number(row.bucket_ms);
+    if (expanded.has(bucketMs)) continue;
+    const shape = Number(row.shape);
+    const classIndex = Number(row.ctx_class);
+    const component = (bit, value) => ((shape >> bit) & 1) === 1 ? null : Number(value);
+    const tier = dimensions.tiers.get(Number(row.tier_id));
+    yield { record: {
+      observedAt: new Date(bucketMs).toISOString(),
+      model: dimensions.models.get(Number(row.model_id)),
+      // A class stands for every total between two registry thresholds, so its
+      // first token count prices exactly as each of them does.
+      totalInputContextTokens: classIndex < 0
+        ? null
+        : classIndex === 0 ? 0 : starts[classIndex - 1],
+      components: {
+        input_uncached_tokens: component(0, row.in_uncached),
+        input_cache_read_tokens: component(1, row.in_cache_read),
+        input_cache_write_tokens: component(2, row.in_cache_write),
+        output_text_tokens: component(3, row.out_text),
+        output_reasoning_tokens: component(4, row.out_reasoning),
+        output_combined_tokens: component(5, row.out_combined),
+      },
+      tierSemantics: tier,
+      surfaceClassification: dimensions.surfaces.get(Number(row.surface_id)),
+      accountScope: { status: dimensions.scopes.get(Number(row.account_scope_id)) },
+    }, observedMs: bucketMs, eventCount: Number(row.events), aggregate: true };
+  }
+
+  // 2. Buckets read event by event, through the same projection.
+  const eventRows = database.prepare(`
+    SELECT u.observed_at_ms, u.model_id, u.tier_id, u.surface_id,
+           u.account_scope_id, u.total_input_context, u.tier_observed_at_ms, u.flags,
+           u.source_offset, u.event_key, s.source_local, s.source_ordinal, u.tokens_in_uncached,
+           u.tokens_in_cache_read, u.tokens_in_cache_write, u.tokens_out_text,
+           u.tokens_out_reasoning, u.tokens_out_combined
+    FROM usage_event u JOIN source s ON s.id = u.source_id
+    WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND u.observed_at_ms <= ?
+      AND u.observed_at_ms >= ? AND ${committedPredicate("u")}
+    ORDER BY u.observed_at_ms, COALESCE(s.source_ordinal, 2147483647),
+      s.source_local, u.source_offset, u.event_key`);
+  for (const bucketMs of [...expanded].sort((left, right) => left - right)) {
+    for (const row of eventRows.iterate(bucketMs, bucketMs + ROLLUP_BUCKET_MS, endMs, startMs)) {
+      const observedMs = Number(row.observed_at_ms);
+      const tier = dimensions.tiers.get(Number(row.tier_id));
+      yield { record: {
+        observedAt: new Date(observedMs).toISOString(),
+        model: dimensions.models.get(Number(row.model_id)),
+        totalInputContextTokens: tokenOrNull(row.total_input_context),
+        components: {
+          input_uncached_tokens: tokenOrNull(row.tokens_in_uncached),
+          input_cache_read_tokens: tokenOrNull(row.tokens_in_cache_read),
+          input_cache_write_tokens: tokenOrNull(row.tokens_in_cache_write),
+          output_text_tokens: tokenOrNull(row.tokens_out_text),
+          output_reasoning_tokens: tokenOrNull(row.tokens_out_reasoning),
+          output_combined_tokens: tokenOrNull(row.tokens_out_combined),
+        },
+        tierSemantics: tier,
+        surfaceClassification: dimensions.surfaces.get(Number(row.surface_id)),
+        accountScope: { status: dimensions.scopes.get(Number(row.account_scope_id)) },
+      }, row, observedMs, eventCount: 1, aggregate: false };
+    }
+  }
+
+}
+
+function readUsageObservedBounds(database, futureLimitMs) {
+  // The earliest and latest instants, by an index seek into one bucket each.
+  const firstBucket = database.prepare(
+    "SELECT MIN(bucket_ms) AS value FROM usage_rollup WHERE events > 0",
+  ).get().value;
+  let firstObservedMs = null;
+  if (firstBucket !== null && firstBucket !== undefined) {
+    const value = database.prepare(`
+      SELECT MIN(u.observed_at_ms) AS value FROM usage_event u
+      WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ?
+        AND ${committedPredicate("u")}`).get(Number(firstBucket), Number(firstBucket) + ROLLUP_BUCKET_MS).value;
+    if (value !== null && Number(value) <= futureLimitMs) firstObservedMs = Number(value);
+  }
+  let lastObservedMs = null;
+  const lastBuckets = database.prepare(`
+    SELECT bucket_ms FROM usage_rollup WHERE events > 0 AND bucket_ms <= ?
+    GROUP BY bucket_ms ORDER BY bucket_ms DESC LIMIT 4`).all(futureLimitMs);
+  for (const { bucket_ms: bucket } of lastBuckets) {
+    const value = database.prepare(`
+      SELECT MAX(u.observed_at_ms) AS value FROM usage_event u
+      WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND u.observed_at_ms <= ?
+        AND ${committedPredicate("u")}`).get(Number(bucket), Number(bucket) + ROLLUP_BUCKET_MS, futureLimitMs).value;
+    if (value !== null) {
+      lastObservedMs = Number(value);
+      break;
+    }
+  }
+  return { firstObservedMs, lastObservedMs };
+}
+
+/**
  * Fold the usage rollups into the four periods and the timeline.
  *
  * `nowMs` is the report clock. Returns finalized periods, the finalized
@@ -136,8 +292,6 @@ export function readLocalIndexUsage(database, {
   if (!Number.isFinite(nowMs)) throw new TypeError("nowMs must be a finite epoch timestamp");
   if (!rollupBasisCurrent(database)) throw fixedError("local_index_rollup_basis_stale");
   const futureLimitMs = nowMs + FUTURE_SKEW_MS;
-  const starts = storedContextStarts(database);
-  const dimensions = loadDimensions(database);
   const windows = validSpeedWindows(declaredSpeedBaselines);
   const periods = PERIOD_DEFINITIONS.map((definition) => ({
     summary: newUsagePeriod(
@@ -188,100 +342,14 @@ export function readLocalIndexUsage(database, {
     );
   };
 
-  // 1. Whole buckets, from the rollups.
-  const rollupRows = database.prepare(`
-    SELECT bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape,
-           ctx_class, events, in_uncached, in_cache_read, in_cache_write,
-           out_text, out_reasoning, out_combined
-    FROM usage_rollup
-    WHERE events > 0 AND bucket_ms <= ?`);
-  for (const row of rollupRows.iterate(futureLimitMs)) {
-    const bucketMs = Number(row.bucket_ms);
-    if (expanded.has(bucketMs)) continue;
-    const shape = Number(row.shape);
-    const classIndex = Number(row.ctx_class);
-    const component = (bit, value) => ((shape >> bit) & 1) === 1 ? null : Number(value);
-    const tier = dimensions.tiers.get(Number(row.tier_id));
-    fold({
-      observedAt: new Date(bucketMs).toISOString(),
-      model: dimensions.models.get(Number(row.model_id)),
-      // A class stands for every total between two registry thresholds, so its
-      // first token count prices exactly as each of them does.
-      totalInputContextTokens: classIndex < 0
-        ? null
-        : classIndex === 0 ? 0 : starts[classIndex - 1],
-      components: {
-        input_uncached_tokens: component(0, row.in_uncached),
-        input_cache_read_tokens: component(1, row.in_cache_read),
-        input_cache_write_tokens: component(2, row.in_cache_write),
-        output_text_tokens: component(3, row.out_text),
-        output_reasoning_tokens: component(4, row.out_reasoning),
-        output_combined_tokens: component(5, row.out_combined),
-      },
-      tierSemantics: tier,
-      surfaceClassification: dimensions.surfaces.get(Number(row.surface_id)),
-      accountScope: { status: dimensions.scopes.get(Number(row.account_scope_id)) },
-    }, tier, bucketMs, Number(row.events));
+  for (const { record, observedMs, eventCount } of iterateLocalIndexUsageGroups(database, {
+    endMs: futureLimitMs,
+    expandedBuckets: expanded,
+  })) {
+    fold(record, record.tierSemantics, observedMs, eventCount);
   }
 
-  // 2. Buckets read event by event, through the same projection.
-  const eventRows = database.prepare(`
-    SELECT u.observed_at_ms, u.model_id, u.tier_id, u.surface_id,
-           u.account_scope_id, u.total_input_context, u.tokens_in_uncached,
-           u.tokens_in_cache_read, u.tokens_in_cache_write, u.tokens_out_text,
-           u.tokens_out_reasoning, u.tokens_out_combined
-    FROM usage_event u
-    WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND u.observed_at_ms <= ?
-      AND ${committedPredicate("u")}`);
-  for (const bucketMs of [...expanded].sort((left, right) => left - right)) {
-    for (const row of eventRows.iterate(bucketMs, bucketMs + ROLLUP_BUCKET_MS, futureLimitMs)) {
-      const observedMs = Number(row.observed_at_ms);
-      const tier = dimensions.tiers.get(Number(row.tier_id));
-      fold({
-        observedAt: new Date(observedMs).toISOString(),
-        model: dimensions.models.get(Number(row.model_id)),
-        totalInputContextTokens: tokenOrNull(row.total_input_context),
-        components: {
-          input_uncached_tokens: tokenOrNull(row.tokens_in_uncached),
-          input_cache_read_tokens: tokenOrNull(row.tokens_in_cache_read),
-          input_cache_write_tokens: tokenOrNull(row.tokens_in_cache_write),
-          output_text_tokens: tokenOrNull(row.tokens_out_text),
-          output_reasoning_tokens: tokenOrNull(row.tokens_out_reasoning),
-          output_combined_tokens: tokenOrNull(row.tokens_out_combined),
-        },
-        tierSemantics: tier,
-        surfaceClassification: dimensions.surfaces.get(Number(row.surface_id)),
-        accountScope: { status: dimensions.scopes.get(Number(row.account_scope_id)) },
-      }, tier, observedMs, 1);
-    }
-  }
-
-  // The earliest and latest instants, by an index seek into one bucket each.
-  const firstBucket = database.prepare(
-    "SELECT MIN(bucket_ms) AS value FROM usage_rollup WHERE events > 0",
-  ).get().value;
-  let firstObservedMs = null;
-  if (firstBucket !== null && firstBucket !== undefined) {
-    const value = database.prepare(`
-      SELECT MIN(u.observed_at_ms) AS value FROM usage_event u
-      WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ?
-        AND ${committedPredicate("u")}`).get(Number(firstBucket), Number(firstBucket) + ROLLUP_BUCKET_MS).value;
-    if (value !== null && Number(value) <= futureLimitMs) firstObservedMs = Number(value);
-  }
-  let lastObservedMs = null;
-  const lastBuckets = database.prepare(`
-    SELECT bucket_ms FROM usage_rollup WHERE events > 0 AND bucket_ms <= ?
-    GROUP BY bucket_ms ORDER BY bucket_ms DESC LIMIT 4`).all(futureLimitMs);
-  for (const { bucket_ms: bucket } of lastBuckets) {
-    const value = database.prepare(`
-      SELECT MAX(u.observed_at_ms) AS value FROM usage_event u
-      WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND u.observed_at_ms <= ?
-        AND ${committedPredicate("u")}`).get(Number(bucket), Number(bucket) + ROLLUP_BUCKET_MS, futureLimitMs).value;
-    if (value !== null) {
-      lastObservedMs = Number(value);
-      break;
-    }
-  }
+  const { firstObservedMs, lastObservedMs } = readUsageObservedBounds(database, futureLimitMs);
 
   const coveredStartMs = timelineBuckets.size === 0
     ? null : Math.min(...timelineBuckets.keys());
@@ -516,6 +584,7 @@ const CANDIDATE_OUTPUT_SQL = `
            t.codex_speed_mode AS codex_speed_mode,
            cu.surface_id AS surface_id,
            s.parser_version AS parser_version,
+           (cu.flags & ${EVENT_FLAG_RESPONSE_USAGE}) != 0 AS current_observation_is_response,
            cu.tokens_in_uncached AS tokens_in_uncached,
            cu.tokens_in_cache_read AS tokens_in_cache_read,
            cu.tokens_in_cache_write AS tokens_in_cache_write,
@@ -529,6 +598,7 @@ const CANDIDATE_OUTPUT_SQL = `
            pu.tier_id AS previous_tier_id,
            pu.surface_id AS previous_surface_id,
            s.parser_version AS previous_parser_version,
+           (pu.flags & ${EVENT_FLAG_RESPONSE_USAGE}) != 0 AS previous_observation_is_response,
            pu.tokens_in_cache_read AS previous_tokens_in_cache_read,
            COALESCE(b.compaction_before, 0) AS compaction_between,
            COALESCE(b.turn_context_before, 0) AS turn_context_between,
@@ -538,7 +608,7 @@ const CANDIDATE_OUTPUT_SQL = `
 const SENTINEL_COLUMNS_SQL = `
            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
            NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
-           NULL, NULL, NULL, NULL,`;
+           NULL, NULL, NULL, NULL, NULL, NULL,`;
 
 // A sentinel has every candidate column, all NULL, exactly as the SQL emits it.
 const SENTINEL_ROW = Object.freeze(Object.fromEntries([...CANDIDATE_OUTPUT_SQL.matchAll(/ AS ([a-z_]+)/gu)]
@@ -789,20 +859,26 @@ export function readLocalIndexCoverage(database) {
     WHERE parser_version <> ? OR quarantine_code IS NOT NULL
       OR (presence = 'present' AND scanned_bytes <> size_bytes)`
   ).get(LOCAL_INDEX_PARSER_VERSION).n);
-  const qualifiedPrefixTurns = Number(database.prepare(`
+  const qualifiedPrefixCount = database.prepare(`
     SELECT COALESCE(SUM(d.count), 0) AS n
     FROM source_diagnostic d JOIN source s ON s.id = d.source_id
-    WHERE d.code = 'responseUnverifiedPrefixTurns'
+    WHERE d.code = ?
       AND ${responseCoverageSourcePredicate}`
-  ).get(LOCAL_INDEX_PARSER_VERSION).n);
+  );
   // A known partial source remains useful evidence even if another retained
   // source predates the parser that records this diagnostic. Only an explicit
   // zero requires every source to have been checked by the current parser.
-  const responseUnverifiedPrefixTurns = qualifiedPrefixTurns > 0
-    ? qualifiedPrefixTurns
-    : Number(totals.sources) > 0 && unparsedResponseSources === 0
-      ? 0
-      : null;
+  const prefixCount = (code) => {
+    const count = Number(qualifiedPrefixCount.get(code, LOCAL_INDEX_PARSER_VERSION).n);
+    if (!Number.isSafeInteger(count) || count < 0) return null;
+    return count > 0
+      ? count
+      : Number(totals.sources) > 0 && unparsedResponseSources === 0
+        ? 0
+        : null;
+  };
+  const responseUnverifiedPrefixTurns = prefixCount('responseUnverifiedPrefixTurns');
+  const cumulativePrefixUnattributed = prefixCount('cumulativePrefixUnattributed');
   return {
     sourceCount: Number(totals.sources),
     sourceBytes: Number(totals.bytes),
@@ -815,6 +891,7 @@ export function readLocalIndexCoverage(database) {
     skippedThreadCount: skippedThreads,
     rolloutIssueCounts: issues,
     responseUnverifiedPrefixTurns,
+    cumulativePrefixUnattributed,
   };
 }
 
@@ -852,6 +929,32 @@ export function readLocalIndexReportValidUntil(database, { nowMs, includeWorkUsa
   }
   const pending = boundaries.filter((value) => value > nowMs);
   return pending.length === 0 ? Number.POSITIVE_INFINITY : Math.min(...pending);
+}
+
+/** Generation metadata for accounting, without pricing a presentation report.
+ * Call inside the same read snapshot as the accounting scan. */
+export function readLocalIndexReportMetadata(database, { nowMs = Date.now() } = {}) {
+  if (!Number.isFinite(nowMs)) throw new TypeError("nowMs must be a finite epoch timestamp");
+  if (!rollupBasisCurrent(database)) throw fixedError("local_index_rollup_basis_stale");
+  const futureLimitMs = nowMs + FUTURE_SKEW_MS;
+  const cutoffBucket = bucketOf(futureLimitMs);
+  // Rollups contain committed facts. Only the cutoff bucket needs an exact
+  // membership check; zero/unknown quantities still count as observed events.
+  const wholeEvents = Number(database.prepare(`SELECT COALESCE(SUM(events),0) AS n
+    FROM usage_rollup WHERE events > 0 AND bucket_ms < ?`).get(cutoffBucket).n);
+  const boundaryEvents = Number(database.prepare(`SELECT COUNT(*) AS n FROM usage_event u
+    WHERE u.observed_at_ms >= ? AND u.observed_at_ms <= ?
+      AND ${committedPredicate("u")}`).get(cutoffBucket, futureLimitMs).n);
+  const { firstObservedMs, lastObservedMs } = readUsageObservedBounds(database, futureLimitMs);
+  const toolsComplete = localIndexToolProvenanceComplete(database);
+  return {
+    ...readLocalIndexCoverage(database),
+    coveredAt: { startAt: isoOrNull(firstObservedMs), endAt: isoOrNull(lastObservedMs) },
+    usageEvents: wholeEvents + boundaryEvents,
+    tools: readLocalIndexTools(database),
+    toolCoverageStatus: toolsComplete ? "complete" : "partial",
+    toolCoverageBlockReason: toolsComplete ? null : "tool_provenance_incomplete",
+  };
 }
 
 /**

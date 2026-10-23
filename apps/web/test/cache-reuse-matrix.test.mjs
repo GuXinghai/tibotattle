@@ -17,6 +17,13 @@ const DEFINITIONS = [
   // existed, and the two day-scale buckets it needed are now one.
   ["six_to_twenty_four_hours", 21600, 86400], ["over_twenty_four_hours", 86400, 604800],
 ];
+const LOCAL_DEFINITIONS = [
+  ...DEFINITIONS.slice(0, 6),
+  ["one_to_six_hours", 3600, 21600],
+  ["six_to_twenty_four_hours", 21600, 86400],
+  ["one_to_three_days", 86400, 259200],
+  ["over_three_days", 259200, null],
+];
 function bucket(n = 0, yes = n) {
   const no = n - yes;
   return { comparableReturns: n, reusedMoreThanHalfReturns: yes, reusedHalfOrLessReturns: no,
@@ -25,8 +32,8 @@ function bucket(n = 0, yes = n) {
     coverageStatus: "complete", estimatedPremiumUsd: no / 100,
     coveredSubtotal: { standardApiPremiumUsd: no / 100 } };
 }
-function impact(values = [], byModel = []) {
-  const byOutcomeBucket = Object.fromEntries(DEFINITIONS.map(([id, startSeconds, endSeconds], i) =>
+function impact(values = [], byModel = [], definitions = DEFINITIONS) {
+  const byOutcomeBucket = Object.fromEntries(definitions.map(([id, startSeconds, endSeconds], i) =>
     [id, { ...bucket(...(values[i] ?? [])), startSeconds, endSeconds }]));
   const result = { status: "available", ...bucket(), byOutcomeBucket, byModel };
   for (const field of Object.keys(bucket()).filter((field) => typeof result[field] === "number")) {
@@ -34,6 +41,34 @@ function impact(values = [], byModel = []) {
   }
   return result;
 }
+const localImpact = (values = [], byModel = []) => impact(values, byModel, LOCAL_DEFINITIONS);
+
+test("positive-count estimates stay separate from half-ratio lights and reject fabricated prefix proof", () => {
+  const value = localImpact([[1, 1]]);
+  const evidence = { schemaVersion: 1, method: "adjacent_cache_read_decrease",
+    reusablePrefixStatus: "unverified", verifiedLossTokens: null, verifiedPremiumUsd: null };
+  for (const row of [value, ...Object.values(value.byOutcomeBucket)]) row.estimateEvidence = { ...evidence };
+  const first = value.byOutcomeBucket.under_one_minute;
+  for (const row of [value, first]) Object.assign(row, {
+    matchedOrExceededReturns: 0, reusedBetweenHalfAndPreviousReturns: 1,
+    cacheReadDrops: 1, lostCacheTokens: 10, pricedDrops: 1, estimatedPremiumUsd: .01,
+  });
+  assert.equal(cacheReuseMatrixBuckets(value)[0].cacheReadDrops, 1);
+  assert.equal(cacheReuseMatrixLights(first, 1)[0].more, 1);
+  assert.equal(first.reusedHalfOrLessReturns, 0);
+  for (const invalid of [
+    { ...evidence, verifiedLossTokens: 10 },
+    { ...evidence, method: "unknown" },
+    { ...evidence, reusablePrefixStatus: "verified" },
+  ]) {
+    const bad = structuredClone(value);
+    bad.estimateEvidence = invalid;
+    assert.equal(cacheReuseMatrixBuckets(bad), null);
+  }
+  const mixed = structuredClone(value);
+  delete mixed.byOutcomeBucket.one_to_two_minutes.estimateEvidence;
+  assert.equal(cacheReuseMatrixBuckets(mixed), null);
+});
 
 // Tiny DOM boundary: renders and events are exercised, without adding a browser
 // dependency to the offline unit lane. Visual layout is separately browser-tested.
@@ -137,6 +172,78 @@ test("missing or inconsistent bucket evidence fails closed", () => {
   const unbounded = impact([[20, 12]]);
   unbounded.byOutcomeBucket.over_twenty_four_hours.endSeconds = null;
   assert.equal(cacheReuseMatrixBuckets(unbounded), null);
+});
+
+test("local evidence retains its measured hour and day buckets without a hosted lookback cap", () => {
+  const value = localImpact([[], [], [], [], [], [], [12, 8], [], [10, 5], [20, 2]]);
+  value.outcomeDisplayMaximumGapSeconds = 604800;
+  const before = structuredClone(value);
+  const rows = cacheReuseMatrixBuckets(value);
+  assert.ok(rows, "valid local evidence must reach the matrix");
+  assert.deepEqual(rows.map(row => [row.id, row.startSeconds, row.endSeconds]), LOCAL_DEFINITIONS);
+  assert.equal(rows[6].comparableReturns, 12);
+  assert.equal(rows[8].comparableReturns, 10);
+  assert.equal(rows[9].comparableReturns, 20);
+  assert.equal(rows[9].endSeconds, null, "local comparisons can include gaps longer than seven days");
+  assert.deepEqual(value, before);
+});
+
+test("matrix rejects mixed, extra, unknown or incorrectly bounded source buckets", () => {
+  for (const make of [impact, localImpact]) {
+    const extra = make([[10, 5]]);
+    extra.byOutcomeBucket.synthetic_extra = { ...extra.byOutcomeBucket.under_one_minute };
+    assert.equal(cacheReuseMatrixBuckets(extra), null);
+    const unknown = make([[10, 5]]);
+    unknown.byOutcomeBucket.synthetic_unknown = unknown.byOutcomeBucket.under_one_minute;
+    delete unknown.byOutcomeBucket.under_one_minute;
+    assert.equal(cacheReuseMatrixBuckets(unknown), null);
+  }
+  const mixed = localImpact([[10, 5]]);
+  mixed.byOutcomeBucket.one_to_two_hours = impact().byOutcomeBucket.one_to_two_hours;
+  delete mixed.byOutcomeBucket.one_to_six_hours;
+  assert.equal(cacheReuseMatrixBuckets(mixed), null);
+  for (const endSeconds of [604800, Number.POSITIVE_INFINITY]) {
+    const local = localImpact([[10, 5]]);
+    local.byOutcomeBucket.over_three_days.endSeconds = endSeconds;
+    assert.equal(cacheReuseMatrixBuckets(local), null);
+  }
+});
+
+test("local matrix renders exact measured groups and model evidence at wide and narrow widths", () => {
+  const model = { ...localImpact([[], [], [], [], [], [], [6, 3], [], [2, 0], [4, 1]]), model: "gpt-6-sol" };
+  const value = localImpact([[], [], [], [], [], [], [12, 6], [], [4, 0], [8, 2]], [model]);
+  for (const width of [850, 390]) {
+    const ui = mount({ width });
+    ui.matrix.render({ impact: value });
+    assert.equal(ui.all("cache-matrix-hit").length, 10);
+    assert.equal(ui.find("cache-matrix-empty").hidden, true);
+    const gaps = ui.all("cache-matrix-gap").map(node => node.textContent);
+    assert.equal(gaps[6], "oneToSixHours");
+    assert.equal(gaps[8], "oneToThreeDays");
+    assert.equal(gaps[9], "overThreeDays");
+    ui.find("cache-matrix-model-picker").value = model.model;
+    ui.find("cache-matrix-model-picker").dispatch("change");
+    assert.equal(ui.all("cache-matrix-hit").length, 10);
+    assert.equal(ui.all("cache-matrix-rate")[6].textContent, "50.0%");
+    assert.equal(ui.all("cache-matrix-rate")[9].textContent, "25.0%");
+    ui.matrix.destroy();
+  }
+});
+
+test("model and period cohorts must use the same measured bucket boundaries", () => {
+  for (const [period, model] of [
+    [impact([[20, 10]]), localImpact([[10, 5]])],
+    [localImpact([[20, 10]]), impact([[10, 5]])],
+  ]) {
+    const ui = mount();
+    const modelId = "gpt-6-sol";
+    ui.matrix.render({ impact: { ...period, byModel: [{ ...model, model: modelId }] } });
+    ui.find("cache-matrix-model-picker").value = modelId;
+    ui.find("cache-matrix-model-picker").dispatch("change");
+    assert.equal(ui.all("cache-matrix-hit").length, 0);
+    assert.equal(ui.find("cache-matrix-empty").textContent, "modelUnavailable");
+    ui.matrix.destroy();
+  }
 });
 
 test("one common bounded unit preserves evidence volume and partial light proportions", () => {

@@ -44,6 +44,7 @@ export const EXPORT_DIAGNOSTIC_CODES = Object.freeze([
   "collector_oversized_irrelevant_lines",
   "collector_unsupported_schema_records",
   "collector_unsupported_source_records",
+  "cumulative_prefix_unattributed",
   "fork_replay_events_skipped",
   "last_only_events",
   "lineage_parents_missing",

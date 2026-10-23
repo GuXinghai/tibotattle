@@ -22,7 +22,9 @@ import {
   localCompanionStatePaths,
 } from "../src/local-installation-diagnostics.js";
 import {
+  readLocalCollectorAccountingCache,
   readLocalCollectorCheckpoint,
+  writeLocalCollectorAccountingCache,
 } from "../src/local-collector-state.js";
 import {
   runCollectorOnce,
@@ -33,6 +35,10 @@ import {
 import {
   REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION,
 } from "../src/replay-safe-accounting-cache.js";
+import { buildLocalIndexAccountingCache } from "../src/local-index-accounting-cache.js";
+import { readLocalIndexGenerationIdentity } from "../src/local-index-companion-source.js";
+import { refreshLocalIndex } from "../src/local-index-refresh.js";
+import { createWorkspace } from "./helpers/local-index-facts.js";
 
 const COMPLETE_INDEX = Object.freeze({
   mode: "recent_7d",
@@ -2288,6 +2294,81 @@ test("a memory-budget rebuild miss serves the retained cache, reports deferred, 
   });
 });
 
+test("zero-write budget backoff keeps an expired accounting result deferred", async () => {
+  let nowMs = Date.parse("2026-07-23T12:00:00.000Z");
+  let rebuilds = 0;
+  const runner = createLocalCollectorRefreshRunner({
+    clock: () => nowMs,
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => ({ rolloutRecordsWritten: 0, filesDiscovered: 0,
+      refresh: { attempted: false, recordWritten: false, errorCode: null } }),
+    refreshUnifiedIndex: ingestedUnifiedIndex(),
+    readAccountingCache: async ({ maximumAgeMs = null }) => ({
+      status: maximumAgeMs === null ? "available" : "stale",
+      cache: REUSABLE_ACCOUNTING_CACHE,
+    }),
+    refreshAccounting: async () => {
+      rebuilds++;
+      return { status: "accounting_rebuild_deferred",
+        reason: "accounting_transition_rss_limit_exceeded", retained: true };
+    },
+  });
+  assert.equal((await runner()).accounting.refreshStatus, "deferred");
+  nowMs += 60_000;
+  const second = await runner();
+  assert.equal(second.accounting.refreshStatus, "deferred");
+  assert.equal(second.accounting.generatedAt, REUSABLE_ACCOUNTING_CACHE.generatedAt);
+  assert.equal(rebuilds, 1);
+});
+
+test("budget backoff serves a real prior-generation cache only as deferred", async t => {
+  const workspace = createWorkspace({ files: 1, events: 5, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite");
+  const stateFile = join(workspace.state, "collector.sqlite");
+  let nowMs = Date.parse("2026-09-01T01:00:00.000Z");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile,
+    secretFile: workspace.secretFile, workerCount: 1 });
+  const oldGeneration = readLocalIndexGenerationIdentity({ indexFile });
+  const cache = await buildLocalIndexAccountingCache({ indexFile,
+    codexHome: workspace.codexHome, expectedGeneration: oldGeneration, now: () => nowMs });
+  await writeLocalCollectorAccountingCache({ stateFile, cache });
+  const database = new DatabaseSync(indexFile);
+  try {
+    database.exec("BEGIN; UPDATE source SET mtime_ms=mtime_ms+1; UPDATE store_state SET commit_seq=commit_seq+1 WHERE id=1; COMMIT");
+  } finally { database.close(); }
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  assert.notEqual(generation.fingerprint, oldGeneration.fingerprint);
+  let writes = 1, rebuilds = 0;
+  const runner = createLocalCollectorRefreshRunner({
+    stateFile, unifiedIndexFile: indexFile, codexHome: workspace.codexHome,
+    clock: () => nowMs,
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => ({ rolloutRecordsWritten: writes, filesDiscovered: 1,
+      refresh: { attempted: false, recordWritten: false, errorCode: null } }),
+    refreshUnifiedIndex: ingestedUnifiedIndex({ ...UNIFIED_GENERATION, ...generation }),
+    refreshAccounting: async () => {
+      rebuilds++;
+      return { status: "accounting_rebuild_deferred",
+        reason: "accounting_transition_rss_limit_exceeded", retained: true };
+    },
+  });
+  for (let pass = 0; pass < 2; pass++) {
+    const result = await runner();
+    assert.equal(result.accounting.refreshStatus, "deferred");
+    assert.equal(result.accounting.generationMatched, false);
+    assert.equal(String(result.accounting.generation), String(oldGeneration.id));
+    assert.equal(result.accounting.generationFingerprint, oldGeneration.fingerprint);
+    assert.equal(result.accounting.generatedAt, cache.generatedAt);
+    assert.equal(result.accounting.events, cache.periods.find(row => row.id === "7d").events);
+    writes = 0;
+    nowMs += 60_000;
+  }
+  assert.equal(rebuilds, 1);
+  const stored = await readLocalCollectorAccountingCache({ stateFile });
+  assert.deepEqual(stored.cache, cache, "backoff never republishes old calculations as a new generation");
+});
+
 test("a budget miss with no retained cache defers without fabricating an accounting block", async (t) => {
   const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-empty-budget-state-"));
   const stateFile = join(stateRoot, "local-collector-state.sqlite");
@@ -3701,12 +3782,14 @@ test("refresh controller publishes bounded progress and reloads after success", 
   assert.equal(controller.getStatus().progress.status, "recent_7d_indexing");
   release();
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    if (controller.getStatus().status === "succeeded") break;
+    if (controller.getStatus().status === "degraded") break;
     await new Promise((resolve) => setImmediate(resolve));
   }
 
   const status = controller.getStatus();
-  assert.equal(status.status, "succeeded");
+  assert.equal(status.status, "degraded");
+  assert.equal(status.quota.status, "failed");
+  assert.equal(status.usage.status, "reused");
   assert.equal(status.progress.status, "recent_7d_complete");
   assert.deepEqual(status.result.indexing, COMPLETE_INDEX);
   assert.deepEqual(status.result.accounting, {
@@ -3748,6 +3831,25 @@ test("refresh controller exposes only allowlisted unified-index failure codes", 
       "local_unified_index_publication_failed",
       "local_unified_index_model_recovery_stalled",
       "codex_response_usage_checkpoint_conflict",
+      "codex_response_usage_invalid",
+      "codex_response_usage_timestamp_invalid",
+      "codex_response_usage_identity_invalid",
+      "codex_response_usage_session_unattributed",
+      "codex_response_usage_identity_conflict",
+      "codex_response_usage_chain_incomplete",
+      "codex_response_usage_legacy_conflict",
+      "codex_response_usage_legacy_scope_unattributed",
+      "codex_response_usage_resource_limit",
+      "codex_response_usage_rescan_required",
+      "local_index_aborted",
+      "local_index_worker_failed",
+      "local_index_wal_limit",
+      "local_index_candidate_replay_required",
+      "local_index_candidate_unfinished",
+      "local_index_journal_mode_refused",
+      "local_index_quarantine_invalid",
+      "local_index_transaction_open",
+      "local_index_transaction_required",
       "local_index_maintenance_failed",
       "local_index_maintenance_cancelled",
       "local_index_maintenance_deferred",
@@ -3799,6 +3901,46 @@ test("refresh controller exposes only allowlisted unified-index failure codes", 
     assert.equal(status.failureCode, fixture.expected);
     assert.equal(status.result.unifiedIndex.errorCode, fixture.expected);
     assert.equal(JSON.stringify(status).includes("/Users/private"), false);
+  }
+});
+
+test("settled index, accounting and quota failures are recorded without changing their partial outcomes", async () => {
+  for (const result of [
+    { unifiedIndex: { status: "failed", errorCode: "codex_response_usage_legacy_conflict" } },
+    { accounting: { status: "unavailable", errorCode: "accounting_unified_read_failed" } },
+    { quotaRefresh: { attempted: true, errorCode: "app_server_unavailable" } },
+  ]) {
+    for (const brokenSink of [false, true]) {
+      const notes = [];
+      const controller = new LocalCompanionRefreshController({
+        runner: async () => result, dataStore: { async reload() {} },
+        onTerminalFailure: note => { notes.push(note);if (brokenSink) throw new Error('synthetic sink failure'); },
+      });
+      controller.start();await controller.whenSettled();
+      const status = controller.getStatus();
+      assert.equal(status.status, "degraded");
+      assert.deepEqual(notes, [{ errorCode: "refresh_degraded", failedStep: status.failedStep,
+        ...(status.failureCode === undefined ? {} : { failureCode: status.failureCode }) }]);
+      if (result.quotaRefresh) assert.equal(notes[0].failureCode, 'app_server_unavailable');
+      assert.equal(status.running, false);
+    }
+  }
+});
+
+test("parser failures keep their fixed code across the runner and stop accounting before publication", async () => {
+  for (const code of ['codex_response_usage_legacy_conflict', 'codex_response_usage_identity_conflict',
+    'codex_response_usage_chain_incomplete', 'codex_response_usage_invalid']) {
+    let accountingCalls = 0;
+    const runner = createLocalCollectorRefreshRunner({
+      selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+      runCollector: async () => ({ rolloutRecordsWritten: 0, filesDiscovered: 0 }),
+      refreshUnifiedIndex: async () => { const e = new Error('synthetic private detail');e.code = code;throw e; },
+      refreshAccounting: async () => { accountingCalls++; },
+    });
+    const result = await runner({ mode: 'overview' });
+    assert.equal(result.unifiedIndex.errorCode, code);
+    assert.equal(accountingCalls, 0);
+    assert.equal(JSON.stringify(result).includes('synthetic private detail'), false);
   }
 });
 
@@ -3970,11 +4112,14 @@ test("a timed-out refresh cannot be reclassified as user-cancelled while settlin
     timeoutMs: 1_000,
   });
 
+  assert.equal(controller.getStatus().running, false);
   assert.equal(controller.start(), true);
+  assert.equal(controller.getStatus().running, true);
   await new Promise((resolve) => setTimeout(resolve, 1_050));
   assert.equal(controller.getStatus().status, "failed");
   assert.equal(controller.getStatus().errorCode, "refresh_timed_out");
   assert.equal(controller.isRunning(), true);
+  assert.equal(controller.getStatus().running, true);
   assert.equal(controller.cancel(), false);
 
   release();
@@ -3984,6 +4129,7 @@ test("a timed-out refresh cannot be reclassified as user-cancelled while settlin
   }
   assert.equal(controller.getStatus().status, "failed");
   assert.equal(controller.getStatus().errorCode, "refresh_timed_out");
+  assert.equal(controller.getStatus().running, false);
 });
 
 test("terminal refresh failures invoke the failure observer with bounded identity only", async () => {
@@ -4370,4 +4516,125 @@ test("overview grants only the existing one-time accounting extension after a lo
   timers.advanceBy(29_999);assert.equal(controller.getStatus().status,"running");
   timers.advanceBy(1);assert.equal(controller.getStatus().errorCode,"refresh_timed_out");assert.equal(signal.aborted,true);
   settled.resolve({});await flushControllerSettlement(controller);
+});
+
+
+test("refresh requests expose actual capabilities and collapse stronger work into one follow-up", async () => {
+  const gates = [Promise.withResolvers(), Promise.withResolvers()];
+  const modes = [];
+  const controller = new LocalCompanionRefreshController({
+    runner: async ({ mode }) => { const index = modes.length; modes.push(mode); return gates[index].promise; },
+    dataStore: { async reload() {} },
+  });
+  const first = controller.request({ mode: "quick" });
+  assert.equal(first.started, true);
+  assert.deepEqual(first.refresh.capabilities, { quota: true, usage: false, resetDetails: false });
+  await new Promise(setImmediate);
+  const upgrade = controller.request({ mode: "overview" });
+  assert.equal(upgrade.joined, false); assert.equal(upgrade.pending, true);
+  assert.equal(upgrade.refresh.refreshId, first.refresh.refreshId);
+  assert.equal(upgrade.refresh.mode, "quick");
+  controller.request({ mode: "detailed" });
+  controller.request({ mode: "detailed" });
+  assert.equal(controller.getStatus().pending.mode, "detailed");
+  const complete = controller.whenSettled();
+  gates[0].resolve({});
+  await new Promise(setImmediate);
+  assert.deepEqual(modes, ["quick", "detailed"]);
+  assert.equal(controller.getStatus().pending, null);
+  assert.equal(controller.request({ mode: "overview" }).joined, true);
+  gates[1].resolve({}); await complete;
+  assert.equal(controller.isRunning(), false);
+  assert.equal(controller.getStatus().mode, "detailed");
+});
+
+test("cancel clears the merged follow-up instead of immediately restarting usage", async () => {
+  const gate = Promise.withResolvers(); let calls = 0;
+  const controller = new LocalCompanionRefreshController({
+    runner: async () => { calls++; return gate.promise; }, dataStore: { async reload() {} },
+  });
+  controller.request({ mode: "quick" }); await new Promise(setImmediate);
+  controller.request({ mode: "detailed" });
+  controller.cancel(); assert.equal(controller.getStatus().pending, null);
+  gate.resolve({}); await controller.whenSettled();
+  assert.equal(calls, 1); assert.equal(controller.getStatus().status, "cancelled");
+});
+
+test("overview publishes durable quota before usage and preserves it when usage fails", async () => {
+  const quotaReady = Promise.withResolvers(), usage = Promise.withResolvers(); let publishes = 0, reloads = 0;
+  const controller = new LocalCompanionRefreshController({
+    runner: async ({ onQuotaReady }) => {
+      await onQuotaReady({ attempted: true, recordWritten: true, errorCode: null });
+      quotaReady.resolve(); await usage.promise; throw new Error("synthetic failure");
+    },
+    dataStore: { async reload() { reloads++; }, async publishQuota({ isCurrent }) {
+      assert.equal(isCurrent(), true); publishes++; return { published: true, observedAt: "2026-10-21T00:00:00.000Z" };
+    } },
+  });
+  controller.request({ mode: "overview", reason: "automatic" }); await quotaReady.promise;
+  const partial = controller.getStatus();
+  assert.equal(partial.status, "running"); assert.equal(partial.quota.status, "published");
+  assert.ok(partial.quickResultAt); assert.equal(partial.usage.status, "running");
+  usage.resolve(); await controller.whenSettled();
+  assert.equal(controller.getStatus().status, "failed");
+  assert.equal(controller.getStatus().quota.publishedAt, partial.quickResultAt);
+  assert.equal(controller.getStatus().usage.status, "failed");
+  assert.equal(publishes, 1); assert.equal(reloads, 0);
+});
+
+test("quota failure cannot publish a headline or reset quota age while usage succeeds", async () => {
+  let publishes = 0, reloads = 0;
+  const controller = new LocalCompanionRefreshController({
+    runner: async ({ onQuotaReady, onProgress }) => {
+      await onQuotaReady({ attempted: true, recordWritten: false, errorCode: "temporary_disconnect" });
+      await onProgress({ ...COMPLETE_INDEX, phase: "quick_result" });
+      return { quotaRefresh: { attempted: true, recordWritten: false, errorCode: "temporary_disconnect" } };
+    }, dataStore: { async reload() { reloads++; }, async publishQuota() { publishes++; return { published: true }; } },
+  });
+  controller.start({ mode: "overview" }); await controller.whenSettled();
+  const status = controller.getStatus();
+  assert.equal(status.status, "degraded"); assert.equal(status.quota.status, "failed");
+  assert.equal(status.usage.status, "succeeded"); assert.equal(status.quickResultAt, null);
+  assert.equal(publishes, 0); assert.equal(reloads, 1);
+});
+
+test("quota publication yielding across cancellation cannot update its run receipt", async () => {
+  const entered = Promise.withResolvers(), publication = Promise.withResolvers(); let current;
+  const controller = new LocalCompanionRefreshController({
+    runner: async ({ onQuotaReady }) => {
+      await onQuotaReady({ attempted: true, recordWritten: true, errorCode: null }); return {};
+    }, dataStore: { async reload() {}, async publishQuota({ isCurrent }) {
+      current = isCurrent; entered.resolve(); await publication.promise; return { published: true };
+    } },
+  });
+  controller.start({ mode: "overview" }); await entered.promise;
+  controller.cancel(); assert.equal(current(), false); publication.resolve();
+  await controller.whenSettled();
+  assert.equal(controller.getStatus().status, "cancelled");
+  assert.equal(controller.getStatus().quickResultAt, null);
+});
+
+test("production runner reports durable quota independently before unified usage work", async () => {
+  const stages = [];
+  const runner = createLocalCollectorRefreshRunner({
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => ({ refresh: { attempted: true, recordWritten: true, errorCode: null } }),
+    refreshUnifiedIndex: async () => { stages.push("usage"); return { status: "ingested", generation: null }; },
+  });
+  await runner({ mode: "overview", onQuotaReady: async quota => {
+    assert.deepEqual(quota, { attempted: true, recordWritten: true, errorCode: null }); stages.push("quota");
+  } });
+  assert.deepEqual(stages, ["quota", "usage"]);
+});
+
+
+test("reviewed provider transport errors continue usage while durable collector faults stay terminal", async () => {
+  let usage = 0;
+  const runner = createLocalCollectorRefreshRunner({
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => { throw Object.assign(new Error("synthetic"), { code: "temporary_disconnect" }); },
+    refreshUnifiedIndex: async () => { usage++; return { status: "ingested", generation: null }; },
+  });
+  const result = await runner({ mode: "overview" });
+  assert.equal(usage, 1); assert.equal(result.quotaRefresh.errorCode, "temporary_disconnect");
 });

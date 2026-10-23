@@ -3,6 +3,34 @@ import test from 'node:test';
 import { installDesktopXIpc, validateXDesktopRequest, X_IPC_CHANNEL } from '../desktop-x-ipc.js';
 import { validateDesktopCommand } from '../desktop-command.js';
 import { X_SESSION_ERRORS } from '../desktop-x-contract.js';
+import { readFile } from 'node:fs/promises';
+import vm from 'node:vm';
+
+test('sandbox preload accepts scoped refresh and forced details while rejecting mixed or unknown arguments',async()=>{
+  const exposed=new Map(),calls=[];
+  const context=vm.createContext({process:{platform:'win32',env:{}},require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>exposed.set(name,value)},ipcRenderer:{invoke:async(channel,request)=>{calls.push({channel,request});return{};},on(){},off(){}}})});
+  vm.runInContext(await readFile(new URL('../preload.cjs',import.meta.url),'utf8'),context);
+  const bridge=exposed.get('tibotattleDesktop');
+  await bridge.refreshX({tab:'media'});await bridge.getXPost({id:'123',force:true});await bridge.getXPost({id:'123',cursor:'safe'});
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.map(c=>c.request))),[{action:'refreshX',args:{tab:'media'}},{action:'getXPost',args:{id:'123',force:true}},{action:'getXPost',args:{id:'123',cursor:'safe'}}]);
+  for(const args of [[],[{}],[{tab:'media',url:'https://x.com'}],[{tab:'unknown'}]])await assert.rejects(bridge.refreshX(...args));
+  for(const query of [{id:'123',force:1},{id:'123',force:undefined},{id:'123',force:true,cursor:'safe'},{id:'123',force:true,extra:true}])await assert.rejects(bridge.getXPost(query));
+  assert.equal(calls.length,3);
+});
+
+test('manual refresh is scoped and force detail reads have a closed contract',async()=>{
+  const calls=[];let handler;
+  installDesktopXIpc({ipcMain:{handle(_c,fn){handler=fn;}},authorize:()=>true,importBridge:{},service:{refresh:async args=>{calls.push(args);},getPost:async args=>{calls.push(args);}}});
+  await handler({}, {action:'refreshX',args:{tab:'media'}});await handler({}, {action:'getXPost',args:{id:'123',force:true}});
+  assert.deepEqual(calls,[{tab:'media',reason:'manual'},{id:'123',force:true}]);
+  for(const args of [{},{tab:'unknown'},{tab:'posts',id:'123'},{tab:'posts',cursor:'safe'}])assert.throws(()=>validateXDesktopRequest({action:'refreshX',args}));
+  for(const args of [{id:'123',force:1},{id:'123',force:undefined},{id:'123',force:true,cursor:'safe'},{id:'123',force:true,url:'https://x.com'}])assert.throws(()=>validateXDesktopRequest({action:'getXPost',args}));
+});
+
+test('detail pagination accepts only a bounded opaque cursor and exact request fields',()=>{
+  assert.deepEqual(validateXDesktopRequest({action:'getXPost',args:{id:'123',cursor:'synthetic-page'}}).args,{id:'123',cursor:'synthetic-page'});
+  for(const args of [{id:'123',cursor:'https://x.com/private'},{id:'123',cursor:null},{id:'123',cursor:'x'.repeat(161)},{id:'123',cursor:'safe',branch:'private'},{id:'123',url:'https://x.com'}])assert.throws(()=>validateXDesktopRequest({action:'getXPost',args}));
+});
 
 test('local session failure categories survive IPC without raw error context', async () => {
   for (const code of [...X_SESSION_ERRORS, 'storage_unavailable']) {

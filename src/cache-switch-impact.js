@@ -17,6 +17,17 @@ import { projectRecordedTokenComponents } from "./reporting/index.js";
 
 export const CACHE_SWITCH_PROXIMITY_MS = 5 * 60_000;
 export const CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO = 0.5;
+// This is a counterfactual chosen by the application, not an observed reusable
+// prefix. Prices and exact response units cannot establish prefix equivalence.
+export function cacheEstimateEvidence() {
+  return {
+    schemaVersion: 1,
+    method: "adjacent_cache_read_decrease",
+    reusablePrefixStatus: "unverified",
+    verifiedLossTokens: null,
+    verifiedPremiumUsd: null,
+  };
+}
 export const MAX_CACHE_SWITCH_RECENT_DETAILS = 250;
 // Elapsed time is evidence, not an eligibility gate. A same-configuration
 // cache collapse can be observed on the very next user turn; gap bands let the
@@ -286,13 +297,15 @@ function contextCanRetainPreviousPrefix(row) {
     && currentInputTokens(row) >= row.previous_tokens_in_cache_read;
 }
 
-function materialDropFor(row) {
+// A positive count decrease defines only this conditional repricing scenario.
+// Neither adjacent counts nor context length establish a reusable prefix C*.
+// The 50% ratio is reserved for the independent outcome classification.
+function cacheReadDecreaseFor(row) {
   if (!completeCacheComparison(row)) return null;
   const previousCacheReadTokens = row.previous_tokens_in_cache_read;
   const currentCacheReadTokens = row.tokens_in_cache_read;
   if (previousCacheReadTokens === 0
-      || currentCacheReadTokens
-        > previousCacheReadTokens * CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO) {
+      || currentCacheReadTokens >= previousCacheReadTokens) {
     return null;
   }
   const nonCacheReadInput = row.tokens_in_uncached + row.tokens_in_cache_write;
@@ -499,6 +512,7 @@ function premiumFor(row, lostCacheTokens, pricer) {
   const event = {
     timestamp: new Date(Number(row.observed_at_ms)).toISOString(),
     model: row.model_id,
+    totalInputContextTokens: currentInputTokens(row),
   };
   let actual;
   let counterfactual;
@@ -533,6 +547,7 @@ function newSummary() {
     lostCacheTokens: 0,
     pricedDrops: 0,
     unpricedDrops: 0,
+    observationUnits: { responsePairs: 0, unresolvedIncrementPairs: 0 },
     premiumNanos: 0n,
     speedWeighting: emptySpeedWeightingCrossing(),
     declaredSpeedWeighting: emptySpeedWeightingCrossing(),
@@ -558,7 +573,15 @@ function addConfigurationChange(summary, proximate) {
   if (proximate) summary.proximateConfigurationChanges += 1;
 }
 
-function addDrop(summary, lostCacheTokens, premiumNanos) {
+function addObservationUnit(summary, row) {
+  const key = row.current_observation_is_response === 1
+    && row.previous_observation_is_response === 1
+    ? "responsePairs" : "unresolvedIncrementPairs";
+  summary.observationUnits[key] += 1;
+}
+
+function addDrop(summary, lostCacheTokens, premiumNanos, row) {
+  addObservationUnit(summary, row);
   summary.cacheReadDrops += 1;
   summary.lostCacheTokens += lostCacheTokens;
   if (premiumNanos === null) {
@@ -575,6 +598,8 @@ function finalizeSummary(summary) {
     ? nanosToUsdString(summary.premiumNanos)
     : null;
   return {
+    estimateEvidence: cacheEstimateEvidence(),
+    observationUnits: { ...summary.observationUnits },
     configurationChanges: summary.configurationChanges,
     proximateConfigurationChanges: summary.proximateConfigurationChanges,
     uncoveredConfigurationChanges: summary.uncoveredConfigurationChanges,
@@ -641,6 +666,7 @@ function newContinuitySummary() {
     lostCacheTokens: 0,
     pricedDrops: 0,
     unpricedDrops: 0,
+    observationUnits: { responsePairs: 0, unresolvedIncrementPairs: 0 },
     premiumNanos: 0n,
     speedWeighting: emptySpeedWeightingCrossing(),
     declaredSpeedWeighting: emptySpeedWeightingCrossing(),
@@ -760,7 +786,8 @@ function addComparableReturn(summary, row) {
   }
 }
 
-function addContinuityDrop(summary, lostCacheTokens, premiumNanos) {
+function addContinuityDrop(summary, lostCacheTokens, premiumNanos, row) {
+  addObservationUnit(summary, row);
   summary.cacheReadDrops += 1;
   summary.lostCacheTokens += lostCacheTokens;
   if (premiumNanos === null) {
@@ -777,6 +804,8 @@ function finalizeContinuitySummary(summary) {
     ? nanosToUsdString(summary.premiumNanos)
     : null;
   return {
+    estimateEvidence: cacheEstimateEvidence(),
+    observationUnits: { ...summary.observationUnits },
     sameConfigurationReturns: summary.sameConfigurationReturns,
     comparableReturns: summary.comparableReturns,
     compactionConfoundedReturns: summary.compactionConfoundedReturns,
@@ -885,7 +914,7 @@ export function analyzeCacheSwitchRows(rows, {
     // observed zero. All four inputs used to identify and bound a cache drop
     // must therefore be present before the row can enter the drop/cost sum.
     if (!contextCanRetainPreviousPrefix(row)) continue;
-    const drop = materialDropFor(row);
+    const drop = cacheReadDecreaseFor(row);
     if (drop === null) continue;
     const {
       previousCacheReadTokens,
@@ -904,8 +933,8 @@ export function analyzeCacheSwitchRows(rows, {
       premiumNanos,
     );
     for (const period of applicablePeriods) {
-      addDrop(period.summary, lostCacheTokens, premiumNanos);
-      addDrop(period.byChangeType[changeType], lostCacheTokens, premiumNanos);
+      addDrop(period.summary, lostCacheTokens, premiumNanos, row);
+      addDrop(period.byChangeType[changeType], lostCacheTokens, premiumNanos, row);
       addPremiumCrossing(period.summary, premiumCrossing);
       addPremiumCrossing(period.byChangeType[changeType], premiumCrossing);
       retainRecent(period, detail);
@@ -969,7 +998,7 @@ export function analyzeCacheContinuityRows(rows, {
     const applicablePeriods = periods.filter((period) => observedMs >= period.startMs);
     const compactionBetween = row.compaction_between === 1;
     if (compactionBetween) {
-      const postCompactionDrop = materialDropFor(row);
+      const postCompactionDrop = cacheReadDecreaseFor(row);
       for (const period of applicablePeriods) {
         const model = CONTINUITY_MODELS.has(row.model_id)
           ? continuityModelCohort(period, row.model_id)
@@ -1030,7 +1059,7 @@ export function analyzeCacheContinuityRows(rows, {
       continue;
     }
     for (const summary of targets) addComparableReturn(summary, row);
-    const drop = materialDropFor(row);
+    const drop = cacheReadDecreaseFor(row);
     if (drop === null) continue;
     const premiumNanos = premiumFor(row, drop.lostCacheTokens, pricer);
     const premiumCrossing = premiumCrossingFor(row, premiumNanos, baselines);
@@ -1042,7 +1071,7 @@ export function analyzeCacheContinuityRows(rows, {
       premiumNanos,
     );
     for (const summary of targets) {
-      addContinuityDrop(summary, drop.lostCacheTokens, premiumNanos);
+      addContinuityDrop(summary, drop.lostCacheTokens, premiumNanos, row);
       addPremiumCrossing(summary, premiumCrossing);
     }
     for (const cohort of cohorts) retainContinuityRecent(cohort, detail);

@@ -106,6 +106,7 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/desktop-update-preferences.js",
   "apps/electron/desktop-updater.js",
   "apps/electron/desktop-x-contract.js",
+  "apps/electron/desktop-x-diagnostics.js",
   "apps/electron/desktop-x-import.js",
   "apps/electron/desktop-x-ipc.js",
   "apps/electron/desktop-x-page-adapter.js",

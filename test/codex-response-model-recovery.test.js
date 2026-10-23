@@ -38,6 +38,55 @@ test('recovered model keeps the captured speed declaration instead of borrowing 
  assert.equal(result.model,'gpt-6-astra');assert.equal(result.requestTier.rawTier,'default');
  const noTier=replay([meta,ctx(1,'gpt-6-astra'),updated,response(3)]).responseAt(3);assert.equal(noTier.requestTier,null);
 });
+test('ordinary known-model requests freeze captured speed and a stale context cannot borrow changed settings',()=>{
+ for(const declared of ['default',undefined]){
+  const context=ctx(1);if(declared!==undefined)context.payload.service_tier=declared;
+  const fast=rec(2,'event_msg',{type:'thread_settings_applied',thread_settings:{service_tier:'priority'}});
+  const out=replay([meta,context,fast,response(3,'in-flight',1),response(4,'reused-context',2),ctx(5),response(6,'fresh-context',3)]);
+  assert.equal(out.responseAt(3).model,'gpt-6.1-sol');
+  assert.equal(out.responseAt(3).requestTier?.rawTier??null,declared??null);
+  assert(Object.hasOwn(out.responseAt(3),'requestTier'),'unknown tier must prevent mutable timeline fallback');
+  assert.equal(out.responseAt(4).requestTier,null,'reused request context cannot acquire the new speed');
+  assert.equal(out.responseAt(6).requestTier.rawTier,'priority');
+ }
+});
+test('malformed, absent and future request-tier evidence remains explicitly unknown',()=>{
+ const standard=setting(0,'gpt-6.1-sol');standard.payload.thread_settings.service_tier='default';
+ const malformed=ctx(1);malformed.payload.service_tier={};
+ assert.equal(replay([meta,standard,malformed,response(2)]).responseAt(3).requestTier,null);
+ const fast=setting(1,'gpt-6.1-sol');fast.payload.thread_settings.service_tier='priority';
+ assert.equal(replay([meta,fast,response(2)]).responseAt(2).requestTier,null);
+ const incomplete=rec(2,'turn_context',{turn_id:turn,service_tier:'priority'});
+ assert.equal(replay([meta,standard,ctx(1),incomplete,response(3)]).responseAt(4).requestTier,null);
+ const futureSetting=structuredClone(standard);futureSetting.timestamp=at(5);
+ assert.equal(replay([meta,futureSetting,ctx(1),response(2)]).responseAt(3).requestTier,null);
+ const futureContext=ctx(5);futureContext.payload.service_tier='default';
+ assert.equal(replay([meta,futureContext,response(2)]).responseAt(2).requestTier,null);
+});
+test('a request context can capture the prior speed setting and only fresh context accepts a changed speed',()=>{
+ const standard=setting(0,'gpt-6.1-sol');standard.payload.thread_settings.service_tier='default';
+ const fast=setting(2,'gpt-6.1-sol');fast.payload.thread_settings.service_tier='priority';
+ const out=replay([meta,standard,ctx(1),fast,response(3,'first',1),response(4,'second',2),ctx(5),response(6,'third',3)]);
+ assert.equal(out.responseAt(4).requestTier.rawTier,'default');
+ assert.equal(out.responseAt(5).requestTier,null);
+ assert.equal(out.responseAt(7).requestTier.rawTier,'priority');
+});
+test('checkpoint model agreement does not supply a tier without unanimous independent prior settings',()=>{
+ const r=response(2);
+ const cp=(n,tier)=>{const value=checkpoint(n,r);if(tier!==undefined)value.payload.resume_metadata.previous_turn_settings.service_tier=tier;return value;};
+ const context=(n,tier)=>{const value=ctx(n);value.payload.service_tier=tier;return value;};
+ for(const records of [
+  [meta,started,r,cp(3,undefined),context(4,'default')],
+  [meta,started,r,cp(3,'default'),context(4,'priority')],
+  [meta,started,r,cp(3,'default'),context(4,'default'),cp(5,'priority'),context(6,'priority')],
+  [meta,started,r,cp(3,'default'),context(4,'default'),cp(5,undefined),context(6,'default')],
+ ]){
+  const recovered=replay(records).responseAt(2);
+  assert.equal(recovered.model,'gpt-6.1-sol');assert.equal(recovered.requestTier,null);
+ }
+ const agreed=replay([meta,started,r,cp(3,'default'),context(4,'default'),cp(5,'default'),context(6,'default')]).responseAt(2);
+ assert.equal(agreed.model,'gpt-6.1-sol');assert.equal(agreed.requestTier.rawTier,'default');
+});
 test('context conflicting when captured and unknown earlier response prefix do not prove a frozen model',()=>{
  const out=replay([meta,setting(0,'gpt-6-astra'),ctx(1),response(2)]);assert.equal(out.responseAt(3).model,null);
  const prefix=replay([meta,ctx(1),setting(2,'gpt-6-astra'),response(3,'a',2)]);assert.equal(prefix.responseAt(3).model,null);

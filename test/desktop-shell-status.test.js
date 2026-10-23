@@ -234,3 +234,35 @@ test("only elapsed time after a valid completed direct receipt receives the clos
     assert.throws(() => validateDesktopShellStatus({ ...expired, ...change }), TypeError);
   }
 });
+
+
+test("quota publication survives later usage failure without notification authority", () => {
+  const publishedAt = "2026-09-05T11:59:01.000Z";
+  const base = { quickResultAt: publishedAt,
+    quota: { status: "published", errorCode: null, publishedAt }, result: {} };
+  for (const status of ["failed", "degraded", "cancelled"]) {
+    const value = projectDesktopShellStatus({ refresh: { ...base, status },
+      displayEvidence: displayEvidence(), now: NOW });
+    assert.equal(value.state, "fresh");
+    assert.equal(value.allowance.remainingPercent, 0);
+    assert.equal(value.notificationEvidence, null);
+    assert.deepEqual(validateDesktopShellStatus(value), value);
+  }
+  for (const quota of [
+    { ...base.quota, status: "failed" },
+    { ...base.quota, errorCode: "quota_publication_failed" },
+    { ...base.quota, publishedAt: "2026-09-05T12:00:01.000Z" },
+    { ...base.quota, publishedAt: "invalid" },
+  ]) {
+    const value = projectDesktopShellStatus({ refresh: { ...base, status: "failed", quota },
+      displayEvidence: displayEvidence(), now: NOW });
+    assert.equal(value.state, "unavailable");
+    assert.equal(value.displayEvidence, undefined);
+  }
+  const stale = projectDesktopShellStatus({ refresh: { ...base, status: "failed" },
+    displayEvidence: displayEvidence({ freshness: { status: "stale" } }), now: NOW });
+  assert.equal(stale.state, "stale");
+  assert.equal(stale.allowance, null);
+  assert.equal(stale.notificationEvidence, null);
+  assert.ok(stale.displayEvidence);
+});

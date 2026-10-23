@@ -3,7 +3,7 @@ import { opendir, lstat, mkdir, realpath } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
-import { MODEL_PERFORMANCE_MAX_WINDOWS } from './model-performance-snapshots.js';
+import { MODEL_PERFORMANCE_MAX_WINDOWS, MODEL_PERFORMANCE_SOURCE_DIAGNOSTICS } from './model-performance-snapshots.js';
 import { openTimingStore, ingestTimingFile, readTimingRows, createCompressedTimingReader, timingLogicalSourcePath } from '../../src/platform/index.js';
 import { createModelPerformanceContext } from '../../src/application/index.js';
 
@@ -58,6 +58,25 @@ export function modelPerformanceSourceFailure(error) {
   return 'timing_store_failed';
 }
 
+export function modelPerformanceSourceRecoveryReason(error) {
+  return MODEL_PERFORMANCE_SOURCE_DIAGNOSTICS.includes(error?.recoveryReason) ? error.recoveryReason
+    : error?.message === 'source_recovery_failed' || error?.code === 'codex_rollout_source_changed'
+      ? 'source_changed_unknown' : null;
+}
+
+export function modelPerformanceRecoveryDiagnostics(failures, sources, discoveredDigests) {
+  const counts = new Map();
+  const add = (code, digest) => {
+    if (!MODEL_PERFORMANCE_SOURCE_DIAGNOSTICS.includes(code)) return;
+    const ids = counts.get(code) ?? new Set(); ids.add(digest); counts.set(code, ids);
+  };
+  for (const [digest, reasons] of failures) for (const reason of reasons) add(reason, digest);
+  if (discoveredDigests !== null) for (const row of sources) {
+    if (row.rebuilding && !discoveredDigests.has(row.digest)) add('recovery_source_not_discovered', row.digest);
+  }
+  return [...counts].map(([code, ids]) => ({ code, count: ids.size }));
+}
+
 export function modelPerformanceHistoryState(sources, parserVersion, discoveredDigests) {
   let pending = 0, unavailable = 0, recoveryFailed = 0;
   for (const source of sources) {
@@ -85,8 +104,10 @@ async function run() {
   let discoveredDigests = null;
   const diagnostics = new Set();
   const sourceFailures = new Map();
+  const sourceRecoveryReasons = new Map();
+  let recoveryDiagnostics = [];
   let stage = 'timing_store_failed';
-  const emitDiagnostics = () => parentPort.postMessage({ type: 'diagnostics', codes: [...diagnostics] });
+  const emitDiagnostics = () => parentPort.postMessage({ type: 'diagnostics', codes: [...diagnostics], sourceDetails: recoveryDiagnostics });
   const windows = new Map();
   let windowsChanged = false;
   const stop = () => { stopped = true; clearTimeout(timer); abort.abort(); };
@@ -102,20 +123,23 @@ async function run() {
   });
   let lastPublished = 0, lastCollecting = null;
   function publish(collecting) {
-    let rows, revision, history;
+    let rows, revision, history, sourceFacts;
     try {
       const result = readTimingRows(store, { supplement, withRevision: true });
       rows = result.rows; revision = result.revision;
+      sourceFacts = result.sources;
       history = modelPerformanceHistoryState(result.sources, context.parserVersion, discoveredDigests);
     } catch {
       degraded = true; passFailed = true;
       diagnostics.add('timing_store_failed');
       const result = readTimingRows(store, { withRevision: true });
       rows = result.rows; revision = result.revision;
+      sourceFacts = result.sources;
       history = modelPerformanceHistoryState(result.sources, context.parserVersion, discoveredDigests);
     }
     if (history.unavailable) diagnostics.add('timing_history_unavailable');
     else diagnostics.delete('timing_history_unavailable');
+    recoveryDiagnostics = modelPerformanceRecoveryDiagnostics(sourceRecoveryReasons, sourceFacts, discoveredDigests);
     for (const code of ['timing_source_recovery_failed', 'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported']) {
       if (code === 'timing_source_recovery_failed' && history.recoveryFailed
           || [...sourceFailures.values()].some(codes => codes.has(code))) diagnostics.add(code);
@@ -184,6 +208,7 @@ async function run() {
             stage = 'timing_store_failed';
             let done = true;
             const failuresForSource = new Set();
+            const recoveryReasonsForSource = new Set();
             // Two 2-MiB chunks preserve the original total 4-MiB slice budget.
             for (const target of [store, supplement].filter(Boolean)) {
               try {
@@ -194,12 +219,17 @@ async function run() {
                 if (stopped) break;
                 bytes += e.attemptedBytes ?? 0; degraded = true; passFailed = true;
                 const code = modelPerformanceSourceFailure(e);
+                const reason = modelPerformanceSourceRecoveryReason(e);
+                if (reason !== null) recoveryReasonsForSource.add(reason);
                 failuresForSource.add(code); diagnostics.add(code);
               }
             }
             const sourceDigest = store.digest(store.key, 'source-path', files[cursor].logicalPath);
             if (failuresForSource.size) sourceFailures.set(sourceDigest, failuresForSource);
             else sourceFailures.delete(sourceDigest);
+            if (recoveryReasonsForSource.size) sourceRecoveryReasons.set(sourceDigest, recoveryReasonsForSource);
+            else sourceRecoveryReasons.delete(sourceDigest);
+            while (sourceRecoveryReasons.size > 50_000) sourceRecoveryReasons.delete(sourceRecoveryReasons.keys().next().value);
             if (done) cursor++;
           } catch (e) {
             if (stopped) break;

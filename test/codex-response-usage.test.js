@@ -76,25 +76,144 @@ test('first response raw usage survives an unknown nonnegative prefix while late
 
 test('legacy overlap needs known component agreement and handles only absent zero cache-write evidence', () => {
   for (const [label, omitModernCacheWrite] of [['assumed', true], ['explicit', false]]) {
-    const old = legacy(1, 3);
+    const old = legacy(1, 1);
     delete old.payload.info.last_token_usage.cache_write_input_tokens;
-    const current = response(2, `response-${label}-cache-write`, 3);
+    const current = response(2, `response-${label}-cache-write`, 1);
     if (omitModernCacheWrite) delete current.payload.usage.cache_write_input_tokens;
     const reconciled = plan([meta, context, old, current]);
     assert(reconciled.suppressLegacyAt(2));
-    assert.equal(reconciled.diagnostics.unverifiedPrefixTurns, 1);
+    assert.equal(reconciled.diagnostics.unverifiedPrefixTurns, 0);
   }
 
-  const explicitConflict = legacy(1, 3);
+  const explicitConflict = legacy(1, 1);
   explicitConflict.payload.info.last_token_usage.cache_write_input_tokens = 1;
   assert.throws(() => plan([meta, context, explicitConflict,
-    response(2, 'response-cache-write-conflict', 3)]),
+    response(2, 'response-cache-write-conflict', 1)]),
   { code: 'codex_response_usage_legacy_conflict' });
 
-  const unmatched = legacy(1, 3);
+  const unmatched = legacy(1, 1);
   unmatched.payload.info.last_token_usage = raw(2);
-  assert.throws(() => plan([meta, context, unmatched, response(2, 'only-one-response', 3)]),
+  assert.throws(() => plan([meta, context, unmatched, response(2, 'only-one-response', 1)]),
     { code: 'codex_response_usage_legacy_conflict' });
+});
+
+test('legacy reconciliation requires complete modern coverage and distinct matching occurrences', () => {
+  // Two independently advancing legacy snapshots cannot both refer to one
+  // response merely because their per-response token vectors are equal.
+  assert.throws(() => plan([meta, context, legacy(1, 1), legacy(2, 2),
+    response(3, 'only-first-response', 1)]),
+  { code: 'codex_response_usage_legacy_conflict' });
+  assert.throws(() => plan([meta, context, legacy(1, 1), legacy(2, 2),
+    response(3, 'only-second-response', 2)]),
+  { code: 'codex_response_usage_legacy_conflict' });
+  assert.throws(() => plan([meta, context, legacy(1, 3),
+    response(2, 'unknown-prefix-overlap', 3)]),
+  { code: 'codex_response_usage_legacy_conflict' });
+
+  const complete = plan([meta, context, legacy(1, 1), response(2, 'first-call', 1),
+    legacy(3, 2), response(4, 'second-call', 2), legacy(5, 2)]);
+  assert.equal(complete.diagnostics.responses, 2);
+  assert(complete.suppressLegacyAt(2));assert(complete.suppressLegacyAt(4));
+  assert(!complete.suppressLegacyAt(6), 'unchanged cumulative status is not another occurrence');
+  assert.notEqual(complete.responseAt(3).key, complete.responseAt(5).key);
+
+  const modernOnly = plan([meta, context, response(1, 'known-after-prefix', 3)]);
+  assert.equal(modernOnly.diagnostics.unverifiedPrefixTurns, 1);
+  assert.deepEqual(modernOnly.responseAt(2).raw, raw());
+});
+
+function checkpointContinuation() {
+  const before = response(1, 'synthetic-compactor', 2);
+  before.payload.usage = raw(2);
+  const baseline = legacy(1, 20);baseline.payload.info.last_token_usage = raw(0);
+  return [meta, rec(1, 'compacted', {
+    compaction_response_id: before.payload.response_id, latest_token_usage_record: before.payload,
+  }), baseline, rec(2, 'event_msg', { type: 'task_started', turn_id: context.payload.turn_id }),
+  legacy(3, 21), response(3, 'synthetic-resumed-a', 3),
+  legacy(4, 22), response(4, 'synthetic-resumed-b', 4)];
+}
+
+test('exact preceding checkpoint permits only the paired new usage, without pricing or charging its prefix', () => {
+  const result = plan(checkpointContinuation());
+  assert.equal(result.diagnostics.responses, 2);
+  assert.equal(result.diagnostics.unverifiedPrefixTurns, 1, 'historical prefix is still not new spend');
+  assert(result.suppressLegacyAt(4));assert(result.suppressLegacyAt(6));
+  assert.equal(result.responseAt(1), null, 'checkpoint is a baseline, not an extra response');
+  assert.equal(result.responseAt(5).model, null);
+  assert.equal(result.responseAt(5).requestTier, null);
+  assert.deepEqual(result.responseAt(5).raw, raw());
+});
+
+test('checkpoint continuation rejects absent, conflicting, late, duplicate and incomplete evidence', () => {
+  const variants = [
+    rows => rows.splice(1, 1),
+    rows => { rows[1].payload.compaction_response_id = 'synthetic-unrelated'; },
+    rows => { rows[1].payload.latest_token_usage_record.thread_id = 'synthetic-foreign'; },
+    rows => { rows[1].payload.latest_token_usage_record.turn_id = 'synthetic-other-turn'; },
+    rows => { rows[1].timestamp = at(5); },
+    rows => { rows.splice(6, 0, rows.splice(1, 1)[0]); },
+    rows => { rows.splice(2, 0, structuredClone(rows[1])); },
+    rows => { rows[1].payload.latest_token_usage_record.turn_token_usage = raw(3); },
+    rows => { rows[1].payload.latest_token_usage_record.usage = raw(1); },
+    rows => { delete rows[1].payload.latest_token_usage_record.usage.cache_write_input_tokens; },
+    rows => { rows[4].payload.info.total_token_usage = raw(23); },
+    rows => { delete rows[4].payload.info.total_token_usage.cached_input_tokens; },
+    rows => { rows[4].payload.info.last_token_usage.cached_input_tokens--; },
+    rows => { rows[4].timestamp = at(2); },
+    rows => { rows[6].payload.info.total_token_usage.cached_input_tokens--; },
+    rows => { rows.splice(6, 0, legacy(3, 22)); },
+    rows => { rows.splice(2, 1); },
+  ];
+  for (const [index, change] of variants.entries()) {
+    const rows = checkpointContinuation();change(rows);
+    assert.throws(() => plan(rows), { code: 'codex_response_usage_legacy_conflict' }, `variant ${index}`);
+  }
+  for (const component of Object.keys(raw())) {
+    const rows=checkpointContinuation();rows[4].payload.info.total_token_usage[component]++;
+    assert.throws(() => plan(rows), {code:'codex_response_usage_legacy_conflict'}, component);
+  }
+});
+
+test('checkpoint overlap has scanner/index parity, atomic append and replay-safe rollback', async () => {
+  const rows = checkpointContinuation();
+  const f = await fixture(rows.slice(0, 4)), indexFile = join(f.root, 'index.sqlite'), secretFile = join(f.root, 'salt');
+  try {
+    await refreshCodexHome(f.root, { indexFile, secretFile });
+    await appendFile(f.path, rows.slice(4).map(r => JSON.stringify(r)).join('\n') + '\n');
+    await refreshCodexHome(f.root, { indexFile, secretFile });
+    const events = [];
+    await extractRolloutUsage(f.path, { size: (await stat(f.path)).size, onEvent: e => events.push(e) });
+    const scanned = [];
+    await localCodexLogScanner.scanCodexLogEvents({ codexHome: f.root, startAt: at(0), endAt: at(20),
+      onUsage: e => scanned.push(e) });
+    assert.equal(events.length, 2, 'only the two exact responses are new spend');
+    assert.deepEqual(events.map(e => [e.totalInputContextTokens, e.outputCombinedTokens]),
+      scanned.map(e => [e.raw.input_tokens, e.raw.output_tokens]));
+    const facts = v2Facts(indexFile);
+    const cursor = () => withReadOnlyStore(indexFile, db => db.prepare('SELECT scanned_bytes FROM source').get().scanned_bytes);
+    const priorCursor = cursor();
+    await refreshCodexHome(f.root, { indexFile, secretFile });
+    assertSameFacts(v2Facts(indexFile), facts);
+    const coldIndex = join(f.root, 'cold.sqlite');
+    await refreshCodexHome(f.root, { indexFile: coldIndex, secretFile });
+    assertSameFacts(v2Facts(coldIndex), facts);
+    const invalid = structuredClone(rows[6]);invalid.payload.info.total_token_usage = raw(23);
+    await appendFile(f.path, JSON.stringify(invalid) + '\n');
+    for (let i = 0; i < 2; i++) {
+      await assert.rejects(refreshCodexHome(f.root, { indexFile, secretFile }), { code: 'codex_response_usage_legacy_conflict' });
+      assertSameFacts(v2Facts(indexFile), facts);
+      assert.equal(cursor(), priorCursor);
+    }
+  } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+test('malformed modern JSON retains the fixed parser error code', async () => {
+  const f = await fixture([meta]);
+  try {
+    await appendFile(f.path, '{"type":"token_usage_record","payload":\n');
+    await assert.rejects(localCodexLogScanner.scanCodexLogEvents({ codexHome: f.root,
+      startAt: at(0), endAt: at(20) }), { code: 'codex_response_usage_invalid' });
+  } finally { await rm(f.root, { recursive: true, force: true }); }
 });
 
 test('fork replay never charges the child and an in-flight setting change retains the captured request model', () => {
@@ -245,6 +364,28 @@ test('first modern append atomically replaces prior legacy overlap and repeat re
   } finally { await rm(f.root,{recursive:true}); }
 });
 
+test('ambiguous modern append preserves last committed legacy facts and cursor across retries', async () => {
+  const f = await fixture([meta, context, legacy(1, 1), legacy(2, 2)]);
+  const indexFile = join(f.root, 'index.sqlite');
+  const state = () => withReadOnlyStore(indexFile, db => ({
+    facts: db.prepare('SELECT event_key,total_input_context,tokens_out_combined FROM usage_event ORDER BY source_offset').all(),
+    cursor: db.prepare('SELECT scanned_bytes,size_bytes,verified_bytes,head_digest,boundary_digest,tail_digest,parser_version FROM source').get(),
+    sequence: db.prepare('SELECT commit_seq FROM store_state').get(),
+  }));
+  try {
+    await refreshCodexHome(f.root, { indexFile });
+    const before = state();
+    assert.equal(before.facts.length, 2);
+    assert.equal(before.facts.reduce((n, row) => n + row.total_input_context, 0), 200);
+    await appendFile(f.path, JSON.stringify(response(3, 'only-second-modern-response', 2)) + '\n');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(refreshCodexHome(f.root, { indexFile }),
+        { code: 'codex_response_usage_legacy_conflict' });
+      assert.deepEqual(state(), before);
+    }
+  } finally { await rm(f.root, { recursive: true }); }
+});
+
 test('duplicate response ownership survives rescan, owner replacement, pruning, and replay', async () => {
   const shared = response(2, 'synthetic-shared-owner', 1);
   const prefix = [meta, context, shared];
@@ -257,9 +398,12 @@ test('duplicate response ownership survives rescan, owner replacement, pruning, 
     history_mode: 'paginated', history_base: { thread_id: meta.payload.id,
       end_ordinal_exclusive: 3, end_byte_offset: Buffer.byteLength(prefixText) } });
   replacementMeta.ordinal = 3;
-  const replacementResponse = response(4, 'synthetic-shared-owner', 1);
-  replacementResponse.ordinal = 4;
-  const copyRecords = [replacementMeta, replacementResponse];
+  // A physical copy keeps the response's timestamp and request attribution.
+  // Conflicting dates/settings under an identity must not choose its price by
+  // source order; those are negative cases in the ledger parity tests.
+  const replacementContext = { ...context, ordinal: 4 };
+  const replacementResponse = { ...shared, ordinal: 5 };
+  const copyRecords = [replacementMeta, replacementContext, replacementResponse];
   const copyText = copyRecords.map(record => JSON.stringify(record)).join('\n') + '\n';
   const writeCopy = async (records) => writeFile(
     survivingCopy, records.map(record => JSON.stringify(record)).join('\n') + '\n',
@@ -357,8 +501,14 @@ test('persistent response identity suppresses physical copies and rejects change
       const r=db.prepare('SELECT * FROM usage_event LIMIT 1').get(),writer=createLocalIndexWriter(db);writer.begin();
       const source=writer.registerSource({sourceLocal:Buffer.alloc(32,91),sessionId:r.session_id,surfaceId:r.surface_id,path:join(f.root,'synthetic-copy.jsonl'),rolloutKey:'synthetic-copy',sizeBytes:0,mtimeMs:0});
       const e={sourceId:source.id,sourceOffset:1,observedAtMs:r.observed_at_ms,eventKey:r.event_key,sessionId:r.session_id,accountScopeId:r.account_scope_id,modelId:r.model_id,tierId:r.tier_id,surfaceId:r.surface_id,reasoningEffort:r.reasoning_effort,responseUsage:true,tokensInUncached:r.tokens_in_uncached,tokensInCacheRead:r.tokens_in_cache_read,tokensInCacheWrite:r.tokens_in_cache_write,tokensOutText:r.tokens_out_text,tokensOutReasoning:r.tokens_out_reasoning,tokensOutCombined:r.tokens_out_combined,totalInputContext:r.total_input_context};
+      e.tierObservedAtMs=r.tier_observed_at_ms;
+      e.cacheWriteAssumedZero=(r.flags&4)!==0;
       assert.equal(writer.writeUsageEvent(e),0);
       assert.throws(()=>writer.writeUsageEvent({...e,tokensInUncached:e.tokensInUncached+1}),{code:'codex_response_usage_identity_conflict'});
+      assert.throws(()=>writer.writeUsageEvent({...e,observedAtMs:e.observedAtMs+1}),{code:'codex_response_usage_identity_conflict'});
+      const changedModel=writer.internModel('gpt-6-astra','recognized');
+      assert.throws(()=>writer.writeUsageEvent({...e,modelId:changedModel}),{code:'codex_response_usage_identity_conflict'});
+      assert.throws(()=>writer.writeUsageEvent({...e,cacheWriteAssumedZero:!e.cacheWriteAssumedZero}),{code:'codex_response_usage_identity_conflict'});
       writer.rollback();assert.equal(db.prepare('SELECT COUNT(*) n FROM usage_event').get().n,1);
     }finally{db.close();}
   }finally{await rm(f.root,{recursive:true});}
@@ -379,4 +529,46 @@ test('deferred modern response tails preserve reconciled history through rescan,
     await refreshCodexHome(f.root, options); assert.deepEqual(facts(), completed);
     await rename(f.path, join(f.root, 'retained-source')); await refreshCodexHome(f.root, options); assert.deepEqual(facts(), completed);
   } finally { await rm(f.root, { recursive: true, force: true }); }
+});
+
+
+test('ignored and duplicate modern appends publish metadata without rewriting unchanged usage facts', async () => {
+  const first = response(2, 'stable-response', 1);
+  const f = await fixture([meta, context, first]);
+  let db;
+  try {
+    await refreshCodexHome(f.root);
+    db = openLocalIndexStore(join(f.root, 'index.sqlite'));
+    const revision = () => Number(db.prepare('SELECT calculation_revision n FROM store_state').get().n);
+    const baseline = revision();
+    const scopeRows = db.prepare("SELECT COUNT(*) n FROM account_scope").get().n;
+    const sequence = db.prepare('SELECT commit_seq n FROM store_state').get().n;
+    db.exec(`CREATE TABLE candidate_write_audit(n INTEGER);
+      CREATE TRIGGER candidate_usage_insert AFTER INSERT ON usage_event BEGIN INSERT INTO candidate_write_audit VALUES(1); END;
+      CREATE TRIGGER candidate_usage_delete AFTER DELETE ON usage_event BEGIN INSERT INTO candidate_write_audit VALUES(1); END;`);
+    db.close();
+    for (const record of [rec(3, 'ignored', {}), first]) {
+      await appendFile(f.path, JSON.stringify(record) + '\n');
+      const refreshed = await refreshCodexHome(f.root);
+      assert.equal(refreshed.usageEventsRemoved, 0);
+      assert.equal(refreshed.usageEvents, 0);
+      assert.equal(refreshed.sourcesSemanticNoop, 1);
+      db = openLocalIndexStore(join(f.root, 'index.sqlite'));
+      assert.equal(revision(), baseline);
+      assert.equal(db.prepare("SELECT COUNT(*) n FROM account_scope").get().n, scopeRows);
+      assert.equal(db.prepare('SELECT COUNT(*) n FROM candidate_write_audit').get().n, 0);
+      assert.ok(db.prepare('SELECT commit_seq n FROM store_state').get().n > sequence);
+      const source = db.prepare('SELECT scanned_bytes,size_bytes FROM source').get();
+      assert.equal(source.scanned_bytes, source.size_bytes);
+      db.close();
+    }
+    // Same quantities but genuinely different model evidence must invalidate.
+    const changedContext = structuredClone(context); changedContext.payload.model = 'gpt-6-astra';
+    await writeFile(f.path, [meta, changedContext, first].map(r => JSON.stringify(r)).join('\n') + '\n');
+    await refreshCodexHome(f.root);
+    db = openLocalIndexStore(join(f.root, 'index.sqlite'));
+    assert.ok(revision() > baseline);
+    assert.equal(db.prepare('SELECT COUNT(*) n FROM usage_event').get().n, 1);
+    db.close();
+  } finally { if (db?.isOpen) db.close(); await rm(f.root, { recursive: true, force: true }); }
 });

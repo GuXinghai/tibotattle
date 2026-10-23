@@ -2830,10 +2830,12 @@ export function verifyWindowsNormalCandidateModelPerformance(value) {
     && model.turns === 1
     && Array.isArray(model.speed)
     && model.speed.some((series) => Array.isArray(series?.points)
-      && series.points.some((point) => Number.isFinite(point?.median) && point.median > 0))
+      && series.points.some((point) => Number.isFinite(point?.median) && point.median > 0
+        && Number.isFinite(point.mean) && point.mean > 0))
     && Array.isArray(model.ttft)
-    && model.ttft.some((point) => Number.isFinite(point?.median) && point.median > 0));
-  return value?.schemaVersion === 5 && value.method === 5
+    && model.ttft.some((point) => Number.isFinite(point?.median) && point.median > 0
+      && Number.isFinite(point.mean) && point.mean > 0));
+  return value?.schemaVersion === 6 && value.method === 5
     && value.speedMode === 'standard' && value.excludedUnknownTurns === 0
     && value.status === 'ready' && value.collecting === false && value.stale === false
     && value.period === 'all' && measured === true

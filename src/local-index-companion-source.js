@@ -11,6 +11,7 @@ import {
   LOCAL_INDEX_PARSER_VERSION,
   LOCAL_INDEX_STORE_USER_VERSION,
   openLocalIndexStore,
+  readCalculationRevision,
   withReadSnapshot,
 } from "./local-index-store.js";
 import { readLocalIndexWorkUsage } from "./local-index-work-usage.js";
@@ -48,6 +49,7 @@ function unavailable(status, errorCode = null) {
     skippedSourceBytes: 0,
     skippedThreadCount: 0,
     responseUnverifiedPrefixTurns: null,
+    cumulativePrefixUnattributed: null,
     rolloutIssueCounts: {},
     indexBytes: 0,
     latestExportableRecordAt: null,
@@ -116,6 +118,7 @@ export function describeLocalIndexGeneration(database, report, commitSeq) {
   ).get(commitSeq)?.at ?? 0);
   return {
     id: commitSeq,
+    calculationRevision: readCalculationRevision(database),
     fingerprint,
     status,
     blockReason,
@@ -173,7 +176,7 @@ export function readLocalIndexGenerationIdentity({ indexFile } = {}) {
       const identity = generationIdentity(
         commitSeq, readLocalIndexCoverage(database), localIndexToolProvenanceComplete(database),
       );
-      return { id: commitSeq, fingerprint: identity.fingerprint };
+      return { id: commitSeq, fingerprint: identity.fingerprint, calculationRevision: readCalculationRevision(database) };
     });
   } catch {
     return null;

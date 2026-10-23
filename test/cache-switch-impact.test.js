@@ -150,7 +150,7 @@ function allowanceCapacity(selectedScenario = "unresolved_as_standard") {
   };
 }
 
-test("analyzer classifies effective changes and prices the conservative warm counterfactual", () => {
+test("analyzer classifies effective changes and prices the chosen warm counterfactual", () => {
   const calls = [];
   const projection = analyzeCacheSwitchRows([row()], {
     nowMs: NOW_MS,
@@ -262,33 +262,38 @@ test("cache premiums preserve observed speed, then declarations, then scenario f
   ], [2, 1, 1, 0]);
 });
 
-test("material-collapse gate excludes a near-warm switch-back and includes exactly half retained", () => {
+test("positive decreases remain priced across the half-retained classification boundary", () => {
   const nearWarm = row({
     previous_tokens_in_cache_read: 115_456,
     tokens_in_cache_read: 114_432,
     tokens_in_uncached: 1_024,
     tokens_in_cache_write: 0,
   });
-  const halfRetained = row({
-    observed_at_ms: NOW_MS - 30_000,
-    previous_observed_at_ms: NOW_MS - 60_000,
+  const retained = (cached, index) => row({
+    observed_at_ms: NOW_MS - (30 - index) * 1_000,
+    previous_observed_at_ms: NOW_MS - (60 - index) * 1_000,
     previous_tokens_in_cache_read: 1_000,
-    tokens_in_cache_read: 500,
-    tokens_in_uncached: 500,
+    tokens_in_cache_read: cached,
+    tokens_in_uncached: 1_000 - cached,
     tokens_in_cache_write: 0,
   });
-  const period = analyzeCacheSwitchRows([nearWarm, halfRetained], {
+  const period = analyzeCacheSwitchRows([nearWarm,
+    retained(501, 0), retained(500, 1), retained(499, 2)], {
     nowMs: NOW_MS,
     pricer: fullyPriced,
   }).periods.find((candidate) => candidate.periodId === "24h");
 
   assert.equal(CACHE_SWITCH_MAXIMUM_RETAINED_CACHE_RATIO, 0.5);
-  assert.equal(period.configurationChanges, 2);
-  assert.equal(period.proximateConfigurationChanges, 2);
-  assert.equal(period.cacheReadDrops, 1);
-  assert.equal(period.lostCacheTokens, 500);
-  assert.equal(period.recent.length, 1);
-  assert.equal(period.recent[0].currentCacheReadTokens, 500);
+  assert.equal(period.configurationChanges, 4);
+  assert.equal(period.proximateConfigurationChanges, 4);
+  assert.equal(period.cacheReadDrops, 4);
+  assert.equal(period.lostCacheTokens, 2_524);
+  assert.equal(period.estimatedPremiumUsdExact, usdFromNanos(2_524 * 9));
+  assert.equal(period.recent.length, 4);
+  for (const cached of [501, 500, 499]) {
+    assert.equal(period.recent.find((detail) => detail.currentCacheReadTokens === cached)
+      .estimatedPremiumUsdExact, usdFromNanos((1_000 - cached) * 9));
+  }
 });
 
 test("Max and Ultra share one effective effort while model and combined changes stay distinct", () => {
@@ -567,7 +572,9 @@ test("continuity outcomes partition checked follow-ups at the exact half boundar
   assert.equal(period.reusedHalfOrLessReturns, 2);
   assert.equal(period.matchedOrExceededReturns, 2);
   assert.equal(period.reusedBetweenHalfAndPreviousReturns, 1);
-  assert.equal(period.cacheReadDrops, 2);
+  assert.equal(period.cacheReadDrops, 3);
+  assert.equal(period.lostCacheTokens, 1_750);
+  assert.equal(period.estimatedPremiumUsdExact, usdFromNanos(1_750 * 9));
   assert.equal(bucket.comparableReturns, 5);
   assert.equal(bucket.reusedMoreThanHalfReturns, 3);
   assert.equal(bucket.reusedHalfOrLessReturns, 2);
@@ -628,7 +635,7 @@ test("continuity lens has no timing floor, requires a turn boundary, and separat
   assert.equal(period.contextContractedReturns, 1);
   assert.equal(period.insufficientEvidenceReturns, 1);
   assert.equal(period.uncoveredReturns, 0);
-  assert.equal(period.cacheReadDrops, 1);
+  assert.equal(period.cacheReadDrops, 2);
   assert.ok(period.estimatedPremiumUsd > 0);
   assert.equal(period.byGapBand.under_one_minute.cacheReadDrops, 1);
   assert.equal(period.postCompactionRequests, 1);
@@ -686,7 +693,7 @@ test("older parser coverage withholds both continuity and switch premiums", () =
   assert.equal(switched.coveredSubtotal, null);
 });
 
-test("retained parser suffixes retain cache continuity coverage after the v21 response upgrade", () => {
+test("retained parser suffixes retain cache continuity coverage after the v22 attribution upgrade", () => {
   const retainedV15 = [
     "unified-rollout-typed-v15",
     "unified-rollout-typed-v15-partial",
@@ -706,8 +713,9 @@ test("retained parser suffixes retain cache continuity coverage after the v21 re
   const retainedV18 = retainedV17.map((version) => version.replace("v17", "v18"));
   const retainedV19 = retainedV18.map((version) => version.replace("v18", "v19"));
   const retainedV20 = retainedV19.map((version) => version.replace("v19", "v20"));
+  const retainedV21 = retainedV20.map((version) => version.replace("v20", "v21"));
   for (const parserVersion of [...retainedV15, ...retainedV16, ...retainedV17,
-    ...retainedV18, ...retainedV19, ...retainedV20,
+    ...retainedV18, ...retainedV19, ...retainedV20, ...retainedV21,
     ...currentV18.flatMap((version) => [version, `${version}-cache-write-zero`])]) {
     const continuity = analyzeCacheContinuityRows([continuityRow({
       parser_version: parserVersion,
@@ -731,7 +739,7 @@ test("retained parser suffixes retain cache continuity coverage after the v21 re
 
   for (const parserVersion of [
     "unified-rollout-typed-v17-future",
-    "unified-rollout-typed-v22",
+    "unified-rollout-typed-v23",
   ]) {
     const continuity = analyzeCacheContinuityRows([continuityRow({
       parser_version: parserVersion,
@@ -757,6 +765,113 @@ for (const [name, analyze, makeRow, premiumNanos] of [
   ["switch", analyzeCacheSwitchRows, row, 9_400],
   ["continuity", analyzeCacheContinuityRows, continuityRow, 9_000],
 ]) {
+  test(`${name} amounts remain continuous immediately below, at and above half retained`, () => {
+    const period = analyze([499, 500, 501].map((cached) => makeRow({
+      tokens_in_uncached: 1_000 - cached, tokens_in_cache_read: cached,
+      tokens_in_cache_write: 0, previous_tokens_in_cache_read: 1_000,
+    })), { nowMs: NOW_MS, pricer: fullyPriced }).periods
+      .find((candidate) => candidate.periodId === "7d");
+    assert.equal(period.cacheReadDrops, 3);
+    assert.equal(period.lostCacheTokens, 1_500);
+    assert.equal(period.estimatedPremiumUsdExact, usdFromNanos(1_500 * 9));
+    for (const cached of [499, 500, 501]) {
+      assert.equal(period.recent.find((detail) => detail.currentCacheReadTokens === cached)
+        .estimatedPremiumUsdExact, usdFromNanos((1_000 - cached) * 9));
+    }
+    if (name === "continuity") {
+      assert.equal(period.reusedHalfOrLessReturns, 2);
+      assert.equal(period.reusedMoreThanHalfReturns, 1);
+    }
+  });
+
+  test(`${name} exact responses and unresolved increments both leave reusable-prefix loss unverified`, () => {
+    const rows = [[1, 1], [0, 0], [1, 0], [undefined, undefined], [true, true]]
+      .map(([current, previous]) => makeRow({
+        current_observation_is_response: current,
+        previous_observation_is_response: previous,
+      }));
+    const original = structuredClone(rows);
+    const period = analyze(rows, { nowMs: NOW_MS, pricer: fullyPriced }).periods
+      .find((candidate) => candidate.periodId === "7d");
+    assert.equal(period.cacheReadDrops, 5);
+    assert.deepEqual(period.observationUnits, { responsePairs: 1, unresolvedIncrementPairs: 4 });
+    assert.deepEqual(period.estimateEvidence, {
+      schemaVersion: 1,
+      method: "adjacent_cache_read_decrease",
+      reusablePrefixStatus: "unverified",
+      verifiedLossTokens: null,
+      verifiedPremiumUsd: null,
+    });
+    const parts = name === "switch" ? Object.values(period.byChangeType) : period.byModel;
+    for (const field of ["responsePairs", "unresolvedIncrementPairs"]) {
+      assert.equal(parts.reduce((sum, part) => sum + part.observationUnits[field], 0),
+        period.observationUnits[field]);
+    }
+    const exactResponse = analyze([rows[0]], { nowMs: NOW_MS, pricer: fullyPriced }).periods
+      .find((candidate) => candidate.periodId === "7d");
+    assert.deepEqual(exactResponse.observationUnits, { responsePairs: 1, unresolvedIncrementPairs: 0 });
+    assert.deepEqual(exactResponse.estimateEvidence, period.estimateEvidence);
+    assert.equal(cacheSwitchAllowanceImpact(exactResponse, allowanceCapacity()).reason,
+      "reusable_prefix_unverified");
+    assert.deepEqual(rows, original);
+  });
+
+  test(`${name} reclassification preserves full input, output and context on both sides of 272K`, () => {
+    for (const total of [271_999, 272_000, 272_001]) {
+      const cached = total - 1_100;
+      const calls = [];
+      const source = makeRow({
+        previous_tokens_in_cache_read: cached + 1_000,
+        tokens_in_uncached: 800, tokens_in_cache_read: cached, tokens_in_cache_write: 300,
+        tokens_out_text: 60, tokens_out_reasoning: 40, tokens_out_combined: 100,
+      });
+      const original = structuredClone(source);
+      const period = analyze([source], { nowMs: NOW_MS,
+        pricer(event, components) {
+          calls.push({ event: { ...event }, components: { ...components } });
+          return fullyPriced(event, components);
+        },
+      }).periods.find((candidate) => candidate.periodId === "7d");
+      assert.equal(period.lostCacheTokens, 1_000);
+      assert.equal(calls.length, 2);
+      for (const { event, components } of calls) {
+        assert.equal(event.totalInputContextTokens, total);
+        assert.equal(components.input_uncached_tokens + components.input_cache_read_tokens
+          + components.input_cache_write_tokens, total);
+        assert.ok(Object.values(components).every((quantity) => quantity >= 0));
+        assert.equal(components.output_text_tokens, 60);
+        assert.equal(components.output_reasoning_tokens, 40);
+        assert.equal(components.output_combined_tokens, undefined);
+      }
+      assert.equal(calls[1].components.input_uncached_tokens, 0);
+      assert.equal(calls[1].components.input_cache_read_tokens, cached + 1_000);
+      assert.equal(calls[1].components.input_cache_write_tokens, 100);
+      assert.deepEqual(calls[0].event, calls[1].event);
+      assert.deepEqual(source, original);
+    }
+  });
+
+  test(`${name} production pricing keeps the current full-input tier at each published 272K boundary`, () => {
+    // Retained 5.4 cards start the long tier at 272K; Sol 6 starts above 272K.
+    for (const [model, nowMs, prices] of [
+      ["gpt-5.4", NOW_MS, ["0.001125", "0.00225", "0.00225"]],
+      ["gpt-6-sol", Date.parse("2026-09-30T12:00:00.000Z"), ["0.0009", "0.0009", "0.0018"]],
+    ]) {
+      for (const [index, total] of [271_999, 272_000, 272_001].entries()) {
+        const cached = total - 1_000;
+        const period = analyze([makeRow({
+          observed_at_ms: nowMs - 60_000, previous_observed_at_ms: nowMs - 120_000,
+          model_id: model, previous_model_id: model,
+          previous_tokens_in_cache_read: cached + 500,
+          tokens_in_uncached: 1_000, tokens_in_cache_read: cached, tokens_in_cache_write: 0,
+        })], { nowMs }).periods.find((candidate) => candidate.periodId === "7d");
+        assert.equal(period.pricedDrops, 1, `${model}/${total}`);
+        assert.equal(period.lostCacheTokens, 500, `${model}/${total}`);
+        assert.equal(period.estimatedPremiumUsdExact, prices[index], `${model}/${total}`);
+      }
+    }
+  });
+
   const pricedInput = {
     model_id: "gpt-5.4",
     previous_model_id: "gpt-5.4",
@@ -960,7 +1075,7 @@ test("context contraction and compaction prevent a switch premium", () => {
   assert.equal(period.estimatedPremiumUsd, 0);
 });
 
-test("allowance translation couples each weighted premium to its matching capacity", () => {
+test("unverified reusable prefixes never translate heuristic premiums into allowance", () => {
   const standard = premiumScenario("unresolved_as_standard", 5);
   const fast = premiumScenario("unresolved_as_fast", 12.5);
   const fixedWeighting = {
@@ -975,76 +1090,35 @@ test("allowance translation couples each weighted premium to its matching capaci
     },
     rangePremiumUsd: null,
   };
-  const fixed = cacheSwitchAllowanceImpact(
-    { periodId: "7d", allowanceWeighting: fixedWeighting },
-    allowanceCapacity(),
-  );
-  assert.equal(fixed.status, "complete");
-  for (const [coverageStatus, unpricedDrops, reason] of [
-    ["incomplete", 0, "weighting_evidence_incomplete"],
-    ["complete", 1, "price_coverage_incomplete"],
-  ]) {
-    const subsetPromotedToTotal = cacheSwitchAllowanceImpact({
-      periodId: "7d",
-      coverageStatus,
-      unpricedDrops,
-      allowanceWeighting: fixedWeighting,
-      coveredSubtotal: {
-        scope: "covered_priced_drops",
-        allowanceWeighting: fixedWeighting,
-      },
-    }, allowanceCapacity());
-    assert.equal(subsetPromotedToTotal.status, "unavailable");
-    assert.equal(subsetPromotedToTotal.reason, reason);
-    assert.equal(subsetPromotedToTotal.medianPercentagePoints, null);
-  }
-  assert.equal(fixed.selectedScenario, "unresolved_as_standard");
-  assert.equal(fixed.medianPercentagePoints, 5);
-  assert.deepEqual(
-    fixed.plausibleRangePercentagePoints,
-    { lower: 4, upper: 6.25 },
-  );
-  assert.equal(
-    fixed.scenarios.unresolved_as_standard.basisId,
-    standard.basisId,
-  );
-
-  const mixed = cacheSwitchAllowanceImpact({
-    periodId: "7d",
-    allowanceWeighting: {
-      ...fixedWeighting,
-      status: "range",
-      selectedScenario: null,
-      selectedPremiumUsd: null,
-      rangePremiumUsd: { lower: 5, upper: 12.5 },
-    },
-  }, allowanceCapacity(null));
-  assert.equal(mixed.status, "range");
-  assert.deepEqual(mixed.percentagePointRange, { lower: 5, upper: 6.25 });
-  assert.deepEqual(
-    mixed.plausibleRangePercentagePoints,
-    { lower: 4, upper: 7.8125 },
-  );
-
   const mismatched = allowanceCapacity();
   mismatched.scenarios.unresolved_as_standard = {
     ...mismatched.scenarios.unresolved_as_standard,
     basisId: fast.basisId,
   };
-  assert.equal(cacheSwitchAllowanceImpact(
-    { periodId: "7d", allowanceWeighting: fixedWeighting },
-    mismatched,
-  ).reason, "basis_mismatch");
-  for (const periodId of ["24h", "30d", "all"]) {
-    assert.equal(cacheSwitchAllowanceImpact(
-      { periodId, allowanceWeighting: fixedWeighting },
-      allowanceCapacity(),
-    ).reason, "period_denominator_mismatch");
+  const period = { periodId: "7d", allowanceWeighting: fixedWeighting };
+  for (const [source, capacity] of [
+    [period, allowanceCapacity()],
+    [{ ...period, coverageStatus: "incomplete", coveredSubtotal: {
+      scope: "covered_priced_drops", allowanceWeighting: fixedWeighting,
+    } }, allowanceCapacity()],
+    [{ ...period, unpricedDrops: 1 }, allowanceCapacity()],
+    [{ ...period, allowanceWeighting: { ...fixedWeighting, status: "range",
+      selectedScenario: null, selectedPremiumUsd: null,
+      rangePremiumUsd: { lower: 5, upper: 12.5 } } }, allowanceCapacity(null)],
+    [period, mismatched],
+    ...["24h", "30d", "all"].map((periodId) => [{ ...period, periodId }, allowanceCapacity()]),
+    [period, { ...allowanceCapacity(), accountAttribution: null }],
+    [null, null],
+  ]) {
+    const result = cacheSwitchAllowanceImpact(source, capacity);
+    assert.equal(result.status, "unavailable");
+    assert.equal(result.reason, "reusable_prefix_unverified");
+    assert.equal(result.selectedScenario, null);
+    assert.equal(result.medianPercentagePoints, null);
+    assert.equal(result.percentagePointRange, null);
+    assert.equal(result.plausibleRangePercentagePoints, null);
+    assert.deepEqual(result.scenarios, { unresolved_as_standard: null, unresolved_as_fast: null });
   }
-  assert.equal(cacheSwitchAllowanceImpact(
-    { periodId: "7d", allowanceWeighting: fixedWeighting },
-    { ...allowanceCapacity(), accountAttribution: null },
-  ).reason, "weekly_calibration_account_scope_unverified");
 });
 
 function sessionMeta(sessionId) {
@@ -1238,6 +1312,15 @@ test("raw rollout facts flow through the existing index into the read-only impac
     assert.equal(normalized.byModel.length, 1);
     assert.equal(normalized.byModel[0].model, "gpt-5.6-sol");
     assert.deepEqual(normalized.byModel[0].byOutcomeBucket, normalized.byOutcomeBucket);
+    const { cacheReuseMatrixBuckets } = await import("../apps/web/public/cache-reuse-matrix.js");
+    const matrix = cacheReuseMatrixBuckets(normalized);
+    assert.ok(matrix, "local index -> snapshot -> browser normalization must reach the cache matrix");
+    assert.equal(matrix.length, 10);
+    assert.equal(matrix.reduce((sum, bucket) => sum + bucket.comparableReturns, 0),
+      normalized.comparableReturns);
+    assert.equal(matrix[6].id, "one_to_six_hours");
+    assert.equal(matrix[9].endSeconds, null);
+    assert.deepEqual(cacheReuseMatrixBuckets(normalized.byModel[0]), matrix);
     assert.doesNotMatch(serialized, new RegExp(sessionId, "u"));
     assert.doesNotMatch(serialized, /turn-high|event_key|session_local/u);
     assert.doesNotMatch(
@@ -1291,8 +1374,8 @@ test("model continuity cohorts use full-period evidence, including warm returns 
   assert.equal(sol.reusedMoreThanHalfReturns, 12);
   assert.equal(sol.matchedOrExceededReturns, 6);
   assert.equal(sol.reusedBetweenHalfAndPreviousReturns, 6);
-  assert.equal(sol.recent.length, 24);
-  assert.equal(sol.cacheReadDrops, 24);
+  assert.equal(sol.recent.length, 30);
+  assert.equal(sol.cacheReadDrops, 30);
   assert.equal(sol.byOutcomeBucket.under_one_minute.comparableReturns, 36);
   assert.equal(gpt54.comparableReturns, 1);
   assert.equal(gpt54.recent.length, 0);

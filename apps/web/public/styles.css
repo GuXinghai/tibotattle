@@ -5962,6 +5962,8 @@ html[data-theme="dark"] {
 .workload-grid { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,1fr); gap:16px; }
 .workload-card { min-width:0; padding:22px; border:1px solid var(--neutral-line); border-radius:14px; background:var(--neutral-surface); }
 .workload-card h3 { margin:0 0 18px; font-size:18px; color:var(--neutral-ink); }
+.workload-card[data-workload-card="comparison"] h3 { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 12px; }
+.workload-comparison-period { font-size:13px; font-weight:400; color:var(--neutral-muted); white-space:nowrap; }
 .workload-card svg { display:block; width:100%; min-height:180px; max-height:245px; overflow:visible; }
 .workload-card svg text { fill:var(--neutral-muted); font:12px system-ui,sans-serif; }
 .workload-remaining { display:flex; align-items:baseline; gap:10px; }
@@ -5972,8 +5974,15 @@ html[data-theme="dark"] {
 .workload-hour-track i { display:block; height:100%; border-radius:5px; }
 .workload-hours-row.is-composite { font-weight:700; }
 .workload-current-value { display:block; font-size:37px; margin:22px 0; }
-.workload-current-rate,.workload-current-hours { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px; margin:16px 0; }
-.workload-current-hours strong { font-size:22px; }
+.workload-load-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.workload-card[data-workload-card="current"] h3 { margin-bottom:6px; }
+.workload-load-window { min-width:0; }
+.workload-load-label { font-weight:600; font-size:14px; }
+.workload-load-period { margin-left:3px; font-size:12px; font-weight:400; white-space:nowrap; }
+.workload-load-value { margin:6px 0; font-size:32px; overflow-wrap:anywhere; }
+.workload-load-value.is-unavailable { font-size:18px; min-height:40px; display:flex; align-items:center; }
+.workload-current-rate,.workload-current-hours { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:baseline; gap:10px; margin:8px 0; font-size:14px; }
+.workload-current-hours strong { font-size:18px; }
 .workload-legend { display:flex; flex-wrap:wrap; gap:16px; color:var(--neutral-muted); font-size:13px; }
 .workload-legend span { display:inline-flex; align-items:center; gap:6px; }
 .workload-legend i { display:inline-block; width:9px; height:9px; border-radius:2px; }
@@ -6165,6 +6174,7 @@ body[data-dashboard-page="allowance"] > .topbar { grid-template-columns:auto aut
 }
 .sidebar-actions .sidebar-action[hidden] { display: none; }
 .sidebar-action svg { display: block; flex: none; }
+.sidebar-action svg [hidden] { display: none; }
 .sidebar-action:hover:not(:disabled) { outline: 1px solid currentColor; outline-offset: -6px; }
 .sidebar-action:focus-visible { outline: 2px solid var(--neutral-ink, var(--ink)); outline-offset: 1px; }
 .sidebar-action:disabled { cursor: default; opacity: .5; }

@@ -76,6 +76,7 @@ const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "USAGE_MONITOR_RESOURCE_ROOT",
   "USAGE_MONITOR_STATE_ROOT",
   "USAGE_MONITOR_REFRESH_INTERVAL_SECONDS",
+  "USAGE_MONITOR_REFRESH_PAUSED",
   "USAGE_MONITOR_PREPARED_DIRECTORY",
   "USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION",
   "USAGE_MONITOR_TEST_LANE",
@@ -482,17 +483,19 @@ export function createCompanionSupervisor({
   return Object.freeze({
     start,
     stop,
-    setRefreshInterval(seconds) {
+    setRefreshInterval(seconds, paused = false) {
       if (!isDesktopRefreshIntervalSeconds(seconds)) throw new TypeError("refresh interval is invalid");
+      if (typeof paused !== "boolean") throw new TypeError("refresh pause is invalid");
       refreshIntervalSeconds = seconds;
       environment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS = String(seconds);
+      environment.USAGE_MONITOR_REFRESH_PAUSED = String(paused);
       if (child === null || state !== "ready") return false;
       if (typeof child.send !== "function" || child.connected === false) {
         throw shellError("companion_refresh_interval_unavailable");
       }
       return new Promise((resolve, reject) => {
         try {
-          child.send({ type: "tibotattle.refresh-interval.v1", seconds }, (error) => {
+          child.send({ type: "tibotattle.refresh-interval.v2", seconds, paused }, (error) => {
             if (error) reject(shellError("companion_refresh_interval_unavailable"));
             else resolve(true);
           });

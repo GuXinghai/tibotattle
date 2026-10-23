@@ -33,7 +33,7 @@ test("model performance accepts only one standard period and preserves read guar
   const { base } = await fixture(t, {
     modelPerformanceProvider: async (period, options) => {
       requests.push({ period, ...options });
-      return { schemaVersion: 5, status: "ready", period, ...options, models: [] };
+      return { schemaVersion: 6, status: "ready", period, ...options, models: [] };
     },
   });
   const route = `${base}/api/local/model-performance`;

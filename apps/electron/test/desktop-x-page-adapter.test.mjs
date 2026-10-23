@@ -4,6 +4,46 @@ import { EventEmitter } from 'node:events';
 import { createDesktopXPageAdapter, inspectXDocument, projectXPageData } from '../desktop-x-page-adapter.js';
 
 const tweet = (id = '123', handle = 'thsottiaux', extra = {}) => ({ __typename: 'Tweet', rest_id: id, core: { user_results: { result: { legacy: { name: 'Example', screen_name: handle, profile_image_url_https: 'https://pbs.twimg.com/profile_images/example.jpg' } } } }, legacy: { full_text: 'Synthetic public post', created_at: 'Mon Oct 19 14:59:00 +0000 2026', ...extra } });
+
+test('detail projection follows conversation entry order before unrelated response fields',()=>{
+  const first=tweet('125','other',{in_reply_to_status_id_str:'123',created_at:'Mon Oct 19 15:00:00 +0000 2026'}),second=tweet('124','other',{in_reply_to_status_id_str:'123'});
+  const data={unrelated:second,data:{threaded_conversation_with_injections_v2:{instructions:[{type:'TimelineAddEntries',entries:[{content:{tweet_results:{result:first}}},{content:{items:[{item:{itemContent:{tweet_results:{result:second}}}}]}}]}]}}};
+  assert.deepEqual(projectXPageData(data,{detail:true}).posts.map(p=>p.id),['125','124']);
+});
+
+test('detail pagination scopes main termination separately from nested reply modules',()=>{
+  const terminal={type:'TimelineTerminateTimeline',direction:'Bottom'};
+  const module={entryId:'conversationthread-124',content:{__typename:'TimelineTimelineModule',instructions:[terminal],items:[{item:{itemContent:{cursorType:'Bottom',value:'branch-next'}}}]}};
+  const data={data:{threaded_conversation_with_injections_v2:{instructions:[{type:'TimelineAddEntries',entries:[{content:{cursorType:'Bottom',value:'main-next'}},module]}]}}};
+  const page=projectXPageData(data,{detail:true});assert.equal(page.cursor,'main-next');assert.equal(page.exhausted,false);assert.equal(page.pagination.branches[0].cursor,'branch-next');assert.equal(page.pagination.branches[0].exhausted,true);
+  data.data.threaded_conversation_with_injections_v2.instructions.push(terminal);
+  assert.equal(projectXPageData(data,{detail:true}).exhausted,true,'explicit main end wins over a residual main cursor');
+  const branchOnly={data:{threaded_conversation_with_injections_v2:{instructions:[{type:'TimelineAddToModule',moduleEntryId:'conversationthread-124',moduleItems:[{item:{itemContent:{cursorType:'Bottom',value:''}}}]}]}}};
+  const branch=projectXPageData(branchOnly,{detail:true});assert.equal(branch.exhausted,false);assert.equal(branch.pagination.main.observed,false);assert.equal(branch.pagination.branches[0].exhausted,true);
+});
+
+test('detail continuation scrolls past known direct replies and ignores new branch children',async()=>{
+  const wc=new EventEmitter();let scrolls=0,ticks=0;
+  const model=(id,replyTo)=>({id,author:{name:'Example',handle:'other'},createdAt:'2026-10-19T14:59:00.000Z',text:'Synthetic',complete:true,kind:replyTo?'reply':'post',media:[],...(replyTo?{replyTo}:{})});
+  wc.getURL=()=> 'https://x.com/thsottiaux/status/123';wc.executeJavaScript=async code=>{
+    if(code.startsWith('window.scrollTo')){scrolls++;return;}
+    return{accountMenu:true,posts:[model('123'),model('124','123'),model('125','124'),...(scrolls>=2?[model('126','123')]:[])]};
+  };
+  const adapter=createDesktopXPageAdapter({window:{webContents:wc,isDestroyed:()=>false},delay:async()=>{ticks++;}});
+  const result=await adapter.load({id:'123',more:true,knownReplies:['124']});assert.ok(scrolls>=2);assert.ok(result.posts.some(post=>post.id==='126'));assert.equal(result.exhausted,false);assert.ok(ticks<30);adapter.dispose();
+});
+
+test('a different focal post cannot terminate the current reply continuation',async()=>{
+  const wc=new EventEmitter(),debuggerApi=new EventEmitter();let reads=0,ticks=0;
+  debuggerApi.isAttached=()=>false;debuggerApi.attach=()=>{};debuggerApi.detach=()=>{};debuggerApi.sendCommand=async method=>{if(method==='Network.getResponseBody'){reads++;return{body:JSON.stringify({type:'TimelineTerminateTimeline',direction:'Bottom'})};}};
+  wc.debugger=debuggerApi;wc.getURL=()=> 'https://x.com/thsottiaux/status/123';
+  wc.executeJavaScript=async code=>{if(code.startsWith('window.scrollTo')){
+    debuggerApi.emit('message',{},'Network.responseReceived',{requestId:'other',response:{url:'https://x.com/i/api/graphql/synthetic/TweetDetail?variables='+encodeURIComponent(JSON.stringify({focalTweetId:'999'})),status:200}});
+    debuggerApi.emit('message',{},'Network.loadingFinished',{requestId:'other',encodedDataLength:80});return;
+  }return{posts:[],accountMenu:true,empty:true};};
+  const adapter=createDesktopXPageAdapter({window:{webContents:wc,isDestroyed:()=>false},delay:async()=>{ticks++;}});
+  const result=await adapter.load({id:'123',more:true,knownReplies:[]});assert.equal(result.exhausted,false);assert.equal(reads,0);assert.equal(ticks,30);adapter.dispose();
+});
 test('X page projection preserves exact UTC, full note text, variants and verified reply relationships', () => {
   const item = tweet(); item.note_tweet = { note_tweet_results: { result: { text: 'Expanded synthetic post' } } }; item.legacy.truncated = true;
   item.legacy.extended_entities = { media: [{ type: 'video', media_url_https: 'https://pbs.twimg.com/media/example.jpg', video_info: { variants: [{ content_type: 'application/x-mpegURL', url: 'https://video.twimg.com/master.m3u8' }, { content_type: 'video/mp4', bitrate: 1000, url: 'https://video.twimg.com/clip.mp4' }] } }] };

@@ -1,4 +1,5 @@
 import { mountSettingsPage } from "./electron-settings.js";
+import { mountLocalRefreshPause } from "./local-refresh-pause.js";
 import { mountDesktopXReader } from "./x-reader-integration.js";
 import {
   createObservationFreshnessClock,
@@ -252,21 +253,20 @@ let localActionBusy = false;
 // the same load token as quick reloads and cache-drop links below.
 let activeLocalDashboardLoad = null;
 let localRefreshInProgress = false;
+let localRefreshPaused = false;
+let localRefreshPauseReady = !runsInsideElectronDashboard();
+let localRefreshSubmissionPending = false;
+let localRefreshObserverActive = false;
+let localRefreshStatusVersion = 0;
+let overviewPublicationPollingStarted = false;
+let lastObservedRefreshPublication = null;
+let lastOverviewScheduleError = null;
 let localRefreshCancelRequested = false;
 let sidebarRefreshSummaryTimer = null;
 let sidebarRefreshSummaryVersion = 0;
-let returnRefreshScheduled = false;
-let returnRefreshDeferrals = 0;
-// Electron's main process owns the recurring cadence. The renderer lifecycle
-// module keeps the accepted companion operation heartbeating without exposing
-// its lease value to presentation state.
+// The companion owns business scheduling. Electron leases only protect the
+// renderer connection and bounded recovery of an accepted operation.
 let electronRefreshLifecycleState = null;
-let electronStartupRefreshTriggered = false;
-// A qualified startup observer can release while the first local-dashboard
-// load still owns the action lock. Keep that one launch pass pending until the
-// owner clears the lock instead of treating its harmless early return as the
-// completed Electron refresh.
-let electronStartupRefreshDeferred = false;
 let globalState = null;
 let visibleConnectionNotice = null;
 let refreshResultNotice = null;
@@ -537,6 +537,8 @@ function renderRefreshProgress(button, phase, { processed = null, selected = nul
     ["Starting detailed accounting…", "refresh.progress.startingDetailed"],
     ["Starting local analysis…", "refresh.progress.starting"],
     ["Update running…", "refresh.progress.running"],
+    ["Reading allowance…", "refresh.progress.quota"],
+    ["Allowance updated; calculating usage…", "refresh.progress.quotaUpdatedCalculating"],
     ["Update running; reconnecting…", "refresh.progress.reconnecting"],
     ["Stopping safely…", "refresh.progress.stopping"],
     ["Scanning local history…", "refresh.progress.history"],
@@ -671,7 +673,7 @@ function updateLocalActionButtons() {
     // progress renderer and cancel action are deliberately independent of the
     // primary load lock, because a terminal dashboard reload can release that
     // lock before the refresh's finalizer clears its own lifecycle state.
-    button.disabled = sidebar && refreshActive ? localRefreshCancelRequested : localActionBusy || refreshActive || !allowed;
+    button.disabled = localRefreshPaused || !localRefreshPauseReady || (sidebar && refreshActive ? localRefreshCancelRequested : localActionBusy || refreshActive || !allowed);
     if (refreshActive && !button.classList.contains("refresh-progress")) {
       // Recover a progress affordance if a nested dashboard render released
       // the primary load lock after the refresh began.
@@ -1089,11 +1091,12 @@ function renderLocalOnboarding(value) {
   const indexing = dashboard?.collector?.indexing ?? null;
   const boundedPause = indexing?.status === "bounded_pause";
   const ready = localAnalysisAllowed(value);
-  card.hidden = false;
-  card.removeAttribute("aria-hidden");
   card.classList.toggle("needs-attention", !ready);
   // Setup reading opens in a dialog so a readiness change cannot expand Overview.
   const compactSetup = ready && !boundedPause && Boolean(dashboard);
+  card.hidden = compactSetup;
+  if (compactSetup) card.setAttribute("aria-hidden", "true");
+  else card.removeAttribute("aria-hidden");
   const setupMode = compactSetup ? "ready" : "attention";
   card.open = false;
   card.dataset.setupMode = setupMode;
@@ -1135,10 +1138,19 @@ function renderLocalOnboarding(value) {
   updateLocalActionButtons();
 }
 
+function quotaObservationRecency(data, now = Date.now()) {
+  return observationRecency(data?.quotaFreshness === null || data?.quotaFreshness === undefined
+    ? data : { mode: data.mode, freshness: data.quotaFreshness.status === "unavailable"
+      ? null : data.quotaFreshness }, now);
+}
+
 function dashboardObservationPresentation(data, recency) {
   const observationStale = recency.status === "stale";
   const observationUnavailable = recency.status === "unknown";
   const observationNotCurrent = observationStale || observationUnavailable;
+  const quotaRecency = data?.quotaFreshness === null || data?.quotaFreshness === undefined
+    ? recency : quotaObservationRecency(data);
+  const quotaNotCurrent = ["stale", "unknown"].includes(quotaRecency.status);
   const freshnessStatus = recency.status === "current"
     ? "live"
     : observationStale
@@ -1158,7 +1170,7 @@ function dashboardObservationPresentation(data, recency) {
       ageSeconds: recency.ageSeconds,
       staleAfterSeconds: recency.staleAfterSeconds ?? data?.freshness?.staleAfterSeconds,
     },
-    quotaWindows: observationNotCurrent
+    quotaWindows: quotaNotCurrent
       ? (Array.isArray(data?.quotaWindows) ? data.quotaWindows : []).map((window) => ({
         ...window,
         status: window?.status === "live" ? "stale" : window?.status,
@@ -1232,6 +1244,7 @@ function quotaRefreshFailureMessage(refresh) {
 
 function historyRefreshFailureMessage(refresh) {
   const unifiedIndex = refresh?.result?.unifiedIndex;
+  if (["ingested", "partial"].includes(unifiedIndex?.status)) return null;
   if (refresh?.failedStep !== "unified_index" && unifiedIndex?.status !== "failed") return null;
   const code = refresh.failureCode ?? unifiedIndex?.errorCode;
   switch (code) {
@@ -1243,6 +1256,12 @@ function historyRefreshFailureMessage(refresh) {
       return { copyKey: "refresh.history.publicationFailedCopy", copyValues: { code } };
     case "codex_rollout_source_changed":
       return { copyKey: "refresh.history.sourceChangedCopy", copyValues: { code } };
+    case "codex_response_usage_legacy_conflict":
+    case "codex_response_usage_legacy_scope_unattributed":
+    case "codex_response_usage_identity_conflict":
+    case "codex_response_usage_checkpoint_conflict":
+    case "codex_response_usage_chain_incomplete":
+      return { copyKey: "refresh.history.usageEvidenceCopy", copyValues: { code } };
     default:
       return null;
   }
@@ -1279,6 +1298,10 @@ function publishRefreshResultNotice(refresh) {
 
   if (refresh.status === "degraded") {
     const unifiedIndex = refresh.result?.unifiedIndex ?? null;
+    const accountingFailed = refresh.failedStep === "accounting"
+      || (unifiedIndex?.status !== "failed" && refresh.result?.accounting?.status === "unavailable");
+    const usageFailed = accountingFailed || unifiedIndex?.status === "failed"
+      || (refresh.failedStep === "unified_index" && !["ingested", "partial"].includes(unifiedIndex?.status));
     const history = dashboard?.pricing?.historyCoverage
       ?? dashboard?.accounting?.historyCoverage
       ?? null;
@@ -1291,7 +1314,7 @@ function publishRefreshResultNotice(refresh) {
     const composeCopy = () => {
       const degradedCopy = historyFailureMessage
         ? t(historyFailureMessage.copyKey, historyFailureMessage.copyValues)
-        : skipped > 0
+        : skipped > 0 && !usageFailed
         ? t("refresh.degradedCopy", {
           sources: tPlural("format.rolloutSourceCount", skipped, {
             count: formatNumber(skipped),
@@ -1300,22 +1323,26 @@ function publishRefreshResultNotice(refresh) {
             count: formatNumber(threads),
           }),
         })
-        : t("refresh.degradedGenericCopy", {
+        : accountingFailed
+        ? t("refresh.accounting.failureCopy", { code: refresh.failureCode ?? "accounting_unified_source_unavailable" })
+        : usageFailed ? t("refresh.degradedGenericCopy", {
           code: refresh.failureCode ?? "unified_index",
-        });
+        }) : "";
       const quotaCopy = disposition === "failed"
         ? t(failureMessage.copyKey, failureMessage.copyValues ?? {})
         : disposition === "no-new"
           ? t("refresh.quota.noNewCopy")
           : "";
-      return quotaCopy ? `${degradedCopy} ${quotaCopy}` : degradedCopy;
+      return [degradedCopy, quotaCopy].filter(Boolean).join(" ");
     };
     refreshResultNotice = {
-      titleKey: disposition === "failed"
-        ? "refresh.degradedQuotaFailureTitle"
+      titleKey: usageFailed
+        ? disposition === "failed" ? "refresh.usageQuotaFailureTitle" : "refresh.usageFailureTitle"
+        : disposition === "failed"
+        ? skipped > 0 ? "refresh.degradedQuotaFailureTitle" : "refresh.quota.failureTitle"
         : "refresh.degradedTitle",
       copyFn: composeCopy,
-      kind: disposition === "failed"
+      kind: usageFailed || disposition === "failed"
         ? "error"
         : historyCoverageNoticeKind({
           history,
@@ -1350,18 +1377,24 @@ function publishRefreshResultNotice(refresh) {
 
 function renderLiveObservationPresentation(data, recency = observationRecency(data)) {
   const presentation = dashboardObservationPresentation(data, recency);
+  const quotaRecency = quotaObservationRecency(data);
+  const presentationStatus = `${recency.status}:${quotaRecency.status}`;
   const priorStatus = lastObservationPresentationStatus;
-  lastObservationPresentationStatus = recency.status;
+  lastObservationPresentationStatus = presentationStatus;
   const card = $(".freshness-card");
-  card.dataset.freshness = recency.status;
-  setLocalizedText(card.querySelector("span"), recency.status === "stale"
-    ? "dashboard.freshness.stale" : "dashboard.freshness.observation");
-  if (recency.ageSeconds !== null) setRawText($("#latest-observation"), formatAge(recency.ageSeconds));
+  card.dataset.freshness = quotaRecency.status;
+  const freshnessLabel = card.querySelector("span");
+  const freshnessKey = quotaRecency.status === "stale"
+    ? "dashboard.freshness.stale" : "dashboard.freshness.observation";
+  freshnessLabel.dataset.i18n = freshnessKey;
+  setLocalizedText(freshnessLabel, freshnessKey);
+  if (quotaRecency.ageSeconds !== null) setRawText($("#latest-observation"), formatAge(quotaRecency.ageSeconds));
   else setLocalizedText($("#latest-observation"), "page.observation.noTimestamp");
   if (data.mode === "demo") setLocalizedText($("#data-source"), "page.dataSource.demo");
-  else setRawText($("#data-source"), formatLocal(data.freshness.latestObservedAt));
+  else setRawText($("#data-source"), formatLocal(data.quotaFreshness === null || data.quotaFreshness === undefined
+    ? data.freshness.latestObservedAt : data.quotaFreshness.latestObservedAt));
 
-  if (priorStatus !== recency.status) {
+  if (priorStatus !== presentationStatus) {
     setGlobalState(presentation.state, {
       companionReachable: data.mode !== "demo"
     });
@@ -1388,12 +1421,12 @@ async function refreshElectronCadenceHealth() {
   }
   const leaseAwaitingRecovery = status?.schemaVersion === "tibotattle-desktop-refresh-status-v1"
     && status.activeLease === true
-    && status.cadenceTimerArmed === false;
+    && (status.scheduleOwner === "companion" || status.cadenceTimerArmed === false);
   if (!leaseAwaitingRecovery) {
     element.hidden = true;
     return;
   }
-  setLocalizedText(element, electronRefreshLifecycleState?.reason === "settlement_failed"
+  setLocalizedText(element, status?.scheduleOwner === "companion" || electronRefreshLifecycleState?.reason === "settlement_failed"
     ? "dashboard.refresh.recovering"
     : "dashboard.refresh.waitingForRecovery");
   element.hidden = false;
@@ -1925,8 +1958,8 @@ history.phase === "not_started"
  *
  * The companion writes each one as a finished English sentence and publishes no
  * category alongside it. This page therefore decides only *where* a sentence
- * appears. Repeated freshness and unknown-model notices are represented by
- * the existing freshness status and the partial-price marker. Other strings
+ * appears. Repeated freshness, indexing and unknown-model notices are represented
+ * by the existing freshness status, history progress and partial-price marker. Other strings
  * are written with `setRawText`, so each one
  * reaches the document as text, unreworded and untruncated, and localization
  * cannot reinterpret it.
@@ -1977,6 +2010,7 @@ function renderEvidenceWarnings(data) {
     if (typeof message !== "string" || message === "") continue;
     const localized = evidenceWarningLocalization(message);
     if (localized?.key === "dashboard.warning.collectorOld") continue;
+    if (localized?.key === "dashboard.warning.indexing") continue;
     if (localized?.key === "dashboard.warning.unknownModel") {
       continue;
     }
@@ -7008,9 +7042,10 @@ function renderWeeklyPlanControl(data) {
   const select = $("#weekly-plan-select");
   const note = $("#weekly-plan-note");
   if (!control || !select || !note) return;
+  const optionPlanLabel = (planType) => allowancePlanLabel(planType).replace(/\s*\((\d+)×\)/u, "$1x");
   const selection = data.allowancePlanSelection;
   const previewPlan = data.mode === "demo"
-    ? allowancePlanLabel(data?.weekly?.planType)
+    ? optionPlanLabel(data?.weekly?.planType)
     : "";
   control.hidden = !selection && previewPlan === "";
   note.hidden = !selection;
@@ -7041,7 +7076,8 @@ function renderWeeklyPlanControl(data) {
       option.value = row.planType;
       option.textContent = t(row.planType === selection.currentPlanType
         ? "weekly.plan.latestOption" : "weekly.plan.historyOption", {
-        plan: allowancePlanLabel(row.planType) || t("weekly.plan.unknown"),
+        plan: (row.planType === selection.currentPlanType
+          ? optionPlanLabel(row.planType) : allowancePlanLabel(row.planType)) || t("weekly.plan.unknown"),
       });
       return option;
     }));
@@ -7513,6 +7549,10 @@ function cacheImpactMetricBullets(impact, appendDetails) {
     ? "accounting.cacheImpact.bulletPartial" : "accounting.cacheImpact.bulletPriced", {
     priced: formatCount(cost.pricedDrops ?? impact.pricedDrops),
   }));
+  list.append(localizedNode("li", "", "accounting.cacheImpact.evidenceUnknown"));
+  if (finite(impact.observationUnits?.unresolvedIncrementPairs, 0) > 0) {
+    list.append(localizedNode("li", "", "accounting.cacheImpact.bulletIncrement"));
+  }
   const excluded = [];
   for (const [count, key] of [
     [impact.unpricedDrops, "accounting.cacheImpact.bulletUnpriced"],
@@ -8286,9 +8326,8 @@ function staleAccountingServePeriod(data) {
 
 /**
  * The quiet informational label over stale-served figures. Figures from the
- * previous version's cache say so, with the live rebuild state folded in
- * ("recalculating now" while attempts proceed normally, "being retried" once
- * the rebuild has deferred repeatedly). Figures retained from this version's
+ * previous version's cache state their provenance and repeated deferrals,
+ * without inferring that a rebuild is currently running. Figures retained from this version's
  * last completed full projection (`lastCompletedAt` set) state only that and
  * their age: refresh activity is the refresh control's to report. Deliberately
  * an annotation, not an alert — the replaced red withheld-cache banner
@@ -9149,17 +9188,15 @@ async function loadLocalDashboardSecondaryState({ isCurrent, primaryAvailable = 
   const onboarding = read(() => localClient.onboarding(), (value) => {
     if (value === null) return;
     renderLocalOnboarding(value);
-    // Bootstrap may have finished before this verdict arrived. Electron's
-    // launch pass is gated on this readiness verdict, so retry it here before
-    // preserving the browser's return-visit cadence.
-    startElectronStartupRefresh();
-    scheduleReturningUserRefresh();
   });
+  const refreshStatusVersion = localRefreshStatusVersion;
   const refresh = read(() => localClient.refreshStatus(), (refreshState) => {
-    if (refreshState === null) return;
+    if (refreshState === null || refreshStatusVersion !== localRefreshStatusVersion) return;
     accountingRebuildDeferral =
       refreshState?.refresh?.result?.accountingRebuildDeferred ?? null;
-    if (primaryAvailable !== false && !dashboardReadFailed) publishRefreshResultNotice(refreshState?.refresh);
+    if (refreshState.refresh?.running || ["running", "cancelling"].includes(refreshState.refresh?.status)) {
+      void requestRefresh({ observeOnly: true, initialRefresh: refreshState.refresh });
+    } else if (primaryAvailable !== false && !dashboardReadFailed) publishRefreshResultNotice(refreshState?.refresh);
     if (dashboard) renderAccounting(dashboard);
   });
   await Promise.all([health, onboarding, refresh]);
@@ -9244,10 +9281,6 @@ async function loadLocalDashboard() {
       load.pending = false;
       localActionBusy = load.previousBusy;
       updateLocalActionButtons();
-      if (electronStartupRefreshDeferred) {
-        electronStartupRefreshDeferred = false;
-        startElectronStartupRefresh();
-      }
       if (nativeEvidenceReloadPending && !localRefreshInProgress && !localActionBusy) void reloadLocalEvidenceAfterNativeRefresh();
     }
   }
@@ -9377,8 +9410,9 @@ function scheduleReindexAutoContinuation() {
   }, REINDEX_AUTO_CONTINUE_DELAY_MS);
 }
 
-async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
-  if (localActionBusy) return;
+async function requestRefresh({ autoContinue = false, detailed = false, observeOnly = false, initialRefresh = null } = {}) {
+  if (!observeOnly && (localRefreshPaused || !localRefreshPauseReady)) return;
+  if (localActionBusy || localRefreshObserverActive || localRefreshSubmissionPending) return;
   const previousGlobalState = globalState;
   // Fence continuation against the exact coverage visible before this pass.
   // If the terminal reload presents the same generation/count/byte receipt,
@@ -9401,7 +9435,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
   }
   const button = $("#refresh-button");
   const electronRefresh = runsInsideElectronDashboard();
-  let refreshAccepted = false;
+  let refreshAccepted = observeOnly;
   let cancelled = false;
   let quickResultLoaded = false;
   let continuationLimitReached = false;
@@ -9409,29 +9443,40 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
   let refreshProgressClock = null;
   let sidebarResultKey = "refresh.sidebar.failed";
   let refreshSucceeded = false;
+  let observationInterrupted = false;
+  let observedRefreshId = null;
+  localRefreshStatusVersion += 1;
+  localRefreshObserverActive = true;
   localActionBusy = true;
-  localRefreshInProgress = true;
+  localRefreshSubmissionPending = !observeOnly;
+  localRefreshInProgress = observeOnly;
   localRefreshCancelRequested = false;
-  renderRefreshProgress(button, detailed
-    ? "Starting detailed accounting…"
-    : "Starting local analysis…");
+  if (observeOnly) renderRefreshProgress(button, "Update running…");
+  else if (button.getAttribute("data-sidebar-refresh") === "true") setSidebarRefreshSummary("refresh.progress.submitting");
+  else setLocalizedText(button, "refresh.progress.submitting");
   updateLocalActionButtons();
-  setGlobalState("updating");
+  if (observeOnly) setGlobalState("updating");
   try {
-    await (detailed
+    const accepted = observeOnly ? null : await (detailed
       ? localClient.recalculateDetailedAccounting()
       : localClient.refresh());
+    initialRefresh = accepted?.refresh ?? initialRefresh;
     refreshAccepted = true;
-    if (electronRefresh) {
+    localRefreshSubmissionPending = false;
+    localRefreshInProgress = true;
+    setGlobalState("updating");
+    if (electronRefresh && !observeOnly) {
       refreshLeaseSession = createElectronRefreshLease({
         bridge: globalThis.tibotattleDesktop,
-        mode: detailed ? "detailed" : "quick",
+        // Both ordinary overview and explicit detailed requests can calculate
+        // usage. Only an actually quota-only run receives quick lease bounds.
+        mode: initialRefresh?.mode === "quick" && accepted?.request?.pending !== true ? "quick" : "detailed",
         onState(next) {
           electronRefreshLifecycleState = next;
           if (!localRefreshInProgress) void refreshElectronCadenceHealth();
         },
       });
-      // Cadence bookkeeping must never delay companion polling. A bounded late
+      // Connection bookkeeping must never delay companion polling. A bounded late
       // start reply is still settled by the lifecycle module after completion.
       void refreshLeaseSession.start();
     }
@@ -9449,19 +9494,28 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     let timeoutSettlementNoted = false;
     while (pollingBudget.hasTime()
         && ["running", "cancelling"].includes(outcome)) {
-      await new Promise((resolve) => setTimeout(resolve, 750));
+      if (!initialRefresh) await new Promise((resolve) => setTimeout(resolve, 750));
       pollCount += 1;
       let status;
       try {
-        status = await localClient.refreshStatus();
+        status = initialRefresh ? { refresh: initialRefresh } : await localClient.refreshStatus();
+        initialRefresh = null;
         consecutiveStatusFailures = 0;
       } catch (error) {
         consecutiveStatusFailures += 1;
         refreshProgressClock.update("Update running; reconnecting…");
-        if (consecutiveStatusFailures >= 8) throw error;
+        if (consecutiveStatusFailures >= 8) {
+          observationInterrupted = true;
+          throw error;
+        }
         continue;
       }
       const refresh = status?.refresh ?? {};
+      if (refresh.refreshId && refresh.refreshId !== observedRefreshId) {
+        observedRefreshId = refresh.refreshId;
+        quickResultLoaded = false;
+      }
+      if (refresh.status === "cancelling") localRefreshCancelRequested = true;
       finalRefreshState = refresh;
       outcome = refresh.status ?? "failed";
       finalErrorCode = refresh.errorCode ?? null;
@@ -9472,8 +9526,8 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
       const unifiedIndexScanning = progress?.kind === "unified_index"
         && progress?.status === "scanning"
         && progress?.phase === "rollout_index";
-      if (collectorProgress
-          && progress?.phase === "quick_result" && !quickResultLoaded) {
+      if ((refresh.quickResultAt || (collectorProgress && progress?.phase === "quick_result"))
+          && !quickResultLoaded) {
         try {
           await loadQuickResultDashboard();
           quickResultLoaded = true;
@@ -9494,6 +9548,10 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
         ? progress.filesSelected : null;
       const phase = outcome === "cancelling"
         ? "Stopping safely…"
+        : quickResultLoaded && refresh.quota?.status === "published" && refresh.usage?.status === "running"
+          ? "Allowance updated; calculating usage…"
+        : refresh.quota?.status === "running"
+          ? "Reading allowance…"
         : accountingStatus !== null
           ? accountingStatus
         : collectorProgress && progress?.phase === "quick_result"
@@ -9508,7 +9566,8 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
           : "Analyzing files…"
         : pollCount < 3 ? "Analyzing local evidence…" : "Analyzing…";
       refreshProgressClock.update(phase, { processed, selected });
-      if (detailed && refreshNeedsContinuation({
+      updateLocalActionButtons();
+      if (detailed && refresh.mode === "detailed" && refresh.running === false && refreshNeedsContinuation({
         outcome,
         errorCode: refresh.errorCode,
         progress,
@@ -9518,12 +9577,15 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
           throw new Error("The bounded continuation limit was reached.");
         }
         try {
-          await (detailed
+          const continuation = await (detailed
             ? localClient.recalculateDetailedAccounting()
             : localClient.refresh());
-          pollingBudget.noteContinuation();
-          timeoutSettlementNoted = false;
-          refreshProgressClock.reset("Continuing local analysis…");
+          initialRefresh = continuation?.refresh ?? null;
+          if (continuation?.request?.started === true) {
+            pollingBudget.noteContinuation();
+            timeoutSettlementNoted = false;
+            refreshProgressClock.reset("Continuing local analysis…");
+          }
         } catch (error) {
           // A 409 means a timed-out pass is still finishing its durable
           // checkpoint. Keep polling until it becomes resumable.
@@ -9537,7 +9599,7 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
         continue;
       }
       if (detailed && outcome === "failed"
-          && refresh.errorCode === "refresh_timed_out") {
+          && refresh.errorCode === "refresh_timed_out" && refresh.running === true) {
         refreshProgressClock.update("Stopping timed-out analysis…");
         if (!timeoutSettlementNoted) {
           pollingBudget.noteSettling();
@@ -9545,6 +9607,20 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
         }
         outcome = "running";
       }
+      // A failed timeout receipt can still own a settling writer. Observe it
+      // until the controller releases ownership before presenting completion.
+      if (refresh.running === true && !["running", "cancelling"].includes(outcome)) outcome = "running";
+      // A joined quota-only run is not completion of an accepted usage/detail
+      // request. Keep one observer across the controller's bounded follow-up.
+      if (refresh.pending !== null && typeof refresh.pending === "object"
+          && !["running", "cancelling"].includes(outcome)) outcome = "running";
+    }
+    if (["running", "cancelling"].includes(outcome)) {
+      observationInterrupted = true;
+      throw new Error("Refresh observation needs reconnection.");
+    }
+    if (finalRefreshState?.finishedAt) {
+      lastObservedRefreshPublication = `${finalRefreshState.refreshId ?? ""}:${finalRefreshState.quickResultAt ?? ""}:${finalRefreshState.finishedAt}`;
     }
     cancelled = outcome === "cancelled";
     if (cancelled) {
@@ -9598,8 +9674,12 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     if (await loadLocalDashboard() === false) return;
     publishRefreshResultNotice(finalRefreshState);
     refreshSucceeded = true;
-    if (detailed) scheduleReindexAutoContinuation();
+    if (detailed && !observeOnly) scheduleReindexAutoContinuation();
   } catch (error) {
+    if (observationInterrupted) {
+      sidebarResultKey = "refresh.progress.reconnecting";
+      return;
+    }
     if (dashboard) {
       const presentation = dashboardObservationPresentation(
         dashboard,
@@ -9655,16 +9735,16 @@ async function requestRefresh({ autoContinue = false, detailed = false } = {}) {
     refreshProgressClock?.stop();
     if (electronRefresh && refreshAccepted) await refreshLeaseSession?.finish();
     localActionBusy = false;
-    localRefreshInProgress = false;
+    localRefreshSubmissionPending = false;
+    localRefreshObserverActive = false;
+    localRefreshInProgress = observationInterrupted;
     localRefreshCancelRequested = false;
     if (nativeEvidenceReloadPending) void reloadLocalEvidenceAfterNativeRefresh();
     updateLocalActionButtons();
     void refreshElectronCadenceHealth();
     setSidebarRefreshSummary(refreshSucceeded ? "refresh.sidebar.succeeded" : sidebarResultKey, { success: refreshSucceeded });
-    // The updating pill is derived from the renderer-owned lifecycle flag.
-    // Restore the dashboard's last verified status after the refresh reaches a
-    // terminal state so it cannot remain stuck on "Running" beside the idle
-    // action button.
+    // Restore verified evidence freshness after settlement. A disconnected
+    // observer retains the last confirmed busy state until it can read again.
     const currentDashboardState = dashboard
       ? dashboardObservationPresentation(dashboard, observationRecency(dashboard)).state
       : null;
@@ -9734,12 +9814,8 @@ let nativeEvidenceReloadPending = false;
 /**
  * Re-read the companion's fragments after the native shell finished a refresh.
  *
- * In a browser, `requestRefresh` drives the refresh itself and re-renders when
- * it completes. Inside the app that path stands down (see
- * `scheduleReturningUserRefresh` below), so this is the only thing that moves
- * the rendered numbers off the snapshot the page loaded with. Without it the
- * dashboard keeps showing the pre-refresh figures while the toolbar reports
- * the refresh finished - the UI asserting a freshness it does not have.
+ * Status observation owns refresh publication in every surface. This legacy
+ * shell signal also supports evidence published outside the refresh pipeline.
  */
 async function reloadLocalEvidenceAfterNativeRefresh() {
   // A refresh started from this page re-renders on its own completion, and a
@@ -9762,11 +9838,6 @@ async function reloadLocalEvidenceAfterNativeRefresh() {
   }
 }
 
-/**
- * Start Electron's one launch-time refresh after the local onboarding verdict
- * is available. The qualified smoke preload may hold this call behind its
- * CDP observation barrier; ordinary Electron renderers have no such bridge.
- */
 function runsInsideNativeDashboard() {
   return document.documentElement.classList.contains("native-dashboard")
     || document.body?.classList.contains("native-dashboard");
@@ -9776,126 +9847,16 @@ function runsInsideElectronDashboard() {
   return globalThis.window?.tibotattleDesktop?.version === "v1";
 }
 
-function startElectronStartupRefresh() {
-  if (electronStartupRefreshTriggered
-      || !runsInsideElectronDashboard()
-      || !localAnalysisAllowed()) {
-    return false;
-  }
-  electronStartupRefreshTriggered = true;
-  const runStartupRefresh = () => {
-    if (localActionBusy) {
-      // Only the bootstrap owner is guaranteed to call us again after it
-      // clears its lock. Preserve the established one-shot suppression for
-      // every other busy owner rather than leaving a deferred launch stuck.
-      if (activeLocalDashboardLoad?.pending) {
-        electronStartupRefreshTriggered = false;
-        electronStartupRefreshDeferred = true;
-      }
-      return;
-    }
-    // Quick quota observations and accounting-cache generation do not advance
-    // the unified index. Use its persisted publication time so repeated short
-    // launches cannot keep old usage unindexed indefinitely. Match the host's
-    // hourly detailed cadence; unknown/future evidence cannot prove freshness.
-    // Evaluate after any startup barrier or dashboard lock has cleared.
-    const projection = dashboard?.accounting?.projection;
-    const history = dashboard?.timeline?.history;
-    const generatedAt = history?.generatedAt;
-    const generatedMs = typeof generatedAt === "string" ? Date.parse(generatedAt) : NaN;
-    const ageMs = Date.now() - generatedMs;
-    const freshIndex = projection?.status === "available"
-      && projection.reason === null
-      && projection.terminal === false
-      && dashboard.accounting.generationMatched === true
-      && history?.source === "unified_local_index"
-      && ["complete", "partial"].includes(history.status)
-      && Number.isFinite(generatedMs)
-      && new Date(generatedMs).toISOString() === generatedAt
-      && ageMs >= 0 && ageMs < 60 * 60_000;
-    const workloadReady = ["overview-workload-v2","overview-workload-v3","overview-workload-v4"].includes(dashboard?.workload?.schemaVersion)
-      && !["unavailable", "stale"].includes(dashboard.workload.status);
-    const startupRefreshOptions = freshIndex && workloadReady ? {} : { detailed: true };
-    void requestRefresh(startupRefreshOptions);
-  };
-  // The Windows preload is the only smoke barrier this product exposes.
-  const smokeBridge = globalThis.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__;
-  if (smokeBridge !== undefined) {
-    if (smokeBridge === null
-        || smokeBridge.version !== "v1"
-        || typeof smokeBridge.waitForStartupRefresh !== "function") {
-      return true;
-    }
-    let gate;
-    try {
-      gate = smokeBridge.waitForStartupRefresh();
-    } catch {
-      return true;
-    }
-    if (!gate || typeof gate.then !== "function") return true;
-    void Promise.resolve(gate).then(runStartupRefresh).catch(() => {});
-    return true;
-  }
-  runStartupRefresh();
-  return true;
-}
-
-function scheduleReturningUserRefresh() {
-  // The native Windows shell owns the foreground cadence. Running both the web
-  // return-visit timer and the native timer races the same bounded companion
-  // request, which can surface a harmless 409 as a confusing dashboard error.
-  // What the shell owes in return is a signal when its refresh finished, which
-  // `tibotattle:local-evidence-updated` carries.
-  if (runsInsideNativeDashboard()) return;
-  if (runsInsideElectronDashboard()
-      && (electronStartupRefreshTriggered || electronStartupRefreshDeferred)) return;
-  const priorEvidence = dashboard?.mode !== "demo"
-    && Boolean(
-      dashboard?.activity?.lastScanAt
-      || dashboard?.collector?.lastScanAt
-      || dashboard?.freshness?.latestObservedAt
-    );
-  const terminalHistoryGap = currentHistoryContinuationDecision().terminalGap;
-  if (returnRefreshScheduled
-      || !priorEvidence
-      || !localAnalysisAllowed()
-      || terminalHistoryGap
-      || localRefreshInProgress) {
-    return;
-  }
-  returnRefreshScheduled = true;
-  window.setTimeout(() => {
-    if (localActionBusy || localRefreshInProgress) {
-      returnRefreshScheduled = false;
-      returnRefreshDeferrals += 1;
-      if (returnRefreshDeferrals < 20) scheduleReturningUserRefresh();
-      return;
-    }
-    returnRefreshDeferrals = 0;
-    showConnectionNotice({
-      titleKey: "refresh.cachedTitle",
-      copyKey: "refresh.cachedCopy",
-      kind: "info",
-    });
-    void requestRefresh();
-  }, 750);
-}
-
-/**
- * Consume only the closed automatic refresh mode sent by the Electron main
- * process. Manual dashboard controls continue to request detailed accounting;
- * this event keeps the host-owned foreground cadence explicit in the page.
- */
+// Legacy shell events are observations only. The companion owns startup and
+// periodic requests, including when no renderer exists.
 function handleElectronAutomaticRefresh(event) {
   const detail = event?.detail;
-  if (detail === null
-      || typeof detail !== "object"
-      || Array.isArray(detail)
+  if (detail === null || typeof detail !== "object" || Array.isArray(detail)
       || Object.getPrototypeOf(detail) !== Object.prototype
       || Reflect.ownKeys(detail).length !== 1
       || !Object.hasOwn(detail, "mode")
-      || (detail.mode !== "quick" && detail.mode !== "detailed")) return;
-  void requestRefresh({ detailed: detail.mode === "detailed" });
+      || !["quick", "detailed"].includes(detail.mode)) return;
+  void observeOverviewPublication();
 }
 
 /**
@@ -10516,6 +10477,25 @@ const allowancePage = mountAllowancePage({ documentRef: document, t, formatMoney
   stopPlayback: () => trendsHorizonView?.stop(),
   retry: () => dashboardReadFailed ? void loadLocalDashboard() : $("#refresh-button").click(),
 });
+// Mount after the page controllers: pause publishes its initial state
+// synchronously, and updateLocalActionButtons reads allowancePage immediately.
+const localRefreshPause = mountLocalRefreshPause({
+  button: $("#pause-refresh-button"), summary: $("#sidebar-pause-summary"),
+  bridge: runsInsideElectronDashboard() ? globalThis.tibotattleDesktop : null,
+  translate: t,
+  onChange: state => {
+    localRefreshPaused = state.paused;
+    localRefreshPauseReady = state.ready && !state.busy;
+    if (state.paused && reindexAutoContinueTimer !== null) {
+      clearTimeout(reindexAutoContinueTimer); reindexAutoContinueTimer = null;
+    }
+    updateLocalActionButtons();
+  },
+  onError: () => showConnectionNotice({ titleKey: "refresh.pauseFailed", copyKey: "refresh.pauseFailedCopy", kind: "error" }),
+});
+window.addEventListener("tibotattle:locale-change", () => localRefreshPause.repaint?.());
+window.addEventListener("beforeunload", () => localRefreshPause.teardown());
+
 if (window.tibotattleDesktop?.version === "v1") {
   void mountSettingsPage({ documentRef: document, windowRef: window, localizer: localization });
 }
@@ -10534,32 +10514,77 @@ async function bootstrapDashboard() {
   });
   updateLocalActionButtons();
   await loadLocalDashboard();
-  startElectronStartupRefresh();
-  scheduleReturningUserRefresh();
   startOverviewPublicationPolling();
 }
 
 // Observe publication, never trigger refresh here. The companion alone owns
-// the five-minute collection clock, including when the renderer is hidden.
-function startOverviewPublicationPolling() {
-  let receipt=null,failed=false;
-  const poll=async()=>{
-    try {
-      if(dashboard?.mode!=="demo"&&!localRefreshInProgress&&localAnalysisAllowed()){
-        const status=await localClient.refreshStatus();
-        if(status.overviewSchedule?.errorCode)throw Object.assign(new Error("overview_schedule_failed"),{code:status.overviewSchedule.errorCode});
-        const next=status.refresh?.finishedAt;
-        if(next&&next!==receipt){receipt=next;const displayed=await loadLocalDashboard();if(displayed!==false){
-          if(["failed","cancelled"].includes(status.refresh.status))showConnectionNotice({title:t("refresh.failedTitle"),copy:t("refresh.failedCopy"),kind:"error"});
-          else publishRefreshResultNotice(status.refresh);}}
-        failed=false;
+// the configured collection clock, including when the renderer is hidden.
+let overviewPublicationReadPending = false;
+
+async function observeOverviewPublication() {
+  if (overviewPublicationReadPending || localRefreshObserverActive
+      || localRefreshSubmissionPending || localActionBusy
+      || dashboard?.mode === "demo" || !localAnalysisAllowed()) return;
+  overviewPublicationReadPending = true;
+  const statusVersion = localRefreshStatusVersion;
+  try {
+    const status = await localClient.refreshStatus();
+    if (statusVersion !== localRefreshStatusVersion) return;
+    const scheduleError = typeof status?.overviewSchedule?.errorCode === "string"
+      ? status.overviewSchedule.errorCode : null;
+    const previousScheduleError = lastOverviewScheduleError;
+    lastOverviewScheduleError = scheduleError;
+    if (scheduleError && scheduleError !== previousScheduleError) {
+      showConnectionNotice({ titleKey: "refresh.schedule.failedTitle", copyKey: "refresh.schedule.failedCopy", kind: "warning" });
+    }
+    const refresh = status?.refresh;
+    if (refresh?.running || ["running", "cancelling"].includes(refresh?.status)) {
+      await requestRefresh({ observeOnly: true, initialRefresh: refresh });
+      return;
+    }
+    localRefreshInProgress = false;
+    localRefreshCancelRequested = false;
+    updateLocalActionButtons();
+    if (previousScheduleError && !scheduleError) setSidebarRefreshSummary(null);
+    const receipt = refresh?.finishedAt
+      ? `${refresh.refreshId ?? ""}:${refresh.quickResultAt ?? ""}:${refresh.finishedAt}` : null;
+    if (receipt && receipt !== lastObservedRefreshPublication) {
+      lastObservedRefreshPublication = receipt;
+      if (await loadLocalDashboard() !== false) {
+        if (["failed", "cancelled"].includes(refresh.status)) {
+          setSidebarRefreshSummary(refresh.status === "cancelled" ? "refresh.sidebar.cancelled" : "refresh.sidebar.failed");
+          if (refresh.status === "failed") showConnectionNotice({ titleKey: "refresh.failedTitle", copyKey: "refresh.failedCopy", kind: "error" });
+        } else {
+          setSidebarRefreshSummary(refresh.status === "degraded" ? "refresh.sidebar.partial" : "refresh.sidebar.succeeded", { success: refresh.status === "succeeded" });
+          publishRefreshResultNotice(refresh);
+        }
       }
-    } catch {
-      if(!failed)showConnectionNotice({title:t("refresh.failedTitle"),copy:t("refresh.failedCopy"),kind:"error"});
-      failed=true;
-    } finally { window.setTimeout(poll,2000); }
+    }
+    if (scheduleError) setSidebarRefreshSummary("refresh.schedule.failedTitle");
+  } catch {
+    // A transport read cannot establish that the controller's work failed.
+    if (localRefreshInProgress) setSidebarRefreshSummary("refresh.progress.reconnecting");
+  } finally {
+    overviewPublicationReadPending = false;
+  }
+}
+
+function startOverviewPublicationPolling() {
+  if (overviewPublicationPollingStarted) return;
+  overviewPublicationPollingStarted = true;
+  const poll = async () => {
+    try { await observeOverviewPublication(); }
+    finally { window.setTimeout(poll, 2000); }
   };
-  window.setTimeout(poll,2000);
+  const resume = () => {
+    if (document.visibilityState === "hidden") return;
+    // Refresh ages immediately after sleep; this never schedules business work.
+    if (dashboard) observationFreshnessClock.update(dashboard);
+    void observeOverviewPublication();
+  };
+  document.addEventListener("visibilitychange", resume);
+  window.addEventListener("focus", resume);
+  window.setTimeout(poll, 2000);
 }
 
 bootstrapDashboard();

@@ -141,10 +141,18 @@ test("usage relations attach reviews through workers without changing the naviga
     [WORKER, { root: ROOT, autoReview: false }],
     [AUTO_REVIEW, { root: ROOT, autoReview: true }],
   ]);
-  const evidence=await readCodexLocalThreadUsageRelations(home,[ROOT,AUTO_REVIEW,ABSENT],{includeOriginEvidence:true});
+  const diagnostics=[];
+  const evidence=await readCodexLocalThreadUsageRelations(home,[ROOT,AUTO_REVIEW,ABSENT],{includeOriginEvidence:true,onOriginDiagnostic:value=>diagnostics.push(value)});
   assert.equal(evidence.get(ROOT).originKnown,true);
   assert.equal(evidence.get(AUTO_REVIEW).originKnown,true);
   assert.equal(evidence.get(ABSENT).originKnown,false);
+  assert.deepEqual(diagnostics.filter(row=>row.count>0),[
+    {code:'requested',count:3},{code:'thread_row_missing',count:1},{code:'known',count:2},{code:'unknown',count:1},
+  ]);
+  assert.doesNotMatch(JSON.stringify(diagnostics),new RegExp(`${ROOT}|${ABSENT}|${PRIVATE_PROMPT_CANARY}`));
+  assert.deepEqual(await readCodexLocalThreadUsageRelations(home,[ROOT,AUTO_REVIEW,ABSENT],{
+    includeOriginEvidence:true,onOriginDiagnostic:async()=>{throw new Error(PRIVATE_PROMPT_CANARY);},
+  }),evidence,'observer rejection cannot change origin evidence');
   assert.deepEqual(await Promise.all([readFile(databaseFile), readFile(rolloutPath)]), before);
   for (const parent of [ABSENT, AUTO_REVIEW]) {
     await writeFile(rolloutPath, `${autoReviewSession(AUTO_REVIEW, parent)}\n`, { mode: 0o600 });

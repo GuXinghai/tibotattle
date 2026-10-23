@@ -22,6 +22,15 @@ test('session checkpoints persist only a validated digest and fail visibly on wr
 function post(id, text = 'synthetic public post') {
   return { id, author: { name: 'Synthetic', handle: 'synthetic' }, createdAt: '2026-10-20T01:00:00.000Z', text, complete: true, kind: 'post', media: [] };
 }
+
+test('v3 reply ordering survives restart, rejects invalid relationships and retains posts outside the new order',async()=>{
+  const f=fixture(),value=await f.repository.read();
+  value.posts=[post('1'),{...post('2'),kind:'reply',replyTo:'1'},{...post('3'),kind:'reply',replyTo:'1'}];value.lists.posts=['1'];value.replyLists={'1':['3','2']};
+  await f.repository.write(value);assert.deepEqual((await f.make().read()).replyLists,{'1':['3','2']});
+  value.replyLists={'1':['2']};await f.repository.write(value);const saved=await f.make().read();assert.equal(saved.posts.length,3);assert.deepEqual(saved.replyLists,{'1':['2']});
+  for(const replyLists of [{'1':['2','2']},{'1':['999']},{'2':['3']},{'unknown':[]},{'999':[]}])assert.throws(()=>f.repository.write({...value,replyLists}));
+  await f.repository.clearCache();assert.deepEqual((await f.make().read()).replyLists,{});
+});
 function fixture() {
   const files = new Map();
   let fail = null;
@@ -153,9 +162,9 @@ test('logout cache is readable but is not archived a second time on relogin', as
   assert.deepEqual((await f.repository.read()).posts, next.posts);
 });
 
-test('legacy notification snapshots migrate read-only then publish a v2 envelope without replaying old IDs', async () => {
+test('legacy notification snapshots migrate read-only then publish a v3 envelope without replaying old IDs', async () => {
   const f = fixture(); const old = await f.repository.read();
-  old.version = 1; old.activePartition = partition; old.authScope = partition;
+  old.version = 1; delete old.replyLists; old.activePartition = partition; old.authScope = partition;
   old.posts = [post('1')]; old.lists.posts = ['1'];
   old.notificationBaseline = { posts: ['0', '10', '9'], replies: ['0'] };
   const archived = structuredClone(old); archived.notificationBaseline = { posts: [], replies: ['0', '8'] };
@@ -165,15 +174,15 @@ test('legacy notification snapshots migrate read-only then publish a v2 envelope
   f.files.set('x-reader-v1.json', Buffer.from(JSON.stringify(selected)));
   const before = new Map([...f.files].map(([name, data]) => [name, Buffer.from(data)]));
   const migrated = await f.repository.read();
-  assert.equal(migrated.version, 2);
+  assert.equal(migrated.version, 3);
   assert.deepEqual(migrated.notificationBaseline, { posts: { floor: '10', seen: [] }, replies: { floor: '0', seen: [] } });
   assert.deepEqual(f.files, before, 'reading does not rewrite legacy evidence');
   await f.repository.write(migrated);
   const pointer = JSON.parse(f.files.get('x-reader-v1.json'));
   const published = JSON.parse(f.files.get(`x-cache-${pointer.generation}-0.bin`));
-  assert.equal(published.version, 2); assert.equal(published.current.version, 2); assert.equal(published.archives[0].version, 2);
+  assert.equal(published.version, 3); assert.equal(published.current.version, 3); assert.equal(published.archives[0].version, 3);
   assert.deepEqual(published.archives[0].notificationBaseline, { posts: { floor: null, seen: [] }, replies: { floor: '8', seen: [] } });
-  // The old envelope reader refuses v2 rather than modifying the new baseline.
+  // The old envelope reader refuses v3 rather than modifying the new baseline.
   assert.notEqual(published.version, 1);
 });
 
@@ -186,11 +195,21 @@ test('v2 notification state remains bounded and future envelope versions fail cl
   }
   const pointer = JSON.parse(f.files.get('x-reader-v1.json'));
   const chunk = `x-cache-${pointer.generation}-0.bin`;
-  const future = JSON.parse(f.files.get(chunk)); future.version = 3;
+  const future = JSON.parse(f.files.get(chunk)); future.version = 4;
   const bytes = Buffer.from(JSON.stringify(future)); f.files.set(chunk, bytes);
   f.files.set('x-reader-v1.json', Buffer.from(JSON.stringify({ ...pointer, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })));
   await assert.rejects(f.repository.read(), { code: 'invalid_x_state' });
   await assert.rejects(f.repository.write(value), { code: 'invalid_x_state' });
+});
+
+test('v2 caches migrate without fabricating reply order or mutating the source on read',async()=>{
+  const f=fixture(),old=await f.repository.read();old.version=2;delete old.replyLists;
+  old.posts=[post('1'),{...post('2'),kind:'reply',replyTo:'1'}];old.lists.posts=['1'];
+  const bytes=Buffer.from(JSON.stringify({version:2,current:old,archives:[]}));
+  const selected={version:1,generation:partition,chunks:1,bytes:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};
+  f.files.set(`x-cache-${partition}-0.bin`,bytes);f.files.set('x-reader-v1.json',Buffer.from(JSON.stringify(selected)));const before=new Map([...f.files].map(([name,bytes])=>[name,Buffer.from(bytes)]));
+  const migrated=await f.repository.read();assert.equal(migrated.version,3);assert.deepEqual(migrated.replyLists,{});assert.deepEqual(migrated.posts,old.posts);assert.deepEqual(f.files,before);
+  await f.repository.write(migrated);assert.deepEqual((await f.make().read()).posts,old.posts);
 });
 
 test('settings persist without login; multi-chunk text remains exact and prior posts survive subsequent writes', async () => {

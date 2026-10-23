@@ -280,6 +280,45 @@ test("an aborted lane build leaves no visible provisional facts and completes on
   }
 });
 
+test("rediscovered unchanged sources restore coverage without replaying retained facts", async () => {
+  const workspace = createWorkspace({ files: 1, events: 5, days: 1 });
+  try {
+    const indexFile = join(workspace.state, "live.sqlite");
+    const options = { codexHome: workspace.codexHome, indexFile,
+      secretFile: workspace.secretFile, workerCount: 1 };
+    const state = () => {
+      const database = new DatabaseSync(indexFile, { readOnly: true });
+      try {
+        return {
+          ...database.prepare("SELECT commit_seq, calculation_revision FROM store_state").get(),
+          ...database.prepare("SELECT presence FROM source").get(),
+        };
+      } finally { database.close(); }
+    };
+    await refreshLocalIndex(options);
+    const original = v2Facts(indexFile);
+    await refreshLocalIndex({ ...options, endAt: "2020-01-01T00:00:00.000Z" });
+    const hidden = state();
+    assert.equal(hidden.presence, "absent");
+    assertSameFactsExactly(v2Facts(indexFile), original, "narrow discovery retains facts");
+    const cancelled = new AbortController();
+    cancelled.abort();
+    await assert.rejects(refreshLocalIndex({ ...options, signal: cancelled.signal }));
+    assert.deepEqual(state(), hidden, "cancelled refresh leaves the prior publication intact");
+    const restored = await refreshLocalIndex(options);
+    const visible = state();
+    assert.equal(restored.sourcesSkipped, 1);
+    assert.equal(restored.bytesScanned, 0);
+    assert.equal(restored.unchanged, false);
+    assert.equal(visible.presence, "present");
+    assert.equal(visible.commit_seq, hidden.commit_seq + 1);
+    assert.equal(visible.calculation_revision, hidden.calculation_revision + 1);
+    assertSameFactsExactly(v2Facts(indexFile), original, "restored discovery retains facts");
+    assert.equal((await refreshLocalIndex(options)).unchanged, true);
+    assert.deepEqual(state(), visible, "repeated discovery does not republish");
+  } finally { workspace.cleanup(); }
+});
+
 test("a vanished source keeps its facts and is marked absent", async () => {
   const workspace = createWorkspace({ files: 8, events: 200, days: 3 });
   try {

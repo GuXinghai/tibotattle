@@ -2,6 +2,26 @@
 // This module only renders its closed DTOs; provider HTML never enters this DOM.
 export const X_READER_COPY = {
   'en-US': {
+    moreReplies:"Load more replies",
+    repliesMoreFailed:"Could not load more replies. Retry or refresh the post.",
+    repliesEnd:"All currently visible replies have been loaded",
+    repliesUnknown:"No replies read yet. You can continue loading.",
+    sessionBridge:"Check the local bridge",
+    sessionWaiting:"In your signed-in Chrome X tab, click “Import current X session”.",
+    sessionValidating:"Validate imported data",
+    sessionPreparing:"Prepare an isolated login session",
+    sessionWriting:"Write the candidate session",
+    sessionConnecting:"Connect to X",
+    sessionVerifying:"Verify X login",
+    sessionSaving:"Save login state",
+    sessionComplete:"Login successful",
+    sessionChallenge:"Complete verification in X",
+    sessionOpen:"Open X window",
+    sessionFailureAt:"Failed step: ",
+    import_expired:"Import authorization expired. Select Session login again.",
+    import_bridge_failed:"The local bridge is unavailable. Check the extension and bridge setup.",
+    login_failed:"Could not complete X login. Try again or choose another method.",
+    login_timeout:"Login timed out. Try again or choose another method.",import_failed:"Could not import the X session.",invalid_import:"The imported session is invalid.",no_logged_in_session:"No signed-in X session was found in Chrome.",proxy_failed:"Could not connect through the X proxy.",
     session_permission_failed:"Cannot access the saved X session. Its folder permissions need repair.",
     session_profile_limit:"The X session exceeds its safe preparation limit or cache cleanup is incomplete. Retry; saved login and posts are preserved.",
     session_write_failed:"Could not write the X session. The previous login is preserved.",
@@ -12,7 +32,7 @@ export const X_READER_COPY = {
     session_clear_failed:"Could not fully clear the local X session. Please retry.",
     storage_unavailable:"X local storage is unavailable. Saved data has been preserved.",
     title:'X updates', posts:'Posts', replies:'Replies', reposts:'Reposts', media:'Media', settings:'Settings', refresh:'Refresh',
-    loading:'Loading…', empty:'No posts yet', failed:'Could not read updates', offline:'Offline · showing saved posts',
+    loading:'Loading…', empty:'No posts yet', failed:'Could not read updates', offline:'Cannot connect to X. Check the network or proxy.',
     rate_limited:'Requests paused due to rate limiting', parser_changed:'X changed its page format', stale:'Showing saved posts',
     disconnected:'Choose a login method', restoring:'Checking login…', authorizing:'Complete login in the X window',
     expired:'Login expired', challenge:'Verification required', ready:'Connected', login:'Log in', web:'Web login', session:'Session login',
@@ -28,6 +48,26 @@ export const X_READER_COPY = {
     confirmLogout:'Log out of X in this app? Chrome is unaffected.', cacheUnknown:'Size unavailable', notificationUnavailable:'System notifications unavailable',
   },
   'zh-Hans': {
+    moreReplies:"加载更多回复",
+    repliesMoreFailed:"未能继续加载回复，请重试或刷新帖子。",
+    repliesEnd:"当前可见回复已加载完",
+    repliesUnknown:"尚未读取到回复，可继续加载。",
+    sessionBridge:"检查本机桥接",
+    sessionWaiting:"请在已登录的 Chrome X 标签页中点击“导入当前 X 会话”。",
+    sessionValidating:"校验导入数据",
+    sessionPreparing:"准备独立登录会话",
+    sessionWriting:"写入候选会话",
+    sessionConnecting:"连接 X",
+    sessionVerifying:"验证 X 登录",
+    sessionSaving:"保存登录状态",
+    sessionComplete:"登录成功",
+    sessionChallenge:"需要在 X 完成验证",
+    sessionOpen:"打开 X 窗口",
+    sessionFailureAt:"失败步骤：",
+    import_expired:"导入授权已过期，请重新选择 Session 登录。",
+    import_bridge_failed:"本机桥接不可用，请检查扩展与桥接配置。",
+    login_failed:"未能完成 X 登录，请重试或选择其他方式。",
+    login_timeout:"登录超时，请重试或选择其他方式。",import_failed:"X 会话导入失败。",invalid_import:"导入的会话无效。",no_logged_in_session:"未找到 Chrome 中已登录的 X 会话。",proxy_failed:"无法通过代理连接 X。",
     session_permission_failed:"无法访问已保存的 X 会话，请修复会话目录权限。",
     session_profile_limit:"X 会话超出安全处理范围，或缓存清理尚未完成。请重试；已保存的登录和动态仍保留。",
     session_write_failed:"无法写入 X 会话，已保留原有登录。",
@@ -38,7 +78,7 @@ export const X_READER_COPY = {
     session_clear_failed:"未能完整清除本机 X 会话，请重试。",
     storage_unavailable:"X 本地存储不可用，已保留原有数据。",
     title:'X 动态', posts:'帖子', replies:'回复', reposts:'转帖', media:'媒体', settings:'设置', refresh:'刷新',
-    loading:'正在加载…', empty:'暂无动态', failed:'读取失败', offline:'网络不可用 · 显示已保存的内容',
+    loading:'正在加载…', empty:'暂无动态', failed:'读取失败', offline:'无法连接 X，请检查网络或代理。',
     rate_limited:'请求受限，已暂停获取', parser_changed:'X 页面结构发生变化，暂时无法读取', stale:'显示已保存的内容',
     disconnected:'选择登录方式', restoring:'正在检查登录…', authorizing:'请在 X 窗口完成登录',
     expired:'登录已失效', challenge:'需要完成验证', ready:'已连接', login:'登录', web:'网页登录', session:'Session 登录',
@@ -54,6 +94,26 @@ export const X_READER_COPY = {
     confirmLogout:'退出本应用的 X 登录？Chrome 不受影响。', cacheUnknown:'占用未知', notificationUnavailable:'系统通知不可用',
   },
   es: {
+    moreReplies:"Cargar más respuestas",
+    repliesMoreFailed:"No se pudieron cargar más respuestas. Reintenta o actualiza la publicación.",
+    repliesEnd:"Se han cargado todas las respuestas visibles actualmente",
+    repliesUnknown:"Aún no se han leído respuestas. Puedes seguir cargando.",
+    sessionBridge:"Comprobar el puente local",
+    sessionWaiting:"En tu pestaña X de Chrome con sesión iniciada, pulsa «Importar sesión X actual».",
+    sessionValidating:"Validar los datos importados",
+    sessionPreparing:"Preparar una sesión aislada",
+    sessionWriting:"Escribir la sesión candidata",
+    sessionConnecting:"Conectar a X",
+    sessionVerifying:"Verificar el inicio de sesión X",
+    sessionSaving:"Guardar la sesión",
+    sessionComplete:"Inicio de sesión correcto",
+    sessionChallenge:"Completa la verificación en X",
+    sessionOpen:"Abrir ventana de X",
+    sessionFailureAt:"Paso fallido: ",
+    import_expired:"La autorización ha caducado. Elige de nuevo la importación de sesión.",
+    import_bridge_failed:"El puente local no está disponible. Comprueba la extensión y su configuración.",
+    login_failed:"No se pudo completar el inicio de sesión X. Reintenta o elige otro método.",
+    login_timeout:"El inicio de sesión agotó el tiempo. Reintenta o elige otro método.",import_failed:"No se pudo importar la sesión X.",invalid_import:"La sesión importada no es válida.",no_logged_in_session:"No se encontró una sesión X iniciada en Chrome.",proxy_failed:"No se pudo conectar a X mediante el proxy.",
     session_permission_failed:"No se puede acceder a la sesión X guardada. Es necesario reparar los permisos de su carpeta.",
     session_profile_limit:"La sesión X supera el límite seguro o la limpieza de caché está incompleta. Reintenta; se conservan el inicio de sesión y las publicaciones.",
     session_write_failed:"No se pudo escribir la sesión X. Se conserva el inicio de sesión anterior.",
@@ -64,7 +124,7 @@ export const X_READER_COPY = {
     session_clear_failed:"No se pudo borrar por completo la sesión X local. Vuelve a intentarlo.",
     storage_unavailable:"El almacenamiento local de X no está disponible. Se conservan los datos.",
     title:'Novedades de X',posts:'Publicaciones',replies:'Respuestas',reposts:'Republicaciones',media:'Multimedia',settings:'Ajustes',refresh:'Actualizar',
-    loading:'Cargando…',empty:'Todavía no hay publicaciones',failed:'No se pudieron leer las novedades',offline:'Sin conexión · mostrando contenido guardado',
+    loading:'Cargando…',empty:'Todavía no hay publicaciones',failed:'No se pudieron leer las novedades',offline:'No se puede conectar a X. Comprueba la red o el proxy.',
     rate_limited:'Solicitudes pausadas por el límite de frecuencia',parser_changed:'X cambió el formato de su página',stale:'Mostrando contenido guardado',
     disconnected:'Elige cómo iniciar sesión',restoring:'Comprobando la sesión…',authorizing:'Completa el inicio de sesión en la ventana de X',
     expired:'La sesión ha caducado',challenge:'Se requiere verificación',ready:'Conectado',login:'Iniciar sesión',web:'Inicio de sesión web',session:'Importar sesión',
@@ -84,12 +144,17 @@ const TABS = ['posts','replies','reposts','media'];
 const AUTH = ['disconnected','restoring','authorizing','ready','expired','challenge'];
 const OPERATIONS = ['idle','loading','offline','rate_limited','error','parser_changed'];
 const SESSION_ERRORS = new Set(['session_profile_limit','session_permission_failed','session_write_failed','session_persist_failed','session_read_failed','session_decrypt_failed','session_restore_failed','session_clear_failed','storage_unavailable']);
+const STATUS_ERRORS = new Set([...SESSION_ERRORS,'import_expired','import_bridge_failed','login_failed','login_timeout','import_failed','invalid_import','no_logged_in_session','proxy_failed','offline','rate_limited','expired','challenge','parser_changed','pagination_pending']);
+const errorCopy = code => code==='pagination_pending'?'failed':STATUS_ERRORS.has(code)?code:null;
 function sessionFailureKey(value) {
-  if (SESSION_ERRORS.has(value?.code)) return value.code;
+  if (STATUS_ERRORS.has(value?.code)) return errorCopy(value.code);
   // IPC errors may retain only their fixed message, with Electron's prefix.
-  const match = typeof value?.message === 'string' ? value.message.match(/\b(session_profile_limit|session_permission_failed|session_write_failed|session_persist_failed|session_read_failed|session_decrypt_failed|session_restore_failed|session_clear_failed|storage_unavailable)\b/u) : null;
-  return match?.[1] ?? null;
+  const match = typeof value?.message === 'string' ? value.message.match(/\b(session_profile_limit|session_permission_failed|session_write_failed|session_persist_failed|session_read_failed|session_decrypt_failed|session_restore_failed|session_clear_failed|storage_unavailable|import_expired|import_bridge_failed|login_failed|login_timeout|import_failed|invalid_import|no_logged_in_session|proxy_failed|offline|rate_limited|expired|challenge|parser_changed|pagination_pending)\b/u) : null;
+  return errorCopy(match?.[1]);
 }
+const LOGIN_STAGE_COPY = Object.freeze({checking_bridge:'sessionBridge',waiting_import:'sessionWaiting',validating:'sessionValidating',preparing:'sessionPreparing',writing:'sessionWriting',connecting:'sessionConnecting',verifying:'sessionVerifying',challenge:'sessionChallenge',saving:'sessionSaving',complete:'sessionComplete'});
+const loginError = value => errorCopy(value.error) ?? (value.auth==='authorizing'&&value.loginMethod==='session'?errorCopy(value.import?.failure):null);
+const failedStage = value => loginError(value) ? LOGIN_STAGE_COPY[value.loginFailureStage] ?? (value.auth==='authorizing'&&value.loginMethod==='session'&&value.import?.failure ? 'sessionValidating' : null) : null;
 const ID = /^[0-9]{1,25}$/u;
 function translator(options) {
   return key => {const locale=String(options.locale??options.documentRef?.documentElement?.lang??'zh-Hans');return options.translate?.(`x.${key}`)??X_READER_COPY[locale.startsWith('zh')?'zh-Hans':locale.startsWith('es')?'es':'en-US'][key]??key;};
@@ -131,34 +196,62 @@ export function mountXReader(options) {
   const {container,bridge,onOpenSettings=()=>{},documentRef=container.ownerDocument,loadHls}=options;
   const translationOptions={...options,documentRef},t=translator(translationOptions),{node,button}=helpers(documentRef),win=documentRef.defaultView??globalThis;
   const root=node('section','x-reader'),toolbar=node('div','x-reader-toolbar'),tabs=node('div','x-reader-tabs'),statusLine=node('div','x-reader-status'),loginPanel=node('div','x-reader-login'),content=node('div','x-reader-scroll');
+  const pageFooter=node('div','x-reader-page-footer');
   root.setAttribute('aria-label',t('title'));tabs.setAttribute('role','tablist');statusLine.setAttribute('role','status');statusLine.setAttribute('aria-live','polite');
   const iconButton=(key,run,cls)=>{const control=button('',run,`x-reader-icon ${cls}`);control.title=t(key);control.setAttribute('aria-label',t(key));return control;};
   const refresh=iconButton('refresh',()=>void refreshVisible(),'x-reader-refresh');
   const settings=iconButton('settings',onOpenSettings,'x-reader-settings'),newPosts=button(t('newPosts'),()=>{pendingItems=null;content.scrollTop=0;void loadList();},'x-reader-new');newPosts.hidden=true;
-  const backSlot=node('div','x-reader-back-slot'),back=iconButton('back',()=>{detail=null;++detailRequest;renderContent();content.scrollTop=detailScroll;},'x-reader-back');back.hidden=true;backSlot.append(back);
+  const backSlot=node('div','x-reader-back-slot'),back=iconButton('back',()=>{const parent=detailTrail.pop();detail=parent?.detail??null;++detailRequest;renderContent();content.scrollTop=parent?.scroll??detailScroll;},'x-reader-back');back.hidden=true;backSlot.append(back);
   toolbar.append(backSlot,tabs,refresh,settings);root.append(toolbar,statusLine,loginPanel,newPosts,content);container.append(root);
   const records=new Map(TABS.map(tab=>[tab,{items:[],cursor:null,scroll:0,loaded:false}])),full=new Map(),fullFailed=new Set(),autoTried=new Set(),queued=new Set(),mediaCleanups=new Set(),renderedPosts=new Map();
-  let active='posts',shown=false,disposed=false,status={auth:'disconnected',operation:'idle'},generation=0,listRequest=0,detailRequest=0,detail=null,detailScroll=0,pollTimer=null,fullActive=0,loginMethod=null,loginChoiceOpen=false,importSetupError=false,pendingItems=null,updatedAt=null,loading=false,viewer=null;
+  // Until the first service response, login is unknown rather than absent.
+  let active='posts',shown=false,disposed=false,status={auth:'restoring',operation:'idle'},generation=0,listRequest=0,detailRequest=0,detail=null,detailScroll=0,detailTrail=[],pollTimer=null,fullActive=0,loginMethod=null,loginChoiceOpen=false,importSetupError=false,pendingItems=null,updatedAt=null,loading=false,viewer=null;
   const tabButtons=new Map();
   for(const tab of TABS){const control=button(t(tab),()=>switchTab(tab),'x-reader-tab');control.setAttribute('role','tab');control.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?TABS.length-1:(TABS.indexOf(active)+(event.key==='ArrowRight'?1:TABS.length-1))%TABS.length;switchTab(TABS[next]);tabButtons.get(TABS[next]).focus();});tabButtons.set(tab,control);tabs.append(control);}
   function stopMedia(){for(const cleanup of mediaCleanups)cleanup();mediaCleanups.clear();closeViewer();}
   function closeViewer(){viewer?.remove();viewer=null;}
   function escape(event){if(event.key==='Escape'&&viewer)closeViewer();}
   documentRef.addEventListener('keydown',escape);
-  function setStatus(value){if(!value)return;const previous=status.auth;status={...value,auth:AUTH.includes(value.auth)?value.auth:'disconnected',operation:OPERATIONS.includes(value.operation)?value.operation:'error'};if(status.auth==='authorizing'&&['web','session'].includes(status.loginMethod))loginMethod=status.loginMethod;else if(previous==='authorizing'&&status.auth!=='authorizing')loginMethod=null;renderStatus();}
+  // Check the actual scrollport after layout/state changes, sharing the same
+  // single-flight and request-generation guards as manual pagination.
+  // Pagination authority stays upstream: desktop-x-page-adapter interprets X's
+  // main-timeline vs branch termination, and desktop-x-service turns that into
+  // opaque continuation handles (or null when nothing remains to deliver).
+  // These are service handles, not raw X cursors: X can return a nonempty cursor
+  // alongside an explicit end, and the service may still have cached list pages
+  // to deliver after the upstream timeline ends. Do not resolve those cases
+  // again here using hasMore/repliesExhausted or raw-response heuristics. A
+  // second renderer policy would drift from the service and could skip cached
+  // pages or repeatedly request a completed timeline. Fix contradictions at the
+  // adapter/service boundary and test that contract there. The renderer only
+  // follows the returned handle; repliesExhausted controls the end message,
+  // while moreFailed/no-progress pauses retries without declaring a new end.
+  let pageCheckQueued=false;
+  function checkNextPage(){
+    if(!shown||disposed||loading||status.auth!=='ready'||status.operation==='loading'||!(content.clientHeight>0)||content.scrollHeight-pageFooter.offsetHeight-content.scrollTop-content.clientHeight>0)return;
+    if(detail){if(!detail.loading&&!detail.failed&&!detail.moreFailed&&detail.nextCursor)void loadMoreReplies();}
+    else {const record=records.get(active);if(record.loaded&&record.cursor&&!record.moreFailed)void loadList({append:true});}
+  }
+  function scheduleNextPage(){if(pageCheckQueued)return;pageCheckQueued=true;Promise.resolve().then(()=>{pageCheckQueued=false;checkNextPage();});}
+  content.addEventListener('scroll',scheduleNextPage,{passive:true});
+  content.addEventListener('load',scheduleNextPage,true);
+  const pageResize=typeof win.ResizeObserver==='function'?new win.ResizeObserver(scheduleNextPage):null;
+  pageResize?.observe(content);
+  function setStatus(value){if(!value)return;const previous=status.auth;status={...value,auth:AUTH.includes(value.auth)?value.auth:'disconnected',operation:OPERATIONS.includes(value.operation)?value.operation:'error'};if(['authorizing','challenge'].includes(status.auth)&&['web','session'].includes(status.loginMethod))loginMethod=status.loginMethod;else if(previous==='authorizing'&&status.auth!=='authorizing')loginMethod=null;renderStatus();}
   function renderStatus(){
     const operation=status.operation==='error'?'failed':status.operation;
     const hasItems=records.get(active).items.length>0;
     const showLoginPanel=status.auth!=='ready'&&status.auth!=='restoring'&&(!hasItems||loginMethod||loginChoiceOpen);
     const emptyMessage=[...content.children].find(child=>child.className==='x-reader-empty');if(emptyMessage)emptyMessage.hidden=status.auth!=='ready';
-    const key=SESSION_ERRORS.has(status.error)?status.error:operation!=='idle'?operation:showLoginPanel?null:status.auth==='ready'?(updatedAt?null:'ready'):status.auth;
-    statusLine.replaceChildren();if(key)statusLine.append(node('span','',t(key)));if(records.get(active).source==='cache'&&status.operation!=='offline')statusLine.append(node('span','x-reader-muted',t('stale')));
+    const key=loginError(status)??(operation!=='idle'?operation:showLoginPanel?null:status.auth==='ready'?(status.loginStage==='complete'?'sessionComplete':updatedAt?null:'ready'):status.auth);
+    statusLine.replaceChildren();if(key&&!(showLoginPanel&&loginMethod==='session'&&key==='authorizing')){const phase=failedStage(status);statusLine.append(node('span','',`${phase?t('sessionFailureAt')+t(phase)+' · ':''}${t(key)}`));}if(records.get(active).source==='cache'&&status.operation!=='offline')statusLine.append(node('span','x-reader-muted',t('stale')));
     if(updatedAt && operation!=='loading'){const timestamp=node('time','x-reader-muted',new Date(updatedAt).toLocaleString(options.locale));timestamp.dateTime=updatedAt;statusLine.append(timestamp);}
     if(!showLoginPanel&&['expired','challenge','disconnected'].includes(status.auth))statusLine.append(button(t('login'),()=>{loginMethod=null;loginChoiceOpen=true;renderStatus();}));
     if(['offline','error','parser_changed'].includes(status.operation))statusLine.append(button(t('retry'),()=>void refreshVisible()));
-    refresh.disabled=loading||status.operation==='loading';refresh.classList.toggle('is-loading',loading||status.operation==='loading');
-    refresh.setAttribute('aria-busy',String(loading||status.operation==='loading'));
-    const moreButton=[...content.children].find(child=>child.className==='x-reader-more');if(moreButton){moreButton.disabled=loading||status.operation==='loading';moreButton.setAttribute('aria-busy',String(moreButton.disabled));}
+    if(!detail&&records.get(active).moreFailed&&status.operation!=='loading')statusLine.append(node('span','x-reader-muted',t('failed')));
+    const refreshing=loading||Boolean(detail?.loading)||status.operation==='loading';refresh.disabled=refreshing||Boolean(detail?.moreLoading);refresh.classList.toggle('is-loading',refreshing);
+    refresh.setAttribute('aria-busy',String(refreshing));
+    const moreButton=[...pageFooter.children].find(child=>child.className==='x-reader-more');if(moreButton){moreButton.disabled=loading||status.operation==='loading';moreButton.setAttribute('aria-busy',String(moreButton.disabled));moreButton.setAttribute('aria-live','polite');moreButton.textContent=t(moreButton.disabled?'loading':'more');}
     if(status.auth==='ready'){loginMethod=null;loginChoiceOpen=false;loginPanel.hidden=true;}
     else if(showLoginPanel)renderLogin();else loginPanel.hidden=true;
   }
@@ -168,16 +261,17 @@ export function mountXReader(options) {
     if(!loginMethod){loginPanel.append(node('p','',t(['expired','challenge'].includes(status.auth)?status.auth:'disconnected')),
       button(t('web'),()=>void startLogin('web')),button(t('session'),()=>void startLogin('session')),node('small','x-reader-muted',t('sessionHint')));return;}
     const importCode=status.import?.code;
-    const loginState=loginMethod!=='session'?'authorizing':status.import?.importing?'loading':['verification_pending','imported'].includes(importCode)?'restoring':status.import?.configured===false?'importNotConfigured':'importWaiting';
+    const loginState=loginMethod!=='session'?'authorizing':status.import?.configured===false?'importNotConfigured':LOGIN_STAGE_COPY[status.loginStage]??(status.import?.importing?'sessionValidating':['verification_pending','imported'].includes(importCode)?'sessionVerifying':'importWaiting');
     loginPanel.append(node('p','',t(loginState)),button(t('otherLogin'),()=>void cancelLogin()));
     if(loginMethod==='session'){
-      loginPanel.append(node('p','x-reader-muted',t('importHint')),button(t('importSetup'),async()=>{
+      if(status.loginStage==='challenge')loginPanel.append(button(t('sessionOpen'),()=>void startLogin('web')));
+      if(!status.loginStage||['checking_bridge','waiting_import'].includes(status.loginStage))loginPanel.append(node('p','x-reader-muted',t('importHint')),button(t('importSetup'),async()=>{
         const token=generation;try{const result=await bridge.configureXImport();if(token!==generation||!shown)return;const resultImport=result?.import??result;importSetupError=resultImport?.configured===false;status.import=resultImport;renderLogin();}catch{if(token===generation&&shown){importSetupError=true;renderLogin();}}
       }));
-      const extensionDirectory=status.import?.extensionDirectory??status.bridge?.extensionDirectory;if(typeof extensionDirectory==='string')loginPanel.append(node('p','x-reader-import-path',extensionDirectory));
+      const extensionDirectory=status.import?.extensionDirectory??status.bridge?.extensionDirectory;if(typeof extensionDirectory==='string'&&(!status.loginStage||['checking_bridge','waiting_import'].includes(status.loginStage)))loginPanel.append(node('p','x-reader-import-path',extensionDirectory));
       const connection=status.import?.code;
       const connectionKey=importSetupError?'importFailed':({bridge_ready:'importBridgeReady',import_ready:'importWaiting',bridge_unavailable:'importFailed',not_configured:'importNotConfigured'})[connection];
-      if(connectionKey)loginPanel.append(node('p','x-reader-muted',t(connectionKey)));
+      if(connectionKey&&!(connectionKey==='importWaiting'&&status.loginStage==='waiting_import')&&(!status.loginStage||['checking_bridge','waiting_import'].includes(status.loginStage)))loginPanel.append(node('p','x-reader-muted',t(connectionKey)));
     }
   }
   async function startLogin(method){const token=++generation;loginMethod=method;importSetupError=false;renderLogin();try{const result=await bridge.beginXLogin({method});if(token!==generation||!shown)return;setStatus(result?.status??result);if(status.auth==='ready')await loadList();}catch(error){if(token===generation&&shown){setStatus({...status,operation:'error',error:sessionFailureKey(error)??status.error});}}schedulePoll();}
@@ -185,22 +279,29 @@ export function mountXReader(options) {
   async function poll(){const token=generation;try{const value=await bridge.getXStatus();if(token!==generation||!shown)return;const previous=status.auth,previousUpdate=status.lastUpdated;setStatus(value?.status??value);if(status.auth==='ready'&&!loading&&!detail&&(previous!=='ready'||status.lastUpdated&&status.lastUpdated!==previousUpdate))await loadList({background:previous==='ready'});}catch(error){if(token===generation&&shown)setStatus({...status,operation:'error',error:sessionFailureKey(error)??status.error});}finally{schedulePoll();}}
   function schedulePoll(){if(pollTimer)win.clearTimeout(pollTimer);pollTimer=null;if(shown&&!disposed)pollTimer=win.setTimeout(()=>void poll(),status.auth==='authorizing'?2000:15000);}
   function normalizeItems(items){return (Array.isArray(items)?items:[]).map(value=>normalizeXPost(value)).filter(Boolean);}
-  async function loadList({append=false,background=false}={}){
+  async function loadList({append=false,background=false,force=false}={}){
     if(append&&loading)return;
     const tab=active,record=records.get(tab),request=++listRequest,token=generation;
-    if(append&&!record.cursor)return;loading=true;renderStatus();
-    try{const result=await bridge.listXPosts({tab,...(append?{cursor:record.cursor}:{})});if(token!==generation||request!==listRequest||!shown||tab!==active||detail)return;
+    if(append&&!record.cursor)return;const previousCount=record.items.length;loading=true;renderStatus();
+    try{if(force){const refreshed=await bridge.refreshX({tab});if(token!==generation||request!==listRequest||!shown||tab!==active||detail)return;if(refreshed?.status){setStatus(refreshed.status);if(refreshed.status.operation!=='idle'){record.moreFailed=true;return;}}}const result=await bridge.listXPosts({tab,...(append?{cursor:record.cursor}:{})});if(token!==generation||request!==listRequest||!shown||tab!==active||detail)return;
       const incoming=normalizeItems(result.items);if(result.status)setStatus(typeof result.status==='object'?result.status:{...status,operation:result.status});
       const resultTime=result.updatedAt??result.status?.lastUpdated;if(typeof resultTime==='string'&&Number.isFinite(Date.parse(resultTime)))updatedAt=resultTime;
-      if(background&&content.scrollTop>32&&record.loaded&&incoming.some(item=>!record.items.some(old=>old.id===item.id))){pendingItems=incoming;newPosts.hidden=false;return;}
+      if(background&&!force&&content.scrollTop>32&&record.loaded&&incoming.some(item=>!record.items.some(old=>old.id===item.id))){pendingItems=incoming;newPosts.hidden=false;return;}
       const keepTail=background&&incoming.length>0&&record.loaded&&record.items.length>incoming.length;
       const items=append?[...record.items,...incoming]:background&&incoming.length?[...incoming,...record.items.filter(old=>!incoming.some(item=>item.id===old.id))]:incoming;record.items=[...new Map(items.map(item=>[item.id,item])).values()];const cursor=result.nextCursor??result.cursor;if(!keepTail)record.cursor=typeof cursor==='string'?cursor:append&&!incoming.length&&result.hasMore!==false?record.cursor:null;record.loaded=true;record.source=result.source;
-      const scroll=content.scrollTop;renderContent({preserve:true});content.scrollTop=scroll;newPosts.hidden=true;pendingItems=null;prefetch();
-    }catch(error){if(token===generation&&request===listRequest&&shown){setStatus({...status,operation:'error',error:sessionFailureKey(error)??status.error});if(!record.items.length)renderContent();}}
-    finally{if(request===listRequest){loading=false;if(shown)renderStatus();}}
+      if(append)record.moreFailed=Boolean(record.cursor)&&(record.items.length===previousCount||result.outcome==='failed');else if(force||!background)record.moreFailed=false;
+      const scroll=force?0:content.scrollTop;renderContent({preserve:true});content.scrollTop=scroll;newPosts.hidden=true;pendingItems=null;prefetch();
+    }catch(error){if(token===generation&&request===listRequest&&shown){if(append)record.moreFailed=true;setStatus({...status,operation:'error',error:sessionFailureKey(error)??status.error});if(!record.items.length)renderContent();}}
+    finally{if(request===listRequest){loading=false;if(shown){renderStatus();scheduleNextPage();}}}
   }
-  async function refreshVisible(){if(loading||!shown)return;const token=generation;loading=true;renderStatus();try{const value=await bridge.refreshX();if(token!==generation||!shown)return;if(value?.status)setStatus(value.status);if(detail)await openDetail(detail.id);else await loadList({background:true});}catch(error){if(token===generation&&shown)setStatus({...status,operation:'error',error:sessionFailureKey(error)??status.error});}finally{loading=false;if(shown)renderStatus();}}
-  function switchTab(tab){if(active===tab&&!detail)return;records.get(active).scroll=detail?detailScroll:content.scrollTop;detail=null;++detailRequest;++listRequest;loading=false;stopMedia();active=tab;newPosts.hidden=true;pendingItems=null;renderContent();content.scrollTop=records.get(tab).scroll;if(!records.get(tab).loaded)void loadList();else prefetch();}
+  async function refreshVisible(){
+    if(loading||detail?.loading||detail?.moreLoading||!shown)return;
+    // Capture the target before awaiting. Normal request generations prevent a
+    // refresh completed after navigation from reopening or replacing that view.
+    if(detail)await openDetail(detail.id,{force:true});
+    else await loadList({force:true,background:true});
+  }
+  function switchTab(tab){if(active===tab&&!detail)return;records.get(active).scroll=detail?detailScroll:content.scrollTop;detail=null;detailTrail=[];++detailRequest;++listRequest;loading=false;stopMedia();active=tab;newPosts.hidden=true;pendingItems=null;renderContent();content.scrollTop=records.get(tab).scroll;if(!records.get(tab).loaded)void loadList();else prefetch();}
   function addMedia(parent,items){
     for(const item of items){const wrap=node('div','x-reader-media');let element;
       if(item.type==='image'){element=node('img');element.src=item.src;element.loading='lazy';element.alt=t('image');element.tabIndex=0;const open=()=>{closeViewer();viewer=node('div','x-reader-image-viewer');viewer.setAttribute('role','dialog');viewer.setAttribute('aria-modal','true');const image=node('img');image.src=item.src;image.alt=t('image');const close=button(t('close'),()=>{closeViewer();element.focus();});viewer.append(close,image);root.append(viewer);close.focus();};element.addEventListener('click',event=>{event.stopPropagation();open();});element.addEventListener('keydown',event=>{if(event.key==='Enter'){event.stopPropagation();open();}});}
@@ -239,26 +340,45 @@ export function mountXReader(options) {
   function renderContent({preserve=false}={}){
     if(!preserve){stopMedia();renderedPosts.clear();content.replaceChildren();}
     const existing=new Map([...renderedPosts].map(([id,entries])=>[id,entries.find(entry=>entry.article.parentElement===content)]));
-    const children=[],retained=new Set();
+    const children=[],retained=new Set();pageFooter.replaceChildren();
     const appendCard=(value,clickable=true)=>{const post=full.get(value.id)??value,mounted=existing.get(post.id);if(mounted&&mounted.clickable===clickable&&mounted.shape===cardShape(post)){
       mounted.body.textContent=post.text;if(post.complete)mounted.fullState.remove();else renderFullState(mounted.fullState,post.id);children.push(mounted.article);retained.add(mounted.article);
     }else children.push(card(post,{clickable}));};
     for(const[tab,control]of tabButtons){control.setAttribute('aria-selected',String(active===tab&&!detail));control.tabIndex=active===tab?0:-1;}
     back.hidden=!detail;
     if(detail){if(detail.post)appendCard(detail.post,false);else children.push(node('p','',t(detail.failed?'failed':'loading')));
-      if(detail.loading||detail.failed||detail.cached||!detail.replies?.length){const message=node('div','x-reader-replies-status',t(detail.loading?'repliesLoading':detail.failed?'repliesFailed':detail.cached?'stale':'repliesEmpty'));message.setAttribute('role','status');message.setAttribute('aria-live','polite');message.setAttribute('aria-busy',String(Boolean(detail.loading)));if(detail.failed)message.append(button(t('retry'),()=>void openDetail(detail.id)));children.push(message);}
-      for(const reply of detail.replies??[])appendCard(reply);}
-    else {const record=records.get(active);if(!record.items.length&&status.auth==='ready')children.push(node('p','x-reader-empty',t(!record.loaded&&loading?'loading':status.operation==='error'?'failed':record.loaded?'empty':'loading')));for(const post of record.items)appendCard(post);if(record.cursor)children.push(button(t('more'),()=>void loadList({append:true}),'x-reader-more'));}
+      if(!detail.refreshing&&!detail.moreLoading&&(detail.loading||detail.failed||detail.cached||!detail.replies?.length)){const message=node('div','x-reader-replies-status',t(detail.loading?'repliesLoading':detail.failed?'repliesFailed':detail.cached?'stale':detail.nextCursor?'repliesUnknown':'repliesEmpty'));message.setAttribute('role','status');message.setAttribute('aria-live','polite');message.setAttribute('aria-busy',String(Boolean(detail.loading)));if(detail.failed)message.append(button(t('retry'),()=>void openDetail(detail.id)));children.push(message);}
+      for(const reply of detail.replies??[])appendCard(reply);
+      // Automatic continuation owns normal paging; only a failed page offers a
+      // retry. Keep the footer itself mounted to preserve the scroll runway.
+      if(detail.refreshing||detail.moreLoading||(!detail.loading&&!detail.failed&&detail.moreFailed)){const message=node('p','x-reader-replies-status',t(detail.refreshing||detail.moreLoading?'repliesLoading':'repliesMoreFailed'));message.setAttribute('role','status');message.setAttribute('aria-live','polite');message.setAttribute('aria-busy',String(Boolean(detail.refreshing||detail.moreLoading)));if(!detail.refreshing&&!detail.moreLoading&&detail.nextCursor)message.append(button(t('retry'),()=>void loadMoreReplies(),'x-reader-replies-retry'));pageFooter.append(message);}
+      else if(!detail.nextCursor&&detail.repliesExhausted&&!detail.loading&&!detail.failed)pageFooter.append(node('p','x-reader-muted',t('repliesEnd')));}
+    else {const record=records.get(active);if(!record.items.length&&status.auth==='ready')children.push(node('p','x-reader-empty',t(!record.loaded&&loading?'loading':status.operation==='error'?'failed':record.loaded?'empty':'loading')));for(const post of record.items)appendCard(post);if(record.cursor)pageFooter.append(button(t('more'),()=>void loadList({append:true}),'x-reader-more'));}
+    children.push(pageFooter);
     for(const mounted of existing.values())if(mounted&&!retained.has(mounted.article))mounted.release();
     for(const child of [...content.children])if(!children.includes(child))child.remove();
     for(let index=0;index<children.length;index++){const child=children[index],at=content.children[index]??null;if(child!==at){if(child.parentElement===content&&content.moveBefore)content.moveBefore(child,at);else content.insertBefore(child,at);}}
     const attached=element=>{for(let parent=element.parentElement;parent;parent=parent.parentElement)if(parent===content)return true;return false;};
     for(const[id,entries]of renderedPosts){const kept=entries.filter(entry=>attached(entry.article));if(kept.length)renderedPosts.set(id,kept);else renderedPosts.delete(id);}
-    renderStatus();
+    renderStatus();scheduleNextPage();
   }
-  async function openDetail(id){if(!ID.test(id)||!shown)return;if(!detail)detailScroll=content.scrollTop;const prior=detail?.id===id?detail:null;const token=generation,request=++detailRequest;++listRequest;loading=false;detail={id,post:prior?.post??full.get(id)??records.get(active).items.find(item=>item.id===id)??null,replies:prior?.replies??[],loading:true};renderContent({preserve:Boolean(prior)});content.scrollTop=0;
-    try{const value=await bridge.getXPost({id});if(token!==generation||request!==detailRequest||!shown||detail?.id!==id)return;const post=normalizeXPost(value.post);if(post?.complete)full.set(id,post);detail={id,post:post??detail.post,replies:normalizeItems(value.replies),failed:!post||value.outcome==='failed',cached:value.source==='cache'||value.outcome==='cache',loading:false};if(value.status)setStatus(value.status);renderContent({preserve:true});prefetch();}
-    catch(error){if(token===generation&&request===detailRequest&&shown){if(sessionFailureKey(error))setStatus({...status,operation:'error',error:sessionFailureKey(error)});detail.failed=true;detail.loading=false;renderContent({preserve:true});}}
+  async function openDetail(id,{force=false}={}){if(!ID.test(id)||!shown)return;if(detail&&detail.id!==id){detailTrail.push({detail:{...detail,loading:false,refreshing:false,moreLoading:false},scroll:content.scrollTop});if(detailTrail.length>32)detailTrail.shift();}if(!detail)detailScroll=content.scrollTop;const prior=detail?.id===id?detail:null;const token=generation,request=++detailRequest;++listRequest;loading=false;detail={...prior,id,post:prior?.post??full.get(id)??detail?.replies?.find(item=>item.id===id)??records.get(active).items.find(item=>item.id===id)??null,replies:prior?.replies??[],loading:true,refreshing:force,failed:false};renderContent({preserve:Boolean(prior)});if(!force)content.scrollTop=0;
+    try{const value=await bridge.getXPost({id,...(force?{force:true}:{})});if(token!==generation||request!==detailRequest||!shown||detail?.id!==id)return;if(force&&(value.outcome==='failed'||value.outcome==='cache'||value.source==='cache')){detail.failed=true;detail.loading=false;detail.refreshing=false;if(value.status)setStatus(value.status);renderContent({preserve:true});return;}const post=normalizeXPost(value.post);if(post?.complete)full.set(id,post);detail={id,post:post??detail.post,replies:normalizeItems(value.replies),nextCursor:typeof value.nextCursor==='string'?value.nextCursor:null,repliesExhausted:value.repliesExhausted===true,failed:!post||value.outcome==='failed',cached:value.source==='cache'||value.outcome==='cache',loading:false};if(value.status)setStatus(value.status);if(force){for(const item of [detail.post,...detail.replies])if(item?.complete)full.set(item.id,item);}renderContent({preserve:true});if(force)content.scrollTop=0;prefetch();}
+    catch(error){if(token===generation&&request===detailRequest&&shown){if(sessionFailureKey(error))setStatus({...status,operation:'error',error:sessionFailureKey(error)});detail.failed=true;detail.loading=false;detail.refreshing=false;renderContent({preserve:true});}}
+  }
+  async function loadMoreReplies(){
+    if(!shown||!detail?.nextCursor||detail.moreLoading||detail.loading)return;
+    const id=detail.id,cursor=detail.nextCursor,token=generation,request=++detailRequest;
+    const previousCount=detail.replies.length;
+    detail.moreLoading=true;detail.moreFailed=false;renderContent({preserve:true});
+    try{
+      const value=await bridge.getXPost({id,cursor});
+      if(token!==generation||request!==detailRequest||!shown||detail?.id!==id)return;
+      detail.replies=[...new Map(normalizeItems([...(detail.replies??[]),...(value.replies??[])]).map(post=>[post.id,post])).values()];
+      detail.moreLoading=false;detail.moreFailed=value.outcome==='failed'||(value.repliesExhausted!==true&&detail.replies.length===previousCount);
+      if(!detail.moreFailed){detail.nextCursor=typeof value.nextCursor==='string'?value.nextCursor:null;detail.repliesExhausted=value.repliesExhausted===true;}
+      if(value.status)setStatus(value.status);renderContent({preserve:true});prefetch();
+    }catch{if(token===generation&&request===detailRequest&&shown&&detail?.id===id){detail.moreLoading=false;detail.moreFailed=true;renderContent({preserve:true});}}
   }
   function enqueue(id){if(queued.has(id)||full.has(id)||autoTried.has(id))return;queued.add(id);pump();}
   function prefetch(){for(const post of detail?[detail.post,...detail.replies]:records.get(active).items){if(post&&!post.complete)enqueue(post.id);if(post?.quotedPost&&!post.quotedPost.complete)enqueue(post.quotedPost.id);}}
@@ -267,7 +387,7 @@ export function mountXReader(options) {
   function hide(){if(!shown)return;shown=false;++generation;++listRequest;++detailRequest;if(!detail)records.get(active).scroll=content.scrollTop;else detailScroll=content.scrollTop;if(pollTimer)win.clearTimeout(pollTimer);pollTimer=null;queued.clear();for(const id of autoTried)if(!full.has(id))autoTried.delete(id);stopMedia();root.hidden=true;}
   function refreshLocale(value={}){if(disposed)return;Object.assign(translationOptions,value);root.setAttribute('aria-label',t('title'));for(const[control,key]of[[back,'back'],[refresh,'refresh'],[settings,'settings']]){control.title=t(key);control.setAttribute('aria-label',t(key));}newPosts.textContent=t('newPosts');for(const[tab,control]of tabButtons)control.textContent=t(tab);const scroll=content.scrollTop;renderContent();content.scrollTop=scroll;if(loginMethod||!loginPanel.hidden)renderLogin();}
   return {async show(){if(disposed||shown)return;shown=true;root.hidden=false;++generation;renderContent();content.scrollTop=detail?detailScroll:records.get(active).scroll;await Promise.all([poll(),detail?openDetail(detail.id):loadList()]);},hide,
-    dispose(){if(disposed)return;hide();disposed=true;documentRef.removeEventListener('keydown',escape);root.remove();},
+    dispose(){if(disposed)return;hide();disposed=true;pageResize?.disconnect();content.removeEventListener('scroll',scheduleNextPage);content.removeEventListener('load',scheduleNextPage,true);documentRef.removeEventListener('keydown',escape);root.remove();},
     refreshLocale,render:refreshLocale,openPost(id){if(ID.test(id)&&shown)return openDetail(id);return Promise.resolve();},
     handleUpdate(value){if(disposed)return;if(value?.status||value?.auth)setStatus(value.status??value);if(shown&&!detail&&!loading)void loadList({background:true});}};
 }
@@ -295,7 +415,7 @@ export function mountXSettings(options){
     lastStatus=status?.status??status;renderStatus();
     const size=result.cacheBytes??lastStatus.cacheBytes;bytes.textContent=Number.isSafeInteger(size)&&size>=0?`${new Intl.NumberFormat(options.locale,{maximumFractionDigits:1}).format(size/1048576)} MB`:t('cacheUnknown');
   }catch(error){if(!disposed&&token===generation)state.textContent=t(sessionFailureKey(error)??'failed');}}
-  function renderStatus(){if(!lastStatus)return;state.textContent=t(SESSION_ERRORS.has(lastStatus.error)?lastStatus.error:AUTH.includes(lastStatus.auth)?lastStatus.auth:'disconnected');if(lastStatus.notificationStatus==='unavailable'||lastStatus.notificationsAvailable===false)state.append(node('span','x-reader-muted',` · ${t('notificationUnavailable')}`));}
+  function renderStatus(){if(!lastStatus)return;const failure=loginError(lastStatus),phase=failure?failedStage(lastStatus):null;state.textContent=(phase?t('sessionFailureAt')+t(phase)+' · ':'')+t(failure??(['authorizing','challenge'].includes(lastStatus.auth)&&lastStatus.loginMethod==='session'?LOGIN_STAGE_COPY[lastStatus.loginStage]??'authorizing':AUTH.includes(lastStatus.auth)?lastStatus.auth:'disconnected'));if(lastStatus.notificationStatus==='unavailable'||lastStatus.notificationsAvailable===false)state.append(node('span','x-reader-muted',` · ${t('notificationUnavailable')}`));}
   function refreshLocale(value={}){if(disposed)return;Object.assign(translationOptions,value);for(const{element,key}of localized)element.textContent=t(key);if(messageKey)message.textContent=t(messageKey);renderStatus();}
   async function pollStatus(){const token=statusGeneration;try{const value=await bridge.getXStatus();if(disposed||!visible||token!==statusGeneration)return;lastStatus=value.status??value;renderStatus();}catch(error){if(!disposed&&visible&&token===statusGeneration)state.textContent=t(sessionFailureKey(error)??'failed');}finally{if(visible&&!disposed&&token===statusGeneration)statusTimer=settingsWindow.setTimeout(()=>void pollStatus(),lastStatus?.auth==='authorizing'?2000:15000);}}
   function hide(){visible=false;++statusGeneration;if(statusTimer)settingsWindow.clearTimeout(statusTimer);statusTimer=null;root.hidden=true;}

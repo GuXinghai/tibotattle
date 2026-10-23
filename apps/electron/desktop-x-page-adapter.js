@@ -27,9 +27,49 @@ function tweetPost(raw, depth = 0) {
   try { return { post: validateXPost(result), timelineHandle: userOf(tweet).handle }; } catch { return null; }
 }
 
+// Pagination instructions belong to one timeline, never to every nested module.
+const boundedEntries = value => Array.isArray(value) ? value.slice(0, 5000) : [];
+function timelineBoundary(instructions = [], entries = [], branch = false) {
+  let cursor; let ended = false; let observed = false;
+  const inspect = content => {
+    if ((content?.cursorType === 'Bottom' || branch && ['ShowMore', 'ShowMoreThreads'].includes(content?.cursorType)) && typeof content.value === 'string' && content.value.length <= 2048) { cursor = content.value; observed = true; if (!cursor) ended = true; }
+  };
+  for (const instruction of boundedEntries(instructions)) {
+    if (instruction?.type === 'TimelineTerminateTimeline' && instruction.direction === 'Bottom') { ended = true; observed = true; }
+    for (const entry of boundedEntries(instruction?.entries)) inspect(entry?.content ?? entry);
+    if (instruction?.entry) inspect(instruction.entry.content ?? instruction.entry);
+  }
+  for (const entry of boundedEntries(entries)) inspect(entry?.content ?? entry);
+  return { cursor, exhausted: ended, observed };
+}
+function pagePagination(data, detail) {
+  const conversation = data?.data?.threaded_conversation_with_injections_v2;
+  const user = data?.data?.user?.result;
+  const timeline = detail ? conversation ?? data?.timeline : user?.timeline_v2?.timeline ?? user?.timeline?.timeline ?? data?.timeline;
+  const instructions = Array.isArray(timeline?.instructions) ? timeline.instructions : Array.isArray(data?.instructions) ? data.instructions : [];
+  const entries = Array.isArray(data?.entries) ? data.entries : [];
+  const main = timelineBoundary(instructions, entries);
+  // Minimal top-level responses are also used by supported timeline variants.
+  if (!timeline && !instructions.length && !entries.length) Object.assign(main, timelineBoundary([data], [data]));
+  const branches = [];
+  for (const instruction of boundedEntries(instructions)) {
+    for (const entry of boundedEntries(instruction?.entries)) {
+      const module = entry?.content;
+      if (module?.__typename !== 'TimelineTimelineModule' && module?.entryType !== 'TimelineTimelineModule') continue;
+      if (typeof entry.entryId !== 'string' || !/^[a-zA-Z0-9_-]{1,160}$/.test(entry.entryId)) continue;
+      const items = boundedEntries(module.items).map(item => item?.item?.itemContent ?? item?.itemContent ?? item);
+      branches.push({ id: entry.entryId, ...timelineBoundary(Array.isArray(module.instructions) ? module.instructions : [], items, true) });
+    }
+    if (instruction?.type === 'TimelineAddToModule' && typeof instruction.moduleEntryId === 'string' && /^[a-zA-Z0-9_-]{1,160}$/.test(instruction.moduleEntryId)) {
+      branches.push({ id: instruction.moduleEntryId, ...timelineBoundary([], boundedEntries(instruction.moduleItems).map(item => item?.item?.itemContent ?? item?.itemContent ?? item), true) });
+    }
+  }
+  return { main, branches };
+}
+
 /** Project only tweet models from a normal timeline/detail response; omit unknown fields. */
 export function projectXPageData(data, { detail = false, target = X_TARGET } = {}) {
-  const posts = new Map(); let visited = 0; let recognized = false; let cursor; let ended = false;
+  const posts = new Map(); let visited = 0; let recognized = false;
   const walk = (node, depth = 0) => {
     if (++visited > 60000 || depth > 40 || !node || typeof node !== 'object') return;
     if (node.__typename === 'Tweet' || node.rest_id && node.legacy?.full_text !== undefined) {
@@ -37,14 +77,19 @@ export function projectXPageData(data, { detail = false, target = X_TARGET } = {
       const item = tweetPost(node);
       if (item && (detail || item.timelineHandle?.toLowerCase() === target.toLowerCase())) posts.set(item.post.id, item.post);
     }
-    if (node.cursorType === 'Bottom' && typeof node.value === 'string' && node.value.length <= 2048) { cursor = node.value; if (!cursor) ended = true; }
-    if (node.type === 'TimelineTerminateTimeline' && node.direction === 'Bottom') ended = true;
     if (node.__typename === 'TimelineTimelineModule' || node.__typename === 'TimelineTimelineItem' || node.entryId === `user-${target}` || node.instructions || node.timeline?.instructions) recognized = true;
     for (const value of Object.values(node)) if (value && typeof value === 'object') { if (Array.isArray(value)) { for (const child of value.slice(0, 5000)) walk(child, depth + 1); } else walk(value, depth + 1); }
   };
+  // Conversation entries/modules encode X's display order. Visit them before
+  // unrelated response objects; a generic object walk is not a ranking policy.
+  if (detail) {
+    const instructions = data?.data?.threaded_conversation_with_injections_v2?.instructions;
+    if (Array.isArray(instructions)) walk(instructions);
+  }
   walk(data);
   // Missing continuation metadata is unknown, not evidence of the last page.
-  return { posts: [...posts.values()], recognized, cursor, exhausted: ended && !cursor };
+  const pagination = pagePagination(data, detail);
+  return { posts: [...posts.values()], recognized, cursor: pagination.main.cursor, exhausted: pagination.main.exhausted, pagination };
 }
 
 // This function executes in the remote sandbox. It returns only a narrow model,
@@ -115,7 +160,7 @@ export function inspectXDocument() {
 }
 
 export function createDesktopXPageAdapter({ window: win, delay = ms => new Promise(resolve => setTimeout(resolve, ms)), target = X_TARGET } = {}) {
-  const wc = win.webContents; let detached = false; let pending = new Map(); let projected = new Map(); let recognized = false; let exhausted = false; let networkError; let retryAfter; let detailMode = false; let expectedOperation; let disposed = false; let loadGeneration = 0; let activeReads = 0; let revision = 0;
+  const wc = win.webContents; let detached = false; let pending = new Map(); let projected = new Map(); let recognized = false; let exhausted = false; let networkError; let retryAfter; let detailMode = false; let detailId; let expectedOperation; let disposed = false; let loadGeneration = 0; let activeReads = 0; let revision = 0;
   const networkIds = new Set();
   const merge = (existing, incoming, preferExisting = false) => {
     if (!existing) return incoming;
@@ -135,6 +180,10 @@ export function createDesktopXPageAdapter({ window: win, delay = ms => new Promi
       const path = new URL(response.url).pathname;
       const operation = /^\/i\/api\/graphql\/[^/]+\/(UserTweets|UserOriginalsTimeline|UserTweetsAndReplies|UserMedia|TweetDetail)$/.exec(path)?.[1];
       if (!operation || !expectedOperation?.includes(operation)) return;
+      if (detailMode && operation === 'TweetDetail') {
+        const variables = new URL(response.url).searchParams.get('variables');
+        if (variables) { try { if (JSON.parse(variables).focalTweetId !== detailId) return; } catch { return; } }
+      }
       fixedNetworkError(response.status, response.headers);
       if (response.status === 200 && (response.encodedDataLength ?? 0) <= 4000000 && pending.size < 24) pending.set(requestId, loadGeneration);
     }
@@ -147,7 +196,7 @@ export function createDesktopXPageAdapter({ window: win, delay = ms => new Promi
         const result = projectXPageData(json, { detail: detailMode, target });
         for (const post of result.posts) { projected.set(post.id, merge(projected.get(post.id), post)); networkIds.add(post.id); }
         revision++;
-        recognized ||= result.recognized; exhausted = result.exhausted;
+        recognized ||= result.recognized; if (result.pagination.main.observed) exhausted = result.exhausted;
         for (const error of json.errors ?? []) { if ([32, 89, 215].includes(error.code)) networkError = 'expired'; if (error.code === 88) networkError = 'rate_limited'; }
       } catch { /* Unknown response bodies remain unprojected, never logged. */ }
       finally { activeReads--; }
@@ -168,8 +217,8 @@ export function createDesktopXPageAdapter({ window: win, delay = ms => new Promi
     if (networkError) { const err = xError(networkError); if (Number.isFinite(retryAfter)) err.retryAt = retryAfter; throw err; }
     return result;
   }
-  async function load({ tab = 'posts', id, signal, more = false, after } = {}) {
-    assertLive(signal); loadGeneration++; detailMode = Boolean(id); pending.clear(); projected = new Map(); networkIds.clear(); recognized = false; exhausted = false; networkError = undefined; retryAfter = undefined; revision = 0;
+  async function load({ tab = 'posts', id, signal, more = false, after, knownReplies = [] } = {}) {
+    assertLive(signal); loadGeneration++; detailMode = Boolean(id); detailId = id; pending.clear(); projected = new Map(); networkIds.clear(); recognized = false; exhausted = false; networkError = undefined; retryAfter = undefined; revision = 0;
     expectedOperation = id ? ['TweetDetail'] : tab === 'replies' ? ['UserTweetsAndReplies'] : tab === 'media' ? ['UserMedia'] : ['UserTweets', 'UserOriginalsTimeline'];
     const suffix = tab === 'replies' ? '/with_replies' : tab === 'media' ? '/media' : '';
     const url = id ? `https://x.com/${target}/status/${id}` : `https://x.com/${target}${suffix}`;
@@ -190,9 +239,13 @@ export function createDesktopXPageAdapter({ window: win, delay = ms => new Promi
       assertLive(signal);
       if (resumeTimeline) await scroll(); else await navigation;
       assertLive(signal); if (navigationFailed) throw xError('offline');
-      const selected = () => [...projected.values()].filter(post => id || (tab === 'media' ? post.media.length > 0 : tab === 'reposts' ? post.kind === 'repost' : tab === 'posts' ? post.kind === 'post' : post.kind !== 'repost'));
+      // DOM models may arrive before TweetDetail. Network timeline order takes
+      // precedence; DOM-only models follow in their observed page order.
+      const selected = () => [...new Set([...(id ? networkIds : []), ...projected.keys()])].map(key => projected.get(key)).filter(post => id || (tab === 'media' ? post.media.length > 0 : tab === 'reposts' ? post.kind === 'repost' : tab === 'posts' ? post.kind === 'post' : post.kind !== 'repost'));
       // The main card can mount from X's timeline cache before TweetDetail
       // returns. Its full text alone says nothing about whether replies loaded.
+      const known = new Set(knownReplies);
+      const newReplies = () => selected().some(post => post.replyTo === id && !known.has(post.id));
       const detailReady = () => networkIds.has(id) || [...projected.values()].some(post => post.replyTo === id);
       const pastAnchor = post => Date.parse(post.createdAt) < Date.parse(after.createdAt) || post.createdAt === after.createdAt && BigInt(post.id) < BigInt(after.id);
       let last; let signature; let stable = 0;
@@ -202,7 +255,7 @@ export function createDesktopXPageAdapter({ window: win, delay = ms => new Promi
         const nextSignature = `${revision}:${projected.size}:${[...projected.values()].reduce((sum, post) => sum + post.media.length + Number(Boolean(post.author.avatar)), 0)}`;
         stable = nextSignature === signature ? stable + 1 : 0; signature = nextSignature;
         const exact = id && projected.get(id);
-        const available = id ? exact?.complete && detailReady() : more && after ? selected().some(pastAnchor) || last.empty || exhausted : tab === 'media' ? selected().length > 0 || last.empty || exhausted : projected.size > 0 || last.empty || exhausted;
+        const available = id ? more ? newReplies() || exhausted : exact?.complete && detailReady() : more && after ? selected().some(pastAnchor) || last.empty || exhausted : tab === 'media' ? selected().length > 0 || last.empty || exhausted : projected.size > 0 || last.empty || exhausted;
         if (available && pending.size === 0 && activeReads === 0 && stable >= 2) break;
         // A detail/full-text read may have navigated away from the timeline.
         // Reopen it and advance until the saved page boundary, not just until
@@ -210,8 +263,8 @@ export function createDesktopXPageAdapter({ window: win, delay = ms => new Promi
         if (more && !available && pending.size === 0 && activeReads === 0 && stable >= 2) { await scroll(); stable = 0; }
       }
       if (!id && projected.size === 0 && !last?.empty && !recognized) throw xError(last?.failure ? 'offline' : 'parser_changed');
-      if (id && (!projected.has(id) || !detailReady())) throw xError('parser_changed');
-      return { posts: selected(), exhausted: exhausted || Boolean(last?.empty), authenticated: Boolean(last?.accountMenu) };
+      if (id && !more && (!projected.has(id) || !detailReady())) throw xError('parser_changed');
+      return { posts: selected(), exhausted: exhausted || !id && Boolean(last?.empty), authenticated: Boolean(last?.accountMenu) };
     } finally { signal?.removeEventListener('abort', abort); if (activeViewport) { try { await wc.debugger.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: false }); } catch { /* Window may have closed during cancellation. */ } } }
   }
   return { load, inspect, dispose() {

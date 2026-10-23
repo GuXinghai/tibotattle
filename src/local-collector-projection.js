@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createResetEventClassifier, mergeQuotaResetEvents } from "@app-usagemonitor/quota-analysis";
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
 import {
@@ -34,6 +35,34 @@ export const RECENT_COLLECTOR_PERIOD_LABEL =
   `Cached ${RECENT_TIMELINE_DAYS}-day collector window`;
 const MAX_WEEKLY_PACE_OBSERVATIONS = 8_192;
 const MAX_SAFE_TEXT_LENGTH = 2_000;
+const quotaPublicationScopes = new WeakMap();
+
+// Process-internal publication metadata. It never belongs to the projection
+// DTO; the worker transport rebinds it after its closed envelope is validated.
+export function bindLocalCollectorQuotaPublicationScope(projection, scope) {
+  const valid = scope !== null && typeof scope === "object"
+    && Object.keys(scope).sort().join("\0") === "observedAt\0scopeToken"
+    && typeof scope.scopeToken === "string" && /^[a-f0-9]{64}$/u.test(scope.scopeToken)
+    && typeof scope.observedAt === "string"
+    && Number.isFinite(Date.parse(scope.observedAt))
+    && new Date(Date.parse(scope.observedAt)).toISOString() === scope.observedAt;
+  quotaPublicationScopes.set(projection, valid ? Object.freeze({ ...scope }) : null);
+  return valid;
+}
+
+export function localCollectorQuotaPublicationScope(projection) {
+  return quotaPublicationScopes.get(projection) ?? null;
+}
+
+export function localCollectorQuotaRecordScopeToken(record) {
+  const scope = record?.accountScope;
+  return record?.schemaVersion === "0.3" && record?.kind === "codex_quota_snapshot"
+      && record?.provider === "openai_codex"
+      && scope?.status === "available" && scope.version === "openai-account-v1"
+      && typeof scope.scopeId === "string" && scope.scopeId.length > 0
+      && scope.scopeId.length <= 512
+    ? createHash("sha256").update(scope.scopeId).digest("hex") : null;
+}
 
 function fixedError(code) {
   const error = new Error(code);
@@ -135,6 +164,7 @@ export async function readLocalCollectorProjection(
   let firstExportableRecordAt = indexedSummary?.firstUsageObservedAtMs ?? null;
   let latestExportableRecordAt = indexedSummary?.latestUsageObservedAtMs ?? null;
   let latestQuotaRecord = null;
+  let latestQuotaScopeToken = null;
   await forEachLocalCollectorRecord({
     stateFile,
     kinds: indexedSummary === null
@@ -171,6 +201,10 @@ export async function readLocalCollectorProjection(
         if (latestQuotaRecord === null
             || value.observedAt.localeCompare(latestQuotaRecord.observedAt) > 0) {
           latestQuotaRecord = value;
+          latestQuotaScopeToken = localCollectorQuotaRecordScopeToken(value);
+        } else if (value.observedAt === latestQuotaRecord.observedAt
+            && localCollectorQuotaRecordScopeToken(value) !== latestQuotaScopeToken) {
+          latestQuotaScopeToken = null;
         }
         if (observedMs >= recentStartMs && observedMs <= nowMs + 5 * 60_000) {
           weeklyPaceSnapshots.push(
@@ -322,6 +356,10 @@ export async function readLocalCollectorProjection(
     paceForecast,
     paceOutlook,
   };
+  bindLocalCollectorQuotaPublicationScope(projection, latestQuotaScopeToken === null ? null : {
+    scopeToken: latestQuotaScopeToken,
+    observedAt: latestQuotaRecord.observedAt,
+  });
   return projection;
 }
 

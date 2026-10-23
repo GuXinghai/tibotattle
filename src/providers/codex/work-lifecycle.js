@@ -4,6 +4,7 @@ const KINDS = new Map([
   ["task_started", "start"], ["task_complete", "complete"],
   ["turn_aborted", "abort"],
 ]);
+export const CODEX_WORK_LIFECYCLE_EVENT_TYPES=Object.freeze([...KINDS.keys()]);
 export function codexWorkLifecycle(record) {
   if (record?.type !== "event_msg") return null;
   const payload = record.payload;

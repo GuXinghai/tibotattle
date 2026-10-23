@@ -445,6 +445,19 @@ export function projectDesktopShellStatus({
         currentDisplayEvidence,
       );
   }
+  // Usage failure/cancellation cannot withdraw an independently published
+  // allowance. This preserves display evidence only: component publication
+  // never promotes it to a fresh provider notification receipt.
+  const quotaPublishedAt = canonicalInstant(refresh?.quota?.publishedAt);
+  if (["degraded", "failed", "cancelled"].includes(refreshStatus)
+      && refresh.quota?.status === "published"
+      && refresh.quota.errorCode === null
+      && quotaPublishedAt !== null
+      && quotaPublishedAt === refresh.quickResultAt
+      && Date.parse(quotaPublishedAt) <= now
+      && currentDisplayEvidence !== null) {
+    return displayOnlyStatus();
+  }
   if (refreshStatus === "degraded"
       && !coherentQuarantinedRefresh(refresh)) {
     return closedOutput("unavailable");

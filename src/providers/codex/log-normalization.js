@@ -1,4 +1,5 @@
 import { normalizeProviderPlanType } from "./plan-normalization.js";
+import { CODEX_WORK_LIFECYCLE_EVENT_TYPES } from './work-lifecycle.js';
 import {
   sanitizeProviderQuotaLimitDisplayName,
   sanitizeProviderQuotaLimitId,
@@ -29,8 +30,7 @@ export const CODEX_LOG_RELEVANT_LINE_NEEDLES = Object.freeze([
   '"type":"thread_settings_applied"',
   '"type":"token_count"',
   '"type":"token_usage_record"',
-  '"type":"task_started"',
-  '"type":"task_complete"',
+  ...CODEX_WORK_LIFECYCLE_EVENT_TYPES.map(type=>`"type":"${type}"`),
   '"type":"custom_tool_call"',
   '"type":"function_call"',
   '"type":"web_search_call"',

@@ -137,6 +137,24 @@ function storePath(root) {
   return join(root, "index.sqlite");
 }
 
+test('scanner task activity recognizes cancellation without closing foreign, malformed or future tasks',async()=>{
+  const event=(timestamp,type,turn_id)=>JSON.stringify({timestamp,type:'event_msg',payload:{type,turn_id}});
+  for(const [terminal,expected,malformed] of [
+    [event('2026-07-25T00:01:00Z','turn_aborted','synthetic-task'),0,0],
+    [event('2026-07-25T00:01:00Z','task_complete','synthetic-task'),0,0],
+    [event('2026-07-25T00:01:00Z','turn_aborted','another-task'),1,0],
+    [event('2026-07-25T01:01:00Z','turn_aborted','synthetic-task'),1,0],
+    [event('2026-07-25T00:01:00Z','turn_aborted','synthetic\u0000task'),1,1],
+  ]){
+    const {root}=await rolloutHome([sessionMeta(),event('2026-07-25T00:00:01Z','task_started','synthetic-task'),terminal,''].join('\n'));
+    try{
+      const result=await scanCodexLogEvents({codexHome:root,startAt:'2026-07-25T00:00:00Z',endAt:'2026-07-25T00:10:00Z',onUsage:()=>{}});
+      assert.equal(result.diagnostics.activeTaskRolloutsAtEnd,expected);
+      assert.equal(result.diagnostics.malformedTaskEvents,malformed);
+    }finally{await rm(root,{recursive:true});}
+  }
+});
+
 function build(root, workerCount = 1) {
   return refreshCodexHome(root, { workerCount });
 }
@@ -454,7 +472,7 @@ test("provider accounting keeps reverted suffix spend and replacement work with 
       onUsage: (event) => events.push(event),
     });
 
-    assert.equal(result.parserVersion, "codex-log-scan-v11");
+    assert.equal(result.parserVersion, "codex-log-scan-v13");
     assert.deepEqual(events.map((event) => event.raw.input_tokens), [
       100,
       50,

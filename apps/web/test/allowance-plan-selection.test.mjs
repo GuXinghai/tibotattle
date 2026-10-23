@@ -466,17 +466,17 @@ test("dynamic plan labels cannot be replaced by static localization placeholders
     "even a labelled fixture cannot borrow a global legacy rate for an insufficient selected plan");
 });
 
-test("manual refresh includes detailed accounting while automatic refresh stays quick", async () => {
+test("manual refresh keeps explicit detailed recovery while automatic work is observed", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const source = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.doesNotMatch(html, /id="recalculate-detailed-accounting"/u,
     "the accounting page does not offer a duplicate manual refresh action");
   assert.match(source, /localClient\.recalculateDetailedAccounting\(\)/u);
-  assert.match(source, /async function requestRefresh\(\{ autoContinue = false, detailed = false \} = \{\}\)/u,
-    "the shared default stays quick for startup and automatic callers");
+  assert.match(source, /async function requestRefresh\(\{ autoContinue = false, detailed = false, observeOnly = false/u,
+    "the shared entrypoint can observe companion-owned work without submitting");
   assert.match(source, /requestRefresh\(\{ detailed: true \}\)/u);
-  assert.match(source, /if \(detailed\) scheduleReindexAutoContinuation\(\);/u,
-    "ordinary quick refresh cannot schedule a history continuation");
+  assert.match(source, /if \(detailed && !observeOnly\) scheduleReindexAutoContinuation\(\);/u,
+    "ordinary overview and automatic observation cannot schedule explicit recovery");
   assert.match(source, /requestRefresh\(\{ autoContinue: true, detailed: true \}\)/u,
     "bounded continuation preserves the original explicit detailed operation");
 });

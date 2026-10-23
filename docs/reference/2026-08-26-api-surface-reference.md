@@ -170,9 +170,9 @@ Codex accounting snapshot.
 | `GET` | `/api/local/weekly-pace-outlook` | Privacy-safe weekly allowance pace projection bound to the current observed window |
 | `GET` | `/api/local/quality` | Monitoring-quality report data |
 | `GET` | `/api/local/timeline/window-breakdown` | Bounded indexed timeline breakdown for `from` and `to` epoch-millisecond bounds |
-| `GET`, `POST` | `/api/local/refresh` | Inspect refresh state or explicitly start one bounded retained-history and detailed-accounting refresh |
-| `POST` | `/api/local/refresh/quick` | Refresh current quota/headline evidence without advancing retained history or rebuilding detailed accounting |
-| `POST` | `/api/local/refresh/overview` | Join or start a bounded quota, incremental usage/work and overview publication pass; reset the companion-owned five-minute cadence |
+| `GET`, `POST` | `/api/local/refresh` | Inspect actual run/component state or request one bounded retained-history and detailed-accounting refresh; 202 starts, 200 joins or merges one pending follow-up |
+| `POST` | `/api/local/refresh/quick` | Request quota-only refresh without advancing retained history or rebuilding accounting; returns the same actual-run and request-acceptance receipts |
+| `POST` | `/api/local/refresh/overview` | Join, start or merge a bounded quota plus incremental usage/work publication pass; quota can publish before usage settles; reset the sole configurable companion cadence after settlement |
 | `POST` | `/api/local/refresh/cancel` | Cooperatively cancel the active refresh |
 
 The thread-link route has a closed `local-cache-drop-thread-links-v1` response:

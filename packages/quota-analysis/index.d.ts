@@ -790,6 +790,7 @@ export function blendedCompositionCapacityUsd(
 ): number | null;
 
 export interface WorkInterval { startMs: number; endMs: number }
+/** Ancestors are the complete validated session chain; incomplete or cyclic evidence cannot prove ownership. */
 export interface WorkLifecycleEvent { key: string; session: string; kind: "start" | "complete" | "abort"; atMs: number; durationMs?: number | null; ancestors?: string[] }
 export interface WorkUsageEvent { session: string; atMs: number; usd: number | null; priced: boolean }
 export interface WorkQuotaObservation { atMs: number; usedPercent: number; resetKey: string;
@@ -805,11 +806,27 @@ export interface WorkloadInput {
   comparisonContinuityThroughMs?: number | null;
   comparisonEvidenceError?: string | null;
   estimationPlanType?: string | null;
+  quotaResetEvents?: QuotaResetEvent[];
+  usageCoverageFromMs?: number;
 }
-export interface WorkloadBin { atMs: number; workMs: number; usd: number; priced: boolean }
+export interface WorkloadBin { atMs: number; workMs: number; usd: number; priced: boolean; complete?: boolean }
 export type WorkloadLevel = "light" | "medium" | "heavy" | "unclassified";
+/** Evidence-backed intensity within the trailing elapsed-time window. */
+export interface RecentWorkload {
+  windowMinutes: number;
+  state: "unknown" | "working" | "idle";
+  level: WorkloadLevel | null;
+  usdPerWorkHour: number | null;
+  ratePpPerHour: number | null;
+  hours: number | null;
+}
+/** Observed quota points per elapsed hour, not an API-price workload grade. */
+export interface RecentQuotaTrend {
+  windowMinutes: 60; state: "available" | "unknown"; ratePpPerHour: number | null;
+  observedFrom: string | null; observedThrough: string | null; coveredMinutes: number | null; inferred: boolean;
+}
 export interface WorkloadResult {
-  schemaVersion: "overview-workload-v4"; policyVersion: string; generatedAt: string; timeZone: string;
+  schemaVersion: "overview-workload-v7"; policyVersion: string; generatedAt: string; timeZone: string;
   status: "available" | "partial"; errors: { code: string; stage: string; count?: number }[];
   adjustments: { workReplayEvents: number; workDurationDifferences: number; quotaStaleObservations: number };
   allowance: { remainingPercent: number | null; observedAt: string | null;
@@ -820,14 +837,21 @@ export interface WorkloadResult {
   classification: { centers: number[] | null; version: string };
   daily: { date: string; light: number; medium: number; heavy: number; unclassified: number; covered: boolean; inferred: boolean;
     plans: {planType: string; light: number; medium: number; heavy: number; unclassified: number; covered: boolean; inferred: boolean}[] }[];
-  current: { state: "unknown" | "working" | "idle"; level: WorkloadLevel | null; ratePpPerHour: number | null; hours: number | null };
+  current: RecentWorkload & { windowMinutes: 15 };
+  trend: RecentQuotaTrend;
+  segmentation: { policyVersion: "first-quota-drop-v1"; pendingSince: string | null;
+    plans: { planType: string; closedIntervals: number; observedPp: number; dailyPp: number; outsidePp: number; unallocatedPp: number }[] };
+  unallocated: { totalIntervals: number; plans: { planType: string; pp: number; intervals: number }[];
+    records: { from: string; to: string; planType: string; pp: number;
+      reason: "history_incomplete" | "price_missing" | "usage_missing"; inferred: boolean }[]; truncated: boolean };
   comparison: { startedAtMs: number; observedFrom: string | null; observedThrough: string | null;
     coverage: "complete" | "partial" | "unavailable"; confirmedThrough: string | null;
-    capacityUsd: number | null; actualPp: number | null; expectedPp: number | null;
+    capacityUsd: number | null; actualPp: number | null; expectedPp: number | null; inferred: boolean;
     baseline: {atMs: number; usedPercent: number; resetAtMs: number; planType: string; limitId: string} | null };
   coverage: { workMs: number; actualWorkMs: number; actualPp: number; estimationWorkMs: number; estimationPp: number; activeTasks: number; unresolvedTasks: number };
 }
 export const WORKLOAD_POLICY: Readonly<{ version: string; bucketMs: number; historyMs: number; currentMs: number;
+  shortTermMs: number; trendMs: number; minimumRecentWorkMs: number;
   minimumBins: number; minimumClassBins: number; minimumClassMs: number;
   comparisonWindowMs: number; comparisonDeadlineUncertaintyMs: number }>;
 export function unionWorkIntervals(intervals: readonly WorkInterval[], fromMs: number, toMs: number): WorkInterval[];

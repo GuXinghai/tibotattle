@@ -7,10 +7,14 @@ status: accepted
 
 # Electron refresh leases are observable and self-healing
 
-The Electron shell owns automatic refresh cadence while the dashboard renderer
-owns the loopback refresh request and its progress UI. A refresh lease connects
-those responsibilities. This decision keeps that lease bounded, observable and
-recoverable without allowing the shell to start overlapping local analysis.
+Amended on 2026-10-21: the local companion owns the desktop business refresh
+schedule and single execution pipeline. Electron passes persisted settings and
+owns window/connection recovery; it does not run a second hourly business timer.
+The dashboard observes companion run IDs, actual capabilities and component
+publication rather than inferring work from its own request. A renderer lease
+remains bounded, observable and recoverable, without authorizing another analysis.
+This amendment replaces the former shell-owned cadence in the desktop composition;
+explicit legacy shell-owned embeddings retain their existing scheduling protocol.
 
 ## Lifecycle contract
 
@@ -23,19 +27,21 @@ recoverable without allowing the shell to start overlapping local analysis.
   detailed renderer has more tolerance for heavy presentation work.
 - A separate 243-minute absolute deadline is measured from lease creation and is
   never extended by heartbeat. It exceeds the renderer's current 241-minute
-  polling window without allowing a live renderer bug to reserve cadence
+  polling window without allowing a live renderer bug to retain a lease
   indefinitely.
 - Terminal settlement is idempotent for the most recently settled lease. A
-  valid settlement clears both watchdogs and rearms exactly one timer from the
-  latest persisted interval. Stale or foreign leases cannot change cadence.
+  valid settlement clears both watchdogs. It never starts business work or rearms
+  an Electron business timer in the companion-owned composition. Stale or foreign
+  leases cannot change the active run or schedule.
 - Dashboard replacement, missing heartbeats and the absolute deadline all clear
-  an abandoned lease and rearm cadence. They preserve the companion's own
+  an abandoned lease. They preserve the companion's own
   single-operation authority, cancellation and checkpoint rules.
 
 ## Presentation and support contract
 
 - Dashboard and tray observation age are both derived from
-  `freshness.latestObservedAt` against the current wall clock. A serialized
+  quota `latestObservedAt` (`quotaFreshness` when present) against the current wall clock;
+  usage freshness remains independent. A serialized
   `ageSeconds` value cannot keep either surface visually fresh after time passes.
 - When an observation crosses its stale boundary, the open dashboard updates its
   timestamp, freshness state, allowance qualifiers and pacing presentation
@@ -44,7 +50,7 @@ recoverable without allowing the shell to start overlapping local analysis.
   a bounded automatic-refresh recovery message. Unknown staleness remains a
   request to update, not a claim about why provider evidence stopped.
 - Content-free diagnostics expose whether the cadence timer and watchdog are
-  armed, the active mode and lease age, the latest start, heartbeat, settlement
+  armed, the schedule owner, active mode and lease age, the latest start, heartbeat, settlement
   and recovery times, and a closed recovery reason. They never expose a lease
   value, path, account identifier, credential or session content.
 
@@ -56,3 +62,21 @@ automatic cycles. Fake-clock checks must cover normal settlement, delayed
 responses, malformed bridge arguments, heartbeat recovery, absolute recovery,
 dashboard replacement and stale-boundary presentation. Browser rendering and an
 unsigned package remain separate from installed, signed and updater evidence.
+
+## Companion publication contract (2026-10-21)
+
+The default interval remains five minutes after settlement; `-1` stops periodic
+refresh, not the permission-checked startup check or explicit manual requests.
+A startup intent runs at most once per companion lifecycle after last-good
+initialization. Manual, automatic and startup requests use the same scheduler;
+one bounded pending capability set can supplement weaker in-flight work.
+Cancellation clears that pending intent. X refresh remains independent.
+
+Quota observation and usage computation stay sequential in this phase. A valid
+quota commit can publish a narrow allowance projection before usage finishes.
+The run stays busy until all requested work settles; quota and usage failures
+remain separately observable and preserve last-good evidence. Saved observation
+time, accounting evaluation time and run completion time are distinct. Cached
+reads cannot manufacture a new observation. Publication fences reject late or
+unprovably scoped results. Concurrent quota work during calculation is not
+implemented or qualified by this amendment.

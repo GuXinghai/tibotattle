@@ -6,7 +6,8 @@ import {DatabaseSync} from "node:sqlite";
 import {createWorkspace} from "./helpers/local-index-facts.js";
 import {refreshLocalIndex} from "../src/local-index-refresh.js";
 import {openLocalIndexStore} from "../src/local-index-store.js";
-import {readLocalIndexWorkload,readWorkloadQuotaEvidence,workloadStateStore} from "../src/local-index-backend.js";
+import {readLocalIndexWorkload,readWorkloadQuotaEvidence,workloadStateStore,workloadState} from "../src/local-index-backend.js";
+import {codexPrimaryAllowanceBasis} from "../src/codex-primary-allowance-basis.js";
 import {commitLocalCollectorState} from "../src/local-collector-state.js";
 const at=Date.parse("2026-09-01T00:00:00Z"),M=60000;
 const line=(atMs,type,payload)=>JSON.stringify({timestamp:new Date(atMs).toISOString(),type,payload})+"\n";
@@ -29,7 +30,7 @@ test('reader preserves old-plan history, infers unknown labels and leaves persis
     const options={indexFile,nowMs:at+120*M,timeZone:'UTC',quotaWindows:[{limitId:'codex',durationMinutes:10080,
       planType:'pro',usedPercent:2,observedAt:new Date(at+119*M).toISOString(),resetAt:new Date(reset*1000).toISOString()}]};
     const v=readLocalIndexWorkload(options);
-    assert.equal(v.schemaVersion,'overview-workload-v4',JSON.stringify(v.errors));
+    assert.equal(v.schemaVersion,'overview-workload-v7',JSON.stringify(v.errors));
     assert.equal(v.daily.at(-1).plans.find(p=>p.planType==='prolite').unclassified,10);
     assert.equal(v.daily.at(-1).plans.find(p=>p.planType==='pro').unclassified,2);
     assert.equal(v.planAttribution.inferredObservations,2);assert.equal(v.coverage.estimationPp,2);
@@ -37,6 +38,50 @@ test('reader preserves old-plan history, infers unknown labels and leaves persis
     assert.doesNotMatch(JSON.stringify(v),/synthetic-plan-period-task|source_offset|accountKey/);
   }finally{w.cleanup();}
 });
+test('startup reader shares plan inheritance without rewriting unknown source labels',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const file=w.receipt.sources[0],indexFile=join(w.state,'comparison-plan-periods.sqlite');
+    const sessionId=JSON.parse((await readFile(file,'utf8')).split('\n')[0]).payload.id;
+    const reset=Math.floor((at+7*24*60*M)/1000);
+    const q=(minute,used,plan)=>line(at+minute*M,'event_msg',{type:'token_count',rate_limits:{limit_id:'codex',
+      ...(plan===null?{}:{plan_type:plan}),secondary:{used_percent:used,window_minutes:10080,resets_at:reset}}});
+    await writeFile(file,line(at,'session_meta',{id:sessionId})+q(0,4,'pro')+q(1,4,null)+q(2,7,'pro')+q(3,11,null));
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const facts=()=>{const db=openLocalIndexStore(indexFile,{readOnly:true});
+      try{return db.prepare('SELECT * FROM quota_occurrence ORDER BY source_offset,slot_order').all();}finally{db.close();}};
+    const before=facts(),options={indexFile,nowMs:at+3*M,liveSinceMs:at,timeZone:'UTC',
+      quotaWindows:[{limitId:'codex',durationMinutes:10080,planType:'pro',usedPercent:11,
+        observedAt:new Date(at+3*M).toISOString(),resetAt:new Date(reset*1000).toISOString()}]};
+    const value=readLocalIndexWorkload(options);
+    assert.equal(value.comparison.actualPp,7);assert.equal(value.comparison.inferred,true);
+    assert.equal(value.comparison.coverage,'complete');assert.deepEqual(facts(),before);
+    assert.deepEqual(readLocalIndexWorkload({...options,previous:value}).comparison,value.comparison);
+  }finally{w.cleanup();}
+});
+
+test('quota-history failure keeps the inherited-plan qualification with retained startup subtotals',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const file=w.receipt.sources[0],indexFile=join(w.state,'comparison-retained-marker.sqlite');
+    const id=JSON.parse((await readFile(file,'utf8')).split('\n')[0]).payload.id,reset=at+7*1440*M;
+    const q=(minute,used)=>line(at+minute*M,'event_msg',{type:'token_count',rate_limits:{limit_id:'codex',plan_type:'pro',
+      secondary:{used_percent:used,window_minutes:10080,resets_at:Math.floor(reset/1000)}}});
+    await writeFile(file,line(at,'session_meta',{id})+q(0,4)+q(3,11));
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const options={indexFile,nowMs:at+3*M,liveSinceMs:at,timeZone:'UTC',quotaWindows:[{limitId:'codex',durationMinutes:10080,
+      planType:'pro',usedPercent:11,observedAt:new Date(at+3*M).toISOString(),resetAt:new Date(reset).toISOString()}]};
+    const inferred=readLocalIndexWorkload({...options,quotaEvidence:{observations:[{atMs:at+M,usedPercent:5,
+      resetAtMs:reset,planType:'unknown',limitId:'codex',resetKey:'synthetic-reset'}]}});
+    assert.equal(inferred.comparison.inferred,true);
+    const observed=readLocalIndexWorkload(options);assert.equal(observed.comparison.inferred,false);
+    const retained=readLocalIndexWorkload({...options,previous:inferred,quotaEvidence:{errorCode:'quota_history_read_failed'}});
+    assert.equal(retained.comparison.actualPp,7);assert.equal(retained.comparison.inferred,true);
+    assert.equal(retained.comparison.coverage,'partial');
+    assert.ok(retained.errors.some(e=>e.code==='quota_history_read_failed'));
+  }finally{w.cleanup();}
+});
+
 test("quota evidence uses only recorded direct scoped reads and never returns account handles or payloads",async()=>{
   const w=createWorkspace({files:1,events:1}),stateFile=join(w.state,"evidence.sqlite");
   const record=(minutes,scope="synthetic-account-a",source="app_server_read")=>({schemaVersion:"0.3",kind:"codex_quota_snapshot",
@@ -71,6 +116,78 @@ test("malformed saved reset evidence fails explicitly and a missing file is not 
     await assert.rejects(readWorkloadQuotaEvidence({stateFile,fromMs:at,nowMs:at+M}),{code:"quota_history_invalid"});
   }finally{w.cleanup();}
 });
+
+test('history reset lookback does not bind startup comparison to an earlier account',async()=>{
+  const w=createWorkspace({files:1,events:1}),stateFile=join(w.state,'lookback.sqlite');
+  const record=(minute,scope)=>({kind:'codex_quota_snapshot',eventKey:`record-${minute}`,source:'app_server_read',
+    observedAt:new Date(at+minute*M).toISOString(),accountScope:{status:'available',scopeId:scope},
+    windows:[{limitId:'codex',slot:'secondary',planType:'pro',usedPercent:minute,
+      windowDurationMins:10080,resetsAt:Math.floor((at+7*1440*M)/1000)}]});
+  const event={schemaVersion:'quota-reset-event-v0.1',kind:'unknown_reset',reason:'confirmed_unscheduled_quota_drop',
+    precision:'observation_interval',provider:'openai_codex',planType:'pro',limitId:'codex',windowDurationMins:10080,
+    occurredAt:new Date(at+M).toISOString(),observedAt:new Date(at+M).toISOString(),intervalStartedAt:new Date(at).toISOString()};
+  try{
+    await commitLocalCollectorState({stateFile,checkpoint:{},records:[{...record(1,'old'),resetEvents:[event]},record(10,'new'),record(11,'new')],clock:()=>at});
+    const before=await readFile(stateFile),v=await readWorkloadQuotaEvidence({stateFile,fromMs:at+10*M,historyFromMs:at,nowMs:at+12*M});
+    assert.equal(v.observations.length,2);assert.equal(v.continuityThroughMs,null);
+    assert.deepEqual(v.resetEvents,[]);assert.equal(v.historyResetEvents.length,1);
+    assert.deepEqual(await readFile(stateFile),before);assert.doesNotMatch(JSON.stringify(v),/scopeId|eventKey/);
+  }finally{w.cleanup();}
+});
+
+test('cancelled workload reads propagate cancellation instead of a stale success',()=>{
+  const controller=new AbortController();controller.abort(new Error('synthetic-cancellation'));
+  assert.throws(()=>readLocalIndexWorkload({indexFile:'not-opened.sqlite',nowMs:at,signal:controller.signal}),/synthetic-cancellation/);
+});
+
+test('reader includes pre-window usage in complete crossing-interval denominators without changing the index',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const file=w.receipt.sources[0],indexFile=join(w.state,'lookback-workload.sqlite');
+    const id=JSON.parse((await readFile(file,'utf8')).split('\n')[0]).payload.id,day=1440*M;
+    const q=(t,used)=>line(t,'event_msg',{type:'token_count',rate_limits:{limit_id:'codex',plan_type:'pro',
+      secondary:{used_percent:used,window_minutes:10080,resets_at:Math.floor((at+7*day)/1000)}}});
+    const usage=(t,n)=>line(t,'event_msg',{type:'token_count',info:{total_token_usage:{input_tokens:1000*n,cached_input_tokens:0,
+      output_tokens:100*n,reasoning_output_tokens:0,total_tokens:1100*n},last_token_usage:{input_tokens:1000,cached_input_tokens:0,
+      output_tokens:100,reasoning_output_tokens:0,total_tokens:1100}}});
+    await writeFile(file,line(at,'session_meta',{id})+line(at,'turn_context',{model:'gpt-5.1-codex-max'})+
+      q(at,10)+usage(at+M,1)+usage(at+6*day-M,2)+q(at+6*day,12));
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const before=await readFile(indexFile),options={indexFile,nowMs:at+8*day,timeZone:'UTC'};
+    const v=readLocalIndexWorkload(options);assert.equal(v.schemaVersion,'overview-workload-v7',JSON.stringify(v.errors));
+    assert.equal(v.segmentation.plans[0].observedPp,2);assert.equal(v.segmentation.plans[0].outsidePp,1,JSON.stringify({unallocated:v.unallocated,errors:v.errors}));
+    assert.equal(v.segmentation.plans[0].dailyPp,1);assert.equal(v.unallocated.totalIntervals,0);
+    assert.deepEqual(readLocalIndexWorkload(options),v);assert.deepEqual(await readFile(indexFile),before);
+  }finally{w.cleanup();}
+});
+test('reader preserves orphan receipts without extending work into later same-session tasks',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const file=w.receipt.sources[0],indexFile=join(w.state,'orphan-work.sqlite');
+    const id=JSON.parse((await readFile(file,'utf8')).split('\n')[0]).payload.id,next=at+36*60*M,end=next+5*M;
+    const usage=(t,n)=>line(t,'event_msg',{type:'token_count',info:{total_token_usage:{input_tokens:1000*n,cached_input_tokens:0,
+      output_tokens:100*n,reasoning_output_tokens:0,total_tokens:1100*n},last_token_usage:{input_tokens:1000,cached_input_tokens:0,
+      output_tokens:100,reasoning_output_tokens:0,total_tokens:1100}}});
+    const quota=(t,used)=>line(t,'event_msg',{type:'token_count',rate_limits:{limit_id:'codex',plan_type:'pro',
+      secondary:{used_percent:used,window_minutes:10080,resets_at:Math.floor((at+7*1440*M)/1000)}}});
+    await writeFile(file,line(at,'session_meta',{id})+line(at,'turn_context',{model:'gpt-5.1-codex-max'})+
+      line(at,'event_msg',{type:'task_started',turn_id:'synthetic-orphan'})+quota(at,10)+usage(at+M,1)+
+      line(next,'event_msg',{type:'task_started',turn_id:'synthetic-next'})+usage(next+M,2)+
+      line(end,'event_msg',{type:'turn_aborted',turn_id:'synthetic-next'})+quota(end,12));
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const facts=()=>{const db=openLocalIndexStore(indexFile,{readOnly:true});try{return {
+      work:db.prepare('SELECT * FROM work_lifecycle_fact ORDER BY source_offset').all(),
+      usage:db.prepare('SELECT * FROM usage_event ORDER BY source_offset').all()};}finally{db.close();}};
+    const before=facts(),v=readLocalIndexWorkload({indexFile,nowMs:end,timeZone:'UTC'});
+    assert.equal(v.policyVersion,'task-workload-v12');assert.equal(v.coverage.workMs,5*M);
+    assert.equal(v.coverage.estimationPp,0);assert.equal(v.segmentation.plans[0].observedPp,2);
+    assert.equal(v.daily.reduce((s,d)=>s+d.light+d.medium+d.heavy+d.unclassified,0),2);
+    assert.ok(v.errors.some(e=>e.code==='work_boundary_incomplete'));
+    assert.deepEqual(facts(),before);assert.equal(before.work.length,3);
+    assert.equal(before.usage.filter(r=>r.tokens_in_uncached>0).length,2);
+    assert.doesNotMatch(JSON.stringify(v),/synthetic-orphan|synthetic-next|task_key|session_id/);
+  }finally{w.cleanup();}
+});
 test("work lifecycle survives cold, incremental, replay and forward migration without leaking task identity",async()=>{
   const w=createWorkspace({files:1,events:5});
   try{
@@ -88,13 +205,15 @@ test("work lifecycle survives cold, incremental, replay and forward migration wi
     db=openLocalIndexStore(indexFile);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);
     assert.equal(Buffer.from(db.prepare("SELECT task_key FROM work_lifecycle_fact LIMIT 1").get().task_key).length,32);
-    db.exec("DROP TABLE work_lifecycle_fact; PRAGMA user_version=4");
+    // Build the predecessor schema only in this content-free synthetic fixture.
+    for(const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all()) db.exec(`DROP TRIGGER ${row.name}`);
+    db.exec("ALTER TABLE store_state DROP COLUMN calculation_revision; DROP TABLE work_lifecycle_fact; PRAGMA user_version=4");
     db.prepare("UPDATE source SET parser_version='local-index-rollout-typed-v1+unified-rollout-typed-v19'").run();db.close();
     assert.throws(()=>openLocalIndexStore(indexFile,{readOnly:true}),{code:"local_index_family_mismatch"});
     const saltBefore=await readFile(w.secretFile);
     await refreshLocalIndex(options);
     db=openLocalIndexStore(indexFile,{readOnly:true});
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version,7);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version,8);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);db.close();
     assert.deepEqual(await readFile(w.secretFile),saltBefore);
     const result=readLocalIndexWorkload({indexFile,nowMs:at+11*M,sourceFresh:true});
@@ -169,6 +288,36 @@ test("rolling work reads retain older ancestor evidence without counting fork co
   }finally{w.cleanup();}
 });
 
+test('reader resolves nested branch cancellation once and retains every stored abort and usage fact',async()=>{
+  const w=createWorkspace({files:3,events:3});
+  try{
+    const files=w.receipt.sources,indexFile=join(w.state,'branch-cancellation.sqlite');
+    const ids=await Promise.all(files.map(async file=>JSON.parse((await readFile(file,'utf8')).split('\n')[0]).payload.id));
+    const task=(minute,type,turn_id,duration_ms)=>line(at+minute*M,'event_msg',{type,turn_id,...(duration_ms===undefined?{}:{duration_ms})});
+    for(let i=0;i<3;i++)await writeFile(files[i],line(at,'session_meta',{id:ids[i]})+line(at,'turn_context',{model:'gpt-5.6-sol'})+
+      task(0,'task_started','synthetic-parent-task')+
+      (i===0?task(10,'task_complete','synthetic-parent-task',10*M):task(i+1,'turn_aborted','synthetic-parent-task'))+
+      (i===1?task(11,'task_started','synthetic-child-task')+task(14,'turn_aborted','synthetic-child-task'):''));
+    const refresh={codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1};
+    await refreshLocalIndex(refresh);
+    const db=openLocalIndexStore(indexFile);
+    for(let i=1;i<3;i++)db.prepare('UPDATE source SET lineage_json=? WHERE session_id=(SELECT id FROM session WHERE session_uuid=?)')
+      .run(JSON.stringify({lineage:{isFork:true,historyMode:'paginated',parentId:ids[i-1]}}),ids[i]);
+    db.close();
+    const facts=()=>{const d=openLocalIndexStore(indexFile,{readOnly:true});try{return {
+      work:d.prepare('SELECT * FROM work_lifecycle_fact ORDER BY source_id,source_offset').all(),
+      usage:d.prepare('SELECT * FROM usage_event ORDER BY source_id,source_offset').all()};}finally{d.close();}};
+    const before=facts(),options={indexFile,nowMs:at+15*M,sourceFresh:true,timeZone:'UTC'};
+    const result=readLocalIndexWorkload(options);
+    assert.equal(result.coverage.workMs,13*M);assert.deepEqual(result.errors,[]);
+    assert.equal(result.adjustments.workReplayEvents,3);assert.equal(before.work.filter(e=>e.kind==='abort').length,3);
+    assert.deepEqual(readLocalIndexWorkload(options),result);assert.deepEqual(facts(),before);
+    await refreshLocalIndex(refresh);
+    assert.deepEqual(readLocalIndexWorkload(options).coverage,result.coverage);assert.deepEqual(facts(),before);
+    assert.doesNotMatch(JSON.stringify(result),/synthetic-parent-task|synthetic-child-task|task_key|session_id/);
+  }finally{w.cleanup();}
+});
+
 test("v4 refresh refuses a missing device salt before any forward migration",async()=>{
   const w=createWorkspace({files:1,events:5});
   const indexFile=join(w.state,"identity.sqlite");
@@ -206,5 +355,72 @@ test("startup comparison state persists, legacy state reads forward and downgrad
     const path=join(legacyRoot,"private","overview-workload-state.json");await writeFile(path,JSON.stringify(future));
     await assert.rejects(store.read());await assert.rejects(store.write(next));
     assert.deepEqual(JSON.parse(await readFile(path,"utf8")),future);
+  }finally{w.cleanup();}
+});
+
+test("capacity history survives persisted plan switches without moving earlier availability",async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const indexFile=join(w.state,"capacity-plans.sqlite");
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const store=workloadStateStore(indexFile),basisId=codexPrimaryAllowanceBasis("unresolved_as_standard").basisId;
+    const first={usd:100,availableAtMs:at-60*M,planType:"prolite",version:"a".repeat(64),basisId};
+    await store.write({schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:null,planType:null,baseline:null},capacityHistory:[first]});
+    const read=async(plan,usd,version,nowMs)=>{
+      const value=readLocalIndexWorkload({indexFile,nowMs,timeZone:"UTC",sourceFresh:true,storedState:await store.read(),
+        capacity:{status:"available",computedAt:new Date(nowMs).toISOString(),planScope:{planType:plan},selectedScenario:"synthetic",
+          scenarios:{synthetic:{medianCapacityUsd:usd,cohortId:version,basisId}}}});
+      assert.equal(value.status,"available",JSON.stringify(value.errors));
+      await store.write(workloadState(value));
+      return value;
+    };
+    const initial=await read("prolite",100,first.version,at);
+    assert.deepEqual(initial.capacityHistory,[first]);
+    const second=await read("pro",200,"b".repeat(64),at+M);
+    assert.deepEqual(second.capacityHistory.map(c=>c.planType),["prolite","pro"]);
+    const returned=await read("prolite",100,first.version,at+2*M);
+    assert.deepEqual(returned.capacityHistory,second.capacityHistory);
+    assert.deepEqual((await store.read()).capacityHistory,second.capacityHistory);
+    assert.equal(returned.capacityHistory[0].availableAtMs,first.availableAtMs);
+  }finally{w.cleanup();}
+});
+
+test("advancing the display window preserves persisted capacity versions from every plan",async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const indexFile=join(w.state,"capacity-window.sqlite"),day=24*60*M;
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const store=workloadStateStore(indexFile),basisId=codexPrimaryAllowanceBasis("unresolved_as_standard").basisId;
+    const history=[{usd:150,availableAtMs:at-40*day,planType:"pro",version:"b".repeat(64),basisId},
+      {usd:100,availableAtMs:at-30*day,planType:"prolite",version:"a".repeat(64),basisId},
+      {usd:110,availableAtMs:at-20*day,planType:"prolite",version:"c".repeat(64),basisId},
+      {usd:120,availableAtMs:at-day,planType:"prolite",version:"d".repeat(64),basisId}];
+    await store.write({schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:null,planType:null,baseline:null},capacityHistory:history});
+    for(const nowMs of [at,at+30*day]){
+      const value=readLocalIndexWorkload({indexFile,nowMs,timeZone:"UTC",sourceFresh:true,storedState:await store.read(),
+        capacity:{status:"unavailable",planScope:{planType:"prolite"}}});
+      assert.equal(value.status,"available",JSON.stringify(value.errors));
+      assert.deepEqual(value.capacityHistory,history);
+      await store.write(workloadState(value));
+      assert.deepEqual((await store.read()).capacityHistory,history);
+    }
+  }finally{w.cleanup();}
+});
+
+test("capacity history at the state bound retains last-good evidence instead of pruning",async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const indexFile=join(w.state,"capacity-bound.sqlite");
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const basisId=codexPrimaryAllowanceBasis("unresolved_as_standard").basisId;
+    const history=Array.from({length:4096},(_,i)=>({usd:100,availableAtMs:at-5000+i,planType:"prolite",version:"a".repeat(64),basisId}));
+    const storedState={schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:null,planType:null,baseline:null},capacityHistory:history};
+    const previous=readLocalIndexWorkload({indexFile,nowMs:at,timeZone:"UTC",storedState,capacity:{status:"unavailable",planScope:{planType:"prolite"}}});
+    const value=readLocalIndexWorkload({indexFile,nowMs:at+M,timeZone:"UTC",previous,
+      capacity:{status:"available",computedAt:new Date(at+M).toISOString(),planScope:{planType:"prolite"},selectedScenario:"synthetic",
+        scenarios:{synthetic:{medianCapacityUsd:200,cohortId:"b".repeat(64),basisId}}}});
+    assert.equal(value.status,"stale");
+    assert.equal(value.errors[0].code,"workload_context_too_large");
+    assert.deepEqual(value.capacityHistory,history);
   }finally{w.cleanup();}
 });

@@ -6,10 +6,11 @@ import {
 
 import {
   readLocalCollectorProjection,
+  localCollectorQuotaPublicationScope,
 } from "./local-collector-projection.js";
 
 export const LOCAL_COLLECTOR_PROJECTION_WORKER_CONTRACT =
-  "local-collector-projection-worker-v1";
+  "local-collector-projection-worker-v2";
 
 const WORKER_ERROR = "local_collector_projection_worker_failed";
 const PROPAGATED_ERROR_CODES = new Set([
@@ -72,7 +73,8 @@ export async function runLocalCollectorProjectionWorkerThread({
         declaredSpeedBaselines: options.declaredSpeedBaselines,
       },
     );
-    port.postMessage({ type: "result", result });
+    port.postMessage({ type: "result", result,
+      quotaPublicationScope: localCollectorQuotaPublicationScope(result) });
   } catch (error) {
     port.postMessage({ type: "error", code: safeErrorCode(error) });
   } finally {

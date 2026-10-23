@@ -39,7 +39,7 @@ function dashboardFor(historyCoverage) {
 }
 
 async function renderHistory(data, active = false, locale = "en-US") {
-  const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
+  const appSource = (await readFile(new URL("../public/app.js", import.meta.url), "utf8")).replace(/\r\n/gu, "\n");
   const functions = ["renderHistoryIndexBadge", "renderHistoryProgress"]
     .map((name) => {
       const source = appSource.match(new RegExp(`^function ${name}\\([^]*?^\\}`, "mu"))?.[0];

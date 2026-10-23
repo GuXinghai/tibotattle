@@ -98,7 +98,7 @@ export function mountAllowancePage({ documentRef, t, formatMoney, formatPp,
     elements.filter(Boolean).forEach(el => { const marker = documentRef.createComment('allowance detail'); el.before(marker); host.append(el); });
     store.append(host); detailHosts.set(key, host); return host;
   };
-  detail('estimate', [$('.allowance-equivalent'), $('#allowance-window-control')]);
+  detail('estimate', [$('#weekly-stale-note'), $('.allowance-equivalent'), $('#allowance-window-control')]);
   detail('drift', [$('.trends-drift-panel')]);
   detail('exceptions', [$('.divergence-panel')]);
   detail('comparison', [$('.trends-exact-panel')]);

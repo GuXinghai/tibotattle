@@ -52,7 +52,7 @@ navigation allowlist.
 | `src/` | Local/domain ingestion, accounting, identity, exports, contribution preparation, and durable state contracts. | UI composition, deployments, or native OS presentation. |
 | `apps/local/` | Loopback HTTP composition, refresh lifecycle, dashboard projections, and fixed relays. | Arbitrary proxying or hosted persistence. |
 | `apps/web/` | Shared dashboard/static public UI and browser localization. | Local filesystem or platform credential access. |
-| `apps/electron/` | Shell lifecycle, exact preload/IPC bridge, tray popup, settings, updater, Windows Credential Manager access, and automatic-refresh cadence. | Local analysis, provider parsing, or arbitrary renderer commands. |
+| `apps/electron/` | Shell lifecycle, exact preload/IPC bridge, tray popup, settings, updater, Windows Credential Manager access, and refresh connection recovery. | Local analysis, provider parsing, or arbitrary renderer commands. |
 | `apps/worker/` | Public website, identity, participant/session/device lifecycle, ingestion, aggregates, admin operations, D1/R2/DO composition. | Local source discovery or private desktop state. |
 | `packages/` | Runtime-neutral accounting, quota, identity, localization, and telemetry public APIs. | App-to-app imports or platform-specific side effects. |
 | `scripts/` and `tools/` | Build, validation, release, migration, and operator entrypoints. | Runtime product dependencies. |
@@ -102,15 +102,22 @@ blob downloads. Provider identity pages open in the system browser. Native/web
 bridge messages use a closed vocabulary documented in
 [`api-surface.md`](./api-surface.md).
 
-Electron main owns one persisted automatic-refresh cadence timer. After the
-loopback companion accepts a renderer request, the renderer acquires a closed
-`quick` or `detailed` lease through the exact preload and IPC boundary and sends
-a numeric heartbeat every 30 seconds. Main applies a three-minute quick or
-ten-minute detailed missing-heartbeat watchdog plus a non-renewable 243-minute
-operation deadline. Settlement is idempotent for the latest lease; heartbeat
-timeout, absolute deadline and dashboard replacement release an abandoned lease
-and rearm one timer. Main diagnostics project only closed state, booleans,
-mode, age, canonical timestamps and a fixed recovery reason.
+The local companion owns the desktop business refresh schedule, startup freshness
+check and single execution pipeline. Normal manual and automatic requests cover
+quota observation plus incremental usage/index work; existing revision and cache
+proofs decide whether calculation must run. A weaker in-flight request may retain
+one merged pending requirement. All surfaces observe the actual run receipt,
+including quota publication and usage state. A narrow quota publication preserves
+the last-good usage projection; late results require publication and scope fences.
+Concurrent quota work during calculation is not enabled in this phase.
+
+After the companion accepts a renderer request, the renderer acquires a closed
+`quick` or `detailed` lease through preload and IPC; overview work uses the
+detailed bounds. Numeric heartbeats arrive every 30 seconds. Main retains the
+three-minute quick/ten-minute detailed watchdogs and non-renewable 243-minute
+lease deadline. Settlement, heartbeat timeout and dashboard replacement release
+leases without scheduling a second business refresh. Main diagnostics expose the
+schedule owner and truthful shell timer state, not a fabricated companion timer.
 
 Dashboard and tray freshness both derive observation age from
 `latestObservedAt` against the live clock. The serialized age remains transport

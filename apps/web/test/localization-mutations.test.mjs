@@ -12,6 +12,7 @@ import {
 function mutationDocument() {
   let activeObserver = null;
   let writes = 0;
+  const reads = new WeakMap();
   const queue = [];
   const filter = { SHOW_TEXT: 4, FILTER_ACCEPT: 1, FILTER_REJECT: 2 };
   const notify = (record) => {
@@ -58,7 +59,10 @@ function mutationDocument() {
       this.ownerDocument = documentRef;
     }
     get isConnected() { return this.parentElement?.isConnected === true; }
-    get nodeValue() { return this.value; }
+    get nodeValue() {
+      reads.set(this, (reads.get(this) ?? 0) + 1);
+      return this.value;
+    }
     set nodeValue(value) {
       this.value = value;
       writes += 1;
@@ -101,6 +105,7 @@ function mutationDocument() {
     element: (attributes) => new Element("span", attributes),
     text: (value) => new Text(value),
     writes: () => writes,
+    readsOf: (node) => reads.get(node) ?? 0,
     flush() {
       let deliveries = 0;
       while (queue.length) {
@@ -151,4 +156,36 @@ test("inserted legacy product text translates on its first mutation and survives
   localizer.localizeTree();
   assert.equal(dom.flush(), 0);
   assert.equal(dom.writes(), 8);
+});
+
+test("a batch of inserted product text does not repeatedly rescan retained text", () => {
+  for (const size of [32, 128]) {
+    const dom = mutationDocument();
+    createBrowserLocalization(dom);
+    const retained = dom.text("Ready");
+    dom.legacy.append(retained);
+    dom.flush();
+    const readsBefore = dom.readsOf(retained);
+    const inserted = [];
+    for (let index = 0; index < size; index += 1) {
+      const element = dom.element();
+      const text = dom.text("First-time setup");
+      element.append(text);
+      dom.legacy.append(element);
+      inserted.push(text);
+    }
+    const skipped = dom.element({ "data-i18n-skip": "" });
+    const raw = dom.text("Ready");
+    skipped.append(raw);
+    dom.legacy.append(skipped);
+
+    assert.ok(dom.flush() <= 2, "insertions and translation writes must settle");
+    assert.ok(dom.readsOf(retained) - readsBefore <= 4,
+      "retained text work must remain bounded as the insertion batch grows");
+    assert.equal(dom.writes(), size + 1);
+    for (const text of inserted) {
+      assert.equal(text.nodeValue, translateLegacyText("First-time setup", "zh-Hans"));
+    }
+    assert.equal(raw.nodeValue, "Ready");
+  }
 });
