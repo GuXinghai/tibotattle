@@ -1,15 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { gunzipSync } from "node:zlib";
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { parseArgs } from "../src/cli.js";
-import { sanitizeClaudeStatusline } from "../src/claude-statusline.js";
-import { writeClaudeStatusSnapshot } from "../src/claude-statusline-storage.js";
+import { summarizeSupplementalSourcePlan } from "../src/export/supplemental-source-plan.js";
+import {
+  assertWindowsFilesystemProductionSafe,
+  createWindowsFilesystemAdapter,
+} from "../src/platform/index.js";
 import { localExportSourcePipeline, localExportWorkspace } from
   "../src/local-node-runtime.js";
+import { stableJson } from "../src/storage.js";
 const {
   createLocalExportWorkspace,
   inspectLocalExportWorkspace,
@@ -59,7 +65,6 @@ async function fixture() {
 }
 
 const CLI_ACCOUNT_SCOPE_CANARY = `openai-account:v1:${"Z".repeat(43)}`;
-const CLI_CONTENT_CANARY = "PRIVATE_SUPPLEMENTAL_CONTENT_CANARY_account@example.test";
 
 function collectorQuotaRecord() {
   return {
@@ -94,21 +99,6 @@ function collectorQuotaRecord() {
   };
 }
 
-function claudeQuotaStatus() {
-  return sanitizeClaudeStatusline({
-    version: "2.1.176",
-    model: { id: "claude-opus-4-20260701", display_name: CLI_CONTENT_CANARY },
-    session_id: CLI_CONTENT_CANARY,
-    cwd: `/private/${CLI_CONTENT_CANARY}`,
-    prompt: CLI_CONTENT_CANARY,
-    account_id: CLI_CONTENT_CANARY,
-    rate_limits: {
-      five_hour: { used_percentage: 23, resets_at: 1_784_912_400 },
-      seven_day: { used_percentage: 41, resets_at: 1_785_430_800 },
-    },
-  }, "2026-07-24T12:05:00.000Z", { sessionSecret: Buffer.alloc(32, 111) });
-}
-
 async function readExportArtifactText(directory) {
   const texts = [];
   for (const name of await readdir(directory)) {
@@ -118,42 +108,31 @@ async function readExportArtifactText(directory) {
   return texts.join("\n");
 }
 
-test("export-set CLI parses explicit supplemental source selections without auto-detection", () => {
-  const selected = parseArgs([
-    "export-set",
-    "--collector-file", "./private-collector.jsonl",
-    "--claude-state-dir", "./private-claude-state",
-    "--claude-projects-dir", "./private-claude-projects",
-  ]);
+test("export-set CLI accepts Codex collector selection and rejects retired provider flags", () => {
+  const selected = parseArgs(["export-set", "--collector-file", "./private-collector.jsonl"]);
   assert.equal(selected.collectorFile, resolve("./private-collector.jsonl"));
-  assert.equal(selected.claudeStatus, false);
-  assert.equal(selected.claudeStateDirectory, resolve("./private-claude-state"));
-  assert.equal(selected.claudeUsage, false);
-  assert.equal(selected.claudeProjectsDirectory, resolve("./private-claude-projects"));
+  assert.throws(() => parseArgs(["export-set", "--claude-status"]), /unknown|unsupported|option/iu);
+  assert.throws(() => parseArgs(["export-set", "--claude-usage"]), /unknown|unsupported|option/iu);
+  assert.equal("claudeStateDirectory" in selected, false);
+  assert.equal("claudeProjectsDirectory" in selected, false);
+});
 
-  const defaultClaude = parseArgs(["export-set", "--claude-status"]);
-  assert.equal(defaultClaude.claudeStatus, true);
-  assert.equal(defaultClaude.claudeStateDirectory, null);
-
-  const defaultClaudeUsage = parseArgs(["export-set", "--claude-usage"]);
-  assert.equal(defaultClaudeUsage.claudeUsage, true);
-  assert.equal(defaultClaudeUsage.claudeProjectsDirectory, null);
-
-  assert.throws(
-    () => parseArgs(["export-set", "--claude-status", "--claude-state-dir", "./private-claude-state"]),
-    /either --claude-status or --claude-state-dir/,
-  );
-  assert.throws(() => parseArgs(["doctor", "--claude-status"]), /only for export-set/);
-  assert.throws(() => parseArgs(["quality", "--claude-state-dir", "./private-claude-state"]), /only for export-set/);
-  assert.throws(() => parseArgs(["doctor", "--claude-usage"]), /only for export-set/);
-  assert.throws(() => parseArgs(["quality", "--claude-projects-dir", "./private-claude-projects"]), /only for export-set/);
-
-  const omitted = parseArgs(["export-set"]);
-  assert.equal(omitted.collectorFile, null);
-  assert.equal(omitted.claudeStatus, false);
-  assert.equal(omitted.claudeStateDirectory, null);
-  assert.equal(omitted.claudeUsage, false);
-  assert.equal(omitted.claudeProjectsDirectory, null);
+test("direct controller rejects retired source options before workspace creation", async () => {
+  const value = await fixture();
+  const directory = join(value.root, "retired-options-workspace");
+  try {
+    await assert.rejects(
+      createLocalExportWorkspace({
+        directory,
+        claudeStateDirectory: join(value.root, "must-not-be-read"),
+      }),
+      (error) => error instanceof ExportWorkspaceError
+        && error.code === "export_workspace_checkpoint_mismatch",
+    );
+    await assert.rejects(readdir(directory), { code: "ENOENT" });
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
 });
 
 test("controller creates a complete bounded workspace from frozen source prefixes", async () => {
@@ -188,6 +167,109 @@ test("controller creates a complete bounded workspace from frozen source prefixe
     const inspected = await inspectLocalExportWorkspace({ directory: value.workspace });
     assert.equal(inspected.sourcePlan.sourceFiles, 1);
     assert.equal(inspected.scanComplete, true);
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+function hash(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function workspaceDatabaseSnapshot(directory) {
+  const database = new DatabaseSync(join(directory, "workspace.sqlite3"));
+  try {
+    const tables = database.prepare(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+    ).all().map((row) => row.name);
+    return Object.fromEntries(tables.map((name) => {
+      const escaped = name.replaceAll('"', '""');
+      return [name, database.prepare(`SELECT * FROM "${escaped}"`).all()
+        .sort((left, right) => stableJson(left).localeCompare(stableJson(right)))];
+    }));
+  } finally {
+    database.close();
+  }
+}
+
+test("legacy Claude supplemental plans remain inspectable but resume rejects before invocation and source reads", async () => {
+  const value = await fixture();
+  try {
+    const created = await createLocalExportWorkspace({
+      directory: value.workspace,
+      startAt: "2026-07-24T11:00:00.000Z",
+      endAt: "2026-07-24T13:00:00.000Z",
+      createdAt: "2026-07-24T13:00:00.000Z",
+      codexHome: value.home,
+      secret: SECRET,
+    });
+    const legacySource = {
+      ordinal: 0,
+      sourceKey: hash("synthetic-retired-source-key"),
+      kind: "claude_status_snapshot",
+      parserVersion: "claude-statusline-v0.2",
+      binding: {
+        kind: "frozen_inventory",
+        inventoryEntries: 0,
+        inventoryBytes: 0,
+        inventorySha256: hash("synthetic-retired-inventory"),
+      },
+      initialCursorJson: stableJson({}),
+    };
+    const legacySources = [legacySource];
+    const legacyPlan = {
+      schemaVersion: "supplemental-export-source-plan-v2",
+      supplementalSourcePlanSha256: createHash("sha256")
+        .update("app-usagemonitor/supplemental-export-source-plan/v1\0")
+        .update(stableJson(legacySources))
+        .digest("hex"),
+      sources: legacySources,
+    };
+    const descriptor = {
+      ...created.descriptor,
+      sourceProviders: ["openai_codex", "anthropic_claude_code"],
+      supplementalSourcePlan: summarizeSupplementalSourcePlan(legacyPlan),
+    };
+    const database = new DatabaseSync(join(value.workspace, "workspace.sqlite3"));
+    try {
+      database.prepare("UPDATE workspace_meta SET value_json = ? WHERE key = 'descriptor'")
+        .run(stableJson(descriptor));
+      database.prepare(`
+        INSERT INTO supplemental_source_plan(
+          ordinal, source_key, kind, binding_kind, device, inode, birthtime_ms,
+          prefix_bytes, prefix_sha256, inventory_entries, inventory_bytes,
+          inventory_sha256, parser_version, initial_cursor_json
+        ) VALUES (0, ?, ?, 'frozen_inventory', NULL, NULL, NULL, NULL, NULL, 0, 0, ?, ?, ?)
+      `).run(legacySource.sourceKey, legacySource.kind, legacySource.binding.inventorySha256,
+        legacySource.parserVersion, legacySource.initialCursorJson);
+      database.prepare(`
+        INSERT INTO supplemental_source_checkpoints(
+          source_key, status, cursor_json, checkpoint_seq, parser_version, last_batch_sha256
+        ) VALUES (?, 'pending', ?, 0, ?, NULL)
+      `).run(legacySource.sourceKey, legacySource.initialCursorJson, legacySource.parserVersion);
+    } finally {
+      database.close();
+    }
+
+    const before = workspaceDatabaseSnapshot(value.workspace);
+    const inspected = await inspectLocalExportWorkspace({ directory: value.workspace });
+    assert.deepEqual(inspected.sourceProviders, ["openai_codex", "anthropic_claude_code"]);
+    const storedWorkspace = await openExportWorkspace({ directory: value.workspace });
+    try {
+      assert.equal(storedWorkspace.loadSupplementalSourcePlan().sources[0].kind, "claude_status_snapshot");
+    } finally {
+      storedWorkspace.close();
+    }
+    await assert.rejects(
+      resumeLocalExportWorkspace({
+        directory: value.workspace,
+        codexHome: join(value.root, "does-not-exist-codex-home"),
+        secret: SECRET,
+      }),
+      (error) => error instanceof ExportWorkspaceError
+        && error.code === "export_workspace_checkpoint_mismatch",
+    );
+    assert.deepEqual(workspaceDatabaseSnapshot(value.workspace), before);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
@@ -337,52 +419,30 @@ test("resume fails closed when the bounded activity-marker set changes", async (
   }
 });
 
-test("export-set CLI creates and resumes a content-free local set", async () => {
+test("export-set CLI creates and resumes a content-free local set", async (t) => {
+  try {
+    assertWindowsFilesystemProductionSafe(createWindowsFilesystemAdapter());
+  } catch (error) {
+    if (error?.code === "EXPORT_IDENTITY_WINDOWS_FILESYSTEM_POLICY_UNAVAILABLE") {
+      t.skip("local CLI filesystem production policy is unavailable in this environment");
+      return;
+    }
+    throw error;
+  }
   const value = await fixture();
   const output = join(value.root, "output");
   const secretFile = join(value.root, "participant-secret");
   const collectorDirectory = join(value.root, "PRIVATE_COLLECTOR_DIRECTORY_CANARY");
   const collectorFile = join(collectorDirectory, "PRIVATE_COLLECTOR_FILENAME_CANARY.jsonl");
-  const claudeStateDirectory = join(value.root, "PRIVATE_CLAUDE_STATE_DIRECTORY_CANARY");
-  const claudeProjectsDirectory = join(value.root, "PRIVATE_CLAUDE_PROJECTS_DIRECTORY_CANARY");
-  const claudeTranscriptFile = join(claudeProjectsDirectory, "PRIVATE_CLAUDE_TRANSCRIPT_FILENAME_CANARY.jsonl");
-  const claudeTranscriptContentCanary = "PRIVATE_CLAUDE_TRANSCRIPT_CONTENT_CANARY";
-  const claudeTranscriptSessionCanary = "PRIVATE_CLAUDE_TRANSCRIPT_SESSION_CANARY";
-  let claudeRecord;
   try {
     await mkdir(collectorDirectory, { mode: 0o700 });
     await writeFile(collectorFile, `${JSON.stringify(collectorQuotaRecord())}\n`, { mode: 0o600 });
-    claudeRecord = await writeClaudeStatusSnapshot(claudeQuotaStatus(), {
-      stateDirectory: claudeStateDirectory,
-      uuid: "90000000-0000-4000-8000-000000000001",
-    });
-    await mkdir(claudeProjectsDirectory, { mode: 0o700 });
-    await writeFile(claudeTranscriptFile, `${JSON.stringify({
-      type: "assistant",
-      timestamp: "2026-07-24T12:06:00.000Z",
-      sessionId: claudeTranscriptSessionCanary,
-      message: {
-        id: "msg_cli_claude_usage_1",
-        model: "claude-sonnet-4-6",
-        usage: {
-          input_tokens: 11,
-          cache_read_input_tokens: 12,
-          cache_creation_input_tokens: 13,
-          output_tokens: 14,
-          service_tier: "standard",
-          speed: "standard",
-        },
-        content: [{ type: "text", text: claudeTranscriptContentCanary }],
-      },
-    })}\n`, { mode: 0o600 });
     const common = [
       "--workspace", value.workspace,
       "--directory", output,
       "--codex-home", value.home,
       "--secret-file", secretFile,
       "--collector-file", collectorFile,
-      "--claude-state-dir", claudeStateDirectory,
-      "--claude-projects-dir", claudeProjectsDirectory,
       "--max-records-per-chunk", "1",
       "--max-bundle-bytes", "33554432",
       "--max-artifact-bytes", "35651584",
@@ -396,13 +456,15 @@ test("export-set CLI creates and resumes a content-free local set", async () => 
     assert.equal(created.status, 0, created.stderr);
     assert.match(created.stdout, /Local metadata export set: complete/);
     assert.match(created.stdout, /Upload: disabled/);
-    assert.match(created.stdout, /Records: 2 usage, 5 quota, 0 markers/);
+    assert.match(created.stdout, /Records: 1 usage, 3 quota, 0 markers/);
 
     const workspace = await openExportWorkspace({ directory: value.workspace });
-    let supplementalSourceKeys;
     try {
-      supplementalSourceKeys = workspace.loadSupplementalSourcePlan().sources.map((source) => source.sourceKey);
-      assert.deepEqual(workspace.getDescriptor().sourceProviders, ["openai_codex", "anthropic_claude_code"]);
+      assert.deepEqual(workspace.getDescriptor().sourceProviders, ["openai_codex"]);
+      assert.deepEqual(
+        workspace.loadSupplementalSourcePlan().sources.map((source) => source.kind),
+        ["codex_collector_ledger"],
+      );
     } finally {
       workspace.close();
     }
@@ -411,8 +473,8 @@ test("export-set CLI creates and resumes a content-free local set", async () => 
       "./src/cli.js", "inspect-export-workspace", "--workspace", value.workspace,
     ], { cwd: process.cwd(), encoding: "utf8" });
     assert.equal(inspected.status, 0, inspected.stderr);
-    assert.match(inspected.stdout, /Sources: 4; bytes: \d+/);
-    assert.match(inspected.stdout, /Providers: openai_codex, anthropic_claude_code/);
+    assert.match(inspected.stdout, /Sources: 2; bytes: \d+/);
+    assert.match(inspected.stdout, /Providers: openai_codex/);
 
     const missingSelection = spawnSync(process.execPath, [
       "./src/cli.js", "export-set", "--resume",
@@ -435,7 +497,7 @@ test("export-set CLI creates and resumes a content-free local set", async () => 
     ], { cwd: process.cwd(), encoding: "utf8" });
     assert.equal(verified.status, 0, verified.stderr);
     assert.match(verified.stdout, /Local metadata export-set verification: passed/);
-    assert.match(verified.stdout, /Records: 2 usage, 5 quota, 0 markers/);
+    assert.match(verified.stdout, /Records: 1 usage, 3 quota, 0 markers/);
 
     const artifactText = await readExportArtifactText(output);
     const allOutput = [created.stdout, inspected.stdout, missingSelection.stdout, missingSelection.stderr,
@@ -447,17 +509,7 @@ test("export-set CLI creates and resumes a content-free local set", async () => 
       collectorDirectory,
       collectorFile,
       basename(collectorFile),
-      claudeStateDirectory,
-      claudeRecord.recordFile,
-      basename(claudeRecord.recordFile),
-      claudeProjectsDirectory,
-      claudeTranscriptFile,
-      basename(claudeTranscriptFile),
-      claudeTranscriptContentCanary,
-      claudeTranscriptSessionCanary,
-      ...supplementalSourceKeys,
       CLI_ACCOUNT_SCOPE_CANARY,
-      CLI_CONTENT_CANARY,
       "PRIVATE_SESSION",
       "PRIVATE_PROMPT",
     ]) {

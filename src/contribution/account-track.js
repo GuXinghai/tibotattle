@@ -16,10 +16,7 @@ const ACCOUNT_SCOPE_UNAVAILABLE_REASONS = new Set([
   "credential_migration_required", "credential_unavailable",
 ]);
 const ENROLLMENT_NAMESPACE_PATTERN = /^[A-Za-z0-9_-]{16,128}$/u;
-const PROVIDERS = new Set([
-  "openai_codex",
-  "anthropic_claude_code",
-]);
+const PROVIDERS = new Set(["openai_codex"]);
 
 function assertCentralParticipantId(value) {
   if (typeof value !== "string" || !CENTRAL_PARTICIPANT_PATTERN.test(value)) {

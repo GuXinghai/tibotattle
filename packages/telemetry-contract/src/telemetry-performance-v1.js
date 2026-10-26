@@ -15,7 +15,7 @@ export const PERFORMANCE_RECORD_SCHEMA_VERSION = "model-performance-daily-v1";
 export const PERFORMANCE_MEASUREMENT_VERSION = "model-performance-samples-v1";
 export const PERFORMANCE_BUCKET_SCHEME_VERSION = "performance-histogram-v1";
 export const PERFORMANCE_FIELD_DICTIONARY_VERSION =
-  "telemetry-performance-registry-2026-09-29.1";
+  "telemetry-performance-registry-2026-10-27.1";
 export const PERFORMANCE_PRIVACY_CONTRACT_VERSION =
   "privacy-safe-model-performance-v1";
 export const PERFORMANCE_CONTRACT_STATE = "staged";

@@ -199,7 +199,7 @@ export function createExportWorkspaceContract(configuration = {}) {
   function buildExportWorkspaceDescriptor({
     participantId, createdAt, coveredAt, compatibility, sourcePlan,
     supplementalSourcePlan = createEmptySupplementalSourcePlan(), activityPlan,
-    sourceProviders = ["openai_codex"], clientPlatform = platformName(),
+    clientPlatform = platformName(),
     resourceLimits = DEFAULT_EXPORT_RESOURCE_LIMITS,
   } = {}) {
     const descriptor = {
@@ -209,7 +209,7 @@ export function createExportWorkspaceContract(configuration = {}) {
       participantId,
       createdAt: new Date(createdAt).toISOString(),
       coveredAt: { startAt: new Date(coveredAt.startAt).toISOString(), endAt: new Date(coveredAt.endAt).toISOString() },
-      compatibility: structuredClone(compatibility), sourceProviders: [...sourceProviders], clientPlatform,
+      compatibility: structuredClone(compatibility), sourceProviders: ["openai_codex"], clientPlatform,
       sourcePlan: summarizeExportSourcePlan(sourcePlan),
       supplementalSourcePlan: summarizeSupplementalSourcePlan(supplementalSourcePlan),
       activityPlan: structuredClone(activityPlan),

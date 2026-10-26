@@ -163,7 +163,7 @@ test("ephemeral head flags cannot override a private bundle's committed replay p
   // Recompute it deliberately to prove the committed graph, not those hints,
   // is what the verified checkpoint adapter actually consumes.
   const { sourcePlanBundleSha256: ignored, ...payload } = bundle;
-  bundle.sourcePlanBundleSha256 = createHash("sha256").update("app-usagemonitor/export-source-plan-bundle/v0.1\0")
+  bundle.sourcePlanBundleSha256 = createHash("sha256").update("app-usagemonitor/export-source-plan-bundle/v0.2\0")
     .update(stableJson(payload)).digest("hex");
   const configuration = options(value, "flag-tamper");
   const { codexHome: unusedCodexHome, ...frozenConfiguration } = configuration;

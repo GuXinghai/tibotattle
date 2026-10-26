@@ -197,14 +197,6 @@ export interface CodexUsageEvent {
   rawAvailability?: Readonly<Record<string, boolean | null | undefined>>;
 }
 
-export interface ClaudeUsageRecord {
-  eventTime?: string | Date | null;
-  modelId: string;
-  modelRecognition: string;
-  totalInputContextTokens?: string | number | null;
-  components?: Readonly<Record<string, string | number | null | undefined>>;
-}
-
 export interface LocalPricingOptions {
   priceCards?: readonly PriceCard[] | null;
   priceEpochBasis?: "event_time" | "current_price_sensitivity";
@@ -215,10 +207,6 @@ export interface LocalPricingOptions {
 
 export function priceCodexUsageEvent(
   event: CodexUsageEvent,
-  options?: LocalPricingOptions,
-): PriceUsageResult;
-export function priceClaudeUsageRecord(
-  record: ClaudeUsageRecord,
   options?: LocalPricingOptions,
 ): PriceUsageResult;
 export function priceCodexProviderToolUnits(

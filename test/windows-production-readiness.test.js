@@ -5,7 +5,6 @@ import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
 } from "../src/platform/credential-capabilities.js";
 import { selectProductionAccountObservationSecret } from "../src/account-observation-production.js";
-import { createProductionClaudeCallbackBackend } from "../src/claude-callback-capability.js";
 import { createProductionContributionDeviceBackend } from "../src/contribution-device-capability.js";
 import { selectProductionParticipantIdentity } from "../src/export-identity-production.js";
 import {
@@ -244,7 +243,7 @@ test("qualified participant selection retains the required Windows filesystem se
   });
 });
 
-test("all four production selectors remain closed while the manager reports qualification-only", () => {
+test("production selectors remain closed while the manager reports qualification-only", () => {
   const readiness = qualifiedReadiness();
   let constructions = 0;
   const qualificationOnlyBackend = {
@@ -284,17 +283,11 @@ test("all four production selectors remain closed while the manager reports qual
     windowsReadiness: readiness,
     createWindowsBackend,
   }), (error) => error.code === "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_UNAVAILABLE");
-  assert.throws(() => createProductionClaudeCallbackBackend({
-    platform: "win32",
-    architecture: "x64",
-    windowsReadiness: readiness,
-    createWindowsBackend,
-  }), (error) => error.code === "claude_callback_invalid_configuration");
   assert.throws(() => createProductionContributionDeviceBackend({
     platform: "win32",
     architecture: "x64",
     windowsReadiness: readiness,
     createWindowsBackend,
   }), (error) => error.code === "contribution_device_invalid_configuration");
-  assert.equal(constructions, 4);
+  assert.equal(constructions, 3);
 });

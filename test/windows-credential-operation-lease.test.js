@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -28,10 +29,6 @@ const CAPABILITIES = [
   [
     EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation,
     WINDOWS_CREDENTIAL_CAPABILITY_OWNERS.accountObservation,
-  ],
-  [
-    EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym,
-    WINDOWS_CREDENTIAL_CAPABILITY_OWNERS.claudeSessionPseudonym,
   ],
   [
     EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice,
@@ -131,6 +128,19 @@ test("Windows operation leases reject forged, contended, and released leases", (
   second.release(reacquired);
 });
 
+test("retired Claude capability is not available for a new operation lease", () => {
+  const context = createWindowsCredentialOperationLeaseContext();
+  const retiredCapability = Object.freeze({
+    service: "app-usagemonitor.claude-session-pseudonym.v1",
+    account: "installation",
+  });
+  assert.equal(Object.hasOwn(EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES, "claudeSessionPseudonym"), false);
+  assert.throws(
+    () => context.acquire(retiredCapability, { operation: "create" }),
+    leaseError("invalid_capability"),
+  );
+});
+
 test("Windows operation lease audit failures fail closed and do not strand the registry", () => {
   const [capability, owner] = CAPABILITIES[2];
   const context = createWindowsCredentialOperationLeaseContext({
@@ -177,7 +187,7 @@ test("Windows operation lease consumes rejected asynchronous audit callbacks", a
 });
 
 test("Windows operation lease withLease releases after success and failure", async () => {
-  const [capability, owner] = CAPABILITIES[3];
+  const [capability, owner] = CAPABILITIES[2];
   const context = createWindowsCredentialOperationLeaseContext();
   assert.equal(
     await context.withLease(capability, { operation: "create" }, async (lease) => {
@@ -280,14 +290,15 @@ test("Windows operation lease recovers durable prepared rows before the next mut
   }
 });
 
-test("Windows operation lease startup sweep recovers every capability under its mutex", async () => {
+test("startup sweep recovers active capabilities and preserves a retired audit row", async () => {
   const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-lease-startup-"));
-  const auditStore = createWindowsCredentialOperationAuditStore({
-    filePath: join(root, "private", "windows-credential-operation-audit-v1.sqlite"),
-  });
+  const filePath = join(root, "private", "windows-credential-operation-audit-v1.sqlite");
+  let auditStore = createWindowsCredentialOperationAuditStore({ filePath });
   try {
-    for (let index = 0; index < WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS.length; index += 1) {
-      const pair = WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS[index];
+    const activePairs = WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS
+      .filter((pair) => pair.owner !== "claude-callback");
+    for (let index = 0; index < activePairs.length; index += 1) {
+      const pair = activePairs[index];
       auditStore.prepare({
         leaseId: `00000000-0000-4000-8000-${String(200 + index).padStart(12, "0")}`,
         owner: pair.owner,
@@ -295,6 +306,20 @@ test("Windows operation lease startup sweep recovers every capability under its 
         operation: "replace",
       });
     }
+    auditStore.close();
+    const legacyDatabase = new DatabaseSync(filePath);
+    try {
+      legacyDatabase.prepare(`
+        INSERT INTO credential_operations(
+          lease_id, owner, capability, operation, phase, result,
+          failure_class, prepared_at, settled_at, recovered_at, recovery_class
+        ) VALUES (?, 'claude-callback', 'claude_callback', 'replace', 'prepared',
+          NULL, NULL, 203, NULL, NULL, NULL)
+      `).run("00000000-0000-4000-8000-000000000203");
+    } finally {
+      legacyDatabase.close();
+    }
+    auditStore = createWindowsCredentialOperationAuditStore({ filePath });
     const context = createWindowsCredentialOperationLeaseContext({
       mutexContext: memoryMutexContext({ abandoned: true }),
       auditStore,
@@ -302,12 +327,15 @@ test("Windows operation lease startup sweep recovers every capability under its 
     assert.equal(context.startupRecoveryComplete, false);
     assert.deepEqual(context.recoverPreparedOperations(), {
       complete: true,
-      recovered: 4,
+      recovered: 3,
       contended: 0,
     });
     assert.equal(context.startupRecoveryComplete, true);
-    assert.deepEqual(auditStore.readPending(), []);
-    assert.equal(auditStore.read().every((row) => (
+    const pending = auditStore.readPending();
+    assert.equal(pending.length, 1);
+    assert.equal(pending[0].owner, "claude-callback");
+    assert.equal(pending[0].capability, "claude_callback");
+    assert.equal(auditStore.read().filter((row) => row.owner !== "claude-callback").every((row) => (
       row.phase === "recovered" && row.recoveryClass === "unknown_after_crash"
     )), true);
     assert.deepEqual(context.recoverPreparedOperations(), {
@@ -315,6 +343,11 @@ test("Windows operation lease startup sweep recovers every capability under its 
       recovered: 0,
       contended: 0,
     });
+    const codexCapability = CAPABILITIES[1][0];
+    const codexLease = context.acquire(codexCapability, { operation: "create" });
+    context.recordMutation(codexLease, codexCapability, "create", "created");
+    context.release(codexLease, "completed");
+    assert.equal(auditStore.readPending().length, 1);
   } finally {
     auditStore.close();
     await rm(root, { recursive: true, force: true });

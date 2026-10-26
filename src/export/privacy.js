@@ -82,8 +82,6 @@ function providerCompatibilityViolations(bundle) {
   ]);
   const adapters = {
     openai_codex: bundle.compatibility?.providerAdapters?.openaiCodex,
-    anthropic_claude_code:
-      bundle.compatibility?.providerAdapters?.anthropicClaudeCode,
   };
   let violations = 0;
   for (const provider of observed) {
@@ -107,12 +105,6 @@ function providerCompatibilityViolations(bundle) {
         : ["app_server_read", "notification"].includes(record.snapshotSource)
           ? adapters.openai_codex?.capabilities?.quotaSnapshots?.collector
           : undefined;
-    } else if (
-      record.provider === "anthropic_claude_code"
-      && record.snapshotSource === "status_line"
-    ) {
-      capability =
-        adapters.anthropic_claude_code?.capabilities?.quotaSnapshots;
     }
     if (capability !== "implemented") violations += 1;
   }

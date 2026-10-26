@@ -104,6 +104,52 @@ test("audit store is branded and creates a fixed SQLite schema", async () => wit
   assert.equal(WINDOWS_CREDENTIAL_OPERATION_AUDIT_SCHEMA_VERSION, "windows-credential-operation-audit-v1");
 }));
 
+test("retired capability audit rows remain readable without allowing new operations", async () => withStore(async ({ filePath, store }) => {
+  store.close();
+  const database = new DatabaseSync(filePath);
+  try {
+    database.prepare(`
+      INSERT INTO credential_operations(
+        lease_id, owner, capability, operation, phase, result,
+        failure_class, prepared_at, settled_at, recovered_at, recovery_class
+      ) VALUES (?, 'claude-callback', 'claude_callback', 'create', 'settled',
+        'created', NULL, 10, 11, NULL, NULL)
+    `).run(leaseId(77));
+  } finally {
+    database.close();
+  }
+
+  const reopened = createWindowsCredentialOperationAuditStore({
+    filePath,
+    clock: () => 999,
+  });
+  try {
+    const historical = reopened.read();
+    assert.equal(historical.length, 1);
+    assert.equal(historical[0].owner, "claude-callback");
+    assert.equal(historical[0].capability, "claude_callback");
+    assert.throws(() => reopened.prepare({
+      leaseId: leaseId(78),
+      owner: "claude-callback",
+      capability: "claude_callback",
+      operation: "create",
+      at: 12,
+    }), auditError("invalid_record"));
+
+    const codexRecord = reopened.prepare({
+      leaseId: leaseId(79),
+      owner: "account-observation",
+      capability: "account_observation",
+      operation: "create",
+      at: 13,
+    });
+    assert.equal(codexRecord.owner, "account-observation");
+    assert.equal(reopened.read().length, 2);
+  } finally {
+    reopened.close();
+  }
+}));
+
 test("prepare and settle persist only fixed, content-free operation metadata", async () => withStore(async ({ filePath, store }) => {
   const prepared = store.prepare({
     leaseId: leaseId(1),

@@ -1,6 +1,6 @@
 import {
   recognizedExportLimitId,
-  recognizedExportModelId,
+  recognizedCodexModelId,
 } from "./registries.js";
 import {
   DEFAULT_EXPORT_RESOURCE_LIMITS,
@@ -14,7 +14,6 @@ const SESSION_SCOPE_PATTERN = /^session:v1:[a-f0-9]{64}$/u;
 const ACCOUNT_SCOPE_SUBJECT_PATTERN = /^openai-account:v1:[A-Za-z0-9_-]{43}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MODEL_FINGERPRINT_PATTERN = /^model:v1:[a-f0-9]{64}$/u;
-const CLAUDE_PHYSICAL_OCCURRENCE_PATTERN = /^claude-ledger-occurrence:v1:[A-Za-z0-9_-]{43}$/u;
 const MARKER_SURFACES = new Set([
   "chatgpt_chat", "chatgpt_web", "chatgpt_work", "workspace_agent", "chatgpt_excel",
   "codex_cloud", "codex_other_machine", "chatgpt_work_voice", "ordinary_chat_voice",
@@ -100,7 +99,6 @@ export function createSafeRecordsContext(configuration = {}) {
   const port = (name) => assertTrustedPort(isProxy, requirePort(configuration, name), name);
   const createHash = port("createHash");
   const scanCodexLogEvents = port("scanCodexLogEvents");
-  const validateClaudeStatusSnapshot = port("validateClaudeStatusSnapshot");
   const deriveAccountScopeId = port("deriveAccountScopeId");
   const deriveEventOccurrenceId = port("deriveEventOccurrenceId");
   const deriveMarkerOccurrenceId = port("deriveMarkerOccurrenceId");
@@ -137,7 +135,7 @@ function enumOrUnknown(value, allowed) {
  * export or durable parser checkpoint.  Never return the input label.
  */
 function safeExportModelDeclaration(secret, value) {
-  const recognized = recognizedExportModelId(value);
+  const recognized = recognizedCodexModelId(value);
   if (recognized) return { modelId: recognized, modelRecognition: "recognized", modelFingerprint: null };
   if (typeof value !== "string" || value.length === 0 || value.toLowerCase() === "unknown") {
     return { modelId: "unknown", modelRecognition: "missing", modelFingerprint: null };
@@ -177,7 +175,7 @@ function normalizeCheckpointModelDeclaration(value) {
 function normalizeProviderModelDeclaration(value) {
   const declaration = assertExactDataKeys(value, ["modelId", "modelRecognition", "modelFingerprint"],
     "Invalid privacy-safe model declaration");
-  const recognized = recognizedExportModelId(declaration.modelId);
+  const recognized = recognizedCodexModelId(declaration.modelId);
   const valid = (declaration.modelRecognition === "recognized"
       && recognized === declaration.modelId && declaration.modelFingerprint === null)
     || (declaration.modelRecognition === "missing"
@@ -434,154 +432,6 @@ function normalizeCodexCollectorQuotaCandidate(secret, candidate) {
   }, candidate.observationIdentityMaterial);
 }
 
-/**
- * Convert an already privacy-reduced Claude transcript candidate into the
- * canonical usage contract. Claude reports one combined output-token total;
- * this adapter preserves it without inventing visible-text or reasoning
- * components.
- */
-function normalizeClaudeTranscriptUsageCandidate(secret, candidate) {
-  const keys = [
-    "candidateVersion", "provider", "eventTime", "modelDeclaration", "billingSurface",
-    "speedMode", "components", "totalInputContextTokens", "surface", "agentScope",
-    "lineageDisposition", "toolClassCounts", "sessionScopeId", "occurrenceMaterial",
-  ];
-  candidate = assertExactDataKeys(candidate, keys, "Invalid privacy-safe Claude transcript usage candidate");
-  const components = assertExactDataKeys(candidate.components, [
-    "inputUncachedTokens", "inputCacheReadTokens", "inputCacheWriteTokens", "inputCacheWrite5mTokens",
-    "inputCacheWrite1hTokens", "outputCombinedTokens",
-  ], "Invalid privacy-safe Claude transcript usage candidate");
-  const scannerCounts = assertExactDataKeys(candidate.toolClassCounts, Object.keys(TOOL_FIELD),
-    "Invalid privacy-safe Claude transcript usage candidate");
-  const modelDeclaration = normalizeProviderModelDeclaration(candidate.modelDeclaration);
-  const tokenValues = [
-    components.inputUncachedTokens, components.inputCacheReadTokens,
-    components.inputCacheWriteTokens, components.outputCombinedTokens,
-    candidate.totalInputContextTokens,
-  ];
-  if (candidate.candidateVersion !== "claude-transcript-usage-candidate-v0.2"
-      || candidate.provider !== "anthropic_claude_code"
-      || candidate.billingSurface !== "claude_subscription"
-      || !["standard", "fast", "ultrafast", "unknown", "other"].includes(candidate.speedMode)
-      || !["subagent", "local_interactive_unclassified"].includes(candidate.surface)
-      || !["root", "subagent"].includes(candidate.agentScope)
-      || !["standalone", "parent_linked"].includes(candidate.lineageDisposition)
-      || !SESSION_SCOPE_PATTERN.test(candidate.sessionScopeId ?? "")
-      || !SHA256_PATTERN.test(candidate.occurrenceMaterial ?? "")
-      || boundedIso(candidate.eventTime, "Claude transcript usage event time") !== candidate.eventTime
-      || tokenValues.some((value) => !Number.isSafeInteger(value) || value < 0)
-      || (components.inputCacheWrite5mTokens !== null
-        && (!Number.isSafeInteger(components.inputCacheWrite5mTokens)
-          || components.inputCacheWrite5mTokens < 0))
-      || (components.inputCacheWrite1hTokens !== null
-        && (!Number.isSafeInteger(components.inputCacheWrite1hTokens)
-          || components.inputCacheWrite1hTokens < 0))
-      || ((components.inputCacheWrite5mTokens === null) !== (components.inputCacheWrite1hTokens === null))
-      || (components.inputCacheWrite5mTokens !== null
-        && components.inputCacheWrite5mTokens + components.inputCacheWrite1hTokens
-          !== components.inputCacheWriteTokens)
-      || candidate.totalInputContextTokens !== components.inputUncachedTokens
-        + components.inputCacheReadTokens + components.inputCacheWriteTokens
-      || Object.values(scannerCounts).some((value) => !Number.isSafeInteger(value) || value < 0 || value > 1_000_000)) {
-    throw new TypeError("Invalid privacy-safe Claude transcript usage candidate");
-  }
-  const toolClassCounts = createEmptySafeToolClassCounts();
-  for (const [scannerClass, count] of Object.entries(scannerCounts)) {
-    toolClassCounts[safeToolCountFieldForScannerToolClass(scannerClass)] += count;
-  }
-  const usage = {
-    schemaVersion: "usage-event-v0.1",
-    eventTime: candidate.eventTime,
-    provider: "anthropic_claude_code",
-    ...modelDeclaration,
-    billingSurface: "claude_subscription",
-    speedMode: candidate.speedMode,
-    apiServiceTier: "unknown",
-    reasoningEffort: "unknown",
-    components: {
-      inputUncachedTokens: components.inputUncachedTokens,
-      inputCacheReadTokens: components.inputCacheReadTokens,
-      inputCacheWriteTokens: components.inputCacheWriteTokens,
-      inputCacheWrite5mTokens: components.inputCacheWrite5mTokens,
-      inputCacheWrite1hTokens: components.inputCacheWrite1hTokens,
-      outputTextTokens: null,
-      outputReasoningTokens: null,
-      outputCombinedTokens: components.outputCombinedTokens,
-    },
-    totalInputContextTokens: candidate.totalInputContextTokens,
-    surface: candidate.surface,
-    agentScope: candidate.agentScope,
-    lineageDisposition: candidate.lineageDisposition,
-    toolClassCounts,
-    outcome: "unknown",
-    sessionScopeId: candidate.sessionScopeId,
-    accountScopeId: "unattributed",
-  };
-  usage.eventId = deriveEventOccurrenceId(secret, candidate.occurrenceMaterial);
-  assertValidExportRecord("usageEvent", usage);
-  return usage;
-}
-
-/**
- * Convert a validated Claude status-line record into zero, one, or two quota
- * snapshots. A captured session pseudonym is mandatory because Claude status
- * records currently contain no account identifier that could safely scope an
- * unattributed provider-state identity.
- */
-function normalizeClaudeStatusQuotaSnapshots(secret, value, { physicalOccurrenceMaterial } = {}) {
-  const status = validateClaudeStatusSnapshot(value);
-  const windows = [
-    ["fiveHour", "five_hour"],
-    ["sevenDay", "seven_day"],
-  ];
-  // A valid pre-response status-line record may contain no quota windows. It
-  // contributes no export records and therefore needs neither session scope
-  // nor physical-occurrence identity. Window-bearing records remain
-  // fail-closed when they cannot be scoped safely.
-  if (windows.every(([sourceKey]) => status.limits[sourceKey] === null)) return [];
-  if (status.sessionPseudonym === null) {
-    throw new TypeError("Claude quota normalization requires a privacy-safe session pseudonym");
-  }
-  if (typeof physicalOccurrenceMaterial !== "string"
-      || !CLAUDE_PHYSICAL_OCCURRENCE_PATTERN.test(physicalOccurrenceMaterial)) {
-    throw new TypeError("Claude quota normalization requires privacy-safe physical occurrence material");
-  }
-  const sessionScopeId = deriveSessionScopeId(secret, status.sessionPseudonym);
-  if (!SESSION_SCOPE_PATTERN.test(sessionScopeId)) {
-    throw new TypeError("Claude quota normalization requires a privacy-safe session pseudonym");
-  }
-  return windows.flatMap(([sourceKey, slot]) => {
-    const window = status.limits[sourceKey];
-    if (window === null) return [];
-    const snapshot = {
-      schemaVersion: "quota-snapshot-v0.1",
-      observedTime: status.capturedAt,
-      receivedTime: status.capturedAt,
-      provider: "anthropic_claude_code",
-      planType: "unknown",
-      planVariant: "unknown",
-      limitId: "unknown",
-      slot,
-      usedPercent: window.usedPercent,
-      displayPrecision: displayPrecision(window.usedPercent),
-      windowDurationMinutes: window.windowMinutes,
-      resetsAt: new Date(window.resetsAt * 1000).toISOString(),
-      snapshotSource: "status_line",
-      providerSurface: "general_usage",
-      sessionScopeId,
-      accountScopeId: "unattributed",
-    };
-    return [finalizeQuotaSnapshot(secret, snapshot, {
-      identityVersion: "claude-statusline-safe-occurrence-v0.1",
-      provider: "anthropic_claude_code",
-      capturedAt: status.capturedAt,
-      sessionScopeId,
-      slot,
-      physicalOccurrenceMaterial,
-    })];
-  });
-}
-
 function normalizeActivityMarker(secret, marker, bounds) {
   const observedTime = boundedIso(marker?.observedAt, "activity marker observedAt");
   const observedMs = Date.parse(observedTime);
@@ -796,8 +646,6 @@ async function scanCodexSafeRecords({
     createEmptySafeToolClassCounts,
     diagnosticsFromCodexScan,
     normalizeActivityMarker,
-    normalizeClaudeStatusQuotaSnapshots,
-    normalizeClaudeTranscriptUsageCandidate,
     normalizeCodexCollectorQuotaCandidate,
     normalizeCodexQuotaSnapshot,
     normalizeCodexUsageEvent,

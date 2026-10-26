@@ -125,10 +125,6 @@ export {
   readExportCompatibilityArtifactSet,
 } from "./export-compatibility-artifacts.js";
 export {
-  ClaudeCallbackLifecycleError,
-  createClaudeCallbackLifecycleContext,
-} from "./claude-callback-lifecycle.js";
-export {
   createExportSetVerificationStorageContext,
 } from "./export-set-verification-storage.js";
 export {

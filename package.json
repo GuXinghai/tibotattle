@@ -10,7 +10,6 @@
   },
   "scripts": {
     "architecture:check": "node ./scripts/check-architecture-boundaries.mjs",
-    "benchmark:r7:smoke": "node ./src/cli.js benchmark-r7 --profile smoke --output .usage-monitor/r7-resource-benchmark-smoke-v0.1.json",
     "build:prospective-transitions": "node ./tools/reports/build-prospective-collector-transitions.js",
     "build:quality-report-data": "node ./src/build-monitoring-quality-report.js",
     "build:report-data": "node ./src/build-multi-surface-report.js",
@@ -34,7 +33,7 @@
     "docs:links:check": "node ./tools/operations/validate-documentation.mjs --links-only",
     "docs:links:fix": "node ./tools/operations/fix-doc-links.mjs",
     "doctor": "node ./src/cli.js doctor",
-    "evaluate:minimization": "node ./scripts/minimization-ablation.js --input .usage-monitor/transitions-v0.3.2.json --output .usage-monitor/minimization-ablation-v0.1.json --prospective-after 2026-07-24T00:00:00.000Z --fixture test/fixtures/minimization-codex-shaped-v1.json --fixture test/fixtures/minimization-claude-shaped-v1.json",
+    "evaluate:minimization": "node ./scripts/minimization-ablation.js --input .usage-monitor/transitions-v0.3.2.json --output .usage-monitor/minimization-ablation-v0.1.json --prospective-after 2026-07-24T00:00:00.000Z --fixture test/fixtures/minimization-codex-shaped-v1.json --fixture test/fixtures/minimization-codex-sparse-v1.json",
     "experiment": "node ./src/cli.js experiment",
     "export:local": "node ./src/cli.js export-local",
     "fix:report-width": "node ./src/fix-portable-report-width.js",

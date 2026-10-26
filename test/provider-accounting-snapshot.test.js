@@ -69,7 +69,8 @@ function codexSnapshot({
   };
 }
 
-function claudeSnapshot() {
+// Synthetic legacy readback fixture for the immutable v0.1 snapshot schema.
+function legacyProviderSnapshot() {
   return {
     schemaVersion: PROVIDER_ACCOUNTING_SNAPSHOT_VERSION,
     artifactScope: "local_only",
@@ -127,8 +128,8 @@ test("local-only accounting schema is closed, bounded, and digest-bound", async 
   assert.equal(providerAccountingSnapshotSchema.properties.diagnostics.maxItems, MAXIMUM_PROVIDER_ACCOUNTING_DIAGNOSTICS);
 });
 
-test("synthetic Codex and Claude provider-authoritative snapshots validate", () => {
-  for (const snapshot of [codexSnapshot(), claudeSnapshot()]) {
+test("Codex and legacy provider-authoritative snapshots validate", () => {
+  for (const snapshot of [codexSnapshot(), legacyProviderSnapshot()]) {
     assert.deepEqual(validateProviderAccountingSnapshot(snapshot), { valid: true, errors: [] });
     assert.equal(assertValidProviderAccountingSnapshot(snapshot), snapshot);
     assert.equal(JSON.stringify(snapshot).includes("prompt"), false);
@@ -261,7 +262,7 @@ test("unsupported provider versions yield a content-free rejected diagnostic wit
 });
 
 test("provider/version and provider/source pairs cannot cross, and unavailable values cannot masquerade as reported", () => {
-  const crossed = claudeSnapshot();
+  const crossed = legacyProviderSnapshot();
   crossed.authority.providerPayloadVersion = PROVIDER_ACCOUNTING_PAYLOAD_VERSIONS.openai_codex;
   crossed.authority.sourceSurface = "codex_app_server";
   const crossedResult = validateProviderAccountingSnapshot(crossed);
@@ -272,7 +273,7 @@ test("provider/version and provider/source pairs cannot cross, and unavailable v
     (error) => error.schemaPath === "#/x-invariant/supported-provider-version",
   ));
 
-  const guessed = claudeSnapshot();
+  const guessed = legacyProviderSnapshot();
   guessed.periods[0].measurements[1].value = 66;
   assert.ok(validateProviderAccountingSnapshot(guessed).errors.some(
     (error) => error.schemaPath === "#/x-invariant/reported-value-availability",

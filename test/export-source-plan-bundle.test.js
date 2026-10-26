@@ -31,7 +31,6 @@ function guard() {
 function isolatedBundleContext(overrides = {}) {
   const owners = [
     "codexSourcePlan", "codexCollectorExport", "codexCollectorWorkspace",
-    "claudeStatusExport", "claudeStatusWorkspace", "claudeTranscriptExport", "claudeTranscriptWorkspace",
   ];
   return createSourcePlanBundleContext({
     bufferByteLength: Buffer.byteLength,
@@ -50,7 +49,6 @@ function planningOptions(paths, resourceGuard = guard()) {
   return {
     startAt: R7_FIXTURE_START_AT,
     endAt: R7_FIXTURE_END_AT,
-    secret: R7_FIXTURE_SECRET,
     resourceGuard,
     ...paths,
   };
@@ -59,7 +57,7 @@ function planningOptions(paths, resourceGuard = guard()) {
 function rehashBundle(bundle) {
   const { sourcePlanBundleSha256: ignored, ...payload } = bundle;
   bundle.sourcePlanBundleSha256 = createHash("sha256")
-    .update("app-usagemonitor/export-source-plan-bundle/v0.1\0")
+    .update("app-usagemonitor/export-source-plan-bundle/v0.2\0")
     .update(stableJson(payload)).digest("hex");
   return bundle;
 }
@@ -71,7 +69,6 @@ async function frozenFixture() {
   const bundle = await createExportSourcePlanBundle({
     startAt: R7_FIXTURE_START_AT,
     endAt: R7_FIXTURE_END_AT,
-    secret: R7_FIXTURE_SECRET,
     resourceGuard: planningGuard,
     ...fixture.paths,
   });
@@ -94,43 +91,32 @@ test("one private bundle creates two fresh workspaces from the same frozen prefi
   try {
     const originalBundle = stableJson(value.bundle);
     assert.deepEqual(Object.keys(value.bundle).sort(), [
-      "schemaVersion", "startAt", "endAt", "codexPlan", "collectorPlan", "claudeStatusPlan",
-      "claudeTranscriptPlan", "sourcePlanBundleSha256",
+      "schemaVersion", "startAt", "endAt", "codexPlan", "collectorPlan", "sourcePlanBundleSha256",
     ].sort());
     const bundleSummary = summarizeExportSourcePlanBundle(value.bundle);
     assert.equal(bundleSummary.canonicalBytes, Buffer.byteLength(stableJson(value.bundle), "utf8"));
     assert.equal("sourcePlanBundleSha256" in bundleSummary, false);
-    assert.equal(bundleSummary.codex.sourceFiles + bundleSummary.claude.sourceFiles, 5);
-    assert.equal(
-      bundleSummary.codex.sourceBytes + bundleSummary.claude.sourceBytes,
-      bundleSummary.sourceBytes,
-    );
+    assert.equal(bundleSummary.codex.sourceFiles, 2);
+    assert.equal(bundleSummary.codex.sourceBytes, bundleSummary.sourceBytes);
     assert.equal("prefixPlanSha256" in bundleSummary.codex, false);
-    assert.equal("prefixPlanSha256" in bundleSummary.claude, false);
     assert.deepEqual(Object.keys(bundleSummary).sort(), [
-      "schemaVersion", "canonicalBytes", "sourceFiles", "sourceBytes", "codex", "claude",
+      "schemaVersion", "canonicalBytes", "sourceFiles", "sourceBytes", "codex",
     ].sort());
     assert.equal(value.bundle.sourcePlanBundleSha256, rehashBundle(structuredClone(value.bundle)).sourcePlanBundleSha256);
     assert.ok(
       bundleSummary.canonicalBytes < 1024 * 1024,
       "the representative bundle must fit the fixed watchdog stdin limit",
     );
-    assert.equal(value.planningUsage.counters.sourceFiles, 5);
+    assert.equal(value.planningUsage.counters.sourceFiles, 2);
     assert.ok(value.planningUsage.counters.sourceBytes > 0);
 
-    // Every enabled surface grows after the single planning pass. New files
-    // and bytes are deliberately outside the frozen inventories/prefixes.
+    // Both active sources grow after the single planning pass. New files and
+    // bytes are deliberately outside the frozen inventory/prefixes.
     await appendFile(value.paths.collectorPath, "{\"private\":\"POST_FREEZE_COLLECTOR\"}\n");
     await appendFile(value.bundle.codexPlan.sources[0].path, "{\"private\":\"POST_FREEZE_CODEX\"}\n");
-    await appendFile(value.bundle.claudeTranscriptPlan.sources[0].path, "{\"private\":\"POST_FREEZE_CLAUDE\"}\n");
     await writeFile(
       join(value.paths.codexHome, "sessions", "rollout-2026-07-24T12-40-00-post-freeze.jsonl"),
       "{\"private\":\"NEW_UNDISCOVERED_CODEX_SOURCE\"}\n",
-      { mode: 0o600 },
-    );
-    await writeFile(
-      join(value.paths.claudeProjectsDirectory, "post-freeze.jsonl"),
-      "{\"private\":\"NEW_UNDISCOVERED_CLAUDE_SOURCE\"}\n",
       { mode: 0o600 },
     );
 
@@ -139,8 +125,8 @@ test("one private bundle creates two fresh workspaces from the same frozen prefi
     assert.deepEqual(second.status.recordCounts, first.status.recordCounts);
     assert.equal(first.status.scanComplete, true);
     assert.equal(second.status.scanComplete, true);
-    assert.equal(first.resourceUsage.counters.sourceFiles, 5);
-    assert.equal(second.resourceUsage.counters.sourceFiles, 5);
+    assert.equal(first.resourceUsage.counters.sourceFiles, 2);
+    assert.equal(second.resourceUsage.counters.sourceFiles, 2);
     assert.equal(first.resourceUsage.counters.sourceBytes, value.planningUsage.counters.sourceBytes);
     assert.equal(second.resourceUsage.counters.sourceBytes, value.planningUsage.counters.sourceBytes);
     assert.equal(stableJson(value.bundle), originalBundle, "diagnostics must not change the frozen capability");
@@ -207,10 +193,6 @@ test("bundle create and verify contexts identify the actual owning catch stage",
       "verifyCodexExportSourcePlan", pipeline.codexSourcePlan.ExportSourcePlanError, "source_changed"],
     ["collector", "codexCollectorWorkspace", "createCodexCollectorWorkspaceSource", "codexCollectorExport",
       "verifyCodexCollectorExportSourcePlan", pipeline.codexCollectorExport.CodexCollectorExportSourceError, "source_prefix"],
-    ["claude_status", "claudeStatusWorkspace", "createClaudeStatusWorkspaceSource", "claudeStatusExport",
-      "verifyClaudeStatusLedgerExportSourcePlan", pipeline.claudeStatusExport.ClaudeStatusLedgerExportSourceError, "record_changed"],
-    ["claude_transcript", "claudeTranscriptWorkspace", "createClaudeTranscriptWorkspaceSource", "claudeTranscriptExport",
-      "verifyClaudeTranscriptExportSource", pipeline.claudeTranscriptExport.ClaudeTranscriptExportSourceError, "source_changed"],
   ];
   try {
     for (const [source, createOwner, createMethod, verifyOwner, verifyMethod, Owner, reason] of cases) {

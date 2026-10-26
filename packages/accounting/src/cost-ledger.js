@@ -5,7 +5,7 @@ import { aggregateCostLedgers, calculateCost, compilePriceCatalog } from "runcos
 const SCHEMA_VERSION = "0.1";
 const BASIS = "api_price_equivalent_not_subscription_allowance";
 
-const SUPPORTED_PROVIDERS = new Set(["openai", "anthropic"]);
+const SUPPORTED_PROVIDERS = new Set(["openai"]);
 
 const PROVIDER_COMPONENTS = Object.freeze({
   openai: Object.freeze({
@@ -19,20 +19,6 @@ const PROVIDER_COMPONENTS = Object.freeze({
     output_text_tokens: "output_text_tokens",
     outputReasoningTokens: "output_reasoning_tokens",
     output_reasoning_tokens: "output_reasoning_tokens",
-  }),
-  anthropic: Object.freeze({
-    inputUncachedTokens: "input_uncached_tokens",
-    input_uncached_tokens: "input_uncached_tokens",
-    inputCacheReadTokens: "input_cache_read_tokens",
-    input_cache_read_tokens: "input_cache_read_tokens",
-    inputCacheWriteTokens: "anthropic_input_cache_write_unsplit_tokens",
-    input_cache_write_total_tokens: "anthropic_input_cache_write_unsplit_tokens",
-    inputCacheWrite5mTokens: "input_cache_write_tokens",
-    input_cache_write_5m_tokens: "input_cache_write_tokens",
-    inputCacheWrite1hTokens: "input_cache_write_1h_tokens",
-    input_cache_write_1h_tokens: "input_cache_write_1h_tokens",
-    outputCombinedTokens: "output_combined_tokens",
-    output_combined_tokens: "output_combined_tokens",
   }),
 });
 
@@ -125,7 +111,6 @@ function warning(code, message, metadata = {}) {
 
 function defaultSurface(provider) {
   if (provider === "openai") return "openai.responses";
-  if (provider === "anthropic") return "anthropic.messages";
   return `${provider || "unknown"}.usage`;
 }
 
@@ -141,7 +126,7 @@ function hasInputContextCondition(component) {
 }
 
 function isInputComponent(name) {
-  return name?.startsWith("input_") || name === "anthropic_input_cache_write_unsplit_tokens";
+  return name?.startsWith("input_");
 }
 
 function effectivePriceCards(priceCards, serviceTier, inputContextUnavailable = false) {
@@ -217,109 +202,6 @@ function normalizedTokenComponents(provider, rawComponents, coverageWarnings, in
         coverageWarnings.push(warning("duplicate_component_conflict", `Conflicting aliases for ${name} were not priced.`, { component: name }));
       } else {
         pricedCandidates.push({ name, quantity: value.quantity, unit: "token", metadata: { normalized_from: keys[0] } });
-      }
-    }
-  } else if (provider === "anthropic") {
-    for (const [name, keys] of [
-      ["input_uncached_tokens", ["inputUncachedTokens", "input_uncached_tokens"]],
-      ["input_cache_read_tokens", ["inputCacheReadTokens", "input_cache_read_tokens"]],
-    ]) {
-      const value = readSemanticQuantity(components, keys, consumed, informationalWarnings);
-      if (!value.present || !positive(value.quantity)) continue;
-      if (value.conflict) {
-        preUnpriced.push({ name, quantity: value.quantity, unit: "token", reasonCode: "duplicate_component_conflict" });
-        coverageWarnings.push(warning("duplicate_component_conflict", `Conflicting aliases for ${name} were not priced.`, { component: name }));
-      }
-      else pricedCandidates.push({ name, quantity: value.quantity, unit: "token", metadata: { normalized_from: keys[0] } });
-    }
-
-    const aggregateWrite = readSemanticQuantity(
-      components,
-      ["inputCacheWriteTokens", "input_cache_write_total_tokens"],
-      consumed,
-      informationalWarnings,
-    );
-    const write5m = readSemanticQuantity(
-      components,
-      ["inputCacheWrite5mTokens", "input_cache_write_5m_tokens"],
-      consumed,
-      informationalWarnings,
-    );
-    const write1h = readSemanticQuantity(
-      components,
-      ["inputCacheWrite1hTokens", "input_cache_write_1h_tokens"],
-      consumed,
-      informationalWarnings,
-    );
-    const knownWrite = addDecimals(write5m.quantity, write1h.quantity);
-    const observedWrite = aggregateWrite.present ? aggregateWrite.quantity : knownWrite;
-    const writeConflict = aggregateWrite.conflict || write5m.conflict || write1h.conflict;
-    if (positive(observedWrite) && (writeConflict || !write5m.present || !write1h.present)) {
-      const reasonCode = writeConflict ? "duplicate_component_conflict" : "anthropic_cache_write_ttl_split_missing";
-      preUnpriced.push({
-        name: "anthropic_input_cache_write_unsplit_tokens",
-        quantity: observedWrite,
-        unit: "token",
-        reasonCode,
-      });
-      coverageWarnings.push(warning(
-        reasonCode,
-        reasonCode === "anthropic_cache_write_ttl_split_missing"
-          ? "Anthropic cache-write tokens were observed without both 5-minute and 1-hour quantities; no TTL was assumed."
-          : "Conflicting Anthropic cache-write quantities were not priced.",
-        { quantity: observedWrite },
-      ));
-    } else if (aggregateWrite.present && aggregateWrite.quantity !== knownWrite) {
-      if (positive(aggregateWrite.quantity) || positive(knownWrite)) {
-        preUnpriced.push({
-          name: "anthropic_input_cache_write_unsplit_tokens",
-          quantity: aggregateWrite.quantity,
-          unit: "token",
-          reasonCode: "anthropic_cache_write_split_mismatch",
-        });
-        coverageWarnings.push(warning(
-          "anthropic_cache_write_split_mismatch",
-          "Anthropic aggregate cache-write tokens do not equal the TTL split; cache writes were not priced.",
-          { aggregate: aggregateWrite.quantity, splitTotal: knownWrite },
-        ));
-      }
-    } else {
-      if (positive(write5m.quantity)) pricedCandidates.push({
-        name: "input_cache_write_tokens",
-        quantity: write5m.quantity,
-        unit: "token",
-        metadata: { cache_ttl: "5m", normalized_from: "inputCacheWrite5mTokens" },
-      });
-      if (positive(write1h.quantity)) pricedCandidates.push({
-        name: "input_cache_write_1h_tokens",
-        quantity: write1h.quantity,
-        unit: "token",
-        metadata: { cache_ttl: "1h", normalized_from: "inputCacheWrite1hTokens" },
-      });
-    }
-
-    const output = readSemanticQuantity(
-      components,
-      ["outputCombinedTokens", "output_combined_tokens"],
-      consumed,
-      informationalWarnings,
-    );
-    if (positive(output.quantity)) {
-      if (output.conflict) {
-        preUnpriced.push({ name: "output_combined_tokens", quantity: output.quantity, unit: "token", reasonCode: "duplicate_component_conflict" });
-        coverageWarnings.push(warning("duplicate_component_conflict", "Conflicting aliases for Anthropic combined output were not priced.", { component: "output_combined_tokens" }));
-      } else {
-        pricedCandidates.push({
-          name: "output_text_tokens",
-          quantity: output.quantity,
-          unit: "token",
-          metadata: {
-            normalized_from: "outputCombinedTokens",
-            original_component: "output_combined_tokens",
-            pricing_policy: "anthropic_combined_output_priced_as_ordinary_output",
-            output_split_invented: false,
-          },
-        });
       }
     }
   }
@@ -560,9 +442,7 @@ export function priceUsageEvent(event, { priceCards = [], pricingContext = {} } 
     const priced = pricedByKey.get(`component-${index}`);
     if (priced) {
       components.push({
-        name: provider === "anthropic" && requested.metadata?.original_component === "output_combined_tokens"
-          ? "output_combined_tokens"
-          : requested.name,
+        name: requested.name,
         pricedAs: requested.name,
         quantity: requested.quantity,
         unit: requested.unit,

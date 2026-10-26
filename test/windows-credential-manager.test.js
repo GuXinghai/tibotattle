@@ -20,7 +20,6 @@ import { createWindowsCredentialOperationAuditStore } from "../src/platform/wind
 
 const EXPORT_CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity;
 const ACCOUNT_CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation;
-const CLAUDE_CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym;
 const DEVICE_CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice;
 
 async function withMutationLease(backend, capability, operation, callback) {
@@ -244,7 +243,7 @@ test("Windows backend creates, replaces, and deletes exact 32-byte secrets with 
   assert.equal(await backend.read(EXPORT_CAPABILITY), null);
 });
 
-test("Windows backend keeps the four production credentials in separate entries", async () => {
+test("Windows backend keeps retained credentials in separate entries", async () => {
   const binding = memoryBinding();
   const backend = createWindowsCredentialManagerBackend({
     platform: "win32",
@@ -254,7 +253,6 @@ test("Windows backend keeps the four production credentials in separate entries"
   const capabilities = [
     [EXPORT_CAPABILITY, 11],
     [ACCOUNT_CAPABILITY, 12],
-    [CLAUDE_CAPABILITY, 13],
     [DEVICE_CAPABILITY, 14],
   ];
   for (const [capability, fill] of capabilities) {
@@ -268,7 +266,26 @@ test("Windows backend keeps the four production credentials in separate entries"
   for (const [capability, fill] of capabilities) {
     assert.deepEqual(await backend.read(capability), Buffer.alloc(32, fill));
   }
-  assert.equal(binding.values.size, 4);
+  assert.equal(binding.values.size, 3);
+});
+
+test("Windows backend rejects the retired Claude capability before native access", async () => {
+  const binding = memoryBinding();
+  const backend = createWindowsCredentialManagerBackend({
+    platform: "win32",
+    architecture: "x64",
+    binding,
+  });
+  const retiredCapability = Object.freeze({
+    service: "app-usagemonitor.claude-session-pseudonym.v1",
+    account: "installation",
+  });
+
+  await assert.rejects(
+    backend.read(retiredCapability),
+    assertCredentialError("invalid_capability"),
+  );
+  assert.deepEqual(binding.calls, []);
 });
 
 test("Windows backend rejects malformed stored values and collapses native failures", async () => {
@@ -517,7 +534,6 @@ test("native Windows x64 qualification adapter loads the audited binding without
     for (const capability of [
       EXPORT_CAPABILITY,
       ACCOUNT_CAPABILITY,
-      CLAUDE_CAPABILITY,
       DEVICE_CAPABILITY,
     ]) {
       assert.deepEqual(await backend.describe(capability), {
@@ -537,7 +553,7 @@ test("native Windows x64 qualification adapter loads the audited binding without
   }
 });
 
-test("native qualification exercises and cleans all four fixed credential lifecycles", {
+test("native qualification exercises and cleans all retained credential lifecycles", {
   skip: process.platform !== "win32"
     || process.arch !== "x64"
     || process.env.USAGE_MONITOR_WINDOWS_QUALIFICATION !== "1",
@@ -546,7 +562,6 @@ test("native qualification exercises and cleans all four fixed credential lifecy
   const capabilities = [
     EXPORT_CAPABILITY,
     ACCOUNT_CAPABILITY,
-    CLAUDE_CAPABILITY,
     DEVICE_CAPABILITY,
   ];
   try {

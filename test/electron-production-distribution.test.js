@@ -66,8 +66,6 @@ async function assertStagedHandoverCompanionReady({ output, root }) {
   const child = spawn(process.execPath, ["--input-type=module", "-e", launcher], {
     cwd: output,
     env: {
-      CLAUDE_CONFIG_DIR: join(syntheticRoot, "claude"),
-      CLAUDE_PROJECT_DIR: join(syntheticRoot, "project"),
       CODEX_HOME: join(syntheticRoot, "codex"),
       HOME: join(syntheticRoot, "home"),
       PATH: process.env.PATH ?? "",

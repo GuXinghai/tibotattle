@@ -84,7 +84,7 @@ function semanticErrors(
     ));
   }
 
-  const providerOrder = ["openai_codex", "anthropic_claude_code"];
+  const providerOrder = ["openai_codex"];
   const canonicalProviders = providerOrder.filter((provider) =>
     manifest.sourceProviders.includes(provider));
   if (canonicalProviders.some(

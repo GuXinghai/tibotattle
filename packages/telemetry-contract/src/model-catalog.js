@@ -3,7 +3,7 @@
 // The published identities match the accounting package's reviewed text-model
 // cards; synthetic provider-tool cards are deliberately excluded. Explicit
 // aliases retain their own identity even when a caller shares a price card.
-export const REVIEWED_MODEL_CATALOG_VERSION = "reviewed-model-catalog-2026-10-19.1";
+export const REVIEWED_MODEL_CATALOG_VERSION = "reviewed-model-catalog-2026-10-27.1";
 
 const reviewedOpenAiModelRows = [
   ["codex-auto-review", "Codex Auto-review", "assumed_alias", "gpt-5.4"],
@@ -52,30 +52,13 @@ const reviewedOpenAiModelRows = [
   ["gpt-6.1-astra", "GPT-6.1 Astra (forecast)", "unpriced", null],
 ];
 
-const reviewedClaudeModelRows = [
-  ["claude-fable-5", "Claude Fable 5"],
-  ["claude-fable-5-1", "Claude Fable 5.1"],
-  ["claude-haiku-4-5-20251001", "Claude Haiku 4.5"],
-  ["claude-mythos-5-1", "Claude Mythos 5.1"],
-  ["claude-opus-4-8", "Claude Opus 4.8"],
-  ["claude-opus-5", "Claude Opus 5"],
-  ["claude-opus-5-5", "Claude Opus 5.5"],
-  ["claude-sonnet-4-6", "Claude Sonnet 4.6"],
-  ["claude-sonnet-5", "Claude Sonnet 5"],
-];
-
 export const REVIEWED_MODEL_CATALOG = Object.freeze([
   ...reviewedOpenAiModelRows.map(([id, label, pricingStatus = "published", priceModelId = id]) => Object.freeze({
     id, label, provider: "openai_codex",
     allowanceTrack: id === "gpt-5.3-codex-spark" ? "spark" : "primary",
     pricingStatus, priceModelId,
   })),
-  ...reviewedClaudeModelRows.map(([id, label]) => Object.freeze({
-    id, label, provider: "anthropic_claude_code", allowanceTrack: "primary",
-    pricingStatus: "published", priceModelId: id,
-  })),
-  // Append after all existing providers so persisted telemetry enum positions
-  // stay stable for both Codex and Claude identities.
+  // Append Codex identities after existing Codex rows to preserve enum positions.
   Object.freeze({
     id: "gpt-6.1-sol", label: "GPT-6.1 Sol", provider: "openai_codex",
     allowanceTrack: "primary", pricingStatus: "published", priceModelId: "gpt-6.1-sol",
@@ -88,9 +71,6 @@ export const REVIEWED_MODEL_CATALOG = Object.freeze([
 
 export const REVIEWED_CODEX_MODEL_IDS = Object.freeze(
   REVIEWED_MODEL_CATALOG.filter((entry) => entry.provider === "openai_codex").map((entry) => entry.id),
-);
-export const REVIEWED_CLAUDE_MODEL_IDS = Object.freeze(
-  REVIEWED_MODEL_CATALOG.filter((entry) => entry.provider === "anthropic_claude_code").map((entry) => entry.id),
 );
 
 const reviewedModelById = new Map(REVIEWED_MODEL_CATALOG.map((entry) => [entry.id, entry]));

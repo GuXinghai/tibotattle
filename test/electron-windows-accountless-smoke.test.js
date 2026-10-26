@@ -34,7 +34,6 @@ function disposableWindowsProfile() {
     userData: "C:\\smoke\\user-data",
     home: "C:\\smoke\\home",
     codex: "C:\\smoke\\codex",
-    claude: "C:\\smoke\\claude",
     state: "C:\\smoke\\state",
     tmp: "C:\\smoke\\tmp",
   });
@@ -49,7 +48,6 @@ function qualificationEnvironment(profile) {
     USERPROFILE: profile.home,
     HOME: profile.home,
     CODEX_HOME: profile.codex,
-    CLAUDE_CONFIG_DIR: profile.claude,
     TEMP: profile.tmp,
   });
 }

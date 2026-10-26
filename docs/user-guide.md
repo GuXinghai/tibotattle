@@ -15,6 +15,12 @@ qualification remain separate; see [current status](./current-status.md).
 
 The Electron window presents the loopback companion's validated usage evidence.
 The source companion can also serve the local dashboard for development.
+Codex is the only supported usage provider. Claude collection, callbacks,
+transcript export and provider-specific pricing are retired. Existing Claude
+profiles, settings, ledgers and credentials are left untouched; retained
+records in existing versioned formats can only appear as historical readback.
+That preservation does not change their original contract status or imply
+current provider support.
 Choose the intended Codex folders, then use Refresh to advance bounded indexing.
 Long histories can need more than one pass. Keep unknown, partial, stale,
 unpriced and unattributed states visible; an unavailable observation is not zero.

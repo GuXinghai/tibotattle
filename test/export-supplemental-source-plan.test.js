@@ -2,7 +2,7 @@ import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportCompatibilityTuple } from "../src/export-contract.js";
@@ -11,6 +11,7 @@ import { createCodexExportSourcePlan } from "../src/export-source-plan.js";
 import {
   createSupplementalSourcePlan,
   ExportSupplementalSourcePlanError,
+  normalizeSupplementalSourcePlan,
   summarizeSupplementalSourcePlan,
 } from "../src/export-supplemental-source-plan.js";
 import { localCodexCheckpointState, localExportWorkspace } from
@@ -99,19 +100,6 @@ function supplementalPlan() {
         },
         initialCursorJson: stableJson({ batch: 0 }),
       },
-      {
-        ordinal: 1,
-        sourceKey: digest("claude"),
-        kind: "claude_status_snapshot",
-        parserVersion: "claude-statusline-v0.2",
-        binding: {
-          kind: "frozen_inventory",
-          inventoryEntries: 2,
-          inventoryBytes: 17,
-          inventorySha256: digest("claude-inventory"),
-        },
-        initialCursorJson: stableJson({ snapshot: 0 }),
-      },
     ],
   });
 }
@@ -144,9 +132,6 @@ async function fixture({ supplemental = supplementalPlan() } = {}) {
     root,
     sourcePlan,
     supplemental,
-    supplementalPrivatePlans: supplemental.sources
-      .filter((source) => source.kind === "claude_status_snapshot")
-      .map((source) => ({ sourceKey: source.sourceKey, valueJson: stableJson({ opaquePrivatePlan: "fixture" }) })),
     descriptor,
     workspace: join(root, "workspace"),
   };
@@ -211,31 +196,28 @@ async function completeCodexSource(workspace, source) {
   }, { lines: 1 }));
 }
 
-test("supplemental plans are strict, deterministic, and resource-accountable", async () => {
+test("new supplemental plans are Codex-only, strict, deterministic, and resource-accountable", async () => {
   const plan = supplementalPlan();
   assert.deepEqual(summarizeSupplementalSourcePlan(plan), {
     schemaVersion: "supplemental-export-source-plan-v2",
     supplementalSourcePlanSha256: plan.supplementalSourcePlanSha256,
-    sourceCount: 2,
-    sourceFiles: 3,
-    sourceBytes: 28,
+    sourceCount: 1,
+    sourceFiles: 1,
+    sourceBytes: 11,
   });
   for (const mutate of [
     (value) => { value.sources[0].kind = "unreviewed_source"; },
     (value) => {
-      value.sources[0].binding = structuredClone(value.sources[1].binding);
-      value.sources[1].binding = {
-        kind: "file_prefix",
-        device: 4,
-        inode: 5,
-        birthtimeMs: 6,
-        prefixBytes: 7,
-        prefixSha256: digest("wrong-claude-prefix"),
+      value.sources[0].binding = {
+        kind: "frozen_inventory",
+        inventoryEntries: 1,
+        inventoryBytes: 7,
+        inventorySha256: digest("wrong-codex-inventory"),
       };
     },
     (value) => { value.sources[0].initialCursorJson = "{\"batch\":0}"; },
-    (value) => { value.sources[1].ordinal = 0; },
-    (value) => { value.sources[1].sourceKey = value.sources[0].sourceKey; },
+    (value) => { value.sources[0].ordinal = 1; },
+    (value) => { value.sources[0].sourceKey = "invalid"; },
   ]) {
     const value = structuredClone(plan);
     mutate(value);
@@ -251,12 +233,11 @@ test("supplemental plans are strict, deterministic, and resource-accountable", a
       descriptor: value.descriptor,
       sourcePlan: value.sourcePlan,
       supplementalSourcePlan: value.supplemental,
-      supplementalPrivatePlans: value.supplementalPrivatePlans,
     });
     assert.deepEqual(workspace.resourceUsage(), {
       policyVersion: workspace.resourceUsage().policyVersion,
-      sourceFiles: 4,
-      sourceBytes: value.sourcePlan.sources[0].prefixBytes + 28,
+      sourceFiles: 2,
+      sourceBytes: value.sourcePlan.sources[0].prefixBytes + 11,
       directoryEntries: 0,
       lines: 0,
       oversizedIrrelevantLines: 0,
@@ -277,60 +258,46 @@ test("supplemental plans are strict, deterministic, and resource-accountable", a
   }
 });
 
-test("Claude private plans are exact and bounded before reopening parses them", async () => {
-  const value = await fixture();
-  let workspace;
+test("retired source kinds decode as legacy state but cannot enter new plans or workspaces", async () => {
+  const source = {
+    ordinal: 0,
+    sourceKey: digest("retired-source-key"),
+    kind: "claude_status_snapshot",
+    parserVersion: "claude-statusline-v0.2",
+    binding: {
+      kind: "frozen_inventory",
+      inventoryEntries: 0,
+      inventoryBytes: 0,
+      inventorySha256: digest("retired-inventory"),
+    },
+    initialCursorJson: stableJson({}),
+  };
+  const sources = [source];
+  const legacy = {
+    schemaVersion: "supplemental-export-source-plan-v1",
+    supplementalSourcePlanSha256: createHash("sha256")
+      .update("app-usagemonitor/supplemental-export-source-plan/v1\0")
+      .update(stableJson(sources))
+      .digest("hex"),
+    sources,
+  };
+  assert.deepEqual(normalizeSupplementalSourcePlan(legacy), legacy);
+  assert.throws(() => createSupplementalSourcePlan({ sources }), (error) => (
+    error instanceof ExportSupplementalSourcePlanError
+      && error.code === "export_supplemental_source_schema"
+  ));
+
+  const value = await fixture({ supplemental: legacy });
+  const directory = join(value.root, "must-not-be-created");
   try {
-    for (const supplementalPrivatePlans of [
-      [],
-      [{
-        sourceKey: value.supplemental.sources[0].sourceKey,
-        valueJson: stableJson({ opaquePrivatePlan: "wrong-source" }),
-      }],
-    ]) {
-      await assert.rejects(createExportWorkspace({
-        directory: join(value.root, `invalid-private-${supplementalPrivatePlans.length}`),
-        descriptor: value.descriptor,
-        sourcePlan: value.sourcePlan,
-        supplementalSourcePlan: value.supplemental,
-        supplementalPrivatePlans,
-      }), (error) => error instanceof ExportWorkspaceError
-        && error.code === "export_workspace_schema");
-    }
-    workspace = await createExportWorkspace({
-      directory: value.workspace,
+    await assert.rejects(createExportWorkspace({
+      directory,
       descriptor: value.descriptor,
       sourcePlan: value.sourcePlan,
-      supplementalSourcePlan: value.supplemental,
-      supplementalPrivatePlans: value.supplementalPrivatePlans,
-    });
-    const databaseFile = workspace.databaseFile;
-    const claudeSource = value.supplemental.sources.find((source) => source.kind === "claude_status_snapshot");
-    workspace.close();
-    workspace = null;
-    const { DatabaseSync } = await import("node:sqlite");
-    const database = new DatabaseSync(databaseFile);
-    try {
-      // The four-byte UTF-8 character crosses the 32 MiB on-disk limit while
-      // keeping the test allocation smaller than a Latin-1 equivalent.
-      const oversized = `{"private":"${"\u{1F4A9}".repeat((32 * 1024 * 1024 / 4) + 1)}"}`;
-      database.prepare("UPDATE workspace_meta SET value_json = ? WHERE key = ?").run(
-        oversized,
-        `supplemental_private_plan:${claudeSource.sourceKey}`,
-      );
-    } finally {
-      database.close();
-    }
-    const reopened = await openExportWorkspace({ directory: value.workspace });
-    try {
-      assert.throws(() => reopened.loadSupplementalPrivatePlan(claudeSource.sourceKey), (error) => error instanceof ExportWorkspaceError
-        && error.code === "export_workspace_schema"
-        && !error.message.includes("private"));
-    } finally {
-      reopened.close();
-    }
+      supplementalSourcePlan: legacy,
+    }), (error) => error instanceof ExportWorkspaceError && error.code === "export_workspace_schema");
+    await assert.rejects(readdir(directory), { code: "ENOENT" });
   } finally {
-    workspace?.close();
     await rm(value.root, { recursive: true, force: true });
   }
 });
@@ -344,7 +311,6 @@ test("supplemental commits are atomic, byte-identical replays, and gate completi
       descriptor: value.descriptor,
       sourcePlan: value.sourcePlan,
       supplementalSourcePlan: value.supplemental,
-      supplementalPrivatePlans: value.supplementalPrivatePlans,
     });
     await completeCodexSource(workspace, value.sourcePlan.sources[0]);
     await assert.throws(() => workspace.finalizeScan(), (error) => error instanceof ExportWorkspaceError
@@ -408,15 +374,10 @@ test("supplemental commits are atomic, byte-identical replays, and gate completi
       status: "complete",
       cursorJson: stableJson({ batch: 2 }),
     }));
-    const second = workspace.loadSupplementalSourceCheckpoint(value.supplemental.sources[1].sourceKey);
-    await workspace.commitSupplementalSourceBatch(supplementalBatch(second.sourceKey, second, {
-      status: "complete",
-      cursorJson: stableJson({ snapshot: 1 }),
-    }));
     workspace.finalizeScan();
     assert.equal(workspace.isScanComplete(), true);
     assert.deepEqual(workspace.scanDiagnostics(), {
-      sourceFilesScanned: 4,
+      sourceFilesScanned: 2,
       codes: [{ code: "malformed_lines", count: 1 }],
     });
     workspace.close();
@@ -436,7 +397,6 @@ test("an empty supplemental plan preserves the Codex-only completion path", asyn
       directory: value.workspace,
       descriptor: value.descriptor,
       sourcePlan: value.sourcePlan,
-      supplementalPrivatePlans: value.supplementalPrivatePlans,
     });
     assert.equal(workspace.loadNextSupplementalSourceCheckpoint(), null);
     assert.equal(workspace.hasPendingSupplementalSources(), false);
@@ -467,7 +427,6 @@ test("opening revalidates the descriptor-bound supplemental plan exactly", async
       descriptor: value.descriptor,
       sourcePlan: value.sourcePlan,
       supplementalSourcePlan: value.supplemental,
-      supplementalPrivatePlans: value.supplementalPrivatePlans,
     });
     const databaseFile = workspace.databaseFile;
     workspace.close();
@@ -494,8 +453,7 @@ test("retired physical v4 workspaces are refused without modifying retained evid
   let source; let legacy; let reopened;
   try {
     const current = await createExportWorkspace({ directory: value.workspace, descriptor: value.descriptor,
-      sourcePlan: value.sourcePlan, supplementalSourcePlan: value.supplemental,
-      supplementalPrivatePlans: value.supplementalPrivatePlans });
+      sourcePlan: value.sourcePlan, supplementalSourcePlan: value.supplemental });
     current.close();
     const legacyDirectory = join(value.root, "legacy-workspace");
     await mkdir(legacyDirectory, { mode: 0o700 });

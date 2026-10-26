@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 import * as application from "../src/application/index.js";
@@ -42,33 +42,6 @@ const LEGACY = Object.freeze({
     "createCodexCollectorWorkspaceSource", "populateCodexCollectorWorkspaceSource",
     "resolveCodexCollectorWorkspaceSource", "summarizeCodexCollectorDiagnostics",
   ]],
-  "claude-statusline-export-source": ["claudeStatusExport", [
-    "CLAUDE_STATUS_LEDGER_OCCURRENCE_VERSION", "CLAUDE_STATUS_LEDGER_SOURCE_CURSOR_VERSION",
-    "CLAUDE_STATUS_LEDGER_SOURCE_PLAN_VERSION", "ClaudeStatusLedgerExportSourceError",
-    "createClaudeStatusLedgerExportCursor", "createClaudeStatusLedgerExportSourcePlan",
-    "scanClaudeStatusLedgerExportSource", "verifyClaudeStatusLedgerExportSourcePlan",
-  ]],
-  "claude-statusline-workspace-source": ["claudeStatusWorkspace", [
-    "CLAUDE_STATUS_WORKSPACE_CURSOR_VERSION", "CLAUDE_STATUS_WORKSPACE_SOURCE_VERSION",
-    "ClaudeStatusWorkspaceSourceError", "DEFAULT_CLAUDE_STATUS_RECORDS_PER_BATCH",
-    "appendClaudeStatusWorkspaceSource", "claudeStatusWorkspaceSourceKey", "createClaudeStatusWorkspaceSource",
-    "populateClaudeStatusWorkspaceSource", "resolveClaudeStatusWorkspaceSource",
-  ]],
-  "claude-transcript-export-source": ["claudeTranscriptExport", [
-    "CLAUDE_TRANSCRIPT_SOURCE_CURSOR_VERSION", "CLAUDE_TRANSCRIPT_SOURCE_PLAN_VERSION",
-    "CLAUDE_TRANSCRIPT_USAGE_CANDIDATE_VERSION", "ClaudeTranscriptExportSourceError",
-    "createClaudeTranscriptExportCursor", "createClaudeTranscriptExportPlanCheckpoint",
-    "createClaudeTranscriptExportSourcePlan", "defaultClaudeProjectsDirectory",
-    "minimizeClaudeTranscriptCanonicalOccurrence", "restoreClaudeTranscriptExportSourcePlan",
-    "scanClaudeTranscriptExportSource", "sliceClaudeTranscriptExportSourcePlan",
-    "sliceClaudeTranscriptExportSourcePlans", "summarizeClaudeTranscriptPlan",
-    "verifyClaudeTranscriptExportSource",
-  ]],
-  "claude-transcript-workspace-source": ["claudeTranscriptWorkspace", [
-    "CLAUDE_TRANSCRIPT_WORKSPACE_SOURCE_VERSION", "ClaudeTranscriptWorkspaceSourceError",
-    "DEFAULT_CLAUDE_TRANSCRIPT_RECORDS_PER_BATCH", "appendClaudeTranscriptWorkspaceSources",
-    "createClaudeTranscriptWorkspaceSource", "populateClaudeTranscriptWorkspaceSources",
-  ]],
 });
 
 function workspaceRuntime() {
@@ -96,7 +69,7 @@ function createPipeline(ports, configuration) {
   );
 }
 
-test("ten flat export-source shims preserve the exact singleton binding identities", async () => {
+test("Codex export-source shims preserve the exact singleton binding identities", async () => {
   for (const [moduleName, [contextName, names]] of Object.entries(LEGACY)) {
     const legacy = await import(`../src/${moduleName}.js`);
     assert.deepEqual(Object.keys(legacy).sort(), [...names].sort(), moduleName);
@@ -429,7 +402,7 @@ test("platform ports reject hostile configuration without evaluating traps", () 
   assert.equal(touched, 0);
 });
 
-test("platform ports snapshot only required environment data and retain no caller environment", () => {
+test("platform ports snapshot only Codex environment data and retain no caller environment", () => {
   const environment = {
     LOCALAPPDATA: "/local/app-data",
     CODEX_HOME: "/codex/original",
@@ -446,18 +419,10 @@ test("platform ports snapshot only required environment data and retain no calle
   });
   assert.equal(touched, 0);
   assert.equal(Object.hasOwn(ports, "environment"), false);
-  assert.equal(
-    ports.defaultClaudeStatusStateDirectory(),
-    join("/local/app-data", "app-usagemonitor", "claude-statusline-v0.2"),
-  );
   assert.equal(ports.codexLogPorts.filesystem.defaultCodexHome(), "/codex/original");
 
   environment.LOCALAPPDATA = "/local/mutated";
   environment.CODEX_HOME = "/codex/mutated";
-  assert.equal(
-    ports.defaultClaudeStatusStateDirectory(),
-    join("/local/app-data", "app-usagemonitor", "claude-statusline-v0.2"),
-  );
   assert.equal(ports.codexLogPorts.filesystem.defaultCodexHome(), "/codex/original");
   assert.equal(touched, 0);
 });
@@ -474,7 +439,7 @@ test("platform ports reject nested environment Proxies and accessors without can
   );
   assert.equal(touched, 0);
 
-  for (const key of ["LOCALAPPDATA", "CODEX_HOME"]) {
+  for (const key of ["CODEX_HOME"]) {
     const environment = {};
     Object.defineProperty(environment, key, {
       enumerable: true,
@@ -491,26 +456,6 @@ test("platform ports reject nested environment Proxies and accessors without can
   const ports = platform.createLocalExportSourcePorts({
     environment: {}, homeDirectory: "/home/original", platform: "linux",
   });
-  assert.throws(
-    () => ports.defaultClaudeStatusStateDirectory(proxy),
-    /configuration is invalid/u,
-  );
-  assert.equal(touched, 0);
-  assert.throws(
-    () => ports.defaultClaudeStatusStateDirectory({ env: proxy }),
-    /configuration is invalid/u,
-  );
-  assert.equal(touched, 0);
-  const envAccessor = {};
-  Object.defineProperty(envAccessor, "LOCALAPPDATA", {
-    enumerable: true,
-    get() { touched += 1; throw new Error("PRIVATE_OPTION_ENVIRONMENT_ACCESSOR_CANARY"); },
-  });
-  assert.throws(
-    () => ports.defaultClaudeStatusStateDirectory({ env: envAccessor }),
-    /configuration is invalid/u,
-  );
-  assert.equal(touched, 0);
 });
 
 test("owner dependency closure remains explicit", async () => {

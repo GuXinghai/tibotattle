@@ -4,8 +4,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { sanitizeClaudeStatusline } from "../src/claude-statusline.js";
-import { writeClaudeStatusSnapshot } from "../src/claude-statusline-storage.js";
+import { fileURLToPath } from "node:url";
 import {
   localExportSetMaterialization,
   localExportSourcePipeline,
@@ -29,12 +28,12 @@ const { materializeLocalExportSet } = localExportSetMaterialization;
 const { openExportWorkspace } = localExportWorkspace;
 
 const SECRET = Buffer.alloc(32, 117);
-const CLAUDE_SESSION_SECRET = Buffer.alloc(32, 118);
 const START = "2026-07-24T11:00:00.000Z";
 const END = "2026-07-24T13:00:00.000Z";
 const CREATED = "2026-07-24T13:00:00.000Z";
 const PRIVATE_CANARY = "SUPPLEMENTAL_LIFECYCLE_PRIVATE_CANARY";
 const WORKER = new URL("../scripts/test-fixtures/supplemental-checkpoint-crash-worker.js", import.meta.url);
+const WORKER_PATH = fileURLToPath(WORKER);
 
 function collectorWindow({ slot = "primary", usedPercent = 12.34 } = {}) {
   return {
@@ -79,21 +78,6 @@ function collectorRecord(at, usedPercent = 12.34) {
   };
 }
 
-function claudeStatus(capturedAt, usedPercent) {
-  return sanitizeClaudeStatusline({
-    version: "2.1.176",
-    model: { id: "claude-opus-4-20260701", display_name: PRIVATE_CANARY },
-    session_id: "private-claude-session",
-    cwd: `/private/${PRIVATE_CANARY}`,
-    prompt: PRIVATE_CANARY,
-    account_id: PRIVATE_CANARY,
-    rate_limits: {
-      five_hour: { used_percentage: usedPercent, resets_at: 1_774_608_000 },
-      seven_day: { used_percentage: 40, resets_at: 1_775_212_800 },
-    },
-  }, capturedAt, { sessionSecret: CLAUDE_SESSION_SECRET });
-}
-
 function codexUsage(tokens) {
   return {
     input_tokens: tokens,
@@ -123,31 +107,24 @@ async function externalSourceBytes(value) {
   return {
     codex: await byteTree(value.codexHome),
     collector: await readFile(value.collectorPath),
-    claude: await byteTree(value.claudeStateDirectory),
-    claudeTranscript: await byteTree(value.claudeProjectsDirectory),
   };
 }
 
 function assertExternalSourcesUnchanged(actual, expected) {
   assert.deepEqual(actual.codex, expected.codex);
   assert.deepEqual(actual.collector, expected.collector);
-  assert.deepEqual(actual.claude, expected.claude);
-  assert.deepEqual(actual.claudeTranscript, expected.claudeTranscript);
 }
 
-async function fixture({ includeCodex = true, collectorRecords = 3, claudeRecords = 3 } = {}) {
+async function fixture({ includeCodex = true, collectorRecords = 3 } = {}) {
   const created = await mkdtemp(join(tmpdir(), "usage-monitor-supplemental-lifecycle-"));
   await chmod(created, 0o700);
   const root = await realpath(created);
   const codexHome = join(root, "codex-home");
   const collectorPath = join(root, "collector-events.jsonl");
-  const claudeStateDirectory = join(root, "claude-state");
-  const claudeProjectsDirectory = join(root, "claude-projects");
   const workspace = join(root, "workspace");
   const output = join(root, "output");
   await mkdir(join(codexHome, "sessions"), { recursive: true });
   await mkdir(join(codexHome, "archived_sessions"), { recursive: true });
-  await mkdir(claudeProjectsDirectory, { recursive: true });
   if (includeCodex) {
     await writeFile(join(codexHome, "sessions", "rollout-2026-07-24T12-00-00-lifecycle.jsonl"), `${[
       JSON.stringify({
@@ -168,38 +145,8 @@ async function fixture({ includeCodex = true, collectorRecords = 3, claudeRecord
     10 + index,
   )));
   await writeFile(collectorPath, `${collectorLines.join("\n")}\n`, { mode: 0o600 });
-  for (let index = 0; index < claudeRecords; index += 1) {
-    const suffix = String(index + 1).padStart(12, "0");
-    await writeClaudeStatusSnapshot(claudeStatus(
-      new Date(Date.parse("2026-07-24T12:20:00.000Z") + (index * 60_000)).toISOString(),
-      10 + index,
-    ), {
-      stateDirectory: claudeStateDirectory,
-      uuid: `70000000-0000-4000-8000-${suffix}`,
-    });
-  }
-  const transcriptRows = Array.from({ length: claudeRecords }, (_, index) => ({
-    type: "assistant",
-    timestamp: new Date(Date.parse("2026-07-24T12:30:00.000Z") + (index * 60_000)).toISOString(),
-    sessionId: "private-claude-transcript-session",
-    cwd: `/private/${PRIVATE_CANARY}`,
-    requestId: PRIVATE_CANARY,
-    message: {
-      id: `claude-message-${index}`,
-      model: "claude-sonnet-5",
-      content: [{ type: "tool_use", id: `claude-tool-${index}`, name: "Read", input: { path: PRIVATE_CANARY } }],
-      usage: {
-        input_tokens: 10 + index,
-        cache_read_input_tokens: 20,
-        cache_creation_input_tokens: 30,
-        output_tokens: 40 + index,
-      },
-    },
-  }));
-  await writeFile(join(claudeProjectsDirectory, "session.jsonl"),
-    `${transcriptRows.map(JSON.stringify).join("\n")}\n`, { mode: 0o600 });
   return {
-    root, codexHome, collectorPath, claudeStateDirectory, claudeProjectsDirectory, workspace, output,
+    root, codexHome, collectorPath, workspace, output,
   };
 }
 
@@ -209,8 +156,6 @@ function workerEnvironment(value, kind, workspace, crashMarker) {
     SUPPLEMENTAL_WORKSPACE_DIRECTORY: workspace,
     SUPPLEMENTAL_CODEX_HOME: value.codexHome,
     SUPPLEMENTAL_COLLECTOR_PATH: value.collectorPath,
-    SUPPLEMENTAL_CLAUDE_STATE_DIRECTORY: value.claudeStateDirectory,
-    SUPPLEMENTAL_CLAUDE_PROJECTS_DIRECTORY: value.claudeProjectsDirectory,
     SUPPLEMENTAL_SECRET_HEX: SECRET.toString("hex"),
     SUPPLEMENTAL_START_AT: START,
     SUPPLEMENTAL_END_AT: END,
@@ -221,7 +166,7 @@ function workerEnvironment(value, kind, workspace, crashMarker) {
 
 function killAfterCommittedAcknowledgement(environment) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [WORKER.pathname], {
+    const child = spawn(process.execPath, [WORKER_PATH], {
       cwd: process.cwd(),
       env: { ...process.env, ...environment },
       stdio: ["ignore", "pipe", "pipe"],
@@ -271,7 +216,7 @@ async function logicalRecords(directory) {
   }
 }
 
-for (const kind of ["collector", "claude", "claude-transcript"]) {
+for (const kind of ["collector"]) {
   test(`parent SIGKILL after a committed ${kind} supplemental batch resumes exactly once and preserves external state`, { timeout: 60_000 }, async (t) => {
     const value = await fixture({ includeCodex: false });
     const crashedWorkspace = join(value.root, `workspace-${kind}-crashed`);
@@ -299,11 +244,9 @@ for (const kind of ["collector", "claude", "claude-transcript"]) {
       const incomplete = await inspectLocalExportWorkspace({ directory: crashedWorkspace });
       assert.equal(incomplete.poisoned, false);
       assert.equal(incomplete.scanComplete, false);
-      assert.ok(kind === "claude-transcript"
-        ? incomplete.recordCounts.usageEvents > 0
-        : incomplete.recordCounts.quotaSnapshots > 0);
+      assert.ok(incomplete.recordCounts.quotaSnapshots > 0);
 
-      const resumed = spawnSync(process.execPath, [WORKER.pathname], {
+      const resumed = spawnSync(process.execPath, [WORKER_PATH], {
         cwd: process.cwd(),
         env: { ...process.env, ...environment, SUPPLEMENTAL_WORKER_MODE: "resume" },
         encoding: "utf8",
@@ -313,18 +256,14 @@ for (const kind of ["collector", "claude", "claude-transcript"]) {
       assert.deepEqual(JSON.parse(resumed.stdout), {
         scanComplete: true,
         recordCounts: {
-          usageEvents: kind === "claude-transcript" ? 3 : 0,
-          quotaSnapshots: kind === "collector" ? 3 : (kind === "claude" ? 6 : 0),
+          usageEvents: 0,
+          quotaSnapshots: 3,
           activityMarkers: 0,
         },
       });
       assertExternalSourcesUnchanged(await externalSourceBytes(value), expectedExternalSources);
 
-      const sourceOptions = kind === "collector"
-        ? { collectorPath: value.collectorPath, collectorCandidatesPerBatch: 1 }
-        : kind === "claude"
-          ? { claudeStateDirectory: value.claudeStateDirectory, claudeRecordsPerBatch: 1 }
-          : { claudeProjectsDirectory: value.claudeProjectsDirectory, claudeTranscriptRecordsPerBatch: 1 };
+      const sourceOptions = { collectorPath: value.collectorPath, collectorCandidatesPerBatch: 1 };
       await createLocalExportWorkspace({
         directory: controlWorkspace,
         startAt: START,
@@ -344,8 +283,8 @@ for (const kind of ["collector", "claude", "claude-transcript"]) {
   });
 }
 
-test("bound Codex, collector, and Claude sources survive interrupted deletion recovery byte-for-byte", { timeout: 60_000 }, async () => {
-  const value = await fixture({ includeCodex: true, collectorRecords: 2, claudeRecords: 2 });
+test("bound Codex and collector sources survive interrupted deletion recovery byte-for-byte", { timeout: 60_000 }, async () => {
+  const value = await fixture({ includeCodex: true, collectorRecords: 2 });
   const expectedExternalSources = await externalSourceBytes(value);
   try {
     const created = await createLocalExportWorkspace({
@@ -356,13 +295,11 @@ test("bound Codex, collector, and Claude sources survive interrupted deletion re
       codexHome: value.codexHome,
       collectorPath: value.collectorPath,
       collectorCandidatesPerBatch: 1,
-      claudeStateDirectory: value.claudeStateDirectory,
-      claudeRecordsPerBatch: 1,
       secret: SECRET,
     });
     assert.equal(created.status.scanComplete, true);
-    assert.deepEqual(created.descriptor.sourceProviders, ["openai_codex", "anthropic_claude_code"]);
-    assert.equal(created.descriptor.supplementalSourcePlan.sourceCount, 2);
+    assert.deepEqual(created.descriptor.sourceProviders, ["openai_codex"]);
+    assert.equal(created.descriptor.supplementalSourcePlan.sourceCount, 1);
     await materializeLocalExportSet({
       workspaceDirectory: value.workspace,
       outputDirectory: value.output,
@@ -393,8 +330,8 @@ test("bound Codex, collector, and Claude sources survive interrupted deletion re
   }
 });
 
-test("discarding a failed combined-source workspace preserves all selected external ledgers and state", async () => {
-  const value = await fixture({ includeCodex: true, collectorRecords: 2, claudeRecords: 2 });
+test("discarding a failed Codex and collector workspace preserves selected external sources", async () => {
+  const value = await fixture({ includeCodex: true, collectorRecords: 2 });
   const expectedExternalSources = await externalSourceBytes(value);
   try {
     await assert.rejects(createLocalExportWorkspace({
@@ -405,8 +342,6 @@ test("discarding a failed combined-source workspace preserves all selected exter
       codexHome: value.codexHome,
       collectorPath: value.collectorPath,
       collectorCandidatesPerBatch: 1,
-      claudeStateDirectory: value.claudeStateDirectory,
-      claudeRecordsPerBatch: 1,
       secret: SECRET,
       async failpoint(stage) {
         if (stage === "after_collector_checkpoint_batch") throw new Error("intentional supplemental workspace failure");

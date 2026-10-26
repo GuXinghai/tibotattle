@@ -624,20 +624,14 @@ export function formatAge(value) {
 const MODEL_NAME_FRAGMENTS = Object.freeze({
   astra: "Astra",
   auto: "Auto",
-  claude: "Claude",
   codex: "Codex",
-  fable: "Fable",
   gpt: "GPT",
-  haiku: "Haiku",
   luna: "Luna",
   mini: "Mini",
-  mythos: "Mythos",
   nano: "Nano",
-  opus: "Opus",
   preview: "Preview",
   review: "Review",
   sol: "Sol",
-  sonnet: "Sonnet",
   spark: "Spark",
   terra: "Terra",
   // Work Mode routing alias. The picker writes it as two capitals.
@@ -645,9 +639,6 @@ const MODEL_NAME_FRAGMENTS = Object.freeze({
 });
 const MODEL_VERSION_FRAGMENT = /^\d+(?:\.\d+)*$/;
 const REVIEWED_MODEL_DISPLAY_NAMES = Object.freeze({
-  "claude-fable-5-1": "Claude Fable 5.1",
-  "claude-mythos-5-1": "Claude Mythos 5.1",
-  "claude-opus-5-5": "Claude Opus 5.5",
   "gpt-6.1-astra": "GPT-6.1 Astra (forecast)",
 });
 
@@ -669,8 +660,7 @@ export function formatModelName(value) {
   for (const [index, fragment] of fragments.entries()) {
     if (MODEL_VERSION_FRAGMENT.test(fragment)) {
       // A version binds to the family it qualifies - "GPT-5.6", not "GPT 5.6"
-      // - but only in first position. Later numbers are their own word, which
-      // is what keeps "Claude Sonnet 5" from becoming "Claude-Sonnet 5".
+      // - but only in first position. Later numbers are their own word.
       if (index === 1 && parts.length === 1) parts[0] += `-${fragment}`;
       else parts.push(fragment);
       continue;

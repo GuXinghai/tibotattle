@@ -625,7 +625,6 @@ function safeContributionProjection(payload) {
         "unknown",
         "openai_pre_agentic_pool_2026_07_09",
         "openai_agentic_pool_2026_07_09",
-        "anthropic_unknown",
       ].includes(payload.providerPolicyEpoch)
       || !Array.isArray(payload.usageEvents)
       || !Array.isArray(payload.quotaSnapshots)

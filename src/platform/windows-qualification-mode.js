@@ -815,17 +815,6 @@ function validateOptions(options) {
       normalizeWindowsAbsolutePath(right),
     ),
   }) ?? `${homeDirectory}\\.codex`;
-  const claudeValue = selectValue({
-    options,
-    nested,
-    names: ["claudeConfigDirectory", "claudeConfigDir", "claudeHome"],
-    environment,
-    environmentNames: ["CLAUDE_CONFIG_DIR"],
-    equivalent: (left, right) => sameWindowsPath(
-      normalizeWindowsAbsolutePath(left),
-      normalizeWindowsAbsolutePath(right),
-    ),
-  }) ?? `${homeDirectory}\\.claude`;
   const stateValue = selectValue({
     options,
     nested,
@@ -842,11 +831,6 @@ function validateOptions(options) {
   const paths = Object.freeze({
     stateRoot: validatePathUnderRoot(stateValue, root, "stateRoot").value,
     codexHome: validatePathUnderRoot(codexValue, root, "codexHome").value,
-    claudeConfigDirectory: validatePathUnderRoot(
-      claudeValue,
-      root,
-      "claudeConfigDirectory",
-    ).value,
     homeDirectory: validatePathUnderRoot(homeDirectory, root, "homeDirectory").value,
   });
   // Lexical containment is insufficient on Windows because any existing path
@@ -859,7 +843,6 @@ function validateOptions(options) {
     root,
     paths.homeDirectory,
     paths.codexHome,
-    paths.claudeConfigDirectory,
     paths.stateRoot,
   ]);
 
@@ -908,8 +891,6 @@ export function createWindowsQualificationModeContext(options = {}) {
     resourceManifestSha256: resourceAuthority.manifestSha256,
     stateRoot: paths.stateRoot,
     codexHome: paths.codexHome,
-    claudeConfigDirectory: paths.claudeConfigDirectory,
-    claudeHome: paths.claudeConfigDirectory,
     homeDirectory: paths.homeDirectory,
   });
   CONTEXTS.add(context);

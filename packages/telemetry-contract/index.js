@@ -10,7 +10,6 @@ export {
   REVIEWED_MODEL_CATALOG_VERSION,
   REVIEWED_MODEL_CATALOG,
   REVIEWED_CODEX_MODEL_IDS,
-  REVIEWED_CLAUDE_MODEL_IDS,
   reviewedModelIdentity,
   codexRequestReasoningEffort,
   codexCacheReasoningConfiguration,

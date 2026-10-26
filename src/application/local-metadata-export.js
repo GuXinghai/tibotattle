@@ -7,7 +7,6 @@ import {
   stableJson,
 } from "../export/index.js";
 import { isProxy } from "node:util/types";
-import { validateClaudeStatusSnapshot } from "../providers/claude/statusline.js";
 import { createLocalCodexLogScanner } from "./local-codex-log-scanner.js";
 
 function requirePort(configuration, name) {
@@ -107,7 +106,6 @@ export function createLocalMetadataExportContext(configuration = {}) {
     isProxy,
     scanCodexLogEvents: scanner.scanCodexLogEvents,
     stableJson,
-    validateClaudeStatusSnapshot,
     ...checkpointState,
   });
   const verifyPrivacySafeBundle = createPrivacySafeBundleVerifier({

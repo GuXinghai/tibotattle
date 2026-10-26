@@ -79,7 +79,6 @@ const OWNED_SOURCE_OWNER_KINDS = new Set([
 ]);
 const REVIEWED_SOURCE_OWNER_PUBLIC_ENTRYPOINTS = new Set([
   "src/application/index.js",
-  "src/application/claude-callback-capability.js",
   "src/application/local-review.js",
   "src/application/local-contribution-preparation.js",
   "src/application/local-prepared-contribution.js",
@@ -95,10 +94,8 @@ const REVIEWED_SOURCE_OWNER_PUBLIC_ENTRYPOINTS = new Set([
   // out of the shared index used by portable/local-only client exports.
   "src/platform/windows-account-observation-credential.js",
   "src/platform/windows-credential-manager-probe.js",
-  "src/platform/claude-callback-lifecycle.js",
   "src/platform/owner-only-prepared-contribution-storage.js",
   "src/platform/telemetry-envelope.js",
-  "src/providers/claude/statusline.js",
   "src/providers/codex/account.js",
   "src/providers/codex/logs.js",
   "src/reporting/index.js",
@@ -297,11 +294,7 @@ export const LEGACY_STORAGE_DIRECT_IMPORTERS = Object.freeze([
   "src/cli.js",
   "src/local-collector-state.js",
   "src/passive-collector.js",
-  "src/r7-materialized-boundary-benchmark.js",
-  "src/r7-real-history-benchmark.js",
   "src/r7-release-evidence-schema.js",
-  "src/r7-release-synthetic-evidence.js",
-  "src/r7-release-workload-fixture.js",
   "src/r7-resource-benchmark-fixture.js",
   "src/r7-resource-benchmark-schema.js",
   "src/r7-resource-benchmark.js",
@@ -316,6 +309,22 @@ export const LEGACY_STORAGE_DIRECT_IMPORTERS = Object.freeze([
  * imports into them may be reintroduced or baselined.
  */
 export const RETIRED_PRODUCTION_SOURCE_PATHS = Object.freeze([
+  "src/application/claude-callback-capability.js",
+  "src/application/export-sources/claude-status-export.js",
+  "src/application/export-sources/claude-status-workspace.js",
+  "src/application/export-sources/claude-transcript-export.js",
+  "src/application/export-sources/claude-transcript-record.js",
+  "src/application/export-sources/claude-transcript-workspace.js",
+  "src/claude-callback-capability.js",
+  "src/claude-callback-lifecycle.js",
+  "src/claude-callback-runtime.js",
+  "src/claude-statusline-export-source.js",
+  "src/claude-statusline-storage.js",
+  "src/claude-statusline-workspace-source.js",
+  "src/claude-statusline.js",
+  "src/claude-transcript-export-source.js",
+  "src/claude-transcript-workspace-source.js",
+  "src/platform/claude-callback-lifecycle.js",
   "shared/quota-calibration.js",
   "shared/quota-rolling.js",
   "shared/quota-tracks.js",
@@ -372,6 +381,7 @@ const RETIRED_PRODUCTION_SOURCE_PATH_SET = new Set(
  */
 export const RETIRED_PRODUCTION_TREE_PATHS = Object.freeze([
   "apps/cloud-run",
+  "src/providers/claude",
 ]);
 const RETIRED_PRODUCTION_TREE_PATH_SET = new Set(
   RETIRED_PRODUCTION_TREE_PATHS,

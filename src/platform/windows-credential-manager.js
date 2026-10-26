@@ -170,9 +170,6 @@ function capabilityPair(capability) {
   if (capability === EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation) {
     return EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation;
   }
-  if (capability === EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym) {
-    return EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym;
-  }
   if (capability === EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice) {
     return EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice;
   }
@@ -223,7 +220,7 @@ function validateOperationLeaseContext(context) {
 }
 
 /**
- * Create the Windows Credential Manager backend used by the four production
+ * Create the Windows Credential Manager backend used by the retained production
  * credential capabilities. The adapter deliberately has the same narrow
  * capability surface as the shared credential contract: callers supply one of the
  * frozen capability objects above, never arbitrary service/account strings.

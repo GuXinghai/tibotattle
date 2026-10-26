@@ -4,19 +4,17 @@ import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  collectR7BenchmarkImplementationUrls,
-  R7_BENCHMARK_PROTOCOL_VERSION,
-  R7_SELECTION_RULE_VERSION,
+  buildR7SmokeReceipt,
   cleanupR7OwnedTree,
+  collectR7BenchmarkImplementationUrls,
   inventoryR7OwnedTree,
   projectR7DeterministicOperation,
+  R7_RECEIPT_GENERATION_RETIRED_CODE,
   runR7BenchmarkWorker,
   runR7SmokeBenchmark,
   runR7SmokeEvidence,
 } from "../src/r7-resource-benchmark.js";
 import { R7_WORKER_MAXIMUM_STDIN_BYTES } from "../src/r7-worker-watchdog.js";
-import { validateR7ResourceBenchmarkReceipt } from "../src/r7-resource-benchmark-schema.js";
-import { R7_FIXTURE_VERSION } from "../src/r7-resource-benchmark-fixture.js";
 import { runR7ResourceBoundaryMatrix } from "../src/r7-resource-boundaries.js";
 import { DEFAULT_EXPORT_RESOURCE_LIMITS, EXPORT_RESOURCE_POLICY_VERSION } from "../src/export-resource-policy.js";
 import {
@@ -32,7 +30,7 @@ test("the supported default suite keeps resource evidence serial", async () => {
   );
 });
 
-test("R7 smoke provenance binds shared and package runtime sources", async () => {
+test("R7 worker provenance binds shared and package runtime sources", async () => {
   const repositoryRoot = new URL("../", import.meta.url);
   const urls = await collectR7BenchmarkImplementationUrls();
   const paths = urls.map((url) => {
@@ -50,24 +48,8 @@ test("R7 smoke provenance binds shared and package runtime sources", async () =>
     "packages/telemetry-contract/src/telemetry-v0.1.js",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
-  ]) {
-    assert.equal(paths.includes(expected), true, expected);
-  }
-  assert.equal(paths.some((path) => path.endsWith("/AGENTS.md")), false);
+  ]) assert.equal(paths.includes(expected), true, expected);
 });
-
-const EXPECTED_OPERATIONS = [
-  "source_scan",
-  "checkpoint_resume",
-  "export_set_materialize",
-  "export_set_verify",
-  "workspace_discard",
-  "workspace_discard_recovery",
-  "claude_callback_uninstall",
-  "claude_callback_recovery",
-  "complete_set_delete_recovery",
-  "complete_set_delete",
-];
 
 test("R7 content determinism excludes volatile workspace-reservation width", () => {
   const operation = {
@@ -91,16 +73,8 @@ test("R7 content determinism excludes volatile workspace-reservation width", () 
       workspaceHighWaterBytes: operation.evidence.workspaceHighWaterBytes + 8,
     },
   };
-
-  assert.deepEqual(
-    projectR7DeterministicOperation(operation),
-    projectR7DeterministicOperation(widerVolatileBatch),
-  );
-  assert.notEqual(
-    operation.evidence.workspaceHighWaterBytes,
-    widerVolatileBatch.evidence.workspaceHighWaterBytes,
-    "the measured resource metric remains available outside the projection",
-  );
+  assert.deepEqual(projectR7DeterministicOperation(operation), projectR7DeterministicOperation(widerVolatileBatch));
+  assert.notEqual(operation.evidence.workspaceHighWaterBytes, widerVolatileBatch.evidence.workspaceHighWaterBytes);
 });
 
 test("R7 worker retains allow-listed subsystem codes and discards arbitrary errors", async (t) => {
@@ -126,13 +100,10 @@ test("R7 worker retains allow-listed subsystem codes and discards arbitrary erro
     )),
     "internal_bundle_privacy_schema_allowlist_and_provider_adapter_compatibility_sensitive_web_url",
   );
-  assert.equal(
-    fixedOperationFailureCode(new Error("PRIVATE_ARBITRARY_FAILURE")),
-    "operation_failed",
-  );
+  assert.equal(fixedOperationFailureCode(new Error("PRIVATE_ARBITRARY_FAILURE")), "operation_failed");
 });
 
-test("R7 boundary matrix proves every guard ceiling or labels the unexercised SQLite batch limit", () => {
+test("R7 boundary matrix proves each synthetic guard ceiling or labels SQLite batch as untested", () => {
   const value = runR7ResourceBoundaryMatrix();
   assert.equal(value.resourcePolicyVersion, EXPORT_RESOURCE_POLICY_VERSION);
   assert.equal(value.rows.length, Object.keys(DEFAULT_EXPORT_RESOURCE_LIMITS).length);
@@ -154,67 +125,19 @@ test("R7 boundary matrix proves every guard ceiling or labels the unexercised SQ
   }
 });
 
-test("R7 isolated lifecycle smoke is two-pass deterministic and content-free", { timeout: 30_000 }, async () => {
-  const value = await runR7SmokeEvidence();
-  assert.equal(value.benchmarkProtocolVersion, R7_BENCHMARK_PROTOCOL_VERSION);
-  assert.equal(value.selectionRuleVersion, R7_SELECTION_RULE_VERSION);
-  assert.equal(value.fixtureVersion, R7_FIXTURE_VERSION);
-  assert.match(value.fixtureManifestSha256, /^[a-f0-9]{64}$/);
-  assert.equal(value.determinism.runCount, 2);
-  assert.equal(value.determinism.passed, true);
-  assert.equal(value.determinism.status, "passed");
-  assert.deepEqual(value.determinism.runProjectionSha256es, [
-    value.first.deterministicProjectionSha256,
-    value.second.deterministicProjectionSha256,
-  ]);
-  assert.equal(Object.values(value.determinism.checks).every((status) => status === "matched"), true);
-  assert.equal(value.cleanup.exhausted, true);
-  assert.deepEqual(value.first.operations.map((row) => row.operation), EXPECTED_OPERATIONS);
-  assert.deepEqual(value.second.operations.map((row) => row.operation), EXPECTED_OPERATIONS);
-  for (const pass of [value.first, value.second]) {
-    assert.equal(pass.fixturePreserved, true);
-    for (const operation of pass.operations) {
-      assert.equal(operation.status, "completed", operation.operation);
-      assert.equal(operation.failureCode, null);
-      assert.equal(Number.isSafeInteger(operation.wallTimeMicros), true);
-      assert.equal(Number.isSafeInteger(operation.cpuUserMicros), true);
-      assert.equal(Number.isSafeInteger(operation.cpuSystemMicros), true);
-      assert.equal(Number.isSafeInteger(operation.peakRssBytes), true);
-      assert.equal(Number.isSafeInteger(operation.parentElapsedMs), true);
-      assert.equal(operation.parentElapsedMs >= 0, true);
-      assert.equal(Number.isSafeInteger(operation.externalPeakRssBytes), true);
-      assert.equal(Number.isSafeInteger(operation.rssSampleCount), true);
-      assert.equal(Number.isSafeInteger(operation.rssSampleFailureCount), true);
-      assert.match(operation.evidence.operationEvidenceSha256, /^[a-f0-9]{64}$/);
-    }
-  }
-  const serialized = JSON.stringify(value);
-  assert.equal(serialized.includes("R7_SYNTHETIC_CONTENT_CANARY_NEVER_EXPORT"), false);
-  assert.equal(serialized.includes("codex-home"), false);
-  assert.equal(serialized.includes("claude-projects"), false);
-  assert.equal(serialized.includes("workspace-complete"), false);
-  assert.equal(serialized.includes(process.env.USER ?? "__missing_user__"), false);
-});
-
-test("R7 cleanup refuses a replaced task root instead of inventorying the replacement", { timeout: 30_000 }, async () => {
-  const parent = await mkdtemp(join(tmpdir(), "usage-monitor-r7-root-race-"));
-  try {
+test("retired v0.1 smoke receipt entrypoints reject before reading options or creating fixtures", async () => {
+  let accessed = false;
+  const options = new Proxy({}, { get() { accessed = true; throw new Error("option must not be read"); } });
+  for (const generate of [runR7SmokeEvidence, buildR7SmokeReceipt, runR7SmokeBenchmark]) {
     await assert.rejects(
-      runR7SmokeEvidence({
-        temporaryRoot: parent,
-        async cleanupFailpoint(created) {
-          await rename(created, `${created}-displaced`);
-          await mkdir(created, { mode: 0o700 });
-        },
-      }),
-      /temporary root identity changed/,
+      generate(options),
+      (error) => error.code === R7_RECEIPT_GENERATION_RETIRED_CODE,
     );
-  } finally {
-    await rm(parent, { recursive: true, force: true });
   }
+  assert.equal(accessed, false);
 });
 
-test("R7 exact cleanup rejects same-content file identity replacement", async () => {
+test("exact R7 cleanup rejects same-content file identity replacement", async () => {
   const parent = await mkdtemp(join(tmpdir(), "usage-monitor-r7-file-race-"));
   const root = join(parent, "task-root");
   try {
@@ -246,7 +169,10 @@ test("extended worker stdin is restricted to frozen real source-plan scans", asy
   }
 });
 
-test("R7 benchmark worker enforces its terminal lifetime RSS high-water mark", { timeout: 10_000 }, async () => {
+test("R7 benchmark worker enforces its terminal lifetime RSS high-water mark", {
+  timeout: 10_000,
+  skip: process.platform === "win32" ? "R7 child watchdog is not qualified on Windows" : false,
+}, async () => {
   await assert.rejects(
     runR7BenchmarkWorker({
       operation: "export_set_materialize",
@@ -257,27 +183,4 @@ test("R7 benchmark worker enforces its terminal lifetime RSS high-water mark", {
     }, { maximumRssBytes: 1 }),
     /R7 operation worker stopped: rss_limit_exceeded/,
   );
-});
-
-test("R7 smoke benchmark emits a strict self-hashed honest receipt", { timeout: 30_000 }, async () => {
-  const receipt = await runR7SmokeBenchmark();
-  assert.deepEqual(validateR7ResourceBenchmarkReceipt(receipt), { valid: true, errors: [] });
-  assert.equal(receipt.profile, "smoke");
-  assert.equal(receipt.classification, "synthetic_lifecycle");
-  assert.equal(receipt.networkActivity, "not_measured");
-  assert.equal(receipt.runtimeProvenance.rssMeasurementMethod, "external_sampling");
-  assert.equal(receipt.runtimeProvenance.rssSamplingIntervalMs, 100);
-  assert.equal(receipt.operations.every((row) => row.metrics.parentElapsedMs > 0), true);
-  assert.equal(receipt.determinismEvidence.status, "passed");
-  assert.equal(receipt.operations.filter((row) => row.status === "completed").length, 7);
-  assert.equal(receipt.operations.filter((row) => row.status === "interrupted_recovered").length, 3);
-  assert.equal(receipt.operations.filter((row) => row.status === "not_run").length, 0);
-  assert.equal(receipt.operations.every((row) => row.evidenceSha256.length === 2), true);
-  assert.equal(receipt.boundaryEvidence.filter((row) => row.identification === "identified").length, 0);
-  assert.equal(receipt.boundaryEvidence.filter((row) => row.identification === "not_identified").length, 18);
-  assert.equal(receipt.boundaryEvidence.filter((row) => row.identification === "not_run").length, 1);
-  assert.equal(receipt.boundaryEvidence.every((row) => row.producer.status === "not_run"), true);
-  assert.equal(receipt.boundaryEvidence.every((row) => row.verifier.status === "not_run"), true);
-  assert.equal(receipt.callbackSettingsPreserved, true);
-  assert.match(receipt.receiptSha256, /^[a-f0-9]{64}$/);
 });

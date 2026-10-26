@@ -14,6 +14,7 @@ import * as localPreparationCompatibility from
 import { preparedContributionContext } from
   "../src/prepared-contribution-compatibility-internal.js";
 import * as preparedCompatibility from "../src/telemetry-prepared-set.js";
+import { deriveTelemetryAccountTrackId } from "../src/contribution/account-track.js";
 
 const CONTRIBUTION_PUBLIC_EXPORTS = Object.freeze([
   "MAX_PREPARED_CONTRIBUTION_BATCHES",
@@ -85,6 +86,18 @@ function assertAliases(compatibility, names) {
     assert.strictEqual(compatibility[name], contribution[name], name);
   }
 }
+
+test("account-track derivation keeps Codex continuity and rejects other providers", () => {
+  const localScope = `account:v1:${"a".repeat(64)}`;
+  const participant = "participant:123e4567-e89b-42d3-a456-426614174000";
+  const codexTrack = deriveTelemetryAccountTrackId(localScope, participant, "openai_codex");
+  assert.match(codexTrack, /^account-track:v1:[a-f0-9]{64}$/u);
+  assert.equal(deriveTelemetryAccountTrackId(localScope, participant, "openai_codex"), codexTrack);
+  assert.throws(
+    () => deriveTelemetryAccountTrackId(localScope, participant, "legacy_provider"),
+    /provider is invalid/u,
+  );
+});
 
 test("contribution publishes one exact reviewed domain API", () => {
   assert.deepEqual(
@@ -281,7 +294,6 @@ test("contribution implementations use only reviewed package and owner edges", a
       "./export/index.js",
       "./export/set-materialization-runtime.js",
       "./platform/index.js",
-      "./providers/claude/statusline.js",
       "./telemetry-prepared-set.js",
       "node:crypto",
       "node:path",

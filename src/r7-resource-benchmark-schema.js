@@ -10,6 +10,8 @@ export const R7_RESOURCE_BENCHMARK_POLICY_VERSION = "g1-r3-candidate-0.5";
 export const R7_RESOURCE_BENCHMARK_SELECTION_RULE_VERSION = "g1-r7-ceiling-selection-v0.1";
 export const R7_RESOURCE_BENCHMARK_DETERMINISTIC_PROJECTION_VERSION = "g1-r7-deterministic-projection-v0.1";
 
+// Frozen v0.1 receipt vocabulary for historical validation only. Receipt
+// generation under this contract is retired; these names are never dispatched.
 export const R7_RESOURCE_BENCHMARK_OPERATION_NAMES = Object.freeze([
   "source_scan",
   "checkpoint_resume",

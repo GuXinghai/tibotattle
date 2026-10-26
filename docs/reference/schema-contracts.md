@@ -3,7 +3,7 @@ title: Schema and Contract Lifecycle
 date: 2026-08-27
 type: reference
 status: maintained
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-27
 ---
 
 # Schema and contract lifecycle
@@ -18,24 +18,31 @@ versioning, and retirement rules.
 | Contract family | Canonical source | Generated or mirrored output | Gate |
 | --- | --- | --- | --- |
 | Telemetry v0.1 export | `schemas/telemetry-v0.1/*.schema.json` plus `contracts/telemetry-v0.1/field-policy.json` | `generated/telemetry-v0.1-field-dictionary.json` and `generated/telemetry-v0.1-compatibility.json` | `npm run telemetry:check` |
-| Telemetry contribution v0.2 | `packages/telemetry-contract/schemas/v0.2/*.schema.json` and package source | `schemas/telemetry-contribution-v0.2/*.schema.json` byte-canonical mirrors | `npm run telemetry:upload-schemas:check` |
-| Attribution contribution v1.1 (staged) | `packages/telemetry-contract/src/telemetry-v1.1.js`, `telemetry-v1.1-domain.js`, and `telemetry-v1.1-schemas.js` | Eight package JSON Schemas and eight root mirrors in `schemas/telemetry-contribution-v1.1/` | `npm run telemetry:upload-schemas:check`, contract and Worker staging/activation tests |
-| Continuity contribution v1.2 (staged) | `packages/telemetry-contract/src/telemetry-v1.2.js`, `telemetry-v1.2-domain.js`, and `telemetry-v1.2-schemas.js` | Eight package JSON Schemas and eight root mirrors in `schemas/telemetry-contribution-v1.2/` | Upload/browser mirror checks and v1.2 contract tests; hosted runtime starts staged |
-| Daily model performance (staged) | `packages/telemetry-contract/src/performance-histogram.js`, `telemetry-performance-v1.js`, and `telemetry-performance-v1-schemas.js` | Two package JSON Schemas and two root mirrors in `schemas/telemetry-performance-v1/` | Histogram/record tests and schema/browser parity; no transport or source-coverage authority |
+| Telemetry contribution v0.2 (existing versioned format retained for historical readback) | `packages/telemetry-contract/schemas/v0.2/*.schema.json` and package source | `schemas/telemetry-contribution-v0.2/*.schema.json` byte-canonical mirrors | `npm run telemetry:upload-schemas:check`; validates retained bytes and mirrors, not an upload path |
+| Attribution contribution v1.1 (legacy schema family) | `packages/telemetry-contract/src/telemetry-v1.1.js`, `telemetry-v1.1-domain.js`, and `telemetry-v1.1-schemas.js` | Eight package JSON Schemas and eight root mirrors in `schemas/telemetry-contribution-v1.1/` | Schema/contract tests only; no Worker source or local transport in this product |
+| Continuity contribution v1.2 (legacy schema family) | `packages/telemetry-contract/src/telemetry-v1.2.js`, `telemetry-v1.2-domain.js`, and `telemetry-v1.2-schemas.js` | Eight package JSON Schemas and eight root mirrors in `schemas/telemetry-contribution-v1.2/` | Schema/contract tests only; no hosted runtime or local upload path is implied |
+| Daily model performance (Codex-only staged contract) | `packages/telemetry-contract/src/performance-histogram.js`, `telemetry-performance-v1.js`, and `telemetry-performance-v1-schemas.js` | Two package JSON Schemas and two root mirrors in `schemas/telemetry-performance-v1/` | Codex-only histogram/record tests and schema/browser parity; no transport or source-coverage authority |
 | Telemetry browser mirror | Telemetry contract package/source | Browser-consumable generated mirror | `npm run telemetry:browser:check` |
 | Public model identity mirror | `packages/telemetry-contract/src/model-catalog.js` only | `apps/web/public/model-catalog.generated.js`; excludes telemetry and admin-history contracts | `npm run telemetry:browser:check` and browser parity/public-asset isolation tests |
 | Reviewed model identities and admin history | `packages/telemetry-contract/src/model-catalog.js` and `admin-model-history.js` | Public package exports and the telemetry browser mirror; closed export/upload model enums checked against the catalog | Catalog tests, `npm run telemetry:check`, browser and upload mirror checks |
 | Export set v0.1/v0.2/v0.3 | `schemas/export-set-v0.1/`, `schemas/export-set-v0.2/` and `schemas/export-set-v0.3/` | None; controllers/verifiers consume the schemas. | Export schema/controller tests |
 | Export deletion | `schemas/export-deletion-v0.1/`, `schemas/export-deletion-v0.2/journal.schema.json`, and `schemas/export-deletion-v0.3/` | New journal v0.3 and commit marker v0.2 bind exact unsigned decimal filesystem IDs. Older journals/markers retain immutable validators; preflight and receipt stay v0.1. | Export deletion tests |
 | Workspace discard v0.1 | `schemas/export-workspace-discard-v0.1/` | Journal, preflight, commit marker, and receipt are one transaction family. | Workspace discard tests |
-| Product synthetic v0.1 | `schemas/product-synthetic-v0.1/` | Contribution and encrypted envelope schemas. | Worker/local acceptance tests |
-| Provider accounting snapshot | `schemas/provider-accounting-snapshot-v0.1.schema.json` | None. | Accounting/export tests |
-| Claude status line v0.2 | `schemas/claude-statusline-v0.2/claude-statusline-record.schema.json` | None. | Claude callback/status tests |
+| Product synthetic v0.1 (legacy) | `schemas/product-synthetic-v0.1/` | Retained contribution and encrypted-envelope schemas. | Local compatibility tests; no hosted transport in this product |
+| Provider accounting snapshot (legacy readback) | `schemas/provider-accounting-snapshot-v0.1.schema.json` | None. | Historical accounting/export parser tests; no active non-Codex producer |
 | Release evidence v1 | `schemas/release-evidence-v1/manifest.schema.json` | Release-specific manifests generated by release tooling. | `npm run release:evidence:validate` and release-trust tests |
-| R7 release/resource evidence | `schemas/r7-release-evidence-v0.1/` and `schemas/r7-resource-benchmark-v0.1/` | Protected `generated/r7-*.json` receipts. | Protected R7 regeneration/verification workflow |
+| R7 release/resource evidence (frozen historical readback) | `schemas/r7-release-evidence-v0.1/` and `schemas/r7-resource-benchmark-v0.1/` | Existing `generated/r7-*.json` receipt bytes remain unchanged. | Original v0.1 validators only; no new receipt/evidence generation or v0.2 schema |
 
 `contracts/telemetry-v0.1/` and `contracts/telemetry-v0.2/` also retain consent
 and contract-status records. They are policy state, not JSON Schema mirrors.
+Their recorded status is not changed by this retirement. Preserving a versioned
+format or enum does not imply that it was frozen, published, transport-ready, or
+active. The local product supports Codex as its only usage provider. Existing
+versioned contribution schemas and enum positions are preserved only to
+recognize already-retained bytes; they do not authorize source collection,
+consent, pricing, upload, or a hosted runtime. Remote services and historical
+data obligations are outside this checkout's source and are not changed by this
+boundary.
 `config/codex-contract-ledger.json` and
 `config/windows-compatibility-ledger.json` are compatibility ledgers with their
 own source-derived checks.
@@ -63,7 +70,7 @@ The root schema families are grouped as follows:
 | `export-workspace-discard-v0.1/` | 4 | Recoverable workspace-discard preflight/journal/commit/receipt. |
 | `export-set-v0.1/`, `export-set-v0.2/`, `export-set-v0.3/` | 3 | Versioned export-set manifests. |
 | `product-synthetic-v0.1/` | 2 | Synthetic contribution and encrypted envelope. |
-| Claude, provider accounting, release manifest, R7 release, R7 resource | 5 | One schema per listed family. |
+| Provider accounting, release manifest, R7 release, R7 resource | 4 | One schema per listed family. |
 
 Package-owned schema copies are not additional independent contracts. v0.2
 package JSON files are canonical; v1.1, v1.2 and performance JSON files are generated from their
@@ -80,10 +87,10 @@ Successors do not reinterpret earlier bytes or consent.
 - Human explanations belong here or in source policy metadata, not in a second
   manually maintained field dictionary.
 
-The Worker embeds the admin module graph, including the telemetry browser
-mirror. After regenerating that mirror, run
-`node apps/worker/scripts/generate-admin-ui-assets.mjs` from the repository
-root. The Worker check verifies this additional generated copy.
+The former Worker source and admin asset generator are retired from this
+checkout. The telemetry browser mirror has only the local generator/check above;
+no Worker build, staging, activation, deployment, or remote-service claim is
+part of this product.
 
 ## Closed privacy contract
 
@@ -106,43 +113,36 @@ code must also avoid reading forbidden content in the first place.
 
 ### Reviewed model vocabulary
 
-The shared model catalog includes every reviewed OpenAI text-model price identity,
-explicit Codex aliases, Spark and the existing Claude identities. It is an exact
-allowlist, not a model-prefix rule or a claim of account availability. The
-catalog records display label, provider, price identity/status and allowance
-track. Aliases stay distinct identities; Spark stays unpriced and on its separate
-allowance. Unknown labels are withheld or fingerprinted at the existing export
-boundary, never copied into admin labels. Legacy telemetry enum positions remain
-stable; newly reviewed values append.
+The current shared model catalog includes only reviewed Codex/OpenAI identities,
+explicit Codex aliases and Spark. It is an exact allowlist, not a model-prefix
+rule or a claim of account availability. The catalog records display label,
+provider, price identity/status and allowance track. Aliases stay distinct
+identities; Spark stays unpriced and on its separate allowance. Unknown labels
+are withheld or fingerprinted at the existing export boundary, never copied into
+admin labels. Existing legacy telemetry enums retain their original positions
+for old-byte readback; a legacy Claude identifier is not a current reviewed
+model or pricing identity.
 
-The export registry advances to `telemetry-v0.1-registry-2026-10-19.1` with its
-closed schema and generated compatibility dictionary. Disabled legacy upload
-contracts remain disabled; this vocabulary change does not enable contribution
-or alter consent. Reparse retained source before claiming to recover a model that
-an older extractor normalized to unknown. Admin model history has an independent,
-versioned compact projection; historical absence is not zero observations for a
-newly added model.
+The reviewed model catalog is `reviewed-model-catalog-2026-10-27.1`. Disabled
+legacy upload contracts remain disabled; this vocabulary change does not enable
+contribution or alter consent. Reparse retained source before claiming to recover
+a model that an older extractor normalized to unknown. Admin model history has
+an independent, versioned compact projection; historical absence is not zero
+observations for a newly added model.
 
-### Performance speed vocabulary and retained authorization
+### Performance vocabulary and historical authorization
 
-The performance dictionary advances to `telemetry-performance-registry-2026-09-29.1`
-for the appended GPT-6.1 Sol identity and separate Ultrafast cohort. Existing
-enum positions stay stable. Worker isolation migration
-`0013_performance_ultrafast.sql` admits the new dictionary without rewriting
-historical migration `0009`. Historical reports and their Sep21 authorizations
-retain their original dictionary; they remain readable and erasable, rather
-than authorizing the expanded contract. New writes require the Sep29
-dictionary and matching current authorization. Local SQL tests cover historical
-preservation, refusal before migration, old-consent refusal, new admission,
-rollback, retry and erasure. Remote application remains a separate gate: the
-existing historical forward operator has closed pins through `0009`, so `0013`
-needs an environment-specific reviewed migration plan and rehearsal.
-The independent performance activation predicate requires the exact `0009` and
-`0013` ledger hashes and both current cohort dictionary triggers. Usage
-activation does not acquire those performance requirements. Migration `0013`
-preserves runtime state while incrementing the existing policy revision; an
-activation request must use the reconciled current revision rather than an
-assumed initial value.
+The current staged performance dictionary is
+`telemetry-performance-registry-2026-10-27.1` and its field vocabulary is
+Codex-only. This is a local contract; it does not enable hosted transport or
+authorize remote writes. Existing reports and authorizations retain their
+original dictionary, bytes, and status; do not rewrite them as part of this
+vocabulary change. The historical Worker migration `0013_performance_ultrafast.sql`
+and its associated activation predicate are time-scoped records only. They do
+not activate the current dictionary or authorize new remote writes, and this
+reference makes no claim about present remote deployment state. Current source
+validation covers the local Codex-only vocabulary, schema parity, and browser
+mirror; there is no current Worker migration or activation procedure.
 
 ## Compatibility and versioning
 
@@ -229,7 +229,7 @@ allowance remains explicitly conditional even when a record has an account
 pseudonym. This is not a provider-authoritative account billing contract.
 
 The source- and binary-verified `promax` identifier is accepted by local v0.1
-export and staged v1.1/v1.2 schemas. The frozen v0.2
+export and staged v1.1/v1.2 schemas. The existing v0.2
 contribution schema retains its original vocabulary: its local projection
 writes `unknown` for this value, while v1.1/v1.2 can retain the exact identifier.
 On 2026-10-04 UTC, reviewed ChatGPT-bundled and PATH `codex-cli 0.160.0` each
@@ -339,7 +339,7 @@ Timing SQLite schemas are primary 12 and supplement 13 while measurement methods
 Old rows retain existing TPS/TTFT
 with unavailable new fields. Receipt timing
 wins when qualified; tool-free timing is a single-sample fallback, never a
-second speed sample for the same turn. The field dictionary is `telemetry-performance-registry-2026-09-29.1`.
+second speed sample for the same turn. The field dictionary is `telemetry-performance-registry-2026-10-27.1`.
 The [performance specification](../design/2026-09-20-performance-telemetry-contract.md)
 records the measurement, overlap, policy, delivery, erasure, restore and UI requirements.
 Those gates must not delay continuity collection or alter cache calculations.
@@ -373,21 +373,28 @@ npm run docs:check
 
 Release-evidence validation is read-only but requires the exact candidate
 manifest and artifact directory; the bare package script deliberately refuses
-to guess them. R7 regeneration is intentionally absent from this routine list:
-it reads environment-specific private evidence and remains a protected owner
-workflow.
+to guess them. R7 generation is retired: its v0.1 schema requires Claude
+operation values and fields, so the schema cannot be narrowed under the same
+version or used to fabricate a passing receipt. Existing schemas and receipts
+remain byte-for-byte historical readback. Any remaining new-generation entry
+point must reject before creating or reading fixtures, accessing repository
+state, or opening provider sources. The implementation and its rejection test
+are separate source evidence gates; this contract does not change Codex
+collection, accounting, or UI behavior. See the [Codex-only decision](../decisions/2026-10-27-codex-only-product.md)
+and [R7 preservation runbook](../runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md).
 
 ### Exact local filesystem identities
 
-New Claude transcript source plans v0.3, Claude status ledger source plans v0.2,
-and collector source plans v0.2 serialize `device` and `inode` as canonical
+New collector source plans v0.2 serialize `device` and `inode` as canonical
 unsigned decimal strings, bounded to 64 bits. The platform reads these values
 from BigInt stats before conversion of unrelated bounded numeric metadata.
 Legacy plan versions continue to validate only safe integer identities; unsafe
 Number values cannot be repaired by rounding. Checkpoint restoration and slicing
-preserve the original plan version and digest. Existing safe numeric transcript
-source-key material remains unchanged; new exact identities are explicit in the
-new plan version. Account/session pseudonym derivation and secrets are unchanged.
+preserve the original plan version and digest. Existing Claude transcript and
+status-line workspace metadata is legacy immutable state: inspection may identify
+it without reading its source paths, while resume fails closed before source
+access. No new Claude source plan is created. Account/session pseudonym derivation
+and secrets are unchanged.
 
 Supplemental source plan v2 carries these exact file-prefix bindings. Export
 workspace v0.5 uses physical schema 5 and `ANY` identity columns with tagged

@@ -64,7 +64,6 @@ const PROFILE_DIRECTORY_NAMES = Object.freeze([
   "appdata",
   "localappdata",
   "codex",
-  "claude",
   "state",
   "config",
   "data",
@@ -219,7 +218,6 @@ function profilePaths(profilePath) {
     appdata: join(root, "appdata"),
     localappdata: join(root, "localappdata"),
     codex: join(root, "codex"),
-    claude: join(root, "claude"),
     state: join(root, "state"),
     config: join(root, "config"),
     data: join(root, "data"),
@@ -381,7 +379,6 @@ function assertProfileObject(profile) {
     "appdata",
     "localappdata",
     "codex",
-    "claude",
     "state",
     "config",
     "data",
@@ -415,7 +412,6 @@ export function buildWindowsDevelopmentEnvironment({
   selected.TMP = paths.tmp;
   selected.TMPDIR = paths.tmp;
   selected.CODEX_HOME = paths.codex;
-  selected.CLAUDE_CONFIG_DIR = paths.claude;
   selected.XDG_CONFIG_HOME = paths.config;
   selected.XDG_DATA_HOME = paths.data;
   selected.XDG_CACHE_HOME = paths.cache;
@@ -455,7 +451,6 @@ export function buildWindowsNormalCandidateEnvironment({
   // Ordinary desktop settings resolve the default source under HOME, rather
   // than honoring the development lane's separate override directory.
   selected.CODEX_HOME = join(paths.home, ".codex");
-  selected.CLAUDE_CONFIG_DIR = paths.claude;
   selected.XDG_CONFIG_HOME = paths.config;
   selected.XDG_DATA_HOME = paths.data;
   selected.XDG_CACHE_HOME = paths.cache;

@@ -45,7 +45,7 @@ function emitCompanionProcessLifecycleEvent(observer, event, phase, exitCode, si
 
 // The renderer/launcher environment is not a credential transport. Keep the
 // child input explicit: platform runtime discovery plus the reviewed
-// Rhetrion/Codex/Claude configuration knobs only. NODE_OPTIONS, arbitrary
+// Rhetrion/Codex configuration knobs only. NODE_OPTIONS, arbitrary
 // provider credentials, and unrelated shell secrets never cross the boundary.
 const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "PATH",
@@ -69,9 +69,6 @@ const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "CODEX_HOME",
   "CODEX_BIN",
   "CODEX_THREAD_ID",
-  "CLAUDE_CONFIG_DIR",
-  "CLAUDE_PROJECT_DIR",
-  "CLAUDE_PROJECT_DIRECTORY",
   "USAGE_MONITOR_ACCOUNTING_SOURCE_MODE",
   "USAGE_MONITOR_RESOURCE_ROOT",
   "USAGE_MONITOR_STATE_ROOT",

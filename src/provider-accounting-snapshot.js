@@ -10,6 +10,8 @@ export const MAXIMUM_PROVIDER_ACCOUNTING_PERIODS = 8;
 export const MAXIMUM_PROVIDER_ACCOUNTING_MEASUREMENTS = 12;
 export const MAXIMUM_PROVIDER_ACCOUNTING_DIAGNOSTICS = 16;
 
+// Readback vocabulary for the versioned local snapshot contract. These legacy
+// provider identities are not capture, dispatch, or pricing entry points.
 export const PROVIDER_ACCOUNTING_PAYLOAD_VERSIONS = Object.freeze({
   openai_codex: "openai_provider_accounting_v1",
   anthropic_claude_code: "anthropic_provider_accounting_v1",
@@ -32,6 +34,7 @@ export const providerAccountingSnapshotSchema = require(
 const ajv = new Ajv({ allErrors: true, strict: true });
 const validateSchema = ajv.compile(providerAccountingSnapshotSchema);
 
+// Historical v0.1 source pairs exist only to validate already-written snapshots.
 const SOURCE_SURFACES = Object.freeze({
   openai_codex: new Set(["codex_app_server", "codex_rollout", "codex_usage_page"]),
   anthropic_claude_code: new Set(["claude_status_line", "claude_api", "claude_usage_page"]),

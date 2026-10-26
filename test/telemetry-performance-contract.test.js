@@ -130,14 +130,6 @@ test("staged performance contract exports and browser mirror stay in lockstep", 
 test("performance daily cohorts preserve the closed measurement shape", () => {
   const record = performanceRecord();
   assert.equal(parseTelemetryPerformanceRecord(record), record);
-  const claude = performanceRecord({
-    provider: "anthropic_claude_code",
-    modelId: "claude-sonnet-5",
-    speedMode: "fast",
-    speedModeSource: "lineage_inherited",
-    apiServiceTier: "priority",
-  });
-  assert.equal(parseTelemetryPerformanceRecord(claude), claude);
   const turnContext = performanceRecord({
     speedMode: "fast",
     speedModeSource: "turn_context_service_tier",
@@ -190,7 +182,6 @@ test("performance validation rejects privacy, version, bounds, and relation viol
 
   expectInvalid(performanceRecord({ day: "2026-02-29" }), "invalid UTC day");
   expectInvalid(performanceRecord({ provider: "private_provider", modelId: "private_model" }), "unreviewed provider/model");
-  expectInvalid(performanceRecord({ provider: "anthropic_claude_code", modelId: "gpt-5.6-luna" }), "cross-provider model");
   expectInvalid(performanceRecord({ speedMode: "unknown", speedModeSource: "mixed" }), "unknown mode requires unobserved source");
   expectInvalid(performanceRecord({ speedMode: "mixed", speedModeSource: "unobserved" }), "mixed mode requires mixed source");
   expectInvalid(performanceRecord({ speedMode: "standard", speedModeSource: "unobserved" }), "known mode requires evidence source");
@@ -273,16 +264,8 @@ test("performance JSON Schemas express closed shape and simple runtime relations
   }
   assert.equal(validateRecord(performanceRecord({ speedMode: "ultrafast", speedModeSource: "unobserved" })), false);
   assert.equal(validateRecord(performanceRecord({
-    provider: "anthropic_claude_code",
-    modelId: "claude-sonnet-5",
-  })), true);
-  assert.equal(validateRecord(performanceRecord({
     provider: "private_provider",
     modelId: "private_model",
-  })), false);
-  assert.equal(validateRecord(performanceRecord({
-    provider: "anthropic_claude_code",
-    modelId: "gpt-5.6-luna",
   })), false);
   assert.equal(validateRecord({
     ...performanceRecord(),

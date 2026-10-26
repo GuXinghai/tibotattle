@@ -69,8 +69,6 @@ import {
   readOwnerOnlyLocalMetadataBundlePair,
   sha256Hex,
 } from "./platform/index.js";
-import { validateClaudeStatusSnapshot } from
-  "./providers/claude/statusline.js";
 import {
   loadVerifiedPreparedContribution,
   verifyPreparedContributionSet,
@@ -128,7 +126,6 @@ export const localSafeRecords = createSafeRecordsContext({
   isProxy,
   scanCodexLogEvents: localCodexLogScanner.scanCodexLogEvents,
   stableJson,
-  validateClaudeStatusSnapshot,
   ...localCodexCheckpointState,
 });
 

@@ -1,6 +1,6 @@
 ---
 title: System Architecture and Trust Boundaries
-date: 2026-10-23
+date: 2026-10-27
 type: reference
 status: maintained
 ---
@@ -12,6 +12,9 @@ product has no cloud project, sharing, contribution upload, public site or
 configured update feed. Removing old service source does not administer or
 erase any former remote service. See the
 [product decision](../decisions/2026-10-23-local-product-identity-and-cloud-retirement.md).
+Codex is the only supported usage provider; legacy immutable records are
+readback history only. The optional X reader remains a separate local metadata
+feature under the [provider-scope decision](../decisions/2026-10-27-codex-only-product.md).
 
 ## Composition and ownership
 

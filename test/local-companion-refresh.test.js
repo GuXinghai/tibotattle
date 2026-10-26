@@ -727,7 +727,6 @@ test("local refresh bounds the headline collector pass and returns only safe pro
 test("local refresh routes collector, credential lock, and accounting writes beneath explicit state", async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-state-"));
   const paths = localCompanionStatePaths(stateRoot);
-  assert.equal(Object.keys(paths).some((name) => name.startsWith("claudeDesktop")), false);
   let collectorOptions;
   let selectionOptions;
   try {
@@ -4352,38 +4351,6 @@ test("a failing diagnostics writer is contained and cannot become a write storm"
   nowMs += 5 * 60_000;
   assert.equal(await record(failure), false);
   assert.equal(attempts, 1);
-});
-
-test("local refresh performs no retired Claude quota I/O", async () => {
-  let quotaReads = 0;
-  const runner = createLocalCollectorRefreshRunner({
-    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
-    runCollector: async () => ({
-      rolloutRecordsWritten: 2,
-      filesDiscovered: 1,
-      refresh: { attempted: true, recordWritten: true, errorCode: null },
-    }),
-    refreshClaudeQuota: async () => {
-      quotaReads += 1;
-    },
-  });
-  const result = await runner();
-  assert.equal(result.rolloutRecordsWritten, 2);
-  assert.equal(quotaReads, 0);
-  assert.equal(Object.hasOwn(result, "claudeQuota"), false);
-});
-
-test("retired Claude Desktop shadow callback cannot run or enrich refresh results", async () => {
-  let invoked = false;
-  const runner = createLocalCollectorRefreshRunner({
-    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
-    runCollector: async () => ({ rolloutRecordsWritten: 1, filesDiscovered: 1, refresh: { attempted: true, recordWritten: true, errorCode: null } }),
-    refreshClaudeUsageShadow: async () => { invoked = true; throw new Error("Retired callback must not run"); },
-  });
-  const result = await runner();
-  assert.equal(result.rolloutRecordsWritten, 1);
-  assert.equal(invoked, false);
-  assert.equal(Object.hasOwn(result, "claudeShadow"), false);
 });
 
 test("quick polling omits reset details only after a successful startup read; detailed refreshes retain them", async () => {

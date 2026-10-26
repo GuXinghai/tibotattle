@@ -1,7 +1,9 @@
 # Contributing to Rhetrion
 
 This checkout owns a local Windows x64 application, its loopback companion and
-browser dashboard. Read [AGENTS.md](AGENTS.md), the nearest scoped guidance and
+browser dashboard. Codex is the only supported usage provider; do not restore
+Claude collection, callback, transcript, pricing or UI paths. Read
+[AGENTS.md](AGENTS.md), the nearest scoped guidance and
 [SECURITY.md](SECURITY.md) before changing a boundary.
 
 ## Setup

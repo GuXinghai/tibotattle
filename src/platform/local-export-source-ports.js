@@ -1,9 +1,9 @@
 import { Buffer } from "node:buffer";
 import { createHash, createHmac } from "node:crypto";
 import { constants } from "node:fs";
-import { lstat as nodeLstat, open as nodeOpen, opendir, realpath } from "node:fs/promises";
+import { lstat as nodeLstat, open as nodeOpen } from "node:fs/promises";
 import { homedir } from "node:os";
-import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { resolve } from "node:path";
 import { isProxy } from "node:util/types";
 
 import { readBoundedUtf8LineEntries } from "./bounded-jsonl-reader.js";
@@ -25,11 +25,6 @@ const open = nodeOpen;
 const exactSourceLstat = (path) => exactLstat(path, nodeLstat);
 const exactSourceOpen = (path, flags) => exactOpen(path, flags, nodeOpen);
 
-const DEFAULT_CLAUDE_STATUS_MAX_RECORDS = 20_000;
-const DEFAULT_CLAUDE_STATUS_MAX_LEDGER_BYTES = 32 * 1024 * 1024;
-const MAX_CLAUDE_STATUS_RECORD_BYTES = 4096;
-const NOFOLLOW = constants.O_NOFOLLOW ?? 0;
-const CLAUDE_STATE_ENVIRONMENT_KEYS = Object.freeze(["LOCALAPPDATA"]);
 const CODEX_ENVIRONMENT_KEYS = Object.freeze(["CODEX_HOME"]);
 
 export function localPlatformName() {
@@ -40,14 +35,6 @@ export const localIsProxy = isProxy;
 
 function invalid() {
   throw new TypeError("local export-source platform configuration is invalid");
-}
-
-class LocalExportSourcePortError extends Error {
-  constructor(code) {
-    super(`Local export-source platform failed (${code})`);
-    this.name = "LocalExportSourcePortError";
-    this.code = `local_export_source_port_${code}`;
-  }
 }
 
 function ownData(configuration, key, fallback) {
@@ -79,29 +66,6 @@ function snapshotEnvironment(environment, keys) {
   return Object.freeze(snapshot);
 }
 
-function directoryChain(target) {
-  const root = parse(target).root;
-  const suffix = relative(root, target);
-  const parts = suffix === "" ? [] : suffix.split(sep).filter(Boolean);
-  const chain = [root];
-  for (const part of parts) chain.push(join(chain[chain.length - 1], part));
-  return chain;
-}
-
-function exportDirectoryIdentity(stats) {
-  return Object.freeze({
-    device: stats.dev,
-    inode: stats.ino,
-    birthtimeMs: Math.trunc(stats.birthtimeMs),
-  });
-}
-
-function matchesExportDirectoryIdentity(stats, expected) {
-  return String(stats.dev) === String(expected?.device)
-    && String(stats.ino) === String(expected?.inode)
-    && Math.trunc(stats.birthtimeMs) === expected?.birthtimeMs;
-}
-
 export function createLocalExportSourcePorts(configuration = {}) {
   if (!configuration || typeof configuration !== "object" || Array.isArray(configuration)
       || isProxy(configuration)) invalid();
@@ -109,139 +73,9 @@ export function createLocalExportSourcePorts(configuration = {}) {
   const homeDirectory = ownData(configuration, "homeDirectory", homedir());
   const platform = ownData(configuration, "platform", process.platform);
   if (typeof homeDirectory !== "string" || typeof platform !== "string") invalid();
-  const environment = snapshotEnvironment(configuredEnvironment, CLAUDE_STATE_ENVIRONMENT_KEYS);
   const codexEnvironment = snapshotEnvironment(configuredEnvironment, CODEX_ENVIRONMENT_KEYS);
-
-  function statusFail(code) {
-    throw new LocalExportSourcePortError(code);
-  }
-
   function currentUid() {
     return typeof process.getuid === "function" ? process.getuid() : null;
-  }
-
-  function assertOwnerDirectory(stats) {
-    if (!stats.isDirectory() || stats.isSymbolicLink()) statusFail("state_directory_type");
-    const uid = currentUid();
-    if (uid !== null && stats.uid !== uid) statusFail("state_directory_owner");
-  }
-
-  function assertSafeDirectoryComponent(stats, ownerOnly) {
-    if (!stats.isDirectory() || stats.isSymbolicLink()) statusFail("state_parent_type");
-    const uid = currentUid();
-    if (uid !== null) {
-      if (ownerOnly ? stats.uid !== uid : stats.uid !== uid && stats.uid !== 0) {
-        statusFail("state_parent_owner");
-      }
-    }
-  }
-
-  async function safeLstat(path, code = "state_directory_missing") {
-    try {
-      return await exactSourceLstat(path);
-    } catch {
-      statusFail(code);
-    }
-  }
-
-  async function validateExistingDirectoryChain(target) {
-    const targetParent = join(target, "..");
-    for (const component of directoryChain(target)) {
-      const stats = await safeLstat(component);
-      if (component === target) assertOwnerDirectory(stats);
-      else assertSafeDirectoryComponent(stats, component === resolve(targetParent));
-    }
-    let canonical;
-    try {
-      canonical = await realpath(target);
-    } catch {
-      statusFail("state_directory_missing");
-    }
-    if (canonical !== target) statusFail("state_parent_alias");
-  }
-
-  async function openVerifiedOwnerDirectory(path) {
-    const before = await safeLstat(path);
-    assertOwnerDirectory(before);
-    let handle;
-    try {
-      handle = await exactSourceOpen(path, constants.O_RDONLY | NOFOLLOW);
-      const opened = await handle.stat();
-      assertOwnerDirectory(opened);
-      if (opened.dev !== before.dev || opened.ino !== before.ino
-          || Math.trunc(opened.birthtimeMs) !== Math.trunc(before.birthtimeMs)) {
-        statusFail("state_directory_replaced");
-      }
-      return { handle, stats: opened };
-    } catch (error) {
-      await handle?.close().catch(() => {});
-      if (error instanceof LocalExportSourcePortError) throw error;
-      statusFail("state_directory_replaced");
-    }
-  }
-
-  function resolveStateDirectory(value) {
-    if (typeof value !== "string" || !isAbsolute(value) || value.length > 4096) statusFail("state_path");
-    return resolve(value);
-  }
-
-  async function inspectClaudeStatusLedgerDirectoriesForExport(stateDirectory) {
-    const root = resolveStateDirectory(stateDirectory);
-    await validateExistingDirectoryChain(root);
-    const recordsDirectory = join(root, "records");
-    await validateExistingDirectoryChain(recordsDirectory);
-    const rootOpened = await openVerifiedOwnerDirectory(root);
-    const recordsOpened = await openVerifiedOwnerDirectory(recordsDirectory);
-    try {
-      const rootStats = await rootOpened.handle.stat();
-      const recordsStats = await recordsOpened.handle.stat();
-      assertOwnerDirectory(rootStats);
-      assertOwnerDirectory(recordsStats);
-      const rootPathStats = await safeLstat(root);
-      const recordsPathStats = await safeLstat(recordsDirectory);
-      if (rootStats.dev !== rootPathStats.dev || rootStats.ino !== rootPathStats.ino
-          || recordsStats.dev !== recordsPathStats.dev || recordsStats.ino !== recordsPathStats.ino) {
-        statusFail("state_directory_replaced");
-      }
-      return Object.freeze({
-        root,
-        recordsDirectory,
-        rootIdentity: exportDirectoryIdentity(rootStats),
-        recordsIdentity: exportDirectoryIdentity(recordsStats),
-      });
-    } finally {
-      await recordsOpened.handle.close().catch(() => {});
-      await rootOpened.handle.close().catch(() => {});
-    }
-  }
-
-  async function revalidateClaudeStatusLedgerDirectoriesForExport(boundary) {
-    const current = await inspectClaudeStatusLedgerDirectoriesForExport(boundary?.root);
-    if (current.recordsDirectory !== boundary?.recordsDirectory
-        || !matchesExportDirectoryIdentity({
-          dev: current.rootIdentity.device,
-          ino: current.rootIdentity.inode,
-          birthtimeMs: current.rootIdentity.birthtimeMs,
-        }, boundary?.rootIdentity)
-        || !matchesExportDirectoryIdentity({
-          dev: current.recordsIdentity.device,
-          ino: current.recordsIdentity.inode,
-          birthtimeMs: current.recordsIdentity.birthtimeMs,
-        }, boundary?.recordsIdentity)) statusFail("state_directory_replaced");
-    return current;
-  }
-
-  function defaultClaudeStatusStateDirectory(options = {}) {
-    if (!options || typeof options !== "object" || Array.isArray(options) || isProxy(options)) invalid();
-    const env = snapshotEnvironment(
-      ownData(options, "env", environment),
-      CLAUDE_STATE_ENVIRONMENT_KEYS,
-    );
-    const configuredHome = ownData(options, "homeDirectory", homeDirectory);
-    if (typeof configuredHome !== "string" || !isAbsolute(configuredHome)) statusFail("state_home");
-    let base = env.LOCALAPPDATA;
-    if (typeof base !== "string" || !isAbsolute(base)) base = join(configuredHome, "AppData", "Local");
-    return join(base, "app-usagemonitor", "claude-statusline-v0.2");
   }
 
   const codexLogPorts = createLocalCodexLogPorts({ environment: codexEnvironment, homeDirectory });
@@ -255,7 +89,6 @@ export function createLocalExportSourcePorts(configuration = {}) {
     createHash,
     createHmac,
     currentUid,
-    defaultClaudeStatusStateDirectory,
     defaultHomeDirectory: homeDirectory,
     deriveAccountScopeId,
     deriveEventOccurrenceId,
@@ -269,22 +102,13 @@ export function createLocalExportSourcePorts(configuration = {}) {
       O_NOFOLLOW: constants.O_NOFOLLOW,
       O_RDONLY: constants.O_RDONLY,
     }),
-    inspectClaudeStatusLedgerDirectoriesForExport,
-    joinPath: join,
     lstat,
     open,
     exactSourceLstat,
     exactSourceOpen,
-    openDirectory: opendir,
     platform,
     readBoundedUtf8LineEntries,
-    realpath,
-    revalidateClaudeStatusLedgerDirectoriesForExport,
     resolvePath: resolve,
-    resolveRealpath: realpath,
     rss: () => process.memoryUsage().rss,
-    DEFAULT_CLAUDE_STATUS_MAX_LEDGER_BYTES,
-    DEFAULT_CLAUDE_STATUS_MAX_RECORDS,
-    MAX_CLAUDE_STATUS_RECORD_BYTES,
   });
 }

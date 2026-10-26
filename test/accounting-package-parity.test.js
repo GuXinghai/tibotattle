@@ -4,7 +4,6 @@ import { test } from "node:test";
 
 import {
   APP_OFFICIAL_PRICE_CARDS,
-  priceClaudeUsageRecord,
   priceCodexUsageEvent,
   priceUsageEvent,
 } from "../packages/accounting/index.js";
@@ -52,18 +51,6 @@ function priceThroughLocalAdapter(kernelEvent) {
       priceEpochBasis: "current_price_sensitivity",
     });
   }
-  if (kernelEvent.provider === "anthropic") {
-    return priceClaudeUsageRecord({
-      eventTime: kernelEvent.pricedAt,
-      modelRecognition: "recognized",
-      modelId: kernelEvent.model,
-      totalInputContextTokens: kernelEvent.totalInputContextTokens,
-      components: kernelEvent.components,
-    }, {
-      apiServiceTier: kernelEvent.apiTier,
-      priceEpochBasis: "current_price_sensitivity",
-    });
-  }
   throw new TypeError(`Unsupported parity-fixture provider: ${kernelEvent.provider}`);
 }
 
@@ -78,8 +65,8 @@ test("frozen accounting fixtures preserve exact kernel and local-adapter results
     ),
   );
   assert.equal(fixture.schemaVersion, "accounting-parity-fixture-v0.1");
-  assert.equal(fixture.cases.length, 6);
-  assert.equal(new Set(fixture.cases.map(({ id }) => id)).size, 6);
+  assert.equal(fixture.cases.length, 5);
+  assert.equal(new Set(fixture.cases.map(({ id }) => id)).size, 5);
 
   for (const item of fixture.cases) {
     const result = priceUsageEvent(item.kernelEvent, {

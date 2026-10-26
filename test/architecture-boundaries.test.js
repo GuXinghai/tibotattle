@@ -1338,12 +1338,12 @@ for (const fixture of [
   },
   {
     category: "source_owner_dependency_direction",
-    label: "cross-provider dependencies even through a reviewed facade",
+    label: "an unreviewed provider cannot depend on the reviewed Codex facade",
     files: {
-      "src/providers/claude/statusline.js":
-        "export const statusline = true;",
-      "src/providers/codex/client.js":
-        'import { statusline } from "../claude/statusline.js";',
+      "src/providers/codex/account.js":
+        "export const account = true;",
+      "src/providers/unreviewed/client.js":
+        'import { account } from "../codex/account.js";',
     },
   },
   {
@@ -1637,6 +1637,22 @@ test("structural source-owner and cycle categories cannot be baselined", async (
 
 test("the retired source ledger remains exact and normalized", () => {
   assert.deepEqual(RETIRED_PRODUCTION_SOURCE_PATHS, [
+    "src/application/claude-callback-capability.js",
+    "src/application/export-sources/claude-status-export.js",
+    "src/application/export-sources/claude-status-workspace.js",
+    "src/application/export-sources/claude-transcript-export.js",
+    "src/application/export-sources/claude-transcript-record.js",
+    "src/application/export-sources/claude-transcript-workspace.js",
+    "src/claude-callback-capability.js",
+    "src/claude-callback-lifecycle.js",
+    "src/claude-callback-runtime.js",
+    "src/claude-statusline-export-source.js",
+    "src/claude-statusline-storage.js",
+    "src/claude-statusline-workspace-source.js",
+    "src/claude-statusline.js",
+    "src/claude-transcript-export-source.js",
+    "src/claude-transcript-workspace-source.js",
+    "src/platform/claude-callback-lifecycle.js",
     "shared/quota-calibration.js",
     "shared/quota-rolling.js",
     "shared/quota-tracks.js",
@@ -1684,6 +1700,7 @@ test("the retired source ledger remains exact and normalized", () => {
   ]);
   assert.deepEqual(RETIRED_PRODUCTION_TREE_PATHS, [
     "apps/cloud-run",
+    "src/providers/claude",
   ]);
 });
 

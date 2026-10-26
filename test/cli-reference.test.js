@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { run } from "../src/cli.js";
+import { parseArgs, run } from "../src/cli.js";
 
 const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(TEST_DIRECTORY, "..");
@@ -34,7 +34,7 @@ test("maintained CLI reference exactly mirrors every CLI invocation", async () =
     repositoryFile("package.json"),
   ]);
   const sourceUsage = usageLines(source);
-  assert.equal(sourceUsage.length, 40, "review unexpected CLI surface change");
+  assert.equal(sourceUsage.length, 33, "review unexpected CLI surface change");
   assert.deepEqual(documentedUsageLines(markdown), sourceUsage);
   assert.equal(
     Object.hasOwn(JSON.parse(packageSource).scripts, "register-account"),
@@ -52,12 +52,32 @@ const RETIRED_CLI_COMMANDS = Object.freeze([
   "sync-contributions-status",
   "sync-contributions-pause",
   "sync-contributions-resume",
+  "benchmark-r7",
+  "inspect-claude-callback",
+  "install-claude-callback",
+  "uninstall-claude-callback",
+  "recover-claude-callback",
+  "rotate-claude-callback-identity",
+  "remove-claude-callback-identity",
 ]);
 
-test("retired enrollment and hosted delivery commands cannot be invoked", async () => {
+test("retired commands cannot be invoked", async () => {
   for (const command of RETIRED_CLI_COMMANDS) {
     await assert.rejects(run([command]), {
       message: `Unknown command: ${command}`,
     });
+  }
+});
+
+test("retired provider-specific CLI options are rejected during parsing", () => {
+  for (const args of [
+    ["export-set", "--workspace", "C:\\work", "--directory", "C:\\out", "--claude-status"],
+    ["export-set", "--workspace", "C:\\work", "--directory", "C:\\out", "--claude-state-dir", "C:\\state"],
+    ["export-set", "--workspace", "C:\\work", "--directory", "C:\\out", "--claude-usage"],
+    ["export-set", "--workspace", "C:\\work", "--directory", "C:\\out", "--claude-projects-dir", "C:\\projects"],
+    ["remove-claude-callback-identity", "--confirm-removal", "ABC"],
+    ["benchmark-r7", "--profile", "smoke", "--output", "C:\\receipt.json"],
+  ]) {
+    assert.throws(() => parseArgs(args), /Unknown argument:/u);
   }
 });

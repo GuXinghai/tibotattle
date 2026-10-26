@@ -164,8 +164,7 @@ const CONTRIBUTION_SCHEMA_VERSIONS = new Set([
 const CONTRIBUTION_POLICY_EPOCHS = new Set([
   "unknown",
   "openai_pre_agentic_pool_2026_07_09",
-  "openai_agentic_pool_2026_07_09",
-  "anthropic_unknown"
+  "openai_agentic_pool_2026_07_09"
 ]);
 const PARTICIPANT_CONSENT_VERSIONS = new Set([
   "synthetic-preview-v0.1",
@@ -1111,8 +1110,7 @@ export function normalizeContributionSyncPreview(payload) {
     && [
       "unknown",
       "openai_pre_agentic_pool_2026_07_09",
-      "openai_agentic_pool_2026_07_09",
-      "anthropic_unknown"
+      "openai_agentic_pool_2026_07_09"
     ].includes(item?.providerPolicyEpoch)
     && coveredStart && coveredEnd
     && Number.isFinite(Date.parse(coveredStart))
@@ -1727,7 +1725,7 @@ function normalizeAccountScopedQuotaAnalysis(payload) {
     const continuity = source?.continuity ?? {};
     const windowDurationMinutes = count(continuity.windowDurationMinutes, null);
     if (
-      !["openai_codex", "anthropic_claude_code"].includes(continuity.provider)
+      continuity.provider !== "openai_codex"
       || !isValidQuotaWindowDuration(windowDurationMinutes)
     ) {
       return [];
@@ -1819,7 +1817,7 @@ export function normalizeParticipantCommunityComparison(payload) {
   for (const candidate of payload.cells) {
     const provider = text(candidate?.provider, "");
     const modelId = text(candidate?.modelId, "");
-    if (!["openai_codex", "anthropic_claude_code"].includes(provider)
+    if (provider !== "openai_codex"
         || !modelId
         || typeof candidate?.participantHasActivity !== "boolean"
         || !candidate?.metrics

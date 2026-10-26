@@ -1,5 +1,3 @@
-import { REVIEWED_MODEL_CATALOG } from "./model-catalog.js";
-
 export const TELEMETRY_SCHEMA_VERSION = "telemetry-contribution-v0.1";
 export const TELEMETRY_CONTRIBUTION_SCHEMA_VERSION =
   TELEMETRY_SCHEMA_VERSION;
@@ -79,6 +77,9 @@ export const TELEMETRY_TOOL_CLASSES = Object.freeze([
   "unknown",
 ]);
 
+// Historical telemetry v0.x model vocabulary. Claude identities remain here only
+// so existing versioned contributions can be recognized; active model identity
+// and presentation use REVIEWED_MODEL_CATALOG, which is Codex-only.
 export const TELEMETRY_MODEL_IDS = Object.freeze([
   "unknown",
   "gpt-4.1",
@@ -95,11 +96,43 @@ export const TELEMETRY_MODEL_IDS = Object.freeze([
   "claude-opus-4-8",
   "claude-sonnet-4-6",
   "claude-sonnet-5",
-  // Append newly reviewed identities; never reorder the legacy vocabulary.
-  ...REVIEWED_MODEL_CATALOG.map((entry) => entry.id).filter((id) => ![
-    "gpt-4.1", "gpt-5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5",
-    "gpt-5.5-codex", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
-    "claude-fable-5", "claude-haiku-4-5-20251001", "claude-opus-4-8",
-    "claude-sonnet-4-6", "claude-sonnet-5",
-  ].includes(id)),
+  "codex-auto-review",
+  "gpt-4-turbo-2024-04-09",
+  "gpt-4.1-mini",
+  "gpt-4.1-nano",
+  "gpt-4o",
+  "gpt-4o-2024-05-13",
+  "gpt-4o-mini",
+  "gpt-5-codex",
+  "gpt-5-mini",
+  "gpt-5-nano",
+  "gpt-5-pro",
+  "gpt-5.1",
+  "gpt-5.1-codex",
+  "gpt-5.1-codex-mini",
+  "gpt-5.2",
+  "gpt-5.2-codex",
+  "gpt-5.2-pro",
+  "gpt-5.3-codex",
+  "gpt-5.3-codex-spark",
+  "gpt-5.4-nano",
+  "gpt-5.4-pro",
+  "gpt-5.5-pro",
+  "gpt-5.6-sol-wm",
+  "gpt-6-astra",
+  "o1",
+  "o1-pro",
+  "o3",
+  "o3-mini",
+  "o3-pro",
+  "o4-mini",
+  "gpt-6-sol",
+  "gpt-6-luna",
+  "gpt-6.1-astra",
+  "claude-fable-5-1",
+  "claude-mythos-5-1",
+  "claude-opus-5",
+  "claude-opus-5-5",
+  "gpt-6.1-sol",
+  "gpt-5.1-codex-max",
 ]);

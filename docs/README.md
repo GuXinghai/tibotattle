@@ -16,12 +16,12 @@ an informal archive.
 | Area | Authority | Boundary |
 |---|---|---|
 | Independent local product | [Stable identity and cloud retirement](./decisions/2026-10-23-local-product-identity-and-cloud-retirement.md) | Accepted local-product boundary; source retirement and migration implementation remain in progress; no remote-resource deletion |
+| Provider scope | [Codex-only product](./decisions/2026-10-27-codex-only-product.md) | Codex is the only supported usage provider; retained immutable legacy records are historical readback only; existing Claude state is untouched |
 | Local state cutover scope | [Usage-only state cutover](./decisions/2026-10-25-usage-only-state-cutover.md) | Owner-approved usage computation/history continuity only; X/UI/browser state stays untouched at the source and is not a migration prerequisite |
 | Platform scope | [Windows-only platform support](./decisions/2026-10-12-windows-only.md) | Accepted product scope: Windows x64 only; earlier macOS and Linux platform records are superseded and removed |
-| Claude Desktop prototype retirement | [Shadow prototype retirement](./decisions/2026-10-13-claude-desktop-shadow-retirement.md) | Accepted Windows-only source retirement; generic provider and hosted contracts remain, existing local prototype state is preserved |
 | 0.1.19 patches | [Model attribution and labels](./plans/2026-09-06-v0.1.19-model-attribution-and-labels.md) | Prepared model-inheritance and display patches; private history conservation verified, release pending |
 | Status | [Current product and release status](./current-status.md) | Commit- and date-stamped source, live-service, published-release, updater, and support snapshot; reverify before relying on it later |
-| Dashboard UI restructure | [Four-entry dashboard UI plan](./plans/2026-10-13-dashboard-ui-restructure.md), [Claude Code execution handoff](./plans/2026-10-13-claude-code-ui-handoff.md) | Owner-approved concept direction; planned navigation and presentation work with analytical-detail preservation, not implementation or release evidence |
+| Dashboard UI restructure | [Four-entry dashboard UI plan](./plans/2026-10-13-dashboard-ui-restructure.md) | Owner-approved concept direction; planned navigation and presentation work with analytical-detail preservation, not implementation or release evidence |
 | User help | [User guide](./user-guide.md) | Local setup, uncertainty, refresh/recovery, optional features, retained data and unconfigured updates/support |
 | Architecture | [System architecture](./reference/system-architecture.md) | Current components, trust boundaries, stores, identities, and data flow |
 | Privacy | [Local data, network, and privacy](./reference/local-data-and-privacy.md) | Exact source reads, local and hosted stores, Windows Credential Manager, network, retention, deletion, and uninstall boundaries |
@@ -48,7 +48,7 @@ an informal archive.
 | 0.1.27 build dependency exception | [Temporary HTTP cache advisory exception](./decisions/2026-10-03-v0-1-27-http-cache-advisory-exception.md) | Owner-approved root-lock-only exact-patch exception for GHSA-ch52-4w7c-c8xp; fails closed at 2026-10-10T00:00Z, with source/status and child-lock boundaries |
 | Early release qualification | [Synthetic admission and evidence reuse](./runbooks/release-qualification-admission.md) | Reviewed local proof cache and owning test lanes; not R7 or installed-app qualification |
 | Windows readiness | [Windows portability environments](./runbooks/2026-08-17-windows-portability-environments.md) | Development/qualification environments only; current release support is defined by the platform authority |
-| R7 evidence | [R7 release-evidence receipt maintenance](./runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md) | Staleness rule and protected dual-runtime regeneration; not a routine documentation check |
+| R7 evidence | [R7 evidence preservation and readback](./runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md) | Frozen v0.1 schema and receipt bytes are historical readback only; generation is retired and any remaining entrypoint must reject before fixture, repository-state, or provider-source access |
 
 ## Lifecycle evidence
 

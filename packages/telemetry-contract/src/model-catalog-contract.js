@@ -1,5 +1,4 @@
 import {
-  REVIEWED_CLAUDE_MODEL_IDS,
   REVIEWED_CODEX_MODEL_IDS,
   REVIEWED_MODEL_CATALOG,
   REVIEWED_MODEL_CATALOG_VERSION,
@@ -12,7 +11,7 @@ import {
 const REVIEWED_MODEL_ENTRY_KEYS = Object.freeze(
   ["id", "label", "provider", "allowanceTrack", "pricingStatus", "priceModelId"],
 );
-const REVIEWED_MODEL_PROVIDERS = Object.freeze(["openai_codex", "anthropic_claude_code"]);
+const REVIEWED_MODEL_PROVIDERS = Object.freeze(["openai_codex"]);
 const REVIEWED_ALLOWANCE_TRACKS = Object.freeze(["primary", "spark"]);
 const REVIEWED_PRICING_STATUSES = Object.freeze(["published", "assumed_alias", "unpriced"]);
 // `reviewedModelIdentity` refuses anything longer than 80 characters, so an
@@ -90,7 +89,6 @@ export function assertReviewedModelCatalogCompleteness({
   if (catalog === REVIEWED_MODEL_CATALOG) {
     for (const [provider, exported] of [
       ["openai_codex", REVIEWED_CODEX_MODEL_IDS],
-      ["anthropic_claude_code", REVIEWED_CLAUDE_MODEL_IDS],
     ]) {
       const expected = catalog
         .filter((entry) => entry.provider === provider)

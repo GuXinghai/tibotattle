@@ -178,6 +178,9 @@ function buildTupleFromSnapshot({
           },
         },
       },
+      // Retained to keep the versioned compatibility.schema.json v0.1
+      // tuple shape readable. This is historical wire-format metadata,
+      // not an available adapter or a supported source.
       anthropicClaudeCode: {
         status: "partial",
         capabilities: {

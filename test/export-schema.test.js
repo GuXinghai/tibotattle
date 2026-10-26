@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fc from "fast-check";
-import { exportRegistrySnapshot } from "../src/export/index.js";
+import {
+  TELEMETRY_PROVIDER_IDS, exportModelProvider, exportRegistrySnapshot, recognizedExportModelId,
+} from "../src/export/index.js";
 import { exportSchemas, validateExportRecord } from "../src/export-schema.js";
 import { exportCompatibilityTuple } from "../src/export-contract.js";
 
@@ -190,20 +193,20 @@ test("arbitrary source-like fields cannot pass the strict usage schema", () => {
   ), { numRuns: 100 });
 });
 
-test("reviewed registries and schemas expose the same closed model, limit, and diagnostic vocabularies", () => {
+test("the Codex registry stays within the unchanged historical schema vocabulary", () => {
   const registry = exportRegistrySnapshot();
-  assert.deepEqual(
-    exportSchemas.usageEvent.properties.modelId.enum,
-    // New export identities append to the combined vocabulary so existing
-    // Claude enum positions survive the addition of another Codex model.
-    [
-      "unknown",
-      ...registry.providers.openai_codex.modelIds.filter((model) => !["gpt-6.1-sol", "gpt-5.1-codex-max"].includes(model)),
-      ...registry.providers.anthropic_claude_code.modelIds,
-      "gpt-6.1-sol",
-      "gpt-5.1-codex-max",
-    ],
+  const historicalModelIds = exportSchemas.usageEvent.properties.modelId.enum;
+  // Preserve both the values and positions recorded before provider retirement.
+  assert.equal(
+    createHash("sha256").update(JSON.stringify(historicalModelIds)).digest("hex"),
+    "0eda40785735e36f956754ced532e805a3502f24e4dee32c8183acfa742fd89a",
   );
+  assert.deepEqual(TELEMETRY_PROVIDER_IDS, ["openai_codex"]);
+  assert.equal(recognizedExportModelId("claude-sonnet-5"), null);
+  assert.equal(exportModelProvider("claude-sonnet-5"), "unknown");
+  for (const id of registry.providers.openai_codex.modelIds) {
+    assert.ok(historicalModelIds.includes(id), `unversioned export model: ${id}`);
+  }
   assert.ok(registry.providers.openai_codex.modelIds.includes("gpt-6.1-sol"));
   assert.deepEqual(
     exportSchemas.quotaSnapshot.properties.limitId.enum,

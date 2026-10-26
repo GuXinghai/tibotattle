@@ -18,6 +18,38 @@ test("maintained product guidance identifies an unpublished local Windows produc
   assert.equal(distribution.PRODUCTION_ELECTRON_TARGETS["win32-x64"].feedURL, null);
 });
 
+test("maintained guidance enforces Codex-only provider scope without touching legacy state", async () => {
+  const [readme, guide, index, decision] = await Promise.all([
+    text("README.md"), text("docs/user-guide.md"), text("docs/README.md"),
+    text("docs/decisions/2026-10-27-codex-only-product.md"),
+  ]);
+  for (const source of [readme, guide, decision]) {
+    assert.match(source, /Codex is the only supported usage provider/u);
+  }
+  assert.ok(index.includes("2026-10-27-codex-only-product.md"));
+  assert.match(decision, /Do not run an uninstall or cleanup operation/u);
+  assert.match(decision, /Existing versioned generic telemetry\/export and provider-accounting snapshot\s+formats/u);
+  assert.match(decision, /does not change their original contract-status fields/u);
+  assert.doesNotMatch(decision, /Frozen generic telemetry\/export/u);
+  assert.match(decision, /resume fails closed/u);
+});
+
+test("R7 evidence stays frozen historical readback with generation retired", async () => {
+  const [decision, index, runbook, schemas] = await Promise.all([
+    text("docs/decisions/2026-10-27-codex-only-product.md"), text("docs/README.md"),
+    text("docs/runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md"),
+    text("docs/reference/schema-contracts.md"),
+  ]);
+  assert.match(decision, /R7 release-evidence v0\.1 schema requires Claude operation values and\s+fields/u);
+  assert.match(decision, /do not create a v0\.2 schema/u);
+  assert.match(decision, /must reject before it creates or reads a\s+fixture, reads or writes repository state, or reads a provider source/u);
+  assert.match(index, /R7 evidence preservation and readback[\s\S]+generation is retired/u);
+  assert.match(runbook, /There is no supported freshness, regeneration, recovery, or replacement\s+procedure/u);
+  assert.match(runbook, /must fail closed\s+before creating or reading fixtures/u);
+  assert.doesNotMatch(runbook, /scripts\/regenerate-r7-release-evidence\.js|chmod 600 generated/u);
+  assert.match(schemas, /frozen historical readback[\s\S]+no new receipt\/evidence generation or v0\.2 schema/u);
+});
+
 test("documented machine identity stays separate from presentation and migration", async () => {
   const [readme, architecture, plan] = await Promise.all([
     text("README.md"), text("docs/reference/system-architecture.md"),

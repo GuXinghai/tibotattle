@@ -3,7 +3,7 @@ title: Local Data, Network, and Privacy Inventory
 date: 2026-08-27
 type: reference
 status: maintained
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-27
 ---
 
 # Local data, network, and privacy inventory
@@ -110,10 +110,20 @@ refresh and background keepalive; user-triggered page reads remain available.
 | Codex selected-rollout store | `~/.codex/state_5.sqlite` | Read-only `threads.id` and `threads.rollout_path`, after owner/file/path validation, to select the physical head of a logical thread. | Only the validated selected rollout filename mapping needed during ingest. | Local filesystem only. | The app never edits Codex SQLite; selected source paths stay owner-only. |
 | Codex account/quota service | Local `codex app-server` subprocess using `account/read`, `account/rateLimits/read`, `account/usage/read`, and bounded update notifications | Current plan/account scope, quota windows, resets, credits-presence flags, and provider usage projection. | Sanitized quota/account observations and local-HMAC account scope. No Codex authentication token is copied. | Rhetrion talks to a local subprocess. If Codex itself cannot refresh its account evidence offline, Rhetrion records the source as unavailable/stale rather than inventing continuity. | Observations and identity state are preserved; unavailable credentials never authorize creating a replacement identity. |
 
-The normal installed refresh does **not** read Claude Desktop quota history,
-Claude prompt transcripts, Claude project files, or Gemini artifacts. Standalone
-Claude callback/export integrations have their own explicit CLI lifecycle; they
-are not enabled by a setting, route or upload surface in the installed companion.
+Codex is the only supported usage provider. Claude Code/Desktop collection,
+transcript ingestion/export, callback and status-line lifecycle, and
+Anthropic-specific pricing are retired. Existing versioned generic
+telemetry/export formats and provider-accounting snapshot formats are preserved
+only to identify or read already-retained bytes. Their original contract-status
+fields remain unchanged; preservation does not imply a frozen, published, or
+active contract. The one historical credential-audit pair (`owner=claude-callback`,
+`capability=claude_callback`) may be read under bounded historical contracts;
+the pair is read-only and cannot authorize new credential preparation or a
+lease. No status-line JSON or Claude settings reader remains. The product
+does not scan existing Claude profiles or settings to remove those integrations;
+existing profiles, ledgers, callback state, credentials and files remain
+untouched. Historical readback is not current provider support. See the
+[Codex-only provider decision](../decisions/2026-10-27-codex-only-product.md).
 
 Codex history discovery also recognizes cold `.jsonl.zst` representations. On
 native-Zstd-capable runtimes, bounded streaming decompression feeds the same
@@ -128,7 +138,6 @@ for runtime and resource limits.
 
 | Integration | Activation | Data boundary | Persistence |
 | --- | --- | --- | --- |
-| Managed Claude status-line callback | Explicit standalone CLI install/repair lifecycle | Bounded JSON status input through the managed local broker; projected status/usage fields only. | Managed callback state plus provider-isolated pseudonym capability. This is not an installed-app feature. |
 | Custom Codex home | User chooses a directory in Settings | It replaces the default Codex home anchor; the same fixed subpaths and allowlists apply. | Owner-only launcher setting. |
 | Local cache-drop thread links | Local interactive dashboard, for recent displayed drops only | Read-only bounded `session_index.jsonl` (`id`, `thread_name`, `updated_at`) and `state_5.sqlite` (`id`, explicit `name`, worker nickname, and allowlisted source ancestry). For a `guardian_review` row only, the first bounded `session_meta` header in its selected owner-controlled session may supply its matching explicit parent UUID after source and path validation. Never uses prompt-bearing `threads.title`, first messages, or transcripts. | Names and IDs exist only in a separate `no-store`, same-origin local response and transient UI memory, reused for unchanged displayed event pairs during refresh. No snapshot/cache/report/share-card/diagnostic/contribution persistence. Clicking hands only the canonical thread UUID to the local Codex URL handler. |
 | Export workspace | Explicit CLI or review flow | Only allowlisted metadata for the selected time range and sources. | Journaled workspace, chunks, manifest, and verification/deletion receipts at explicit paths. |
@@ -227,11 +236,6 @@ Rhetrion keeps separate credential capabilities for:
 - current account observation pseudonymity;
 - the retired paired contribution-device credential, preserved and not used by the desktop app.
 
-The managed Claude callback has a separate pseudonym capability contract. Its
-Windows production backend requires explicit readiness and adapter injection;
-the standalone CLI and callback defaults currently fail closed without that
-composition. It is not exposed by the desktop app.
-
 These installed-app capabilities are stored in Windows Credential Manager through
 the noninteractive native adapter. A content-free binding/renewal record lives under
 the app's user-data state root; it is not the credential. Keys are intentionally
@@ -263,7 +267,7 @@ unattributed records retain their original status. This does not grant productio
 updater, installer, or signing policy.
 
 The current desktop has no whole-profile erase or general identity-reset control.
-The explicit CLI export/callback identity operations are capability-specific;
+The explicit CLI export-identity operations are capability-specific;
 they are not permission to rotate the index salt or delete unrelated credentials.
 An unavailable Credential Manager entry is an availability condition, not proof
 of corruption or permission to replace it.
@@ -308,7 +312,7 @@ lifetime or successful deletion is promised here.
 | X cache clearing | Removes cached public-post payloads across X scopes while preserving X login metadata, settings and notification baselines. | Logout, Chrome cleanup or deletion of usage evidence. |
 | X logout | Clears the app's isolated X session. | Logout from Chrome, X-server data deletion or removal of the independent reading cache. |
 | CLI export deletion/workspace discard | Acts only on the exact reviewed export/workspace, confirmation token and recovery journal. | Analysis-index deletion, unrelated credential removal or remote erasure. |
-| CLI export/callback identity rotation or removal | The named capability, with its explicit confirmation and lifecycle contract. | Rotation of the local index salt or a whole-profile reset. |
+| CLI export identity rotation or removal | The named export capability, with its explicit confirmation and lifecycle contract. | Rotation of the local index salt or a whole-profile reset. |
 | Ordinary app uninstall | Packaging is configured to remove binaries while retaining AppData. | Local evidence or Credential Manager erasure; this source setting is not installed-uninstaller qualification. |
 
 The desktop provides no blanket **Erase local data** or **Reset identity and

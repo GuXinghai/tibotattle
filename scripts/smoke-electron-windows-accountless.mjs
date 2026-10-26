@@ -141,14 +141,14 @@ function assertDisposableFirstRunProfile(profile) {
   if (profile === null || typeof profile !== "object" || Array.isArray(profile)) {
     fail("FIRST_RUN_PROFILE_INVALID");
   }
-  const expected = ["root", "userData", "home", "codex", "claude", "tmp"];
+  const expected = ["root", "userData", "home", "codex", "tmp"];
   if (!expected.every((key) => typeof profile[key] === "string"
       && profile[key].length > 0
       && !profile[key].includes("\0")
       && win32.isAbsolute(profile[key]))) {
     fail("FIRST_RUN_PROFILE_INVALID");
   }
-  if (!["userData", "home", "codex", "claude", "tmp"].every(
+  if (!["userData", "home", "codex", "tmp"].every(
     (key) => pathUnderWindowsRoot(profile[key], profile.root),
   )) {
     fail("FIRST_RUN_PROFILE_INVALID");

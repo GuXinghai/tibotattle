@@ -1,8 +1,9 @@
 import {
   REVIEWED_CODEX_MODEL_IDS,
-  REVIEWED_CLAUDE_MODEL_IDS,
+  TELEMETRY_MODEL_IDS,
 } from "@app-usagemonitor/telemetry-contract";
 
+// These identify the existing v0.1 wire dictionary, not current provider support.
 export const TELEMETRY_V01_REGISTRY_VERSION = "telemetry-v0.1-registry-2026-10-19.1";
 export const TELEMETRY_V01_REVIEWED_AT = "2026-10-19";
 
@@ -35,8 +36,6 @@ export const OPENAI_CODEX_LIMIT_IDS = Object.freeze([
   "codex-spark",
 ]);
 
-export const ANTHROPIC_CLAUDE_MODEL_IDS = REVIEWED_CLAUDE_MODEL_IDS;
-
 export const EXPORT_DIAGNOSTIC_CODES = Object.freeze([
   "collector_empty_lines",
   "collector_irrelevant_records",
@@ -62,15 +61,13 @@ export const EXPORT_DIAGNOSTIC_CODES = Object.freeze([
 ]);
 
 export const TELEMETRY_PROVIDER_IDS = Object.freeze([
-  "anthropic_claude_code",
   "openai_codex",
 ]);
 
-const modelIds = new Set([...OPENAI_CODEX_MODEL_IDS, ...ANTHROPIC_CLAUDE_MODEL_IDS]);
+const modelIds = new Set(OPENAI_CODEX_MODEL_IDS);
 const limitIds = new Set(OPENAI_CODEX_LIMIT_IDS);
 const providerByModelId = new Map([
   ...OPENAI_CODEX_MODEL_IDS.map((id) => [id, "openai_codex"]),
-  ...ANTHROPIC_CLAUDE_MODEL_IDS.map((id) => [id, "anthropic_claude_code"]),
 ]);
 const providerByLimitId = new Map(
   OPENAI_CODEX_LIMIT_IDS.map((id) => [id, "openai_codex"]),
@@ -79,14 +76,9 @@ const codexModelIds = new Set(OPENAI_CODEX_MODEL_IDS);
 const codexUnpricedModelIds = new Set(OPENAI_CODEX_UNPRICED_MODEL_IDS);
 
 export function recognizedExportModelId(value) {
-  if (typeof value !== "string") return null;
-  const normalized = value.toLowerCase();
-  return modelIds.has(normalized) ? normalized : null;
+  return recognizedCodexModelId(value);
 }
 
-// Codex-scoped recognition. Deliberately narrower than
-// `recognizedExportModelId`: the local Codex surfaces must not start naming a
-// Claude identifier just because the shared export registry knows it.
 export function recognizedCodexModelId(value) {
   if (typeof value !== "string") return null;
   const normalized = value.toLowerCase();
@@ -121,12 +113,9 @@ export function codexModelApiPriceEquivalentApplicable(value) {
 }
 
 /**
- * The reviewed model-identity -> provider mapping, and the limit-identity one
- * for records that carry no model. "unknown" is a deliberate value rather than
- * a fallback to whichever provider happens to dominate the corpus: an
- * identifier this registry has never reviewed must not be attributed to a
- * vendor by guess. Transport admission does not depend on either function —
- * an unreviewed identifier still ships, labelled honestly.
+ * The reviewed Codex model-identity -> provider mapping, and the limit-identity
+ * one for records that carry no model. "unknown" is deliberate; an identifier
+ * this registry has never reviewed must not be attributed by guess.
  */
 export function exportModelProvider(value) {
   if (typeof value !== "string") return "unknown";
@@ -146,6 +135,9 @@ export function recognizedExportLimitId(value) {
   return limitIds.has(normalized) ? normalized : "unknown";
 }
 
+// Only the compatibility tuple consumes this historical serialized dictionary.
+// Product dispatch uses TELEMETRY_PROVIDER_IDS and the Codex-only recognizers.
+// Retaining its identifiers does not register a reader, price card or adapter.
 export function exportRegistrySnapshot() {
   return {
     schemaVersion: TELEMETRY_V01_REGISTRY_VERSION,
@@ -156,7 +148,10 @@ export function exportRegistrySnapshot() {
         modelIds: [...OPENAI_CODEX_MODEL_IDS],
         limitIds: [...OPENAI_CODEX_LIMIT_IDS],
       },
-      anthropic_claude_code: { modelIds: [...ANTHROPIC_CLAUDE_MODEL_IDS], limitIds: [] },
+      anthropic_claude_code: {
+        modelIds: TELEMETRY_MODEL_IDS.filter(id => id.startsWith("claude-")).sort(),
+        limitIds: [],
+      },
     },
     diagnosticCodes: [...EXPORT_DIAGNOSTIC_CODES],
   };

@@ -1,16 +1,20 @@
 ---
 title: Current product and qualification status
-date: 2026-10-23
+date: 2026-10-27
 type: status
 status: current
-source_commit: 63e8753a27a0da0c67d8ddd3226df4dd855ad055
-observation_date: 2026-10-23
+source_commit: 15776b672ec562cd9fdbac83cbe317bee081d811
+observation_date: 2026-10-27
 ---
 
 # Current product and qualification status
 
 衡川 · Rhetrion is an independent, unpublished local Windows x64 product.
 Source version 0.1.27 is a development identifier, not a published release.
+Codex is the only supported usage provider. The owner accepted the
+[Codex-only scope](./decisions/2026-10-27-codex-only-product.md) on this date;
+source cleanup, old-format readback boundaries, and owning validation remain
+in progress. The decision is not implementation or release evidence.
 The [identity and cloud-retirement decision](./decisions/2026-10-23-local-product-identity-and-cloud-retirement.md)
 supersedes inherited service and publication wiring. No download website,
 update feed, signing account or external support destination is configured.
@@ -41,4 +45,6 @@ Current work and exact outstanding gates are tracked in the
 [cutover plan](./plans/2026-10-23-rhetrion-brand-identity-and-local-state-cutover.md).
 Passing a source gate never proves physical Windows, packaged, installed,
 signed-release, updater or public deployment behavior. Retained historical
-receipts apply only to their own original project, source, bytes and dates.
+receipts apply only to their own original project, source, bytes and dates. No
+user-owned Claude profile/source content, settings, ledger, callback state,
+credential, or file has been inspected, moved, or cleaned up for this decision.

@@ -25,11 +25,6 @@ export {
   createExportCompatibilityContext,
 } from "./export-compatibility.js";
 export {
-  ClaudeCallbackCapabilityError,
-  createClaudeCallbackCapabilityContext,
-  selectProductionClaudeCallbackBackend,
-} from "./claude-callback-capability.js";
-export {
   selectProductionParticipantIdentity,
 } from "./production-participant-identity.js";
 export {

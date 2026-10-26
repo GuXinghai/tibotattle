@@ -19,9 +19,7 @@ const QUOTA_SENSITIVITY_EXPORTS = [
 ];
 const APPLICATION_PUBLIC_EXPORTS = [
   ...QUOTA_SENSITIVITY_EXPORTS,
-  "ClaudeCallbackCapabilityError",
   "USAGE_EXPLAINER_SCHEMA_VERSION",
-  "createClaudeCallbackCapabilityContext",
   "createExportCompatibilityContext",
   "createLocalContributionSyncQueueContext",
   "createLocalExportArtifactStorageContext",
@@ -46,7 +44,6 @@ const APPLICATION_PUBLIC_EXPORTS = [
   "validateWorkUsageQuery",
   "fitUsageExplanationEnvelope",
   "selectProductionParticipantIdentity",
-  "selectProductionClaudeCallbackBackend",
   "usageExplanationCatalog",
 ].sort();
 const PRODUCTION_EXTENSIONS = new Set([

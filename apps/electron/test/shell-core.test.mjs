@@ -158,7 +158,6 @@ function qualificationProfileEnvironment(root = "C:\\qualification-profile") {
     APPDATA: `${root}\\appdata`,
     LOCALAPPDATA: `${root}\\localappdata`,
     CODEX_HOME: `${root}\\codex`,
-    CLAUDE_CONFIG_DIR: `${root}\\claude`,
     XDG_CONFIG_HOME: `${root}\\config`,
     XDG_DATA_HOME: `${root}\\data`,
     XDG_CACHE_HOME: `${root}\\cache`,
@@ -1040,7 +1039,6 @@ test("companion supervisor owns one child, injects a parent contract, and strips
       PRIVATE_CANARY: "must-not-escape",
       PATH: "/safe/path",
       CODEX_HOME: "/safe/codex",
-      CLAUDE_CONFIG_DIR: "/safe/claude",
       USAGE_MONITOR_CENTRAL_ORIGIN: "http://127.0.0.1:8792",
       APP_USAGEMONITOR_EXPORT_SECRET: "secret-must-not-escape",
       APP_USAGEMONITOR_ACCOUNT_HMAC_KEY: "hmac-must-not-escape",
@@ -1068,7 +1066,6 @@ test("companion supervisor owns one child, injects a parent contract, and strips
   assert.equal(spawnCalls[0].options.env.PRIVATE_CANARY, undefined);
   assert.equal(spawnCalls[0].options.env.PATH, "/safe/path");
   assert.equal(spawnCalls[0].options.env.CODEX_HOME, "/safe/codex");
-  assert.equal(spawnCalls[0].options.env.CLAUDE_CONFIG_DIR, "/safe/claude");
   assert.equal(
     spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN,
     undefined,

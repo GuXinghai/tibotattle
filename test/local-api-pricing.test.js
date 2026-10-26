@@ -4,13 +4,11 @@ import {
   addUsdStrings,
   aggregateLocalApiPriceResults,
   apiPriceResolutionSummary,
-  priceClaudeUsageRecord,
   priceCodexProviderToolUnits,
   priceCodexUsageEvent,
 } from "../packages/accounting/index.js";
 import {
   codexProviderBillableToolUnits,
-  summarizeClaudeApiPriceRecords,
 } from "../packages/accounting/src/local-api-pricing.js";
 
 test("Codex defaults to event-time history while retaining explicit current sensitivity", () => {
@@ -259,26 +257,6 @@ test("Codex pricing prefers canonical totalInputContextTokens for the exact long
   assert.match(result.selectedPriceCardId, /:long-(?:through-2026-07-29|from-2026-07-30):/);
 });
 
-test("Claude canonical records retain cache TTL and combined-output semantics", () => {
-  const result = priceClaudeUsageRecord({
-    eventTime: "2026-07-25T15:00:00.000Z",
-    modelRecognition: "recognized",
-    modelId: "claude-sonnet-4-6",
-    totalInputContextTokens: 3_000_000,
-    components: {
-      inputUncachedTokens: 1_000_000,
-      inputCacheReadTokens: 1_000_000,
-      inputCacheWriteTokens: 1_000_000,
-      inputCacheWrite5mTokens: 500_000,
-      inputCacheWrite1hTokens: 500_000,
-      outputCombinedTokens: 1_000_000,
-    },
-  });
-  assert.equal(result.coverageStatus, "fully_priced");
-  assert.equal(result.totalUsd, "23.175");
-  assert.equal(result.components.find((component) => component.name === "output_combined_tokens").pricedAs, "output_text_tokens");
-});
-
 test("typed provider tool units price separately from client tool classes", () => {
   const units = codexProviderBillableToolUnits({
     responses_web_search_call: 2,
@@ -392,44 +370,6 @@ test("noncanonical historical event times fail closed instead of selecting a car
       timestamp,
     );
   }
-});
-
-test("Claude record summaries expose exact per-model coverage", () => {
-  const base = {
-    eventTime: "2026-07-25T15:00:00.000Z",
-    modelRecognition: "recognized",
-    modelId: "claude-sonnet-4-6",
-    totalInputContextTokens: 10,
-  };
-  const summary = summarizeClaudeApiPriceRecords([
-    {
-      ...base,
-      components: {
-        inputUncachedTokens: 10,
-        inputCacheReadTokens: 0,
-        inputCacheWriteTokens: 0,
-        inputCacheWrite5mTokens: 0,
-        inputCacheWrite1hTokens: 0,
-        outputCombinedTokens: 2,
-      },
-    },
-    {
-      ...base,
-      components: {
-        inputUncachedTokens: 10,
-        inputCacheReadTokens: 0,
-        inputCacheWriteTokens: 5,
-        inputCacheWrite5mTokens: null,
-        inputCacheWrite1hTokens: null,
-        outputCombinedTokens: 2,
-      },
-    },
-  ]);
-  assert.equal(summary.eventCount, 2);
-  assert.equal(summary.coverageCounts.fullyPriced, 1);
-  assert.equal(summary.coverageCounts.partiallyPriced, 1);
-  assert.equal(summary.byModel["claude-sonnet-4-6"].events, 2);
-  assert.equal(typeof summary.totalUsd, "string");
 });
 
 test("resolution summary binds method and official registry without claiming an observed API tier", () => {

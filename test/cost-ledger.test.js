@@ -37,17 +37,12 @@ const OPENAI_STANDARD = card({
   ],
 });
 
-const ANTHROPIC_STANDARD = card({
-  id: "anthropic:claude-test:standard",
-  provider: "anthropic",
-  model: "claude-test",
+const OPENAI_TOOL_CARD = card({
+  id: "openai:gpt-test:tool-units",
+  provider: "openai",
+  model: "gpt-test",
   tier: "standard",
   components: [
-    component("input_uncached_tokens", "3"),
-    component("input_cache_read_tokens", "0.3"),
-    component("input_cache_write_tokens", "3.75"),
-    component("input_cache_write_1h_tokens", "6"),
-    component("output_text_tokens", "15"),
     component("web_search_units", "10", "search", "1000"),
   ],
 });
@@ -94,49 +89,6 @@ test("prices every OpenAI token component and preserves exact decimals plus reas
   assert.equal(reasoning.metadata.priced_as_component, "output_text_tokens");
   assert.equal(reasoning.metadata.fallback_reason, "no_separate_reasoning_price");
   assert.equal(typeof result.totalUsd, "string");
-});
-
-test("maps Anthropic combined output to ordinary output without inventing a text/reasoning split", () => {
-  const result = priceUsageEvent({
-    provider: "anthropic",
-    model: "claude-test",
-    components: {
-      inputUncachedTokens: "1000000",
-      inputCacheReadTokens: "1000000",
-      inputCacheWriteTokens: "2000000",
-      inputCacheWrite5mTokens: "1000000",
-      inputCacheWrite1hTokens: "1000000",
-      outputCombinedTokens: "1000000",
-    },
-  }, { priceCards: [ANTHROPIC_STANDARD] });
-
-  assert.equal(result.coverageStatus, "fully_priced");
-  assert.equal(result.totalUsd, "28.05");
-  const output = result.components.find((item) => item.name === "output_combined_tokens");
-  assert.equal(output.pricedAs, "output_text_tokens");
-  assert.equal(output.metadata.output_split_invented, false);
-  assert.equal(output.metadata.pricing_policy, "anthropic_combined_output_priced_as_ordinary_output");
-  assert.equal(result.components.some((item) => item.name === "output_reasoning_tokens"), false);
-});
-
-test("does not assume missing Anthropic 1h cache writes are zero", () => {
-  const result = priceUsageEvent({
-    provider: "anthropic",
-    model: "claude-test",
-    components: {
-      inputUncachedTokens: "1000000",
-      inputCacheWriteTokens: "1000000",
-      inputCacheWrite5mTokens: "1000000",
-      outputCombinedTokens: "1000000",
-    },
-  }, { priceCards: [ANTHROPIC_STANDARD] });
-
-  assert.equal(result.coverageStatus, "partially_priced");
-  assert.equal(result.totalUsd, "18");
-  const cacheWrite = result.components.find((item) => item.name === "anthropic_input_cache_write_unsplit_tokens");
-  assert.equal(cacheWrite.pricingStatus, "unpriced");
-  assert.equal(cacheWrite.reasonCode, "anthropic_cache_write_ttl_split_missing");
-  assert.ok(result.warnings.coverage.some((item) => item.code === "anthropic_cache_write_ttl_split_missing"));
 });
 
 test("unavailable components remain unavailable and an observed total-input context still selects thresholds", () => {
@@ -255,32 +207,43 @@ test("unknown models and positive components fail closed while non-coverage warn
 
 test("prices tool usage only for an exact provider-billable unit", () => {
   const base = {
-    provider: "anthropic",
-    model: "claude-test",
+    provider: "openai",
+    model: "gpt-test",
     components: {},
   };
   const exact = priceUsageEvent({
     ...base,
     billableToolUnits: [{
-      provider: "anthropic",
+      provider: "openai",
       name: "web_search_units",
       quantity: "1000",
       unit: "search",
       billingSource: "provider",
     }],
-  }, { priceCards: [ANTHROPIC_STANDARD] });
+  }, { priceCards: [OPENAI_TOOL_CARD] });
   assert.equal(exact.coverageStatus, "fully_priced");
   assert.equal(exact.totalUsd, "10");
 
   for (const item of [
-    { provider: "openai", name: "web_search_units", quantity: "1", unit: "search", billingSource: "provider" },
-    { provider: "anthropic", name: "web_search_units", quantity: "1", unit: "search", billingSource: "inferred" },
-    { provider: "anthropic", name: "unknown_tool_units", quantity: "1", unit: "custom", billingSource: "provider" },
+    { provider: "unsupported_provider", name: "web_search_units", quantity: "1", unit: "search", billingSource: "provider" },
+    { provider: "openai", name: "web_search_units", quantity: "1", unit: "search", billingSource: "inferred" },
+    { provider: "openai", name: "unknown_tool_units", quantity: "1", unit: "custom", billingSource: "provider" },
   ]) {
-    const result = priceUsageEvent({ ...base, billableToolUnits: [item] }, { priceCards: [ANTHROPIC_STANDARD] });
+    const result = priceUsageEvent({ ...base, billableToolUnits: [item] }, { priceCards: [OPENAI_TOOL_CARD] });
     assert.equal(result.coverageStatus, "unpriced");
     assert.equal(result.totalUsd, "0");
   }
+});
+
+test("unsupported provider token components remain explicit and unpriced", () => {
+  const result = priceUsageEvent({
+    provider: "unsupported_provider",
+    model: "provider_model",
+    components: { input_uncached_tokens: "1000000" },
+  }, { priceCards: [OPENAI_STANDARD] });
+  assert.equal(result.coverageStatus, "unpriced");
+  assert.equal(result.totalUsd, "0");
+  assert.equal(result.components[0].reasonCode, "unsupported_provider");
 });
 
 test("unknown provider-billable units remain explicit and unpriced", () => {

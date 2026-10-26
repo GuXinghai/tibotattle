@@ -201,6 +201,18 @@ test("builder removes private scopes, normalizes components, and prices usage", 
   }
 });
 
+test("new contribution construction rejects non-Codex provider records", () => {
+  for (const input of [
+    bundle({ usageEvents: [usage(1, { provider: "legacy_provider" })] }),
+    bundle({ quotaSnapshots: [{ ...quota(1), provider: "legacy_provider" }] }),
+  ]) {
+    assert.throws(
+      () => buildTelemetryContributionsFromBundle(input),
+      (error) => error.code === "provider_unsupported",
+    );
+  }
+});
+
 test("builder preserves exact Ultrafast API valuation and leaves unsupported Sol unpriced", () => {
   const eventTime = "2026-09-29T20:00:00.000Z";
   const input = bundle({ quotaSnapshots: [], usageEvents: [usage(1, {

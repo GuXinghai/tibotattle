@@ -54,6 +54,7 @@ export const TELEMETRY_TOOL_CLASSES: readonly [
 export type TelemetryToolClass =
   typeof TELEMETRY_TOOL_CLASSES[number];
 
+/** Frozen v0.x recognition enum; legacy IDs are not part of the active catalog. */
 export const TELEMETRY_MODEL_IDS: readonly [
   "unknown",
   "gpt-4.1",
@@ -112,18 +113,30 @@ export const TELEMETRY_MODEL_IDS: readonly [
 ];
 export type TelemetryModelId = typeof TELEMETRY_MODEL_IDS[number];
 
+type ReviewedCodexModelId = Exclude<TelemetryModelId,
+  | "unknown"
+  | "claude-fable-5"
+  | "claude-fable-5-1"
+  | "claude-haiku-4-5-20251001"
+  | "claude-mythos-5-1"
+  | "claude-opus-4-8"
+  | "claude-opus-5"
+  | "claude-opus-5-5"
+  | "claude-sonnet-4-6"
+  | "claude-sonnet-5"
+>;
+
 export interface ReviewedModelIdentity {
-  readonly id: Exclude<TelemetryModelId, "unknown">;
+  readonly id: ReviewedCodexModelId;
   readonly label: string;
-  readonly provider: "openai_codex" | "anthropic_claude_code";
+  readonly provider: "openai_codex";
   readonly allowanceTrack: "primary" | "spark";
   readonly pricingStatus: "published" | "assumed_alias" | "unpriced";
-  readonly priceModelId: Exclude<TelemetryModelId, "unknown"> | null;
+  readonly priceModelId: ReviewedCodexModelId | null;
 }
-export const REVIEWED_MODEL_CATALOG_VERSION: "reviewed-model-catalog-2026-10-19.1";
+export const REVIEWED_MODEL_CATALOG_VERSION: "reviewed-model-catalog-2026-10-27.1";
 export const REVIEWED_MODEL_CATALOG: readonly ReviewedModelIdentity[];
-export const REVIEWED_CODEX_MODEL_IDS: readonly Exclude<TelemetryModelId, "unknown">[];
-export const REVIEWED_CLAUDE_MODEL_IDS: readonly Exclude<TelemetryModelId, "unknown">[];
+export const REVIEWED_CODEX_MODEL_IDS: readonly ReviewedCodexModelId[];
 export function reviewedModelIdentity(value: unknown): ReviewedModelIdentity | null;
 export type ReviewedModelVocabularyEntry =
   Omit<ReviewedModelIdentity, "label">;
@@ -729,7 +742,7 @@ export function telemetryV12DomainManifestDigestInput(value: TelemetryV12DomainM
 export const PERFORMANCE_RECORD_SCHEMA_VERSION: "model-performance-daily-v1";
 export const PERFORMANCE_MEASUREMENT_VERSION: "model-performance-samples-v1";
 export const PERFORMANCE_BUCKET_SCHEME_VERSION: "performance-histogram-v1";
-export const PERFORMANCE_FIELD_DICTIONARY_VERSION: "telemetry-performance-registry-2026-09-29.1";
+export const PERFORMANCE_FIELD_DICTIONARY_VERSION: "telemetry-performance-registry-2026-10-27.1";
 export const PERFORMANCE_PRIVACY_CONTRACT_VERSION: "privacy-safe-model-performance-v1";
 export const PERFORMANCE_CONTRACT_STATE: "staged";
 export const PERFORMANCE_HISTOGRAM_SCHEMA_VERSION: "performance-histogram-v1";

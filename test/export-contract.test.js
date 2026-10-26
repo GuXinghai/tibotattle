@@ -76,12 +76,15 @@ test("privacy verification rejects a schema-valid compatibility mutation", async
   }
 });
 
-test("a declared partial Claude provider passes when no unsupported record family is observed", async () => {
+test("the active privacy verifier rejects a retired provider declaration", async () => {
   const result = await emptyBundle();
   try {
     const mutated = structuredClone(result.bundle);
     mutated.sourceProviders.push("anthropic_claude_code");
-    assert.equal(verifyPrivacySafeBundle(mutated).verdict, "passed");
+    assert.throws(
+      () => verifyPrivacySafeBundle(mutated),
+      /provider_adapter_compatibility/u,
+    );
   } finally {
     await rm(result.home, { recursive: true, force: true });
   }

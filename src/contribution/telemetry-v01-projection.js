@@ -1,6 +1,5 @@
 import {
   addUsdStrings,
-  priceClaudeUsageRecord,
   priceCodexUsageEvent,
 } from "@app-usagemonitor/accounting";
 
@@ -108,15 +107,6 @@ function priceUsage(record, components) {
           || record.apiServiceTier === "batch"
           ? record.apiServiceTier
           : "standard",
-        priceEpochBasis: "event_time",
-      });
-    }
-    if (record.provider === "anthropic_claude_code") {
-      return priceClaudeUsageRecord({
-        ...record,
-        components,
-      }, {
-        apiServiceTier: "standard",
         priceEpochBasis: "event_time",
       });
     }
@@ -260,7 +250,6 @@ function providerPolicyEpoch(bundle) {
     ...bundle.records.quotaSnapshots.map((record) => record.provider),
   ]);
   if (providers.size !== 1) return "unknown";
-  if (providers.has("anthropic_claude_code")) return "anthropic_unknown";
   if (!providers.has("openai_codex")) return "unknown";
   const start = Date.parse(bundle.coveredAt.startAt);
   const end = Date.parse(bundle.coveredAt.endAt);
@@ -288,6 +277,13 @@ function assertTransportProjection(value) {
 export function buildTelemetryContributionsFromBundle(bundle) {
   if (!bundle || bundle.schemaVersion !== "usage-metadata-bundle-v0.1") {
     throw fixedError("bundle_invalid");
+  }
+  const providerRecords = [
+    ...(bundle.records?.usageEvents ?? []),
+    ...(bundle.records?.quotaSnapshots ?? []),
+  ];
+  if (providerRecords.some((record) => record.provider !== "openai_codex")) {
+    throw fixedError("provider_unsupported");
   }
   const entries = [
     ...bundle.records.usageEvents.map((record) => ({

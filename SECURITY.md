@@ -23,6 +23,14 @@ The local refresh reads selected Codex session folders, local Codex
 configuration and lineage state, the installed Codex app-server account/quota
 methods, and owner-only derived state. Undisclosed source access, retention of prompt/response content, unsafe derived artifacts, or unintended network transmission is in scope.
 
+Codex is the only supported usage provider. Claude Code/Desktop collection,
+transcript ingestion, callbacks, pricing and related UI are retired. This source
+change does not inspect or modify existing Claude profiles, settings, ledgers,
+callback state or credentials; it does not authorize uninstall or cleanup.
+Already-retained immutable legacy records may be read back only as historical
+evidence, not as active provider support. See the
+[Codex-only provider decision](docs/decisions/2026-10-27-codex-only-product.md).
+
 Desktop usage analysis stays local and sends no usage data. Community sharing, contribution upload, and Rhetrion hosted sign-in were removed on 2026-10-13 ([decision](docs/decisions/2026-10-13-desktop-sharing-removal.md)). The optional [X reader](docs/decisions/2026-10-20-optional-x-reader.md) uses a separate authenticated session and protected public-post cache; its network requests do not contain local usage data. The earlier [accountless Electron sharing policy](docs/decisions/2026-09-04-accountless-sharing-policy.md) is historical.
 
 The interactive local cache-drop tables also resolve explicit display names,

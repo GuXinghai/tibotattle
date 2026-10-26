@@ -3,14 +3,20 @@
 Rhetrion is a private, local coding-agent usage dashboard for Windows x64.
 It reads bounded Codex usage/account observations and shows recorded usage,
 quota movement, cache behavior, and estimates with their coverage and uncertainty.
+Codex is the only supported usage provider. Existing versioned legacy formats
+are preserved for historical readback only; that preservation does not change
+their contract status or enable collection, publication, or runtime support.
+Claude collection, integrations, pricing, and UI are retired. Existing Claude
+profiles and settings are left untouched.
 It is not a provider billing system or an authoritative quota formula.
 
 This independent product is under development and has not been published.
 The repository has no configured download website, hosted contribution service,
 signing account, or update feed. Older Git history and retained evidence describe
 an earlier project; they do not establish a Rhetrion release or deployment.
-See the [current status](docs/current-status.md) and
-[identity decision](docs/decisions/2026-10-23-local-product-identity-and-cloud-retirement.md).
+See the [current status](docs/current-status.md),
+[identity decision](docs/decisions/2026-10-23-local-product-identity-and-cloud-retirement.md),
+and [Codex-only provider decision](docs/decisions/2026-10-27-codex-only-product.md).
 
 ## Local behavior and privacy
 

@@ -14,7 +14,8 @@ import { recognizedCodexModelId, codexModelPricingStatus, codexModelAllowanceTra
 import { telemetryV01Golden } from "./fixtures/telemetry-contract-vectors.mjs";
 
 test("reviewed identity catalog covers priced OpenAI models and explicit aliases, never provider tools", () => {
-  const models = REVIEWED_MODEL_CATALOG.filter((entry) => entry.provider === "openai_codex");
+  const models = REVIEWED_MODEL_CATALOG;
+  assert.equal(models.every((entry) => entry.provider === "openai_codex"), true);
   const priced = new Set(APP_OFFICIAL_PRICE_CARDS.filter((card) => card.provider === "openai"
     && card.model !== "openai-provider-tools").flatMap((card) => [card.model, ...(card.aliases ?? [])]));
   assert.deepEqual(models.filter((entry) => entry.pricingStatus !== "unpriced").map((entry) => entry.id).sort(), [...priced].sort());
@@ -41,7 +42,7 @@ test("reviewed identity catalog covers priced OpenAI models and explicit aliases
   }
 });
 
-test("package, browser and closed upload schemas preserve all reviewed models and provider boundaries", async () => {
+test("active catalog is Codex-only while frozen telemetry enums retain legacy IDs", async () => {
   assert.deepEqual(browser.REVIEWED_MODEL_CATALOG, REVIEWED_MODEL_CATALOG);
   assert.deepEqual(browser.TELEMETRY_MODEL_IDS, TELEMETRY_MODEL_IDS);
   // Existing enum positions remain stable; newly reviewed identities append.
@@ -56,6 +57,8 @@ test("package, browser and closed upload schemas preserve all reviewed models an
     "gpt-6.1-astra", "claude-fable-5-1", "claude-mythos-5-1",
     "claude-opus-5", "claude-opus-5-5", "gpt-6.1-sol", "gpt-5.1-codex-max",
   ]);
+  assert.equal(reviewedModelIdentity("claude-sonnet-5"), null);
+  assert.equal(browser.reviewedModelIdentity("claude-sonnet-5"), null);
   const schema = JSON.parse(await readFile(new URL("../packages/telemetry-contract/schemas/v0.2/usage-event.schema.json", import.meta.url), "utf8"));
   assert.deepEqual([...schema.properties.modelId.enum].sort(), [...TELEMETRY_MODEL_IDS].sort());
   const validateId = new Ajv().compile(schema.properties.modelId);
@@ -71,11 +74,31 @@ test("package, browser and closed upload schemas preserve all reviewed models an
   for (const modelId of ["gpt-6t", "o3-private", "unknown-model-content"]) assert.equal(validateId(modelId), false);
 });
 
+test("the frozen v0.1 parser still reads legacy provider bytes outside the active catalog", () => {
+  const legacy = telemetryV01Golden();
+  const event = legacy.usageEvents[0];
+  event.provider = "anthropic_claude_code";
+  event.modelId = "claude-sonnet-5";
+  event.billingSurface = "claude_subscription";
+  event.components.outputTextTokens = null;
+  event.components.outputReasoningTokens = null;
+  event.components.outputCombinedTokens = 1100;
+  const quota = legacy.quotaSnapshots[0];
+  quota.provider = "anthropic_claude_code";
+  quota.limitId = "unknown";
+  quota.snapshotSource = "status_line";
+  quota.providerSurface = "general_usage";
+  legacy.providerPolicyEpoch = "anthropic_unknown";
+
+  assert.equal(reviewedModelIdentity(event.modelId), null);
+  assert.equal(parseTelemetryContribution(legacy), legacy);
+});
+
 test("requested effort mapping is model-specific and does not assert cache or effective update state", () => {
   for (const [model, effort, expected] of [
     ["gpt-6-astra", "ultra", "xhigh"], ["gpt-6-astra", "max", "max"],
     ["gpt-6-astra", "xhigh", "xhigh"], ["gpt-5.6-sol", "ultra", "max"],
-    ["gpt-6t", "ultra", "ultra"], ["claude-sonnet-5", "ultra", "ultra"],
+    ["gpt-6t", "ultra", "ultra"], ["unreviewed-model", "ultra", "ultra"],
     ["gpt-6-astra", "custom-private", null],
   ]) {
     assert.equal(codexRequestReasoningEffort(model, effort), expected);

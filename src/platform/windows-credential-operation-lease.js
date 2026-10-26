@@ -30,32 +30,27 @@ const RELEASE_RESULTS = new Set(["released", "completed", "failed", "aborted"]);
 export const WINDOWS_CREDENTIAL_CAPABILITY_OWNERS = Object.freeze({
   exportIdentity: "participant-identity",
   accountObservation: "account-observation",
-  claudeSessionPseudonym: "claude-callback",
   contributionDevice: "contribution-device",
 });
 
 const OWNER_FOR_CAPABILITY = new Map([
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity, WINDOWS_CREDENTIAL_CAPABILITY_OWNERS.exportIdentity],
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation, WINDOWS_CREDENTIAL_CAPABILITY_OWNERS.accountObservation],
-  [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym, WINDOWS_CREDENTIAL_CAPABILITY_OWNERS.claudeSessionPseudonym],
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice, WINDOWS_CREDENTIAL_CAPABILITY_OWNERS.contributionDevice],
 ]);
 const LABEL_FOR_CAPABILITY = new Map([
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity, "export_identity"],
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation, "account_observation"],
-  [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym, "claude_callback"],
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice, "contribution_device"],
 ]);
 const MUTEX_ID_FOR_CAPABILITY = new Map([
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity, 0],
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation, 1],
-  [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym, 2],
   [EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice, 3],
 ]);
 const CAPABILITIES = Object.freeze([
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity,
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation,
-  EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.claudeSessionPseudonym,
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice,
 ]);
 

@@ -26,8 +26,6 @@ const SAFE_RECORD_EXPORTS = [
   "createEmptySafeToolClassCounts",
   "diagnosticsFromCodexScan",
   "normalizeActivityMarker",
-  "normalizeClaudeStatusQuotaSnapshots",
-  "normalizeClaudeTranscriptUsageCandidate",
   "normalizeCodexCollectorQuotaCandidate",
   "normalizeCodexQuotaSnapshot",
   "normalizeCodexUsageEvent",
@@ -168,7 +166,7 @@ test("metadata owner directions stay runtime-neutral", async () => {
   const applicationImports = await extractEsmImports(application);
   assert.deepEqual(
     applicationImports.map(({ specifier }) => specifier).sort(),
-    ["../export/index.js", "../providers/claude/statusline.js", "./local-codex-log-scanner.js", "node:util/types"],
+    ["../export/index.js", "./local-codex-log-scanner.js", "node:util/types"],
   );
   assert.equal(platformPorts.includes("../export/"), false);
   assert.equal(platformPorts.includes("../application/"), false);

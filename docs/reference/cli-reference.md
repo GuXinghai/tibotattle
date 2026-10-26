@@ -3,12 +3,14 @@ title: Command-Line Reference
 date: 2026-08-27
 type: reference
 status: maintained
-last_reviewed: 2026-10-23
+last_reviewed: 2026-10-27
 ---
 
 # Command-line reference
 
 `usage-monitor` is the repository's local research, export and collection CLI.
+Codex is its only supported usage provider. Claude callback, transcript,
+collection, and pricing commands and options are retired.
 The Rhetrion desktop app does not require users to run these commands. Command
 coverage is checked against `src/cli.js` by
 `test/cli-reference.test.js`; the CLI's own usage output remains the authority
@@ -99,21 +101,14 @@ Never use deletion or discard commands against an unresolved path, an only copy
 of evidence, or a workspace owned by another running process. Inspect first and
 retain the generated receipt.
 
-## Claude callback lifecycle
+## Retained historical exports
 
-| Command | Purpose | Safety boundary |
-| --- | --- | --- |
-| `inspect-claude-callback` | Inspect the managed Claude callback capability. | Read-only, content-free status. |
-| `install-claude-callback` | Install the managed callback capability. | Changes only the reviewed local Claude integration boundary. |
-| `uninstall-claude-callback` | Remove the installed callback while retaining recoverable identity state. | Scoped lifecycle operation. |
-| `recover-claude-callback` | Forward-recover an interrupted callback lifecycle. | Uses the managed journal/state. |
-| `rotate-claude-callback-identity` | Rotate the callback identity. | Explicit confirmation required. |
-| `remove-claude-callback-identity` | Remove retained callback identity state. | Two-step removal token required. |
-
-These callback commands manage an explicit optional local integration. They do
-not enable a Claude source, quota route, dashboard, or upload surface in the
-installed companion; the shipping boundary is recorded in
-[`local-data-and-privacy.md`](./local-data-and-privacy.md).
+Previously persisted records in existing versioned legacy formats may be
+inspected only as historical readback. Existing export workspaces with a retired Claude source
+plan can be inspected, but cannot be resumed; refusal occurs before new source
+path reads. The CLI does not install, uninstall, repair, rotate, remove, or
+clean up Claude callback state, profiles, settings, or credentials. See the
+[Codex-only provider decision](../decisions/2026-10-27-codex-only-product.md).
 
 ## Retired hosted commands
 
@@ -142,7 +137,6 @@ authorizes wiping AppData or deleting the unified index.
 | Command | Purpose | Safety boundary |
 | --- | --- | --- |
 | `experiment` | Validate or run a manifest-defined experiment. | Dry by default; live execution requires `--execute-live`, and the manifest still bounds every action. |
-| `benchmark-r7` | Run a named synthetic R7 benchmark profile. | Release profiles are protected evidence workflows; normal development uses the smoke profile only. |
 
 ## Exact invocation synopsis
 
@@ -163,7 +157,7 @@ usage-monitor mark-activity --surface SURFACE --state start|end|pulse [--experim
 usage-monitor inspect-export --since ISO_TIMESTAMP --until ISO_TIMESTAMP [--codex-home PATH] [--activity-file PATH] [--secret-file PATH]
 usage-monitor export-local --since ISO_TIMESTAMP --until ISO_TIMESTAMP --output PATH [--receipt PATH] [--codex-home PATH] [--activity-file PATH] [--secret-file PATH]
 usage-monitor verify-bundle --input PATH [--receipt PATH]
-usage-monitor export-set --workspace PATH --directory PATH [--resume] [--since ISO_TIMESTAMP --until ISO_TIMESTAMP] [--codex-home PATH] [--collector-file PATH] [--claude-status | --claude-state-dir PATH] [--claude-usage] [--claude-projects-dir PATH] [--activity-file PATH] [--secret-file PATH] [--max-records-per-chunk N] [--max-bundle-bytes N] [--max-artifact-bytes N]
+usage-monitor export-set --workspace PATH --directory PATH [--resume] [--since ISO_TIMESTAMP --until ISO_TIMESTAMP] [--codex-home PATH] [--collector-file PATH] [--activity-file PATH] [--secret-file PATH] [--max-records-per-chunk N] [--max-bundle-bytes N] [--max-artifact-bytes N]
 usage-monitor inspect-export-workspace --workspace PATH
 usage-monitor verify-export-set --directory PATH
 usage-monitor delete-local-export --workspace PATH --directory PATH [--confirm-deletion TOKEN]
@@ -172,13 +166,6 @@ usage-monitor discard-export-workspace --workspace PATH [--confirm-discard TOKEN
 usage-monitor recover-export-workspace-discard --workspace PATH
 usage-monitor recover-exports --directory PATH
 usage-monitor rotate-local-identity [--secret-file PATH] [--confirm]
-usage-monitor inspect-claude-callback
-usage-monitor install-claude-callback
-usage-monitor uninstall-claude-callback
-usage-monitor recover-claude-callback
-usage-monitor rotate-claude-callback-identity [--confirm]
-usage-monitor remove-claude-callback-identity [--confirm-removal TOKEN]
-usage-monitor benchmark-r7 --profile smoke|release_synthetic_semantics|release_synthetic_pressure|release_materialized_boundaries --output PATH
 usage-monitor collect-once [--stale-after-ms N] [--no-refresh] [--backfill] [--state-file PATH]
 usage-monitor collect-foreground [--stale-after-ms N] [--reconciliation-ms N] [--duration-ms N] [--state-file PATH]
 usage-monitor collector-state-status [--state-file PATH] [--json]
@@ -190,6 +177,6 @@ usage-monitor migrate-corrections [--observations PATH] [--transitions PATH] [--
 ```
 
 The removed `register-account` package script and command are not part of the
-CLI. No enrollment or delivery replacement is configured. The maintained test
-checks all 40 synopsis lines exactly and verifies that the retired commands
-cannot be invoked.
+CLI. No enrollment or delivery replacement is configured. The maintained CLI
+reference tests match synopsis lines against the current source and verify that
+retired commands and options cannot be invoked.

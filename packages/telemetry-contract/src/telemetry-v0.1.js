@@ -1,5 +1,3 @@
-import { REVIEWED_CODEX_MODEL_IDS, REVIEWED_CLAUDE_MODEL_IDS } from "./model-catalog.js";
-
 import {
   MAX_TELEMETRY_BROWSER_BYTES,
   TELEMETRY_MODEL_IDS,
@@ -25,8 +23,13 @@ import {
 } from "./primitives.js";
 
 const MODEL_IDS = new Set(TELEMETRY_MODEL_IDS);
-const OPENAI_MODELS = new Set(["unknown", ...REVIEWED_CODEX_MODEL_IDS]);
-const CLAUDE_MODELS = new Set(["unknown", ...REVIEWED_CLAUDE_MODEL_IDS]);
+// The v0.1 parser is retained for historical readback. These sets are not the
+// active provider/model catalog used by new collection or projection paths.
+const OPENAI_MODELS = new Set(TELEMETRY_MODEL_IDS.filter((id) => !id.startsWith("claude-")));
+const LEGACY_CLAUDE_MODELS = new Set([
+  "unknown",
+  ...TELEMETRY_MODEL_IDS.filter((id) => id.startsWith("claude-")),
+]);
 const ACTIVITY_SURFACES = new Set([
   "chatgpt_chat",
   "chatgpt_web",
@@ -288,7 +291,7 @@ function validateUsage(value) {
       && value.components.inputCacheWrite5mTokens === null
       && value.components.inputCacheWrite1hTokens === null;
   }
-  return CLAUDE_MODELS.has(value.modelId)
+  return LEGACY_CLAUDE_MODELS.has(value.modelId)
     && value.billingSurface === "claude_subscription"
     && value.apiServiceTier === "unknown"
     && value.reasoningEffort === "unknown"

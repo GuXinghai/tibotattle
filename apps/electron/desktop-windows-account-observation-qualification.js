@@ -55,7 +55,6 @@ const QUALIFICATION_PROFILE_PATHS = Object.freeze([
   Object.freeze(["APPDATA", "appdata"]),
   Object.freeze(["LOCALAPPDATA", "localappdata"]),
   Object.freeze(["CODEX_HOME", "codex"]),
-  Object.freeze(["CLAUDE_CONFIG_DIR", "claude"]),
   Object.freeze(["XDG_CONFIG_HOME", "config"]),
   Object.freeze(["XDG_DATA_HOME", "data"]),
   Object.freeze(["XDG_CACHE_HOME", "cache"]),

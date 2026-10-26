@@ -682,7 +682,7 @@ test("loopback server exposes only fixed API, static, and report routes", async 
     assert.match(await canonicalReport.text(), /Canonical gradient detail/);
 
     for (const retiredPath of [
-      "/api/local/claude/quota",
+      "/api/local/unsupported-provider/quota",
       "/api/local/reports",
       "/api/local/contribution/preview",
       "/api/local/contribution/sync-once",
@@ -2235,24 +2235,6 @@ test("production root environment keeps writable state outside resources", async
     }
   } finally {
     await app.close();
-    await rm(files.root, { recursive: true });
-  }
-});
-
-test("retired Claude Desktop configuration cannot activate collection", async () => {
-  const files = await fixture();
-  let invoked = false;
-  try {
-    const app = createLocalCompanionServer({
-      environment: { USERPROFILE: files.root, CLAUDE_CONFIG_DIR: "relative-config", CLAUDE_PROJECT_DIR: "relative-project" },
-      resourceRoot: files.resourceRoot, stateRoot: files.stateRoot, codexHome: files.codexHome,
-      staticRoot: files.staticRoot, dataStore: fakeStore(), refreshRunner: async () => ({}),
-      claudeShadowEnabled: true,
-      claudeShadowControllerFactory() { invoked = true; throw new Error("Retired collection must not run"); },
-    });
-    assert.equal(app.server.listening, false);
-    assert.equal(invoked, false);
-  } finally {
     await rm(files.root, { recursive: true });
   }
 });

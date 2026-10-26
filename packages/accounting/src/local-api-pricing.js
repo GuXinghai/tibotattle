@@ -1,4 +1,4 @@
-import { addUsdStrings, aggregateCostResults, priceUsageEvent } from "./cost-ledger.js";
+import { aggregateCostResults, priceUsageEvent } from "./cost-ledger.js";
 import {
   APP_OFFICIAL_PRICE_CARDS,
   APP_PRICE_REGISTRY_MANIFEST,
@@ -95,42 +95,6 @@ export function priceCodexUsageEvent(event, {
   return { ...result, methodVersion: LOCAL_API_PRICING_METHOD_VERSION, registry: registry.manifest };
 }
 
-export function priceClaudeUsageRecord(record, {
-  priceCards = null,
-  priceEpochBasis = "event_time",
-  apiServiceTier = "standard",
-  region = null,
-} = {}) {
-  if (!record || typeof record !== "object") throw new TypeError("Claude usage record is required");
-  const registry = priceCardsAndManifest(priceCards);
-  const epoch = priceEpoch({ eventTime: record.eventTime, priceEpochBasis });
-  const components = record.components ?? {};
-  const result = priceUsageEvent({
-    provider: "anthropic",
-    model: record.modelRecognition === "recognized" ? record.modelId : "unknown",
-    surface: "anthropic.messages",
-    apiTier: apiServiceTier,
-    pricedAt: epoch.pricedAt,
-    ...(region ? { region } : {}),
-    totalInputContextTokens: record.totalInputContextTokens,
-    components: {
-      inputUncachedTokens: components.inputUncachedTokens,
-      inputCacheReadTokens: components.inputCacheReadTokens,
-      inputCacheWriteTokens: components.inputCacheWriteTokens,
-      inputCacheWrite5mTokens: components.inputCacheWrite5mTokens,
-      inputCacheWrite1hTokens: components.inputCacheWrite1hTokens,
-      outputCombinedTokens: components.outputCombinedTokens,
-    },
-  }, {
-    priceCards: registry.priceCards,
-    pricingContext: {
-      priceEpochBasis: epoch.priceEpochBasis,
-      ...(epoch.historicalPriceReasonCode ? { historicalPriceReasonCode: epoch.historicalPriceReasonCode } : {}),
-    },
-  });
-  return { ...result, methodVersion: LOCAL_API_PRICING_METHOD_VERSION, registry: registry.manifest };
-}
-
 export function codexProviderBillableToolUnits(serverBillableUnits) {
   if (!serverBillableUnits || typeof serverBillableUnits !== "object" || Array.isArray(serverBillableUnits)) {
     return [];
@@ -200,40 +164,6 @@ export function aggregateLocalApiPriceResults(results) {
     ...aggregate,
     methodVersion: LOCAL_API_PRICING_METHOD_VERSION,
     registry: results[0]?.registry ?? APP_PRICE_REGISTRY_MANIFEST,
-  };
-}
-
-export function summarizeClaudeApiPriceRecords(records, options = {}) {
-  if (!Array.isArray(records)) throw new TypeError("Claude usage records must be an array");
-  const results = records.map((record) => priceClaudeUsageRecord(record, options));
-  const aggregate = aggregateLocalApiPriceResults(results);
-  const byModel = {};
-  for (let index = 0; index < records.length; index += 1) {
-    const record = records[index];
-    const priced = results[index];
-    const model = record.modelRecognition === "recognized" ? record.modelId : "unknown";
-    const summary = byModel[model] ??= {
-      events: 0,
-      totalUsdExact: "0",
-      fullyPricedEvents: 0,
-      partiallyPricedEvents: 0,
-      unpricedEvents: 0,
-    };
-    summary.events += 1;
-    summary.totalUsdExact = addUsdStrings(summary.totalUsdExact, priced.totalUsd);
-    if (priced.coverageStatus === "fully_priced") summary.fullyPricedEvents += 1;
-    else if (priced.coverageStatus === "partially_priced") summary.partiallyPricedEvents += 1;
-    else summary.unpricedEvents += 1;
-  }
-  return {
-    ...aggregate,
-    provider: "anthropic_claude_code",
-    byModel,
-    assumptions: [
-      "Claude combined output is priced at the ordinary output-token rate without inventing text or reasoning shares.",
-      "Cache writes are priced only when both five-minute and one-hour quantities are structurally available and reconcile to the aggregate.",
-      "Subscription speed is not interpreted as an Anthropic API service tier; Standard API pricing is the default counterfactual.",
-    ],
   };
 }
 

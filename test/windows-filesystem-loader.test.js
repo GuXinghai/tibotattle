@@ -612,7 +612,6 @@ test("verified producer claims compose the qualification context and protected f
         USERPROFILE: "C:\\qualification\\home",
         HOME: "C:\\qualification\\home",
         CODEX_HOME: "C:\\qualification\\codex",
-        CLAUDE_CONFIG_DIR: "C:\\qualification\\claude",
         USAGE_MONITOR_STATE_ROOT: "C:\\qualification\\state",
       },
     });

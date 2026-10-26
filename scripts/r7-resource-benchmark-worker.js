@@ -2,12 +2,9 @@
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { BundleVerificationError } from "../src/bundle-verifier.js";
-import { ClaudeCallbackLifecycleError } from "../src/claude-callback-lifecycle.js";
 import { ExportSourcePlanError } from "../src/export-source-plan.js";
 import { ExportSourcePlanBundleError } from "../src/export-source-plan-bundle.js";
 import { CodexCollectorExportSourceError } from "../src/codex-collector-export-source.js";
-import { ClaudeStatusLedgerExportSourceError } from "../src/claude-statusline-export-source.js";
-import { ClaudeTranscriptExportSourceError } from "../src/claude-transcript-export-source.js";
 import { ExportCompressionError } from "../src/export-compression.js";
 import { ExportResourceLimitError } from "../src/export-resource-policy.js";
 import {
@@ -22,10 +19,6 @@ import {
   localExportWorkspace,
   localExportWorkspaceDiscard,
 } from "../src/local-node-runtime.js";
-import {
-  recoverClaudeCallbackLifecycle,
-  uninstallClaudeCallback,
-} from "../src/claude-callback-lifecycle.js";
 import { stableJson } from "../src/storage.js";
 import {
   R7_WORKER_DEFAULT_MAXIMUM_STDIN_BYTES,
@@ -41,8 +34,6 @@ const OPERATIONS = new Set([
   "complete_set_delete_recovery",
   "workspace_discard",
   "workspace_discard_recovery",
-  "claude_callback_uninstall",
-  "claude_callback_recovery",
 ]);
 
 const {
@@ -81,9 +72,7 @@ function safeInteger(value) {
 export function fixedOperationFailureCode(error) {
   if (error instanceof ExportSourcePlanError
       || error instanceof ExportSourcePlanBundleError
-      || error instanceof CodexCollectorExportSourceError
-      || error instanceof ClaudeStatusLedgerExportSourceError
-      || error instanceof ClaudeTranscriptExportSourceError) {
+      || error instanceof CodexCollectorExportSourceError) {
     return "source_integrity";
   }
   const systemCode = typeof error?.code === "string" ? error.code : "";
@@ -93,7 +82,6 @@ export function fixedOperationFailureCode(error) {
   }
   const fixedErrors = [
     BundleVerificationError,
-    ClaudeCallbackLifecycleError,
     ExportCompressionError,
     ExportDeletionError,
     ExportDeletionExecutionError,
@@ -234,8 +222,6 @@ function workspaceOptions(config, secret) {
     ...options,
     codexHome: config.codexHome,
     collectorPath: config.collectorPath,
-    claudeStateDirectory: config.claudeStateDirectory,
-    claudeProjectsDirectory: config.claudeProjectsDirectory,
   };
 }
 
@@ -391,34 +377,6 @@ async function perform(config, secret) {
       sourceLogsPreserved: receipt.sourceLogsPreserved,
       identityStatePreserved: receipt.identityStatePreserved,
       independentOutputPreserved: receipt.independentOutputPreserved,
-    };
-  }
-  if (config.operation === "claude_callback_uninstall") {
-    const value = await uninstallClaudeCallback({
-      settingsFile: config.settingsFile,
-      lifecycleDirectory: config.lifecycleDirectory,
-      installedStatusLine: config.installedStatusLine,
-    });
-    return {
-      ...emptyEvidence(),
-      operationEvidenceSha256: sha256(stableJson(value)),
-      sourceLogsPreserved: true,
-      identityStatePreserved: value.capabilityPreserved,
-      independentOutputPreserved: true,
-    };
-  }
-  if (config.operation === "claude_callback_recovery") {
-    const value = await recoverClaudeCallbackLifecycle({
-      settingsFile: config.settingsFile,
-      lifecycleDirectory: config.lifecycleDirectory,
-      installedStatusLine: config.installedStatusLine,
-    });
-    return {
-      ...emptyEvidence(),
-      operationEvidenceSha256: sha256(stableJson(value)),
-      sourceLogsPreserved: true,
-      identityStatePreserved: true,
-      independentOutputPreserved: true,
     };
   }
   throw new TypeError("Unknown benchmark operation");

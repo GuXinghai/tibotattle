@@ -6,7 +6,6 @@ import { localSafeRecords } from "../src/local-node-runtime.js";
 import { deriveEventOccurrenceId, deriveSessionScopeId } from "../src/export-identity.js";
 
 const {
-  normalizeClaudeStatusQuotaSnapshots,
   normalizeCodexCollectorQuotaCandidate,
 } = localSafeRecords;
 
@@ -116,105 +115,31 @@ test("privacy gate accepts the implemented OpenAI collector quota family", () =>
   assert.equal(verifyPrivacySafeBundle(bundleWithQuota(snapshot)).verdict, "passed");
 });
 
-test("privacy gate accepts Claude quota records under the partial provider adapter", () => {
-  const [snapshot] = normalizeClaudeStatusQuotaSnapshots(SECRET, {
-    schemaVersion: "0.2",
-    kind: "claude_rate_limit_snapshot",
-    provider: "anthropic_claude_code",
-    capturedAt: "2026-07-24T12:02:00.000Z",
-    clientVersion: "2.1.0",
-    modelId: "claude_sonnet",
-    fastMode: false,
-    sessionPseudonym: `claude-session:v1:${"D".repeat(43)}`,
-    limits: {
-      fiveHour: { windowMinutes: 300, usedPercent: 8, resetsAt: 1_785_000_000 },
-      sevenDay: null,
-    },
-    privacy: {
-      rawSessionIdentifierStored: false,
-      transcriptPathStored: false,
-      workspaceStored: false,
-      conversationContentStored: false,
-      accountIdentifierStored: false,
-      repositoryMetadataStored: false,
-    },
-  }, { physicalOccurrenceMaterial: `claude-ledger-occurrence:v1:${"E".repeat(43)}` });
-  assert.equal(verifyPrivacySafeBundle(bundleWithQuota(snapshot)).verdict, "passed");
-});
-
-test("privacy gate accepts Claude usage events under the implemented transcript adapter", () => {
-  const usage = {
-    schemaVersion: "usage-event-v0.1",
-    eventTime: "2026-07-24T12:02:00.000Z",
-    provider: "anthropic_claude_code",
-    modelId: "unknown",
-    modelRecognition: "missing",
-    modelFingerprint: null,
-    billingSurface: "claude_subscription",
-    speedMode: "unknown",
-    apiServiceTier: "unknown",
-    reasoningEffort: "unknown",
-    components: {
-      inputUncachedTokens: 10,
-      inputCacheReadTokens: 20,
-      inputCacheWriteTokens: 30,
-      inputCacheWrite5mTokens: 30,
-      inputCacheWrite1hTokens: 0,
-      outputTextTokens: null,
-      outputReasoningTokens: null,
-      outputCombinedTokens: 40,
-    },
-    totalInputContextTokens: 60,
-    surface: "local_rollout_unclassified",
-    agentScope: "unknown",
-    lineageDisposition: "standalone",
-    toolClassCounts: {
-      webSearch: 0,
-      fileSearch: 0,
-      codeInterpreter: 0,
-      hostedShell: 0,
-      computerUse: 0,
-      mcp: 0,
-      applyPatch: 0,
-      localShell: 0,
-      subagent: 0,
-      toolGateway: 0,
-      other: 0,
-      unknown: 0,
-    },
-    outcome: "unknown",
-    eventId: `event:v2:${"f".repeat(64)}`,
-    sessionScopeId: `session:v1:${"0".repeat(64)}`,
-    accountScopeId: "unattributed",
-  };
-  assert.equal(verifyPrivacySafeBundle(bundleWithUsage(usage)).verdict, "passed");
-});
-
 test("hex-derived identifiers pass the scanner and credential-shaped ID values fail closed", () => {
   const usage = {
     schemaVersion: "usage-event-v0.1",
     eventTime: "2026-07-24T12:02:00.000Z",
-    provider: "anthropic_claude_code",
-    modelId: "unknown",
-    modelRecognition: "missing",
+    provider: "openai_codex",
+    modelId: "gpt-5.6-sol",
+    modelRecognition: "recognized",
     modelFingerprint: null,
-    billingSurface: "claude_subscription",
-    speedMode: "unknown",
+    billingSurface: "chatgpt_subscription",
+    speedMode: "standard",
     apiServiceTier: "unknown",
     reasoningEffort: "unknown",
     components: {
       inputUncachedTokens: 1,
       inputCacheReadTokens: 0,
       inputCacheWriteTokens: 0,
-      inputCacheWrite5mTokens: 0,
-      inputCacheWrite1hTokens: 0,
-      outputTextTokens: null,
-      outputReasoningTokens: null,
-      outputCombinedTokens: 1,
+      inputCacheWrite5mTokens: null,
+      inputCacheWrite1hTokens: null,
+      outputTextTokens: 1,
+      outputReasoningTokens: 0,
+      outputCombinedTokens: null,
     },
     totalInputContextTokens: 1,
-    surface: "local_rollout_unclassified",
-    agentScope: "unknown",
+    surface: "local_interactive_unclassified",
+    agentScope: "root",
     lineageDisposition: "standalone",
     toolClassCounts: {
       webSearch: 0, fileSearch: 0, codeInterpreter: 0, hostedShell: 0,

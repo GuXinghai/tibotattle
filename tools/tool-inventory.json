@@ -667,7 +667,7 @@
         "test/r7-materialized-boundary-benchmark.test.js",
         "test/r7-release-evidence-schema.test.js"
       ],
-      "decision": "retain_without_modification_until_r7_source_freeze",
+      "decision": "retain_codex_worker_utilities_and_historical_receipt_validation",
       "provenance": null,
       "provenanceReason": "R7 receipts bind this worker through source inventory, but no dated narrative artifact directly identifies the worker path.",
       "legacyPaths": []
@@ -717,21 +717,6 @@
       "decision": "retain_as_internal_test_support",
       "provenance": null,
       "provenanceReason": "Test-only failure injection has no standalone provenance artifact.",
-      "legacyPaths": []
-    },
-    {
-      "classification": "build_release_operation",
-      "owner": "claude_provider_test_infrastructure",
-      "canonicalPath": "scripts/test-fixtures/claude-callback-existing-status-process.js",
-      "stableAlias": null,
-      "stableAliasReason": "Fixture process is launched only by Claude callback runtime tests.",
-      "additionalAliases": [],
-      "callers": [
-        "test/claude-callback-runtime.test.js"
-      ],
-      "decision": "retain_as_internal_test_support",
-      "provenance": null,
-      "provenanceReason": "Test-only callback fixture has no standalone provenance artifact.",
       "legacyPaths": []
     },
     {

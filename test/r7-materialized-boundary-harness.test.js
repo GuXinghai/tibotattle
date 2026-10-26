@@ -238,7 +238,6 @@ test("R7 materialized boundary harness executes content-free producer and verifi
   const serialized = JSON.stringify(value);
   assert.equal(serialized.includes("R7_SYNTHETIC_CONTENT_CANARY_NEVER_EXPORT"), false);
   assert.equal(serialized.includes("codex-home"), false);
-  assert.equal(serialized.includes("claude-projects"), false);
   assert.equal(serialized.includes(process.env.USER ?? "__missing_user__"), false);
   assert.equal(serialized.includes("/var/"), false);
   assert.equal(serialized.includes("/tmp/"), false);

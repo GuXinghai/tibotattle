@@ -28,9 +28,17 @@ export const WINDOWS_CREDENTIAL_OPERATION_AUDIT_MAXIMUM_PENDING_ROWS = 16;
 export const WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS = Object.freeze([
   Object.freeze({ owner: "participant-identity", capability: "export_identity" }),
   Object.freeze({ owner: "account-observation", capability: "account_observation" }),
+  // Read-only compatibility for audit rows already written by the retired
+  // Claude callback. This pair remains in the v1 SQLite constraint so opening
+  // the existing audit file never requires rewriting or dropping those rows.
   Object.freeze({ owner: "claude-callback", capability: "claude_callback" }),
   Object.freeze({ owner: "contribution-device", capability: "contribution_device" }),
 ]);
+
+const ACTIVE_AUDIT_CAPABILITY_PAIRS = Object.freeze(
+  WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS
+    .filter(({ owner }) => owner !== "claude-callback"),
+);
 
 const OPERATIONS = new Set(["create", "replace", "delete"]);
 const RESULTS = new Set([
@@ -54,11 +62,11 @@ const UUID_PATTERN = /^[0-9a-f-]{36}$/iu;
 const MAXIMUM_PATH_LENGTH = 4_096;
 
 const OWNER_BY_CAPABILITY = new Map(
-  WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS
+  ACTIVE_AUDIT_CAPABILITY_PAIRS
     .map(({ owner, capability }) => [capability, owner]),
 );
 const CAPABILITY_BY_OWNER = new Map(
-  WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS
+  ACTIVE_AUDIT_CAPABILITY_PAIRS
     .map(({ owner, capability }) => [owner, capability]),
 );
 

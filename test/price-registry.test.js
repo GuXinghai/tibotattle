@@ -9,7 +9,6 @@ import {
   priceUsageEvent,
 } from "../packages/accounting/index.js";
 import {
-  ANTHROPIC_OFFICIAL_PRICE_CARDS,
   APP_PRICE_REGISTRY_SHA256,
   NORMALIZED_PRICE_EVIDENCE_ROWS,
   OPENAI_OFFICIAL_PRICE_CARDS,
@@ -26,7 +25,7 @@ function price({ provider, model, tier = "standard", pricedAt = "2026-07-26", co
     usageLedger: {
       schema_version: "0.1",
       provider,
-      surface: provider === "openai" ? "openai.responses" : "anthropic.messages",
+      surface: "openai.responses",
       model: { requested: model },
       context: {
         service_tier: tier,
@@ -50,14 +49,15 @@ function price({ provider, model, tier = "standard", pricedAt = "2026-07-26", co
 
 test("registry validates and preserves exact decimal strings and provenance", () => {
   assert.equal(validateOfficialPriceRegistry(), APP_OFFICIAL_PRICE_CARDS);
+  assert.equal(APP_OFFICIAL_PRICE_CARDS.every((card) => card.provider === "openai"), true);
   assert.equal(OPENAI_OFFICIAL_PRICE_CARDS.length, 170);
-  assert.equal(ANTHROPIC_OFFICIAL_PRICE_CARDS.length, 17);
+  assert.equal(PROVIDER_TOOL_PRICE_CARDS.length, 1);
   const batch54 = OPENAI_OFFICIAL_PRICE_CARDS.find((card) => card.model === "gpt-5.4" && card.service_tier === "batch");
   assert.equal(batch54.components.find((item) => item.usage_component === "input_cache_read_tokens").price.amount, "0.13");
   assert.match(batch54.metadata.provenance.evidence_sha256, /^[a-f0-9]{64}$/);
   assert.match(APP_PRICE_REGISTRY_SHA256, /^[a-f0-9]{64}$/);
   assert.equal(APP_PRICE_REGISTRY_MANIFEST.sha256, APP_PRICE_REGISTRY_SHA256);
-  assert.equal(APP_PRICE_REGISTRY_MANIFEST.sources.length, 7);
+  assert.equal(APP_PRICE_REGISTRY_MANIFEST.sources.length, 5);
   assert.equal(batch54.metadata.provenance.vendor_effective_from, null);
   assert.equal(OPENAI_PRICE_EVIDENCE_START_DATE, "2026-07-26");
   assert.equal(batch54.effective.from, undefined);
@@ -69,10 +69,6 @@ test("registry validates and preserves exact decimal strings and provenance", ()
     sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.openai),
     APP_PRICE_REGISTRY_MANIFEST.sources.find((source) => source.provider === "openai").evidenceSha256,
   );
-  assert.equal(
-    sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.anthropic),
-    APP_PRICE_REGISTRY_MANIFEST.sources.find((source) => source.provider === "anthropic").evidenceSha256,
-  );
   assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS), APP_PRICE_REGISTRY_SHA256);
   assert.equal(
     sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.openaiAstra),
@@ -81,10 +77,9 @@ test("registry validates and preserves exact decimal strings and provenance", ()
   // Later model additions must not change the provenance bytes of legacy cards.
   assert.equal(
     sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => ![
-      "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "claude-fable-5-1",
-      "claude-mythos-5-1", "claude-opus-5", "claude-opus-5-5", "gpt-5.1-codex-max",
+      "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-5.1-codex-max",
     ].includes(card.model))),
-    "0a5879e981f20f1d244ef193427cf198199bd5e7fd407eca4c0ae48f11d717ac",
+    "ed6259cf730144202bf1e427fe719eef92516a4d68188d6a7979a7f4654105ba",
   );
 });
 
@@ -98,7 +93,7 @@ test("GPT-5.1 Codex Max has an independent historical Standard card and no inven
   assert.equal(sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.openaiCodexMax), cards[0].metadata.provenance.evidence_sha256);
   // A new review must not rewrite any previously shipped price/provenance bytes.
   assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => card.model !== "gpt-5.1-codex-max")),
-    "d57a7443bb43a756f1458872897dfcfcafdde0893433fc83b1036d58184de78d");
+    "8b0ce65aa2c6d9eda831b9da045bc6d69ed9379f59adbcc61e9986882d878deb");
   for (const pricedAt of ["2025-11-22", "2026-10-19"]) {
     const result = price({ provider: "openai", model: "gpt-5.1-codex-max", pricedAt,
       totalInputTokens: 400_000, components: {
@@ -197,12 +192,11 @@ test("Sol and Luna retain exact launch prices across every tier, component, and 
   }
   assert.equal(sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.openaiSolLuna),
     APP_PRICE_REGISTRY_MANIFEST.sources.find((source) => source.evidenceVersion === "openai-sol-luna-api-pricing-reviewed-2026-09-22").evidenceSha256);
-  // Cards predating the Sol/Luna and latest Claude additions retain their exact bytes.
+  // Cards predating the Sol/Luna and Codex Max additions retain their exact bytes.
   assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => ![
-    "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "claude-fable-5-1", "claude-mythos-5-1",
-    "claude-opus-5", "claude-opus-5-5", "gpt-5.1-codex-max",
+    "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-5.1-codex-max",
   ].includes(card.model) && card.service_tier !== "ultrafast")),
-    "303374d522e7ef695beefe1fbf6f3d2b5c84b8b9c6130921a70bc5e8ec1d56e0");
+    "e2762f5bb37bf579845983fef7c275130547e43b8d63536aaa684c702caa7da1");
 });
 
 test("Sol 6.1 and Astra Ultrafast price every published component at the release and context boundaries", () => {
@@ -249,7 +243,7 @@ test("Sol 6.1 and Astra Ultrafast price every published component at the release
     APP_PRICE_REGISTRY_MANIFEST.sources.find((source) => source.evidenceVersion === sourceVersion).evidenceSha256);
   // Every previously shipped card, including each old Astra tier, is byte-stable.
   assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => card.source.version !== sourceVersion && card.model !== "gpt-5.1-codex-max")),
-    "48119389ecbcaced58837bc24fa852c3c4a99835289b417e69f34fb0166a63b9");
+    "24833c8b5df9da3221c40bedbff12aaab5101da25a79876b2a91b4800b062d75");
 });
 
 test("unpublished Ultrafast model pairs and unreviewed Sol 6.1 aliases remain unpriced", () => {
@@ -284,20 +278,6 @@ test("exact provider tool units use official call prices without pricing client 
   assert.equal(openAi.total, "12.5");
   assert.equal(openAi.warnings.length, 0);
 
-  const anthropic = calculateCost({
-    usageLedger: {
-      schema_version: "0.1",
-      provider: "anthropic",
-      surface: "anthropic.messages",
-      model: { requested: "claude-sonnet-4-6" },
-      context: { service_tier: "standard", priced_at: "2026-07-26" },
-      components: [{ name: "web_search_units", quantity: "1000", unit: "search" }],
-    },
-    priceCards: compilePriceCatalog(APP_OFFICIAL_PRICE_CARDS),
-    mode: "compatibility",
-  });
-  assert.equal(anthropic.total, "10");
-  assert.equal(anthropic.warnings.length, 0);
 });
 
 test("OpenAI official Standard, Batch, Flex, and Priority rows price exact components", () => {
@@ -710,101 +690,21 @@ test("OpenAI Priority rows do not invent long-context prices", () => {
   assert.ok(result.warnings.some((warning) => warning.code === "long_context_rule_missing"));
 });
 
-test("Anthropic cache categories, Batch modifiers, and first-party API Fast are exact", () => {
-  const standard = price({
-    provider: "anthropic",
-    model: "claude-opus-4-8",
-    components: {
-      input_uncached_tokens: 1_000_000,
-      input_cache_write_tokens: 1_000_000,
-      input_cache_write_1h_tokens: 1_000_000,
-      input_cache_read_tokens: 1_000_000,
-      output_text_tokens: 1_000_000,
-    },
-  });
-  assert.equal(standard.total, "46.75");
-
-  const batch = price({
-    provider: "anthropic",
-    model: "claude-opus-4-8",
-    tier: "batch",
-    components: { input_cache_write_1h_tokens: 1_000_000, output_text_tokens: 1_000_000 },
-  });
-  assert.equal(batch.total, "17.5");
-
-  const fast = price({
-    provider: "anthropic",
-    model: "claude-opus-4-8",
-    tier: "fast",
-    components: { input_uncached_tokens: 1_000_000, output_text_tokens: 1_000_000 },
-  });
-  assert.equal(fast.total, "60");
-  const fastCard = ANTHROPIC_OFFICIAL_PRICE_CARDS.find((card) => card.model === "claude-opus-4-8" && card.service_tier === "fast");
-  assert.equal(fastCard.metadata.subscription_speed_tier, null);
-  assert.match(fastCard.metadata.coverage_note, /first-party API fast mode/);
-});
-
-test("Claude Sonnet 5 pricing changes at the official September 1 boundary", () => {
-  const components = { input_uncached_tokens: 1_000_000, output_text_tokens: 1_000_000 };
-  // The introductory window is open backwards but still closes at the published
-  // vendor change, so old history prices at the introductory rate and events on
-  // or after 2026-09-01 select the distinct successor card.
-  const totals = { "2026-01-15": "12", "2026-08-31": "12", "2026-09-01": "18", "2026-09-02": "18" };
-  const selected = {};
-  for (const [pricedAt, total] of Object.entries(totals)) {
-    const result = price({ provider: "anthropic", model: "claude-sonnet-5", pricedAt, components });
-    assert.equal(result.total, total, pricedAt);
-    assert.equal(result.warnings.length, 0, pricedAt);
-    selected[pricedAt] = [...new Set(result.components.map((item) => item.price_card_id))].sort().join(",");
-    assert.match(selected[pricedAt], /^anthropic:claude-sonnet-5:standard:/, pricedAt);
-  }
-  assert.equal(selected["2026-01-15"], selected["2026-08-31"]);
-  assert.equal(selected["2026-09-01"], selected["2026-09-02"]);
-  assert.notEqual(selected["2026-08-31"], selected["2026-09-01"]);
-
-  const introductory = ANTHROPIC_OFFICIAL_PRICE_CARDS.find((card) => card.model === "claude-sonnet-5" && card.service_tier === "standard" && card.effective.to === "2026-08-31");
-  assert.equal(introductory.effective.from, undefined);
-  assert.equal(introductory.metadata.provenance.vendor_effective_to, "2026-08-31");
-  const future = ANTHROPIC_OFFICIAL_PRICE_CARDS.find((card) => card.model === "claude-sonnet-5" && card.service_tier === "standard" && card.effective.from === "2026-09-01");
-  assert.equal(future.metadata.provenance.vendor_effective_from, "2026-09-01");
-});
-
-test("undated Anthropic price evidence prices history as far back as it goes", () => {
-  // The Anthropic review date is provenance, not a validity lower bound: an
-  // undated reviewed rate must price a recognized event of any age. Only rows
-  // with a published vendor-effective boundary may refuse a date.
-  for (const pricedAt of ["2025-06-01", "2026-01-15", "2026-07-24", "2026-07-25"]) {
-    const result = price({
-      provider: "anthropic",
-      model: "claude-sonnet-4-6",
-      pricedAt,
-      components: { input_uncached_tokens: 1_000_000 },
-    });
-    assert.equal(result.total, "3", pricedAt);
-    assert.equal(result.warnings.length, 0, pricedAt);
-  }
-  for (const card of ANTHROPIC_OFFICIAL_PRICE_CARDS) {
-    if (card.metadata.provenance.vendor_effective_from) continue;
-    assert.equal(card.effective.from, undefined, card.id);
-  }
-});
-
 test("provider tool unit cards price billable units from before the review date", () => {
   const toolUnits = {
     openai: [
       { name: "web_search_units", quantity: "1000", unit: "search" },
       { name: "file_search_units", quantity: "1000", unit: "call" },
     ],
-    anthropic: [{ name: "web_search_units", quantity: "1000", unit: "search" }],
   };
-  const expected = { openai: "12.5", anthropic: "10" };
+  const expected = { openai: "12.5" };
   for (const [provider, components] of Object.entries(toolUnits)) {
     for (const pricedAt of ["2025-06-01", "2026-01-15", "2026-07-24", "2026-08-01"]) {
       const result = calculateCost({
         usageLedger: {
           schema_version: "0.1",
           provider,
-          surface: provider === "openai" ? "openai.responses" : "anthropic.messages",
+          surface: "openai.responses",
           model: { requested: `${provider}-provider-tools` },
           context: { service_tier: "standard", region: "global", priced_at: pricedAt },
           components,

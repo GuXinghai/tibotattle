@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createSupplementalSourcePlan, stableJson } from "../src/export/index.js";
-import { createClaudeTranscriptExportContext } from "../src/application/export-sources/claude-transcript-export.js";
+import { createSupplementalSourcePlan } from "../src/export/index.js";
 import { createHash } from "node:crypto";
 import { exactFilesystemStats } from "../src/platform/exact-filesystem-stats.js";
 import { createLocalExportSourcePorts } from "../src/platform/index.js";
@@ -64,36 +63,6 @@ test("legacy safe numeric plans replay original digest and unsafe legacy values 
     const invalid = { ...legacy, inode }; invalid.sourcePlanSha256 = digest(invalid);
     assert.throws(() => owner.createCodexCollectorExportCursor(invalid), error => error.code === "codex_collector_export_plan_invalid");
   }
-});
-
-test("legacy transcript checkpoints preserve safe numeric source keys and their original plan version", async () => {
-  const root = await mkdtemp(join(tmpdir(), "exact-transcript-compat-"));
-  const secret = Buffer.alloc(32, 17);
-  try {
-    await mkdir(join(root, "projects"));
-    const path = join(root, "projects", "synthetic.jsonl"); await writeFile(path, "\n", { mode: 0o600 });
-    const ports = createLocalExportSourcePorts();
-    const adjust = stats => ({ ...stats, dev: "44", ino: "42" });
-    const owner = createClaudeTranscriptExportContext({ ...ports,
-      exactSourceLstat: async path => adjust(await ports.exactSourceLstat(path)),
-      exactSourceOpen: async (path, flags) => { const handle = await ports.exactSourceOpen(path, flags); return {
-        stat: async () => adjust(await handle.stat()), read: (...args) => handle.read(...args), close: () => handle.close(),
-      }; },
-    });
-    const fresh = await owner.createClaudeTranscriptExportSourcePlan({ projectsDirectory: join(root, "projects"), startAt: bounds.startAt, endAt: bounds.endAt, secret, resourceGuard: createExportResourceGuard() });
-    const legacy = { ...fresh, schemaVersion: "claude-transcript-export-source-plan-v0.2", sources: fresh.sources.map(source => ({ ...source, device: 44, inode: 42 })) };
-    const keys = ["ordinal", "sourceKey", "device", "inode", "birthtimeMs", "prefixBytes", "prefixLineCount", "prefixSha256", "selectedMessages", "selectionSha256"];
-    legacy.planSha256 = createHash("sha256").update("app-usagemonitor/claude-transcript-plan/v1\0").update(stableJson(legacy.sources.map(source => Object.fromEntries(keys.map(key => [key, source[key]]))))).digest("hex");
-    const checkpoint = owner.createClaudeTranscriptExportPlanCheckpoint(legacy, { secret });
-    assert.equal(checkpoint.sourcePlanVersion, legacy.schemaVersion);
-    const restored = await owner.restoreClaudeTranscriptExportSourcePlan(checkpoint, { projectsDirectory: join(root, "projects"), selectedSourcePaths: [path], secret });
-    assert.equal(stableJson(restored), stableJson(legacy));
-    assert.equal(restored.sources[0].sourceKey, fresh.sources[0].sourceKey);
-    const slice = owner.sliceClaudeTranscriptExportSourcePlan(restored, restored.sources[0].sourceKey, { secret });
-    assert.equal(slice.schemaVersion, legacy.schemaVersion);
-    await owner.verifyClaudeTranscriptExportSource(slice, slice.sources[0].sourceKey, { secret, resourceGuard: createExportResourceGuard() });
-    assert.equal(secret.equals(Buffer.alloc(32, 17)), true);
-  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("exact stat conversion refuses unsafe Number identities before serialization", () => {

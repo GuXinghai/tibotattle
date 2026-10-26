@@ -31,14 +31,15 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 | Build, generator, verification, or release tooling | `scripts/AGENTS.md` |
 | Documentation, evidence, plans, or release claims | `docs/AGENTS.md`, then `docs/README.md` |
 
-`CLAUDE.md` imports this policy for all agents.
-
 ## Product invariants
 
 Changing an invariant requires an explicit product decision, matching tests,
 and updated authoritative documentation.
 
 - Rhetrion supports Windows x64 only ([decision](docs/decisions/2026-10-12-windows-only.md)); changing platform scope needs a new decision, tests, and docs.
+- Codex is the only supported provider ([decision](docs/decisions/2026-10-27-codex-only-product.md)).
+  Retired provider state and credentials remain untouched; historical format
+  compatibility never enables collection, pricing, callbacks, or source resume.
 - Local analysis must work offline, and local HTTP services bind only to loopback.
 - Unexpected Windows credential prompts block release. Credential Manager access
   must be non-interactive; never weaken protection to suppress prompts. Follow

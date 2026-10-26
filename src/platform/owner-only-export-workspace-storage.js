@@ -151,6 +151,7 @@ const MAXIMUM_SUPPLEMENTAL_PRIVATE_PLAN_BYTES = 32 * 1024 * 1024;
 const SUPPLEMENTAL_SOURCE_KINDS = new Set([
   "codex_collector_ledger", "claude_status_snapshot", "claude_transcript_jsonl",
 ]);
+const ACTIVE_SUPPLEMENTAL_SOURCE_KINDS = new Set(["codex_collector_ledger"]);
 const WORKSPACE_TABLES = Object.freeze([
   "chunks", "diagnostics", "resource_invocations", "resource_usage", "safe_records", "seen_occurrences",
   "source_checkpoints", "source_diagnostics", "source_open_tasks", "source_plan",
@@ -1619,6 +1620,9 @@ async function createExportWorkspace({
   } catch {
     fail("schema");
   }
+  if (normalizedSupplementalSourcePlan.sources.some(
+    (source) => !ACTIVE_SUPPLEMENTAL_SOURCE_KINDS.has(source.kind),
+  )) fail("schema");
   const normalizedSupplementalPrivatePlans = normalizeSupplementalPrivatePlans(
     supplementalPrivatePlans,
     normalizedSupplementalSourcePlan,

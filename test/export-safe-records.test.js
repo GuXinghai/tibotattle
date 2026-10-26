@@ -11,7 +11,6 @@ import { loadVerifiedLocalMetadataBundleBytes } from "../src/bundle-verifier.js"
 
 const {
   normalizeActivityMarker,
-  normalizeClaudeStatusQuotaSnapshots,
   normalizeCodexCollectorQuotaCandidate,
   normalizeCodexQuotaSnapshot,
   scanCodexSafeRecords,
@@ -20,7 +19,6 @@ const {
 const { buildLocalMetadataBundle } = localMetadataExport;
 
 const SECRET = Buffer.alloc(32, 37);
-const CLAUDE_OCCURRENCE = `claude-ledger-occurrence:v1:${"G".repeat(43)}`;
 const START_AT = "2026-07-24T11:59:00.000Z";
 const END_AT = "2026-07-24T12:10:00.000Z";
 
@@ -153,32 +151,6 @@ function collectorCandidate(overrides = {}) {
     accountScopeSubject: `openai-account:v1:${"A".repeat(43)}`,
     sessionScopeId: null,
     observationIdentityMaterial: "b".repeat(64),
-    ...overrides,
-  };
-}
-
-function claudeStatus(overrides = {}) {
-  return {
-    schemaVersion: "0.2",
-    kind: "claude_rate_limit_snapshot",
-    provider: "anthropic_claude_code",
-    capturedAt: "2026-07-24T12:02:00.000Z",
-    clientVersion: "2.1.0",
-    modelId: "claude_opus",
-    fastMode: false,
-    sessionPseudonym: `claude-session:v1:${"C".repeat(43)}`,
-    limits: {
-      fiveHour: { windowMinutes: 300, usedPercent: 8.4, resetsAt: 1_785_000_000 },
-      sevenDay: { windowMinutes: 10_080, usedPercent: 19, resetsAt: 1_785_500_000 },
-    },
-    privacy: {
-      rawSessionIdentifierStored: false,
-      transcriptPathStored: false,
-      workspaceStored: false,
-      conversationContentStored: false,
-      accountIdentifierStored: false,
-      repositoryMetadataStored: false,
-    },
     ...overrides,
   };
 }
@@ -356,48 +328,4 @@ test("collector candidate normalization rejects unknown fields and session-scope
     })),
     /Invalid privacy-safe collector quota candidate/,
   );
-});
-
-test("Claude status quota normalization is deterministic and requires a session pseudonym", () => {
-  const first = normalizeClaudeStatusQuotaSnapshots(SECRET, claudeStatus(), {
-    physicalOccurrenceMaterial: CLAUDE_OCCURRENCE,
-  });
-  const repeat = normalizeClaudeStatusQuotaSnapshots(SECRET, claudeStatus(), {
-    physicalOccurrenceMaterial: CLAUDE_OCCURRENCE,
-  });
-  assert.deepEqual(first, repeat);
-  assert.deepEqual(first.map((snapshot) => snapshot.slot), ["five_hour", "seven_day"]);
-  assert.ok(first.every((snapshot) => snapshot.snapshotSource === "status_line"));
-  assert.ok(first.every((snapshot) => /^session:v1:[a-f0-9]{64}$/.test(snapshot.sessionScopeId)));
-  assert.notEqual(first[0].snapshotId, first[1].snapshotId);
-  assert.throws(
-    () => normalizeClaudeStatusQuotaSnapshots(SECRET, claudeStatus({ sessionPseudonym: null }), {
-      physicalOccurrenceMaterial: CLAUDE_OCCURRENCE,
-    }),
-    /requires a privacy-safe session pseudonym/,
-  );
-  assert.throws(
-    () => normalizeClaudeStatusQuotaSnapshots(SECRET, claudeStatus()),
-    /requires privacy-safe physical occurrence material/,
-  );
-});
-
-test("windowless Claude status records emit no snapshots without requiring identity material", () => {
-  const snapshots = normalizeClaudeStatusQuotaSnapshots(SECRET, claudeStatus({
-    sessionPseudonym: null,
-    limits: { fiveHour: null, sevenDay: null },
-  }));
-  assert.deepEqual(snapshots, []);
-});
-
-test("distinct Claude physical records cannot collapse to one observation identity", () => {
-  const first = normalizeClaudeStatusQuotaSnapshots(SECRET, claudeStatus(), {
-    physicalOccurrenceMaterial: `claude-ledger-occurrence:v1:${"H".repeat(43)}`,
-  });
-  const second = normalizeClaudeStatusQuotaSnapshots(SECRET, claudeStatus(), {
-    physicalOccurrenceMaterial: `claude-ledger-occurrence:v1:${"I".repeat(43)}`,
-  });
-  assert.notEqual(first[0].snapshotId, second[0].snapshotId);
-  assert.equal(stableJson(first).includes("claude-ledger-occurrence"), false);
-  assert.equal(stableJson(second).includes("claude-ledger-occurrence"), false);
 });

@@ -6,16 +6,11 @@ import {
   ExportResourceLimitError,
   stableJson,
 } from "../../export/index.js";
-import { validateClaudeStatusSnapshot } from "../../providers/claude/statusline.js";
 import {
   createLocalCodexLogScanner,
   validateLocalProxyDetector,
 } from "../local-codex-log-scanner.js";
 
-import { createClaudeStatusExportContext } from "./claude-status-export.js";
-import { createClaudeStatusWorkspaceContext } from "./claude-status-workspace.js";
-import { createClaudeTranscriptExportContext } from "./claude-transcript-export.js";
-import { createClaudeTranscriptWorkspaceContext } from "./claude-transcript-workspace.js";
 import { createCodexCheckpointContext } from "./codex-checkpoint.js";
 import { createCodexCollectorExportContext } from "./codex-collector-export.js";
 import { createCodexCollectorWorkspaceContext } from "./codex-collector-workspace.js";
@@ -36,7 +31,6 @@ const SOURCE_PORT_FUNCTION_KEYS = Object.freeze([
   "createHash",
   "createHmac",
   "currentUid",
-  "defaultClaudeStatusStateDirectory",
   "deriveAccountScopeId",
   "deriveEventOccurrenceId",
   "deriveMarkerOccurrenceId",
@@ -45,26 +39,17 @@ const SOURCE_PORT_FUNCTION_KEYS = Object.freeze([
   "deriveQuotaStateId",
   "deriveSessionScopeId",
   "deriveSnapshotObservationId",
-  "inspectClaudeStatusLedgerDirectoriesForExport",
-  "joinPath",
   "lstat",
   "open",
   "exactSourceLstat",
   "exactSourceOpen",
-  "openDirectory",
   "readBoundedUtf8LineEntries",
-  "realpath",
-  "revalidateClaudeStatusLedgerDirectoriesForExport",
   "resolvePath",
-  "resolveRealpath",
   "rss",
 ]);
 const SOURCE_PORT_DATA_KEYS = Object.freeze([
   "defaultHomeDirectory",
   "platform",
-  "DEFAULT_CLAUDE_STATUS_MAX_LEDGER_BYTES",
-  "DEFAULT_CLAUDE_STATUS_MAX_RECORDS",
-  "MAX_CLAUDE_STATUS_RECORD_BYTES",
 ]);
 const SOURCE_PORT_OBJECT_KEYS = Object.freeze(["codexLogPorts", "fsConstants"]);
 const SOURCE_PORT_KEYS = Object.freeze([
@@ -172,11 +157,6 @@ function snapshotSourcePorts(sourcePorts, isProxy) {
   if (typeof defaultHomeDirectory !== "string" || typeof platform !== "string") invalid();
   snapshot.defaultHomeDirectory = defaultHomeDirectory;
   snapshot.platform = platform;
-  for (const key of SOURCE_PORT_DATA_KEYS.slice(2)) {
-    const value = descriptors[key].value;
-    if (!Number.isSafeInteger(value) || value < 0) invalid();
-    snapshot[key] = value;
-  }
   snapshot.codexLogPorts = snapshotCodexLogPorts(descriptors.codexLogPorts.value, isProxy);
   snapshot.fsConstants = snapshotFsConstants(descriptors.fsConstants.value, isProxy);
   return Object.freeze(snapshot);
@@ -268,7 +248,6 @@ export function createLocalExportSourcePipelineContext(proxyDetector, sourcePort
     isProxy,
     createHash: ports.createHash,
     scanCodexLogEvents: scanner.scanCodexLogEvents,
-    validateClaudeStatusSnapshot,
     deriveAccountScopeId: ports.deriveAccountScopeId,
     deriveEventOccurrenceId: ports.deriveEventOccurrenceId,
     deriveMarkerOccurrenceId: ports.deriveMarkerOccurrenceId,
@@ -289,40 +268,15 @@ export function createLocalExportSourcePipelineContext(proxyDetector, sourcePort
     ...runtimeSourcePorts,
     createExportResourceGuard: createRuntimeResourceGuard,
   });
-  const claudeTranscriptExport = createClaudeTranscriptExportContext({
-    ...runtimeSourcePorts,
-    safeExportModelDeclaration: safeRecords.safeExportModelDeclaration,
-  });
-  const claudeStatusExport = createClaudeStatusExportContext({
-    ...runtimeSourcePorts,
-    createExportResourceGuard: createRuntimeResourceGuard,
-    validateClaudeStatusSnapshot,
-  });
   const codexCollectorWorkspace = createCodexCollectorWorkspaceContext({
     ...runtimeSourcePorts,
     codexCollectorExport,
     normalizeCodexCollectorQuotaCandidate: safeRecords.normalizeCodexCollectorQuotaCandidate,
     supplementalSourceCheckpointBatchSha256: workspace.supplementalSourceCheckpointBatchSha256,
   });
-  const claudeStatusWorkspace = createClaudeStatusWorkspaceContext({
-    ...runtimeSourcePorts,
-    claudeStatusExport,
-    normalizeClaudeStatusQuotaSnapshots: safeRecords.normalizeClaudeStatusQuotaSnapshots,
-    supplementalSourceCheckpointBatchSha256: workspace.supplementalSourceCheckpointBatchSha256,
-  });
-  const claudeTranscriptWorkspace = createClaudeTranscriptWorkspaceContext({
-    ...runtimeSourcePorts,
-    claudeTranscriptExport,
-    normalizeClaudeTranscriptUsageCandidate: safeRecords.normalizeClaudeTranscriptUsageCandidate,
-    supplementalSourceCheckpointBatchSha256: workspace.supplementalSourceCheckpointBatchSha256,
-  });
   const sourcePlanBundle = createSourcePlanBundleContext({
     ...runtimeSourcePorts,
     isProxy,
-    claudeStatusExport,
-    claudeStatusWorkspace,
-    claudeTranscriptExport,
-    claudeTranscriptWorkspace,
     codexCollectorExport,
     codexCollectorWorkspace,
     codexSourcePlan,
@@ -337,9 +291,6 @@ export function createLocalExportSourcePipelineContext(proxyDetector, sourcePort
   });
   const controller = createLocalExportSetController({
     ...runtimeSourcePorts,
-    claudeStatusWorkspace,
-    claudeTranscriptExport,
-    claudeTranscriptWorkspace,
     codexCheckpoint,
     codexCollectorWorkspace,
     codexSourcePlan,
@@ -351,10 +302,6 @@ export function createLocalExportSourcePipelineContext(proxyDetector, sourcePort
   });
 
   return Object.freeze({
-    claudeStatusExport,
-    claudeStatusWorkspace,
-    claudeTranscriptExport,
-    claudeTranscriptWorkspace,
     codexCheckpoint,
     codexCollectorExport,
     codexCollectorWorkspace,

@@ -23,5 +23,9 @@ Use [safe local recovery](docs/runbooks/local-index-recovery.md).
 The supported product scope is Windows x64. Local analysis works offline;
 source, native, GUI, packaged, installed and signed-release evidence remain
 separate. Missing or unqualified prerequisites are reported explicitly.
+Codex is the only supported usage provider. Existing immutable legacy records
+may appear as historical readback; Claude integrations and new collection are
+not supported. Existing Claude profiles, settings and credentials are outside
+the product's cleanup or uninstall scope.
 Provider billing and authoritative quota questions belong with the provider;
 this app reports observations and estimates.

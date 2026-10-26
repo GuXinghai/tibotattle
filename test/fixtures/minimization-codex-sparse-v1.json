@@ -1,0 +1,15 @@
+{
+  "schemaVersion": "g1-minimization-synthetic-fixture-v0.1",
+  "fixtureId": "codex-sparse-independent-v1",
+  "providerShape": "openai_codex",
+  "cases": [
+    "sparse_thread_settings",
+    "late_model_attribution",
+    "partial_tail_restart",
+    "response_usage_reconciliation",
+    "account_switch",
+    "missing_tier",
+    "paginated_history"
+  ],
+  "containsSensitiveData": false
+}

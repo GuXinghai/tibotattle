@@ -6,13 +6,13 @@ import { evaluateMinimizationAblation } from "../src/minimization-ablation.js";
 
 const fixtureUrls = [
   new URL("./fixtures/minimization-codex-shaped-v1.json", import.meta.url),
-  new URL("./fixtures/minimization-claude-shaped-v1.json", import.meta.url),
+  new URL("./fixtures/minimization-codex-sparse-v1.json", import.meta.url),
 ];
 
 async function fixtureHashes() {
   const fixtures = await Promise.all(fixtureUrls.map((url) => readFile(url, "utf8")));
   return Object.fromEntries(fixtures.map((fixture, index) => [
-    index === 0 ? "codex_shape" : "claude_shape",
+    index === 0 ? "codex_shape" : "codex_sparse",
     createHash("sha256").update(fixture).digest("hex"),
   ]));
 }
@@ -26,7 +26,7 @@ function syntheticTransitions({ includeRestrictedFamilies = true, collideResetTi
     const eventMs = (resetsAt * 1_000) - ((12 - pointIndex) * 30 * 60 * 1_000);
     const common = {
       accountScopeId: "safe-account-partition",
-      provider: collideResetTimes ? "openai_codex" : resetIndex % 2 === 0 ? "openai_codex" : "anthropic_claude",
+      provider: "openai_codex",
       planType: "pro",
       limitId: "codex",
       slot: "primary",

@@ -40,7 +40,6 @@ export {
   aggregateLocalApiPriceResults,
   apiPriceResolutionSummary,
   costWarningCodes,
-  priceClaudeUsageRecord,
   priceCodexProviderToolUnits,
   priceCodexUsageEvent,
 } from "./src/local-api-pricing.js";

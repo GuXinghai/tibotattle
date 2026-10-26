@@ -46,7 +46,6 @@ const LOCAL_EXPORTS = Object.freeze([
   "aggregateLocalApiPriceResults",
   "apiPriceResolutionSummary",
   "costWarningCodes",
-  "priceClaudeUsageRecord",
   "priceCodexProviderToolUnits",
   "priceCodexUsageEvent",
 ]);
