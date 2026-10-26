@@ -43,12 +43,12 @@ export function parseDashboardHash(hash) {
  * app and could leave people lost halfway down a long technical report.
  *
  * `#<page>/<view>` additionally asks the page to show one of its level-1 views
- * through the `tibotattle:page-view` event. The page view switch owns the list
+ * through the `usagemonitor:page-view` event. The page view switch owns the list
  * of valid views, so mount it before this function (or read the initial hash
  * with `parseDashboardHash`) if the first hash must select a view.
  */
 export function mountDashboardNavigation({ documentRef, windowRef }) {
-  const desktopX = windowRef.tibotattleDesktop?.version === 'v1' && typeof windowRef.tibotattleDesktop.getXStatus === 'function';
+  const desktopX = windowRef.usageMonitorDesktop?.version === 'v1' && typeof windowRef.usageMonitorDesktop.getXStatus === 'function';
   const available = element => element.dataset.desktopOnly !== 'true' || desktopX;
   const links = [...documentRef.querySelectorAll("[data-nav]")].filter(available);
   const pages = [...documentRef.querySelectorAll("[data-dashboard-page]")].filter(available);
@@ -92,7 +92,7 @@ export function mountDashboardNavigation({ documentRef, windowRef }) {
     if (typeof CustomEventConstructor !== "function"
         || typeof documentRef.dispatchEvent !== "function") return;
     documentRef.dispatchEvent(new CustomEventConstructor(
-      "tibotattle:page-view",
+      "usagemonitor:page-view",
       { detail: { page, view } },
     ));
   }

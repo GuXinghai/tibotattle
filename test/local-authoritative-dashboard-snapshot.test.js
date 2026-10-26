@@ -151,7 +151,7 @@ function unavailableSnapshot() {
   const snapshot = authoritativeSnapshot();
   snapshot.generatedAt = "2026-08-27T12:05:00.000Z";
   snapshot.overview.warnings = [
-    "This local history was created by a newer TiboTattle build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.",
+    "This local history was created by a newer Rhetrion build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.",
   ];
   snapshot.overview.usage = [{
     id: "7d",

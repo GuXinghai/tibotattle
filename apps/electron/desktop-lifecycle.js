@@ -1,3 +1,4 @@
+import { PRODUCT_BRAND } from "../../config/product-brand.js";
 import { DESKTOP_TRAY_UPGRADE_DEFAULTS, validateDesktopTrayPreferences } from "./desktop-tray-preferences.js";
 import { dirname, resolve } from "node:path";
 import { existsSync } from "node:fs";
@@ -98,7 +99,7 @@ export function createDesktopLifecycle({
   windowOptions = {},
   createNavigationPolicy = createLoopbackNavigationPolicy,
   installNavigationPolicy = installLoopbackNavigationPolicy,
-  appName = "TiboTattle",
+  appName = PRODUCT_BRAND.displayName,
   platform = process.platform,
   desktopLocale = "system",
   initialTrayPreferences = DESKTOP_TRAY_UPGRADE_DEFAULTS,

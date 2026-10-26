@@ -17,7 +17,7 @@ import {
 } from "node:fs/promises";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import {
   collectReleaseAttestation,
@@ -180,9 +180,9 @@ test("caller permission and deferred manifest-generation boundaries are document
 });
 
 async function makeFixture() {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-attestation-"));
-  const artifactPath = join(root, "TiboTattle-test.bin");
-  const sbomPath = join(root, "TiboTattle-test.spdx.json");
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-attestation-"));
+  const artifactPath = join(root, "Rhetrion-test.bin");
+  const sbomPath = join(root, "Rhetrion-test.spdx.json");
   const descriptorPath = join(root, "release-descriptor.json");
   const outputPath = join(root, "outputs.txt");
   const evidenceDirectory = join(root, "evidence");
@@ -193,8 +193,8 @@ async function makeFixture() {
   const sbomDocument = {
     spdxVersion: "SPDX-2.3",
     SPDXID: "SPDXRef-DOCUMENT",
-    name: "TiboTattle-test",
-    documentNamespace: "https://example.test/tibotattle/test",
+    name: "Rhetrion-test",
+    documentNamespace: "https://example.test/usagemonitor/test",
     dataLicense: "CC0-1.0",
     creationInfo: { created: "2026-08-18T00:00:00Z", creators: ["Tool: test"] },
     packages: [],
@@ -202,19 +202,19 @@ async function makeFixture() {
   await writeFile(sbomPath, JSON.stringify(sbomDocument), "utf8");
   const descriptor = {
     schemaVersion: "usage-monitor-release-evidence-input-v1",
-    product: { name: "TiboTattle" },
+    product: { name: "Rhetrion" },
     version: "0.1.0",
     tag: "v0.1.0",
     commit: "a".repeat(40),
-    repository: "https://github.com/adamallcock/tibotattle",
+    repository: "https://github.com/example/usage-monitor",
     artifacts: [{
       platform: "windows",
       channel: "direct",
       architecture: "x64",
       format: "exe",
-      path: "TiboTattle-test.bin",
+      path: "Rhetrion-test.bin",
       distribution: "github-release",
-      downloadUrl: "https://github.com/adamallcock/tibotattle/releases/download/v0.1.0/TiboTattle-test.bin",
+      downloadUrl: "https://github.com/example/usage-monitor/releases/download/v0.1.0/Rhetrion-test.bin",
       nativeTrust: {
         publisher: "Adam Allcock",
         certificateSha256: "e".repeat(64),
@@ -229,7 +229,7 @@ async function makeFixture() {
         timestamped: true,
       },
       updater: { enabled: false, mechanism: "none", metadata: null },
-      sbom: { path: "TiboTattle-test.spdx.json" },
+      sbom: { path: "Rhetrion-test.spdx.json" },
     }],
   };
   await writeFile(descriptorPath, JSON.stringify(descriptor), "utf8");
@@ -243,19 +243,19 @@ async function makeFixture() {
     evidenceDirectory,
     verifierPath,
     verifierSha256: createHash("sha256").update(verifierBytes).digest("hex"),
-    trustedRepository: "adamallcock/tibotattle",
+    trustedRepository: "example/usage-monitor",
     trustedRef: "refs/tags/v0.1.0",
     trustedSha: "a".repeat(40),
-    signerWorkflow: "adamallcock/tibotattle/.github/workflows/release.yml",
+    signerWorkflow: "example/usage-monitor/.github/workflows/release.yml",
     signerDigest: "b".repeat(40),
-    trustedWorkflowRef: "adamallcock/tibotattle/.github/workflows/release.yml@refs/tags/v0.1.0",
+    trustedWorkflowRef: "example/usage-monitor/.github/workflows/release.yml@refs/tags/v0.1.0",
     trustedWorkflowSha: "b".repeat(40),
     signerRef: "refs/tags/v0.1.0",
     artifactSha256: "9f749ad8036072418507e7e2c7a7650d9cc0745295ae8cfc227a3c2c6b76e0d1",
     trustedServerUrl: "https://github.com",
     trustedRunId: "123456",
     trustedRunAttempt: "1",
-    trustedRunUrl: "https://github.com/adamallcock/tibotattle/actions/runs/123456",
+    trustedRunUrl: "https://github.com/example/usage-monitor/actions/runs/123456",
     sbomDocument,
   };
 }
@@ -280,22 +280,22 @@ function verifiedResult(fixture, {
   const bundle = verifiedBundle();
   const certificate = {
     certificateIssuer: "GitHub, Inc.",
-    subjectAlternativeName: "https://github.com/adamallcock/tibotattle/.github/workflows/release.yml@refs/tags/v0.1.0",
+    subjectAlternativeName: "https://github.com/example/usage-monitor/.github/workflows/release.yml@refs/tags/v0.1.0",
     issuer: "https://token.actions.githubusercontent.com",
     githubWorkflowTrigger: "workflow_dispatch",
     githubWorkflowSHA: fixture.signerDigest,
     githubWorkflowName: "release",
-    githubWorkflowRepository: "adamallcock/tibotattle",
+    githubWorkflowRepository: "example/usage-monitor",
     githubWorkflowRef: fixture.signerRef,
-    buildSignerURI: "https://github.com/adamallcock/tibotattle/.github/workflows/release.yml@refs/tags/v0.1.0",
+    buildSignerURI: "https://github.com/example/usage-monitor/.github/workflows/release.yml@refs/tags/v0.1.0",
     buildSignerDigest: fixture.signerDigest,
     runnerEnvironment: "github-hosted",
-    sourceRepositoryURI: "https://github.com/adamallcock/tibotattle",
+    sourceRepositoryURI: "https://github.com/example/usage-monitor",
     sourceRepositoryDigest: fixture.trustedSha,
     sourceRepositoryRef: fixture.trustedRef,
   };
   const statement = {
-    subject: [{ name: "TiboTattle-test.bin", digest: { sha256: fixture.artifactSha256 } }],
+    subject: [{ name: "Rhetrion-test.bin", digest: { sha256: fixture.artifactSha256 } }],
     predicateType,
     predicate: predicateType === "https://slsa.dev/provenance/v1"
       ? {
@@ -344,22 +344,22 @@ test("preflight validates SPDX, exact descriptor association, and canonical dige
   });
   assert.match(result.artifactSha256, /^[a-f0-9]{64}$/u);
   assert.match(result.sbomSha256, /^[a-f0-9]{64}$/u);
-  assert.equal(result.frozenArtifactPath.split("/").at(-1), "TiboTattle-test.bin");
-  assert.equal(result.frozenSbomPath.split("/").at(-1), "TiboTattle-test.spdx.json");
+  assert.equal(basename(result.frozenArtifactPath), "Rhetrion-test.bin");
+  assert.equal(basename(result.frozenSbomPath), "Rhetrion-test.spdx.json");
   const outputs = await readFile(fixture.outputPath, "utf8");
   assert.match(outputs, new RegExp(`artifact-sha256=${result.artifactSha256}`));
   assert.match(outputs, new RegExp(`sbom-sha256=${result.sbomSha256}`));
-  assert.match(outputs, /trusted-run-url=https:\/\/github\.com\/adamallcock\/tibotattle\/actions\/runs\/123456/u);
+  assert.match(outputs, /trusted-run-url=https:\/\/github\.com\/example\/usage-monitor\/actions\/runs\/123456/u);
 });
 
 test("preflight rejects same-basename artifact and SBOM staging collisions", async () => {
   const fixture = await makeFixture();
   const collisionDirectory = join(fixture.root, "collision");
   await mkdir(collisionDirectory);
-  const collidingArtifact = join(collisionDirectory, "TiboTattle-test.spdx.json");
+  const collidingArtifact = join(collisionDirectory, "Rhetrion-test.spdx.json");
   await writeFile(collidingArtifact, "collision artifact\n", "utf8");
   const descriptor = JSON.parse(await readFile(fixture.descriptorPath, "utf8"));
-  descriptor.artifacts[0].path = "collision/TiboTattle-test.spdx.json";
+  descriptor.artifacts[0].path = "collision/Rhetrion-test.spdx.json";
   fixture.artifactPath = collidingArtifact;
   await writeFile(fixture.descriptorPath, JSON.stringify(descriptor), "utf8");
   assert.throws(
@@ -448,13 +448,13 @@ test("preflight binds source identity to the trusted tag context", async () => {
 test("preflight permits a trusted reusable signer workflow ref distinct from the release tag", async () => {
   const fixture = await makeFixture();
   fixture.trustedWorkflowRef =
-    "adamallcock/tibotattle/.github/workflows/reusable-release.yml@refs/heads/release-workflow";
+    "example/usage-monitor/.github/workflows/reusable-release.yml@refs/heads/release-workflow";
   const result = preflightReleaseAttestation({
     ...fixture,
     workspace: process.cwd(),
   });
   assert.equal(result.signer.signerWorkflow,
-    "adamallcock/tibotattle/.github/workflows/reusable-release.yml");
+    "example/usage-monitor/.github/workflows/reusable-release.yml");
   assert.equal(result.signer.signerDigest, fixture.trustedWorkflowSha);
 });
 
@@ -663,11 +663,11 @@ test("collect rechecks frozen subjects, copies both bundles, and rejects output 
   });
   assert.equal(
     collected.provenanceBundlePath,
-    join(await realpath(fixture.evidenceDirectory), "TiboTattle-test.bin.provenance.bundle.json"),
+    join(await realpath(fixture.evidenceDirectory), "Rhetrion-test.bin.provenance.bundle.json"),
   );
   assert.equal(
     collected.sbomBundlePath,
-    join(await realpath(fixture.evidenceDirectory), "TiboTattle-test.bin.sbom.bundle.json"),
+    join(await realpath(fixture.evidenceDirectory), "Rhetrion-test.bin.sbom.bundle.json"),
   );
   assert.equal(await readFile(collected.provenanceBundlePath, "utf8"),
     await readFile(provenanceSource, "utf8"));
@@ -680,7 +680,7 @@ test("collect rechecks frozen subjects, copies both bundles, and rejects output 
   assert.equal(enrichedArtifact.provenance.predicateType,
     "https://slsa.dev/provenance/v1");
   assert.equal(enrichedArtifact.provenance.builderId,
-    "https://github.com/adamallcock/tibotattle/.github/workflows/release.yml@refs/tags/v0.1.0");
+    "https://github.com/example/usage-monitor/.github/workflows/release.yml@refs/tags/v0.1.0");
   assert.equal(enrichedArtifact.provenance.runUrl, fixture.trustedRunUrl);
   assert.equal(enrichedArtifact.provenance.signerRepository, fixture.trustedRepository);
   assert.equal(enrichedArtifact.provenance.signerWorkflow, fixture.signerWorkflow);
@@ -730,11 +730,11 @@ test("collect rechecks frozen subjects, copies both bundles, and rejects output 
   );
   const secondEvidencePath = await realpath(secondEvidenceDirectory);
   assert.throws(
-    () => lstatSync(join(secondEvidencePath, "TiboTattle-test.bin.provenance.bundle.json")),
+    () => lstatSync(join(secondEvidencePath, "Rhetrion-test.bin.provenance.bundle.json")),
     { code: "ENOENT" },
   );
   assert.throws(
-    () => lstatSync(join(secondEvidencePath, "TiboTattle-test.bin.sbom.bundle.json")),
+    () => lstatSync(join(secondEvidencePath, "Rhetrion-test.bin.sbom.bundle.json")),
     { code: "ENOENT" },
   );
 
@@ -816,8 +816,8 @@ test("enriched descriptors rebase nested updater paths to the emitted base direc
   await mkdir(metadataDirectory);
   await writeFile(join(metadataDirectory, "latest.yml"), "version: 0.1.0\n", "utf8");
   const descriptor = JSON.parse(await readFile(fixture.descriptorPath, "utf8"));
-  descriptor.artifacts[0].path = "../../TiboTattle-test.bin";
-  descriptor.artifacts[0].sbom.path = "../../TiboTattle-test.spdx.json";
+  descriptor.artifacts[0].path = "../../Rhetrion-test.bin";
+  descriptor.artifacts[0].sbom.path = "../../Rhetrion-test.spdx.json";
   descriptor.artifacts[0].updater = {
     enabled: true,
     mechanism: "electron-updater",
@@ -849,7 +849,7 @@ test("enriched descriptors rebase nested updater paths to the emitted base direc
   const enriched = JSON.parse(
     await readFile(collected.enrichedReleaseDescriptorPath, "utf8"),
   );
-  assert.equal(enriched.artifacts[0].updater.metadata.path, "metadata/latest.yml");
+  assert.equal(enriched.artifacts[0].updater.metadata.path, join("metadata", "latest.yml"));
   const manifest = await generateReleaseEvidence({
     descriptor: enriched,
     baseDir: collected.enrichedReleaseDescriptorBaseDir,
@@ -892,7 +892,7 @@ test("collect rolls back a provenance bundle when the SBOM bundle copy fails", a
   );
   const evidencePath = await realpath(fixture.evidenceDirectory);
   assert.throws(
-    () => lstatSync(join(evidencePath, "TiboTattle-test.bin.provenance.bundle.json")),
+    () => lstatSync(join(evidencePath, "Rhetrion-test.bin.provenance.bundle.json")),
     { code: "ENOENT" },
   );
 });
@@ -923,7 +923,7 @@ test("ancestor symlinks are canonicalized before generated evidence outputs", as
   });
   assert.equal(
     collected.provenanceBundlePath,
-    join(await realpath(join(realEvidence, "nested")), "TiboTattle-test.bin.provenance.bundle.json"),
+    join(await realpath(join(realEvidence, "nested")), "Rhetrion-test.bin.provenance.bundle.json"),
   );
 });
 
@@ -948,8 +948,8 @@ test("frozen staging cleanup removes only the original device/inode and survives
   assert.throws(() => lstatSync(preflight.frozenArtifactPath), { code: "ENOENT" });
   assert.throws(() => lstatSync(preflight.frozenSbomPath), { code: "ENOENT" });
 
-  const stagingDirectory = await mkdtemp(join(tmpdir(), "tibotattle-release-frozen-"));
-  const replacementRoot = await mkdtemp(join(tmpdir(), "tibotattle-cleanup-target-"));
+  const stagingDirectory = await mkdtemp(join(tmpdir(), "usagemonitor-release-frozen-"));
+  const replacementRoot = await mkdtemp(join(tmpdir(), "usagemonitor-cleanup-target-"));
   const replacementArtifact = join(replacementRoot, "preserve-me.txt");
   await writeFile(join(stagingDirectory, "artifact.bin"), "artifact\n", "utf8");
   await writeFile(join(stagingDirectory, "sbom.json"), "sbom\n", "utf8");
@@ -1032,11 +1032,11 @@ test("collect rechecks original/frozen subjects and descriptor after verificatio
     );
     const evidencePath = await realpath(fixture.evidenceDirectory);
     assert.throws(
-      () => lstatSync(join(evidencePath, "TiboTattle-test.bin.provenance.bundle.json")),
+      () => lstatSync(join(evidencePath, "Rhetrion-test.bin.provenance.bundle.json")),
       { code: "ENOENT" },
     );
     assert.throws(
-      () => lstatSync(join(evidencePath, "TiboTattle-test.bin.sbom.bundle.json")),
+      () => lstatSync(join(evidencePath, "Rhetrion-test.bin.sbom.bundle.json")),
       { code: "ENOENT" },
     );
   }

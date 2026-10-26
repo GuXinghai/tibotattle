@@ -124,7 +124,7 @@ function refreshHarness({
       "collection_failed",
     ]),
     electronRefreshLifecycleState: null,
-    tibotattleDesktop: bridge,
+    usageMonitorDesktop: bridge,
     createElectronRefreshLease: (options) => createElectronRefreshLease({
       ...options,
       heartbeatIntervalMs: 60_000,
@@ -680,7 +680,7 @@ test("quota failure messages explain a missing Codex CLI and expose only fixed e
     const copy = translate(unavailable.copyKey, {}, locale);
     assert.match(title, /quota|额度|cuota/iu, locale);
     assert.match(copy, /CODEX_BIN/u, locale);
-    assert.match(copy, /TiboTattle/u, locale);
+    assert.ok(copy.includes(translate("app.name", {}, locale)), locale);
     assert.match(copy, /Codex CLI/u, locale);
     assert.match(copy, /restart|重启|reinicia/iu, locale);
   }
@@ -823,7 +823,7 @@ test("accepted Electron refreshes acquire and settle the main-process lease", as
 
 test("a stranded main-process lease reports connection recovery", async () => {
   let status = {
-    schemaVersion: "tibotattle-desktop-refresh-status-v1",
+    schemaVersion: "usagemonitor-desktop-refresh-status-v1",
     activeLease: true,
     cadenceTimerArmed: false,
   };
@@ -1013,7 +1013,7 @@ test("optional status reads started before a manual request cannot overwrite its
 
 
 test("companion scheduling does not require a shell business timer", async () => {
-  let status = { schemaVersion: "tibotattle-desktop-refresh-status-v1",
+  let status = { schemaVersion: "usagemonitor-desktop-refresh-status-v1",
     activeLease: false, cadenceTimerArmed: false, scheduleOwner: "companion" };
   const harness = refreshHarness({ electron: true, bridge: { getRefreshStatus: async () => status } });
   await harness.context.refreshElectronCadenceHealth();

@@ -11,7 +11,7 @@ This forward repair follows the 0.1.18 desktop source merge. It does not
 change the published source tag, signed installers, applied migrations,
 collection consent, or staged protocol activation. Deployment and live
 recovery require separate verification through the maintained
-[production runbook](../runbooks/production-operations.md).
+production runbook (retired; retained in Git history).
 
 The admin asset inventory now embeds the telemetry module required by its
 client. Recursive import-closure validation rejects missing or unreviewed

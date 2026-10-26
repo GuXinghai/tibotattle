@@ -13,8 +13,8 @@ it does not authorize deployment, migration, activation or changes to the runnin
 production recovery. The desktop release can proceed independently of the D1
 drafts. Follow the [documentation index](../README.md),
 [current release status](../current-status.md),
-[production operations](../runbooks/production-operations.md),
-[migration rehearsal](../runbooks/release-migration-rehearsal.md) and
+production operations (retired; retained in Git history),
+migration rehearsal (retired; retained in Git history) and
 publication reconciliation
 for their respective gates.
 

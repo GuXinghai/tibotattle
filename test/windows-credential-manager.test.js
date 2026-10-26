@@ -369,7 +369,7 @@ test("Windows backend records secret-free, capability-derived mutation audit eve
 });
 
 test("Windows backend durably prepares before native access and settles after readback", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-manager-audit-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-manager-audit-"));
   const auditStore = createWindowsCredentialOperationAuditStore({
     filePath: join(root, "private", "windows-credential-operation-audit-v1.sqlite"),
   });

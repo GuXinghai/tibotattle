@@ -65,16 +65,16 @@ test("semantic tray states project fixed status copy in every supported locale",
       ["es", labels[2]],
     ]) {
       const template = createTrayFixture({
-        appName: "TiboTattle Dev",
+        appName: "Rhetrion Dev",
         locale,
         trayStatus: { status, allowance: null, notificationEvidence: null },
       });
       const compact = status === "analyzing" ? "…" : "–";
       const expectedTitle = locale === "en-US"
-        ? `TiboTattle Dev · ${compact} allowance`
+        ? `Rhetrion Dev · ${compact} allowance`
         : locale === "zh-Hans"
-          ? `TiboTattle Dev · 剩余 ${compact}`
-          : `TiboTattle Dev · ${compact} disponible`;
+          ? `Rhetrion Dev · 剩余 ${compact}`
+          : `Rhetrion Dev · ${compact} disponible`;
       assert.equal(template[0].label, expectedTitle);
       assert.equal(template[1].label, expected);
       assert.equal(template[1].enabled, false);
@@ -129,7 +129,7 @@ test("tray refresh control follows companion lifecycle and avoids overlap", () =
 
 test("fresh direct evidence projects compact title, evidence age, and quota lanes", () => {
   const notificationEvidence = {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",
@@ -145,7 +145,7 @@ test("fresh direct evidence projects compact title, evidence age, and quota lane
     }],
   };
   const fiveHour = createTrayFixture({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     locale: "en-US",
     trayStatus: {
       status: "fresh",
@@ -154,26 +154,26 @@ test("fresh direct evidence projects compact title, evidence age, and quota lane
     },
     now: Date.parse("2026-08-22T12:04:00.000Z"),
   });
-  assert.equal(fiveHour[0].label, "TiboTattle Dev · 74% allowance");
+  assert.equal(fiveHour[0].label, "Rhetrion Dev · 74% allowance");
   assert.equal(fiveHour[1].label, "Observed 4 minutes ago · verified current evidence");
   assert.equal(fiveHour[2].label, "Five-hour allowance: 74% remaining · resets in 2h 56m");
   assert.equal(fiveHour[2].enabled, false);
   assert.deepEqual(fiveHour.slice(3).map((entry) => entry.type === "separator" ? entry.type : entry.label), [
     "separator",
-    "Open TiboTattle Dev",
+    "Open Rhetrion Dev",
     "Allowance",
     "Usage & costs",
     "Model performance",
     "Update Local Usage",
     "Check for Updates…",
     "Settings…",
-    "About TiboTattle Dev",
+    "About Rhetrion Dev",
     "separator",
-    "Quit TiboTattle Dev",
+    "Quit Rhetrion Dev",
   ]);
 
   const sevenDay = createTrayFixture({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     locale: "zh-Hans",
     trayStatus: {
       status: "fresh",
@@ -185,7 +185,7 @@ test("fresh direct evidence projects compact title, evidence age, and quota lane
     },
     now: Date.parse("2026-08-22T12:00:00.000Z"),
   });
-  assert.equal(sevenDay[0].label, "TiboTattle Dev · 剩余 12%");
+  assert.equal(sevenDay[0].label, "Rhetrion Dev · 剩余 12%");
   assert.equal(sevenDay[2].label, "七天配额：已过 57% · 已用 88% · 3d 0h 后重置");
 });
 
@@ -236,41 +236,41 @@ test("tray status rejects arbitrary fields and renderer-shaped labels", () => {
 test("default and legacy label callers remain bounded and preserve action identity", () => {
   const { actions, calls } = actionRecorder();
   const defaultTemplate = createTrayFixture({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     actions,
   });
   assert.equal(defaultTemplate[1].label, STATUS_PLACEHOLDER);
   assert.deepEqual(menuLabels(defaultTemplate), [
-    "TiboTattle Dev · – allowance",
+    "Rhetrion Dev · – allowance",
     STATUS_PLACEHOLDER,
     "separator",
-    "Open TiboTattle Dev",
+    "Open Rhetrion Dev",
     "Allowance",
     "Usage & costs",
     "Model performance",
     "Retry",
     "Check for Updates…",
     "Settings…",
-    "About TiboTattle Dev",
+    "About Rhetrion Dev",
     "separator",
-    "Quit TiboTattle Dev",
+    "Quit Rhetrion Dev",
   ]);
   for (const [label, action] of [
-    ["Open TiboTattle Dev", "show"],
+    ["Open Rhetrion Dev", "show"],
     ["Allowance", "allowance"],
     ["Usage & costs", "usage"],
     ["Model performance", "performance"],
     ["Retry", "retry"],
     ["Settings…", "settings"],
-    ["About TiboTattle Dev", "about"],
-    ["Quit TiboTattle Dev", "quit"],
+    ["About Rhetrion Dev", "about"],
+    ["Quit Rhetrion Dev", "quit"],
   ]) {
     labeled(defaultTemplate, label).click();
     assert.equal(calls.at(-1), action);
   }
 
   const legacy = createTrayFixture({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     statusLabel: "Status unavailable",
   });
   assert.equal(legacy[1].label, STATUS_PLACEHOLDER);

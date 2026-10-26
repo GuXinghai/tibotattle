@@ -19,7 +19,7 @@ implemented in `a624d521dd6ce49d8466927d91652124af09234b` on
 `codex/release-agent-tooling`, based on
 `77b564cd1d226aef4e32e0405c25cf20ec1c7d3f`. Recommendations 4–5 remain
 [planned](../plans/2026-09-08-agent-release-tooling.md). The maintained entrypoint
-is [agent release operations](../runbooks/agent-release-operations.md).
+is agent release operations (retired; retained in Git history).
 
 Environment: macOS arm64, Node.js 26.2.0. All mutation tests used synthetic
 fixtures, disposable local Git remotes, local databases or development bundles.

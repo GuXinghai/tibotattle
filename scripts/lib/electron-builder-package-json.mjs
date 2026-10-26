@@ -9,26 +9,32 @@
  * inventory.
  */
 
+import identity from "../../config/application-identity.cjs";
+import brand from "../../config/product-brand.cjs";
+
 import distribution from "../../config/electron-production-distribution.cjs";
 
-// TiboTattle is Windows-only. Development packages stay unsigned and carry no
+// Rhetrion is Windows-only. Development packages stay unsigned and carry no
 // updater authority; the production profiles carry the reviewed NSIS feed.
 export const ELECTRON_BUILDER_PACKAGE_PROFILES = Object.freeze({
   development: Object.freeze({
     main: "apps/electron/main.js",
     name: "app-usagemonitor",
-    productName: "TiboTattle Dev",
-    desktopName: "com.adamallcock.tibotattle.electron.dev.desktop",
+    productName: brand.developmentDisplayName,
+    usageMonitorIdentity: identity.applicationMetadata("development"),
+    desktopName: "com.usagemonitor.local.dev.desktop",
   }),
   "windows-production": Object.freeze({
     main: "apps/electron/main.js",
     name: "app-usagemonitor",
-    productName: "TiboTattle",
+    productName: brand.displayName,
+    usageMonitorIdentity: identity.applicationMetadata("stable"),
   }),
   production: Object.freeze({
     main: "apps/electron/main.js",
     name: "app-usagemonitor",
-    productName: "TiboTattle",
+    productName: brand.displayName,
+    usageMonitorIdentity: identity.applicationMetadata("stable"),
   }),
 });
 
@@ -179,7 +185,7 @@ export function transformElectronBuilderPackageJsonBytes(
     throw new TypeError("production distribution metadata is not allowed for this profile");
   }
   if (isMain) {
-    const hasDistributionMetadata = Object.hasOwn(data, "tibotattleDistribution");
+    const hasDistributionMetadata = Object.hasOwn(data, "usageMonitorDistribution");
     // The input package is shared by every unsigned development build. An
     // ordinary profile must not inherit an authority marker from a previous
     // distribution build. The selected profile below is the only authority
@@ -197,9 +203,10 @@ export function transformElectronBuilderPackageJsonBytes(
       main: selectedProfile.main,
       name: selectedProfile.name,
       productName: selectedProfile.productName,
+      usageMonitorIdentity: selectedProfile.usageMonitorIdentity,
       ...(selectedProfile.desktopName ? { desktopName: selectedProfile.desktopName } : {}),
       version: packageVersion,
-      ...(productionMetadata ? { tibotattleDistribution: productionMetadata } : {}),
+      ...(productionMetadata ? { usageMonitorDistribution: productionMetadata } : {}),
     })) {
       data[property] = value;
     }

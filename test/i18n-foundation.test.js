@@ -25,7 +25,7 @@ import {
 } from "../packages/i18n/index.js";
 
 test("browser catalog generation atomically replaces output on Windows", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-i18n-generation-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-i18n-generation-"));
   try {
     const sourceFile = join(root, "source.js");
     const outputFile = join(root, "mirror.js");
@@ -61,7 +61,7 @@ test("i18n is a dependency-free workspace package with complete initial catalogs
   assert.equal(canonicalizeLocale("en-us"), "en-US");
   assert.equal(canonicalizeLocale("zh-hant-tw"), "zh-Hant-TW");
   assert.equal(canonicalizeLocale(null), null);
-  assert.equal(EN_US_CATALOG["app.name"], "TiboTattle");
+  assert.equal(EN_US_CATALOG["app.name"], "Usage Monitor");
   const completeness = assertCatalogCompleteness();
   assert.deepEqual(completeness.locales, ["en-US", "zh-Hans", "es"]);
   assert.equal(completeness.keyCount, Object.keys(EN_US_CATALOG).length);
@@ -186,7 +186,7 @@ test("message lookup and interpolation keep missing content visible", () => {
   );
   assert.equal(
     translate("app.name", {}, { locale: "fr-FR", catalogs }),
-    "TiboTattle",
+    "Usage Monitor",
   );
   assert.equal(
     translate("missing.key", {}, { locale: "fr-FR", catalogs }),

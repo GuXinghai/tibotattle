@@ -239,15 +239,15 @@ payloads, credentials or private session content are included.
 Source references should be read at the deployed revision above when reproducing
 this snapshot; the checkout may contain later work:
 
-- [Catch-up handler](../../apps/worker/src/storage-analytics-catchup-worker.ts):
+- `Catch-up handler` (retired source):
   Queue work units, budgets, receipts and partial-work hint.
-- [Analytics runtime](../../apps/worker/src/storage-analytics-runtime.ts):
+- `Analytics runtime` (retired source):
   ordinary dispatch, repeated admission and maintenance.
-- [Daily v1.1 projection](../../apps/worker/src/v11-daily-projection.ts):
+- `Daily v1.1 projection` (retired source):
   200-record pages, immutable-day reuse, final source proof and saved steps.
-- [Typed record reader](../../apps/worker/src/typed-v11-record-reader.ts):
+- `Typed record reader` (retired source):
   membership validation and bounded compatibility reads.
-- [Page schema and triggers](../../apps/worker/analytics-migrations/0013_v11_daily_value_pages.sql):
+- `Page schema and triggers` (retired source):
   retained page-size and completeness contracts.
-- [Source journal proof](../../apps/worker/src/v11-storage-journal.ts):
+- `Source journal proof` (retired source):
   current generation and terminal-owner handling.

@@ -57,7 +57,7 @@ Scope: all files under `docs/`. Apply the repository root guidance first.
 - Retiring self-service controls does not retire owner erasure, privacy-request
   handling, retention disclosures, or deletion-safe restore. Keep those boundaries
   truthful without inventing a contact channel, deadline, or legal conclusion.
-- TiboTattle supports Windows x64 only ([decision](decisions/2026-10-12-windows-only.md)).
+- Rhetrion supports Windows x64 only ([decision](decisions/2026-10-12-windows-only.md)).
   Do not describe macOS or Linux as supported, planned, or qualified; keep Windows
   source, installed, updater, and release evidence separate.
 

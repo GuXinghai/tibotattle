@@ -3,7 +3,7 @@ export const X_TARGET = 'thsottiaux';
 export const X_TABS = Object.freeze(['posts', 'replies', 'reposts', 'media']);
 export const X_LOGIN_STAGES = Object.freeze(['checking_bridge', 'waiting_import', 'validating', 'preparing', 'writing', 'connecting', 'verifying', 'challenge', 'saving', 'complete']);
 export const X_DEFAULT_SETTINGS = Object.freeze({ refreshMinutes: 5, proxyMode: 'system', proxyPort: 10809, notifyPosts: false, notifyReplies: false });
-export const X_RESOURCE_SCHEME = 'tibotattle-x-media';
+export const X_RESOURCE_SCHEME = 'usagemonitor-x-media';
 // Closed local failures: never carry a filesystem path, cookie or native message.
 export const X_SESSION_ERRORS = Object.freeze(['session_write_failed', 'session_persist_failed', 'session_read_failed', 'session_decrypt_failed', 'session_restore_failed', 'session_permission_failed', 'session_profile_limit', 'session_clear_failed']);
 export const X_NOTIFICATION_SEEN_LIMIT = 1024;

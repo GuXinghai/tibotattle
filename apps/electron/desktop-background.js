@@ -3,13 +3,13 @@ import { open, stat } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import { isWindowsProtectedStateStore, isWindowsProtectedStateStoreError } from "../../src/platform/index.js";
 
-export const BACKGROUND_SCHEMA = "tibotattle-window-background-v2";
-const LEGACY_SCHEMA = "tibotattle-window-background-v1";
+export const BACKGROUND_SCHEMA = "usagemonitor-window-background-v2";
+const LEGACY_SCHEMA = "usagemonitor-window-background-v1";
 export const BACKGROUND_CHUNK_BYTES = 1024 * 1024;
 const CONFIG = "window-background-v1.json";
 const JOURNAL = "window-background-import-v1.json";
 const PICKER_CONFIG = "window-background-picker-v1.json";
-const PICKER_SCHEMA = "tibotattle-window-background-picker-v1";
+const PICKER_SCHEMA = "usagemonitor-window-background-picker-v1";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const DEFAULT = Object.freeze({ schemaVersion: BACKGROUND_SCHEMA, color: null, mask: 35, image: null });
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -329,7 +329,7 @@ export function createWindowsBackgroundRepository(store) {
 export function createDesktopBackgroundController({ repository, chooseImage, notify = () => {} }) {
   let tail = Promise.resolve();
   const enqueue = operation => { const result = tail.then(operation); tail = result.catch(() => {}); return result; };
-  const response = async (state, status = "ready") => ({ status, background: { color: state.color, mask: state.mask, imageUrl: state.image ? `tibotattle-background://image/${state.image.id}` : null } });
+  const response = async (state, status = "ready") => ({ status, background: { color: state.color, mask: state.mask, imageUrl: state.image ? `usagemonitor-background://image/${state.image.id}` : null } });
   const available = () => { if (!repository) throw new Error("Background storage unavailable"); };
   const changed = async state => { notify(); return response(state); };
   return Object.freeze({
@@ -352,7 +352,7 @@ export function createDesktopBackgroundController({ repository, chooseImage, not
     handleResource: request => enqueue(async () => {
       const notFound = () => new Response(null, { status: 404 });
       if (!["GET", "HEAD"].includes(request.method)) return new Response(null, { status: 405, headers: { Allow: "GET, HEAD" } });
-      const match = /^tibotattle-background:\/\/image\/([0-9a-f-]+)$/u.exec(request.url);
+      const match = /^usagemonitor-background:\/\/image\/([0-9a-f-]+)$/u.exec(request.url);
       if (!match || !UUID.test(match[1]) || !repository) return notFound();
       const state = await repository.load();
       if (!state.image || state.image.id !== match[1]) return notFound();

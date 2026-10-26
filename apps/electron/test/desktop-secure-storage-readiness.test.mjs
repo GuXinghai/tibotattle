@@ -38,7 +38,7 @@ test("secure storage failures keep a closed content-free reason and support code
 
 test("migration-required guidance preserves legacy state and offers no unavailable recovery flow", () => {
   const dialog = createDesktopSecureStorageDialog("migration_required");
-  assert.equal(dialog.message, "An existing TiboTattle credential requires migration.");
+  assert.equal(dialog.message, "An existing Rhetrion credential requires migration.");
   assert.match(dialog.detail, /Quit and contact support with the support code below/u);
   assert.match(dialog.detail, /The legacy credential is preserved\./u);
   assert.match(dialog.detail, /Do not delete or reset credentials or app data\./u);

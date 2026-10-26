@@ -38,7 +38,6 @@ export {
 
 import { normalizeOverviewWorkload } from "./overview-workload.js";
 const LOCAL_ROOT = "/api/local";
-const CENTRAL_ROOT = "/api/v1";
 // The dashboard has no tool-activity view. Keep this diagnostic in the raw
 // companion payload and retained snapshots, but omit it from display warnings.
 const INTERNAL_TOOL_HISTORY_WARNING =
@@ -5941,7 +5940,7 @@ export class LocalCompanionClient {
     }
     const fetchPerformance = async (...args) => {
       const response = await this.fetchImpl(...args);
-      const raw = response.headers?.get('X-TiboTattle-Performance-Diagnostics') ?? '';
+      const raw = response.headers?.get('X-Usage-Monitor-Performance-Diagnostics') ?? '';
       const allowed = ['timing_worker_failed', 'timing_scan_failed', 'timing_store_failed',
         'timing_projection_failed', 'timing_snapshot_read_failed', 'timing_snapshot_invalid', 'timing_snapshot_write_failed', 'timing_snapshot_scope_mismatch', 'timing_history_unavailable', 'timing_source_recovery_failed',
         'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported'];
@@ -5950,7 +5949,7 @@ export class LocalCompanionClient {
           || codes.some(code => !allowed.includes(code))) {
         throw Object.assign(new Error('Invalid performance diagnostics'), { code: 'timing_contract_invalid' });
       }
-      const sourceRaw = response.headers?.get('X-TiboTattle-Performance-Source-Diagnostics') ?? '';
+      const sourceRaw = response.headers?.get('X-Usage-Monitor-Performance-Source-Diagnostics') ?? '';
       const sourceAllowed = ['recovery_source_missing', 'recovery_source_read_failed',
         'recovery_source_not_discovered', 'source_identity_changed', 'source_truncated_during_read',
         'source_grew_during_read', 'source_metadata_changed_during_read', 'source_changed_unknown'];
@@ -6430,175 +6429,6 @@ export class LocalCompanionClient {
       throw error;
     }
     return normalizeLocalContributionPreparation(payload);
-  }
-
-}
-
-export class CommunityClient {
-  constructor({
-    fetchImpl = globalThis.fetch,
-    getCsrfToken = () => null
-  } = {}) {
-    // Detached for the same reason as LocalCompanionClient: browser-native
-    // fetch throws when invoked with this client as its receiver.
-    this.fetchImpl = (...args) => fetchImpl(...args);
-    this.getCsrfToken = getCsrfToken;
-  }
-
-  sessionOptions(options = {}) {
-    return { credentials: "same-origin", ...options };
-  }
-
-  mutationOptions(options = {}) {
-    const csrfToken = this.getCsrfToken();
-    if (typeof csrfToken !== "string" || csrfToken.length === 0) {
-      throw new Error("A current session confirmation is required.");
-    }
-    return this.sessionOptions({
-      ...options,
-      headers: {
-        "X-Usage-Monitor-CSRF": csrfToken,
-        ...(options.headers ?? {})
-      }
-    });
-  }
-
-  health() {
-    return fetchJson(this.fetchImpl, "/api/health");
-  }
-
-  session() {
-    return fetchJson(this.fetchImpl, `${CENTRAL_ROOT}/session`, this.sessionOptions());
-  }
-
-  async enroll(
-    inviteCode = null,
-    contributionSchemaVersion = "telemetry-contribution-v0.1",
-    { deviceBootstrap = false, identity = null } = {}
-  ) {
-    if (typeof deviceBootstrap !== "boolean") {
-      throw new TypeError("Enrollment device bootstrap selection is invalid.");
-    }
-    if (identity !== null && !validHostedIdentity(identity)) {
-      throw new TypeError("Enrollment identity is invalid.");
-    }
-    const accountScoped = contributionSchemaVersion === "telemetry-contribution-v0.2";
-    const body = {
-      consentVersion: accountScoped
-        ? "privacy-safe-telemetry-v0.2"
-        : "privacy-safe-telemetry-v0.1",
-      syntheticOnly: false
-    };
-    if (deviceBootstrap) {
-      body.deviceBootstrap = {
-        ongoingUpload: true,
-        consentVersion: accountScoped
-          ? "ongoing-privacy-safe-telemetry-v0.2"
-          : "ongoing-privacy-safe-telemetry-v0.1"
-      };
-    }
-    if (identity !== null) {
-      body.identity = {
-        provider: identity.provider,
-        proof: identity.proof,
-        verifier: identity.verifier
-      };
-    }
-    if (typeof inviteCode === "string" && inviteCode.length > 0) body.inviteCode = inviteCode;
-    return fetchJson(this.fetchImpl, `${CENTRAL_ROOT}/enroll`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { Accept: "application/json", "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-  }
-
-  /**
-   * Starts hosted Google sign-in. Google's Web application client requires its
-   * client secret on the token exchange even with PKCE, so the service owns
-   * both the redirect and the verifier; this page never sees either.
-   */
-  async identityGoogleStart() {
-    return startHostedSignIn(this.fetchImpl, "google");
-  }
-
-  async identityGoogleResult(state, verifier) {
-    return readHostedSignInResult(this.fetchImpl, "google", state, verifier);
-  }
-
-  /**
-   * Starts hosted Sign in with Apple. Apple refuses loopback redirects and
-   * answers with response_mode=form_post, so the service owns both the
-   * redirect target and the client secret.
-   */
-  async identityAppleStart() {
-    return startHostedSignIn(this.fetchImpl, "apple");
-  }
-
-  async identityAppleResult(state, verifier) {
-    return readHostedSignInResult(this.fetchImpl, "apple", state, verifier);
-  }
-
-  createDevicePairing(accountScoped = false) {
-    return fetchJson(this.fetchImpl, `${CENTRAL_ROOT}/me/device-pairings`, this.mutationOptions({
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        // Re-pinned 2026-08-08 (v1.0 wiring): a telemetry participant's
-        // pairing requests the v1.0 incremental consent identifier. The
-        // Worker pins it on the pairing, and the companion's CLAIM of that
-        // pairing is what records the server-side consent-once grant that
-        // every v1.0 chunk upload is verified against — a pairing still
-        // carrying "ongoing-privacy-safe-telemetry-v0.1" leaves every upload
-        // refused 403 TELEMETRY_CONSENT_INVALID. The account-scoped preview
-        // keeps its own single identifier.
-        consentVersion: accountScoped
-          ? "ongoing-privacy-safe-telemetry-v0.2"
-          : "ongoing-privacy-safe-telemetry-v1.0",
-        ongoingUpload: true
-      })
-    }));
-  }
-
-  grantAttributionContribution(review) {
-    const successor = review?.consent?.telemetrySchemaVersion === TELEMETRY_V12_CONTRIBUTION_SCHEMA_VERSION;
-    const consent = (successor ? telemetryV12RequiredConsent : telemetryV11RequiredConsent)();
-    if (!review || Object.entries(consent).some(([key, value]) => review.consent?.[key] !== value)
-        || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(review.grantDeviceId ?? "")) {
-      throw new TypeError("Attribution consent requires a reviewed device target.");
-    }
-    return fetchJson(this.fetchImpl, `${CENTRAL_ROOT}/me/${successor ? "device-telemetry-v12-consents" : "device-telemetry-consents"}`, this.mutationOptions({
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deviceId: review.grantDeviceId, consent, ongoingUpload: true }),
-    }));
-  }
-
-  grantTelemetryPerformanceContribution(review) {
-    const consent = {
-      schemaVersion: PERFORMANCE_RECORD_SCHEMA_VERSION,
-      fieldDictionaryVersion: PERFORMANCE_FIELD_DICTIONARY_VERSION,
-      privacyContractVersion: PERFORMANCE_PRIVACY_CONTRACT_VERSION,
-      scope: PERFORMANCE_SCOPE,
-    };
-    if (!review
-        || !review.binding
-        || Object.entries(consent).some(([key, value]) => review.consent?.[key] !== value)
-        || performanceBinding(review.binding) === null
-        || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(review.grantDeviceId ?? "")) {
-      throw new TypeError("Telemetry performance consent requires a reviewed device target.");
-    }
-    return fetchJson(this.fetchImpl, `${CENTRAL_ROOT}/me/device-telemetry-performance-consents`, this.mutationOptions({
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ deviceId: review.grantDeviceId, consent, ongoingUpload: true }),
-    }));
-  }
-
-  logout() {
-    return fetchJson(this.fetchImpl, `${CENTRAL_ROOT}/logout`, this.mutationOptions({
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}"
-    }));
   }
 
 }

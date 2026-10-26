@@ -28,7 +28,7 @@ const RECOVERY_STATUSES = Object.freeze([
   "companion_busy",
 ]);
 
-export const RECOVERY_ACTION_CHANNEL = "tibotattle:electron-recovery:v1";
+export const RECOVERY_ACTION_CHANNEL = "usagemonitor:electron-recovery:v1";
 export const RECOVERY_WINDOW_VERSION = "v1";
 
 const RECOVERY_COPY = Object.freeze({
@@ -85,7 +85,7 @@ const RECOVERY_HTML_PREFIX = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
-<title>TiboTattle</title>
+<title>Rhetrion</title>
 <style>
 :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #fff; color: #000; }
@@ -121,7 +121,7 @@ button:disabled { cursor: default; opacity: .45; }
 </main>
 <script>
 (function () {
-  const bridge = globalThis.tibotattleRecovery;
+  const bridge = globalThis.usagemonitorRecovery;
   const actions = Object.freeze({
     retry: document.getElementById("retry"),
     settings: document.getElementById("settings"),

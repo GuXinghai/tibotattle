@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://tibotattle.com/schemas/telemetry-contribution-v1.1/domain-manifest.schema.json",
+  "$id": "urn:usagemonitor:schema:telemetry-contribution-v1.1:domain-manifest.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [

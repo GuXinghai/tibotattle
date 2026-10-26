@@ -849,7 +849,7 @@ export async function installPinnedGhVerifier({
 } = {}) {
   const key = ghPlatformKey(platform, architecture);
   const archive = GH_RELEASE_ARCHIVES[key];
-  const workDirectory = mkdtempSync(join(resolve(temporaryRoot), "tibotattle-gh-verifier-"));
+  const workDirectory = mkdtempSync(join(resolve(temporaryRoot), "usagemonitor-gh-verifier-"));
   const archivePath = join(workDirectory, archive.archive);
   const extractionDirectory = join(workDirectory, "extract");
   mkdirSync(extractionDirectory);
@@ -1199,7 +1199,7 @@ function cleanupOwnedStagingDirectory(directory, ownedFiles = []) {
         || directoryRelative === ".."
         || directoryRelative.startsWith(`..${sep}`)
         || isAbsolute(directoryRelative)
-        || !basename(canonicalDirectory).startsWith("tibotattle-release-frozen-")) {
+        || !basename(canonicalDirectory).startsWith("usagemonitor-release-frozen-")) {
       return false;
     }
   } catch {
@@ -1369,7 +1369,7 @@ export function preflightReleaseAttestation({
     "artifact.sbom.subjectSha256");
   ensureEvidenceInterface(workspace);
   const descriptorSha256 = sha256File(descriptorPathValue);
-  const stagingDirectory = mkdtempSync(join(tmpdir(), "tibotattle-release-frozen-"));
+  const stagingDirectory = mkdtempSync(join(tmpdir(), "usagemonitor-release-frozen-"));
   const stagedFiles = [];
   try {
     const frozenArtifactPath = stageFrozenFile(artifact, stagingDirectory, "artifact");
@@ -1580,7 +1580,7 @@ export function cleanupFrozenStaging(
       && relativePath !== ".."
       && !relativePath.startsWith(`..${sep}`)
       && !isAbsolute(relativePath)
-      && basename(canonicalDirectory).startsWith("tibotattle-release-frozen-"),
+      && basename(canonicalDirectory).startsWith("usagemonitor-release-frozen-"),
   "RELEASE_ATTESTATION_STAGING_INVALID",
   "refusing to remove an untrusted frozen staging directory");
   const directoryMetadata = lstatSync(canonicalDirectory);

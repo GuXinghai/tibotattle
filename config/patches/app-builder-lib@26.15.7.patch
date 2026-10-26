@@ -98,7 +98,7 @@ index 12f078a..e3e5483 100644
 +for arg in "\${args[@]}" ; do
 +  case "$arg" in
 +    --no-sandbox|--no-sandbox=*|--disable-setuid-sandbox|--disable-setuid-sandbox=*)
-+      echo 'TiboTattle requires Chromium sandboxing.' >&2
++      echo 'Rhetrion requires Chromium sandboxing.' >&2
 +      exit 1
 +      ;;
 +  esac
@@ -163,7 +163,7 @@ index 2e68fb5..f6ef00b 100644
 +// This is deliberately a content-free seam for the protected finalizer. It
 +// records only fixed extension classes and counts; it never serializes the
 +// subject path, log fields, credentials, or signer diagnostics.
-+const WINDOWS_SIGNING_OPERATION_LEDGER_SCHEMA = "tibotattle-windows-signing-operation-ledger-v1";
++const WINDOWS_SIGNING_OPERATION_LEDGER_SCHEMA = "usagemonitor-windows-signing-operation-ledger-v1";
 +exports.WINDOWS_SIGNING_OPERATION_LEDGER_SCHEMA = WINDOWS_SIGNING_OPERATION_LEDGER_SCHEMA;
 +const WINDOWS_SIGNING_OPERATION_LEDGER_STATUS = "WINDOWS_SIGNING_OPERATION_LEDGER_RECORDED";
 +exports.WINDOWS_SIGNING_OPERATION_LEDGER_STATUS = WINDOWS_SIGNING_OPERATION_LEDGER_STATUS;

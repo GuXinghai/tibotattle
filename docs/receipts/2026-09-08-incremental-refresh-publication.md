@@ -15,7 +15,7 @@ completed accounts, so a flat historical-day counter no longer hides saved work.
 This receipt proves deployment and the observations below, **not completion of
 historical backfill**, a production speed multiplier, or a desktop release.
 
-Current operational authority is [production operations](../runbooks/production-operations.md).
+Current operational authority is production operations (retired; retained in Git history).
 The [investigation](../research/2026-09-07-refresh-performance-investigation.md)
 and [local qualification](../reviews/2026-09-07-incremental-refresh-qualification.md)
 retain the original findings, parity measurements and independent reviews.

@@ -32,7 +32,7 @@ function named(id, name, updatedAt = "2026-09-22T00:00:00Z") {
 }
 
 async function fixture(t, { wal = false } = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "tibotattle-work-metadata-"));
+  const directory = await mkdtemp(join(tmpdir(), "usagemonitor-work-metadata-"));
   const home = join(directory, "Codex metadata Ω");
   await mkdir(home, { mode: 0o700 });
   const file = join(home, "state_5.sqlite");

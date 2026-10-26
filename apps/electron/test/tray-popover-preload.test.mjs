@@ -45,7 +45,7 @@ test("tray popup preload exposes immutable actions and main-owned visibility", a
   const source = await readFile(PRELOAD_PATH, "utf8");
   vm.runInNewContext(source, context, { filename: PRELOAD_PATH });
   assert.equal(exposed.length, 1);
-  assert.equal(exposed[0].name, "tibotattleTrayPopover");
+  assert.equal(exposed[0].name, "usageMonitorTrayPopover");
   const bridge = exposed[0].value;
   assert.equal(Object.isFrozen(bridge), true);
   assert.equal(bridge.version, "v1");

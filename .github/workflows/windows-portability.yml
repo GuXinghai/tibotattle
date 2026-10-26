@@ -24,7 +24,7 @@ jobs:
     env:
       CI: "1"
       USAGE_MONITOR_TEST_LANE_REPORTER: dot
-      TIBOTATTLE_QUALIFICATION_CACHE_MODE: ${{ matrix.cache-mode }}
+      USAGE_MONITOR_QUALIFICATION_CACHE_MODE: ${{ matrix.cache-mode }}
     steps:
       - name: Check out the requested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,7 +47,7 @@ jobs:
             Write-Error 'WINDOWS_QUALIFICATION_REVISION_MISMATCH'
             exit 1
           }
-          "TIBOTATTLE_QUALIFICATION_REVISION=$actual" >> $env:GITHUB_ENV
+          "USAGE_MONITOR_QUALIFICATION_REVISION=$actual" >> $env:GITHUB_ENV
 
       - name: Install pinned Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -110,7 +110,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           if ('${{ matrix.cache-mode }}' -eq 'clean') {
-            $cleanStore = Join-Path $env:RUNNER_TEMP 'tibotattle-pnpm-clean-store'
+            $cleanStore = Join-Path $env:RUNNER_TEMP 'usagemonitor-pnpm-clean-store'
             if (Test-Path -LiteralPath $cleanStore) {
               Remove-Item -LiteralPath $cleanStore -Recurse -Force
             }
@@ -178,8 +178,8 @@ jobs:
             Write-Error 'WINDOWS_FILESYSTEM_BINDING_MANIFEST_INVALID'
             exit 1
           }
-          "TIBOTATTLE_WINDOWS_BINDING_SHA256=$($manifest.sha256)" >> $env:GITHUB_ENV
-          "TIBOTATTLE_WINDOWS_BINDING_BYTES=$($manifest.bytes)" >> $env:GITHUB_ENV
+          "USAGE_MONITOR_WINDOWS_BINDING_SHA256=$($manifest.sha256)" >> $env:GITHUB_ENV
+          "USAGE_MONITOR_WINDOWS_BINDING_BYTES=$($manifest.bytes)" >> $env:GITHUB_ENV
 
       - name: Record native environment
         shell: pwsh
@@ -189,12 +189,12 @@ jobs:
           "- Architecture: $env:PROCESSOR_ARCHITECTURE" >> $env:GITHUB_STEP_SUMMARY
           "- Node: $(node --version)" >> $env:GITHUB_STEP_SUMMARY
           "- pnpm: $(pnpm --version)" >> $env:GITHUB_STEP_SUMMARY
-          "- Revision: $env:TIBOTATTLE_QUALIFICATION_REVISION" >> $env:GITHUB_STEP_SUMMARY
+          "- Revision: $env:USAGE_MONITOR_QUALIFICATION_REVISION" >> $env:GITHUB_STEP_SUMMARY
           "- Cache mode: ${{ matrix.cache-mode }}" >> $env:GITHUB_STEP_SUMMARY
           "- Cache restore hit: ${{ steps.pnpm-cache.outputs.cache-hit || 'not-applicable' }}" >> $env:GITHUB_STEP_SUMMARY
           "- Warm proof: restored or online-primed store followed by an offline reinstall" >> $env:GITHUB_STEP_SUMMARY
-          "- Native binding bytes: $env:TIBOTATTLE_WINDOWS_BINDING_BYTES" >> $env:GITHUB_STEP_SUMMARY
-          "- Native binding SHA-256: $env:TIBOTATTLE_WINDOWS_BINDING_SHA256" >> $env:GITHUB_STEP_SUMMARY
+          "- Native binding bytes: $env:USAGE_MONITOR_WINDOWS_BINDING_BYTES" >> $env:GITHUB_STEP_SUMMARY
+          "- Native binding SHA-256: $env:USAGE_MONITOR_WINDOWS_BINDING_SHA256" >> $env:GITHUB_STEP_SUMMARY
           "- Credential mutex contract: windows-credential-mutex-v1 (owner-only, per capability)" >> $env:GITHUB_STEP_SUMMARY
           "- Credential audit file guard: windows-credential-audit-file-guard-v1 (main, journal, and two owned ancestors)" >> $env:GITHUB_STEP_SUMMARY
 
@@ -216,11 +216,11 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $qualificationCodexHome = Join-Path $env:RUNNER_TEMP 'tibotattle-codex-home'
-          $qualificationStateRoot = Join-Path $env:RUNNER_TEMP 'tibotattle-windows-private-state'
+          $qualificationCodexHome = Join-Path $env:RUNNER_TEMP 'usagemonitor-codex-home'
+          $qualificationStateRoot = Join-Path $env:RUNNER_TEMP 'usagemonitor-windows-private-state'
           New-Item -ItemType Directory -Force -Path $qualificationCodexHome | Out-Null
           "CODEX_HOME=$qualificationCodexHome" >> $env:GITHUB_ENV
-          "TIBOTATTLE_WINDOWS_QUALIFICATION_STATE_ROOT=$qualificationStateRoot" >> $env:GITHUB_ENV
+          "USAGE_MONITOR_WINDOWS_QUALIFICATION_STATE_ROOT=$qualificationStateRoot" >> $env:GITHUB_ENV
 
       - name: Run content-free Windows security qualification
         shell: pwsh

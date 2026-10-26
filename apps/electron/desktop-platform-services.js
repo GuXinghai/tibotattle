@@ -14,11 +14,8 @@ import { DESKTOP_LANGUAGES } from "./desktop-contract.js";
 import { desktopText } from "./desktop-menu.js";
 import { parseCodexThreadURL } from "./loopback-policy.js";
 
-const EXTERNAL_URLS = Object.freeze({
-  website: "https://tibotattle.com",
-  github: "https://github.com/adamallcock/tibotattle",
-  x: "https://x.com/adamallcock",
-});
+// Independent local product: external destinations are intentionally unconfigured.
+const EXTERNAL_URLS = Object.freeze({ website: null, github: null, x: null });
 
 const SYSTEM_SETTINGS_URLS = Object.freeze({
   win32: Object.freeze({
@@ -475,7 +472,7 @@ export function createDesktopPlatformServices({
     const version = typeof app.getVersion === "function"
       ? safeBuildLabel(app.getVersion())
       : "unknown";
-    const configuredBuild = environment?.TIBOTATTLE_BUILD_ID;
+    const configuredBuild = environment?.USAGE_MONITOR_BUILD_ID;
     const build = typeof configuredBuild === "string" && configuredBuild.length > 0
       ? safeBuildLabel(configuredBuild)
       : packagedRuntimeContentBuild(app) ?? "development";

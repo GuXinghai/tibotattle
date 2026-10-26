@@ -1,7 +1,7 @@
 # Repository script guidance
 
 Scope: all files under `scripts/`. Apply the repository root guidance first.
-TiboTattle supports Windows x64 only ([decision](../docs/decisions/2026-10-12-windows-only.md));
+Rhetrion supports Windows x64 only ([decision](../docs/decisions/2026-10-12-windows-only.md));
 scripts must not add macOS, Linux, Sparkle, AppImage, Keychain, or Secret Service paths.
 
 ## Tooling boundary

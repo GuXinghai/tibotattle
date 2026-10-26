@@ -6,9 +6,9 @@ import { readFile as readRawFile } from "node:fs/promises";
 import { buildAllowanceTrends } from "../public/allowance-trends.js";
 import { createContext, runInContext } from "node:vm";
 import { FAST_MODE_QUOTA_MULTIPLIERS } from "@app-usagemonitor/accounting";
-import {
-  SEMANTIC_OPEN_TARGET_PLACEHOLDER,
-} from "../../../config/product-brand.js";
+import applicationIdentity from "../../../config/application-identity.cjs";
+const { APPLICATION_IDENTITY, APPLICATION_PROFILES } = applicationIdentity;
+const SEMANTIC_OPEN_TARGET_PLACEHOLDER = APPLICATION_IDENTITY.semanticOpenTargetPlaceholder;
 
 import {
   DIAGNOSTIC_REFERENCE_PATTERN,
@@ -63,7 +63,6 @@ import {
   formatQuotaWindowDuration,
   isValidQuotaWindowDuration,
   LOCAL_ONBOARDING_SCHEMA_VERSION,
-  CommunityClient,
   demoDashboard,
   LocalCompanionClient,
   normalizeCommunitySnapshot,
@@ -3718,249 +3717,6 @@ test("local contribution preparation exposes only verified bounded results", asy
   }
 });
 
-test("community adapter exposes only the current browser-session routes", async () => {
-  const calls = [];
-  const client = new CommunityClient({
-    getCsrfToken: () => "csrf-confirmation",
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify({ ok: true }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-  await client.health();
-  await client.session();
-  await client.createDevicePairing();
-  await client.logout();
-  assert.equal(calls[0].url, "/api/health");
-  assert.equal(calls[1].url, "/api/v1/session");
-  assert.equal(calls[1].options.credentials, "same-origin");
-  assert.equal(calls[2].url, "/api/v1/me/device-pairings");
-  assert.equal(calls[2].options.method, "POST");
-  assert.equal(calls[2].options.headers["X-Usage-Monitor-CSRF"], "csrf-confirmation");
-  // Re-pinned 2026-08-08 (v1.0 wiring): a telemetry participant's pairing now
-  // requests the v1.0 incremental consent identifier. The companion's CLAIM
-  // of this pairing is what records the server-side consent-once grant that
-  // v1.0 chunk uploads are verified against; the v0.1 identifier here left
-  // production refusing every upload with 403 TELEMETRY_CONSENT_INVALID.
-  assert.match(calls[2].options.body, /ongoing-privacy-safe-telemetry-v1\.0/);
-  assert.doesNotMatch(calls[2].options.body, /ongoing-privacy-safe-telemetry-v0\.1/);
-  assert.equal(calls[3].url, "/api/v1/logout");
-  assert.equal(calls[3].options.headers["X-Usage-Monitor-CSRF"], "csrf-confirmation");
-  await client.enroll("um_invite_test");
-  assert.match(calls[4].options.body, /privacy-safe-telemetry-v0\.1/);
-  assert.match(calls[4].options.body, /um_invite_test/);
-  assert.equal(calls.some(({ options }) => options.method === "DELETE"), false);
-  for (const retired of [
-    "readiness",
-    "recover",
-    "registerUpload",
-    "contributeSerialized",
-    "contribution",
-    "deleteContribution",
-    "deleteParticipant",
-    "personalStats",
-    "participantProfile",
-    "communityStats",
-    "participantExport",
-    "devices",
-    "revokeDevice",
-    "securityReset"
-  ]) {
-    assert.equal(typeof client[retired], "undefined", retired);
-  }
-});
-
-test("community enrollment can atomically request one upload-only device pairing", async () => {
-  const calls = [];
-  const client = new CommunityClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify({
-        schemaVersion: "participant-bootstrap-v0.1",
-        state: "pairing_ready"
-      }), {
-        status: 201,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-
-  await client.enroll(
-    "invite-code",
-    "telemetry-contribution-v0.1",
-    { deviceBootstrap: true }
-  );
-  assert.equal(calls[0].url, "/api/v1/enroll");
-  assert.equal(calls[0].options.credentials, "same-origin");
-  assert.deepEqual(JSON.parse(calls[0].options.body), {
-    consentVersion: "privacy-safe-telemetry-v0.1",
-    syntheticOnly: false,
-    deviceBootstrap: {
-      ongoingUpload: true,
-      consentVersion: "ongoing-privacy-safe-telemetry-v0.1"
-    },
-    inviteCode: "invite-code"
-  });
-});
-
-test("hosted Google sign-in starts, polls, and refuses anything but Google's authorize URL", async () => {
-  const calls = [];
-  const state = "G".repeat(64);
-  let responseStatus = 200;
-  let responsePayload = () => ({
-    schemaVersion: "identity-google-start-v0.1",
-    state,
-    authorizeUrl:
-      `https://accounts.google.com/o/oauth2/v2/auth?client_id=test.apps.googleusercontent.com&state=${state}`
-  });
-  const client = new CommunityClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify(responsePayload()), {
-        status: responseStatus,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-
-  const started = await client.identityGoogleStart();
-  assert.equal(started.state, state);
-  assert.equal(
-    started.authorizeUrl.startsWith(
-      "https://accounts.google.com/o/oauth2/v2/auth?"
-    ),
-    true
-  );
-  assert.equal(calls[0].url, "/api/v1/identity/google/start");
-  assert.equal(calls[0].options.method, "POST");
-  assert.equal(calls[0].options.credentials, "same-origin");
-  // The start request carries only SHA-256(verifier): the client keeps the raw
-  // verifier and the service still owns the client id, redirect, and PKCE. The
-  // start also never returns the verifier or its digest to the page.
-  const googleStartBody = JSON.parse(calls[0].options.body);
-  assert.deepEqual(Object.keys(googleStartBody), ["binding"]);
-  assert.match(googleStartBody.binding, /^[0-9a-f]{64}$/u);
-  assert.match(started.verifier, /^[A-Za-z0-9_-]{43,128}$/u);
-  assert.equal(started.authorizeUrl.includes(started.verifier), false);
-  assert.equal(started.authorizeUrl.includes(googleStartBody.binding), false);
-
-  // A tampered authorize URL is never handed to window.open.
-  for (const authorizeUrl of [
-    "https://attacker.example/o/oauth2/v2/auth?client_id=x",
-    "https://accounts.google.com.attacker.example/o/oauth2/v2/auth?a=b",
-    "https://accounts.google.com/o/oauth2/v2/authorize?a=b",
-    "javascript:alert(1)",
-    "https://accounts.google.com/o/oauth2/v2/auth"
-  ]) {
-    responsePayload = () => ({
-      schemaVersion: "identity-google-start-v0.1",
-      state,
-      authorizeUrl
-    });
-    await assert.rejects(
-      client.identityGoogleStart(),
-      /usable Google sign-in request/u
-    );
-  }
-  responsePayload = () => ({
-    schemaVersion: "identity-google-start-v0.1",
-    state: "too-short",
-    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?a=b"
-  });
-  await assert.rejects(
-    client.identityGoogleStart(),
-    /usable Google sign-in request/u
-  );
-  // An Apple start payload can never satisfy a Google start.
-  responsePayload = () => ({
-    schemaVersion: "identity-apple-start-v0.1",
-    state,
-    authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth?a=b"
-  });
-  await assert.rejects(
-    client.identityGoogleStart(),
-    /usable Google sign-in request/u
-  );
-
-  responsePayload = () => ({
-    schemaVersion: "identity-google-result-v0.1",
-    proof: "P".repeat(64)
-  });
-  const identity = await client.identityGoogleResult(state, started.verifier);
-  assert.deepEqual(identity, {
-    provider: "google",
-    proof: "P".repeat(64),
-    verifier: started.verifier
-  });
-  const resultCall = calls.at(-1);
-  assert.equal(resultCall.url, "/api/v1/identity/google/result");
-  assert.equal(resultCall.options.credentials, "same-origin");
-  assert.deepEqual(JSON.parse(resultCall.options.body), {
-    state,
-    verifier: started.verifier
-  });
-
-  await assert.rejects(
-    client.identityGoogleResult("short", started.verifier),
-    TypeError
-  );
-  await assert.rejects(
-    client.identityGoogleResult(null, started.verifier),
-    TypeError
-  );
-  // A missing or malformed verifier is refused before any request is made.
-  await assert.rejects(client.identityGoogleResult(state, "short"), TypeError);
-  await assert.rejects(client.identityGoogleResult(state), TypeError);
-
-  // A pending sign-in is a signal to keep polling, not a failure.
-  responseStatus = 404;
-  responsePayload = () => ({ error: { code: "IDENTITY_RESULT_PENDING" } });
-  await assert.rejects(
-    client.identityGoogleResult(state, started.verifier),
-    (error) => error.status === 404
-      && error.code === "IDENTITY_RESULT_PENDING"
-  );
-  // A consumed, replayed, or expired state is refused outright.
-  responseStatus = 401;
-  responsePayload = () => ({ error: { code: "IDENTITY_TOKEN_INVALID" } });
-  await assert.rejects(
-    client.identityGoogleResult(state, started.verifier),
-    (error) => error.status === 401 && error.code === "IDENTITY_TOKEN_INVALID"
-  );
-  responseStatus = 503;
-  responsePayload = () => ({ error: { code: "IDENTITY_CONFIGURATION_INVALID" } });
-  await assert.rejects(
-    client.identityGoogleStart(),
-    (error) => error.status === 503
-      && error.code === "IDENTITY_CONFIGURATION_INVALID"
-  );
-  responseStatus = 401;
-  responsePayload = () => ({ error: { code: "PRIVATE_DETAIL_MUST_NOT_PASS" } });
-  await assert.rejects(
-    client.identityGoogleResult(state, started.verifier),
-    (error) => error.status === 401 && error.code === undefined
-  );
-  responseStatus = 200;
-  responsePayload = () => ({
-    schemaVersion: "identity-google-result-v0.1",
-    proof: ""
-  });
-  await assert.rejects(
-    client.identityGoogleResult(state, started.verifier),
-    /usable Google sign-in proof/u
-  );
-});
-
-// The client-side authorization request is gone, not merely unused. It built a
-// provider URL in the page, kept a PKCE verifier there, and read the result out
-// of a loopback callback's localStorage write — a completion signal the
-// dashboard cannot receive when it runs inside the macOS app, whose web view
-// refuses every remote origin and shares no storage with the browser that
-// finishes the sign-in. Leaving any of it reachable would leave two ways to
-// turn a code into an identity, one of them client-controlled.
 test("no client-side Google authorization path survives in the shipped modules", async () => {
   const [libSource, appSource, clientSource] = await Promise.all([
     readFile(new URL("../public/lib.js", import.meta.url), "utf8"),
@@ -3976,7 +3732,7 @@ test("no client-side Google authorization path survives in the shipped modules",
       "createGoogleSignInRequest",
       "parseGoogleSignInResult",
       "GOOGLE_OAUTH_RESULT_STORAGE_KEY",
-      "tibotattle-google-oauth-result",
+      "usagemonitor-google-oauth-result",
       "identityGoogleExchange",
       "identity/google/exchange",
       "oauth/google/callback",
@@ -4001,244 +3757,6 @@ test("no client-side Google authorization path survives in the shipped modules",
   assert.equal(appSource.includes("accounts.google.com"), false);
 });
 
-test("a hosted identity enrolls same-origin with fixed error codes", async () => {
-  const calls = [];
-  const state = "G".repeat(64);
-  const verifier = "V".repeat(64);
-  let responseStatus = 200;
-  let responsePayload = () => ({
-    schemaVersion: "identity-google-result-v0.1",
-    proof: "P".repeat(64)
-  });
-  const client = new CommunityClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify(responsePayload()), {
-        status: responseStatus,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-  const identity = await client.identityGoogleResult(state, verifier);
-  assert.deepEqual(identity, {
-    provider: "google",
-    proof: "P".repeat(64),
-    verifier
-  });
-  assert.equal(calls[0].url, "/api/v1/identity/google/result");
-  assert.equal(calls[0].options.method, "POST");
-  assert.equal(calls[0].options.credentials, "same-origin");
-  assert.deepEqual(JSON.parse(calls[0].options.body), { state, verifier });
-
-  await client.enroll(null, "telemetry-contribution-v0.1", {
-    deviceBootstrap: true,
-    identity
-  });
-  assert.equal(calls[1].url, "/api/v1/enroll");
-  // The verifier is carried through to enrollment so proof consumption is bound
-  // to the client that initiated the sign-in.
-  assert.deepEqual(JSON.parse(calls[1].options.body).identity, {
-    provider: "google",
-    proof: "P".repeat(64),
-    verifier
-  });
-  await client.enroll(null, "telemetry-contribution-v0.1", {
-    identity: { provider: "apple", proof: "A".repeat(64), verifier }
-  });
-  assert.deepEqual(JSON.parse(calls[2].options.body).identity, {
-    provider: "apple",
-    proof: "A".repeat(64),
-    verifier
-  });
-  assert.equal(
-    Object.hasOwn(JSON.parse(calls[2].options.body), "deviceBootstrap"),
-    false
-  );
-  await assert.rejects(
-    client.enroll(null, "telemetry-contribution-v0.1", {
-      identity: { provider: "github", proof: "A".repeat(64), verifier }
-    }),
-    TypeError
-  );
-  await assert.rejects(
-    client.enroll(null, "telemetry-contribution-v0.1", {
-      identity: { provider: "google", proof: "A".repeat(64), extra: true }
-    }),
-    TypeError
-  );
-  // A hosted identity missing its verifier is refused before any request.
-  await assert.rejects(
-    client.enroll(null, "telemetry-contribution-v0.1", {
-      identity: { provider: "google", proof: "A".repeat(64) }
-    }),
-    TypeError
-  );
-  assert.equal(calls.length, 3);
-
-  responseStatus = 401;
-  responsePayload = () => ({ error: { code: "IDENTITY_REQUIRED" } });
-  await assert.rejects(
-    client.enroll(null, "telemetry-contribution-v0.1", { identity: null }),
-    (error) => error.status === 401 && error.code === "IDENTITY_REQUIRED"
-  );
-
-  // Enrollment errors are not hosted-identity endpoint errors. Preserve the
-  // service's fixed code and request id so the connection view can tell the
-  // user whether storage, enrollment policy, or another specific boundary
-  // failed rather than showing a generic retry sentence.
-  const requestId = "00000000-0000-4000-8000-000000000007";
-  responseStatus = 503;
-  responsePayload = () => ({
-    error: { code: "BACKEND_STORAGE_UNAVAILABLE", requestId }
-  });
-  await assert.rejects(
-    client.enroll(null, "telemetry-contribution-v0.1", {
-      identity: { provider: "google", proof: "P".repeat(64), verifier }
-    }),
-    (error) => error.status === 503
-      && error.code === "BACKEND_STORAGE_UNAVAILABLE"
-      && error.requestId === requestId
-  );
-});
-
-test("hosted Apple sign-in starts, polls, and refuses anything but Apple's authorize URL", async () => {
-  const calls = [];
-  const state = "S".repeat(64);
-  let responseStatus = 200;
-  let responsePayload = () => ({
-    schemaVersion: "identity-apple-start-v0.1",
-    state,
-    authorizeUrl:
-      `https://appleid.apple.com/auth/authorize?client_id=com.tibotattle.web&state=${state}`
-  });
-  const client = new CommunityClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify(responsePayload()), {
-        status: responseStatus,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-
-  const started = await client.identityAppleStart();
-  assert.equal(started.state, state);
-  assert.equal(
-    started.authorizeUrl.startsWith("https://appleid.apple.com/auth/authorize?"),
-    true
-  );
-  assert.equal(calls[0].url, "/api/v1/identity/apple/start");
-  assert.equal(calls[0].options.method, "POST");
-  assert.equal(calls[0].options.credentials, "same-origin");
-  // The start carries only SHA-256(verifier); the raw verifier stays on the
-  // client and is never returned to the page.
-  const appleStartBody = JSON.parse(calls[0].options.body);
-  assert.deepEqual(Object.keys(appleStartBody), ["binding"]);
-  assert.match(appleStartBody.binding, /^[0-9a-f]{64}$/u);
-  assert.match(started.verifier, /^[A-Za-z0-9_-]{43,128}$/u);
-  assert.equal(started.authorizeUrl.includes(started.verifier), false);
-  assert.equal(started.authorizeUrl.includes(appleStartBody.binding), false);
-
-  // A tampered authorize URL is never handed to window.open.
-  for (const authorizeUrl of [
-    "https://attacker.example/auth/authorize?client_id=x",
-    "https://appleid.apple.com.attacker.example/auth/authorize?a=b",
-    "javascript:alert(1)",
-    "https://appleid.apple.com/auth/authorize"
-  ]) {
-    responsePayload = () => ({
-      schemaVersion: "identity-apple-start-v0.1",
-      state,
-      authorizeUrl
-    });
-    await assert.rejects(
-      client.identityAppleStart(),
-      /usable Apple sign-in request/u
-    );
-  }
-  responsePayload = () => ({
-    schemaVersion: "identity-apple-start-v0.1",
-    state: "too-short",
-    authorizeUrl: "https://appleid.apple.com/auth/authorize?a=b"
-  });
-  await assert.rejects(
-    client.identityAppleStart(),
-    /usable Apple sign-in request/u
-  );
-
-  responsePayload = () => ({
-    schemaVersion: "identity-apple-result-v0.1",
-    proof: "A".repeat(64)
-  });
-  const identity = await client.identityAppleResult(state, started.verifier);
-  assert.deepEqual(identity, {
-    provider: "apple",
-    proof: "A".repeat(64),
-    verifier: started.verifier
-  });
-  const resultCall = calls.at(-1);
-  assert.equal(resultCall.url, "/api/v1/identity/apple/result");
-  assert.equal(resultCall.options.credentials, "same-origin");
-  assert.deepEqual(JSON.parse(resultCall.options.body), {
-    state,
-    verifier: started.verifier
-  });
-
-  await assert.rejects(
-    client.identityAppleResult("short", started.verifier),
-    TypeError
-  );
-  await assert.rejects(
-    client.identityAppleResult(null, started.verifier),
-    TypeError
-  );
-  await assert.rejects(client.identityAppleResult(state, "short"), TypeError);
-  await assert.rejects(client.identityAppleResult(state), TypeError);
-
-  responseStatus = 404;
-  responsePayload = () => ({ error: { code: "IDENTITY_RESULT_PENDING" } });
-  await assert.rejects(
-    client.identityAppleResult(state, started.verifier),
-    (error) => error.status === 404
-      && error.code === "IDENTITY_RESULT_PENDING"
-  );
-  responseStatus = 401;
-  responsePayload = () => ({ error: { code: "IDENTITY_TOKEN_INVALID" } });
-  await assert.rejects(
-    client.identityAppleResult(state, started.verifier),
-    (error) => error.status === 401 && error.code === "IDENTITY_TOKEN_INVALID"
-  );
-  responseStatus = 503;
-  responsePayload = () => ({ error: { code: "IDENTITY_CONFIGURATION_INVALID" } });
-  await assert.rejects(
-    client.identityAppleStart(),
-    (error) => error.status === 503
-      && error.code === "IDENTITY_CONFIGURATION_INVALID"
-  );
-  responseStatus = 200;
-  responsePayload = () => ({
-    schemaVersion: "identity-apple-result-v0.1",
-    proof: ""
-  });
-  await assert.rejects(
-    client.identityAppleResult(state, started.verifier),
-    /usable Apple sign-in proof/u
-  );
-});
-
-// Every point where the companion health response is stored, paired with the
-// statements that follow it, so a test can require what must happen there.
-function assignsCompanionHealth(source) {
-  const branches = [];
-  const assignment = /localCompanionHealth = localHealth;/gu;
-  for (let match = assignment.exec(source); match !== null; match = assignment.exec(source)) {
-    branches.push(source.slice(match.index, match.index + 600));
-  }
-  assert.ok(branches.length >= 2, "expected both the startup and recovery health paths");
-  return branches;
-}
-
-
 test("backend readiness accepts fail-closed 503 state without calling it ready", async () => {
   const payload = {
     status: "not_ready",
@@ -4256,7 +3774,6 @@ test("backend readiness accepts fail-closed 503 state without calling it ready",
       lifecycleStaleAfterMilliseconds: 3_600_000
     }
   };
-  assert.equal(typeof CommunityClient.prototype.readiness, "undefined");
   const ready = {
     ...payload,
     status: "ready",
@@ -4296,8 +3813,6 @@ test("backend readiness accepts fail-closed 503 state without calling it ready",
 });
 
 test("retired granular contribution methods are absent from the browser adapter", () => {
-  assert.equal(typeof CommunityClient.prototype.contribution, "undefined");
-  assert.equal(typeof CommunityClient.prototype.deleteContribution, "undefined");
 });
 
 test("historical granular deletion receipts remain parse-only and fail closed", () => {
@@ -4325,7 +3840,6 @@ test("historical granular deletion receipts remain parse-only and fail closed", 
     ),
     /invalid contribution deletion receipt/
   );
-  assert.equal(typeof CommunityClient.prototype.deleteContribution, "undefined");
 });
 
 test("community snapshots fail closed and never disclose threshold distance", () => {
@@ -4727,7 +4241,6 @@ test("participant history keeps lifecycle and provenance bounded and private", a
     "unknown",
   );
 
-  assert.equal(typeof CommunityClient.prototype.participantProfile, "undefined");
 });
 
 test("participant results fail closed for unverifiable prices and honest not-testable movement", () => {
@@ -5395,7 +4908,6 @@ test("local analysis exposes quick results and cancel-safe progress", async () =
 test("timeline keeps time, uncertainty, and primary navigation explicit", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
-  const adminSource = await readFile(new URL("../public/admin.js", import.meta.url), "utf8");
   const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
   for (const id of [
     "timeline-zoom-in",
@@ -5435,8 +4947,6 @@ test("timeline keeps time, uncertainty, and primary navigation explicit", async 
   assert.doesNotMatch(appSource, /function formatChartTimeLabel\(value/u);
   assert.match(appSource, /formatChartTimeLabel\(at/);
   assert.doesNotMatch(appSource, /function formatUtc/);
-  assert.match(adminSource, /formatReportingTime/);
-  assert.doesNotMatch(adminSource, /toLocaleString/);
   assert.match(appSource, /periodEndAt/);
   assert.match(appSource, /point\.periodEndAt \?\? point\.timestamp/);
   assert.match(appSource, /chart\.status\.unpricedLocalActivity/u);
@@ -6670,36 +6180,6 @@ test("every user-visible failure carries a quotable, content-free reference", ()
   assert.ok(DIAGNOSTIC_SURFACES.includes("device_credential_reset"));
 });
 
-test("service request ids survive rejection so both sides of a failure can be joined", async () => {
-  const requestId = "0f2c7a11-4b93-4bb2-9a7c-1c0d2e3f4a5b";
-  const failing = (payload, status = 500) => new CommunityClient({
-    getCsrfToken: () => "csrf-confirmation",
-    fetchImpl: async () => new Response(JSON.stringify(payload), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
-  });
-  await assert.rejects(
-    failing({ error: { code: "INTERNAL_ERROR", requestId } }).session(),
-    (error) => error.status === 500
-      && error.code === "INTERNAL_ERROR"
-      && error.requestId === requestId,
-  );
-  // A body that is not the service's fixed error shape contributes nothing:
-  // no code to branch on and no request id to show.
-  await assert.rejects(
-    failing({ error: { code: "sorry, it broke", requestId: "private-value" } })
-      .session(),
-    (error) => error.code === undefined && error.requestId === undefined,
-  );
-  await assert.rejects(
-    failing("not json at all").session(),
-    (error) => error.status === 500
-      && error.code === undefined
-      && error.requestId === undefined,
-  );
-});
-
 test("diagnostic notes are recorded through a fixed, bounded local route", async () => {
   const calls = [];
   const client = new LocalCompanionClient({
@@ -6832,50 +6312,6 @@ test("failed diagnostic writes reject and leave the user with only the reference
     "Reference TT-7QF3K2.",
   );
 });
-
-test("clients never invoke browser-native fetch with themselves as receiver", async () => {
-  // Window.fetch is receiver-sensitive: Blink throws "Illegal invocation" and
-  // WebKit "Can only call Window.fetch on instances of Window" when it is
-  // called as a property of anything else. Node's fetch tolerates any
-  // receiver, which is exactly how this regression stayed invisible to tests
-  // while every diagnostic note died in the page before a request was made.
-  function receiverStrictFetch(url, options = {}) {
-    if (this !== undefined && this !== globalThis) {
-      throw new TypeError("Illegal invocation");
-    }
-    receiverStrictFetch.calls.push({ url, options });
-    return Promise.resolve(new Response(JSON.stringify({
-      schemaVersion: "local-diagnostic-note-v0.1",
-      status: "recorded",
-      reference: "TT-7QF3K2",
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
-  }
-  receiverStrictFetch.calls = [];
-  const local = new LocalCompanionClient({ fetchImpl: receiverStrictFetch });
-  assert.deepEqual(
-    await local.recordDiagnosticNote({
-      reference: "TT-7QF3K2",
-      surface: "hosted_identity",
-      code: "",
-      requestId: "",
-    }),
-    { status: "recorded", reference: "TT-7QF3K2" },
-  );
-  assert.equal(receiverStrictFetch.calls.length, 1);
-
-  function receiverStrictHealth(url, options = {}) {
-    if (this !== undefined && this !== globalThis) {
-      throw new TypeError("Illegal invocation");
-    }
-    return Promise.resolve(new Response(JSON.stringify({
-      status: "ready",
-      checks: {},
-    }), { status: 200, headers: { "Content-Type": "application/json" } }));
-  }
-  const community = new CommunityClient({ fetchImpl: receiverStrictHealth });
-  assert.deepEqual(await community.health(), { status: "ready", checks: {} });
-});
-
 
 test("disconnecting this Mac is a confirmed, non-identifying local transaction", async () => {
   const calls = [];
@@ -7325,7 +6761,7 @@ test("a refresh finished by the native shell makes the page re-read its evidence
   // Preserve the legacy shell evidence signal alongside status observation.
   assert.match(
     appSource,
-    /window\.addEventListener\("tibotattle:local-evidence-updated", \(\) => \{\s*\n\s*void reloadLocalEvidenceAfterNativeRefresh\(\);/u,
+    /window\.addEventListener\("usagemonitor:local-evidence-updated", \(\) => \{\s*\n\s*void reloadLocalEvidenceAfterNativeRefresh\(\);/u,
   );
   assert.match(
     appSource,
@@ -7482,8 +6918,8 @@ test("self-resolving degraded notes are classed informational and keep the quiet
   const informationalSentences = [
     "Quota tracking started fresh on this computer, so its retained records begin"
       + " on ${trackingStartDate}. Coverage of anything earlier is not claimed.",
-    "Full indexed history is loading. The latest replay-safe snapshot is shown"
-      + " meanwhile and will be replaced only by the completed full projection.",
+    "Local history indexing is in progress. Complete historical totals will"
+      + " appear after the indexed aggregate is published.",
   ];
   for (const sentence of informationalSentences) {
     assert.ok(
@@ -8981,9 +8417,9 @@ test("Monochrome dark appearance is explicit, balanced, and live-updateable", as
     /if \(!NATIVE_APPEARANCE_THEMES\.has\(theme\)\) return false;/u,
   );
   assert.match(appSource, /document\.documentElement\.dataset\.theme = theme/u);
-  assert.match(appSource, /__TIBOTATTLE_APPEARANCE__\?\.resolvedTheme/u);
+  assert.match(appSource, /__USAGE_MONITOR_APPEARANCE__\?\.resolvedTheme/u);
   assert.match(appSource, /resolveElectronStartupAppearance\(\)/u);
-  assert.match(appSource, /"tibotattle:appearance-override"/u);
+  assert.match(appSource, /"usagemonitor:appearance-override"/u);
   assert.match(
     appSource,
     /theme === "dark" \? "#161616" : "#fff"/u,

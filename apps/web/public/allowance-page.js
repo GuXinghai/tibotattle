@@ -252,12 +252,12 @@ export function mountAllowancePage({ documentRef, t, formatMoney, formatPp,
   }
   comparisonTime.oninput = () => {select(Number(comparisonTime.value)); selectTime(Number(comparisonTime.value));};
   const onSelected = event => {if(Number.isFinite(event.detail?.at)) select(event.detail.at);};
-  documentRef.addEventListener('tibotattle:allowance-time', onSelected);
-  documentRef.addEventListener('tibotattle:allowance-reset', event => {
+  documentRef.addEventListener('usagemonitor:allowance-time', onSelected);
+  documentRef.addEventListener('usagemonitor:allowance-reset', event => {
     const row = data.events.find(row => row.timestampMs === event.detail?.timestampMs);
     if(row) {trigger = documentRef.activeElement; inspect('resets',row);}
   });
-  documentRef.addEventListener('tibotattle:page-view', event => {
+  documentRef.addEventListener('usagemonitor:page-view', event => {
     if(event.detail?.page !== 'allowance') {if(dialog.open)dialog.close();return;}
     const routes = {changes:'history',differences:'differences',equivalent:'estimate',drift:'drift',divergence:'exceptions',evidence:'comparison'};
     if(routes[event.detail.view]) open(routes[event.detail.view]);

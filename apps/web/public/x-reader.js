@@ -161,7 +161,7 @@ function translator(options) {
 }
 function safeResource(value) {
   if(typeof value !== 'string' || value.length > 2048) return null;
-  try { const url=new URL(value); return url.protocol==='tibotattle-x-media:' && url.hostname==='resource' && /^\/[a-zA-Z0-9_-]{1,160}$/u.test(url.pathname) && !url.username && !url.password && !url.search && !url.hash ? value : null; } catch { return null; }
+  try { const url=new URL(value); return url.protocol==='usagemonitor-x-media:' && url.hostname==='resource' && /^\/[a-zA-Z0-9_-]{1,160}$/u.test(url.pathname) && !url.username && !url.password && !url.search && !url.hash ? value : null; } catch { return null; }
 }
 export function normalizeXPost(value, depth=0) {
   if(!value || !ID.test(value.id ?? '') || !Number.isFinite(Date.parse(value.createdAt)) || typeof value.text!=='string' || !value.author || depth>1) return null;

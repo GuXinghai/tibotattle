@@ -23,7 +23,7 @@ afterEach(async () => {
 });
 
 async function fixture(files) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-doc-policy-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-doc-policy-"));
   temporaryRoots.push(root);
   for (const [path, contents] of Object.entries(files)) {
     const selected = join(root, path);

@@ -29,7 +29,7 @@ function fixedError(code) {
 // the new one. Once a pointer exists every later publication is a new snapshot;
 // returning to the plain file would need a second crash-ordered swap for no
 // benefit. Superseded snapshots are deleted once nothing has them open.
-const SNAPSHOT_POINTER_FORMAT = "tibotattle-local-unified-index-pointer-v1";
+const SNAPSHOT_POINTER_FORMAT = "usagemonitor-local-unified-index-pointer-v1";
 
 const SNAPSHOT_POINTER_MAX_BYTES = 1024;
 

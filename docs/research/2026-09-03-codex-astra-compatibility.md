@@ -225,8 +225,8 @@ retain explicit coverage diagnostics and preserve previously accumulated facts.
 ## Admin per-model dashboard
 
 The baseline has four pinned models: Sol, Terra, Luna and GPT-5.5, with no GPT-6.
-The roster is duplicated in [Worker](../../apps/worker/src/admin-community-allowance.ts)
-and [browser](../../apps/web/public/admin-client.js). Rendering is already
+The roster is duplicated in `Worker` (retired source)
+and browser (retired source). Rendering is already
 iterative; the contracts and upstream identity recognition are the larger work.
 
 Two measured traps prevent a simple list expansion:

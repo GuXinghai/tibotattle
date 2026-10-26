@@ -78,7 +78,7 @@ deploying the Worker, with contribution consent and v1.1 activation unchanged.
 No migration, new contribution consent, v1.1 activation or owner erasure is
 implied by the manual-testing waiver alone. Follow the
 [lineage review](../reviews/2026-09-04-hosted-migration-lineage-reconciliation.md)
-and [production runbook](../runbooks/production-operations.md); do not publish
+and production runbook (retired; retained in Git history); do not publish
 an Intel feed until its authenticated guard is deployed and verified.
 
 ## Approved migration repair continuation

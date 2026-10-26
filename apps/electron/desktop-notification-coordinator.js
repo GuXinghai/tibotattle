@@ -27,7 +27,7 @@ import {
 } from "../../src/desktop-shell-status.js";
 
 export const DESKTOP_NOTIFICATION_COORDINATOR_SCHEMA_VERSION =
-  "tibotattle-electron-notification-coordinator-v1";
+  "usagemonitor-electron-notification-coordinator-v1";
 
 export const DESKTOP_NOTIFICATION_POLICY_FILE_NAME =
   "desktop-notification-policy-v1.json";
@@ -236,7 +236,7 @@ function staleEvidence() {
   // ineligible receipt.  This fixed shape therefore clears baselines without
   // carrying a path, account, refresh ID, or provider error into the policy.
   return {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "stale",
     provider: "openai_codex",
     source: "app_server_read",

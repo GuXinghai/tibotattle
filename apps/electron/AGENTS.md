@@ -1,7 +1,7 @@
 # Electron desktop guidance (Windows only)
 
 Scope: all files under `apps/electron/`. Apply the repository root guidance first.
-TiboTattle's desktop shell supports Windows x64 only. Do not add branches,
+Rhetrion's desktop shell supports Windows x64 only. Do not add branches,
 packaging targets, or compatibility shims for other platforms.
 
 ## Ownership and isolation
@@ -45,7 +45,7 @@ packaging targets, or compatibility shims for other platforms.
 
 - Use the reviewed Windows staging and builder configuration
   (`electron-builder.config.cjs` for development, `electron-builder.production.config.cjs`
-  for the candidate, `electron-builder.release.config.cjs` for the signed release).
+  for the candidate). Signing/publication is unconfigured for this independent product.
   Keep the exact source/dependency closure and the Windows native bytes verifiable.
 - The Windows NSIS installer, Authenticode signing, `usagemonitor://` protocol
   registration (`windows-protocol-registration.nsh`), and the `electron-updater`
@@ -54,7 +54,7 @@ packaging targets, or compatibility shims for other platforms.
 - Never reuse the retired native app's state, credentials, or profile.
   Never mutate or downgrade the native app's databases; a Windows profile
   migrates only through its reviewed, forward-moving path.
-- The application icon is `assets/tibotattle.ico`, generated from the approved
+- The application icon is `assets/app.ico`, generated from the approved
   web artwork as described in `assets/README.md`.
 - Keep unsigned development packaging separate from signing, installer/updater
   qualification, and public release. Never promote a prior receipt to proof for

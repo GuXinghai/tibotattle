@@ -179,13 +179,11 @@ test("permits supported dependency directions and ignores tests and tooling", as
         import { shared } from "../../src/shared.js";
         import { contract } from "@usage-monitor/telemetry-contract";
       `,
-      "apps/worker/scripts/check.mjs":
+      "apps/local/scripts/check.mjs":
         'import "../../../src/forbidden-only-in-tooling.js";',
-      "apps/worker/src/index.ts":
-        'import { quota } from "../../../shared/quota.js";',
-      "apps/worker/test/index.spec.ts":
+      "apps/local/test/index.spec.ts":
         'import "../../../src/forbidden-only-in-tests.js";',
-      "apps/worker/worker-configuration.d.ts":
+      "apps/local/runtime.d.ts":
         "type RuntimeModule = typeof import(runtimePath);",
       "packages/telemetry-contract/package.json": JSON.stringify({
         name: "@usage-monitor/telemetry-contract",
@@ -1137,16 +1135,10 @@ test("local composition may import application and platform facades but not prov
   );
 });
 
-test("local and Worker apps may use only their reviewed package roots", async () => {
+test("the local app may use its reviewed package roots", async () => {
   await withFixtureTree(
     {
       "apps/local/server.js": [
-        'import "@fixture/accounting";',
-        'import "@fixture/quota-analysis";',
-        'import "@fixture/telemetry-contract";',
-        "",
-      ].join("\n"),
-      "apps/worker/src/index.ts": [
         'import "@fixture/accounting";',
         'import "@fixture/quota-analysis";',
         'import "@fixture/telemetry-contract";',
@@ -1198,6 +1190,11 @@ for (const fixture of [
     packageDirectory: "accounting",
     packageName: "@fixture/accounting",
   },
+  ...["accounting", "quota-analysis", "telemetry-contract"].map((packageDirectory) => ({
+    app: "worker",
+    packageDirectory,
+    packageName: `@fixture/${packageDirectory}`,
+  })),
 ]) {
   test(`rejects an unapproved package root from the ${fixture.app} app`, async () => {
     await withFixtureTree(

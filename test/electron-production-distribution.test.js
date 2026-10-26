@@ -43,7 +43,7 @@ const BUILD_NUMBER = "20260906";
 
 
 async function withTemporaryDirectory(run) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-production-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-production-"));
   try {
     return await run(root);
   } finally {
@@ -153,6 +153,8 @@ async function assertStagedReleaseManifestRejects({ output, root, overrides }) {
   for (const name of [
     "electron-production-distribution.cjs",
     "product-brand.js",
+    "product-brand.cjs",
+    "application-identity.cjs",
     "release-manifest.js",
   ]) {
     await writeFile(join(fixtureConfig, name), await readFile(join(output, "config", name)));
@@ -185,10 +187,10 @@ function loadProductionBuilderConfig(target, {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       ...process.env,
-      TIBOTATTLE_ELECTRON_BUILD_NUMBER: buildNumber,
-      TIBOTATTLE_ELECTRON_SOURCE_REVISION: SOURCE_REVISION,
-      TIBOTATTLE_ELECTRON_TARGET: target,
-      TIBOTATTLE_ELECTRON_VERSION: version,
+      USAGE_MONITOR_ELECTRON_BUILD_NUMBER: buildNumber,
+      USAGE_MONITOR_ELECTRON_SOURCE_REVISION: SOURCE_REVISION,
+      USAGE_MONITOR_ELECTRON_TARGET: target,
+      USAGE_MONITOR_ELECTRON_VERSION: version,
     },
   }));
 }
@@ -203,7 +205,7 @@ function loadDevelopmentBuilderConfig(target) {
     encoding: "utf8",
     env: {
       ...process.env,
-      TIBOTATTLE_ELECTRON_TARGET: target,
+      USAGE_MONITOR_ELECTRON_TARGET: target,
     },
   }));
 }
@@ -223,17 +225,18 @@ test("production builder source config binds app identity, target-specific build
   for (const [target, spec] of Object.entries(POLICY.PRODUCTION_ELECTRON_TARGETS)) {
     const config = loadProductionBuilderConfig(target);
     assert.equal(config.appId, POLICY.PRODUCTION_ELECTRON_APP_ID, target);
-    assert.equal(config.productName, "TiboTattle", target);
+    assert.equal(config.productName, "Rhetrion", target);
     assert.equal(config.buildNumber, BUILD_NUMBER, target);
     assert.equal(config.buildVersion, POLICY.productionElectronBuildVersionForTarget({
       target, version: RELEASE_VERSION, buildNumber: BUILD_NUMBER,
     }), target);
     assert.equal(config.extraMetadata.version, RELEASE_VERSION, target);
-    assert.equal(Object.hasOwn(config.extraMetadata, "tibotattleSourceReleaseVersion"), false,
+    assert.equal(Object.hasOwn(config.extraMetadata, "usageMonitorSourceReleaseVersion"), false,
       target);
-    assert.deepEqual(config.extraMetadata.tibotattleDistribution,
+    assert.deepEqual(config.extraMetadata.usageMonitorDistribution,
       createProductionDistributionMetadata({ buildNumber: BUILD_NUMBER, sourceRevision: SOURCE_REVISION, target }), target);
-    assert.deepEqual(config.publish, [{ provider: "generic", url: spec.feedURL }], target);
+    assert.equal(spec.feedURL, null);
+    assert.equal(config.publish, null, target);
     assert.equal(config.forceCodeSigning, true, target);
     assert.match(config.directories.app, new RegExp(`electron-production[\\\\/]${target}[\\\\/]app$`, "u"), target);
     assert.match(config.directories.output, new RegExp(`electron-production[\\\\/]${target}[\\\\/]artifacts$`, "u"), target);
@@ -318,7 +321,7 @@ test("manual production source workflow has no default candidate or finalization
   assert.match(workflow, /^  workflow_dispatch:\n    inputs:\n      build_number:/mu);
   assert.match(workflow, /^  push:\n    branches: \[codex\/unified-desktop-accountless\]/mu);
   assert.match(workflow, /^  registration:\n    if: github\.event_name == 'push'/mu);
-  assert.equal((workflow.match(/if: github\.event_name == 'workflow_dispatch'/gu) ?? []).length, 4);
+  assert.equal((workflow.match(/if: github\.event_name == 'workflow_dispatch'/gu) ?? []).length, 1);
   assert.match(workflow, /build_number:\n(?:.*\n){0,3}\s+required: true\n(?:.*\n){0,2}\s+type: string/mu);
   assert.doesNotMatch(workflow, /^\s+(?:pull_request|schedule):/mu);
   assert.doesNotMatch(workflow, /^\s+default:/mu);
@@ -352,8 +355,8 @@ test("production staging carries the exact app metadata and updater closure whil
     });
     const productionPackage = JSON.parse(await readFile(join(production.output, "package.json"), "utf8"));
     const developmentPackage = JSON.parse(await readFile(join(development.output, "package.json"), "utf8"));
-    assert.deepEqual(productionPackage.tibotattleDistribution, metadata);
-    assert.equal(Object.hasOwn(developmentPackage, "tibotattleDistribution"), false);
+    assert.deepEqual(productionPackage.usageMonitorDistribution, metadata);
+    assert.equal(Object.hasOwn(developmentPackage, "usageMonitorDistribution"), false);
     for (const name of Object.keys(ELECTRON_UPDATER_RUNTIME_PACKAGE_PINS)) {
       const segments = name.split("/");
       const packagePath = posix.join("node_modules", ...segments, "package.json");

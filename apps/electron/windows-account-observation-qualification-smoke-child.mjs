@@ -78,7 +78,7 @@ function isControlMessage(message) {
 
 function syntheticSecret(runId) {
   return createHash("sha256")
-    .update(`tibotattle-windows-account-observation-ipc-smoke-v1:${runId}`)
+    .update(`usagemonitor-windows-account-observation-ipc-smoke-v1:${runId}`)
     .digest();
 }
 

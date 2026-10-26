@@ -1,3 +1,4 @@
+import applicationIdentity from "../../../config/application-identity.cjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -8,12 +9,13 @@ const IDENTITY = Object.freeze({
   toastActivatorClsid: "FDA705D7-5644-50E8-8CD2-3005D51B98C5",
 });
 const APP_DATA = "C:\\Users\\Ada\\AppData\\Roaming";
-const EXECUTABLE = "C:\\Users\\Ada\\AppData\\Local\\Programs\\TiboTattle\\TiboTattle.exe";
-const SHORTCUT = `${APP_DATA}\\Microsoft\\Windows\\Start Menu\\Programs\\TiboTattle.lnk`;
+const EXECUTABLE = "C:\\Users\\Ada\\AppData\\Local\\Programs\\Rhetrion\\usage-monitor.exe";
+const SHORTCUT = `${APP_DATA}\\Microsoft\\Windows\\Start Menu\\Programs\\Rhetrion.lnk`;
 
 function fixture({
   packaged = true,
-  name = "TiboTattle",
+  profile = "stable",
+  name = "Rhetrion",
   shortcut = { target: EXECUTABLE, appUserModelId: IDENTITY.appUserModelId },
   readShortcutLink = undefined,
   setAppUserModelId = undefined,
@@ -33,12 +35,13 @@ function fixture({
       return shortcut;
     }),
   };
-  return { app, calls, shell };
+  return { app, calls, shell, applicationProfile: applicationIdentity.applicationMetadata(profile) };
 }
 
 test("Windows notification identity requires the installed Start Menu target and AUMID", () => {
   const value = fixture();
   assert.equal(prepareWindowsNotificationIdentity({
+    applicationProfile: value.applicationProfile,
     app: value.app,
     shell: value.shell,
     platform: "win32",
@@ -54,17 +57,17 @@ test("Windows notification identity requires the installed Start Menu target and
 test("Windows notification identity refuses development, another app, shortcut mismatch, and native errors", () => {
   const scenarios = [
     fixture({ packaged: false }),
-    fixture({ name: "TiboTattle Dev" }),
+    fixture({ profile: "development" }),
     fixture({ shortcut: { target: "C:\\other.exe", appUserModelId: IDENTITY.appUserModelId } }),
     fixture({ shortcut: { target: EXECUTABLE, appUserModelId: "other.app" } }),
     fixture({ readShortcutLink: () => { throw new Error("missing"); } }),
     fixture({ setToastActivatorCLSID: () => { throw new Error("unavailable"); } }),
-    fixture({ name: undefined }),
+    fixture({ profile: "preview" }),
   ];
-  scenarios.at(-1).app.getName = () => { throw new Error("unavailable"); };
   for (const value of scenarios) {
     assert.equal(prepareWindowsNotificationIdentity({
-      app: value.app,
+      applicationProfile: value.applicationProfile,
+    app: value.app,
       shell: value.shell,
       platform: "win32",
       identity: IDENTITY,
@@ -72,6 +75,7 @@ test("Windows notification identity refuses development, another app, shortcut m
   }
   const nonWindows = fixture();
   assert.equal(prepareWindowsNotificationIdentity({
+    applicationProfile: nonWindows.applicationProfile,
     app: nonWindows.app,
     shell: nonWindows.shell,
     platform: "darwin",
@@ -83,6 +87,7 @@ test("Windows notification identity refuses development, another app, shortcut m
 test("Windows notification identity refuses an unconfigured CLSID without reading or mutating the app", () => {
   const value = fixture();
   assert.equal(prepareWindowsNotificationIdentity({
+    applicationProfile: value.applicationProfile,
     app: value.app,
     shell: value.shell,
     platform: "win32",

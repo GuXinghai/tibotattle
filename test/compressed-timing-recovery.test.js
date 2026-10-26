@@ -85,8 +85,8 @@ test('representation change stages atomically, shares one decode and then skips 
     assert.equal((await ingestTimingFile(primary, f.compressed)).unchanged, true);
     assert.equal((await ingestTimingFile(extra, f.compressed)).unchanged, true);
     assert.deepEqual(f.reader.stats(), counters);
-    assert.equal(primary.db.prepare('PRAGMA user_version').get().user_version, 10);
-    assert.equal(extra.db.prepare('PRAGMA user_version').get().user_version, 11);
+    assert.equal(primary.db.prepare('PRAGMA user_version').get().user_version, 12);
+    assert.equal(extra.db.prepare('PRAGMA user_version').get().user_version, 13);
     const discovered = new Set([digest(primary.key, 'source-path', f.path)]);
     assert.deepEqual(modelPerformanceHistoryState(readTimingRows(primary, { supplement: extra, withRevision: true }).sources,
       INFERENCE_TIMING_PARSER_VERSION, discovered), { pending: 0, unavailable: 0, recoveryFailed: 0 });

@@ -11,7 +11,7 @@ const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PRIVATE_CANARY = "synthetic-private-content-must-not-escape";
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "Tibo Tattle portable 路径 "));
+  const root = await mkdtemp(join(tmpdir(), "Usage Monitor portable 路径 "));
   const profile = join(root, "Profile With Spaces");
   const localAppData = join(profile, "AppData", "Local");
   const codexHome = join(root, "Custom Codex Home", ".codex");

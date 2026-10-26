@@ -176,13 +176,13 @@ test("native source contract keeps sensitive opens handle-relative and replaceme
   assert.match(source, /std::lock_guard<std::mutex> lock\(gCredentialMutexLeasesMutex\)/u);
   assert.match(source, /SE_KERNEL_OBJECT/u);
   assert.match(source, /ConvertSidToStringSidW/u);
-  assert.match(source, /Local\\\\TiboTattle-CredentialMutation-v1-/u);
+  assert.match(source, /Local\\\\UsageMonitor-CredentialMutation-v1-/u);
   assert.match(source, /DefineMethod\(env, exports, "acquireCredentialMutex",/u);
   assert.match(source, /DefineMethod\(env, exports, "releaseCredentialMutex",/u);
   assert.match(source, /enum class CredentialMutexLeaseKind/u);
   assert.match(source, /kAccountlessInstallationCredential/u);
   assert.match(source, /bool AccountlessInstallationCredentialMutexName\(std::wstring\* name\)/u);
-  assert.match(source, /Local\\\\TiboTattle-AccountlessInstallationCredential-v1-/u);
+  assert.match(source, /Local\\\\UsageMonitor-AccountlessInstallationCredential-v1-/u);
   assert.match(
     source,
     /AcquireAccountlessInstallationCredentialMutexCallback[\s\S]*?GetArguments\(env, info, &arguments, 0\)/u,

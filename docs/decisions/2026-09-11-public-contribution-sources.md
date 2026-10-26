@@ -80,7 +80,7 @@ the independent deletion ledger through 0002. The sole pending operation is
    metadata and creates bounded discovery state. It does not copy or remove
    retained uploads. Verify the exact new schema and both migration ledgers.
 4. Deploy the clean reviewed source with the
-   [guarded production wrapper](../runbooks/production-operations.md#guarded-deployment-wrapper),
+   guarded production wrapper (retired; retained in Git history),
    requiring the exact predecessor above. Preserve enabled enrollment/ownership,
    existing collection controls, release assets and bindings.
 5. Verify the deployed source and public surface, then release only the owned

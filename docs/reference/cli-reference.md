@@ -3,20 +3,22 @@ title: Command-Line Reference
 date: 2026-08-27
 type: reference
 status: maintained
-last_verified_commit: 52399658
+last_reviewed: 2026-10-23
 ---
 
 # Command-line reference
 
-`usage-monitor` is the repository's research, export, collection, and local
-contribution CLI. The installed TiboTattle app does not require users to run
-these commands. Command coverage is checked against `src/cli.js` by
+`usage-monitor` is the repository's local research, export and collection CLI.
+The Rhetrion desktop app does not require users to run these commands. Command
+coverage is checked against `src/cli.js` by
 `test/cli-reference.test.js`; the CLI's own usage output remains the authority
 for exact flags.
 
-Commands operate on local files unless a documented `--origin` or explicit
-live-experiment flag is supplied. Paths can contain sensitive derived evidence:
-keep them out of commits, issues, logs, and documentation.
+Commands operate on local files or the reviewed local Codex subprocess. Codex
+may itself need provider network access for fresh account evidence. A live
+research experiment requires an explicit `--execute-live` and reviewed manifest;
+there is no hosted contribution `--origin` command. Paths can contain sensitive
+derived evidence: keep them out of commits, issues, logs, and documentation.
 
 ## Read and analysis
 
@@ -49,9 +51,11 @@ current plan catalog, supported periods, limits, evidence availability, and
 pagination fields without opening the index. `period_drivers` compares equal
 adjacent windows and therefore does not accept `all`.
 
-Default discovery uses a closed production-first order: Electron companion
-state, then legacy CLI state.
-`coverage.sourceKind` reports which class was selected without exposing a local
+Default read-only explainer discovery uses a closed production-first order:
+`%APPDATA%\UsageMonitor\profiles\stable\companion-state`, then the standalone
+CLI state at `%LOCALAPPDATA%\app-usagemonitor`. Former-name profiles are not
+compatibility discovery paths; their conversion belongs to a separate one-time
+package. `coverage.sourceKind` reports which class was selected without exposing a local
 path. `USAGE_MONITOR_STATE_ROOT` overrides discovery and `--index-file` is an
 explicit development/recovery override; the corresponding device-salt file
 must be beside it for plans that return evidence selectors. `--codex-home`
@@ -111,23 +115,15 @@ not enable a Claude source, quota route, dashboard, or upload surface in the
 installed companion; the shipping boundary is recorded in
 [`local-data-and-privacy.md`](./local-data-and-privacy.md).
 
-## Contribution device and delivery
+## Retired hosted commands
 
-| Command | Purpose | Network/durable effect |
-| --- | --- | --- |
-| `pair-contribution-device` | Claim a reviewed hosted pairing. | Contacts only the explicit HTTPS/loopback origin and stores the device credential in the platform credential store. |
-| `sync-contributions-inspect-next` | Inspect the exact next queued contribution. | Read-only local review. |
-| `sync-contributions-once` | Deliver a bounded queue pass. | Contacts only the explicit origin; replay-safe queue state is updated. |
-| `sync-contributions-watch` | Run bounded periodic delivery for an explicit duration. | Same fixed origin and queue contract; no daemon installation. |
-| `sync-contributions-status` | Read queue status. | Read-only. |
-| `sync-contributions-pause` | Pause queue delivery. | Updates the explicit queue file. |
-| `sync-contributions-resume` | Resume queue delivery. | Updates the explicit queue file; does not itself grant consent. |
-
-Hosted contribution is optional and consent-gated. Inspect the payload before
-first delivery. Device disconnect preserves hosted/local history; private owner
-erasure is separate and has no self-service contribution CLI command. Neither
-operation should be inferred from a local queue command. See the
-[owner procedure](../runbooks/production-operations.md#private-owner-participant-erasure).
+Hosted pairing and contribution delivery are not CLI capabilities.
+`pair-contribution-device` and the `sync-contributions-*` command family are
+removed and return `Unknown command`. Retained local queue/receipt schemas do
+not make those commands callable or grant upload authority. This retirement
+neither deletes accepted remote history nor changes saved local consent, opt-out,
+credential or identity state. Historical remote responsibility is described in
+[the privacy inventory](./local-data-and-privacy.md#historical-remote-state-and-responsibility).
 
 ## Collector lifecycle
 
@@ -183,13 +179,6 @@ usage-monitor recover-claude-callback
 usage-monitor rotate-claude-callback-identity [--confirm]
 usage-monitor remove-claude-callback-identity [--confirm-removal TOKEN]
 usage-monitor benchmark-r7 --profile smoke|release_synthetic_semantics|release_synthetic_pressure|release_materialized_boundaries --output PATH
-usage-monitor pair-contribution-device --origin HTTPS_OR_LOOPBACK_ORIGIN
-usage-monitor sync-contributions-inspect-next --directory PREPARED_DIRECTORY_OR_SPOOL [--queue-file PATH]
-usage-monitor sync-contributions-once --directory PREPARED_DIRECTORY_OR_SPOOL --origin HTTPS_OR_LOOPBACK_ORIGIN [--queue-file PATH] [--max-uploads-per-pass N] [--max-upload-bytes-per-pass N]
-usage-monitor sync-contributions-watch --directory PREPARED_SPOOL --origin HTTPS_OR_LOOPBACK_ORIGIN [--queue-file PATH] [--interval-seconds N] [--duration-ms N] [--max-uploads-per-pass N] [--max-upload-bytes-per-pass N]
-usage-monitor sync-contributions-status [--queue-file PATH]
-usage-monitor sync-contributions-pause [--queue-file PATH]
-usage-monitor sync-contributions-resume [--queue-file PATH]
 usage-monitor collect-once [--stale-after-ms N] [--no-refresh] [--backfill] [--state-file PATH]
 usage-monitor collect-foreground [--stale-after-ms N] [--reconciliation-ms N] [--duration-ms N] [--state-file PATH]
 usage-monitor collector-state-status [--state-file PATH] [--json]
@@ -200,6 +189,7 @@ usage-monitor tools --since ISO_TIMESTAMP --until ISO_TIMESTAMP [--output PATH] 
 usage-monitor migrate-corrections [--observations PATH] [--transitions PATH] [--corrections PATH] [--output PATH] [--report-file PATH]
 ```
 
-The removed `register-account` package script was a dead entrypoint and is not
-part of the CLI. Enrollment is performed through the reviewed hosted or
-loopback contribution flow.
+The removed `register-account` package script and command are not part of the
+CLI. No enrollment or delivery replacement is configured. The maintained test
+checks all 40 synopsis lines exactly and verifies that the retired commands
+cannot be invoked.

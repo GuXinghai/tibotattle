@@ -11,50 +11,25 @@
 //
 // It reads. It never writes, never refreshes, and never mutates state.
 
-import { execFileSync } from "node:child_process";
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-/**
- * The companion binds an ephemeral port chosen by the OS, so a fixed default
- * finds nothing. Ask lsof which local ports the running TiboTattle (or a
- * repo-run companion) is listening on and probe each for the health route.
- */
-async function discoverOrigin() {
-  if (process.env.TIBOTATTLE_ORIGIN) return process.env.TIBOTATTLE_ORIGIN;
-  let listing = "";
-  try {
-    listing = execFileSync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"], {
-      encoding: "utf8",
-      maxBuffer: 4 * 1024 * 1024,
-    });
-  } catch {
-    return "http://127.0.0.1:8787";
+// The source companion defaults to loopback port 8787. Packaged companions use
+// an ephemeral port: pass the known loopback origin explicitly instead of
+// probing other applications or guessing an installed path.
+function configuredOrigin() {
+  const selected = process.env.USAGE_MONITOR_ORIGIN ?? "http://127.0.0.1:8787";
+  if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/?$/u.test(selected)) {
+    throw new Error("DASHBOARD_DIAGNOSTIC_ORIGIN_INVALID");
   }
-  const ports = [...new Set([...listing.matchAll(/127\.0\.0\.1:(\d+) \(LISTEN\)/g)]
-    .map((match) => Number(match[1])))];
-  for (const port of ports) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/api/local/health`, {
-        signal: AbortSignal.timeout(1_500),
-      });
-      if (!response.ok) continue;
-      const body = await response.json();
-      if (typeof body?.schemaVersion === "string"
-          && body.schemaVersion.startsWith("local-companion")) {
-        return `http://127.0.0.1:${port}`;
-      }
-    } catch {
-      continue;
-    }
-  }
-  return "http://127.0.0.1:8787";
+  const url = new URL(selected);
+  if (Number(url.port) > 65535) throw new Error("DASHBOARD_DIAGNOSTIC_ORIGIN_INVALID");
+  return url.origin;
 }
-
-const ORIGIN = await discoverOrigin();
-const BUNDLE = process.env.TIBOTATTLE_APP
-  ?? "/Applications/TiboTattle.app/Contents/Resources/app";
-const REPO = new URL("../", import.meta.url).pathname;
+const ORIGIN = configuredOrigin();
+const BUNDLE = process.env.USAGE_MONITOR_APP ?? null;
+const REPO = fileURLToPath(new URL("../", import.meta.url));
 
 const out = [];
 const say = (line = "") => out.push(line);
@@ -92,7 +67,7 @@ function bundleDrift() {
   for (const file of files) {
     let installed = null;
     let repo = null;
-    try { installed = readFileSync(join(BUNDLE, file), "utf8"); } catch {}
+    try { if (BUNDLE !== null) installed = readFileSync(join(BUNDLE, file), "utf8"); } catch {}
     try { repo = readFileSync(join(REPO, file), "utf8"); } catch {}
     rows.push({
       file,
@@ -174,7 +149,7 @@ try {
 } catch (error) {
   say("COMPANION UNREACHABLE");
   say(`  ${error.message}`);
-  say("  Start the app, or set TIBOTATTLE_ORIGIN.");
+  say("  Start the app, or set USAGE_MONITOR_ORIGIN.");
 }
 
 say("");

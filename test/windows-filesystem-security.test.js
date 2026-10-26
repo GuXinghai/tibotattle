@@ -86,7 +86,7 @@ test('legacy frozen copy preserves large bytes and refuses writers, links and cl
   }));
 
 async function withSyntheticRoot(run) {
-  const parent = await mkdtemp(join(tmpdir(), "tibotattle-windows-security-"));
+  const parent = await mkdtemp(join(tmpdir(), "usagemonitor-windows-security-"));
   const root = join(parent, `private state Ω ${randomUUID()}`);
   const adapter = createWindowsFilesystemAdapter();
   try {
@@ -110,7 +110,7 @@ test("synthetic owner child removes inherited module paths without changing its 
     pSmOdUlEpAtH: "synthetic-other-inherited-modules",
     PATH: "synthetic-executable-search",
     SystemRoot: "synthetic-windows-root",
-    TIBOTATTLE_SYNTHETIC_SOURCE_FILE: "synthetic-previous-source",
+    USAGE_MONITOR_SYNTHETIC_SOURCE_FILE: "synthetic-previous-source",
   });
   const before = { ...parent };
   let child;
@@ -125,8 +125,8 @@ test("synthetic owner child removes inherited module paths without changing its 
   assert.deepEqual(child, {
     PATH: parent.PATH,
     SystemRoot: parent.SystemRoot,
-    TIBOTATTLE_SYNTHETIC_SOURCE_FILE: path,
-    TIBOTATTLE_SYNTHETIC_SOURCE_LENGTH: "10",
+    USAGE_MONITOR_SYNTHETIC_SOURCE_FILE: path,
+    USAGE_MONITOR_SYNTHETIC_SOURCE_LENGTH: "10",
   });
   assert.deepEqual(parent, before);
 });
@@ -234,7 +234,7 @@ test("native adapter rejects hard-link aliases and reparse-point aliases", {
 test("native adapter rejects a reparse-point ancestor, not only a final alias", {
   skip: NATIVE_SKIP,
 }, async (t) => withSyntheticRoot(async ({ adapter, root }) => {
-  const outside = await mkdtemp(join(tmpdir(), "tibotattle-windows-outside-"));
+  const outside = await mkdtemp(join(tmpdir(), "usagemonitor-windows-outside-"));
   const junction = join(root, "state-junction");
   try {
     adapter.ensureDirectory(root);
@@ -396,7 +396,7 @@ test("native protected directory lease pins root and ancestors through atomic re
 test("native protected directory lease refuses inherited ACL roots", {
   skip: NATIVE_SKIP,
 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-unprotected-operation-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-unprotected-operation-"));
   try {
     assert.throws(() => loadWindowsFilesystemBinding().acquireProtectedDirectoryGuard(root),
       fixedNativeError("WINDOWS_FILESYSTEM_SECURITY_POLICY"));

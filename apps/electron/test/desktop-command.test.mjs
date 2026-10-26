@@ -8,7 +8,7 @@ import {
 } from "../desktop-command.js";
 
 test("desktop commands contain only the fixed presentation vocabulary", () => {
-  assert.equal(DESKTOP_COMMAND_CHANNEL, "tibotattle:desktop-command:v1");
+  assert.equal(DESKTOP_COMMAND_CHANNEL, "usagemonitor:desktop-command:v1");
   assert.deepEqual(createDesktopCommand("refresh"), { command: "refresh" });
   assert.deepEqual(createDesktopCommand("automaticRefresh", "quick"), {
     command: "automaticRefresh",
@@ -71,7 +71,7 @@ test("desktop commands reject selectors, paths, URLs, extra keys, and prototypes
       section,
     })),
     { command: "hostedSignInReturn" },
-    { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" },
+    { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-usagemonitor-results.png" },
     { command: "shareCardDownloadFailed" },
     { command: "navigate", value: "https://attacker.example" },
     { command: "language", value: "fr" },

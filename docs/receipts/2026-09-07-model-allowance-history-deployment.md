@@ -104,7 +104,7 @@ CPU/memory use. Cloudflare documents distinct resource-exhaustion outcomes in
 its [Worker limits](https://developers.cloudflare.com/workers/platform/limits/);
 the observed `canceled` event alone does not establish either exhaustion cause.
 
-The [production runbook](../runbooks/production-operations.md) owns the scheduler
-and rollout boundaries; the [allowance diagnosis runbook](../runbooks/2026-08-13-community-allowance-band-diagnosis.md)
+The production runbook (retired; retained in Git history) owns the scheduler
+and rollout boundaries; the allowance diagnosis runbook (retired; retained in Git history)
 owns the 100-day lookback, UTC cutoff, identification and gap interpretation.
 The [current status](../current-status.md) owns later live observations.

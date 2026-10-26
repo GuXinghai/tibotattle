@@ -17,11 +17,11 @@ function element(tag = "span", className = "", textContent = "") {
 }
 
 test("recognized evidence warnings localize while unknown text retains the raw boundary", () => {
-  const warning = "Full indexed history is loading. The latest replay-safe snapshot is shown meanwhile and will be replaced only by the completed full projection.";
+  const warning = "Local history indexing is in progress. Complete historical totals will appear after the indexed aggregate is published.";
   for (const locale of ["zh-Hans", "en-US", "es", "zh-Hans"]) {
     const list = element("ul");
     const context = createContext({ EVIDENCE_WARNING_ROUTES: [], EVIDENCE_WARNING_FALLBACK: "#warnings",
-      EVIDENCE_WARNING_PROGRESS: /still/u, EVIDENCE_WARNING_INFORMATIONAL: /loading/u,
+      EVIDENCE_WARNING_PROGRESS: /still/u, EVIDENCE_WARNING_INFORMATIONAL: /loading|indexing/u,
       $: () => list, node: element, clear: target => { target.children = []; }, evidenceWarningLocalization,
       setLocalizedText(target, key, values) { target.textContent = translate(key, values, locale); },
       setRawText(target, text) { target.textContent = text; target.setAttribute("data-i18n-skip", ""); },

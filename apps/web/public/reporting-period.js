@@ -1,6 +1,6 @@
 import { REPORTING_PERIODS } from "./dashboard-ui.js";
 export { REPORTING_PERIODS };
-const STORAGE_KEY = "tibotattle.reporting-period";
+const STORAGE_KEY = "usagemonitor.reporting-period";
 const DAYS = Object.freeze({ "24h": 1, "7d": 7, "30d": 30, all: 36_500 });
 
 export function reportingDays(period) { return DAYS[period] ?? 7; }

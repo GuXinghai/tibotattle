@@ -1,7 +1,5 @@
 import { createRequire } from "node:module";
 
-import { PRODUCT_BRAND } from "./product-brand.js";
-
 const require = createRequire(import.meta.url);
 const packageManifest = require("../package.json");
 const RELEASE_VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
@@ -29,7 +27,7 @@ function hasExactKeys(value, keys) {
 }
 
 function validHandoverPackageMetadata({ sourceReleaseVersion, manifest }) {
-  const metadata = manifest.tibotattleDistribution;
+  const metadata = manifest.usageMonitorDistribution;
   if (!hasExactKeys(metadata, HANDOVER_DISTRIBUTION_KEYS)
       || typeof sourceReleaseVersion !== "string"
       || !RELEASE_VERSION_PATTERN.test(sourceReleaseVersion)
@@ -74,10 +72,10 @@ function validHandoverPackageMetadata({ sourceReleaseVersion, manifest }) {
     && metadata.rehearsalNextVersion === selected.rehearsalNextVersion;
 }
 
-const sourceReleaseVersion = Object.hasOwn(packageManifest, "tibotattleSourceReleaseVersion")
-  ? packageManifest.tibotattleSourceReleaseVersion
+const sourceReleaseVersion = Object.hasOwn(packageManifest, "usageMonitorSourceReleaseVersion")
+  ? packageManifest.usageMonitorSourceReleaseVersion
   : packageManifest.version;
-const packagedHandover = Object.hasOwn(packageManifest, "tibotattleSourceReleaseVersion");
+const packagedHandover = Object.hasOwn(packageManifest, "usageMonitorSourceReleaseVersion");
 
 if (packageManifest.name !== "app-usagemonitor"
     || packageManifest.type !== "module"
@@ -96,7 +94,6 @@ export const RELEASE_TAG = `v${RELEASE_VERSION}`;
 export const RELEASE_VERSION_PLACEHOLDER = "__USAGE_MONITOR_RELEASE_VERSION__";
 
 export const RELEASE_MANIFEST = Object.freeze({
-  productName: PRODUCT_BRAND.displayName,
   version: RELEASE_VERSION,
   tag: RELEASE_TAG,
 });

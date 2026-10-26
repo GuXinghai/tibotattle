@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { installWindowsNormalCandidateQuitControl } from "../main.js";
 
-const REQUEST = Object.freeze({ type: "tibotattle-electron-smoke-quit-v1" });
+const REQUEST = Object.freeze({ type: "usagemonitor-electron-smoke-quit-v1" });
 const ENVIRONMENT = Object.freeze({ USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" });
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -30,7 +30,7 @@ test("normal Windows quit control flushes one fixed acknowledgement before actua
   value.source.emit("message", REQUEST);
   value.source.emit("message", REQUEST);
   assert.equal(value.sent.length, 1);
-  assert.deepEqual(value.sent[0].message, { type: "tibotattle-electron-smoke-quit-accepted-v1" });
+  assert.deepEqual(value.sent[0].message, { type: "usagemonitor-electron-smoke-quit-accepted-v1" });
   assert.equal(value.quits(), 0);
   value.sent[0].callback();
   value.sent[0].callback();

@@ -2311,7 +2311,7 @@ export function mountWorkUsageView(options = {}) {
     setStatus(statusKey, statusValues);
     if (response && !body.hidden) render();
   }
-  windowRef.addEventListener("tibotattle:locale-change", relocalize);
+  windowRef.addEventListener("usagemonitor:locale-change", relocalize);
   return {
     clearFilters() {
       input.value = ""; delete query.model; model.control.value = "";
@@ -2359,7 +2359,7 @@ export function mountWorkUsageView(options = {}) {
       observer.disconnect();
       documentRef.removeEventListener?.("visibilitychange", visibilityChanged);
       windowRef.removeEventListener("pageshow", visibilityChanged);
-      windowRef.removeEventListener("tibotattle:locale-change", relocalize);
+      windowRef.removeEventListener("usagemonitor:locale-change", relocalize);
     },
   };
 }

@@ -211,7 +211,7 @@ test("state preparation recovers a hot SQLite rollback journal after a killed wr
       "-e",
       `
         import { DatabaseSync } from "node:sqlite";
-        const database = new DatabaseSync(process.env.TIBOTATTLE_STATE_FILE, {
+        const database = new DatabaseSync(process.env.USAGE_MONITOR_STATE_FILE, {
           readOnly: false,
           timeout: 5_000,
         });
@@ -238,7 +238,7 @@ test("state preparation recovers a hot SQLite rollback journal after a killed wr
     ], {
       env: {
         ...process.env,
-        TIBOTATTLE_STATE_FILE: value.stateFile,
+        USAGE_MONITOR_STATE_FILE: value.stateFile,
       },
       stdio: ["ignore", "pipe", "inherit"],
     });

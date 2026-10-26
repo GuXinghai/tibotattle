@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, realpath, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import {
   buildWindowsDevelopmentEnvironment,
@@ -31,9 +31,9 @@ test("Windows development distribution wrapper is self-contained", async () => {
     "utf8",
   );
   assert.match(wrapper, /^@echo off\r?\n/u);
-  assert.match(wrapper, /set "APP=%~dp0win-unpacked\\TiboTattle Dev\.exe"/u);
-  assert.match(wrapper, /set "LAUNCHER=%~dp0TiboTattle-Windows-Development-Launcher\.mjs"/u);
-  assert.match(wrapper, /set "PROFILE=%LOCALAPPDATA%\\TiboTattle\\electron-user-test\\win32-x64\\profile"/u);
+  assert.match(wrapper, /set "APP=%~dp0win-unpacked\\usage-monitor\.exe"/u);
+  assert.match(wrapper, /set "LAUNCHER=%~dp0UsageMonitor-Windows-Development-Launcher\.mjs"/u);
+  assert.match(wrapper, /set "PROFILE=%LOCALAPPDATA%\\UsageMonitor\\electron-user-test\\win32-x64\\profile"/u);
   assert.match(wrapper, /set "ELECTRON_RUN_AS_NODE=1"/u);
   assert.match(wrapper, /"%APP%" "%LAUNCHER%" --app "%APP%" --profile "%PROFILE%"/u);
   assert.match(wrapper, /set "ELECTRON_RUN_AS_NODE="/u);
@@ -49,27 +49,27 @@ test("Windows development launcher parses one absolute app and isolated profile"
   assert.equal(LAUNCHER_TEST_LANE, WINDOWS_ELECTRON_TEST_LANE);
   const options = parseWindowsDevelopmentLaunchArguments([
     "--app",
-    "/candidate/TiboTattle Dev.exe",
+    "/candidate/usage-monitor.exe",
     "--profile",
     "/private/profile",
     "--dry-run",
   ]);
   assert.deepEqual(options, {
     help: false,
-    appPath: "/candidate/TiboTattle Dev.exe",
-    profilePath: "/private/profile",
+    appPath: resolve("/candidate/usage-monitor.exe"),
+    profilePath: resolve("/private/profile"),
     dryRun: true,
   });
   assert.throws(
-    () => parseWindowsDevelopmentLaunchArguments(["--app", "TiboTattle Dev.exe"]),
+    () => parseWindowsDevelopmentLaunchArguments(["--app", "usage-monitor.exe"]),
     /ELECTRON_WINDOWS_DEVELOPMENT_ARGUMENT_INVALID/u,
   );
   assert.throws(
     () => parseWindowsDevelopmentLaunchArguments([
       "--app",
-      "/candidate/TiboTattle Dev.exe",
+      "/candidate/usage-monitor.exe",
       "--app",
-      "/other/TiboTattle Dev.exe",
+      "/other/usage-monitor.exe",
     ]),
     /ELECTRON_WINDOWS_DEVELOPMENT_ARGUMENT_INVALID/u,
   );
@@ -78,10 +78,10 @@ test("Windows development launcher parses one absolute app and isolated profile"
 test("Windows development profile and child environment stay private and credential-free", async () => {
   const root = await mkdtemp(join(
     await realpath(tmpdir()),
-    "tibotattle-electron-windows-launcher-",
+    "usagemonitor-electron-windows-launcher-",
   ));
   try {
-    const appPath = join(root, "candidate", "TiboTattle Dev.exe");
+    const appPath = join(root, "candidate", "usage-monitor.exe");
     const profilePath = join(root, "profile");
     const profile = await prepareWindowsDevelopmentProfile({ appPath, profilePath });
     const environment = buildWindowsDevelopmentEnvironment({
@@ -125,7 +125,7 @@ test("Windows development dry-run stays an explicit non-production handoff", asy
   const result = await runWindowsDevelopmentLaunch({
     options: parseWindowsDevelopmentLaunchArguments([
       "--app",
-      "/candidate/TiboTattle Dev.exe",
+      "/candidate/usage-monitor.exe",
       "--dry-run",
     ]),
     platform: "darwin",
@@ -143,7 +143,7 @@ test("Windows development dry-run stays an explicit non-production handoff", asy
 });
 
 test("Windows development launcher hands the real Codex install to the private profile", async () => {
-  const root = await realpath(await mkdtemp(join(tmpdir(), "tibotattle-codex-locate-")));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "usagemonitor-codex-locate-")));
   try {
     const bin = join(root, "OpenAI", "Codex", "bin");
     const older = join(bin, "aaaa", "codex.exe");
@@ -165,7 +165,7 @@ test("Windows development launcher hands the real Codex install to the private p
     assert.equal(locateInstalledCodexBinary({ CODEX_BIN: join(root, "not-codex.cmd") }), null);
 
     const profile = await prepareWindowsDevelopmentProfile({
-      appPath: join(root, "app", "TiboTattle Dev.exe"),
+      appPath: join(root, "app", "usage-monitor.exe"),
       profilePath: join(root, "profile"),
     });
     const withBinary = buildWindowsDevelopmentEnvironment({

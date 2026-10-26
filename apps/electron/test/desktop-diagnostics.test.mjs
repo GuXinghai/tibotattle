@@ -34,7 +34,7 @@ test("desktop diagnostics reduce runtime state to content-free enums and boolean
       notifications: { delivery: "ready" },
     },
     refresh: {
-      schemaVersion: "tibotattle-desktop-refresh-status-v1",
+      schemaVersion: "usagemonitor-desktop-refresh-status-v1",
       scheduleOwner: "companion",
       state: "running",
       mode: "detailed",
@@ -53,7 +53,7 @@ test("desktop diagnostics reduce runtime state to content-free enums and boolean
     },
   });
   const text = formatDesktopDiagnostics(record);
-  assert.match(text, /tibotattle-electron-diagnostics-v2/u);
+  assert.match(text, /usagemonitor-electron-diagnostics-v2/u);
   assert.match(text, /"dashboardReady": true/u);
   assert.doesNotMatch(text, /127\.0\.0\.1|Users|private-codex/u);
   assert.deepEqual(record.settings, {
@@ -65,7 +65,7 @@ test("desktop diagnostics reduce runtime state to content-free enums and boolean
     notificationDelivery: "ready",
   });
   assert.deepEqual(record.refresh, {
-    schemaVersion: "tibotattle-desktop-refresh-status-v1",
+    schemaVersion: "usagemonitor-desktop-refresh-status-v1",
     scheduleOwner: "companion",
     state: "running",
     mode: "detailed",

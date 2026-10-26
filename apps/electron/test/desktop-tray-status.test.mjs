@@ -79,7 +79,7 @@ test("reducer transitions clear evidence until fresh direct evidence returns", (
 test("analyzing retains a prior live observation but the projector expires it", () => {
   const observedAt = "2026-08-22T12:00:00.000Z";
   const notificationEvidence = {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",
@@ -154,7 +154,7 @@ test("an explicit analyzing overview snapshot keeps a current direct allowance w
 
 test("an explicit empty analyzing snapshot clears retained notification evidence", () => {
   const notificationEvidence = {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",
@@ -325,7 +325,7 @@ test("compact title never promotes a secondary-only lane", () => {
     status: "fresh",
     allowance: null,
     notificationEvidence: {
-      schemaVersion: "tibotattle-notification-evidence-v2",
+      schemaVersion: "usagemonitor-notification-evidence-v2",
       status: "fresh_provider_observation",
       provider: "openai_codex",
       source: "app_server_read",
@@ -354,7 +354,7 @@ test("a qualified exhausted primary allowance remains an honest zero title", () 
       remainingPercent: 0,
     },
     notificationEvidence: {
-      schemaVersion: "tibotattle-notification-evidence-v2",
+      schemaVersion: "usagemonitor-notification-evidence-v2",
       status: "fresh_provider_observation",
       provider: "openai_codex",
       source: "app_server_read",
@@ -419,7 +419,7 @@ test("stateful reducer serializes transitions and can reset to starting", () => 
 
 test("explicit stale display snapshots keep an unexpired value without carrying alert authority", () => {
   const now = Date.parse("2026-09-09T15:21:00.000Z");
-  const displayEvidence = { schemaVersion: "tibotattle-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
+  const displayEvidence = { schemaVersion: "usagemonitor-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
     windows: [{ durationMinutes: 10080, remainingPercent: 53, observedAt: "2026-09-09T13:45:00.000Z", resetAt: "2026-09-14T13:00:00.000Z" }] };
   const state = reduceDesktopTrayStatus(DESKTOP_TRAY_INITIAL_STATUS, {
     type: "stale", allowance: null, notificationEvidence: null, displayEvidence,

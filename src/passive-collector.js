@@ -117,7 +117,7 @@ const INDEXING_STATUSES = new Set([
 // `account/rateLimits/read` pass after that pass has committed a local record;
 // log-derived snapshots and app-server push notifications are not eligible.
 const QUOTA_NOTIFICATION_EVIDENCE_SCHEMA =
-  "tibotattle-notification-evidence-v2";
+  "usagemonitor-notification-evidence-v2";
 const QUOTA_NOTIFICATION_WINDOW_MINUTES = new Set([300, 10_080]);
 const QUOTA_NOTIFICATION_SCOPE_DOMAIN =
   "app-usagemonitor/quota-notification-continuity/v1\u0000";

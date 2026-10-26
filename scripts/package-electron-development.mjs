@@ -15,7 +15,7 @@ import { RELEASE_VERSION } from "../config/release-manifest.js";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(import.meta.url);
-const SCHEMA = "tibotattle-electron-development-package-v1";
+const SCHEMA = "usagemonitor-electron-development-package-v1";
 const TARGET_NAMES = Object.freeze(["win32-x64"]);
 const SHA = /^[0-9a-f]{40}$/u;
 const FORMATS = new Set(["dir", "distribution"]);
@@ -85,8 +85,8 @@ export function developmentBuildEnvironment(environment, target) {
     if (typeof environment[key] === "string") selected[key] = environment[key];
   }
   selected.CSC_IDENTITY_AUTO_DISCOVERY = "false";
-  selected.TIBOTATTLE_ELECTRON_TARGET = target;
-  selected.TIBOTATTLE_ELECTRON_VERSION = RELEASE_VERSION;
+  selected.USAGE_MONITOR_ELECTRON_TARGET = target;
+  selected.USAGE_MONITOR_ELECTRON_VERSION = RELEASE_VERSION;
   return selected;
 }
 
@@ -146,7 +146,7 @@ export function executableArchitecture(header) {
 
 function artifactPaths(output) {
   const unpacked = join(output, "win-unpacked");
-  return { executable: join(unpacked, "TiboTattle Dev.exe"), resources: join(unpacked, "resources") };
+  return { executable: join(unpacked, "usage-monitor.exe"), resources: join(unpacked, "resources") };
 }
 
 // Local and CI builds receive the same complete test handoff. These sidecars
@@ -155,8 +155,8 @@ function artifactPaths(output) {
 export async function writeDevelopmentHandoff({ target, outputDirectory }) {
   if (!TARGET_NAMES.includes(target)) fail("TARGET_OR_FORMAT_INVALID");
   const scripts = [
-    ["launch-electron-windows-development.mjs", "TiboTattle-Windows-Development-Launcher.mjs", false],
-    ["launch-electron-windows-development.cmd", "TiboTattle-Windows-Development-Launch.cmd", false],
+    ["launch-electron-windows-development.mjs", "UsageMonitor-Windows-Development-Launcher.mjs", false],
+    ["launch-electron-windows-development.cmd", "UsageMonitor-Windows-Development-Launch.cmd", false],
   ];
   const files = [];
   async function retain(file, bytes, executable = false) {
@@ -175,13 +175,13 @@ export async function writeDevelopmentHandoff({ target, outputDirectory }) {
       await retain(file, bytes, executable);
     } finally { await handle.close(); }
   }
-  const instructions = "Extract the complete bundle, keeping win-unpacked beside the launch files. Double-click TiboTattle-Windows-Development-Launch.cmd. No separate Node.js installation or source checkout is needed. The persistent private test profile is under %LOCALAPPDATA%\\TiboTattle\\electron-user-test\\win32-x64\\profile. The packaged main process verifies the development runtime and native binding before opening.";
+  const instructions = "Extract the complete bundle, keeping win-unpacked beside the launch files. Double-click UsageMonitor-Windows-Development-Launch.cmd. No separate Node.js installation or source checkout is needed. The persistent private test profile is under %LOCALAPPDATA%\\UsageMonitor\\electron-user-test\\win32-x64\\profile. The packaged main process verifies the development runtime and native binding before opening.";
   await retain("DEVELOPMENT-TESTING.txt", Buffer.from([
-    `TiboTattle Dev ${RELEASE_VERSION} — ${target}`,
+    `Rhetrion Dev ${RELEASE_VERSION} — ${target}`,
     "",
     instructions,
     "",
-    "Use Settings to select the Codex history to read. Local analysis and sharing controls are testable; hosted accountless uploads remain unavailable in this candidate.",
+    "This isolated development profile does not import your previous application's state. Local analysis and settings are available for inspection; cloud uploads are unavailable.",
     "These are unsigned development artifacts. Production signing, installed migration, updates and native desktop qualification remain separate gates.",
     "",
   ].join("\n")));

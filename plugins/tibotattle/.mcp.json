@@ -1,9 +1,0 @@
-{
-  "mcpServers": {
-    "tibotattle": {
-      "command": "node",
-      "args": ["./mcp/server.mjs"],
-      "cwd": "."
-    }
-  }
-}

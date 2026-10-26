@@ -5,7 +5,6 @@ import {
   mergeChangedPaths,
   parseTestLaneArguments,
   selectTestLanes,
-  hostedLaneCommands,
   ELECTRON_TEST_ARGUMENTS,
 } from "../scripts/test-lanes.mjs";
 import {
@@ -17,7 +16,7 @@ test("Electron gate discovers every focused suite serially and joins the integra
   assert.deepEqual(ELECTRON_TEST_ARGUMENTS, ["--test-concurrency=1", "apps/electron/test/*.test.mjs"]);
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(manifest.scripts["product:electron:test"], `node --test ${ELECTRON_TEST_ARGUMENTS.join(" ")}`);
-  assert.ok(manifest.scripts["product:check"].split(" && ").includes("npm run product:electron:test"));
+  assert.ok(manifest.scripts["product:check"].split(" && ").includes("pnpm run product:electron:test"));
   assert.equal(parseTestLaneArguments(["electron"]).command, "electron");
   assert.deepEqual(selectTestLanes(["apps/electron/test/desktop-runtime.test.mjs"]).lanes, ["electron"]);
   assert.deepEqual(selectTestLanes(["apps/electron/desktop-runtime.js"]).lanes, ["full"]);
@@ -136,16 +135,9 @@ test("test-lane selection narrows only paths with complete executable coverage",
   assert.deepEqual(selectTestLanes(["docs/decisions/example.md"]).lanes, []);
 });
 
-test("hosted lanes execute complete owning gates and unfamiliar or shared inputs stay broad", () => {
-  for (const path of ["apps/worker/src/index.ts", "apps/worker/test/health.test.ts", "apps/worker/migrations/0057_synthetic.sql", "apps/worker/wrangler.jsonc"])
-    assert.deepEqual(selectTestLanes([path]).lanes, ["worker"]);
-  assert.deepEqual(selectTestLanes(["scripts/build-public-release-site.js"]).lanes, ["public-site"]);
-  assert.deepEqual(selectTestLanes(["scripts/build-public-release-site.js", "apps/worker/src/index.ts"]).lanes, ["public-site"]);
-  for (const path of ["apps/worker/scripts/new-tool.mjs", "apps/worker/new-fixtures/source.json", "apps/web/public/community.js", "config/release-manifest.js"])
+test("retired hosted paths cannot select a runnable hosted lane", () => {
+  for (const path of ["apps/worker/src/index.ts", "scripts/build-public-release-site.js"])
     assert.deepEqual(selectTestLanes([path]).lanes, ["full"]);
-  assert.deepEqual(selectTestLanes(["apps/worker/src/index.ts"], { full: true }).lanes, ["full"]);
+  for (const lane of ["worker", "public-site"]) assert.throws(() => parseTestLaneArguments([lane]));
   assert.deepEqual(selectTestLanes(["docs/example.md"], { full: true }).lanes, ["full"]);
-  assert.deepEqual(hostedLaneCommands("worker"), [["--prefix", "apps/worker", "run", "check"]]);
-  assert.deepEqual(hostedLaneCommands("public-site"), [["run", "product:ui:test"], ["run", "product:release-site:test"], ["--prefix", "apps/worker", "run", "check"]]);
-  assert.equal(hostedLaneCommands("not-a-lane"), null);
 });

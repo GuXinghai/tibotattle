@@ -20,7 +20,7 @@ const continuity = () => response({ error: { code: "DEVICE_CONTINUITY_REQUIRED" 
 const receipt = () => response({ deviceId: DEVICE, state: "active", scope: "upload_registration", expiresAt: EXPIRY });
 
 async function fixture(run) {
-  const directory = await mkdtemp(join(tmpdir(), "tibotattle-pairing-repair-"));
+  const directory = await mkdtemp(join(tmpdir(), "usagemonitor-pairing-repair-"));
   let current = null;
   const leased = [];
   const replacements = [];

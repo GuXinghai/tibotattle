@@ -111,7 +111,10 @@ const RESOURCE_INVENTORY_KINDS = new Set([
   "runtime_metadata",
 ]);
 export const WINDOWS_QUALIFICATION_REQUIRED_RESOURCE_PATHS = Object.freeze([
-  "config/deployment-endpoints.js",
+  "config/application-identity.cjs",
+  "config/product-brand.cjs",
+  "config/product-brand.js",
+  "apps/electron/application-profile.js",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-command.js",
   "apps/electron/desktop-contract.js",
@@ -167,7 +170,10 @@ export const WINDOWS_QUALIFICATION_REQUIRED_RESOURCE_PATHS = Object.freeze([
   "apps/web/public/index.html",
 ]);
 const REQUIRED_RESOURCE_KINDS = Object.freeze({
-  "config/deployment-endpoints.js": "electron_shell",
+  "config/application-identity.cjs": "electron_shell",
+  "config/product-brand.cjs": "electron_shell",
+  "config/product-brand.js": "electron_shell",
+  "apps/electron/application-profile.js": "electron_shell",
   "apps/electron/companion-supervisor.js": "electron_shell",
   "apps/electron/desktop-command.js": "electron_shell",
   "apps/electron/desktop-contract.js": "electron_shell",

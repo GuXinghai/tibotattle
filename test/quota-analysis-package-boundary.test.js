@@ -184,17 +184,15 @@ test("package implementation bytes equal the pre-extraction quota kernels", asyn
   }
 });
 
-test("root and Worker resolve only the reviewed package root", async () => {
+test("local analysis resolves only the reviewed package root and concrete declarations", async () => {
   const [
     rootManifest,
-    workerManifest,
-    workerSource,
+    localSource,
     declarationSource,
   ] = await Promise.all([
     readFile(new URL("../package.json", import.meta.url), "utf8"),
-    readFile(new URL("../apps/worker/package.json", import.meta.url), "utf8"),
     readFile(
-      new URL("../apps/worker/src/quota-analysis.ts", import.meta.url),
+      new URL("../src/local-companion-data.js", import.meta.url),
       "utf8",
     ),
     readFile(
@@ -208,22 +206,16 @@ test("root and Worker resolve only the reviewed package root", async () => {
     ],
     "workspace:*",
   );
-  assert.equal(
-    JSON.parse(workerManifest).dependencies[
-      "@app-usagemonitor/quota-analysis"
-    ],
-    "file:../../packages/quota-analysis",
-  );
   assert.match(
-    workerSource,
+    localSource,
     /from "@app-usagemonitor\/quota-analysis"/u,
   );
-  assert.doesNotMatch(workerSource, /shared\/quota-/u);
+  assert.doesNotMatch(localSource, /shared\/quota-/u);
   assert.doesNotMatch(
-    workerSource,
+    localSource,
     /@app-usagemonitor\/quota-analysis\//u,
   );
-  assert.doesNotMatch(workerSource, /@ts-(?:expect-error|ignore)/u);
+  assert.doesNotMatch(localSource, /@ts-(?:expect-error|ignore)/u);
   for (const name of [
     "buildResetEvidence",
     "analyzeQuotaCalibration",

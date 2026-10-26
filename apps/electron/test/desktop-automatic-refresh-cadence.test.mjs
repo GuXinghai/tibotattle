@@ -229,7 +229,7 @@ test("the cadence codec is exact and the production backend uses the protected f
   );
 
   if (process.platform === "win32") return;
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-automatic-cadence-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-automatic-cadence-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const backend = createDesktopAutomaticRefreshCadenceBackend({
     platform: process.platform,

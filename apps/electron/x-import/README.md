@@ -5,7 +5,7 @@ extension has no background worker and reads only authorized X cookies after
 an active, normal `https://x.com` tab and an application import preflight.
 It never uses files, clipboard, extension storage or logging for credentials.
 
-The packaged `TiboTattleXImport.exe` is built from `NativeHost.cs` with the
+The packaged `RhetrionXImport.exe` is built from `NativeHost.cs` with the
 Windows x64 .NET Framework compiler by `buildDesktopXImportNative`. Generate
 the binary in the candidate source tree before packaging; do not compile at
 application startup or package a binary from a Downloads/prototype directory.

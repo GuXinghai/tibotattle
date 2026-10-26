@@ -15,7 +15,7 @@ not approval of a release candidate or a fully green repository release gate.
 
 Maintained interfaces: publication reconciliation,
 [early admission](../runbooks/release-qualification-admission.md), and
-[migration rehearsal](../runbooks/release-migration-rehearsal.md).
+migration rehearsal (retired; retained in Git history).
 The [implementation plan](../plans/2026-09-08-agent-release-tooling.md) defines
 the unchanged acceptance and authorization boundaries.
 

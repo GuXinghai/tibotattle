@@ -19,7 +19,7 @@ const POPOVER_ORIGIN = "http://127.0.0.1:54321";
 const POPOVER_PAGE_URL = `${POPOVER_ORIGIN}/electron-tray-popup.html`;
 
 const EVIDENCE = Object.freeze({
-  schemaVersion: "tibotattle-notification-evidence-v2",
+  schemaVersion: "usagemonitor-notification-evidence-v2",
   status: "fresh_provider_observation",
   provider: "openai_codex",
   source: "app_server_read",
@@ -106,7 +106,7 @@ class FakeWindow extends EventEmitter {
 }
 
 async function preloadFixture() {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-tray-popover-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-tray-popover-"));
   const path = join(root, "tray-popover-preload.cjs");
   await writeFile(path, "// synthetic tray preload\n");
   return path;
@@ -114,7 +114,7 @@ async function preloadFixture() {
 
 test("popover model is a content-free projection of direct tray evidence", () => {
   const model = createDesktopTrayPopoverModel({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     trayStatus: status(),
     locale: "en-US",
     now: Date.parse("2026-08-22T12:04:00.000Z"),
@@ -143,7 +143,7 @@ test("popover model is a content-free projection of direct tray evidence", () =>
 test("popover requires the exact local shared renderer route", async () => {
   const preloadPath = await preloadFixture();
   const model = createDesktopTrayPopoverModel({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     trayStatus: status(),
     locale: "en-US",
     now: Date.parse("2026-08-22T12:04:00.000Z"),

@@ -156,7 +156,6 @@ function workloadSourcePaths() {
   visitRuntimeJsonDirectory("packages/telemetry-contract/schemas");
   return [
     ...collectR7ReleaseEvidenceRuntimeSourcePaths({ repositoryRoot }),
-    "config/deployment-endpoints.js",
     "scripts/r7-materialized-boundary-worker.js",
     "scripts/r7-resource-benchmark-worker.js",
     ...runtimeJsonPaths,

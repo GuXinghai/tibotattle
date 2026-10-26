@@ -1,3 +1,4 @@
+import { PRODUCT_BRAND } from "../../config/product-brand.js";
 import { DESKTOP_TRAY_UPGRADE_DEFAULTS, validateDesktopTrayPreferences } from "./desktop-tray-preferences.js";
 /**
  * The visual status surface opened by the Electron tray item.
@@ -25,10 +26,10 @@ import {
 } from "./desktop-tray-status.js";
 
 export const TRAY_POPOVER_VERSION = "v1";
-export const TRAY_POPOVER_ACTION_CHANNEL = "tibotattle:electron-tray-popover:v1";
-export const TRAY_POPOVER_MODEL_CHANNEL = "tibotattle:electron-tray-popover-model:v1";
-export const TRAY_POPOVER_VISIBILITY_CHANNEL = "tibotattle:electron-tray-popover-visibility:v1";
-export const TRAY_POPOVER_CONTENT_HEIGHT_CHANNEL = "tibotattle:electron-tray-popover-content-height:v1";
+export const TRAY_POPOVER_ACTION_CHANNEL = "usagemonitor:electron-tray-popover:v1";
+export const TRAY_POPOVER_MODEL_CHANNEL = "usagemonitor:electron-tray-popover-model:v1";
+export const TRAY_POPOVER_VISIBILITY_CHANNEL = "usagemonitor:electron-tray-popover-visibility:v1";
+export const TRAY_POPOVER_CONTENT_HEIGHT_CHANNEL = "usagemonitor:electron-tray-popover-content-height:v1";
 export const TRAY_POPOVER_PRELOAD_FILE = "tray-popover-preload.cjs";
 export const TRAY_POPOVER_ACTIONS = Object.freeze([
   "open",
@@ -180,7 +181,7 @@ function freezeModel(value) {
  * renderer fields cross this boundary.
  */
 export function createDesktopTrayPopoverModel({
-  appName = "TiboTattle",
+  appName = PRODUCT_BRAND.displayName,
   trayStatus,
   trayPreferences = DESKTOP_TRAY_UPGRADE_DEFAULTS,
   locale = "system",
@@ -210,7 +211,7 @@ export function createDesktopTrayPopoverModel({
     status: projected.status,
     statusLabel: projected.label,
     evidenceLabel: projected.evidenceLabel,
-    compactTitle: projected.compactTitle || "TiboTattle",
+    compactTitle: projected.compactTitle || appName,
     trayPreferences,
     windows,
     refreshEnabled: !["starting", "analyzing"].includes(projected.status),

@@ -20,7 +20,7 @@ function fixture(overrides = {}) {
 test("pause icon precedes refresh; saved state paints resume and mutations are serialized", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   assert.ok(html.indexOf('id="pause-refresh-button"') < html.indexOf('id="refresh-button"'));
-  assert.doesNotMatch(html, /TiboTattle · not affiliated/u);
+  assert.doesNotMatch(html, /Rhetrion · not affiliated/u);
   const view = fixture(); assert.equal(view.button.disabled, true); await flush();
   assert.equal(view.button.disabled, false);
   const first = view.click(); view.click(); await first;

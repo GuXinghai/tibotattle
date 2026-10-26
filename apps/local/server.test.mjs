@@ -28,11 +28,9 @@ import { readLocalIndexProjection } from "../../src/local-index-backend.js";
 import {
   DESKTOP_SHELL_STATUS_SCHEMA_VERSION,
 } from "../../src/desktop-shell-status.js";
-import {
-  PREVIEW_PRODUCT_BRAND,
-  PRODUCT_BRAND,
-  SEMANTIC_OPEN_TARGET_PLACEHOLDER,
-} from "../../config/product-brand.js";
+import applicationIdentity from "../../config/application-identity.cjs";
+const { APPLICATION_IDENTITY, APPLICATION_PROFILES } = applicationIdentity;
+const SEMANTIC_OPEN_TARGET_PLACEHOLDER = APPLICATION_IDENTITY.semanticOpenTargetPlaceholder;
 import {
   configuredSemanticOpenTarget,
   createCachedLocalUnifiedProjectionReader,
@@ -231,12 +229,12 @@ test("work usage shares only in-flight builds and preserves subscriber cancellat
 });
 
 test("semantic open target is stable by default and accepts only reviewed identities", () => {
-  assert.equal(configuredSemanticOpenTarget({}), PRODUCT_BRAND.appOpenURL);
+  assert.equal(configuredSemanticOpenTarget({}), APPLICATION_IDENTITY.appOpenURL);
   assert.equal(
     configuredSemanticOpenTarget({
-      USAGE_MONITOR_APP_OPEN_URL: PREVIEW_PRODUCT_BRAND.appOpenURL,
+      USAGE_MONITOR_APP_OPEN_URL: APPLICATION_PROFILES.preview.appOpenURL,
     }),
-    PREVIEW_PRODUCT_BRAND.appOpenURL,
+    APPLICATION_PROFILES.preview.appOpenURL,
   );
   for (const value of [
     "",
@@ -358,7 +356,7 @@ async function fixture() {
   );
   await writeFile(
     join(staticRoot, "index.html"),
-    `<!doctype html><meta name="usage-monitor-semantic-open-target" content="${SEMANTIC_OPEN_TARGET_PLACEHOLDER}"><title>TiboTattle</title>`,
+    `<!doctype html><meta name="usage-monitor-semantic-open-target" content="${SEMANTIC_OPEN_TARGET_PLACEHOLDER}"><title>Rhetrion</title>`,
   );
   await writeFile(join(staticRoot, "app.js"), "export const app = true;");
   await writeFile(join(staticRoot, "data-client.js"), "export const client = true;");
@@ -380,7 +378,7 @@ async function fixture() {
   );
   await writeFile(join(staticRoot, "styles.css"), "body { color: black; }");
   await writeFile(
-    join(staticRoot, "tibotattle-icon.png"),
+    join(staticRoot, "app-icon.png"),
     Buffer.from([0x89, 0x50, 0x4e, 0x47]),
   );
   for (const [fileName, title] of [
@@ -552,9 +550,9 @@ test("loopback server exposes only fixed API, static, and report routes", async 
     assert.equal(health.headers.get("access-control-allow-origin"), null);
     assert.match(health.headers.get("content-security-policy"), /default-src 'none'/);
     const csp = health.headers.get("content-security-policy");
-    assert.match(csp, /connect-src 'self' tibotattle-x-media:;/);
-    assert.match(csp, /img-src 'self' data: tibotattle-background: tibotattle-x-media:;/);
-    assert.match(csp, /media-src tibotattle-x-media: blob:;/);
+    assert.match(csp, /connect-src 'self' usagemonitor-x-media:;/);
+    assert.match(csp, /img-src 'self' data: usagemonitor-background: usagemonitor-x-media:;/);
+    assert.match(csp, /media-src usagemonitor-x-media: blob:;/);
     assert.match(csp, /worker-src 'none'/);
     assert.doesNotMatch(csp, /https:|\*|connect-src[^;]*blob:|script-src[^;]*blob:/);
 
@@ -630,11 +628,11 @@ test("loopback server exposes only fixed API, static, and report routes", async 
     const page = await fetch(`${base}/`);
     assert.equal(page.status, 200);
     const pageBody = await page.text();
-    assert.match(pageBody, /TiboTattle/);
+    assert.match(pageBody, /Rhetrion/);
     assert.match(
       pageBody,
       new RegExp(
-        `content="${PRODUCT_BRAND.appOpenURL.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}"`,
+        `content="${APPLICATION_IDENTITY.appOpenURL.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&")}"`,
         "u",
       ),
     );
@@ -654,7 +652,7 @@ test("loopback server exposes only fixed API, static, and report routes", async 
       (await fetch(`${base}/telemetry-shared.generated.js`)).status,
       200,
     );
-    const brandIcon = await fetch(`${base}/tibotattle-icon.png`);
+    const brandIcon = await fetch(`${base}/app-icon.png`);
     assert.equal(brandIcon.status, 200);
     assert.equal(brandIcon.headers.get("content-type"), "image/png");
 
@@ -830,7 +828,7 @@ test("preview companion stamps only the preview semantic-open route", async () =
     dataStore: fakeStore(),
     environment: {
       ...process.env,
-      USAGE_MONITOR_APP_OPEN_URL: PREVIEW_PRODUCT_BRAND.appOpenURL,
+      USAGE_MONITOR_APP_OPEN_URL: APPLICATION_PROFILES.preview.appOpenURL,
     },
     refreshRunner: async () => ({}),
     port: 0,
@@ -839,8 +837,8 @@ test("preview companion stamps only the preview semantic-open route", async () =
     const page = await fetch(`http://127.0.0.1:${app.port}/`);
     assert.equal(page.status, 200);
     const body = await page.text();
-    assert.match(body, new RegExp(PREVIEW_PRODUCT_BRAND.appOpenURL, "u"));
-    assert.doesNotMatch(body, new RegExp(PRODUCT_BRAND.appOpenURL, "u"));
+    assert.match(body, new RegExp(APPLICATION_PROFILES.preview.appOpenURL, "u"));
+    assert.doesNotMatch(body, new RegExp(APPLICATION_IDENTITY.appOpenURL, "u"));
     assert.doesNotMatch(
       body,
       new RegExp(SEMANTIC_OPEN_TARGET_PLACEHOLDER, "u"),
@@ -1747,7 +1745,7 @@ test("desktop status route projects refresh lifecycle without dashboard payloads
   const files = await fixture();
   const now = Date.parse("2026-08-25T12:00:00.000Z");
   const notificationEvidence = {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",
@@ -1890,7 +1888,7 @@ test("desktop status route serves cached current overview evidence without a com
       },
       notificationEvidence: null,
       displayEvidence: {
-        schemaVersion: "tibotattle-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
+        schemaVersion: "usagemonitor-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
         windows: [{ durationMinutes: 10080, remainingPercent: 0,
           observedAt: "2026-09-05T11:59:00.000Z", resetAt: "2026-09-05T15:00:00.000Z" }],
       },
@@ -2510,7 +2508,7 @@ test("no provider redirect can land on the loopback companion", async () => {
       new URL("./server.js", import.meta.url),
       "utf8",
     );
-    assert.equal(source.includes("tibotattle-google-oauth-result"), false);
+    assert.equal(source.includes("usagemonitor-google-oauth-result"), false);
     assert.equal(source.includes("/oauth/google/callback"), false);
   } finally {
     await app.close();

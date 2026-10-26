@@ -48,7 +48,6 @@ test("R7 smoke provenance binds shared and package runtime sources", async () =>
     "packages/telemetry-contract/index.js",
     "packages/telemetry-contract/package.json",
     "packages/telemetry-contract/src/telemetry-v0.1.js",
-    "config/deployment-endpoints.js",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
   ]) {

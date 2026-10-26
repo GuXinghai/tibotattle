@@ -38,7 +38,7 @@ const REPOSITORY_ROOT = resolve(
 );
 
 async function withTemporaryDirectory(run) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-package-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-package-"));
   try {
     return await run(root);
   } finally {
@@ -96,8 +96,8 @@ test("Windows runtime capture requests BigInt stats and preserves above-safe ide
 });
 
 test("Electron output containment treats Windows cross-drive paths as outside", () => {
-  const repository = "D:\\checkouts\\tibotattle";
-  const reviewedOutput = "D:\\checkouts\\tibotattle\\.release-build\\electron-dev";
+  const repository = "D:\\checkouts\\usagemonitor";
+  const reviewedOutput = "D:\\checkouts\\usagemonitor\\.release-build\\electron-dev";
   const foreignDriveOutput = "C:\\Users\\runner\\AppData\\Local\\Temp\\electron-dev";
 
   assert.equal(electronRuntimeOutputIsInsideRepositoryForTest(
@@ -107,7 +107,7 @@ test("Electron output containment treats Windows cross-drive paths as outside", 
   ), true);
   assert.equal(electronRuntimeOutputIsInsideRepositoryForTest(
     repository,
-    "d:\\CHECKOUTS\\TIBOTATTLE",
+    "d:\\CHECKOUTS\\USAGE_MONITOR",
     "win32",
   ), false);
   assert.equal(electronRuntimeOutputIsInsideRepositoryForTest(
@@ -132,7 +132,7 @@ test("Electron runtime staging is deterministic and contains only the reviewed c
 
     assert.equal(firstManifest, secondManifest);
     assert.equal(first.manifest.target, "win32");
-    assert.equal(first.manifest.windowsBinding.included, false);
+    assert.equal(first.manifest.windowsBinding.included, true);
     assert.equal(first.manifest.windowsBinding.verified, false);
     assert.equal(first.manifest.entrypoint, "apps/local/server.js");
     assert.equal(first.manifest.dashboardRoot, "apps/web/public");
@@ -160,7 +160,10 @@ test("Electron runtime staging is deterministic and contains only the reviewed c
       ],
     );
     assert.ok(paths.every((path) => !/(^|\/)(?:\.git|docs|test|tests|\.usage-monitor)(?:\/|$)/u.test(path)));
-    assert.ok(paths.every((path) => !path.startsWith("native/windows-filesystem/build/")));
+    assert.deepEqual(paths.filter(path => path.startsWith("native/windows-filesystem/build/")).sort(), [
+      "native/windows-filesystem/build/Release/windows_filesystem.node",
+      "native/windows-filesystem/build/Release/windows_filesystem.node.manifest.json",
+    ]);
     assert.ok(paths.every((path) => !/(^|\/)(?:credentials?|secrets?|quarantine|uploads?)(?:\/|$)/iu.test(path)));
     assert.ok(!paths.some((path) => path.endsWith("windows_filesystem_qualification.node")));
   });
@@ -315,13 +318,13 @@ test("Electron runtime argument parsing requires an output and paired Windows in
   assert.deepEqual(
     parseElectronRuntimeArguments([
       "--output",
-      "/tmp/tibotattle-runtime",
+      "/tmp/usagemonitor-runtime",
       "--platform",
       "windows",
       "--replace",
     ]),
     {
-      output: "/tmp/tibotattle-runtime",
+      output: "/tmp/usagemonitor-runtime",
       target: "win32-x64",
       replace: true,
       windowsBindingPath: null,
@@ -342,13 +345,13 @@ test("Electron runtime argument parsing requires an output and paired Windows in
   );
   assert.deepEqual(
     parseElectronRuntimeArguments([
-      "--output", "/tmp/tibotattle-runtime",
+      "--output", "/tmp/usagemonitor-runtime",
       "--target", "windows",
       "--profile", "windows-production",
       "--version", RELEASE_VERSION,
     ]),
     {
-      output: "/tmp/tibotattle-runtime",
+      output: "/tmp/usagemonitor-runtime",
       target: "win32-x64",
       replace: false,
       windowsBindingPath: null,
@@ -359,7 +362,7 @@ test("Electron runtime argument parsing requires an output and paired Windows in
   );
   assert.throws(
     () => parseElectronRuntimeArguments([
-      "--output", "/tmp/tibotattle-runtime",
+      "--output", "/tmp/usagemonitor-runtime",
       "--profile", "unknown",
     ]),
     (error) => error.code === "ELECTRON_RUNTIME_INVALID_PACKAGING_PROFILE",

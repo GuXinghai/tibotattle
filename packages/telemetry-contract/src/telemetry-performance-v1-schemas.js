@@ -16,7 +16,7 @@ import {
 } from "./telemetry-performance-v1.js";
 import { REVIEWED_MODEL_CATALOG } from "./model-catalog.js";
 
-const ROOT = "https://tibotattle.com/schemas/telemetry-performance-v1/";
+const ROOT = "urn:usagemonitor:schema:telemetry-performance-v1:";
 const DAY = "^\\d{4}-\\d{2}-\\d{2}$";
 const PERFORMANCE_PROVIDERS = Object.freeze([
   ...new Set(REVIEWED_MODEL_CATALOG.map(({ provider }) => provider)),

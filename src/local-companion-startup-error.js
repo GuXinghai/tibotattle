@@ -8,7 +8,7 @@ export const COMPANION_STARTUP_ERROR_CODES = Object.freeze([
   "companion_configuration_invalid",
   "companion_startup_failed",
 ]);
-const PREFIX = "TIBOTATTLE_COMPANION_FAILURE ";
+const PREFIX = "USAGE_MONITOR_COMPANION_FAILURE ";
 export function companionStartupErrorCode(error) {
   const code = typeof error?.code === "string" ? error.code : "";
   if (/^(?:WINDOWS_FILESYSTEM_|windows_protected_state_store_)/u.test(code)) return COMPANION_STARTUP_ERROR_CODES[0];

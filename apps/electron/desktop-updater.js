@@ -171,7 +171,7 @@ function updateUserAgent(app) {
       || !UPDATE_USER_AGENT_VERSION_PATTERN.test(version)) {
     throw new TypeError("Electron app version is invalid");
   }
-  return `TiboTattle/${version} electron-updater`;
+  return `Rhetrion/${version} electron-updater`;
 }
 
 function safePercent(value) {
@@ -285,9 +285,9 @@ export function createProductionDesktopUpdater({
       platform,
       architecture,
     });
-    updater = assertUpdater(autoUpdater);
+    if (metadata.updateFeed !== null) updater = assertUpdater(autoUpdater);
   }
-  const requestUserAgent = packaged ? updateUserAgent(app) : null;
+  const requestUserAgent = updater ? updateUserAgent(app) : null;
 
   let disposed = false;
   let started = false;
@@ -375,7 +375,7 @@ export function createProductionDesktopUpdater({
     if (disposed) fail("disposed");
     if (started) return status;
     started = true;
-    if (!packaged) return status;
+    if (!updater) return status;
 
     let saved;
     try {
@@ -420,7 +420,7 @@ export function createProductionDesktopUpdater({
   }
 
   function scheduleInitialCheck() {
-    if (initialCheckScheduled || disposed || !packaged) return;
+    if (initialCheckScheduled || disposed || !updater) return;
     initialCheckScheduled = true;
     // A packaged-only startup check gives the persisted automatic-download
     // preference an immediate bounded effect. Recurring checks are scheduled
@@ -432,7 +432,7 @@ export function createProductionDesktopUpdater({
   }
 
   function schedulePeriodicChecks() {
-    if (periodicCheckTimer !== null || disposed || !packaged) return;
+    if (periodicCheckTimer !== null || disposed || !updater) return;
     try {
       periodicCheckTimer = unrefTimer(setIntervalImpl(() => {
         if (disposed || activeOperation !== null || !status.canCheck) return;

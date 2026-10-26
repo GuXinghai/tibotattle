@@ -3,8 +3,8 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { createValidatedSnapshotStore } from '../../src/platform/index.js';
 
 export const MODEL_PERFORMANCE_PERIODS = Object.freeze(['1', '7', '30', 'all']);
-export const MODEL_PERFORMANCE_DIAGNOSTIC_HEADER = 'X-TiboTattle-Performance-Diagnostics';
-export const MODEL_PERFORMANCE_SOURCE_DIAGNOSTIC_HEADER = 'X-TiboTattle-Performance-Source-Diagnostics';
+export const MODEL_PERFORMANCE_DIAGNOSTIC_HEADER = 'X-Usage-Monitor-Performance-Diagnostics';
+export const MODEL_PERFORMANCE_SOURCE_DIAGNOSTIC_HEADER = 'X-Usage-Monitor-Performance-Source-Diagnostics';
 export const MODEL_PERFORMANCE_SOURCE_DIAGNOSTICS = Object.freeze([
   'recovery_source_missing', 'recovery_source_read_failed', 'recovery_source_not_discovered',
   'source_identity_changed', 'source_truncated_during_read', 'source_grew_during_read',

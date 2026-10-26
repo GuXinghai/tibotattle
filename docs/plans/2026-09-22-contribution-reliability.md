@@ -60,7 +60,7 @@ authorized read-only connection; a query artifact is not a live measurement.
 - The local contribution support route and Copy diagnostics expose six closed
   scheduler facts. Bounded private fixed-code notes retain an incident trail
   across restart; live timestamps explicitly describe the current process.
-- The maintained [completion-funnel runbook](../runbooks/2026-09-22-contribution-completion-funnel.md)
+- The maintained completion-funnel runbook (retired; retained in Git history)
   and synthetic-tested SELECT-plan tool separate receipt, source activation,
   projection and publication. They do not issue database requests.
 

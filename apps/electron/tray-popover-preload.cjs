@@ -1,9 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-const ACTION_CHANNEL = "tibotattle:electron-tray-popover:v1";
-const MODEL_CHANNEL = "tibotattle:electron-tray-popover-model:v1";
-const VISIBILITY_CHANNEL = "tibotattle:electron-tray-popover-visibility:v1";
-const CONTENT_HEIGHT_CHANNEL = "tibotattle:electron-tray-popover-content-height:v1";
+const ACTION_CHANNEL = "usagemonitor:electron-tray-popover:v1";
+const MODEL_CHANNEL = "usagemonitor:electron-tray-popover-model:v1";
+const VISIBILITY_CHANNEL = "usagemonitor:electron-tray-popover-visibility:v1";
+const CONTENT_HEIGHT_CHANNEL = "usagemonitor:electron-tray-popover-content-height:v1";
 const ACTIONS = new Set([
   "open",
   "allowance",
@@ -97,7 +97,7 @@ function subscribeVisibility(listener) {
 }
 
 if (typeof contextBridge?.exposeInMainWorld === "function") {
-  contextBridge.exposeInMainWorld("tibotattleTrayPopover", Object.freeze({
+  contextBridge.exposeInMainWorld("usageMonitorTrayPopover", Object.freeze({
     version: "v1",
     requestAction,
     setHistoryRange,

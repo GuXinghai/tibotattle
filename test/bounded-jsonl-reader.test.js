@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { readBoundedUtf8LineEntries } from "../src/platform/bounded-jsonl-reader.js";
 
 test("bounded reader preserves lines across reused FileHandle scratch-buffer boundaries", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-bounded-reader-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-bounded-reader-"));
   const path = join(root, "records.jsonl");
   const value = "first-crosses-boundaries\nsecond\r\nthird-crosses-too\n";
   await writeFile(path, value, { mode: 0o600 });
@@ -34,7 +34,7 @@ test("bounded reader preserves lines across reused FileHandle scratch-buffer bou
 });
 
 test("bounded reader resumes a FileHandle from an exact byte and line cursor", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-bounded-reader-resume-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-bounded-reader-resume-"));
   const path = join(root, "records.jsonl");
   const prefix = "ignored-one\nignored-two\n";
   const value = `${prefix}selected-crosses-scratch\nlast\n`;

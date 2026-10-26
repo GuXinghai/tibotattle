@@ -5,22 +5,25 @@
  * the main-process updater.  Development packages intentionally do not read
  * this policy: they have a separate identifier and no updater configuration.
  *
- * TiboTattle supports Windows x64 only. Every other platform, the native
+ * Rhetrion supports Windows x64 only. Every other platform, the native
  * macOS and Linux lanes, and their signing or handover rehearsals are absent
  * from this policy; a lookup for them returns null and fails closed.
  */
 
+const { APPLICATION_PROFILES } = require("./application-identity.cjs");
+
 const PRODUCTION_ELECTRON_DISTRIBUTION_SCHEMA_VERSION =
-  "tibotattle-electron-distribution-v1";
-const PRODUCTION_ELECTRON_APP_ID = "com.usagemonitor.local";
+  "usagemonitor-electron-distribution-v1";
+const PRODUCTION_ELECTRON_APP_ID = APPLICATION_PROFILES.stable.appId;
 // Windows uses the same fixed product identity for its NSIS installation and
 // Electron toast registration. Keeping this value in the distribution policy
 // prevents separately-reviewed packaging and runtime paths from drifting.
 const PRODUCTION_ELECTRON_WINDOWS_TOAST_ACTIVATOR_CLSID =
-  "FDA705D7-5644-50E8-8CD2-3005D51B98C5";
+  APPLICATION_PROFILES.stable.toastActivatorClsid;
 const PRODUCTION_ELECTRON_CHANNEL = "stable";
 const PRODUCTION_ELECTRON_CONTRIBUTION_POLICY = "accountless-opt-out-v1";
-const PRODUCTION_ELECTRON_UPDATE_ORIGIN = "https://updates.tibotattle.com";
+// No update service is configured for the independent local application.
+const PRODUCTION_ELECTRON_UPDATE_ORIGIN = null;
 // Immutable artifact/source-candidate identity. Retain the historical
 // ten-digit bound for receipt compatibility.
 const PRODUCTION_ELECTRON_BUILD_NUMBER_PATTERN = /^[1-9][0-9]{0,9}$/u;
@@ -32,7 +35,7 @@ const WINDOWS_FILE_VERSION_COMPONENTS = 4;
 const PRODUCTION_ELECTRON_TARGETS = Object.freeze({
   "win32-x64": Object.freeze({
     architecture: "x64",
-    feedURL: `${PRODUCTION_ELECTRON_UPDATE_ORIGIN}/electron/stable/win32-x64`,
+    feedURL: null,
     platform: "win32",
   }),
 });

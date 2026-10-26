@@ -1,359 +1,93 @@
 ---
 title: System Architecture and Trust Boundaries
-date: 2026-08-27
+date: 2026-10-23
 type: reference
 status: maintained
-last_verified_commit: 52399658
 ---
 
 # System architecture and trust boundaries
 
-TiboTattle is a local-first usage and quota companion with an optional hosted
-community contribution service. Local analysis works without the hosted
-service. Contribution, identity, public community data, release distribution,
-and updates cross separate network boundaries and must never be treated as one
-combined readiness claim.
+Rhetrion is a local Windows x64 usage and quota companion. The independent
+product has no cloud project, sharing, contribution upload, public site or
+configured update feed. Removing old service source does not administer or
+erase any former remote service. See the
+[product decision](../decisions/2026-10-23-local-product-identity-and-cloud-retirement.md).
 
-## Deployed topology
+## Composition and ownership
 
 ```mermaid
 flowchart LR
-  subgraph Desktop[Installed Windows app]
-    Native[Native shell]
-    Local[Loopback companion]
-    Index[(Owner-only local state)]
-    WebView[Embedded dashboard]
-    Native --> Local
-    WebView --> Local
-    Local --> Index
-  end
-
-  Codex[Codex sessions, config, state DB, app-server] --> Local
-  Keychain[Windows Credential Manager] <--> Native
-  Local -. explicit contribution / public reads .-> Worker[Cloudflare Worker]
-  Browser[System browser] --> Providers[Google / Apple]
-  Providers --> Worker
-  Worker --> D1[(D1 primary + deletion ledger)]
-  Worker --> R2[(R2 quarantine + update assets)]
-  Worker --> DO[Durable Object ingress budget]
-  Worker --> Assets[Static website assets]
-  Native --> Appcast[updates.tibotattle.com update feed]
-  Appcast --> R2
+  Shell[Electron lifecycle and IPC] --> Companion[Loopback companion]
+  UI[Sandboxed dashboard] --> Companion
+  Companion --> Domain[Reviewed domain facades]
+  Domain --> Index[(Owner-only local index)]
+  Domain --> Reader[Bounded provider adapters]
+  Shell --> Native[Windows filesystem and credential boundary]
 ```
 
-Dashed traffic is optional. The local dashboard is not a remote website inside
-the app: it is served by the loopback companion and admitted by a native
-navigation allowlist.
+`src/` owns ingestion, identity-scoped accounting and local analysis.
+`apps/local` composes the loopback HTTP service; `apps/web` presents its validated
+DTOs; `apps/electron` owns lifecycle, IPC, settings, tray and Windows integration.
+Runtime-neutral packages are accessed through their public facades. Scripts and
+tools consume these APIs in one direction; product code does not import tooling.
+`pnpm run architecture:check` enforces these dependency boundaries.
 
-## Component ownership
+## Stable application identity
 
-| Component | Responsibility | Does not own |
-| --- | --- | --- |
-| `src/` | Local/domain ingestion, accounting, identity, exports, contribution preparation, and durable state contracts. | UI composition, deployments, or native OS presentation. |
-| `apps/local/` | Loopback HTTP composition, refresh lifecycle, dashboard projections, and fixed relays. | Arbitrary proxying or hosted persistence. |
-| `apps/web/` | Shared dashboard/static public UI and browser localization. | Local filesystem or platform credential access. |
-| `apps/electron/` | Shell lifecycle, exact preload/IPC bridge, tray popup, settings, updater, Windows Credential Manager access, and refresh connection recovery. | Local analysis, provider parsing, or arbitrary renderer commands. |
-| `apps/worker/` | Public website, identity, participant/session/device lifecycle, ingestion, aggregates, admin operations, D1/R2/DO composition. | Local source discovery or private desktop state. |
-| `packages/` | Runtime-neutral accounting, quota, identity, localization, and telemetry public APIs. | App-to-app imports or platform-specific side effects. |
-| `scripts/` and `tools/` | Build, validation, release, migration, and operator entrypoints. | Runtime product dependencies. |
-| `native/windows-filesystem/` | Narrow Windows filesystem/credential qualification boundary. | A supported Windows product claim. |
+`config/application-identity.cjs` is the machine-identity authority. The stable
+App ID is `com.usagemonitor.local`, package `app-usagemonitor`, executable
+`usage-monitor.exe` and app link `usagemonitor://open`. Exact package metadata,
+platform, distribution and profile select runtime capabilities; display names
+never select a credential, profile or production permission.
 
-Architecture ownership is mechanically checked by
-`npm run architecture:check`. Cross-surface imports must use reviewed public
-facades; no application may reach through another application's private files.
+`config/product-brand.cjs` owns only names and artwork. CJS packaging and ESM
+presentation consume it through the existing config boundary. Neutral i18n
+catalogs interpolate a supplied name; generators materialize presentation copy
+without adding a product-config dependency to the reusable package.
 
-Electron is the main app and uses the shared dashboard HTML, modules and
-styles. Collection retains companion readiness, bounded refresh, cancellation
-and host-owned cadence. Settings and accountless sharing use their existing
-versioned preload actions; no separate dashboard mode or presentation flags
-are required.
-The dashboard contains no TiboTattle hosted sign-in, legacy consent/pairing or device
-disconnect UI. Legacy backend contracts remain available to their existing
-consumers, independently of this presentation change.
+The executable composition pins `userData` to
+`%APPDATA%/UsageMonitor/profiles/<profile>` and `sessionData` to its `chromium`
+child before Electron readiness, creating protected directories through the
+platform owner. Stable and development profiles do not overlap. Existing data
+is not automatically discovered or imported by brand name. The separate one-time
+migration must preserve original bytes, identities, salts, privacy choices and
+accumulated evidence before activating a converted copy.
+Its [owner-approved scope](../decisions/2026-10-25-usage-only-state-cutover.md)
+is usage computation/history continuity only: the index and salt, collector,
+timing, calculation baselines, retained usage evidence and necessary source/control
+settings. X, background and generic Chromium state remain untouched at the
+source; their migration or restart is not a usage-cutover prerequisite. No
+whole-profile overlay or restore is authorized by this narrower transition.
 
-The optional [X reader](../decisions/2026-10-20-optional-x-reader.md) is owned by
-Electron and uses its own authenticated webpage adapter, protected public-post
-cache, session directories and refresh scheduler. It consumes no usage-index
-content. The trusted dashboard receives validated reader models and opaque
-post-associated media references through the restricted desktop bridge; the
-remote X webpage has no access to that bridge. This is separate from the
-retired TiboTattle hosted sign-in and contribution paths.
+## Local privacy and integrity
 
-## Local trust boundary
+Local analysis works offline. HTTP binds only to loopback with explicit
+Host/Origin and mutation-header checks; the API is not an arbitrary path or
+remote proxy. Electron keeps sandboxing, context isolation, a narrow preload,
+trusted-frame IPC and navigation/resource allowlists. App links contain only a
+fixed wake target, never tokens, paths or renderer commands.
 
-The installed app creates an owner-only state root under its Electron user-data
-directory (normally under `%APPDATA%`). The native shell passes that
-exact absolute path to the companion. Standalone developer/CLI use defaults to
-the platform-specific `app-usagemonitor` state directory unless explicitly
-configured; this distinction is intentional and must be named in instructions.
+Raw prompts, responses, commands, credentials and session contents stay outside
+derived artifacts. Owner-only local source paths never leave the machine.
+Transient Projects & threads names have their separately approved local-display
+boundary and are excluded from reports, exports, diagnostics and browser storage.
+Unknown, stale, partial, unavailable and unattributed evidence remains explicit.
+Accounting is replay-safe, bounded, deterministic and identity-scoped.
 
-The companion:
+Schema evolution is forward-only. Older readers refuse newer state; they never
+relabel versions, destructively downgrade or wipe data. Display windows are not
+retention limits. Recovery diagnoses and rehearses against copies, preserving
+original and post-cutover history. The optional X reader has an independent
+protected browser session and public-post cache; it does not send local usage data.
 
-- binds only to a random loopback port;
-- rejects non-loopback peers, unapproved Host headers, arbitrary paths, and
-  unexpected query strings;
-- serves a fixed dashboard/resource root that is separate from writable state;
-- requires same-origin and route-specific review tokens for mutations; and
-- publishes staged index/snapshot changes atomically so cancellation or failure
-  leaves the previous good state readable.
+## Verification and operation
 
-The embedded dashboard view admits only its current loopback origin, `about:`, and bounded
-blob downloads. Provider identity pages open in the system browser. Native/web
-bridge messages use a closed vocabulary documented in
-[`api-surface.md`](./api-surface.md).
+Native claims, source tests, staging, GUI rendering, packaged apps, installed
+lifecycle, signing and updates are separate evidence gates. Narrow native
+capabilities do not enable disabled general production/path-walk policy.
+No test or qualification marker may be applied to a real profile as a shortcut.
 
-The local companion owns the desktop business refresh schedule, startup freshness
-check and single execution pipeline. Normal manual and automatic requests cover
-quota observation plus incremental usage/index work; existing revision and cache
-proofs decide whether calculation must run. A weaker in-flight request may retain
-one merged pending requirement. All surfaces observe the actual run receipt,
-including quota publication and usage state. A narrow quota publication preserves
-the last-good usage projection; late results require publication and scope fences.
-Concurrent quota work during calculation is not enabled in this phase.
-
-After the companion accepts a renderer request, the renderer acquires a closed
-`quick` or `detailed` lease through preload and IPC; overview work uses the
-detailed bounds. Numeric heartbeats arrive every 30 seconds. Main retains the
-three-minute quick/ten-minute detailed watchdogs and non-renewable 243-minute
-lease deadline. Settlement, heartbeat timeout and dashboard replacement release
-leases without scheduling a second business refresh. Main diagnostics expose the
-schedule owner and truthful shell timer state, not a fabricated companion timer.
-
-Dashboard and tray freshness both derive observation age from
-`latestObservedAt` against the live clock. The serialized age remains transport
-evidence rather than a presentation clock, so an open surface crosses the stale
-boundary and withdraws current allowance/pacing claims without a new payload.
-
-## Independent model performance diagnostics
-
-The development source adds web/native `#performance` navigation and a fixed
-loopback timing route. The page reads validated aggregates; it never parses
-Codex logs. A separate page-leased worker composes the application timing
-facade, Codex reconstruction owner, reporting projection, and platform sidecar
-adapter. Its diagnostic population spans the selected device-local Codex
-sources across accounts, independently of account-scoped accounting.
-
-The worker starts on a timing-page read and stops after a 60-second idle lease.
-It scans plain session/archive JSONL in bounded, checkpointed passes and stores
-one aggregate per turn in an owner-only, capped version-2 timing database.
-A version-3 supplement under `inference-timing-v2/source-<Codex-home digest>/tool-free-v1/` independently
-backfills single-response turns without tools, using the original sidecar's
-private correlation key. Its own cursor and pending state do not change original
-measurements or checkpoints. Joins require matching turn identity and original
-scalar evidence. The schema-4/method-5 display contract combines response speed and full-turn
-throughput in one Output speed distribution. Response timing takes precedence
-per turn; eligible tool-free throughput is used only as a fallback, including
-initial waiting. Percentiles are computed from individual samples, never merged
-from aggregate percentiles. The fallback count and bins identify that subset;
-TTFT and original stored measurements remain unchanged.
-If the supplement cannot open or be read, the worker still serves the original
-measurements with an explicit stale state.
-Neither timing data nor failures enter accounting or contribution; no network
-service is involved. Incompatible storage is preserved and refused. See the
-[privacy inventory](./local-data-and-privacy.md#model-performance-timing-in-development-source)
-for limits and retained fields. Windows permission support and installed-native
-qualification remain separate gates.
-
-## Source boundary
-
-Normal refresh reads narrowly defined local sources:
-
-- Codex rollout metadata under `~/.codex/sessions` and
-  `~/.codex/archived_sessions`;
-- the top-level `service_tier` setting in `~/.codex/config.toml`;
-- selected rollout names from `~/.codex/state_5.sqlite`, without retaining
-  thread titles, working directories, prompts, or previews;
-- content-free account, quota-window, and usage projections from a local
-  `codex app-server` subprocess.
-
-Claude prototype and benchmark readers remain outside the shipping source
-boundary. The installed companion exposes no Claude or Gemini source setting,
-route, UI, or upload surface. The complete field, persistence, and deletion
-inventory is maintained in
-[`local-data-and-privacy.md`](./local-data-and-privacy.md).
-
-## Identity and authority separation
-
-Do not collapse these identities:
-
-| Identity | Location | Purpose |
-| --- | --- | --- |
-| Local session and source keys | Owner-only local SQLite/files | Replay-safe joins and deduplication on one machine. |
-| Export participant secret | Windows Credential Manager in the installed app | Rotatable pseudonyms for explicitly reviewed exports. |
-| Account observation secret | Windows Credential Manager | Pseudonymous current account/quota attribution. |
-| Hosted participant/session | D1 plus secure cookie | Website account, export, and device management; no self-service hosted erasure. |
-| Hosted device credential | Windows Credential Manager plus content-free local binding; digest/state in D1 | Consent-bound incremental upload authority. |
-| Upload authorization | Short-lived D1 record | One-use contribution delivery. |
-| Admin identity | Cloudflare Access assertion plus configured owner email | Owner-only operations host, including explicitly confirmed participant erasure with admin CSRF. |
-| Release credential | Owner-controlled secret profile | Update-feed publication only. |
-
-Raw account identifiers and credentials do not enter contribution payloads,
-diagnostics, public aggregates, or documentation.
-
-Prospective v1.1 account/era pseudonyms reuse the account-observation root under
-a separate purpose and authenticated enrollment/destination binding. The upload
-path only leases an existing root; it does not mint one or infer cross-device
-continuity. Bracketed collection remains provisional evidence. Historical quota
-occurrences and cumulative quantity bounds are a separate provenance layer.
-
-Device credential use is serialized locally across delivery, pairing, renewal,
-reset and credential-bearing review/capability reads. Before a rotation, the
-contribution controller persists `device_repair_required`. Ordinary approval or
-manual resume cannot bypass it. A validated remote receipt and local credential
-commit are required before re-arming delivery; monthly renewal also persists
-its scheduling hint. An ambiguous failure stays paused across restart without
-retrying an old bearer. Local analysis and accepted history remain available.
-
-## Hosted data flow
-
-Electron uses accountless installation enrollment, authorization, lease renewal
-and the persisted sharing choice under the
-[accepted sharing policy](../decisions/2026-09-04-accountless-sharing-policy.md).
-Its dashboard and Settings present the existing main-process policy owner.
-A missing sharing bridge cannot authorize enrollment or uploads.
-
-The following social enrollment flow remains a legacy backend compatibility
-contract. The shared dashboard no longer presents its controls:
-
-1. A participant starts Google or Apple sign-in. The Worker owns the provider
-   callback; loopback receives only a bounded restart/result handoff.
-2. Enrollment creates or reattaches the participant after explicit consent and
-   configured admission controls.
-3. Device pairing creates a short-lived claim. The native app stores the
-   claimed credential in Windows Credential Manager and retains only a content-free binding file.
-4. Legacy clients show an exact local contribution preview before first approval.
-5. Each upload uses a one-use authorization, closed JSON Schema validation,
-   encryption, idempotency/deduplication, ingress budgets, and staged D1/R2
-   bookkeeping.
-6. Scheduled aggregation publishes only eligible derived cohorts. Missing,
-   stale, or unavailable evidence remains explicit rather than becoming zero.
-7. Participant export and device revoke/disconnect are separate authenticated
-   lifecycles. Legacy device disconnect removes this device's authority,
-   not hosted or local history.
-8. Private owner erasure uses the existing admin maintenance action, not a
-   participant session or device capability. It preserves the upload fence,
-   aggregate withdrawal/rebuild, independent tombstone, identity cooldown, R2
-   cleanup, and fenced database removal, with resumable audit-backed attempts.
-
-Self-service `DELETE /api/v1/me` is retired under the
-[2026-08-30 source decision](../decisions/2026-08-30-self-service-deletion-retirement.md).
-The source retirement does not establish deployment, change retention, or
-remove deletion-safe restore; the baseline review commit above predates it.
-
-The full HTTP inventory and authority model is in
-[`api-surface.md`](./api-surface.md).
-
-### Attribution-correct analytical selection
-
-The shared quota-analysis package builds plan/conflict eras from all admitted
-quota evidence before fit filtering. Local reset estimates are plan-selected;
-unresolved quantity only blocks intervals it could contribute to. Positively
-identified other-account usage does not poison an unrelated account. An absent
-account key by itself does not discard coherent legacy plan history.
-
-Hosted legacy quota, usage, daily totals and model composition share one pinned
-winning-device/day vector. Its exact journal fingerprint and participant input
-revision accompany existing fit/composition caches. The current lane coalesces
-changed participants into a durable fair queue; unchanged participants need
-no reconstruction. Publication captures finite membership and complete cache
-versions in bounded restartable pages. Ordinary newer uploads queue a successor;
-the hard-invalidation epoch still fences the captured generation and saved
-admin/public preview on erasure, consent and source-policy changes. Capture
-start is not relabelled as a latest-live epoch. Raw daily activity and spend
-retain their own exact source/revision guards. Fragment selection occurs after fit/coverage
-gates and cannot give one reset multiple votes. Public Pro-equivalent conversion
-and existing cohort limits are unchanged.
-
-The staged v1.1 path adds immutable day manifests and a complete-domain head.
-First activation uses a null predecessor plus the observed legacy fingerprint;
-successors preserve every selected prior occurrence's base accounting. Candidate
-arrival is not publication. A transactional head switch records the new v1.1 write cursor, queues daily
-rebuilds and invalidates prior caches. With the correction runtime staged, the
-legacy reader selects that complete participant domain. Once the correction
-runtime is active, effective readers retain all admitted v1/v1.1 device
-generations and activated v1.2 generations, grouping observations by occurrence
-before folding. A newer device head cannot discard unique older-device rows.
-Even an explicit admission-floor rollback cannot silently select a legacy day
-outside that domain. Any accepted v0.2 corpus prevents a v1.1 consent upgrade
-and activation until a semantic replacement mapping is proven, including when
-its dates do not overlap the candidate. This preserves the existing v0.2 source
-instead of hiding it behind a participant-wide successor head. Identical complete vectors acknowledge the
-existing generation without cache churn when no source revision changed.
-
-The local runner retains an owner-only, closed progress journal beside the
-index (at most 1 MiB). It contains completed day-manifest digests and bounded
-control fingerprints, not account markers, root bytes, provider identifiers or
-session content. Each invocation checks consent and predecessor continuity;
-publication or marker-presence changes revalidate the completed prefix locally.
-A changed day restarts only the affected suffix, while a new day can extend the
-vector. Interrupted staging is not analytical acknowledgment.
-
-Closure is bounded to 4,096 contiguous days and 30,000 chunks (at most 6,000,000
-records); larger transfers pause without deleting or silently truncating history.
-Hosted fitting has a bounded 100-day evidence horizon and remains conditional:
-the wire format does not prove complete historical quantity intervals. No
-scoped-primary account billing claim is introduced by the new transport.
-
-The v1.2 source path adds independent successor capability and authorization,
-an exact local field review, a separate progress journal, encrypted transport,
-typed admission and complete-domain activation. Its three usage extensions are
-continuity bits, same-time order and non-additive cache-write TTL detail. They
-are excluded from current cache arithmetic. Exact-total corrections preserve
-immutable source variants so later older-client uploads cannot erase known
-totals or their own unique occurrences. Every analytical pathway must use the
-qualified occurrence reader before the correction runtime is activated; see the
-[current implementation plan](../plans/2026-09-20-turn-boundary-telemetry-plan.md).
-
-Daily performance is a separate stream with its own policy, grants, encrypted
-reports and typed cohort/bucket storage. It has fixed mergeable distributions
-for TPS, TTFT and full turn duration, plus measurement and mode provenance.
-Per-device report revisions are idempotent; pooled values describe reported
-samples and may include cross-device overlap. Timing fields do not enter usage
-events. Both new runtimes start staged, and source availability proves neither
-hosted activation nor installed-client operation.
-
-## Hosted storage
-
-| Store | Current role | Boundary |
-| --- | --- | --- |
-| Primary D1 | Identities, sessions, devices, upload authorizations, contribution metadata/derived records, aggregates, controls, admin audit. | Schema migrations are ordered and production application is protected. |
-| Deletion-ledger D1 | Tombstones that suppress restore replay after participant deletion. | A restore is unsafe until ledger replay/readiness passes. |
-| Quarantine R2 | Encrypted/raw contribution object lifecycle and reconciliation. | Database/object registration is journaled; orphan and referenced objects are distinguished. Age-based deletion is currently disabled in shipped source. |
-| Update R2 | Stable update feed and release assets behind the reviewed update origin. | Publication uses digest/size/signature/nonce checks and is separate from Worker deployment. |
-| Upload ingress Durable Object | Shared concurrency and start-rate admission. | It protects expensive body reads/processing; it is not participant storage. |
-| Static assets | Public website and application UI assets. | Unknown API routes never fall through to the SPA. |
-
-## Release and deployment gates
-
-These are independent:
-
-1. source and unit tests;
-2. local/browser rendering;
-3. native app and installed-state behavior;
-4. signed artifact evidence;
-5. GitHub release publication;
-6. update-feed publication;
-7. Worker deployment and migrations;
-8. live endpoint checks; and
-9. physical platform qualification.
-
-See [`../current-status.md`](../current-status.md) for the latest explicitly
-verified snapshot and [`../runbooks/production-operations.md`](../runbooks/production-operations.md)
-for protected operations.
-
-## Change contract
-
-A change that adds or removes a source, route, bridge message, credential,
-store, schema, migration, binding, network destination, or release surface must
-update in the same change:
-
-- the closest source registry or allowlist;
-- negative and parity tests;
-- this architecture reference and the relevant privacy/API/schema reference;
-- public disclosure or first-run copy when user-visible access changes; and
-- the current status/support matrix when a qualification gate changes.
-
-When an old architecture document is no longer accurate and supplies no
-enduring decision, audit, recovery, or release value, delete it with `git rm`
-and repair every inbound link. Do not preserve obsolete instructions merely to
-avoid deleting documentation.
+See [API boundaries](./api-surface.md), [schema lifecycle](./schema-contracts.md),
+[privacy](./local-data-and-privacy.md), [recovery](../runbooks/local-index-recovery.md)
+and [current status](../current-status.md). Publication and remote operations
+require a separately configured and explicitly authorized workflow.

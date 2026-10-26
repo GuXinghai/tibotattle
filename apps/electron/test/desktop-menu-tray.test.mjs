@@ -13,7 +13,9 @@ import {
   createDesktopTrayIconFactory,
   createDesktopTrayTemplate,
   extractDesktopTrayTemplateBitmap,
+  resolveDesktopApplicationIcon,
   resolveDesktopTrayIcon,
+  APP_ICON_RELATIVE_PATH,
   STATUS_PLACEHOLDER,
   TRAY_ICON_RELATIVE_PATH,
   TRAY_ICON_SIZE,
@@ -65,7 +67,7 @@ test("Windows menus use conventional File and Help entries", () => {
   const { actions, calls } = actionRecorder();
   for (const platform of ["win32"]) {
     const template = createMenuFixture({
-      appName: "TiboTattle Dev",
+      appName: "Rhetrion Dev",
       platform,
       actions,
     });
@@ -81,7 +83,7 @@ test("Windows menus use conventional File and Help entries", () => {
     item(file, "Settings…").click();
     item(file, "Exit").click();
     const help = template.find(({ label }) => label === "Help").submenu;
-    item(help, "About TiboTattle Dev").click();
+    item(help, "About Rhetrion Dev").click();
     assert.equal(item(file, "Settings…").accelerator, "CmdOrCtrl+,");
     assert.equal(item(file, "Exit").accelerator, "CmdOrCtrl+Q");
   }
@@ -96,9 +98,9 @@ test("desktop menu and tray copy resolves every supported language", () => {
       sections: ["Usage & costs", "Allowance", "Model performance"],
       refresh: "Update Local Usage",
       checkForUpdates: "Check for Updates…",
-      tray: "Open TiboTattle Dev",
+      tray: "Open Rhetrion Dev",
       update: "Update Local Usage",
-      quit: "Quit TiboTattle Dev",
+      quit: "Quit Rhetrion Dev",
       status: "Stale",
     },
     "zh-Hans": {
@@ -107,9 +109,9 @@ test("desktop menu and tray copy resolves every supported language", () => {
       sections: ["用量与成本", "额度", "模型性能"],
       refresh: "更新本地用量",
       checkForUpdates: "检查更新…",
-      tray: "打开 TiboTattle Dev",
+      tray: "打开 Rhetrion Dev",
       update: "更新本地用量",
-      quit: "退出 TiboTattle Dev",
+      quit: "退出 Rhetrion Dev",
       status: "已过时",
     },
     es: {
@@ -118,16 +120,16 @@ test("desktop menu and tray copy resolves every supported language", () => {
       sections: ["Uso y costos", "Asignación", "Rendimiento de modelos"],
       refresh: "Actualizar uso local",
       checkForUpdates: "Buscar actualizaciones…",
-      tray: "Abrir TiboTattle Dev",
+      tray: "Abrir Rhetrion Dev",
       update: "Actualizar uso local",
-      quit: "Salir de TiboTattle Dev",
+      quit: "Salir de Rhetrion Dev",
       status: "Desactualizado",
     },
   };
   for (const [locale, copy] of Object.entries(expected)) {
     assert.equal(resolveDesktopLocale(locale, ["en-US"]), locale);
     const menu = createMenuFixture({
-      appName: "TiboTattle Dev",
+      appName: "Rhetrion Dev",
       platform: "win32",
       locale,
     });
@@ -139,7 +141,7 @@ test("desktop menu and tray copy resolves every supported language", () => {
     assert.equal(typeof item(view.submenu, copy.overview).click, "function");
     for (const label of copy.sections) assert.equal(typeof item(view.submenu, label).click, "function");
     const tray = createTrayFixture({
-      appName: "TiboTattle Dev",
+      appName: "Rhetrion Dev",
       locale,
       trayStatus: { status: "stale", allowance: null, notificationEvidence: null },
     });
@@ -166,7 +168,7 @@ test("application menu installation is dependency-injected and optional in plain
       calls.push(["set", value]);
     },
   };
-  assert.equal(installDesktopApplicationMenu({ Menu, appName: "TiboTattle" }), menu);
+  assert.equal(installDesktopApplicationMenu({ Menu, appName: "Rhetrion" }), menu);
   assert.equal(calls[0][0], "build");
   assert.deepEqual(calls[1], ["set", menu]);
   assert.equal(installDesktopApplicationMenu({ Menu: undefined }), null);
@@ -175,33 +177,33 @@ test("application menu installation is dependency-injected and optional in plain
 test("tray menu exposes truthful status and shared action callbacks", () => {
   const { actions, calls } = actionRecorder();
   const template = createTrayFixture({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     actions,
   });
   assert.deepEqual(template.map(({ label, type }) => type === "separator" ? type : label), [
-    "TiboTattle Dev · – allowance",
+    "Rhetrion Dev · – allowance",
     STATUS_PLACEHOLDER,
     "separator",
-    "Open TiboTattle Dev",
+    "Open Rhetrion Dev",
     "Allowance",
     "Usage & costs",
     "Model performance",
     "Retry",
     "Check for Updates…",
     "Settings…",
-    "About TiboTattle Dev",
+    "About Rhetrion Dev",
     "separator",
-    "Quit TiboTattle Dev",
+    "Quit Rhetrion Dev",
   ]);
   assert.equal(item(template, STATUS_PLACEHOLDER).enabled, false);
-  item(template, "Open TiboTattle Dev").click();
+  item(template, "Open Rhetrion Dev").click();
   item(template, "Allowance").click();
   item(template, "Usage & costs").click();
   item(template, "Model performance").click();
   item(template, "Retry").click();
   item(template, "Settings…").click();
-  item(template, "About TiboTattle Dev").click();
-  item(template, "Quit TiboTattle Dev").click();
+  item(template, "About Rhetrion Dev").click();
+  item(template, "Quit Rhetrion Dev").click();
   assert.deepEqual(calls, [
     "show",
     "allowance",
@@ -216,14 +218,14 @@ test("tray menu exposes truthful status and shared action callbacks", () => {
   assert.equal(item(template, "Check for Updates…").click, undefined);
   assert.equal(item(template, "Retry").accelerator, undefined);
   assert.equal(item(template, "Settings…").accelerator, "CmdOrCtrl+,");
-  assert.equal(item(template, "Quit TiboTattle Dev").accelerator, "CmdOrCtrl+Q");
+  assert.equal(item(template, "Quit Rhetrion Dev").accelerator, "CmdOrCtrl+Q");
 });
 
 
 test("tray check-for-updates is enabled only for an injected bounded capability", () => {
   const calls = [];
   const template = createTrayFixture({
-    appName: "TiboTattle Dev",
+    appName: "Rhetrion Dev",
     actions: { checkForUpdates: () => calls.push("checkForUpdates") },
   });
   const checkForUpdates = item(template, "Check for Updates…");
@@ -263,6 +265,7 @@ function nativeImageFixture({
   };
   return {
     calls,
+    source,
     resized,
     nativeImage: {
       createFromPath: (value) => {
@@ -280,7 +283,7 @@ function nativeImageFixture({
 test("real packaged bird asset produces a sparse template, not a white plate", async () => {
   const { readFile } = await import("node:fs/promises");
   const { inflateSync } = await import("node:zlib");
-  const assetPath = new URL("../../web/public/tibotattle-icon.png", import.meta.url);
+  const assetPath = new URL("../../web/public/app-icon.png", import.meta.url);
   const png = await readFile(assetPath);
 
   // This deliberately small decoder handles the reviewed RGBA/non-interlaced
@@ -387,6 +390,18 @@ test("Windows tray icon resolution uses the same fixed asset without template mo
     join("/trusted/app", TRAY_ICON_RELATIVE_PATH),
   ]);
   assert.deepEqual(fixture.calls.template, []);
+});
+
+test("application icon resolution uses the colour asset separately from the tray mask", () => {
+  const fixture = nativeImageFixture();
+  const result = resolveDesktopApplicationIcon({
+    nativeImage: fixture.nativeImage,
+    resourceRoot: "/trusted/app",
+  });
+  assert.equal(result, fixture.source);
+  assert.deepEqual(fixture.calls.createFromPath, [
+    join("/trusted/app", APP_ICON_RELATIVE_PATH),
+  ]);
 });
 
 test("tray icon resolution keeps an explicit injected icon seam", () => {

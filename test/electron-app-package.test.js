@@ -38,7 +38,7 @@ function loadBuilderConfigForTarget(target) {
   ].join("\n");
   return JSON.parse(execFileSync(process.execPath, ["-e", source], {
     cwd: resolve("."),
-    env: { ...process.env, TIBOTATTLE_ELECTRON_TARGET: target },
+    env: { ...process.env, USAGE_MONITOR_ELECTRON_TARGET: target },
     encoding: "utf8",
   }));
 }
@@ -48,7 +48,7 @@ function sha256(bytes) {
 }
 
 async function withTemporaryDirectory(run) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-app-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-app-"));
   try {
     return await run(root);
   } finally {
@@ -80,7 +80,10 @@ test("Electron app staging includes the shell and keeps the companion manifest v
     await access(join(result.output, "apps/web/public/index.html"));
     assert.ok(paths.every((path) => !/(^|\/)(?:docs?|tests?)(?:\/|$)/iu.test(path)));
     assert.ok(!paths.some((path) => path.includes("windows_filesystem_qualification")));
-    assert.ok(!paths.some((path) => path.startsWith("native/windows-filesystem/")));
+    assert.deepEqual(paths.filter(path => path.startsWith("native/windows-filesystem/")).sort(), [
+      "native/windows-filesystem/build/Release/windows_filesystem.node",
+      "native/windows-filesystem/build/Release/windows_filesystem.node.manifest.json",
+    ]);
   });
 });
 
@@ -95,7 +98,7 @@ test("Electron builder configuration exposes an unsigned Windows x64 directory t
   ]);
   assert.deepEqual(config.asar, { smartUnpack: false });
   assert.deepEqual(config.win.target, [{ target: "dir", arch: ["x64"] }]);
-  assert.equal(config.win.signAndEditExecutable, false);
+  assert.equal(config.win.signAndEditExecutable, true);
   assert.equal(config.win.signExecutable, false);
   assert.equal(config.publish, null);
   assert.equal(config.forceCodeSigning, false);
@@ -127,7 +130,7 @@ test("staged Electron linkage fails closed for missing modules and packages", as
     });
     await rm(join(
       packageManifest.output,
-      "node_modules/@app-usagemonitor/telemetry-contract/package.json",
+      "node_modules/@app-usagemonitor/identity-core/package.json",
     ));
     await assert.rejects(
       () => assertStagedElectronShellModuleLinkage(packageManifest.output),
@@ -140,7 +143,7 @@ test("staged Electron linkage fails closed for missing modules and packages", as
     });
     await rm(join(
       workspaceFile.output,
-      "node_modules/@app-usagemonitor/telemetry-contract/src/constants.js",
+      "node_modules/@app-usagemonitor/identity-core/src/pseudonym.js",
     ));
     await assert.rejects(
       () => assertStagedElectronShellNodeLinkage(workspaceFile.output),
@@ -190,7 +193,7 @@ test("Windows Electron staging includes the exact binding pair and shell", async
     const paths = manifest.files.map(({ path }) => path);
 
     assert.equal(packageJson.main, "apps/electron/main.js");
-    assert.equal(packageJson.productName, "TiboTattle");
+    assert.equal(packageJson.productName, "Rhetrion");
     for (const path of [
       "node_modules/@app-usagemonitor/quota-analysis/src/workload.js",
       "src/local-index-workload.js",

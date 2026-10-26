@@ -16,7 +16,7 @@ export function loadLocalXHls({documentRef=globalThis.document,windowRef=globalT
 
 export function mountDesktopXReader({documentRef=globalThis.document,windowRef=globalThis.window,translate,locale}={}) {
   if(mounted.has(documentRef))return mounted.get(documentRef);
-  const bridge=windowRef?.tibotattleDesktop;
+  const bridge=windowRef?.usageMonitorDesktop;
   if(bridge?.version!=='v1'||typeof bridge.getXStatus!=='function')return null;
   const readerContainer=documentRef.querySelector('#x-content'),settingsContainer=documentRef.querySelector('#settings-panel-x');
   if(!readerContainer||!settingsContainer)return null;
@@ -41,7 +41,7 @@ export function mountDesktopXReader({documentRef=globalThis.document,windowRef=g
   const onLocale=event=>{const value={locale:event.detail?.locale??documentRef.documentElement.lang,translate};reader.refreshLocale(value);settings.refreshLocale(value);};
   const onOpenPost=async event=>{const id=event.detail?.id;if(typeof id!=='string'||!/^[0-9]{1,24}$/u.test(id))return;sync();await reader.show();if(!disposed)await reader.openPost(id);};
   const onUnload=()=>api.dispose();
-  windowRef.addEventListener('tibotattle:locale-change',onLocale);windowRef.addEventListener('tibotattle-x-open-post',onOpenPost);windowRef.addEventListener('pagehide',onUnload,{once:true});
-  const api={sync,reader,settings,dispose(){if(disposed)return;disposed=true;observer?.disconnect();reader.dispose();settings.dispose();windowRef.removeEventListener('tibotattle:locale-change',onLocale);windowRef.removeEventListener('tibotattle-x-open-post',onOpenPost);windowRef.removeEventListener('pagehide',onUnload);mounted.delete(documentRef);}};
+  windowRef.addEventListener('usagemonitor:locale-change',onLocale);windowRef.addEventListener('usagemonitor-x-open-post',onOpenPost);windowRef.addEventListener('pagehide',onUnload,{once:true});
+  const api={sync,reader,settings,dispose(){if(disposed)return;disposed=true;observer?.disconnect();reader.dispose();settings.dispose();windowRef.removeEventListener('usagemonitor:locale-change',onLocale);windowRef.removeEventListener('usagemonitor-x-open-post',onOpenPost);windowRef.removeEventListener('pagehide',onUnload);mounted.delete(documentRef);}};
   mounted.set(documentRef,api);sync();return api;
 }

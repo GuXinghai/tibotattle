@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createWindowsDesktopSettingsBackend } from "./desktop-settings-backends.js";
 
 export const DESKTOP_AUTOMATIC_REFRESH_CADENCE_SCHEMA_VERSION =
-  "tibotattle-electron-automatic-refresh-cadence-v1";
+  "usagemonitor-electron-automatic-refresh-cadence-v1";
 export const DESKTOP_AUTOMATIC_REFRESH_CADENCE_FILE_NAME =
   "automatic-refresh-cadence-v1.json";
 export const DESKTOP_AUTOMATIC_REFRESH_CADENCE_INTERVAL_MS = 60 * 60_000;

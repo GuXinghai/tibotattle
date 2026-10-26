@@ -83,14 +83,14 @@ jobs:
       - name: Check ordinary companion startup and fixed credential channel contracts
         run: node --test test/windows-account-observation-credential.test.js apps/electron/test/shell-core.test.mjs apps/electron/test/desktop-windows-account-observation-broker.test.mjs apps/electron/test/desktop-windows-account-observation-qualification.test.mjs apps/electron/test/windows-account-observation-qualification-smoke.test.mjs apps/electron/test/windows-account-observation-ipc-coexistence.test.mjs
       - name: Validate packaging contracts
-        run: node --test test/electron-development-package.test.js test/electron-builder-package-json.test.js test/electron-development-artifact-verifier.test.js test/windows-electron-release-config.test.js
+        run: node --test test/electron-development-package.test.js test/electron-builder-package-json.test.js test/electron-development-artifact-verifier.test.js
       - name: Build and verify development distributions
         run: node scripts/package-electron-development.mjs --target win32-x64 --format distribution --replace-staging
       - name: Exercise synthetic upload and account-observation storage through packaged Electron and inherited IPC
         run: |
           $ErrorActionPreference = 'Stop'
           $packageRoot = Join-Path $env:GITHUB_WORKSPACE ".release-build/electron-candidates/$env:GITHUB_SHA/win32-x64/distribution"
-          $appPath = Join-Path $packageRoot 'win-unpacked/TiboTattle Dev.exe'
+          $appPath = Join-Path $packageRoot 'win-unpacked/usage-monitor.exe'
           $stagedApp = Join-Path $env:GITHUB_WORKSPACE '.release-build/electron-dev/win32-x64/app'
           $packageReceipt = Join-Path $packageRoot 'development-package.json'
           $smokeReceipt = Join-Path $packageRoot 'accountless-storage-smoke.json'
@@ -286,10 +286,10 @@ jobs:
           $ErrorActionPreference = 'Stop'
           node scripts/package-electron-production.mjs --target win32-x64 --source-revision $env:GITHUB_SHA --build-number $env:GITHUB_RUN_NUMBER --replace-staging
           if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NORMAL_CANDIDATE_PREPARATION_FAILED' }
-          $env:TIBOTATTLE_ELECTRON_TARGET = 'win32-x64'
-          $env:TIBOTATTLE_ELECTRON_SOURCE_REVISION = $env:GITHUB_SHA
-          $env:TIBOTATTLE_ELECTRON_BUILD_NUMBER = $env:GITHUB_RUN_NUMBER
-          $env:TIBOTATTLE_ELECTRON_VERSION = node -p 'require("./package.json").version'
+          $env:USAGE_MONITOR_ELECTRON_TARGET = 'win32-x64'
+          $env:USAGE_MONITOR_ELECTRON_SOURCE_REVISION = $env:GITHUB_SHA
+          $env:USAGE_MONITOR_ELECTRON_BUILD_NUMBER = $env:GITHUB_RUN_NUMBER
+          $env:USAGE_MONITOR_ELECTRON_VERSION = node -p 'require("./package.json").version'
           if ($LASTEXITCODE -ne 0) { throw 'WINDOWS_NORMAL_CANDIDATE_VERSION_FAILED' }
           # Overrides apply only to this runner-only unpacked test candidate.
           # The release configuration still requires signing and updater trust.
@@ -299,7 +299,7 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $candidateRoot = Join-Path $env:GITHUB_WORKSPACE '.release-build/electron-production/win32-x64'
-          $appPath = Join-Path $candidateRoot 'artifacts/win-unpacked/TiboTattle.exe'
+          $appPath = Join-Path $candidateRoot 'artifacts/win-unpacked/usage-monitor.exe'
           $stagedApp = Join-Path $candidateRoot 'app'
           $sourceCandidate = Join-Path $candidateRoot 'production-source-candidate.json'
           $smokeReceipt = Join-Path $env:GITHUB_WORKSPACE '.release-build/electron-windows-normal-candidate/normal-candidate-smoke.json'

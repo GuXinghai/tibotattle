@@ -490,7 +490,7 @@ test("an unavailable accounting report degrades the shared refresh receipt expli
 });
 
 const FRESH_NOTIFICATION_EVIDENCE = Object.freeze({
-  schemaVersion: "tibotattle-notification-evidence-v2",
+  schemaVersion: "usagemonitor-notification-evidence-v2",
   status: "fresh_provider_observation",
   provider: "openai_codex",
   source: "app_server_read",

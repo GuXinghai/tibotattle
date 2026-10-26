@@ -112,7 +112,7 @@ comment citing this note.
 
 ## Runbook alignment
 
-The maintained [production operations runbook](../runbooks/production-operations.md)
+The maintained production operations runbook (retired; retained in Git history)
 describes the deploy sequence and does not instruct writing containment
 receipts for routine deploys. The read-only production observer
 (`release-readiness.mjs --probe-public`) remains available as an intake

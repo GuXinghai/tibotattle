@@ -69,7 +69,6 @@ test("links carrying credentials, tokens, ports, or navigation data fail closed"
     "usagemonitor://open\n",
     " usagemonitor://open",
     "usagemonitor://open ",
-    "tibotattle://open",
     "https://open",
     "file:///tmp/private",
     "--open=usagemonitor://open",
@@ -94,7 +93,7 @@ test("the parser bounds oversized input before retaining or normalizing it", () 
 
 test("argv extraction accepts only semantic links and returns an immutable snapshot", () => {
   const extracted = extractDesktopDeepLinks([
-    "/Applications/TiboTattle Dev.app/Contents/MacOS/TiboTattle Dev",
+    "/Applications/Rhetrion Dev.app/Contents/MacOS/Rhetrion Dev",
     "--no-sandbox",
     "usagemonitor://open/",
     "https://example.test/?next=usagemonitor://open",

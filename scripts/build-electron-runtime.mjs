@@ -146,7 +146,10 @@ const NATIVE_PATH_MODULE = Object.freeze({
 });
 export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "config/electron-production-distribution.cjs",
-  "config/deployment-endpoints.js",
+  "config/application-identity.cjs",
+  "config/product-brand.cjs",
+  "config/product-brand.js",
+  "apps/electron/application-profile.js",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
   "apps/electron/desktop-command.js",
@@ -196,7 +199,7 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "apps/electron/x-import/popup.html",
   "apps/electron/x-import/popup.js",
   "apps/electron/x-import/NativeHost.cs",
-  "apps/electron/x-import/TiboTattleXImport.exe",
+  "apps/electron/x-import/UsageMonitorXImport.exe",
   "apps/electron/errors.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
@@ -819,7 +822,7 @@ async function importStagedElectronMain(stagingRoot) {
  */
 export async function assertStagedElectronShellNodeLinkage(stagingRoot, options) {
   await assertStagedElectronShellModuleLinkage(stagingRoot, options);
-  const isolatedParent = await mkdtemp(join(tmpdir(), "tibotattle-electron-linkage-"));
+  const isolatedParent = await mkdtemp(join(tmpdir(), "usagemonitor-electron-linkage-"));
   const isolatedRuntime = join(isolatedParent, "app");
   try {
     await cp(stagingRoot, isolatedRuntime, {
@@ -1646,7 +1649,7 @@ export async function buildElectronRuntime({
       for (const relativePath of ELECTRON_SHELL_RUNTIME_FILES) {
         // This reviewed native executable is generated only in staging from
         // the captured C# source, before manifest inventory/hashing.
-        if (relativePath === "apps/electron/x-import/TiboTattleXImport.exe") continue;
+        if (relativePath === "apps/electron/x-import/UsageMonitorXImport.exe") continue;
         const result = await stageUniqueRepositoryFile({
           repositoryRoot: REPOSITORY_ROOT,
           stagingRoot: temporaryRoot,
@@ -1658,10 +1661,10 @@ export async function buildElectronRuntime({
       try {
         await buildDesktopXImportNative({
           sourceDirectory: outputPath(temporaryRoot, "apps/electron/x-import"),
-          outputPath: outputPath(temporaryRoot, "apps/electron/x-import/TiboTattleXImport.exe"),
+          outputPath: outputPath(temporaryRoot, "apps/electron/x-import/UsageMonitorXImport.exe"),
         });
-        await captureRegularFile(outputPath(temporaryRoot, "apps/electron/x-import/TiboTattleXImport.exe"), "X import native relay");
-        staged.push({ kind: ELECTRON_SHELL_KIND, path: "apps/electron/x-import/TiboTattleXImport.exe" });
+        await captureRegularFile(outputPath(temporaryRoot, "apps/electron/x-import/UsageMonitorXImport.exe"), "X import native relay");
+        staged.push({ kind: ELECTRON_SHELL_KIND, path: "apps/electron/x-import/UsageMonitorXImport.exe" });
       } catch {
         fail("X_IMPORT_NATIVE_BUILD", "X import relay requires the Windows x64 build toolchain");
       }

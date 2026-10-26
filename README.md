@@ -1,269 +1,93 @@
-# TiboTattle
+# 衡川 · Rhetrion
 
-Local-first monitoring for coding-agent usage. TiboTattle
-processes local Codex usage metadata and provider-reported quota evidence to
-show where your allowance stands, what observed work would have cost at
-standard API prices, and where the available evidence does not support a
-confident answer.
+Rhetrion is a private, local coding-agent usage dashboard for Windows x64.
+It reads bounded Codex usage/account observations and shows recorded usage,
+quota movement, cache behavior, and estimates with their coverage and uncertainty.
+It is not a provider billing system or an authoritative quota formula.
 
-Personal analysis runs locally and works without an account. Raw source logs do
-not leave your machine, and prompts, responses, file paths, and raw account
-identifiers do not enter TiboTattle's derived artifacts. Desktop usage analysis stays local: it sends no usage data and has no community sharing, contribution upload, or TiboTattle hosted sign-in. See the [removal decision](docs/decisions/2026-10-13-desktop-sharing-removal.md).
-Local analysis remains available independently of hosted service availability.
-The optional [X reader](docs/decisions/2026-10-20-optional-x-reader.md) connects
-to X in a separate session and stores public posts in its own protected cache;
-it does not send local usage data.
+This independent product is under development and has not been published.
+The repository has no configured download website, hosted contribution service,
+signing account, or update feed. Older Git history and retained evidence describe
+an earlier project; they do not establish a Rhetrion release or deployment.
+See the [current status](docs/current-status.md) and
+[identity decision](docs/decisions/2026-10-23-local-product-identity-and-cloud-retirement.md).
 
+## Local behavior and privacy
 
-> **The name:** TiboTattle is named with affection for the Codex community and
-> its patron saint of quota resets. It is not affiliated with or endorsed by
-> OpenAI or Thibault Sottiaux, and we will happily rename it if asked. Your
-> personal analysis stays local, and the desktop app sends no usage data.
+Local reads cover Codex `sessions`, `archived_sessions`, bounded `state_5.sqlite`
+thread metadata and `config.toml`, plus the app-server methods `account/read`,
+`account/rateLimits/read` and `account/usage/read`. These sources have separate
+privacy and coverage boundaries; they do not authorize storing session content.
 
-## What it shows
+Analysis works offline. The companion binds only to loopback. Prompts, responses,
+raw commands, credentials and session contents do not belong in derived reports.
+Private source paths remain in the owner-only local index and never leave it.
+Missing, stale, partial, unpriced and unattributed evidence stays explicit.
+Display windows do not delete retained history.
 
-- **Allowance tracks** — observed 7-day (and secondary) quota remaining, with
-  reset times, reconstructed from local observations.
-  Overview shows seven-day remaining allowance, daily consumption, estimated
-  remaining work hours, current workload and actual-versus-expected consumption. Work includes
-  tools and necessary waiting; parallel tasks count once. Historical work-hour
-  rates use observed quota deductions; current rates use API-equivalent usage.
-  The single-account, continuous-subscription scenario is an analysis assumption,
-  not retrospective verification of account identity. The detailed pace forecast
-  remains on the Allowance page.
-  Historical consumption retains every observed plan period. Missing plan labels
-  can inherit the preceding explicit plan under the marked period assumption;
-  source records remain unchanged. Conflicts and explicit account changes break
-  inference. Daily bars separate plans, and remaining-hour estimates use only the
-  current plan period, never a previous plan's quota-per-hour rate.
-- **API-price-equivalent usage** — replay-safe totals split into cached input,
-  uncached input, reasoning output, and output text, priced from a pinned
-  public price registry.
-- **Measured versus calculated** — how far observed quota movement diverges
-  from cost-implied movement, with a fitted dollars-per-quota-point rate and an
-  explicit uncertainty band.
-- **Timelines** — hourly/daily/weekly usage against allowance, entirely from
-  local evidence.
-- **Fast-mode pricing** — API-price-equivalent estimates for Codex Fast turns
-  use the provider's published Priority (Fast) API rates: 2x Standard for
-  GPT-6 Astra, Sol and Luna and the GPT-5.6 and GPT-5.4 families, 2.5x for
-  GPT-5.5, and a clearly disclosed assumed 2x for models with no published
-  Priority rate. These estimates are not subscription charges or quota formulas.
-  Codex records the speed mode only when it is applied or
-  changed, so turns before the first change in a session are attributed to
-  Standard as a visible assumption unless a timestamped configuration reading
-  covers them.
-- **A tray icon** — where the allowance stands without opening the app,
-  including a Check for Updates entry in builds that ship the updater.
-- **An optional X reader** — Tibo's posts, replies, reposts and media with
-  local/Pacific publication times, separate refresh settings and opt-in
-  notifications. Connect through X's webpage or explicitly import an existing
-  Chrome session. Logout and cache clearing are separate actions.
+The desktop has no community sharing or contribution upload. Saved opt-outs,
+identity salts, receipts and credentials are preserved. Removing the old cloud
+project from this checkout does not erase or administer any former remote service.
+The optional X reader uses a separate protected browser session and does not send
+local usage data in its network requests.
 
-The desktop opens its main window directly, without a startup page. Navigation
-stays available while saved results load in the selected page. Background colors
-apply first; local wallpaper appears only after decoding, without blocking the
-window. Loading, empty results and read failures have distinct states.
-The Allowance chart reserves its plot area while data is unavailable, without
-showing zero-valued axes or an empty-result verdict. During a same-plan refresh,
-the previous report stays visible with an update status; diagnostics remain in details.
-Weekly intervals verify their source against the unified accounting snapshot,
-independently of quota-fit availability. The plan selector keeps historical
-plans available after an upgrade; each plan's intervals and estimates remain
-separate, and intervals with uncertain plan attribution stay explicitly unavailable.
+See [local data and privacy](docs/reference/local-data-and-privacy.md),
+[security policy](SECURITY.md), and [safe recovery](docs/runbooks/local-index-recovery.md).
 
-## Install (Windows x64)
+## Install Windows x64
 
-TiboTattle supports **Windows x64** only. Download the Windows installer from
-[tibotattle.com](https://tibotattle.com) or the
-[TiboTattle releases page](https://github.com/adamallcock/tibotattle/releases),
-run it, and launch TiboTattle. The app includes its runtime. You do **not** need
-Node.js or pnpm to install or use the published app.
+No Rhetrion installer is published. Source staging and unsigned local test artifacts
+are separate from installed, signed-release, updater and GUI qualification.
+The native Windows adapter retains its fail-closed policy; a valid binary digest
+or passing source tests does not enable unqualified production capabilities.
+Do not run an incomplete candidate against your only copy of application data.
 
-In Electron, check for updates in Settings → About. A missing website slot is not
-a release claim; use the GitHub release page for the exact version and digest. A
-v1 release manifest may explicitly leave SBOM or provenance fields `null`;
-source-to-binary provenance is claimed only when a trusted hosted workflow
-generated/finalized and cryptographically verified the exact final bytes for that
-specific release. This repository is the source of truth for the public app and
-its releases. See the [user guide](docs/user-guide.md#install-and-first-launch) for
-first launch, or the developer section below to build from source.
-See [Verify a TiboTattle release](docs/verify-release.md) to check the downloaded
-bytes, the Authenticode signature, and any non-null release-specific GitHub
-provenance evidence yourself.
+Branding is presentation only. The executable remains `usage-monitor.exe`,
+the package is `app-usagemonitor`, and the stable App ID is `com.usagemonitor.local`.
+Profiles use `%APPDATA%/UsageMonitor/profiles/<profile>` independently of the title.
+A new name never authorizes changing credentials or selecting another profile.
+Existing data cutover requires the separately verified one-time migration and backup.
 
-## Build from source (developers)
+## Develop and verify
 
-A qualified packaged Windows development app can read an existing local
-account-observation key through the fixed parent broker to attribute new quota
-readings. Its broker refuses key creation; a missing key remains unavailable.
-This does not enable production updater or installer policy, and it does not
-attribute previously unowned observations retroactively.
+Root tooling needs Node.js 22.13 or newer and pnpm 11. Production Electron source
+preparation requires exactly Node.js 26.2.0. Native packaging and desktop validation
+require a supported interactive Windows x64 host.
 
-These requirements are for development, not installation of the released app.
-Repository tooling requires Node.js ≥ 22.13 and
-[pnpm](https://pnpm.io) 11. Electron packaging requires a supported Windows x64
-host; the production candidate procedure is in the release runbooks.
-
-The root workspace uses pnpm; the Worker keeps its own npm lockfile, which is
-needed only for hosted-service checks and the full gates:
-
-```bash
-pnpm install
-npm --prefix apps/worker ci
+```sh
+pnpm install --frozen-lockfile
+pnpm run product:local
 ```
 
-Build and open the self-contained desktop app:
+The source dashboard is served through its loopback companion. Use focused tests
+first, then the relevant owning gate:
 
-```bash
-npm run package:electron:development
+```sh
+pnpm run test:preflight
+pnpm run architecture:check
+pnpm run product:ui:test
+pnpm run product:electron:test
+pnpm run product:local:test
 ```
 
-For development only, run the local dashboard in an external browser without
-building the app:
+`pnpm run check` composes the broad source gates; it is not installed-artifact
+or production-release proof. See [contributing](CONTRIBUTING.md) and the
+[documentation index](docs/README.md) for maintained contracts.
 
-```bash
-npm run product:local
-```
+## Local usage coaching
 
-then open <http://localhost:8787>. Electron is the main app and uses this same
-dashboard for local collection and Settings. A
-useful headline usually appears within seconds; the first deep pass over a
-large history is bounded, cancellable, and resumable.
+`node ./src/cli.js explain-usage-plans` lists the bounded, deterministic local
+analysis plans. The [agent protocol](docs/reference/usage-explainer-agent-protocol.md)
+defines pagination, evidence selection and prohibited claims. The repository skill
+uses this CLI; the former macOS-only plugin wrapper is retired.
 
-## Uninstall
+The source layout follows `src/` for domain behavior, `apps/local` for the companion,
+`apps/web` for the dashboard, `apps/electron` for the shell, `packages/` for neutral
+public APIs, and `native/windows-filesystem` for the Windows security boundary.
 
-Uninstall TiboTattle through Windows Settings → Apps. Uninstalling the app does
-not by itself erase accumulated local indexes, preferences, logs, or Windows
-Credential Manager entries. Use only the documented local erase and identity-reset controls for their separate effects, or follow [SUPPORT.md](SUPPORT.md).
-None of them erases hosted history.
+## Support and language
 
-## Languages
-
-TiboTattle ships English, Simplified Chinese, and Spanish for its desktop shell,
-local dashboard, and public community/install surface. New users follow a safe
-system-language match with English fallback; General settings and the web
-header both provide a persisted override. Language choice does not change
-regional number/date formatting, event times, or quota/pricing semantics. See
-[the localization decision record](docs/decisions/2026-08-03-localization-system.md)
-for the provenance and future-locale policy.
-
-## Privacy model
-
-- Local analysis works fully offline. **Start TiboTattle at login** is a Settings
-  switch. It reads the observed Windows startup state and registers only the
-  normal app at login; it does not install a daemon, privileged helper, or
-  separate background worker.
-- Optional Windows allowance notifications are **off by default** and local-only.
-  If enabled in **Settings → Notifications**, they are evaluated only after the
-  existing foreground refresh receives fresh direct provider quota evidence.
-  Stale, inferred, mixed-source, unknown, unobserved, forecast, and
-  log-derived state never notifies; turning the same switch off immediately
-  stops future alerts and clears only their local pending/dedupe state.
-  The current provider receipt supplies a reset schedule but no reset identity,
-  so reset alerts are visibly unavailable rather than inferred from time or a
-  percentage change.
-- The dashboard binds to loopback only. The packaged app's network behavior is
-  audited at build time (zero JavaScript and zero native network attempts in
-  offline mode).
-- Manual Refresh updates quota and detailed accounting together, reusing a
-  valid generation-bound cache. Startup and frequent automatic quota checks
-  stay lightweight; automatic detailed attempts are limited to once per hour.
-  Detailed refresh reads more than the selected session folders. It processes
-  metadata from the selected Codex `sessions` and `archived_sessions` folders;
-  reads `state_5.sqlite` for rollout lineage and `config.toml` for service-tier
-  settings; invokes the installed Codex binary's local `app-server` methods
-  `account/read`, `account/rateLimits/read`, and `account/usage/read`. Source
-  records are processed locally; prompt and response text is not retained in
-  derived state.
-- The desktop app is local-only. Community sharing, contribution upload, performance sharing, and hosted sign-in were removed on 2026-10-13; see the [removal decision](docs/decisions/2026-10-13-desktop-sharing-removal.md).
-- The shared dashboard contains no Google/Apple sign-in or legacy social
-  controls. Legacy enrollment and device disconnect backend contracts
-  remain compatible with their existing consumers. Hosted erasure is a separate
-  private owner operation, not an app control; local-only use needs no account.
-- Derived artifacts (reports, exports, telemetry) are schema-validated to
-  exclude prompts, responses, commands, paths, URLs, and raw identifiers.
-
-The [2026-08-30 deletion-retirement decision](docs/decisions/2026-08-30-self-service-deletion-retirement.md)
-is a source contract, not a deployed-service or installed-release claim. It
-does not change retention or settle privacy-request obligations; see the
-[privacy inventory](docs/reference/local-data-and-privacy.md).
-
-### Private local report artifacts
-
-Historical technical-report artifacts are kept only in
-`.usage-monitor/legacy-reports/`, which is ignored by Git and never used as a
-public web asset. `npm run migrate:legacy-reports` previews a one-time,
-no-overwrite move from the former repository-root layout; add `-- --apply` only
-after reviewing its SHA-256 manifest. Existing root files remain a read-only
-compatibility fallback until they are explicitly migrated.
-
-## Repository layout
-
-| Path | Contents |
-| --- | --- |
-| `apps/electron`, `apps/local`, `apps/web` | Desktop app shell, loopback companion server, and browser dashboard |
-| `apps/worker` | Optional hosted contribution service (off by default) |
-| `packages/` | Workspace packages: accounting, quota analysis, telemetry contract, identity core, and i18n |
-| `src/` | Product source: `application/`, `platform/`, `export/`, `contribution/`, `reporting/`, `providers/` owners plus compatibility roots |
-| `docs/` | Maintained references and runbooks plus retained dated decisions and evidence |
-
-The hosted community-aggregate service at
-[tibotattle.com](https://tibotattle.com) is operated by the maintainer, and
-the deploy scripts in this repository target the owner's Cloudflare account.
-Forks that want their own hosted service must provision their own resources
-per `apps/worker/wrangler.jsonc`; the local app never requires the hosted
-service.
-
-For the complete engineering map of loopback and hosted HTTP routes, native
-bridges, child-process protocols, Cloudflare bindings, workspace package APIs,
-schemas, and third-party services, see the maintained
-[TiboTattle API surface reference](docs/reference/api-surface.md).
-Its source-parity check is `npm run docs:api:check`.
-
-## Development
-
-```bash
-npm test
-npm run product:check
-```
-
-For iteration, run the preflight:
-
-```bash
-npm run test:preflight
-```
-
-Use `npm run test:changed -- --base <revision>` to select known changed
-paths; unfamiliar or shared changes run the complete `npm run check` gate.
-Installed-app qualification remains a separate release gate; see the release
-runbooks.
-
-`npm run architecture:check` enforces ownership boundaries. Maintained current
-references are deliberately split by authority:
-
-- [system architecture](docs/reference/system-architecture.md);
-- [local data and privacy](docs/reference/local-data-and-privacy.md);
-- [API surface](docs/reference/api-surface.md);
-- [CLI commands](docs/reference/cli-reference.md); and
-- [production operations](docs/runbooks/production-operations.md).
-
-Contributions are welcome—see [CONTRIBUTING.md](CONTRIBUTING.md) for the
-workflow and gates. For help, start with [SUPPORT.md](SUPPORT.md); report
-vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
-
-## Status
-
-TiboTattle publishes a Windows x64 desktop installer, and its optional hosted
-service is operational. The current published version and
-user-facing history are listed in the [changelog](CHANGELOG.md) and on the
-[GitHub Releases page](https://github.com/adamallcock/tibotattle/releases).
-TiboTattle is not a provider-authoritative billing dashboard: quota estimates
-carry explicit uncertainty, and unknown models or tiers remain explicit rather
-than silently defaulted. The maintained [current status matrix](docs/current-status.md)
-records source, live-service, installed-artifact, public-release, updater, and
-platform qualification separately.
-
-## License
-
-[MIT](LICENSE)
+The interface supports English, Simplified Chinese and Spanish. Product names and
+artwork come from the presentation config, separately from stable internal identity.
+For troubleshooting, review [support guidance](SUPPORT.md). No external support or
+private reporting destination is configured for this unpublished product.

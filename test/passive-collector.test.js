@@ -1544,7 +1544,7 @@ test("fresh direct app-server records expose a closed local notification project
   });
   const evidence = notificationEvidenceFromAppServerRecord(record);
   assert.deepEqual(evidence, {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",
@@ -1636,7 +1636,7 @@ test("Spark windows in a fresh snapshot leave the codex notification evidence in
   assert.equal(record.windows.length, 4);
   const evidence = notificationEvidenceFromAppServerRecord(record);
   assert.deepEqual(evidence, {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",

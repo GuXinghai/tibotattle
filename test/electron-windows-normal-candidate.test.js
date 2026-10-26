@@ -36,6 +36,14 @@ import {
 import { classifyWindowsSyntheticSourceOwnerFailure,
   createWindowsSyntheticOwnedSource } from "../scripts/lib/windows-synthetic-source-owner.mjs";
 import {
+  assertWindowsProcessTreeExited,
+  buildWindowsExactExecutableProcessQueryArguments,
+  buildWindowsOwnedProcessSnapshotQueryArguments,
+  ownedWindowsProcessTree,
+  parseWindowsProcessSnapshot,
+  runWindowsCandidateProgram,
+} from "../scripts/lib/windows-candidate-process.mjs";
+import {
   buildWindowsNormalCandidateCodexFixture,
   buildWindowsNormalCandidateFirewallCreateArguments,
   buildWindowsNormalCandidateFirewallRemoveArguments,
@@ -84,11 +92,162 @@ import {
 } from "../scripts/smoke-electron-windows-normal-candidate.mjs";
 
 const SOURCE_REVISION = "0123456789abcdef0123456789abcdef01234567";
-const APP_PATH = String.raw`C:\candidate\artifacts\win-unpacked\TiboTattle.exe`;
+const APP_PATH = String.raw`C:\candidate\artifacts\win-unpacked\usage-monitor.exe`;
 const STAGED_APP_PATH = String.raw`C:\candidate\app`;
 const SOURCE_CANDIDATE_PATH = String.raw`C:\candidate\production-source-candidate.json`;
 const RECEIPT_PATH = String.raw`C:\workspace\.release-build\electron-windows-normal-candidate\normal-candidate-smoke.json`;
-const FIREWALL_RULE = "tibotattle-normal-candidate-550e8400-e29b-41d4-a716-446655440000";
+const FIREWALL_RULE = "usagemonitor-normal-candidate-550e8400-e29b-41d4-a716-446655440000";
+
+test("candidate process probes bind the fixed executable path and Toolhelp creation identity", () => {
+  const exact = buildWindowsExactExecutableProcessQueryArguments(APP_PATH);
+  const ready = buildWindowsOwnedProcessSnapshotQueryArguments({ rootProcessId: 42 });
+  const retained = buildWindowsOwnedProcessSnapshotQueryArguments({ retainedProcessIds: [42, 43] });
+  for (const args of [exact, ready, retained]) {
+    assert.deepEqual(args.slice(0, 4), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]);
+    assert.match(args[4], /Import-Module -Name Microsoft\.PowerShell\.Utility -ErrorAction Stop/u);
+    assert.match(args[4], /CreateToolhelp32Snapshot/u);
+    assert.match(args[4], /Process32First/u);
+    assert.match(args[4], /Process32Next/u);
+    assert.match(args[4], /GetProcessTimes/u);
+    assert.match(args[4], /UsageMonitorWindowsProcessSnapshot/u);
+    assert.doesNotMatch(args[4], /Get-CimInstance|Win32_Process|WMI|Remove-|Stop-Process|Start-Process|taskkill/u);
+  }
+  assert.match(exact[4], /GetProcessesByName\('usage-monitor'\)/u);
+  assert.match(exact[4], /USAGE_MONITOR_WINDOWS_CANDIDATE_EXPECTED_PATH_V1/u);
+  assert.match(exact[4], /\$process\.MainModule\.FileName/u);
+  assert.match(exact[4], /\$process\.StartTime\.ToFileTimeUtc\(\)/u);
+  assert.match(exact[4], /\$process\.Dispose\(\)/u);
+  assert.doesNotMatch(exact[4], /C:\\candidate|ParentProcessId=0/u);
+  assert.match(ready[4], /\[uint32\]42/u);
+  assert.match(retained[4], /\[uint32\[\]\]@\(42,43\)/u);
+  for (const [path, options] of [
+    [String.raw`C:\candidate\display-name.exe`, {}],
+    [APP_PATH, { executableName: "display-name.exe" }],
+    ["relative/usage-monitor.exe", {}],
+  ]) {
+    assert.throws(() => buildWindowsExactExecutableProcessQueryArguments(path, options),
+      { code: "ELECTRON_WINDOWS_CANDIDATE_PROCESS_PROCESS_PROOF_UNAVAILABLE" });
+  }
+  for (const options of [
+    {}, { rootProcessId: 0 }, { rootProcessId: 0x1_0000_0000 },
+    { rootProcessId: 42, retainedProcessIds: [43] },
+    { retainedProcessIds: [42, 42] }, { retainedProcessIds: Array(4097).fill(42) },
+  ]) {
+    assert.throws(() => buildWindowsOwnedProcessSnapshotQueryArguments(options),
+      { code: "ELECTRON_WINDOWS_CANDIDATE_PROCESS_PROCESS_PROOF_UNAVAILABLE" });
+  }
+});
+
+test("candidate process ownership excludes unrelated processes and recognizes PID reuse", () => {
+  const snapshot = parseWindowsProcessSnapshot(JSON.stringify([
+    { ProcessId: 100, ParentProcessId: 1, CreationDate: "one" },
+    { ProcessId: 101, ParentProcessId: 100, CreationDate: "two" },
+    { ProcessId: 102, ParentProcessId: 101, CreationDate: "three" },
+    { ProcessId: 103, ParentProcessId: 1, CreationDate: "other" },
+  ]));
+  const tracked = ownedWindowsProcessTree(snapshot, 100);
+  assert.deepEqual(tracked, [
+    { pid: 100, creation: "one" },
+    { pid: 101, creation: "two" },
+    { pid: 102, creation: "three" },
+  ]);
+  assert.equal(assertWindowsProcessTreeExited(tracked, [
+    { pid: 100, parentPid: 1, creation: "replacement" },
+    { pid: 103, parentPid: 1, creation: "other" },
+  ]), true);
+  assert.throws(() => assertWindowsProcessTreeExited(tracked, [
+    { pid: 101, parentPid: 1, creation: "two" },
+  ]), { code: "ELECTRON_WINDOWS_CANDIDATE_PROCESS_OWNED_PROCESS_REMAINS" });
+  for (const text of ["", "{", "x".repeat(65537), JSON.stringify([
+    { ProcessId: 100, ParentProcessId: 1, CreationDate: "one" },
+    { ProcessId: 100, ParentProcessId: 1, CreationDate: "one" },
+  ])]) {
+    assert.throws(() => parseWindowsProcessSnapshot(text),
+      { code: "ELECTRON_WINDOWS_CANDIDATE_PROCESS_PROCESS_PROOF_UNAVAILABLE" });
+  }
+  assert.throws(() => ownedWindowsProcessTree(snapshot, 999),
+    { code: "ELECTRON_WINDOWS_CANDIDATE_PROCESS_PROCESS_PROOF_UNAVAILABLE" });
+});
+
+test("candidate program forwards only approved environment and fixed read-only probe state", async () => {
+  const environment = {
+    SystemRoot: String.raw`C:\Windows`,
+    PSModulePath: "ambient-module-path",
+    USAGE_MONITOR_WINDOWS_CANDIDATE_EXPECTED_PATH_V1: "ambient-probe-path",
+    PRIVATE_TEST_VALUE: "must-not-forward",
+  };
+  const powerShell = join(environment.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const calls = [];
+  const spawnProcess = (command, args, options) => {
+    calls.push({ command, args, options });
+    const child = new EventEmitter();
+    queueMicrotask(() => child.emit("close", 0));
+    return child;
+  };
+  const invoke = (options = {}) => runWindowsCandidateProgram(powerShell, ["-NoProfile", "-NonInteractive"], {
+    timeoutMs: 100, environment, ...options,
+  }, { spawnProcess });
+  assert.equal((await invoke()).settled, true);
+  await invoke({ fixedProbePath: APP_PATH });
+  await invoke({ captureOutput: true, fixedPowerShellUtilityModules: true });
+  for (const { options } of calls) {
+    assert.equal(options.shell, false);
+    assert.equal(options.windowsHide, true);
+    assert.equal(Object.hasOwn(options.env, "PRIVATE_TEST_VALUE"), false);
+  }
+  assert.deepEqual(calls[0].options.env, { SystemRoot: environment.SystemRoot });
+  assert.equal(calls[1].options.env.USAGE_MONITOR_WINDOWS_CANDIDATE_EXPECTED_PATH_V1, APP_PATH);
+  assert.equal(Object.hasOwn(calls[1].options.env, "PSModulePath"), false);
+  assert.equal(calls[2].options.env.PSModulePath,
+    join(environment.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "Modules"));
+  assert.deepEqual(calls[2].options.stdio, ["ignore", "pipe", "ignore"]);
+  for (const options of [
+    { timeoutMs: 0 }, { fixedProbePath: "relative" }, { fixedPowerShellUtilityModules: true },
+  ]) {
+    await assert.rejects(invoke(options), { code: "ELECTRON_WINDOWS_CANDIDATE_PROCESS_PROGRAM_INVALID" });
+  }
+  await assert.rejects(runWindowsCandidateProgram(APP_PATH, [], {
+    timeoutMs: 100, environment, captureOutput: true, fixedPowerShellUtilityModules: true,
+  }, { spawnProcess }), { code: "ELECTRON_WINDOWS_CANDIDATE_PROCESS_PROGRAM_INVALID" });
+  assert.equal(calls.length, 3);
+});
+
+test("candidate program bounds captured output and never settles a timed-out child", async () => {
+  const captured = new EventEmitter();
+  captured.setEncoding = () => {};
+  const outputChild = new EventEmitter();
+  outputChild.stdout = captured;
+  const overflow = await runWindowsCandidateProgram(APP_PATH, [], {
+    timeoutMs: 100, captureOutput: true, environment: {},
+  }, {
+    spawnProcess: () => {
+      queueMicrotask(() => {
+        captured.emit("data", "x".repeat(65537));
+        captured.emit("data", "must-not-resurface");
+        outputChild.emit("close", 0);
+      });
+      return outputChild;
+    },
+  });
+  assert.deepEqual(overflow, { exitCode: 0, timedOut: false, settled: true, stdout: "" });
+  for (const closeAfterDeadline of [false, true]) {
+    const child = new EventEmitter();
+    let killed = 0;
+    let unrefed = 0;
+    child.kill = () => {
+      killed += 1;
+      if (closeAfterDeadline) child.emit("close", 0);
+    };
+    child.unref = () => { unrefed += 1; };
+    const result = await runWindowsCandidateProgram(APP_PATH, [], {
+      timeoutMs: 5, environment: {},
+    }, { spawnProcess: () => child, terminationGraceMs: 5 });
+    assert.equal(result.timedOut, true);
+    assert.equal(result.settled, false);
+    assert.equal(killed, 1);
+    assert.equal(unrefed, 1);
+  }
+});
 
 test("disposable Windows source is created with current-user owner and fixed errors", () => {
   const path = String.raw`C:\runner\owned\synthetic.jsonl`;
@@ -101,8 +260,8 @@ test("disposable Windows source is created with current-user owner and fixed err
     },
   });
   assert.equal(invocation.command, "powershell.exe");
-  assert.equal(invocation.options.env.TIBOTATTLE_SYNTHETIC_SOURCE_FILE, path);
-  assert.equal(invocation.options.env.TIBOTATTLE_SYNTHETIC_SOURCE_LENGTH, "10");
+  assert.equal(invocation.options.env.USAGE_MONITOR_SYNTHETIC_SOURCE_FILE, path);
+  assert.equal(invocation.options.env.USAGE_MONITOR_SYNTHETIC_SOURCE_LENGTH, "10");
   assert.equal(Object.hasOwn(invocation.options.env, "PSModulePath"), false);
   assert.equal(invocation.options.input.toString(), "synthetic\n");
   assert.match(invocation.args.at(-1), /SetTokenInformation/u);
@@ -682,8 +841,8 @@ test("dashboard-target diagnostic retains only existing closed product markers",
 });
 
 test("normal candidate snapshots the closed CDP diagnostic before owned cleanup", async () => {
-  const root = await mkdtemp(join(process.cwd(), ".tibotattle-cdp-diagnostic-"));
-  const appPath = join(root, "TiboTattle.exe");
+  const root = await mkdtemp(join(process.cwd(), ".usagemonitor-cdp-diagnostic-"));
+  const appPath = join(root, "usage-monitor.exe");
   const profile = await prepareWindowsDevelopmentProfile({ appPath, profilePath: join(root, "profile") });
   const child = new EventEmitter();
   child.pid = 8123;
@@ -755,8 +914,8 @@ test("normal candidate snapshots the closed CDP diagnostic before owned cleanup"
 });
 
 test("normal candidate retains dashboard-target product diagnostics before cleanup", async () => {
-  const root = await mkdtemp(join(process.cwd(), ".tibotattle-dashboard-target-diagnostic-"));
-  const appPath = join(root, "TiboTattle.exe");
+  const root = await mkdtemp(join(process.cwd(), ".usagemonitor-dashboard-target-diagnostic-"));
+  const appPath = join(root, "usage-monitor.exe");
   const profile = await prepareWindowsDevelopmentProfile({ appPath, profilePath: join(root, "profile") });
   const child = new EventEmitter();
   child.pid = 8124;
@@ -1158,9 +1317,9 @@ test("normal candidate releases its startup gate only through the fixed Windows 
     },
   }), true);
   assert.equal(expressions.length, 1);
-  assert.match(expressions[0], /__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__/u);
+  assert.match(expressions[0], /__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__/u);
   assert.match(expressions[0], /releaseStartupRefresh/u);
-  assert.match(expressions[0], /tibotattleDesktop\?\.version === "v1"/u);
+  assert.match(expressions[0], /usageMonitorDesktop\?\.version === "v1"/u);
   assert.equal(await releaseWindowsNormalCandidateStartupRefreshGate({
     async evaluate() { return false; },
   }), false);
@@ -1257,7 +1416,7 @@ function smokeOptions() {
 
 function sourceCandidate() {
   return {
-    schemaVersion: "tibotattle-electron-production-source-candidate-v1",
+    schemaVersion: "usagemonitor-electron-production-source-candidate-v1",
     status: "production_source_staged",
     target: "win32-x64",
     sourceRevision: SOURCE_REVISION,
@@ -1296,7 +1455,7 @@ function packageVerificationDependencies({
   useNativePair = false,
   useRuntimeClosure = false,
 } = {}) {
-  const manifest = { version: "0.1.0", tibotattleDistribution: candidateMetadata() };
+  const manifest = { version: "0.1.0", usageMonitorDistribution: candidateMetadata() };
   const selectedValidateNative = validateNative ?? (useNativePair ? undefined : async () => ({
     windowsFilesystemSha256: "b".repeat(64),
     keytarSha256: "c".repeat(64),
@@ -1418,7 +1577,7 @@ function normalCandidateSeedDependencies(overrides = {}) {
 }
 
 const NORMAL_CANDIDATE_PROFILE = Object.freeze({
-  userData: String.raw`C:\tibotattle-normal-candidate-test-${randomUUID()}\user-data`,
+  userData: String.raw`C:\usagemonitor-normal-candidate-test-${randomUUID()}\user-data`,
 });
 
 // Pinning the clock keeps the source byte-exact under assertion while the
@@ -1593,7 +1752,7 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
     },
     normalizeOwner: () => {},
   });
-  const root = await mkdtemp(join(await realpath(tmpdir()), "tibotattle-windows-normal-fixture-"));
+  const root = await mkdtemp(join(await realpath(tmpdir()), "usagemonitor-windows-normal-fixture-"));
   const codexHome = join(root, "codex");
   const rejectedCodexHome = join(root, "rejected-codex");
   const stateRoot = join(root, "state");
@@ -1691,11 +1850,29 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
       refreshUnifiedIndex: indexBackend.refreshUnifiedIndex,
       refreshAccounting: indexBackend.refreshAccounting,
     });
+    let startupOnboardingCheck = null;
+    let startupQuotaReads = 0;
+    const waitForStartupRefresh = async (companion) => {
+      await companion.snapshotReady;
+      // The startup intent follows its asynchronous onboarding check. Wait
+      // for that exact check, then drain its continuation before waiting for
+      // the writer. A manual request must not race or join the startup pass.
+      await startupOnboardingCheck;
+      await new Promise((resolveTurn) => setImmediate(resolveTurn));
+      await companion.refresh.whenSettled();
+      assert.notEqual(companion.refresh.getStatus().status, "running");
+    };
     const serverOptions = {
       port: 0,
       resourceRoot: process.cwd(),
       stateRoot,
       codexHome,
+      onboardingProvider: () => {
+        startupOnboardingCheck = inspectLocalOnboarding({
+          codexHome, stateRoot, explicitRefresh: true, customCodexHomeConfigured: true,
+        });
+        return startupOnboardingCheck;
+      },
       environment: {
         ...process.env,
         CODEX_HOME: codexHome,
@@ -1707,6 +1884,9 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
       },
     };
     app = await startLocalCompanionServer({ ...serverOptions, refreshRunner: createFixtureRefreshRunner() });
+    const beforeFirstStartup = quotaReads;
+    await waitForStartupRefresh(app);
+    startupQuotaReads += quotaReads - beforeFirstStartup;
     const base = `http://127.0.0.1:${app.port}`;
     const response = await fetch(`${base}/api/local/onboarding`);
     assert.equal(response.status, 200);
@@ -1791,6 +1971,9 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
     if (nativeTimingAvailable) await verifyProjectAndTask(base);
     await app.close();
     app = await startLocalCompanionServer({ ...serverOptions, refreshRunner: createFixtureRefreshRunner() });
+    const beforeRestartStartup = quotaReads;
+    await waitForStartupRefresh(app);
+    startupQuotaReads += quotaReads - beforeRestartStartup;
     const restartedBase = `http://127.0.0.1:${app.port}`;
     const restartedOnboarding = await fetch(`${restartedBase}/api/local/onboarding`);
     assert.equal(restartedOnboarding.status, 200);
@@ -1824,7 +2007,7 @@ test("normal candidate fixture passes Codex discovery, onboarding, and local ref
       expectedRefreshId: restartedTerminal.refreshId,
     }), true);
     if (nativeTimingAvailable) await verifyProjectAndTask(restartedBase);
-    assert.equal(quotaReads, 2);
+    assert.equal(quotaReads - startupQuotaReads, 2);
   } finally {
     await app?.close();
     await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
@@ -1865,7 +2048,7 @@ test("Windows normal candidate smoke accepts only its exact unpacked invocation"
 
 test("Windows normal candidate smoke binds source staging and archived metadata to stable win32-x64", () => {
   const distribution = candidateMetadata();
-  const manifest = { version: "0.1.0", tibotattleDistribution: distribution };
+  const manifest = { version: "0.1.0", usageMonitorDistribution: distribution };
   assert.deepEqual(validateWindowsNormalCandidateSmokeMetadata({
     sourceCandidate: sourceCandidate(),
     stagedManifest: manifest,
@@ -1891,7 +2074,7 @@ test("Windows normal candidate smoke binds source staging and archived metadata 
   assert.throws(() => validateWindowsNormalCandidateSmokeMetadata({
     sourceCandidate: sourceCandidate(),
     stagedManifest: manifest,
-    archiveManifest: { version: "0.1.0", tibotattleDistribution: { ...distribution, channel: "beta" } },
+    archiveManifest: { version: "0.1.0", usageMonitorDistribution: { ...distribution, channel: "beta" } },
     sourceRevision: SOURCE_REVISION,
   }), /ELECTRON_WINDOWS_NORMAL_CANDIDATE_SMOKE_PACKAGE_METADATA_INVALID/u);
 });
@@ -1930,7 +2113,7 @@ test("normal candidate package verification keeps its closed failure stages dist
     asar: { uncache: () => false, extractFile: () => { throw new Error("unavailable"); } },
   }), { code: "ELECTRON_WINDOWS_NORMAL_CANDIDATE_SMOKE_PACKAGE_ARCHIVE_MANIFEST_INVALID" });
 
-  const manifest = { version: "0.1.0", tibotattleDistribution: {
+  const manifest = { version: "0.1.0", usageMonitorDistribution: {
     ...candidateMetadata(), channel: "beta",
   } };
   await assert.rejects(verify({
@@ -1976,7 +2159,7 @@ test("normal candidate package verification uses Windows ASAR separators for the
           if (member === "package.json") {
             return Buffer.from(JSON.stringify({
               version: "0.1.0",
-              tibotattleDistribution: candidateMetadata(),
+              usageMonitorDistribution: candidateMetadata(),
             }));
           }
           if (member === virtualManifest) return nativeManifest;
@@ -2019,7 +2202,7 @@ test("normal candidate package verification binds the staged preload and runtime
       useRuntimeClosure: true,
       readJsonFile: async (path, code) => {
         if (code === "SOURCE_CANDIDATE_INVALID") return sourceCandidate();
-        if (path.endsWith("package.json")) return { version: "0.1.0", tibotattleDistribution: candidateMetadata() };
+        if (path.endsWith("package.json")) return { version: "0.1.0", usageMonitorDistribution: candidateMetadata() };
         if (path.endsWith("electron-runtime-manifest.json")) return stagedRuntimeManifest;
         throw new Error("unexpected staged member");
       },
@@ -2031,7 +2214,7 @@ test("normal candidate package verification binds the staged preload and runtime
         uncache: () => false,
         extractFile: (_archive, member) => {
           if (member === "package.json") return Buffer.from(JSON.stringify({
-            version: "0.1.0", tibotattleDistribution: candidateMetadata(),
+            version: "0.1.0", usageMonitorDistribution: candidateMetadata(),
           }));
           if (member === "electron-runtime-manifest.json") return selectedArchivedRuntimeBytes;
           if (member === String.raw`apps\electron\preload.cjs`) return archivedPreload;
@@ -2152,7 +2335,7 @@ test("normal candidate profile seeding writes only the first-run acknowledgement
     }),
   }));
   assert.equal(saved.length, 1);
-  assert.deepEqual(saved[0], { schemaVersion: "tibotattle-desktop-first-run-v1", acknowledged: true });
+  assert.deepEqual(saved[0], { schemaVersion: "usagemonitor-desktop-first-run-v1", acknowledged: true });
   assert.deepEqual(Object.keys(seed).sort(), ["adapter", "settingsRoot", "store"]);
 });
 
@@ -2211,11 +2394,11 @@ test("normal candidate receipt retains distinct terminal startup-gate causes", a
 test("normal candidate launcher keeps only the private profile, unified mode, and quit-only control", async () => {
   const root = await mkdtemp(join(
     await realpath(tmpdir()),
-    "tibotattle-windows-normal-candidate-test-",
+    "usagemonitor-windows-normal-candidate-test-",
   ));
   try {
     const profile = await prepareWindowsDevelopmentProfile({
-      appPath: join(root, "candidate", "TiboTattle.exe"),
+      appPath: join(root, "candidate", "usage-monitor.exe"),
       profilePath: join(root, "profile"),
     });
     const environment = buildWindowsNormalCandidateEnvironment({
@@ -2243,7 +2426,7 @@ test("normal candidate launcher keeps only the private profile, unified mode, an
       "USAGE_MONITOR_CENTRAL_ORIGIN",
     ]) assert.equal(Object.hasOwn(environment, key), false, key);
     const spec = buildWindowsNormalCandidateLaunchSpec({
-      appPath: join(root, "candidate", "TiboTattle.exe"),
+      appPath: join(root, "candidate", "usage-monitor.exe"),
       profile,
       remoteDebuggingPort: 9222,
       environment: { PATH: "/safe/bin" },
@@ -2257,7 +2440,7 @@ test("normal candidate launcher keeps only the private profile, unified mode, an
     assert.equal(spec.options.shell, false);
     assert.equal(spec.options.env.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL, "quit-v1");
     assert.throws(() => buildWindowsNormalCandidateLaunchSpec({
-      appPath: join(root, "candidate", "TiboTattle Dev.exe"),
+      appPath: join(root, "candidate", "other.exe"),
       profile,
       remoteDebuggingPort: 9222,
     }), /ELECTRON_WINDOWS_DEVELOPMENT_APP_INVALID/u);
@@ -2275,7 +2458,7 @@ test("normal candidate firewall scripts use the direct COM policy and recheck ex
     assert.match(command, /USAGE_MONITOR_WINDOWS_NORMAL_CANDIDATE_APP/u);
     assert.match(command, /USAGE_MONITOR_WINDOWS_NORMAL_CANDIDATE_FIREWALL_RULE/u);
     assert.match(command, /HNetCfg\.FwPolicy2/u);
-    assert.doesNotMatch(command, /C:\\candidate|tibotattle-normal-candidate-550e/u);
+    assert.doesNotMatch(command, /C:\\candidate|usagemonitor-normal-candidate-550e/u);
     assert.doesNotMatch(command, /(?:Get|New|Remove)-NetFirewall|CimSession/u);
   }
   assert.match(create[4], /HNetCfg\.FWRule/u);
@@ -2371,12 +2554,12 @@ test("normal candidate quit protocol accepts only the fixed lifecycle acknowledg
     sent.push(message);
     callback?.();
     child.emit("message", { type: "unexpected" });
-    setImmediate(() => child.emit("message", { type: "tibotattle-electron-smoke-quit-accepted-v1" }));
+    setImmediate(() => child.emit("message", { type: "usagemonitor-electron-smoke-quit-accepted-v1" }));
   };
   const protocol = createWindowsNormalCandidateQuitProtocol(child, { timeoutMs: 1_000 });
   await protocol.requestQuit();
   protocol.close();
-  assert.deepEqual(sent, [{ type: "tibotattle-electron-smoke-quit-v1" }]);
+  assert.deepEqual(sent, [{ type: "usagemonitor-electron-smoke-quit-v1" }]);
 });
 
 test("normal candidate process stop waits for exact PID-tree killer completion", async () => {
@@ -2475,7 +2658,7 @@ test("normal candidate runner orders firewall coverage around both ordinary laun
     "receipt-parent", "package", "root", "fixture", "absent", "firewall-add", "first", "second", "firewall-remove", "profile-remove",
   ]);
   assert.deepEqual(receipt, {
-    schemaVersion: "tibotattle-electron-windows-normal-candidate-smoke-v1",
+    schemaVersion: "usagemonitor-electron-windows-normal-candidate-smoke-v1",
     status: "passed",
     scope: "candidate_only",
     target: "win32-x64",

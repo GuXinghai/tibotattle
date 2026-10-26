@@ -225,13 +225,15 @@ test("workflow policy recursively scans local actions and refuses missing, escap
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("release trust owns and triggers on Electron signing, publication, packaging and Worker configuration", async () => {
+test("independent-product CI retains local trust checks without inheriting remote ownership", async () => {
   const owners = await readFile(new URL("../.github/CODEOWNERS", import.meta.url), "utf8");
   const workflow = await readFile(new URL("../.github/workflows/release-trust-policy.yml", import.meta.url), "utf8");
-  for (const pattern of ["scripts/*electron*", "scripts/lib/*electron*", "scripts/lib/publication-file-digest.mjs", "apps/worker/wrangler.jsonc"]) {
-    assert.ok(owners.includes(`/${pattern} @adamallcock`));
-    assert.equal(workflow.split(`- "${pattern}"`).length - 1, 2, `${pattern} must trigger both PR and main checks`);
+  assert.match(owners, /ownership is unconfigured/u);
+  assert.doesNotMatch(owners, /^\s*[^#\s].*@/mu);
+  for (const pattern of ["scripts/*electron*", "scripts/lib/*electron*"]) {
+    assert.equal(workflow.split(`- "${pattern}"`).length - 1, 2);
   }
+  assert.doesNotMatch(workflow, /apps\/worker|build-public-release-site|community-site/u);
 });
 
 test("workflow policy rejects flow-style sensitive mappings instead of parsing them as trusted", () => {

@@ -15,12 +15,12 @@ function clone(value) {
 }
 
 test("v4 migrates pause to false; pause persists across reload without replacing the interval", async () => {
-  let record = { ...clone(DESKTOP_DEFAULT_SETTINGS), schemaVersion: "tibotattle-desktop-settings-v4", refreshIntervalSeconds: 420 };
+  let record = { ...clone(DESKTOP_DEFAULT_SETTINGS), schemaVersion: "usagemonitor-desktop-settings-v4", refreshIntervalSeconds: 420 };
   delete record.refreshPaused;
   const backend = { load: async () => record, save: async value => { record = clone(value); } };
   const store = createDesktopSettingsStore({ backend });
   assert.equal((await store.getSettings()).refreshPaused, false);
-  assert.equal(record.schemaVersion, "tibotattle-desktop-settings-v5");
+  assert.equal(record.schemaVersion, "usagemonitor-desktop-settings-v5");
   await store.setRefreshPaused(true);
   await store.setRefreshInterval(900);
   const reloaded = createDesktopSettingsStore({ backend });
@@ -170,7 +170,7 @@ test("transient pre-write reads remain retriable while invalid newer records sta
   failRead = false;
   assert.equal((await store.setLanguage("es")).language, "es");
   assert.equal(writes, 1);
-  stored.schemaVersion = "tibotattle-desktop-settings-v6";
+  stored.schemaVersion = "usagemonitor-desktop-settings-v6";
   await assert.rejects(store.setLanguage("en"), { code: "desktop_settings_persistence_failed" });
   stored = clone(DESKTOP_DEFAULT_SETTINGS);
   await assert.rejects(store.setLanguage("en"), { code: "desktop_settings_persistence_failed" });
@@ -243,7 +243,7 @@ test("custom refresh minutes and threshold-only preferences survive reload", asy
 test("a future settings schema cannot be overwritten by the current reader", async () => {
   let saves = 0;
   const store = createDesktopSettingsStore({ backend: {
-    async load() { return { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v6" }; },
+    async load() { return { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v6" }; },
     async save() { saves += 1; },
   } });
   await store.getSettings();
@@ -254,7 +254,7 @@ test("a future settings schema cannot be overwritten by the current reader", asy
 
 test("store migrates v1 once and retains the generated root ID", async () => {
   const legacy = {
-    schemaVersion: "tibotattle-desktop-settings-v1",
+    schemaVersion: "usagemonitor-desktop-settings-v1",
     codexHome: { mode: "custom", path: "D:\\Codex" },
     language: "en",
     appearance: "system",
@@ -272,7 +272,7 @@ test("store migrates v1 once and retains the generated root ID", async () => {
   });
   assert.equal((await store.getCodexHomesForSettings()).activityRoots[0].rootId, ROOT_A);
   assert.equal(saves.length, 1);
-  assert.equal(saves[0].schemaVersion, "tibotattle-desktop-settings-v5");
+  assert.equal(saves[0].schemaVersion, "usagemonitor-desktop-settings-v5");
   assert.equal(saves[0].codexHomes.activityRoots[0].path, "D:\\Codex");
   assert.equal(store.lastLoadFailed, false);
 });

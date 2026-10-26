@@ -87,9 +87,9 @@ test("the accounting package exposes its reviewed combined runtime API", () => {
   );
 });
 
-test("the Worker consumes only the typed accounting package boundary", async () => {
+test("local application accounting consumes only the reviewed package root", async () => {
   const source = await readFile(
-    new URL("../apps/worker/src/server-pricing.ts", import.meta.url),
+    new URL("../src/application/subscription-speed-sensitivity.js", import.meta.url),
     "utf8",
   );
   assert.match(
@@ -102,9 +102,8 @@ test("the Worker consumes only the typed accounting package boundary", async () 
   assert.doesNotMatch(source, /@ts-ignore/u);
   assert.deepEqual(
     CURRENT_ARCHITECTURE_BOUNDARY_BASELINE.filter(
-      ({ importer, target }) =>
-        importer.startsWith("apps/worker/")
-        || [
+      ({ target }) =>
+        [
           "src/cost-ledger.js",
           "src/local-api-pricing.js",
           "src/price-registry.js",

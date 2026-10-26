@@ -186,7 +186,7 @@ test('X hydration exposes cached rows before slow restoration; controls do not a
   const f = fixture(initial({ posts: [post()], lists: { posts: ['123'], replies: [], reposts: [], media: [] } }));
   let resolve; f.setLoad(() => new Promise(done => { resolve = done; }));
   await f.service.ready; const rows = await f.service.listPosts({ tab: 'posts' }); assert.equal(rows.items.length, 1); assert.equal(rows.source, 'cache'); assert.equal(f.service.getStatus().auth, 'restoring');
-  assert.match(rows.items[0].media[0].src, /^tibotattle-x-media:\/\/resource\//); assert.equal(JSON.stringify(rows).includes('video.twimg.com'), false);
+  assert.match(rows.items[0].media[0].src, /^usagemonitor-x-media:\/\/resource\//); assert.equal(JSON.stringify(rows).includes('video.twimg.com'), false);
   await flush(); resolve({ authenticated: true, posts: [post()], exhausted: true }); await flush(); await f.service.dispose();
 });
 test('X baseline avoids historical notifications, deduplicates rounds, disables cadence, and retains manual refresh', async () => {
@@ -223,10 +223,10 @@ test('X import cancellation does not replace a working session; successful isola
 });
 test('X media rejects arbitrary references and rewrites HLS references into scoped capabilities', async () => {
   const f = fixture(); await f.service.ready; await flush(); const rows = await f.service.listPosts({ tab: 'replies' }); const src = rows.items[0].media[0].src;
-  const response = await f.service.resourceHandler(new Request(src)); assert.equal(response.status, 200); const body = await response.text(); assert.match(body, /tibotattle-x-media:\/\/resource\//); assert.equal(body.includes('video.twimg.com'), false);
+  const response = await f.service.resourceHandler(new Request(src)); assert.equal(response.status, 200); const body = await response.text(); assert.match(body, /usagemonitor-x-media:\/\/resource\//); assert.equal(body.includes('video.twimg.com'), false);
   assert.equal(response.headers.get('access-control-allow-origin'), 'http://127.0.0.1:12345');
   assert.equal((await f.service.resourceHandler(new Request(src, { headers: { Origin: 'https://x.com' } }))).status, 403);
-  assert.equal((await f.service.resourceHandler(new Request('tibotattle-x-media://resource/https://evil.test'))).status, 404);
+  assert.equal((await f.service.resourceHandler(new Request('usagemonitor-x-media://resource/https://evil.test'))).status, 404);
   await f.service.logout(); assert.equal((await f.service.resourceHandler(new Request(src))).status, 404); await f.service.dispose();
 });
 test('X disabled cadence restores no remote page, permits first visit, and resume does not refresh', async () => {

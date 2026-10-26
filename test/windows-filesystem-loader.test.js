@@ -357,7 +357,7 @@ function qualificationResourceManifest(omitPath = null) {
 }
 
 async function withQualificationResourceRoot(run) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-qualification-producer-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-qualification-producer-"));
   try {
     await writeFile(
       join(root, "electron-runtime-manifest.json"),

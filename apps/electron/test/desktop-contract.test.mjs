@@ -22,7 +22,7 @@ import {
 } from "../desktop-contract.js";
 
 test("desktop contract freezes the exact bridge action and enum vocabulary", () => {
-  assert.equal(DESKTOP_IPC_CHANNEL, "tibotattle:desktop:v1");
+  assert.equal(DESKTOP_IPC_CHANNEL, "usagemonitor:desktop:v1");
   assert.deepEqual(DESKTOP_ACTIONS, [
     "getSettings",
     "getApplicationMenu",
@@ -285,7 +285,7 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
   assert.equal(Object.isFrozen(valid.notifications), true);
 
   const prior = {
-    schemaVersion: "tibotattle-desktop-settings-v2",
+    schemaVersion: "usagemonitor-desktop-settings-v2",
     codexHomes: DESKTOP_DEFAULT_SETTINGS.codexHomes,
     language: "system", appearance: "system", refreshIntervalSeconds: 300,
     startAtLogin: false, notifications: { enabled: false, threshold: "off" },
@@ -329,7 +329,7 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
 
 test("v1 scalar migration creates one stable v2 root and path-free projection", () => {
   const legacy = {
-    schemaVersion: "tibotattle-desktop-settings-v1",
+    schemaVersion: "usagemonitor-desktop-settings-v1",
     codexHome: { mode: "custom", path: "C:\\Users\\adam\\.codex" },
     language: "en",
     appearance: "light",
@@ -380,12 +380,12 @@ test("numeric settings reject fractional and unsafe values and migrate legacy ch
   }
   assert.throws(() => createDesktopRequest("setNotificationPreferences", { enabled: true, threshold: 90 }), TypeError);
   for (const [enabled, mode, expected] of [[false, "ninety", -1], [true, "off", -1], [true, "ninety", 90], [true, "eighty_and_ninety", 90]]) {
-    const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v3", notifications: { enabled, threshold: mode } };
+    const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v3", notifications: { enabled, threshold: mode } };
     delete legacy.refreshPaused;
     const migrated = migrateDesktopSettingsSnapshot(legacy);
     assert.equal(migrated.schemaVersion, DESKTOP_SETTINGS_SCHEMA_VERSION);
     assert.deepEqual(migrated.notifications, { enabled: expected !== -1, threshold: expected });
   }
-  assert.throws(() => migrateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v3", notifications: { enabled: true, threshold: 90 } }), TypeError);
+  assert.throws(() => migrateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v3", notifications: { enabled: true, threshold: 90 } }), TypeError);
   assert.throws(() => validateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, notifications: { enabled: false, threshold: 90 } }), TypeError);
 });

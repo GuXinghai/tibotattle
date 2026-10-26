@@ -13,7 +13,7 @@ import {
 } from "./desktop-secure-storage-readiness.js";
 
 export const DESKTOP_STARTUP_DIAGNOSTIC_SCHEMA =
-  "tibotattle-electron-startup-diagnostic-v1";
+  "usagemonitor-electron-startup-diagnostic-v1";
 export const DESKTOP_STARTUP_DIAGNOSTIC_FILE = "startup-diagnostic-v1.json";
 
 const STARTUP_PHASES = new Set([

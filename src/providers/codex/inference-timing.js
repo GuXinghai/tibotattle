@@ -23,7 +23,7 @@ const MODE_SOURCES = new Set([
   'rollout_thread_settings', 'turn_context_service_tier', 'unobserved',
 ]);
 export const digest = (key, domain, value) => createHmac('sha256', key)
-  .update(`tibotattle-timing-experiment/${METHOD}/${domain}\0`).update(value).digest('hex');
+  .update(`usagemonitor-timing-experiment/${METHOD}/${domain}\0`).update(value).digest('hex');
 const integer = x => Number.isSafeInteger(x) && x >= 0;
 const stamp = x => typeof x === 'string' ? Date.parse(x) : NaN;
 const id = x => typeof x === 'string' && x.length > 0 && x.length <= 256;

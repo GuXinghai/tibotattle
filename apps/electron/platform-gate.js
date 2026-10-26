@@ -25,7 +25,7 @@ export function assertElectronPlatformGate({
   productionDistribution = null,
   environment = {},
 } = {}) {
-  // TiboTattle's desktop shell is Windows-only. Any other host fails closed
+  // Rhetrion's desktop shell is Windows-only. Any other host fails closed
   // before a companion, state root, notification, or credential path exists.
   if (platform !== "win32") {
     throw shellError("unsupported_platform");

@@ -43,7 +43,7 @@ function operation(store, index, result = "created") {
 }
 
 async function withStore(run) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-audit-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-audit-"));
   const filePath = join(root, "private", "windows-credential-operation-audit-v1.sqlite");
   const store = createWindowsCredentialOperationAuditStore({
     filePath,
@@ -268,7 +268,7 @@ test("audit store retains only the bounded terminal window and never prunes pend
 }));
 
 test("audit store rejects malformed or tampered files with fixed errors", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-audit-invalid-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-audit-invalid-"));
   const filePath = join(root, "audit.sqlite");
   try {
     await writeFile(filePath, Buffer.from("not-a-sqlite-database"));
@@ -283,7 +283,7 @@ test("audit store rejects malformed or tampered files with fixed errors", async 
 });
 
 test("audit store rejects marker-compatible v1 schema without the composite capability check", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-audit-legacy-v1-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-audit-legacy-v1-"));
   const filePath = join(root, "windows-credential-operation-audit-v1.sqlite");
   const database = new DatabaseSync(filePath);
   try {
@@ -327,7 +327,7 @@ test("audit store rejects future application and user schema markers without rew
     ["application_id", 1430470998],
     ["user_version", 2],
   ]) {
-    const root = await mkdtemp(join(tmpdir(), `tibotattle-windows-audit-${marker}-`));
+    const root = await mkdtemp(join(tmpdir(), `usagemonitor-windows-audit-${marker}-`));
     const filePath = join(root, "windows-credential-operation-audit-v1.sqlite");
     const store = createWindowsCredentialOperationAuditStore({ filePath });
     store.close();
@@ -352,8 +352,8 @@ test("audit store rejects future application and user schema markers without rew
 });
 
 test("audit store rejects a symlinked state boundary", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-audit-link-"));
-  const target = await mkdtemp(join(tmpdir(), "tibotattle-windows-audit-target-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-audit-link-"));
+  const target = await mkdtemp(join(tmpdir(), "usagemonitor-windows-audit-target-"));
   const alias = join(root, "state-alias");
   try {
     await symlink(target, alias, "dir");

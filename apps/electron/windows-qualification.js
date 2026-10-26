@@ -2,6 +2,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
+import { readApplicationPackage } from "./application-profile.js";
 
 import {
   assertWindowsQualificationResourceAuthority,
@@ -35,7 +36,7 @@ const WINDOWS_BINDING_PROVENANCE_CONTRACT = "windows-binding-provenance-v1";
 const WINDOWS_BINDING_FILE = "windows_filesystem.node";
 const WINDOWS_BINDING_PLATFORM = "win32";
 const WINDOWS_BINDING_ARCHITECTURE = "x64";
-const PRODUCT_NAME = "TiboTattle Dev";
+const APPLICATION_PROFILE = "development";
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -320,17 +321,9 @@ export async function createWindowsElectronQualificationContext({
       || platform !== WINDOWS_BINDING_PLATFORM
       || architecture !== WINDOWS_BINDING_ARCHITECTURE
       || app?.isPackaged !== true
-      || typeof app?.getAppPath !== "function"
-      || typeof app?.getName !== "function") {
+      || typeof app?.getAppPath !== "function") {
     return null;
   }
-  let appName;
-  try {
-    appName = app.getName();
-  } catch {
-    return null;
-  }
-  if (appName !== PRODUCT_NAME) return null;
   let rawAppPath;
   try {
     rawAppPath = app.getAppPath();
@@ -399,12 +392,26 @@ export async function createWindowsElectronQualificationContext({
     fail("KEYTAR_INTEGRITY");
   }
   await assertRuntimeInventoryBytes({ appPath, manifest: runtimeManifest });
+  let packageBytes;
+  let packaged;
+  try {
+    packaged = await readApplicationPackage({ app, readManifest: async (path) => {
+      packageBytes = await readFile(path);
+      return packageBytes;
+    } });
+    const row = rowForPath(runtimeManifest, "package.json");
+    if (row.kind !== "runtime_metadata" || row.bytes !== packageBytes.length
+        || row.sha256 !== digest(packageBytes)) throw new Error();
+  } catch {
+    fail("APPLICATION_IDENTITY_INVALID");
+  }
+  if (packaged?.identity.profile !== APPLICATION_PROFILE) fail("APPLICATION_IDENTITY_INVALID");
 
   const context = Object.freeze({
     contractVersion: WINDOWS_ELECTRON_QUALIFICATION_CONTRACT,
     marker: WINDOWS_ELECTRON_QUALIFICATION_MARKER,
     lane: WINDOWS_ELECTRON_TEST_LANE,
-    productName: PRODUCT_NAME,
+    applicationProfile: APPLICATION_PROFILE,
     platform: WINDOWS_BINDING_PLATFORM,
     architecture: WINDOWS_BINDING_ARCHITECTURE,
     runtimeManifestSchema: WINDOWS_ELECTRON_RUNTIME_MANIFEST_SCHEMA,
@@ -452,7 +459,7 @@ export function assertWindowsElectronQualificationContext({
       && context.contractVersion === WINDOWS_ELECTRON_QUALIFICATION_CONTRACT
       && context.marker === WINDOWS_ELECTRON_QUALIFICATION_MARKER
       && context.lane === WINDOWS_ELECTRON_TEST_LANE
-      && context.productName === PRODUCT_NAME
+      && context.applicationProfile === APPLICATION_PROFILE
       && context.platform === WINDOWS_BINDING_PLATFORM
       && context.architecture === WINDOWS_BINDING_ARCHITECTURE
       && context.runtimeManifestSchema === WINDOWS_ELECTRON_RUNTIME_MANIFEST_SCHEMA
@@ -517,7 +524,7 @@ export function validateWindowsElectronQualificationRunId(value) {
 
 function syntheticSecret(runId) {
   return createHash("sha256")
-    .update(`tibotattle-windows-electron-qualification-v1:${runId}`)
+    .update(`usagemonitor-windows-electron-qualification-v1:${runId}`)
     .digest("base64url");
 }
 
@@ -607,4 +614,4 @@ export async function runWindowsElectronQualificationCredentialProbe(context) {
   return runWindowsCredentialManagerProbe({ binding });
 }
 
-export const WINDOWS_ELECTRON_PRODUCT_NAME = PRODUCT_NAME;
+export const WINDOWS_ELECTRON_APPLICATION_PROFILE = APPLICATION_PROFILE;

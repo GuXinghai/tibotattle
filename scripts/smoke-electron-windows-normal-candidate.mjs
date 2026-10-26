@@ -4,8 +4,7 @@
  * Candidate-only normal Windows Electron journey.
  *
  * This executes an exact unpacked stable-metadata candidate in a fresh hosted
- * runner profile. It is deliberately separate from the development NSIS
- * lifecycle proof: no installer is exercised here, and no qualification
+ * runner profile. No installer is exercised here, and no qualification
  * marker, test lane, or private smoke IPC reaches the app. The candidate's
  * one temporary, app-scoped outbound firewall rule prevents hosted reach while
  * its loopback dashboard remains the rendered journey under test.
@@ -55,8 +54,8 @@ import {
   buildWindowsOwnedProcessSnapshotQueryArguments,
   ownedWindowsProcessTree,
   parseWindowsProcessSnapshot,
-  runWindowsNsisLifecycleProgram,
-} from "./smoke-electron-windows-nsis-lifecycle.mjs";
+  runWindowsCandidateProgram,
+} from "./lib/windows-candidate-process.mjs";
 import { classifyWindowsSyntheticSourceOwnerFailure,
   createWindowsSyntheticOwnedSource } from "./lib/windows-synthetic-source-owner.mjs";
 
@@ -64,8 +63,8 @@ const require = createRequire(import.meta.url);
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const PREFIX = "ELECTRON_WINDOWS_NORMAL_CANDIDATE_SMOKE_";
 const TARGET = "win32-x64";
-const RECEIPT_SCHEMA = "tibotattle-electron-windows-normal-candidate-smoke-v1";
-const SOURCE_CANDIDATE_SCHEMA = "tibotattle-electron-production-source-candidate-v1";
+const RECEIPT_SCHEMA = "usagemonitor-electron-windows-normal-candidate-smoke-v1";
+const SOURCE_CANDIDATE_SCHEMA = "usagemonitor-electron-production-source-candidate-v1";
 const SOURCE_CANDIDATE_STAGE = ".release-build/electron-production/win32-x64/app";
 const SOURCE_CANDIDATE_BUILDER = "apps/electron/electron-builder.production.config.cjs";
 const FIRST_RUN_ACKNOWLEDGEMENT = validateDesktopFirstRunReceipt({
@@ -214,12 +213,12 @@ const SYNTHETIC_INGESTION_EXPECTATION = Object.freeze({
 });
 const SOURCE_REVISION = /^[0-9a-f]{40}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
-const FIREWALL_RULE_PREFIX = "tibotattle-normal-candidate-";
+const FIREWALL_RULE_PREFIX = "usagemonitor-normal-candidate-";
 const FIREWALL_RULE_NAME = new RegExp(`^${FIREWALL_RULE_PREFIX}[0-9a-f-]{36}$`, "u");
 const NORMAL_CANDIDATE_QUIT_REQUEST = Object.freeze({
-  type: "tibotattle-electron-smoke-quit-v1",
+  type: "usagemonitor-electron-smoke-quit-v1",
 });
-const NORMAL_CANDIDATE_QUIT_ACCEPTED = "tibotattle-electron-smoke-quit-accepted-v1";
+const NORMAL_CANDIDATE_QUIT_ACCEPTED = "usagemonitor-electron-smoke-quit-accepted-v1";
 const MAXIMUM_JSON_BYTES = 1024 * 1024;
 const MAXIMUM_PROGRAM_OUTPUT_BYTES = 1024;
 const STARTUP_TIMEOUT_MS = 30_000;
@@ -620,8 +619,8 @@ export function validateWindowsNormalCandidateSmokeMetadata({
 } = {}) {
   if (!SOURCE_REVISION.test(sourceRevision ?? "")) fail("ARGUMENT_INVALID");
   if (!sourceCandidateValid(sourceCandidate, sourceRevision)) fail("SOURCE_CANDIDATE_INVALID");
-  const staged = stableMetadata(stagedManifest?.tibotattleDistribution, sourceRevision);
-  const archived = stableMetadata(archiveManifest?.tibotattleDistribution, sourceRevision);
+  const staged = stableMetadata(stagedManifest?.usageMonitorDistribution, sourceRevision);
+  const archived = stableMetadata(archiveManifest?.usageMonitorDistribution, sourceRevision);
   if (JSON.stringify(staged) !== JSON.stringify(archived)
       || stagedManifest?.version !== sourceCandidate.version
       || archiveManifest?.version !== sourceCandidate.version) {
@@ -1253,15 +1252,15 @@ export async function removeOutboundFirewallBlock({ appPath, environment, name, 
 }
 
 /**
- * Reuse the reviewed Toolhelp snapshot/query path from the NSIS lifecycle
- * runner. WMI/CIM hangs in hosted Windows cleanup, so this runner never uses
+ * Use the fixed Toolhelp snapshot/query library. WMI/CIM hangs in hosted
+ * Windows cleanup, so this runner never uses
  * either API. The query output contains only PID, parent PID, and creation
  * metadata; exact executable paths remain inside the fixed child process.
  */
 async function readNormalCandidateExactProcesses({
   appPath,
   environment,
-  runProgram = runWindowsNsisLifecycleProgram,
+  runProgram = runWindowsCandidateProgram,
   timeoutMs = POWERSHELL_TIMEOUT_MS,
 } = {}) {
   if (!exactWindowsPath(appPath) || typeof runProgram !== "function"
@@ -1297,7 +1296,7 @@ async function readNormalCandidateProcessSnapshot({
   rootProcessId = null,
   retainedProcessIds = null,
   environment,
-  runProgram = runWindowsNsisLifecycleProgram,
+  runProgram = runWindowsCandidateProgram,
 } = {}) {
   if (typeof runProgram !== "function") fail("PROCESS_PROOF_UNAVAILABLE");
   let result;
@@ -1326,7 +1325,7 @@ async function assertCandidateProcessProof({
   appPath,
   rootPid,
   environment,
-  runProgram = runWindowsNsisLifecycleProgram,
+  runProgram = runWindowsCandidateProgram,
 } = {}) {
   if (!Number.isSafeInteger(rootPid) || rootPid < 1) fail("PROCESS_PROOF_UNAVAILABLE");
   const [exactProcesses, snapshot] = await Promise.all([
@@ -1347,7 +1346,7 @@ export async function assertCandidateProcessAbsence({
   appPath,
   environment,
   tracked = null,
-  runProgram = runWindowsNsisLifecycleProgram,
+  runProgram = runWindowsCandidateProgram,
 } = {}) {
   try {
     if (tracked !== null) {
@@ -1564,7 +1563,7 @@ try {
   Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class TiboTattleNormalCandidateStartupProbe {
+public static class RhetrionNormalCandidateStartupProbe {
   public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
   [DllImport("user32.dll", SetLastError=true)] public static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll", SetLastError=true)] [return: MarshalAs(UnmanagedType.Bool)] public static extern bool CloseDesktop(IntPtr desktop);
@@ -1574,7 +1573,7 @@ public static class TiboTattleNormalCandidateStartupProbe {
 }
 '@ -ErrorAction Stop
   # EnumDesktopWindows requires both DESKTOP_READOBJECTS and DESKTOP_ENUMERATE.
-  $desktop = [TiboTattleNormalCandidateStartupProbe]::OpenInputDesktop(0, $false, 0x41)
+  $desktop = [RhetrionNormalCandidateStartupProbe]::OpenInputDesktop(0, $false, 0x41)
   if ($desktop -eq [IntPtr]::Zero) {
     $result.desktop = 'unobserved'
   } else {
@@ -1582,12 +1581,12 @@ public static class TiboTattleNormalCandidateStartupProbe {
       $result.desktop = 'observed'
       $script:ownedWindows = @()
       $script:windowEnumerationComplete = $true
-      $callback = [TiboTattleNormalCandidateStartupProbe+EnumWindowsProc]{
+      $callback = [RhetrionNormalCandidateStartupProbe+EnumWindowsProc]{
         param([IntPtr]$window, [IntPtr]$unused)
         try {
           [uint32]$owner = 0
-          [void][TiboTattleNormalCandidateStartupProbe]::GetWindowThreadProcessId($window, [ref]$owner)
-          if ($owner -eq $rootPid -and [TiboTattleNormalCandidateStartupProbe]::IsWindowVisible($window)) {
+          [void][RhetrionNormalCandidateStartupProbe]::GetWindowThreadProcessId($window, [ref]$owner)
+          if ($owner -eq $rootPid -and [RhetrionNormalCandidateStartupProbe]::IsWindowVisible($window)) {
             if ($script:ownedWindows.Count -ge 16) {
               $script:windowEnumerationComplete = $false
               return $false
@@ -1600,7 +1599,7 @@ public static class TiboTattleNormalCandidateStartupProbe {
           return $false
         }
       }
-      $enumerated = [TiboTattleNormalCandidateStartupProbe]::EnumDesktopWindows(
+      $enumerated = [RhetrionNormalCandidateStartupProbe]::EnumDesktopWindows(
         $desktop, $callback, [IntPtr]::Zero
       )
       if (-not $enumerated -and $script:windowEnumerationComplete) {
@@ -1673,7 +1672,7 @@ public static class TiboTattleNormalCandidateStartupProbe {
         }
       }
     } finally {
-      [void][TiboTattleNormalCandidateStartupProbe]::CloseDesktop($desktop)
+      [void][RhetrionNormalCandidateStartupProbe]::CloseDesktop($desktop)
     }
   }
 } catch {}
@@ -1705,7 +1704,7 @@ export async function inspectWindowsNormalCandidateStartupNativeDiagnostic({
   remoteDebuggingPort,
   environment,
   readExactProcesses = readNormalCandidateExactProcesses,
-  runProgram = runWindowsNsisLifecycleProgram,
+  runProgram = runWindowsCandidateProgram,
 } = {}) {
   if (!exactWindowsPath(appPath) || !Number.isSafeInteger(rootPid) || rootPid < 1
       || rootPid > 0xffff_ffff
@@ -2110,13 +2109,13 @@ export async function inspectWindowsNormalCandidateStartupRefreshGate(cdp) {
   }
   try {
     const result = await cdp.evaluate(`(() => {
-      const bridge = globalThis.__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__;
+      const bridge = globalThis.__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__;
       if (!bridge || bridge.version !== "v1" || typeof bridge.releaseStartupRefresh !== "function") {
         // This is an existing, ordinary preload bridge. It gives the receipt
         // one content-free distinction: preload/contextBridge ran, but the
         // normal smoke-gate branch did not expose its bridge. No environment,
         // credential, status, or renderer data crosses this boundary.
-        return globalThis.tibotattleDesktop?.version === "v1"
+        return globalThis.usageMonitorDesktop?.version === "v1"
           ? "preload_active_gate_absent" : "unavailable";
       }
       try {
@@ -2998,7 +2997,7 @@ async function assertDashboard({ cdp, target, fetchImpl, launch, onPhase = () =>
         heading: document.querySelector("#overview-title")?.textContent?.trim() ?? "",
         location: location.href,
       }))()`);
-      return value?.ready === true && value.title === "TiboTattle" && typeof value.heading === "string"
+      return value?.ready === true && value.title === "Rhetrion" && typeof value.heading === "string"
         && value.heading.length > 0 && value.location === dashboard.href ? value : null;
     }, STARTUP_TIMEOUT_MS);
     if (ready === null) fail("DASHBOARD_UNAVAILABLE");
@@ -3212,7 +3211,7 @@ async function openSettings({ dashboardCdp, endpoint, dashboardOrigin, port, fet
 
 async function readSettingsRefreshInterval(cdp) {
   return cdp.evaluate(`(async () => {
-    const snapshot = await globalThis.tibotattleDesktop?.getSettings?.();
+    const snapshot = await globalThis.usageMonitorDesktop?.getSettings?.();
     const value = snapshot?.settings?.refreshIntervalSeconds ?? snapshot?.refreshIntervalSeconds;
     return Number.isSafeInteger(value) ? value : null;
   })()`).catch(() => null);
@@ -3225,7 +3224,7 @@ async function waitForSettingsReady(cdp) {
       bridge: document.querySelector("#settings-bridge-status")?.hidden === true,
       refresh: document.querySelector("#settings-refresh-interval"),
     }))()`);
-    return value?.title === "TiboTattle Settings" && value.bridge === true && value.refresh ? true : null;
+    return value?.title === "Rhetrion Settings" && value.bridge === true && value.refresh ? true : null;
   }, STARTUP_TIMEOUT_MS);
   if (ready !== true) fail("SETTINGS_UNAVAILABLE");
 }
@@ -3324,7 +3323,7 @@ export async function launchAndRenderCandidate({
   processProof = assertCandidateProcessProof,
   processAbsence = assertCandidateProcessAbsence,
   stopChild = stopOwnedCandidate,
-  processRunProgram = runWindowsNsisLifecycleProgram,
+  processRunProgram = runWindowsCandidateProgram,
   inspectStartupNativeDiagnostic = inspectWindowsNormalCandidateStartupNativeDiagnostic,
   createQuitProtocol = createWindowsNormalCandidateQuitProtocol,
 } = {}) {
@@ -3505,7 +3504,7 @@ async function createOwnedRoot(runnerTemp) {
   await regularDirectory(base, "RUNNER_TEMP_INVALID");
   let root;
   try {
-    root = await mkdtemp(win32.join(base, "tibotattle-windows-normal-candidate-"));
+    root = await mkdtemp(win32.join(base, "usagemonitor-windows-normal-candidate-"));
   } catch {
     fail("RUNNER_TEMP_INVALID");
   }

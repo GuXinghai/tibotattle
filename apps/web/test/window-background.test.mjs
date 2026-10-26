@@ -18,7 +18,7 @@ test("background color entry validates both directions and rejects partial or in
 test("background bridge responses only permit opaque imported resource URLs and valid fields", () => {
   const value = { status: "ready", background: { color: "#FFFFFF", mask: 35, imageUrl: null } };
   assert.ok(validBackgroundResponse(value));
-  assert.ok(validBackgroundResponse({ ...value, background: { ...value.background, imageUrl: "tibotattle-background://image/12345678-1234-4234-8234-123456789abc" } }));
+  assert.ok(validBackgroundResponse({ ...value, background: { ...value.background, imageUrl: "usagemonitor-background://image/12345678-1234-4234-8234-123456789abc" } }));
   for (const imageUrl of ["https://remote.invalid/x.png", "file:///private/x.png", "data:image/svg+xml;base64,AAAA", "data:image/png;base64,\";x"]) assert.ok(!validBackgroundResponse({ ...value, background: { ...value.background, imageUrl } }));
 });
 test("background CSS keeps one fixed cover layer and explicitly transparent reset states", async () => {
@@ -44,12 +44,12 @@ test("floating copies share only the imported image, track cover coordinates and
   const picker = { style: style() };
   let image, disconnected = false, command, unsubscribed = false;
   const images = [];
-  const background = { color: "#F0F9FF", mask: 35, imageUrl: "tibotattle-background://image/12345678-1234-4234-8234-123456789abc" };
+  const background = { color: "#F0F9FF", mask: 35, imageUrl: "usagemonitor-background://image/12345678-1234-4234-8234-123456789abc" };
   const listeners = new Map(), frames = new Map();
   let nextFrame = 0;
   const windowRef = {
     innerWidth: 800, innerHeight: 600,
-    tibotattleDesktop: { version: "v1", getWindowBackground: async () => ({ status: "ready", background: { ...background } }), onCommand: callback => { command = callback; return () => { unsubscribed = true; }; } },
+    usageMonitorDesktop: { version: "v1", getWindowBackground: async () => ({ status: "ready", background: { ...background } }), onCommand: callback => { command = callback; return () => { unsubscribed = true; }; } },
     MutationObserver: class { observe() {} disconnect() { disconnected = true; } },
     Image: class {
       constructor() { image = this; images.push(this); this.naturalWidth = 1000; this.naturalHeight = 600; }
@@ -99,17 +99,17 @@ test("floating copies share only the imported image, track cover coordinates and
   assert.equal(frames.size, 1); flush(); assert.equal(frames.size, 0);
   assert.equal(typeof command, "function");
   // A failed image leaves the saved color and does not change persisted settings.
-  background.imageUrl = "tibotattle-background://image/22345678-1234-4234-8234-123456789abc";
+  background.imageUrl = "usagemonitor-background://image/22345678-1234-4234-8234-123456789abc";
   command({ command: "windowBackground" }); await Promise.resolve();
   const failed = image.onload(); image.failed(new Error("synthetic decode failure")); await failed;
   assert.equal(layer.style.backgroundImage, "none");
   assert.equal(root.style.getPropertyValue("--window-background-color"), "#F0F9FF");
   assert.equal(root.style.getPropertyValue("--window-background-mask"), 0);
   // A late image cannot overwrite a more recent selection.
-  background.imageUrl = "tibotattle-background://image/32345678-1234-4234-8234-123456789abc";
+  background.imageUrl = "usagemonitor-background://image/32345678-1234-4234-8234-123456789abc";
   command({ command: "windowBackground" }); await Promise.resolve();
   const obsolete = image, obsoleteLoad = obsolete.onload();
-  background.imageUrl = "tibotattle-background://image/42345678-1234-4234-8234-123456789abc";
+  background.imageUrl = "usagemonitor-background://image/42345678-1234-4234-8234-123456789abc";
   command({ command: "windowBackground" }); await Promise.resolve();
   obsolete.decoded(); await obsoleteLoad;
   assert.equal(layer.style.backgroundImage, "none");

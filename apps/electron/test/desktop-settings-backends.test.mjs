@@ -32,7 +32,7 @@ import {
 } from "../../../src/platform/index.js";
 
 const SETTINGS_FILE = DESKTOP_SETTINGS_FILE_NAME;
-const ROOT = "C:\\Users\\tester\\AppData\\Local\\TiboTattle\\state";
+const ROOT = "C:\\Users\\tester\\AppData\\Local\\Rhetrion\\state";
 const POSIX_TEST_SKIP = process.platform === "win32"
   ? "POSIX owner-mode backend coverage is not a Windows ACL test"
   : false;
@@ -55,7 +55,7 @@ function snapshot(overrides = {}) {
 
 function legacySnapshot(overrides = {}) {
   return {
-    schemaVersion: "tibotattle-desktop-settings-v1",
+    schemaVersion: "usagemonitor-desktop-settings-v1",
     codexHome: { mode: "custom", path: "/Users/test/.codex" },
     language: "system",
     refreshIntervalSeconds: 300,
@@ -66,7 +66,7 @@ function legacySnapshot(overrides = {}) {
 }
 
 async function temporaryRoot(callback) {
-  const parent = await mkdtemp(join(tmpdir(), "tibotattle-desktop-settings-"));
+  const parent = await mkdtemp(join(tmpdir(), "usagemonitor-desktop-settings-"));
   try {
     return await callback(parent);
   } finally {

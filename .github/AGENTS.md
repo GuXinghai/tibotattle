@@ -20,7 +20,7 @@ Scope: all files under `.github/`. Apply the repository root guidance first.
 
 ## Windows-only scope
 
-- TiboTattle supports Windows x64 only. Hosted jobs run on the pinned Windows
+- Rhetrion supports Windows x64 only. Hosted jobs run on the pinned Windows
   image (`windows-2025`) and composite actions target Windows artifacts. Do not
   add macOS or Linux runners, matrices, packaging, signing, or artifact lanes
   without an explicit product decision and matching documentation.

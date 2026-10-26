@@ -99,7 +99,7 @@ function documentWithMarker(marked) {
 
 function windowWithScheme({ dark, bridge = true } = {}) {
   return {
-    ...(bridge ? { tibotattleDesktop: { version: "v1" } } : {}),
+    ...(bridge ? { usageMonitorDesktop: { version: "v1" } } : {}),
     matchMedia(query) {
       assert.equal(query, "(prefers-color-scheme: dark)");
       return { matches: dark };

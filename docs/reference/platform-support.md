@@ -1,68 +1,44 @@
 ---
 title: Platform support and qualification
-date: 2026-10-12
+date: 2026-10-23
 type: reference
 status: maintained
 ---
 
 # Platform support and qualification
 
-TiboTattle supports **Windows x64 only**, under the
-[Windows-only platform decision](../decisions/2026-10-12-windows-only.md).
-macOS and Linux are not supported platforms: their desktop builds, installers,
-updaters, credential stores, and qualification paths are removed. Earlier
-released macOS and Linux artifacts and their evidence remain available only as
-historical records. See [current status](../current-status.md) for the source,
-updater, and hosted boundaries, and the
-[public release manifest](https://github.com/adamallcock/tibotattle/releases/download/v0.1.26/release-manifest.json)
-for the exact 0.1.26 artifact hashes and recorded assurances.
+The product scope is Windows x64 only. Rhetrion is unpublished; this scope is
+not a claim that every native, installed or release gate has passed. See the
+[current status](../current-status.md) and
+[Windows-only decision](../decisions/2026-10-12-windows-only.md).
 
-## Status matrix
+| Gate | Required evidence |
+| --- | --- |
+| Source and contracts | Exact checkout, active diff, owning tests and maintained documentation |
+| Native Windows | Exact binary and sidecar, C N-API/ABI, owner/ACL/link/reparse/race and credential boundaries |
+| Packaged artifact | Exact staged inventory, ASAR integrity, package identity, native bytes and resources |
+| Physical desktop | Real interactive Windows rendering, tray/taskbar, lifecycle and credential behavior |
+| Installed lifecycle | Fresh install, shortcuts/protocols, notifications, startup, reopen and recovery |
+| Release and updater | Final-byte signing/timestamp/provenance and separately configured feed/publication proof |
 
-| Platform | Current distribution | Proven final-artifact boundary | Acceptance limits |
-|---|---|---|---|
-| Windows x64 | Released; 0.1.26 signed installer | Authenticode signature, timestamp and hosted installed journey on the exact candidate | Existing-install updater replacement and every physical desktop integration are not qualified |
+Passing one row never establishes another. Node.js 22.13 or newer is required
+for root tools; production source preparation requires exactly Node.js 26.2.0.
+Windows packaging and GUI checks require a supported interactive Windows x64 host.
 
-Windows ARM and unlisted Windows variants are not covered. Platform-specific
-trust, credential, and installed-lifecycle evidence is not interchangeable with
-shared application source tests.
+The native binding deliberately retains `productionSafe: false` and
+`pathWalkRaceSafe: false`. Narrow source-reader, release-operation and
+browser-profile approvals are separate capabilities, not switches for general
+production safety. Qualification markers and synthetic adapters must not be used
+against a real profile. A development artifact or unsigned local candidate does
+not become a signed release because its source tests passed.
 
-## Evidence ladder
+Unexpected credential prompts remain a release blocker; do not weaken credential
+protection to suppress them. Credential Manager access must be non-interactive.
+Preserve the designed identity, owner-only state, native validation and explicit
+recovery path. Never rotate credentials or wipe a profile to hide a prompt.
 
-Keep these boundaries separate for every release:
-
-1. Source and automated contracts: selectors, schemas, bounded processing,
-   filesystem and credential protection, and negative behavior.
-2. Final artifact: exact source/build identity, architecture, checksum and the
-   Windows trust policy.
-3. Installed lifecycle: fresh launch, retained-data upgrade, local processing,
-   preferences, opt-out and restart on Windows.
-4. Updaters and desktop integration: replacement, relaunch, tray,
-   notifications and login behavior where tested.
-5. Publication: immutable installer, checksums, manifest, stable updater
-   metadata, and website and distribution guidance agree.
-
-An explicit owner acceptance identifies missing observations; it does not
-convert source tests, a container run, metadata or a prior release into a
-passed installed test. It never waives data preservation, credential protection
-or updater integrity.
-
-## Windows
-
-The 0.1.26 installer is signed and timestamped. Its
-[hosted installed journey](https://github.com/adamallcock/tibotattle/actions/runs/36347063769)
-qualifies the exact signed candidate. It does not establish every existing
-installation's updater replacement, retained credentials or physical desktop
-notification behavior. Do not promote earlier unsigned or source-only Windows
-tests into final-artifact evidence.
-
-Windows credentials use the Windows Credential Manager. Unexpected credential
-prompts remain a release blocker; do not weaken credential protection to avoid
-them.
-
-## Maintenance rule
-
-Update this declaration from exact release evidence and explicit acceptance.
-Do not infer current support from an open pull request, development build,
-screenshot or old receipt. A future release needs its own frozen source,
-artifacts and qualification.
+An independent-product signing account, release owner and updater feed are not
+configured. Former project receipts remain historical and cannot qualify new
+source or artifact bytes. Full local-data cutover also requires protected cold
+backup, copy conversion, schema/semantic checks, encrypted session restart and
+journaled activation/recovery before the original profile can cease to be authoritative.

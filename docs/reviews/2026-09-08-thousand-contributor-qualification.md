@@ -20,7 +20,7 @@ No production data, consent, retention or v1.1 activation setting was changed.
 
 The target is 1,000 contributing accounts, not 1,000 simultaneous HTTP uploads.
 The maintained operational authority is the
-[production runbook](../runbooks/production-operations.md).
+production runbook (retired; retained in Git history).
 
 ## Implemented contracts
 

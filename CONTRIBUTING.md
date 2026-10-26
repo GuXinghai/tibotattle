@@ -1,125 +1,61 @@
-# Contributing to TiboTattle
+# Contributing to Rhetrion
 
-Thanks for your interest in improving TiboTattle. This repository is the
-source of truth for the local Windows app, the browser dashboard, and the
-optional hosted contribution service. Contributions are welcome, but the
-project's privacy boundaries and verification gates are non-negotiable, so
-please read this page before opening an issue or pull request.
+This checkout owns a local Windows x64 application, its loopback companion and
+browser dashboard. Read [AGENTS.md](AGENTS.md), the nearest scoped guidance and
+[SECURITY.md](SECURITY.md) before changing a boundary.
 
-## Developer prerequisites
+## Setup
 
-Just installing the app? Use the [installation instructions](README.md#install-windows-x64)
-for Windows x64. The published app bundles its runtime and does not require the
-development tools below.
+Use Node.js 22.13 or newer and the pnpm version in `package.json`. Production
+Electron preparation requires exactly Node.js 26.2.0; native packaging and GUI
+checks require Windows x64. Install only the root workspace:
 
-- **Node.js ≥ 22.13** for repository tooling and tests.
-- **pnpm 11** (the repository sets `packageManager: pnpm@11.9.0`).
-- **A supported Windows x64 host** for packaging or installed-app
-  qualification. Follow the pinned release host requirements in the
-  release runbooks.
-
-## Developer setup
-
-The root workspace uses pnpm; the Worker keeps its own npm lockfile. Install
-both dependency sets:
-
-```bash
-pnpm install
-npm --prefix apps/worker ci
+```sh
+pnpm install --frozen-lockfile
 ```
 
-## Verification gates
+There is no Worker dependency tree or cloud deployment in this product.
+No source checkout step authorizes remote changes, signing, publication,
+installation into system locations, or changes to real credentials/profile data.
 
-The authoritative complete repository gate is `npm run check`. It composes
-root tests with architecture, Codex-contract, tool-inventory, documentation,
-schema-mirror, UI, Electron source contracts, release-site, local companion, and Worker
-checks. Installed-app qualification
-requires separate Windows hosts and signed artifacts;
-report an environment-blocked lane explicitly.
+## Checks
 
-Use focused gates while iterating, then run the broadest applicable set before
-sending a pull request:
+Run the smallest meaningful direct tests first, then the owning gates. Root
+checks use pnpm; serial test configurations must remain serial.
 
-```bash
-npm test                       # core suite (serial by design)
-npm run codex:contract:check   # checked-in Codex plan/name contract parity
-npm run docs:check             # maintained docs, links, status, and current authority
-npm run product:worker:check   # hosted-service worker checks
-npm run architecture:check     # ownership/boundary enforcement
-npm run product:electron:test  # serial Electron source contracts; no GUI qualification
+```sh
+pnpm run test:preflight
+pnpm run architecture:check
+pnpm run codex:contract:check
+pnpm run product:ui:test
+pnpm run product:electron:test
+pnpm run product:local:test
 ```
 
-The Electron lane discovers `apps/electron/test/*.test.mjs` and is included in
-`product:check`. Run individual affected cases while iterating; defining this
-aggregate gate does not replace native Windows qualification. Workflow policy
-requires the pinned `windows-2025` runner and recursively checks referenced local
-composite actions for the same immutable third-party action pins.
+`pnpm run check` composes source gates. Physical Windows behavior, packaged apps,
+installers, signing and updater availability are separate gates. Report missing
+prerequisites and baseline failures explicitly; do not lower checks for a green run.
 
-Report any unavailable installed-artifact or hardware gate separately from
-the source and contract checks.
+## Contracts and generated files
 
-## Generated artifacts are never hand-edited
+Use reviewed public facades. Keep packages platform-neutral, local HTTP loopback-only,
+and renderer capabilities narrow. Preserve replay safety, sparse evidence,
+forward-only schemas, cancellation and recoverable state transitions.
 
-`generated/` and the contract artifacts under `contracts/` are produced by
-generators and revalidated by tests. Do not edit them by hand, and do not
-gitignore them. Regenerate via:
+Change canonical inputs and regenerate i18n/telemetry mirrors through their owned
+commands. Never hand-edit `generated/` or generated contracts. R7 receipt regeneration
+is a protected environment-specific operation, not routine validation.
 
-```bash
-npm run telemetry:generate                  # telemetry contract artifacts
-npm run benchmark:r7:release:regenerate     # R7 release evidence receipts
-```
+Brand resources belong in `config/product-brand.cjs`. Machine identity belongs in
+`config/application-identity.cjs`. Display names and artwork must not determine
+storage paths, credentials, account scope, protocols or runtime authority.
 
-A pull request that hand-edits a generated file will fail the exact-set and
-provenance tests.
+Use synthetic minimal fixtures. Never include prompts, responses, credentials,
+real account identifiers, session paths or raw private records in source, logs,
+issues or artifacts. Preserve unrelated worktree changes and inspect the exact
+diff before committing. Update maintained docs and owning tests with behavior.
 
-## The hosted service and forks
-
-The hosted community-aggregate service at [tibotattle.com](https://tibotattle.com)
-is operated by the maintainer. The deploy scripts in this repository target
-the owner's Cloudflare account; they will not work from a fork as-is. Forks
-that want their own hosted service must provision their own Cloudflare
-resources per `apps/worker/wrangler.jsonc`. Nothing in the local app requires
-the hosted service: local analysis works fully offline.
-
-Production writes to the owner's account (`wrangler deploy --env production`,
-`wrangler d1 migrations apply --remote`, and any D1 `DELETE`/`UPDATE`) are an
-owner action; read-only `wrangler d1 execute … --remote` is suitable for
-inspection and cost profiling. Two facts are important before changing the
-Worker:
-
-- **`wrangler deploy` does not apply D1 migrations.** Run
-  `wrangler d1 migrations apply` separately, or a schema-dependent change can
-  ship without its required schema.
-- A stale Wrangler OAuth token can return D1 write error `7403` while reads
-  still succeed; `wrangler login` refreshes it.
-
-Worker-side D1 query and deployment diagnostics are documented in the
-[community allowance diagnosis runbook](docs/runbooks/2026-08-13-community-allowance-band-diagnosis.md).
-
-## No session content in issues or pull requests
-
-TiboTattle exists to keep coding-agent session content private. Keep it out
-of this repository's issue tracker too: **never include prompts, model
-responses, or real file paths from Codex sessions** in an issue, pull
-request, commit message, or test fixture. Use the built-in diagnostics
-(`npm run diagnose:dashboard`) and redacted or synthetic examples instead.
-
-## Repository hygiene
-
-The tracked root layout is an explicit allowlist enforced by
-`scripts/check-root-workspace-hygiene.mjs` (run inside `npm test`). Adding a
-new root-level file or directory is an intentional project-layout decision
-and must update `ROOT_WORKSPACE_POLICY` in the same commit.
-
-## Keep maintained documentation current
-
-Undated READMEs and the maintained entries in `docs/README.md` are current
-contracts, not historical notes. A behavior, interface, data-access, privacy,
-route, command, storage, setting, platform, release, operations, or support
-change must update or delete every affected root, component, public, and
-maintained document in the same pull request.
-
-Use `git rm` for obsolete instructions instead of leaving contradictory prose.
-Retain a dated evidence document only when it has an enduring audit, recovery,
-decision, or release reason and accurate title, date, type, and lifecycle
-status. Update the source-derived documentation tests with the same change.
+Third-party workflow actions remain pinned to immutable commits, with read-only
+permissions by default. Future publication needs a configured owner/repository and
+new evidence bound to exact final bytes; inherited historical releases cannot be
+presented as releases of this independent product.

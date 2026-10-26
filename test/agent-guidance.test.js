@@ -194,30 +194,16 @@ test("agent guidance requires current documentation and removal of obsolete guid
 });
 
 test("agent guidance preserves owner erasure and restore after self-service retirement", async () => {
-  const [root, worker, local, web, docs] = await Promise.all([
+  const [root, local, web, docs] = await Promise.all([
     readRepositoryFile("AGENTS.md"),
-    readRepositoryFile("apps/worker/AGENTS.md"),
     readRepositoryFile("apps/local/AGENTS.md"),
     readRepositoryFile("apps/web/AGENTS.md"),
     readRepositoryFile("docs/AGENTS.md"),
   ]);
   assert.match(root, /hosted erasure is owner-only/u);
-  for (const marker of [
-    "404 NOT_FOUND",
-    "participantDeletion: false",
-    "deletionSafeRestoreReplay: true",
-    "POST /api/v1/admin/action",
-    "run_maintenance",
-    "participantErasure",
-    "Access-owner and CSRF",
-    "digest-only",
-  ]) {
-    assert.ok(worker.includes(marker), `Worker guidance retains ${marker}`);
-  }
   assert.match(local, /Do not relay retired participant deletion or private owner-erasure requests/u);
   assert.match(local, /`device_disconnected` before revocation or\s+credential cleanup/u);
   assert.match(local, /pause across restart/u);
-  assert.match(worker, /`--owner-access-file` before enrollment or other writes/u);
   assert.match(web, /Electron is the main app and uses the shared dashboard/u);
   assert.match(web, /Preserve saved sharing opt-outs and owner-only hosted erasure/u);
   assert.match(docs, /does not retire owner erasure, privacy-request\s+handling, retention disclosures, or deletion-safe restore/u);
@@ -234,7 +220,7 @@ test("agent guidance treats unexpected Windows credential prompts as a release b
   assert.match(root, /Unexpected Windows credential prompts block release/u);
   assert.match(root, /never weaken protection to suppress prompts/u);
   assert.match(platform, /Unexpected credential\s+prompts remain a release blocker/u);
-  assert.match(platform, /do not weaken credential protection/u);
+  assert.match(platform, /do not weaken credential\s+protection/u);
   assert.match(electron, /Never reuse the retired native app's/u);
   assert.match(electron, /Never mutate or downgrade the native app's databases/u);
   assert.match(scripts, /never automate prompt approval or broaden key access/u);
@@ -249,6 +235,6 @@ test("agent guidance records Windows-only platform scope", async () => {
   assert.match(root, /supports Windows x64 only/u);
   assert.match(root, /docs\/decisions\/2026-10-12-windows-only\.md/u);
   assert.match(decision, /^status: accepted$/mu);
-  assert.match(decision, /TiboTattle supports Windows only\./u);
+  assert.match(decision, /supports Windows only\./u);
   assert.doesNotMatch(root, /macOS|Keychain|Sparkle|AppImage|notariz/u);
 });

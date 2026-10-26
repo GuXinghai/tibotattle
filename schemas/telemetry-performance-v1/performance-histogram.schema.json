@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://tibotattle.com/schemas/telemetry-performance-v1/performance-histogram.schema.json",
+  "$id": "urn:usagemonitor:schema:telemetry-performance-v1:performance-histogram.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [

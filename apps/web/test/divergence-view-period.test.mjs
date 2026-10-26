@@ -39,7 +39,7 @@ test("View period frames the divergence on Allowance changes and selects its end
   assert.deepEqual(viewports, [{ startMs: 100 * hour - 1.2 * hour, endMs: 110 * hour + 1.2 * hour }]);
   assert.deepEqual(selections, [[110 * hour, true]]);
   assert.equal(events.length, 1);
-  assert.equal(events[0].type, "tibotattle:page-view");
+  assert.equal(events[0].type, "usagemonitor:page-view");
   assert.deepEqual(events[0].detail, { page: "allowance", view: "changes" });
   assert.deepEqual(focused, [{ preventScroll: true }]);
 

@@ -303,12 +303,11 @@ test("the checked-in inventory classifies every retained tool entry point and np
     true,
     formatToolInventoryReport(result),
   );
-  // 92 records / 93 executable paths: every retained tool is a reviewed
-  // Windows-only repository operation invoked by CI, release runbooks, or
-  // supported internal product tooling. Keep these exact so any future
-  // executable still requires an ownership decision.
-  assert.equal(result.records, 92);
-  assert.equal(result.candidates.length, 93);
+  // 83 records / 84 executable paths after the reviewed hosted/publication
+  // retirement, journals, cold verifier, ownership and usage qualification tools.
+  // Keep exact counts: future executables still require an ownership decision.
+  assert.equal(result.records, 83);
+  assert.equal(result.candidates.length, 84);
   assert.ok(result.aliases >= 25);
 });
 

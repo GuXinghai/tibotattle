@@ -1,7 +1,9 @@
+const applicationIdentity = require("../../config/application-identity.cjs");
+const productBrand = require("../../config/product-brand.cjs");
 const path = require("node:path");
 
 const repositoryRoot = path.resolve(__dirname, "../..");
-const requestedTarget = process.env.TIBOTATTLE_ELECTRON_TARGET ?? "win32-x64";
+const requestedTarget = process.env.USAGE_MONITOR_ELECTRON_TARGET ?? "win32-x64";
 const targetAliases = {
   windows: "win32-x64",
   win: "win32-x64",
@@ -10,7 +12,7 @@ const targetAliases = {
 };
 const target = Object.hasOwn(targetAliases, requestedTarget) ? targetAliases[requestedTarget] : null;
 if (!target) {
-  throw new Error("TIBOTATTLE_ELECTRON_TARGET must be win32-x64");
+  throw new Error("USAGE_MONITOR_ELECTRON_TARGET must be win32-x64");
 }
 const targetSpec = { platform: "win32", architecture: "x64" };
 const appDirectory = path.join(
@@ -29,16 +31,17 @@ const artifactDirectory = path.join(
 /**
  * Development-only Electron configuration. `build-electron-app.mjs` creates
  * this app directory first; electron-builder is intentionally a later explicit
- * target step. Set TIBOTATTLE_ELECTRON_TARGET to the canonical Windows target
+ * target step. Set USAGE_MONITOR_ELECTRON_TARGET to the canonical Windows target
  * before invoking electron-builder. This development config does not register
  * the production custom URL scheme, which keeps side-by-side test packages
  * from stealing native app callbacks.
  */
 module.exports = {
-  appId: "com.adamallcock.tibotattle.electron.dev",
-  productName: "TiboTattle Dev",
-  artifactName: "TiboTattle-Dev-${version}-${os}-${arch}.${ext}",
-  icon: path.join(repositoryRoot, "apps/web/public/tibotattle-icon.png"),
+  appId: applicationIdentity.APPLICATION_PROFILES.development.appId,
+  executableName: applicationIdentity.APPLICATION_IDENTITY.executableName,
+  productName: productBrand.developmentDisplayName,
+  artifactName: productBrand.developmentDisplayName.replaceAll(" ", "-") + "-${version}-${os}-${arch}.${ext}",
+  icon: path.join(repositoryRoot, productBrand.windowsIcon),
   directories: {
     app: appDirectory,
     output: artifactDirectory,
@@ -81,10 +84,11 @@ module.exports = {
     "native/windows-filesystem/build/Release/windows_filesystem.node",
   ],
   extraMetadata: {
+    usageMonitorIdentity: applicationIdentity.applicationMetadata("development"),
     main: "apps/electron/main.js",
     name: "app-usagemonitor",
-    productName: "TiboTattle Dev",
-    desktopName: "com.adamallcock.tibotattle.electron.dev.desktop",
+    productName: productBrand.developmentDisplayName,
+    desktopName: "com.usagemonitor.local.dev.desktop",
   },
   forceCodeSigning: false,
   // The staged app deliberately has no lockfile. Returning false from the
@@ -102,7 +106,7 @@ module.exports = {
   publish: null,
   win: {
     target: [{ target: "dir", arch: [targetSpec.architecture] }],
-    signAndEditExecutable: false,
+    signAndEditExecutable: true,
     signExecutable: false,
   },
 };

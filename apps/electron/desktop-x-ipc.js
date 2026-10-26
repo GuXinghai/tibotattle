@@ -1,6 +1,6 @@
 import { validateXDetailQuery, validateXQuery, validateXSettings, X_SESSION_ERRORS } from './desktop-x-contract.js';
 
-export const X_IPC_CHANNEL = 'tibotattle:x-reader:v1';
+export const X_IPC_CHANNEL = 'usagemonitor:x-reader:v1';
 const EMPTY = new Set(['getXStatus', 'cancelXLogin', 'getXSettings', 'logoutX', 'clearXCache', 'configureXImport']);
 const ACTIONS = new Set([...EMPTY, 'refreshX', 'listXPosts', 'getXPost', 'beginXLogin', 'setXSettings']);
 function exact(value, keys) {

@@ -4,7 +4,7 @@ import {
   isDesktopRefreshIntervalSeconds,
 } from "./desktop-contract.js";
 
-const DIAGNOSTICS_SCHEMA_VERSION = "tibotattle-electron-diagnostics-v2";
+const DIAGNOSTICS_SCHEMA_VERSION = "usagemonitor-electron-diagnostics-v2";
 const PLATFORMS = new Set(["win32"]);
 const ARCHITECTURES = new Set(["arm64", "x64", "ia32", "arm"]);
 const LOGIN_STATUSES = new Set([
@@ -154,7 +154,7 @@ function strictDiagnosticsRecord(diagnostics) {
   }
 
   const refresh = assertExactRecord(source.refresh, REFRESH_KEYS, "diagnostics.refresh");
-  if (refresh.schemaVersion !== "tibotattle-desktop-refresh-status-v1"
+  if (refresh.schemaVersion !== "usagemonitor-desktop-refresh-status-v1"
       || !REFRESH_SCHEDULE_OWNERS.has(refresh.scheduleOwner)
       || !REFRESH_STATES.has(refresh.state)
       || (refresh.mode !== null && !REFRESH_MODES.has(refresh.mode))
@@ -301,7 +301,7 @@ function safeRefreshState(value) {
     : {};
   const safeInstant = (candidate) => validInstant(candidate) ? candidate : null;
   return Object.freeze({
-    schemaVersion: "tibotattle-desktop-refresh-status-v1",
+    schemaVersion: "usagemonitor-desktop-refresh-status-v1",
     scheduleOwner: REFRESH_SCHEDULE_OWNERS.has(source.scheduleOwner) ? source.scheduleOwner : "unknown",
     state: REFRESH_STATES.has(source.state) ? source.state : "idle",
     mode: REFRESH_MODES.has(source.mode) ? source.mode : null,

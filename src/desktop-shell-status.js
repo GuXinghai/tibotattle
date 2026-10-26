@@ -14,7 +14,7 @@ import { isValidQuotaWindowDuration } from "@app-usagemonitor/quota-analysis";
  */
 
 export const DESKTOP_SHELL_STATUS_SCHEMA_VERSION =
-  "tibotattle-desktop-shell-status-v2";
+  "usagemonitor-desktop-shell-status-v2";
 
 export const DESKTOP_SHELL_STATUS_STATES = Object.freeze([
   "starting",
@@ -30,7 +30,7 @@ export const DESKTOP_SHELL_ALLOWANCE_WINDOWS = Object.freeze([
 ]);
 
 export const DESKTOP_SHELL_NOTIFICATION_EVIDENCE_SCHEMA_VERSION =
-  "tibotattle-notification-evidence-v2";
+  "usagemonitor-notification-evidence-v2";
 
 export const DESKTOP_SHELL_NOTIFICATION_EVIDENCE_MAX_AGE_MS = 5 * 60 * 1_000;
 
@@ -285,7 +285,7 @@ function displayWindows(displayEvidence, { now }) {
   }
 
   if (selected.size === 0) return null;
-  return Object.freeze({ schemaVersion: "tibotattle-display-evidence-v1", scopeKey: null,
+  return Object.freeze({ schemaVersion: "usagemonitor-display-evidence-v1", scopeKey: null,
     staleAfterSeconds: displayEvidence.freshness.staleAfterSeconds,
     windows: Object.freeze([...selected.values()]) });
 }
@@ -293,7 +293,7 @@ function displayWindows(displayEvidence, { now }) {
 /** Display-only authority; never accepted by notification evaluators. */
 export function projectDesktopShellDisplayEvidence(value, { now = Date.now() } = {}) {
   if (!hasExactKeys(value, ["schemaVersion", "scopeKey", "staleAfterSeconds", "windows"])
-      || value.schemaVersion !== "tibotattle-display-evidence-v1"
+      || value.schemaVersion !== "usagemonitor-display-evidence-v1"
       || (value.scopeKey !== null && !validContinuityKey(value.scopeKey))
       || !Number.isFinite(value.staleAfterSeconds) || value.staleAfterSeconds < 0
       || !Array.isArray(value.windows) || value.windows.length < 1 || value.windows.length > 2) return null;
@@ -508,7 +508,7 @@ export function validateDesktopShellStatus(value) {
     ...(Object.hasOwn(value ?? {}, "displayEvidence") ? ["displayEvidence"] : []),
     ...(Object.hasOwn(value ?? {}, "notificationEvidenceStatus") ? ["notificationEvidenceStatus"] : []),
   ])
-      || ![DESKTOP_SHELL_STATUS_SCHEMA_VERSION, "tibotattle-desktop-shell-status-v1"].includes(value.schemaVersion)
+      || ![DESKTOP_SHELL_STATUS_SCHEMA_VERSION, "usagemonitor-desktop-shell-status-v1"].includes(value.schemaVersion)
       || !STATUS_SET.has(value.state)) {
     throw new TypeError("desktop shell status is invalid");
   }

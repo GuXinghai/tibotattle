@@ -76,7 +76,7 @@ must use the reviewed generator and exact hash-pinned Node 24.14.0/26.2.0 pair.
 
 Follow macOS candidate qualification,
 [R7 maintenance](../runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md)
-and [cross-platform publication](../runbooks/2026-08-18-cross-platform-release-publication.md).
+and cross-platform publication (retired; retained in Git history).
 The October 3 readiness review identified provisional `promax`, stale R7
 fingerprints and missing successor/final-artifact evidence. This plan records
 new execution; the earlier review is a dated snapshot, not release proof.

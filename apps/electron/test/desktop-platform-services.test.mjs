@@ -61,7 +61,7 @@ test("platform services use only native-picker paths and fixed open targets", as
     app,
     platform: "win32",
     homeDirectory: "/Users/adam",
-    environment: { TIBOTATTLE_BUILD_ID: "parity-123" },
+    environment: { USAGE_MONITOR_BUILD_ID: "parity-123" },
     dialog: {
       showOpenDialog: async (options) => {
         dialogOptions.push(options);
@@ -84,15 +84,14 @@ test("platform services use only native-picker paths and fixed open targets", as
   assert.equal(await services.chooseCodexHome(), "/private/Users/adam/custom-codex");
   assert.equal(dialogOptions.at(-1).title, "Choose Codex folder");
   assert.deepEqual(validated, ["/Users/adam/custom-codex"]);
-  await services.openExternal("github");
+  await assert.rejects(services.openExternal("github"), { code: "desktop_external_target_invalid" });
   await services.openCodexThread(
     "codex://threads/11111111-1111-4111-8111-111111111111",
   );
   await services.openSystemSettings("notifications");
   assert.deepEqual(opened, [
-    ["https://github.com/adamallcock/tibotattle", { activate: true }],
     ["codex://threads/11111111-1111-4111-8111-111111111111", { activate: true }],
-    ["x-apple.systempreferences:com.apple.Notifications-Settings.extension"],
+    ["ms-settings:notifications"],
   ]);
   for (const value of [
     "codex://threads/not-a-thread",
@@ -107,7 +106,7 @@ test("platform services use only native-picker paths and fixed open targets", as
   assert.deepEqual(services.notificationStatus(), {
     permission: "unknown",
     available: true,
-    detail: "Operating-system permission is shown here; local alert capability is reported above.",
+    detail: "Operating system permission is shown here. Whether alerts work is shown above.",
   });
   assert.deepEqual(services.about(), {
     version: "0.1.16",
@@ -119,7 +118,7 @@ test("platform services use only native-picker paths and fixed open targets", as
       canInstall: false,
       progress: null,
       error: "unavailable",
-      detail: "Update checks are unavailable in this development build.",
+      detail: "Update checks aren't available in development builds.",
     },
     automaticUpdates: {
       enabled: false,
@@ -130,7 +129,7 @@ test("platform services use only native-picker paths and fixed open targets", as
   });
   assert.equal(services.setLocale("es"), true);
   assert.equal(services.defaultCodexHomeDisplay, "Ubicación predeterminada (~/.codex)");
-  assert.equal((await services.loginItemStatus()).detail, "TiboTattle no se iniciará automáticamente.");
+  assert.equal((await services.loginItemStatus()).detail, "Rhetrion no se iniciará automáticamente.");
   assert.match(services.about().update.detail, /no están disponibles/u);
   await services.chooseCodexHome();
   assert.equal(dialogOptions.at(-1).title, "Elegir carpeta de Codex");
@@ -187,7 +186,7 @@ test("platform services expose only the bounded updater port and fixed failures"
 });
 
 test("About identifies packaged runtime content when no explicit build label exists", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-about-runtime-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-about-runtime-"));
   const manifest = Buffer.from("{\"schemaVersion\":\"usage-monitor-electron-runtime-v0.1\"}\n");
   const environment = {};
   try {
@@ -207,7 +206,7 @@ test("About identifies packaged runtime content when no explicit build label exi
     });
     const expected = `content-${createHash("sha256").update(manifest).digest("hex").slice(0, 12)}`;
     assert.equal(services.about().build, expected);
-    environment.TIBOTATTLE_BUILD_ID = "fixture-build";
+    environment.USAGE_MONITOR_BUILD_ID = "fixture-build";
     assert.equal(services.about().build, "fixture-build");
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -215,7 +214,7 @@ test("About identifies packaged runtime content when no explicit build label exi
 });
 
 test("About refuses to hash an oversized runtime manifest", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-about-runtime-limit-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-about-runtime-limit-"));
   try {
     await writeFile(
       join(root, "electron-runtime-manifest.json"),

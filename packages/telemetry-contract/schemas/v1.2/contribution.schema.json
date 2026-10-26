@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://tibotattle.com/schemas/telemetry-contribution-v1.2/contribution.schema.json",
+  "$id": "urn:usagemonitor:schema:telemetry-contribution-v1.2:contribution.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -76,7 +76,7 @@
         "properties": {
           "records": {
             "items": {
-              "$ref": "https://tibotattle.com/schemas/telemetry-contribution-v1.2/usage-event.schema.json"
+              "$ref": "urn:usagemonitor:schema:telemetry-contribution-v1.2:usage-event.schema.json"
             },
             "type": "array"
           }
@@ -96,7 +96,7 @@
         "properties": {
           "records": {
             "items": {
-              "$ref": "https://tibotattle.com/schemas/telemetry-contribution-v1.2/quota-observation.schema.json"
+              "$ref": "urn:usagemonitor:schema:telemetry-contribution-v1.2:quota-observation.schema.json"
             },
             "type": "array"
           }
@@ -116,7 +116,7 @@
         "properties": {
           "records": {
             "items": {
-              "$ref": "https://tibotattle.com/schemas/telemetry-contribution-v1.2/session-dimension.schema.json"
+              "$ref": "urn:usagemonitor:schema:telemetry-contribution-v1.2:session-dimension.schema.json"
             },
             "type": "array"
           }

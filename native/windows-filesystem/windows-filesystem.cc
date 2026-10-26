@@ -1458,7 +1458,7 @@ std::wstring TemporaryReplacementName() {
   static std::atomic<unsigned long> sequence{0};
   const unsigned long serial = sequence.fetch_add(1, std::memory_order_relaxed);
   std::wstringstream stream;
-  stream << L".tibotattle-rotation-"
+  stream << L".usagemonitor-rotation-"
          << GetCurrentProcessId()
          << L'-'
          << GetTickCount64()
@@ -1576,8 +1576,36 @@ bool ReplaceOpenFile(
     // rename. The residual same-user swap window is why productionSafe=false.
     CloseHandle(*target);
     *target = INVALID_HANDLE_VALUE;
-    success = RenameHandleRelative(replacement, parent, targetName, failure);
-    renamed = success;
+    for (int attempt = 0; attempt < 8; ++attempt) {
+      success = RenameHandleRelative(replacement, parent, targetName, failure);
+      renamed = success;
+      if (success) break;
+      const DWORD renameError = GetLastError();
+      if (renameError != ERROR_ACCESS_DENIED && renameError != ERROR_SHARING_VIOLATION) break;
+      // Transient external readers can reject legacy NT rename even when
+      // they share delete access. Retry only this uncommitted rename, using
+      // the same flushed temporary handle, after rechecking the ORIGINAL
+      // destination identity/security against the still-held parent. Never
+      // replay a completed write or guess an uncertain post-rename result.
+      if (attempt == 7) break;
+      Sleep(static_cast<DWORD>(10 * (attempt + 1)));
+      HANDLE check = INVALID_HANDLE_VALUE; ULONG_PTR information = 0;
+      if (!OpenRelativeComponent(parent, targetName,
+          READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, kFileOpen,
+          kFileNonDirectoryFile, nullptr, &check, &information, failure)) break;
+      HandleIdentity observed;
+      const bool valid = ValidateSecurity(check, false, failure, &observed);
+      CloseHandle(check);
+      if (!valid) break;
+      if (!EqualIdentity(observed, expected)) {
+        if (EqualIdentity(observed, replacementIdentity)) {
+          // Preserve potentially applied bytes; no automatic success or delete.
+          renamed = true; *failure = OperationFailed(); failure->stage = "rename_result_uncertain";
+        } else *failure = IdentityMismatch();
+        break;
+      }
+    }
     if (success && !FlushFileBuffers(replacement)) {
       *failure = FromLastError();
       success = false;
@@ -3034,7 +3062,7 @@ bool CredentialMutexName(std::uint32_t capabilityId, std::wstring* name) {
   if (!ConvertSidToStringSidW(ownerSid.data(), &sidText) || sidText == nullptr) {
     return false;
   }
-  *name = L"Local\\TiboTattle-CredentialMutation-v1-";
+  *name = L"Local\\UsageMonitor-CredentialMutation-v1-";
   name->append(sidText);
   name->push_back(L'-');
   name->append(label);
@@ -3052,7 +3080,7 @@ bool AccountlessInstallationCredentialMutexName(std::wstring* name) {
   if (!ConvertSidToStringSidW(ownerSid.data(), &sidText) || sidText == nullptr) {
     return false;
   }
-  *name = L"Local\\TiboTattle-AccountlessInstallationCredential-v1-";
+  *name = L"Local\\UsageMonitor-AccountlessInstallationCredential-v1-";
   name->append(sidText);
   LocalFree(sidText);
   return true;
@@ -3832,9 +3860,37 @@ void DefineMethod(napi_env env, napi_value exports, const char* name, napi_callb
   napi_set_named_property(env, exports, name, function);
 }
 
+#include "usage-freeze.inc"
+
 } // namespace
 
 NAPI_MODULE_INIT() {
+  DefineMethod(env, exports, "openUsageFreezeDirectory", OpenUsageDirectoryCallback);
+  DefineMethod(env, exports, "reopenUsageFreezeDirectory", ReopenUsageDirectoryCallback);
+  DefineMethod(env, exports, "openUsageFreezeParentDirectory", OpenUsageParentCallback);
+  DefineMethod(env, exports, "reopenUsageFreezeParentDirectory", ReopenUsageParentCallback);
+  DefineMethod(env, exports, "openLegacyUsageFreezeParentDirectory", OpenLegacyUsageParentCallback);
+  DefineMethod(env, exports, "reopenLegacyUsageFreezeParentDirectory", ReopenLegacyUsageParentCallback);
+  DefineMethod(env, exports, "readUsageFreezeDirectorySecurity", ReadUsageDirectorySecurityCallback);
+  DefineMethod(env, exports, "inspectUsageFreezeSourcePolicy", InspectUsageSourcePolicyCallback);
+  DefineMethod(env, exports, "sealUsageFreezeParentDirectory", SealUsageParentCallback);
+  DefineMethod(env, exports, "applyUsageDirectoryFreeze", ApplyUsageFreezeCallback);
+  DefineMethod(env, exports, "restoreUsageDirectoryFreeze", RestoreUsageFreezeCallback);
+  DefineMethod(env, exports, "closeUsageFreezeDirectory", CloseUsageDirectoryCallback);
+  DefineMethod(env, exports, "readUsageChildSecurity", ReadUsageChildSecurityCallback);
+  DefineMethod(env, exports, "openUsageFreezeChildDirectory", OpenUsageChildDirectoryCallback);
+  DefineMethod(env, exports, "reopenUsageFreezeChildDirectory", ReopenUsageChildDirectoryCallback);
+  DefineMethod(env, exports, "listUsageFreezeChildren", ListUsageChildrenCallback);
+  DefineMethod(env, exports, "openUsageFreezeChildFile", OpenUsageChildFileCallback);
+  DefineMethod(env, exports, "reopenUsageFreezeChildFile", ReopenUsageChildFileCallback);
+  DefineMethod(env, exports, "openUsageFreezeSnapshotFile", OpenUsageSnapshotFileCallback);
+  DefineMethod(env, exports, "reopenUsageFreezeSnapshotFile", ReopenUsageSnapshotFileCallback);
+  DefineMethod(env, exports, "borrowUsageFrozenObjectFile", BorrowUsageObjectFileCallback);
+  DefineMethod(env, exports, "borrowUsageFrozenDirectory", BorrowUsageDirectoryCallback);
+  DefineMethod(env, exports, "usageFreezeObjectState", UsageFreezeStateCallback);
+  napi_value usageFreezeVersion;
+  napi_create_string_utf8(env, "windows-usage-directory-freeze-qualification-v1", NAPI_AUTO_LENGTH, &usageFreezeVersion);
+  napi_set_named_property(env, exports, "usageFreezeQualificationContractVersion", usageFreezeVersion);
   DefineMethod(env, exports, "inspectPath", InspectPathCallback);
   DefineMethod(env, exports, "ensureDirectory", EnsureDirectoryCallback);
   DefineMethod(env, exports, "prepareBrowserProfile", PrepareBrowserProfileCallback);

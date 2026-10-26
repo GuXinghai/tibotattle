@@ -5,7 +5,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 // The marker is private to the isolated preload world and exists only for
 // diagnostics/tests that need to prove which preload was installed.
 const marker = Object.freeze({
-  name: "tibotattle-electron-preload",
+  name: "usagemonitor-electron-preload",
   version: "v1",
   capabilities: Object.freeze({
     filesystem: false,
@@ -13,13 +13,13 @@ const marker = Object.freeze({
   }),
 });
 
-const IPC_CHANNEL = "tibotattle:desktop:v1";
-const COMMAND_CHANNEL = "tibotattle:desktop-command:v1";
+const IPC_CHANNEL = "usagemonitor:desktop:v1";
+const COMMAND_CHANNEL = "usagemonitor:desktop-command:v1";
 const BRIDGE_VERSION = "v1";
 const WINDOWS_SMOKE_CONTROL_ENV = "USAGE_MONITOR_ELECTRON_SMOKE_CONTROL";
 const WINDOWS_SMOKE_CONTROL = "windows-v1";
 const WINDOWS_NORMAL_SMOKE_CONTROL = "quit-v1";
-const WINDOWS_SMOKE_BRIDGE_NAME = "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__";
+const WINDOWS_SMOKE_BRIDGE_NAME = "__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__";
 const WINDOWS_SMOKE_BRIDGE_VERSION = "v1";
 const WINDOWS_QUALIFICATION_ENV = "USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION";
 const WINDOWS_QUALIFICATION_MARKER = "windows-electron-v1";
@@ -84,7 +84,7 @@ function invoke(action, args) {
 }
 
 function invokeX(action, args = {}) {
-  return ipcRenderer.invoke('tibotattle:x-reader:v1', { action, args });
+  return ipcRenderer.invoke('usagemonitor:x-reader:v1', { action, args });
 }
 function xNoArguments(action, values) {
   return values.length === 0 ? invokeX(action) : rejected('X operation takes no arguments');
@@ -427,7 +427,7 @@ function installDesktopBridge() {
       (lease) => refreshLeaseMethod("refreshSettled", lease),
     ),
   });
-  contextBridge.exposeInMainWorld("tibotattleDesktop", bridge);
+  contextBridge.exposeInMainWorld("usageMonitorDesktop", bridge);
 }
 
 function installQualifiedSmokeBridge() {
@@ -507,7 +507,7 @@ globalThis.document?.addEventListener?.(
   { once: true },
 );
 
-Object.defineProperty(globalThis, "__TIBOTATTLE_PRELOAD_MARKER__", {
+Object.defineProperty(globalThis, "__USAGE_MONITOR_PRELOAD_MARKER__", {
   configurable: false,
   enumerable: false,
   writable: false,

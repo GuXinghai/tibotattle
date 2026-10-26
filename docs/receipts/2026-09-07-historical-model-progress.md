@@ -13,7 +13,7 @@ incremental graph-cache branch, preserving published graphs, exact calculation
 semantics, source fences, consent and lifecycle behavior. No desktop changes,
 migrations or telemetry deletion. Current authority is
 [current status](../current-status.md) and the
-[production runbook](../runbooks/production-operations.md).
+production runbook (retired; retained in Git history).
 
 Production observation at 21:46 UTC: seven stored dates (September 1–7),
 August 31 terminal results 7/15, acquisition complete 9/15; checkpoints advancing

@@ -1042,7 +1042,7 @@ test('ready reports have no recurring timer and loading requests stop at the bou
 });
 
 test('request diagnostics are closed and separate from the v6 DTO',async()=>{
-  const run=async raw=>{const seen=[];const client=new LocalCompanionClient({fetchImpl:async()=>({ok:true,status:200,headers:{get:name=>name==='X-TiboTattle-Performance-Diagnostics'?raw:null},json:async()=>payload()})});const value=await client.modelPerformance('all',{onDiagnostics:codes=>seen.push(codes)});assert.deepEqual(Object.keys(value),Object.keys(payload()));return seen;};
+  const run=async raw=>{const seen=[];const client=new LocalCompanionClient({fetchImpl:async()=>({ok:true,status:200,headers:{get:name=>name==='X-Usage-Monitor-Performance-Diagnostics'?raw:null},json:async()=>payload()})});const value=await client.modelPerformance('all',{onDiagnostics:codes=>seen.push(codes)});assert.deepEqual(Object.keys(value),Object.keys(payload()));return seen;};
   assert.deepEqual(await run('timing_scan_failed,timing_snapshot_write_failed'),[['timing_scan_failed','timing_snapshot_write_failed']]);
   assert.deepEqual(await run('timing_history_unavailable'),[['timing_history_unavailable']]);
   const sourceCodes=['timing_source_decode_failed','timing_source_read_failed','timing_source_limit','timing_source_unsupported'];
@@ -1110,7 +1110,7 @@ test('source diagnostic headers are closed, bounded and separate from the measur
   const run = async raw => {
     const seen = [];
     const client = new LocalCompanionClient({ fetchImpl: async () => ({ ok: true, status: 200,
-      headers: { get: name => name === 'X-TiboTattle-Performance-Source-Diagnostics' ? raw : '' },
+      headers: { get: name => name === 'X-Usage-Monitor-Performance-Source-Diagnostics' ? raw : '' },
       json: async () => payload() }) });
     const data = await client.modelPerformance('all', { onSourceDiagnostics: rows => seen.push(rows) });
     assert.deepEqual(data, payload());
@@ -1273,7 +1273,7 @@ test('malformed source diagnostics reject a retry rather than silently accepting
   const c = mountModelPerformance({ ...dom, sharedReporting: true,
     reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
     client: new LocalCompanionClient({ fetchImpl: async () => ({ ok: true, status: 200,
-      headers: { get: name => name === 'X-TiboTattle-Performance-Diagnostics' ? 'timing_source_recovery_failed'
+      headers: { get: name => name === 'X-Usage-Monitor-Performance-Diagnostics' ? 'timing_source_recovery_failed'
         : bad ? '[{"code":"source_grew_during_read","count":1,"private":"omitted"}]'
           : '[{"code":"source_grew_during_read","count":1}]' }, json: async () => payload() }) }),
     t: (key, values) => translate(key, values, 'zh-CN') });

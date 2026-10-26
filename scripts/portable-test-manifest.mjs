@@ -102,9 +102,6 @@ export const PORTABLE_TEST_GROUPS = Object.freeze({
     "apps/local/server.test.mjs",
   ]),
   web: Object.freeze([
-    "apps/web/test/admin-client.test.mjs",
-    "apps/web/test/admin-site.test.mjs",
-    "apps/web/test/community-site.test.mjs",
     "apps/web/test/i18n-browser-parity.test.mjs",
     "apps/web/test/lib.test.mjs",
     "apps/web/test/localization-copy.test.mjs",

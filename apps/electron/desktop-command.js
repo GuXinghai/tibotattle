@@ -1,4 +1,4 @@
-export const DESKTOP_COMMAND_CHANNEL = "tibotattle:desktop-command:v1";
+export const DESKTOP_COMMAND_CHANNEL = "usagemonitor:desktop-command:v1";
 
 export const DESKTOP_COMMAND_NAMES = Object.freeze([
   "refresh",

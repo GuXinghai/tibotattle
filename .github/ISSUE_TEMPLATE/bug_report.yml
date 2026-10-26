@@ -1,14 +1,13 @@
 name: Bug report
-description: Report a problem with the local TiboTattle app or dashboard.
+description: Report a problem with the local Rhetrion app or dashboard.
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the report. For problems with the hosted service at
-        tibotattle.com, use the "Hosted service issue" template instead.
-        For security problems, use a private GitHub Security Advisory,
-        not a public issue (see SECURITY.md).
+        Use a synthetic, content-free reproduction. This unpublished product has
+        no configured private reporting channel. Do not post security details,
+        credentials or private records publicly; see SECURITY.md.
   - type: input
     id: app-version
     attributes:
@@ -22,7 +21,6 @@ body:
     attributes:
       label: Install channel
       options:
-        - Release download (tibotattle.com / TiboTattle GitHub releases)
         - Built from source
         - Preview / development build
     validations:
@@ -49,8 +47,8 @@ body:
     attributes:
       label: Installation history
       options:
-        - Updated over an older TiboTattle version
-        - Fresh install with no previous TiboTattle version
+        - Updated over an older Rhetrion version
+        - Fresh install with no previous Rhetrion version
         - Reinstalled the same version
         - Not sure
     validations:
@@ -59,7 +57,7 @@ body:
     id: previous-version
     attributes:
       label: Previous app version
-      description: If this was an update, give the last TiboTattle version that opened successfully.
+      description: If this was an update, give the last Rhetrion version that opened successfully.
       placeholder: vX.Y.Z or not applicable
   - type: textarea
     id: repro

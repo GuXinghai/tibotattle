@@ -10,7 +10,7 @@ test('sandbox preload accepts scoped refresh and forced details while rejecting 
   const exposed=new Map(),calls=[];
   const context=vm.createContext({process:{platform:'win32',env:{}},require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>exposed.set(name,value)},ipcRenderer:{invoke:async(channel,request)=>{calls.push({channel,request});return{};},on(){},off(){}}})});
   vm.runInContext(await readFile(new URL('../preload.cjs',import.meta.url),'utf8'),context);
-  const bridge=exposed.get('tibotattleDesktop');
+  const bridge=exposed.get('usageMonitorDesktop');
   await bridge.refreshX({tab:'media'});await bridge.getXPost({id:'123',force:true});await bridge.getXPost({id:'123',cursor:'safe'});
   assert.deepEqual(JSON.parse(JSON.stringify(calls.map(c=>c.request))),[{action:'refreshX',args:{tab:'media'}},{action:'getXPost',args:{id:'123',force:true}},{action:'getXPost',args:{id:'123',cursor:'safe'}}]);
   for(const args of [[],[{}],[{tab:'media',url:'https://x.com'}],[{tab:'unknown'}]])await assert.rejects(bridge.refreshX(...args));

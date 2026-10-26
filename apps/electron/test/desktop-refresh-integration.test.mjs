@@ -128,7 +128,7 @@ test(`real renderer, preload, IPC, and controller complete two ${overviewRefresh
       return { contextBridge, ipcRenderer };
     },
   }, { filename: "preload.cjs" });
-  const bridge = exposed.tibotattleDesktop;
+  const bridge = exposed.usageMonitorDesktop;
   assert.equal(Object.isFrozen(bridge), true);
 
   const expectedModes = overviewRefreshOwnedByCompanion ? ["detailed", "detailed"] : ["quick", "detailed"];

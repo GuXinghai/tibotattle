@@ -3247,11 +3247,11 @@ footer p { margin: 0; }
 .community-site .performance-plot::after,
 .community-site #usage-timeline-chart::after,
 .community-site .community-daily-chart::after {
-  content: "TiboTattle" / "";
+  content: var(--product-name, "Usage Monitor") / "";
   position: absolute;
   z-index: 2;
   padding-inline-start: 17px;
-  background: url("./tibotattle-icon.png") no-repeat left center / 13px 13px;
+  background: url("./app-icon.png") no-repeat left center / 13px 13px;
   color: var(--chart-credit-ink, var(--muted));
   font-family: var(--serif);
   font-size: 11px;

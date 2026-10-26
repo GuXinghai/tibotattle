@@ -11,7 +11,7 @@ import { desktopText } from "./desktop-copy.js";
  * acknowledgement is a launch gate, not a user preference.
  */
 export const DESKTOP_FIRST_RUN_RECEIPT_SCHEMA_VERSION =
-  "tibotattle-desktop-first-run-v1";
+  "usagemonitor-desktop-first-run-v1";
 export const DESKTOP_FIRST_RUN_RECEIPT_FILE_NAME =
   "desktop-first-run-v1.json";
 

@@ -203,16 +203,16 @@ test('browser has no desktop X integration and HLS uses a single local lazy scri
 });
 test('post projection retains text as data and rejects external or arbitrary resource addresses',()=>{
   const projected=normalizeXPost(post('123',{text:'<img onerror="unsafe()">',secret:'no',media:[
-    {id:'1',type:'image',src:'tibotattle-x-media://resource/opaque-1'},
+    {id:'1',type:'image',src:'usagemonitor-x-media://resource/opaque-1'},
     {id:'2',type:'image',src:'https://remote.invalid/image'},
-    {id:'3',type:'image',src:'tibotattle-x-media://other/path'},
-    {id:'4',type:'image',src:'tibotattle-x-media://resource/id?file=C:/secret'},
+    {id:'3',type:'image',src:'usagemonitor-x-media://other/path'},
+    {id:'4',type:'image',src:'usagemonitor-x-media://resource/id?file=C:/secret'},
   ]}));
   assert.equal(projected.text,'<img onerror="unsafe()">');assert.equal(projected.media.length,1);assert.equal('secret' in projected,false);
   assert.equal(normalizeXPost(post('../bad')),null);assert.equal(normalizeXPost(post('1',{createdAt:'invalid'})),null);
 });
 test('reader preserves tab scroll, renders plain text, releases media and owns one polling timer',async()=>{
-  const fixture=dom(),calls=[];const mounted=mountXReader({container:fixture.container,bridge:bridge({listXPosts:async({tab})=>{calls.push(tab);return{items:[post('123',{text:'<script>untrusted</script>',media:[{id:'v',type:'video',src:'tibotattle-x-media://resource/video',mimeType:'video/mp4'}]})]};}})});
+  const fixture=dom(),calls=[];const mounted=mountXReader({container:fixture.container,bridge:bridge({listXPosts:async({tab})=>{calls.push(tab);return{items:[post('123',{text:'<script>untrusted</script>',media:[{id:'v',type:'video',src:'usagemonitor-x-media://resource/video',mimeType:'video/mp4'}]})]};}})});
   await mounted.show();await flush();assert.equal(fixture.timers.size,1);
   assert.ok(fixture.container.textContent.includes('<script>untrusted</script>'));assert.equal(walk(fixture.container).some(el=>el.tagName==='script'),false);
   const content=walk(fixture.container).find(el=>el.className==='x-reader-scroll');content.scrollTop=180;
@@ -230,7 +230,7 @@ test('late page results cannot replace the current tab or a hidden reader',async
 });
 
 test('background updates and pagination preserve mounted playback; removed players are released',async()=>{
-  const fixture=dom(),videoPost=post('123',{media:[{id:'v',type:'video',src:'tibotattle-x-media://resource/video',mimeType:'video/mp4'}]});let rows=[videoPost],more=false;
+  const fixture=dom(),videoPost=post('123',{media:[{id:'v',type:'video',src:'usagemonitor-x-media://resource/video',mimeType:'video/mp4'}]});let rows=[videoPost],more=false;
   const mounted=mountXReader({container:fixture.container,bridge:bridge({listXPosts:async({cursor})=>({items:cursor?[post('100')]:rows,nextCursor:more&&!cursor?'next':null})})});
   await mounted.show();await flush();const video=walk(fixture.container).find(el=>el.tagName==='video');let resets=0;video.load=()=>resets++;video.paused=false;video.currentTime=12;
   mounted.handleUpdate({auth:'ready',operation:'loading'});await flush();assert.equal(walk(fixture.container).find(el=>el.tagName==='video'),video);assert.equal(video.paused,false);assert.equal(resets,0);
@@ -241,7 +241,7 @@ test('background updates and pagination preserve mounted playback; removed playe
 });
 
 test('late detail replies do not reset a main video started while the detail was loading',async()=>{
-  const fixture=dom(),videoPost=post('123',{media:[{id:'v',type:'video',src:'tibotattle-x-media://resource/video',mimeType:'video/mp4'}]});let finish;
+  const fixture=dom(),videoPost=post('123',{media:[{id:'v',type:'video',src:'usagemonitor-x-media://resource/video',mimeType:'video/mp4'}]});let finish;
   const mounted=mountXReader({container:fixture.container,bridge:bridge({listXPosts:async()=>({items:[videoPost]}),getXPost:()=>new Promise(resolve=>finish=resolve)})});
   await mounted.show();const opening=mounted.openPost('123');await flush();const video=walk(fixture.container).find(el=>el.tagName==='video');let resets=0;video.load=()=>resets++;video.paused=false;video.currentTime=3;
   finish({post:videoPost,replies:[post('124',{text:'A reply'})]});await opening;

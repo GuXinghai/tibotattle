@@ -41,7 +41,7 @@ This is a research and implementation proposal. None of the proposed commands,
 schemas, approval records or new automation below has been implemented or
 authorized to publish by this report. Current operating authority remains the
 macOS release runbook and
-[production runbook](../runbooks/production-operations.md).
+production runbook (retired; retained in Git history).
 
 ## Evidence and scope
 
@@ -503,7 +503,7 @@ accessed on 2026-09-08.
 [^7]: [Source 7](../../scripts/test-lanes.mjs). See the annotated source list below.
 [^8]: Source 8. See the annotated source list below.
 [^9]: [Source 9](../../.github/workflows/release-trust-policy.yml). See the annotated source list below.
-[^10]: [Source 10](../../apps/worker/scripts/production-deploy.mjs). See the annotated source list below.
+[^10]: `Source 10` (retired source). See the annotated source list below.
 [^11]: [Source 11](../current-status.md). See the annotated source list below.
 [^12]: [Source 12](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow). See the annotated source list below.
 [^13]: [Source 13](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases). See the annotated source list below.
@@ -535,7 +535,7 @@ accessed on 2026-09-08.
 9. Release trust workflow and `scripts/check-release-workflow-policy.mjs:301–310`.
 10. Production wrapper, `apps/worker/scripts/production-deploy.mjs:652–700`,
     `880–1090`, `1204–1207`; exact-source operational check in
-    [production operations](../runbooks/production-operations.md).
+    production operations (retired; retained in Git history).
 11. Current status, source `77b564cd`, and the
     [verified scale publication receipt](../receipts/2026-09-08-thousand-contributor-publication.md).
     Compare macOS runbook lines 110–114 for stale Intel Homebrew wording.

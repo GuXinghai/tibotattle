@@ -15,11 +15,8 @@ const PRIMARY_TURN_COLUMNS = Object.freeze([
   'sample_duration', 'sample_responses', 'sample_total_responses', 'sample_method',
   'turn_duration', 'speed_mode', 'speed_mode_source', 'api_service_tier',
 ]);
-const V12_TURN_COLUMNS = Object.freeze([
-  'turn_duration', 'speed_mode', 'speed_mode_source', 'api_service_tier',
-]);
 const REQUIRED_TURN_COLUMNS = Object.freeze([
-  'key', 'source', 'offset', ...PRIMARY_TURN_COLUMNS.filter(column => !V12_TURN_COLUMNS.includes(column)),
+  'key', 'source', 'offset', ...PRIMARY_TURN_COLUMNS,
 ]);
 const REQUIRED_SOURCE_COLUMNS = Object.freeze([
   'id', 'digest', 'fingerprint', 'cursor', 'snapshot', 'state', 'revision', 'telemetry_revision', 'parser_version', 'replay_parser_version', 'rebuild_kind',
@@ -39,53 +36,47 @@ function timingSourceError(message, recoveryReason) {
   return error;
 }
 
-// Parser methods identify the HMAC/keying semantics of each projection.  The
-// SQLite schema method is separate so older writers cannot reopen a migrated
-// file and overwrite additive performance columns or parser provenance.
-const STORE_SCHEMA_METHODS = Object.freeze({ 2: 10, 3: 11 });
-const PREVIOUS_STORE_SCHEMA_METHODS = Object.freeze({ 2: [4, 6, 8], 3: [5, 7, 9] });
+// Measurement methods and persisted identity namespaces are independent.
+// Older stores must be converted outside the application before a writer in
+// this namespace can accept them; a schema number alone cannot prove keying.
+const STORE_SCHEMA_METHODS = Object.freeze({ 2: 12, 3: 13 });
+const IDENTITY_VERSION = 'usage-monitor-timing-identity-v1';
 
 function schemaMethodFor(method) {
-  safe(Number.isSafeInteger(method) && method >= 1, 'invalid_method');
-  return STORE_SCHEMA_METHODS[method] ?? method;
+  safe(Object.hasOwn(STORE_SCHEMA_METHODS, method), 'invalid_method');
+  return STORE_SCHEMA_METHODS[method];
 }
 
 function tableColumns(db, table) {
   return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(column => column.name));
 }
 
-function migrateTimingSchema(db, schemaMethod) {
+function validateTimingSchema(db) {
   const turnColumns = tableColumns(db, 'turn');
   const sourceColumns = tableColumns(db, 'source');
   safe(REQUIRED_TURN_COLUMNS.every(column => turnColumns.has(column))
-    && REQUIRED_SOURCE_COLUMNS.every(column => sourceColumns.has(column)
-      || ['revision', 'telemetry_revision', 'parser_version', 'replay_parser_version', 'rebuild_kind'].includes(column)),
+    && REQUIRED_SOURCE_COLUMNS.every(column => sourceColumns.has(column)),
   'incompatible_database');
-  const additions = [];
-  for (const column of V12_TURN_COLUMNS) {
-    if (!turnColumns.has(column)) additions.push(`ALTER TABLE turn ADD COLUMN ${column} ${column === 'turn_duration' ? 'INTEGER' : 'TEXT'}`);
-  }
-  if (!sourceColumns.has('revision')) additions.push('ALTER TABLE source ADD COLUMN revision INTEGER NOT NULL DEFAULT 0');
-  if (!sourceColumns.has('telemetry_revision')) additions.push('ALTER TABLE source ADD COLUMN telemetry_revision INTEGER NOT NULL DEFAULT 0');
-  if (!sourceColumns.has('parser_version')) additions.push('ALTER TABLE source ADD COLUMN parser_version INTEGER NOT NULL DEFAULT 0');
-  if (!sourceColumns.has('replay_parser_version')) additions.push('ALTER TABLE source ADD COLUMN replay_parser_version INTEGER NOT NULL DEFAULT 0');
-  if (!sourceColumns.has('rebuild_kind')) additions.push("ALTER TABLE source ADD COLUMN rebuild_kind TEXT NOT NULL DEFAULT 'none' CHECK(rebuild_kind IN ('none','source','late'))");
   const replayColumns = tableColumns(db, 'parser_replay_turn');
-  if (!replayColumns.size) additions.push(`CREATE TABLE parser_replay_turn ${TURN_SCHEMA}`);
-  else safe(['key', 'source', 'offset', ...PRIMARY_TURN_COLUMNS].every(column => replayColumns.has(column)), 'incompatible_database');
-  if (!additions.length) {
-    db.exec(`PRAGMA user_version=${schemaMethod}`);
-    return;
+  safe(REQUIRED_TURN_COLUMNS.every(column => replayColumns.has(column)), 'incompatible_database');
+}
+
+function validateTimingIdentity(db, { schemaMethod, correlationKey, parserVersion }) {
+  safe(db.prepare('PRAGMA application_id').get().application_id === APPLICATION
+    && db.prepare('PRAGMA user_version').get().user_version === schemaMethod, 'incompatible_database');
+  const columns = tableColumns(db, 'metadata');
+  safe(columns.size === 2 && columns.has('key') && columns.has('identity_version'), 'incompatible_timing_identity');
+  const metadata = db.prepare('SELECT key,identity_version FROM metadata').all();
+  safe(metadata.length === 1 && metadata[0].key instanceof Uint8Array
+    && metadata[0].key.length === 32 && metadata[0].identity_version === IDENTITY_VERSION, 'incompatible_timing_identity');
+  const key = Buffer.from(metadata[0].key);
+  safe(correlationKey === undefined || key.equals(correlationKey), 'correlation_mismatch');
+  validateTimingSchema(db);
+  for (const column of ['parser_version', 'replay_parser_version']) {
+    const newest = db.prepare(`SELECT COALESCE(MAX(${column}),0) AS version FROM source`).get().version;
+    safe(Number.isSafeInteger(newest) && newest >= 0 && newest <= parserVersion, 'incompatible_parser_version');
   }
-  db.exec('BEGIN IMMEDIATE');
-  try {
-    for (const sql of additions) db.exec(sql);
-    db.exec(`PRAGMA user_version=${schemaMethod}`);
-    db.exec('COMMIT');
-  } catch (error) {
-    try { db.exec('ROLLBACK'); } catch { /* Preserve the migration failure. */ }
-    throw error;
-  }
+  return key;
 }
 
 function revisionToken(db, supplement = null) {
@@ -190,17 +181,26 @@ export async function openTimingStore(directory, { createParser, digest, METHOD,
   }
 
   try {
-    db = databaseFactory(file, { timeout: 100 });
+    // Inspect existing stores through a read-only connection before any
+    // journal/write pragma. The native lease remains held across reopening.
+    db = databaseFactory(file, { timeout: 100, readOnly: !created });
+    let key;
+    if (!created) {
+      key = validateTimingIdentity(db, { schemaMethod, correlationKey, parserVersion });
+      db.close();
+      dbClosed = databaseIsClosed(db);
+      safe(dbClosed, 'database_close_incomplete');
+      db = databaseFactory(file, { timeout: 100 });
+      dbClosed = false;
+      const reopenedKey = validateTimingIdentity(db, { schemaMethod, correlationKey, parserVersion });
+      safe(key.equals(reopenedKey), 'correlation_mismatch');
+    }
     if (lease.persistentJournal) configureGuardedSqliteConnection(db);
-    const version = db.prepare('PRAGMA user_version').get().user_version;
-    const application = db.prepare('PRAGMA application_id').get().application_id;
-    safe(created || (application === APPLICATION
-      && (version === METHOD || version === schemaMethod
-        || PREVIOUS_STORE_SCHEMA_METHODS[METHOD]?.includes(version))), 'incompatible_database');
     db.exec('PRAGMA busy_timeout=100; PRAGMA cache_size=-2048; PRAGMA synchronous=FULL; PRAGMA max_page_count=65536;');
     if (created) {
       db.exec(`BEGIN IMMEDIATE;
-        CREATE TABLE metadata (key BLOB NOT NULL CHECK(length(key)=32));
+        CREATE TABLE metadata (key BLOB NOT NULL CHECK(length(key)=32),
+          identity_version TEXT NOT NULL CHECK(identity_version='${IDENTITY_VERSION}'));
         CREATE TABLE source (id INTEGER PRIMARY KEY, digest BLOB UNIQUE NOT NULL,
           fingerprint TEXT NOT NULL, cursor INTEGER NOT NULL, snapshot TEXT NOT NULL,
           state TEXT NOT NULL CHECK(length(state)<=${MAX_STATE_BYTES}),
@@ -213,24 +213,10 @@ export async function openTimingStore(directory, { createParser, digest, METHOD,
         CREATE TABLE parser_replay_turn ${TURN_SCHEMA};
         CREATE INDEX turn_time ON turn(at);
         PRAGMA application_id=${APPLICATION}; PRAGMA user_version=${schemaMethod};`);
-      db.prepare('INSERT INTO metadata VALUES (?)').run(correlationKey ?? randomBytes(32));
+      db.prepare('INSERT INTO metadata VALUES (?,?)').run(correlationKey ?? randomBytes(32), IDENTITY_VERSION);
       db.exec('COMMIT');
     }
-    // Validate the local correlation envelope before changing an existing
-    // schema. A sidecar opened with another store's key must not even perform
-    // the forward migration.
-    const key = Buffer.from(db.prepare('SELECT key FROM metadata').get().key);
-    safe(key.length === 32, 'invalid_metadata');
-    safe(correlationKey === undefined || key.equals(correlationKey), 'correlation_mismatch');
-    if (!created && tableColumns(db, 'source').has('parser_version')) {
-      const newest = db.prepare('SELECT COALESCE(MAX(parser_version),0) AS version FROM source').get().version;
-      safe(Number.isSafeInteger(newest) && newest >= 0 && newest <= parserVersion, 'incompatible_parser_version');
-    }
-    if (!created && tableColumns(db, 'source').has('replay_parser_version')) {
-      const newest = db.prepare('SELECT COALESCE(MAX(replay_parser_version),0) AS version FROM source').get().version;
-      safe(Number.isSafeInteger(newest) && newest >= 0 && newest <= parserVersion, 'incompatible_parser_version');
-    }
-    if (!created) migrateTimingSchema(db, schemaMethod);
+    if (created) key = validateTimingIdentity(db, { schemaMethod, correlationKey, parserVersion });
     compressedReader?.register(file);
     return { db, key, file, createParser, digest, filesystem, method: METHOD, parserVersion,
       readCompressed: () => {

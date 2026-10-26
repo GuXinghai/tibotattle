@@ -35,7 +35,6 @@ function assertManifest(manifest) {
   const surfaceNames = Object.keys(manifest.surfaces).sort();
   const expectedSurfaceNames = [
     "electron-runtime",
-    "history-free-export",
     "local-companion",
   ];
   if (JSON.stringify(surfaceNames) !== JSON.stringify(expectedSurfaceNames)) {

@@ -61,11 +61,9 @@ import {
 import {
   selectProductionAccountObservationSecret,
 } from "../../src/account-observation-production.js";
-import {
-  PREVIEW_PRODUCT_BRAND,
-  PRODUCT_BRAND,
-  SEMANTIC_OPEN_TARGET_PLACEHOLDER,
-} from "../../config/product-brand.js";
+import applicationIdentity from "../../config/application-identity.cjs";
+const { APPLICATION_IDENTITY, APPLICATION_PROFILES } = applicationIdentity;
+const SEMANTIC_OPEN_TARGET_PLACEHOLDER = APPLICATION_IDENTITY.semanticOpenTargetPlaceholder;
 import {
   projectDesktopShellStatus,
 } from "../../src/desktop-shell-status.js";
@@ -384,7 +382,7 @@ function securityHeaders({ report = false } = {}) {
   const scriptPolicy = report ? "'self' 'unsafe-inline'" : "'self'";
   return {
     "Cache-Control": "no-store",
-    "Content-Security-Policy": `default-src 'none'; base-uri 'none'; connect-src 'self' tibotattle-x-media:; font-src 'self' data:; form-action 'none'; frame-ancestors 'none'; img-src 'self' data: tibotattle-background: tibotattle-x-media:; media-src tibotattle-x-media: blob:; object-src 'none'; script-src ${scriptPolicy}; style-src 'self' 'unsafe-inline'; worker-src 'none'`,
+    "Content-Security-Policy": `default-src 'none'; base-uri 'none'; connect-src 'self' usagemonitor-x-media:; font-src 'self' data:; form-action 'none'; frame-ancestors 'none'; img-src 'self' data: usagemonitor-background: usagemonitor-x-media:; media-src usagemonitor-x-media: blob:; object-src 'none'; script-src ${scriptPolicy}; style-src 'self' 'unsafe-inline'; worker-src 'none'`,
     "Cross-Origin-Opener-Policy": "same-origin",
     "Cross-Origin-Resource-Policy": "same-origin",
     "Referrer-Policy": "no-referrer",
@@ -728,13 +726,13 @@ async function readFixedFile(root, file, maximumBytes) {
 }
 
 const ALLOWED_SEMANTIC_OPEN_TARGETS = new Set([
-  PRODUCT_BRAND.appOpenURL,
-  PREVIEW_PRODUCT_BRAND.appOpenURL,
+  APPLICATION_IDENTITY.appOpenURL,
+  APPLICATION_PROFILES.preview.appOpenURL,
 ]);
 
 export function configuredSemanticOpenTarget(environment = process.env) {
   const value = environment?.USAGE_MONITOR_APP_OPEN_URL
-    ?? PRODUCT_BRAND.appOpenURL;
+    ?? APPLICATION_IDENTITY.appOpenURL;
   if (typeof value !== "string" || !ALLOWED_SEMANTIC_OPEN_TARGETS.has(value)) {
     throw new Error(
       "USAGE_MONITOR_APP_OPEN_URL must match a reviewed product identity",
@@ -1577,7 +1575,7 @@ function createPreparedLocalCompanionServer({
         try {
           const snapshot = await readModelPerformance(period, { speedMode, ...(endAt === null ? {} : { endAt }) });
           const diagnostics = modelPerformanceController?.diagnostics() ?? [];
-          if (diagnostics.length) response.setHeader('X-TiboTattle-Performance-Diagnostics', diagnostics.join(','));
+          if (diagnostics.length) response.setHeader('X-Usage-Monitor-Performance-Diagnostics', diagnostics.join(','));
           const sourceDetails = modelPerformanceSourceDiagnosticHeader(modelPerformanceController?.sourceDiagnostics() ?? []);
           if (sourceDetails !== null) response.setHeader(MODEL_PERFORMANCE_SOURCE_DIAGNOSTIC_HEADER, sourceDetails);
           send(response, 200, snapshot);

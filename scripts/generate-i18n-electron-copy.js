@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import productBrand from "../config/product-brand.cjs";
 
 /**
  * Generate the static Electron main-process localization slice.
@@ -259,9 +260,10 @@ export function desktopText(key, values = {}, {
 } = {}) {
   const messages = DESKTOP_MESSAGES[key];
   if (!messages) return key;
-  const selected = messages[resolveDesktopLocale(locale, systemLocales)]
+  const resolvedLocale = resolveDesktopLocale(locale, systemLocales);
+  const selected = messages[resolvedLocale]
     ?? messages[DESKTOP_DEFAULT_LOCALE];
-  return interpolateDesktopMessage(selected, values);
+  return interpolateDesktopMessage(selected, { appName: DESKTOP_PRODUCT_NAMES[resolvedLocale], ...values });
 }
 
 export {
@@ -310,6 +312,7 @@ export async function buildI18nElectronCopy({
     "  ...DESKTOP_OVERRIDES,",
     "});",
     "",
+    `const DESKTOP_PRODUCT_NAMES = Object.freeze(${json(productBrand.names)});`,
     renderPolicy(),
   ].join("\n");
 }

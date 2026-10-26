@@ -3,11 +3,12 @@ import { EventEmitter } from "node:events";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { createDesktopLifecycle } from "../desktop-lifecycle.js";
+import { createDesktopLifecycle as composeLifecycle } from "../desktop-lifecycle.js";
+const createDesktopLifecycle = (options) => composeLifecycle({ desktopLocale: "en-US", ...options });
 import { TRAY_POPOVER_ACTION_CHANNEL } from "../desktop-tray-popover.js";
 
 const EVIDENCE = Object.freeze({
-  schemaVersion: "tibotattle-notification-evidence-v2",
+  schemaVersion: "usagemonitor-notification-evidence-v2",
   status: "fresh_provider_observation",
   provider: "openai_codex",
   source: "app_server_read",
@@ -30,7 +31,7 @@ function status(state = "fresh", {
   notificationEvidence = state === "fresh" ? EVIDENCE : null,
 } = {}) {
   return {
-    schemaVersion: "tibotattle-desktop-shell-status-v1",
+    schemaVersion: "usagemonitor-desktop-shell-status-v1",
     state,
     allowance,
     notificationEvidence,
@@ -38,6 +39,8 @@ function status(state = "fresh", {
 }
 
 class FakeApp extends EventEmitter {
+  getPreferredSystemLanguages() { return ["en-US"]; }
+  getLocale() { return "en-US"; }
   constructor() {
     super();
     this.quitCalls = 0;
@@ -192,17 +195,17 @@ test("lifecycle projects monitor status into a dynamic localized tray and observ
   await fixtureValue.lifecycle.start();
   const tray = fixtureValue.trays[0];
   assert.equal(tray.menu.template[1].label, "Starting");
-  await waitFor(() => tray.menu.template[0].label === "TiboTattle · Five-hour allowance: 74% remaining");
+  await waitFor(() => tray.menu.template[0].label === "Rhetrion · Five-hour allowance: 74% remaining");
   assert.equal(requested[0], "http://127.0.0.1:4801/api/local/desktop-status");
-  assert.equal(tray.menu.template[0].label, "TiboTattle · Five-hour allowance: 74% remaining");
+  assert.equal(tray.menu.template[0].label, "Rhetrion · Five-hour allowance: 74% remaining");
   assert.match(tray.menu.template[1].label, /^Observed /u);
   assert.match(tray.menu.template[2].label, /^Five-hour allowance: 74% remaining/u);
-  assert.equal(tray.titles.at(-1), "5h 74%");
+  assert.equal(tray.titles.at(-1), "");
   assert.deepEqual(observed.map((value) => value.state), ["starting", "fresh"]);
   assert.equal(JSON.stringify(observed).includes("/private"), false);
 
   assert.equal(fixtureValue.lifecycle.setDesktopLanguage("zh-Hans"), true);
-  assert.equal(tray.menu.template[0].label, "TiboTattle · 五小时配额：剩余 74%");
+  assert.equal(tray.menu.template[0].label, "Rhetrion · 五小时配额：剩余 74%");
   await fixtureValue.lifecycle.dispose();
 });
 
@@ -218,10 +221,10 @@ test("lifecycle forwards a current analyzing overview allowance without notifica
 
   await fixtureValue.lifecycle.start();
   const tray = fixtureValue.trays[0];
-  await waitFor(() => tray.menu.template[0].label === "TiboTattle · Seven-day allowance: 0% remaining");
-  assert.equal(tray.menu.template[0].label, "TiboTattle · Seven-day allowance: 0% remaining");
+  await waitFor(() => tray.menu.template[0].label === "Rhetrion · Seven-day allowance: 0% remaining");
+  assert.equal(tray.menu.template[0].label, "Rhetrion · Seven-day allowance: 0% remaining");
   assert.equal(tray.menu.template[1].label, "Analyzing");
-  assert.equal(tray.titles.at(-1), "7d 0%");
+  assert.equal(tray.titles.at(-1), "");
   assert.deepEqual(observed.map((value) => value.state), ["starting", "analyzing"]);
   assert.equal(observed.at(-1).notificationEvidence, null);
   await fixtureValue.lifecycle.dispose();
@@ -238,7 +241,7 @@ test("lifecycle stops status polling at recovery and restarts it for bounded ret
     },
   });
   await fixtureValue.lifecycle.start();
-  await waitFor(() => fixtureValue.trays[0].menu.template[0].label === "TiboTattle · Five-hour allowance: 74% remaining");
+  await waitFor(() => fixtureValue.trays[0].menu.template[0].label === "Rhetrion · Five-hour allowance: 74% remaining");
 
   fixtureValue.supervisor.exitHandler({ kind: "companion_exit" });
   assert.equal(fixtureValue.trays[0].menu.template[1].label, "Status unavailable");
@@ -272,13 +275,13 @@ test("a native Windows menu presentation dismisses the visual tray first", async
 
 test("lifecycle forwards an explicit stale display snapshot without notification evidence", async (t) => {
   const observed = [];
-  const value = { schemaVersion: "tibotattle-desktop-shell-status-v2", state: "stale", allowance: null, notificationEvidence: null,
-    displayEvidence: { schemaVersion: "tibotattle-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
+  const value = { schemaVersion: "usagemonitor-desktop-shell-status-v2", state: "stale", allowance: null, notificationEvidence: null,
+    displayEvidence: { schemaVersion: "usagemonitor-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
       windows: [{ durationMinutes: 10080, remainingPercent: 53, observedAt: "2026-08-22T10:28:00.000Z", resetAt: "2026-08-27T12:00:00.000Z" }] } };
   const f = fixture({ fetchImpl: async url => jsonResponse(value, url), onDesktopStatus: row => observed.push(row) });
   t.after(() => f.lifecycle.dispose());
   await f.lifecycle.start();
-  await waitFor(() => f.trays[0].titles.at(-1) === "7d 53%");
+  await waitFor(() => f.trays[0].menu.template[0].label.includes("53%"));
   assert.match(f.trays[0].menu.template[1].label, /Stale/u);
   assert.equal(observed.at(-1).state, "stale");
   assert.equal(observed.at(-1).notificationEvidence, null);

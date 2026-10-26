@@ -13,7 +13,7 @@ evidence lookup, and model synthesis. The implementation authority is the
 closed plan registry in `src/reporting/usage-explainer.js`; the command syntax
 is maintained in [the CLI reference](./cli-reference.md).
 Installed Codex integrations use the equivalent closed tool surface documented
-in [the Codex plugin reference](./codex-plugin.md).
+in the Codex plugin reference (retired; retained in Git history).
 
 ## Responsibility boundary
 
@@ -174,5 +174,5 @@ recommendation must carry the missing tail or attribution limitation.
   not infer an answer from missing evidence or refresh the index implicitly.
 
 The repository-scoped
-[TiboTattle usage coach skill](../../.agents/skills/tibotattle-usage-coach/SKILL.md)
+[TiboTattle usage coach skill](../../.agents/skills/usage-monitor-usage-coach/SKILL.md)
 applies this protocol for Codex agents.

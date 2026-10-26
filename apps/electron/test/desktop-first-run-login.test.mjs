@@ -165,9 +165,9 @@ test("dialog and system-settings failures are contained", async () => {
 
 test("system, English, Simplified Chinese, and Spanish copy is fixed and complete", () => {
   const expectations = [
-    ["en-US", "TiboTattle will continue without Start at login", "Continue", "Open Login Items Settings"],
-    ["zh-Hans", "TiboTattle 将继续启动，但不会在登录时启动", "继续", "打开登录项设置"],
-    ["es", "TiboTattle continuará sin iniciarse al iniciar sesión", "Continuar", "Abrir configuración de elementos de inicio"],
+    ["en-US", "Rhetrion will continue without Start at login", "Continue", "Open Login Items Settings"],
+    ["zh-Hans", "衡川 将继续启动，但不会在登录时启动", "继续", "打开登录项设置"],
+    ["es", "Rhetrion continuará sin iniciarse al iniciar sesión", "Continuar", "Abrir configuración de elementos de inicio"],
   ];
   for (const [locale, title, continueLabel, settingsLabel] of expectations) {
     const copy = desktopFirstRunLoginDialogCopy({ locale });

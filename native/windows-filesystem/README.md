@@ -1,7 +1,7 @@
 # Windows native security adapter
 
-This is a fail-closed capability boundary. The published Electron application
-has a Windows x64 release, but this binding's general production/path-walk
+This is a fail-closed capability boundary. This independent Electron product
+is unpublished, and this binding's general production/path-walk
 policy remains disabled. Its narrow source-reader is enabled in this unreleased
 source candidate, with native and packaged qualification pending. Source
 compilation, native unit tests, or a valid sidecar do not establish that the
@@ -9,7 +9,7 @@ candidate works in the installed app. See the
 [current status matrix](../../docs/current-status.md).
 
 This directory contains the reviewed Windows-only filesystem and credential
-mutex boundary for private TiboTattle state. The binding is deliberately a
+mutex boundary for private Rhetrion state. The binding is deliberately a
 small C N-API module;
 it does not depend on a JavaScript filesystem path check being equivalent to a
 Windows ACL or reparse-point check.
@@ -20,6 +20,10 @@ Build it on native Windows x64 with the repository's pinned Node toolchain:
 npm exec -- node-gyp rebuild --directory native/windows-filesystem
 node ./scripts/build-windows-filesystem-manifest.mjs
 ```
+
+The linker records only the neutral PDB basename in the binary's debug record,
+so a developer's absolute checkout path does not enter the distributed module.
+This changes no capability approval; regenerate the adjacent manifest after rebuilding.
 
 The resulting `build/Release/windows_filesystem.node` and its adjacent
 `windows_filesystem.node.manifest.json` are loaded only on native
@@ -345,3 +349,76 @@ verify encrypted persistence and restoration separately and report uncertainty.
 Native source tests, encrypted Electron restart tests, installed artifacts and
 signed releases remain separate gates; general production/path-walk flags stay
 disabled.
+
+## Isolated usage-bundle freeze qualification
+
+`usage-freeze.inc` supplies an opt-in qualification API, identified by
+`windows-usage-directory-freeze-qualification-v1`. The ordinary product loader
+does not select it. An isolated Node 26.2.0 build, generated adjacent manifest
+and source/binary hash receipt are checked by
+`scripts/lib/usage-bundle-freeze.mjs`; the receipt detects mismatched bytes, not
+publisher authenticity. No global production or path-walk approval is enabled.
+
+The qualification caller routes protected journals through that exact isolated
+binding as well. Native atomic replacement retries only an uncommitted rename
+for transient access/sharing rejection: at most eight attempts, bounded backoff,
+the same flushed temporary handle and parent, and fresh original-destination
+identity/security checks before each attempt. Persistent or uncertain results
+remain failures; this is not logical-save or migration-action replay. The
+ordinary compiled product binding is not replaced by qualification builds.
+
+Opaque object leases bind current-owner, single-link, non-reparse directories
+and files to native identities. Original DACLs must contain only recognized
+current-owner allow ACEs; inherited current-owner grants can be preserved.
+Broad/foreign/service/capability grants, source denies and unknown ACEs refuse,
+without repairing or widening source permissions. The owner-approved separate
+`openLegacyUsageFreezeParentDirectory` path accepts only the existing legacy
+usage-source exception: SYSTEM/built-in administrators and one account-domain
+read/execute SID, pinned consistently from the original parent ACL. It requires
+the exact preflight descriptor bytes; mutation after preflight refuses. This
+does not alter default owner-only or destination contracts. Broader SID classes,
+reader write/delete/ACL rights, a second/different reader, source denies and
+unknown ACEs refuse. `inspectUsageFreezeSourcePolicy` checks private supplied
+descriptor bytes without mutation; it does not prove selected-file acceptance.
+
+The separately approved snapshot exception is exposed only through
+`openUsageFreezeSnapshotFile` / `reopenUsageFreezeSnapshotFile`. Native lease
+ancestry must identify the primary timing root directly below the selected
+usage root, with the fixed legacy/v6 snapshot filename. Only one existing,
+non-inheriting logon-session read/execute ACE may be retained in that file's
+exact original descriptor. Database, controls, other filenames, nested lookalike
+directories, session writes and multiple session ACEs refuse. The tool must
+explicitly select `preserve_legacy_usage_snapshot_v1`; earlier policies remain
+unchanged. Recovery binds the same identity, nonce, descriptor and policy.
+No source permission is removed, and source ACLs never reach the destination.
+
+Directory acquisition excludes share-tracked
+existing access before applying a fixed non-inheriting deny; child acquisition
+uses held parent handles. All selected files reject existing granted data-write
+handles and deny future data writes. Usage directories deny additions, deletion,
+attribute/EA writes and child deletion. The explicit direct maintenance parent
+separately denies `DELETE_CHILD` and `DELETE`, closing the source-root rename
+bypass. It is acquired exclusively, frozen, then reopened against the same
+identity/ACL with traversal sharing; no descendant ACL is inherited or repaired.
+An independent no-delete-sharing identity handle stays held during that handle
+handoff, including the close/reopen interval.
+Its durable journal must be outside that parent. Unselected child contents and
+ACLs remain unchanged. Ancestors are pinned during the operation; this is not
+a volume lock or protection against a privileged/hostile owner changing ACLs
+or relocating higher ancestors after the process exits.
+
+Persist original owner/group/DACL bytes and object identity before mutation.
+A deny-only operation nonce ACE binds recovery to that operation, so an older
+valid journal cannot thaw a newer freeze. Recovery accepts only the exact
+original or computed frozen ACL. Unknown changes refuse. Close, GC and process
+death release handles without restoring ACLs. Explicit reverse restoration
+refuses live descendants and borrowed read/SQLite handles. Failed SQLite closes
+pin the whole barrier until process exit; do not turn release uncertainty into
+an automatic thaw. SACLs, credentials and registry data are not accessed.
+
+Borrowed tokens reuse the reviewed frozen source reader, native root-identity
+comparison and per-file `CREATE_NEW` copier. Copying never invokes the broad
+legacy continuity selector. Backup creation, readback, immutable SQL inspection,
+conversion, permission restoration and activation remain distinct operations.
+Qualification tests use disposable private roots only. Source/native synthetic
+success does not qualify a real source, installed artifact or release.

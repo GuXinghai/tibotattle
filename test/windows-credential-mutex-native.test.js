@@ -140,7 +140,7 @@ test("worker termination never strands a native credential mutex", {
 test("native lease recovers a durable prepared row after abrupt process termination", {
   skip: process.platform !== "win32" || process.arch !== "x64",
 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-mutex-crash-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-mutex-crash-"));
   const filePath = join(root, "private", "windows-credential-operation-audit-v1.sqlite");
   try {
     const crashed = spawnSync(process.execPath, [

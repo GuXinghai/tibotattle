@@ -97,34 +97,6 @@ function quotedMethods(source, label) {
   );
 }
 
-function workerRoutePolicy(source) {
-  const block = sourceBlock(
-    source,
-    /const EXACT_WORKER_ROUTE_DEFINITIONS = \[/u,
-    /\] as const/u,
-    "Worker route registry",
-  );
-  const entries = [...block.matchAll(
-    /pathname:\s*"(\/[^"?]+)",\s*id:\s*"[^"]+",\s*methods:\s*("all"|\[[^\]]*\]),\s*authority:\s*"([a-z_]+)"/gu,
-  )].map((match) => ({
-    path: match[1],
-    methods: match[2] === "\"all\""
-      ? "all"
-      : quotedMethods(match[2], `Worker ${match[1]}`),
-    authority: match[3],
-  }));
-  const fieldCount = [...block.matchAll(/\bpathname\s*:/gu)].length;
-  assert.equal(entries.length, fieldCount, "every Worker route needs method and authority metadata");
-  const authorities = new Set([
-    "none", "public", "enrollment", "accountless_enrollment", "accountless_ownership", "handoff", "recovery", "session",
-    "device", "upload", "pairing_code", "admin", "operator",
-  ]);
-  for (const entry of entries) {
-    assert.ok(authorities.has(entry.authority), `unknown Worker authority ${entry.authority}`);
-  }
-  return routePolicy(entries, "Worker registry");
-}
-
 function localRoutePolicy(source) {
   const allowlist = sourceBlock(
     source,
@@ -181,19 +153,16 @@ function reportRoutePolicy(source) {
 }
 
 test("both maintained API references cover every registered HTTP boundary", async () => {
-  const [markdown, detailedMarkdown, worker, local, reports] = await Promise.all([
+  const [markdown, detailedMarkdown, local, reports] = await Promise.all([
     repositoryFile("docs/reference/api-surface.md"),
     repositoryFile("docs/reference/2026-08-26-api-surface-reference.md"),
-    repositoryFile("apps/worker/src/route-registry.ts"),
     repositoryFile("apps/local/server.js"),
     repositoryFile("src/local-companion-data.js"),
   ]);
 
-  const workerPolicy = workerRoutePolicy(worker);
   const localPolicy = localRoutePolicy(local);
   const reportPolicy = reportRoutePolicy(reports);
 
-  assert.equal(workerPolicy.length, 50, "review Worker route-count changes");
   assert.equal(localPolicy.length, 17, "review local route-count changes");
   assert.equal(reportPolicy.length, 4, "review fixed report-count changes");
 
@@ -202,7 +171,6 @@ test("both maintained API references cover every registered HTTP boundary", asyn
     ["detailed", detailedMarkdown],
   ]) {
     for (const [heading, policy] of [
-      ["Hosted Worker route inventory", workerPolicy],
       ["Local route inventory", localPolicy],
       ["Fixed report pages", reportPolicy],
     ]) {
@@ -223,14 +191,10 @@ test("both maintained API references cover every registered HTTP boundary", asyn
     .map((cells) => [cells[1], cells[3]]));
   const operationCount = (policy) => policy.reduce((count, route) =>
     count + (route.methods === "all" ? 0 : route.methods.length), 0);
-  const workerApiPolicy = workerPolicy.filter((route) => route.path.startsWith("/api/"));
   assert.equal(
     ledger.get("Local companion API"),
     `${localPolicy.length} paths, ${operationCount(localPolicy)} method/path operations`,
   );
   assert.equal(ledger.has("Participant relay"), false);
-  assert.equal(
-    ledger.get("Hosted Worker API"),
-    `${workerApiPolicy.length} API paths, ${operationCount(workerApiPolicy)} method/path operations`,
-  );
+
 });

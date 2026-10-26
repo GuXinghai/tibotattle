@@ -7,7 +7,7 @@ status: in-progress
 
 Reconcile routine Worker deployment with a reviewed typed production layout,
 then resume the authorized admin dashboard deployment. The maintained operating
-authority remains [production operations](../runbooks/production-operations.md).
+authority remains production operations (retired; retained in Git history).
 This plan is not evidence that a deployment or migration occurred.
 
 ## Acceptance boundary

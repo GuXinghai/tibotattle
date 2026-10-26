@@ -175,7 +175,7 @@ test('additive sidecar resumes and joins without changing original rows, version
   let checkpoint;
   let extra = await openTimingStore(path, extraConfig(primary.key));
   try {
-    assert.equal(extra.db.prepare('PRAGMA user_version').get().user_version, 11);
+    assert.equal(extra.db.prepare('PRAGMA user_version').get().user_version, 13);
     await ingestTimingFile(extra, file, { maxBytes: Buffer.byteLength(lines(fixture().slice(0, 6))) });
     checkpoint = extra.db.prepare('SELECT cursor FROM source').get().cursor;
     assert.ok(checkpoint > 0 && checkpoint < Buffer.byteLength(lines(fixture())));
@@ -189,7 +189,7 @@ test('additive sidecar resumes and joins without changing original rows, version
     assert.equal(joined.length, 1); assert.equal(joined[0].tool_free_tokens, 120); assert.equal(joined[0].tool_free_duration, 1200);
     const { tool_free_tokens, tool_free_duration, ...original } = joined[0];
     assert.deepEqual(original, before[0]); assert.deepEqual(readTimingRows(primary), before);
-    assert.equal(primary.db.prepare('PRAGMA user_version').get().user_version, 10);
+    assert.equal(primary.db.prepare('PRAGMA user_version').get().user_version, 12);
     assert.equal((await ingestTimingFile(extra, file)).bytes, 0);
     await assert.rejects(openTimingStore(path, primaryConfig), /incompatible_database/);
     await assert.rejects(openTimingStore(path, extraConfig(Buffer.alloc(32))), /correlation_mismatch/);
@@ -300,7 +300,7 @@ test('real worker backfills the supplement beside saved measurements and preserv
       ...extraConfig(scopedPrimary.key), parserVersion: INFERENCE_TIMING_PARSER_VERSION,
     });
     extra.db.exec('PRAGMA user_version=999'); extra.close();
-    assert.equal(scopedPrimary.db.prepare('PRAGMA user_version').get().user_version, 10);
+    assert.equal(scopedPrimary.db.prepare('PRAGMA user_version').get().user_version, 12);
   } finally { scopedPrimary.close(); }
   const saved = await readFile(snapshotFile, 'utf8');
   let controller = createModelPerformanceController(options);

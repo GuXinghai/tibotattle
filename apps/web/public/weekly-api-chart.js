@@ -28,7 +28,7 @@ export function mountWeeklyApiChart({documentRef,t,formatMoney,formatInstant,onD
     for(const [k,v]of Object.entries(attrs))el.setAttribute(k,String(v));if(text!==undefined)el.textContent=text;return el;};
   let data=null,rows=[],domain=null,selected=null,selectionScope=null,smoother=null,renderError=null;
   let width=900,guide=null,publishedAt=null,locale=null,labelLocale=null,loadState='loading';const preferences=new Map();
-  const preferenceKey='tibotattle.weekly-api-sigma';
+  const preferenceKey='usagemonitor.weekly-api-sigma';
   try{
     const saved=JSON.parse(documentRef.defaultView.localStorage.getItem(preferenceKey)??'{}');
     for(const period of ['24h','7d','30d','all'])if(SIGMAS.includes(saved?.[period]))preferences.set(period,saved[period]);

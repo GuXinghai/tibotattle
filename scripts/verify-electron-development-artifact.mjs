@@ -67,8 +67,11 @@ const TARGETS = Object.freeze(Object.fromEntries(
   ]),
 ));
 export const ELECTRON_SHELL_FILES = Object.freeze([
+  "config/application-identity.cjs",
+  "config/product-brand.cjs",
+  "config/product-brand.js",
+  "apps/electron/application-profile.js",
   "config/electron-production-distribution.cjs",
-  "config/deployment-endpoints.js",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
   "apps/electron/desktop-command.js",
@@ -118,7 +121,7 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/x-import/popup.html",
   "apps/electron/x-import/popup.js",
   "apps/electron/x-import/NativeHost.cs",
-  "apps/electron/x-import/TiboTattleXImport.exe",
+  "apps/electron/x-import/UsageMonitorXImport.exe",
   "apps/electron/errors.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
@@ -1072,7 +1075,7 @@ async function compareArtifactToStaged({
       fail(status);
     }
     // The development artifact carries no distribution authority.
-    if (Object.hasOwn(value, "tibotattleDistribution")) fail(status);
+    if (Object.hasOwn(value, "usageMonitorDistribution")) fail(status);
   };
   const stagedPackageJsonBytes = await readRegularFile(
     join(appPath, "package.json"),

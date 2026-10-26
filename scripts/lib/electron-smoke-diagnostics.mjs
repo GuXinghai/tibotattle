@@ -6,8 +6,8 @@
  * refresh response data.
  */
 
-const COMPANION_PROCESS_PREFIX = "TIBOTATTLE_ELECTRON_COMPANION_PROCESS ";
-const DASHBOARD_FAILURE_PREFIX = "TIBOTATTLE_ELECTRON_DASHBOARD_FAILURE ";
+const COMPANION_PROCESS_PREFIX = "USAGE_MONITOR_ELECTRON_COMPANION_PROCESS ";
+const DASHBOARD_FAILURE_PREFIX = "USAGE_MONITOR_ELECTRON_DASHBOARD_FAILURE ";
 const RENDER_PROCESS_FAILURE_REASONS = new Set([
   "clean-exit", "abnormal-exit", "killed", "crashed", "oom", "launch-failed", "integrity-failure", "unknown",
 ]);

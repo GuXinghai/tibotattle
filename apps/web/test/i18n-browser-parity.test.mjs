@@ -1,3 +1,4 @@
+import productBrand from "../../../config/product-brand.cjs";
 import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -21,7 +22,9 @@ test("dashboard notice details resolve through the runtime browser translator", 
 
 test("the browser i18n mirror is current and exposes the canonical contract", async () => {
   assert.equal(await checkI18nBrowserMirror(), true);
-  assert.deepEqual(Object.keys(browser), Object.keys(canonical));
+  assert.deepEqual(Object.keys(browser).sort(), [...Object.keys(canonical), "PRODUCT_BRAND_NAMES", "PRODUCT_FULL_NAME"].sort());
+  assert.deepEqual(browser.PRODUCT_BRAND_NAMES, productBrand.names);
+  assert.equal(browser.PRODUCT_FULL_NAME, productBrand.fullName);
   assert.equal(
     await buildI18nBrowserMirror(),
     await import("node:fs/promises").then(({ readFile }) =>

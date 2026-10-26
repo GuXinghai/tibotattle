@@ -33,9 +33,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "No se creó, sustituyó ni eliminó ninguna credencial.",
   }),
   "electron.secureStorage.locked.message": Object.freeze({
-    "en-US": "Windows Credential Manager is locked for TiboTattle.",
-    "zh-Hans": "TiboTattle 所需的 Windows 凭据管理器已锁定。",
-    "es": "El Administrador de credenciales de Windows que necesita TiboTattle está bloqueado.",
+    "en-US": "Windows Credential Manager is locked for {appName}.",
+    "zh-Hans": "{appName} 所需的 Windows 凭据管理器已锁定。",
+    "es": "El Administrador de credenciales de Windows que necesita {appName} está bloqueado.",
   }),
   "electron.secureStorage.locked.detail": Object.freeze({
     "en-US": "Unlock your Windows session, then choose Retry.",
@@ -43,19 +43,19 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Desbloquea tu sesión de Windows y después elige Reintentar.",
   }),
   "electron.secureStorage.denied.message": Object.freeze({
-    "en-US": "Windows denied TiboTattle access to a required secure credential.",
-    "zh-Hans": "Windows 拒绝 TiboTattle 访问所需的安全凭据。",
-    "es": "Windows denegó a TiboTattle el acceso a una credencial segura necesaria.",
+    "en-US": "Windows denied {appName} access to a required secure credential.",
+    "zh-Hans": "Windows 拒绝 {appName} 访问所需的安全凭据。",
+    "es": "Windows denegó a {appName} el acceso a una credencial segura necesaria.",
   }),
   "electron.secureStorage.denied.detail": Object.freeze({
-    "en-US": "Confirm TiboTattle runs under the Windows account that owns its existing credential, then choose Retry. Do not delete or reset the credential.",
-    "zh-Hans": "请确认 TiboTattle 与拥有现有凭据的 Windows 账户一致，然后点击“重试”。请勿删除或重置凭据。",
-    "es": "Confirma que TiboTattle se ejecuta con la cuenta de Windows que posee su credencial existente y elige Reintentar. No elimines ni restablezcas la credencial.",
+    "en-US": "Confirm {appName} runs under the Windows account that owns its existing credential, then choose Retry. Do not delete or reset the credential.",
+    "zh-Hans": "请确认 {appName} 与拥有现有凭据的 Windows 账户一致，然后点击“重试”。请勿删除或重置凭据。",
+    "es": "Confirma que {appName} se ejecuta con la cuenta de Windows que posee su credencial existente y elige Reintentar. No elimines ni restablezcas la credencial.",
   }),
   "electron.secureStorage.migration_required.message": Object.freeze({
-    "en-US": "An existing TiboTattle credential requires migration.",
-    "zh-Hans": "现有的 TiboTattle 凭据需要迁移。",
-    "es": "Es necesario migrar una credencial existente de TiboTattle.",
+    "en-US": "An existing {appName} credential requires migration.",
+    "zh-Hans": "现有的 {appName} 凭据需要迁移。",
+    "es": "Es necesario migrar una credencial existente de {appName}.",
   }),
   "electron.secureStorage.migration_required.detail": Object.freeze({
     "en-US": "Quit and contact support with the support code below. The legacy credential is preserved. Do not delete or reset credentials or app data. Retry only repeats the secure credential check; neither Retry nor reinstalling this release migrates the credential.",
@@ -68,14 +68,14 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Windows no terminó a tiempo la comprobación de la credencial segura.",
   }),
   "electron.secureStorage.timeout.detail": Object.freeze({
-    "en-US": "Wait for Windows Credential Manager to respond, then choose Retry. TiboTattle will not retry automatically.",
-    "zh-Hans": "请等待 Windows 凭据管理器恢复响应后点击“重试”。TiboTattle 不会自动重试。",
-    "es": "Espera a que el Administrador de credenciales de Windows responda y elige Reintentar. TiboTattle no reintentará automáticamente.",
+    "en-US": "Wait for Windows Credential Manager to respond, then choose Retry. {appName} will not retry automatically.",
+    "zh-Hans": "请等待 Windows 凭据管理器恢复响应后点击“重试”。{appName} 不会自动重试。",
+    "es": "Espera a que el Administrador de credenciales de Windows responda y elige Reintentar. {appName} no reintentará automáticamente.",
   }),
   "electron.secureStorage.credential_invalid.message": Object.freeze({
-    "en-US": "A required TiboTattle credential could not be validated.",
-    "zh-Hans": "无法验证 TiboTattle 所需的凭据。",
-    "es": "No se pudo validar una credencial necesaria de TiboTattle.",
+    "en-US": "A required {appName} credential could not be validated.",
+    "zh-Hans": "无法验证 {appName} 所需的凭据。",
+    "es": "No se pudo validar una credencial necesaria de {appName}.",
   }),
   "electron.secureStorage.credential_invalid.detail": Object.freeze({
     "en-US": "The credential was preserved. Do not delete or reset it; quit and contact support with the support code below.",
@@ -83,19 +83,19 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "La credencial se conserva. No la elimines ni restablezcas; sal y contacta con soporte indicando el código de abajo.",
   }),
   "electron.secureStorage.adapter_integrity_failed.message": Object.freeze({
-    "en-US": "TiboTattle's secure storage component failed verification.",
-    "zh-Hans": "TiboTattle 的安全存储组件未通过验证。",
-    "es": "El componente de almacenamiento seguro de TiboTattle no superó la verificación.",
+    "en-US": "{appName}'s secure storage component failed verification.",
+    "zh-Hans": "{appName} 的安全存储组件未通过验证。",
+    "es": "El componente de almacenamiento seguro de {appName} no superó la verificación.",
   }),
   "electron.secureStorage.adapter_integrity_failed.detail": Object.freeze({
-    "en-US": "Quit and reinstall an untouched TiboTattle release for this PC, then try again.",
-    "zh-Hans": "请退出，重新安装适用于这台电脑的未修改版 TiboTattle，然后再试。",
-    "es": "Sal y reinstala una versión sin modificar de TiboTattle para este PC; después inténtalo de nuevo.",
+    "en-US": "Quit and reinstall an untouched {appName} release for this PC, then try again.",
+    "zh-Hans": "请退出，重新安装适用于这台电脑的未修改版 {appName}，然后再试。",
+    "es": "Sal y reinstala una versión sin modificar de {appName} para este PC; después inténtalo de nuevo.",
   }),
   "electron.secureStorage.security_unavailable.message": Object.freeze({
-    "en-US": "Windows Credential Manager is currently unavailable to TiboTattle.",
-    "zh-Hans": "TiboTattle 目前无法使用 Windows 凭据管理器。",
-    "es": "El Administrador de credenciales de Windows no está disponible para TiboTattle en este momento.",
+    "en-US": "Windows Credential Manager is currently unavailable to {appName}.",
+    "zh-Hans": "{appName} 目前无法使用 Windows 凭据管理器。",
+    "es": "El Administrador de credenciales de Windows no está disponible para {appName} en este momento.",
   }),
   "electron.secureStorage.security_unavailable.detail": Object.freeze({
     "en-US": "Open Windows Credential Manager and confirm it is available, then choose Retry. If this continues, contact support.",
@@ -133,19 +133,19 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Preparar incidencia pública en GitHub…",
   }),
   "electron.diagnostics.message": Object.freeze({
-    "en-US": "Review this content-free report. Preparing a public issue sends it to GitHub in the URL; review the form before submitting. Local crash dumps may contain private data and are not uploaded by TiboTattle. Capture changes take effect after restart.",
-    "zh-Hans": "请检查这份不含会话内容的诊断报告。准备公开问题报告时，会通过网址将报告发送给 GitHub；提交前请检查表单。本地崩溃转储文件可能包含私密数据，TiboTattle 不会上传这些文件。崩溃捕获设置将在重启后生效。",
-    "es": "Revisa este informe sin contenido. Preparar una incidencia pública lo envía a GitHub en la URL; revisa el formulario antes de publicarlo. Los volcados locales pueden contener datos privados y TiboTattle no los sube. Los cambios de captura se aplican tras reiniciar.",
+    "en-US": "Review or copy this content-free local report. Nothing is uploaded. Local crash dumps may contain private data and are not included in this report.",
+    "zh-Hans": "请检查或复制这份不含会话内容的本地诊断报告。不会上传任何内容。本地崩溃转储可能包含私密数据，不包含在此报告中。",
+    "es": "Revisa o copia este informe local sin contenido. No se sube nada. Los volcados locales pueden contener datos privados y no forman parte de este informe.",
   }),
   "electron.diagnostics.title": Object.freeze({
-    "en-US": "TiboTattle doctor",
-    "zh-Hans": "TiboTattle 诊断工具",
-    "es": "Diagnóstico de TiboTattle",
+    "en-US": "{appName} doctor",
+    "zh-Hans": "{appName} 诊断工具",
+    "es": "Diagnóstico de {appName}",
   }),
   "electron.firstRun.checkbox.startAtLogin": Object.freeze({
-    "en-US": "Start TiboTattle at login (you can change this later in Settings)",
-    "zh-Hans": "登录时启动 TiboTattle（稍后可在“设置”中更改）",
-    "es": "Iniciar TiboTattle al iniciar sesión (puedes cambiarlo después en Configuración)",
+    "en-US": "Start {appName} at login (you can change this later in Settings)",
+    "zh-Hans": "登录时启动 {appName}（稍后可在“设置”中更改）",
+    "es": "Iniciar {appName} al iniciar sesión (puedes cambiarlo después en Configuración)",
   }),
   "electron.firstRun.continue": Object.freeze({
     "en-US": "Continue",
@@ -153,9 +153,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Continuar",
   }),
   "electron.firstRun.detail": Object.freeze({
-    "en-US": "Reads: timestamps, model and speed labels, token counters, tool categories, and quota snapshots from the selected Codex sessions folders.\n\nStores: content-free indexes, cached calculations, and settings in your owner-only TiboTattle app-data folder.\n\nLocal analysis runs on this computer and works offline. TiboTattle does not upload your usage data.\n\nLocal allowance notifications are off by default. Supported packaged builds can deliver a local alert after fresh provider-reported evidence crosses a selected threshold. This development build cannot deliver OS alerts until it has a supported app identity; TiboTattle does not add background polling.\n\nUpdates: this development build does not include update checks. Signed production releases can check for updates from About.\n\nKeep the app open while analysis runs. You may close and reopen the TiboTattle window; quitting the app stops the current pass and preserves completed checkpoints.\n\nBy default, first-run setup preselects Start TiboTattle at login. TiboTattle adds an operating-system login item only after you click Continue; it uses no daemon, privileged helper, or hidden persistent process.\n\nContinue to start the local dashboard, or Quit to leave the app closed.",
-    "zh-Hans": "读取：从选定的 Codex 会话文件夹读取时间戳、模型和速度标签、Token 数量、工具类别以及配额快照。\n\n存储：在仅限你本人访问的 TiboTattle 应用数据文件夹中存储不含会话内容的索引、缓存的计算结果和设置。\n\n本地分析在此电脑上运行，离线也可使用。TiboTattle 不会上传你的用量数据。\n\n本地配额提醒默认关闭。支持的已打包版本可以在提供商报告的最新证据显示用量超过所选阈值后发送本地提醒。此开发版本尚未具备受支持的应用身份，因此无法发送系统提醒；TiboTattle 不会添加后台轮询。\n\n更新：此开发版本不包含更新检查。已签名的生产版本可以从“关于”中检查更新。\n\n分析运行期间请保持应用打开。你可以关闭并重新打开 TiboTattle 窗口；退出应用会停止当前分析，并保留已完成的检查点。\n\n首次设置默认勾选“登录时启动 TiboTattle”。只有在你点击“继续”后，TiboTattle 才会添加操作系统登录项；它不会使用守护进程、特权帮助程序或隐藏的常驻进程。\n\n点击“继续”启动本地用量面板，或点击“退出”关闭应用。",
-    "es": "Lee: marcas de tiempo, etiquetas de modelo y velocidad, contadores de tokens, categorías de herramientas y capturas de cuotas de las carpetas de sesiones de Codex seleccionadas.\n\nGuarda: índices sin contenido, cálculos en caché y configuración en la carpeta de datos de la aplicación TiboTattle, protegida para tu usuario.\n\nEl análisis local se ejecuta en este equipo y funciona sin conexión. TiboTattle no sube tus datos de uso.\n\nLas notificaciones locales de cuota están desactivadas de forma predeterminada. Las versiones empaquetadas compatibles pueden enviar una alerta local después de que evidencia reciente informada por el proveedor supere el umbral seleccionado. Esta compilación de desarrollo no puede enviar alertas del sistema hasta tener una identidad de aplicación compatible; TiboTattle no añade sondeo en segundo plano.\n\nActualizaciones: esta compilación de desarrollo no incluye comprobaciones de actualización. Las versiones de producción firmadas pueden comprobar actualizaciones desde Acerca de.\n\nMantén la aplicación abierta mientras se ejecuta el análisis. Puedes cerrar y volver a abrir la ventana de TiboTattle; salir de la aplicación detiene el análisis actual y conserva los puntos de control completados.\n\nDe forma predeterminada, la configuración inicial preselecciona Iniciar TiboTattle al iniciar sesión. TiboTattle añade un elemento de inicio del sistema operativo solo después de que hagas clic en Continuar; no usa demonios, asistentes privilegiados ni procesos persistentes ocultos.\n\nElige Continuar para iniciar el panel local o Salir para dejar la aplicación cerrada.",
+    "en-US": "Reads: timestamps, model and speed labels, token counters, tool categories, and quota snapshots from the selected Codex sessions folders.\n\nStores: content-free indexes, cached calculations, and settings in your owner-only {appName} app-data folder.\n\nLocal analysis runs on this computer and works offline. {appName} does not upload your usage data.\n\nLocal allowance notifications are off by default. Supported packaged builds can deliver a local alert after fresh provider-reported evidence crosses a selected threshold. This development build cannot deliver OS alerts until it has a supported app identity; {appName} does not add background polling.\n\nUpdates: this development build does not include update checks. Signed production releases can check for updates from About.\n\nKeep the app open while analysis runs. You may close and reopen the {appName} window; quitting the app stops the current pass and preserves completed checkpoints.\n\nBy default, first-run setup preselects Start {appName} at login. {appName} adds an operating-system login item only after you click Continue; it uses no daemon, privileged helper, or hidden persistent process.\n\nContinue to start the local dashboard, or Quit to leave the app closed.",
+    "zh-Hans": "读取：从选定的 Codex 会话文件夹读取时间戳、模型和速度标签、Token 数量、工具类别以及配额快照。\n\n存储：在仅限你本人访问的 {appName} 应用数据文件夹中存储不含会话内容的索引、缓存的计算结果和设置。\n\n本地分析在此电脑上运行，离线也可使用。{appName} 不会上传你的用量数据。\n\n本地配额提醒默认关闭。支持的已打包版本可以在提供商报告的最新证据显示用量超过所选阈值后发送本地提醒。此开发版本尚未具备受支持的应用身份，因此无法发送系统提醒；{appName} 不会添加后台轮询。\n\n更新：此开发版本不包含更新检查。已签名的生产版本可以从“关于”中检查更新。\n\n分析运行期间请保持应用打开。你可以关闭并重新打开 {appName} 窗口；退出应用会停止当前分析，并保留已完成的检查点。\n\n首次设置默认勾选“登录时启动 {appName}”。只有在你点击“继续”后，{appName} 才会添加操作系统登录项；它不会使用守护进程、特权帮助程序或隐藏的常驻进程。\n\n点击“继续”启动本地用量面板，或点击“退出”关闭应用。",
+    "es": "Lee: marcas de tiempo, etiquetas de modelo y velocidad, contadores de tokens, categorías de herramientas y capturas de cuotas de las carpetas de sesiones de Codex seleccionadas.\n\nGuarda: índices sin contenido, cálculos en caché y configuración en la carpeta de datos de la aplicación {appName}, protegida para tu usuario.\n\nEl análisis local se ejecuta en este equipo y funciona sin conexión. {appName} no sube tus datos de uso.\n\nLas notificaciones locales de cuota están desactivadas de forma predeterminada. Las versiones empaquetadas compatibles pueden enviar una alerta local después de que evidencia reciente informada por el proveedor supere el umbral seleccionado. Esta compilación de desarrollo no puede enviar alertas del sistema hasta tener una identidad de aplicación compatible; {appName} no añade sondeo en segundo plano.\n\nActualizaciones: esta compilación de desarrollo no incluye comprobaciones de actualización. Las versiones de producción firmadas pueden comprobar actualizaciones desde Acerca de.\n\nMantén la aplicación abierta mientras se ejecuta el análisis. Puedes cerrar y volver a abrir la ventana de {appName}; salir de la aplicación detiene el análisis actual y conserva los puntos de control completados.\n\nDe forma predeterminada, la configuración inicial preselecciona Iniciar {appName} al iniciar sesión. {appName} añade un elemento de inicio del sistema operativo solo después de que hagas clic en Continuar; no usa demonios, asistentes privilegiados ni procesos persistentes ocultos.\n\nElige Continuar para iniciar el panel local o Salir para dejar la aplicación cerrada.",
   }),
   "electron.firstRun.failure.detail": Object.freeze({
     "en-US": "Review the application data directory and try again. No local companion or login item was started.",
@@ -163,14 +163,14 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Revisa el directorio de datos de la aplicación e inténtalo de nuevo. No se inició el servicio auxiliar local ni el elemento de inicio.",
   }),
   "electron.firstRun.failure.message": Object.freeze({
-    "en-US": "TiboTattle could not verify its local privacy acknowledgement, so it did not start the companion.",
-    "zh-Hans": "TiboTattle 无法验证保存在本地的隐私确认记录，因此未启动辅助服务。",
-    "es": "TiboTattle no pudo verificar su confirmación de privacidad local, por lo que no inició el servicio auxiliar.",
+    "en-US": "{appName} could not verify its local privacy acknowledgement, so it did not start the companion.",
+    "zh-Hans": "{appName} 无法验证保存在本地的隐私确认记录，因此未启动辅助服务。",
+    "es": "{appName} no pudo verificar su confirmación de privacidad local, por lo que no inició el servicio auxiliar.",
   }),
   "electron.firstRun.failure.title": Object.freeze({
-    "en-US": "TiboTattle cannot start safely",
-    "zh-Hans": "TiboTattle 无法安全启动",
-    "es": "TiboTattle no puede iniciarse de forma segura",
+    "en-US": "{appName} cannot start safely",
+    "zh-Hans": "{appName} 无法安全启动",
+    "es": "{appName} no puede iniciarse de forma segura",
   }),
   "electron.firstRun.loginRegistration.continue": Object.freeze({
     "en-US": "Continue",
@@ -178,9 +178,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Continuar",
   }),
   "electron.firstRun.loginRegistration.detail": Object.freeze({
-    "en-US": "TiboTattle will continue starting now. You can review or approve this setting in Login Items.",
-    "zh-Hans": "TiboTattle 将继续启动。你可以在系统的“登录项”设置中查看或批准此设置。",
-    "es": "TiboTattle continuará iniciándose ahora. Puedes revisar o aprobar esta configuración en Elementos de inicio.",
+    "en-US": "{appName} will continue starting now. You can review or approve this setting in Login Items.",
+    "zh-Hans": "{appName} 将继续启动。你可以在系统的“登录项”设置中查看或批准此设置。",
+    "es": "{appName} continuará iniciándose ahora. Puedes revisar o aprobar esta configuración en Elementos de inicio.",
   }),
   "electron.firstRun.loginRegistration.message": Object.freeze({
     "en-US": "The operating system did not confirm Start at login.",
@@ -193,19 +193,19 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Abrir configuración de elementos de inicio",
   }),
   "electron.firstRun.loginRegistration.title": Object.freeze({
-    "en-US": "TiboTattle will continue without Start at login",
-    "zh-Hans": "TiboTattle 将继续启动，但不会在登录时启动",
-    "es": "TiboTattle continuará sin iniciarse al iniciar sesión",
+    "en-US": "{appName} will continue without Start at login",
+    "zh-Hans": "{appName} 将继续启动，但不会在登录时启动",
+    "es": "{appName} continuará sin iniciarse al iniciar sesión",
   }),
   "electron.firstRun.message": Object.freeze({
-    "en-US": "TiboTattle updates local Codex metadata while the app is open. The first pass starts after setup; later checks reuse the same bounded local companion.",
-    "zh-Hans": "TiboTattle 会在应用打开期间更新本地 Codex 元数据。首次分析将在设置完成后开始，后续检查会继续使用同一个运行范围受限的本地辅助服务。",
-    "es": "TiboTattle actualiza los metadatos locales de Codex mientras la aplicación está abierta. El primer análisis comienza después de la configuración; las comprobaciones posteriores reutilizan el mismo servicio auxiliar local acotado.",
+    "en-US": "{appName} updates local Codex metadata while the app is open. The first pass starts after setup; later checks reuse the same bounded local companion.",
+    "zh-Hans": "{appName} 会在应用打开期间更新本地 Codex 元数据。首次分析将在设置完成后开始，后续检查会继续使用同一个运行范围受限的本地辅助服务。",
+    "es": "{appName} actualiza los metadatos locales de Codex mientras la aplicación está abierta. El primer análisis comienza después de la configuración; las comprobaciones posteriores reutilizan el mismo servicio auxiliar local acotado.",
   }),
   "electron.firstRun.production.detail": Object.freeze({
-    "en-US": "TiboTattle reads local usage metadata: timestamps, models, token counts, tool categories and quota snapshots. Analysis and your saved history stay on this computer and work offline.\n\nTiboTattle does not upload your usage data.\n\nUpdate checks are available in About. Manage automatic downloads, optional local notifications and startup in Settings.\n\nKeep TiboTattle open while analysis runs. Quitting stops the current pass and preserves completed checkpoints. The startup checkbox below adds a login item only after you click Continue.",
-    "zh-Hans": "TiboTattle 读取本地用量元数据：时间戳、模型、Token 数量、工具类别和配额快照。分析和已保存的历史记录保留在此电脑上，离线也可使用。\n\nTiboTattle 不会上传你的用量数据。\n\n你可以在“关于”中检查更新，在“设置”中管理自动下载、可选的本地提醒和启动选项。\n\n分析期间请保持 TiboTattle 打开。退出会停止当前分析，并保留已完成的检查点。只有勾选下方的启动选项并点击“继续”后，应用才会添加系统登录项。",
-    "es": "TiboTattle lee metadatos de uso locales: marcas de tiempo, modelos, contadores de tokens, categorías de herramientas y capturas de cuotas. El análisis y tu historial guardado permanecen en este equipo y funcionan sin conexión.\n\nTiboTattle no sube tus datos de uso.\n\nPuedes buscar actualizaciones en Acerca de. Gestiona las descargas automáticas, las notificaciones locales opcionales y el inicio en Configuración.\n\nMantén TiboTattle abierto durante el análisis. Salir detiene el análisis actual y conserva los puntos de control completados. La casilla de inicio que aparece abajo añade un elemento de inicio de sesión solo después de pulsar Continuar.",
+    "en-US": "{appName} reads local usage metadata: timestamps, models, token counts, tool categories and quota snapshots. Analysis and your saved history stay on this computer and work offline.\n\n{appName} does not upload your usage data.\n\nUpdate checks are available in About. Manage automatic downloads, optional local notifications and startup in Settings.\n\nKeep {appName} open while analysis runs. Quitting stops the current pass and preserves completed checkpoints. The startup checkbox below adds a login item only after you click Continue.",
+    "zh-Hans": "{appName} 读取本地用量元数据：时间戳、模型、Token 数量、工具类别和配额快照。分析和已保存的历史记录保留在此电脑上，离线也可使用。\n\n{appName} 不会上传你的用量数据。\n\n你可以在“关于”中检查更新，在“设置”中管理自动下载、可选的本地提醒和启动选项。\n\n分析期间请保持 {appName} 打开。退出会停止当前分析，并保留已完成的检查点。只有勾选下方的启动选项并点击“继续”后，应用才会添加系统登录项。",
+    "es": "{appName} lee metadatos de uso locales: marcas de tiempo, modelos, contadores de tokens, categorías de herramientas y capturas de cuotas. El análisis y tu historial guardado permanecen en este equipo y funcionan sin conexión.\n\n{appName} no sube tus datos de uso.\n\nPuedes buscar actualizaciones en Acerca de. Gestiona las descargas automáticas, las notificaciones locales opcionales y el inicio en Configuración.\n\nMantén {appName} abierto durante el análisis. Salir detiene el análisis actual y conserva los puntos de control completados. La casilla de inicio que aparece abajo añade un elemento de inicio de sesión solo después de pulsar Continuar.",
   }),
   "electron.firstRun.production.message": Object.freeze({
     "en-US": "See your Codex usage and allowance in one place.",
@@ -213,9 +213,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Consulta tu uso y tu cuota de Codex en un solo lugar.",
   }),
   "electron.firstRun.production.title": Object.freeze({
-    "en-US": "Welcome to TiboTattle",
-    "zh-Hans": "欢迎使用 TiboTattle",
-    "es": "Te damos la bienvenida a TiboTattle",
+    "en-US": "Welcome to {appName}",
+    "zh-Hans": "欢迎使用 {appName}",
+    "es": "Te damos la bienvenida a {appName}",
   }),
   "electron.firstRun.quit": Object.freeze({
     "en-US": "Quit",
@@ -223,9 +223,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Salir",
   }),
   "electron.firstRun.title": Object.freeze({
-    "en-US": "TiboTattle local data",
-    "zh-Hans": "TiboTattle 本地数据",
-    "es": "Datos locales de TiboTattle",
+    "en-US": "{appName} local data",
+    "zh-Hans": "{appName} 本地数据",
+    "es": "Datos locales de {appName}",
   }),
   "electron.menu.usage": Object.freeze({
     "en-US": "Usage & costs",
@@ -268,9 +268,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Esta es una prueba de notificación local. La configuración de alertas y el historial de uso no han cambiado.",
   }),
   "electron.notification.test.title": Object.freeze({
-    "en-US": "TiboTattle test notification",
-    "zh-Hans": "TiboTattle 测试通知",
-    "es": "Notificación de prueba de TiboTattle",
+    "en-US": "{appName} test notification",
+    "zh-Hans": "{appName} 测试通知",
+    "es": "Notificación de prueba de {appName}",
   }),
   "electron.notification.threshold80.body": Object.freeze({
     "en-US": "A fresh provider-reported observation crossed the 80% usage threshold.",
@@ -298,9 +298,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "El servicio de uso local ya se está reiniciando.",
   }),
   "electron.recovery.companionBusy.title": Object.freeze({
-    "en-US": "TiboTattle is busy",
-    "zh-Hans": "TiboTattle 正忙",
-    "es": "TiboTattle está ocupado",
+    "en-US": "{appName} is busy",
+    "zh-Hans": "{appName} 正忙",
+    "es": "{appName} está ocupado",
   }),
   "electron.recovery.companionExitBeforeReady.detail": Object.freeze({
     "en-US": "The local usage service stopped before it became ready.",
@@ -308,9 +308,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "El servicio de uso local se detuvo antes de estar listo.",
   }),
   "electron.recovery.companionExitBeforeReady.title": Object.freeze({
-    "en-US": "TiboTattle stopped during startup",
-    "zh-Hans": "TiboTattle 启动中途停止",
-    "es": "TiboTattle se detuvo durante el inicio",
+    "en-US": "{appName} stopped during startup",
+    "zh-Hans": "{appName} 启动中途停止",
+    "es": "{appName} se detuvo durante el inicio",
   }),
   "electron.recovery.companionReadyInvalid.detail": Object.freeze({
     "en-US": "The local usage service returned an invalid startup signal.",
@@ -318,9 +318,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "El servicio de uso local devolvió una señal de inicio no válida.",
   }),
   "electron.recovery.companionReadyInvalid.title": Object.freeze({
-    "en-US": "TiboTattle could not start",
-    "zh-Hans": "TiboTattle 无法启动",
-    "es": "No se pudo iniciar TiboTattle",
+    "en-US": "{appName} could not start",
+    "zh-Hans": "{appName} 无法启动",
+    "es": "No se pudo iniciar {appName}",
   }),
   "electron.recovery.companionReadyOverflow.detail": Object.freeze({
     "en-US": "The local usage service returned an oversized startup signal.",
@@ -328,9 +328,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "El servicio de uso local devolvió una señal de inicio demasiado grande.",
   }),
   "electron.recovery.companionReadyOverflow.title": Object.freeze({
-    "en-US": "TiboTattle could not start",
-    "zh-Hans": "TiboTattle 无法启动",
-    "es": "No se pudo iniciar TiboTattle",
+    "en-US": "{appName} could not start",
+    "zh-Hans": "{appName} 无法启动",
+    "es": "No se pudo iniciar {appName}",
   }),
   "electron.recovery.companionShutdownTimeout.detail": Object.freeze({
     "en-US": "The previous local usage service did not stop in time.",
@@ -338,9 +338,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "El servicio de uso local anterior no se detuvo a tiempo.",
   }),
   "electron.recovery.companionShutdownTimeout.title": Object.freeze({
-    "en-US": "TiboTattle could not restart",
-    "zh-Hans": "TiboTattle 无法重新启动",
-    "es": "TiboTattle no pudo reiniciarse",
+    "en-US": "{appName} could not restart",
+    "zh-Hans": "{appName} 无法重新启动",
+    "es": "{appName} no pudo reiniciarse",
   }),
   "electron.recovery.companionSpawnFailed.detail": Object.freeze({
     "en-US": "The local usage service could not be started.",
@@ -348,9 +348,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "No se pudo iniciar el servicio de uso local.",
   }),
   "electron.recovery.companionSpawnFailed.title": Object.freeze({
-    "en-US": "TiboTattle could not start",
-    "zh-Hans": "TiboTattle 无法启动",
-    "es": "No se pudo iniciar TiboTattle",
+    "en-US": "{appName} could not start",
+    "zh-Hans": "{appName} 无法启动",
+    "es": "No se pudo iniciar {appName}",
   }),
   "electron.recovery.companionStartTimeout.detail": Object.freeze({
     "en-US": "The local usage service did not become ready in time.",
@@ -358,9 +358,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "El servicio de uso local no estuvo listo a tiempo.",
   }),
   "electron.recovery.companionStartTimeout.title": Object.freeze({
-    "en-US": "TiboTattle is taking too long to start",
-    "zh-Hans": "TiboTattle 启动时间过长",
-    "es": "TiboTattle está tardando demasiado en iniciarse",
+    "en-US": "{appName} is taking too long to start",
+    "zh-Hans": "{appName} 启动时间过长",
+    "es": "{appName} está tardando demasiado en iniciarse",
   }),
   "electron.recovery.diagnostic": Object.freeze({
     "en-US": "Diagnostic: {code}",
@@ -408,9 +408,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Aquí no se muestran rutas de carpetas ni errores internos. Reintenta el inicio o sal y vuelve a intentarlo.",
   }),
   "electron.recovery.settings.failureMessage": Object.freeze({
-    "en-US": "TiboTattle could not apply that folder choice.",
-    "zh-Hans": "TiboTattle 无法应用所选文件夹。",
-    "es": "TiboTattle no pudo aplicar esa elección de carpeta.",
+    "en-US": "{appName} could not apply that folder choice.",
+    "zh-Hans": "{appName} 无法应用所选文件夹。",
+    "es": "{appName} no pudo aplicar esa elección de carpeta.",
   }),
   "electron.recovery.settings.failureTitle": Object.freeze({
     "en-US": "Codex folder could not be changed",
@@ -418,9 +418,9 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "No se pudo cambiar la carpeta de Codex",
   }),
   "electron.recovery.settings.message": Object.freeze({
-    "en-US": "TiboTattle could not start with the configured Codex folder.",
-    "zh-Hans": "TiboTattle 无法使用当前配置的 Codex 文件夹启动。",
-    "es": "TiboTattle no pudo iniciarse con la carpeta de Codex configurada.",
+    "en-US": "{appName} could not start with the configured Codex folder.",
+    "zh-Hans": "{appName} 无法使用当前配置的 Codex 文件夹启动。",
+    "es": "{appName} no pudo iniciarse con la carpeta de Codex configurada.",
   }),
   "electron.recovery.settings.title": Object.freeze({
     "en-US": "Repair Codex folder",
@@ -438,14 +438,14 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Iniciando el servicio de uso local…",
   }),
   "electron.recovery.starting.title": Object.freeze({
-    "en-US": "Starting TiboTattle",
-    "zh-Hans": "正在启动 TiboTattle",
-    "es": "Iniciando TiboTattle",
+    "en-US": "Starting {appName}",
+    "zh-Hans": "正在启动 {appName}",
+    "es": "Iniciando {appName}",
   }),
   "electron.recovery.windowTitle": Object.freeze({
-    "en-US": "TiboTattle",
-    "zh-Hans": "TiboTattle",
-    "es": "TiboTattle",
+    "en-US": "{appName}",
+    "zh-Hans": "{appName}",
+    "es": "{appName}",
   }),
   "electron.settings.updates.automaticUnavailable": Object.freeze({
     "en-US": "Automatic updates are unavailable in this development build.",

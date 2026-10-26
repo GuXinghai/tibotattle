@@ -197,7 +197,7 @@ const HEADLINE_READY_INDEXING_STATUSES = new Set([
   "bounded_pause",
 ]);
 const QUOTA_NOTIFICATION_EVIDENCE_SCHEMA =
-  "tibotattle-notification-evidence-v2";
+  "usagemonitor-notification-evidence-v2";
 const QUOTA_NOTIFICATION_LANES = new Set(["primary", "secondary"]);
 const QUOTA_NOTIFICATION_CONTINUITY_KEY = /^[A-Za-z0-9_-]{43}$/u;
 const MAX_NOTIFICATION_EVIDENCE_AGE_MS = 5 * 60 * 1_000;

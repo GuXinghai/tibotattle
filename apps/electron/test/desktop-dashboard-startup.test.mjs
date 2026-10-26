@@ -44,7 +44,7 @@ async function rendererProbe() {
       failed = readFailure;
       const before = requests.length;
       const preload = path.join(temporary, "preload.cjs");
-      fs.writeFileSync(preload, `const {contextBridge}=require('electron');contextBridge.exposeInMainWorld('tibotattleDesktop',Object.freeze({version:'v1',getSettings:async()=>({settings:{language:${JSON.stringify(language)},appearance:'light',refreshPaused:false,refreshIntervalSeconds:300}}),setRefreshPaused:async paused=>({settings:{refreshPaused:paused}}),onCommand:()=>()=>{}}));`);
+      fs.writeFileSync(preload, `const {contextBridge}=require('electron');contextBridge.exposeInMainWorld('usageMonitorDesktop',Object.freeze({version:'v1',getSettings:async()=>({settings:{language:${JSON.stringify(language)},appearance:'light',refreshPaused:false,refreshIntervalSeconds:300}}),setRefreshPaused:async paused=>({settings:{refreshPaused:paused}}),onCommand:()=>()=>{}}));`);
       const window = new BrowserWindow({ show: false, width: 1280, height: 900,
         webPreferences: { preload, sandbox: true, contextIsolation: true, nodeIntegration: false } });
       window.webContents.on("console-message", event => {
@@ -74,7 +74,7 @@ test("complete desktop dashboard initializes pause after page controllers and te
   skip: process.platform !== "win32" || process.arch !== "x64",
   timeout: 30_000,
 }, async () => {
-  const temporary = await mkdtemp(join(tmpdir(), "tibotattle-dashboard-startup-"));
+  const temporary = await mkdtemp(join(tmpdir(), "usagemonitor-dashboard-startup-"));
   try {
     const script = join(temporary, "probe.cjs");
     await writeFile(script, `(${rendererProbe.toString()})()`);

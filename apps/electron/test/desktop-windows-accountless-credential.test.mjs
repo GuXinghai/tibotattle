@@ -12,22 +12,22 @@ test("main enables the development reader only inside the qualified Windows lane
   const block = source.match(/const windowsNormalCandidateCredentialHandover =[\s\S]*?;\n/u)?.[0];
   assert.ok(block);
   const select = new Function("productionEnabled", "platform", "architecture",
-    "productionDistribution", "qualificationContext", "app", "environment",
+    "productionDistribution", "qualificationContext", "preparation", "environment",
     "WINDOWS_ELECTRON_TEST_LANE", "createWindowsNormalCandidateCredentialHandover",
     "createWindowsDevelopmentReadOnlyCredentialHandover", `${block} return windowsNormalCandidateCredentialHandover;`);
   const valid = { platform: "win32", architecture: "x64", context: {},
-    name: "TiboTattle Dev", lane: "windows-electron-smoke" };
+    profile: "development", lane: "windows-electron-smoke" };
   for (const [change, expected] of [
     [{}, "reader"], [{ platform: "linux" }, null], [{ architecture: "arm64" }, null],
-    [{ context: null }, null], [{ name: "other" }, null], [{ lane: undefined }, null],
+    [{ context: null }, null], [{ profile: "preview" }, null], [{ lane: undefined }, null],
   ]) {
     const v = { ...valid, ...change };
     assert.equal(select(false, v.platform, v.architecture, null, v.context,
-      { getName: () => v.name }, { USAGE_MONITOR_TEST_LANE: v.lane },
+      { applicationProfile: v.profile }, { USAGE_MONITOR_TEST_LANE: v.lane },
       "windows-electron-smoke", () => "normal", () => "reader"), expected);
   }
   assert.equal(select(true, "win32", "x64", { target: "win32-x64" }, null,
-    { getName: () => "TiboTattle" }, {}, "windows-electron-smoke",
+    { applicationProfile: "stable" }, {}, "windows-electron-smoke",
     () => "normal", () => "reader"), "normal");
 });
 

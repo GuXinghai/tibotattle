@@ -1,8 +1,11 @@
 import { win32 } from "node:path";
 
+import applicationIdentity from "../../config/application-identity.cjs";
+import brand from "../../config/product-brand.cjs";
+
 import distribution from "../../config/electron-production-distribution.cjs";
 
-const WINDOWS_NOTIFICATION_SHORTCUT_LEAF = "TiboTattle.lnk";
+const WINDOWS_NOTIFICATION_SHORTCUT_LEAF = `${brand.displayName}.lnk`;
 const WINDOWS_NOTIFICATION_START_MENU_SEGMENTS = Object.freeze([
   "Microsoft",
   "Windows",
@@ -61,11 +64,12 @@ export function prepareWindowsNotificationIdentity({
   shell,
   platform = process.platform,
   identity = productionIdentity(),
+  applicationProfile = null,
   pathApi = win32,
 } = {}) {
   try {
     if (platform !== "win32" || app?.isPackaged !== true
-        || typeof app.getName !== "function" || app.getName() !== "TiboTattle"
+        || applicationIdentity.validateApplicationMetadata(applicationProfile).profile !== "stable"
         || typeof app.getPath !== "function"
         || typeof app.setAppUserModelId !== "function"
         || typeof app.setToastActivatorCLSID !== "function"

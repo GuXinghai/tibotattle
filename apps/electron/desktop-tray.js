@@ -1,3 +1,4 @@
+import { PRODUCT_BRAND } from "../../config/product-brand.js";
 /**
  * Dependency-injected tray descriptors for the Electron shell.
  *
@@ -19,17 +20,16 @@ import {
 } from "./desktop-tray-status.js";
 
 const STATUS_PLACEHOLDER = "Status unavailable";
-const TRAY_ICON_RELATIVE_PATH = "apps/web/public/tibotattle-icon.png";
+const APP_ICON_RELATIVE_PATH = "apps/web/public/app-icon.png";
+const TRAY_ICON_RELATIVE_PATH = "apps/web/public/tray-icon.png";
 const TRAY_ICON_SIZE = 16;
-// Keep the intermediate bitmap large enough to preserve the bird's fingers
-// and beak before reducing it to the 16px menu-bar mark. The native AppKit
-// implementation uses the same 64px extraction surface.
+// Preserve transparent vector edges before composing the 16px status mark.
 const TRAY_TEMPLATE_WORK_SIZE = 64;
-const TRAY_TEMPLATE_CROP_INSET_RATIO = 0.14;
-const TRAY_TEMPLATE_CROP_SIZE_RATIO = 0.72;
+const TRAY_TEMPLATE_CROP_INSET_RATIO = 0;
+const TRAY_TEMPLATE_CROP_SIZE_RATIO = 1;
 const TRAY_TEMPLATE_SCALE_FACTORS = Object.freeze([1, 2]);
 const TRAY_TEMPLATE_DRAW_SCALE = TRAY_TEMPLATE_WORK_SIZE / TRAY_ICON_SIZE;
-const NATIVE_TRAY_BIRD_RECT = Object.freeze({
+const NATIVE_TRAY_MARK_RECT = Object.freeze({
   x: 0.5,
   y: 2.5,
   width: 15,
@@ -51,7 +51,7 @@ function defaultSystemLocales() {
 }
 
 export function createDesktopTrayTemplate({
-  appName = "TiboTattle",
+  appName = PRODUCT_BRAND.displayName,
   actions = createDesktopActionInterface(),
   trayStatus,
   trayPreferences,
@@ -499,25 +499,25 @@ function paintCircle(bitmap, centerX, centerY, radius, alpha) {
 function trayGlyphDescriptor(trayStatus, options = {}) {
   if (trayStatus !== undefined && options.preferences !== undefined) {
     const projected = projectDesktopTrayStatus(trayStatus, options);
-    return { kind: projected.status, birdAlpha: 1, iconMode: projected.iconMode, meters: projected.meters };
+    return { kind: projected.status, markAlpha: 1, iconMode: projected.iconMode, meters: projected.meters };
   }
-  if (trayStatus === undefined) return { kind: "unavailable", birdAlpha: 0.42 };
+  if (trayStatus === undefined) return { kind: "unavailable", markAlpha: 0.42 };
   let status;
   try {
     status = validateDesktopTrayStatus(trayStatus);
   } catch {
-    return { kind: "unavailable", birdAlpha: 0.42 };
+    return { kind: "unavailable", markAlpha: 0.42 };
   }
-  if (status.status === "analyzing") return { kind: "analyzing", birdAlpha: 1 };
-  if (status.status === "stale") return { kind: "stale", birdAlpha: 0.58 };
+  if (status.status === "analyzing") return { kind: "analyzing", markAlpha: 1 };
+  if (status.status === "stale") return { kind: "stale", markAlpha: 0.58 };
   if (status.status === "fresh" && status.allowance !== null) {
     return {
       kind: "live",
-      birdAlpha: 1,
+      markAlpha: 1,
       remainingPercent: status.allowance.remainingPercent,
     };
   }
-  return { kind: "unavailable", birdAlpha: 0.42 };
+  return { kind: "unavailable", markAlpha: 0.42 };
 }
 
 function trayGlyphKey(descriptor) {
@@ -581,40 +581,40 @@ function composeNativeTrayGlyph(baseSource, descriptor) {
   if (baseSource === null
       || typeof baseSource !== "object"
       || typeof baseSource.resize !== "function") return null;
-  const birdRect = scaledNativeRect(descriptor.iconMode === "dual-meter"
-    ? { x: 3, y: 3.5, width: 10, height: 9 } : NATIVE_TRAY_BIRD_RECT);
-  let bird;
+  const markRect = scaledNativeRect(descriptor.iconMode === "dual-meter"
+    ? { x: 3, y: 3.5, width: 10, height: 9 } : NATIVE_TRAY_MARK_RECT);
+  let mark;
   try {
-    bird = baseSource.resize({
-      width: Math.round(birdRect.width),
-      height: Math.round(birdRect.height),
+    mark = baseSource.resize({
+      width: Math.round(markRect.width),
+      height: Math.round(markRect.height),
       quality: "best",
     });
-    if (!isNonEmptyNativeImage(bird) || typeof bird.toBitmap !== "function") return null;
+    if (!isNonEmptyNativeImage(mark) || typeof mark.toBitmap !== "function") return null;
   } catch {
     return null;
   }
-  let birdBitmap;
+  let markBitmap;
   try {
-    birdBitmap = Buffer.from(bird.toBitmap());
+    markBitmap = Buffer.from(mark.toBitmap());
   } catch {
     return null;
   }
-  const birdWidth = Math.round(birdRect.width);
-  const birdHeight = Math.round(birdRect.height);
-  if (birdBitmap.byteLength !== birdWidth * birdHeight * 4) return null;
+  const markWidth = Math.round(markRect.width);
+  const markHeight = Math.round(markRect.height);
+  if (markBitmap.byteLength !== markWidth * markHeight * 4) return null;
 
   const output = Buffer.alloc(TRAY_TEMPLATE_WORK_SIZE * TRAY_TEMPLATE_WORK_SIZE * 4);
-  const left = Math.round(birdRect.x);
-  const top = Math.round(birdRect.y);
-  for (let y = 0; y < birdHeight; y += 1) {
-    for (let x = 0; x < birdWidth; x += 1) {
-      const sourceOffset = (y * birdWidth + x) * 4;
+  const left = Math.round(markRect.x);
+  const top = Math.round(markRect.y);
+  for (let y = 0; y < markHeight; y += 1) {
+    for (let x = 0; x < markWidth; x += 1) {
+      const sourceOffset = (y * markWidth + x) * 4;
       const targetOffset = ((top + y) * TRAY_TEMPLATE_WORK_SIZE + left + x) * 4;
       output[targetOffset] = 255;
       output[targetOffset + 1] = 255;
       output[targetOffset + 2] = 255;
-      output[targetOffset + 3] = Math.round(birdBitmap[sourceOffset + 3] * descriptor.birdAlpha);
+      output[targetOffset + 3] = Math.round(markBitmap[sourceOffset + 3] * descriptor.markAlpha);
     }
   }
   drawNativeTrayMeter(output, descriptor);
@@ -654,37 +654,8 @@ function desktopTrayAsset({ nativeImage, resourceRoot, icon }) {
     return { baseSource: null, fallback: undefined };
   }
 
-  // The reviewed application artwork is a full squircle. At menu-bar size,
-  // shrinking that whole plate makes the cream bird collapse into a white
-  // rounded square. Match the native AppKit shell's reviewed crop before
-  // extracting the bright brand mark. The crop seam is optional so older
-  // Electron/nativeImage implementations still fail soft to the unprocessed
-  // asset rather than losing the status item entirely.
-  let workingSource = source;
-  if (typeof source.getSize === "function"
-      && typeof source.crop === "function") {
-    try {
-      const size = source.getSize();
-      const width = Number(size?.width);
-      const height = Number(size?.height);
-      if (Number.isFinite(width) && Number.isFinite(height)
-          && width > 0 && height > 0) {
-        const cropWidth = Math.max(1, Math.round(width * TRAY_TEMPLATE_CROP_SIZE_RATIO));
-        const cropHeight = Math.max(1, Math.round(height * TRAY_TEMPLATE_CROP_SIZE_RATIO));
-        const cropped = source.crop({
-          x: Math.max(0, Math.floor(width * TRAY_TEMPLATE_CROP_INSET_RATIO)),
-          y: Math.max(0, Math.floor(height * TRAY_TEMPLATE_CROP_INSET_RATIO)),
-          width: Math.min(Math.round(width), cropWidth),
-          height: Math.min(Math.round(height), cropHeight),
-        });
-        if (isNonEmptyNativeImage(cropped) && typeof cropped.resize === "function") {
-          workingSource = cropped;
-        }
-      }
-    } catch {
-      workingSource = source;
-    }
-  }
+  // The transparent tray artwork already has its own small-size optical layout.
+  const workingSource = source;
 
   let resized;
   try {
@@ -708,7 +679,9 @@ function desktopTrayAsset({ nativeImage, resourceRoot, icon }) {
       baseSource = null;
     }
   }
-  return { baseSource, fallback: resized };
+  const fallback = baseSource === null ? resized : dynamicTemplateImage(nativeImage, baseSource,
+    { kind: "unavailable", markAlpha: 1, iconMode: "app", meters: [] }) ?? resized;
+  return { baseSource, fallback };
 }
 
 /**
@@ -777,16 +750,24 @@ export function resolveDesktopTrayIcon({
 }
 
 /**
- * Extract the bright bird from an Electron BGRA bitmap.
- *
- * The native status item uses the source artwork's red channel as the
- * reviewed separation between the deep-green plate and the cream/amber bird:
- * values around 0.35 are transparent and values around 0.75 are opaque. A
- * ramp, rather than a hard threshold, preserves anti-aliased edges while the
- * source alpha keeps transparent icon corners transparent. The helper is
- * exported so the real packaged asset can be regression-tested without
- * needing a running Electron process.
+ * Resolve the full-colour application artwork used by BrowserWindow and the
+ * Windows taskbar. This is intentionally separate from the monochrome tray
+ * template so the shell never falls back to a status mask for its app icon.
  */
+export function resolveDesktopApplicationIcon({ nativeImage, resourceRoot } = {}) {
+  if (typeof nativeImage?.createFromPath !== "function"
+      || typeof resourceRoot !== "string" || !isAbsolute(resourceRoot)) {
+    return undefined;
+  }
+  try {
+    const icon = nativeImage.createFromPath(join(resourceRoot, APP_ICON_RELATIVE_PATH));
+    return isNonEmptyNativeImage(icon) ? icon : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Normalize a transparent monochrome mark, preserving all anti-aliased alpha edges. */
 export function extractDesktopTrayTemplateBitmap(bitmap) {
   if (!(bitmap instanceof Uint8Array)
       || bitmap.byteLength !== TRAY_TEMPLATE_WORK_SIZE * TRAY_TEMPLATE_WORK_SIZE * 4) {
@@ -794,24 +775,18 @@ export function extractDesktopTrayTemplateBitmap(bitmap) {
   }
   const output = Buffer.from(bitmap);
   for (let offset = 0; offset < output.length; offset += 4) {
-    // Electron nativeImage.toBitmap() is BGRA on the supported desktop
-    // targets. This intentionally mirrors the native Swift red-channel ramp.
-    const red = output[offset + 2];
     const sourceAlpha = output[offset + 3];
-    const markAlpha = Math.max(
-      0,
-      Math.min(1, (red / 255 - 0.35) / 0.40),
-    );
     output[offset] = 255;
     output[offset + 1] = 255;
     output[offset + 2] = 255;
-    output[offset + 3] = Math.round(sourceAlpha * markAlpha);
+    output[offset + 3] = sourceAlpha;
   }
   return output;
 }
 
 export {
   STATUS_PLACEHOLDER,
+  APP_ICON_RELATIVE_PATH,
   TRAY_ICON_RELATIVE_PATH,
   TRAY_ICON_SIZE,
   TRAY_TEMPLATE_CROP_INSET_RATIO,

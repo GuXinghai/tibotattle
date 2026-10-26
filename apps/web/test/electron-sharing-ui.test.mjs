@@ -13,7 +13,7 @@ function fixture({ settings = {}, getSettings, permission = "granted" } = {}) {
   }
   const selectors = ["settings-content", "settings-bridge-status", "settings-language", "settings-appearance", "settings-codex-roots-title", "settings-codex-roots-status", "settings-choose-codex-folder", "settings-refresh-interval", "settings-refresh-error", "settings-start-at-login", "settings-notifications-detail", "settings-notification-threshold", "settings-threshold-error", "settings-notification-status", "settings-open-notification-settings", "settings-test-notification", "settings-notification-test-status", "settings-automatic-updates", "settings-check-for-updates", "settings-download-update", "settings-install-update", "settings-open-dashboard-browser", "settings-show-diagnostics", "settings-reveal-local-data", "settings-version", "settings-build", "settings-updates-status", "settings-operation-status"];
   const elements = new Map(selectors.map((id) => [`#${id}`, element()]));
-  const tabs = ["general", "tray", "notifications", "data", "about"].map((id) => Object.assign(element(), { dataset: { settingsTab: id } }));
+  const tabs = ["general", "tray", "notifications", "data", "x", "about"].map((id) => Object.assign(element(), { dataset: { settingsTab: id } }));
   const panels = tabs.map((tab) => Object.assign(element(), { dataset: { settingsPanel: tab.dataset.settingsTab } }));
   const doc = { documentElement: { dataset: {}, classList: { toggle() {} } }, querySelector(s) { return elements.get(s) ?? null; }, querySelectorAll(s) { return s === "[data-settings-tab]" ? tabs : s === "[data-settings-panel]" ? panels : []; }, addEventListener(k,v) { listeners.set(k,v); }, removeEventListener(k,v) { if (listeners.get(k) === v) listeners.delete(k); } };
   const calls = [];
@@ -32,16 +32,16 @@ function fixture({ settings = {}, getSettings, permission = "granted" } = {}) {
     async sendTestNotification() { calls.push(["test"]); return { status: "requested" }; }, async openSystemSettings(value) { calls.push(["system", value]); },
   };
   const winListeners = new Map();
-  const win = { tibotattleDesktop: bridge, location: { hash: "#settings/notifications" }, history: { replaceState(_state,_title,hash) { win.location.hash = hash; } }, Notification: { permission, async requestPermission() { calls.push(["permission"]); return "granted"; } }, addEventListener(k,v) { winListeners.set(k,v); }, removeEventListener(k,v) { if (winListeners.get(k) === v) winListeners.delete(k); } };
+  const win = { usageMonitorDesktop: bridge, location: { hash: "#settings/notifications" }, history: { replaceState(_state,_title,hash) { win.location.hash = hash; } }, Notification: { permission, async requestPermission() { calls.push(["permission"]); return "granted"; } }, addEventListener(k,v) { winListeners.set(k,v); }, removeEventListener(k,v) { if (winListeners.get(k) === v) winListeners.delete(k); } };
   const localizer = { t: (key, values = {}) => key === "electron.settings.codexRoots.locationTitle" ? `Codex folder (${values.path})` : key, setLanguagePreference(value) { calls.push(["locale",value]); } };
   return { doc, win, bridge, localizer, calls, elements, tabs, panels, listeners, winListeners, command: (value) => command?.(value) };
 }
 const mount = (f) => mountSettingsPage({ documentRef: f.doc, windowRef: f.win, bridge: f.bridge, localizer: f.localizer });
 
-test("Settings has one complete main-window destination and five ordered categories", async () => {
+test("Settings has one complete main-window destination and six ordered categories", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   assert.match(html, /id="settings-content"[^>]*data-dashboard-page="settings"/u);
-  assert.deepEqual([...html.matchAll(/data-settings-tab="([^"]+)"/gu)].map((m) => m[1]), ["general", "tray", "notifications", "data", "about"]);
+  assert.deepEqual([...html.matchAll(/data-settings-tab="([^"]+)"/gu)].map((m) => m[1]), ["general", "tray", "notifications", "data", "x", "about"]);
   for (const retired of ["settings-notifications-enabled", "settings-start-at-login-summary", "settings-open-login-items", "data-background-reset", "background.imageHint", "background.custom", "background.image\""]) assert.equal(html.includes(retired), false, retired);
   assert.match(html, /id="settings-refresh-interval" type="number"/u);
   assert.match(html, /id="settings-notification-threshold" type="number"/u);
@@ -67,7 +67,7 @@ test("Settings mounts once, deep-links tabs, and removes every navigation subscr
   await f.tabs[3].fire("click"); assert.equal(f.win.location.hash,"#settings/data");
   f.win.location.hash="#settings/tray"; f.winListeners.get("hashchange")();
   assert.equal(f.panels.find((p) => !p.hidden).dataset.settingsPanel,"tray");
-  f.listeners.get("tibotattle:page-view")({ detail: { page: "settings", view: "about" } });
+  f.listeners.get("usagemonitor:page-view")({ detail: { page: "settings", view: "about" } });
   assert.equal(f.panels.find((p) => !p.hidden).dataset.settingsPanel,"about");
   mounted.teardown(); assert.equal(f.listeners.size,0); assert.equal(f.winListeners.size,0);
   assert.equal(f.tabs.every((t) => t.listeners.size === 0),true);

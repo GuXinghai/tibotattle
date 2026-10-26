@@ -21,11 +21,11 @@ export function validBackgroundResponse(result) {
     && (value.color === null || normalizeHexColor(value.color) === value.color)
     && Number.isInteger(value.mask) && value.mask >= 0 && value.mask <= 90
     && (value.imageUrl === null || typeof value.imageUrl === "string"
-      && /^tibotattle-background:\/\/image\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value.imageUrl));
+      && /^usagemonitor-background:\/\/image\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value.imageUrl));
 }
 
 export async function mountWindowBackground({ documentRef = globalThis.document, windowRef = globalThis.window } = {}) {
-  const bridge = windowRef?.tibotattleDesktop;
+  const bridge = windowRef?.usageMonitorDesktop;
   if (bridge?.version !== "v1" || typeof bridge.getWindowBackground !== "function") return null;
   const controls = documentRef.querySelector("#window-background-controls");
   const root = documentRef.documentElement;
@@ -245,12 +245,12 @@ export async function mountWindowBackground({ documentRef = globalThis.document,
     updateControls();
     for (const button of all("[data-background-preset]")) button.setAttribute("aria-label", localizer.t(button.dataset.i18nAriaLabel));
   };
-  if (controls) windowRef?.addEventListener?.("tibotattle:locale-change", localeChanged);
+  if (controls) windowRef?.addEventListener?.("usagemonitor:locale-change", localeChanged);
   const unsubscribe = bridge.onCommand?.(command => {
     if (command.command === "windowBackground") void read();
   });
   await read();
-  return { teardown() { disposed = true; ++readVersion; ++imageVersion; copyObserver.disconnect(); if (copyFrame !== null) windowRef.cancelAnimationFrame(copyFrame); if (pendingImageStart) windowRef.removeEventListener("load", pendingImageStart); windowRef.removeEventListener("resize", scheduleCopies); windowRef.removeEventListener("scroll", scheduleCopies, true); for (const event of pickerEvents) windowRef.removeEventListener(event, scheduleCopies, true); if (patchTimer !== null) windowRef.clearTimeout(patchTimer); windowRef?.removeEventListener?.("tibotattle:locale-change", localeChanged); unsubscribe?.(); layer.remove(); } };
+  return { teardown() { disposed = true; ++readVersion; ++imageVersion; copyObserver.disconnect(); if (copyFrame !== null) windowRef.cancelAnimationFrame(copyFrame); if (pendingImageStart) windowRef.removeEventListener("load", pendingImageStart); windowRef.removeEventListener("resize", scheduleCopies); windowRef.removeEventListener("scroll", scheduleCopies, true); for (const event of pickerEvents) windowRef.removeEventListener(event, scheduleCopies, true); if (patchTimer !== null) windowRef.clearTimeout(patchTimer); windowRef?.removeEventListener?.("usagemonitor:locale-change", localeChanged); unsubscribe?.(); layer.remove(); } };
 }
 
 if (typeof document !== "undefined") void mountWindowBackground();

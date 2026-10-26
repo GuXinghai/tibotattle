@@ -41,11 +41,7 @@ export function validSettingsNotificationThreshold(value) {
 
 
 
-export const SETTINGS_EXTERNAL_TARGETS = Object.freeze({
-  website: "https://tibotattle.com",
-  github: "https://github.com/adamallcock/tibotattle",
-  x: "https://x.com/adamallcock",
-});
+export const SETTINGS_EXTERNAL_TARGETS = Object.freeze({});
 
 export const SETTINGS_ACTION_NAMES = Object.freeze([
   "getSettings",
@@ -166,8 +162,8 @@ const UPDATE_ERRORS = new Set([
 ]);
 
 const LOGIN_ITEM_LABELS = Object.freeze({
-  enabled: "TiboTattle starts when you sign in.",
-  disabled: "TiboTattle will not start automatically.",
+  enabled: "Rhetrion starts when you sign in.",
+  disabled: "Rhetrion will not start automatically.",
   "needs-approval": "Your operating system needs approval in Login Items before this can take effect.",
   unavailable: "Start at login status is unavailable on this system.",
   error: "The operating system did not confirm the current Login Item status. Review it before relying on start at login.",
@@ -487,7 +483,7 @@ export function normalizeSettingsState(raw, settingsRoots = null) {
 }
 
 function desktopBridge(windowRef) {
-  const bridge = windowRef?.tibotattleDesktop;
+  const bridge = windowRef?.usageMonitorDesktop;
   if (!bridge || typeof bridge !== "object") return null;
   if (bridge.version !== DESKTOP_SETTINGS_API_VERSION) return null;
   if (typeof bridge.getSettings !== "function") return null;
@@ -1092,7 +1088,7 @@ async function mountSettingsPageOnce({
     listen(windowRef, "hashchange", syncTab);
     listen(windowRef, "popstate", syncTab);
   }
-  listen(documentRef, "tibotattle:page-view", (event) => {
+  listen(documentRef, "usagemonitor:page-view", (event) => {
     if (event.detail?.page === "settings") selectTab(event.detail.view);
   });
   const tabs = [...documentRef.querySelectorAll("[data-settings-tab]")];

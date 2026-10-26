@@ -51,10 +51,10 @@ test("package CLI refuses unknown targets, publication flags, duplicate selectio
 });
 
 test("development builder cannot inherit signing, publishing or application credentials", () => {
-  const env = developmentBuildEnvironment({ PATH: "/safe/bin", HOME: "/safe/home", CSC_LINK: "private", WIN_CSC_LINK: "private", CSC_KEY_PASSWORD: "private", GH_TOKEN: "private", APPLE_ID: "private", APPLE_APP_SPECIFIC_PASSWORD: "private", APP_USAGEMONITOR_EXPORT_SECRET: "private", USAGE_MONITOR_CENTRAL_ORIGIN: "https://example.invalid", TIBOTATTLE_ELECTRON_TARGET: "win32-x64" }, "win32-x64");
-  assert.deepEqual(Object.keys(env).sort(), ["CSC_IDENTITY_AUTO_DISCOVERY", "HOME", "PATH", "TIBOTATTLE_ELECTRON_TARGET", "TIBOTATTLE_ELECTRON_VERSION"]);
+  const env = developmentBuildEnvironment({ PATH: "/safe/bin", HOME: "/safe/home", CSC_LINK: "private", WIN_CSC_LINK: "private", CSC_KEY_PASSWORD: "private", GH_TOKEN: "private", APPLE_ID: "private", APPLE_APP_SPECIFIC_PASSWORD: "private", APP_USAGEMONITOR_EXPORT_SECRET: "private", USAGE_MONITOR_CENTRAL_ORIGIN: "https://example.invalid", USAGE_MONITOR_ELECTRON_TARGET: "win32-x64" }, "win32-x64");
+  assert.deepEqual(Object.keys(env).sort(), ["CSC_IDENTITY_AUTO_DISCOVERY", "HOME", "PATH", "USAGE_MONITOR_ELECTRON_TARGET", "USAGE_MONITOR_ELECTRON_VERSION"]);
   assert.equal(env.CSC_IDENTITY_AUTO_DISCOVERY, "false");
-  assert.equal(env.TIBOTATTLE_ELECTRON_TARGET, "win32-x64");
+  assert.equal(env.USAGE_MONITOR_ELECTRON_TARGET, "win32-x64");
   assert.equal(JSON.stringify(env).includes("private"), false);
   assert.throws(() => developmentBuildEnvironment({ PATH: "/safe/bin" }, "darwin-arm64"), /TARGET_OR_FORMAT_INVALID/u);
 });
@@ -166,7 +166,7 @@ test("normal Windows CI keeps unsigned candidate bytes private and preserves the
   assert.equal(parsed.target, "win32-x64");
   assert.equal(parsed.sourceRevision, sourceRevision);
   assert.equal(parsed.buildNumber, "1234567");
-  assert.doesNotMatch(prepare, /GITHUB_RUN_ID|TIBOTATTLE_ELECTRON_REHEARSAL/u);
+  assert.doesNotMatch(prepare, /GITHUB_RUN_ID|USAGE_MONITOR_ELECTRON_REHEARSAL/u);
   const builderArguments = prepare.match(/^\s+pnpm exec electron-builder (.+)$/mu)?.[1].split(/\s+/u);
   assert.deepEqual(builderArguments, [
     "--config", "apps/electron/electron-builder.production.config.cjs",
@@ -192,9 +192,9 @@ test("normal Windows CI keeps unsigned candidate bytes private and preserves the
   const output = execFileSync(process.execPath, ["-e", script], {
     encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
     env: {
-      ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("TIBOTATTLE_ELECTRON_"))),
-      TIBOTATTLE_ELECTRON_TARGET: "win32-x64", TIBOTATTLE_ELECTRON_SOURCE_REVISION: sourceRevision,
-      TIBOTATTLE_ELECTRON_BUILD_NUMBER: "1234567", TIBOTATTLE_ELECTRON_VERSION: releaseVersion,
+      ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("USAGE_MONITOR_ELECTRON_"))),
+      USAGE_MONITOR_ELECTRON_TARGET: "win32-x64", USAGE_MONITOR_ELECTRON_SOURCE_REVISION: sourceRevision,
+      USAGE_MONITOR_ELECTRON_BUILD_NUMBER: "1234567", USAGE_MONITOR_ELECTRON_VERSION: releaseVersion,
     },
   });
   const result = JSON.parse(output.trim().split(/\r?\n/u).at(-1));
@@ -202,9 +202,9 @@ test("normal Windows CI keeps unsigned candidate bytes private and preserves the
   assert.equal(result.config.win.signExecutable, false);
   assert.equal(result.config.win.signAndEditExecutable, true);
   assert.equal(result.config.win.verifyUpdateCodeSignature, true);
-  assert.equal(result.config.extraMetadata.tibotattleDistribution.channel, "stable");
-  assert.equal(result.config.extraMetadata.tibotattleDistribution.sourceRevision, sourceRevision);
-  assert.equal(result.config.extraMetadata.tibotattleDistribution.target, "win32-x64");
+  assert.equal(result.config.extraMetadata.usageMonitorDistribution.channel, "stable");
+  assert.equal(result.config.extraMetadata.usageMonitorDistribution.sourceRevision, sourceRevision);
+  assert.equal(result.config.extraMetadata.usageMonitorDistribution.target, "win32-x64");
   assert.equal(result.publish, "never");
   assert.deepEqual(result.targets, [{ platform: "win32", arches: [[1, ["dir"]]] }]);
   const execute = job.slice(job.indexOf("- name: Exercise normal Windows"), job.indexOf("- name: Retain only"));

@@ -10,7 +10,7 @@ status: in-progress
 The objective is a working public graph that retains completed history while
 new contributions arrive. This plan records the repair being qualified on
 2026-09-16; it is not evidence of deployment or restored public graphs.
-The [production operations runbook](../runbooks/production-operations.md) and
+The production operations runbook (retired; retained in Git history) and
 the [accepted opt-out decision](../decisions/2026-09-15-opt-out-stops-future-uploads.md)
 remain the operational and product authorities.
 

@@ -3,12 +3,12 @@ title: Schema and Contract Lifecycle
 date: 2026-08-27
 type: reference
 status: maintained
-last_verified_commit: 52399658
+last_reviewed: 2026-10-23
 ---
 
 # Schema and contract lifecycle
 
-TiboTattle uses closed JSON Schemas and generated contract artifacts to make
+Rhetrion uses closed JSON Schemas and generated contract artifacts to make
 privacy, compatibility, release evidence, and destructive workflows fail
 closed. This reference identifies canonical sources, mirrors, generators,
 versioning, and retirement rules.
@@ -241,7 +241,7 @@ contract check. Product expectations name `pro` Pro 10x and `promax` Pro Max
 25x, without changing the existing `pro` identity or discarding its history.
 These ratios are product expectations; provider-authoritative allowance and
 window semantics remain unverified. Enum verification does not establish those
-capacities or qualify a TiboTattle release artifact.
+capacities or qualify a Rhetrion release artifact.
 
 ## Staged continuity successor v1.2
 
@@ -335,7 +335,7 @@ capability and authorization routes, encrypted report delivery, typed cohort and
 bucket storage, idempotent per-device report revisions, and owner-erasure/restore
 coverage. Usage consent cannot authorize performance. Local timing source and
 scheduler integration are qualified separately from hosted chart publication.
-Timing SQLite schemas are primary 10 and supplement 11 while parser methods remain 2/3. Prior 8/9 stores migrate forward; the new boundary protects compressed physical snapshots and logical cursors from older writers. Source parser version 18 recognizes GPT-6.1 Sol and Ultrafast and is unchanged by compressed-source recovery. Plain and Zstd representations retain one logical source identity, with plaintext preferred when both exist. Both timing stores share a bounded in-memory decoder; durable staging and logical cursors resume after restart, and completed unchanged compressed sources skip decoding. No decoded transcript is persisted. Still-present, verified sources replay through bounded staging; completed old rows remain readable through cancellation and restart until the final verified chunk atomically replaces them. Missing sources and failed or unfinished replacements retain their last good rows and prior parser provenance. Older writers refuse the upgraded stores.
+Timing SQLite schemas are primary 12 and supplement 13 while measurement methods remain 2/3. The single correlation-key record is bound to `usage-monitor-timing-identity-v1`. Existing stores are inspected read-only before any writable connection or journal pragma. Unknown identity markers, duplicate metadata, older schemas 2–11 and newer schemas are refused without in-place conversion. A separate transition package must reconcile all source/turn digests, fingerprints and parser state; changing a schema number cannot convert an HMAC namespace. Missing preimages or ambiguous mappings block cutover and preserve the old store. The physical schema boundary also prevents older writers from reopening new stores. Source parser version 18 recognizes GPT-6.1 Sol and Ultrafast and is unchanged by compressed-source recovery. Plain and Zstd representations retain one logical source identity, with plaintext preferred when both exist. Both timing stores share a bounded in-memory decoder; durable staging and logical cursors resume after restart, and completed unchanged compressed sources skip decoding. No decoded transcript is persisted. Still-present, verified sources replay through bounded staging; completed old rows remain readable through cancellation and restart until the final verified chunk atomically replaces them. Missing sources and failed or unfinished replacements retain their last good rows and prior parser provenance. Older writers refuse the upgraded stores.
 Old rows retain existing TPS/TTFT
 with unavailable new fields. Receipt timing
 wins when qualified; tool-free timing is a single-sample fallback, never a

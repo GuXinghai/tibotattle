@@ -1,4 +1,4 @@
-# TiboTattle agent guidance
+# Rhetrion agent guidance
 
 Prefer principles, constraints and verifiable outcomes over canned examples.
 
@@ -21,7 +21,6 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 | Local companion, dashboard API, or unified index | `apps/local/AGENTS.md` |
 | Browser dashboard or public web UI | `apps/web/AGENTS.md` |
 | Electron desktop lifecycle, IPC, settings, shell integration, installer, updater, migration, or signing | `apps/electron/AGENTS.md` |
-| Hosted Worker, D1/R2, auth, or deployment | `apps/worker/AGENTS.md` |
 | Exact accounting or price semantics | `packages/accounting/AGENTS.md` |
 | Pseudonym derivation or identity continuity | `packages/identity-core/AGENTS.md` |
 | Quota calibration, rolling windows, or forecasts | `packages/quota-analysis/AGENTS.md` |
@@ -39,7 +38,7 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 Changing an invariant requires an explicit product decision, matching tests,
 and updated authoritative documentation.
 
-- TiboTattle supports Windows x64 only ([decision](docs/decisions/2026-10-12-windows-only.md)); changing platform scope needs a new decision, tests, and docs.
+- Rhetrion supports Windows x64 only ([decision](docs/decisions/2026-10-12-windows-only.md)); changing platform scope needs a new decision, tests, and docs.
 - Local analysis must work offline, and local HTTP services bind only to loopback.
 - Unexpected Windows credential prompts block release. Credential Manager access
   must be non-interactive; never weaken protection to suppress prompts. Follow

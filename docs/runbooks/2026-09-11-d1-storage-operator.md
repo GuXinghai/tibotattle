@@ -8,7 +8,7 @@ status: local-implementation-only
 ## Boundary
 
 These commands operate the new typed-storage workstream. They do not replace
-the [production operations authority](production-operations.md), migrate existing
+the production operations authority (retired; retained in Git history), migrate existing
 production data automatically, or certify the application cutover. Follow the
 [implementation plan](../plans/2026-09-11-d1-typed-storage-isolation.md) and the
 [schema boundary inventory](../research/2026-09-11-ingestion-analytics-schema-map.md).

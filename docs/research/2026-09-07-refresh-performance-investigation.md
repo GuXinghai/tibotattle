@@ -21,7 +21,7 @@ This is a completed investigation and a proposed implementation sequence,
 `700aec28-e2a3-4aff-9e25-24c20b076d78`. Checkout `1b44f9ea` adds only the
 [preceding deployment receipt](../receipts/2026-09-07-historical-model-progress.md).
 The recommendations below do not supersede the
-[production runbook](../runbooks/production-operations.md).
+production runbook (retired; retained in Git history).
 
 Scope: hosted ingestion, source selection, acquisition/checkpoints, pricing,
 model-history reconstruction, scheduling, publication and public/admin reads.
@@ -85,9 +85,9 @@ mutation epoch without an append marker, raising the hard invalidation floor and
 deleting the entire preview. The replacement INSERT also fails the `revision = 1`
 preservation condition. Widening only the INSERT exception would not fix this.
 
-Source: [supersession transaction](../../apps/worker/src/telemetry-v1-repository.ts)
-at lines 295–303; [update fencing](../../apps/worker/migrations/0043_analytical_input_fencing.sql)
-at line 45; [preservation triggers](../../apps/worker/migrations/0049_preserve_published_graph.sql)
+Source: `supersession transaction` (retired source)
+at lines 295–303; `update fencing` (retired source)
+at line 45; `preservation triggers` (retired source)
 at lines 18–28 and 44–57.
 
 | Accepted event | Current behavior | Required distinction |
@@ -114,11 +114,11 @@ revision equality. Checkpoint identity mismatch disposes obsolete work and
 restarts acquisition. An unrelated later upload can therefore invalidate both
 completed reusable results and unfinished progress.
 
-Source: [source pin](../../apps/worker/src/telemetry-v1-source-selection.ts)
-at lines 140–178; [result admission](../../apps/worker/src/community-model-history.ts)
-at line 61; [restart path](../../apps/worker/src/community-analysis-runner.ts)
+Source: `source pin` (retired source)
+at lines 140–178; `result admission` (retired source)
+at line 61; `restart path` (retired source)
 at lines 182–192. The published-day invalidation in
-[0048](../../apps/worker/migrations/0048_community_model_history.sql) is more
+`0048` (retired source) is more
 date-specific than the per-account work/result identities.
 
 The synthetic probe used 61 quota observations and 120 priced usage records.
@@ -166,10 +166,10 @@ result each executed seven statements, including two usage queries, and
 produced exactly equal results. The production terminal-result cache normally
 avoids this; unnecessary invalidation forfeits that benefit.
 
-Source: [historical window](../../apps/worker/src/model-history-window.ts),
-[indexed quota pages](../../apps/worker/src/quota-fit-projection.ts) at line 120,
-[acquisition reader](../../apps/worker/src/quota-analysis-v1-reader.ts) at line 560,
-and [usage/pricing finisher](../../apps/worker/src/quota-analysis-v1.ts) at lines
+Source: `historical window` (retired source),
+`indexed quota pages` (retired source) at line 120,
+`acquisition reader` (retired source) at line 560,
+and `usage/pricing finisher` (retired source) at lines
 836, 1124 and 1701.
 
 ### H4 — Temporary read failure can masquerade as authoritative invalidation
@@ -190,10 +190,10 @@ physically deleted snapshot observed above.
 - Exact model-catalog/label matching can reject an otherwise analytically valid
   publication after a display-only catalog deployment.
 
-Source: [public read fallback](../../apps/worker/src/community-daily-aggregates.ts)
-at line 798; [admin preview](../../apps/worker/src/admin-community-allowance.ts)
-at lines 215 and 846; [growth expiry](../../apps/worker/src/admin-metrics-history.ts)
-at line 623; [admin loaders](../../apps/web/public/admin.js) at lines 630, 1132,
+Source: `public read fallback` (retired source)
+at line 798; `admin preview` (retired source)
+at lines 215 and 846; `growth expiry` (retired source)
+at line 623; admin loaders (retired source) at lines 630, 1132,
 2987 and 3130. Some existing tests intentionally enforce clearing on the old
 unavailable contract: implementation must deliberately change that contract,
 not merely weaken assertions.
@@ -216,8 +216,8 @@ vectors. Retain a slower, bounded reconciliation sweep as a correctness backstop
 Calendar rollover, missing results and applicable pricing/method changes remain
 legitimate triggers; a replay or unrelated metadata change should not be one.
 
-Source: [daily rebuild ordering](../../apps/worker/src/community-daily-aggregates.ts)
-at lines 574–625 and [preview refresh](../../apps/worker/src/admin-community-allowance.ts).
+Source: `daily rebuild ordering` (retired source)
+at lines 574–625 and `preview refresh` (retired source).
 The broad v1.1 activation and legacy-authority paths also need range-aware work;
 this investigation does not justify treating cutover as an ordinary v1 append.
 
@@ -312,10 +312,10 @@ bundling is excluded from the reported timings.
 - Public refresh is single-flight, timed out, visibility-aware and backoff-bounded.
   Public graph reads do not synchronously acquire raw evidence or fit models.
 
-Source: [replay checks](../../apps/worker/src/index.ts) at lines 2295–2353,
-[unchanged domain](../../apps/worker/src/telemetry-v11-domain.ts) at lines 232–260,
-[current-cache regression](../../apps/worker/test/community-analysis-warmer.spec.ts)
-at line 161, and [scheduler](../../apps/worker/src/index.ts) at lines 4000–4098.
+Source: `replay checks` (retired source) at lines 2295–2353,
+`unchanged domain` (retired source) at lines 232–260,
+`current-cache regression` (retired source)
+at line 161, and `scheduler` (retired source) at lines 4000–4098.
 
 ## Recommended implementation sequence
 

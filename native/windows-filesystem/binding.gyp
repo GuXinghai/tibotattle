@@ -14,6 +14,9 @@
         "VCCLCompilerTool": {
           "ExceptionHandling": 1,
           "AdditionalOptions": ["/std:c++17"]
+        },
+        "VCLinkerTool": {
+          "AdditionalOptions": ["/PDBALTPATH:windows_filesystem.pdb"]
         }
       },
       "xcode_settings": {

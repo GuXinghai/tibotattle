@@ -1,44 +1,23 @@
 # Electron artwork
 
-`tibotattle.ico` is a format conversion of the existing approved
-[`tibotattle-icon.png`](../../web/public/tibotattle-icon.png), matching the web
-artwork. No artwork was redrawn.
+The editable master is [app-icon.svg](../../web/public/app-icon.svg), the approved
+blue, cyan and gold crescent, sun, bars, mountains and river design. Its viewBox
+fits the native geometry; it has a transparent background.
 
-The Windows release configuration explicitly selects this file for the executable
-and the default NSIS installer/uninstaller icons. The ICO contains 32-bit PNG
-frames at 16, 24, 32, 48, 64, 128 and 256 pixels.
+[app-icon.png](../../web/public/app-icon.png) is the 1024 pixel raster used by
+windows. `app.ico` contains 32-bit PNG frames at 16, 24, 32, 48, 64, 128 and 256
+pixels. Both Windows builder configurations select this icon.
 
-Generate it from the repository root after the locked dependency installation:
+The separate [tray-icon.svg](../../web/public/tray-icon.svg) and
+[tray-icon.png](../../web/public/tray-icon.png) are a monochrome alpha mask derived
+from the approved vector paths. The tray compositor retains alpha, supplies
+contrast backing and adds its existing status/quota information; it no longer
+crops or thresholds the previous artwork.
 
-```sh
-node --input-type=module <<'JS'
-import { createRequire } from "node:module";
-import { copyFile, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-const require = createRequire(import.meta.url);
-const builderRequire = createRequire(require.resolve("electron-builder/package.json"));
-const appBuilderRequire = createRequire(builderRequire.resolve("app-builder-lib/package.json"));
-const outDir = await mkdtemp(join(tmpdir(), "tibotattle-windows-icon-"));
-try {
-  const result = await appBuilderRequire("./out/util/iconConverter").convertIcon({
-    sources: [resolve("apps/web/public/tibotattle-icon.png")],
-    fallbackSources: [], roots: [process.cwd()], format: "ico", outDir,
-  });
-  if (result.isFallback || result.icons.length !== 1) throw new Error("Icon conversion failed");
-  await copyFile(result.icons[0].file, "apps/electron/assets/tibotattle.ico");
-} finally {
-  await rm(outDir, { recursive: true });
-}
-JS
-```
+Raster assets were rendered with Inkscape 1.4.4. The ICO is a format conversion
+of that PNG at the listed sizes. Future artwork changes must regenerate the
+rasters and ICO from the vector, verify dimensions, transparency and frames,
+and inspect the result at small sizes on light and dark backgrounds.
 
-This reuses electron-builder 26.15.7's icon converter and its checksum-pinned
-`icons@1.2.1` tool bundle; no separate image dependency is introduced. The
-converter may download that public tool bundle when its cache is empty.
-
-Generated source SHA-256: `482c5876243f8e24485add7e61d6dd20312f81109c9e5e4c9229cfd12c56c879`.
-Generated ICO SHA-256: `08bd419ed2fb1e645fcd61b3dc17a63b688f0e826aa79fa9fcd69ada6469623f`.
-
-Run the focused Windows release-config tests after regeneration. The tracked ICO
-avoids requiring icon conversion or a new artwork download during signing.
+Asset inspection does not qualify the installed taskbar, notification identity
+or Windows shell. Those require the exact packaged artifact and GUI checks.

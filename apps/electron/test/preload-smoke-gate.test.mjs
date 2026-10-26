@@ -28,7 +28,7 @@ test("Windows normal candidate exposes only the one-shot startup gate under its 
     platform: "win32",
     environment: { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1" },
   });
-  const bridge = normal.get("__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__");
+  const bridge = normal.get("__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__");
   assert.equal(bridge?.version, "v1");
   assert.equal(typeof bridge?.waitForStartupRefresh, "function");
   assert.equal(bridge.releaseStartupRefresh(), true);
@@ -40,6 +40,6 @@ test("Windows normal candidate exposes only the one-shot startup gate under its 
     { USAGE_MONITOR_ELECTRON_SMOKE_CONTROL: "quit-v1", USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION: "unexpected" },
   ]) {
     const rejected = await smokeBridges({ platform: "win32", environment });
-    assert.equal(rejected.has("__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__"), false);
+    assert.equal(rejected.has("__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__"), false);
   }
 });

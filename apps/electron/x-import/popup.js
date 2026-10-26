@@ -1,12 +1,12 @@
 /* This extension has no background task and never saves cookies. */
-const host = 'com.tibotattle.x_session_import';
+const host = 'com.usagemonitor.x_session_import';
 const status = document.getElementById('status');
 const check = document.getElementById('check'), button = document.getElementById('import');
 const messages = {
-  bridge_ready: '本机连接正常，未读取 Cookie。', app_not_running: '请先打开 TiboTattle。',
-  import_not_pending: '请先在 TiboTattle 选择 Session 登录。', import_expired: '导入请求已取消或过期，请重新选择 Session 登录。',
-  imported: '会话已交给 TiboTattle，请在应用中检查登录结果。', import_failed: '导入未完成，原有登录保持不变。',
-  verification_pending: '会话已交给 TiboTattle，正在验证 X 是否接受。请在应用中查看结果。',
+  bridge_ready: '本机连接正常，未读取 Cookie。', app_not_running: '请先打开 Rhetrion。',
+  import_not_pending: '请先在 Rhetrion 选择 Session 登录。', import_expired: '导入请求已取消或过期，请重新选择 Session 登录。',
+  imported: '会话已交给 Rhetrion，请在应用中检查登录结果。', import_failed: '导入未完成，原有登录保持不变。',
+  verification_pending: '会话已交给 Rhetrion，正在验证 X 是否接受。请在应用中查看结果。',
   invalid_import: '会话格式不受支持，未执行导入。', no_logged_in_session: '没有找到完整的 X 登录会话。',
 };
 function show(response) { status.textContent = messages[response?.code] || '本机连接未完成。'; }
@@ -38,7 +38,7 @@ button.addEventListener('click', async () => {
       if (!c.session) value.expirationDate = c.expirationDate;
       return value;
     });
-    status.textContent = '正在向 TiboTattle 传送会话…';
+    status.textContent = '正在向 Rhetrion 传送会话…';
     const response = await chrome.runtime.sendNativeMessage(host, { version: 1, type: 'x-cookie-import', permit: permit.permit, cookies: payload });
     show(response);
   } catch (error) { failed(error); }

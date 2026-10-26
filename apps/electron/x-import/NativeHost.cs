@@ -11,7 +11,7 @@ using System.Security.Principal;
 using System.Security.Cryptography;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-class TiboTattleXImport {
+class UsageMonitorXImport {
  const int Max = 524288;
  const string Origin = "chrome-extension://ididcmbpmekkeindgjimhcdffbnliejo/";
  [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe,out uint pid);
@@ -30,7 +30,7 @@ class TiboTattleXImport {
  static string PublicPipe() {
   using(SHA256 sha=SHA256.Create()) {
    byte[] hash=sha.ComputeHash(Encoding.UTF8.GetBytes(WindowsIdentity.GetCurrent().User.Value));
-   return "TiboTattle.XImport."+BitConverter.ToString(hash,0,16).Replace("-","").ToLowerInvariant();
+   return "UsageMonitor.XImport."+BitConverter.ToString(hash,0,16).Replace("-","").ToLowerInvariant();
   }
  }
  static PipeSecurity Security() {
@@ -56,7 +56,7 @@ class TiboTattleXImport {
  }
  static int Broker(string[] args) {
   int ownerPid;
-  if(args.Length!=3||!Int32.TryParse(args[2],out ownerPid)||!System.Text.RegularExpressions.Regex.IsMatch(args[1],"^TiboTattle\\.XControl\\.[a-f0-9]{32}$"))return 2;
+  if(args.Length!=3||!Int32.TryParse(args[2],out ownerPid)||!System.Text.RegularExpressions.Regex.IsMatch(args[1],"^UsageMonitor\\.XControl\\.[a-f0-9]{32}$"))return 2;
   using(Process owner=Process.GetProcessById(ownerPid))
   using(Timer watch=new Timer(_=>{try{if(owner.HasExited)Environment.Exit(0);}catch{Environment.Exit(0);}},null,1000,1000))
   using(NamedPipeServerStream control=Server(args[1])) {

@@ -1,94 +1,27 @@
-# TiboTattle support
+# Rhetrion support
 
-TiboTattle is maintained on a best-effort basis. Before reporting a problem,
-update to the latest published stable release, read the
-[public user guide](https://tibotattle.com/docs), and check the
-[current status matrix](docs/current-status.md).
+Rhetrion is unpublished. No external support, download or private reporting
+channel is configured. Former project services are not support endpoints for
+this product. See the [current status](docs/current-status.md).
 
-## Choose the right channel
+For local troubleshooting, record the app/source version, Windows version and
+architecture, the action, expected behavior and fixed failure code. Review
+**Settings → General → Local tools → Show diagnostics** and copy only its
+content-free report. The app does not open an external issue form. Native crash
+reports may contain private data; do not share them as ordinary diagnostics.
 
-- Use the [bug report form](https://github.com/adamallcock/tibotattle/issues/new?template=bug_report.yml)
-  for the Windows app, local dashboard, refresh, updater, or install problems.
-- Use the [hosted-service form](https://github.com/adamallcock/tibotattle/issues/new?template=hosted_service.yml)
-  for non-sensitive `tibotattle.com`, sign-in, contribution, disconnect, or
-  community-result bugs; it is a public issue form, not a private erasure channel.
-- Use a [private GitHub Security Advisory](https://github.com/adamallcock/tibotattle/security/advisories/new)
-  for vulnerabilities, privacy-boundary failures, credential exposure, or a
-  way to access another person's data. Do not open a public security issue.
-- Provider billing, subscription, account access, and authoritative quota
-  questions belong with the provider. TiboTattle reports observations and
-  estimates; it is not the provider's billing system.
+From a source checkout, `pnpm run diagnose:dashboard` inspects dashboard state.
+Review output before sharing. Never publish prompts, responses, credentials,
+account identifiers, private repository names, session paths or raw local files.
+Screenshots also need review for private data.
 
-## Hosted history and privacy requests
+Preserve original state on an indexing, SQLite, AppData or credential failure.
+Do not delete the only database, wipe AppData, downgrade a schema, reset salts,
+rotate credentials or revoke devices to make an error disappear.
+Use [safe local recovery](docs/runbooks/local-index-recovery.md).
 
-Electron's sharing toggle in Community or Settings saves a persistent opt-out
-and stops future uploads without deleting hosted history or local analysis.
-The shared dashboard no longer exposes social sign-in or device disconnect.
-In the legacy [2026-08-30 source contract](docs/decisions/2026-08-30-self-service-deletion-retirement.md),
-the device disconnect control requires confirmation and stops this device's hosted
-contribution authority without deleting hosted history or local analysis.
-Signing out is not device disconnect. Self-service hosted deletion is retired;
-private hosted erasure is a separately authorized maintainer operation described
-in [production operations](docs/runbooks/production-operations.md#private-owner-participant-erasure).
-Older installed apps and deployed services may not yet match that source.
-
-This retirement does not decide the handling of applicable privacy or erasure
-requests. A dedicated private privacy-request intake channel and completion
-deadline are not documented here. Do not put account identifiers, proof of
-identity, or private request details in public issues. The Security Advisory
-channel above is for security/privacy-boundary failures, not a newly promised
-general erasure-request service.
-
-## What to include
-
-Include the app version from **Settings → About**, install channel, Windows
-version and architecture, the exact action, expected behavior, observed
-evidence state, and any fixed diagnostic or failure code. If the problem is an
-update, name whether it was a manual check, automatic download, or direct
-installer replacement.
-
-Run `npm run diagnose:dashboard` only from a source checkout. Review its output
-before sharing it. Use synthetic examples where possible.
-
-In the Electron app, open **Settings → General → Local tools → Show diagnostics**
-to run the doctor. Review its content-free report, then choose **Copy diagnostics**
-or **Prepare support issue…**. The latter opens an editable GitHub issue form
-with only that report; GitHub receives the form URL when it opens. Describe the
-problem and review the form before submitting. The doctor does not include or
-upload a native crash report.
-
-Never paste prompts, model responses, credentials, OAuth material, account
-identifiers, real session paths, repository names, or unredacted local files
-into an issue or pull request. A screenshot can contain private data even when
-the diagnostic text is safe.
-
-If TiboTattle closes during launch, note whether a native alert shows the fixed
-support code `electron_shell_entry_failed`. This means startup stopped before
-the dashboard opened; it does not identify the underlying cause. Native crash diagnostics are not offered on Windows.
-
-## Supported surface
-
-TiboTattle supports Windows x64 only. See
-[platform qualification](docs/reference/platform-support.md) for exact artifact
-assurances and the unperformed existing-install and physical desktop coverage.
-Local analysis works without the hosted service; a hosted outage should remain
-visibly unavailable rather than make the
-local dashboard unusable.
-
-Only the latest published stable release and current source receive routine
-fixes. Older releases may be investigated, but the first requested step may be
-an upgrade. Development, preview, container, and source-only platform lanes are
-not supported distribution channels.
-
-## Safe recovery boundary
-
-Preserve the original state when reporting an indexing, SQLite schema,
-AppData, Windows Credential Manager, contribution, or updater problem. Do not relabel
-a SQLite `user_version`, delete the only index, wipe AppData, reset
-Credential Manager identities, revoke devices, or delete hosted data merely to make an
-error disappear. Those actions have separate consequences and require an
-explicit recovery or deletion workflow.
-
-See the [local-data and privacy reference](docs/reference/local-data-and-privacy.md)
-and [unified-index recovery runbook](docs/runbooks/local-index-recovery.md)
-for the maintained boundaries.
+The supported product scope is Windows x64. Local analysis works offline;
+source, native, GUI, packaged, installed and signed-release evidence remain
+separate. Missing or unqualified prerequisites are reported explicitly.
+Provider billing and authoritative quota questions belong with the provider;
+this app reports observations and estimates.

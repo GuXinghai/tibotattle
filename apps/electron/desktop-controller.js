@@ -626,7 +626,7 @@ export function createDesktopController({
       ? Math.max(0, Math.floor((now - activeRefreshStartedAtMs) / 1_000))
       : null;
     return Object.freeze({
-      schemaVersion: "tibotattle-desktop-refresh-status-v1",
+      schemaVersion: "usagemonitor-desktop-refresh-status-v1",
       scheduleOwner: overviewRefreshOwnedByCompanion ? "companion" : "electron",
       state: disposed
         ? "disposed"

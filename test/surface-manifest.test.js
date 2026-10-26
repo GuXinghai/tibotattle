@@ -12,13 +12,12 @@ import {
 
 const SURFACES = [
   "electron-runtime",
-  "history-free-export",
   "local-companion",
 ];
 
 function reviewedManifest() {
   return {
-    schemaVersion: "tibotattle-surface-manifest-v0.1",
+    schemaVersion: "usagemonitor-surface-manifest-v0.1",
     surfaces: Object.fromEntries(
       SURFACES.map((surface) => [surface, [...surfaceFiles(surface)]]),
     ),

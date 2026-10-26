@@ -48,10 +48,10 @@ record count. The ready-manifest transition checks completion; none of these
 checks belongs in the asynchronous analytics consumer.
 
 `activateTelemetryV11Domain()` in
-[telemetry-v11-domain.ts](../../apps/worker/src/telemetry-v11-domain.ts)
+`telemetry-v11-domain.ts` (retired source)
 atomically inserts the domain, its day vector and the head. The final
 `telemetry_v11_domain_complete_before_insert` definition in
-[0058](../../apps/worker/migrations/0058_accountless_upload_ownership.sql)
+`0058` (retired source)
 checks current predecessor authority/revision/head, complete contiguous days,
 chunk/record counts, duplicate occurrences across days, and exact preservation
 of old v1 winning occurrences and previous v1.1 base semantics. It refuses a
@@ -78,7 +78,7 @@ same-batch owner write fence fails.
 
 ### Withdrawal and erasure
 
-The final [0060](../../apps/worker/migrations/0060_public_contribution_sources.sql)
+The final `0060` (retired source)
 `community_public_source_owners` view admits active social participants, and
 accountless participants only through the exact nonrevoked ledger, owner,
 device, grant and current domain-head/device chain. Policy/dictionary/privacy
@@ -93,14 +93,14 @@ hard-invalidate publication, subtract eligible prepared metadata once, enqueue
 rebuilds and withdraw published daily/weekly rows. They do not merely bump an
 allowance epoch. Existing daily readers deliberately serve activity without
 allowance, selecting `release_state = 'published'` in
-[community-daily-aggregates.ts](../../apps/worker/src/community-daily-aggregates.ts).
+`community-daily-aggregates.ts` (retired source).
 Consequently, gating only the allowance endpoint leaves withdrawn activity
 visible during delivery failure.
 
-[participant-erasure.ts](../../apps/worker/src/participant-erasure.ts) first
+`participant-erasure.ts` (retired source) first
 revokes accountless enrollment, obtains the participant deletion fence, records
 an independent deletion-ledger tombstone, handles retained objects, and finishes
-fenced parent deletion through [repository.ts](../../apps/worker/src/repository.ts).
+fenced parent deletion through `repository.ts` (retired source).
 The baseline relies on participant/device foreign-key cascades for raw and
 prepared data. Cross-database copies lose those cascades: they need explicit
 owner-erasure events, projection deletion/withdrawal, durable completion evidence,
@@ -149,7 +149,7 @@ generation when a head exists and otherwise v1; they never union old v1 history
 with a successor. `telemetry_v11_active_records` exposes v1-shaped typed columns
 through JSON extraction and uses the original record `rowid` as `id`.
 
-The new [typed repository](../../apps/worker/src/typed-telemetry-repository.ts)
+The new `typed repository` (retired source)
 preserves original namespace/format/source-row identity and reconstructs a
 canonical record plus legacy projection in bounded pages. It is a storage
 primitive, not a drop-in SQL view or HTTP admission path. Its surrogate row IDs
@@ -165,10 +165,10 @@ cutover:
    objects outside the transaction does not prove that those current guards still
    run. Preserve canonical representation and NULL/zero/unknown semantics in a
    typed SQL proof or an equally strong transaction-bound substitute.
-3. [prepared-v1-evidence.ts](../../apps/worker/src/prepared-v1-evidence.ts) reads
+3. `prepared-v1-evidence.ts` (retired source) reads
    `telemetry_v1_records INDEXED BY telemetry_v1_records_participant_stream_observed`
    with `(observed_at,id)` keyset cursors. A same-name view cannot provide that
-   physical index. [quota-analysis-v11.ts](../../apps/worker/src/quota-analysis-v11.ts)
+   physical index. `quota-analysis-v11.ts` (retired source)
    and staged-chunk replay also directly read raw records, bypassing the generic
    analytical view. Preserve bounded reads and cursor identity explicitly.
 4. `telemetry_v1_quota_fit_rows` has a cascading FK to raw record IDs. Prepared
@@ -205,11 +205,11 @@ with the existing single-shard adapter and complete unchanged admission guards:
 5. Then replace this slice's synchronous analytical effects; expand across v1,
    legacy, prepared/current/history consumers before changing production bindings.
 
-The new [analytics delivery primitive](../../apps/worker/src/analytics-delivery.ts)
+The new `analytics delivery primitive` (retired source)
 has same-batch event preparation, ordered/idempotent application and an authority
 watermark comparison. The subsequent optional
-[v1.1 source bridge](../../apps/worker/src/v11-storage-journal.ts) and
-[daily projection](../../apps/worker/src/v11-daily-projection.ts) implement this
+`v1.1 source bridge` (retired source) and
+`daily projection` (retired source) implement this
 activation-to-projection slice in local tests, including source-proven discard
 and separate bounded physical retirement. They retain all baseline triggers.
 At this snapshot, `index.ts` has no imports of those modules, the typed repository,

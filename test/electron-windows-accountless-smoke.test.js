@@ -55,7 +55,7 @@ function qualificationEnvironment(profile) {
 }
 
 test("Windows accountless runner requires exact absolute inputs and refuses endpoint/credential options", () => {
-  const argv = ["--app", resolve("TiboTattle Dev.exe"), "--staged-app", resolve("staged"), "--package-receipt", resolve("package.json"), "--source-revision", "a".repeat(40), "--receipt", resolve("receipt.json")];
+  const argv = ["--app", resolve("usage-monitor.exe"), "--staged-app", resolve("staged"), "--package-receipt", resolve("package.json"), "--source-revision", "a".repeat(40), "--receipt", resolve("receipt.json")];
   assert.equal(parseWindowsAccountlessSmokeArguments(argv).sourceRevision, "a".repeat(40));
   for (const invalid of [[], argv.slice(0, -1), [...argv, "--app", resolve("other.exe")], [...argv, "--endpoint", "https://invalid.test"], [...argv, "--value", "synthetic"], argv.map((v) => v === resolve("staged") ? "relative" : v)]) {
     assert.throws(() => parseWindowsAccountlessSmokeArguments(invalid), /ARGUMENT_INVALID/u);
@@ -111,7 +111,7 @@ test("Windows smoke prepares and readbacks only the fixed first-run receipt in i
         async load() {
           calls.push(["load"]);
           return {
-            schemaVersion: "tibotattle-desktop-first-run-v1",
+            schemaVersion: "usagemonitor-desktop-first-run-v1",
             acknowledged: true,
           };
         },
@@ -137,7 +137,7 @@ test("Windows smoke prepares and readbacks only the fixed first-run receipt in i
     windowsProtectedStateStore: store,
   });
   assert.deepEqual(calls[4][1], {
-    schemaVersion: "tibotattle-desktop-first-run-v1",
+    schemaVersion: "usagemonitor-desktop-first-run-v1",
     acknowledged: true,
   });
   assert.deepEqual(calls[5], ["load"]);

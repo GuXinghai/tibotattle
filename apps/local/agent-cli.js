@@ -1,3 +1,4 @@
+import applicationIdentity from "../../config/application-identity.cjs";
 import { RELEASE_VERSION } from "../../config/release-manifest.js";
 import {
   USAGE_EXPLAINER_SCHEMA_VERSION,
@@ -8,9 +9,9 @@ import { createLocalUsageExplainer } from "../../src/local-usage-explainer.js";
 
 export const INSTALLED_AGENT_PROTOCOL_VERSION = 1;
 export const INSTALLED_AGENT_STATUS_SCHEMA_VERSION =
-  "tibotattle-installed-agent-status-v1";
+  "usagemonitor-installed-agent-status-v1";
 export const INSTALLED_AGENT_ERROR_SCHEMA_VERSION =
-  "tibotattle-installed-agent-error-v1";
+  "usagemonitor-installed-agent-error-v1";
 
 const COMMANDS = Object.freeze([
   "status",
@@ -155,7 +156,7 @@ export async function executeInstalledAgentCommand(
     return {
       schemaVersion: INSTALLED_AGENT_STATUS_SCHEMA_VERSION,
       status: "available",
-      product: "TiboTattle",
+      product: applicationIdentity.APPLICATION_IDENTITY.executableName,
       releaseVersion,
       protocolVersion: INSTALLED_AGENT_PROTOCOL_VERSION,
       capabilities: [...COMMANDS],

@@ -120,7 +120,7 @@ export async function checkLocal(root) {
 }
 
 async function json(url) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": "TiboTattle-exception-proof" } });
+  const response = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { "User-Agent": "usage-monitor-exception-proof" } });
   assert.ok(response.ok, "Official status unavailable; exception refused");
   return response.json();
 }

@@ -423,7 +423,7 @@ export async function runWindowsAccountlessSmoke(options) {
     quitAcknowledged: false, sendFailureCode: null };
   try {
     identity = await verifyWindowsAccountlessSmokePackage(options);
-    profileRoot = await mkdtemp(join(tmpdir(), "tibotattle-windows-accountless-smoke-"));
+    profileRoot = await mkdtemp(join(tmpdir(), "usagemonitor-windows-accountless-smoke-"));
     const profile = await prepareWindowsDevelopmentProfile({ appPath: options.appPath, profilePath: profileRoot });
     const spec = buildWindowsDevelopmentLaunchSpec({ appPath: options.appPath, profile });
     await prepareWindowsAccountlessSmokeFirstRunAcknowledgement({

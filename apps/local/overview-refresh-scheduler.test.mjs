@@ -89,15 +89,15 @@ test("parent schedule channel validates exact messages and leaves broker traffic
   const pauses = [];
   const detach = attachOverviewRefreshIntervalChannel({ channel, scheduler: { setIntervalSeconds: value => values.push(value), setPaused: value => pauses.push(value) } });
   for (const message of [null, [], { type: "credential.request", seconds: 60 },
-    { type: "tibotattle.refresh-interval.v2", seconds: 0, paused: false },
-    { type: "tibotattle.refresh-interval.v2", seconds: 61, paused: false },
-    { type: "tibotattle.refresh-interval.v2", seconds: "60", paused: false },
-    { type: "tibotattle.refresh-interval.v2", seconds: 60, paused: "false" },
-    { type: "tibotattle.refresh-interval.v2", seconds: 60 },
-    { type: "tibotattle.refresh-interval.v2", seconds: 60, paused: false, extra: true }]) channel.emit("message", message);
+    { type: "usagemonitor.refresh-interval.v2", seconds: 0, paused: false },
+    { type: "usagemonitor.refresh-interval.v2", seconds: 61, paused: false },
+    { type: "usagemonitor.refresh-interval.v2", seconds: "60", paused: false },
+    { type: "usagemonitor.refresh-interval.v2", seconds: 60, paused: "false" },
+    { type: "usagemonitor.refresh-interval.v2", seconds: 60 },
+    { type: "usagemonitor.refresh-interval.v2", seconds: 60, paused: false, extra: true }]) channel.emit("message", message);
   assert.deepEqual(values, []);
-  channel.emit("message", { type: "tibotattle.refresh-interval.v2", seconds: -1, paused: true });
-  channel.emit("message", { type: "tibotattle.refresh-interval.v2", seconds: 120, paused: false });
+  channel.emit("message", { type: "usagemonitor.refresh-interval.v2", seconds: -1, paused: true });
+  channel.emit("message", { type: "usagemonitor.refresh-interval.v2", seconds: 120, paused: false });
   assert.deepEqual(pauses, [true, false]);
   assert.deepEqual(values, [-1, 120]); detach(); assert.equal(channel.listenerCount("message"), 0);
 });

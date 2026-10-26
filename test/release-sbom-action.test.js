@@ -80,7 +80,7 @@ test("SBOM action uses the checked-in immutable Syft downloader", () => {
 });
 
 test("Syft archive download rejects an oversized Content-Length before creating the file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const destination = join(root, "syft.tar.gz");
   const asset = {
     fileName: "fixture.tar.gz",
@@ -104,7 +104,7 @@ test("Syft archive download rejects an oversized Content-Length before creating 
 });
 
 test("Syft archive download enforces the byte limit when Content-Length is absent", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const destination = join(root, "syft.tar.gz");
   const asset = {
     fileName: "fixture.tar.gz",
@@ -152,7 +152,7 @@ test("SBOM action reserves the exact output and validates it after generation", 
 });
 
 test("protected SBOM output cannot escape its trusted workspace through a directory symlink", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const workspace = join(root, "workspace");
   const outside = join(root, "outside");
   const scanPath = join(workspace, "payload");
@@ -173,7 +173,7 @@ test("protected SBOM output cannot escape its trusted workspace through a direct
 });
 
 test("preflight rejects a stale output and accepts a new exact output path", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const scanPath = join(root, "payload");
   const outputPath = join(root, "evidence", "payload.spdx.json");
   await writeFile(join(root, "placeholder"), "placeholder", "utf8");
@@ -203,7 +203,7 @@ test("preflight rejects a stale output and accepts a new exact output path", asy
 });
 
 test("preflight canonicalizes ancestor symlinks and rejects output routed into the scan", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const scanPath = join(root, "payload");
   const evidence = join(root, "evidence");
   const outsideLink = join(root, "evidence-link");
@@ -231,16 +231,16 @@ test("preflight canonicalizes ancestor symlinks and rejects output routed into t
 });
 
 test("postflight requires a regular non-symlink SPDX-2.3 JSON file", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const outputPath = join(root, "payload.spdx.json");
   const githubOutput = join(root, "github-output");
 
   await writeFile(outputPath, JSON.stringify({
     spdxVersion: "SPDX-2.3",
     SPDXID: "SPDXRef-DOCUMENT",
-    name: "TiboTattle payload",
+    name: "Rhetrion payload",
     dataLicense: "CC0-1.0",
-    documentNamespace: "https://github.com/adamallcock/tibotattle/sbom/test",
+    documentNamespace: "https://github.com/example/usage-monitor/sbom/test",
     creationInfo: {
       created: "2026-08-18T00:00:00Z",
       creators: ["Tool: Syft-1.51.0"],
@@ -250,7 +250,7 @@ test("postflight requires a regular non-symlink SPDX-2.3 JSON file", async () =>
   const result = validateReleaseSbom({ outputPath, githubOutput });
   const canonicalOutput = join(await realpath(root), "payload.spdx.json");
   assert.equal(result.outputPath, canonicalOutput);
-  assert.match(await readFile(githubOutput, "utf8"), new RegExp(`^sbom-path=${canonicalOutput}\\n?$`, "u"));
+  assert.equal(await readFile(githubOutput, "utf8"), `sbom-path=${canonicalOutput}\n`);
 
   await writeFile(outputPath, JSON.stringify({ spdxVersion: "SPDX-2.2" }), "utf8");
   assert.throws(
@@ -311,7 +311,7 @@ test("postflight requires a regular non-symlink SPDX-2.3 JSON file", async () =>
 });
 
 test("postflight bounds a replacement created after preflight without reading by path", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const scanPath = join(root, "payload");
   const outputPath = join(root, "evidence", "payload.spdx.json");
   await mkdir(scanPath);
@@ -339,7 +339,7 @@ test("postflight bounds a replacement created after preflight without reading by
 });
 
 test("validated SBOM installation is atomic and preserves a concurrent destination", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-sbom-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-sbom-"));
   const stagedPath = join(root, "private", "payload.spdx.json");
   const destination = join(root, "evidence", "payload.spdx.json");
   await mkdir(join(root, "private"));
@@ -347,9 +347,9 @@ test("validated SBOM installation is atomic and preserves a concurrent destinati
   const document = {
     spdxVersion: "SPDX-2.3",
     SPDXID: "SPDXRef-DOCUMENT",
-    name: "TiboTattle payload",
+    name: "Rhetrion payload",
     dataLicense: "CC0-1.0",
-    documentNamespace: "https://github.com/adamallcock/tibotattle/sbom/no-clobber",
+    documentNamespace: "https://github.com/example/usage-monitor/sbom/no-clobber",
     creationInfo: {
       created: "2026-08-18T00:00:00Z",
       creators: ["Tool: Syft-1.51.0"],

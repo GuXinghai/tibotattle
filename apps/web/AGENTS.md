@@ -7,8 +7,8 @@ Scope: all files under `apps/web/`. Apply the repository root guidance first.
 - Web code presents validated companion or hosted-service contracts. It does not
   parse raw provider logs, calculate an independent ledger, infer identity, or
   redefine schema semantics.
-- Keep the local dashboard and public release/install site explicit. Do not let a public build accidentally include
-  loopback-only assets, private controls, or local runtime assumptions.
+- The only active web surface is the local dashboard. The cloud site and
+  operator pages are retired; do not recreate hosted entrypoints implicitly.
 - Local/offline rendering must not require a CDN, analytics, telemetry, remote
   font, or hosted API. Any permitted hosted request belongs to an explicit
   capability with a truthful unavailable state.
@@ -49,9 +49,7 @@ Scope: all files under `apps/web/`. Apply the repository root guidance first.
   Preserve saved sharing opt-outs and owner-only hosted erasure; retired social
   sign-in and disconnect flows belong to legacy backend contracts, not this UI.
 - Run the narrow `apps/web/test/*.test.mjs` files while iterating, then
-  `npm run product:ui:test`. Add `npm run product:release-site:test` for public
-  install/release surface changes and the relevant local or Worker gate for API
-  contract changes.
+  `pnpm run product:ui:test` and the relevant local gate for API changes.
 - Inspect the rendered result at representative widths and in the actual target
   surface using real-system data. Validate loading, sparse, error, retry,
   localization, and accessibility states, not only the populated happy path.

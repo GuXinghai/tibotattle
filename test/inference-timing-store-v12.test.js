@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
-import { chmod, mkdir, mkdtemp, realpath, rm, writeFile, appendFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, realpath, rm, readFile, writeFile, appendFile } from 'node:fs/promises';
 import { appendFileSync, mkdirSync, writeFileSync, openSync, readSync, fstatSync, closeSync, lstatSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -55,7 +55,7 @@ const syntheticNative = (() => {
 const syntheticFilesystem = createTimingFilesystem({ platform: 'win32', loadWindowsBinding: () => syntheticNative });
 const options = { createParser, digest, METHOD, MAX_STATE_BYTES, filesystem: syntheticFilesystem };
 
-test('opens the prior method-2 schema, adds nullable v1.2 columns, and preserves old rows', async t => {
+test('rejects unconverted and foreign timing stores without writing their original bytes', async t => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'timing-v12-schema-')));
   t.after(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, 'timing'); await mkdir(directory, { mode: 0o700 });
@@ -82,24 +82,58 @@ test('opens the prior method-2 schema, adds nullable v1.2 columns, and preserves
   `);
   db.close();
   await chmod(file, 0o600);
-  const store = await openTimingStore(directory, options);
-  try {
-    const names = new Set(store.db.prepare('PRAGMA table_info(turn)').all().map(row => row.name));
-    for (const name of ['turn_duration', 'speed_mode', 'speed_mode_source', 'api_service_tier']) assert.ok(names.has(name));
-    const sourceColumns = new Set(store.db.prepare('PRAGMA table_info(source)').all().map(row => row.name));
-    assert.ok(sourceColumns.has('revision'));
-    assert.ok(sourceColumns.has('telemetry_revision'));
-    assert.ok(sourceColumns.has('parser_version'));
-    assert.ok(sourceColumns.has('replay_parser_version'));
-    assert.ok(sourceColumns.has('rebuild_kind'));
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 10);
-    assert.notEqual(store.db.prepare('PRAGMA user_version').get().user_version, METHOD,
-      'the pre-v1.2 writer method cannot reopen the upgraded store');
-    const rows = readTimingRows(store);
-    assert.equal(rows.length, 1);
-    assert.equal(rows[0].duration, 1000);
-    assert.equal(Object.hasOwn(rows[0], 'turn_duration'), false, 'old rows keep the legacy reporting shape');
-  } finally { store.close(); }
+  for (const version of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]) {
+    const setup = new DatabaseSync(file);
+    setup.exec(`PRAGMA user_version=${version}`);
+    setup.close();
+    const before = await readFile(file);
+    const calls = [];
+    await assert.rejects(openTimingStore(directory, {
+      ...options,
+      databaseFactory(path, connectionOptions) {
+        assert.equal(connectionOptions.readOnly, true);
+        const connection = new DatabaseSync(path, connectionOptions);
+        return {
+          prepare: connection.prepare.bind(connection),
+          exec(sql) { calls.push(sql); return connection.exec(sql); },
+          close: connection.close.bind(connection),
+          get isOpen() { return connection.isOpen; },
+        };
+      },
+    }), version === 12 ? /incompatible_timing_identity/u : /incompatible_database/u);
+    assert.deepEqual(calls, [], 'refusal runs no DDL or write pragmas');
+    assert.deepEqual(await readFile(file), before, 'unconverted evidence is preserved byte for byte');
+  }
+});
+
+test('foreign identity markers and duplicate correlation metadata are refused before writable reopening', async t => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'timing-identity-refusal-')));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const malformed of ['foreign-namespace', 'duplicate-metadata']) {
+    const directory = join(root, malformed);
+    const store = await openTimingStore(directory, options);
+    const file = store.file;
+    store.close();
+    const setup = new DatabaseSync(file);
+    setup.exec('ALTER TABLE metadata RENAME TO original_metadata; CREATE TABLE metadata (key BLOB, identity_version TEXT)');
+    setup.exec('INSERT INTO metadata SELECT key,identity_version FROM original_metadata');
+    if (malformed === 'foreign-namespace') setup.exec("UPDATE metadata SET identity_version='synthetic-foreign-v1'");
+    else setup.exec('INSERT INTO metadata SELECT key,identity_version FROM original_metadata');
+    setup.exec('DROP TABLE original_metadata');
+    setup.close();
+    const before = await readFile(file);
+    let connections = 0;
+    await assert.rejects(openTimingStore(directory, {
+      ...options,
+      databaseFactory(path, connectionOptions) {
+        connections += 1;
+        assert.equal(connectionOptions.readOnly, true);
+        return new DatabaseSync(path, connectionOptions);
+      },
+    }), /incompatible_timing_identity/u);
+    assert.equal(connections, 1, 'no writable connection is opened for an unknown identity');
+    assert.deepEqual(await readFile(file), before);
+  }
 });
 
 test('parser upgrades replay unchanged verified sources once without changing stable turn identities', async t => {
@@ -109,13 +143,9 @@ test('parser upgrades replay unchanged verified sources once without changing st
   const rows = fixture();
   Object.assign(rows.find(row => row.type === 'turn_context').payload, { model: 'gpt-6.1-sol', service_tier: 'ultrafast' });
   await writeFile(file, lines(rows), { mode: 0o600 });
-  for (const [name, parser, method, oldSchema, newSchema] of [
-    ['primary-v4', createParser, METHOD, 4, 10],
-    ['primary-v6', createParser, METHOD, 6, 10],
-    ['primary-v8', createParser, METHOD, 8, 10],
-    ['supplement-v5', createToolFreeParser, TOOL_FREE_METHOD, 5, 11],
-    ['supplement-v7', createToolFreeParser, TOOL_FREE_METHOD, 7, 11],
-    ['supplement-v9', createToolFreeParser, TOOL_FREE_METHOD, 9, 11],
+  for (const [name, parser, method, newSchema] of [
+    ['primary', createParser, METHOD, 12],
+    ['supplement', createToolFreeParser, TOOL_FREE_METHOD, 13],
   ]) {
     const directory = join(root, name);
     const config = { ...options, createParser: parser, METHOD: method };
@@ -124,11 +154,6 @@ test('parser upgrades replay unchanged verified sources once without changing st
     old.db.prepare("UPDATE turn SET speed_mode='other',model=NULL").run();
     const oldKey = Buffer.from(old.db.prepare('SELECT key FROM turn').get().key);
     const oldRows = readTimingRows(old);
-    if (oldSchema === 4 || oldSchema === 5) {
-      old.db.exec('DROP TABLE parser_replay_turn; ALTER TABLE source DROP COLUMN parser_version; ALTER TABLE source DROP COLUMN replay_parser_version');
-    }
-    if (oldSchema < 8) old.db.exec('ALTER TABLE source DROP COLUMN rebuild_kind');
-    old.db.exec(`PRAGMA user_version=${oldSchema}`);
     old.close();
     const current = await openTimingStore(directory, { ...config, parserVersion: INFERENCE_TIMING_PARSER_VERSION });
     try {

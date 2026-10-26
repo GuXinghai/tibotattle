@@ -53,7 +53,7 @@ function expected(state, allowance = null, notificationEvidence = null, display 
 }
 
 function displaySummary(windows = displayEvidence().windows) {
-  return { schemaVersion: "tibotattle-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
+  return { schemaVersion: "usagemonitor-display-evidence-v1", scopeKey: null, staleAfterSeconds: 1800,
     windows: windows.map(({ durationMinutes, remainingPercent, observedAt, resetAt }) => ({ durationMinutes, remainingPercent, observedAt, resetAt })) };
 }
 
@@ -146,7 +146,7 @@ test("desktop shell display proof follows live current reset and primary-lane bo
 
 test("strict v2 notification evidence remains the only notification-bearing path", () => {
   const notificationEvidence = {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",
@@ -201,7 +201,7 @@ test("aged display-only observations survive until reset without notification au
 
 test("only elapsed time after a valid completed direct receipt receives the closed expired marker", () => {
   const receipt = {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation", provider: "openai_codex", source: "app_server_read", freshness: "fresh",
     observedAt: "2026-09-05T11:54:00.000Z", continuityKey: "a".repeat(43),
     windows: [{ lane: "primary", usedPercent: 85, durationMinutes: 300, resetAt: "2026-09-05T15:00:00.000Z", resetProofKind: "provider_reported_schedule_only" }],
@@ -227,7 +227,7 @@ test("only elapsed time after a valid completed direct receipt receives the clos
   for (const change of [
     { notificationEvidenceStatus: "fresh" },
     { notificationEvidenceStatus: null },
-    { schemaVersion: "tibotattle-desktop-shell-status-v1" },
+    { schemaVersion: "usagemonitor-desktop-shell-status-v1" },
     { state: "unavailable" },
     { notificationEvidence: receipt },
   ]) {

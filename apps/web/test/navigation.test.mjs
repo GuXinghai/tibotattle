@@ -85,7 +85,7 @@ function fakeBrowser({ hash = "" } = {}) {
       return pages;
     },
     dispatchEvent(event) {
-      if (event.type === "tibotattle:page-view") viewRequests.push(event.detail);
+      if (event.type === "usagemonitor:page-view") viewRequests.push(event.detail);
       return true;
     },
   };
@@ -150,7 +150,7 @@ test("the dashboard has five shared destinations plus desktop X, and no compatib
 test('X navigation is available only through the desktop capability',()=>{
   const browser=fakeBrowser({hash:'#x'}),xPage=fakePage('x'),xLink=fakeLink('x');xPage.dataset.desktopOnly='true';xLink.dataset.desktopOnly='true';
   browser.pages.push(xPage);browser.links.push(xLink);const unmount=mountDashboardNavigation(browser);assert.equal(xLink.attributes.has('aria-current'),false);assert.equal(browser.links[0].attributes.get('aria-current'),'page');unmount();
-  browser.windowRef.tibotattleDesktop={version:'v1',getXStatus(){}};const unmountDesktop=mountDashboardNavigation(browser);assert.equal(xLink.attributes.get('aria-current'),'page');unmountDesktop();
+  browser.windowRef.usageMonitorDesktop={version:'v1',getXStatus(){}};const unmountDesktop=mountDashboardNavigation(browser);assert.equal(xLink.attributes.get('aria-current'),'page');unmountDesktop();
 });
 
 test("each page id is its own hash and selects that page", () => {

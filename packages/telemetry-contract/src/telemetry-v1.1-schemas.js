@@ -5,7 +5,7 @@ import {
   telemetryV11RequiredConsent,
 } from "./telemetry-v1.1.js";
 
-const root = "https://tibotattle.com/schemas/telemetry-contribution-v1.1/";
+const root = "urn:usagemonitor:schema:telemetry-contribution-v1.1:";
 const closed = (properties) => ({ type: "object", additionalProperties: false,
   required: Object.keys(properties), properties });
 const text = (pattern) => ({ type: "string", pattern });

@@ -93,7 +93,7 @@ test("profiles collector freshness, reset jitter, quantization, and prioritized 
   assert.equal(report.quantization.usageEventsP50, 2);
   assert.ok(report.opportunities.some((row) => row.id === "collector_continuity" && row.priority === "P0"));
   assert.ok(report.opportunities.some((row) => row.id === "reset_identity_stabilization"));
-  assert.match(renderMonitoringQualityReport(report), /TiboTattle Quality Diagnostic/);
+  assert.match(renderMonitoringQualityReport(report), /Rhetrion Quality Diagnostic/);
 });
 
 test("Ultrafast receipts count as known speed evidence without erasing unresolved receipts", () => {

@@ -21,11 +21,11 @@ import {
  */
 
 export const DESKTOP_BRIDGE_VERSION = "v1";
-export const DESKTOP_IPC_CHANNEL = "tibotattle:desktop:v1";
-export const DESKTOP_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v5";
-export const DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v3";
-export const DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v2";
-export const DESKTOP_LEGACY_SETTINGS_SCHEMA_VERSION = "tibotattle-desktop-settings-v1";
+export const DESKTOP_IPC_CHANNEL = "usagemonitor:desktop:v1";
+export const DESKTOP_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v5";
+export const DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v3";
+export const DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v2";
+export const DESKTOP_LEGACY_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v1";
 export const DESKTOP_LEGACY_LAUNCHER_SETTINGS_SCHEMA_VERSION = "usage-monitor-launcher-settings-v1";
 // Internal, non-serialized marker used by the storage adapter to tell the
 // store that a legacy record was decoded and must be atomically rewritten as
@@ -507,7 +507,7 @@ function migrateLegacyNotificationPreferences(value) {
 }
 
 export function migrateDesktopSettingsSnapshot(snapshot, { idFactory } = {}) {
-  if (isPlainRecord(snapshot) && snapshot.schemaVersion === "tibotattle-desktop-settings-v4") {
+  if (isPlainRecord(snapshot) && snapshot.schemaVersion === "usagemonitor-desktop-settings-v4") {
     if (!hasExactKeys(snapshot, SETTINGS_KEYS.filter(key => key !== "refreshPaused"))) throw new TypeError("legacy settings has unexpected keys");
     return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION, refreshPaused: false });
   }

@@ -1,9 +1,13 @@
+import { createWindowsFilesystemAdapter, createWindowsProtectedStateStore, createWindowsBrowserProfileStore } from "../../src/platform/index.js";
+import { readApplicationPackage, pinApplicationProfilePaths } from "./application-profile.js";
+import identity from "../../config/application-identity.cjs";
+import brand from "../../config/product-brand.cjs";
 import { dirname, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { launchDesktopRuntime } from "./desktop-runtime.js";
-import { createDesktopTrayIconFactory } from "./desktop-tray.js";
+import { createDesktopTrayIconFactory, resolveDesktopApplicationIcon } from "./desktop-tray.js";
 import { createDesktopStartupDiagnostics } from "./desktop-startup-diagnostics.js";
 import { validateProductionDistributionMetadata } from "./desktop-updater.js";
 import { ELECTRON_ENTRY_FAILURE_DIAGNOSTIC, shellError } from "./errors.js";
@@ -30,9 +34,9 @@ const DEFAULT_COMPANION_SCRIPT = resolve(MODULE_DIRECTORY, "../local/server.js")
 const DEFAULT_RESOURCE_ROOT = resolve(MODULE_DIRECTORY, "../..");
 const ELECTRON_SMOKE_CONTROL = "quit-v1";
 export const ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX =
-  "TIBOTATTLE_ELECTRON_COMPANION_PROCESS ";
+  "USAGE_MONITOR_ELECTRON_COMPANION_PROCESS ";
 export const ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX =
-  "TIBOTATTLE_ELECTRON_DASHBOARD_FAILURE ";
+  "USAGE_MONITOR_ELECTRON_DASHBOARD_FAILURE ";
 const ELECTRON_SHELL_BOOTSTRAP = Symbol("electron-shell-bootstrap");
 const WINDOWS_ELECTRON_SMOKE_CONTROL = "windows-v1";
 const WINDOWS_ELECTRON_SMOKE_MESSAGE_TYPE = "windows-electron-smoke-v1";
@@ -98,22 +102,10 @@ export async function readProductionDistribution({
   architecture = process.arch,
   readManifest = readFile,
 } = {}) {
-  if (!isPackagedElectronApp(app) || app.getName?.() !== "TiboTattle") return null;
-  const appPath = packagedAppPath(app);
-  if (appPath === null) throw shellError("electron_configuration_invalid");
+  const packaged = await readApplicationPackage({ app, readManifest });
+  if (packaged === null || packaged.identity.profile !== "stable") return null;
   try {
-    const bytes = await readManifest(resolve(appPath, "package.json"));
-    if (!Buffer.isBuffer(bytes) || bytes.length > 1_048_576) {
-      throw new Error("Invalid packaged manifest");
-    }
-    const manifest = JSON.parse(bytes.toString("utf8"));
-    if (!Object.hasOwn(manifest, "tibotattleDistribution")) {
-      throw new Error("Missing production distribution metadata");
-    }
-    return validateProductionDistributionMetadata(manifest.tibotattleDistribution, {
-      platform,
-      architecture,
-    });
+    return validateProductionDistributionMetadata(packaged.distribution, { platform, architecture });
   } catch {
     throw shellError("electron_configuration_invalid");
   }
@@ -179,8 +171,8 @@ function quitAfterEntryFailure({ app, dialog, writeDiagnostic } = {}) {
     // showErrorBox works before app readiness. Keep the copy fixed: a startup
     // exception may contain private paths, account data, or child output.
     dialog?.showErrorBox?.(
-      "TiboTattle could not start",
-      `TiboTattle stopped before opening the dashboard.\n\nSupport code: ${ELECTRON_ENTRY_FAILURE_DIAGNOSTIC}\n\nPlease report this code with the app and operating system versions. Preserve your local data.`,
+      `${brand.displayName} could not start`,
+      `Rhetrion stopped before opening the dashboard.\n\nSupport code: ${ELECTRON_ENTRY_FAILURE_DIAGNOSTIC}\n\nPlease report this code with the app and operating system versions. Preserve your local data.`,
     );
   } catch {
     // A missing or broken native dialog must not prevent fail-closed shutdown.
@@ -387,7 +379,7 @@ export function installWindowsNormalCandidateQuitControl(lifecycle, {
   const onMessage = (message) => {
     if (!active || message === null || typeof message !== "object"
         || Array.isArray(message) || Reflect.ownKeys(message).length !== 1
-        || message.type !== "tibotattle-electron-smoke-quit-v1") return;
+        || message.type !== "usagemonitor-electron-smoke-quit-v1") return;
     cleanup();
     let acknowledged = false;
     const flushed = (error) => {
@@ -399,7 +391,7 @@ export function installWindowsNormalCandidateQuitControl(lifecycle, {
       void Promise.resolve().then(() => lifecycle.requestQuit()).catch(onFailure);
     };
     try {
-      messageSource.send({ type: "tibotattle-electron-smoke-quit-accepted-v1" }, flushed);
+      messageSource.send({ type: "usagemonitor-electron-smoke-quit-accepted-v1" }, flushed);
     } catch {
       // An unavailable parent pipe cannot create a successful quit receipt.
     }
@@ -645,6 +637,8 @@ async function prepareElectronShellBootstrap({
   architecture = process.arch,
   onStartupPhase,
   startStartupDiagnostics,
+  configureProfilePaths = false,
+  environment = process.env,
 } = {}) {
   const runtime = electron ?? await import("electron");
   const app = runtime?.app;
@@ -661,7 +655,29 @@ async function prepareElectronShellBootstrap({
   // Read and validate the package marker before constructing any companion or
   // platform service.
   await markStartupPhase("package_metadata");
-  const productionDistribution = await readProductionDistribution({ app, platform, architecture });
+  const packaged = await readApplicationPackage({ app });
+  const applicationProfile = packaged?.identity.profile ?? "development";
+  const productionDistribution = packaged?.distribution === null || packaged === null ? null
+    : validateProductionDistributionMetadata(packaged.distribution, { platform, architecture });
+  if (configureProfilePaths) {
+    const qualificationContext = await createWindowsElectronQualificationContext({ app, environment, platform, architecture });
+    assertElectronPlatformGate({ platform, architecture, environment, productionDistribution, qualificationContext });
+    const adapter = createWindowsFilesystemAdapter({ platform, architecture });
+    // Reviewed QA launchers supply a private APPDATA alongside their explicit
+    // profile. Electron's Windows known-folder lookup may ignore that environment
+    // variable; never redirect an isolated run into the physical user's profile.
+    const isolated = qualificationContext !== null
+      || (productionDistribution !== null
+        && environment.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL === ELECTRON_SMOKE_CONTROL);
+    const appData = isolated ? environment.APPDATA : app.getPath("appData");
+    if (typeof appData !== "string") throw shellError("electron_configuration_invalid");
+    pinApplicationProfilePaths({ app, appData, profile: applicationProfile, platform,
+      prepareDirectory(path, kind) {
+        if (kind === "session") createWindowsBrowserProfileStore({ adapter, rootPath: path }).ensureReady();
+        else createWindowsProtectedStateStore({ adapter, rootPath: path });
+      },
+    });
+  }
   try {
     if (typeof startStartupDiagnostics === "function") {
       await startStartupDiagnostics();
@@ -671,6 +687,7 @@ async function prepareElectronShellBootstrap({
   }
   return Object.freeze({
     [ELECTRON_SHELL_BOOTSTRAP]: true,
+    applicationProfile,
     app,
     productionDistribution,
     runtime,
@@ -778,7 +795,7 @@ export async function launchElectronShell({
       ? createWindowsNormalCandidateCredentialHandover()
       : platform === "win32" && architecture === "x64"
         && qualificationContext !== null && qualificationContext !== undefined
-        && app.getName?.() === "TiboTattle Dev"
+        && preparation.applicationProfile === "development"
         && environment.USAGE_MONITOR_TEST_LANE === WINDOWS_ELECTRON_TEST_LANE
         ? createWindowsDevelopmentReadOnlyCredentialHandover() : null;
     await markStartupDiagnostics(startupDiagnostics, "credential_wiring");
@@ -787,10 +804,14 @@ export async function launchElectronShell({
       resourceRoot: paths.resourceRoot,
       platform: process.platform,
     });
+    const applicationIcon = resolveDesktopApplicationIcon({
+      nativeImage: runtime.nativeImage,
+      resourceRoot: paths.resourceRoot,
+    });
     const desktop = await launchDesktopRuntime({
       runtime: {
         ...runtime,
-        icon: trayIconFactory.resolve(),
+        icon: applicationIcon,
         createTrayIcon: trayIconFactory.resolve,
       },
       app,
@@ -814,7 +835,7 @@ export async function launchElectronShell({
       },
       lifecycleOptions: {
         appName: productionDistribution !== null || !isPackagedElectronApp(app)
-          ? "TiboTattle" : "TiboTattle Dev",
+          ? brand.displayName : brand.developmentDisplayName,
         ...lifecycleOptions,
         ...(normalCandidateDashboardFailureObserver === undefined ? {} : {
           onDashboardLoadFailure: normalCandidateDashboardFailureObserver,
@@ -858,10 +879,10 @@ export async function launchElectronShell({
 if (process.versions.electron) {
   const runtime = await import("electron");
   runtime.protocol.registerSchemesAsPrivileged([{
-    scheme: "tibotattle-background",
+    scheme: "usagemonitor-background",
     privileges: { standard: true, secure: true, stream: true },
   }, {
-    scheme: "tibotattle-x-media",
+    scheme: "usagemonitor-x-media",
     privileges: { standard: true, secure: true, stream: true, supportFetchAPI: true, corsEnabled: true },
   }]);
   const startupDiagnostics = createDesktopStartupDiagnostics({ app: runtime?.app });
@@ -871,6 +892,7 @@ if (process.versions.electron) {
     // an ESM main process an unawaited launch can lose the race with `ready`.
     startupPreparation = await prepareElectronShellBootstrap({
       electron: runtime,
+      configureProfilePaths: true,
       onStartupPhase: (phase) => markStartupDiagnostics(startupDiagnostics, phase),
       startStartupDiagnostics: () => writeStartupDiagnostics(startupDiagnostics, "start"),
     });

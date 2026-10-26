@@ -54,7 +54,7 @@ test("Windows security workflow is manual, pinned, read-only, and content-free",
   assert.doesNotMatch(workflow, /^\s+(?:push|pull_request):/mu);
   assert.match(workflow, /permissions:\n  contents: read\n/u);
   assert.match(workflow, /USAGE_MONITOR_WINDOWS_QUALIFICATION: "1"/u);
-  assert.match(workflow, /TIBOTATTLE_WINDOWS_QUALIFICATION_STATE_ROOT/u);
+  assert.match(workflow, /USAGE_MONITOR_WINDOWS_QUALIFICATION_STATE_ROOT/u);
   assert.match(workflow, /cache-mode:\n\s+- warm\n\s+- clean/u);
   assert.match(workflow, /matrix\.cache-mode == 'warm'/u);
   assert.doesNotMatch(workflow, /inputs\.clean-cache/u);
@@ -66,9 +66,9 @@ test("Windows security workflow is manual, pinned, read-only, and content-free",
   assert.match(workflow, /persist-credentials: false/u);
   assert.match(workflow, /WINDOWS_QUALIFICATION_REVISION_MISMATCH/u);
   assert.match(workflow, /build-windows-filesystem-manifest\.mjs/u);
-  assert.match(workflow, /TIBOTATTLE_WINDOWS_BINDING_SHA256/u);
-  assert.match(workflow, /TIBOTATTLE_WINDOWS_BINDING_BYTES/u);
-  assert.match(workflow, /TIBOTATTLE_QUALIFICATION_REVISION/u);
+  assert.match(workflow, /USAGE_MONITOR_WINDOWS_BINDING_SHA256/u);
+  assert.match(workflow, /USAGE_MONITOR_WINDOWS_BINDING_BYTES/u);
+  assert.match(workflow, /USAGE_MONITOR_QUALIFICATION_REVISION/u);
   assert.match(workflow, /WINDOWS_QUALIFICATION_NODE_VERSION_MISMATCH/u);
   assert.match(workflow, /WINDOWS_QUALIFICATION_PNPM_VERSION_MISMATCH/u);
   assert.match(workflow, /WINDOWS_QUALIFICATION_COREPACK_VERSION_MISMATCH/u);
@@ -159,8 +159,8 @@ test("qualification receipts accept only fixed aggregate revision and cache meta
   assert.deepEqual(
     qualificationReceiptMetadata({
       USAGE_MONITOR_WINDOWS_QUALIFICATION: "1",
-      TIBOTATTLE_QUALIFICATION_REVISION: "A".repeat(40),
-      TIBOTATTLE_QUALIFICATION_CACHE_MODE: "warm",
+      USAGE_MONITOR_QUALIFICATION_REVISION: "A".repeat(40),
+      USAGE_MONITOR_QUALIFICATION_CACHE_MODE: "warm",
       GITHUB_ACTIONS: "true",
     }),
     {
@@ -171,8 +171,8 @@ test("qualification receipts accept only fixed aggregate revision and cache meta
   assert.throws(
     () => qualificationReceiptMetadata({
       USAGE_MONITOR_WINDOWS_QUALIFICATION: "1",
-      TIBOTATTLE_QUALIFICATION_REVISION: "not-a-revision",
-      TIBOTATTLE_QUALIFICATION_CACHE_MODE: "warm",
+      USAGE_MONITOR_QUALIFICATION_REVISION: "not-a-revision",
+      USAGE_MONITOR_QUALIFICATION_CACHE_MODE: "warm",
       GITHUB_ACTIONS: "true",
     }),
     (error) => error.code === FIXED_STATUS.revisionInvalid,
@@ -180,8 +180,8 @@ test("qualification receipts accept only fixed aggregate revision and cache meta
   assert.throws(
     () => qualificationReceiptMetadata({
       USAGE_MONITOR_WINDOWS_QUALIFICATION: "1",
-      TIBOTATTLE_QUALIFICATION_REVISION: "A".repeat(40),
-      TIBOTATTLE_QUALIFICATION_CACHE_MODE: "other",
+      USAGE_MONITOR_QUALIFICATION_REVISION: "A".repeat(40),
+      USAGE_MONITOR_QUALIFICATION_CACHE_MODE: "other",
       GITHUB_ACTIONS: "true",
     }),
     (error) => error.code === FIXED_STATUS.cacheModeInvalid,
@@ -195,8 +195,8 @@ test("qualification receipts accept only fixed aggregate revision and cache meta
   assert.throws(
     () => qualificationReceiptMetadata({
       USAGE_MONITOR_WINDOWS_QUALIFICATION: "1",
-      TIBOTATTLE_QUALIFICATION_REVISION: "A".repeat(40),
-      TIBOTATTLE_QUALIFICATION_CACHE_MODE: "clean",
+      USAGE_MONITOR_QUALIFICATION_REVISION: "A".repeat(40),
+      USAGE_MONITOR_QUALIFICATION_CACHE_MODE: "clean",
     }),
     (error) => error.code === FIXED_STATUS.environmentInvalid,
   );

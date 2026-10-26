@@ -152,7 +152,6 @@ test("release provenance binds both executable R7 worker scripts", () => {
   );
   assert.equal(
     R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_PATHS.includes(
-      "config/deployment-endpoints.js",
     ),
     true,
   );

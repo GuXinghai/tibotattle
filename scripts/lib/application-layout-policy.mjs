@@ -13,15 +13,7 @@ const APPLICATION_DEFINITIONS = [
     root: "apps/web",
     allowedPackages: [],
   },
-  {
-    name: "worker",
-    root: "apps/worker",
-    allowedPackages: [
-      "accounting",
-      "quota-analysis",
-      "telemetry-contract",
-    ],
-  },
+
 ];
 const NON_APPLICATION_CONTAINERS = new Set([
   "assets",

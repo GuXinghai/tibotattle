@@ -10,7 +10,7 @@ import { normalizeXImportCookies, encodeXImportFrame, createXImportFrameReader, 
 
 const execFile = promisify(execFileCallback);
 const SOURCE = fileURLToPath(new URL('./x-import/', import.meta.url));
-const FILES = ['manifest.json', 'popup.html', 'popup.js', 'TiboTattleXImport.exe'];
+const FILES = ['manifest.json', 'popup.html', 'popup.js', 'UsageMonitorXImport.exe'];
 const reply = (code, extra = {}) => ({ ok: ['bridge_ready', 'import_ready', 'imported', 'verification_pending'].includes(code), code, ...extra });
 const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === keys.slice().sort().join(',');
 
@@ -67,7 +67,7 @@ export function createDesktopXImport({ protectedStore, onImport, sourceDirectory
   if (process.platform !== 'win32' || process.arch !== 'x64' || !isWindowsProtectedStateStore(protectedStore) || protectedStore.maxBytes < 1048576 || typeof onImport !== 'function') throw new Error('x_import_unavailable');
   const gate = createXImportRequestGate({ onImport });
   let child = null, channel = null, starting = null, exiting = Promise.resolve(), configured = false, disposed = false, actionGeneration = 0, code = 'not_configured';
-  const hostPath = join(protectedStore.rootPath, 'TiboTattleXImport.exe');
+  const hostPath = join(protectedStore.rootPath, 'UsageMonitorXImport.exe');
   const stop = () => {
     channel?.destroy(); channel = null;
     const old = child; child = null; starting = null;
@@ -102,11 +102,11 @@ export function createDesktopXImport({ protectedStore, onImport, sourceDirectory
     starting = (async () => {
       await exiting;
       if (disposed) throw new Error('x_import_unavailable');
-      protectedStore.inspect('TiboTattleXImport.exe');
-      const expected = await readFile(join(sourceDirectory, 'TiboTattleXImport.exe'));
-      const installed = protectedStore.read('TiboTattleXImport.exe').data;
+      protectedStore.inspect('UsageMonitorXImport.exe');
+      const expected = await readFile(join(sourceDirectory, 'UsageMonitorXImport.exe'));
+      const installed = protectedStore.read('UsageMonitorXImport.exe').data;
       if (!Buffer.from(installed).equals(expected)) throw new Error('x_import_unavailable');
-      const pipe = `TiboTattle.XControl.${randomBytes(16).toString('hex')}`;
+      const pipe = `UsageMonitor.XControl.${randomBytes(16).toString('hex')}`;
       const owned = spawn(hostPath, ['--broker', pipe, String(process.pid)], { windowsHide: true, stdio: 'ignore', env: { SystemRoot: process.env.SystemRoot } });
       child = owned;
       owned.once('error', () => { if (child === owned) { code = 'bridge_unavailable'; channel?.destroy(); } });
@@ -136,7 +136,7 @@ export function createDesktopXImport({ protectedStore, onImport, sourceDirectory
       try {
         protectedStore.ensureProtectedDirectory();
         for (const name of FILES) await upsert(name, await readFile(join(sourceDirectory, name)));
-        await upsert('native-host.json', Buffer.from(JSON.stringify({ name: X_IMPORT_HOST, description: 'TiboTattle X session import', path: hostPath, type: 'stdio', allowed_origins: [X_IMPORT_ORIGIN] })));
+        await upsert('native-host.json', Buffer.from(JSON.stringify({ name: X_IMPORT_HOST, description: 'Rhetrion X session import', path: hostPath, type: 'stdio', allowed_origins: [X_IMPORT_ORIGIN] })));
         const registry = join(process.env.SystemRoot, 'System32', 'reg.exe');
         for (const view of ['32', '64']) await execFile(registry, ['ADD', `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${X_IMPORT_HOST}`, '/ve', '/t', 'REG_SZ', '/d', join(protectedStore.rootPath, 'native-host.json'), '/f', `/reg:${view}`], { windowsHide: true, timeout: 10000, maxBuffer: 4096 });
         configured = true; await start();

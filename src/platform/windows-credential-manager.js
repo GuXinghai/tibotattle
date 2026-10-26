@@ -287,9 +287,9 @@ export function createWindowsCredentialManagerBackend(options = {}) {
           });
           const qualificationStateRoot = process.env.GITHUB_ACTIONS === "true"
             && process.env.USAGE_MONITOR_WINDOWS_QUALIFICATION === "1"
-            && typeof process.env.TIBOTATTLE_WINDOWS_QUALIFICATION_STATE_ROOT === "string"
-            && process.env.TIBOTATTLE_WINDOWS_QUALIFICATION_STATE_ROOT.length > 0
-            ? process.env.TIBOTATTLE_WINDOWS_QUALIFICATION_STATE_ROOT
+            && typeof process.env.USAGE_MONITOR_WINDOWS_QUALIFICATION_STATE_ROOT === "string"
+            && process.env.USAGE_MONITOR_WINDOWS_QUALIFICATION_STATE_ROOT.length > 0
+            ? process.env.USAGE_MONITOR_WINDOWS_QUALIFICATION_STATE_ROOT
             : null;
           auditStore = createWindowsCredentialOperationAuditStore({
             filePath: defaultWindowsCredentialOperationAuditFile({

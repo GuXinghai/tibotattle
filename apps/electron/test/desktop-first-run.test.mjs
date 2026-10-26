@@ -94,26 +94,26 @@ test("first-run native copy resolves the system and explicit desktop languages",
   const expectations = [
     [
       "en",
-      "TiboTattle local data",
+      "Rhetrion local data",
       "Continue",
       "Quit",
-      "Start TiboTattle at login (you can change this later in Settings)",
+      "Start Rhetrion at login (you can change this later in Settings)",
       /Reads:.*Stores:.*works offline.*does not upload your usage data.*notifications.*development build.*Keep the app open/su,
     ],
     [
       "zh-Hans",
-      "TiboTattle 本地数据",
+      "衡川 本地数据",
       "继续",
       "退出",
-      "登录时启动 TiboTattle（稍后可在“设置”中更改）",
+      "登录时启动 衡川（稍后可在“设置”中更改）",
       /读取：.*存储：.*离线也可使用.*不会上传你的用量数据.*提醒.*开发版本.*分析运行期间请保持应用打开/su,
     ],
     [
       "es",
-      "Datos locales de TiboTattle",
+      "Datos locales de Rhetrion",
       "Continuar",
       "Salir",
-      "Iniciar TiboTattle al iniciar sesión (puedes cambiarlo después en Configuración)",
+      "Iniciar Rhetrion al iniciar sesión (puedes cambiarlo después en Configuración)",
       /Lee:.*Guarda:.*funciona sin conexión.*no sube tus datos de uso.*notificaciones.*compilación de desarrollo.*Mantén la aplicación abierta/su,
     ],
   ];
@@ -275,7 +275,7 @@ test("persistence failure fails closed and never allows a companion launch", asy
 test("POSIX receipt backend uses the owner-only atomic sibling store", {
   skip: POSIX_TEST_SKIP,
 }, async () => {
-  const parent = await mkdtemp(join(tmpdir(), "tibotattle-first-run-"));
+  const parent = await mkdtemp(join(tmpdir(), "usagemonitor-first-run-"));
   try {
     const root = join(parent, "state");
     const backend = createDesktopFirstRunReceiptBackend({
@@ -306,7 +306,7 @@ test("Windows receipt backend requires the branded protected store and never use
   assert.throws(
     () => createDesktopFirstRunReceiptBackend({
       platform: "win32",
-      rootPath: "C:\\Users\\tester\\AppData\\Local\\TiboTattle\\state",
+      rootPath: "C:\\Users\\tester\\AppData\\Local\\Rhetrion\\state",
       windowsProtectedStateStore: {
         readJson: () => calls.push("read"),
         createJson: () => calls.push("create"),

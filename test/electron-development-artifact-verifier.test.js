@@ -36,6 +36,10 @@ import {
 const require = createRequire(import.meta.url);
 const asar = createRequire(require.resolve("electron-builder"))("@electron/asar");
 const SHELL_FILES = [
+  "apps/electron/application-profile.js",
+  "config/application-identity.cjs",
+  "config/product-brand.cjs",
+  "config/product-brand.js",
   "config/electron-production-distribution.cjs",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
@@ -86,7 +90,7 @@ const SHELL_FILES = [
   "apps/electron/x-import/popup.html",
   "apps/electron/x-import/popup.js",
   "apps/electron/x-import/NativeHost.cs",
-  "apps/electron/x-import/TiboTattleXImport.exe",
+  "apps/electron/x-import/UsageMonitorXImport.exe",
   "apps/electron/errors.js",
   "apps/electron/loopback-policy.js",
   "apps/electron/main.js",
@@ -99,7 +103,6 @@ const SHELL_FILES = [
   "apps/electron/windows-account-observation-qualification-smoke-child.mjs",
   "apps/electron/windows-account-observation-qualification-smoke.js",
   "apps/electron/windows-qualification.js",
-  "config/deployment-endpoints.js",
   "src/desktop-shell-status.js",
   "src/platform/windows-accountless-installation-credential.js",
   "src/platform/windows-credential-manager-probe.js",
@@ -200,7 +203,7 @@ async function makeFixture(
     unpackPattern = "**/*.node",
   } = {},
 ) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-artifact-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-artifact-"));
   const appPath = join(root, "app");
   const archiveSource = join(root, "archive-source");
   const asarPath = join(root, "app.asar");

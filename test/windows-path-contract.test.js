@@ -36,8 +36,8 @@ test("Windows application-state paths are deterministic on every host", () => {
 test("native Windows roots support spaces, Unicode, custom CODEX_HOME, and cleanup", {
   skip: process.platform !== "win32",
 }, async () => {
-  const root = await mkdtemp(join(tmpdir(), "Tibo Tattle Windows 路径 "));
-  const resourceRoot = join(root, "Program Files", "TiboTattle resources");
+  const root = await mkdtemp(join(tmpdir(), "Usage Monitor Windows 路径 "));
+  const resourceRoot = join(root, "Program Files", "Usage Monitor resources");
   const localAppData = join(root, "Local AppData 用户");
   const stateRoot = defaultExportStateDirectory({
     platform: "win32",

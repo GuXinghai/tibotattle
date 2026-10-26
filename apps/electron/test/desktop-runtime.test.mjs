@@ -96,7 +96,7 @@ class FakeApp extends EventEmitter {
 
   getPath(name) {
     assert.equal(name, "userData");
-    return "C:\\Users\\adam\\AppData\\Roaming\\TiboTattle";
+    return "C:\\Users\\adam\\AppData\\Roaming\\Rhetrion";
   }
 
   quit() {
@@ -222,16 +222,16 @@ function platformServices() {
 }
 
 function qualifyNotificationFixture(app) {
-  app.getName = () => "TiboTattle";
+  app.getName = () => "Rhetrion";
   const originalGetPath = app.getPath.bind(app);
   app.getPath = (name) => ({
     appData: "C:\\Users\\adam\\AppData\\Roaming",
-    exe: "C:\\Users\\adam\\AppData\\Local\\Programs\\TiboTattle\\TiboTattle.exe",
+    exe: "C:\\Users\\adam\\AppData\\Local\\Programs\\Rhetrion\\usage-monitor.exe",
   })[name] ?? originalGetPath(name);
   app.setAppUserModelId = () => {};
   app.setToastActivatorCLSID = () => {};
   return { readShortcutLink: () => ({
-        target: "C:\\Users\\adam\\AppData\\Local\\Programs\\TiboTattle\\TiboTattle.exe",
+        target: "C:\\Users\\adam\\AppData\\Local\\Programs\\Rhetrion\\usage-monitor.exe",
         appUserModelId: distribution.PRODUCTION_ELECTRON_APP_ID,
       }) };
 }
@@ -273,7 +273,7 @@ function runtime(app) {
 
 function shellStatus({ usedPercent, observedAt }) {
   const notificationEvidence = {
-    schemaVersion: "tibotattle-notification-evidence-v2",
+    schemaVersion: "usagemonitor-notification-evidence-v2",
     status: "fresh_provider_observation",
     provider: "openai_codex",
     source: "app_server_read",
@@ -413,8 +413,8 @@ async function launchFixture({
 test("normal desktop never forwards retired upload environment variables", async () => {
   let productionUpdaterLoads = 0;
   const fixture = await launchFixture({ load: async () => null, environment: {
-    HOME: "/Users/adam", USAGE_MONITOR_CENTRAL_ORIGIN: "https://tibotattle.com",
-    USAGE_MONITOR_ACCOUNTLESS_ORIGIN: "https://tibotattle.com",
+    HOME: "/Users/adam", USAGE_MONITOR_CENTRAL_ORIGIN: "https://retired.example.invalid",
+    USAGE_MONITOR_ACCOUNTLESS_ORIGIN: "https://retired.example.invalid",
   }, loadProductionUpdater: async () => {
     productionUpdaterLoads += 1;
     return { autoUpdater: null };
@@ -569,13 +569,13 @@ test("runtime accepts Codex handoff only from the ready dashboard main frame", a
   const ipcMain = {
     handler: null,
     handle(channel, handler) {
-      if (channel === "tibotattle:x-reader:v1") { this.xHandler = handler; return; }
-      assert.equal(channel, "tibotattle:desktop:v1");
+      if (channel === "usagemonitor:x-reader:v1") { this.xHandler = handler; return; }
+      assert.equal(channel, "usagemonitor:desktop:v1");
       this.handler = handler;
     },
     removeHandler(channel) {
-      if (channel === "tibotattle:x-reader:v1") { this.xHandler = null; return; }
-      assert.equal(channel, "tibotattle:desktop:v1");
+      if (channel === "usagemonitor:x-reader:v1") { this.xHandler = null; return; }
+      assert.equal(channel, "usagemonitor:desktop:v1");
       this.handler = null;
     },
   };
@@ -693,6 +693,8 @@ test("runtime awaits Electron readiness before the first-run native dialog", asy
     },
     environment: { HOME: "/Users/adam", USAGE_MONITOR_RESOURCE_ROOT: "/repo" },
     platformServices: platformServices(),
+    settingsBackend: { load: async () => null, save: async () => {} },
+    notificationBackend: notificationBackendFixture(),
     firstRunReceiptBackend: {
       load: async () => null,
       save: async () => {},
@@ -741,6 +743,8 @@ test("runtime uses Electron preferred system languages for first-run copy", asyn
     },
     environment: { HOME: "/Users/adam", USAGE_MONITOR_RESOURCE_ROOT: "/repo" },
     platformServices: platformServices(),
+    settingsBackend: { load: async () => null, save: async () => {} },
+    notificationBackend: notificationBackendFixture(),
     firstRunReceiptBackend: {
       load: async () => null,
       save: async () => {},
@@ -754,7 +758,7 @@ test("runtime uses Electron preferred system languages for first-run copy", asyn
   const desktop = await launch;
   assert.equal(desktop.firstRun.status, "cancelled");
   assert.deepEqual(dialogCalls[0].buttons, ["Continuar", "Salir"]);
-  assert.match(dialogCalls[0].detail, /servicio auxiliar|contribución/u);
+  assert.match(dialogCalls[0].detail, /local|conexión/u);
 });
 
 test("runtime applies persisted custom CODEX_HOME before first child start", async () => {
@@ -833,7 +837,7 @@ test("runtime wires safe browser, diagnostics, and local-data actions", async ()
   assert.deepEqual(external, ["http://127.0.0.1:4811/"]);
 
   assert.equal(await fixture.desktop.controller.handlers.revealLocalData({}), true);
-  assert.deepEqual(revealed, ["C:\\Users\\adam\\AppData\\Roaming\\TiboTattle\\companion-state"]);
+  assert.deepEqual(revealed, ["C:\\Users\\adam\\AppData\\Roaming\\Rhetrion\\companion-state"]);
 
   assert.deepEqual(
     await fixture.desktop.controller.handlers.showDiagnostics({}),
@@ -842,7 +846,7 @@ test("runtime wires safe browser, diagnostics, and local-data actions", async ()
   assert.equal(dialogs.length, 1);
   assert.equal(copied.length, 1);
   assert.equal(copied[0], dialogs[0].detail);
-  assert.match(dialogs[0].detail, /tibotattle-electron-diagnostics-v2/u);
+  assert.match(dialogs[0].detail, /usagemonitor-electron-diagnostics-v2/u);
   assert.match(dialogs[0].detail, /"scheduleOwner": "companion"/u);
   assert.match(dialogs[0].detail, /"cadenceTimerArmed": false/u);
   assert.doesNotMatch(dialogs[0].detail, /Users|127\.0\.0\.1|codex-first/u);
@@ -858,7 +862,7 @@ test("runtime applies the persisted desktop language to the initial tray menu", 
     }),
   });
   const tray = FakeTray.instances.at(-1);
-  assert.equal(tray.menu.template.find((item) => item.label === "打开 TiboTattle")?.label, "打开 TiboTattle");
+  assert.equal(tray.menu.template.find((item) => item.label === "打开 Rhetrion")?.label, "打开 Rhetrion");
   await fixture.desktop.lifecycle.dispose();
 });
 
@@ -883,6 +887,11 @@ test("runtime forwards the trusted dynamic tray-image factory to lifecycle", asy
 test("runtime invalidates a dashboard refresh lease when its renderer is replaced", async () => {
   const fixture = await launchFixture({
     load: async () => null,
+    childFactory() {
+      const child = new FakeChild();
+      setImmediate(() => child.stdout.emit("data", "USAGE_MONITOR_READY http://127.0.0.1:4811/\n"));
+      return child;
+    },
   });
   const dashboard = FakeWindow.instances.find((candidate) => (
     candidate.options.webPreferences.preload === "/repo/apps/electron/preload.cjs"
@@ -977,7 +986,7 @@ test("runtime keeps the prior child and environment when root persistence fails"
   await fixture.desktop.lifecycle.dispose();
 });
 
-test("runtime keeps policy persistence separate and delivers one localized crossing", async () => {
+test("runtime preserves crossing policy but a display name cannot authorize delivery", async () => {
   const fake = fakeNotification();
   const policyEvents = [];
   const policyBackend = notificationBackendFixture({ events: policyEvents });
@@ -1011,9 +1020,7 @@ test("runtime keeps policy persistence separate and delivers one localized cross
   assert.equal(first.outcome, "first_observation");
   assert.equal(crossing.outcome, "notification");
   assert.equal(duplicate.outcome, "no_crossing");
-  assert.equal(fake.shown.length, 1);
-  assert.equal(fake.shown[0].title, "El uso de la cuota alcanzó el 90 %");
-  assert.match(fake.shown[0].body, /umbral de uso del 90 %/u);
+  assert.equal(fake.shown.length, 0);
   assert.ok(policyEvents.includes("save"));
   const recovery = await fixture.desktop.notificationCoordinator.evaluate({
     schemaVersion: DESKTOP_SHELL_STATUS_SCHEMA_VERSION,
@@ -1068,16 +1075,16 @@ test("runtime truthfully gates development and Windows notification identity", a
   await windows.desktop.lifecycle.dispose();
 });
 
-test("runtime enables Windows delivery only after the installed identity matches and retains it across language changes", async () => {
+test("runtime refuses title and shortcut proof without checked distribution metadata across language changes", async () => {
   const fake = fakeNotification();
   const calls = [];
   const app = new FakeApp();
   app.isPackaged = true;
-  app.getName = () => "TiboTattle";
+  app.getName = () => "Rhetrion";
   const originalGetPath = app.getPath.bind(app);
   app.getPath = (name) => ({
     appData: "C:\\Users\\adam\\AppData\\Roaming",
-    exe: "C:\\Users\\adam\\AppData\\Local\\Programs\\TiboTattle\\TiboTattle.exe",
+    exe: "C:\\Users\\adam\\AppData\\Local\\Programs\\Rhetrion\\usage-monitor.exe",
   })[name] ?? originalGetPath(name);
   app.setAppUserModelId = (value) => calls.push(["appUserModelId", value]);
   app.setToastActivatorCLSID = (value) => calls.push(["toastActivatorClsid", value]);
@@ -1091,7 +1098,7 @@ test("runtime enables Windows delivery only after the installed identity matches
         readShortcutLink(path) {
           calls.push(["shortcut", path]);
           return {
-            target: "C:\\Users\\adam\\AppData\\Local\\Programs\\TiboTattle\\TiboTattle.exe",
+            target: "C:\\Users\\adam\\AppData\\Local\\Programs\\Rhetrion\\usage-monitor.exe",
             appUserModelId: distribution.PRODUCTION_ELECTRON_APP_ID,
           };
         },
@@ -1103,18 +1110,14 @@ test("runtime enables Windows delivery only after the installed identity matches
   });
   assert.equal(
     (await windows.desktop.controller.handlers.getSettings({})).settings.notifications.delivery,
-    "ready",
+    "windows_identity_unavailable",
   );
   await windows.desktop.controller.handlers.setLanguage({ value: "es" });
   assert.equal(
     (await windows.desktop.controller.handlers.getSettings({})).settings.notifications.delivery,
-    "ready",
+    "windows_identity_unavailable",
   );
-  assert.deepEqual(calls, [
-    ["shortcut", "C:\\Users\\adam\\AppData\\Roaming\\Microsoft\\Windows\\Start Menu\\Programs\\TiboTattle.lnk"],
-    ["appUserModelId", distribution.PRODUCTION_ELECTRON_APP_ID],
-    ["toastActivatorClsid", distribution.PRODUCTION_ELECTRON_WINDOWS_TOAST_ACTIVATOR_CLSID],
-  ]);
+  assert.deepEqual(calls, []);
   await windows.desktop.lifecycle.dispose();
 });
 
@@ -1225,8 +1228,8 @@ test("runtime grants Settings actions only to the trusted live dashboard top fra
   const ipcMain = {
     handler: null,
     handle(channel, handler) {
-      if (channel === "tibotattle:x-reader:v1") { this.xHandler = handler; return; }
-      assert.equal(channel, "tibotattle:desktop:v1");
+      if (channel === "usagemonitor:x-reader:v1") { this.xHandler = handler; return; }
+      assert.equal(channel, "usagemonitor:desktop:v1");
       this.handler = handler;
     },
     removeHandler() { this.handler = null; },
@@ -1249,11 +1252,9 @@ test("runtime grants Settings actions only to the trusted live dashboard top fra
   await desktop.controller.handlers.openSettings({});
   assert.equal(FakeWindow.instances.length, before, "opening Settings must reuse the main window");
   const trustedEvent = { sender: dashboard.webContents, senderFrame: dashboard.webContents.mainFrame };
-  assert.deepEqual(
-    await ipcMain.handler(trustedEvent, { action: "sendTestNotification", args: {} }),
-    { status: "requested" },
-  );
-  assert.equal(fake.shown.length, 1);
+  await assert.rejects(ipcMain.handler(trustedEvent, { action: "sendTestNotification", args: {} }),
+    { code: "desktop_ipc_handler_failed" });
+  assert.equal(fake.shown.length, 0);
   const hostileEvents = [
     { sender: dashboard.webContents, senderFrame: { isMainFrame: false, parent: dashboard.webContents.mainFrame } },
     { sender: dashboard.webContents, senderFrame: { isMainFrame: true, parent: null } },
@@ -1279,7 +1280,7 @@ test("runtime grants Settings actions only to the trusted live dashboard top fra
   }
   dashboard.webContents.url = "http://127.0.0.1:4811/#settings/notifications";
   const settings = await ipcMain.handler(trustedEvent, { action: "getSettings", args: {} });
-  assert.equal(settings.settings.notifications.delivery, "ready", "hash navigation does not revoke the trusted main frame");
-  assert.equal(fake.shown.length, 1);
+  assert.equal(settings.settings.notifications.delivery, "windows_identity_unavailable", "hash navigation does not revoke the trusted main frame");
+  assert.equal(fake.shown.length, 0);
   await desktop.lifecycle.dispose();
 });

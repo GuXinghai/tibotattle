@@ -77,7 +77,7 @@ function onboardingHarness(locale = "en-US") {
   vm.runInContext(source.slice(layoutStart, layoutEnd), context);
   context.mountDashboardLayout({ documentRef, windowRef });
   const settleLayout = () => {
-    windowListeners.get("tibotattle:locale-change")();
+    windowListeners.get("usagemonitor:locale-change")();
     while (frames.length) frames.shift()();
   };
   settleLayout();

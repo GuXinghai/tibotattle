@@ -7,7 +7,6 @@ on:
       - "CHANGELOG.md"
       - "config/release-evidence.js"
       - "release-notes/**"
-      - "scripts/check-release-notes.mjs"
       - "tools/tool-inventory.json"
       - "test/tool-inventory.test.js"
       - "config/electron-production-distribution.cjs"
@@ -15,18 +14,14 @@ on:
       - "scripts/check-release-workflow-policy.mjs"
       - "scripts/*electron*"
       - "scripts/lib/*electron*"
-      - "scripts/lib/publication-file-digest.mjs"
-      - "apps/worker/wrangler.jsonc"
       - "scripts/release-attestation-evidence.mjs"
       - "scripts/release-evidence.js"
       - "scripts/release-evidence-*.js"
       - "scripts/generate-release-evidence.js"
-      - "scripts/build-public-release-site.js"
       - "scripts/validate-release-sbom.mjs"
       - "tools/operations/validate-documentation.mjs"
       - "test/documentation-governance.test.js"
       - "test/release-*.test.js"
-      - "test/public-release-site.test.js"
       - "README.md"
       - "SECURITY.md"
       - "docs/**"
@@ -42,7 +37,6 @@ on:
       - "CHANGELOG.md"
       - "config/release-evidence.js"
       - "release-notes/**"
-      - "scripts/check-release-notes.mjs"
       - "tools/tool-inventory.json"
       - "test/tool-inventory.test.js"
       - "config/electron-production-distribution.cjs"
@@ -50,18 +44,14 @@ on:
       - "scripts/check-release-workflow-policy.mjs"
       - "scripts/*electron*"
       - "scripts/lib/*electron*"
-      - "scripts/lib/publication-file-digest.mjs"
-      - "apps/worker/wrangler.jsonc"
       - "scripts/release-attestation-evidence.mjs"
       - "scripts/release-evidence.js"
       - "scripts/release-evidence-*.js"
       - "scripts/generate-release-evidence.js"
-      - "scripts/build-public-release-site.js"
       - "scripts/validate-release-sbom.mjs"
       - "tools/operations/validate-documentation.mjs"
       - "test/documentation-governance.test.js"
       - "test/release-*.test.js"
-      - "test/public-release-site.test.js"
       - "README.md"
       - "SECURITY.md"
       - "docs/**"
@@ -111,14 +101,6 @@ jobs:
       - name: Enforce immutable workflow dependencies and runner policy
         run: node ./scripts/check-release-workflow-policy.mjs
 
-      - name: Check pull-request release documentation against its ancestry
-        if: github.event_name == 'pull_request'
-        run: node ./scripts/check-release-notes.mjs --reachable-tags
-
-      - name: Check complete release documentation before publication
-        if: github.event_name != 'pull_request'
-        run: node ./scripts/check-release-notes.mjs
-
       - name: Check qualification dependency boundaries
         run: npm run architecture:check
 
@@ -129,10 +111,7 @@ jobs:
         run: npm run codex:contract:check
 
       - name: Test release evidence and attestation contracts
-        run: node --test test/codex-contract-drift.test.js test/release-workflow-policy.test.js test/release-evidence.test.js test/release-attestation-action.test.js test/release-sbom-action.test.js test/release-notes.test.js
-
-      - name: Test public verification documentation
-        run: node --test apps/web/test/community-site.test.mjs
+        run: node --test test/codex-contract-drift.test.js test/release-workflow-policy.test.js test/release-evidence.test.js test/release-attestation-action.test.js test/release-sbom-action.test.js
 
       - name: Check documentation governance
         run: npm run docs:check

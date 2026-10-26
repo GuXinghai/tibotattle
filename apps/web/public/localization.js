@@ -5,6 +5,8 @@
 
 import {
   CATALOGS,
+  PRODUCT_BRAND_NAMES,
+  PRODUCT_FULL_NAME,
   canonicalizeLocale,
   DEFAULT_LOCALE as CANONICAL_DEFAULT_LOCALE,
   isLanguagePreference as canonicalIsLanguagePreference,
@@ -14,7 +16,7 @@ import {
   SYSTEM_LOCALE_PREFERENCE,
 } from "./i18n.generated.js";
 
-export const LOCALIZATION_SCHEMA_VERSION = "tibotattle-localization-v2";
+export const LOCALIZATION_SCHEMA_VERSION = "usagemonitor-localization-v2";
 // Keep these browser names stable while the package owns the locale policy.
 // The generated mirror is static so this remains safe for the offline/public
 // browser boundary.
@@ -22,7 +24,7 @@ export const SYSTEM_LANGUAGE_PREFERENCE = SYSTEM_LOCALE_PREFERENCE;
 export const DEFAULT_LOCALE = CANONICAL_DEFAULT_LOCALE;
 export const SUPPORTED_LOCALES = CANONICAL_SUPPORTED_LOCALES;
 export const LANGUAGE_PREFERENCE_STORAGE_KEY =
-  "tibotattle.language-preference.v1";
+  "usagemonitor.language-preference.v1";
 
 const BROWSER_LANGUAGE_LABELS = Object.freeze({
   [SYSTEM_LANGUAGE_PREFERENCE]: "System",
@@ -117,11 +119,11 @@ function interpolate(message, values = {}) {
 // Match only these sentences and bounded numeric/date slots: arbitrary service
 // or provider text remains raw and cannot be interpreted as product copy.
 const EVIDENCE_WARNING_MESSAGES = Object.freeze({
-  "loading": ["Full indexed history is loading. The latest replay-safe snapshot is shown meanwhile and will be replaced only by the completed full projection.", "正在加载完整的已索引历史。期间显示最近一次可安全重放的快照，完整计算完成后才会替换它。", "Se está cargando el historial indexado completo. Mientras tanto se muestra la última instantánea reproducible sin duplicaciones; solo se sustituirá por el resultado completo."],
+  "loading": ["Local history indexing is in progress. Complete historical totals will appear after the indexed aggregate is published.", "本地历史索引正在进行。已索引汇总发布后，才会显示完整历史总计。", "La indexación del historial local está en curso. Los totales históricos completos aparecerán cuando se publique el agregado indexado."],
   "partialIndex": ["The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.", "统一本地索引可读取，但覆盖不完整。完整且与当前索引版本一致的结果发布前，不显示用量总计和时间线。", "El índice local unificado se puede leer, pero su cobertura es parcial. Los totales y las cronologías no se muestran hasta disponer de una publicación completa vinculada a la generación del índice."],
   "missingIndex": ["The unified local index has not been built yet. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "尚未建立统一本地索引。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado aún no se ha creado. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
   "unavailableIndex": ["The unified local index is unavailable. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "统一本地索引不可用。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado no está disponible. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
-  "newerBuild": ["This local history was created by a newer TiboTattle build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.", "本地历史由较新版本的 TiboTattle 创建。当前版本无法更新其用量总计和时间线，请安装兼容的较新版本。保留的本地历史未被删除。", "Este historial local se creó con una versión más reciente de TiboTattle. Esta versión no puede actualizar sus totales ni cronologías; instala una versión posterior compatible. El historial local conservado no se ha eliminado."],
+  "newerBuild": ["This local history was created by a newer application build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.", "本地历史由较新版本的应用创建。当前版本无法更新其用量总计和时间线，请安装兼容的较新版本。保留的本地历史未被删除。", "Este historial local se creó con una versión más reciente de la aplicación. Esta versión no puede actualizar sus totales ni cronologías; instala una versión posterior compatible. El historial local conservado no se ha eliminado."],
   "indexing": ["History indexing is still advancing. Complete historical totals stay hidden until an indexed aggregate is available.", "历史索引仍在进行。已索引的汇总结果可用前，不显示完整历史总计。", "La indexación del historial sigue avanzando. Los totales históricos completos no se muestran hasta disponer de un agregado indexado."],
   "summaryUnavailable": ["The history scan is complete, but the current accounting summary is unavailable. Update local usage to retry.", "历史扫描已完成，但当前用量汇总不可用。请更新本地用量以重试。", "El análisis del historial ha terminado, pero el resumen contable actual no está disponible. Actualiza el uso local para reintentar."],
   "priceRegistry": ["Official API prices changed. Cached price estimates are withheld until the next local replay rebuilds them with the current registry.", "官方 API 价格已变更。下次本地重放按最新价格重新计算前，不显示缓存中的价格估算。", "Los precios oficiales de API han cambiado. Las estimaciones en caché no se muestran hasta que la siguiente reproducción local las recalcule con el registro vigente."],
@@ -165,6 +167,8 @@ export function evidenceWarningLocalization(message) {
 }
 
 export const WEB_MESSAGES = Object.freeze({
+  "app.name": SUPPORTED_LOCALES.map((locale) => PRODUCT_BRAND_NAMES[locale]),
+  "app.fullName": SUPPORTED_LOCALES.map(() => PRODUCT_FULL_NAME),
   ...Object.fromEntries(Object.entries(EVIDENCE_WARNING_MESSAGES).map(([id, row]) => [`dashboard.warning.${id}`, row])),
   ...Object.fromEntries(Object.keys(CATALOGS[DEFAULT_LOCALE])
     .filter((key) => key.startsWith("allowance.")
@@ -228,15 +232,15 @@ export const WEB_MESSAGES = Object.freeze({
   "dashboard.unavailable.companionUnavailable": ["Companion unavailable", "伴随程序不可用", "Acompañante no disponible"],
   "dashboard.unavailable.noRealUsage": ["No real usage is displayed", "未显示真实使用情况", "No se muestra uso real"],
   "dashboard.unavailable.backendOnlyTitle": ["This address is the backend-only service", "此地址仅提供后端服务", "Esta dirección es el servicio solo de backend"],
-  "dashboard.unavailable.backendOnlyCopy": ["This service handles optional community requests but can't read this PC. Open TiboTattle from the Start menu and use its window.", "此服务接受可选的社区请求，但无法读取这台电脑。请从开始菜单打开 TiboTattle，并使用其应用内窗口。", "Este servicio atiende solicitudes comunitarias opcionales, pero no puede leer este PC. Abre TiboTattle desde el menú Inicio y usa su ventana."],
+  "dashboard.unavailable.backendOnlyCopy": ["This service handles optional community requests but can't read this PC. Open {appName} from the Start menu and use its window.", "此服务接受可选的社区请求，但无法读取这台电脑。请从开始菜单打开 {appName}，并使用其应用内窗口。", "Este servicio atiende solicitudes comunitarias opcionales, pero no puede leer este PC. Abre {appName} desde el menú Inicio y usa su ventana."],
 
   "dashboard.unavailable.dashboardTitle": ["The companion could not load the local dashboard", "伴随程序无法加载本地仪表板", "El acompañante no pudo cargar el panel local"],
-  "dashboard.unavailable.dashboardCopy": ["The Windows app is running, but its dashboard couldn't load. Quit and reopen TiboTattle, open the dashboard in its window and check again.", "Windows 应用正在运行，但无法加载其应用内仪表板。退出并重新打开 TiboTattle，然后在其窗口中打开仪表板并再次检查。", "La app para Windows está en ejecución, pero no se pudo cargar su panel. Cierra y vuelve a abrir TiboTattle, abre el panel en su ventana y vuelve a comprobarlo."],
+  "dashboard.unavailable.dashboardCopy": ["The Windows app is running, but its dashboard couldn't load. Quit and reopen {appName}, open the dashboard in its window and check again.", "Windows 应用正在运行，但无法加载其应用内仪表板。退出并重新打开 {appName}，然后在其窗口中打开仪表板并再次检查。", "La app para Windows está en ejecución, pero no se pudo cargar su panel. Cierra y vuelve a abrir {appName}, abre el panel en su ventana y vuelve a comprobarlo."],
 
   "dashboard.unavailable.companionTitle": ["The local companion is not available", "本地伴随程序不可用", "El acompañante local no está disponible"],
-  "dashboard.unavailable.companionCopy": ["Open TiboTattle from the Start menu, wait for Ready, then open the dashboard in its window. If no installer is listed below, this build isn't available for new installations yet.", "从开始菜单打开 TiboTattle，等待显示“就绪”，然后在其窗口中打开仪表板。如果下方没有发布安装程序，此构建尚不可用于新的安装。", "Abre TiboTattle desde el menú Inicio, espera a que aparezca Listo y luego abre el panel en su ventana. Si abajo no aparece ningún instalador, esta versión todavía no está disponible para nuevas instalaciones."],
+  "dashboard.unavailable.companionCopy": ["Open {appName} from the Start menu, wait for Ready, then open the dashboard in its window. If no installer is listed below, this build isn't available for new installations yet.", "从开始菜单打开 {appName}，等待显示“就绪”，然后在其窗口中打开仪表板。如果下方没有发布安装程序，此构建尚不可用于新的安装。", "Abre {appName} desde el menú Inicio, espera a que aparezca Listo y luego abre el panel en su ventana. Si abajo no aparece ningún instalador, esta versión todavía no está disponible para nuevas instalaciones."],
 
-  "dashboard.unavailable.companionInAppCopy": ["The local service stopped. Try Refresh. If that doesn't help, quit and reopen TiboTattle, and contact Support if it still fails.", "本地服务已停止。请先使用“刷新”，然后退出并重新打开 TiboTattle 再试一次。如果仍然失败，请联系支持。", "El servicio local se detuvo. Prueba Actualizar; luego cierra y vuelve a abrir TiboTattle e inténtalo de nuevo. Si sigue fallando, contacta con Soporte."],
+  "dashboard.unavailable.companionInAppCopy": ["The local service stopped. Try Refresh. If that doesn't help, quit and reopen {appName}, and contact Support if it still fails.", "本地服务已停止。请先使用“刷新”，然后退出并重新打开 {appName} 再试一次。如果仍然失败，请联系支持。", "El servicio local se detuvo. Prueba Actualizar; luego cierra y vuelve a abrir {appName} e inténtalo de nuevo. Si sigue fallando, contacta con Soporte."],
   "dashboard.unavailable.noLocalEvidence": ["No local evidence", "没有本地证据", "Sin evidencia local"],
   "dashboard.unavailable.offline": ["Offline", "离线", "Sin conexión"],
   "dashboard.unavailable.emptyState": ["This empty state is intentional. Demo values are never substituted automatically.", "暂无实际数据。应用不会自动用演示数值填补空缺。", "Este estado vacío es intencional. Los valores de demostración nunca se sustituyen automáticamente."],
@@ -285,7 +289,7 @@ export const WEB_MESSAGES = Object.freeze({
   // sentences, and the routed evidence warnings.
   "dashboard.pricing.noComponents": ["No token-component accounting was returned.", "未返回 Token 组成核算。", "No se devolvió contabilidad por componente de token."],
   "dashboard.pricing.tokens": ["{count} tokens", "{count} 个 Token", "{count} tokens"],
-  "accounting.projection.newerBuild": ["A newer TiboTattle build created this history. Install a compatible newer build to refresh it. Your local history has not been deleted.", "此历史记录由较新版本的 TiboTattle 创建。请安装兼容的较新版本以刷新它。保留的本地历史记录尚未被删除。", "Este historial fue creado por una versión más reciente de TiboTattle. Instala una versión posterior compatible para actualizarlo. El historial local conservado no se ha eliminado."],
+  "accounting.projection.newerBuild": ["A newer application build created this history. Install a compatible newer build to refresh it. Your local history has not been deleted.", "此历史记录由较新版本的应用创建。请安装兼容的较新版本以刷新它。保留的本地历史记录尚未被删除。", "Este historial fue creado por una versión más reciente de la aplicación. Instala una versión posterior compatible para actualizarlo. El historial local conservado no se ha eliminado."],
   "accounting.projection.unavailable": ["Usage accounting is unavailable. The dash is intentional; missing evidence is not zero usage.", "用量核算不可用。破折号是有意显示的；缺失证据并不代表用量为零。", "La contabilidad de uso no está disponible. El guion es intencional: la falta de evidencia no significa uso cero."],
   "accounting.projection.lastVerifiedPeriod": ["Last verified · {period}", "上次验证 · {period}", "Última verificación · {period}"],
   "accounting.projection.periodUnavailable": ["Period unavailable", "期间不可用", "Período no disponible"],
@@ -665,7 +669,7 @@ export const WEB_MESSAGES = Object.freeze({
   "dashboard.calibration.perModelRateUnavailable": ["Not separately estimable", "无法单独估算", "No estimable por separado"],
   "dashboard.calibration.perModelSharedExplainer": ["A model with less than {threshold} of the fitted mix is too small to get its own rate, so its usage is priced at a single rate fitted to the remainder.", "在拟合所用的模型组合中，占比低于 {threshold} 的模型数据不足，无法单独估算费率，因此按其余模型合并拟合的统一费率计算。", "Un modelo con menos del {threshold} de la mezcla ajustada es demasiado pequeño para tener una tasa propia, así que su uso se valora con una única tasa ajustada para el resto."],
   "dashboard.calibration.example": ["$100 of speed-priced API-equivalent usage corresponds to about {points} percentage points.", "按速度档定价的 API 等价金额每 100 美元约对应 {points} 个百分点。", "100 USD de uso equivalente de API con precio según velocidad corresponden a unos {points} puntos porcentuales."],
-  "dashboard.calibration.noRate": [`The weekly calibration contract requires at least ${WEEKLY_CALIBRATION_MINIMUM_QUOTA_BOUNDARIES} unique quota-boundary observations spanning at least ${WEEKLY_CALIBRATION_MINIMUM_DISPLAYED_SPAN_PP} displayed percentage points, plus a valid positive fit, before TiboTattle can estimate this rate and range. API prices remain a measuring stick, not a subscription charge.`, `每周校准规则要求至少 ${WEEKLY_CALIBRATION_MINIMUM_QUOTA_BOUNDARIES} 个不同的额度边界观测值，跨度至少为 ${WEEKLY_CALIBRATION_MINIMUM_DISPLAYED_SPAN_PP} 个界面显示的百分点，且必须得到有效的正值拟合，TiboTattle 才能估算此费率和区间。API 价格仅作为衡量参考，并不代表订阅费用。`, `El contrato de calibración semanal exige al menos ${WEEKLY_CALIBRATION_MINIMUM_QUOTA_BOUNDARIES} observaciones únicas de límites de cuota que abarquen al menos ${WEEKLY_CALIBRATION_MINIMUM_DISPLAYED_SPAN_PP} puntos porcentuales mostrados, además de un ajuste positivo válido, antes de que TiboTattle pueda estimar esta tasa y su intervalo. Los precios de API siguen siendo una referencia, no un cargo de suscripción.`],
+  "dashboard.calibration.noRate": [`The weekly calibration contract requires at least ${WEEKLY_CALIBRATION_MINIMUM_QUOTA_BOUNDARIES} unique quota-boundary observations spanning at least ${WEEKLY_CALIBRATION_MINIMUM_DISPLAYED_SPAN_PP} displayed percentage points, plus a valid positive fit, before {appName} can estimate this rate and range. API prices remain a measuring stick, not a subscription charge.`, `每周校准规则要求至少 ${WEEKLY_CALIBRATION_MINIMUM_QUOTA_BOUNDARIES} 个不同的额度边界观测值，跨度至少为 ${WEEKLY_CALIBRATION_MINIMUM_DISPLAYED_SPAN_PP} 个界面显示的百分点，且必须得到有效的正值拟合，{appName} 才能估算此费率和区间。API 价格仅作为衡量参考，并不代表订阅费用。`, `El contrato de calibración semanal exige al menos ${WEEKLY_CALIBRATION_MINIMUM_QUOTA_BOUNDARIES} observaciones únicas de límites de cuota que abarquen al menos ${WEEKLY_CALIBRATION_MINIMUM_DISPLAYED_SPAN_PP} puntos porcentuales mostrados, además de un ajuste positivo válido, antes de que {appName} pueda estimar esta tasa y su intervalo. Los precios de API siguen siendo una referencia, no un cargo de suscripción.`],
   "dashboard.calibration.withRange": ["Across {count} qualifying resets, the fitted seven-day allowance is {amount}. The middle 80% of those estimates spans {lower}–{upper}. Observed movement comes from the provider. Cost-implied movement converts local activity using the price in effect when each event happened.", "在 {count} 次合格重置中，拟合的七天额度为 {amount}；这些估计的中间 80% 范围为 {lower}–{upper}。观测变化来自提供商。成本推算的变化根据每个事件发生时有效的价格换算本地活动。", "En {count} reinicios válidos, el límite ajustado de siete días es {amount}; el 80 % central de esas estimaciones abarca {lower}–{upper}. El movimiento observado procede del proveedor. El movimiento implícito por coste traduce la actividad local con el precio vigente cuando ocurrió cada evento."],
   "dashboard.calibration.withoutRange": ["The central fit puts a full 100-point allowance near {amount} in speed-priced API equivalent, but there isn't a usable range across resets yet. This is not a dollar cap published by the provider.", "中心拟合表明完整的 100 点额度约为 {amount} 的按速度档定价 API 等价金额，但尚无可用的跨重置区间。这不是提供商公布的美元上限。", "El ajuste central implica una asignación completa de 100 puntos cercana a {amount} de equivalente de API con precio según velocidad, pero todavía no hay un intervalo utilizable entre restablecimientos. No es un límite monetario publicado por el proveedor."],
   "dashboard.timeWindow.fifteenMinutes": ["15-minute", "15 分钟", "15 minutos"],
@@ -999,8 +1003,8 @@ export const WEB_MESSAGES = Object.freeze({
   "action.connecting": ["Connecting…", "正在连接…", "Conectando…"],
   "status.unknown": ["Unknown state", "未知状态", "Estado desconocido"],
   "aria.moreInformation": ["More information about {label}", "有关{label}的更多信息", "Más información sobre {label}"],
-  "aria.tibotattleHome": ["TiboTattle home", "TiboTattle 主页", "Inicio de TiboTattle"],
-  "aria.tibotattleDashboard": ["TiboTattle dashboard", "TiboTattle 仪表板", "Panel de TiboTattle"],
+  "aria.usagemonitorHome": ["{appName} home", "{appName} 主页", "Inicio de {appName}"],
+  "aria.usagemonitorDashboard": ["{appName} dashboard", "{appName} 仪表板", "Panel de {appName}"],
   "aria.dashboardNavigation": ["Dashboard navigation", "仪表板导航", "Navegación del panel"],
   "aria.dashboardSections": ["Dashboard sections", "仪表板分区", "Secciones del panel"],
   "aria.siteSections": ["Site sections", "网站分区", "Secciones del sitio"],
@@ -1011,8 +1015,8 @@ export const WEB_MESSAGES = Object.freeze({
 
   "aria.copyInstallerSha256": ["Copy the published SHA-256 checksum", "复制已发布的 SHA-256 校验和", "Copiar la suma de comprobación SHA-256 publicada"],
   "aria.installerSha256": ["SHA-256 checksum", "SHA-256 校验和", "Suma de comprobación SHA-256"],
-  "aria.tibotattleFeatures": ["What TiboTattle provides", "TiboTattle 提供的功能", "Qué ofrece TiboTattle"],
-  "aria.findTiboTattleOnline": ["Find TiboTattle online", "在线查找 TiboTattle", "Encuentra TiboTattle en línea"],
+  "aria.usagemonitorFeatures": ["What {appName} provides", "{appName} 提供的功能", "Qué ofrece {appName}"],
+  "aria.findProductOnline": ["Find {appName} online", "在线查找 {appName}", "Encuentra {appName} en línea"],
   "aria.githubExternal": ["GitHub (opens in a new tab)", "GitHub（在新标签页中打开）", "GitHub (se abre en una pestaña nueva)"],
   "aria.xExternal": ["X (opens in a new tab)", "X（在新标签页中打开）", "X (se abre en una pestaña nueva)"],
   "alt.previewWeeklyHistory": ["Sample seven-day allowance history with reset-level uncertainty ranges", "带有重置级别不确定性范围的七天额度历史示例", "Ejemplo de historial de asignación de siete días con intervalos de incertidumbre por restablecimiento"],
@@ -1125,7 +1129,7 @@ export const WEB_MESSAGES = Object.freeze({
   // narrowing is stated rather than left for the reader to infer.
   "syncStatus.summaryVerifiedNarrowed": ["The covered data shown above is verified on this PC. A full day exceeded a fixed reviewed-set size bound, so this review covers the latest hour instead. Nothing uploads without your approval.", "上方显示的涵盖数据已在这台电脑上完成校验。整天的数据超出了固定的审阅集大小上限，因此本次审阅改为涵盖最近一小时。未经你的核准不会上传任何内容。", "Los datos cubiertos mostrados arriba están verificados en este PC. Un día completo superó el límite fijo del conjunto de revisión, así que esta revisión cubre la última hora. Nada se sube sin tu aprobación."],
 
-  "consent.reviewFirst": ["TiboTattle is preparing and verifying one real instance of the covered data on this PC for you to review. Nothing is uploaded.", "TiboTattle 正在这台电脑上准备并校验一份涵盖数据的真实实例供你审阅。不会上传任何内容。", "TiboTattle está preparando y verificando en este PC una instancia real de los datos cubiertos para que la revises. No se sube nada."],
+  "consent.reviewFirst": ["{appName} is preparing and verifying one real instance of the covered data on this PC for you to review. Nothing is uploaded.", "{appName} 正在这台电脑上准备并校验一份涵盖数据的真实实例供你审阅。不会上传任何内容。", "{appName} está preparando y verificando en este PC una instancia real de los datos cubiertos para que la revises. No se sube nada."],
 
   "consent.readyToApprove": [
     "The verified instance above is the review. Approving covers this kind of data from now on.",
@@ -1171,9 +1175,9 @@ export const WEB_MESSAGES = Object.freeze({
 
   "consent.preparingReview": ["Preparing one real instance of the covered data on this PC for you to review. No network upload is performed.", "正在这台电脑上准备一份涵盖数据的真实实例供你审阅。不会执行任何网络上传。", "Preparando en este PC una instancia real de los datos cubiertos para que la revises. No se realiza ninguna subida de red."],
   "consent.reviewUnavailable": [
-    "TiboTattle could not read the local review state. Choose Check again. Nothing was uploaded.",
-    "TiboTattle 无法读取本地审阅状态。请选择“再次检查”。未上传任何内容。",
-    "TiboTattle no pudo leer el estado de revisión local. Elige Comprobar de nuevo. No se cargó nada.",
+    "{appName} could not read the local review state. Choose Check again. Nothing was uploaded.",
+    "{appName} 无法读取本地审阅状态。请选择“再次检查”。未上传任何内容。",
+    "{appName} no pudo leer el estado de revisión local. Elige Comprobar de nuevo. No se cargó nada.",
   ],
   "contribution.diagnostics.copy": [
     "Copy diagnostics",
@@ -1258,9 +1262,9 @@ export const WEB_MESSAGES = Object.freeze({
     "Inicia sesión con Google o Apple para contribuir.",
   ],
   "identity.next.signingIn": [
-    "Finish in your browser; TiboTattle returns when it's ready.",
-    "请在浏览器中完成；准备就绪后 TiboTattle 会自动返回。",
-    "Termina en tu navegador; TiboTattle vuelve cuando esté listo.",
+    "Finish in your browser; {appName} returns when it's ready.",
+    "请在浏览器中完成；准备就绪后 {appName} 会自动返回。",
+    "Termina en tu navegador; {appName} vuelve cuando esté listo.",
   ],
   "identity.next.signedIn": ["Review below, then approve to connect this device. Nothing uploads before approval.", "请在下方审阅并核准以连接这台设备。核准前不会上传任何内容。", "Revisa abajo y aprueba para conectar este dispositivo. Nada se sube antes de aprobar."],
 
@@ -1323,7 +1327,7 @@ export const WEB_MESSAGES = Object.freeze({
   "community.metric.usageEvents": ["Usage events", "用量事件", "Eventos de uso"],
   "community.metric.allTokens": ["All tokens", "全部 Token", "Todos los tokens"],
   "community.daily.state.serviceUnavailable": ["Daily community activity is temporarily unavailable. We can't tell whether any day has been published.", "每日社区活动暂时不可用。这并不能说明是否已发布任何日期。", "La actividad comunitaria diaria no está disponible temporalmente. Esto no indica si se ha publicado algún día."],
-  "community.daily.state.unsupportedSchema": ["The daily community series cannot be displayed safely with this version of TiboTattle.", "此版本的 TiboTattle 无法安全显示每日社区序列。", "La serie comunitaria diaria no se puede mostrar de forma segura con esta versión de TiboTattle."],
+  "community.daily.state.unsupportedSchema": ["The daily community series cannot be displayed safely with this version of {appName}.", "此版本的 {appName} 无法安全显示每日社区序列。", "La serie comunitaria diaria no se puede mostrar de forma segura con esta versión de {appName}."],
   "community.daily.state.nonePublished": ["No daily community activity has been published for the year window yet.", "此一年窗口内尚未发布任何每日社区活动。", "Todavía no se ha publicado actividad comunitaria diaria para la ventana anual."],
   "community.daily.seriesAvailable": ["Daily series available", "每日序列可用", "Serie diaria disponible"],
   "community.daily.seriesUnavailable": ["Daily series unavailable", "每日序列不可用", "Serie diaria no disponible"],
@@ -1437,7 +1441,7 @@ export const WEB_MESSAGES = Object.freeze({
   "community.allowance.breakdownsUnavailable": ["This breakdown can't be shown publicly yet. The aggregate and community activity views are separate.", "此分类明细尚未提供公开展示。汇总视图与社区活动视图仍然独立。", "Este desglose aún no está disponible para su publicación. Las vistas agregada y de actividad comunitaria siguen siendo independientes."],
   "community.allowance.dialogClose": ["Close", "关闭", "Cerrar"],
   "community.allowance.state.serviceUnavailable": ["The community allowance series is temporarily unavailable. We can't tell whether any estimate has been published.", "社区额度序列暂时不可用。这并不能说明是否已发布任何估计。", "La serie comunitaria de asignación no está disponible temporalmente. Esto no indica si se ha publicado alguna estimación."],
-  "community.allowance.state.unsupportedSchema": ["The community allowance series cannot be displayed safely with this version of TiboTattle.", "此版本的 TiboTattle 无法安全显示社区额度序列。", "La serie comunitaria de asignación no se puede mostrar de forma segura con esta versión de TiboTattle."],
+  "community.allowance.state.unsupportedSchema": ["The community allowance series cannot be displayed safely with this version of {appName}.", "此版本的 {appName} 无法安全显示社区额度序列。", "La serie comunitaria de asignación no se puede mostrar de forma segura con esta versión de {appName}."],
   "community.allowance.state.nonePublished": ["No community days have been published for the year window yet.", "此一年窗口内尚未发布任何社区日期。", "Todavía no se ha publicado ningún día comunitario para la ventana anual."],
   "community.allowance.available": ["Allowance estimates available", "额度估计可用", "Estimaciones de asignación disponibles"],
   "community.allowance.unavailable": ["Allowance estimates unavailable", "额度估计不可用", "Estimaciones de asignación no disponibles"],
@@ -1469,7 +1473,7 @@ export const WEB_MESSAGES = Object.freeze({
   "community.allowance.methodNote": ["Each point combines qualifying reset fits from the trailing 30 days after normalizing supported personal plans to a Pro 10× equivalent (Pro ×1, Pro 5× ×2, Pro Max 25× ×0.4, Plus ×10). The line is the median, the range is the middle 80%, and every fit passes the shared calibration gates including the 25-point observed-span floor. Unsupported plans are excluded; late data republishes the day.", "每个点都汇总过去 30 天内的合格重置拟合，并将支持的个人方案换算为 Pro 10× 等值（Pro ×1、Pro 5× ×2、Pro Max 25× ×0.4、Plus ×10）。折线为中位数，区间为中间 80%；每个拟合均通过共享校准门槛，包括 25 个百分点的观测跨度下限。不支持的方案会被排除；迟到的数据会重新发布对应日期。", "Cada punto combina los ajustes de restablecimiento válidos de los últimos 30 días tras normalizar los planes personales compatibles a un equivalente de Pro 10× (Pro ×1, Pro 5× ×2, Pro Max 25× ×0,4 y Plus ×10). La línea es la mediana, el rango es el 80 % central y cada ajuste supera las puertas de calibración compartidas, incluido el mínimo de 25 puntos de amplitud observada. Los planes no compatibles se excluyen; los datos tardíos vuelven a publicar el día."],
   "community.allowance.methodNoteLegacy": ["Each point combines qualifying reset fits from the trailing 30 days after normalizing supported personal plans to a Pro 20x equivalent (Pro ×1, Pro 5x ×4, Plus ×20). The line is the median, the range is the middle 80%, and every fit passes the shared calibration gates recorded with that published basis. Unsupported plans are excluded; late data republishes the day.", "每个点都汇总过去 30 天内的合格重置拟合，并将支持的个人方案换算为 Pro 20x 等值（Pro ×1、Pro 5x ×4、Plus ×20）。折线为中位数，区间为中间 80%；每个拟合均通过共享校准门槛，以已发布的换算基准为准。不支持的方案会被排除；迟到的数据会重新发布对应日期。", "Cada punto combina los ajustes de restablecimiento válidos de los últimos 30 días tras normalizar los planes personales compatibles a un equivalente de Pro 20x (Pro ×1, Pro 5x ×4 y Plus ×20). La línea es la mediana, el rango es el 80 % central y cada ajuste supera las puertas de calibración compartidas, registradas con esa base publicada. Los planes no compatibles se excluyen; los datos tardíos vuelven a publicar el día."],
   "installer.requiresWindows": ["Requires Windows {version} or later · {architecture}", "需要 Windows {version} 或更高版本 · {architecture}", "Requiere Windows {version} o posterior · {architecture}"],
-  "aria.downloadWindows": ["Download TiboTattle for Windows", "下载适用于 Windows 的 TiboTattle", "Descargar TiboTattle para Windows"],
+  "aria.downloadWindows": ["Download {appName} for Windows", "下载适用于 Windows 的 {appName}", "Descargar {appName} para Windows"],
   "aria.windowsDownload": ["Windows download", "Windows 下载", "Descarga para Windows"],
 });
 
@@ -1508,7 +1512,9 @@ export function translate(key, values = {}, locale = DEFAULT_LOCALE) {
   const row = WEB_MESSAGES[key];
   if (!row) return interpolate(key, values);
   const index = negotiatedCatalogIndex(locale);
-  return interpolate(row[index < 0 ? 0 : index], values);
+  const selectedLocale = SUPPORTED_LOCALES[index < 0 ? 0 : index];
+  const appName = PRODUCT_BRAND_NAMES[selectedLocale];
+  return interpolate(key === "app.name" ? appName : row[index < 0 ? 0 : index], { appName, ...values });
 }
 
 // Plural forms stay small and standards-based. This is deliberately not a
@@ -1764,20 +1770,20 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Can't reach the local app": ["无法连接本地应用", "No se puede conectar con la app local"],
   "Explore labeled demo": ["查看标注演示", "Explorar demostración etiquetada"],
   "First-time setup": ["首次设置", "Configuración inicial"],
-  "Open TiboTattle on this PC": ["在这台电脑上打开 TiboTattle", "Abre TiboTattle en este PC"],
+  "Open {appName} on this PC": ["在这台电脑上打开 {appName}", "Abre {appName} en este PC"],
 
   "Get the Windows app": ["获取 Windows 应用", "Obtén la app para Windows"],
 
   "Get the app": ["获取应用", "Obtener la app"],
   "Install the desktop app": ["安装桌面应用", "Instala la app de escritorio"],
-  "TiboTattle turns your seven-day Codex allowance into an API-price-equivalent estimate, shows how it changes over time, and calculates your personal dashboard locally on your computer.": ["TiboTattle 会将你的 Codex 七天额度转换为 API 等价金额估计，展示它如何随时间变化，并在你的电脑上本地计算个人仪表板。", "TiboTattle convierte tu asignación de Codex de siete días en una estimación equivalente al precio de API, muestra cómo cambia con el tiempo y calcula tu panel personal localmente en tu ordenador."],
-  "Choose TiboTattle for your platform": ["选择适合你平台的 TiboTattle", "Elige TiboTattle para tu plataforma"],
+  "{appName} turns your seven-day Codex allowance into an API-price-equivalent estimate, shows how it changes over time, and calculates your personal dashboard locally on your computer.": ["{appName} 会将你的 Codex 七天额度转换为 API 等价金额估计，展示它如何随时间变化，并在你的电脑上本地计算个人仪表板。", "{appName} convierte tu asignación de Codex de siete días en una estimación equivalente al precio de API, muestra cómo cambia con el tiempo y calcula tu panel personal localmente en tu ordenador."],
+  "Choose {appName} for your platform": ["选择适合你平台的 {appName}", "Elige {appName} para tu plataforma"],
   "Choose your platform": ["选择你的平台", "Elige tu plataforma"],
   "macOS": ["macOS", "macOS"],
   "Windows": ["Windows", "Windows"],
   "Linux": ["Linux", "Linux"],
   "Not yet available": ["尚未提供", "Aún no disponible"],
-  "TiboTattle for Windows is not available yet.": ["Windows 版 TiboTattle 尚未提供。", "TiboTattle para Windows aún no está disponible."],
+  "{appName} for Windows is not available yet.": ["Windows 版 {appName} 尚未提供。", "{appName} para Windows aún no está disponible."],
   "Windows is not yet available": ["Windows 尚未提供", "Windows aún no está disponible"],
   "There is no published Windows build yet.": ["尚未发布 Windows 版本。", "Todavía no hay una versión publicada para Windows."],
   "Follow the Windows support work for progress. A download will appear only after the Windows release passes its platform and release checks.": ["关注 Windows 支持工作的进展。只有在 Windows 版本通过平台和发行检查后，才会提供下载。", "Sigue el trabajo de compatibilidad con Windows para ver los avances. La descarga solo aparecerá cuando la versión para Windows supere las comprobaciones de plataforma y lanzamiento."],
@@ -1787,7 +1793,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
 
 
 
-  "Download TiboTattle for Windows": ["下载适用于 Windows 的 TiboTattle", "Descargar TiboTattle para Windows"],
+  "Download {appName} for Windows": ["下载适用于 Windows 的 {appName}", "Descargar {appName} para Windows"],
 
   "Release notes": ["发行说明", "Notas de la versión"],
   "Privacy": ["隐私", "Privacidad"],
@@ -1795,7 +1801,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Support": ["支持", "Soporte"],
   "Open it from Applications": ["从“应用程序”打开它", "Ábrela desde Aplicaciones"],
   "Open installed app": ["打开已安装的应用", "Abrir la app instalada"],
-  "Use the TiboTattle window": ["使用 TiboTattle 窗口", "Usa la ventana de TiboTattle"],
+  "Use the {appName} window": ["使用 {appName} 窗口", "Usa la ventana de {appName}"],
   "Local setup": ["本地设置", "Configuración local"],
   "Check this PC before analyzing": ["分析前检查这台电脑", "Comprueba este PC antes de analizar"],
 
@@ -1847,7 +1853,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Shared: times, token counts, model names, broad activity categories, and how much of your allowance was left.": ["会分享：时间、Token 数量、模型名称、大致的活动类别，以及你的额度还剩多少。", "Se comparte: horas, recuentos de tokens, nombres de modelos, categorías generales de actividad y cuánto quedaba de tu cuota."],
   "Never shared: anything you typed or a model wrote, file names, folders, links, commands, your name, your email, or any account or login details.": ["绝不分享：你输入的或模型生成的任何内容、文件名、文件夹、链接、命令、你的姓名、电子邮件，或任何账户或登录信息。", "Nunca se comparte: nada de lo que escribiste ni de lo que escribió un modelo, nombres de archivos, carpetas, enlaces, comandos, tu nombre, tu correo ni ningún dato de cuenta o inicio de sesión."],
   "Sign in to contribute": ["登录以参与贡献", "Inicia sesión para contribuir"],
-  "Contributing uses your Google or Apple sign-in. We keep a scrambled version of it that cannot be turned back into your email or your name. Using TiboTattle on your own needs no account.": ["贡献时会使用你的 Google 或 Apple 登录。我们只保留经过打乱处理的版本，无法还原成你的电子邮件或姓名。单独使用 TiboTattle 不需要账户。", "Contribuir usa tu inicio de sesión de Google o Apple. Guardamos una versión codificada que no se puede convertir de vuelta en tu correo ni en tu nombre. Usar TiboTattle por tu cuenta no necesita ninguna cuenta."],
+  "Contributing uses your Google or Apple sign-in. We keep a scrambled version of it that cannot be turned back into your email or your name. Using {appName} on your own needs no account.": ["贡献时会使用你的 Google 或 Apple 登录。我们只保留经过打乱处理的版本，无法还原成你的电子邮件或姓名。单独使用 {appName} 不需要账户。", "Contribuir usa tu inicio de sesión de Google o Apple. Guardamos una versión codificada que no se puede convertir de vuelta en tu correo ni en tu nombre. Usar {appName} por tu cuenta no necesita ninguna cuenta."],
   "I want to review a summary and decide whether to send it.": ["我想先查看摘要，再决定是否发送。", "Quiero revisar un resumen y decidir si lo envío."],
   "Connected. Look at the summary below before deciding whether to send it. Nothing will repeat automatically.": ["已连接。请先查看下方的摘要，再决定是否发送。不会自动重复。", "Conectado. Mira el resumen de abajo antes de decidir si lo envías. Nada se repetirá automáticamente."],
   "Sending now. This runs once and then stops.": ["正在发送。此操作只运行一次，然后停止。", "Enviando. Esto se ejecuta una vez y luego se detiene."],
@@ -1873,9 +1879,9 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Creating pseudonymous contribution access…": ["正在创建匿名贡献访问权限…", "Creando acceso de contribución seudónimo…"],
 
 
-  "Your existing local identity and history are unchanged. In TiboTattle, open Settings… → General and choose Review migration… under Secure upgrade when you’re ready. No upload occurred. Do not reset, delete, or rotate the identity.": ["现有本地身份和历史记录均未改变。你可以在方便时，在 TiboTattle 中打开“设置…”→“通用”，然后在“安全升级”下选择“查看迁移…”。没有上传任何内容。请勿重置、删除或更换该身份。", "Tu identidad local y tu historial existentes no han cambiado. Cuando quieras, abre Configuración… → General en TiboTattle y elige Revisar migración… en Actualización segura. No se ha subido nada. No restablezcas, elimines ni cambies la identidad."],
+  "Your existing local identity and history are unchanged. In {appName}, open Settings… → General and choose Review migration… under Secure upgrade when you’re ready. No upload occurred. Do not reset, delete, or rotate the identity.": ["现有本地身份和历史记录均未改变。你可以在方便时，在 {appName} 中打开“设置…”→“通用”，然后在“安全升级”下选择“查看迁移…”。没有上传任何内容。请勿重置、删除或更换该身份。", "Tu identidad local y tu historial existentes no han cambiado. Cuando quieras, abre Configuración… → General en {appName} y elige Revisar migración… en Actualización segura. No se ha subido nada. No restablezcas, elimines ni cambies la identidad."],
 
-  "Resetting clears only that unusable credential and its local record. Then choose Review and approve again. If the reset fails too, quit and reopen TiboTattle first.": ["重置只会清除那条无法使用的凭据及其本地记录。然后请再次选择“查看并批准”。如果重置也失败，请先退出并重新打开 TiboTattle。", "Restablecer borra solo esa credencial inutilizable y su registro local. Después elige Revisar y aprobar de nuevo. Si el restablecimiento también falla, cierra y vuelve a abrir TiboTattle primero."],
+  "Resetting clears only that unusable credential and its local record. Then choose Review and approve again. If the reset fails too, quit and reopen {appName} first.": ["重置只会清除那条无法使用的凭据及其本地记录。然后请再次选择“查看并批准”。如果重置也失败，请先退出并重新打开 {appName}。", "Restablecer borra solo esa credencial inutilizable y su registro local. Después elige Revisar y aprobar de nuevo. Si el restablecimiento también falla, cierra y vuelve a abrir {appName} primero."],
   // The locked-keychain pause. Kept apart from the reset guidance above on
   // purpose: nothing is broken, so neither sentence may suggest clearing or
   // re-approving anything.
@@ -1909,7 +1915,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Choose what to share": ["选择要分享的内容", "Elige qué compartir"],
   "Local-first by design": ["本地优先设计", "Local primero por diseño"],
 
-  "Skip to TiboTattle": ["跳到 TiboTattle", "Ir a TiboTattle"],
+  "Skip to {appName}": ["跳到 {appName}", "Ir a {appName}"],
   "Docs": ["文档", "Documentación"],
   "Release status": ["发布状态", "Estado de la versión"],
   "See where your Codex allowance stands.": ["查看你的 Codex 额度状况。", "Consulta el estado de tu límite de Codex."],
@@ -1921,7 +1927,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Public download coming soon.": ["公开下载即将推出。", "La descarga pública estará disponible pronto."],
   "Latest community evidence": ["最新社区证据", "Evidencia comunitaria más reciente"],
   "Install the Mac app": ["安装 Mac 应用", "Instala la app para Mac"],
-  "Open TiboTattle and let it calculate your Codex usage locally.": ["打开 TiboTattle，让它在本地计算你的 Codex 使用情况。", "Abre TiboTattle y deja que calcule tu uso de Codex de forma local."],
+  "Open {appName} and let it calculate your Codex usage locally.": ["打开 {appName}，让它在本地计算你的 Codex 使用情况。", "Abre {appName} y deja que calcule tu uso de Codex de forma local."],
   "See your week": ["查看你的一周", "Consulta tu semana"],
   "View your allowance estimate and history in the app.": ["在应用中查看额度估计和历史记录。", "Consulta en la app la estimación de tu límite y su historial."],
   "When available, this leads with one combined Pro 10x-equivalent allowance from delayed, anonymous personal-plan contributions. The daily activity series sits below. A late contribution never edits history: it publishes a replacement revision for its day.": ["如有可用数据，这里会首先展示一个合并后的 Pro 10x 等值额度，数据来自延迟的匿名个人方案贡献。每日活动序列位于下方。迟到的贡献绝不会改写历史：它会为对应日期发布替代修订。", "Cuando está disponible, aquí se muestra primero una única asignación combinada equivalente a Pro 10x a partir de contribuciones anónimas y diferidas de planes personales. La serie de actividad diaria está debajo. Una contribución tardía nunca edita el historial: publica una revisión de reemplazo para su día."],
@@ -1954,7 +1960,7 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Security and verification": ["安全与验证", "Seguridad y verificación"],
 
   "Already installed?": ["已经安装？", "¿Ya está instalada?"],
-  "Open TiboTattle": ["打开 TiboTattle", "Abrir TiboTattle"],
+  "Open {appName}": ["打开 {appName}", "Abrir {appName}"],
   "A download link appears only after a signed public installer and its release metadata pass the release checks. Otherwise, this release remains unavailable.": ["只有在已签名的公开安装程序及其发行元数据通过发行检查后，才会显示下载链接。否则，此版本仍不可用。", "El enlace de descarga solo aparece después de que un instalador público firmado y sus metadatos de versión superen las comprobaciones. De lo contrario, esta versión no está disponible."],
   "This website is read-only: it does not enroll contributors or accept uploads.": ["本网站是只读的：不会为贡献者注册账户或接受上传。", "Este sitio web es de solo lectura: no registra colaboradores ni acepta cargas."],
   "Delayed community activity": ["延迟的社区活动", "Actividad comunitaria diferida"],
@@ -1996,13 +2002,13 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
 
   "The app reads your local Codex metadata and shows the personal dashboard in its own window. The website never asks for access to those files, and nothing is uploaded unless you explicitly choose to contribute from the app.": ["该应用会读取你的本地 Codex 元数据，并在自己的窗口中显示个人仪表板。网站绝不会请求访问这些文件，除非你明确选择在应用中贡献，否则不会上传任何内容。", "La app lee tus metadatos locales de Codex y muestra el panel personal en su propia ventana. El sitio web nunca solicita acceso a esos archivos y no se sube nada salvo que elijas explícitamente contribuir desde la app."],
 
-  "Open TiboTattle from Applications": ["从“应用程序”打开 TiboTattle", "Abre TiboTattle desde Aplicaciones"],
+  "Open {appName} from Applications": ["从“应用程序”打开 {appName}", "Abre {appName} desde Aplicaciones"],
 
   "Any community contribution is optional, delayed, clipped, and rounded before a public snapshot can be released.": ["任何社区贡献都是可选的，并会在发布公开快照前经过延迟、截断和取整。", "Toda contribución comunitaria es opcional, se retrasa, se recorta y se redondea antes de poder publicar un resumen."],
   "A clear boundary for personal data.": ["个人数据的清晰边界。", "Un límite claro para los datos personales."],
 
   "Personal evidence stays local.": ["个人证据保留在本地。", "La evidencia personal permanece local."],
-  "TiboTattle reads content-free metadata locally for the personal dashboard. Raw prompts, responses, transcripts, and file paths are not part of this public page.": ["TiboTattle 会在本地读取不含内容的元数据以提供个人仪表板。原始提示词、回复、转录内容和文件路径不属于此公开页面。", "TiboTattle lee metadatos sin contenido localmente para el panel personal. Las indicaciones, respuestas, transcripciones y rutas de archivos sin procesar no forman parte de esta página pública."],
+  "{appName} reads content-free metadata locally for the personal dashboard. Raw prompts, responses, transcripts, and file paths are not part of this public page.": ["{appName} 会在本地读取不含内容的元数据以提供个人仪表板。原始提示词、回复、转录内容和文件路径不属于此公开页面。", "{appName} lee metadatos sin contenido localmente para el panel personal. Las indicaciones, respuestas, transcripciones y rutas de archivos sin procesar no forman parte de esta página pública."],
   "In the snapshot": ["在快照中", "En el resumen"],
   "Only delayed aggregate totals appear.": ["只显示延迟的汇总总量。", "Solo aparecen totales agregados y diferidos."],
   "The public view is delayed and support-gated. Released metrics are clipped per participant, rounded down, and may show a status instead of a value when support is insufficient.": ["公开视图经过延迟处理并受支持门槛限制。已发布指标按参与者截断并向下取整；当支持不足时，可能显示状态而非数值。", "La vista pública se retrasa y está sujeta a un umbral de soporte. Las métricas publicadas se recortan por participante, se redondean hacia abajo y pueden mostrar un estado en lugar de un valor cuando el soporte es insuficiente."],
@@ -2013,25 +2019,25 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "They are delayed activity totals from contributors, clipped per participant and rounded down. A cell can instead show a release status. They do not describe an individual or group limit.": ["它们是来自贡献者的延迟活动总数，按参与者截断并向下取整。单元格也可能显示发布状态。它们不描述个人或群体限额。", "Son totales de actividad diferida de colaboradores, recortados por participante y redondeados hacia abajo. Una celda puede mostrar en su lugar un estado de publicación. No describen un límite individual o de grupo."],
 
   "The download remains hidden until a signed public installer and its release metadata pass the fixed checks. No placeholder or unverified artifact is offered.": ["在已签名的公开安装程序及其发行元数据通过固定检查前，下载会保持隐藏。不会提供占位符或未经验证的工件。", "La descarga permanece oculta hasta que un instalador público firmado y sus metadatos de lanzamiento superen las comprobaciones establecidas. No se ofrece ningún marcador de posición ni artefacto no verificado."],
-  "TiboTattle · evidence, uncertainty, and privacy boundaries kept visible.": ["TiboTattle · 让证据、不确定性和隐私边界保持可见。", "TiboTattle · evidencia, incertidumbre y límites de privacidad visibles."],
+  "{appName} · evidence, uncertainty, and privacy boundaries kept visible.": ["{appName} · 让证据、不确定性和隐私边界保持可见。", "{appName} · evidencia, incertidumbre y límites de privacidad visibles."],
   "Named with affection for the Codex community. Not affiliated with or endorsed by OpenAI or Thibault Sottiaux — and we will happily rename if asked.": ["这个名字是对 Codex 社区的亲切致意。它与 OpenAI 或 Thibault Sottiaux 没有隶属或认可关系；如被要求，我们会乐意更名。", "Nombrado con afecto por la comunidad de Codex. No está afiliado a OpenAI ni a Thibault Sottiaux, ni cuenta con su respaldo; cambiaremos el nombre con gusto si nos lo piden."],
   "JavaScript is required to show the published community snapshot and available download details. The page does not contain a local dashboard or a personal-data control.": ["需要 JavaScript 才能显示已发布的社区快照和可用下载详情。该页面不包含本地仪表板或个人数据控件。", "Se requiere JavaScript para mostrar el resumen comunitario publicado y los detalles de descarga disponibles. La página no contiene un panel local ni un control de datos personales."],
   "Cancel": ["取消", "Cancelar"],
   "Compare content-free token metadata with observed quota movement, see what the model can and cannot explain, and improve the estimate over time.": ["将不含内容的 Token 元数据与观测到的额度变化进行比较，了解模型能解释和不能解释的内容，并随时间改进估计。", "Compara metadatos de tokens sin contenido con el movimiento de cuota observado, ve qué puede y no puede explicar el modelo y mejora la estimación con el tiempo."],
-  "Open TiboTattle and use the window it opens. Nothing on this page is your real usage.": ["打开 TiboTattle 并使用它弹出的窗口。此页面上的内容都不是你的真实用量。", "Abre TiboTattle y usa la ventana que se abre. Nada de esta página es tu uso real."],
+  "Open {appName} and use the window it opens. Nothing on this page is your real usage.": ["打开 {appName} 并使用它弹出的窗口。此页面上的内容都不是你的真实用量。", "Abre {appName} y usa la ventana que se abre. Nada de esta página es tu uso real."],
   "Check again": ["再次检查", "Comprobar de nuevo"],
-  "A website can't read your Codex files. The TiboTattle Windows app reads them locally and shows your dashboard in its own window.": ["网站无法读取你的 Codex 文件。TiboTattle Windows 应用会在本地读取这些文件，并在其自身窗口中显示你的仪表板。", "Un sitio web no puede leer tus archivos de Codex. La app de TiboTattle para Windows los lee localmente y muestra tu panel en su propia ventana."],
+  "A website can't read your Codex files. The {appName} Windows app reads them locally and shows your dashboard in its own window.": ["网站无法读取你的 Codex 文件。{appName} Windows 应用会在本地读取这些文件，并在其自身窗口中显示你的仪表板。", "Un sitio web no puede leer tus archivos de Codex. La app de {appName} para Windows los lee localmente y muestra tu panel en su propia ventana."],
 
   "This build has no public download. If you already have the app, continue below.": ["此版本没有公开下载。如果你已有该应用，请继续下面的步骤。", "Esta versión no tiene descarga pública. Si ya tienes la app, continúa abajo."],
   "Wait for": ["等待", "Espera a que aparezca"],
   "Ready": ["就绪", "Listo"],
-  ", then open the dashboard in TiboTattle.": ["，然后在 TiboTattle 中打开仪表板。", " y luego abre el panel en TiboTattle."],
+  ", then open the dashboard in {appName}.": ["，然后在 {appName} 中打开仪表板。", " y luego abre el panel en {appName}."],
   "Your real usage appears only there. This web page can never read your local logs.": ["你的真实用量只会显示在那里。此网页永远无法读取你的本地日志。", "Tu uso real solo aparece allí. Esta página web nunca puede leer tus registros locales."],
   "Check this page again": ["再次检查此页面", "Comprobar esta página de nuevo"],
-  "This only reconnects this page. If the app opened a TiboTattle window, continue there.": ["这只会重新连接此页面。如果应用已打开 TiboTattle 窗口，请在那里继续。", "Esto solo reconecta esta página. Si la app abrió una ventana de TiboTattle, continúa allí."],
-  "You can close this browser tab at any time. Keep the TiboTattle app open during an analysis. If you close it, the analysis stops, and the last saved checkpoint is still there when you reopen it.": ["你可以随时关闭此浏览器标签页。分析期间请保持 TiboTattle 应用打开。如果关闭应用，分析会停止，重新打开后仍可从上次保存的进度继续。", "Puedes cerrar esta pestaña del navegador en cualquier momento. Mantén abierta la app de TiboTattle durante un análisis. Si la cierras, el análisis se detiene y el último punto guardado sigue ahí al reabrirla."],
-  "TiboTattle only checks that the Codex folders and its own data folder are available. It never sends or shows prompts, responses, commands, paths or account identifiers.": ["TiboTattle 只检查 Codex 文件夹及其自身数据文件夹是否可用，绝不会发送或显示提示词、回复、命令、路径或账户标识。", "TiboTattle solo comprueba que las carpetas de Codex y su propia carpeta de datos estén disponibles. Nunca envía ni muestra prompts, respuestas, comandos, rutas ni identificadores de cuenta."],
-  "A first summary often appears in seconds. The first deep pass can take a few minutes, and later updates are usually faster. A large Codex history may need more than one pass. Keep the TiboTattle app open while it runs.": ["初步摘要通常几秒内就会出现。首次深度分析可能需要几分钟，之后的更新通常更快。较大的 Codex 历史可能需要多轮分析。分析运行时请保持 TiboTattle 应用打开。", "Un primer resumen suele aparecer en segundos. La primera pasada profunda puede tardar unos minutos y las siguientes suelen ser más rápidas. Un historial grande de Codex puede necesitar más de una pasada. Mantén abierta la app de TiboTattle mientras se ejecuta."],
+  "This only reconnects this page. If the app opened a {appName} window, continue there.": ["这只会重新连接此页面。如果应用已打开 {appName} 窗口，请在那里继续。", "Esto solo reconecta esta página. Si la app abrió una ventana de {appName}, continúa allí."],
+  "You can close this browser tab at any time. Keep the {appName} app open during an analysis. If you close it, the analysis stops, and the last saved checkpoint is still there when you reopen it.": ["你可以随时关闭此浏览器标签页。分析期间请保持 {appName} 应用打开。如果关闭应用，分析会停止，重新打开后仍可从上次保存的进度继续。", "Puedes cerrar esta pestaña del navegador en cualquier momento. Mantén abierta la app de {appName} durante un análisis. Si la cierras, el análisis se detiene y el último punto guardado sigue ahí al reabrirla."],
+  "{appName} only checks that the Codex folders and its own data folder are available. It never sends or shows prompts, responses, commands, paths or account identifiers.": ["{appName} 只检查 Codex 文件夹及其自身数据文件夹是否可用，绝不会发送或显示提示词、回复、命令、路径或账户标识。", "{appName} solo comprueba que las carpetas de Codex y su propia carpeta de datos estén disponibles. Nunca envía ni muestra prompts, respuestas, comandos, rutas ni identificadores de cuenta."],
+  "A first summary often appears in seconds. The first deep pass can take a few minutes, and later updates are usually faster. A large Codex history may need more than one pass. Keep the {appName} app open while it runs.": ["初步摘要通常几秒内就会出现。首次深度分析可能需要几分钟，之后的更新通常更快。较大的 Codex 历史可能需要多轮分析。分析运行时请保持 {appName} 应用打开。", "Un primer resumen suele aparecer en segundos. La primera pasada profunda puede tardar unos minutos y las siguientes suelen ser más rápidas. Un historial grande de Codex puede necesitar más de una pasada. Mantén abierta la app de {appName} mientras se ejecuta."],
   "01 · Overview": ["01 · 概览", "01 · Resumen"],
   "Where your allowance stands": ["你的额度状况", "Situación de tu límite"],
   "Current quota observations and API-price-equivalent usage from your local evidence.": ["来自本地证据的当前额度观测和 API 等价金额使用情况。", "Observaciones actuales de cuota y uso equivalente al precio de API a partir de tu evidencia local."],
@@ -2216,9 +2222,9 @@ export const LEGACY_TEXT_CATALOG = Object.freeze({
   "Loading saved results…": ["正在加载已保存结果…", "Cargando resultados guardados…"],
   "Loading updated evidence…": ["正在加载更新后的证据…", "Cargando evidencia actualizada…"],
   "Preparing locally…": ["正在本地准备…", "Preparando localmente…"],
-  "Opening TiboTattle… If no app appears, install the signed Windows download above, then try again.": ["正在打开 TiboTattle…如果没有出现应用，请安装上方已签名的 Windows 下载，然后重试。", "Abriendo TiboTattle… Si no aparece la app, instala la descarga firmada para Windows de arriba y vuelve a intentarlo."],
+  "Opening {appName}… If no app appears, install the signed Windows download above, then try again.": ["正在打开 {appName}…如果没有出现应用，请安装上方已签名的 Windows 下载，然后重试。", "Abriendo {appName}… Si no aparece la app, instala la descarga firmada para Windows de arriba y vuelve a intentarlo."],
 
-  "Continue in the TiboTattle in-app window. If nothing opened, the app is not installed or Windows blocked the link.": ["请在 TiboTattle 应用内窗口继续。如果没有打开任何内容，说明应用未安装，或 Windows 阻止了该链接。", "Continúa en la ventana de TiboTattle. Si no se abrió nada, la app no está instalada o Windows bloqueó el enlace."],
+  "Continue in the {appName} in-app window. If nothing opened, the app is not installed or Windows blocked the link.": ["请在 {appName} 应用内窗口继续。如果没有打开任何内容，说明应用未安装，或 Windows 阻止了该链接。", "Continúa en la ventana de {appName}. Si no se abrió nada, la app no está instalada o Windows bloqueó el enlace."],
 
   "Signed out on this page. Sign in again with Google or Apple when you want to contribute.": ["已在此页面退出登录。想继续贡献时，请使用 Google 或 Apple 再次登录。", "Sesión cerrada en esta página. Inicia sesión de nuevo con Google o Apple cuando quieras contribuir."],
   "Sign in first: hosted participation requires Google or Apple sign-in above. Local-only use needs no account, and nothing was uploaded.": ["请先登录：托管参与需要使用上方的 Google 或 Apple 登录。本地使用不需要账户，也没有上传任何内容。", "Inicia sesión primero: la participación alojada requiere iniciar sesión arriba con Google o Apple. El uso solo local no necesita cuenta y no se cargó nada."],
@@ -2233,15 +2239,21 @@ function normalizeText(value) {
 }
 
 function legacyText(value, locale) {
-  const normalized = normalizeText(value);
+  // Only product-owned, exact catalog matches are rewritten. Never apply brand
+  // substitution to user/provider text that happens to contain the same name.
+  let normalized = normalizeText(value);
+  for (const name of new Set(["Usage Monitor", ...Object.values(PRODUCT_BRAND_NAMES)])) {
+    normalized = normalized.replaceAll(name, "{appName}");
+  }
   const row = LEGACY_TEXT_CATALOG[normalized];
   if (!row) return value;
-  const index = negotiateLocale(locale) === "zh-Hans" ? 0
-    : negotiateLocale(locale) === "es" ? 1 : -1;
-  if (index < 0) return value;
+  const selectedLocale = negotiateLocale(locale);
+  const index = selectedLocale === "zh-Hans" ? 0 : selectedLocale === "es" ? 1 : -1;
   const leading = String(value).match(/^\s*/u)?.[0] ?? "";
   const trailing = String(value).match(/\s*$/u)?.[0] ?? "";
-  return `${leading}${row[index]}${trailing}`;
+  return `${leading}${interpolate(index < 0 ? normalized : row[index], {
+    appName: PRODUCT_BRAND_NAMES[selectedLocale],
+  })}${trailing}`;
 }
 
 export function translateLegacyText(value, locale = DEFAULT_LOCALE) {
@@ -2252,7 +2264,7 @@ function safeStorage(windowRef) {
   try {
     const storage = windowRef?.localStorage;
     if (!storage) return null;
-    const probe = "__tibotattle_localization_probe__";
+    const probe = "__usagemonitor_localization_probe__";
     storage.setItem(probe, "1");
     storage.removeItem(probe);
     return storage;
@@ -2262,7 +2274,7 @@ function safeStorage(windowRef) {
 }
 
 function hostConfiguration(windowRef) {
-  const candidate = windowRef?.__TIBOTATTLE_LOCALIZATION__;
+  const candidate = windowRef?.__USAGE_MONITOR_LOCALIZATION__;
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     return null;
   }
@@ -2271,7 +2283,7 @@ function hostConfiguration(windowRef) {
 
 function hostPostMessage(windowRef, preference) {
   try {
-    windowRef?.webkit?.messageHandlers?.tibotattleLocalization?.postMessage?.({
+    windowRef?.webkit?.messageHandlers?.usagemonitorLocalization?.postMessage?.({
       type: "set-language-preference",
       preference,
     });
@@ -2427,6 +2439,9 @@ export function createBrowserLocalization({
     if (documentRef?.documentElement) {
       documentRef.documentElement.lang = locale;
       documentRef.documentElement.dir = directionForLocale(locale);
+      documentRef.documentElement.style?.setProperty?.(
+        "--product-name", JSON.stringify(PRODUCT_BRAND_NAMES[locale]),
+      );
     }
   }
 
@@ -2558,9 +2573,9 @@ export function createBrowserLocalization({
 
   function bindLanguagePicker(element) {
     if (!element) return;
-    const wasBound = element.dataset.tibotattleLanguagePicker === "true";
+    const wasBound = element.dataset.usagemonitorLanguagePicker === "true";
     if (!wasBound) {
-      element.dataset.tibotattleLanguagePicker = "true";
+      element.dataset.usagemonitorLanguagePicker = "true";
       element.addEventListener("change", () => setLanguagePreference(element.value));
     }
     // The self-identifying choices stay recoverable, while the system option
@@ -2617,12 +2632,12 @@ export function createBrowserLocalization({
     refreshLanguagePickers();
     if (announce) announceLanguageChange();
     if (notifyHost && host?.host === "native") hostPostMessage(windowRef, preference);
-    windowRef?.dispatchEvent?.(new CustomEvent("tibotattle:locale-change", {
+    windowRef?.dispatchEvent?.(new CustomEvent("usagemonitor:locale-change", {
       detail: Object.freeze({ formatLocale, locale, preference }),
     }));
   }
 
-  windowRef?.addEventListener?.("tibotattle:locale-override", (event) => {
+  windowRef?.addEventListener?.("usagemonitor:locale-override", (event) => {
     const next = event?.detail?.preference;
     if (isLanguagePreference(next)) setLanguagePreference(next, { notifyHost: false });
   });

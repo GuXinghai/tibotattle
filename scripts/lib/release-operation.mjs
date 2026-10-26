@@ -24,9 +24,9 @@ function fileFailure(error) {
 // resolves relative to that exact root identity. SQLite serializes cooperating
 // writers across processes/sessions. A hostile same-owner process bypassing the
 // transaction is outside the native conditional-replacement contract.
-function privateStorage(directory, create = false) {
+function privateStorage(directory, create = false, bindingPath) {
   let native;
-  try { native = loadWindowsReleaseOperationBinding(); }
+  try { native = loadWindowsReleaseOperationBinding(bindingPath === undefined ? {} : { bindingPath }); }
   catch { throw operationError("RELEASE_OPERATION_NATIVE_UNAVAILABLE"); }
   let lease;
   try {
@@ -125,10 +125,10 @@ function openMutex(storage) {
     if (failed) throw operationError("RELEASE_OPERATION_RELEASE_FAILED");
   };
 }
-export async function openOperation({ directory, kind, binding, resume = false }) {
+export async function openOperation({ directory, kind, binding, resume = false, bindingPath }) {
   if (!OPERATION_KINDS.has(kind)) throw operationError("RELEASE_OPERATION_KIND_INVALID");
   directory = resolve(directory);
-  const storage = privateStorage(directory, !resume);
+  const storage = privateStorage(directory, !resume, bindingPath);
   let closeMutex;
   try {
     closeMutex = openMutex(storage);

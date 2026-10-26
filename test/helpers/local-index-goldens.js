@@ -50,7 +50,7 @@ export const GOLDEN_LIMITS = Object.freeze({
 export function pinGoldenSalt(workspace) {
   writeFileSync(
     workspace.secretFile,
-    createHash("sha256").update("tibotattle local index goldens").digest(),
+    createHash("sha256").update("usagemonitor local index goldens").digest(),
     { mode: 0o600, flag: "wx" },
   );
 }

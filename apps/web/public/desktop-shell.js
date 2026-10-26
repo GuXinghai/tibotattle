@@ -182,7 +182,7 @@ function mountApplicationTitlebar(documentRef, windowRef, bridge) {
   documentRef.addEventListener("keyup", onKeyUp);
   documentRef.addEventListener("fullscreenchange", syncFullscreen);
   windowRef.addEventListener?.("blur", resetAlt);
-  windowRef.addEventListener?.("tibotattle:locale-change", refresh);
+  windowRef.addEventListener?.("usagemonitor:locale-change", refresh);
   overlay?.addEventListener?.("geometrychange", syncFullscreen);
   syncFullscreen();
   void refresh();
@@ -196,7 +196,7 @@ function mountApplicationTitlebar(documentRef, windowRef, bridge) {
       documentRef.removeEventListener("keyup", onKeyUp);
       documentRef.removeEventListener("fullscreenchange", syncFullscreen);
       windowRef.removeEventListener?.("blur", resetAlt);
-      windowRef.removeEventListener?.("tibotattle:locale-change", refresh);
+      windowRef.removeEventListener?.("usagemonitor:locale-change", refresh);
       overlay?.removeEventListener?.("geometrychange", syncFullscreen);
       bar.remove();
       root.classList.remove("desktop-titlebar-active", "desktop-titlebar-fullscreen");
@@ -222,7 +222,7 @@ export function navigateToDashboardSection(_documentRef, windowRef, section, set
 }
 
 function openSettings(windowRef) {
-  const bridge = windowRef?.tibotattleDesktop;
+  const bridge = windowRef?.usageMonitorDesktop;
   if (bridge?.version === ELECTRON_API_VERSION
       && typeof bridge.openSettings === "function") {
     try {
@@ -277,7 +277,7 @@ function dispatchAutomaticRefresh(windowRef, mode) {
   if (typeof CustomEventConstructor !== "function"
       || typeof windowRef?.dispatchEvent !== "function") return false;
   windowRef.dispatchEvent(new CustomEventConstructor(
-    "tibotattle:automatic-refresh",
+    "usagemonitor:automatic-refresh",
     { detail: Object.freeze({ mode }) },
   ));
   return true;
@@ -294,7 +294,7 @@ function dispatchAppearanceOverride(windowRef, command) {
   if (typeof CustomEventConstructor !== "function"
       || typeof windowRef?.dispatchEvent !== "function") return false;
   windowRef.dispatchEvent(new CustomEventConstructor(
-    "tibotattle:appearance-override",
+    "usagemonitor:appearance-override",
     {
       detail: Object.freeze({
         preference: command.preference,
@@ -306,7 +306,7 @@ function dispatchAppearanceOverride(windowRef, command) {
 }
 
 function installCommandBridge(documentRef, windowRef, applyLanguage, applySidebar, refreshMenu, setFullscreen, appearanceChanged) {
-  const bridge = windowRef?.tibotattleDesktop;
+  const bridge = windowRef?.usageMonitorDesktop;
   if (bridge?.version !== ELECTRON_API_VERSION
       || typeof bridge.onCommand !== "function") return () => {};
   const onCommand = (command) => {
@@ -322,7 +322,7 @@ function installCommandBridge(documentRef, windowRef, applyLanguage, applySideba
     if (command.command === 'xPost') {
       if (Reflect.ownKeys(command).length !== 2 || typeof command.id !== 'string' || !/^[0-9]{1,24}$/u.test(command.id)) return;
       if (navigateToDashboardSection(documentRef, windowRef, 'x') && typeof windowRef.CustomEvent === 'function') {
-        windowRef.dispatchEvent(new windowRef.CustomEvent('tibotattle-x-open-post', { detail: { id: command.id } }));
+        windowRef.dispatchEvent(new windowRef.CustomEvent('usagemonitor-x-open-post', { detail: { id: command.id } }));
       }
       return;
     }
@@ -371,7 +371,7 @@ export function mountDesktopShell({
   if (!settingsButton) return Object.freeze({ teardown() {} });
   settingsButton.hidden = false;
   const onSettings = () => openSettings(windowRef);
-  const bridge = windowRef?.tibotattleDesktop;
+  const bridge = windowRef?.usageMonitorDesktop;
   let disposed = false;
   let preferenceVersion = 0;
   const titlebar = mountApplicationTitlebar(documentRef, windowRef, bridge);

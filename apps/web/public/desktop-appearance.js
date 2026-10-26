@@ -2,7 +2,7 @@ const ELECTRON_API_VERSION = "v1";
 const DESKTOP_APPEARANCE_PREFERENCES = new Set(["system", "light", "dark"]);
 
 export function isElectronDashboard(documentRef, windowRef) {
-  const bridge = windowRef?.tibotattleDesktop;
+  const bridge = windowRef?.usageMonitorDesktop;
   if (bridge?.version === ELECTRON_API_VERSION) return true;
   return documentRef?.documentElement?.classList?.contains("electron-dashboard") === true
     || documentRef?.body?.classList?.contains("electron-dashboard") === true;

@@ -1,3 +1,4 @@
+import { PRODUCT_BRAND } from "../../config/product-brand.js";
 /**
  * Dependency-injected application-menu descriptors for the Electron shell.
  *
@@ -103,7 +104,7 @@ function actionItem(label, action, options = {}) {
  * accelerators to Control.
  */
 export function createDesktopMenuTemplate({
-  appName = "TiboTattle",
+  appName = PRODUCT_BRAND.displayName,
   platform = process.platform,
   actions = createDesktopActionInterface(),
   locale = "system",
@@ -185,7 +186,7 @@ export function createDesktopMenuTemplate({
  */
 export function installDesktopApplicationMenu({
   Menu,
-  appName = "TiboTattle",
+  appName = PRODUCT_BRAND.displayName,
   platform = process.platform,
   actions,
   locale = "system",

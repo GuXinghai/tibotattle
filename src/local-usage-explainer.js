@@ -1,3 +1,4 @@
+import applicationIdentity from "../config/application-identity.cjs";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -32,7 +33,7 @@ export function defaultLocalUsageExplainerPaths({
   const roaming = environment.APPDATA
     ?? join(homeDirectory, "AppData", "Roaming");
   const candidates = [
-    ["electron_production", join(roaming, "TiboTattle", "companion-state")],
+    ["electron_production", join(roaming, applicationIdentity.APPLICATION_IDENTITY.stateDirectoryName, "profiles", "stable", "companion-state")],
     ["legacy_cli", legacyRoot],
   ];
   const selected = environment.USAGE_MONITOR_STATE_ROOT === undefined

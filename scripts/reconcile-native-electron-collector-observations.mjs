@@ -24,8 +24,8 @@ import {
 import { stableJson, syncDirectory } from "../src/storage.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
-const SCHEMA = "tibotattle-native-electron-collector-reconciliation-v1";
-const PROOF_SCHEMA = "tibotattle-native-electron-collector-conservation-r9-v1";
+const SCHEMA = "usagemonitor-native-electron-collector-reconciliation-v1";
+const PROOF_SCHEMA = "usagemonitor-native-electron-collector-conservation-r9-v1";
 const PROOF_INSPECTION = "read-only";
 const PROOF_SCOPE = "stopped-native-r9-versus-current-electron";
 const MAX_PROOF_BYTES = 256 * 1024;

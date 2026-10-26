@@ -1,7 +1,7 @@
 import { createWindowsDesktopSettingsBackend } from "./desktop-settings-backends.js";
 
 export const DESKTOP_UPDATE_PREFERENCES_SCHEMA_VERSION =
-  "tibotattle-electron-update-preferences-v1";
+  "usagemonitor-electron-update-preferences-v1";
 export const DESKTOP_UPDATE_PREFERENCES_FILE_NAME = "update-preferences-v1.json";
 
 const MAXIMUM_BYTES = 4_096;

@@ -12,7 +12,7 @@ function fixture(enabled = true) {
   const policy = createLoopbackNavigationPolicy({ origin });
   const mainPolicy = installLoopbackNavigationPolicy({ session, policy, webContents: main, allowXMediaResource: enabled });
   const otherPolicy = installLoopbackNavigationPolicy({ session, policy, webContents: other });
-  const request = { url: `tibotattle-x-media://resource/${id}`, resourceType: 'image', method: 'GET', webContentsId: main.id, frame: main.mainFrame };
+  const request = { url: `usagemonitor-x-media://resource/${id}`, resourceType: 'image', method: 'GET', webContentsId: main.id, frame: main.mainFrame };
   const check = (patch, permitted) => {
     let decision;
     session.webRequest.listener({ ...request, ...patch }, value => { decision = value; });
@@ -29,8 +29,8 @@ test('X media allows only canonical opaque resources requested by the opted-in d
     { resourceType: 'worker' }, { resourceType: 'other' }, { webContentsId: f.other.id }, { webContentsId: 999 },
     { frame: undefined }, { frame: { ...f.main.mainFrame } }, { frame: { url: `${origin}/`, parent: f.main.mainFrame } },
     { url: `${f.request.url}?url=https://video.twimg.com/example` }, { url: `${f.request.url}#fragment` }, { url: `${f.request.url}/segment` },
-    { url: `tibotattle-x-media://user@resource/${id}` }, { url: `tibotattle-x-media://resource:80/${id}` },
-    { url: 'tibotattle-x-media://resource/https://video.twimg.com/example' }, { url: 'https://video.twimg.com/example' },
+    { url: `usagemonitor-x-media://user@resource/${id}` }, { url: `usagemonitor-x-media://resource:80/${id}` },
+    { url: 'usagemonitor-x-media://resource/https://video.twimg.com/example' }, { url: 'https://video.twimg.com/example' },
     { url: f.request.url.replace('resource/', 'other/') }, { url: f.request.url.replace('11111111', '%311111111') },
   ]) f.check(patch, false);
   for (const url of [`${origin}/app.js`, `${origin}/?x`, 'https://x.com/', 'http://127.0.0.1:3457/']) { f.main.mainFrame.url = url; f.check({}, false); }

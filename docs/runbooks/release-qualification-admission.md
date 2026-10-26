@@ -57,12 +57,12 @@ Private scratch data is retained for review; no broad automatic cleanup occurs.
 
 The returned timing is observed work avoided, not a performance benchmark or
 proof of current host capacity. `releaseReady` always remains false. The status
-command in [agent release operations](agent-release-operations.md) can inspect
+command in agent release operations (retired; retained in Git history) can inspect
 the journal, but only qualification input inspection can establish current reuse.
 
 ## Earlier hosted admission
 
-Use [migration rehearsal](release-migration-rehearsal.md) to observe the exact
+Use migration rehearsal (retired; retained in Git history) to observe the exact
 deployed migration prefix and rehearse it against populated synthetic data.
 Supplied prefix snapshots do not prove current production state. Disposable
 remote syntax checks require their own explicit authorization and cannot target

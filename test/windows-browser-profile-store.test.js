@@ -17,7 +17,7 @@ const syntheticCapability = '*S-1-15-3-1024-1-2-3-4-5-6-7-8';
 const userSid = () => execFileSync('whoami.exe', ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true })
   .match(/S-1-5-21-[\d-]+/u)[0];
 async function fixture(run) {
-  const directory = await mkdtemp(join(tmpdir(), 'tibotattle-browser-profile-'));
+  const directory = await mkdtemp(join(tmpdir(), 'usagemonitor-browser-profile-'));
   const adapter = createWindowsFilesystemAdapter();
   const root = join(directory, 'profile');
   adapter.ensureDirectory(root);

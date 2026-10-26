@@ -5,7 +5,7 @@ export const ELECTRON_LOOPBACK_HOST = "127.0.0.1";
 const CODEX_THREAD_URL_PATTERN =
   /^codex:\/\/threads\/[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const CODEX_THREAD_URL_PREFIX = "codex://threads/";
-const X_MEDIA_RESOURCE_PATTERN = /^tibotattle-x-media:\/\/resource\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
+const X_MEDIA_RESOURCE_PATTERN = /^usagemonitor-x-media:\/\/resource\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const BLOB_MEDIA_PATH_PATTERN = /^\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 function trustedDashboardResourceFrame(details, contents, origin) {
@@ -246,7 +246,7 @@ export function installLoopbackNavigationPolicy({
       const backgroundContents = new Map();
       const xMediaContents = new Map();
       const onBeforeRequest = (details, callback) => {
-        if (typeof details?.url === "string" && (details.url.startsWith("tibotattle-x-media:") || details.url.startsWith("blob:"))) {
+        if (typeof details?.url === "string" && (details.url.startsWith("usagemonitor-x-media:") || details.url.startsWith("blob:"))) {
           const contents = xMediaContents.get(details.webContentsId);
           const permittedMethod = ["GET", "HEAD"].includes(details.method);
           const permittedResource = X_MEDIA_RESOURCE_PATTERN.test(details.url)
@@ -259,13 +259,13 @@ export function installLoopbackNavigationPolicy({
           callback?.({ cancel: !allowed });
           return allowed;
         }
-        if (typeof details?.url === "string" && details.url.startsWith("tibotattle-background:")) {
+        if (typeof details?.url === "string" && details.url.startsWith("usagemonitor-background:")) {
           const contents = backgroundContents.get(details.webContentsId);
           let allowed = false;
           try {
             const frame = details.frame;
             const source = new URL(frame.url);
-            allowed = /^tibotattle-background:\/\/image\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(details.url)
+            allowed = /^usagemonitor-background:\/\/image\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(details.url)
               && details.resourceType === "image" && details.method === "GET"
               && contents?.mainFrame === frame && frame.parent === null
               && source.origin === policy.origin && source.pathname === "/" && source.search === ""

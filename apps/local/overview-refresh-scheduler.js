@@ -108,7 +108,7 @@ export function attachOverviewRefreshIntervalChannel({ channel, scheduler } = {}
     if (message === null || typeof message !== "object" || Array.isArray(message)
         || Object.getPrototypeOf(message) !== Object.prototype
         || Reflect.ownKeys(message).length !== 3
-        || message.type !== "tibotattle.refresh-interval.v2"
+        || message.type !== "usagemonitor.refresh-interval.v2"
         || !Object.hasOwn(message, "type") || !Object.hasOwn(message, "paused")
         || typeof message.paused !== "boolean"
         || !Object.hasOwn(message, "seconds")

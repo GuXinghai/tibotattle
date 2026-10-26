@@ -15,7 +15,7 @@ const ASSETS = ["weekly-api-intervals.js", "weekly-api-chart.js", "allowance-pag
   "electron-tray-settings.js", "electron-tray-preferences.js", "electron-settings.css", "icon-panel-left.svg", "icon-refresh-cw.svg", "icon-settings.svg"];
 
 test("Electron settings and bridge have a real loopback route and retained client/native asset closure", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-assets-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-assets-"));
   const sourceStaticRoot = fileURLToPath(new URL("../web/public/", import.meta.url));
   const resourceRoot = join(root, "resources");
   const staticRoot = join(resourceRoot, "public");
@@ -39,8 +39,6 @@ test("Electron settings and bridge have a real loopback route and retained clien
       assert.equal(response.status, 200, file);
       assert.equal(await response.text(), await readFile(join(staticRoot, file), "utf8"), file);
       assert.equal(response.headers.get("access-control-allow-origin"), null);
-      assert.ok(surfaceFiles("history-free-export").includes(`apps/web/public/${file}`),
-        `history-free export: ${file}`);
       assert.ok([...RUNTIME_WEB_MODULE_ENTRYPOINTS, ...surfaceFiles("electron-runtime")]
         .includes(`apps/web/public/${file}`), `Electron closure: ${file}`);
     }
@@ -53,7 +51,6 @@ test("Electron settings and bridge have a real loopback route and retained clien
     for (const file of websiteOnly) {
       assert.equal((await fetch(`${origin}/${file}`)).status, 404, file);
       assert.equal(surfaceFiles("electron-runtime").includes(`apps/web/public/${file}`), false);
-      assert.equal(surfaceFiles("history-free-export").includes(`apps/web/public/${file}`), false);
     }
   } finally {
     await app?.close();

@@ -45,7 +45,7 @@ test('sigma is display-only, remembered by period, and explicit off survives swi
  sigma.value='0';sigma.onchange();assert.equal(chart.reading().sigma,0);
  chart.update(data({period:'7d'}));assert.equal(chart.reading().sigma,60);
  sigma.value='240';sigma.onchange();chart.update(data());assert.equal(chart.reading().sigma,0);
- assert.match(storage.get('tibotattle.weekly-api-sigma'),/"24h":0/);
+ assert.match(storage.get('usagemonitor.weekly-api-sigma'),/"24h":0/);
  chart.update(data({projection:{status:'available',rows:[...rows]},generatedAt:new Date(start+5*hour).toISOString(),endMs:start+5*hour}));
  assert.equal(chart.reading().sigma,0);
 });

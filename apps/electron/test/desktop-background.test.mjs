@@ -36,10 +36,10 @@ function fixture() {
 }
 
 async function pickerFixture(t) {
-  const directory = await mkdtemp(join(tmpdir(), "tibotattle-picker-"));
+  const directory = await mkdtemp(join(tmpdir(), "usagemonitor-picker-"));
   t.after(async () => {
     assert.equal(resolve(dirname(directory)), resolve(tmpdir()));
-    assert.ok(basename(directory).startsWith("tibotattle-picker-"));
+    assert.ok(basename(directory).startsWith("usagemonitor-picker-"));
     await rm(directory, { recursive: true, force: true });
   });
   const path = join(directory, "background.png");
@@ -77,7 +77,7 @@ test("unavailable folders fall back and newer picker records are never overwritt
   await source.close();
   assert.ok(!Object.hasOwn(f.calls[0], "defaultPath"));
   assert.equal(await f.repository.loadPickerDirectory(), f.directory);
-  const future = { schemaVersion: "tibotattle-window-background-picker-v99", directory: f.directory };
+  const future = { schemaVersion: "usagemonitor-window-background-picker-v99", directory: f.directory };
   f.records.set("window-background-picker-v1.json", future);
   const next = await createBackgroundImagePicker({ ...f.options, repository: f.repository })();
   await next.close();
@@ -171,7 +171,7 @@ test("controller serializes changes, retains image on color edits and emits no s
 });
 
 test("100 MB selected originals stream through protected chunks and resource responses across restart", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "tibotattle-background-test-"));
+  const directory = await mkdtemp(join(tmpdir(), "usagemonitor-background-test-"));
   try {
     const path = join(directory, "original.png"), bytes = png(100 * 1024 * 1024);
     const expected = createHash("sha256").update(bytes).digest("hex");
@@ -200,7 +200,7 @@ test("100 MB selected originals stream through protected chunks and resource res
 test("resource URLs reject other images, paths and methods and detect corrupted chunks", async () => {
   const f = fixture(), controller = createDesktopBackgroundController({ repository: f.repository, chooseImage: async () => png() });
   const result = await controller.handlers.chooseWindowBackground(), url = result.background.imageUrl;
-  for (const invalid of ["file:///private.png", "https://invalid/image.png", `${url}?path=private`, `${url}#x`, `${url}/../private`, url.replace("//image/", "//other/"), "tibotattle-background://image/12345678-1234-4234-8234-123456789abc"]) {
+  for (const invalid of ["file:///private.png", "https://invalid/image.png", `${url}?path=private`, `${url}#x`, `${url}/../private`, url.replace("//image/", "//other/"), "usagemonitor-background://image/12345678-1234-4234-8234-123456789abc"]) {
     assert.equal((await controller.handleResource({ url: invalid, method: "GET" })).status, 404);
   }
   assert.equal((await controller.handleResource({ url, method: "POST" })).status, 405);
@@ -226,18 +226,18 @@ test("in-flight resource retains its owned chunks through replacement, then clea
 
 test("legacy metadata moves forward and future schemas never downgrade", async () => {
   const f = fixture(), initial = await f.repository.commit(await f.repository.load(), png());
-  f.records.set("window-background-v1.json", { ...initial, schemaVersion: "tibotattle-window-background-v1" });
+  f.records.set("window-background-v1.json", { ...initial, schemaVersion: "usagemonitor-window-background-v1" });
   const migrated = await f.repository.load();
-  assert.equal(migrated.schemaVersion, "tibotattle-window-background-v2");
+  assert.equal(migrated.schemaVersion, "usagemonitor-window-background-v2");
   assert.deepEqual(migrated.image, initial.image);
   assert.deepEqual(f.records.get("window-background-v1.json"), migrated);
-  f.records.set("window-background-v1.json", { ...initial, schemaVersion: "tibotattle-window-background-v99" });
+  f.records.set("window-background-v1.json", { ...initial, schemaVersion: "usagemonitor-window-background-v99" });
   await assert.rejects(f.repository.load());
-  assert.equal(f.records.get("window-background-v1.json").schemaVersion, "tibotattle-window-background-v99");
+  assert.equal(f.records.get("window-background-v1.json").schemaVersion, "usagemonitor-window-background-v99");
 });
 
 test("file changed after native validation fails import without replacing the durable background", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "tibotattle-background-race-"));
+  const directory = await mkdtemp(join(tmpdir(), "usagemonitor-background-race-"));
   try {
     const path = join(directory, "selected.png");
     await writeFile(path, png(10));

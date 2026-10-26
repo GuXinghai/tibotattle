@@ -31,8 +31,8 @@ export function createWindowsSyntheticOwnedSource(path, contents, {
 
   const childEnvironment = {
     ...Object.fromEntries(Object.entries(environment).filter(([key]) => key.toLowerCase() !== 'psmodulepath')),
-    TIBOTATTLE_SYNTHETIC_SOURCE_FILE: path,
-    TIBOTATTLE_SYNTHETIC_SOURCE_LENGTH: String(input.length),
+    USAGE_MONITOR_SYNTHETIC_SOURCE_FILE: path,
+    USAGE_MONITOR_SYNTHETIC_SOURCE_LENGTH: String(input.length),
   };
   let result;
   try {
@@ -40,15 +40,15 @@ export function createWindowsSyntheticOwnedSource(path, contents, {
       $ErrorActionPreference = 'Stop'
       $stage = 41
       try {
-        $path = $env:TIBOTATTLE_SYNTHETIC_SOURCE_FILE
-        $expectedLength = [int64]$env:TIBOTATTLE_SYNTHETIC_SOURCE_LENGTH
+        $path = $env:USAGE_MONITOR_SYNTHETIC_SOURCE_FILE
+        $expectedLength = [int64]$env:USAGE_MONITOR_SYNTHETIC_SOURCE_LENGTH
         $owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
         if ($null -eq $owner) { exit 41 }
         $stage = 42
         Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
-public static class TiboTattleSyntheticSourceCreator {
+public static class UsageMonitorSyntheticSourceCreator {
   private const uint TokenQuery = 0x0008;
   private const uint TokenAdjustDefault = 0x0080;
   private const int TokenOwner = 4;
@@ -126,7 +126,7 @@ public static class TiboTattleSyntheticSourceCreator {
         $ownerBytes = New-Object byte[] ($owner.BinaryLength)
         $owner.GetBinaryForm($ownerBytes, 0)
         $stage = 43
-        if (-not [TiboTattleSyntheticSourceCreator]::SetCurrentTokenOwner($ownerBytes)) { exit 43 }
+        if (-not [UsageMonitorSyntheticSourceCreator]::SetCurrentTokenOwner($ownerBytes)) { exit 43 }
 
         $stage = 44
         $inputStream = [Console]::OpenStandardInput()
@@ -165,7 +165,7 @@ public static class TiboTattleSyntheticSourceCreator {
         if ($actualOwner.Value -ne $owner.Value) { exit 49 }
 
         $stage = 50
-        if (-not [TiboTattleSyntheticSourceCreator]::HasNonNullDacl($path)) { exit 50 }
+        if (-not [UsageMonitorSyntheticSourceCreator]::HasNonNullDacl($path)) { exit 50 }
 
         $stage = 51
         $length = (Get-Item -LiteralPath $path).Length

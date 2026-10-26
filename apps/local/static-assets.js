@@ -1,4 +1,7 @@
 export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
+  "/app-icon.svg": Object.freeze({ file: "app-icon.svg", type: "image/svg+xml" }),
+  "/tray-icon.svg": Object.freeze({ file: "tray-icon.svg", type: "image/svg+xml" }),
+  "/tray-icon.png": Object.freeze({ file: "tray-icon.png", type: "image/png" }),
   "/x-reader.js": Object.freeze({ file: "x-reader.js", type: "text/javascript; charset=utf-8" }),
   "/x-reader-integration.js": Object.freeze({ file: "x-reader-integration.js", type: "text/javascript; charset=utf-8" }),
   "/x-reader.css": Object.freeze({ file: "x-reader.css", type: "text/css; charset=utf-8" }),
@@ -156,8 +159,8 @@ export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
     file: "styles.css",
     type: "text/css; charset=utf-8",
   }),
-  "/tibotattle-icon.png": Object.freeze({
-    file: "tibotattle-icon.png",
+  "/app-icon.png": Object.freeze({
+    file: "app-icon.png",
     type: "image/png",
   }),
 });

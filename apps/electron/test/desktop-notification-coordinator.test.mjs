@@ -317,7 +317,7 @@ test("legacy reset-enabled state is migrated and cannot deliver a reset but rear
   const lane = `${CONTINUITY}|primary|300`;
   const handled = `threshold|${lane}|${RESET_AT}|90`;
   const backend = backendFixture({ value: {
-    schemaVersion: "tibotattle-electron-notification-policy-v1",
+    schemaVersion: "usagemonitor-electron-notification-policy-v1",
     preferences: { enabled: true, resetEnabled: true, thresholdMode: "ninety" },
     baselines: { [lane]: { observedAt: OBSERVED_FIRST, usedPercent: 95, resetAt: RESET_AT, resetIdentity: null } },
     handledKeys: [handled],

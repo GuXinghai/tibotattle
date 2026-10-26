@@ -76,4 +76,4 @@ unknown; future released clients must carry the updater change. Source, live
 service, deployed UI and released Electron clients are separate gates.
 
 Maintained operating guidance is in the
-[production operations runbook](../runbooks/production-operations.md).
+production operations runbook (retired; retained in Git history).

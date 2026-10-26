@@ -36,7 +36,7 @@ test("default explainer discovery prefers the production store over the legacy r
   const appData = resolve("synthetic-roaming");
   const environment = { APPDATA: appData };
   const electronStore = localCompanionStatePaths(
-    join(appData, "TiboTattle", "companion-state"),
+    join(appData, "UsageMonitor", "profiles", "stable", "companion-state"),
   ).localIndexStoreFile;
   const legacyStore = localCompanionStatePaths(
     defaultLocalCompanionStateRoot({ environment, homeDirectory }),
@@ -60,7 +60,7 @@ test("default explainer discovery prefers the production store over the legacy r
 
   // The retired unified-index file is not a store, so it never selects a source.
   const retired = localCompanionStatePaths(
-    join(appData, "TiboTattle", "companion-state"),
+    join(appData, "UsageMonitor", "profiles", "stable", "companion-state"),
   ).unifiedIndexFile;
   const none = defaultLocalUsageExplainerPaths({
     environment,

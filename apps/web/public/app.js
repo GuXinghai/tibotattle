@@ -116,10 +116,10 @@ function applyNativeAppearanceTheme(theme) {
 // Reapplying both here owns live Settings changes and keeps the browser metadata
 // in step without reloading a dashboard or losing in-memory state.
 applyNativeAppearanceTheme(
-  globalThis.__TIBOTATTLE_APPEARANCE__?.resolvedTheme,
+  globalThis.__USAGE_MONITOR_APPEARANCE__?.resolvedTheme,
 );
 applyNativeAppearanceTheme(resolveElectronStartupAppearance());
-window.addEventListener("tibotattle:appearance-override", (event) => {
+window.addEventListener("usagemonitor:appearance-override", (event) => {
   applyNativeAppearanceTheme(event.detail?.resolvedTheme);
 });
 
@@ -424,7 +424,7 @@ function rerenderLocalizedDashboard() {
   localization.localizeTree();
 }
 
-window.addEventListener("tibotattle:locale-change", (event) => {
+window.addEventListener("usagemonitor:locale-change", (event) => {
   setFormattingLocale(event.detail?.formatLocale ?? localization.formatLocale());
   setMessageLocale(event.detail?.locale ?? localization.locale());
   rerenderLocalizedDashboard();
@@ -434,11 +434,11 @@ function openInstalledApp() {
   const status = $("#open-installed-app-status");
   status.hidden = false;
   status.textContent =
-    "Opening TiboTattle… If no app appears, install the signed Windows download above, then try again.";
+    "Opening Rhetrion… If no app appears, install the signed Windows download above, then try again.";
   window.setTimeout(() => {
     if (!status.hidden) {
       status.textContent =
-        "Continue in the TiboTattle in-app window. If nothing opened, the app is not installed or Windows blocked the link.";
+        "Continue in the Rhetrion in-app window. If nothing opened, the app is not installed or Windows blocked the link.";
     }
   }, 2_000);
 }
@@ -1408,7 +1408,7 @@ function renderLiveObservationPresentation(data, recency = observationRecency(da
 async function refreshElectronCadenceHealth() {
   const element = $("#automatic-refresh-health");
   if (!element) return;
-  const bridge = runsInsideElectronDashboard() ? globalThis.tibotattleDesktop : null;
+  const bridge = runsInsideElectronDashboard() ? globalThis.usageMonitorDesktop : null;
   if (localRefreshInProgress || typeof bridge?.getRefreshStatus !== "function") {
     element.hidden = true;
     return;
@@ -1419,7 +1419,7 @@ async function refreshElectronCadenceHealth() {
   } catch {
     status = null;
   }
-  const leaseAwaitingRecovery = status?.schemaVersion === "tibotattle-desktop-refresh-status-v1"
+  const leaseAwaitingRecovery = status?.schemaVersion === "usagemonitor-desktop-refresh-status-v1"
     && status.activeLease === true
     && (status.scheduleOwner === "companion" || status.cadenceTimerArmed === false);
   if (!leaseAwaitingRecovery) {
@@ -1993,7 +1993,7 @@ const EVIDENCE_WARNING_PROGRESS =
 // sentences and their vocabulary — that state is being replaced wholesale by
 // serve-stale-while-recalculating, and its rendering is owned there.
 const EVIDENCE_WARNING_INFORMATIONAL =
-  /\b(?:loading|started fresh|limited history coverage)\b/iu;
+  /\b(?:loading|indexing|started fresh|limited history coverage)\b/iu;
 
 function evidenceWarningTarget(message) {
   return EVIDENCE_WARNING_ROUTES
@@ -4410,7 +4410,7 @@ function focusTrendsPeriod(period) {
   }));
   requestAnimationFrame(() => {
     trendsHorizonView?.select(period.endMs, true);
-    document.dispatchEvent(new CustomEvent("tibotattle:page-view", { detail: { page: "allowance", view: "changes" } }));
+    document.dispatchEvent(new CustomEvent("usagemonitor:page-view", { detail: { page: "allowance", view: "changes" } }));
     $("#trends-time").focus({ preventScroll: true });
   });
 }
@@ -9467,7 +9467,7 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
     setGlobalState("updating");
     if (electronRefresh && !observeOnly) {
       refreshLeaseSession = createElectronRefreshLease({
-        bridge: globalThis.tibotattleDesktop,
+        bridge: globalThis.usageMonitorDesktop,
         // Both ordinary overview and explicit detailed requests can calculate
         // usage. Only an actually quota-only run receives quick lease bounds.
         mode: initialRefresh?.mode === "quick" && accepted?.request?.pending !== true ? "quick" : "detailed",
@@ -9844,7 +9844,7 @@ function runsInsideNativeDashboard() {
 }
 
 function runsInsideElectronDashboard() {
-  return globalThis.window?.tibotattleDesktop?.version === "v1";
+  return globalThis.window?.usageMonitorDesktop?.version === "v1";
 }
 
 // Legacy shell events are observations only. The companion owns startup and
@@ -9981,8 +9981,8 @@ $("#open-installed-app").addEventListener("click", openInstalledApp);
 $("#connection-check").addEventListener("click", checkLocalSetup);
 $("#companion-check").addEventListener("click", checkLocalSetup);
 $("#setup-check-again").addEventListener("click", checkLocalSetup);
-window.addEventListener("tibotattle:automatic-refresh", handleElectronAutomaticRefresh);
-window.addEventListener("tibotattle:local-evidence-updated", () => {
+window.addEventListener("usagemonitor:automatic-refresh", handleElectronAutomaticRefresh);
+window.addEventListener("usagemonitor:local-evidence-updated", () => {
   void reloadLocalEvidenceAfterNativeRefresh();
 });
 $("#demo-button").addEventListener("click", showDemoDashboard);
@@ -10208,7 +10208,7 @@ const modelPerformance = mountModelPerformance({
   root: document.querySelector("#performance"), client: localClient,
   t, locale: () => localization.formatLocale(), sharedReporting: true, reportingWindow: null,
 });
-window.addEventListener("tibotattle:locale-change", () => {
+window.addEventListener("usagemonitor:locale-change", () => {
   modelPerformance.render();
   renderReportingPeriod();
 });
@@ -10323,7 +10323,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     // Hidden charts retain their data. Redraw at the revealed width, without a fetch.
     windowRef.requestAnimationFrame(() => windowRef.dispatchEvent(new Event("resize")));
   };
-  documentRef.addEventListener("tibotattle:page-view", event => {
+  documentRef.addEventListener("usagemonitor:page-view", event => {
     const config = levelOne.find(item => item.page === event.detail?.page);
     if (config) choose(config, event.detail.view);
     const usageDetailRoutes = { composition: "#usage-composition-details", diagnostics: "#usage-cache-details" };
@@ -10454,7 +10454,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     changes.observe(documentRef.body, { attributes: true,
       attributeFilter: ["data-dashboard-page", "class"] });
   }
-  windowRef.addEventListener("tibotattle:locale-change", schedule);
+  windowRef.addEventListener("usagemonitor:locale-change", schedule);
   // Build the switches now so the page switch below tracks every element that
   // belongs to a destination (including each level-1 empty-view message).
   for (const config of configurations) syncViews(config);
@@ -10481,7 +10481,7 @@ const allowancePage = mountAllowancePage({ documentRef: document, t, formatMoney
 // synchronously, and updateLocalActionButtons reads allowancePage immediately.
 const localRefreshPause = mountLocalRefreshPause({
   button: $("#pause-refresh-button"), summary: $("#sidebar-pause-summary"),
-  bridge: runsInsideElectronDashboard() ? globalThis.tibotattleDesktop : null,
+  bridge: runsInsideElectronDashboard() ? globalThis.usageMonitorDesktop : null,
   translate: t,
   onChange: state => {
     localRefreshPaused = state.paused;
@@ -10493,10 +10493,10 @@ const localRefreshPause = mountLocalRefreshPause({
   },
   onError: () => showConnectionNotice({ titleKey: "refresh.pauseFailed", copyKey: "refresh.pauseFailedCopy", kind: "error" }),
 });
-window.addEventListener("tibotattle:locale-change", () => localRefreshPause.repaint?.());
+window.addEventListener("usagemonitor:locale-change", () => localRefreshPause.repaint?.());
 window.addEventListener("beforeunload", () => localRefreshPause.teardown());
 
-if (window.tibotattleDesktop?.version === "v1") {
+if (window.usageMonitorDesktop?.version === "v1") {
   void mountSettingsPage({ documentRef: document, windowRef: window, localizer: localization });
 }
 const desktopXReader = mountDesktopXReader({ documentRef: document, windowRef: window, translate: t, locale: localization.locale() });

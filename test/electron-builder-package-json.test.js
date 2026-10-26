@@ -47,9 +47,9 @@ test("canonicalizes the Electron root package with the selected fixed profile", 
     { packageVersion: VERSION, profile: "windows-production" },
   );
 
-  assert.equal(JSON.parse(development).productName, "TiboTattle Dev");
-  assert.equal(JSON.parse(development).desktopName, "com.adamallcock.tibotattle.electron.dev.desktop");
-  assert.equal(JSON.parse(production).productName, "TiboTattle");
+  assert.equal(JSON.parse(development).productName, "Rhetrion Dev");
+  assert.equal(JSON.parse(development).desktopName, "com.usagemonitor.local.dev.desktop");
+  assert.equal(JSON.parse(production).productName, "Rhetrion");
   assert.equal(JSON.parse(production).version, VERSION);
   assert.equal(development.toString("utf8").endsWith("\n"), false);
   assert.equal(production.toString("utf8").endsWith("\n"), false);
@@ -130,8 +130,8 @@ test("production package canonicalization binds the exact stable distribution me
   );
   const packageJson = JSON.parse(transformed.toString("utf8"));
   assert.equal(packageJson.version, VERSION);
-  assert.equal(Object.hasOwn(packageJson, "tibotattleSourceReleaseVersion"), false);
-  assert.deepEqual(packageJson.tibotattleDistribution, metadata);
+  assert.equal(Object.hasOwn(packageJson, "usageMonitorSourceReleaseVersion"), false);
+  assert.deepEqual(packageJson.usageMonitorDistribution, metadata);
   assert.throws(() => canonicalElectronBuilderPackageJsonBytes(
     "package.json",
     rootSource(),
@@ -153,7 +153,7 @@ test("non-Electron runtime staging leaves package-json bytes unchanged", () => {
 
 test("matches pinned app-builder-lib 26.15.7 for the development profile", async () => {
   assert.equal(appBuilderRequire("app-builder-lib/package.json").version, "26.15.7");
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-package-transform-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-package-transform-"));
   try {
     const dependencyPath = join(root, "node_modules", "fixture", "package.json");
     await mkdir(join(root, "node_modules", "fixture"), { recursive: true });
@@ -189,8 +189,9 @@ test("matches pinned app-builder-lib 26.15.7 for the development profile", async
       {
         main: "apps/electron/main.js",
         name: "app-usagemonitor",
-        productName: "TiboTattle Dev",
-        desktopName: "com.adamallcock.tibotattle.electron.dev.desktop",
+        productName: "Rhetrion Dev",
+        usageMonitorIdentity: require("../config/application-identity.cjs").applicationMetadata("development"),
+        desktopName: "com.usagemonitor.local.dev.desktop",
         version: VERSION,
       },
     );

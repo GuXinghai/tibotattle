@@ -13,7 +13,7 @@ This review records the source-lineage decision for the local
 `codex/release-0.1.18` branch and the coordinating release task's retained,
 read-only metadata observations on 2026-09-04. It does not authorize or prove
 remote migration, deployment, new consent, or publication. The maintained
-[production operations runbook](../runbooks/production-operations.md) remains
+production operations runbook (retired; retained in Git history) remains
 the operating authority.
 
 The production migration ledger and the former checked-in sequence diverged at

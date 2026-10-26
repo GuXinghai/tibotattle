@@ -4,6 +4,8 @@ import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { run } from "../src/cli.js";
+
 const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(TEST_DIRECTORY, "..");
 
@@ -32,11 +34,30 @@ test("maintained CLI reference exactly mirrors every CLI invocation", async () =
     repositoryFile("package.json"),
   ]);
   const sourceUsage = usageLines(source);
-  assert.equal(sourceUsage.length, 47, "review unexpected CLI surface change");
+  assert.equal(sourceUsage.length, 40, "review unexpected CLI surface change");
   assert.deepEqual(documentedUsageLines(markdown), sourceUsage);
   assert.equal(
     Object.hasOwn(JSON.parse(packageSource).scripts, "register-account"),
     false,
     "dead register-account package entrypoint must not return",
   );
+});
+
+const RETIRED_CLI_COMMANDS = Object.freeze([
+  "register-account",
+  "pair-contribution-device",
+  "sync-contributions-inspect-next",
+  "sync-contributions-once",
+  "sync-contributions-watch",
+  "sync-contributions-status",
+  "sync-contributions-pause",
+  "sync-contributions-resume",
+]);
+
+test("retired enrollment and hosted delivery commands cannot be invoked", async () => {
+  for (const command of RETIRED_CLI_COMMANDS) {
+    await assert.rejects(run([command]), {
+      message: `Unknown command: ${command}`,
+    });
+  }
 });

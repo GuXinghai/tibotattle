@@ -97,7 +97,7 @@ existing reconstruction pause; prefer a schema-compatible forward repair.
 Do not restore production, rewrite an applied migration, discard telemetry or
 bypass normal deployment health checks.
 
-Use the [production runbook](../runbooks/production-operations.md), then verify
+Use the production runbook (retired; retained in Git history), then verify
 the exact deployed source, natural scheduled results, updated caches and
 rendered public/admin graphs. The maintained
 [status page](../current-status.md) records which of those gates actually passed.

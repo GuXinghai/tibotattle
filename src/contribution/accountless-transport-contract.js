@@ -1,4 +1,3 @@
-import { DEPLOYMENT_ENDPOINTS } from "../../config/deployment-endpoints.js";
 
 // The accountless installation policy is a transport authorization, not a
 // consent event. These identifiers are deliberately separate from the legacy
@@ -63,8 +62,6 @@ export function accountlessTransportOrigin({
   if ([laboratory, rehearsal, production].some((value) => typeof value !== "boolean")
       || [laboratory, rehearsal, production].filter(Boolean).length !== 1) return null;
   if (laboratory) return accountlessLocalLaboratoryOrigin(true, origin);
-  if (rehearsal) {
-    return origin === DEPLOYMENT_ENDPOINTS.staging.origin ? origin : null;
-  }
-  return production && origin === DEPLOYMENT_ENDPOINTS.public.origin ? origin : null;
+  // Hosted transports are retired. Only the explicit synthetic loopback laboratory remains.
+  return null;
 }

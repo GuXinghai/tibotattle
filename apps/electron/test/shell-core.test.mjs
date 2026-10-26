@@ -1,3 +1,4 @@
+import applicationIdentity from "../../../config/application-identity.cjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -23,8 +24,9 @@ import {
   createCompanionSupervisor,
 } from "../companion-supervisor.js";
 import {
-  createDesktopLifecycle,
+  createDesktopLifecycle as composeLifecycle,
 } from "../desktop-lifecycle.js";
+const createDesktopLifecycle = options => composeLifecycle({ desktopLocale: "en-US", ...options });
 import {
   launchDesktopRuntime,
 } from "../desktop-runtime.js";
@@ -184,7 +186,7 @@ async function withTestTimeout(promise, code) {
 }
 
 async function withWindowsQualificationFixture(run) {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-qualification-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-qualification-"));
   const appPath = join(root, "app");
   const bindingPath = join(appPath, "native/windows-filesystem/build/Release/windows_filesystem.node");
   const bindingManifestPath = `${bindingPath}.manifest.json`;
@@ -197,7 +199,12 @@ async function withWindowsQualificationFixture(run) {
   });
   const bindingManifest = Buffer.from(`${JSON.stringify(bindingManifestValue)}\n`);
   const runtimeSourcePaths = [...WINDOWS_QUALIFICATION_REQUIRED_RESOURCE_PATHS];
+  const packageBytes = Buffer.from(JSON.stringify({
+    name: "app-usagemonitor", main: "apps/electron/main.js",
+    usageMonitorIdentity: applicationIdentity.applicationMetadata("development"),
+  }));
   const runtimeFiles = [
+    { path: "package.json", bytes: packageBytes.length, kind: "runtime_metadata", sha256: sha256(packageBytes) },
     ...runtimeSourcePaths.map((path) => {
       const content = Buffer.from(path, "utf8");
       return {
@@ -268,6 +275,7 @@ async function withWindowsQualificationFixture(run) {
   await mkdir(join(appPath, "node_modules/@github/keytar/prebuilds/win32-x64"), {
     recursive: true,
   });
+  await writeFile(join(appPath, "package.json"), packageBytes);
   await writeFile(bindingPath, binding);
   await writeFile(bindingManifestPath, bindingManifest);
   await writeFile(keytarPath, keytar);
@@ -284,7 +292,7 @@ async function withWindowsQualificationFixture(run) {
   const app = {
     isPackaged: true,
     getAppPath: () => appPath,
-    getName: () => "TiboTattle Dev",
+    getName: () => "Rhetrion Dev",
   };
   const environment = {
     USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION: "windows-electron-v1",
@@ -343,6 +351,8 @@ class FakeChild extends EventEmitter {
 }
 
 class FakeApp extends EventEmitter {
+  getPreferredSystemLanguages() { return ["en-US"]; }
+  getLocale() { return "en-US"; }
   constructor() {
     super();
     this.quitCalls = 0;
@@ -496,7 +506,7 @@ class RuntimeApp extends FakeApp {
 
   getPath(name) {
     assert.equal(name, "userData");
-    return "/private/tibotattle-shell-test-user-data";
+    return "/private/usagemonitor-shell-test-user-data";
   }
 }
 
@@ -575,11 +585,13 @@ async function launchDashboardRuntimeFixture({
   const ipcMain = {
     handler: null,
     handle(channel, handler) {
-      assert.equal(channel, "tibotattle:desktop:v1");
+      if (channel === "usagemonitor:x-reader:v1") { this.xHandler = handler; return; }
+      assert.equal(channel, "usagemonitor:desktop:v1");
       this.handler = handler;
     },
     removeHandler(channel) {
-      assert.equal(channel, "tibotattle:desktop:v1");
+      if (channel === "usagemonitor:x-reader:v1") { this.xHandler = null; return; }
+      assert.equal(channel, "usagemonitor:desktop:v1");
       this.handler = null;
     },
   };
@@ -616,7 +628,7 @@ async function launchDashboardRuntimeFixture({
     environment: {
       HOME: "/Users/adam",
       USAGE_MONITOR_RESOURCE_ROOT: "/repo",
-      USAGE_MONITOR_STATE_ROOT: "/private/tibotattle-shell-test-companion-state",
+      USAGE_MONITOR_STATE_ROOT: "/private/usagemonitor-shell-test-companion-state",
       USAGE_MONITOR_CENTRAL_ORIGIN: "http://127.0.0.1:8792",
       ...environmentOverrides,
     },
@@ -831,7 +843,7 @@ test("protected background resources require a tracked dashboard image request a
   const installed = installLoopbackNavigationPolicy({ webContents: dashboard, session, policy, allowBackgroundResource: true });
   const keeperInstallation = installLoopbackNavigationPolicy({ webContents: keeper, session, policy });
   const valid = {
-    url: "tibotattle-background://image/11111111-1111-4111-8111-111111111111",
+    url: "usagemonitor-background://image/11111111-1111-4111-8111-111111111111",
     resourceType: "image", method: "GET", webContentsId: dashboard.id, frame: dashboard.mainFrame,
   };
   const check = (details, cancel) => {
@@ -846,8 +858,8 @@ test("protected background resources require a tracked dashboard image request a
     { frame: { ...dashboard.mainFrame } },
     { frame: { url: `${origin}/`, parent: dashboard.mainFrame, isMainFrame: false } },
     { url: `${valid.url}?query` }, { url: `${valid.url}#fragment` },
-    { url: "tibotattle-background://image/invalid" },
-    { url: "tibotattle-background://other/11111111-1111-4111-8111-111111111111" },
+    { url: "usagemonitor-background://image/invalid" },
+    { url: "usagemonitor-background://other/11111111-1111-4111-8111-111111111111" },
   ]) check({ ...valid, ...patch }, true);
   for (const url of ["https://example.test/", `${origin}/app.js`, `${origin}/?query`, "http://127.0.0.1:3457/"]) {
     dashboard.mainFrame.url = url;
@@ -1007,7 +1019,7 @@ test("companion supervisor retains only a classified startup error before ready"
   const child = new FakeChild();
   const supervisor = createCompanionSupervisor({spawnChild:()=>child,command:"node",args:["apps/local/server.js"],cwd:REPOSITORY_ROOT});
   const starting=supervisor.start();
-  child.stderr.emit("data",Buffer.from("private diagnostics\nTIBOTATTLE_COMPANION_FAILURE companion_state_security_policy\n"));
+  child.stderr.emit("data",Buffer.from("private diagnostics\nUSAGE_MONITOR_COMPANION_FAILURE companion_state_security_policy\n"));
   const rejected=assert.rejects(starting,errorCode("companion_state_security_policy"));
   child.emit("exit",1,null);
   await rejected;
@@ -1093,34 +1105,40 @@ test("production policy reads only the final packaged app manifest and validates
   const metadata = createProductionDistributionMetadata({
     target: "win32-x64", sourceRevision: "a".repeat(40), buildNumber: "20260906",
   });
-  const packagedAppPath = join(tmpdir(), "tibotattle-policy-fixture", "app.asar");
+  const packagedAppPath = join(tmpdir(), "usagemonitor-policy-fixture", "app.asar");
   const paths = [];
-  const app = { isPackaged: true, getName: () => "TiboTattle",
+  const app = { isPackaged: true, getName: () => "Rhetrion",
     getAppPath: () => packagedAppPath };
   const readManifest = async (path) => {
     paths.push(path);
-    return Buffer.from(JSON.stringify({ tibotattleDistribution: metadata }));
+    return Buffer.from(JSON.stringify({ name: "app-usagemonitor", main: "apps/electron/main.js", usageMonitorIdentity: applicationIdentity.applicationMetadata("stable"), usageMonitorDistribution: metadata }));
   };
   assert.deepEqual(await readProductionDistribution({ app, platform: "win32",
     architecture: "x64", readManifest }), metadata);
   assert.deepEqual(paths, [join(packagedAppPath, "package.json")]);
   await assert.rejects(readProductionDistribution({ app, platform: "win32",
     architecture: "arm64", readManifest }), errorCode("electron_configuration_invalid"));
-  for (const value of [{}, { tibotattleDistribution: { ...metadata, updateFeed: "https://example.test" } }]) {
+  for (const value of [{}, { usageMonitorDistribution: { ...metadata, updateFeed: "https://example.test" } }]) {
     await assert.rejects(readProductionDistribution({ app, platform: "win32", architecture: "x64",
       readManifest: async () => Buffer.from(JSON.stringify(value)) }),
     errorCode("electron_configuration_invalid"));
   }
-  for (const candidate of [{ ...app, isPackaged: false }, { ...app, getName: () => "TiboTattle Dev" }]) {
-    assert.equal(await readProductionDistribution({ app: candidate,
-      readManifest: () => { throw new Error("Development must not read production metadata"); } }), null);
-  }
+  assert.equal(await readProductionDistribution({ app: { ...app, isPackaged: false },
+    readManifest: () => { throw new Error("Unpackaged app must not read authority"); } }), null);
+  assert.deepEqual(await readProductionDistribution({ app: { ...app, getName: () => "Any Display Name" },
+    platform: "win32", architecture: "x64", readManifest }), metadata);
+  assert.equal(await readProductionDistribution({ app: { ...app, getName: () => "Rhetrion" },
+    readManifest: async () => Buffer.from(JSON.stringify({ name: "app-usagemonitor",
+      main: "apps/electron/main.js", usageMonitorIdentity: applicationIdentity.applicationMetadata("development") })) }), null);
 });
 
 
 
 
-test("companion supervisor fails closed on malformed readiness and bounded startup timeout", async () => {
+test("companion supervisor fails closed on malformed readiness and bounded startup timeout", async (t) => {
+  // Real children keep the loop alive; this EventEmitter fixture has no handle.
+  const keepAlive = setInterval(() => {}, 1_000);
+  t.after(() => clearInterval(keepAlive));
   const malformedChild = new FakeChild();
   const malformed = createCompanionSupervisor({
     spawnChild: () => malformedChild,
@@ -1835,7 +1853,7 @@ test("Windows qualification forbids launch-path and supervisor overrides", async
 });
 
 test("Windows qualification rejects a runtime/native manifest mismatch", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-qualification-mismatch-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-qualification-mismatch-"));
   const appPath = join(root, "app");
   const bindingPath = join(appPath, "native/windows-filesystem/build/Release/windows_filesystem.node");
   const bindingManifestPath = `${bindingPath}.manifest.json`;
@@ -1912,7 +1930,7 @@ test("Windows qualification rejects a runtime/native manifest mismatch", async (
         app: {
           isPackaged: true,
           getAppPath: () => appPath,
-          getName: () => "TiboTattle Dev",
+          getName: () => "Rhetrion Dev",
         },
         environment: {
           USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION: "windows-electron-v1",
@@ -1929,14 +1947,14 @@ test("Windows qualification rejects a runtime/native manifest mismatch", async (
 });
 
 test("Windows qualification cannot inject a package reader authority", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-electron-reader-seam-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-electron-reader-seam-"));
   try {
     await assert.rejects(
       createWindowsElectronQualificationContext({
         app: {
           isPackaged: true,
           getAppPath: () => root,
-          getName: () => "TiboTattle Dev",
+          getName: () => "Rhetrion Dev",
         },
         environment: {
           USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION: "windows-electron-v1",
@@ -1965,7 +1983,7 @@ test("Windows qualification rejects a payload inventory byte mismatch", async ()
         app: {
           isPackaged: true,
           getAppPath: () => appPath,
-          getName: () => "TiboTattle Dev",
+          getName: () => "Rhetrion Dev",
         },
         environment,
         platform: "win32",
@@ -2081,24 +2099,24 @@ test("desktop lifecycle composes secure window, tray, single instance, retry, an
   firstDashboard.emit("ready-to-show");
   assert.equal(firstDashboard.visible, true);
   assert.equal(lifecycle.state.windowVisible, true);
-  trays[0].menu.template.find((item) => item.label === "Weekly Allowance").click();
+  trays[0].menu.template.find((item) => item.label === "Allowance").click();
   assert.deepEqual(firstDashboard.webContents.sent.at(-1), {
-    channel: "tibotattle:desktop-command:v1",
-    command: { command: "dashboardSection", section: "weekly" },
+    channel: "usagemonitor:desktop-command:v1",
+    command: { command: "dashboardSection", section: "allowance" },
   });
-  trays[0].menu.template.find((item) => item.label === "Usage Timeline").click();
+  trays[0].menu.template.find((item) => item.label === "Usage & costs").click();
   assert.deepEqual(firstDashboard.webContents.sent.at(-1), {
-    channel: "tibotattle:desktop-command:v1",
-    command: { command: "dashboardSection", section: "timeline" },
+    channel: "usagemonitor:desktop-command:v1",
+    command: { command: "dashboardSection", section: "usage" },
   });
-  trays[0].menu.template.find((item) => item.label === "Usage and Costs").click();
+  trays[0].menu.template.find((item) => item.label === "Model performance").click();
   assert.deepEqual(firstDashboard.webContents.sent.at(-1), {
-    channel: "tibotattle:desktop-command:v1",
-    command: { command: "dashboardSection", section: "accounting" },
+    channel: "usagemonitor:desktop-command:v1",
+    command: { command: "dashboardSection", section: "performance" },
   });
   trays[0].emit("click");
   assert.equal(lifecycle.state.windowVisible, false);
-  trays[0].menu.template.find((item) => item.label === "Open TiboTattle").click();
+  trays[0].menu.template.find((item) => item.label === "Open Rhetrion").click();
   assert.equal(lifecycle.state.windowVisible, true);
   trays[0].emit("click");
   assert.equal(lifecycle.state.windowVisible, false);
@@ -2119,11 +2137,14 @@ test("desktop lifecycle composes secure window, tray, single instance, retry, an
   assert.equal(windows.length, 4, "Settings reuses the dashboard");
   secondDashboard.emit("ready-to-show");
   assert.equal(secondDashboard.visible, true);
-  assert.equal(lifecycle.navigateDashboardSection("community"), true);
+  const sentBeforeRetiredSection = secondDashboard.webContents.sent.length;
+  assert.equal(lifecycle.navigateDashboardSection("community"), false);
+  assert.equal(secondDashboard.webContents.sent.length, sentBeforeRetiredSection);
+  assert.equal(lifecycle.navigateDashboardSection("overview"), true);
   assert.equal(secondDashboard.visible, true);
   assert.deepEqual(secondDashboard.webContents.sent.at(-1), {
-    channel: "tibotattle:desktop-command:v1",
-    command: { command: "dashboardSection", section: "community" },
+    channel: "usagemonitor:desktop-command:v1",
+    command: { command: "dashboardSection", section: "overview" },
   });
   assert.equal(lifecycle.navigateDashboardSection("https://evil.example"), false);
   await lifecycle.requestQuit();
@@ -2198,7 +2219,7 @@ test("desktop lifecycle leaves macOS app reveal and focus APIs unused on Windows
   await lifecycle.start();
   const dashboard = dashboardWindowsForTest(windows)[0];
   dashboard.emit("ready-to-show");
-  const openItem = trays[0].menu.template.find((item) => item.label === "Open TiboTattle");
+  const openItem = trays[0].menu.template.find((item) => item.label === "Open Rhetrion");
   openItem.click();
   assert.equal(app.showCalls, 0);
   assert.deepEqual(app.focusCalls, []);
@@ -2678,7 +2699,7 @@ test("Settings requests before readiness use the dashboard without constructing 
   assert.equal(dashboard.webContents.sent.length, 0);
   dashboard.emit("ready-to-show");
   assert.deepEqual(dashboard.webContents.sent, [{
-    channel: "tibotattle:desktop-command:v1",
+    channel: "usagemonitor:desktop-command:v1",
     command: { command: "dashboardSection", section: "settings", settingsSection: "notifications" },
   }]);
   dashboard.emit("ready-to-show");
@@ -2711,7 +2732,7 @@ test("navigating away before dashboard readiness cancels an earlier Settings req
   assert.deepEqual(dashboard.webContents.sent.at(-1).command, { command: "dashboardSection", section: "usage" });
   dashboard.emit("ready-to-show");
   assert.deepEqual(dashboard.webContents.sent, [{
-    channel: "tibotattle:desktop-command:v1",
+    channel: "usagemonitor:desktop-command:v1",
     command: { command: "dashboardSection", section: "usage" },
   }]);
   dashboard.emit("ready-to-show");
@@ -2807,7 +2828,7 @@ test("Settings routes menu and tray entries to the dashboard and requires its ex
   const dashboard = dashboardWindowsForTest(windows)[0];
   dashboard.emit("ready-to-show");
   const expectSection = (section) => assert.deepEqual(dashboard.webContents.sent.at(-1), {
-    channel: "tibotattle:desktop-command:v1",
+    channel: "usagemonitor:desktop-command:v1",
     command: { command: "dashboardSection", section: "settings", settingsSection: section },
   });
   for (const section of ["general", "tray", "notifications", "data", "about"]) {
@@ -2822,17 +2843,17 @@ test("Settings routes menu and tray entries to the dashboard and requires its ex
   for (const menu of [menus[0].template.flatMap((item) => item.submenu ?? []), trays[0].menu.template]) {
     menu.find((item) => item.label === "Settings…").click();
     expectSection("general");
-    menu.find((item) => item.label === "About TiboTattle").click();
+    menu.find((item) => item.label === "About Rhetrion").click();
     expectSection("about");
   }
   assert.equal(lifecycle.navigateDashboardSection("usage"), true);
   assert.equal(lifecycle.navigateDashboardSection("#usage"), false);
   assert.deepEqual(dashboard.webContents.sent.at(-1).command, { command: "dashboardSection", section: "usage" });
   assert.equal(lifecycle.setDesktopLanguage("zh-Hans"), true);
-  assert.ok(menus.at(-1).template.flatMap((item) => item.submenu ?? []).some((item) => item.label === "\u5173\u4e8e TiboTattle"));
-  assert.ok(trays[0].menu.template.some((item) => item.label === "\u6253\u5f00 TiboTattle"));
+  assert.ok(menus.at(-1).template.flatMap((item) => item.submenu ?? []).some((item) => item.label === "\u5173\u4e8e Rhetrion"));
+  assert.ok(trays[0].menu.template.some((item) => item.label === "\u6253\u5f00 Rhetrion"));
   assert.equal(lifecycle.setDesktopLanguage("es"), true);
-  assert.ok(menus.at(-1).template.flatMap((item) => item.submenu ?? []).some((item) => item.label === "Acerca de TiboTattle"));
+  assert.ok(menus.at(-1).template.flatMap((item) => item.submenu ?? []).some((item) => item.label === "Acerca de Rhetrion"));
   assert.equal(lifecycle.refreshSettings(), true);
   assert.deepEqual(dashboard.webContents.sent.at(-1).command, { command: "settingsChanged" });
   const contents = dashboard.webContents, frame = contents.mainFrame, event = { sender: contents };
@@ -2997,8 +3018,8 @@ test("Electron entry quits explicitly when composition fails before lifecycle ow
   assert.equal(electronEntryCompositionFailure(recordedFailure), true);
   assert.deepEqual(diagnostics, [`${ELECTRON_ENTRY_FAILURE_DIAGNOSTIC}\n`]);
   assert.deepEqual(alerts, [{
-    title: "TiboTattle could not start",
-    message: `TiboTattle stopped before opening the dashboard.\n\nSupport code: ${ELECTRON_ENTRY_FAILURE_DIAGNOSTIC}\n\nPlease report this code with the app and operating system versions. Preserve your local data.`,
+    title: "Rhetrion could not start",
+    message: `Rhetrion stopped before opening the dashboard.\n\nSupport code: ${ELECTRON_ENTRY_FAILURE_DIAGNOSTIC}\n\nPlease report this code with the app and operating system versions. Preserve your local data.`,
   }]);
   assert.deepEqual(events, ["startup-failure", "diagnostic", "alert", "quit"]);
   assert.equal(app.quitCalls, 1);
@@ -3048,26 +3069,27 @@ test("Electron entry still quits when its fixed diagnostic and native alert fail
 });
 
 
-test("stable and Dev packages leave Electron profile paths unchanged", async (t) => {
+test("dependency-injected composition leaves physical Electron profile paths untouched", async (t) => {
   const stableDistribution = createProductionDistributionMetadata({
     target: "win32-x64",
     sourceRevision: "e".repeat(40),
     buildNumber: "20260908",
   });
   for (const [name, appName, manifest] of [
-    ["stable", "TiboTattle", { tibotattleDistribution: stableDistribution }],
-    ["Dev", "TiboTattle Dev", {}],
+    ["stable", "Rhetrion", { usageMonitorIdentity: applicationIdentity.applicationMetadata("stable"), usageMonitorDistribution: stableDistribution }],
+    ["Dev", "Rhetrion Dev", { usageMonitorIdentity: applicationIdentity.applicationMetadata("development") }],
   ]) {
-    const root = await mkdtemp(join(tmpdir(), "tibotattle-ordinary-shell-"));
-    const appPath = join(root, "TiboTattle.app", "Contents", "Resources", "app.asar");
+    const root = await mkdtemp(join(tmpdir(), "usagemonitor-ordinary-shell-"));
+    const appPath = join(root, "Rhetrion.app", "Contents", "Resources", "app.asar");
     const appData = join(root, "app-data");
-    const userData = join(appData, "TiboTattle");
+    const userData = join(appData, "Rhetrion");
     await Promise.all([
       mkdir(appPath, { recursive: true }),
       mkdir(userData, { recursive: true }),
     ]);
     await writeFile(join(appPath, "package.json"), `${JSON.stringify({
-      name: "tibotattle",
+      name: "app-usagemonitor",
+      main: "apps/electron/main.js",
       version: "0.1.19",
       ...manifest,
     })}\n`, "utf8");
@@ -3088,12 +3110,12 @@ test("stable and Dev packages leave Electron profile paths unchanged", async (t)
     app.whenReady = async () => { throw new Error(`${name} readiness sentinel`); };
 
     await assert.rejects(launchElectronShell({
-      electron: { app, dialog: { showErrorBox() {} } },
+      electron: { app, BrowserWindow: class {}, dialog: { showErrorBox() {}, async showOpenDialog() { return { canceled: true, filePaths: [] }; } } },
       environment: {},
       platform: "win32",
       architecture: "x64",
-      resourcesPath: join(root, "TiboTattle.app", "Contents", "Resources"),
-    }), new RegExp(`${name} readiness sentinel`, "u"));
+      resourcesPath: join(root, "Rhetrion.app", "Contents", "Resources"),
+    }), name === "stable" ? new RegExp(`${name} readiness sentinel`, "u") : errorCode("windows_readiness_unavailable"));
     assert.deepEqual(setPathCalls, [], name);
     assert.equal(paths.get("userData"), userData, name);
     assert.equal(paths.get("sessionData"), userData, name);
@@ -3110,17 +3132,17 @@ test("packaged Electron composition keeps the companion in app.asar and uses phy
     app.isPackaged = true;
     await assert.rejects(
       launchElectronShell({ electron: { app } }),
-      errorCode("windows_readiness_unavailable"),
+      errorCode("electron_configuration_invalid"),
     );
     assert.equal(app.quitCalls, 1);
     return;
   }
   const app = new FakeApp();
   app.isPackaged = true;
-  app.getAppPath = () => "/private/TiboTattle.app/Contents/Resources/app.asar";
+  app.getAppPath = () => "/private/Rhetrion.app/Contents/Resources/app.asar";
   app.getPath = (name) => {
     assert.equal(name, "userData");
-    return "/private/TiboTattle-user-data";
+    return "/private/Rhetrion-user-data";
   };
   const child = new FakeChild();
   const spawnCalls = [];
@@ -3148,7 +3170,7 @@ test("packaged Electron composition keeps the companion in app.asar and uses phy
         }),
       },
     },
-    resourcesPath: "/private/TiboTattle.app/Contents/Resources",
+    resourcesPath: "/private/Rhetrion.app/Contents/Resources",
     environment: {
       USAGE_MONITOR_CENTRAL_ORIGIN: "http://127.0.0.1:8792",
     },
@@ -3181,24 +3203,24 @@ test("packaged Electron composition keeps the companion in app.asar and uses phy
   );
   assert.equal(spawnCalls.length, 1);
   assert.deepEqual(spawnCalls[0].args, [
-    "/private/TiboTattle.app/Contents/Resources/app.asar/apps/local/server.js",
+    "/private/Rhetrion.app/Contents/Resources/app.asar/apps/local/server.js",
   ]);
   assert.equal(
     spawnCalls[0].options.env.CODEX_HOME,
-    "/Users/adamallcock/.codex",
+    "/Users/synthetic-user/.codex",
     "the direct companion entrypoint receives its analyzed root through CODEX_HOME",
   );
   assert.equal(
     spawnCalls[0].options.cwd,
-    "/private/TiboTattle.app/Contents/Resources",
+    "/private/Rhetrion.app/Contents/Resources",
   );
   assert.equal(
     spawnCalls[0].options.env.USAGE_MONITOR_RESOURCE_ROOT,
-    "/private/TiboTattle.app/Contents/Resources/app.asar",
+    "/private/Rhetrion.app/Contents/Resources/app.asar",
   );
   assert.equal(
     spawnCalls[0].options.env.USAGE_MONITOR_STATE_ROOT,
-    "/private/TiboTattle-user-data/companion-state",
+    "/private/Rhetrion-user-data/companion-state",
   );
   assert.equal(
     spawnCalls[0].options.env.USAGE_MONITOR_CENTRAL_ORIGIN,
@@ -3279,15 +3301,15 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     },
   };
   vm.runInNewContext(source, context, { filename: "preload.cjs" });
-  assert.deepEqual(JSON.parse(JSON.stringify(context.__TIBOTATTLE_PRELOAD_MARKER__)), {
-    name: "tibotattle-electron-preload",
+  assert.deepEqual(JSON.parse(JSON.stringify(context.__USAGE_MONITOR_PRELOAD_MARKER__)), {
+    name: "usagemonitor-electron-preload",
     version: "v1",
     capabilities: { filesystem: false, ipc: true },
   });
-  assert.equal(Object.isFrozen(context.__TIBOTATTLE_PRELOAD_MARKER__), true);
-  assert.equal(Object.isFrozen(context.__TIBOTATTLE_PRELOAD_MARKER__.capabilities), true);
-  assert.deepEqual(Object.keys(exposed), ["tibotattleDesktop"]);
-  const bridge = exposed.tibotattleDesktop;
+  assert.equal(Object.isFrozen(context.__USAGE_MONITOR_PRELOAD_MARKER__), true);
+  assert.equal(Object.isFrozen(context.__USAGE_MONITOR_PRELOAD_MARKER__.capabilities), true);
+  assert.deepEqual(Object.keys(exposed), ["usageMonitorDesktop"]);
+  const bridge = exposed.usageMonitorDesktop;
   assert.equal(Object.isFrozen(bridge), true);
   assert.deepEqual(Object.keys(bridge), [
     "version",
@@ -3315,6 +3337,7 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "setLanguage",
     "setAppearance",
     "setRefreshInterval",
+    "setRefreshPaused",
     "setStartAtLogin",
     "sendTestNotification",
     "setNotificationPreferences",
@@ -3327,6 +3350,8 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "openDashboardInBrowser",
     "showDiagnostics",
     "revealLocalData",
+    "getXStatus", "refreshX", "getXSettings", "cancelXLogin", "configureXImport", "logoutX", "clearXCache",
+    "listXPosts", "getXPost", "beginXLogin", "setXSettings",
     "getRefreshStatus",
     "refreshStarted",
     "refreshHeartbeat",
@@ -3347,12 +3372,12 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   await assert.rejects(bridge.sendTestNotification({ body: "arbitrary" }));
   await bridge.sendTestNotification();
   assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())), {
-    channel: "tibotattle:desktop:v1", request: { action: "sendTestNotification", args: {} },
+    channel: "usagemonitor:desktop:v1", request: { action: "sendTestNotification", args: {} },
   });
   const commands = [];
   const unsubscribe = bridge.onCommand((command) => commands.push(command));
   assert.equal(typeof unsubscribe, "function");
-  const commandListener = commandListeners.get("tibotattle:desktop-command:v1");
+  const commandListener = commandListeners.get("usagemonitor:desktop-command:v1");
   assert.equal(typeof commandListener, "function");
   commandListener({}, { command: "refresh" });
   commandListener({}, { command: "automaticRefresh", mode: "quick" });
@@ -3377,7 +3402,7 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   commandListener({}, { command: "windowFullscreen", fullscreen: true, extra: true });
   // Retired native-to-renderer commands must not cross the preload boundary.
   commandListener({}, { command: "hostedSignInReturn" });
-  commandListener({}, { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-tibotattle-results.png" });
+  commandListener({}, { command: "shareCardDownloadCompleted", filename: "2026-09-28-19-15-usagemonitor-results.png" });
   commandListener({}, { command: "shareCardDownloadFailed" });
   commandListener({}, { command: "language", value: "fr" });
   commandListener({}, { command: "refresh", selector: "#private" });
@@ -3435,71 +3460,71 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
   await bridge.refreshHeartbeat(1);
   await bridge.refreshSettled(1);
   assert.deepEqual(JSON.parse(JSON.stringify(calls.map(({ channel, request }) => ({ channel, request })))), [
-    { channel: "tibotattle:desktop:v1", request: { action: "getSettings", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "getCodexHomesForSettings", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "openSettings", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "toggleSidebar", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "chooseCodexHome", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "addCodexHome", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "getSettings", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "getCodexHomesForSettings", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "openSettings", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "toggleSidebar", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "chooseCodexHome", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "addCodexHome", args: {} } },
     {
-      channel: "tibotattle:desktop:v1",
+      channel: "usagemonitor:desktop:v1",
       request: {
         action: "editCodexHome",
         args: { rootId: "11111111-1111-4111-8111-111111111111" },
       },
     },
     {
-      channel: "tibotattle:desktop:v1",
+      channel: "usagemonitor:desktop:v1",
       request: {
         action: "removeCodexHome",
         args: { rootId: "11111111-1111-4111-8111-111111111111" },
       },
     },
     {
-      channel: "tibotattle:desktop:v1",
+      channel: "usagemonitor:desktop:v1",
       request: {
         action: "setPrimaryCodexHome",
         args: { rootId: "11111111-1111-4111-8111-111111111111" },
       },
     },
     {
-      channel: "tibotattle:desktop:v1",
+      channel: "usagemonitor:desktop:v1",
       request: {
         action: "reorderCodexHomes",
         args: { rootIds: ["11111111-1111-4111-8111-111111111111"] },
       },
     },
-    { channel: "tibotattle:desktop:v1", request: { action: "useDefaultCodexHome", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "setLanguage", args: { value: "en" } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "setAppearance", args: { value: "dark" } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "setRefreshInterval", args: { seconds: 300 } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "setStartAtLogin", args: { enabled: true } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "useDefaultCodexHome", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "setLanguage", args: { value: "en" } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "setAppearance", args: { value: "dark" } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "setRefreshInterval", args: { seconds: 300 } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "setStartAtLogin", args: { enabled: true } } },
     {
-      channel: "tibotattle:desktop:v1",
+      channel: "usagemonitor:desktop:v1",
       request: {
         action: "setNotificationPreferences",
         args: { threshold: 90 },
       },
     },
     {
-      channel: "tibotattle:desktop:v1",
+      channel: "usagemonitor:desktop:v1",
       request: { action: "openSystemSettings", args: { target: "notifications" } },
     },
     {
-      channel: "tibotattle:desktop:v1",
+      channel: "usagemonitor:desktop:v1",
       request: { action: "openExternal", args: { target: "github" } },
     },
-    { channel: "tibotattle:desktop:v1", request: { action: "checkForUpdates", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "downloadUpdate", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "installUpdateAndRestart", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "setAutomaticDownload", args: { enabled: false } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "openDashboardInBrowser", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "showDiagnostics", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "revealLocalData", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "getRefreshStatus", args: {} } },
-    { channel: "tibotattle:desktop:v1", request: { action: "refreshStarted", args: { mode: "quick" } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "refreshHeartbeat", args: { lease: 1 } } },
-    { channel: "tibotattle:desktop:v1", request: { action: "refreshSettled", args: { lease: 1 } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "checkForUpdates", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "downloadUpdate", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "installUpdateAndRestart", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "setAutomaticDownload", args: { enabled: false } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "openDashboardInBrowser", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "showDiagnostics", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "revealLocalData", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "getRefreshStatus", args: {} } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "refreshStarted", args: { mode: "quick" } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "refreshHeartbeat", args: { lease: 1 } } },
+    { channel: "usagemonitor:desktop:v1", request: { action: "refreshSettled", args: { lease: 1 } } },
   ]);
   await assert.rejects(
     bridge.setNotificationPreferences({ threshold: 90, extra: true }),
@@ -3675,10 +3700,10 @@ test("preload exposes platform-qualified one-shot startup gates and rejects host
     lexicalProcess: true,
   });
   assert.deepEqual(Object.keys(windowsSmoke.exposed), [
-    "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__",
-    "tibotattleDesktop",
+    "__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__",
+    "usageMonitorDesktop",
   ]);
-  await assertSmokeGate(windowsSmoke, "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__");
+  await assertSmokeGate(windowsSmoke, "__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__");
 
   const windowsNormalSmoke = runPreload({
     platform: "win32",
@@ -3686,13 +3711,12 @@ test("preload exposes platform-qualified one-shot startup gates and rejects host
     lexicalProcess: true,
   });
   assert.deepEqual(Object.keys(windowsNormalSmoke.exposed), [
-    "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__",
-    "tibotattleDesktop",
+    "__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__",
+    "usageMonitorDesktop",
   ]);
-  await assertSmokeGate(windowsNormalSmoke, "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__");
+  await assertSmokeGate(windowsNormalSmoke, "__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__");
 
   for (const options of [
-    { platform: "win32", control: "quit-v1" },
     { platform: "win32", control: "windows-v1" },
     { platform: "win32", control: "windows-v1" },
     { platform: "win32", control: undefined },
@@ -3724,7 +3748,7 @@ test("preload exposes platform-qualified one-shot startup gates and rejects host
   ]) {
     const unqualified = runPreload({ ...options, lexicalProcess: true });
     assert.equal(
-      Object.hasOwn(unqualified.exposed, "__TIBOTATTLE_ELECTRON_WINDOWS_SMOKE__"),
+      Object.hasOwn(unqualified.exposed, "__USAGE_MONITOR_ELECTRON_WINDOWS_SMOKE__"),
       false,
       JSON.stringify(options),
     );
@@ -3802,7 +3826,7 @@ test("preload forwards only a trusted canonical Codex thread click", async () =>
   }
   assert.equal(click({ href: null }), false);
   assert.deepEqual(JSON.parse(JSON.stringify(calls)), [{
-    channel: "tibotattle:desktop:v1",
+    channel: "usagemonitor:desktop:v1",
     request: {
       action: "openCodexThread",
       args: { url: canonical },

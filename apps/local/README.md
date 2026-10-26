@@ -9,7 +9,7 @@ explicit. Homepage diagnostics sit below the cards with expandable pricing
 records and capture status. Original Codex records and log retention are untouched.
 
 This loopback-only Node application turns retained privacy-safe monitoring
-artifacts into the functional TiboTattle dashboard. It does not send raw
+artifacts into the functional Rhetrion dashboard. It does not send raw
 Codex logs, accept arbitrary source paths, or expose raw account/session
 pseudonyms to the browser. A separate, explicitly local-only thread-link
 contract exposes Codex thread IDs and display names for recent cache-drop rows,
@@ -114,7 +114,7 @@ used by the Codex plugin. `--agent-protocol 1` selects exactly `status`,
 one content-free JSON result instead of binding a server. It accepts no generic
 path, command, SQL, refresh, settings, or upload input. Normal companion startup
 is unchanged when the selector is absent. See the maintained
-[Codex plugin reference](../../docs/reference/codex-plugin.md).
+Codex plugin reference (retired; retained in Git history).
 
 Startup defers the full-history projection so the first local dashboard does
 not wait for it. A validated last-authoritative snapshot may supply retained
@@ -155,7 +155,7 @@ On first use:
    quota/headline refresh when it is recent; or choose **Refresh** in a standalone browser
    development session;
 4. during manual **Refresh**, keep reading as
-   TiboTattle continues bounded slices under that original action, or choose
+   Rhetrion continues bounded slices under that original action, or choose
    **Cancel** and resume later; and
 5. review the privacy-safe local results.
 
@@ -239,7 +239,7 @@ limit. Recovery procedures are in the [local index recovery runbook](../../docs/
 
 Codex may retain several immutable rollout files for one stable thread, including
 the canonical `rollout-<timestamp>-<thread>_<rollout>.jsonl` form used by
-paginated history. TiboTattle treats the stable thread and the physical rollout
+paginated history. Rhetrion treats the stable thread and the physical rollout
 as separate identities. It indexes every valid physical spend delta once,
 resolves `history_base` by rollout ID and exact ordinal/byte cutoff, and seeds the
 new generation from that boundary so retained history is not charged twice.
@@ -317,7 +317,7 @@ The desktop app is local-only. Community sharing, contribution upload, performan
 ## Local API
 
 The complete route-by-route inventory lives in the maintained
-[TiboTattle API surface reference](../../docs/reference/api-surface.md).
+[Rhetrion API surface reference](../../docs/reference/api-surface.md).
 It covers all local companion paths, fixed report routes, and the credential-free central relay. A source-parity
 test fails if an exact route allowlist changes without the reference changing
 with it.
@@ -385,7 +385,7 @@ The lab creates dedicated synthetic owner fixtures and isolated envelope keys,
 and supplies its smoke child with `--owner-access-file` automatically. It does
 not require `.dev.vars` or make ordinary participants admins. Direct smoke/load
 commands have a separate required owner-file preflight; see the
-[local HTTP procedure](../../docs/runbooks/production-operations.md#disposable-local-http-acceptance).
+local HTTP procedure (retired; retained in Git history).
 
 Use `npm run product:backend:lab` instead when you want the verified state and
 portal to remain available for inspection. That command now starts this local

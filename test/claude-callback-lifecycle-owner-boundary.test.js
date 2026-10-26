@@ -137,9 +137,9 @@ test("Claude callback lifecycle owner, context, and legacy APIs are exact", () =
   });
   const spaced = context.buildManagedClaudeStatusLine({
     nodeExecutable: "C:\\Program Files\\Node\\node.exe",
-    runtimeScript: "C:\\Tibo Tattle\\claude-callback-runtime.js",
+    runtimeScript: "C:\\Usage Monitor\\claude-callback-runtime.js",
   });
-  assert.equal(spaced.command, '"C:\\Program Files\\Node\\node.exe" "C:\\Tibo Tattle\\claude-callback-runtime.js"');
+  assert.equal(spaced.command, '"C:\\Program Files\\Node\\node.exe" "C:\\Usage Monitor\\claude-callback-runtime.js"');
   for (const nodeExecutable of ['C:\\private%PATH%\\node.exe', 'C:\\private!PATH!\\node.exe', 'C:\\private"\\node.exe', 'C:\\private\n\\node.exe']) {
     assert.throws(() => context.buildManagedClaudeStatusLine({ nodeExecutable }), fixedConfigurationError);
   }

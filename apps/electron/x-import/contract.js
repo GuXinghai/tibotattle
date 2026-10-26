@@ -1,5 +1,5 @@
 export const X_IMPORT_MAX_BYTES = 524288;
-export const X_IMPORT_HOST = 'com.tibotattle.x_session_import';
+export const X_IMPORT_HOST = 'com.usagemonitor.x_session_import';
 export const X_IMPORT_EXTENSION_ID = 'ididcmbpmekkeindgjimhcdffbnliejo';
 export const X_IMPORT_ORIGIN = `chrome-extension://${X_IMPORT_EXTENSION_ID}/`;
 const invalid = () => { throw new Error('invalid_import'); };

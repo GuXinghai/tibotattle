@@ -276,7 +276,7 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
     setText("#trends-clock", format(at, { hour: "numeric", minute: "2-digit" }));
     const description = format(at, { dateStyle: "medium", timeStyle: "short" });
     input.setAttribute("aria-valuetext", description);
-    if (win.CustomEvent) document.dispatchEvent?.(new win.CustomEvent("tibotattle:allowance-time", { detail: { at } }));
+    if (win.CustomEvent) document.dispatchEvent?.(new win.CustomEvent("usagemonitor:allowance-time", { detail: { at } }));
     const levelPoint = sampleAt(allowanceSamples, at, 3 * 3_600_000);
     const spendPoint = spendAt(at);
     const rate = hourlySpend(spendPoint);
@@ -362,12 +362,12 @@ export function mountTrendsHorizon(root, { t, locale, timeZone, formatMoney, for
         $("#trends-event-detail").hidden = false;
       };
       marker.addEventListener("click", e => { e.stopPropagation(); inspect();
-        document.dispatchEvent(new win.CustomEvent("tibotattle:allowance-reset", {detail:{timestampMs:event.timestampMs}})); });
+        document.dispatchEvent(new win.CustomEvent("usagemonitor:allowance-reset", {detail:{timestampMs:event.timestampMs}})); });
       marker.addEventListener("focus", inspect);
       marker.addEventListener("pointerenter", inspect);
       marker.addEventListener("keydown", e => {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); inspect();
-          if (win.CustomEvent) document.dispatchEvent?.(new win.CustomEvent("tibotattle:allowance-reset", {detail:{timestampMs:event.timestampMs}})); }
+          if (win.CustomEvent) document.dispatchEvent?.(new win.CustomEvent("usagemonitor:allowance-reset", {detail:{timestampMs:event.timestampMs}})); }
       });
       layer.append(marker);
     }

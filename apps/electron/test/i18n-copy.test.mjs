@@ -70,14 +70,14 @@ const EXPECTED_CRASH_COPY = {
     "es": "Preparar incidencia pública en GitHub…",
   },
   "electron.diagnostics.message": {
-    "en-US": "Review this content-free report. Preparing a public issue sends it to GitHub in the URL; review the form before submitting. Local crash dumps may contain private data and are not uploaded by TiboTattle. Capture changes take effect after restart.",
-    "zh-Hans": "请检查这份不含会话内容的诊断报告。准备公开问题报告时，会通过网址将报告发送给 GitHub；提交前请检查表单。本地崩溃转储文件可能包含私密数据，TiboTattle 不会上传这些文件。崩溃捕获设置将在重启后生效。",
-    "es": "Revisa este informe sin contenido. Preparar una incidencia pública lo envía a GitHub en la URL; revisa el formulario antes de publicarlo. Los volcados locales pueden contener datos privados y TiboTattle no los sube. Los cambios de captura se aplican tras reiniciar.",
+    "en-US": "Review or copy this content-free local report. Nothing is uploaded. Local crash dumps may contain private data and are not included in this report.",
+    "zh-Hans": "请检查或复制这份不含会话内容的本地诊断报告。不会上传任何内容。本地崩溃转储可能包含私密数据，不包含在此报告中。",
+    "es": "Revisa o copia este informe local sin contenido. No se sube nada. Los volcados locales pueden contener datos privados y no forman parte de este informe.",
   },
   "electron.diagnostics.title": {
-    "en-US": "TiboTattle doctor",
-    "zh-Hans": "TiboTattle 诊断工具",
-    "es": "Diagnóstico de TiboTattle",
+    "en-US": "{appName} doctor",
+    "zh-Hans": "{appName} 诊断工具",
+    "es": "Diagnóstico de {appName}",
   },
 };
 

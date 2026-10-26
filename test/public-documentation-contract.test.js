@@ -1,319 +1,81 @@
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
-import { test } from "node:test";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import distribution from "../config/electron-production-distribution.cjs";
+import identity from "../config/application-identity.cjs";
 
-const ROOT = new URL("../", import.meta.url);
+const text = path => readFile(new URL(`../${path}`, import.meta.url), "utf8");
 
-async function text(path) {
-  return readFile(new URL(path, ROOT), "utf8");
-}
+test("maintained product guidance identifies an unpublished local Windows product", async () => {
+  const [readme, contribution, status, support] = await Promise.all([
+    text("README.md"), text("CONTRIBUTING.md"), text("docs/current-status.md"), text("SUPPORT.md"),
+  ]);
+  for (const source of [readme, contribution, status, support]) assert.match(source, /Windows x64/u);
+  assert.match(readme, /has not been published/u);
+  assert.match(status, /unpublished/u);
+  assert.match(support, /No external support, download or private reporting/u);
+  assert.equal(distribution.PRODUCTION_ELECTRON_UPDATE_ORIGIN, null);
+  assert.equal(distribution.PRODUCTION_ELECTRON_TARGETS["win32-x64"].feedURL, null);
+});
 
-function exactStringLiterals(source) {
-  return [...source.matchAll(/"([^"\\]*(?:\\.[^"\\]*)*)"/gu)]
-    .map(([, value]) => value);
-}
+test("documented machine identity stays separate from presentation and migration", async () => {
+  const [readme, architecture, plan] = await Promise.all([
+    text("README.md"), text("docs/reference/system-architecture.md"),
+    text("docs/plans/2026-10-23-rhetrion-brand-identity-and-local-state-cutover.md"),
+  ]);
+  assert.ok(readme.includes(identity.APPLICATION_IDENTITY.executableName + ".exe"));
+  assert.ok(readme.includes(identity.APPLICATION_PROFILES.stable.appId));
+  assert.match(architecture, /display names\s+never select a credential, profile or production permission/u);
+  assert.match(architecture, /before Electron readiness/u);
+  assert.match(plan, /prepared → backed_up → converted → verified → activated → accepted/u);
+  assert.match(plan, /不得直接覆盖新增历史/u);
+});
 
-test("Windows installation guidance is consistent across maintained public surfaces", async () => {
+test("source collection and content-free boundaries stay disclosed", async () => {
   const readme = await text("README.md");
-  const guide = await text("docs/user-guide.md");
-  const webDocs = await text("apps/web/public/docs.html");
-  const support = await text("SUPPORT.md");
-  for (const [name, content] of [["README", readme], ["user guide", guide], ["website docs", webDocs], ["SUPPORT", support]]) {
-    assert.match(content, /Windows x64/u, `${name} names the Windows x64 target`);
-    assert.doesNotMatch(content, /brew install --cask|Homebrew|Sparkle|Gatekeeper|\.dmg\b/u, `${name} carries no macOS distribution path`);
-  }
-  assert.match(webDocs, /TiboTattle supports Windows x64 only\./u);
-  assert.doesNotMatch(webDocs, /macOS 14 or later/u);
-  assert.match(readme, /## Install \(Windows x64\)/u);
-  assert.match(readme, /## Build from source \(developers\)/u);
-  assert.match(readme, /Electron packaging/u);
-  assert.doesNotMatch(readme, /## Quick start \(macOS, Apple Silicon\)/u);
-  assert.match(await text("CONTRIBUTING.md"), /## Developer setup/u);
-  assert.match(support, /TiboTattle supports Windows x64 only/u);
+  for (const marker of ["sessions", "archived_sessions", "state_5.sqlite", "config.toml",
+    "account/read", "account/rateLimits/read", "account/usage/read"]) assert.ok(readme.includes(marker), marker);
+  const security = await text("SECURITY.md");
+  assert.match(security, /local usage data/u);
+  assert.match(security, /private paths|source paths/u);
+  assert.match(security, /prompts, responses/u);
+  assert.match(readme, /Display windows do not delete retained history/u);
 });
 
-
-test("maintained Markdown retires self-service promises without implying history loss", async () => {
-  const paths = [
-    "README.md",
-    "SUPPORT.md",
-    "apps/local/README.md",
-    "apps/worker/README.md",
-    "docs/user-guide.md",
-    "docs/reference/local-data-and-privacy.md",
-  ];
-  const disconnectNamingPaths = [
-    "apps/local/README.md",
-    "apps/worker/README.md",
-    "docs/user-guide.md",
-    "docs/reference/local-data-and-privacy.md",
-  ];
-  for (const path of disconnectNamingPaths) {
-    assert.match(await text(path), /device disconnect|Disconnect this (?:Mac|device)/u, `${path} names device disconnect`);
-  }
-  for (const path of paths) {
-    const markdown = await text(path);
-    assert.doesNotMatch(
-      markdown,
-      /Hosted deletion is always available|request deletion through the product controls|Full deletion control from the app|disclosure retains complete hosted deletion/u,
-      `${path} must not restore a self-service deletion promise`,
-    );
-  }
-  const guide = await text("docs/user-guide.md");
-  assert.match(guide, /It preserves previously contributed hosted\s+history, other devices, and local analysis/u);
-  assert.match(guide, /source change, not a deployed-service or installed-release/u);
-  assert.match(guide, /Turn off \*\*Share usage measurements\*\* in Community to stop future accountless/u);
-  assert.match(guide, /Settings… → Data & privacy → Community sharing → Manage sharing/u);
-  assert.match(guide, /The shared dashboard no longer presents Google\/Apple sign-in/u);
-  assert.match(guide, /Older clients may offer a device disconnect control/u);
-  assert.match(guide, /SECURE_STORAGE_MIGRATION_REQUIRED/u);
-  assert.match(guide, /current Electron app has no self-service credential migration or approval\s+control/u);
-  assert.doesNotMatch(guide, /Choose \*\*Review migration…\*\*|\*\*Approve migration\*\*/u);
-});
-
-test("owner erasure runbook preserves the exact request, retry, and audit contract", async () => {
-  const runbook = await text("docs/runbooks/production-operations.md");
-  const requestBodies = [...runbook.matchAll(/```json\s+([\s\S]*?)\s*```/gu)];
-  assert.equal(requestBodies.length, 1, "the minimal owner procedure has one explicit request body");
-  assert.deepEqual(JSON.parse(requestBodies[0][1]), {
-    action: "run_maintenance",
-    participantErasure: {
-      participantId: "participant:00000000-0000-4000-8000-000000000000",
-      confirmation: "erase_hosted_participant",
-    },
-  });
-  for (const marker of [
-    "POST /api/v1/admin/action",
-    "Cloudflare Access",
-    "pinned owner identity",
-    "x-usage-monitor-admin: 1",
-    'schemaVersion: "admin-action-v0.1"',
-    'task: "participant_erasure"',
-    "operationId",
-    "deleted: true",
-    "alreadyDeleted: false",
-    "alreadyDeleted: true",
-    "contributionsDeleted: null",
-    "unknown historical count, not zero",
-    "unexpired tombstone",
-    "409 PARTICIPANT_DELETING",
-    "older than five minutes",
-    "SHA256('app-usagemonitor/admin-participant-erasure/v1\\0' + participantId)",
-    "participantDeletion: false",
-    "deletionSafeRestoreReplay: true",
-  ]) {
-    assert.ok(runbook.includes(marker), `owner procedure retains ${marker}`);
-  }
-  assert.match(runbook, /without\s+`participantErasure` performs ordinary maintenance only/u);
-  assert.match(runbook, /stale attempt cannot complete after takeover/u);
-  assert.match(runbook, /Social restore replay owns `state: 'deleting'` with `deletion_session_id: null`/u);
-  assert.match(runbook, /Cron\s+must not resume non-null owner or legacy deletion fences/u);
-  assert.match(runbook, /restore replay atomically claims only active\s+rows or interrupted restores with the exact same fence/u);
-  assert.match(runbook, /Social owners retain\s+the NULL restore fence; accountless owners use the deterministic\s+`restore-replay:<participantDeletionDigest>` fence after revoking their\s+enrollment, before changing participant state/u);
-  assert.match(runbook, /Accountless replay resumes only\s+that exact reserved fence and refuses other reserved or owner UUID fences/u);
-  assert.match(runbook, /Final removal must match the exact claimed fence: the social NULL restore\s+fence, the accountless reserved restore fence, or the owner operation UUID/u);
-  assert.match(runbook, /not a claim that production has changed/u);
-});
-
-test("public templates retain security routing without self-service deletion promises", async () => {
-  const issueDirectory = ".github/ISSUE_TEMPLATE/";
-  const issuePaths = (await readdir(new URL(issueDirectory, ROOT), { withFileTypes: true }))
-    .filter((entry) => entry.isFile() && /\.(?:md|ya?ml)$/iu.test(entry.name))
-    .map((entry) => `${issueDirectory}${entry.name}`);
-  const templates = new Map(await Promise.all([
-    ...issuePaths,
-    ".github/PULL_REQUEST_TEMPLATE.md",
-  ].map(async (path) => [path, await text(path)])));
-  for (const [path, template] of templates) {
-    assert.doesNotMatch(
-      template,
-      /upload\/deletion endpoints|Hosted deletion is always available|request deletion through the product controls|Full deletion control from the app/iu,
-      `${path} must not restore self-service deletion guidance`,
-    );
-  }
-  const hosted = templates.get(`${issueDirectory}hosted_service.yml`);
-  assert.match(hosted, /For security\s+problems/u);
-  assert.match(hosted, /private GitHub Security Advisory,\s+not a public issue \(see SECURITY\.md\)/u);
-  for (const boundary of ["contribution uploads", "device disconnect", "private owner erasure", "deletion-safe restore"]) {
-    assert.ok(hosted.includes(boundary), `hosted security guidance covers ${boundary}`);
-  }
-  assert.deepEqual(
-    [...hosted.matchAll(/^    id: ([a-z-]+)$/gmu)].map(([, id]) => id),
-    ["page", "when", "what-happened", "no-session-content"],
-    "the hosted bug form must not gain privacy-intake fields",
-  );
-  assert.match(
-    templates.get(`${issueDirectory}config.yml`),
-    /url: https:\/\/github\.com\/adamallcock\/tibotattle\/security\/advisories\/new/u,
-  );
-});
-
-test("local operation docs preserve owner preflight and durable disconnect intent", async () => {
-  const [runbook, workerReadme, localReadme, workerManifest] = await Promise.all([
-    text("docs/runbooks/production-operations.md"),
-    text("apps/worker/README.md"),
-    text("apps/local/README.md"),
-    text("apps/worker/package.json").then(JSON.parse),
+test("recovery guidance preserves original state and separates evidence gates", async () => {
+  const [support, status, security] = await Promise.all([
+    text("SUPPORT.md"), text("docs/current-status.md"), text("SECURITY.md"),
   ]);
-  for (const command of [
-    "smoke:http", "smoke:account-scoped:http", "smoke:queue:http",
-    "smoke:incident:http", "load:http",
-  ]) {
-    assert.equal(typeof workerManifest.scripts[command], "string");
-    assert.ok(runbook.includes(`\`${command}\``), `local procedure covers ${command}`);
-  }
-  for (const marker of [
-    "--owner-access-file",
-    "LOCAL_OWNER_ACCESS_REQUIRED",
-    "local-backend-owner-access-v0.1",
-    "ADMIN_IDENTITY_LINK_KEY",
-    "ownerAccessFileContainsSecret: true",
-    "ownerErasureVerified",
-  ]) {
-    assert.ok(runbook.includes(marker), `local owner procedure retains ${marker}`);
-  }
-  assert.match(runbook, /admin overview authorization before\s+participant enrollment, ingestion, or incident-control writes/u);
-  assert.match(runbook, /`--profile-only` remains offline\s+and requires no owner file/u);
-  assert.match(runbook, /does not bypass\s+production Cloudflare Access/u);
-  const localAcceptance = runbook.split("### Disposable local HTTP acceptance\n")[1]
-    ?.split("\n## ")[0];
-  assert.ok(localAcceptance, "the runbook has a distinct local acceptance boundary");
-  assert.match(localAcceptance, /serves `apps\/web\/public` directly under `--local`/u);
-  assert.doesNotMatch(localAcceptance, /production:stage-assets/u);
-  assert.match(localAcceptance, /does not change production\/staging asset paths, guarded wrappers/u);
-  for (const readme of [workerReadme, localReadme]) {
-    assert.ok(readme.includes("--owner-access-file"));
-    assert.doesNotMatch(readme, /npm run product:keys:local/u, "the lab provisions isolated keys itself");
-  }
-  for (const marker of ['paused: true', 'pausedReason: "device_disconnected"', 'nextAttemptAt: null']) {
-    assert.ok(localReadme.includes(marker), `local docs disclose ${marker}`);
-  }
-  assert.match(localReadme, /before remote\s+revocation or local credential cleanup/u);
-  assert.match(localReadme, /must not resume delivery/u);
-  assert.match(localReadme, /preserves\s+the credential\/binding for retry/u);
-  assert.match(localReadme, /real Codex home and production credential\s+backend/u);
+  assert.match(support, /Do not delete the only database, wipe AppData, downgrade a schema/u);
+  assert.match(status, /Real application data has not been moved or converted/u);
+  assert.match(status, /usage-only cutover/u);
+  assert.match(status, /timing conversion, semantic continuity checks/u);
+  assert.match(status, /not a usage-cutover gate/u);
+  assert.match(status, /Unexpected credential prompts remain a release blocker/u);
+  assert.match(security, /never.*|Never wipe/u);
+  assert.match(security, /Source tests, sidecar hashes, staging and\s+unsigned local candidates cannot substitute/u);
 });
 
-test("shipping local data sources remain disclosed in maintained user surfaces", async () => {
-  const [collector, threadStore, localServer, appServer, rootReadme,
-    localReadme, publicDocs, publicPrivacy, electronCopy] = await Promise.all([
-    text("src/passive-collector.js"),
-    text("src/platform/local-codex-thread-store.js"),
-    text("apps/local/server.js"),
-    text("src/providers/codex/app-server.js"),
-    text("README.md"),
-    text("apps/local/README.md"),
-    text("apps/web/public/docs.html"),
-    text("apps/web/public/privacy.html"),
-    text("apps/electron/desktop-copy-source.js"),
+test("usage-only cutover excludes X and browser migration without authorizing source deletion", async () => {
+  const decision = "docs/decisions/2026-10-25-usage-only-state-cutover.md";
+  const [scope, index, plan, recovery, architecture] = await Promise.all([
+    text(decision), text("docs/README.md"),
+    text("docs/plans/2026-10-23-rhetrion-brand-identity-and-local-state-cutover.md"),
+    text("docs/runbooks/local-index-recovery.md"), text("docs/reference/system-architecture.md"),
   ]);
-  const sourceContracts = [
-    [collector, "sessions"],
-    [collector, "archived_sessions"],
-    [threadStore, "state_5.sqlite"],
-    [localServer, "config.toml"],
-    [appServer, "account/read"],
-    [appServer, "account/rateLimits/read"],
-    [appServer, "account/usage/read"],
-  ];
-  for (const [source, marker] of sourceContracts) {
-    assert.ok(source.includes(marker), `source still owns ${marker}`);
+  assert.ok(index.includes("2026-10-25-usage-only-state-cutover.md"));
+  assert.match(scope, /usage computation and history continuity/u);
+  assert.match(scope, /not whole-profile migration/u);
+  for (const marker of ["original device salt", "collector state", "timing measurement state", "speed-mode baseline ledger",
+    "source-root selections", "No automatic replay, deletion or duplicate counting", "No whole-profile rename, overlay or restore"]) {
+    assert.ok(scope.includes(marker), marker);
   }
-  for (const [surface, name] of [
-    [rootReadme, "root README"],
-    [localReadme, "local companion README"],
-    [publicDocs, "public docs"],
-    [publicPrivacy, "public privacy page"],
-  ]) {
-    for (const [, marker] of sourceContracts) {
-      assert.ok(surface.includes(marker), `${name} discloses ${marker}`);
-    }
-    assert.doesNotMatch(surface, /plan-usage-history\.json/u);
-  }
-  for (const marker of ["electron.firstRun.detail", "Never contributed:",
-    "prompts, responses", "first-run setup", "local dashboard"]) {
-    assert.ok(electronCopy.includes(marker), `Electron first-run disclosure retains ${marker}`);
-  }
-});
-
-test("component READMEs delegate executable route inventories to the canonical reference", async () => {
-  const [localServer, localReadme, workerRoutes, workerReadme, apiReference] =
-    await Promise.all([
-      text("apps/local/server.js"),
-      text("apps/local/README.md"),
-      text("apps/worker/src/route-registry.ts"),
-      text("apps/worker/README.md"),
-      text("docs/reference/api-surface.md"),
-    ]);
-
-  const apiRoutesBlock = localServer.match(
-    /const API_ROUTES = new Set\(\[([\s\S]*?)\]\);/u,
-  )?.[1];
-  assert.ok(apiRoutesBlock, "local API_ROUTES inventory exists");
-  const localRoutes = exactStringLiterals(apiRoutesBlock)
-    .filter((value) => value.startsWith("/api/"));
-  assert.equal(localRoutes.length, 33, "review local route-count changes");
-  for (const route of localRoutes) {
-    assert.ok(apiReference.includes(route), `API reference covers local ${route}`);
-  }
-
-  const workerRoutesList = [
-    ...workerRoutes.matchAll(/pathname:\s*"([^"]+)"/gu),
-  ].map(([, route]) => route);
-  assert.equal(workerRoutesList.length, 50, "review Worker route-count changes");
-  for (const route of workerRoutesList) {
-    assert.ok(apiReference.includes(route), `API reference covers Worker ${route}`);
-  }
-  assert.match(localReadme, /docs\/reference\/api-surface\.md/u);
-  assert.match(workerReadme, /docs\/reference\/api-surface\.md/u);
-  assert.doesNotMatch(localReadme, /2026-08-26-api-surface-reference\.md/u);
-  assert.doesNotMatch(workerReadme, /2026-08-26-api-surface-reference\.md/u);
-});
-
-test("maintained public docs reject known pre-release and wrong-location claims", async () => {
-  const [
-    rootReadme,
-    localReadme,
-    workerReadme,
-    contributing,
-    security,
-    support,
-    issueConfig,
-    pullRequestTemplate,
-    rootPackage,
-    electronCopy,
-  ] = await Promise.all([
-    text("README.md"),
-    text("apps/local/README.md"),
-    text("apps/worker/README.md"),
-    text("CONTRIBUTING.md"),
-    text("SECURITY.md"),
-    text("SUPPORT.md"),
-    text(".github/ISSUE_TEMPLATE/config.yml"),
-    text(".github/PULL_REQUEST_TEMPLATE.md"),
-    text("package.json"),
-    text("apps/electron/desktop-copy-source.js"),
-  ]);
-
-  assert.doesNotMatch(rootReadme, /product-reference\.md|2026-07-29-end-to-end-pilot/u);
-  assert.doesNotMatch(rootReadme, /apps\/cloud-run|plan-usage-history\.json/u);
-  assert.doesNotMatch(localReadme, /usage-monitor\.example|Application Support\/TiboTattle/u);
-  assert.doesNotMatch(localReadme, /plan-usage-history\.json/u);
-  assert.doesNotMatch(localReadme, /GET \/api\/local\/contribution\/sync-next/u);
-  assert.doesNotMatch(
-    workerReadme,
-    /Worker is development-only|public production is not authorized/u,
-  );
-  assert.match(contributing, /npm run docs:check/u);
-  assert.match(contributing, /Use `git rm` for obsolete instructions/u);
-  assert.match(security, /Supported versions/u);
-  assert.doesNotMatch(security, /apps\/cloud-run|plan-usage-history\.json/u);
-  assert.match(support, /Safe recovery boundary/u);
-  assert.doesNotMatch(issueConfig, /adamallcock\/app-usagemonitor/u);
-  assert.match(pullRequestTemplate, /npm run docs:check/u);
-  assert.doesNotMatch(rootPackage, /Local-only quota and standard API-price usage triangulation experiment/u);
-  for (const surface of [electronCopy]) {
-    assert.doesNotMatch(surface, /settings\.previewUpdatesPending/u);
-    assert.doesNotMatch(surface, /first signed release has not been published/u);
-  }
+  assert.match(scope, /X posts, cache,[\s\S]+not\s+migration inputs or acceptance dependencies/u);
+  assert.match(scope, /no deletion, cleanup, logout, registry update or\s+credential change/u);
+  assert.match(scope, /not import the entire\s+desktop-settings file/u);
+  assert.match(scope, /unknown|Unknown/u);
+  assert.match(scope, /protected\s+cold backup\/readback/u);
+  assert.match(plan, /尚未实现 scoped bundle 选择器/u);
+  assert.match(recovery, /not a required selector or readiness gate/u);
+  assert.match(architecture, /their migration or restart is not a usage-cutover prerequisite/u);
 });

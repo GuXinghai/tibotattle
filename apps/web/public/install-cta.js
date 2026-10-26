@@ -4,7 +4,7 @@
 // partially injected release renders as "unavailable" rather than as a
 // half-filled download card.
 //
-// TiboTattle is Windows x64 only, so there is one installer slot and one
+// Rhetrion is Windows x64 only, so there is one installer slot and one
 // architecture. Shared by the public site entry (community.js), where it is
 // the primary call to action, and by the in-app dashboard entry (app.js),
 // which uses the same card when the local companion is not yet reachable.
@@ -115,7 +115,7 @@ export function configuredInstallerRelease(documentRef) {
     return null;
   }
   if (new URL(installerUrl).pathname.split("/").at(-1)
-      !== `TiboTattle-${version}-Windows-x64.exe`) return null;
+      !== `Rhetrion-${version}-Windows-x64.exe`) return null;
   return {
     installerUrl,
     version,

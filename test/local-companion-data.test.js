@@ -1371,7 +1371,7 @@ test("a deferred unified projection publishes a loading history receipt", async 
       },
     });
     assert.ok(snapshot.overview.warnings.some((warning) => (
-      warning.includes("Full indexed history is loading")
+      warning.includes("Local history indexing is in progress")
     )));
   } finally {
     await rm(root, { recursive: true });
@@ -1973,7 +1973,7 @@ test("a build serving retained evidence does not claim its figures are loading",
   // Captured live 2026-08-21 on the owner's machine: every ~5-minute refresh
   // pass republishes a quick-milestone snapshot for the first ~2 minutes.
   // Retention keeps the page's figures complete and current through that
-  // window, but the build's own warnings — "Full indexed history is loading",
+  // window, but the build's own indexing warnings,
   // "History indexing is still advancing. Complete historical totals stay
   // hidden" — were served verbatim alongside them. On the Usage-and-costs
   // page the banners therefore showed on a ~40% duty cycle forever, always

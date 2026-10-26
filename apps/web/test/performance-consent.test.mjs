@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  CommunityClient,
   LocalCompanionClient,
   normalizeTelemetryPerformanceReview,
 } from "../public/data-client.js";
@@ -104,26 +103,5 @@ test("local performance client keeps review, approval, and status on closed loop
     consent: review.consent,
     binding: review.binding,
     grantDeviceId: review.grantDeviceId,
-  });
-});
-
-test("hosted performance grant is a separate CSRF-protected route", async () => {
-  const calls = [];
-  const client = new CommunityClient({
-    getCsrfToken: () => "csrf-token",
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return response({ status: "accepted" }, 201);
-    },
-  });
-  const review = normalizeTelemetryPerformanceReview(reviewPayload());
-  await client.grantTelemetryPerformanceContribution(review);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "/api/v1/me/device-telemetry-performance-consents");
-  assert.equal(calls[0].options.headers["X-Usage-Monitor-CSRF"], "csrf-token");
-  assert.deepEqual(JSON.parse(calls[0].options.body), {
-    deviceId: DEVICE_ID,
-    consent: CONSENT,
-    ongoingUpload: true,
   });
 });

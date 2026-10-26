@@ -14,7 +14,7 @@ const builderRequire = createRequire(require.resolve("electron-builder"));
 const loaded = builderRequire("@electron/asar");
 const asar = loaded.default ?? loaded;
 const ROOT = String.raw`C:\archive-cache-fixture`;
-const APP = win32.join(ROOT, "installed", "TiboTattle.exe");
+const APP = win32.join(ROOT, "installed", "usage-monitor.exe");
 const ARCHIVE = win32.join(ROOT, "installed", "resources", "app.asar");
 const PRELOAD = "apps/electron/preload.cjs";
 const BINDING = "native/windows-filesystem/build/Release/windows_filesystem.node";
@@ -45,7 +45,7 @@ async function archiveFixture(context, { successorPackage } = {}) {
       buildNumber: name === "predecessor" ? "12345" : "12346",
       sourceRevision, target: "win32-x64",
     });
-    const manifest = { version, tibotattleDistribution: distribution };
+    const manifest = { version, usageMonitorDistribution: distribution };
     const preload = Buffer.from(`module.exports = ${JSON.stringify(version)};\n`);
     const files = new Map([
       ["a-padding.txt", padding],
@@ -62,7 +62,7 @@ async function archiveFixture(context, { successorPackage } = {}) {
       await writeFile(target, bytes);
     }
     await writeFile(local(sourceCandidatePath), JSON.stringify({
-      schemaVersion: "tibotattle-electron-production-source-candidate-v1",
+      schemaVersion: "usagemonitor-electron-production-source-candidate-v1",
       status: "production_source_staged", target: "win32-x64", sourceRevision, version,
       stagingDirectory: ".release-build/electron-production/win32-x64/app",
       builderConfiguration: "apps/electron/electron-builder.production.config.cjs",

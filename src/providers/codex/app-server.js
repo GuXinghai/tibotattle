@@ -23,7 +23,7 @@ const execFileAsync = promisify(execFile);
 const windowsBinaryCache = { key: null, selected: null };
 const ACCOUNT_HMAC_ENV = "APP_USAGEMONITOR_ACCOUNT_HMAC_KEY";
 const VOLATILE_RESET_CREDIT_INVENTORY = Symbol(
-  "tibotattle.volatileResetCreditInventory",
+  "usagemonitor.volatileResetCreditInventory",
 );
 const MAX_RESET_CREDIT_DETAILS = 1_024;
 const MAX_RESET_CREDIT_COUNT = 1_000_000;
@@ -313,7 +313,7 @@ export class CodexAppServerClient extends EventEmitter {
     await this.request("initialize", {
       clientInfo: {
         name: "app_usagemonitor",
-        title: "TiboTattle",
+        title: "Usage Monitor",
         version: RELEASE_VERSION,
       },
       capabilities: {

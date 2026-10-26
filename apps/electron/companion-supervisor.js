@@ -45,7 +45,7 @@ function emitCompanionProcessLifecycleEvent(observer, event, phase, exitCode, si
 
 // The renderer/launcher environment is not a credential transport. Keep the
 // child input explicit: platform runtime discovery plus the reviewed
-// TiboTattle/Codex/Claude configuration knobs only. NODE_OPTIONS, arbitrary
+// Rhetrion/Codex/Claude configuration knobs only. NODE_OPTIONS, arbitrary
 // provider credentials, and unrelated shell secrets never cross the boundary.
 const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "PATH",
@@ -495,7 +495,7 @@ export function createCompanionSupervisor({
       }
       return new Promise((resolve, reject) => {
         try {
-          child.send({ type: "tibotattle.refresh-interval.v2", seconds, paused }, (error) => {
+          child.send({ type: "usagemonitor.refresh-interval.v2", seconds, paused }, (error) => {
             if (error) reject(shellError("companion_refresh_interval_unavailable"));
             else resolve(true);
           });

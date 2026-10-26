@@ -240,7 +240,7 @@ test("Windows operation lease holds a branded cross-process mutex across the cal
 });
 
 test("Windows operation lease recovers durable prepared rows before the next mutation", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-lease-recovery-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-lease-recovery-"));
   const auditStore = createWindowsCredentialOperationAuditStore({
     filePath: join(root, "private", "windows-credential-operation-audit-v1.sqlite"),
   });
@@ -281,7 +281,7 @@ test("Windows operation lease recovers durable prepared rows before the next mut
 });
 
 test("Windows operation lease startup sweep recovers every capability under its mutex", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-lease-startup-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-lease-startup-"));
   const auditStore = createWindowsCredentialOperationAuditStore({
     filePath: join(root, "private", "windows-credential-operation-audit-v1.sqlite"),
   });

@@ -146,7 +146,7 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
 
     const icon = node("span", undefined, "settings-tray-preview-icon");
     const bird = node("img");
-    bird.src = "./tibotattle-icon.png";
+    bird.src = "./app-icon.png";
     bird.alt = "";
     bird.width = bird.height = 22;
     icon.append(bird);
@@ -180,7 +180,7 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
       if (capabilities.title !== false) previewBar.append(text);
     }
     previewPopup.dataset.density = current.density;
-    previewPopup.replaceChildren(node("strong", "TiboTattle"), node("p", t(`state.${exampleState}`), "settings-tray-note"));
+    previewPopup.replaceChildren(node("strong", "Rhetrion"), node("p", t(`state.${exampleState}`), "settings-tray-note"));
     for (const section of current.sections) {
       const card = node("section");
       card.append(node("h4", t(`option.${section}`)));

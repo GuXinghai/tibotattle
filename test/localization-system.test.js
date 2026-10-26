@@ -18,6 +18,7 @@ import {
   translateLegacyText,
 } from "../apps/web/public/localization.js";
 import { CATALOGS } from "../packages/i18n/index.js";
+import { PRODUCT_BRAND_NAMES } from "../apps/web/public/i18n.generated.js";
 
 function placeholders(value) {
   return [...String(value).matchAll(/\{([A-Za-z][A-Za-z0-9_.-]*)\}/gu)]
@@ -54,7 +55,12 @@ function directTextLiterals(source) {
 
 function hasEnglishCatalogValue(value) {
   return Object.hasOwn(LEGACY_TEXT_CATALOG, value)
-    || Object.values(WEB_MESSAGES).some(([english]) => english === value);
+    || Object.keys(LEGACY_TEXT_CATALOG).some(template => (
+      template.replaceAll("{appName}", PRODUCT_BRAND_NAMES[DEFAULT_LOCALE]) === value
+    ))
+    || Object.values(WEB_MESSAGES).some(([english]) => (
+      english.replaceAll("{appName}", PRODUCT_BRAND_NAMES[DEFAULT_LOCALE]) === value
+    ));
 }
 
 function memoryStorage(seed = {}) {
@@ -76,7 +82,7 @@ function fakeWindow({ host = null, languages = ["en-US"], storage = null } = {})
   const listeners = new Map();
   const events = [];
   return {
-    __TIBOTATTLE_LOCALIZATION__: host,
+    __USAGE_MONITOR_LOCALIZATION__: host,
     addEventListener(type, listener) {
       listeners.set(type, listener);
     },
@@ -248,14 +254,13 @@ test("Electron settings references resolve through the canonical catalogs", asyn
 });
 
 test("shipped static web copy has a complete translated inventory and localizable accessibility labels", async () => {
-  const staticPages = ["index.html", "community.html"];
+  const staticPages = ["index.html"];
   const sourceFiles = await Promise.all(staticPages.map((file) => readFile(
     new URL(`../apps/web/public/${file}`, import.meta.url),
     "utf8",
   )));
   const copyThatNeedsNoTranslation = new Set([
-    "TiboTattle",
-    "brew install --cask adamallcock/tap/tibotattle",
+    "Rhetrion",
   ]);
   // `%` joins `$` here: the percent sign is written identically in zh-Hans and
   // es, so a bare one is a unit symbol rather than untranslated copy. The tank
@@ -320,8 +325,6 @@ test("locale negotiation is safe for Chinese scripts, fallback, and RTL directio
 test("literal generated browser text stays in the translation inventory", async () => {
   const sourceFiles = [
     "app.js",
-    "community.js",
-    "community-view.js",
     "install-cta.js",
     "ui-format.js",
   ];
@@ -369,8 +372,8 @@ test("browser override persists while native override is message-validated and d
   browser.setLanguagePreference("zh-Hans");
   assert.equal(browser.preference(), "zh-Hans");
   assert.equal(browser.locale(), "zh-Hans");
-  assert.equal(storage.getItem("tibotattle.language-preference.v1"), "zh-Hans");
-  assert.equal(browserWindow.events.at(-1).type, "tibotattle:locale-change");
+  assert.equal(storage.getItem("usagemonitor.language-preference.v1"), "zh-Hans");
+  assert.equal(browserWindow.events.at(-1).type, "usagemonitor:locale-change");
 
   const messages = [];
   const nativeWindow = fakeWindow({
@@ -385,7 +388,7 @@ test("browser override persists while native override is message-validated and d
   });
   nativeWindow.webkit = {
     messageHandlers: {
-      tibotattleLocalization: {
+      usagemonitorLocalization: {
         postMessage(value) {
           messages.push(value);
         },
@@ -401,7 +404,7 @@ test("browser override persists while native override is message-validated and d
   native.setLanguagePreference("es");
   assert.equal(native.locale(), "es");
   assert.deepEqual(messages, [{ type: "set-language-preference", preference: "es" }]);
-  nativeWindow.listeners.get("tibotattle:locale-override")({
+  nativeWindow.listeners.get("usagemonitor:locale-override")({
     detail: { preference: "zh-Hans" },
   });
   assert.equal(native.locale(), "zh-Hans");

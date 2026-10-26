@@ -15,7 +15,7 @@ checkpoint, not the current contract. The
 [self-service retirement decision](../decisions/2026-08-30-self-service-deletion-retirement.md)
 supersedes that participant-deletion boundary; the
 [maintained API inventory](../reference/api-surface.md) and
-[production operations](../runbooks/production-operations.md#private-owner-participant-erasure)
+production operations (retired; retained in Git history)
 now govern private owner erasure. This note does not rewrite the original
 evidence or establish deployment of either source change.
 
@@ -31,7 +31,7 @@ account deletion, native-shell, or local-monitoring contracts:
 | Direct local report pages | 4 `GET` paths | 4 `GET` paths | [`src/local-companion-data.js`](../../src/local-companion-data.js) |
 | Credential-free central relay | 5 paths | 1 health path `src/local-companion-central-proxy.js` (removed 2026-10-13) |
 | Participant browser relay | 20 paths / 21 operations | 9 paths / 9 operations `apps/local/transport/participant-relay-routes.js` (removed 2026-10-13) |
-| Hosted Worker API | 38 paths / 39 operations | 31 paths / 31 operations | [`route-registry.ts`](../../apps/worker/src/route-registry.ts) |
+| Hosted Worker API | 38 paths / 39 operations | 31 paths / 31 operations | ``route-registry.ts`` (retired source) |
 | Accounting package root | 47 symbols | 27 symbols | [`packages/accounting/index.js`](../../packages/accounting/index.js) |
 | Quota-analysis package root | 39 symbols | 32 symbols | [`packages/quota-analysis/index.js`](../../packages/quota-analysis/index.js) |
 
@@ -239,7 +239,7 @@ the underlying export or contribution capabilities.
 Handler retirement does not prove that historical D1 rows are absent. The
 ordered migrations, legacy columns, and dormant data helpers remain in source
 until an authorized owner runs the read-only production checks in
-[`2026-08-27-hosted-api-retirement-data-gates.md`](../runbooks/2026-08-27-hosted-api-retirement-data-gates.md).
+`2026-08-27-hosted-api-retirement-data-gates.md` (retired; retained in Git history).
 
 That runbook checks the legacy recovery/session-upload/contribution/statistics
 planes without modifying them. Only a separately authorized, backed-up,

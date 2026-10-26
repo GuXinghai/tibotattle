@@ -73,7 +73,7 @@ function backend(adapter, rootPath) {
 }
 
 async function withSyntheticRoot(run) {
-  const parent = await mkdtemp(join(tmpdir(), "tibotattle-windows-accountless-native-"));
+  const parent = await mkdtemp(join(tmpdir(), "usagemonitor-windows-accountless-native-"));
   const rootPath = join(parent, "private");
   const adapter = createWindowsFilesystemAdapter();
   try {

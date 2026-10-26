@@ -170,7 +170,7 @@ test("manifest source-read extension follows the reviewed source policy only", (
 });
 
 test("manifest builder writes only the exact native digest and safe aggregate fields", async () => {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-windows-manifest-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-manifest-"));
   try {
     const manifestPath = join(root, "binding.manifest.json");
     const result = await buildWindowsFilesystemBindingManifest({

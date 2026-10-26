@@ -32,7 +32,7 @@ import { RELEASE_VERSION } from "../config/release-manifest.js";
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
 const SHA = /^[0-9a-f]{40}$/u;
-const SCHEMA_VERSION = "tibotattle-electron-production-source-candidate-v1";
+const SCHEMA_VERSION = "usagemonitor-electron-production-source-candidate-v1";
 const TARGETS = Object.freeze(Object.keys(PRODUCTION_ELECTRON_TARGETS));
 const PLATFORM_FLAGS = Object.freeze({ win32: "--win" });
 const DISTRIBUTION_TARGETS = Object.freeze({
@@ -148,10 +148,10 @@ export function productionElectronCandidatePlan({
       "never",
     ]),
     builderEnvironment: Object.freeze({
-      TIBOTATTLE_ELECTRON_BUILD_NUMBER: buildNumber,
-      TIBOTATTLE_ELECTRON_SOURCE_REVISION: sourceRevision,
-      TIBOTATTLE_ELECTRON_TARGET: target,
-      TIBOTATTLE_ELECTRON_VERSION: version,
+      USAGE_MONITOR_ELECTRON_BUILD_NUMBER: buildNumber,
+      USAGE_MONITOR_ELECTRON_SOURCE_REVISION: sourceRevision,
+      USAGE_MONITOR_ELECTRON_TARGET: target,
+      USAGE_MONITOR_ELECTRON_VERSION: version,
     }),
     updaterEnabled: true,
     signingRequired: true,
@@ -279,7 +279,7 @@ export async function prepareProductionElectronCandidate(options = {}) {
   }
   let stagedMetadata;
   try {
-    stagedMetadata = validateProductionDistributionMetadata(stagedManifest.tibotattleDistribution, {
+    stagedMetadata = validateProductionDistributionMetadata(stagedManifest.usageMonitorDistribution, {
       platform: PRODUCTION_ELECTRON_TARGETS[plan.target].platform,
       architecture: PRODUCTION_ELECTRON_TARGETS[plan.target].architecture,
     });

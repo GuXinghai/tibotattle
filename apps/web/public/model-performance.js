@@ -182,7 +182,7 @@ export function mountModelPerformance(options = {}) {
   };
   const documentRef = root.ownerDocument;
   let sharedReporting = options.sharedReporting === true || Object.hasOwn(options, "reportingWindow");
-  const storageKey = "tibotattle.performance.v1";
+  const storageKey = "usagemonitor.performance.v1";
   let saved = {};
   try { saved = JSON.parse(windowRef.localStorage.getItem(storageKey)) ?? {}; } catch { /* Storage can be disabled. */ }
   let period = STANDALONE_PERIODS.includes(saved.period) ? saved.period : "all";

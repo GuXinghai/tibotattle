@@ -6,7 +6,7 @@ import {
   telemetryV12RequiredConsent,
 } from "./telemetry-v1.2.js";
 
-const ROOT = "https://tibotattle.com/schemas/telemetry-contribution-v1.2/";
+const ROOT = "urn:usagemonitor:schema:telemetry-contribution-v1.2:";
 const COUNT = (maximum) => ({
   type: "integer",
   minimum: 0,

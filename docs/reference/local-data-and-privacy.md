@@ -3,19 +3,21 @@ title: Local Data, Network, and Privacy Inventory
 date: 2026-08-27
 type: reference
 status: maintained
-last_verified_commit: 52399658
+last_reviewed: 2026-10-23
 ---
 
 # Local data, network, and privacy inventory
 
-This is the maintained technical inventory behind TiboTattle's first-run and
-public privacy disclosures. It describes what the implemented app can read, what
-it derives and stores, which operations use the network, and which removal
-actions are intentionally separate. The baseline review commit above predates the
-[2026-08-30 self-service retirement](../decisions/2026-08-30-self-service-deletion-retirement.md)
-and [local cache-drop thread links](../decisions/2026-08-30-local-cache-drop-thread-links.md)
-documented here. Source changes do not prove that an installed or published
-artifact already contains them, or that the hosted service has been deployed.
+This maintained inventory describes the current source of the independent local
+Windows product, Rhetrion (衡川): source reads, protected local writes, optional
+network use and separate removal boundaries. The app has no configured cloud
+project, hosted account, contribution destination, public download or update
+feed. See the [local-product decision](../decisions/2026-10-23-local-product-identity-and-cloud-retirement.md).
+
+This is source behavior reviewed on 2026-10-23, not proof that a published or
+installed artifact has passed native qualification or that existing real data
+has been converted. A new name or state directory does not establish migration,
+backup, erasure or remote-service shutdown.
 
 The central rule is structural: prompts, responses, reasoning, raw commands,
 credentials, private paths/filenames, emails, account names, and other free
@@ -41,18 +43,21 @@ default permission behavior.
 ## Owner-selected window backgrounds
 
 Electron Settings can read one image chosen through the native file picker.
-Only static PNG, JPEG and WebP images within the bounded byte and pixel limits
-are accepted. The app keeps an original-byte copy in owner-only protected
-binary resources, using bounded chunks and SHA-256 verification. A dedicated
+Only static PNG, JPEG and WebP images with validated dimensions and native
+decode success are accepted; there is no fixed total byte or pixel cap. The app
+keeps an original-byte copy in owner-only protected binary resources, using
+bounded chunks and SHA-256 verification. A dedicated
 small configuration contains an opaque resource reference, color and overlay;
 the normal desktop settings record is unchanged. An import journal recovers
 interrupted changes and reclaims only unreferenced background resources.
 
 The source filename/path never crosses the renderer mutation boundary, is not
-persisted in the background configuration, and is not printed in failures.
-Original image bytes travel only over the trusted local desktop bridge for
-rendering. They never enter local usage reports, diagnostics, exports or
-telemetry, and there is no remote image URL or upload path. Removing or resetting
+persisted in the background configuration, and is not printed in failures. A
+separate owner-only `window-background-picker-v1.json` remembers the last selected
+directory for the native picker; it never enters renderer IPC or diagnostics.
+Renderers load the selected original-byte resource through the trusted local
+desktop resource boundary. They never enter local usage reports, diagnostics,
+exports or telemetry, and there is no remote image URL or upload path. Removing or resetting
 a background affects only the app's own resource copy, not the source file.
 
 ## Desktop sharing removal
@@ -61,7 +66,9 @@ The desktop app is local-only. Community sharing, contribution upload, performan
 
 The retained local state is preserved untouched: the saved sharing choice (`desktop-settings/accountless-sharing-v1.json`), notice receipts, device salts and identities, the accountless installation credential, and prepared spools and queues. The desktop app neither reads nor writes that state; deleting any of it needs a separate receipt-backed workflow.
 
-The hosted service's contribution, enrollment, publication, and erasure contracts are a separate deployed surface. They do not describe desktop behavior.
+Former hosted deployments are outside this product configuration. Removing their
+source and links does not delete remote records, revoke old authority or establish
+that a deployed service has stopped. Historical responsibility is described below.
 
 ## Optional X reader
 
@@ -95,18 +102,18 @@ refresh and background keepalive; user-triggered page reads remain available.
 
 ## Normal refresh sources
 
-| Provider | Exact source | What is read | What is retained by TiboTattle | Network boundary | Removal/reset |
+| Provider | Exact source | What is read | What is retained by Rhetrion | Network boundary | Removal/reset |
 | --- | --- | --- | --- | --- | --- |
-| Codex rollout metadata | Selected Codex home, normally `~/.codex/sessions` and `~/.codex/archived_sessions` | Bounded record headers and allowlisted metadata from `turn_context`, `token_count`, `thread_settings_applied`, quota/accounting, tool-outcome, lineage, and compaction-boundary records. | Typed usage/quota/tool facts, timestamps, model/speed/reasoning/outcome enums, local HMAC join keys, source cursors, coverage and diagnostic codes. | Local filesystem only. | App **Erase local data** removes TiboTattle's projection, not Codex source files. |
-| Codex configuration | `~/.codex/config.toml` | Only the top-level `service_tier` baseline used when a rollout has not yet recorded an observed speed. | Timestamped declared speed-baseline windows. An observed rollout value always wins. | Local filesystem only. | Local erase removes the derived baseline ledger; it never edits Codex config. |
-| Codex runtime diagnostics | `~/.codex/logs_2.sqlite` including committed WAL | Incremental, bounded read-only diagnostics; transient bodies are projected immediately to model/context/fallback evidence. | Closed kind, canonical model, time, digest and device-HMAC joins in the protected local index; source cursor commits with receipts. No body, command, credential, raw thread/response ID or private path is retained or sent to the renderer. | Local filesystem only. | Evidence is retained with the local index; closing TiboTattle cannot prevent Codex from removing upstream logs. |
-| Codex selected-rollout store | `~/.codex/state_5.sqlite` | Read-only `threads.id` and `threads.rollout_path`, after owner/file/path validation, to select the physical head of a logical thread. | Only the validated selected rollout filename mapping needed during ingest. | Local filesystem only. | Local erase removes derived selection state; it never edits Codex SQLite. |
-| Codex account/quota service | Local `codex app-server` subprocess using `account/read`, `account/rateLimits/read`, `account/usage/read`, and bounded update notifications | Current plan/account scope, quota windows, resets, credits-presence flags, and provider usage projection. | Sanitized quota/account observations and local-HMAC account scope. No Codex authentication token is copied. | TiboTattle talks to a local subprocess. If Codex itself cannot refresh its account evidence offline, TiboTattle records the source as unavailable/stale rather than inventing continuity. | Local erase removes observations; identity reset separately rotates the Credential Manager pseudonym. |
+| Codex rollout metadata | Selected Codex home, normally `~/.codex/sessions` and `~/.codex/archived_sessions` | Bounded record headers and allowlisted metadata from `turn_context`, `token_count`, `thread_settings_applied`, quota/accounting, tool-outcome, lineage, and compaction-boundary records. | Typed usage/quota/tool facts, timestamps, model/speed/reasoning/outcome enums, local HMAC join keys, source cursors, coverage and diagnostic codes. | Local filesystem only. | Refresh preserves accumulated projection; it never edits or deletes Codex source files. |
+| Codex configuration | `~/.codex/config.toml` | Only the top-level `service_tier` baseline used when a rollout has not yet recorded an observed speed. | Timestamped declared speed-baseline windows. An observed rollout value always wins. | Local filesystem only. | Retained with the local evidence; the app never edits Codex config. |
+| Codex runtime diagnostics | `~/.codex/logs_2.sqlite` including committed WAL | Incremental, bounded read-only diagnostics; transient bodies are projected immediately to model/context/fallback evidence. | Closed kind, canonical model, time, digest and device-HMAC joins in the protected local index; source cursor commits with receipts. No body, command, credential, raw thread/response ID or private path is retained or sent to the renderer. | Local filesystem only. | Evidence is retained with the local index; closing Rhetrion cannot prevent Codex from removing upstream logs. |
+| Codex selected-rollout store | `~/.codex/state_5.sqlite` | Read-only `threads.id` and `threads.rollout_path`, after owner/file/path validation, to select the physical head of a logical thread. | Only the validated selected rollout filename mapping needed during ingest. | Local filesystem only. | The app never edits Codex SQLite; selected source paths stay owner-only. |
+| Codex account/quota service | Local `codex app-server` subprocess using `account/read`, `account/rateLimits/read`, `account/usage/read`, and bounded update notifications | Current plan/account scope, quota windows, resets, credits-presence flags, and provider usage projection. | Sanitized quota/account observations and local-HMAC account scope. No Codex authentication token is copied. | Rhetrion talks to a local subprocess. If Codex itself cannot refresh its account evidence offline, Rhetrion records the source as unavailable/stale rather than inventing continuity. | Observations and identity state are preserved; unavailable credentials never authorize creating a replacement identity. |
+
 The normal installed refresh does **not** read Claude Desktop quota history,
-Claude prompt transcripts, Claude project files, or Gemini artifacts. Claude
-prototype and benchmark readers remain in the source tree for development
-evaluation, but the installed companion exposes no setting, route, UI, or
-upload surface that enables them.
+Claude prompt transcripts, Claude project files, or Gemini artifacts. Standalone
+Claude callback/export integrations have their own explicit CLI lifecycle; they
+are not enabled by a setting, route or upload surface in the installed companion.
 
 Codex history discovery also recognizes cold `.jsonl.zst` representations. On
 native-Zstd-capable runtimes, bounded streaming decompression feeds the same
@@ -128,15 +135,14 @@ for runtime and resource limits.
 
 ## Model performance timing in development source
 
-Opening **Model performance** (`#performance`) or running a separately authorized
-daily-performance delivery enables an independent worker
+Opening **Model performance** (`#performance`) enables an independent local worker
 for the selected Codex home's plain `.jsonl` session and archived-session files.
 This diagnostic population spans accounts on this device. It reads timestamps,
 allowlisted model and speed-mode metadata, token counters, and response/turn boundaries to
 reconstruct timing; raw content and raw IDs are never persisted or returned.
 Compressed-only histories and missing timing remain unavailable.
 
-Page reads and daily-report requests renew a 60-second lease. Discovery is capped at 50,000 entries;
+Page reads renew a 60-second lease. Discovery is capped at 50,000 entries;
 scan passes target at most 32 MiB or 750 ms, checking between chunks of at most
 two 2-MiB reads per source (original timing and supplemental throughput). It
 pauses 250 ms during history collection and five seconds after catching up.
@@ -155,21 +161,31 @@ adapter is qualified. These are source behavior, not installed-release proof.
 
 ## Installed local state
 
-The app owns its per-user state root under Electron's user-data directory
-(normally under `%APPDATA%`) with owner-only permissions. Important entries include:
+Normal stable-profile source pins Electron `userData` before readiness to
+`%APPDATA%\UsageMonitor\profiles\stable`; the companion receives its
+`companion-state` child through `USAGE_MONITOR_STATE_ROOT`. Electron `sessionData`
+is the separate `chromium` child. Development and preview use separate profile
+identities; explicit qualification launchers may use isolated test roots. None
+of these paths derives from the display name. Resolve the actual runtime root
+before recovery or cleanup.
+
+Desktop settings, background resources and the X cache live under the profile's
+`desktop-settings` directory; X browser sessions use protected
+`desktop-settings/x-sessions/<opaque session ID>` directories. The following
+companion entries are beneath `companion-state` unless a row states otherwise:
 
 | State | Purpose | Retention behavior |
 | --- | --- | --- |
-| `local-index-store-v1.sqlite` (with its `-wal` and `-shm` sidecars) plus the device salt `local-unified-index-device-salt-v1` in the same directory | Canonical replay-safe Codex usage/quota/tool projection, source provenance, and the owner-only local rollout paths and working directories that the [v2 decision](../decisions/2026-10-12-local-index-v2-and-local-paths.md) allows. Paths never leave the machine. The salt anchors every local join key and hosted pseudonym. | Accumulates locally; the 30-day UI horizon is not retention. Rollout sources are never modified. Facts of rollouts that have since left disk are kept, not deleted by absence. The salt is never regenerated. |
+| `local-index-store-v1.sqlite` (with its `-wal` and `-shm` sidecars) plus the device salt `local-unified-index-device-salt-v1` in the same directory | Canonical replay-safe Codex usage/quota/tool projection, source provenance, and the owner-only local rollout paths and working directories that the [v2 decision](../decisions/2026-10-12-local-index-v2-and-local-paths.md) allows. Paths never leave the machine. The salt anchors local join keys and retained historical export pseudonyms. | Accumulates locally; the 30-day UI horizon is not retention. Rollout sources are never modified. Facts of rollouts that have since left disk are kept, not deleted by absence. The salt is never regenerated. |
 | `local-unified-index-v1.sqlite` (retired previous index, if present) | Previous physical index. The app does not read it except for the one-time ordinal seed while the v2 store has no sources, and it is not a current contract. | Kept until its retirement is assessed and an owner-authorized, receipt-backed deletion removes it. It holds facts of any rollout that has left disk, and such a file is retained as an unread archive. |
 | `inference-timing-v2/model-performance-snapshot.json` | At most twelve rolling period/mode and twelve exact-window completed timing projections, fixed model IDs and numeric bins; 4 MiB owner-only, schema/digest-checked v5 envelope bound to the configured Codex source. | Uses the same atomic snapshot transport as Overview. Earlier mixed-mode receipts are preserved and refused until mode-separated reconstruction produces a v5 replacement. Unknown and mixed-mode turns are excluded from all selectable modes. Restored measurements keep their observation date while background scanning runs or fails; incomplete scans cannot replace them. First result saves immediately, then hourly, with latest completed results flushed on clean shutdown. |
-| `inference-timing-v2/source-<Codex-home digest>/timing-experiment.sqlite` (development source) | Separate owner-only timing sidecar: one row per completed turn, counts/durations/coverage, local HMAC keys, source cursors and bounded pending state. No raw content or IDs. | Maximum 256 MiB per selected source; parser method 2 and SQLite user version 4. The forward migration retains existing TPS/TTFT, adds nullable completion/mode fields and source revision counters, and fences older writers. The legacy unscoped sidecar is preserved without reading or migrating its unknown source provenance; first use rebuilds measurements from retained source logs. Incompatible stores, including version 1, are preserved and refused. Display periods do not delete evidence or migrate the accounting index. |
-| `inference-timing-v2/source-<Codex-home digest>/tool-free-v1/timing-experiment.sqlite` (development source) | Independent supplement for reconciled single-response turns without tools, plus its own source cursors and bounded scalar pending state. Shares the original private timing correlation key for local joins only. | Maximum 256 MiB; parser method 3 and SQLite user version 5. Its forward migration preserves previous supplement measurements and fences older writers; the original primary store remains separate. An incompatible or unavailable supplement does not hide original measurements. |
-| `local-collector-state-v1.sqlite` | App-server quota observations, checkpoints, dedupe, locks, and replay-safe collector state. | Accumulates until explicit local erase or a reviewed migration/retention workflow. |
+| `inference-timing-v2/source-<Codex-home digest>/timing-experiment.sqlite` (development source) | Separate owner-only timing sidecar: one row per completed turn, counts/durations/coverage, local HMAC keys, source cursors and bounded pending state. No raw content or IDs. | Maximum 256 MiB per selected source; measurement method 2 and SQLite user version 12, with an exact `usage-monitor-timing-identity-v1` metadata marker. Existing older or foreign identities are inspected read-only and refused; only the independent transition package may reconcile their HMAC keys on a verified copy. The legacy unscoped sidecar is preserved without reading or migrating its unknown source provenance; first use rebuilds measurements from retained source logs. Incompatible stores, including version 1, are preserved and refused. Display periods do not delete evidence or migrate the accounting index. |
+| `inference-timing-v2/source-<Codex-home digest>/tool-free-v1/timing-experiment.sqlite` (development source) | Independent supplement for reconciled single-response turns without tools, plus its own source cursors and bounded scalar pending state. Shares the original private timing correlation key for local joins only. | Maximum 256 MiB; measurement method 3 and SQLite user version 13, bound to the same identity marker. Unconverted stores are refused before writable reopening; the original primary store remains separate. An incompatible or unavailable supplement does not hide original measurements. |
+| `local-collector-state-v1.sqlite` | App-server quota observations, checkpoints, dedupe, locks, and replay-safe collector state. | Accumulates until a separately authorized, receipt-backed cleanup or reviewed migration/retention workflow. |
 | `private/` settings/handoff state | Fast-mode preference and speed baselines. Retired contribution settings and OAuth handle are preserved, not read. | Settings persist. |
 | Retired prepared contribution/review directories and queue | Preserved spools and queue state from removed contribution sharing; not read or written. | Preserved untouched; deletion needs a receipt-backed workflow. |
 | Diagnostics log | Fixed error/status codes and opaque support references. | Bounded, content-free local diagnostics only. |
-| Chromium website data | Loopback dashboard session/local storage and short-lived hosted web session state. | Cleared by **Erase local data**; provider pages use the system browser. |
+| Profile `chromium/` data | Loopback dashboard browser data; no hosted account session is configured. X browser sessions are isolated in their separately protected directories. | Preserved with the profile. X logout and X cache clearing are separate scoped actions, not a whole-profile erase. |
 
 Preserved Windows contribution device bindings, automatic settings/progress/instance locks
 and renewal state use native root-bound reads and atomic writes with protected
@@ -186,14 +202,26 @@ comparison retains its separate 100,000-row and 4 MiB limits, the retained
 dashboard snapshot retains its 16 MiB limit, and rebuild RSS limits remain
 independent. These resource bounds do not authorize history deletion.
 
-The standalone CLI/developer default uses the platform-specific
-`app-usagemonitor` state directory. The installed app supplies the stable
-`Usage Monitor` state root. Documentation and support instructions must not
-conflate those locations.
+The standalone CLI/developer default is `%LOCALAPPDATA%\app-usagemonitor`.
+Read-only usage-explainer discovery selects an existing stable companion store
+before that CLI store; `USAGE_MONITOR_STATE_ROOT` overrides discovery. These are
+separate locations, not aliases or a migration path.
+
+Old profiles remain preserved source data. Only a separate, backed-up and
+validated one-time conversion package may translate their old keys and layout.
+The application has no former-name fallback. A profile path change does not prove
+that any original state has been copied, converted or accepted.
+The owner-approved [2026-10-25 cutover scope](../decisions/2026-10-25-usage-only-state-cutover.md)
+is limited to usage computation and history continuity. X state, background and
+generic Chromium data are not transferred, inspected for migration or deleted;
+they stay at the source. This does not retire X or authorize logout, registry
+rebinding, secret export or identity rotation. Only explicitly reviewed
+source/calculation controls, not the entire settings/browser profile, may be
+carried into the usage target.
 
 ## Credential Manager and credential state
 
-TiboTattle keeps separate credential capabilities for:
+Rhetrion keeps separate credential capabilities for:
 
 - export pseudonym identity;
 - current account observation pseudonymity;
@@ -212,13 +240,18 @@ separate so one identity namespace cannot be joined to another by accident.
 Current Electron has no credential migration approval entrypoint. Its
 noninteractive adapter preserves a legacy credential and blocks the affected
 path when migration is required. A required startup credential blocks before
-Settings and reports `SECURE_STORAGE_MIGRATION_REQUIRED`; quit and contact
-support with that code. Preserve the legacy credential and app data; do not
-delete or reset credentials or app data. Retry only repeats the silent readiness
+Settings and reports `SECURE_STORAGE_MIGRATION_REQUIRED`; quit, preserve the
+state and follow the [local recovery boundary](../runbooks/local-index-recovery.md).
+Preserve the legacy credential and app data; do not delete or reset credentials
+or app data. Retry only repeats the silent readiness
 check, and reinstalling this release does not perform a credential migration.
 
 The Electron production source serves the four legacy broker capabilities
-through its signed main process and the inherited FD4 channel. The retired accountless installation credential is preserved in Credential Manager; the [2026-10-13 decision](../decisions/2026-10-13-desktop-sharing-removal.md) retires its sharing use.
+through its checked main-process broker and inherited FD4 channel; signing
+and installed-artifact acceptance are separate gates. The retired accountless
+installation credential is preserved in Credential Manager; the
+[2026-10-13 decision](../decisions/2026-10-13-desktop-sharing-removal.md) retires
+its sharing use.
 Secret bytes never enter renderer IPC, local HTTP responses or diagnostics.
 
 A packaged Windows development shell that passed the native qualification checks
@@ -229,201 +262,62 @@ delete credentials. New observations can be attributed, while previously
 unattributed records retain their original status. This does not grant production
 updater, installer, or signing policy.
 
-**Reset identity and device** is a separate two-step action from local data
-erase. It removes the selected local Credential Manager capabilities and associated app
-state; it does not represent hosted participant deletion. An unavailable
-Credential Manager entry is a temporary availability condition, not evidence of a
-corrupt credential.
-
-## Optional hosted contribution
-
-The desktop app has no contribution flow (see the desktop sharing removal section above). The deployed hosted service accepts only the schema below. A contribution can include closed-schema derived fields such
-as:
-
-- opaque participant/session/event pseudonyms and schema versions;
-- provider/plan/model families and observed speed/reasoning categories;
-- timestamps, token counts, standard API-price-equivalent cost, quota windows,
-  resets, coverage, and fixed diagnostic/outcome codes; and
-- source/provenance versions needed for replay, deduplication, and correction.
-
-It excludes prompts, responses, reasoning text, commands, repository/file
-paths, URLs, credentials, emails, account names, raw local account identifiers,
-and arbitrary metadata. Canonical schemas and mirror ownership are listed in
-[`schema-contracts.md`](./schema-contracts.md).
-
-Hosted storage uses Cloudflare D1 for identity/session/device/contribution and
-derived aggregate state, R2 for encrypted contribution objects and update
-artifacts, and a Durable Object for shared upload admission. Public daily
-activity totals and allowance estimates have no minimum account count or
-per-account cap. The owner explicitly approved plan/model dollar estimates
-and supporting account/fit counts even for one account. Such small samples can
-reveal a contributor's estimated capacity despite omitting identifiers; they
-are not anonymous. Plan/model comparisons use closed UTC dates, complete
-source-authorized caches and qualified evidence; missing or unstable estimates
-remain gaps. Only the older sealed weekly snapshot contract applies its own
-delay, minimum-account threshold, caps and rounding. Its guarantees are not
-weakened or attributed to the daily view.
-
-Derived calculation state also includes a per-participant dirty-work queue,
-one restartable captured publication generation, its selected fit/model cache
-payloads, and one preparation-counter row (migrations 0054–0056). These add no
-uploaded fields or raw session content. Participant deletion cascades captured
-membership and queued work; consent, erasure and source-policy invalidations
-immediately fence reading and promotion. Ordinary uploads can leave an
-authorized saved graph visible while the successor is prepared. Completed
-captures are retired in bounded pages when superseded; their generation date
-does not represent the latest live input revision. Preparation counters contain
-only aggregate derived ledger counts, not participant identifiers.
-
-Stable pseudonyms and identity reattachment permit longitudinal linkage.
-Content-free, pseudonymous contribution is not anonymous data.
-
-### Account/plan attribution successor (staged)
-
-The source includes a closed v1.1 successor, disabled for new writes by default
-until a separately authorized hosted cutover. Its additional fields are account
-basis, a purpose-separated account pseudonym or null, plan basis/type, and an
-opaque plan-era pseudonym or null. The exact field inventory and derived sample
-must be reviewed; an explicit hosted-session consent grant and local approval
-bind the new schema, field dictionary, privacy contract and destination. Existing
-consent, pairing or an app update alone does not authorize these fields.
-
-The derivation reuses a leased existing account-observation root. It binds to
-the canonical destination and authenticated enrollment namespace, never creates
-a missing root during export, and makes no cross-device identity claim. Missing
-root/history proof leaves attribution unknown without dropping raw local usage.
-Current quota capture is bracketed by compatible account reads; logout, read
-failure and disagreement clear provisional markers. Markers cannot tag history
-before capture and are not upgraded to exact source proof.
-
-Day chunks remain staged until one complete replacement domain passes source,
-occurrence and base-accounting compatibility checks. Old accepted data remains
-stored; a partial replacement cannot become a hybrid primary. Immutable consent
-grants, enrollment bindings, staged chunks and active domains participate in the
-existing owner-erasure/restore boundaries. Device disconnect retains accepted
-history; format rollback changes upload admission only, not the selected data.
-No account/era pseudonyms or finer account cells are added to public aggregates.
-
-An owner-only progress file beside the local index preserves interrupted
-replacement uploads. Its closed, at-most-1-MiB payload contains day/manifest
-digests and control fingerprints, never credentials, root bytes, account
-markers or raw provider identifiers. Loss of this file can require revalidation
-and retry, but it does not erase local evidence or accepted hosted history.
-
-Accepted v0.2 history keeps its existing analytical source. Until a compatible
-replacement adapter exists, this history blocks the stronger-format upgrade
-before consent or admission-floor changes; disjoint dates do not make it safe
-to hide the old source. No local or hosted history is deleted by this refusal.
-
-### Continuity successor and daily performance (source implementation)
-
-The desktop app no longer sends these streams (see the desktop sharing removal section above). The text below describes the retained hosted contract.
-
-V1.2 adds nullable turn-start/preceding-compaction bits, ordering among events
-with the same session and timestamp, and reported five-minute/one-hour cache
-write subdivisions. Unknown evidence stays null. The subdivisions reconcile to
-the existing cache-write total and never add usage. Continuity before the
-server-issued activation instant remains unreported. Current cache calculations
-remain unchanged. Social sharing requires an exact new field review, hosted
-grant and local approval; accountless sharing negotiates a distinct policy grant
-while respecting the existing durable opt-out. Legacy clients retain their own
-closed contracts. Installing the source does not activate the hosted runtime.
-
-The separately authorized performance stream contains daily distributions and
-counts by provider, model, reasoning effort, measurement method, event-time
-speed mode/evidence source and API tier. It covers eligible TPS, first-token
-time and complete-turn duration, including tool waits where qualified. Missing
-measurements remain unavailable. It sends fixed histogram counts and bounded
-integer summaries, not turn identifiers, prompts, responses or timestamps for
-individual turns. Compatible reports are pooled as reported samples: ordinary
-retry/revision deduplication does not remove copied history across devices.
-
-Usage and performance have separate capabilities, consent/policy tuples,
-progress, retry and storage state. Usage authorization never grants performance
-permission. Performance delivery and application composition are still qualified
-independently in the [implementation plan](../plans/2026-09-20-turn-boundary-telemetry-plan.md).
-The source includes owner erasure for both streams and a typed restore role that
-preserves grants, report revisions and correction history. Populated synthetic
-restore/erasure checks do not establish a production migration or deletion-ledger
-reconciliation. Opt-out stops future uploads and retains accepted history.
+The current desktop has no whole-profile erase or general identity-reset control.
+The explicit CLI export/callback identity operations are capability-specific;
+they are not permission to rotate the index salt or delete unrelated credentials.
+An unavailable Credential Manager entry is an availability condition, not proof
+of corruption or permission to replace it.
 
 ## Network destinations
 
-| Destination | When used | Data sent |
+| Destination | When used | Data boundary |
 | --- | --- | --- |
-| `https://tibotattle.com` | Public community reads, hosted identity/session, optional contribution, participant export, device disconnect, app compatibility/preflight. | Route-specific closed requests; contribution requires consent and one-use/device authority. No self-service hosted deletion. |
-| `https://admin.tibotattle.com` | Owner operations only, including explicitly targeted participant erasure. | Cloudflare Access owner assertion and bounded admin reads/actions with CSRF on mutations. The app is not an admin client. |
-| Legacy Google or Apple identity endpoints | A legacy client starts hosted sign-in in the system browser; the shared dashboard has no sign-in controls. | Provider-controlled sign-in. The provider callback goes to TiboTattle's Worker, not loopback. |
-| Artifact URL from the verified update feed | User/automatic updater downloads an update. | Standard artifact request; signature, length, and digest/provenance gates remain separate. |
-| X and its webpage assets; controlled media on `pbs.twimg.com`, `video.twimg.com`, `abs.twimg.com` | Optional X login, authenticated reading, refresh and media playback. | The isolated X session's ordinary webpage requests and validated media reads. No coding-agent usage, local paths or derived accounting data. See the [reader decision](../decisions/2026-10-20-optional-x-reader.md). |
+| Loopback companion (`127.0.0.1`, with the runtime-selected port) | Dashboard reads and bounded local mutations. | Host/Origin checks and route-specific local headers protect local evidence. The companion is not a general network proxy. |
+| Local `codex app-server` subprocess | Account/quota observations. | The app uses reviewed local RPC methods, not a copied provider credential. Codex may itself contact its provider; failed/offline reads remain stale or unavailable. |
+| X webpages and their webpage assets; controlled media on `pbs.twimg.com`, `video.twimg.com`, `abs.twimg.com` | Explicit optional X login, authenticated reading, refresh and media playback. | Isolated X browser requests and validated post-associated media only; no local coding-agent usage, paths or accounting data is uploaded. |
+| User-selected system proxy or fixed loopback proxy for X | Only the isolated X session and its requests. | An independent X setting; it does not change local-analysis scheduling or authorize usage transmission. |
+| Explicit live research experiment | Standalone CLI `experiment --execute-live` with a reviewed manifest. | Separate from desktop analysis. The manifest bounds the operation; a dry run does not authorize network execution. |
 
-The loopback companion is not a general proxy. It forwards only fixed routes
-and bounded headers listed in [`api-surface.md`](./api-surface.md).
+There is no configured update feed, hosted sign-in, contribution destination,
+former-project API relay, public site or reporting endpoint. A UI label or a
+retained schema cannot enable one. External product links are unconfigured.
+The local route inventory is maintained in [the API surface](./api-surface.md).
 
-## Hosted lifetimes and deletion behavior
+## Historical remote state and responsibility
 
-These current source constants describe credential/control windows, not a
-promise that every data class is deleted on the same schedule:
+Earlier deployments may retain contributed history, pseudonymous identifiers,
+consent/opt-out records, deletion safeguards or backups. This repository's cloud
+source retirement does not administer those deployments. It does not establish
+remote erasure, a new retention period, a completed restore reconciliation or a
+shutdown. Saved local receipts, salts, identities and opt-outs remain intact.
+Historical pseudonyms can support longitudinal linkage; they are not anonymous.
 
-| Data/control | Current lifetime |
-| --- | --- |
-| Web session | 30 minutes |
-| One-use upload authorization | 5 minutes |
-| Device pairing claim | 10 minutes |
-| Paired social device credential | 30 days, silently renewable by the same valid device |
-| Accountless enrollment and derived upload authority | 30-day lease. Same-secret authenticated renewal extends the same active installation graph within seven days of expiry or after an offline period. Revoked or erased authority cannot renew; no replacement identity is created. |
-| Hosted identity authorization handoff | 10 minutes |
-| Completed identity-result delivery window | 5 minutes |
-| Sign-in admission rows | 24 hours |
-| Identity re-enrollment cooldown | 30 days |
-| Deletion tombstone | 400 days in source, to suppress erased participant data after restore replay; not a verified production backup/retention guarantee |
-| Sampled admin diagnostics | 30 days |
-| Contribution quarantine age deletion | Disabled in current source; private owner erasure and orphan reconciliation remain separate operations |
-
-There is no blanket short time-based retention promise for accepted
-contribution/aggregate evidence in current source. Participant capabilities
-retain hosted export and device revoke/disconnect, but neither whole-account
-nor individual-contribution self-service deletion is available. Disconnecting
-does not shorten retention or remove previously accepted data.
-
-Private owner erasure fences uploads, withdraws affected aggregates, records an
-independently verified deletion tombstone and identity cooldown, removes owned
-R2 objects, and completes participant database removal. Immutable aggregate
-revisions may remain withdrawn; replacement publication must exclude the erased
-participant. A tombstone, cooldown, or content-free operational audit is not
-removed merely because the participant's data has been erased. Local history,
-provider-side sign-in records, and provider source files are separate.
-
-The deletion ledger must still suppress erased data after backup restore.
-For tombstoned participants, restore replay claims only active rows or
-interrupted restores with a null deletion fence; it must not take over
-non-null owner/legacy erasures. A busy restore is finished/retried by
-maintenance, not a concurrent owner erasure; final removal must still match
-the restore or owner fence.
-The actual production backup/restore horizon and infrastructure log/object
-policies require independent verification; the constants above do not
-establish them.
-This retirement adds no migration, retention change, or tombstone removal.
-See [production operations](../runbooks/production-operations.md#private-owner-participant-erasure)
-for the protected procedure and [SUPPORT.md](../../SUPPORT.md#hosted-history-and-privacy-requests)
-for the privacy-request intake boundary. Retiring a control is not a conclusion
-about applicable privacy rights or how a particular request should be resolved.
+Any request about former remote records requires its actual responsible operator
+and a separately verified, authorized procedure. Remote erasure and deletion-safe
+restore remain distinct from local cache clearing, uninstall and source removal.
+No former domain or operator contact is configured as this product's service or
+support channel; see [the current support boundary](../../SUPPORT.md). No remote
+lifetime or successful deletion is promised here.
 
 ## Separate deletion actions
 
-| Action | Removes | Does not remove |
+| Action | Current scope | Does not establish |
 | --- | --- | --- |
-| **Erase local data** | Moves the installed app's user-data state root to the operating-system trash, including the local index store, its device salt and collector state, and clears TiboTattle website data. | Provider source files, Credential Manager capabilities, or hosted data. |
-| **Reset identity and device** | Reviewed TiboTattle Credential Manager capabilities plus their associated local binding/app state. | General local analysis state unless the reset contract explicitly reports it; hosted contribution records. |
-| **Device disconnect** (legacy backend contract) | Hosted authority for this device plus its local device credential/binding; pauses delivery. | Other devices, hosted participant data, or local analysis. |
-| Private owner participant erasure | Hosted participant/account, contribution, session, and device state through the protected pipeline; affected aggregates are withdrawn/rebuilt. | Local analysis, provider source files, retained safeguards/audit, or immutable withdrawn aggregate revisions. |
-| Ordinary app uninstall | Application binaries. | By design, local state and Credential Manager entries survive ordinary uninstall. |
+| Ordinary refresh or changing a display period | Reads sources and updates/reuses derived evidence; absent sources keep accumulated facts. | A retention cutoff or deletion of older history. |
+| Remove/reset a window background | Changes the app-owned selection and reclaims only unreferenced background resources. | Deletion of the original user-selected image. |
+| X cache clearing | Removes cached public-post payloads across X scopes while preserving X login metadata, settings and notification baselines. | Logout, Chrome cleanup or deletion of usage evidence. |
+| X logout | Clears the app's isolated X session. | Logout from Chrome, X-server data deletion or removal of the independent reading cache. |
+| CLI export deletion/workspace discard | Acts only on the exact reviewed export/workspace, confirmation token and recovery journal. | Analysis-index deletion, unrelated credential removal or remote erasure. |
+| CLI export/callback identity rotation or removal | The named capability, with its explicit confirmation and lifecycle contract. | Rotation of the local index salt or a whole-profile reset. |
+| Ordinary app uninstall | Packaging is configured to remove binaries while retaining AppData. | Local evidence or Credential Manager erasure; this source setting is not installed-uninstaller qualification. |
 
-Use the app's explicit controls before uninstall when the intent includes
-local cleanup. The saved sharing choice is preserved and no longer read; the shared dashboard no longer offers legacy device disconnect. These controls
-cannot perform private owner erasure.
-Do not manually delete the only local index as a repair technique; follow
-[`../runbooks/local-index-recovery.md`](../runbooks/local-index-recovery.md).
+The desktop provides no blanket **Erase local data** or **Reset identity and
+device** operation. Do not replace a missing control with manual AppData or
+credential deletion. Old-profile conversion and any exact, receipt-backed
+cleanup require separate preservation and authorization. Local actions cannot
+perform historical remote participant erasure. For diagnosis, use
+[local index recovery](../runbooks/local-index-recovery.md); never delete the
+only store as a repair.
 
 ## Coverage and uncertainty
 
@@ -434,15 +328,15 @@ Do not manually delete the only local index as a repair technique; follow
 - Standard API prices are a comparison normalization, not subscription billing.
 - A 30-day chart is a display window, not proof that older local data was
   deleted.
-- Public aggregates do not prove a specific person's contribution, account,
-  device, plan, or activity.
+- Retained historical aggregate or contribution records do not prove current
+  service availability, a particular person's activity or completed erasure.
 
 ## Updating this inventory
 
 Any shipping source reader, subprocess RPC, local store, Credential Manager entry, network
-destination, contribution field, retention constant, or erase/uninstall
-behavior must update this file, the public privacy page, localized first-run
-and refresh disclosure, and source-backed privacy tests in the same change.
+destination, retained schema, retention rule, or removal/uninstall behavior
+must update this file, localized first-run/refresh disclosure, current support
+guidance and source-backed privacy tests in the same change.
 Obsolete privacy documents should be deleted once this maintained inventory
 supersedes them; retaining contradictory consent boundaries is a product bug.
 

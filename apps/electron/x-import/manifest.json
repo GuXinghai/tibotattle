@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "TiboTattle · X 会话导入",
+  "name": "Rhetrion · X 会话导入",
   "version": "1.0.0",
-  "description": "用户主动操作时，通过本机通信将 X 会话导入 TiboTattle。",
+  "description": "用户主动操作时，通过本机通信将 X 会话导入 Rhetrion。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Y7GO8+R5Bj/1nH6AwjFwt3DNzfngD46zUWr4S+kILS7b/3sf24uhBhi+YjEd2JK4/uEQqyCUdrNA5L6troA+xh8firdSpl8jKri3Dqm4Br902tGLBgwPJQcvyZADk8nQKALKVALWwt6Qm4BTNG06xEz9muc4QKha+vwhQwvzHfTe82hWRvXjg6zzlARPyxxxkT9pClebtv7kw8XCONphK2RyKPmTTYEzEp1m5x9rTrGdLtGcn/9woywzyyUQKkNZxud1qP1a2NgqeD7T6uRBJ9iNkfQDUml5hx9XsS1Cg2BtFeogB/VGQqAwOZMvFbJQS8VkDj+2vx6ScfWvSv3rwIDAQAB",
   "minimum_chrome_version": "119",
   "permissions": [

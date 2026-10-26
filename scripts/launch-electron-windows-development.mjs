@@ -53,11 +53,11 @@ const DEFAULT_PROFILE_PATH = join(
   "profile",
 );
 const WINDOWS_TARGET = "win32-x64";
-const WINDOWS_APP_NAME = "TiboTattle Dev.exe";
+const WINDOWS_APP_NAME = "usage-monitor.exe";
 // This fixed name is used only by the disposable normal-candidate runner.
 // It deliberately does not share the development launcher's qualification
 // environment or manual smoke IPC.
-export const WINDOWS_NORMAL_CANDIDATE_APP_NAME = "TiboTattle.exe";
+export const WINDOWS_NORMAL_CANDIDATE_APP_NAME = "usage-monitor.exe";
 const USER_DATA_DIRECTORY = "user-data";
 const PROFILE_DIRECTORY_NAMES = Object.freeze([
   "home",
@@ -324,7 +324,7 @@ export async function prepareWindowsDevelopmentProfile({
 
 function isPlainWindowsExecutable(path) {
   try {
-    if (typeof path !== "string" || path.includes(" ") || !isAbsolute(path)) return false;
+    if (typeof path !== "string" || path.includes("\0") || !isAbsolute(path)) return false;
     if (basename(path).toLowerCase() !== "codex.exe") return false;
     const metadata = lstatSync(path);
     return metadata.isFile() && !metadata.isSymbolicLink();
@@ -563,7 +563,7 @@ export function launchWindowsDevelopmentApplication({
 
 function printHelp() {
   process.stdout.write([
-    "Usage: node scripts/launch-electron-windows-development.mjs --app <absolute TiboTattle Dev.exe>",
+    "Usage: node scripts/launch-electron-windows-development.mjs --app <absolute usage-monitor.exe>",
     "  [--profile <absolute persistent profile>] [--dry-run]",
     "",
     "The Windows host must be win32/x64. The profile is durable and isolated; this launcher never installs, signs, uploads, or enables credential smoke controls.",

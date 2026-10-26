@@ -8,7 +8,7 @@ import { projectDesktopTrayStatus } from "../desktop-tray-status.js";
 const now = Date.parse("2026-09-07T12:00:00Z");
 function status(remaining = 63, weekly = 94, overrides = {}) {
   return { status: "fresh", allowance: { source: "direct", window: "five_hour", remainingPercent: remaining }, notificationEvidence: {
-    schemaVersion: "tibotattle-notification-evidence-v2", status: "fresh_provider_observation", provider: "openai_codex", source: "app_server_read", freshness: "fresh",
+    schemaVersion: "usagemonitor-notification-evidence-v2", status: "fresh_provider_observation", provider: "openai_codex", source: "app_server_read", freshness: "fresh",
     observedAt: new Date(now).toISOString(), continuityKey: "a".repeat(43), windows: [
       { lane: "primary", durationMinutes: 300, usedPercent: 100 - remaining, resetAt: "2026-09-07T15:00:00.000Z", resetProofKind: "provider_reported_schedule_only" },
       { lane: "secondary", durationMinutes: 10080, usedPercent: 100 - weekly, resetAt: "2026-09-10T15:00:00.000Z", resetProofKind: "provider_reported_schedule_only" },
@@ -55,7 +55,9 @@ test("emphasis enters at 10, leaves at 12 and clears on reset, source change and
 
 test("reset formats keep the selected window and dated clock labels", () => {
   assert.equal(project(status(), { preset: "five-hour", barMetric: "remaining-reset" }).compactTitle, "5h 63% · 5h resets in 3h 0m");
-  assert.match(project(status(), { barMetric: "reset", resetFormat: "clock" }, { locale: "en-US" }).compactTitle, /7d resets at .*Sep 10/);
+  assert.match(project(status(), { barMetric: "reset", resetFormat: "clock" }, { locale: "en-US" }).compactTitle, /7d resets at /);
+  const expectedDate = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date("2026-09-10T15:00:00.000Z"));
+  assert.ok(project(status(), { barMetric: "reset", resetFormat: "clock" }, { locale: "en-US" }).compactTitle.includes(expectedDate));
   const unavailable = { status: "stale", allowance: null, notificationEvidence: null };
   assert.equal(project(unavailable, { preset: "five-hour", barMetric: "reset" }).compactTitle, "5h resets in —");
 });
@@ -70,9 +72,13 @@ test("strict preference contract rejects unknown, duplicated, empty and contradi
 
 test("new installs, unconfigured upgrades and all community legacy choices retain distinct defaults", async () => {
   assert.equal((await createDesktopSettingsStore().getSettings()).tray.preset, "weekly");
-  const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "tibotattle-desktop-settings-v2" }; delete legacy.tray;
+  const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v2" };
+  delete legacy.tray;
+  delete legacy.refreshPaused;
+  legacy.notifications = { enabled: false, threshold: "off" };
   const upgraded = createDesktopSettingsStore({ backend: { load: async () => legacy, save: async () => {} } });
   assert.equal((await upgraded.getSettings()).tray.preset, "automatic");
+  assert.equal(upgraded.lastLoadFailed, false);
   for (const [raw, expected] of [["five-hour", "five-hour"], ["weekly", "weekly"], ["both", "both"], ["off", "icon-only"]]) {
     const migrated = migrateDesktopTrayPreferences(raw);
     assert.equal(migrated.preset, expected);

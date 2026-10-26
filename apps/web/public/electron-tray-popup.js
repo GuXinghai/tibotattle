@@ -31,7 +31,6 @@ import {
 import { normalizeTrayPreferences } from "./electron-tray-preferences.js";
 
 export const TRAY_POPUP_SCHEMA_VERSION = "electron-tray-popup-v1";
-const PRODUCT_APP_NAME = "TiboTattle";
 export const TRAY_POPUP_HISTORY_RANGES = Object.freeze({
   "7d": 7,
   "30d": 30,
@@ -1612,7 +1611,7 @@ export function applyTrayPopupPreferences(documentRef, projection, preferences, 
 
 export function renderTrayPopup(documentRef, projection, {
   t = defaultText,
-  bridge = globalThis.window?.tibotattleTrayPopover,
+  bridge = globalThis.window?.usageMonitorTrayPopover,
   mainModel = null,
   requiresMainModel = false,
   numberFormatter = formatNumber,
@@ -1645,7 +1644,7 @@ export function renderTrayPopup(documentRef, projection, {
   for (const button of documentRef.querySelectorAll?.("[data-action]") ?? []) {
     const action = button.dataset.action;
     button.textContent = action === "open"
-      ? translated("electron.tray.open", { appName: PRODUCT_APP_NAME })
+      ? translated("electron.tray.open", { appName: translated("app.name") })
       : action === "more" ? "⋯"
         : action === "customize" ? "⚙"
           : action === "usage" ? translated("electron.trayCustomization.usageLink")
@@ -1674,7 +1673,7 @@ export function observeTrayPopupContentHeight({
   documentRef = globalThis.document,
 } = {}) {
   const root = documentRef?.getElementById?.("tray-popup");
-  const bridge = windowRef?.tibotattleTrayPopover;
+  const bridge = windowRef?.usageMonitorTrayPopover;
   const ResizeObserverImpl = windowRef?.ResizeObserver ?? globalThis.ResizeObserver;
   if (!root || typeof bridge?.reportContentHeight !== "function"
       || typeof ResizeObserverImpl !== "function") return () => {};
@@ -1727,7 +1726,7 @@ export async function bootstrapTrayPopup({
   const localization = createBrowserLocalization({ windowRef, documentRef });
   setFormattingLocale(localization.formatLocale());
   setMessageLocale(localization.locale());
-  const bridge = windowRef.tibotattleTrayPopover;
+  const bridge = windowRef.usageMonitorTrayPopover;
   const requiresMainModel = typeof bridge?.onModel === "function";
   let mainModel = null;
   let preferences = normalizeTrayPreferences(null);
@@ -1879,7 +1878,7 @@ export async function bootstrapTrayPopup({
   if (typeof bridge?.onVisibility === "function") {
     bridge.onVisibility(() => onVisibilityChange());
   }
-  windowRef.addEventListener?.("tibotattle:locale-change", () => {
+  windowRef.addEventListener?.("usagemonitor:locale-change", () => {
     setMessageLocale(localization.locale());
     setFormattingLocale(localization.formatLocale());
     render();

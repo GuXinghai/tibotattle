@@ -523,7 +523,7 @@ export async function generateReleaseSbom({
 } = {}) {
   const prepared = prepareReleaseSbom({ scanPath, outputPath, trustedRoot });
   const asset = syftAssetForPlatform({ platform, architecture });
-  const temporary = await mkdtemp(join(dirname(prepared.outputPath), ".tibotattle-syft-"));
+  const temporary = await mkdtemp(join(dirname(prepared.outputPath), ".usagemonitor-syft-"));
   const archivePath = join(temporary, asset.fileName);
   const stagedOutputPath = join(temporary, basename(prepared.outputPath));
   try {

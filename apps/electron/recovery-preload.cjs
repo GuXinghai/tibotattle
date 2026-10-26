@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-const CHANNEL = "tibotattle:electron-recovery:v1";
+const CHANNEL = "usagemonitor:electron-recovery:v1";
 const ACTIONS = new Set(["retry", "settings", "diagnostics", "quit"]);
 
 function send(action) {
@@ -14,7 +14,7 @@ function send(action) {
 }
 
 if (typeof contextBridge?.exposeInMainWorld === "function") {
-  contextBridge.exposeInMainWorld("tibotattleRecovery", Object.freeze({
+  contextBridge.exposeInMainWorld("usagemonitorRecovery", Object.freeze({
     version: "v1",
     retry: () => send("retry"),
     settings: () => send("settings"),

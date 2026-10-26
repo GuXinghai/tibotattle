@@ -1978,7 +1978,7 @@ function unifiedPartialReason(unified) {
 // every refresh cycle while the figures were complete and current), so they
 // are named constants rather than inline strings.
 const UNIFIED_DEFERRED_LOADING_WARNING =
-  "Full indexed history is loading. The latest replay-safe snapshot is shown meanwhile and will be replaced only by the completed full projection.";
+  "Local history indexing is in progress. Complete historical totals will appear after the indexed aggregate is published.";
 const UNIFIED_WITHHELD_PARTIAL_WARNING =
   "The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.";
 const UNIFIED_WITHHELD_MISSING_WARNING =
@@ -1986,7 +1986,7 @@ const UNIFIED_WITHHELD_MISSING_WARNING =
 const UNIFIED_WITHHELD_UNREADABLE_WARNING =
   "The unified local index is unavailable. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.";
 const UNIFIED_SCHEMA_NEWER_WARNING =
-  "This local history was created by a newer TiboTattle build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.";
+  "This local history was created by a newer application build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.";
 const HISTORY_TOTALS_HIDDEN_WARNING =
   "History indexing is still advancing. Complete historical totals stay hidden until an indexed aggregate is available.";
 const HISTORY_AGGREGATE_UNAVAILABLE_WARNING =

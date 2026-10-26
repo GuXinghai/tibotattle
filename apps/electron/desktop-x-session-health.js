@@ -1,8 +1,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { X_SESSION_ERRORS, xError } from './desktop-x-contract.js';
 
-const probeUrl = 'https://tibotattle.invalid/';
-const probeName = '__Host-TiboTattlePersistence';
+const probeUrl = 'https://session-check.invalid/';
+const probeName = '__Host-UsageMonitorPersistence';
 const digest = value => createHash('sha256').update(value).digest('hex');
 export function sessionError(error, fallback) {
   const failure = xError(X_SESSION_ERRORS.includes(error?.code) ? error.code : fallback);

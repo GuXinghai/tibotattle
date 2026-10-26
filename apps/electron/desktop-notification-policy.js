@@ -14,11 +14,11 @@
  */
 
 export const DESKTOP_NOTIFICATION_POLICY_SCHEMA_VERSION =
-  "tibotattle-electron-notification-policy-v2";
-export const DESKTOP_LEGACY_NOTIFICATION_POLICY_SCHEMA_VERSION = "tibotattle-electron-notification-policy-v1";
+  "usagemonitor-electron-notification-policy-v2";
+export const DESKTOP_LEGACY_NOTIFICATION_POLICY_SCHEMA_VERSION = "usagemonitor-electron-notification-policy-v1";
 
 export const DESKTOP_NOTIFICATION_EVIDENCE_SCHEMA_VERSION =
-  "tibotattle-notification-evidence-v2";
+  "usagemonitor-notification-evidence-v2";
 
 // @deprecated Legacy policy helper modes remain available to retain dormant
 // behavior. Production settings and migrated policy records use a number.

@@ -12,7 +12,7 @@ The owner-approved hosted calculator changes are deployed to production.
 Public and authenticated admin graphs remain available while history continues
 to be calculated. This proves the deployment and bounded observations below,
 not completed historical backfill, a production throughput SLA or a desktop
-release. The [production runbook](../runbooks/production-operations.md) remains
+release. The production runbook (retired; retained in Git history) remains
 the operational authority. The
 [local qualification](../reviews/2026-09-08-thousand-contributor-qualification.md)
 records the 100/500/1,000-contributor workload, exact assertions and limits.

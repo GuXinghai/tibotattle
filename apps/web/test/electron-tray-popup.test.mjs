@@ -380,7 +380,7 @@ test("rendered action labels interpolate the product name", () => {
     // host that supplies onModel starts Refresh in the conservative state.
     bridge: { requestAction() {} },
   });
-  assert.equal(documentRef.actions[0].textContent, "Open TiboTattle");
+  assert.equal(documentRef.actions[0].textContent, "Open Rhetrion");
   assert.equal(documentRef.actions[1].textContent, "Refresh");
   assert.equal(documentRef.actions[2].textContent, "⋯");
   assert.equal(documentRef.actions[2].attributes.get("aria-label"), "More actions");
@@ -434,7 +434,7 @@ test("content-height reporting follows intrinsic changes through the narrow brid
   const cleanup = observeTrayPopupContentHeight({
     windowRef: {
       ResizeObserver: FakeResizeObserver,
-      tibotattleTrayPopover: {
+      usageMonitorTrayPopover: {
         reportContentHeight(height) {
           reported.push(height);
         },
@@ -1014,7 +1014,7 @@ test("hidden popup model events wait for visibility before reading the companion
     requestAction() {},
   };
 
-  await bootstrapTrayPopup({ windowRef: { ...windowRef, tibotattleTrayPopover: bridge }, documentRef, client });
+  await bootstrapTrayPopup({ windowRef: { ...windowRef, usageMonitorTrayPopover: bridge }, documentRef, client });
   assert.equal(loadCalls, 0);
   modelListener();
   assert.equal(loadCalls, 0);
@@ -1047,7 +1047,7 @@ test("native model disables Refresh immediately without hidden companion reads",
     },
   };
 
-  await bootstrapTrayPopup({ windowRef: { ...windowRef, tibotattleTrayPopover: bridge }, documentRef, client });
+  await bootstrapTrayPopup({ windowRef: { ...windowRef, usageMonitorTrayPopover: bridge }, documentRef, client });
   const refresh = documentRef.actions.find((button) => button.dataset.action === "refresh");
   assert.equal(refresh.disabled, true);
   assert.equal(loadCalls, 0);
@@ -1102,7 +1102,7 @@ test("native popup visibility gates visible-DOM loads and reopens on the host si
   };
 
   await bootstrapTrayPopup({
-    windowRef: { ...windowRef, tibotattleTrayPopover: bridge },
+    windowRef: { ...windowRef, usageMonitorTrayPopover: bridge },
     documentRef,
     client,
   });
@@ -1139,7 +1139,7 @@ test("visible popup model events coalesce in-flight reads and fence one follow-u
   };
 
   const bootstrap = bootstrapTrayPopup({
-    windowRef: { ...windowRef, tibotattleTrayPopover: bridge },
+    windowRef: { ...windowRef, usageMonitorTrayPopover: bridge },
     documentRef,
     client,
   });

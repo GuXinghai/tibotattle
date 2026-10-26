@@ -7,7 +7,7 @@
  * separate contracts at their owning boundaries.
  */
 
-export const SURFACE_MANIFEST_SCHEMA = "tibotattle-surface-manifest-v0.1";
+export const SURFACE_MANIFEST_SCHEMA = "usagemonitor-surface-manifest-v0.1";
 
 const SHARED_WEB_FILES = Object.freeze([
   "apps/web/public/app.js",
@@ -57,7 +57,10 @@ const SHARED_WEB_FILES = Object.freeze([
   "apps/web/public/usage-simple.css",
   "apps/web/public/telemetry-envelope.js",
   "apps/web/public/telemetry-shared.generated.js",
-  "apps/web/public/tibotattle-icon.png",
+  "apps/web/public/app-icon.png",
+  "apps/web/public/app-icon.svg",
+  "apps/web/public/tray-icon.png",
+  "apps/web/public/tray-icon.svg",
   "apps/web/public/ui-format.js",
   "apps/web/public/work-usage-view.js",
   "apps/web/public/x-reader.js",
@@ -67,31 +70,10 @@ const SHARED_WEB_FILES = Object.freeze([
   "apps/web/public/vendor/hls.js.LICENSE",
 ]);
 
-const HISTORY_FREE_EXPORT_ONLY_WEB_FILES = Object.freeze([
-  "apps/web/public/community-refresh.js",
-  "apps/web/public/community-view.js",
-  "apps/web/public/community.html",
-  "apps/web/public/community.js",
-  "apps/web/public/feature-insights.js",
-  "apps/web/public/feature-tour.css",
-  "apps/web/public/feature-tour.js",
-  "apps/web/public/feature-week.js",
-  "apps/web/public/last-known-good.js",
-]);
-
-// The export intentionally omits the dashboard icon: the icon is authenticated
-// native/Electron app branding, not part of the history-free source export.
-const HISTORY_FREE_EXPORT_WEB_FILES = Object.freeze([
-  ...SHARED_WEB_FILES.filter((path) =>
-    path !== "apps/web/public/tibotattle-icon.png"),
-  ...HISTORY_FREE_EXPORT_ONLY_WEB_FILES,
-]);
-
 export const SURFACE_MANIFEST = Object.freeze({
   schemaVersion: SURFACE_MANIFEST_SCHEMA,
   surfaces: Object.freeze({
     "local-companion": SHARED_WEB_FILES,
     "electron-runtime": SHARED_WEB_FILES,
-    "history-free-export": HISTORY_FREE_EXPORT_WEB_FILES,
   }),
 });

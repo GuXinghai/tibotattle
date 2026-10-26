@@ -38,11 +38,11 @@ import {
 } from "../config/release-evidence.js";
 
 const RELEASE = Object.freeze({
-  product: { name: "TiboTattle" },
+  product: { name: "Rhetrion" },
   version: RELEASE_MANIFEST.version,
   tag: RELEASE_MANIFEST.tag,
   commit: "a".repeat(40),
-  repository: "https://github.com/adamallcock/tibotattle",
+  repository: "https://github.com/example/usage-monitor",
 });
 
 const RELEASE_SOURCE = Object.freeze({
@@ -52,13 +52,13 @@ const RELEASE_SOURCE = Object.freeze({
   repository: RELEASE.repository,
 });
 
-const EXE_NAME = `TiboTattle-${RELEASE.version}-Windows-x64.exe`;
-const SBOM_NAME = `TiboTattle-${RELEASE.version}-Windows-x64.spdx.json`;
-const SBOM_ATTESTATION_NAME = `TiboTattle-${RELEASE.version}-Windows-x64.sbom.sigstore.json`;
-const PROVENANCE_NAME = `TiboTattle-${RELEASE.version}-Windows-x64.sigstore.json`;
+const EXE_NAME = `Rhetrion-${RELEASE.version}-Windows-x64.exe`;
+const SBOM_NAME = `Rhetrion-${RELEASE.version}-Windows-x64.spdx.json`;
+const SBOM_ATTESTATION_NAME = `Rhetrion-${RELEASE.version}-Windows-x64.sbom.sigstore.json`;
+const PROVENANCE_NAME = `Rhetrion-${RELEASE.version}-Windows-x64.sigstore.json`;
 const UPDATER_METADATA_NAME = "latest.yml";
-const STORE_LISTING = "https://apps.microsoft.com/detail/tibotattle";
-const STORE_RECEIPT_NAME = `TiboTattle-${RELEASE.version}-Windows-x64.store-receipt.json`;
+const STORE_LISTING = "https://apps.microsoft.com/detail/usagemonitor";
+const STORE_RECEIPT_NAME = `Rhetrion-${RELEASE.version}-Windows-x64.store-receipt.json`;
 
 const ASSURANCES = Object.freeze({
   direct: {
@@ -129,7 +129,7 @@ function storeReceipt({ provider, listing, artifactName, artifactContents }) {
 }
 
 async function fixture() {
-  const root = await mkdtemp(join(tmpdir(), "tibotattle-release-evidence-"));
+  const root = await mkdtemp(join(tmpdir(), "usagemonitor-release-evidence-"));
   const files = new Map();
   async function add(name, value) {
     const path = join(root, name);
@@ -157,9 +157,9 @@ function sbomBlock(root, files, fileName, attestationName) {
       mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
       predicateType: "https://spdx.dev/Document/v2.3",
       builderId: "https://github.com/actions/runner",
-      signerWorkflow: "adamallcock/tibotattle/.github/workflows/release.yml",
+      signerWorkflow: "example/usage-monitor/.github/workflows/release.yml",
       signerDigest: "b".repeat(40),
-      runUrl: "https://github.com/adamallcock/tibotattle/actions/runs/123456",
+      runUrl: "https://github.com/example/usage-monitor/actions/runs/123456",
       denySelfHostedRunners: true,
     },
   };
@@ -172,9 +172,9 @@ function provenanceBlock(root, files, fileName) {
     mediaType: "application/vnd.dev.sigstore.bundle.v0.3+json",
     predicateType: "https://slsa.dev/provenance/v1",
     builderId: "https://github.com/actions/runner",
-    signerWorkflow: "adamallcock/tibotattle/.github/workflows/release.yml",
+    signerWorkflow: "example/usage-monitor/.github/workflows/release.yml",
     signerDigest: "b".repeat(40),
-    runUrl: "https://github.com/adamallcock/tibotattle/actions/runs/123456",
+    runUrl: "https://github.com/example/usage-monitor/actions/runs/123456",
     denySelfHostedRunners: true,
   };
 }
@@ -211,10 +211,10 @@ async function buildBaseFixture() {
         path: relative(root, files.get(EXE_NAME)),
         fileName: EXE_NAME,
         source: { ...RELEASE_SOURCE },
-        downloadUrl: `https://github.com/adamallcock/tibotattle/releases/download/${RELEASE.tag}/${EXE_NAME}`,
+        downloadUrl: `https://github.com/example/usage-monitor/releases/download/${RELEASE.tag}/${EXE_NAME}`,
         distribution: "github-release",
         nativeTrust: {
-          publisher: "TiboTattle, Inc.",
+          publisher: "Rhetrion, Inc.",
           certificateSha256: "1".repeat(64),
         },
         build: {
@@ -336,10 +336,10 @@ test("published JSON Schema preserves v1 compatibility and contains current Wind
   const validateSchema = ajv.compile(schema);
   const validateRepositorySchema = ajv.compile(schema.$defs.repository);
   for (const [candidate, expected] of [
-    ["https://github.com/adamallcock/tibotattle", true],
-    ["https://github.com/adamallcock/tibotattle.git", false],
-    ["https://github.com/adamallcock/tibotattle/", false],
-    ["https://GITHUB.com/adamallcock/tibotattle", false],
+    ["https://github.com/example/usage-monitor", true],
+    ["https://github.com/example/usage-monitor.git", false],
+    ["https://github.com/example/usage-monitor/", false],
+    ["https://GITHUB.com/example/usage-monitor", false],
   ]) {
     let runtimeAccepted = true;
     try {
@@ -393,21 +393,21 @@ test("generator emits a deterministic Windows manifest and SHA256SUMS", async ()
     assert.equal(artifact.provenance.verificationStatus, "unverified");
     assert.equal(
       artifact.downloadUrl,
-      `https://github.com/adamallcock/tibotattle/releases/download/${RELEASE.tag}/${artifact.fileName}`,
+      `https://github.com/example/usage-monitor/releases/download/${RELEASE.tag}/${artifact.fileName}`,
     );
     assert.equal(artifact.distribution, "github-release");
-    assert.equal(artifact.nativeTrust.publisher, "TiboTattle, Inc.");
+    assert.equal(artifact.nativeTrust.publisher, "Rhetrion, Inc.");
     assert.equal(artifact.nativeTrust.certificateSha256, "1".repeat(64));
     assert.equal(artifact.build.sourceManifestSha256, "2".repeat(64));
     assert.equal(artifact.build.unsignedPayloadSha256, "3".repeat(64));
     assert.equal(
       artifact.provenance.signerWorkflow,
-      "adamallcock/tibotattle/.github/workflows/release.yml",
+      "example/usage-monitor/.github/workflows/release.yml",
     );
     assert.equal(artifact.provenance.signerDigest, "b".repeat(40));
     assert.equal(
       artifact.provenance.runUrl,
-      "https://github.com/adamallcock/tibotattle/actions/runs/123456",
+      "https://github.com/example/usage-monitor/actions/runs/123456",
     );
     assert.deepEqual(artifact.sbom.attestation.predicateType,
       "https://spdx.dev/Document/v2.3");
@@ -477,7 +477,7 @@ test("generator supports Windows direct and Store artifacts without inventing ab
     const descriptors = [];
     for (const [name, contents, channel] of [
       [EXE_NAME, "windows", "direct"],
-      [`TiboTattle-${RELEASE.version}-Windows-store-x64.msix`, "store windows", "store"],
+      [`Rhetrion-${RELEASE.version}-Windows-store-x64.msix`, "store windows", "store"],
     ]) {
       await value.add(name, contents);
       const prefix = name.slice(0, name.lastIndexOf("."));
@@ -506,15 +506,15 @@ test("generator supports Windows direct and Store artifacts without inventing ab
         fileName: name,
         downloadUrl: channel === "store"
           ? STORE_LISTING
-          : `https://github.com/adamallcock/tibotattle/releases/download/${RELEASE.tag}/${name}`,
+          : `https://github.com/example/usage-monitor/releases/download/${RELEASE.tag}/${name}`,
         distribution: channel === "store" ? "microsoft-store" : "github-release",
         nativeTrust: channel === "store"
           ? {
               provider: "microsoft-store",
-              publisher: "TiboTattle",
+              publisher: "Rhetrion",
               listing: STORE_LISTING,
             }
-          : { publisher: "TiboTattle, Inc.", certificateSha256: "1".repeat(64) },
+          : { publisher: "Rhetrion, Inc.", certificateSha256: "1".repeat(64) },
         build: channel === "store"
           ? null
           : {
@@ -605,7 +605,7 @@ test("Store entries require a verified final listing subject and cannot masquera
     };
     artifact.nativeTrust = {
       provider: "microsoft-store",
-      publisher: "TiboTattle",
+      publisher: "Rhetrion",
       listing: artifact.downloadUrl,
     };
     artifact.assurances = ASSURANCES.store;
@@ -638,7 +638,7 @@ test("Store entries require a verified final listing subject and cannot masquera
 
     const wrongUrl = structuredClone(input);
     wrongUrl.artifacts[0].downloadUrl =
-      `https://github.com/adamallcock/tibotattle/releases/download/${RELEASE.tag}/${wrongUrl.artifacts[0].fileName}`;
+      `https://github.com/example/usage-monitor/releases/download/${RELEASE.tag}/${wrongUrl.artifacts[0].fileName}`;
     await assertCode("RELEASE_EVIDENCE_STORE_INVALID", () => generateReleaseEvidence({
       descriptor: wrongUrl,
       baseDir: value.root,
@@ -660,7 +660,7 @@ test("Store entries require a verified final listing subject and cannot masquera
 
 test("generator rejects unsafe paths, symlinks, and mismatched file metadata", async () => {
   const value = await buildBaseFixture();
-  const outside = await mkdtemp(join(tmpdir(), "tibotattle-release-evidence-outside-"));
+  const outside = await mkdtemp(join(tmpdir(), "usagemonitor-release-evidence-outside-"));
   try {
     const base = structuredClone(value.input);
     base.artifacts[0].fileName = "../release.exe";
@@ -758,7 +758,7 @@ test("validator rejects source drift, incomplete assurances, subject drift, dupl
     const sumsCollision = structuredClone(manifest);
     sumsCollision.artifacts[0].fileName = "SHA256SUMS";
     sumsCollision.artifacts[0].downloadUrl =
-      `https://github.com/adamallcock/tibotattle/releases/download/${RELEASE.tag}/SHA256SUMS`;
+      `https://github.com/example/usage-monitor/releases/download/${RELEASE.tag}/SHA256SUMS`;
     await assertCode("RELEASE_EVIDENCE_DUPLICATE_FILE_NAME", () =>
       validateReleaseEvidenceManifest(sumsCollision));
   } finally {
@@ -841,7 +841,7 @@ test("claims, native trust, and the two attestation kinds fail closed", async ()
 
     const malformedRunUrl = structuredClone(value.input);
     malformedRunUrl.artifacts[0].provenance.runUrl =
-      "https://github.com/adamallcock/tibotattle/actions/runs/not-a-number";
+      "https://github.com/example/usage-monitor/actions/runs/not-a-number";
     await assertCode("RELEASE_EVIDENCE_PROVENANCE_INVALID", () => generateReleaseEvidence({
       descriptor: malformedRunUrl,
       baseDir: value.root,
@@ -916,7 +916,7 @@ test("generator rejects collisions across metadata and attestation filenames", a
   try {
     // A second direct Windows installer (MSI) gets its own bytes and metadata
     // but reuses the first artifact's attestation filename.
-    const secondPrefix = `TiboTattle-${RELEASE.version}-Windows-x64`;
+    const secondPrefix = `Rhetrion-${RELEASE.version}-Windows-x64`;
     const secondArtifactName = `${secondPrefix}.msi`;
     const secondSbomName = `${secondPrefix}.msi.spdx.json`;
     const secondProvenanceName = `${secondPrefix}.msi.sigstore.json`;
@@ -927,7 +927,7 @@ test("generator rejects collisions across metadata and attestation filenames", a
     second.format = "msi";
     second.path = relative(value.root, value.files.get(secondArtifactName));
     second.fileName = secondArtifactName;
-    second.downloadUrl = `https://github.com/adamallcock/tibotattle/releases/download/${RELEASE.tag}/${secondArtifactName}`;
+    second.downloadUrl = `https://github.com/example/usage-monitor/releases/download/${RELEASE.tag}/${secondArtifactName}`;
     second.sbom.path = relative(value.root, value.files.get(secondSbomName));
     second.sbom.fileName = secondSbomName;
     second.provenance.path = relative(value.root, value.files.get(secondProvenanceName));
@@ -967,7 +967,7 @@ test("default output writing refuses collisions before creating a partial pair",
 
 test("output writing rejects a directory symlink that escapes the trusted artifact root", async () => {
   const value = await buildBaseFixture();
-  const outside = await mkdtemp(join(tmpdir(), "tibotattle-release-output-outside-"));
+  const outside = await mkdtemp(join(tmpdir(), "usagemonitor-release-output-outside-"));
   try {
     const manifest = await generateReleaseEvidence({ descriptor: value.input, baseDir: value.root });
     const redirected = join(value.root, "redirected-output");

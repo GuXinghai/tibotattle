@@ -9,7 +9,7 @@ status: qualification-in-progress
 
 Prepare the successor to published 0.1.22 from consolidation PR #139, merged as
 `a1e7c9f82e37c5d99a48e1117139b6b623833441`. The maintained process is the
-[Electron publication runbook](../runbooks/2026-08-18-cross-platform-release-publication.md#normal-electron-stable-feed-preparation),
+Electron publication runbook (retired; retained in Git history),
 with [early admission](../runbooks/release-qualification-admission.md) before
 protected release qualification. This checkpoint records unsigned build and
 R7 evidence preparation through 2026-09-14; it does not qualify a production

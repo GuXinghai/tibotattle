@@ -31,7 +31,7 @@ function fakeWindow() {
     }
   }
   const windowRef = {
-    tibotattleDesktop: {
+    usageMonitorDesktop: {
       version: "v1",
       onCommand(listener) {
         commandListeners.push(listener);
@@ -117,8 +117,8 @@ test("desktop command bridge forwards only the closed automatic refresh mode", (
   commandListeners[0]({ command: "automaticRefresh", mode: "background" });
 
   assert.deepEqual(events.map(({ type, detail }) => ({ type, detail })), [
-    { type: "tibotattle:automatic-refresh", detail: { mode: "quick" } },
-    { type: "tibotattle:automatic-refresh", detail: { mode: "detailed" } },
+    { type: "usagemonitor:automatic-refresh", detail: { mode: "quick" } },
+    { type: "usagemonitor:automatic-refresh", detail: { mode: "detailed" } },
   ]);
   mounted.teardown();
 });
@@ -126,15 +126,15 @@ test("desktop command bridge forwards only the closed automatic refresh mode", (
 test('X notification navigation accepts only a fixed decimal post ID',()=>{
   const{commandListeners,events,windowRef}=fakeWindow();const mounted=mountDesktopShell({documentRef:fakeDocument(),windowRef});
   commandListeners[0]({command:'xPost',id:'123456789'});assert.equal(windowRef.location.hash,'#x');
-  assert.deepEqual(events.filter(event=>event.type==='tibotattle-x-open-post').map(event=>event.detail),[{id:'123456789'}]);
+  assert.deepEqual(events.filter(event=>event.type==='usagemonitor-x-open-post').map(event=>event.detail),[{id:'123456789'}]);
   for(const command of [{command:'xPost',id:'https://x.com'},{command:'xPost',id:12},{command:'xPost',id:'123',url:'https://other.invalid'}])commandListeners[0](command);
-  assert.equal(events.filter(event=>event.type==='tibotattle-x-open-post').length,1);mounted.teardown();
+  assert.equal(events.filter(event=>event.type==='usagemonitor-x-open-post').length,1);mounted.teardown();
 });
 
 test("desktop startup reapplies the persisted forced appearance", async () => {
   const { events, windowRef } = fakeWindow();
   windowRef.matchMedia = () => ({ matches: true });
-  windowRef.tibotattleDesktop.getSettings = async () => ({
+  windowRef.usageMonitorDesktop.getSettings = async () => ({
     settings: { appearance: "light" },
   });
   const mounted = mountDesktopShell({
@@ -144,7 +144,7 @@ test("desktop startup reapplies the persisted forced appearance", async () => {
 
   await Promise.resolve();
   assert.deepEqual(events.map(({ type, detail }) => ({ type, detail })), [{
-    type: "tibotattle:appearance-override",
+    type: "usagemonitor:appearance-override",
     detail: { preference: "light", resolvedTheme: "light" },
   }]);
   mounted.teardown();
@@ -154,7 +154,7 @@ test("a delayed saved preference cannot overwrite a newer command or a disposed 
   for (const action of ["appearance", "teardown"]) {
     const { events, commandListeners, windowRef } = fakeWindow();
     let resolveSettings;
-    windowRef.tibotattleDesktop.getSettings = () => new Promise(resolve => { resolveSettings = resolve; });
+    windowRef.usageMonitorDesktop.getSettings = () => new Promise(resolve => { resolveSettings = resolve; });
     const mounted = mountDesktopShell({ documentRef: fakeDocument(), windowRef });
     if (action === "teardown") mounted.teardown();
     else commandListeners[0]({ command: "appearance", preference: "dark", resolvedTheme: "dark" });
@@ -254,11 +254,11 @@ function titlebarFixture() {
   const ids = ["file", "edit", "view", "window", "help"];
   const calls = [];
   let closePopup;
-  windowRef.tibotattleDesktop.getApplicationMenu = async () => ({
+  windowRef.usageMonitorDesktop.getApplicationMenu = async () => ({
     menus: ids.map((id, index) => ({ id, label: labels[index] })),
     fullscreen: false,
   });
-  windowRef.tibotattleDesktop.openApplicationMenu = (payload) => {
+  windowRef.usageMonitorDesktop.openApplicationMenu = (payload) => {
     calls.push(payload);
     return new Promise((resolve) => { closePopup = resolve; });
   };
@@ -336,8 +336,8 @@ test("titlebar refreshes localized labels, handles fullscreen and ignores late r
   documentRef.emit("fullscreenchange");
   assert.equal(classes.has("desktop-titlebar-fullscreen"), true);
   let resolvePending;
-  windowRef.tibotattleDesktop.getApplicationMenu = () => new Promise((resolve) => { resolvePending = resolve; });
-  windowRef.emit("tibotattle:locale-change");
+  windowRef.usageMonitorDesktop.getApplicationMenu = () => new Promise((resolve) => { resolvePending = resolve; });
+  windowRef.emit("usagemonitor:locale-change");
   mounted.teardown();
   resolvePending({ menus: [] });
   await Promise.resolve();
@@ -358,8 +358,8 @@ test("trusted desktop without the optional overlay geometry API still has its me
 
 test("native fullscreen metadata initializes the row without inferring state from overlay visibility", async () => {
   const fixture = titlebarFixture();
-  const readMenu = fixture.windowRef.tibotattleDesktop.getApplicationMenu;
-  fixture.windowRef.tibotattleDesktop.getApplicationMenu = async () => ({
+  const readMenu = fixture.windowRef.usageMonitorDesktop.getApplicationMenu;
+  fixture.windowRef.usageMonitorDesktop.getApplicationMenu = async () => ({
     ...await readMenu(), fullscreen: true,
   });
   const mounted = mountDesktopShell(fixture);

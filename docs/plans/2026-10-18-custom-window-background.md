@@ -8,7 +8,7 @@ status: superseded
 # 主窗口自定义背景实施计划
 
 此计划保留为原始授权与存储边界的记录，已由 2026-10-18 后续设置整合决定取代。
-当前行为以[用户指南](../user-guide.md#settings-in-the-main-window)和
+当前行为以[用户指南](../user-guide.md#settings-and-optional-features)和
 [接口参考](../reference/api-surface.md#integrated-desktop-settings-contracts)为准；
 下文原计划中的设置独立窗口、图片上限及恢复默认按钮不再适用。
 

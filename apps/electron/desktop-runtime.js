@@ -1,3 +1,4 @@
+import applicationIdentity from "../../config/application-identity.cjs";
 import { isAbsolute, join, resolve } from "node:path";
 import { homedir } from "node:os";
 import distribution from "../../config/electron-production-distribution.cjs";
@@ -360,7 +361,7 @@ export async function launchDesktopRuntime({
       platform,
       architecture,
     });
-    if (app.isPackaged !== true || app.getName?.() !== "TiboTattle"
+    if (app.isPackaged !== true
         || environment.USAGE_MONITOR_TEST_LANE !== undefined
         || qualificationContext !== null || platformServices !== undefined
         || typeof loadProductionUpdater !== "function") {
@@ -591,9 +592,10 @@ export async function launchDesktopRuntime({
 
   // The session request policy checks the exact requesting WebContents and
   // trusted top frame. Keep no-referrer intact; no capability travels via headers.
-  runtime.protocol?.handle?.("tibotattle-background", request => backgroundController.handleResource(request));
+  runtime.protocol?.handle?.("usagemonitor-background", request => backgroundController.handleResource(request));
 
   const windowsNotificationIdentityReady = prepareWindowsNotificationIdentity({
+          applicationProfile: productionDistribution === undefined ? null : applicationIdentity.applicationMetadata("stable"),
     app,
     shell: runtime.shell,
     platform,
@@ -653,7 +655,7 @@ export async function launchDesktopRuntime({
   // this lightweight handler before the dashboard's first navigation; compose
   // storage/authentication later without delaying the main window.
   if (platform === "win32" && app.isPackaged === true && typeof runtime.protocol?.handle === "function") {
-    runtime.protocol.handle("tibotattle-x-media", async request => {
+    runtime.protocol.handle("usagemonitor-x-media", async request => {
       await xInitialized;
       return xService ? xService.resourceHandler(request) : new Response(null, { status: 503 });
     });
@@ -737,7 +739,7 @@ export async function launchDesktopRuntime({
       platform,
       architecture,
       version: snapshot?.about?.version ?? app.getVersion?.(),
-      build: snapshot?.about?.build ?? environment.TIBOTATTLE_BUILD_ID,
+      build: snapshot?.about?.build ?? environment.USAGE_MONITOR_BUILD_ID,
       lifecycle: lifecycle?.state,
       settings: snapshot?.settings,
       refresh: controller?.refreshStatus?.(),
@@ -754,7 +756,7 @@ export async function launchDesktopRuntime({
     };
     const detail = `${await collectDesktopDiagnostics()}\n`
       + "crash_report_upload: false\n";
-    const actions = ["copy", "support", "done"];
+    const actions = ["copy", "done"];
     const buttons = actions.map((action) => desktopText(`electron.diagnostics.${action === "support" ? "prepareSupportIssue" : action}`, {}, textOptions));
     const response = await runtime.dialog.showMessageBox({
       type: "info",
@@ -767,20 +769,6 @@ export async function launchDesktopRuntime({
       noLink: true,
     });
     const action = actions[response?.response] ?? "done";
-    if (action === "support") {
-      const url = new URL("https://github.com/adamallcock/tibotattle/issues/new");
-      url.searchParams.set("title", "TiboTattle doctor report");
-      url.searchParams.set("body", `Please describe what happened and review this report before submitting. Do not attach raw crash dumps or unreviewed crash reports.\n\n\`\`\`text\n${detail}\`\`\``);
-      if (url.href.length > 4096 || typeof runtime.shell?.openExternal !== "function") {
-        return Object.freeze({ status: "support_unavailable" });
-      }
-      try {
-        await runtime.shell.openExternal(url.href);
-        return Object.freeze({ status: "support_prepared" });
-      } catch {
-        return Object.freeze({ status: "support_unavailable" });
-      }
-    }
     if (action !== "copy") return Object.freeze({ status: "shown" });
     if (typeof runtime.clipboard?.writeText !== "function") {
       return Object.freeze({ status: "copy_unavailable" });
@@ -1079,10 +1067,10 @@ export async function launchDesktopRuntime({
       xIpcInstallation.dispose?.();
       xImport?.dispose();
       await drainXSession();
-      xMediaProtocol?.unhandle?.("tibotattle-x-media");
+      xMediaProtocol?.unhandle?.("usagemonitor-x-media");
       await controller.dispose();
       await backgroundController.drain();
-      runtime.protocol?.unhandle?.("tibotattle-background");
+      runtime.protocol?.unhandle?.("usagemonitor-background");
       // Drain first so a final status evaluation cannot race disposal. The
       // coordinator is idempotent, which also tolerates a future controller
       // implementation that owns the same disposal seam.
@@ -1177,7 +1165,7 @@ export async function launchDesktopRuntime({
     await markStartupPhase("lifecycle");
     await lifecycle.start();
     initializeXReader();
-    if (productionDistribution !== undefined) {
+    if (productionDistribution !== undefined && productionDistribution.updateFeed !== null) {
       await markStartupPhase("updater");
       // Electron's built-in autoUpdater lacks electron-updater's explicit
       // download contract, so the selected package consistently uses the

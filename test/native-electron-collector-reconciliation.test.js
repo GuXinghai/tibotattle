@@ -71,7 +71,7 @@ async function fixture(run) {
     await copyFile(electron, baseline);
     await chmod(baseline, 0o600);
     await writeFile(proof, `${JSON.stringify({
-      schema: "tibotattle-native-electron-collector-conservation-r9-v1",
+      schema: "usagemonitor-native-electron-collector-conservation-r9-v1",
       inspection: "read-only",
       scope: "stopped-native-r9-versus-current-electron",
       saltMatches: true,
@@ -89,7 +89,7 @@ test("private-copy plan is content-free and finds digest-plus-kind multiplicity"
   const beforeElectron = sha256(await readFile(electron));
   const result = await planNativeElectronCollectorReconciliation({ copyRoot });
   assert.deepEqual(result, {
-    schema: "tibotattle-native-electron-collector-reconciliation-v1",
+    schema: "usagemonitor-native-electron-collector-reconciliation-v1",
     status: "planned_private_copy_only",
     sourceRecordCount: 4,
     destinationRecordCountBefore: 2,
@@ -136,7 +136,7 @@ test("explicit private-copy reconciliation is append-only, checkpoint-preserving
     await chmod(join(cloneRoot, file), 0o600);
   }
   await writeFile(join(cloneRoot, "collector-conservation.json"), `${JSON.stringify({
-    schema: "tibotattle-native-electron-collector-conservation-r9-v1",
+    schema: "usagemonitor-native-electron-collector-conservation-r9-v1",
     inspection: "read-only",
     scope: "stopped-native-r9-versus-current-electron",
     saltMatches: true,
@@ -159,7 +159,7 @@ test("copy-root, baseline, proof and apply confirmation fail before a destinatio
     { code: "NATIVE_ELECTRON_COLLECTOR_RECONCILIATION_CONFIRMATION_REQUIRED" },
   );
   assert.equal(sha256(await readFile(electron)), before);
-  await writeFile(proof, `${JSON.stringify({ schema: "tibotattle-native-electron-collector-conservation-r9-v1", inspection: "read-only", scope: "stopped-native-r9-versus-current-electron", saltMatches: false, nativeRows: 4, electronRows: 2 })}\n`, { mode: 0o600 });
+  await writeFile(proof, `${JSON.stringify({ schema: "usagemonitor-native-electron-collector-conservation-r9-v1", inspection: "read-only", scope: "stopped-native-r9-versus-current-electron", saltMatches: false, nativeRows: 4, electronRows: 2 })}\n`, { mode: 0o600 });
   await assert.rejects(
     () => planNativeElectronCollectorReconciliation({ copyRoot }),
     { code: "NATIVE_ELECTRON_COLLECTOR_RECONCILIATION_PROOF_INVALID" },

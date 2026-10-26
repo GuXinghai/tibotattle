@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://tibotattle.com/schemas/release-evidence-v1/manifest.schema.json",
-  "title": "TiboTattle cross-platform release evidence manifest",
+  "$id": "urn:usagemonitor:schema:release-evidence-v1:manifest.schema.json",
+  "title": "Usage Monitor release evidence manifest",
   "description": "Structural form of the offline release-evidence contract. The Node policy validator additionally checks local file bytes, source equality, final Store delivery, canonical ordering, duplicate subjects, and cross-field identity.",
   "type": "object",
   "additionalProperties": false,

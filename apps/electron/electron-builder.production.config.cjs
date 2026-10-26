@@ -1,3 +1,5 @@
+const applicationIdentity = require("../../config/application-identity.cjs");
+const productBrand = require("../../config/product-brand.cjs");
 "use strict";
 
 /**
@@ -16,10 +18,10 @@ const path = require("node:path");
 const distribution = require("../../config/electron-production-distribution.cjs");
 
 const REPOSITORY_ROOT = path.resolve(__dirname, "../..");
-const TARGET_ENV = "TIBOTATTLE_ELECTRON_TARGET";
-const VERSION_ENV = "TIBOTATTLE_ELECTRON_VERSION";
-const SOURCE_REVISION_ENV = "TIBOTATTLE_ELECTRON_SOURCE_REVISION";
-const BUILD_NUMBER_ENV = "TIBOTATTLE_ELECTRON_BUILD_NUMBER";
+const TARGET_ENV = "USAGE_MONITOR_ELECTRON_TARGET";
+const VERSION_ENV = "USAGE_MONITOR_ELECTRON_VERSION";
+const SOURCE_REVISION_ENV = "USAGE_MONITOR_ELECTRON_SOURCE_REVISION";
+const BUILD_NUMBER_ENV = "USAGE_MONITOR_ELECTRON_BUILD_NUMBER";
 const SOURCE_REVISION_PATTERN = /^[0-9a-f]{40}$/u;
 const VERSION_PATTERN = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/u;
 
@@ -62,7 +64,7 @@ function readSourceReleaseVersion() {
 
 function readInputs() {
   const target = exactEnvironment(TARGET_ENV);
-  // TiboTattle is Windows-only. Any other target has no reviewed packaging.
+  // Rhetrion is Windows-only. Any other target has no reviewed packaging.
   if (target !== "win32-x64") fail();
   const targetSpec = distribution.PRODUCTION_ELECTRON_TARGETS[target];
   const distributionSelection = distribution.productionElectronDistributionForTarget({ target });
@@ -161,16 +163,18 @@ function assertExactStagedManifest() {
     fail();
   }
   if (staged?.version !== INPUTS.version
-      || Object.hasOwn(staged, "tibotattleSourceReleaseVersion")) {
+      || Object.hasOwn(staged, "usageMonitorSourceReleaseVersion")) {
     fail();
   }
-  if (JSON.stringify(staged.tibotattleDistribution) !== JSON.stringify(metadata)) fail();
+  if (JSON.stringify(staged.usageMonitorDistribution) !== JSON.stringify(metadata)) fail();
 }
 
 const configuration = {
   appId: distribution.PRODUCTION_ELECTRON_APP_ID,
-  productName: "TiboTattle",
-  artifactName: "TiboTattle-${version}-${os}-${arch}.${ext}",
+  executableName: applicationIdentity.APPLICATION_IDENTITY.executableName,
+  productName: productBrand.displayName,
+  icon: path.join(REPOSITORY_ROOT, productBrand.windowsIcon),
+  artifactName: productBrand.displayName + "-${version}-${os}-${arch}.${ext}",
   buildNumber: INPUTS.buildNumber,
   // electron-builder uses this for the PE FileVersion. The closed policy
   // encodes the exact candidate identifier; ambient CI variables cannot affect
@@ -184,11 +188,12 @@ const configuration = {
   asar: { smartUnpack: false },
   asarUnpack: asarUnpackFor(INPUTS.target),
   extraMetadata: {
+    usageMonitorIdentity: applicationIdentity.applicationMetadata("stable"),
     main: "apps/electron/main.js",
     name: "app-usagemonitor",
-    productName: "TiboTattle",
+    productName: productBrand.displayName,
     version: INPUTS.version,
-    tibotattleDistribution: metadata,
+    usageMonitorDistribution: metadata,
     // app-builder-lib uses these fields for Windows executable and NSIS
     // ProductVersion values. Keep them in the same valid four-component form
     // as buildVersion instead of allowing its default decimal build number to
@@ -214,10 +219,11 @@ const configuration = {
   npmRebuild: true,
   buildDependenciesFromSource: false,
   nodeGypRebuild: false,
-  publish: [{ provider: "generic", url: INPUTS.distributionSelection.feedURL }],
+  publish: null,
 };
 
 configuration.win = {
+  icon: path.join(REPOSITORY_ROOT, productBrand.windowsIcon),
   target: [{ target: "nsis", arch: ["x64"] }],
   signAndEditExecutable: true,
   signExecutable: true,
@@ -225,6 +231,9 @@ configuration.win = {
   verifyUpdateCodeSignature: true,
 };
 configuration.nsis = {
+  installerIcon: path.join(REPOSITORY_ROOT, productBrand.windowsIcon),
+  uninstallerIcon: path.join(REPOSITORY_ROOT, productBrand.windowsIcon),
+  shortcutName: productBrand.displayName,
   guid: distribution.PRODUCTION_ELECTRON_WINDOWS_TOAST_ACTIVATOR_CLSID,
   oneClick: true,
   perMachine: false,
