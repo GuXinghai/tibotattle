@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, link, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, link, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
@@ -8,10 +8,16 @@ import { exportCompatibilityTuple } from "../src/export-contract.js";
 import { deriveParticipantId } from "../src/export-identity.js";
 import { createCodexExportSourcePlan } from "../src/export-source-plan.js";
 import { localExportWorkspace } from "../src/local-node-runtime.js";
+import { createWindowsFilesystemAdapter } from "../src/platform/index.js";
+import {
+  assertWindowsOwnerOnly,
+  grantSyntheticEveryoneRead,
+} from "./helpers/windows-owner-only-fixture.js";
 const {
   buildExportWorkspaceDescriptor,
   createExportWorkspace,
   ExportWorkspaceError,
+  inspectExportWorkspaceDiscardState,
   openExportWorkspace,
 } = localExportWorkspace;
 
@@ -97,6 +103,10 @@ test("workspace persists strict safe records without bypassing checkpoint comple
       descriptor: value.descriptor,
       sourcePlan: value.sourcePlan,
     });
+    if (process.platform === "win32") {
+      assertWindowsOwnerOnly(value.workspace);
+      assertWindowsOwnerOnly(workspace.databaseFile);
+    }
     await workspace.insertRecordBatch([{ recordType: "usageEvent", record: usageRecord() }]);
     await workspace.insertRecordBatch([{ recordType: "usageEvent", record: usageRecord() }]);
     workspace.replaceDiagnostics([{ code: "malformed_lines", count: 2 }]);
@@ -116,13 +126,61 @@ test("workspace persists strict safe records without bypassing checkpoint comple
       codes: [{ code: "malformed_lines", count: 2 }],
     });
     assert.equal([...resumed.iterateRecords()][0].record.eventId, usageRecord().eventId);
-    assert.equal((await stat(resumed.databaseFile)).mode & 0o777, 0o600);
+    if (process.platform === "win32") {
+      assertWindowsOwnerOnly(value.workspace);
+      assertWindowsOwnerOnly(resumed.databaseFile);
+    } else {
+      assert.equal((await stat(resumed.databaseFile)).mode & 0o777, 0o600);
+    }
     const databaseBytes = await readFile(resumed.databaseFile);
     assert.equal(databaseBytes.includes(Buffer.from("PRIVATE_PROMPT")), false);
     resumed.close();
     resumed = null;
   } finally {
     resumed?.close();
+    workspace?.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("read-only discard preflight preserves an incomplete protected workspace", async () => {
+  const value = await fixture();
+  let workspace;
+  try {
+    workspace = await createExportWorkspace({
+      directory: value.workspace,
+      descriptor: value.descriptor,
+      sourcePlan: value.sourcePlan,
+    });
+    const databaseFile = workspace.databaseFile;
+    workspace.close();
+    workspace = null;
+    const bytesBefore = await readFile(databaseFile);
+    const namesBefore = (await readdir(value.workspace)).sort();
+    let directoryMetadataBefore = null;
+    let databaseMetadataBefore = null;
+    if (process.platform === "win32") {
+      const adapter = createWindowsFilesystemAdapter();
+      directoryMetadataBefore = adapter.inspectPath(value.workspace);
+      databaseMetadataBefore = adapter.inspectPath(databaseFile);
+      assertWindowsOwnerOnly(value.workspace);
+      assertWindowsOwnerOnly(databaseFile);
+    }
+
+    assert.deepEqual(await inspectExportWorkspaceDiscardState({ directory: value.workspace }), {
+      poisoned: false,
+      scanComplete: false,
+      hasManifestState: false,
+      chunkCount: 0,
+    });
+    assert.deepEqual(await readFile(databaseFile), bytesBefore);
+    assert.deepEqual((await readdir(value.workspace)).sort(), namesBefore);
+    if (process.platform === "win32") {
+      const adapter = createWindowsFilesystemAdapter();
+      assert.deepEqual(adapter.inspectPath(value.workspace), directoryMetadataBefore);
+      assert.deepEqual(adapter.inspectPath(databaseFile), databaseMetadataBefore);
+    }
+  } finally {
     workspace?.close();
     await rm(value.root, { recursive: true, force: true });
   }
@@ -150,7 +208,9 @@ test("workspace rejects conflicting occurrence IDs atomically", async () => {
 });
 
 test("workspace refuses descriptor mismatch, hardlinks, unsafe permissions, and disk overflow", async () => {
-  const scenarios = ["descriptor", "hardlink", "permissions", "disk"];
+  const scenarios = process.platform === "win32"
+    ? ["descriptor", "hardlink", "permissions", "directory-permissions", "disk"]
+    : ["descriptor", "hardlink", "permissions", "disk"];
   for (const scenario of scenarios) {
     const value = await fixture();
     let workspace = await createExportWorkspace({
@@ -174,12 +234,43 @@ test("workspace refuses descriptor mismatch, hardlinks, unsafe permissions, and 
           openExportWorkspace({ directory: value.workspace }),
           (error) => error instanceof ExportWorkspaceError && error.code === "export_workspace_database_links",
         );
-      } else if (scenario === "permissions" && process.platform !== "win32") {
-        await chmod(join(value.workspace, "workspace.sqlite3"), 0o644);
+      } else if (scenario === "permissions") {
+        const databaseFile = join(value.workspace, "workspace.sqlite3");
+        const bytesBefore = await readFile(databaseFile);
+        if (process.platform === "win32") {
+          const adapter = createWindowsFilesystemAdapter();
+          grantSyntheticEveryoneRead(databaseFile);
+          assert.equal(adapter.inspectPath(databaseFile).broadAccess, true);
+          await assert.rejects(
+            openExportWorkspace({ directory: value.workspace }),
+            (error) => error instanceof ExportWorkspaceError && error.code === "export_workspace_database_permissions",
+          );
+          assert.equal(adapter.inspectPath(databaseFile).broadAccess, true,
+            "an unsafe existing DACL is rejected without repair");
+        } else {
+          await chmod(databaseFile, 0o644);
+          await assert.rejects(
+            openExportWorkspace({ directory: value.workspace }),
+            (error) => error instanceof ExportWorkspaceError && error.code === "export_workspace_database_permissions",
+          );
+        }
+        assert.deepEqual(await readFile(databaseFile), bytesBefore);
+      } else if (scenario === "directory-permissions") {
+        const databaseFile = join(value.workspace, "workspace.sqlite3");
+        const bytesBefore = await readFile(databaseFile);
+        const adapter = createWindowsFilesystemAdapter();
+        grantSyntheticEveryoneRead(value.workspace);
+        grantSyntheticEveryoneRead(databaseFile);
+        assert.equal(adapter.inspectPath(value.workspace).broadAccess, true);
+        assert.equal(adapter.inspectPath(databaseFile).broadAccess, true);
         await assert.rejects(
           openExportWorkspace({ directory: value.workspace }),
-          (error) => error instanceof ExportWorkspaceError && error.code === "export_workspace_database_permissions",
+          (error) => error instanceof ExportWorkspaceError && error.code === "export_workspace_directory",
         );
+        assert.equal(adapter.inspectPath(value.workspace).broadAccess, true,
+          "an unsafe existing directory DACL is rejected without repair");
+        assert.equal(adapter.inspectPath(databaseFile).broadAccess, true);
+        assert.deepEqual(await readFile(databaseFile), bytesBefore);
       } else if (scenario === "disk") {
         await assert.rejects(
           openExportWorkspace({ directory: value.workspace, maximumWorkspaceBytes: 1 }),

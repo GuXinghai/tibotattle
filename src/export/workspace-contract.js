@@ -84,7 +84,7 @@ export function createExportWorkspaceContract(configuration = {}) {
   const EXPORT_SOURCE_PLAN_VERSION = ownString(ownValue(configuration, "EXPORT_SOURCE_PLAN_VERSION"), isProxy);
   const EXPORT_SUPPLEMENTAL_SOURCE_PLAN_VERSION = ownString(ownValue(configuration, "EXPORT_SUPPLEMENTAL_SOURCE_PLAN_VERSION"), isProxy);
 
-  const EXPORT_WORKSPACE_VERSION = "usage-export-workspace-v0.5";
+  const EXPORT_WORKSPACE_VERSION = "usage-export-workspace-v0.6";
   const DEFAULT_EXPORT_WORKSPACE_MAXIMUM_BYTES = DEFAULT_EXPORT_RESOURCE_LIMITS.maximumWorkspaceBytes;
   const DEFAULT_EXPORT_WORKSPACE_BATCH_RECORDS = DEFAULT_EXPORT_RESOURCE_LIMITS.maximumSqliteBatchRecords;
   const EXPORT_WORKSPACE_DATABASE_BASENAME = "workspace.sqlite3";

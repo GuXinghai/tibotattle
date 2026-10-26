@@ -1,6 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,7 +21,9 @@ import {
   mineCodexTransitions,
 } from "../src/codex-transition-miner.js";
 import { scanAndPriceCodexLogs } from "../src/codex-local-usage-analysis.js";
-import { stableJson, writeJsonOwnerOnlyAtomic } from "../src/storage.js";
+import { stableJson } from "../src/storage.js";
+import { LOCAL_API_PRICING_METHOD_VERSION } from "@app-usagemonitor/accounting";
+import { createOwnerOnlyAtomicFilePublisher } from "../src/platform/index.js";
 
 const PRICE_CARDS = [{
   schema_version: "0.1",
@@ -24,6 +38,37 @@ const PRICE_CARDS = [{
   ],
   source: { name: "test", url: "https://example.invalid/pricing", retrieved_at: "2026-07-23T00:00:00.000Z" },
 }];
+
+const publishSyntheticOutput = createOwnerOnlyAtomicFilePublisher({
+  filesystem: {
+    mkdir,
+    realpath,
+    lstat,
+    openExclusive(path, mode) {
+      return open(
+        path,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
+        mode,
+      );
+    },
+    rename,
+    unlink,
+    async syncDirectory() {},
+  },
+  // This adapter exercises the atomic publisher's output bytes and lifecycle
+  // over synthetic storage; it makes no Windows DACL claim.
+  policy: {
+    assertPlatformSupported() {},
+    assertDirectory({ stats: metadata }) {
+      assert.equal(metadata.isDirectory(), true);
+    },
+    assertStage({ stats: metadata, expectedBytes }) {
+      assert.equal(metadata.isFile(), true);
+      assert.equal(metadata.nlink, 1n);
+      if (expectedBytes !== null) assert.equal(metadata.size, BigInt(expectedBytes));
+    },
+  },
+});
 
 function usage(input, output = 0, cached = 0, reasoning = 0) {
   return {
@@ -213,6 +258,7 @@ test("transition miner collapses repeated snapshots and retains skipped and regr
     assert.equal(dataset.pricing.serviceTier.observed, null);
     assert.equal(dataset.pricing.serviceTier.apiPriceAssumption, "standard");
     assert.equal(dataset.pricing.longContext.observedFrom, "per_event_total_input_tokens");
+    assert.equal(dataset.pricing.estimatorVersion, LOCAL_API_PRICING_METHOD_VERSION);
     assert.ok(dataset.transitions[0].quality.warnings.includes("display_percentage_skipped_value"));
     assert.ok(dataset.transitions[1].quality.warnings.includes("display_percentage_regression"));
   } finally {
@@ -263,7 +309,7 @@ test("transition miner attaches privacy-safe Standard, Fast, and cleared tier ti
   }
 });
 
-test("tier attribution follows timestamps and cannot leak a future setting into earlier usage", async () => {
+test("an out-of-order future tier setting stays unknown for earlier usage", async () => {
   const lines = [
     ...metadata("gpt-5.6-sol"),
     tierRecord("2026-07-23T00:00:00.500Z", "default"),
@@ -275,7 +321,32 @@ test("tier attribution follows timestamps and cannot leak a future setting into 
   const home = await fixtureHome(lines);
   try {
     const dataset = await mineCodexTransitions({ ...RANGE, codexHome: home });
-    assert.deepEqual(dataset.transitions.map((item) => item.tierUsageEventCounts), [{ standard: 1 }, { fast: 1 }]);
+    // The future-timestamp Priority line occurs physically before the two
+    // earlier usage rows. With that conflicting ordering, retain unknown for
+    // the earlier transition instead of backfilling Standard by inference.
+    assert.deepEqual(dataset.transitions.map((item) => item.tierUsageEventCounts), [{ unknown: 1 }, { fast: 1 }]);
+  } finally {
+    await rm(home, { recursive: true });
+  }
+});
+
+test("tier attribution uses the prior declaration in normal source and timestamp order", async () => {
+  const lines = [
+    ...metadata("gpt-5.6-sol"),
+    tierRecord("2026-07-23T00:00:00.500Z", "default"),
+    tokenRecord("2026-07-23T00:00:01.000Z", usage(10), usage(10), limits({ primary: 1 })),
+    tokenRecord("2026-07-23T00:00:02.000Z", usage(20), usage(10), limits({ primary: 2 })),
+    tierRecord("2026-07-23T00:00:02.500Z", "priority"),
+    tokenRecord("2026-07-23T00:00:03.000Z", usage(30), usage(10), limits({ primary: 3 })),
+    tokenRecord("2026-07-23T00:00:04.000Z", usage(40), usage(10), limits({ primary: 4 })),
+  ];
+  const home = await fixtureHome(lines);
+  try {
+    const dataset = await mineCodexTransitions({ ...RANGE, codexHome: home });
+    assert.deepEqual(
+      dataset.transitions.map((item) => item.tierUsageEventCounts),
+      [{ standard: 1 }, { fast: 1 }, { fast: 1 }],
+    );
   } finally {
     await rm(home, { recursive: true });
   }
@@ -323,7 +394,7 @@ test("unknown model usage remains explicit and unpriced", async () => {
   }
 });
 
-test("normalized output is deterministic and owner-only", async () => {
+test("normalized output is deterministic and the synthetic publisher writes exact stable bytes", async () => {
   const lines = [
     ...metadata(),
     tokenRecord("2026-07-23T00:00:01.000Z", usage(10), usage(10), limits({ primary: 1 })),
@@ -335,9 +406,8 @@ test("normalized output is deterministic and owner-only", async () => {
     const second = await mineCodexTransitions({ ...RANGE, codexHome: home });
     assert.equal(stableJson(first), stableJson(second));
     const output = join(home, "output", "transitions.json");
-    await writeJsonOwnerOnlyAtomic(output, first);
-    assert.equal((await stat(output)).mode & 0o777, 0o600);
-    assert.equal(await readFile(output, "utf8"), stableJson(first));
+    await publishSyntheticOutput(output, stableJson(first));
+    assert.deepEqual(await readFile(output), Buffer.from(stableJson(first), "utf8"));
   } finally {
     await rm(home, { recursive: true });
   }

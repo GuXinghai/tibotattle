@@ -307,6 +307,7 @@ export function createLocalExportSourcePipelineContext(proxyDetector, sourcePort
     codexCollectorWorkspace,
     codexSourcePlan,
     controller,
+    safeRecords,
     sourcePlanBundle,
   });
 }

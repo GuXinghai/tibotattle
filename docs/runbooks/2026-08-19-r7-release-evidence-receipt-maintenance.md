@@ -24,6 +24,13 @@ refresh old receipts. A historical validator can establish only that old bytes
 match their original contract; it cannot establish current source freshness,
 current capability, or release readiness.
 
+`validateHistoricalR7ReleaseEvidenceReceipt` is the explicit readback API. It
+retains schema, self-hash, privacy and metric consistency validation without
+requiring a historical receipt to match today's source hashes. The ordinary
+validator still requires current provenance. Tests pin the retained receipt
+bytes and their original input/decision bindings; neither API authorizes
+regeneration.
+
 ## Required generation guard
 
 Any remaining new-receipt or evidence-generation entrypoint must fail closed

@@ -207,9 +207,15 @@ async function commitBatch(
   return committed.checkpoint;
 }
 
-async function scanTierPhase({ workspace, source, checkpoint, resourceGuard, failpoint, maximumLinesPerBatch }) {
+async function scanTierPhase({ workspace, source, checkpoint, secret, resourceGuard, failpoint, maximumLinesPerBatch }) {
   const handle = await openVerifiedCodexExportSource(source, { resourceGuard });
   try {
+    // The initial tier pass also builds the response plan. Both consumers need
+    // the same verified prefix, so observe it once and retain the bounded plan
+    // only for this source and invocation.
+    const reconciliation = checkpoint.byteOffset === 0 && checkpoint.lineOrdinal === 0
+      ? createResponseUsageReconciler(secret)
+      : null;
     let current = checkpoint;
     let state = cloneState(current.parserState);
     let batch = emptyBatch(source.sourceKey, current);
@@ -229,10 +235,21 @@ async function scanTierPhase({ workspace, source, checkpoint, resourceGuard, fai
       cursor.lineOrdinal = entry.lineOrdinal;
       lineCounts.lines += 1;
       if (entry.line === null) lineCounts.oversized += 1;
+      let parsedRecord = null;
+      let recordParsedForReconciliation = false;
+      if (reconciliation !== null && entry.line !== null && relevantRecordLine(entry.line)) {
+        try {
+          parsedRecord = JSON.parse(entry.line);
+          recordParsedForReconciliation = true;
+        } catch {
+          if (accountingLine(entry.line)) contentInvalid();
+        }
+        if (recordParsedForReconciliation) reconciliation.observe(parsedRecord, entry.lineOrdinal);
+      }
       if (entry.line?.includes('"type":"thread_settings_applied"')
           || entry.line?.includes('"type":"turn_context"')) {
         try {
-          const record = JSON.parse(entry.line);
+          const record = recordParsedForReconciliation ? parsedRecord : JSON.parse(entry.line);
           const observation = codexTierObservation(record);
           if (observation?.status === "observed") {
             const timestampMs = typeof record?.timestamp === "string"
@@ -275,6 +292,7 @@ async function scanTierPhase({ workspace, source, checkpoint, resourceGuard, fai
     const completedTierCursor = { byteOffset: cursor.byteOffset, lineOrdinal: cursor.lineOrdinal };
     cursor = { phase: "record_scan", byteOffset: 0, lineOrdinal: 0 };
     if (source.parentMissing) batch.diagnostics.add("lineage_parents_missing");
+    const responsePlan = reconciliation?.finish() ?? null;
     await commitBatch(
       workspace,
       batch,
@@ -286,6 +304,7 @@ async function scanTierPhase({ workspace, source, checkpoint, resourceGuard, fai
       failpoint,
       completedTierCursor,
     );
+    return responsePlan;
   } finally {
     try {
       await verifyCodexExportSourceHandle(source, handle, { resourceGuard });
@@ -310,21 +329,58 @@ function toolSnapshotKey(secret, line) {
     .digest("hex");
 }
 
-async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, resourceGuard, failpoint, maximumLinesPerBatch }) {
+function createResponseUsageReconciler(secret) {
+  return createResponseUsagePlan({ identityKey: value =>
+    createHmac('sha256', secret).update('codex-response-usage/v1\0').update(value).digest('hex') });
+}
+
+function responsePlanSourceBinding(source) {
+  return stableJson({
+    sourceKey: source.sourceKey,
+    sourceIdentity: source.sourceIdentity ?? source.rolloutInfo?.sourceIdentity ?? null,
+    fileId: source.fileId ?? null,
+    birthtimeMs: Number.isFinite(source.birthtimeMs) ? source.birthtimeMs : null,
+    prefixBytes: Number.isSafeInteger(source.prefixBytes) ? source.prefixBytes : null,
+    prefixSha256: source.prefixSha256 ?? null,
+    contentSha256: source.contentSha256 ?? null,
+  });
+}
+
+async function readResponseUsagePlan({ handle, source, secret, resourceGuard }) {
+  const reconciliation = createResponseUsageReconciler(secret);
+  let lineCount = 0;
+  for await (const entry of readBoundedUtf8LineEntries(handle, {
+    maximumLineBytes: resourceGuard.limits.maximumLineBytes, resourceGuard,
+    oversizedIrrelevantNeedles: RELEVANT_NEEDLES, maximumTotalBytes: source.prefixBytes,
+    startByte: 0, startLineOrdinal: 1,
+  })) {
+    lineCount += 1;
+    if (!Number.isSafeInteger(lineCount)) throw new ExportSourcePlanError("source_changed");
+    if (entry.line === null || !relevantRecordLine(entry.line)) continue;
+    let record;
+    try { record = JSON.parse(entry.line); }
+    catch { if (accountingLine(entry.line)) contentInvalid(); continue; }
+    reconciliation.observe(record, entry.lineOrdinal);
+  }
+  return { responsePlan: reconciliation.finish(), lineCount };
+}
+
+async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, resourceGuard,
+  failpoint, maximumLinesPerBatch, responsePlan: cachedResponsePlan = null }) {
   const handle = await openVerifiedCodexExportSource(source, { resourceGuard });
-  const expectedSessionId = source.rolloutInfo?.lineage?.sessionId ?? null;
-  const sourceScopeId = deriveSessionScopeId(
-    secret,
-    source.rolloutInfo?.lineage?.sessionId ?? source.rolloutInfo?.rolloutKey ?? source.sourceKey,
-  );
-  // Frozen rollout metadata proves this physical generation. Do not persist
-  // its identity in parser state or conflate it with the logical session.
-  const sourceOccurrenceScopeId = source.rolloutInfo?.lineage?.historyMode === "paginated"
-    ? deriveSessionScopeId(secret, `codex-rollout-occurrence/v1\0${
-      source.rolloutInfo.sourceIdentity ?? source.rolloutInfo.rolloutId ?? source.rolloutInfo.rolloutKey
-    }`)
-    : null;
   try {
+    const expectedSessionId = source.rolloutInfo?.lineage?.sessionId ?? null;
+    const sourceScopeId = deriveSessionScopeId(
+      secret,
+      source.rolloutInfo?.lineage?.sessionId ?? source.rolloutInfo?.rolloutKey ?? source.sourceKey,
+    );
+    // Frozen rollout metadata proves this physical generation. Do not persist
+    // its identity in parser state or conflate it with the logical session.
+    const sourceOccurrenceScopeId = source.rolloutInfo?.lineage?.historyMode === "paginated"
+      ? deriveSessionScopeId(secret, `codex-rollout-occurrence/v1\0${
+        source.rolloutInfo.sourceIdentity ?? source.rolloutInfo.rolloutId ?? source.rolloutInfo.rolloutKey
+      }`)
+      : null;
     let current = checkpoint;
     let state = cloneState(current.parserState);
     let batch = emptyBatch(source.sourceKey, current);
@@ -332,18 +388,26 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
     let resourceBefore = workspace.resourceUsage();
     let lineCounts = { lines: 0, oversized: 0 };
     let cursor = { phase: "record_scan", byteOffset: current.byteOffset, lineOrdinal: current.lineOrdinal };
-    const reconciliation = createResponseUsagePlan({ identityKey: value =>
-      createHmac('sha256', secret).update('codex-response-usage/v1\0').update(value).digest('hex') });
-    for await (const entry of readBoundedUtf8LineEntries(handle, {
-      maximumLineBytes: resourceGuard.limits.maximumLineBytes, resourceGuard,
-      oversizedIrrelevantNeedles: RELEVANT_NEEDLES, maximumTotalBytes: source.prefixBytes,
-      startByte: 0, startLineOrdinal: 1,
-    })) {
-      if (entry.line === null || !relevantRecordLine(entry.line)) continue;
-      let record;try { record = JSON.parse(entry.line); } catch { if (accountingLine(entry.line)) contentInvalid(); continue; }
-      reconciliation.observe(record, entry.lineOrdinal);
+    // A same-invocation tier pass supplies this bounded plan. A durable
+    // record_scan checkpoint has no process-local plan after restart, so
+    // rebuild it from the verified source before emitting any records.
+    let responsePlan = cachedResponsePlan;
+    if (responsePlan === null) {
+      // The durable tier checkpoint binds this exact count to the verified
+      // source prefix. Reserve it before fallback reads so a hard process exit
+      // cannot make those reads disappear from the resource ledger. Cursor
+      // deltas continue to count only record-scan progress.
+      await workspace.reserveResourceLineReads(checkpoint.tierLineCount);
+      const rebuilt = await readResponseUsagePlan({ handle, source, secret, resourceGuard });
+      if (rebuilt.lineCount !== checkpoint.tierLineCount) {
+        throw new ExportSourcePlanError("source_changed");
+      }
+      responsePlan = rebuilt.responsePlan;
+      await failpoint?.("after_response_plan_rebuild", {
+        sourceKey: source.sourceKey,
+        lineCount: rebuilt.lineCount,
+      });
     }
-    const responsePlan = reconciliation.finish();
     const pendingResponses = new Set();
     const openTasks = new Set(workspace.sourceOpenTaskKeys(source.sourceKey));
     const pendingTaskAdds = new Set();
@@ -666,6 +730,7 @@ async function populateCheckpointedCodexSources({
     throw new TypeError("Checkpointed Codex source scan requires bounded inputs");
   }
   const sourceByKey = new Map(sourcePlan.sources.map((source) => [source.sourceKey, source]));
+  const responsePlans = new Map();
   try {
     for (;;) {
       const checkpoint = workspace.loadNextSourceCheckpoint();
@@ -673,8 +738,20 @@ async function populateCheckpointedCodexSources({
       const source = sourceByKey.get(checkpoint.sourceKey);
       if (!source) throw new ExportSourcePlanError("source_changed");
       if (checkpoint.phase === "tier_scan") {
-        await scanTierPhase({ workspace, source, checkpoint, resourceGuard, failpoint, maximumLinesPerBatch });
+        const responsePlan = await scanTierPhase({
+          workspace, source, checkpoint, secret, resourceGuard, failpoint, maximumLinesPerBatch,
+        });
+        if (responsePlan !== null) {
+          responsePlans.set(source.sourceKey, {
+            binding: responsePlanSourceBinding(source),
+            responsePlan,
+          });
+        }
       } else if (checkpoint.phase === "record_scan") {
+        const cached = responsePlans.get(source.sourceKey);
+        const responsePlan = cached?.binding === responsePlanSourceBinding(source)
+          ? cached.responsePlan
+          : null;
         await scanRecordPhase({
           workspace,
           source,
@@ -687,7 +764,9 @@ async function populateCheckpointedCodexSources({
           resourceGuard,
           failpoint,
           maximumLinesPerBatch,
+          responsePlan,
         });
+        responsePlans.delete(source.sourceKey);
       }
     }
   } catch (error) {

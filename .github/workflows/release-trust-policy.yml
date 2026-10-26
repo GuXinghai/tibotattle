@@ -105,13 +105,13 @@ jobs:
         run: npm run architecture:check
 
       - name: Test tool inventory contract
-        run: node --test test/tool-inventory.test.js
+        run: node ./scripts/run-isolated-tests.mjs -- test/tool-inventory.test.js
 
       - name: Check the checked-in Codex contract
         run: npm run codex:contract:check
 
       - name: Test release evidence and attestation contracts
-        run: node --test test/codex-contract-drift.test.js test/release-workflow-policy.test.js test/release-evidence.test.js test/release-attestation-action.test.js test/release-sbom-action.test.js
+        run: node ./scripts/run-isolated-tests.mjs -- test/codex-contract-drift.test.js test/release-workflow-policy.test.js test/release-evidence.test.js test/release-attestation-action.test.js test/release-sbom-action.test.js
 
       - name: Check documentation governance
         run: npm run docs:check

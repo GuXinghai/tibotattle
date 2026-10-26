@@ -19,6 +19,13 @@ services. Saved consent, opt-outs, salts, identities and receipts remain intact.
 The optional X reader has its own protected browser session and does not transmit
 local usage evidence.
 
+Ordinary validation uses the isolated test runner with disposable synthetic
+home, application-state, and Codex directories. It removes inherited native
+credential qualification from test children. Environment isolation is not a
+sandbox for arbitrary test code: direct native credential operations belong only
+to a separately authorized hosted qualification gate. Never inspect or roll back
+real user state to validate a test-isolation repair.
+
 The local refresh reads selected Codex session folders, local Codex
 configuration and lineage state, the installed Codex app-server account/quota
 methods, and owner-only derived state. Undisclosed source access, retention of prompt/response content, unsafe derived artifacts, or unintended network transmission is in scope.

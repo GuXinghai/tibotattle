@@ -159,6 +159,40 @@ test("finished scan rendering keeps excluded sources visible in the detail and b
   assert.doesNotMatch(select("#history-index-badge").textContent, /indexing/iu);
 });
 
+test("missing required coverage counts remain visible as unknown, never as zero progress", async () => {
+  for (const missing of [
+    { sourceCount: undefined },
+    { indexedSourceCount: undefined },
+  ]) {
+    const data = dashboardFor(completedScan(missing));
+    const history = data.pricing.historyCoverage;
+    assert.equal(history.status, "partial");
+    assert.ok(history.sourceCount === null || history.indexedSourceCount === null);
+    const select = await renderHistory(data);
+    assert.equal(select("#history-progress").hidden, false);
+    assert.equal(select("#history-progress-headline").textContent, "History coverage unknown");
+    assert.match(select("#history-progress-detail").textContent, /missing required coverage counts/u);
+    assert.match(select("#history-progress-note").textContent, /Update local usage/u);
+    assert.equal(select("#history-progress-track").hidden, true);
+    assert.equal(select("#history-progress-track").getAttribute("aria-valuenow"), undefined);
+    assert.equal(select("#history-index-badge").hidden, false);
+    assert.equal(select("#history-index-badge").textContent, "History coverage unknown");
+  }
+
+  const measuredZero = dashboardFor(completedScan({
+    status: "partial",
+    phase: "not_started",
+    sourceCount: 0,
+    indexedSourceCount: 0,
+    pendingSourceCount: 0,
+    sourceBytes: 0,
+    indexedBytes: 0,
+  }));
+  const select = await renderHistory(measuredZero);
+  assert.equal(select("#history-progress").hidden, true);
+  assert.equal(select("#history-index-badge").hidden, true);
+});
+
 test("the completed-scan message is localized in every shipped locale", async () => {
   for (const locale of SUPPORTED_LOCALES) {
     const select = await renderHistory(dashboardFor(completedScan()), false, locale);
@@ -167,5 +201,18 @@ test("the completed-scan message is localized in every shipped locale", async ()
       assert.ok(text.length > 0);
       assert.doesNotMatch(text, /dashboard\.history|\{(?:indexed|total|bytesIndexed|bytesTotal)\}/u);
     }
+  }
+});
+
+test("unknown-coverage copy is localized in every shipped locale", async () => {
+  const data = dashboardFor(completedScan({ sourceCount: undefined }));
+  for (const locale of SUPPORTED_LOCALES) {
+    const select = await renderHistory(data, false, locale);
+    for (const id of ["headline", "detail", "note"]) {
+      const text = select(`#history-progress-${id}`).textContent;
+      assert.ok(text.length > 0);
+      assert.doesNotMatch(text, /dashboard\.history|\{(?:count|total|indexed)\}/u);
+    }
+    assert.ok(select("#history-index-badge").textContent.length > 0);
   }
 });

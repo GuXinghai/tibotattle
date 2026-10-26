@@ -19,7 +19,12 @@ import {
   TEST_GENERATION_FINGERPRINT,
   withResidentCalibration,
 } from "./helpers/replay-safe-resident-calibration.js";
-import { addUsdStrings, priceCodexUsageEvent, summarizeQuotaWeightedAccounting } from "@app-usagemonitor/accounting";
+import {
+  addUsdStrings,
+  LOCAL_API_PRICING_METHOD_VERSION,
+  priceCodexUsageEvent,
+  summarizeQuotaWeightedAccounting,
+} from "@app-usagemonitor/accounting";
 import {
   readLocalCollectorAccountingCache,
   serializeLocalCollectorAccountingCache,
@@ -45,6 +50,12 @@ async function ownerOnlyCacheFixture(t, prefix, nested = false) {
   assertWindowsOwnerOnly(root);
   assertWindowsOwnerOnly(parent);
   return join(parent, "accounting.sqlite");
+}
+
+function syntheticCacheStateFile(root, basename) {
+  const stateDirectory = join(root, "protected-state");
+  createProtectedFixtureDirectory(stateDirectory);
+  return join(stateDirectory, basename);
 }
 
 // Retention starts from an actually private, valid SQLite cache. Provision that
@@ -128,7 +139,7 @@ async function readTestCache(stateFile) {
 
 test("a full year of usage can publish a compact cache above the former 16 MiB ceiling", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-cache-byte-budget-"));
-  const stateFile = join(directory, "state.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "state.sqlite");
   const bucketCount = 365 * 24 * 4;
   try {
     const cache = await refreshReplaySafeAccountingCache({
@@ -292,7 +303,7 @@ test("unified cache history is attached only after a matching second generation 
 test("prior-generation accounting is opt-in, clock-checked and isolated from current authority", async t => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-retained-generation-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const stateFile = join(directory, "collector.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "collector.sqlite");
   const cache = await refreshReplaySafeAccountingCache({ stateFile,
     sourceMode: "unified", expectedGeneration: "generation-test-1",
     scan: completeUnifiedScanner([]), now: () => NOW });
@@ -328,7 +339,7 @@ test("prior-generation accounting is opt-in, clock-checked and isolated from cur
 
 test("cache reads invalidate when the unified generation no longer matches", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-generation-reuse-"));
-  const stateFile = join(directory, "local-collector-state-v1.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "local-collector-state-v1.sqlite");
   const scan = completeUnifiedScanner([]);
   await refreshReplaySafeAccountingCache({
     stateFile,
@@ -1090,7 +1101,7 @@ test("replay-safe fast pricing plans keep pre-change events on their historical 
 
 test("replay-safe cache rejects price-card event and exact-cost reconciliation drift", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-provenance-cache-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const cache = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => Date.parse("2026-08-01T12:00:00.000Z"),
@@ -1128,7 +1139,7 @@ test("replay-safe cache rejects price-card event and exact-cost reconciliation d
 
 test("exact decimal totals survive a floating-point half-boundary round trip", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-exact-money-rounding-"));
-  const stateFile = join(directory, "local-collector-state-v1.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "local-collector-state-v1.sqlite");
   const events = Array.from({ length: 31 }, (_, index) => usageEvent({
     timestamp: new Date(NOW - 60_000 + index).toISOString(),
     model: "gpt-5.6-terra",
@@ -1245,7 +1256,7 @@ test("refresh and read round-trip a valid owner-only cache", async (t) => {
 
 test("cache freshness uses the covered end and rejects a future projection", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-freshness-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const written = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -1463,7 +1474,7 @@ test("refresh publishes a fitted reset after an earlier diagnostic-only transiti
     "usage-monitor-diagnostic-first-calibration-",
   ));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const stateFile = join(directory, "local-collector-state-v1.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "local-collector-state-v1.sqlite");
   const startMs = Date.parse("2026-08-01T00:00:00.000Z");
   const stamp = (seconds) => new Date(startMs + seconds * 1_000).toISOString();
   const resetsAt = Math.floor(
@@ -1548,7 +1559,7 @@ test("refresh publishes a fitted reset after an earlier diagnostic-only transiti
 
 test("a mix-varied corpus yields a fitted per-model composition that survives the cache round trip", async () => {
   const directory = await mkdtemp(join(tmpdir(), "composition-cache-"));
-  const stateFile = join(directory, "collector-state-v1.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "collector-state-v1.sqlite");
   const resetStart = Date.parse("2026-08-10T00:00:00.000Z");
   const resetsAt = (resetStart + 7 * 24 * 60 * 60 * 1_000) / 1_000;
   const nowMs = resetStart + 60 * 60 * 60 * 1_000;
@@ -1625,7 +1636,7 @@ test("compact plan buckets preserve event-summed tokens and reject malformed evi
 
 test("a composition fit that trips the RSS ceiling mid-way fails soft into a completed v0.7 cache", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-fit-fail-soft-"));
-  const stateFile = join(directory, "collector-state-v1.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "collector-state-v1.sqlite");
   let fitSpikeArmed = false;
   let checksSinceArmed = 0;
   const cache = await buildReplaySafeAccountingCache({
@@ -2241,7 +2252,7 @@ test("Spark quota observations stay outside the normal weekly quota timeline", a
 // permanently empty against every real capture.
 test("Spark quota snapshots are retained under every real Spark limit id and round-trip", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-spark-ids-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const cache = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2286,7 +2297,7 @@ test("Spark quota snapshots are retained under every real Spark limit id and rou
 // collation order would be rejected by its own read validation.
 test("same-instant readings under both Spark ids stay deterministic and readable", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-spark-tie-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const snapshots = [
     weeklySnapshot({
       timestamp: "2026-07-27T11:59:00.000Z",
@@ -2327,7 +2338,7 @@ test("same-instant readings under both Spark ids stay deterministic and readable
 // rebuild instead of serving them as evidence that no Spark history exists.
 test("a v0.7 cache with the permanently empty spark series is withheld for rebuild", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-spark-stale-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const cache = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2420,7 +2431,7 @@ test("exact retained quota points make an eligible comparison window testable", 
 
 test("cache validation requires weighted and bounded timeline evidence so older cache shapes rebuild", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-quota-cache-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const cache = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2493,14 +2504,21 @@ test("replay cache rejects the old prefix-priced version and unreviewed model cr
       components: { input_uncached_tokens: 1_000 },
     })]),
   });
-  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.24");
+  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.25");
+  assert.equal(cache.pricingMethodVersion, LOCAL_API_PRICING_METHOD_VERSION);
   assert.doesNotThrow(() => assertReplaySafeAccountingCache(cache));
+  const oldPricingMethod = structuredClone(cache);
+  oldPricingMethod.pricingMethodVersion = "provider-neutral-api-price-equivalent-v0.3";
+  assert.throws(() => assertReplaySafeAccountingCache(oldPricingMethod));
   const oldVersion = structuredClone(cache);
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.12";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
   oldVersion.schemaVersion = "local-replay-safe-accounting-v0.13";
   assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
-  for(const version of ["0.19","0.20","0.21","0.22","0.23"]){oldVersion.schemaVersion="local-replay-safe-accounting-v"+version;assert.throws(()=>assertReplaySafeAccountingCache(oldVersion));}
+  for (const version of ["0.19", "0.20", "0.21", "0.22", "0.23", "0.24"]) {
+    oldVersion.schemaVersion = `local-replay-safe-accounting-v${version}`;
+    assert.throws(() => assertReplaySafeAccountingCache(oldVersion));
+  }
   for (const model of ["gpt-5.6", "gpt-5.5-pro", "gpt-5.5-future"]) {
     const invalidCrossing = structuredClone(cache);
     invalidCrossing.timeline[0].speedWeighting.unknown ??= {};
@@ -2513,7 +2531,7 @@ test("replay cache rejects the old prefix-priced version and unreviewed model cr
 
 test("a replay cache from an older official price registry is withheld", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-pricing-cache-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const cache = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2533,7 +2551,7 @@ test("a replay cache from an older official price registry is withheld", async (
 
 test("a cache from the former current-price basis is withheld for deterministic rebuild", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-semantics-cache-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const cache = await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2559,7 +2577,7 @@ test("a cache from the former current-price basis is withheld for deterministic 
 
 test("refresh forwards AbortSignal and never writes an aborted projection", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-abort-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const controller = new AbortController();
   let observedSignal;
   const scan = async (options) => {
@@ -2592,7 +2610,7 @@ test("refresh forwards AbortSignal and never writes an aborted projection", asyn
 
 test("an abort during cache-store preparation preserves the retained cache", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-publish-abort-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2886,7 +2904,7 @@ test("an RSS ceiling miss during accounting is a soft target: the prior cache is
 
 test("the RSS guard is budget-relative: a pass past the delta budget soft-fails below the absolute ceiling", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-rss-delta-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2923,7 +2941,7 @@ test("the RSS guard is budget-relative: a pass past the delta budget soft-fails 
 
 test("a retained-byte budget miss is a soft target that retains the prior cache", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-bytes-soft-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -2968,7 +2986,7 @@ test("a retained-byte budget miss is a soft target that retains the prior cache"
 
 test("a memory-budget miss with no prior cache degrades honestly without throwing", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-rss-nocache-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   // No prior refresh: nothing valid is on disk to retain.
   const samples = [50, 50, 101];
   const deferredEvents = [];
@@ -3012,7 +3030,7 @@ test("a memory-budget miss with no prior cache degrades honestly without throwin
 
 test("the 2026-08-11 incident's own reading is in budget and rebuilds normally", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-rss-in-budget-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const baseline = REALISTIC_COMPANION_BASELINE;
   // The live-failure reading: ~800 MB baseline, the pass climbs to ~1.6 GB.
   // Under the then-current 1.5 GiB ceiling / 512 MiB delta that hard-failed
@@ -3047,7 +3065,7 @@ test("the 2026-08-11 incident's own reading is in budget and rebuilds normally",
 
 test("the absolute target is the effective transition ceiling for a realistic companion baseline", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-rss-absolute-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -3084,7 +3102,7 @@ test("the absolute target is the effective transition ceiling for a realistic co
 
 test("a large companion baseline is not charged against the pass budget", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-rss-baseline-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const baseline = 1_200 * 1024 * 1024;
   // The companion idles at ~1.2 GiB and the pass climbs a modest 50 MiB:
   // well within its delta budget and under the absolute ceiling, so the
@@ -3112,7 +3130,7 @@ test("a large companion baseline is not charged against the pass budget", async 
 
 test("the scan resource guard inherits the budget-relative RSS ceiling", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-rss-guard-limit-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   const baseline = 100 * 1024 * 1024;
   let observedGuard = null;
   await refreshReplaySafeAccountingCache({
@@ -3241,7 +3259,7 @@ test("the deep-scan guard admits a full rollout corpus and still stops above the
 
 test("an AbortSignal can interrupt cooperative derivation after a dense scan and preserves the last cache", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-derive-abort-"));
-  const cacheFile = join(directory, "accounting.json");
+  const cacheFile = syntheticCacheStateFile(directory, "accounting.json");
   await refreshReplaySafeAccountingCache({
     cacheFile,
     now: () => NOW,
@@ -3455,7 +3473,7 @@ test("a build without a calibration source or a non-unified source mode fails cl
 
 test("a stored cache built from the retired legacy source is never served as current", async () => {
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-legacy-stored-"));
-  const stateFile = join(directory, "local-collector-state-v1.sqlite");
+  const stateFile = syntheticCacheStateFile(directory, "local-collector-state-v1.sqlite");
   try {
     const cache = await refreshReplaySafeAccountingCache({
       stateFile,

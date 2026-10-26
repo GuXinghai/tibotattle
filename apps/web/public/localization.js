@@ -322,6 +322,21 @@ export const WEB_MESSAGES = Object.freeze({
     "历史记录扫描已完成",
     "Exploración del historial finalizada",
   ],
+  "dashboard.history.coverageUnknownHeadline": [
+    "History coverage unknown",
+    "历史覆盖范围未知",
+    "Cobertura del historial desconocida",
+  ],
+  "dashboard.history.coverageUnknownDetail": [
+    "The local history record is missing required coverage counts. Usage remains unknown, not zero or complete.",
+    "本地历史记录缺少必需的覆盖计数。用量仍属未知，不代表零或已完成。",
+    "Al registro del historial local le faltan recuentos de cobertura necesarios. El uso sigue siendo desconocido, no cero ni completo.",
+  ],
+  "dashboard.history.coverageUnknownNote": [
+    "Update local usage to refresh the history coverage summary.",
+    "更新本地用量以刷新历史覆盖摘要。",
+    "Actualiza el uso local para renovar el resumen de cobertura del historial.",
+  ],
   "dashboard.history.indexedSources": [
     "{indexed} of {total} discovered sources indexed ({bytesIndexed} of {bytesTotal}).",
     "已索引 {total} 个已发现来源中的 {indexed} 个（{bytesIndexed}/{bytesTotal}）。",

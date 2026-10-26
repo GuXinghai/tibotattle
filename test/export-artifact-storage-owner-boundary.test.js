@@ -28,12 +28,16 @@ import * as platform from "../src/platform/index.js";
 import * as platformOwner from
   "../src/platform/owner-only-export-artifact-storage.js";
 import * as storage from "../src/storage.js";
+import { createSyntheticWindowsExportProtection } from "./helpers/synthetic-windows-export-protection.mjs";
 import {
   LEGACY_STORAGE_DIRECT_IMPORTERS,
   checkArchitectureBoundaries,
 } from "../scripts/check-architecture-boundaries.mjs";
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const sharedSyntheticWindowsProtection = process.platform === "win32"
+  ? createSyntheticWindowsExportProtection()
+  : null;
 const PLATFORM_EXPORTS = Object.freeze([
   "createOwnerOnlyExportArtifactStorageContext",
 ]);
@@ -69,8 +73,22 @@ function ownerStorageConfiguration(overrides = {}) {
     maximumDirectoryEntries:
       exportApi.DEFAULT_EXPORT_RESOURCE_LIMITS.maximumDirectoryEntries,
     createResourceLimitError: (code) => new exportApi.ExportResourceLimitError(code),
+    ...(sharedSyntheticWindowsProtection ? {
+      windowsFilesystemFactory: () => sharedSyntheticWindowsProtection.filesystem,
+      windowsSourceAccessFactory: () => sharedSyntheticWindowsProtection.sourceAccess,
+    } : {}),
     ...overrides,
   };
+}
+
+function createOwnerOnlyArtifactStorage(configuration = {}) {
+  return platform.createOwnerOnlyExportArtifactStorageContext({
+    ...(sharedSyntheticWindowsProtection ? {
+      windowsFilesystemFactory: () => sharedSyntheticWindowsProtection.filesystem,
+      windowsSourceAccessFactory: () => sharedSyntheticWindowsProtection.sourceAccess,
+    } : {}),
+    ...configuration,
+  });
 }
 
 function assertNoCanary(error, expected) {
@@ -100,7 +118,7 @@ test("owner, application, and platform expose exact reviewed artifact APIs", () 
   );
   assert.deepEqual(Object.keys(platformContext).sort(), [...PLATFORM_CONTEXT_METHODS].sort());
   const applicationContext = application.createLocalExportArtifactStorageContext({
-    createStorage: platform.createOwnerOnlyExportArtifactStorageContext,
+    createStorage: createOwnerOnlyArtifactStorage,
     activityMarkerFile: platform.defaultActivityMarkerFile,
   });
   assert.deepEqual(Object.keys(applicationContext).sort(), [...APPLICATION_CONTEXT_API].sort());
@@ -117,7 +135,7 @@ test("owner, application, and platform expose exact reviewed artifact APIs", () 
 
 test("application binding preserves receipt-first publication and legacy compatibility", async () => {
   const context = application.createLocalExportArtifactStorageContext({
-    createStorage: platform.createOwnerOnlyExportArtifactStorageContext,
+    createStorage: createOwnerOnlyArtifactStorage,
     activityMarkerFile: platform.defaultActivityMarkerFile,
   });
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-artifact-owner-"));
@@ -139,17 +157,19 @@ test("application binding preserves receipt-first publication and legacy compati
 });
 
 test("platform mechanics do not import export, application, or legacy storage", async () => {
-  const ownerSource = await source(
+  const ownerSource = (await source(
     "src/platform/owner-only-export-artifact-storage.js",
-  );
+  )).replace(/\r\n?/gu, "\n");
   assert.match(ownerSource, /from "node:fs\/promises"/u);
   assert.doesNotMatch(ownerSource, /\.\.\/(?:application|export)(?:\/|["'])/u);
   assert.doesNotMatch(ownerSource, /(?:from|import\()\s*["']\.\.\/storage\.js/u);
   assert.match(ownerSource, /The OS user is the local trust boundary/u);
-  assert.match(ownerSource, /no portable openat-style directory capability/u);
+  assert.match(ownerSource, /Windows additionally requires/u);
+  assert.match(ownerSource, /native owner-only DACL evidence/u);
+  assert.match(ownerSource, /same user/u);
   assert.doesNotMatch(ownerSource, /const bytes = await handle\.readFile\(\)/u);
   assert.match(ownerSource, /const overflow = Buffer\.allocUnsafe\(1\)/u);
-  assert.match(ownerSource, /descriptorStats\.size,\n      \);/u);
+  assert.match(ownerSource, /descriptorStats\.size,\s*\);/u);
   assert.match(ownerSource, /if \(readCompleted\)/u);
   assert.doesNotMatch(ownerSource, /recoveryFileRead/u);
   assert.match(ownerSource, /await handle\.close\(\);\n    if \(configuredRecoveryFileCloseFailpoint === undefined\) return;/u);
@@ -370,7 +390,7 @@ test("public artifact-storage snapshots never invoke accessor configuration, por
 
   let applicationConfigReads = 0;
   const applicationConfig = {
-    createStorage: platform.createOwnerOnlyExportArtifactStorageContext,
+    createStorage: createOwnerOnlyArtifactStorage,
     activityMarkerFile: platform.defaultActivityMarkerFile,
   };
   Object.defineProperty(applicationConfig, "createStorage", {
@@ -469,7 +489,7 @@ test("public artifact-storage snapshots never invoke accessor configuration, por
 
 test("application lease facade preserves exact callback throws and normalizes platform failures", async () => {
   const context = application.createLocalExportArtifactStorageContext({
-    createStorage: platform.createOwnerOnlyExportArtifactStorageContext,
+    createStorage: createOwnerOnlyArtifactStorage,
     activityMarkerFile: platform.defaultActivityMarkerFile,
   });
   const directory = await mkdtemp(join(tmpdir(), "usage-monitor-callback-identity-"));
@@ -549,15 +569,18 @@ test("opaque destination capabilities preserve absence, bounds, defensive bytes,
     await link(join(destinationPath, "bundle.umx"), join(destinationPath, "bundle-copy.umx"));
     await assert.rejects(
       context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "bundle.umx" }),
-      /Invalid export recovery artifact/u,
+      /Invalid export recovery artifact|Invalid Windows owner-only export file/u,
     );
     await unlink(join(destinationPath, "bundle-copy.umx"));
-    await chmod(join(destinationPath, "bundle.umx"), 0o644);
-    await assert.rejects(
-      context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "bundle.umx" }),
-      /Invalid export recovery artifact/u,
-    );
-    await chmod(join(destinationPath, "bundle.umx"), 0o600);
+    if (process.platform !== "win32") {
+      // POSIX mode bits are not a Windows DACL assertion.
+      await chmod(join(destinationPath, "bundle.umx"), 0o644);
+      await assert.rejects(
+        context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "bundle.umx" }),
+        /Invalid export recovery artifact/u,
+      );
+      await chmod(join(destinationPath, "bundle.umx"), 0o600);
+    }
 
     const limited = platform.createOwnerOnlyExportArtifactStorageContext(ownerStorageConfiguration({
       maximumDirectoryEntries: 1,
@@ -603,6 +626,207 @@ test("opaque destination capabilities preserve absence, bounds, defensive bytes,
   } finally {
     await rm(parent, { recursive: true, force: true });
   }
+});
+
+test("synthetic filesystem link refusal leaves no half-published pair and remains recoverable", async (t) => {
+  const parent = await mkdtemp(join(tmpdir(), "usage-monitor-artifact-link-refusal-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const destinationPath = join(parent, "destination");
+  const context = platform.createOwnerOnlyExportArtifactStorageContext(ownerStorageConfiguration());
+  const opened = await context.openOwnerOnlyExportDestination({ directory: destinationPath });
+  const syntheticFailure = new Error("synthetic filesystem adapter refused link");
+  let linkAttempts = 0;
+
+  await assert.rejects(context.writeOwnerOnlyPairNoClobberForDestination(opened.destination, {
+    firstBasename: "bundle.umx",
+    firstContent: "bundle\n",
+    secondBasename: "receipt.json",
+    secondContent: "receipt\n",
+  }, {
+    async linkFile() {
+      linkAttempts += 1;
+      throw syntheticFailure;
+    },
+  }), (error) => error === syntheticFailure);
+  assert.equal(linkAttempts, 1);
+  assert.deepEqual(
+    await context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "bundle.umx" }),
+    { status: "absent" },
+  );
+  assert.deepEqual(
+    await context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "receipt.json" }),
+    { status: "absent" },
+  );
+  assert.deepEqual(
+    await context.recoverOwnerOnlyPairTransactionsForDestination(opened.destination),
+    { recovered: 1, transactionsFound: 1 },
+  );
+  assert.equal(
+    (await context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "bundle.umx" })).bytes.toString("utf8"),
+    "bundle\n",
+  );
+  assert.equal(
+    (await context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "receipt.json" })).bytes.toString("utf8"),
+    "receipt\n",
+  );
+});
+
+test("Windows synthetic ACL checks gate bounded artifact writes and reads", async (t) => {
+  const parent = await mkdtemp(join(tmpdir(), "usage-monitor-windows-artifact-acl-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const protection = createSyntheticWindowsExportProtection();
+  const context = platform.createOwnerOnlyExportArtifactStorageContext(ownerStorageConfiguration({
+    windowsFilesystemFactory: () => protection.filesystem,
+    windowsSourceAccessFactory: () => protection.sourceAccess,
+  }));
+  const destinationPath = join(parent, "destination");
+  const opened = await context.openOwnerOnlyExportDestination({ directory: destinationPath });
+  const artifact = Buffer.alloc(2 * 1024 * 1024, 0x41);
+  await context.writeOwnerOnlyPairNoClobberForDestination(opened.destination, {
+    firstBasename: "large.bundle",
+    firstContent: artifact,
+    secondBasename: "receipt.json",
+    secondContent: "receipt\n",
+  });
+  const artifactPath = join(destinationPath, "large.bundle");
+  const beforeBytes = await readFile(artifactPath);
+  assert.deepEqual(beforeBytes, artifact);
+  const successfulRead = await context.readOwnerOnlyExportArtifactIfPresent(opened.destination, {
+    basename: "large.bundle",
+  });
+  assert.deepEqual(successfulRead.bytes, artifact);
+  assert.ok(protection.counters.opens > 0);
+  assert.ok(protection.counters.reads > 0);
+
+  await assert.rejects(
+    context.writeOwnerOnlyPairNoClobberForDestination(opened.destination, {
+      firstBasename: "recovery.bundle",
+      firstContent: "recovery bundle",
+      secondBasename: "recovery.receipt",
+      secondContent: "recovery receipt",
+    }, {
+      async failpoint(stage) {
+        if (stage === "after_receipt") throw new Error("synthetic interruption after receipt link");
+      },
+    }),
+    /synthetic interruption after receipt link/u,
+  );
+  assert.deepEqual(
+    await context.recoverOwnerOnlyPairTransactionsForDestination(opened.destination),
+    { recovered: 1, transactionsFound: 1 },
+  );
+  assert.equal(
+    (await readFile(join(destinationPath, "recovery.bundle"), "utf8")),
+    "recovery bundle",
+  );
+  assert.equal(
+    (await readFile(join(destinationPath, "recovery.receipt"), "utf8")),
+    "recovery receipt",
+  );
+
+  protection.grantEveryoneRead(artifactPath);
+  const fileAclBefore = protection.inspectPath(artifactPath);
+  const fileCountersBefore = { ...protection.counters };
+  await assert.rejects(
+    context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "large.bundle" }),
+    /Invalid Windows owner-only export file/u,
+  );
+  assert.deepEqual(protection.counters, fileCountersBefore);
+  assert.equal(protection.inspectPath(artifactPath).broadAccess, fileAclBefore.broadAccess);
+  assert.deepEqual(await readFile(artifactPath), beforeBytes);
+
+  protection.grantOwnerOnly(artifactPath);
+  const successfulAgain = await context.readOwnerOnlyExportArtifactIfPresent(opened.destination, {
+    basename: "large.bundle",
+  });
+  assert.deepEqual(successfulAgain.bytes, artifact);
+  protection.grantEveryoneRead(destinationPath);
+  const directoryAclBefore = protection.inspectPath(destinationPath);
+  const directoryCountersBefore = { ...protection.counters };
+  await assert.rejects(
+    context.readOwnerOnlyExportArtifactIfPresent(opened.destination, { basename: "large.bundle" }),
+    /Invalid Windows owner-only export directory/u,
+  );
+  await assert.rejects(
+    context.writeOwnerOnlyPairNoClobber({
+      firstPath: join(destinationPath, "other.bundle"),
+      firstContent: "other",
+      secondPath: join(destinationPath, "other.receipt"),
+      secondContent: "receipt",
+    }),
+    /synthetic_acl_rejected_existing_directory|Invalid Windows owner-only export directory/u,
+  );
+  assert.deepEqual(protection.counters, directoryCountersBefore);
+  assert.equal(protection.inspectPath(destinationPath).broadAccess, directoryAclBefore.broadAccess);
+  assert.deepEqual(await readFile(artifactPath), beforeBytes);
+});
+
+test("Windows export protection without required native capabilities refuses before destination creation", async (t) => {
+  const parent = await mkdtemp(join(tmpdir(), "usage-monitor-windows-artifact-no-capability-"));
+  t.after(() => rm(parent, { recursive: true, force: true }));
+  const destinationPath = join(parent, "not-created");
+  const context = platform.createOwnerOnlyExportArtifactStorageContext(ownerStorageConfiguration({
+    windowsFilesystemFactory: () => ({ inspectPath() {} }),
+    windowsSourceAccessFactory: () => ({ contractVersion: "windows-source-read-v1", inspectPath() {}, open() {} }),
+  }));
+  await assert.rejects(
+    context.openOwnerOnlyExportDestination({ directory: destinationPath }),
+    /Windows owner-only export protection is unavailable/u,
+  );
+  await assert.rejects(lstat(destinationPath), { code: "ENOENT" });
+});
+
+test("Windows publish preflights source-read capability before filesystem mutation", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "usage-monitor-windows-artifact-preflight-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const protection = createSyntheticWindowsExportProtection();
+  const setup = platform.createOwnerOnlyExportArtifactStorageContext(ownerStorageConfiguration({
+    windowsFilesystemFactory: () => protection.filesystem,
+    windowsSourceAccessFactory: () => protection.sourceAccess,
+  }));
+  const oldBundle = join(directory, "old.bundle");
+  const oldReceipt = join(directory, "old.receipt");
+  await setup.writeOwnerOnlyPairNoClobber({
+    firstPath: oldBundle,
+    firstContent: "retained bundle",
+    secondPath: oldReceipt,
+    secondContent: "retained receipt",
+  });
+  const oldBundleBytes = await readFile(oldBundle);
+  const oldReceiptBytes = await readFile(oldReceipt);
+  const countersBefore = { ...protection.counters };
+  let linkCalls = 0;
+  const noSourceRead = platform.createOwnerOnlyExportArtifactStorageContext(ownerStorageConfiguration({
+    windowsFilesystemFactory: () => protection.filesystem,
+    windowsSourceAccessFactory: () => ({
+      contractVersion: "windows-source-read-v1",
+      inspectPath() {},
+    }),
+  }));
+  await assert.rejects(noSourceRead.writeOwnerOnlyPairNoClobber({
+    firstPath: join(directory, "new.bundle"),
+    firstContent: "new bundle",
+    secondPath: join(directory, "new.receipt"),
+    secondContent: "new receipt",
+  }, {
+    linkFile() {
+      linkCalls += 1;
+    },
+  }), /Windows owner-only export source access is unavailable/u);
+  assert.equal(linkCalls, 0);
+  assert.deepEqual(protection.counters, countersBefore);
+  assert.deepEqual(await readFile(oldBundle), oldBundleBytes);
+  assert.deepEqual(await readFile(oldReceipt), oldReceiptBytes);
+  await assert.rejects(lstat(join(directory, "new.bundle")), { code: "ENOENT" });
+  await assert.rejects(lstat(join(directory, "new.receipt")), { code: "ENOENT" });
+  const batchDestination = await noSourceRead.openOwnerOnlyExportDestination({ directory });
+  await assert.rejects(
+    noSourceRead.withOwnerOnlyExportDestinationBatch(batchDestination.destination, async () => {}),
+    /Windows owner-only export source access is unavailable/u,
+  );
+  assert.deepEqual(protection.counters, countersBefore);
+  await assert.rejects(lstat(join(directory, ".app-usagemonitor-export.lock")), { code: "ENOENT" });
+  await assert.rejects(lstat(join(directory, ".app-usagemonitor-export-transactions")), { code: "ENOENT" });
 });
 
 test("owner-only artifact reads use bounded positioned reads and report close failures", async () => {
@@ -774,7 +998,7 @@ test("batch boundaries refuse proxy callbacks and option accessors without invok
   assert.equal(invoked, 0);
   await assert.rejects(lstat(root), { code: "ENOENT" });
   const applicationContext = application.createLocalExportArtifactStorageContext({
-    createStorage: platform.createOwnerOnlyExportArtifactStorageContext,
+    createStorage: createOwnerOnlyArtifactStorage,
     activityMarkerFile: platform.defaultActivityMarkerFile,
   });
   const opened = await applicationContext.openOwnerOnlyExportDestination({ directory: dirname(root) });

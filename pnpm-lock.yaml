@@ -9,12 +9,13 @@ overrides:
   brace-expansion@2.1.4: 2.1.7
   brace-expansion@5.0.9: 5.0.12
   fast-uri: 3.1.8
+  http-cache-semantics@4.2.0: 4.3.0
   undici@6.28.0: 6.28.1
   undici@7.29.0: 7.29.1
 
 patchedDependencies:
   app-builder-lib@26.15.7: 38e07196f5e1ba169c8931f84b988d6f8e2601c1ddf24e7ccc6e7b1f375c567d
-  http-cache-semantics@4.2.0: 6e7076d25b3bdb7a6e9cd709a5d6f63c3b9f0d9308f12659b2dddb08dc904a93
+  http-cache-semantics@4.3.0: 94ecd9492e12512d8de3feef07eb3f98fbf82d55c6c0332612f2f1b919bec2ae
 
 importers:
 
@@ -656,8 +657,8 @@ packages:
     resolution: {integrity: sha512-kyCuEOWjJqZuDbRHzL8V93NzQhwIB71oFWSyzVo+KPZI+pnQPPxucdkrOZvkLRnrf5URsQM+IJ09Dw29cRALIA==}
     engines: {node: '>=10'}
 
-  http-cache-semantics@4.2.0:
-    resolution: {integrity: sha512-dTxcvPXqPvXBQpq5dUr6mEMJX4oIEFv6bwom3FDwKRDsuIjjJGANqhBuoAn9c1RQJIdAKav33ED65E2ys+87QQ==}
+  http-cache-semantics@4.3.0:
+    resolution: {integrity: sha512-M5t5LlJpS1UHMjvwRQVdFHvPISGeLAxNcrWuJkeGh0KxsqCHZ1O3NXZU/8x7cD0BDcGW8kapxMKTvwlqrNkHkA==}
 
   http-proxy-agent@7.0.2:
     resolution: {integrity: sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==}
@@ -1527,7 +1528,7 @@ snapshots:
     dependencies:
       clone-response: 1.0.3
       get-stream: 5.2.0
-      http-cache-semantics: 4.2.0(patch_hash=6e7076d25b3bdb7a6e9cd709a5d6f63c3b9f0d9308f12659b2dddb08dc904a93)
+      http-cache-semantics: 4.3.0(patch_hash=94ecd9492e12512d8de3feef07eb3f98fbf82d55c6c0332612f2f1b919bec2ae)
       keyv: 4.5.4
       lowercase-keys: 2.0.0
       normalize-url: 6.1.0
@@ -1930,7 +1931,7 @@ snapshots:
     dependencies:
       lru-cache: 6.0.0
 
-  http-cache-semantics@4.2.0(patch_hash=6e7076d25b3bdb7a6e9cd709a5d6f63c3b9f0d9308f12659b2dddb08dc904a93): {}
+  http-cache-semantics@4.3.0(patch_hash=94ecd9492e12512d8de3feef07eb3f98fbf82d55c6c0332612f2f1b919bec2ae): {}
 
   http-proxy-agent@7.0.2:
     dependencies:

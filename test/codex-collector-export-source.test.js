@@ -15,14 +15,15 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
+import { createSyntheticExportSourcePipeline } from "./helpers/synthetic-export-source-pipeline.mjs";
+import { createExportResourceGuard, ExportResourceLimitError } from "../src/export-resource-policy.js";
+const {
   CodexCollectorExportSourceError,
   createCodexCollectorExportCursor,
   createCodexCollectorExportSourcePlan,
   scanCodexCollectorExportSource,
   verifyCodexCollectorExportSourcePlan,
-} from "../src/codex-collector-export-source.js";
-import { createExportResourceGuard, ExportResourceLimitError } from "../src/export-resource-policy.js";
+} = createSyntheticExportSourcePipeline().codexCollectorExport;
 
 const START = "2026-07-20T00:00:00.000Z";
 const END = "2026-07-25T00:00:00.000Z";
@@ -135,9 +136,9 @@ async function collectAll(plan, maximumCandidateRecords) {
   } while (true);
 }
 
-function safeFailure(expected) {
+function safeFailure(expected, ErrorType = CodexCollectorExportSourceError) {
   return (error) => {
-    assert.equal(error instanceof CodexCollectorExportSourceError, true);
+    assert.equal(error instanceof ErrorType, true);
     assert.equal(error.code, expected);
     assert.equal(error.message.includes("PRIVATE-CANARY"), false);
     return true;
@@ -183,6 +184,63 @@ test("freezes a complete-line prefix and emits only provider-neutral quota candi
       "lifetimeTokens", "987654321", "123456789", "Codex allowance", "limitName",
       "resetEvents", "banked_reset_used", value.path,
     ]) assert.equal(serialized.includes(forbidden), false, forbidden);
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("Windows collector plans retain exact U64 identity and close every source lease", async () => {
+  const value = await fixture([quotaRecord()]);
+  const opened = { count: 0 };
+  const closed = { count: 0 };
+  const context = createSyntheticExportSourcePipeline({
+    identity: {
+      volumeSerialNumber: "ffffffffffffffff",
+      fileId: "0000000000000000ffffffffffffffff",
+    },
+    onOpen: () => { opened.count += 1; },
+    onClose: () => { closed.count += 1; },
+  }).codexCollectorExport;
+  try {
+    const plan = await context.createCodexCollectorExportSourcePlan({
+      collectorPath: value.path,
+      startAt: START,
+      endAt: END,
+    });
+    assert.equal(plan.schemaVersion, "codex-collector-export-source-plan-v0.2");
+    assert.equal(plan.device, "18446744073709551615");
+    assert.equal(plan.inode, "18446744073709551615");
+    await context.verifyCodexCollectorExportSourcePlan(plan);
+    assert.equal(opened.count, closed.count);
+    assert.ok(opened.count > 0);
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("Windows collector source refuses file IDs above its U64 contract before reading", async () => {
+  const value = await fixture([quotaRecord()]);
+  const opened = { count: 0 };
+  const closed = { count: 0 };
+  const readLengths = [];
+  const context = createSyntheticExportSourcePipeline({
+    identity: {
+      volumeSerialNumber: "0000000000000001",
+      fileId: "00000001000000000000000000000000",
+    },
+    onOpen: () => { opened.count += 1; },
+    onClose: () => { closed.count += 1; },
+    onRead: (length) => { readLengths.push(length); },
+  }).codexCollectorExport;
+  try {
+    await assert.rejects(context.createCodexCollectorExportSourcePlan({
+      collectorPath: value.path,
+      startAt: START,
+      endAt: END,
+    }), safeFailure("codex_collector_export_source_changed", context.CodexCollectorExportSourceError));
+    assert.equal(opened.count, closed.count);
+    assert.ok(opened.count > 0);
+    assert.deepEqual(readLengths, []);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
@@ -385,7 +443,6 @@ test("rejects mutation, truncation, replacement, symlink, hardlink, and unsafe p
       await symlink(target, value.path);
     },
     async (value) => link(value.path, join(value.root, "hardlink.jsonl")),
-    async (value) => chmod(value.path, 0o640),
   ];
   for (const mutate of mutations) {
     const value = await fixture([quotaRecord()]);
@@ -400,6 +457,28 @@ test("rejects mutation, truncation, replacement, symlink, hardlink, and unsafe p
     } finally {
       await rm(value.root, { recursive: true, force: true });
     }
+  }
+});
+
+test("Windows export source refuses a synthetic non-owner metadata result before open", async () => {
+  const value = await fixture([quotaRecord()]);
+  const opened = { count: 0 };
+  const closed = { count: 0 };
+  const context = createSyntheticExportSourcePipeline({
+    ownerMatches: false,
+    onOpen: () => { opened.count += 1; },
+    onClose: () => { closed.count += 1; },
+  }).codexCollectorExport;
+  try {
+    await assert.rejects(context.createCodexCollectorExportSourcePlan({
+      collectorPath: value.path,
+      startAt: START,
+      endAt: END,
+    }), safeFailure("codex_collector_export_source_changed", context.CodexCollectorExportSourceError));
+    assert.equal(opened.count, 0);
+    assert.equal(closed.count, 0);
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
   }
 });
 

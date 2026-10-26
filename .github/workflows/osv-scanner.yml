@@ -40,10 +40,10 @@ jobs:
           corepack prepare pnpm@11.9.0 --activate
           test "$(pnpm --version)" = "11.9.0"
           pnpm install --frozen-lockfile --ignore-scripts
-      - name: Refuse expired or changed temporary exception
+      - name: Verify reviewed downstream HTTP cache backport
         run: |
-          node scripts/check-http-cache-exception.mjs
-          node --test test/http-cache-semantics-security.test.js test/electron-windows-production-signing.test.js test/http-cache-exception.test.js test/http-cache-exception-workflow.test.mjs
+          node scripts/check-http-cache-backport.mjs
+          node scripts/run-isolated-tests.mjs -- test/http-cache-semantics-security.test.js test/http-cache-backport.test.js test/http-cache-exception-workflow.test.mjs
       # The reviewed binary digest fixes executable bytes. Direct invocation
       # preserves vulnerability, no-package, config and operational failures.
       - name: Run scanner

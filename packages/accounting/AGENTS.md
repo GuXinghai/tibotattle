@@ -37,9 +37,9 @@ first.
   unknowns, boundaries, and rounding whenever affected.
 - Run the package's affected tests through the root suite, then `npm test` and
   `npm run architecture:check` for public or dependency changes.
-- Run `npm run product:worker:check` when exports or installed package contents
-  change, because the Worker uses a guarded file-installed copy.
-- Compare local and Worker results for shared semantics. A matching typecheck
+- Run isolated accounting parity tests when exports or package contents change.
+  This checkout has no Worker gate or installed Worker copy.
+- Compare shared numeric fixtures across public entrypoints. A matching typecheck
   without numeric parity is not sufficient.
 - Do not regenerate retained R7 receipts as routine follow-up. Identify them as
   stale/protected evidence when hashed accounting inputs change and follow the

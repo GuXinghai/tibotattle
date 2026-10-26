@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exportCompatibilityTuple } from "../src/export-contract.js";
@@ -146,6 +146,7 @@ function sameCheckpointShape(checkpoint) {
     phase: checkpoint.phase,
     byteOffset: checkpoint.byteOffset,
     lineOrdinal: checkpoint.lineOrdinal,
+    tierLineCount: checkpoint.tierLineCount,
     checkpointSeq: checkpoint.checkpointSeq,
     parserVersion: checkpoint.parserVersion,
     parserState: checkpoint.parserState,
@@ -173,6 +174,7 @@ test("checkpoint workspace atomically persists an initial tier batch and rejects
       phase: "tier_scan",
       byteOffset: 0,
       lineOrdinal: 0,
+      tierLineCount: 0,
       checkpointSeq: 0,
       parserVersion: "codex-checkpoint-state-v0.3",
       parserState: createEmptyCodexCheckpointState(),
@@ -242,6 +244,7 @@ test("checkpoint workspace atomically persists an initial tier batch and rejects
     const committed = await workspace.commitSourceBatch(batch);
     assert.equal(committed.alreadyCommitted, false);
     assert.equal(committed.checkpoint.phase, "record_scan");
+    assert.equal(committed.checkpoint.tierLineCount, 1);
     assert.equal(committed.checkpoint.checkpointSeq, 1);
     assert.equal(committed.checkpoint.lastBatchSha256, batch.batchSha256);
     assert.deepEqual(committed.checkpoint.parserState, parserState);
@@ -267,6 +270,11 @@ test("checkpoint workspace atomically persists an initial tier batch and rejects
     assert.equal(replay.alreadyCommitted, true);
     assert.equal(replay.checkpoint.checkpointSeq, 1);
     assert.deepEqual(workspace.resourceUsage(), usage);
+
+    await workspace.reserveResourceLineReads(2);
+    assert.equal(workspace.resourceUsage().lines, 3,
+      "fallback reads reserve durable usage independently from checkpoint cursor deltas");
+    assert.equal(workspace.loadSourceCheckpoint(source.sourceKey).lineOrdinal, 0);
 
     const stale = batchFor({
       sourceKey: source.sourceKey,
@@ -306,6 +314,66 @@ test("checkpoint workspace atomically persists an initial tier batch and rejects
       assert.equal(String(error).includes(privacyCanary), false);
       return error instanceof TypeError && /Invalid privacy-safe Codex checkpoint state/.test(error.message);
     });
+  } finally {
+    workspace?.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("workspace v6 round-trips exact U64 device and U128 inode identity strings", async () => {
+  const value = await fixture();
+  let workspace;
+  try {
+    const sourcePlan = {
+      ...value.sourcePlan,
+      sources: value.sourcePlan.sources.map((source) => ({
+        ...source,
+        dev: "18446744073709551615",
+        ino: "340282366920938463463374607431768211455",
+      })),
+    };
+    workspace = await createExportWorkspace({
+      directory: value.workspace,
+      descriptor: value.descriptor,
+      sourcePlan,
+    });
+    const stored = workspace.loadSourcePlan().sources[0];
+    assert.equal(stored.dev, "18446744073709551615");
+    assert.equal(stored.ino, "340282366920938463463374607431768211455");
+  } finally {
+    workspace?.close();
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("legacy workspace v5 marker is rejected without changing its database bytes or sidecars", async () => {
+  const value = await fixture();
+  let workspace;
+  try {
+    workspace = await createExportWorkspace({
+      directory: value.workspace,
+      descriptor: value.descriptor,
+      sourcePlan: value.sourcePlan,
+    });
+    const databaseFile = workspace.databaseFile;
+    workspace.close();
+    workspace = null;
+    const { DatabaseSync } = await import("node:sqlite");
+    const database = new DatabaseSync(databaseFile);
+    try {
+      // Synthetic incompatibility marker only; no production workspace is used.
+      database.exec("PRAGMA user_version=5");
+    } finally {
+      database.close();
+    }
+    const bytesBefore = await readFile(databaseFile);
+    const entriesBefore = (await readdir(value.workspace)).sort();
+    await assert.rejects(
+      openExportWorkspace({ directory: value.workspace }),
+      (error) => error instanceof ExportWorkspaceError && error.code === "export_workspace_schema",
+    );
+    assert.deepEqual(await readFile(databaseFile), bytesBefore);
+    assert.deepEqual((await readdir(value.workspace)).sort(), entriesBefore);
   } finally {
     workspace?.close();
     await rm(value.root, { recursive: true, force: true });

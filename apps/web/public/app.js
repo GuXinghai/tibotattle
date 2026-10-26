@@ -837,12 +837,16 @@ function renderHistoryIndexBadge(data) {
   const partialTerminal = history?.phase === "partial_terminal"
     || (history?.phase === "aggregate_unavailable"
       && finite(history?.skippedSourceCount, 0) > 0);
-  if (data?.mode === "demo" || complete
-      || indexed === null || total === null || total <= 0) {
+  if (data?.mode === "demo" || history === null || complete
+      || (total !== null && total <= 0)) {
     badge.hidden = true;
     return;
   }
   badge.hidden = false;
+  if (indexed === null || total === null) {
+    setLocalizedText(badge, "dashboard.history.coverageUnknownHeadline");
+    return;
+  }
   setRawText(badge, partialTerminal
     ? t("status.historyPartial", {
       skipped: compact(history?.skippedSourceCount ?? 0),
@@ -1871,15 +1875,34 @@ function renderHistoryProgress(data) {
   const history = data?.pricing?.historyCoverage
     ?? data?.accounting?.historyCoverage
     ?? null;
-  const total = finite(history?.sourceCount, 0);
-  const indexed = finite(history?.indexedSourceCount, 0);
+  const total = finite(history?.sourceCount, null);
+  const indexed = finite(history?.indexedSourceCount, null);
   const partialTerminal = history?.phase === "partial_terminal";
   const aggregateUnavailable = history?.phase === "aggregate_unavailable";
-  if (history === null || history.status === "complete" || total <= 0) {
+  if (history === null || history.status === "complete"
+      || (total !== null && total <= 0)) {
     container.hidden = true;
     return false;
   }
   container.hidden = false;
+  const track = $("#history-progress-track");
+  if (total === null || indexed === null) {
+    track.hidden = true;
+    $("#history-progress-fill").style.width = "0%";
+    setLocalizedText(
+      $("#history-progress-headline"),
+      "dashboard.history.coverageUnknownHeadline",
+    );
+    setLocalizedText(
+      $("#history-progress-detail"),
+      "dashboard.history.coverageUnknownDetail",
+    );
+    setLocalizedText(
+      $("#history-progress-note"),
+      "dashboard.history.coverageUnknownNote",
+    );
+    return true;
+  }
   const percent = (indexed / total) * 100;
   const skippedSourceCount = finite(history?.skippedSourceCount, 0);
   const skippedSources = tPlural(
@@ -1908,7 +1931,7 @@ history.phase === "not_started"
       { percent: formatPercent(percent, 1) },
     );
   }
-  const track = $("#history-progress-track");
+  track.hidden = false;
   track.setAttribute("aria-valuenow", String(Math.round(percent)));
   const coverageKey = partialTerminal
       || (aggregateUnavailable && skippedSourceCount > 0)

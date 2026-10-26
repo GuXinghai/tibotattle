@@ -338,6 +338,7 @@ async function launchFixture({
   runtimeOverrides = {},
   lifecycleOptions = {},
   productionDistribution,
+  singleInstanceLockAcquired,
   prepareNativeHandover,
   onStartupPhase,
   onStartupStop,
@@ -378,6 +379,7 @@ async function launchFixture({
     argv,
     lifecycleOptions,
     productionDistribution,
+    singleInstanceLockAcquired,
     prepareNativeHandover,
     onStartupPhase,
     onStartupStop,
@@ -934,6 +936,18 @@ test("a secondary Electron instance exits before first-run or companion startup"
   assert.deepEqual(startupEvents, ["stop:secondary_instance", "quit"]);
   assert.equal(app.readyCalls, 0);
   assert.equal(fixture.children.length, 0);
+});
+
+test("runtime reuses bootstrap single-instance ownership without reacquiring the lock", async () => {
+  const app = new FakeApp();
+  const fixture = await launchFixture({
+    app,
+    singleInstanceLockAcquired: true,
+    load: async () => null,
+  });
+  assert.equal(app.lockCalls, 0);
+  assert.notEqual(fixture.desktop.lifecycle, null);
+  await fixture.desktop.lifecycle.dispose();
 });
 
 test("runtime retains a configured root when its path is currently unavailable", async () => {

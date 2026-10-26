@@ -9,6 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { LOCAL_API_PRICING_METHOD_VERSION } from "@app-usagemonitor/accounting";
 import {
   createDeferredAccountingRebuildRecorder,
   createLocalCollectorRefreshRunner,
@@ -39,6 +40,7 @@ import { buildLocalIndexAccountingCache } from "../src/local-index-accounting-ca
 import { readLocalIndexGenerationIdentity } from "../src/local-index-companion-source.js";
 import { refreshLocalIndex } from "../src/local-index-refresh.js";
 import { createWorkspace } from "./helpers/local-index-facts.js";
+import { createProtectedFixtureDirectory } from "./helpers/windows-owner-only-fixture.js";
 
 const COMPLETE_INDEX = Object.freeze({
   mode: "recent_7d",
@@ -397,6 +399,7 @@ const UNIFIED_SOURCE_DESCRIPTOR = Object.freeze({
 const REUSABLE_ACCOUNTING_CACHE = Object.freeze({
   weeklyApiIntervals: Object.freeze({schemaVersion:'weekly-api-interval-v1',status:'available',rows:[]}),
   schemaVersion: REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION,
+  pricingMethodVersion: LOCAL_API_PRICING_METHOD_VERSION,
   generatedAt: "2026-07-23T10:00:00.000Z",
   coveredAt: Object.freeze({
     startAt: "2026-06-22T10:00:00.000Z",
@@ -1228,6 +1231,7 @@ test("a semantics-outdated unified cache announces one rebuild and receives the 
 
 test("a fresh unified machine completes its first refresh when the app-server read fails", async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-fresh-machine-"));
+  createProtectedFixtureDirectory(join(stateRoot, "state"));
   const expectedGeneration = {
     id: 1,
     fingerprint: "f".repeat(64),
@@ -1491,6 +1495,7 @@ test("detailed refresh keeps quota and unified-index failures independent and re
 
 test("a mid-run checkpoint loss fails the refresh under the stable collector code", async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), "local-refresh-store-fault-"));
+  createProtectedFixtureDirectory(join(stateRoot, "state"));
   const clock = () => Date.parse("2026-08-19T12:00:00.000Z");
   try {
     const codexHome = join(stateRoot, "codex-home");

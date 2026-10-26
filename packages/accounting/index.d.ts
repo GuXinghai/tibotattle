@@ -104,7 +104,7 @@ export interface PriceUsageResult {
     informational: AccountingWarning[];
   };
   ledger: unknown;
-  methodVersion?: string;
+  methodVersion?: typeof LOCAL_API_PRICING_METHOD_VERSION;
   registry?: PriceRegistryManifest;
 }
 
@@ -129,7 +129,7 @@ export interface AggregateCostResult {
     informational: AccountingWarning[];
   };
   ledger: unknown;
-  methodVersion?: string;
+  methodVersion?: typeof LOCAL_API_PRICING_METHOD_VERSION;
   registry?: PriceRegistryManifest;
 }
 
@@ -204,6 +204,8 @@ export interface LocalPricingOptions {
   region?: string | null;
   eventTime?: string | Date | null;
 }
+
+export const LOCAL_API_PRICING_METHOD_VERSION: "provider-neutral-api-price-equivalent-v0.4";
 
 export function priceCodexUsageEvent(
   event: CodexUsageEvent,

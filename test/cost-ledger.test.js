@@ -47,6 +47,14 @@ const OPENAI_TOOL_CARD = card({
   ],
 });
 
+const ZERO_OPENAI_COMPONENTS = Object.freeze({
+  input_uncached_tokens: 0,
+  input_cache_read_tokens: 0,
+  input_cache_write_tokens: 0,
+  output_text_tokens: 0,
+  output_reasoning_tokens: 0,
+});
+
 test("adds exact decimal costs with the canonical normalization policy", () => {
   assert.equal(addUsdStrings(), "0");
   assert.equal(addUsdStrings("+0001.2300e-2", "1.2277", 0), "1.24");
@@ -89,6 +97,50 @@ test("prices every OpenAI token component and preserves exact decimals plus reas
   assert.equal(reasoning.metadata.priced_as_component, "output_text_tokens");
   assert.equal(reasoning.metadata.fallback_reason, "no_separate_reasoning_price");
   assert.equal(typeof result.totalUsd, "string");
+});
+
+test("missing or empty token component maps are unavailable while explicit zeros are complete", () => {
+  const base = { provider: "openai", model: "gpt-test" };
+  for (const event of [base, { ...base, components: {} }]) {
+    const result = priceUsageEvent(event, { priceCards: [OPENAI_STANDARD] });
+    assert.equal(result.coverageStatus, "unpriced");
+    assert.equal(result.totalUsd, "0");
+    assert.equal(result.coverageCounts.unavailableComponents, 5);
+    assert.deepEqual(
+      result.components.filter((item) => item.pricingStatus === "unavailable").map((item) => item.name).sort(),
+      Object.keys(ZERO_OPENAI_COMPONENTS).sort(),
+    );
+  }
+
+  const explicitZeros = priceUsageEvent({
+    ...base,
+    components: ZERO_OPENAI_COMPONENTS,
+  }, { priceCards: [OPENAI_STANDARD] });
+  assert.equal(explicitZeros.coverageStatus, "fully_priced");
+  assert.equal(explicitZeros.totalUsd, "0");
+  assert.equal(explicitZeros.coverageCounts.unavailableComponents, 0);
+});
+
+test("historical kernel pricing canonicalizes finite Date values and rejects invalid dates", () => {
+  const event = {
+    provider: "openai",
+    model: "gpt-test",
+    components: { inputUncachedTokens: "1000000" },
+  };
+  const timestamp = new Date("2026-07-25T12:00:00.123Z");
+  const priced = priceUsageEvent({ ...event, timestamp }, {
+    priceCards: [OPENAI_STANDARD],
+    pricingContext: { priceEpochBasis: "event_time_when_registry_has_effective_evidence" },
+  });
+  assert.equal(priced.pricingContext.pricedAt, timestamp.toISOString());
+  assert.equal(priced.coverageStatus, "fully_priced");
+
+  const invalid = priceUsageEvent({ ...event, timestamp: new Date(Number.NaN) }, {
+    priceCards: [OPENAI_STANDARD],
+    pricingContext: { priceEpochBasis: "event_time_when_registry_has_effective_evidence" },
+  });
+  assert.equal(invalid.coverageStatus, "unpriced");
+  assert.equal(invalid.components[0].reasonCode, "historical_price_timestamp_missing");
 });
 
 test("unavailable components remain unavailable and an observed total-input context still selects thresholds", () => {
@@ -209,17 +261,27 @@ test("prices tool usage only for an exact provider-billable unit", () => {
   const base = {
     provider: "openai",
     model: "gpt-test",
-    components: {},
+    components: ZERO_OPENAI_COMPONENTS,
   };
+  const billableToolUnits = [{
+    provider: "openai",
+    name: "web_search_units",
+    quantity: "1000",
+    unit: "search",
+    billingSource: "provider",
+  }];
+  const missingTokens = priceUsageEvent({
+    provider: "openai",
+    model: "gpt-test",
+    components: {},
+    billableToolUnits,
+  }, { priceCards: [OPENAI_TOOL_CARD] });
+  assert.equal(missingTokens.coverageStatus, "partially_priced");
+  assert.equal(missingTokens.coverageCounts.unavailableComponents, 5);
+
   const exact = priceUsageEvent({
     ...base,
-    billableToolUnits: [{
-      provider: "openai",
-      name: "web_search_units",
-      quantity: "1000",
-      unit: "search",
-      billingSource: "provider",
-    }],
+    billableToolUnits,
   }, { priceCards: [OPENAI_TOOL_CARD] });
   assert.equal(exact.coverageStatus, "fully_priced");
   assert.equal(exact.totalUsd, "10");

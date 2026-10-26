@@ -1,8 +1,14 @@
 import { createWindowsFilesystemAdapter, createWindowsProtectedStateStore, createWindowsBrowserProfileStore } from "../../src/platform/index.js";
-import { readApplicationPackage, pinApplicationProfilePaths } from "./application-profile.js";
+import {
+  applicationProfilePaths,
+  prepareApplicationProfileDirectories,
+  readApplicationPackage,
+  readApplicationPackageSync,
+  pinApplicationProfilePaths,
+} from "./application-profile.js";
 import identity from "../../config/application-identity.cjs";
 import brand from "../../config/product-brand.cjs";
-import { dirname, resolve } from "node:path";
+import { dirname, resolve, win32 } from "node:path";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
@@ -18,6 +24,7 @@ import {
 } from "./desktop-windows-accountless-credential.js";
 import {
   createWindowsElectronQualificationContext,
+  isWindowsElectronQualificationRequested,
   WINDOWS_ELECTRON_QUALIFICATION_MARKER,
   WINDOWS_ELECTRON_TEST_LANE,
   runWindowsElectronQualificationCredentialCommand,
@@ -38,6 +45,7 @@ export const ELECTRON_COMPANION_PROCESS_DIAGNOSTIC_PREFIX =
 export const ELECTRON_DASHBOARD_FAILURE_DIAGNOSTIC_PREFIX =
   "USAGE_MONITOR_ELECTRON_DASHBOARD_FAILURE ";
 const ELECTRON_SHELL_BOOTSTRAP = Symbol("electron-shell-bootstrap");
+const ELECTRON_PROFILE_STARTUP_SELECTIONS = new WeakSet();
 const WINDOWS_ELECTRON_SMOKE_CONTROL = "windows-v1";
 const WINDOWS_ELECTRON_SMOKE_MESSAGE_TYPE = "windows-electron-smoke-v1";
 const WINDOWS_ELECTRON_SMOKE_COMMAND_MESSAGE = "command-v1";
@@ -119,6 +127,129 @@ function packagedResourcesPath(app, appPath, resourcesPath) {
     return resolve(process.resourcesPath);
   }
   return appPath === null ? null : dirname(appPath);
+}
+
+/** Pure profile selection; injected readers are reserved for synthetic startup tests. */
+export function selectElectronProfileStartup({
+  app,
+  environment = process.env,
+  platform = process.platform,
+  architecture = process.arch,
+  readPackage = readApplicationPackageSync,
+  qualificationRequested = isWindowsElectronQualificationRequested,
+} = {}) {
+  if (platform !== "win32") throw shellError("unsupported_platform");
+  if (architecture !== "x64") throw shellError("windows_readiness_unavailable");
+  if (typeof app?.getPath !== "function") throw shellError("electron_configuration_invalid");
+
+  const packaged = readPackage({ app });
+  const applicationProfile = packaged?.identity.profile ?? "development";
+  const productionDistribution = packaged?.distribution === null || packaged === null ? null
+    : validateProductionDistributionMetadata(packaged.distribution, { platform, architecture });
+  const qualificationModeRequested = qualificationRequested({
+    app,
+    environment,
+    platform,
+    architecture,
+  });
+  if (qualificationModeRequested && applicationProfile !== "development") {
+    throw shellError("windows_readiness_unavailable");
+  }
+  if (productionDistribution !== null) {
+    assertElectronPlatformGate({
+      platform,
+      architecture,
+      environment,
+      productionDistribution,
+    });
+  } else if (!qualificationModeRequested) {
+    throw shellError("windows_readiness_unavailable");
+  }
+  const isolated = qualificationModeRequested
+    || (productionDistribution !== null
+      && environment.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL === ELECTRON_SMOKE_CONTROL);
+  const appData = isolated ? environment.APPDATA : app?.getPath?.("appData");
+  if (typeof appData !== "string") throw shellError("electron_configuration_invalid");
+  if (isolated) {
+    const defaultAppData = app.getPath("appData");
+    if (typeof defaultAppData !== "string"
+        || win32.normalize(appData).toLowerCase() === win32.normalize(defaultAppData).toLowerCase()) {
+      throw shellError("electron_configuration_invalid");
+    }
+  }
+  const selectedProfilePaths = applicationProfilePaths({ appData, profile: applicationProfile, platform });
+  const selection = Object.freeze({
+    applicationProfile,
+    productionDistribution,
+    qualificationModeRequested,
+    appData,
+    profilePaths: selectedProfilePaths,
+    platform,
+    architecture,
+  });
+  ELECTRON_PROFILE_STARTUP_SELECTIONS.add(selection);
+  return selection;
+}
+
+/** Create only setPath prerequisites, pin, and acquire the selected profile lock. */
+export function prepareElectronProfileStartup({
+  app,
+  selection,
+  createProfileFilesystemAdapter = createWindowsFilesystemAdapter,
+} = {}) {
+  if (!selection || typeof selection !== "object"
+      || !ELECTRON_PROFILE_STARTUP_SELECTIONS.has(selection)
+      || typeof app?.getPath !== "function" || typeof app?.setPath !== "function"
+      || app?.isReady?.() === true) {
+    throw shellError("electron_configuration_invalid");
+  }
+  const { appData, applicationProfile, architecture, platform, profilePaths } = selection;
+  const adapter = createProfileFilesystemAdapter({ platform, architecture });
+  if (typeof adapter?.ensureDirectory !== "function" || typeof adapter.inspectPath !== "function") {
+    throw shellError("windows_readiness_unavailable");
+  }
+  // Electron requires both paths to exist when setPath is called. ensureDirectory
+  // creates missing components through protected handles and validates existing
+  // userData without ACL repair. Full Chromium traversal remains post-lock.
+  adapter.ensureDirectory(profilePaths.userData);
+  let sessionMetadata;
+  try {
+    sessionMetadata = adapter.inspectPath(profilePaths.sessionData);
+  } catch (error) {
+    if (error?.code !== "ENOENT" && error?.code !== "WINDOWS_FILESYSTEM_NOT_FOUND") throw error;
+  }
+  if (sessionMetadata === undefined) {
+    adapter.ensureDirectory(profilePaths.sessionData);
+    sessionMetadata = adapter.inspectPath(profilePaths.sessionData);
+  }
+  if (sessionMetadata?.isDirectory !== true
+      || sessionMetadata.isReparsePoint !== false
+      || sessionMetadata.ownerMatches !== true
+      || sessionMetadata.finalPathResolved !== true) {
+    throw shellError("windows_readiness_unavailable");
+  }
+  const pinnedPaths = pinApplicationProfilePaths({
+    app,
+    appData,
+    profile: applicationProfile,
+    platform,
+  });
+  if (pinnedPaths.userData !== profilePaths.userData
+      || pinnedPaths.sessionData !== profilePaths.sessionData) {
+    throw shellError("electron_configuration_invalid");
+  }
+  const singleInstanceLockAcquired = typeof app.requestSingleInstanceLock === "function"
+    ? app.requestSingleInstanceLock()
+    : true;
+  if (typeof singleInstanceLockAcquired !== "boolean") {
+    throw shellError("electron_configuration_invalid");
+  }
+  return Object.freeze({
+    ...selection,
+    singleInstanceLockAcquired,
+    profilePaths,
+    adapter,
+  });
 }
 
 /**
@@ -652,29 +783,68 @@ async function prepareElectronShellBootstrap({
       // Startup diagnostics are observational and never control startup.
     }
   };
-  // Read and validate the package marker before constructing any companion or
-  // platform service.
+  let profileSelection = null;
+  let profileStartup = null;
+  let applicationProfile;
+  let productionDistribution;
+  if (configureProfilePaths) {
+    profileSelection = selectElectronProfileStartup({ app, environment, platform, architecture });
+    applicationProfile = profileSelection.applicationProfile;
+    productionDistribution = profileSelection.productionDistribution;
+    if (productionDistribution !== null) {
+      // The stable candidate's platform gate is synchronous. Create/validate
+      // only the empty protected paths needed by app.setPath, then acquire the
+      // lock in the selected profile context. Full Chromium preparation follows.
+      profileStartup = prepareElectronProfileStartup({ app, selection: profileSelection });
+      if (!profileStartup.singleInstanceLockAcquired) {
+        return Object.freeze({
+          [ELECTRON_SHELL_BOOTSTRAP]: true,
+          applicationProfile,
+          app,
+          productionDistribution,
+          runtime,
+          singleInstanceLockAcquired: false,
+        });
+      }
+    }
+  } else {
+    // Direct composition callers do not pin application paths; runtime keeps
+    // ownership of their lock unless a bootstrap token carries one explicitly.
+    const packaged = await readApplicationPackage({ app });
+    applicationProfile = packaged?.identity.profile ?? "development";
+    productionDistribution = packaged?.distribution === null || packaged === null ? null
+      : validateProductionDistributionMetadata(packaged.distribution, { platform, architecture });
+  }
   await markStartupPhase("package_metadata");
-  const packaged = await readApplicationPackage({ app });
-  const applicationProfile = packaged?.identity.profile ?? "development";
-  const productionDistribution = packaged?.distribution === null || packaged === null ? null
-    : validateProductionDistributionMetadata(packaged.distribution, { platform, architecture });
   if (configureProfilePaths) {
     const qualificationContext = await createWindowsElectronQualificationContext({ app, environment, platform, architecture });
     assertElectronPlatformGate({ platform, architecture, environment, productionDistribution, qualificationContext });
-    const adapter = createWindowsFilesystemAdapter({ platform, architecture });
-    // Reviewed QA launchers supply a private APPDATA alongside their explicit
-    // profile. Electron's Windows known-folder lookup may ignore that environment
-    // variable; never redirect an isolated run into the physical user's profile.
-    const isolated = qualificationContext !== null
-      || (productionDistribution !== null
-        && environment.USAGE_MONITOR_ELECTRON_SMOKE_CONTROL === ELECTRON_SMOKE_CONTROL);
-    const appData = isolated ? environment.APPDATA : app.getPath("appData");
-    if (typeof appData !== "string") throw shellError("electron_configuration_invalid");
-    pinApplicationProfilePaths({ app, appData, profile: applicationProfile, platform,
+    if (profileStartup === null) {
+      // Qualification mode must pass its complete async gate before native
+      // directory creation. If ready won that race, fail closed before writes.
+      profileStartup = prepareElectronProfileStartup({ app, selection: profileSelection });
+      if (!profileStartup.singleInstanceLockAcquired) {
+        return Object.freeze({
+          [ELECTRON_SHELL_BOOTSTRAP]: true,
+          applicationProfile,
+          app,
+          productionDistribution,
+          runtime,
+          singleInstanceLockAcquired: false,
+        });
+      }
+    }
+    prepareApplicationProfileDirectories({
+      app,
+      appData: profileStartup.appData,
+      profile: applicationProfile,
+      platform,
       prepareDirectory(path, kind) {
-        if (kind === "session") createWindowsBrowserProfileStore({ adapter, rootPath: path }).ensureReady();
-        else createWindowsProtectedStateStore({ adapter, rootPath: path });
+        if (kind === "session") {
+          createWindowsBrowserProfileStore({ adapter: profileStartup.adapter, rootPath: path }).ensureReady();
+        } else {
+          createWindowsProtectedStateStore({ adapter: profileStartup.adapter, rootPath: path });
+        }
       },
     });
   }
@@ -691,6 +861,9 @@ async function prepareElectronShellBootstrap({
     app,
     productionDistribution,
     runtime,
+    ...(profileStartup === null ? {} : {
+      singleInstanceLockAcquired: profileStartup.singleInstanceLockAcquired,
+    }),
   });
 }
 
@@ -847,6 +1020,7 @@ export async function launchElectronShell({
       platform,
       architecture,
       productionDistribution: productionEnabled ? productionDistribution : undefined,
+      singleInstanceLockAcquired: preparation.singleInstanceLockAcquired,
       onStartupPhase: (phase) => markStartupDiagnostics(startupDiagnostics, phase),
       onStartupStop: (code) => writeStartupDiagnostics(startupDiagnostics, "stop", code),
     });
@@ -902,17 +1076,21 @@ if (process.versions.electron) {
     process.exitCode = 1;
   }
   if (startupPreparation !== undefined) {
-    launchElectronShell({
-      electron: runtime,
-      startupPreparation,
-      startupDiagnostics,
-      emitFailureDiagnostic: true,
-    })
-      .then((lifecycle) => {
-        if (lifecycle !== null) installWindowsNormalCandidateQuitControl(lifecycle);
+    if (startupPreparation.singleInstanceLockAcquired === false) {
+      runtime.app.quit?.();
+    } else {
+      launchElectronShell({
+        electron: runtime,
+        startupPreparation,
+        startupDiagnostics,
+        emitFailureDiagnostic: true,
       })
-      .catch(() => {
-        process.exitCode = 1;
-      });
+        .then((lifecycle) => {
+          if (lifecycle !== null) installWindowsNormalCandidateQuitControl(lifecycle);
+        })
+        .catch(() => {
+          process.exitCode = 1;
+        });
+    }
   }
 }

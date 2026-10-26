@@ -81,6 +81,13 @@ test("Codex export-source shims preserve the exact singleton binding identities"
   assert.equal(platform.localIsProxy, platformOwner.localIsProxy);
 });
 
+test("application pipeline exposes its existing frozen safe-record owner", () => {
+  const context = compose();
+  assert.equal(Object.isFrozen(context), true);
+  assert.equal(Object.isFrozen(context.safeRecords), true);
+  assert.equal(typeof context.safeRecords.scanCodexSafeRecords, "function");
+});
+
 test("application pipeline authenticates its explicit proxy detector before invoking it", () => {
   const ports = platform.createLocalExportSourcePorts();
   const configuration = { workspace: workspaceRuntime(), exportCompatibilityTuple: () => ({}) };

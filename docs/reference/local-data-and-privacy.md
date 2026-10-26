@@ -203,6 +203,38 @@ rewriting its ACL or credential identity. A failed read is unavailable evidence,
 not a fresh-install sharing choice. Migration/recovery of older ACL state and
 installed-artifact acceptance remain separate release gates.
 
+Windows metadata bundle/receipt reads require native owner and protected-DACL
+evidence for their parent and files, reject reparse points and multiple links,
+and compare the held read handle with the inspected identity before and after
+bounded reads. Missing protection capability is an unavailable result; Node
+permission bits do not qualify a Windows DACL. Codex export source reads use
+the reviewed handle-bound source port rather than relying on `O_NOFOLLOW`,
+which is unavailable on Windows. Synthetic adapter tests establish these
+refusal and consistency rules, not installed native qualification.
+
+New collector SQLite files must be created with a protected owner-only Windows
+DACL before SQLite initialization. Existing state directories and database
+files with unprotected or broader ACLs are refused without ACL repair or data
+replacement. Such older state needs a separately reviewed recovery workflow;
+an unavailable cache does not authorize deleting its accumulated evidence.
+These creation checks do not establish a full-lifetime SQLite file lease or
+change the native manifest's broader race-safety qualification.
+
+Export workspaces also require protected owner-only Windows directory, SQLite
+and lease-lock creation/checks. Export destination and transaction directories
+require the same protected parent evidence. Artifact files must be owned by the
+current user with no broad, non-owner or unknown allow entries; inherited file
+DACLs are accepted only beneath an already verified protected parent. Existing
+unsafe objects are refused without repair. Staging starts with a native
+exclusive protected empty file, followed by bounded handle writes, so larger
+artifacts do not use the native whole-file size ceiling as an excuse to weaken
+protection. Ordinary single-link reads use a native source lease. Recovery may
+read only the manifest-declared stage/final two-link pair after both identities,
+ACLs and parents match, with bounded descriptor reads and before/after checks.
+Missing operation capabilities refuse before creating directories, locks or
+stages. These checks retain the existing same-user trust boundary and do not
+upgrade native production or race-safety qualification.
+
 The derived accounting cache inside collector state uses compact JSON with a
 128 MiB publication and child-result transport ceiling. Existing pretty-printed
 caches remain readable without migration; observation values, source records,

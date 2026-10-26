@@ -12,6 +12,20 @@ import { parseProductionCandidateArguments } from "../scripts/package-electron-p
 
 const sourceRevision = "a".repeat(40);
 
+function assertIsolatedWorkflowTestCommand(workflowSection, stepName, expectedFiles) {
+  const start = workflowSection.indexOf(`- name: ${stepName}`);
+  assert.notEqual(start, -1, `missing workflow step ${stepName}`);
+  const tail = workflowSection.slice(start);
+  const nextStep = tail.indexOf("\n      - name:", 1);
+  const selectedStep = nextStep === -1 ? tail : tail.slice(0, nextStep);
+  assert.match(selectedStep, /node \.\/scripts\/run-isolated-tests\.mjs --/u);
+  assert.doesNotMatch(selectedStep, /node --test/u);
+  const selectedFiles = selectedStep.match(
+    /(?:test|apps\/electron\/test)\/[^\s]+\.test\.(?:js|mjs)/gu,
+  ) ?? [];
+  assert.deepEqual(selectedFiles, expectedFiles, `${stepName} must retain its exact reviewed file set`);
+}
+
 test("targeted diagnostic runs retain full push qualification and use the same runtime jobs", async () => {
   const workflow = await readFile(new URL("../.github/workflows/electron-development-packages.yml", import.meta.url), "utf8");
   assert.match(workflow, /qualification:\n\s+description:[^\n]+\n\s+required: true\n\s+default: full\n\s+type: choice/u);
@@ -100,6 +114,45 @@ test("the development workflow builds Windows on a static native runner without 
   const windowsLifecycleJob = jobs.find((section) => section.startsWith("  win32-x64-nsis-lifecycle:\n"));
   assert.ok(windowsPackageJob);
   assert.ok(windowsLifecycleJob);
+  assertIsolatedWorkflowTestCommand(
+    windowsPackageJob,
+    "Validate disposable Windows installer lifecycle contracts",
+    ["test/electron-windows-nsis-lifecycle.test.js"],
+  );
+  assertIsolatedWorkflowTestCommand(
+    windowsPackageJob,
+    "Check native binding and synthetic filesystem contracts",
+    [
+      "test/windows-filesystem-loader.test.js",
+      "test/windows-filesystem-manifest.test.js",
+      "test/windows-filesystem-native-contract.test.js",
+      "test/windows-filesystem-security.test.js",
+      "test/windows-accountless-installation-credential.test.js",
+      "test/windows-accountless-installation-credential-native.test.js",
+      "test/electron-windows-accountless-smoke.test.js",
+    ],
+  );
+  assertIsolatedWorkflowTestCommand(
+    windowsPackageJob,
+    "Check ordinary companion startup and fixed credential channel contracts",
+    [
+      "test/windows-account-observation-credential.test.js",
+      "apps/electron/test/shell-core.test.mjs",
+      "apps/electron/test/desktop-windows-account-observation-broker.test.mjs",
+      "apps/electron/test/desktop-windows-account-observation-qualification.test.mjs",
+      "apps/electron/test/windows-account-observation-qualification-smoke.test.mjs",
+      "apps/electron/test/windows-account-observation-ipc-coexistence.test.mjs",
+    ],
+  );
+  assertIsolatedWorkflowTestCommand(
+    windowsPackageJob,
+    "Validate packaging contracts",
+    [
+      "test/electron-development-package.test.js",
+      "test/electron-builder-package-json.test.js",
+      "test/electron-development-artifact-verifier.test.js",
+    ],
+  );
   assert.match(windowsPackageJob, /outputs:\n\s+development-artifact-id: \$\{\{ steps\.retain-win32-development\.outputs\.artifact-id \}\}/u);
   assert.match(windowsPackageJob, /id: retain-win32-development/u);
   assert.match(windowsPackageJob, /include-hidden-files: true/u);
@@ -151,6 +204,14 @@ test("normal Windows CI keeps unsigned candidate bytes private and preserves the
   const jobs = workflow.split(/\n(?= {2}[a-z][a-z0-9-]+:\n)/u);
   const job = jobs.find((section) => section.startsWith("  win32-x64-normal-candidate:\n"));
   assert.ok(job);
+  assertIsolatedWorkflowTestCommand(
+    job,
+    "Check normal-candidate contracts without native credentials",
+    [
+      "test/electron-windows-normal-candidate.test.js",
+      "apps/electron/test/windows-normal-quit-control.test.mjs",
+    ],
+  );
   assert.match(job, /runs-on: windows-2025/u);
   assert.doesNotMatch(job, /needs:|download-artifact|secrets\.|qualification-smoke|accountless-storage-smoke/u,
     "normal credentials start in an independent disposable account");
@@ -216,6 +277,18 @@ test("normal Windows CI keeps unsigned candidate bytes private and preserves the
     "only the closed receipt leaves the disposable candidate runner");
 });
 
+test("production source preparation runs its exact contract file through isolation", async () => {
+  const workflow = await readFile(
+    new URL("../.github/workflows/electron-production-source-preparation.yml", import.meta.url),
+    "utf8",
+  );
+  assertIsolatedWorkflowTestCommand(
+    workflow,
+    "Validate production source contracts",
+    ["test/electron-production-distribution.test.js"],
+  );
+});
+
 test("common packaging assembles usable, hashed handoffs without a source checkout", async () => {
   for (const target of ["win32-x64"]) {
     const outputDirectory = await mkdtemp(join(tmpdir(), "electron-development-handoff-"));
@@ -231,7 +304,7 @@ test("common packaging assembles usable, hashed handoffs without a source checko
         }
       }
       const readme = await readFile(join(outputDirectory, "DEVELOPMENT-TESTING.txt"), "utf8");
-      assert.match(readme, /hosted accountless uploads remain unavailable/u);
+      assert.match(readme, /cloud uploads are unavailable/u);
       assert.match(readme, /No separate Node\.js installation or source checkout is needed/u);
       const wrapper = files.find(({ file }) => /\.cmd$/u.test(file));
       const source = await readFile(join(outputDirectory, wrapper.file), "utf8");

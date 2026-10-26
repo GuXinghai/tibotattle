@@ -83,7 +83,6 @@ function stableResourceTotals(value) {
     policyVersion: value.policyVersion,
     sourceFiles: value.sourceFiles,
     sourceBytes: value.sourceBytes,
-    lines: value.lines,
     oversizedIrrelevantLines: value.oversizedIrrelevantLines,
     outputRecords: value.outputRecords,
     expandedRecordBytes: value.expandedRecordBytes,
@@ -141,6 +140,7 @@ async function fixture() {
     root,
     home,
     source,
+    sourceLineCount: lines.length,
     crashedWorkspace: join(root, "workspace-crashed"),
     controlWorkspace: join(root, "workspace-control"),
     crashMarker: join(root, "checkpoint-crash-once"),
@@ -217,9 +217,14 @@ test("a parent SIGKILL after a committed source batch recovers exactly once with
     assert.equal(new Set(recoveredSnapshot.records.map((record) => record.recordId)).size, 770);
     assert.equal(stableJson(recoveredSnapshot.records), stableJson(controlSnapshot.records));
     assert.deepEqual(recoveredSnapshot.diagnostics, controlSnapshot.diagnostics);
-    // RSS, elapsed time, and directory-entry work are process-attempt counters;
-    // the durable logical/accounting totals must remain equal across recovery.
+    // Preserve every durable logical/accounting total apart from actual line
+    // reads, which include the restart-only bounded response-plan rebuild.
     assert.deepEqual(stableResourceTotals(recoveredSnapshot.resourceUsage), stableResourceTotals(controlSnapshot.resourceUsage));
+    assert.equal(controlSnapshot.resourceUsage.lines, (value.sourceLineCount * 2) + 2,
+      "fresh tier and record passes include the two source identity verification reads");
+    assert.equal(recoveredSnapshot.resourceUsage.lines,
+      controlSnapshot.resourceUsage.lines + value.sourceLineCount,
+      "resume durably counts one additional bounded fallback pass before record scanning");
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }

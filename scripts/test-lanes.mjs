@@ -1,18 +1,22 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { constants as fileSystemConstants } from "node:fs";
-import { access, lstat } from "node:fs/promises";
-import { dirname, relative, resolve, sep } from "node:path";
+import { access, lstat, realpath } from "node:fs/promises";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
   PORTABLE_TEST_FILES,
   WINDOWS_PORTABLE_TEST_FILES,
 } from "./portable-test-manifest.mjs";
+import {
+  createIsolatedTestEnvironment,
+  runIsolatedProcess,
+  runIsolatedTestCommand,
+} from "./run-isolated-tests.mjs";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 export const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
-const NPM_COMMAND = process.platform === "win32" ? "npm.cmd" : "npm";
 const NULL_DEVICE = process.platform === "win32" ? "NUL" : "/dev/null";
 const TEST_REPORTER_ENVIRONMENT_VARIABLE = "USAGE_MONITOR_TEST_LANE_REPORTER";
 const SUPPORTED_TEST_REPORTERS = new Set(["dot", "spec", "tap"]);
@@ -24,7 +28,7 @@ export const LANE_REGRESSION_TEST_FILES = Object.freeze([
 // Keep discovery inclusive as focused Electron regression files are added.
 // These source contracts remain separate from packaged/native GUI gates.
 export const ELECTRON_TEST_ARGUMENTS = Object.freeze([
-  "--test-concurrency=1", "apps/electron/test/*.test.mjs",
+  "--test-concurrency=1", "--suite=electron",
 ]);
 
 const ALL_EXPLICIT_TEST_FILES = Object.freeze([
@@ -212,11 +216,13 @@ export async function runCommand(command, arguments_, {
 
 async function readCommandOutput(command, arguments_, {
   acceptedExitCodes = [0],
+  env = process.env,
 } = {}) {
   const chunks = [];
   await new Promise((resolveRun, rejectRun) => {
     const child = spawn(command, arguments_, {
       cwd: REPOSITORY_ROOT,
+      env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout.on("data", (chunk) => chunks.push(chunk));
@@ -240,13 +246,13 @@ export function mergeChangedPaths(outputs) {
   return Object.freeze([...merged].sort());
 }
 
-async function untrackedPaths() {
+async function untrackedPaths(environment = process.env) {
   const output = await readCommandOutput("git", [
     "ls-files",
     "--others",
     "--exclude-standard",
     "-z",
-  ]);
+  ], { env: environment });
   return mergeChangedPaths([output]);
 }
 
@@ -276,8 +282,8 @@ function testReporterArguments(environment = process.env) {
   return [`--test-reporter=${reporter}`];
 }
 
-async function checkUntrackedWhitespace() {
-  for (const path of await untrackedPaths()) {
+async function checkUntrackedWhitespace(environment = process.env) {
+  for (const path of await untrackedPaths(environment)) {
     const output = await readCommandOutput("git", [
       "diff",
       "--no-index",
@@ -285,39 +291,103 @@ async function checkUntrackedWhitespace() {
       "--",
       NULL_DEVICE,
       resolve(REPOSITORY_ROOT, path),
-    ], { acceptedExitCodes: [0, 1] });
+    ], { acceptedExitCodes: [0, 1], env: environment });
     if (output.trim().length > 0) {
       throw new Error(`Untracked-file whitespace check failed for ${path}: ${output.trim()}`);
     }
   }
 }
 
-export async function runPreflight() {
-  testReporterArguments();
+export async function runPreflight({
+  environment = process.env,
+  reporterArguments = testReporterArguments(),
+} = {}) {
   await validateExplicitTestFiles();
-  await runCommand("git", ["diff", "--check"]);
-  await runCommand("git", ["diff", "--cached", "--check"]);
-  await checkUntrackedWhitespace();
+  await runCommand("git", ["diff", "--check"], { env: environment });
+  await runCommand("git", ["diff", "--cached", "--check"], { env: environment });
+  await checkUntrackedWhitespace(environment);
   await runCommand(process.execPath, [
     "./tools/operations/validate-documentation.mjs",
-  ]);
+  ], { env: environment });
   await runNodeTests([
     "test/documentation-governance.test.js",
     "test/agent-guidance.test.js",
-  ]);
+  ], { environment, reporterArguments });
 }
 
-async function runNodeTests(arguments_, { environment = process.env } = {}) {
-  await runCommand(process.execPath, [
-    "--test",
-    ...testReporterArguments(environment),
-    ...arguments_,
-  ], { env: environment });
+async function runNodeTests(arguments_, {
+  environment = process.env,
+  reporterArguments = [],
+} = {}) {
+  const nodeOptions = arguments_.filter((argument) => argument.startsWith("--"));
+  const files = arguments_.filter((argument) => !argument.startsWith("--"));
+  const runnerArguments = [...reporterArguments, ...nodeOptions];
+  if (files.length > 0) runnerArguments.push("--", ...files);
+  await runIsolatedTestCommand(runnerArguments, { environment });
 }
 
-async function runLane(lane) {
+async function runNodeScript(script, arguments_, environment) {
+  await runIsolatedProcess(process.execPath, [script, ...arguments_], { environment });
+}
+
+function samePath(left, right) {
+  const normalize = (path) => {
+    const selected = resolve(path);
+    if (process.platform !== "win32") return selected;
+    return selected
+      .replace(/^\\\\\?\\UNC\\/iu, "\\\\")
+      .replace(/^\\\\\?\\/u, "")
+      .toLowerCase();
+  };
+  const normalizedLeft = normalize(left);
+  const normalizedRight = normalize(right);
+  return process.platform === "win32"
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+async function resolveBundledNpmCli() {
+  let nodeExecutable;
+  try {
+    nodeExecutable = await realpath(process.execPath);
+    if (process.platform === "win32") {
+      nodeExecutable = nodeExecutable
+        .replace(/^\\\\\?\\UNC\\/iu, "\\\\")
+        .replace(/^\\\\\?\\/u, "");
+    }
+  } catch {
+    throw new Error("ISOLATED_NPM_CLI_UNAVAILABLE");
+  }
+  const nodeDirectory = dirname(nodeExecutable);
+  const selected = resolve(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js");
+  let metadata;
+  let canonical;
+  try {
+    metadata = await lstat(selected);
+    canonical = await realpath(selected);
+    if (process.platform === "win32") {
+      canonical = canonical
+        .replace(/^\\\\\?\\UNC\\/iu, "\\\\")
+        .replace(/^\\\\\?\\/u, "");
+    }
+  } catch {
+    throw new Error("ISOLATED_NPM_CLI_UNAVAILABLE");
+  }
+  const relativePath = relative(nodeDirectory, canonical);
+  if (!metadata.isFile()
+      || metadata.isSymbolicLink()
+      || !samePath(canonical, selected)
+      || relativePath === ".."
+      || relativePath.startsWith(`..${sep}`)
+      || isAbsolute(relativePath)) {
+    throw new Error("ISOLATED_NPM_CLI_UNAVAILABLE");
+  }
+  return canonical;
+}
+
+async function runLane(lane, { environment, reporterArguments }) {
   if (lane === "electron") {
-    await runNodeTests(ELECTRON_TEST_ARGUMENTS);
+    await runNodeTests(ELECTRON_TEST_ARGUMENTS, { environment, reporterArguments });
     return;
   }
 
@@ -326,40 +396,36 @@ async function runLane(lane) {
     const files = process.platform === "win32"
       ? WINDOWS_PORTABLE_TEST_FILES
       : PORTABLE_TEST_FILES;
-    await runNodeTests(["--test-concurrency=1", ...files]);
+    await runNodeTests(["--test-concurrency=1", ...files], { environment, reporterArguments });
     return;
   }
   if (lane === "i18n") {
-    await runCommand(NPM_COMMAND, ["run", "i18n:browser:check"]);
-    await runCommand(NPM_COMMAND, ["run", "i18n:electron:check"]);
+    await runNodeScript("./scripts/generate-i18n-browser-mirror.js", ["--check"], environment);
+    await runNodeScript("./scripts/generate-i18n-electron-copy.js", ["--check"], environment);
     await runNodeTests([
       "--test-concurrency=1",
       "test/i18n-foundation.test.js",
       "apps/electron/test/i18n-copy.test.mjs",
       "apps/electron/test/desktop-menu-tray.test.mjs",
-    ]);
-    await runCommand(NPM_COMMAND, ["run", "product:ui:test"]);
+    ], { environment, reporterArguments });
+    await runNodeTests(["--suite=ui"], { environment, reporterArguments });
     return;
   }
   if (lane === "full") {
-    await runCommand(NPM_COMMAND, ["run", "check"], {
-      env: {
-        ...process.env,
-        USAGE_MONITOR_TEST_LANES: "0",
-      },
-    });
+    const npmCli = await resolveBundledNpmCli();
+    await runIsolatedProcess(process.execPath, [npmCli, "run", "check"], { environment });
     return;
   }
   throw new Error(`Unknown executable test lane: ${lane}`);
 }
 
-async function runSelectedLanes(lanes) {
+async function runSelectedLanes(lanes, options) {
   for (const lane of lanes) {
-    await runLane(lane);
+    await runLane(lane, options);
   }
 }
 
-async function changedPaths(base) {
+async function changedPaths(base, environment = process.env) {
   // A base comparison supplies committed branch work. The active checkout and
   // untracked files are added deliberately, so local changes cannot be hidden
   // merely because the caller also supplied a merge-base revision.
@@ -370,13 +436,13 @@ async function changedPaths(base) {
       "--name-only",
       "-z",
       revision,
-    ])),
+    ], { env: environment })),
     readCommandOutput("git", [
       "ls-files",
       "--others",
       "--exclude-standard",
       "-z",
-    ]),
+    ], { env: environment }),
   ]);
   return mergeChangedPaths(outputs);
 }
@@ -405,29 +471,36 @@ export async function main(argv = process.argv.slice(2)) {
     usage();
     return;
   }
-  if (options.command === "preflight") {
-    await runPreflight();
-    return;
-  }
+  const reporterArguments = testReporterArguments();
+  const isolation = await createIsolatedTestEnvironment();
+  try {
+    const environment = isolation.environment;
+    if (options.command === "preflight") {
+      await runPreflight({ environment, reporterArguments });
+      return;
+    }
 
-  let selection;
-  if (options.command === "changed" || options.command === "plan") {
-    const paths = options.paths.length > 0
-      ? options.paths
-      : await changedPaths(options.base);
-    selection = selectTestLanes(paths, { full: options.full });
-    console.log(JSON.stringify(selection, null, 2));
-    if (options.command === "plan") return;
-  } else {
-    selection = Object.freeze({ lanes: Object.freeze([options.command]) });
-  }
+    let selection;
+    if (options.command === "changed" || options.command === "plan") {
+      const paths = options.paths.length > 0
+        ? options.paths
+        : await changedPaths(options.base, environment);
+      selection = selectTestLanes(paths, { full: options.full });
+      console.log(JSON.stringify(selection, null, 2));
+      if (options.command === "plan") return;
+    } else {
+      selection = Object.freeze({ lanes: Object.freeze([options.command]) });
+    }
 
-  await runPreflight();
-  if (selection.lanes.length === 0) {
-    console.log("No code or test paths selected; preflight completed.");
-    return;
+    await runPreflight({ environment, reporterArguments });
+    if (selection.lanes.length === 0) {
+      console.log("No code or test paths selected; preflight completed.");
+      return;
+    }
+    await runSelectedLanes(selection.lanes, { environment, reporterArguments });
+  } finally {
+    await isolation.dispose();
   }
-  await runSelectedLanes(selection.lanes);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === SCRIPT_FILE) {

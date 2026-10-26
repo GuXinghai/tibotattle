@@ -207,13 +207,13 @@ test("work lifecycle survives cold, incremental, replay and forward migration wi
     assert.equal(Buffer.from(db.prepare("SELECT task_key FROM work_lifecycle_fact LIMIT 1").get().task_key).length,32);
     // Build the predecessor schema only in this content-free synthetic fixture.
     for(const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all()) db.exec(`DROP TRIGGER ${row.name}`);
-    db.exec("ALTER TABLE store_state DROP COLUMN calculation_revision; DROP TABLE work_lifecycle_fact; PRAGMA user_version=4");
+    db.exec("ALTER TABLE store_state DROP COLUMN calculation_revision; ALTER TABLE source DROP COLUMN carry_tier_source; DROP TABLE work_lifecycle_fact; PRAGMA user_version=4");
     db.prepare("UPDATE source SET parser_version='local-index-rollout-typed-v1+unified-rollout-typed-v19'").run();db.close();
     assert.throws(()=>openLocalIndexStore(indexFile,{readOnly:true}),{code:"local_index_family_mismatch"});
     const saltBefore=await readFile(w.secretFile);
     await refreshLocalIndex(options);
     db=openLocalIndexStore(indexFile,{readOnly:true});
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version,8);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version,9);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);db.close();
     assert.deepEqual(await readFile(w.secretFile),saltBefore);
     const result=readLocalIndexWorkload({indexFile,nowMs:at+11*M,sourceFresh:true});

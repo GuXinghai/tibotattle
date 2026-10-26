@@ -185,8 +185,8 @@ async function openSafeSource(path, expected = null) {
   } catch (error) {
     await handle?.close().catch(() => {});
     if (error instanceof CodexCollectorExportSourceError) throw error;
-    if (error?.code === "ENOENT") fail("source_missing");
-    if (error?.code === "ELOOP") fail("source_type");
+    if (error?.code === "ENOENT" || error?.code === "WINDOWS_FILESYSTEM_NOT_FOUND") fail("source_missing");
+    if (error?.code === "ELOOP" || error?.code === "WINDOWS_FILESYSTEM_REPARSE_POINT") fail("source_type");
     fail("source_changed");
   }
 }
@@ -287,7 +287,8 @@ async function verifyBoundPath(plan) {
   try {
     pathStats = await lstat(plan.path);
   } catch (error) {
-    if (error?.code === "ENOENT") fail("source_missing");
+    if (error?.code === "ENOENT" || error?.code === "WINDOWS_FILESYSTEM_NOT_FOUND") fail("source_missing");
+    if (error?.code === "ELOOP" || error?.code === "WINDOWS_FILESYSTEM_REPARSE_POINT") fail("source_type");
     fail("source_changed");
   }
   assertSafeSourceStats(pathStats);
@@ -317,6 +318,9 @@ async function createCodexCollectorExportSourcePlan({
   const canonicalPath = resolve(collectorPath);
   const { handle, stats } = await openSafeSource(canonicalPath);
   try {
+    // Collector v0.2 persists both identities as unsigned 64-bit decimals.
+    // Refuse wider native file IDs before reading source bytes.
+    if (!validFilesystemId(stats.dev) || !validFilesystemId(stats.ino)) fail("source_changed");
     // Prefix discovery scans backward from EOF. Enforce the declared source
     // ceiling before the first discovery read so a sparse or unterminated file
     // cannot turn planning into an unbounded pre-policy scan.

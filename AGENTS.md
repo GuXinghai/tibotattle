@@ -131,8 +131,9 @@ and updated authoritative documentation.
 
 ## Validation
 
-- Use pnpm for the root workspace. The Worker app has an independent npm
-  lockfile. Do not mix lockfile ownership.
+- Use pnpm for the root workspace and preserve its lockfile ownership.
+- Ordinary tests use `scripts/run-isolated-tests.mjs` with synthetic homes/state.
+  Native credential qualification is separate, explicit, and never an ordinary run.
 - Root tooling requires Node.js 22.13 or newer. Production Electron candidate
   preparation requires exactly Node.js 26.2.0; Windows packaging and installed
   checks require a supported Windows x64 host and GUI context. Unsupported
@@ -144,11 +145,10 @@ and updated authoritative documentation.
   `npm run test:changed -- --base <review-base>` when a trustworthy base exists.
 - Use `npm test` for broad root/shared behavior and `npm run check` only when the
   complete cross-surface gate is justified and its platform prerequisites exist.
-- Use the owning package or surface gate for scoped changes. The Electron and
-  Worker files define their retained gates.
+- Use the owning package or surface gate for scoped changes.
 - Tests are serial where configured. Do not weaken assertions, exclusions,
   timeouts, privacy checks, or platform gates to obtain green output.
-- For user-facing changes, inspect the rendered target with real-system data.
+- For user-facing changes, inspect the rendered target with isolated synthetic data.
   Browser rendering does not qualify native rendering, and simulated platform
   checks do not qualify physical operating-system behavior.
 - If validation cannot run because dependencies, credentials, hardware, or

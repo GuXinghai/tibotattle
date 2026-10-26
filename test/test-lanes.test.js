@@ -13,10 +13,23 @@ import {
 } from "../scripts/portable-test-manifest.mjs";
 
 test("Electron gate discovers every focused suite serially and joins the integrated product gate", async () => {
-  assert.deepEqual(ELECTRON_TEST_ARGUMENTS, ["--test-concurrency=1", "apps/electron/test/*.test.mjs"]);
+  assert.deepEqual(ELECTRON_TEST_ARGUMENTS, ["--test-concurrency=1", "--suite=electron"]);
   const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(manifest.scripts["product:electron:test"], `node --test ${ELECTRON_TEST_ARGUMENTS.join(" ")}`);
+  assert.match(manifest.scripts["product:electron:test"], /scripts\/run-isolated-tests\.mjs/u);
+  assert.match(manifest.scripts["product:electron:test"], /--suite(?:=|\s+)electron/u);
   assert.ok(manifest.scripts["product:check"].split(" && ").includes("pnpm run product:electron:test"));
+  const laneSource = await readFile(new URL("../scripts/test-lanes.mjs", import.meta.url), "utf8");
+  assert.match(laneSource, /runIsolatedTestCommand\(runnerArguments, \{ environment \}\)/u);
+  assert.match(laneSource, /runIsolatedProcess\(process\.execPath, \[script, \.\.\.arguments_\], \{ environment \}\)/u);
+  assert.match(laneSource, /async function resolveBundledNpmCli\(\)/u);
+  assert.match(laneSource, /realpath\(process\.execPath\)/u);
+  assert.match(laneSource, /resolve\(nodeDirectory, "node_modules", "npm", "bin", "npm-cli\.js"\)/u);
+  assert.match(laneSource, /metadata\.isSymbolicLink\(\)/u);
+  assert.match(laneSource, /realpath\(selected\)/u);
+  assert.match(laneSource, /runIsolatedProcess\(process\.execPath, \[npmCli, "run", "check"\], \{ environment \}\)/u);
+  assert.doesNotMatch(laneSource, /check-architecture-boundaries\.mjs|check-codex-contract-drift\.mjs|check-tool-inventory\.mjs/u,
+    "the integrated lane must use package.json as its gate authority");
+  assert.doesNotMatch(laneSource, /npm\.cmd|shell\s*:\s*true/u);
   assert.equal(parseTestLaneArguments(["electron"]).command, "electron");
   assert.deepEqual(selectTestLanes(["apps/electron/test/desktop-runtime.test.mjs"]).lanes, ["electron"]);
   assert.deepEqual(selectTestLanes(["apps/electron/desktop-runtime.js"]).lanes, ["full"]);

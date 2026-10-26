@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
 import { TEST_GENERATION, withResidentCalibration } from "./helpers/replay-safe-resident-calibration.js";
 import {
   readLocalCollectorAccountingCache,
+  serializeLocalCollectorAccountingCache,
   writeLocalCollectorAccountingCache,
 } from "../src/local-collector-state.js";
 import { buildLocalCompanionSnapshot } from "../src/local-companion-data.js";
@@ -20,6 +21,7 @@ import { refreshLocalIndex } from "../src/local-index-refresh.js";
 import { buildLocalIndexAccountingCache } from "../src/local-index-accounting-cache.js";
 import { readLocalIndexGenerationIdentity } from "../src/local-index-companion-source.js";
 import { appendSyntheticCodexEvents } from "../src/synthetic-codex-rollout-corpus.js";
+import { createProtectedFixtureDirectory } from "./helpers/windows-owner-only-fixture.js";
 
 // Serve-stale-labeled (2026-08-19). A cache whose semantic identity mismatches
 // the current code — the exact state every updater enters, because a schema
@@ -37,6 +39,7 @@ const NOW = Date.parse("2026-08-20T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const WEEK_MS = 7 * DAY_MS;
 const OUTDATED_SCHEMA_VERSION = "local-replay-safe-accounting-v0.11";
+const PREVIOUS_PRICING_SCHEMA_VERSION = "local-replay-safe-accounting-v0.24";
 const WITHHELD_SENTENCE =
   "Historical event-time accounting changed. The prior cache is withheld until the next local replay rebuilds it.";
 
@@ -131,7 +134,7 @@ async function writeOutdatedPriorCache(stateFile) {
 
 async function fixtureRoot() {
   const root = await mkdtemp(join(tmpdir(), "usage-monitor-stale-serve-"));
-  await mkdir(join(root, ".usage-monitor"), { recursive: true });
+  createProtectedFixtureDirectory(join(root, ".usage-monitor"));
   return root;
 }
 
@@ -207,6 +210,48 @@ test("a semantics-outdated cache is returned on the explicit stale channel with 
     assert.equal(read.staleCache.computedAt, outdated.generatedAt);
     assert.deepEqual(read.staleCache.coveredAt, outdated.coveredAt);
     assert.deepEqual(read.staleCache.cache, outdated);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a synthetic v0.24 cache stays byte-identical on stale read while v0.25 withholds it", async () => {
+  const root = await fixtureRoot();
+  const stateFile = join(root, ".usage-monitor", "local-collector-state-v1.sqlite");
+  try {
+    const current = await refreshReplaySafeAccountingCache({
+      stateFile,
+      now: () => NOW - 60 * 60_000,
+      scan: estimatorWorthyScan(),
+    });
+    const previous = structuredClone(current);
+    previous.schemaVersion = PREVIOUS_PRICING_SCHEMA_VERSION;
+    delete previous.pricingMethodVersion;
+    const previousBytes = Buffer.from(serializeLocalCollectorAccountingCache(previous));
+    await writeLocalCollectorAccountingCache({ stateFile, cache: previous });
+
+    const retainedBeforeRead = await readLocalCollectorAccountingCache({ stateFile });
+    assert.deepEqual(
+      Buffer.from(serializeLocalCollectorAccountingCache(retainedBeforeRead.cache)),
+      previousBytes,
+    );
+
+    const read = await readReplaySafeAccountingCache({ stateFile });
+    assert.equal(read.status, "unavailable");
+    assert.equal(read.errorCode, "cache_accounting_semantics_outdated");
+    assert.equal(read.cache, null);
+    assert.equal(read.staleCache.stale, true);
+    assert.equal(read.staleCache.schemaVersion, PREVIOUS_PRICING_SCHEMA_VERSION);
+    assert.equal(read.staleCache.cache.schemaVersion, PREVIOUS_PRICING_SCHEMA_VERSION);
+    assert.equal(Object.hasOwn(read.staleCache.cache, "pricingMethodVersion"), false);
+    assert.deepEqual(read.staleCache.cache, previous);
+
+    const retainedAfterRead = await readLocalCollectorAccountingCache({ stateFile });
+    assert.deepEqual(
+      Buffer.from(serializeLocalCollectorAccountingCache(retainedAfterRead.cache)),
+      previousBytes,
+      "a stale read never rewrites or relabels the retained cache",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

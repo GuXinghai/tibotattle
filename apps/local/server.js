@@ -687,17 +687,25 @@ async function authorizeDiagnosticNote(request, response) {
   });
 }
 
-function authorizeCacheDropThreadLinksRead(request, response) {
-  // This optional read includes private local display names. Ordinary browser
-  // same-origin GETs omit Origin; the custom header still requires a CORS
-  // preflight from a foreign page, which the companion never grants.
+function authorizeSameOriginLocalRead(request, response, errorCode) {
+  // Ordinary browser same-origin GETs omit Origin. The local marker is still
+  // required; a foreign page needs a CORS preflight to send it, which the
+  // companion never grants. Direct requests with a foreign Origin are refused.
   const origin = request.headers.origin;
   if ((origin !== undefined && !sameOrigin(request))
       || request.headers["x-usage-monitor-local"] !== "1") {
-    sendError(response, 403, "cache_drop_thread_links_not_authorized");
+    sendError(response, 403, errorCode);
     return false;
   }
   return true;
+}
+
+function authorizeCacheDropThreadLinksRead(request, response) {
+  return authorizeSameOriginLocalRead(
+    request,
+    response,
+    "cache_drop_thread_links_not_authorized",
+  );
 }
 
 async function readFixedFile(root, file, maximumBytes) {
@@ -1572,6 +1580,11 @@ function createPreparedLocalCompanionServer({
           sendError(response, 400, "invalid_request");
           return;
         }
+        if (!authorizeSameOriginLocalRead(
+          request,
+          response,
+          "model_performance_not_authorized",
+        )) return;
         try {
           const snapshot = await readModelPerformance(period, { speedMode, ...(endAt === null ? {} : { endAt }) });
           const diagnostics = modelPerformanceController?.diagnostics() ?? [];

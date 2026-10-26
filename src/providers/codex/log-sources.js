@@ -7,6 +7,8 @@ import { classifySessionSurface } from "./surface-classification.js";
 
 const MAXIMUM_ACTIVE_APPEND_PROOF_BYTES = 8 * 1024 * 1024;
 const MAXIMUM_ROLLOUT_LINEAGE_BYTES = 1024 * 1024;
+const UINT64_MAX = 0xffff_ffff_ffff_ffffn;
+const UINT128_MAX = 0xffff_ffff_ffff_ffff_ffff_ffff_ffff_ffffn;
 const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 const UUID_VALUE = new RegExp(`^${UUID}$`, "iu");
 const CANONICAL_ROLLOUT_NAME = new RegExp(
@@ -151,9 +153,28 @@ export function rethrowScannerControlError(error) {
 }
 
 function sameSourceIdentity(stats, expected) {
-  if (Number.isSafeInteger(expected?.dev) && stats.dev !== expected.dev) return false;
-  if (Number.isSafeInteger(expected?.ino) && stats.ino !== expected.ino) return false;
-  if (Number.isFinite(expected?.birthtimeMs)
+  if (expected === null || expected === undefined) return true;
+  if (typeof expected.dev === "string" || typeof expected.ino === "string") {
+    const exactId = (value, maximum) => {
+      let parsed;
+      if (Number.isSafeInteger(value) && value >= 0) parsed = BigInt(value);
+      else if (typeof value === "string" && /^(0|[1-9][0-9]{0,38})$/u.test(value)) parsed = BigInt(value);
+      else return null;
+      return parsed <= maximum ? parsed : null;
+    };
+    const actualDev = exactId(stats?.dev, UINT64_MAX);
+    const expectedDev = exactId(expected.dev, UINT64_MAX);
+    const actualIno = exactId(stats?.ino, UINT128_MAX);
+    const expectedIno = exactId(expected.ino, UINT128_MAX);
+    if (actualDev === null || expectedDev === null || actualDev !== expectedDev
+        || actualIno === null || expectedIno === null || actualIno !== expectedIno) return false;
+  } else {
+    // Keep the historical Node-Stats path unchanged. Its identity fields are
+    // Numbers; the export-specific Windows adapter uses exact decimal strings.
+    if (Number.isSafeInteger(expected.dev) && stats.dev !== expected.dev) return false;
+    if (Number.isSafeInteger(expected.ino) && stats.ino !== expected.ino) return false;
+  }
+  if (Number.isFinite(expected.birthtimeMs)
       && Math.trunc(stats.birthtimeMs) !== Math.trunc(expected.birthtimeMs)) return false;
   return true;
 }

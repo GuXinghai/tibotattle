@@ -1383,7 +1383,10 @@ test("upgrading a legacy tail quarantine restores only complete original records
     await build(root);
     // Model the old defect in a disposable synthetic index, never user state.
     const db = openLocalIndexStore(storePath(root));
-    db.exec("BEGIN IMMEDIATE; DELETE FROM usage_event; UPDATE source SET scanned_bytes=0,quarantine_code='codex_rollout_tail_incomplete',parser_version='local-index-rollout-typed-v2+unified-rollout-typed-v21'; PRAGMA user_version=6; COMMIT"); db.close();
+    for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all()) {
+      db.exec(`DROP TRIGGER ${row.name}`);
+    }
+    db.exec("ALTER TABLE store_state DROP COLUMN calculation_revision; ALTER TABLE source DROP COLUMN carry_tier_source; BEGIN IMMEDIATE; DELETE FROM usage_event; UPDATE source SET scanned_bytes=0,quarantine_code='codex_rollout_tail_incomplete',parser_version='local-index-rollout-typed-v2+unified-rollout-typed-v21'; PRAGMA user_version=6; COMMIT"); db.close();
     await ingest(root); assert.equal(storeEventCount(root), 1); assert.deepEqual(storeQuarantineCodes(root), []);
     const handle = await open(source, 'r'); try { assert.equal(await handle.readFile('utf8'), original); } finally { await handle.close(); }
     await ingest(root); assert.equal(storeEventCount(root), 1);

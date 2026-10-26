@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   addUsdStrings,
+  LOCAL_API_PRICING_METHOD_VERSION,
   aggregateLocalApiPriceResults,
   apiPriceResolutionSummary,
   priceCodexProviderToolUnits,
@@ -70,6 +71,7 @@ test("Astra prices separate cache writes and combined output once with event-tim
 });
 
 test("Sol and Luna event pricing counts cache writes and reasoning once and preserves unknown history", () => {
+  assert.equal(LOCAL_API_PRICING_METHOD_VERSION, "provider-neutral-api-price-equivalent-v0.4");
   for (const [model, short, fast, long] of [
     ["gpt-6-sol", "1.4", "2.8", "2.3"],
     ["gpt-6-luna", "0.07", "0.14", "0.115"],
@@ -200,7 +202,7 @@ test("context-dependent Sol 6.1 and Astra rates require observed input context",
     }, { apiServiceTier });
     assert.equal(knownZero.coverageStatus, "fully_priced");
     assert.equal(knownZero.totalUsd, short);
-    assert.equal(knownZero.methodVersion, "provider-neutral-api-price-equivalent-v0.3");
+    assert.equal(knownZero.methodVersion, LOCAL_API_PRICING_METHOD_VERSION);
   }
 });
 
@@ -332,6 +334,61 @@ test("recognized historical events price before the review date while missing ti
   )));
   assert.equal(result.pricingContext.historicalPriceReasonCode, "historical_price_timestamp_missing");
   assert.equal(result.components[0].reasonCode, "historical_price_timestamp_missing");
+});
+
+test("Codex event-time pricing accepts finite Dates, uses option time as fallback, and rejects invalid Dates", () => {
+  const timestamp = new Date("2026-07-24T23:59:59.999Z");
+  const laterOptionTime = new Date("2026-07-30T00:00:00.000Z");
+  const base = {
+    model: "gpt-5.6-terra",
+    components: { input_uncached_tokens: 1_000_000 },
+  };
+
+  const stringTimestamp = priceCodexUsageEvent({ ...base, timestamp: timestamp.toISOString() });
+  const eventTimestamp = priceCodexUsageEvent({ ...base, timestamp }, { eventTime: laterOptionTime });
+  assert.equal(eventTimestamp.pricingContext.pricedAt, timestamp.toISOString());
+  assert.equal(eventTimestamp.coverageStatus, "fully_priced");
+  assert.equal(eventTimestamp.totalUsd, stringTimestamp.totalUsd);
+
+  const optionFallback = priceCodexUsageEvent(base, { eventTime: timestamp });
+  assert.equal(optionFallback.pricingContext.pricedAt, timestamp.toISOString());
+  assert.equal(optionFallback.totalUsd, stringTimestamp.totalUsd);
+
+  const invalidTimestamp = priceCodexUsageEvent({ ...base, timestamp: new Date(Number.NaN) }, {
+    eventTime: laterOptionTime,
+  });
+  assert.equal(invalidTimestamp.coverageStatus, "unpriced");
+  assert.equal(invalidTimestamp.components[0].reasonCode, "historical_price_timestamp_missing");
+
+  const toolOnly = priceCodexProviderToolUnits({ responses_web_search_call: 2 }, { eventTime: timestamp });
+  assert.equal(toolOnly.pricingContext.pricedAt, timestamp.toISOString());
+});
+
+test("Codex events with absent or empty token maps are unavailable, while explicit all-zero is valid", () => {
+  const base = {
+    timestamp: "2026-07-26T15:00:00.000Z",
+    model: "gpt-5.6-sol",
+  };
+  for (const event of [base, { ...base, components: {} }]) {
+    const result = priceCodexUsageEvent(event);
+    assert.equal(result.coverageStatus, "unpriced");
+    assert.equal(result.totalUsd, "0");
+    assert.equal(result.coverageCounts.unavailableComponents, 5);
+  }
+
+  const explicitZeros = priceCodexUsageEvent({
+    ...base,
+    components: {
+      input_uncached_tokens: 0,
+      input_cache_read_tokens: 0,
+      input_cache_write_tokens: 0,
+      output_text_tokens: 0,
+      output_reasoning_tokens: 0,
+    },
+  });
+  assert.equal(explicitZeros.coverageStatus, "fully_priced");
+  assert.equal(explicitZeros.totalUsd, "0");
+  assert.equal(explicitZeros.coverageCounts.unavailableComponents, 0);
 });
 
 test("the reviewed GPT-5.5 Codex alias remains priceable in historical events", () => {

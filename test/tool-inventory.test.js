@@ -303,10 +303,10 @@ test("the checked-in inventory classifies every retained tool entry point and np
     true,
     formatToolInventoryReport(result),
   );
-  // 82 records / 83 executable paths after retiring the provider callback fixture.
+  // 83 records / 84 executable paths with the ordinary synthetic test runner.
   // Keep exact counts: future executables still require an ownership decision.
-  assert.equal(result.records, 82);
-  assert.equal(result.candidates.length, 83);
+  assert.equal(result.records, 83);
+  assert.equal(result.candidates.length, 84);
   assert.ok(result.aliases >= 25);
 });
 

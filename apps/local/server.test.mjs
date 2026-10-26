@@ -250,7 +250,7 @@ test("semantic open target is stable by default and accepts only reviewed identi
   }
 });
 
-function fakeStore() {
+function fakeStore({ clock = () => new Date().toISOString() } = {}) {
   let reloads = 0;
   const paceOutlook = {
     schemaVersion: "local-weekly-pace-outlook-v0.1",
@@ -287,13 +287,14 @@ function fakeStore() {
       reloads += 1;
     },
     getOverview() {
+      const observedAt = clock();
       return {
         schemaVersion: LOCAL_COMPANION_SCHEMA_VERSION,
         mode: "real_local_evidence",
         evidenceStatus: "available",
-        quotaWindows: [{ observedAt: new Date().toISOString() }],
+        quotaWindows: [{ observedAt }],
         accounting: { generationMatched: true },
-        timeline: { history: { source: "unified_local_index", status: "complete", generatedAt: new Date().toISOString() } },
+        timeline: { history: { source: "unified_local_index", status: "complete", generatedAt: observedAt } },
         workload: { status: "available" },
       };
     },
@@ -529,6 +530,7 @@ test("loopback server exposes only fixed API, static, and report routes", async 
   const files = await fixture();
   const store = fakeStore();
   const app = await startLocalCompanionServer({
+    environment: {},
     resourceRoot: files.resourceRoot,
     stateRoot: files.stateRoot,
     codexHome: files.codexHome,
@@ -930,7 +932,7 @@ test("window-breakdown route bounds its range and returns a per-model/speed shap
 
 test("cache-drop thread links are private, transient, query-free local reads", async () => {
   const files = await fixture();
-  const store = fakeStore();
+  const store = fakeStore({ clock: () => "2026-10-27T00:00:00.000Z" });
   const requests = [];
   const privateName = "Synthetic local thread name";
   const threadId = "11111111-1111-4111-8111-111111111111";
@@ -945,6 +947,7 @@ test("cache-drop thread links are private, transient, query-free local reads", a
     } }],
   };
   const app = await startLocalCompanionServer({
+    environment: { USAGE_MONITOR_REFRESH_PAUSED: "true" },
     resourceRoot: files.resourceRoot,
     stateRoot: files.stateRoot,
     codexHome: files.codexHome,
@@ -1026,6 +1029,7 @@ test("cache-drop thread links are private, transient, query-free local reads", a
 test("local companion remains usable before Codex is installed", async () => {
   const files = await fixture();
   const app = await startLocalCompanionServer({
+    environment: {},
     resourceRoot: files.resourceRoot,
     stateRoot: files.stateRoot,
     codexHome: join(files.root, "no-codex-home-yet"),

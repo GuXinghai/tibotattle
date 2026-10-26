@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { appendFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
 import { extractRolloutUsage } from "../src/local-index-extract.js";
@@ -52,6 +53,14 @@ function uploadedUsage(file) {
       outputCombinedTokens: row.tokens_out_combined,
     },
   })));
+}
+
+function tierSources(file) {
+  return withReadOnlyStore(file, (database) => database.prepare(`
+    SELECT codex_speed_mode, tier_source FROM usage_event
+    JOIN tier_semantics ON tier_semantics.id = usage_event.tier_id
+    ORDER BY observed_at_ms
+  `).all().map((row) => ({ ...row })));
 }
 
 // Rewrites a store the way an older reparse left it: derived columns and the
@@ -291,8 +300,7 @@ test("thread and applied-turn tier evidence agrees across scanner, full and incr
     count(7, vector(400), vector(100)),
   ].map((record) => record.replaceAll("2026-09-03", "2026-09-29")));
   const expected = ["standard", "fast", "ultrafast", "unknown"];
-  const readModes = (file) => withReadOnlyStore(file, (db) => db.prepare(`SELECT codex_speed_mode, tier_source FROM usage_event
-    JOIN tier_semantics ON tier_semantics.id = usage_event.tier_id ORDER BY observed_at_ms`).all());
+  const readModes = tierSources;
   try {
     const events = [];
     await localCodexLogScanner.scanCodexLogEvents({ codexHome: value.root,
@@ -311,6 +319,69 @@ test("thread and applied-turn tier evidence agrees across scanner, full and incr
     }
   } finally { await rm(value.root, { recursive: true }); }
 });
+
+test("turn-override provenance survives sequential and parallel cursor carry", async () => {
+  const firstTotal = vector(100);
+  const secondTotal = vector(200);
+  const value = await fixture([
+    line(1, "turn_context", { model: "gpt-6-astra", service_tier: "priority" }),
+    count(2, firstTotal, firstTotal),
+  ]);
+  try {
+    for (const [name, workerCount] of [["sequential", 1], ["parallel", 2]]) {
+      const indexFile = join(value.root, `${name}.sqlite`);
+      const initial = await refreshCodexHome(value.root, { indexFile, workerCount });
+      if (workerCount > 1) assert.equal(initial.mode, "lanes");
+    }
+
+    await appendFile(value.path, `${count(3, secondTotal, vector(100))}\n`);
+    for (const name of ["sequential", "parallel"]) {
+      const indexFile = join(value.root, `${name}.sqlite`);
+      await refreshCodexHome(value.root, { indexFile, workerCount: name === "parallel" ? 2 : 1 });
+      assert.deepEqual(tierSources(indexFile), [
+        { codex_speed_mode: "fast", tier_source: "turn_override" },
+        { codex_speed_mode: "fast", tier_source: "turn_override" },
+      ]);
+    }
+  } finally { await rm(value.root, { recursive: true }); }
+});
+
+test("synthetic v8 copy keeps old carry provenance unobserved after forward migration", async () => {
+  const firstTotal = vector(100);
+  const secondTotal = vector(200);
+  const value = await fixture([
+    line(1, "turn_context", { model: "gpt-6-astra", service_tier: "priority" }),
+    count(2, firstTotal, firstTotal),
+  ]);
+  const v9Source = join(value.root, "v9-source.sqlite");
+  const v8Copy = join(value.root, "synthetic-v8-copy.sqlite");
+  try {
+    await refreshCodexHome(value.root, { indexFile: v9Source });
+    await copyFile(v9Source, v8Copy);
+    const legacy = new DatabaseSync(v8Copy);
+    try {
+      legacy.exec(`DROP TRIGGER IF EXISTS calculation_source_update;
+        ALTER TABLE source DROP COLUMN carry_tier_source;
+        PRAGMA user_version=8`);
+    } finally { legacy.close(); }
+
+    await appendFile(value.path, `${count(3, secondTotal, vector(100))}\n`);
+    await refreshCodexHome(value.root, { indexFile: v8Copy });
+
+    withReadOnlyStore(v8Copy, (database) => {
+      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 9);
+      assert.equal(database.prepare("SELECT carry_tier_source FROM source").get().carry_tier_source, null);
+    });
+    assert.deepEqual(tierSources(v8Copy), [
+      { codex_speed_mode: "fast", tier_source: "turn_override" },
+      { codex_speed_mode: "unknown", tier_source: "unobserved" },
+    ]);
+    assert.deepEqual(tierSources(v9Source), [
+      { codex_speed_mode: "fast", tier_source: "turn_override" },
+    ], "the original synthetic v9 source copy remains untouched");
+  } finally { await rm(value.root, { recursive: true }); }
+});
+
 test("model catalog repair reparses retained Sol 6.1 sources once without changing token evidence", async () => {
   const selected = vector(100, 90);
   const value = await fixture([

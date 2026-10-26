@@ -71,15 +71,15 @@ not substitute for the exact deployed D1 prefix or an installed predecessor.
 
 ## Scoped iteration and final qualification
 
-The test planner now has `worker` and `public-site` lanes. Each runs the complete
-owning Worker gate, including its clean-source dry builds; the public-site lane
-also runs all UI and public-release-site tests. Only reviewed hosted source,
-migrations/configuration and public builder paths select them. Shared browser
-assets, unfamiliar scripts and shared configuration still fall back to the full
-gate. Both hosted lanes together run the Worker gate once.
+The test planner has `i18n`, `electron`, and `full` lanes. It rejects the retired
+`worker` and `public-site` lanes; this checkout has no Worker dependency tree or
+deployment gate. Ordinary tests run with fresh synthetic homes and state.
+Shared browser assets, unfamiliar scripts, and shared configuration fall back
+to the full local gate. Passing a source lane does not authorize real-profile,
+Credential Manager, installed-app, signing, or remote validation.
 
 ```bash
-node scripts/test-lanes.mjs plan --path apps/worker/src/index.ts
+node scripts/test-lanes.mjs plan --path apps/electron/test/desktop-runtime.test.mjs
 node scripts/test-lanes.mjs changed --base <reviewed-base>
 node scripts/test-lanes.mjs changed --base <reviewed-base> --full
 ```
@@ -88,5 +88,5 @@ node scripts/test-lanes.mjs changed --base <reviewed-base> --full
 final release checks, signed trust, exact predecessor evidence, current remote
 state and public readback separate. Existing R7 v0.1 receipts retain their full
 fingerprint and schema: this cache never reinterprets an old receipt under a
-smaller key. A narrower R7 acceptance schema and resumable R7 calculations remain
-separate qualification work.
+smaller key. R7 v0.1 generation is retired; historical receipt validation never
+turns retained source provenance into current qualification evidence.

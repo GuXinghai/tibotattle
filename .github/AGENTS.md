@@ -51,7 +51,7 @@ Scope: all files under `.github/`. Apply the repository root guidance first.
   guards, and manual platform gates. Do not weaken them to make a workflow green.
 - Run `node scripts/check-release-workflow-policy.mjs` and
   `npm run release:trust:check` for release-trust/action changes, plus the owning
-  SBOM, attestation, web, native, or Worker tests.
+  SBOM, attestation, web, or native tests.
 - Validate YAML structure and inspect the fully expanded shell/action boundary.
   A local policy test cannot prove hosted runner images, secrets, OIDC issuance,
   environment approval, or a successful GitHub run.

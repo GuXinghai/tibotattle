@@ -29,7 +29,7 @@ function combined(nowMs, marker = 1) {
 }
 function latch() { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; }
 
-test("all periods and scopes reuse one priced projection with immutable original bounds", async () => {
+test("each work-usage timestamp builds fresh while one result selects every period and scope", async () => {
   let reads = 0;
   let fingerprint = generation;
   const reader = createCachedLocalUnifiedProjectionReader({
@@ -39,25 +39,31 @@ test("all periods and scopes reuse one priced projection with immutable original
   });
   const first = await reader(options(100));
   first.workUsage.periods.all.snapshots["account-a"].marker = 999;
+  const afterMutation = await reader(options(100));
+  assert.equal(afterMutation.workUsage.periods.all.snapshots["account-a"].marker, 2);
   for (const period of ["24h", "7d", "30d", "all"]) {
     for (const scope of ["account-a", "unknown"]) {
-      const value = selectSharedWorkUsageSnapshot(await reader(options(150)), { period, scope });
-      assert.equal(value.marker, 1);
+      const value = selectSharedWorkUsageSnapshot(afterMutation, { period, scope });
+      assert.equal(value.marker, 2);
       assert.equal(value.toMs, 100);
       assert.equal(value.scope, scope);
     }
   }
-  assert.equal(reads, 1);
+  assert.equal(reads, 2);
   assert.throws(() => selectSharedWorkUsageSnapshot(first, { period: "all", scope: "other" }), { code: "work_usage_scope_unavailable" });
   assert.equal(selectSharedWorkUsageSnapshot(first, { period: "all" }).scope, "unknown");
+  const newer = await reader(options(150));
+  assert.equal(newer.workUsage.asOfMs, 150);
+  assert.equal(newer.workUsage.periods.all.snapshots["account-a"].marker, 3);
+  assert.equal(reads, 3);
   await reader(options(1100));
-  assert.equal(reads, 2);
+  assert.equal(reads, 4);
   fingerprint = `generation-v2-${"b".repeat(64)}`;
   await reader(options(1101));
-  assert.equal(reads, 3);
+  assert.equal(reads, 5);
 });
 
-test("a deferred read serves the completed full result only while it stays valid", async () => {
+test("a deferred work-usage read never serves a prior completed full result", async () => {
   const modes = [];
   let fingerprint = generation;
   const reader = createCachedLocalUnifiedProjectionReader({
@@ -74,23 +80,21 @@ test("a deferred read serves the completed full result only while it stays valid
   assert.equal((await reader(deferred(50))).companion.status, "deferred");
   assert.deepEqual(modes, ["deferred"]);
 
-  // An unchanged publication keeps the completed full result valid.
+  // A full result is usable for its original request but is not reused by a
+  // later deferred read because work usage includes external metadata.
   await reader(options(100));
   const served = await reader(deferred(150));
-  assert.equal(served.companion.status, "available");
-  assert.equal(served.companion.marker, 2);
-  assert.deepEqual(modes, ["deferred", "full"]);
+  assert.equal(served.companion.status, "deferred");
+  assert.deepEqual(modes, ["deferred", "full", "deferred"]);
 
-  // Past its time-membership bound the result is no longer the full projection.
   assert.equal((await reader(deferred(1100))).companion.status, "deferred");
-  // Nor once a different generation is published.
   await reader(options(1200));
   fingerprint = `generation-v2-${"b".repeat(64)}`;
   assert.equal((await reader(deferred(1250))).companion.status, "deferred");
-  assert.deepEqual(modes, ["deferred", "full", "deferred", "full", "deferred"]);
+  assert.deepEqual(modes, ["deferred", "full", "deferred", "deferred", "full", "deferred"]);
 });
 
-test("concurrent dashboard and work reads coalesce, including later timestamps", async () => {
+test("concurrent work-usage reads coalesce only when their timestamps match", async () => {
   const gate = latch(); let reads = 0;
   const reader = createCachedLocalUnifiedProjectionReader({
     reader: async o => { reads++; await gate.promise; return combined(o.nowMs); },
@@ -98,11 +102,11 @@ test("concurrent dashboard and work reads coalesce, including later timestamps",
   });
   const a = reader(options(100)); const b = reader(options(101)); const c = reader(options(100));
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(reads, 1);
+  assert.equal(reads, 2);
   gate.resolve();
   const results = await Promise.all([a, b, c]);
-  assert.equal(reads, 1);
-  assert.deepEqual(results.map(r => r.workUsage.asOfMs), [100, 100, 100]);
+  assert.equal(reads, 2);
+  assert.deepEqual(results.map(r => r.workUsage.asOfMs), [100, 101, 100]);
 });
 
 test("cancelling one subscriber preserves another; cancelling every subscriber prevents publication", async () => {
@@ -166,10 +170,10 @@ test("temporary work failure is retried and bounded failure codes survive select
   assert.equal(reads, 2);
 });
 
-test("selectors isolate dashboard and work shapes without copying every cached period", async () => {
+test("selectors isolate dashboard and work shapes across fresh work-usage timestamps", async () => {
   let reads = 0;
   const reader = createCachedLocalUnifiedProjectionReader({
-    reader: async o => { reads++; return combined(o.nowMs); },
+    reader: async o => { reads++; return combined(o.nowMs, reads); },
     readGeneration: async () => generation, validUntil: async () => Infinity,
   });
   const dashboard = await reader(options(100), { selectProjection: p => p.companion });
@@ -178,12 +182,12 @@ test("selectors isolate dashboard and work shapes without copying every cached p
   dashboard.marker = 999;
   const work = await reader(options(101), { selectProjection: p => selectSharedWorkUsageSnapshot(p, { period: "all", scope: "account-a" }) });
   assert.equal(Object.hasOwn(work, "companion"), false);
-  assert.equal(work.marker, 1);
-  assert.equal(reads, 1);
+  assert.equal(work.marker, 2);
+  assert.equal(reads, 2);
 });
 
 
-test("real index cache validity expires exactly at work admission and lower-bound exit", async t => {
+test("real index work validity stays measured while each work projection is rebuilt", async t => {
   const now = Date.parse("2026-09-01T12:00:00Z");
   for (const observedAt of [now - 86400000, now, now + 100]) {
     const root = await mkdtemp(join(tmpdir(), "work-cache-boundary-"));
@@ -208,9 +212,22 @@ test("real index cache validity expires exactly at work admission and lower-boun
     assert.equal(database.prepare("SELECT COUNT(*) AS n FROM usage_event").get().n, 1);
     database.close();
     let reads = 0;
-    // The composition root's own validity and generation callbacks over this store.
+    // Preserve the real index's membership boundary proof independently of
+    // completed projection reuse, which is disabled for work-usage reads.
+    const backend = createLocalIndexBackend({ indexFile });
+    const validUntil = nowMs => backend.projectionReader.validUntil({
+      indexFile,
+      generationFingerprint: descriptor.fingerprint,
+      nowMs,
+      includeWorkUsage: true,
+    });
+    const boundary = observedAt < now ? now + 1 : observedAt + 1;
+    assert.equal(await validUntil(now), boundary);
+    assert.equal(await validUntil(boundary - 1), boundary);
+    assert.ok(await validUntil(boundary) > boundary);
+
     const reader = createCachedLocalUnifiedProjectionReader({
-      ...createLocalIndexBackend({ indexFile }).projectionReader,
+      ...backend.projectionReader,
       reader: async o => {
         reads++;
         const result = combined(o.nowMs);
@@ -219,16 +236,15 @@ test("real index cache validity expires exactly at work admission and lower-boun
       },
     });
     const request = time => ({ ...options(time), indexFile, codexHome: root });
-    const boundary = observedAt < now ? now + 1 : observedAt + 1;
     await reader(request(now));
     await reader(request(boundary - 1));
-    assert.equal(reads, 1);
-    await reader(request(boundary));
     assert.equal(reads, 2);
+    await reader(request(boundary));
+    assert.equal(reads, 3);
   }
 });
 
-test("related periods reuse accounting even when a cold build outlasts moving-window validity", async () => {
+test("related periods rebuild work usage while preserving the selected snapshot anchor", async () => {
   let now = 10 * 86400000;
   let reads = 0;
   const cached = createCachedLocalUnifiedProjectionReader({
@@ -247,16 +263,19 @@ test("related periods reuse accounting even when a cold build outlasts moving-wi
   try {
     let report = await settle({ period: "7d" });
     const originalAsOf = report.toMs;
+    let expectedReads = 1;
     for (const period of ["30d", "all", "24h", "7d"]) {
       report = await settle({ period, sourceSnapshotId: report.snapshotId });
+      expectedReads++;
       assert.equal(report.status, "available");
       assert.equal(report.toMs, originalAsOf);
-      assert.equal(reads, 1);
+      assert.equal(reads, expectedReads);
     }
     const fresh = await settle({ period: "7d" });
+    expectedReads++;
     assert.equal(fresh.status, "available");
     assert.ok(fresh.toMs > originalAsOf);
-    assert.equal(reads, 2);
+    assert.equal(reads, expectedReads);
   } finally { service.close(); }
 });
 
@@ -279,7 +298,7 @@ test("closing the shared reader aborts work and prevents builds after asynchrono
   assert.equal(closes, 1);
 });
 
-test("exact reporting windows reuse only identical anchors even within a cache membership lease", async () => {
+test("exact reporting windows preserve anchors while completed work projections stay fresh", async () => {
   let reads = 0;
   const reader = createCachedLocalUnifiedProjectionReader({
     reader: async o => { reads++; return combined(o.nowMs, reads); },
@@ -289,14 +308,37 @@ test("exact reporting windows reuse only identical anchors even within a cache m
   const read = async end => selectSharedWorkUsageSnapshot(await reader({ ...options(end), exactWindow: true }), { period: 'all', scope: 'account-a' });
   assert.equal((await read(100)).toMs, 100);
   assert.equal((await read(100)).toMs, 100);
-  assert.equal(reads, 1);
-  assert.equal((await read(101)).toMs, 101);
   assert.equal(reads, 2);
-  assert.equal((await read(100)).toMs, 100);
+  assert.equal((await read(101)).toMs, 101);
   assert.equal(reads, 3);
+  assert.equal((await read(100)).toMs, 100);
+  assert.equal(reads, 4);
 });
 
-test("warming every period preserves the selected report and shares one accounting projection within two snapshots", async () => {
+test("identical exact-window work reads coalesce only while the build is in flight", async () => {
+  const gate = latch();
+  let reads = 0;
+  const reader = createCachedLocalUnifiedProjectionReader({
+    reader: async o => { reads++; await gate.promise; return combined(o.nowMs, reads); },
+    readGeneration: async () => generation,
+    validUntil: async o => o.nowMs + 1000,
+  });
+  const exact = () => ({ ...options(100), exactWindow: true });
+  const first = reader(exact());
+  const second = reader(exact());
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 1);
+  gate.resolve();
+  const [a, b] = await Promise.all([first, second]);
+  assert.deepEqual([a.workUsage.asOfMs, b.workUsage.asOfMs], [100, 100]);
+  assert.equal(reads, 1);
+
+  const afterCompletion = await reader(exact());
+  assert.equal(afterCompletion.workUsage.asOfMs, 100);
+  assert.equal(reads, 2, "settled work is not reused, even for the same exact anchor");
+});
+
+test("warming every period rebuilds work usage but preserves selected and exact snapshot identities", async () => {
   let reads = 0;
   const now = 40 * 86400000;
   const cached = createCachedLocalUnifiedProjectionReader({
@@ -315,12 +357,14 @@ test("warming every period preserves the selected report and shares one accounti
   }
   try {
     const selected = await ready({ period: "7d" });
+    let expectedReads = 1;
     let previous = null;
     for (const period of ["24h", "30d", "all"]) {
       const warmed = await ready({ period, sourceSnapshotId: selected.snapshotId });
+      expectedReads++;
       assert.equal(warmed.status, "available");
       assert.equal(warmed.toMs, selected.toMs);
-      assert.equal(reads, 1, "preloading must not repeat accounting");
+      assert.equal(reads, expectedReads, "each work-usage projection is freshly built");
       assert.equal((await query({ period: "7d", snapshotId: selected.snapshotId })).status, "available");
       if (previous) await assert.rejects(query({ period: previous.period, snapshotId: previous.id }),
         { code: "work_usage_snapshot_expired" });

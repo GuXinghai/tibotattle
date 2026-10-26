@@ -10,8 +10,9 @@ first.
   domain never receives raw rollout or transcript records.
 - Bind prepared immutable data to the applicable versioned authorization and
   authenticated capability before upload, then retain while-open recurrence.
-  Legacy consent/review flows remain compatible; the accepted accountless
-  Electron policy is in `docs/decisions/2026-09-04-accountless-sharing-policy.md`.
+  Legacy consent/review bytes remain compatible. The desktop has no sharing or
+  upload surface under `docs/decisions/2026-10-13-desktop-sharing-removal.md`;
+  retained domain helpers do not authorize restoring one.
   Never convert automatic authorization into a fabricated consent event.
 - Keep local-only use account-free. Hosted sign-in identity, participant identity,
   device capability, account track, and event/session pseudonyms have distinct
@@ -41,10 +42,9 @@ first.
 
 - Add negative privacy, consent, version, replay, crash, duplicate, and multi-device
   tests whenever those boundaries change.
-- Run focused contribution and preparation tests, then
-  `npm run product:local:test`; add `npm run product:worker:check` for any shared
-  client/server or schema contract.
-- Use the disposable local Worker laboratory for end-to-end behavior. Do not use
-  production participant data or endpoints.
+- Run focused contribution/preparation tests through the isolated test runner,
+  then `npm run product:local:test`. This checkout has no Worker gate or lab.
+- Use only disposable synthetic fixtures. Historical hosted contracts do not
+  authorize network access, real participant data, or remote validation.
 - Verify the exact reviewed-data presentation when contribution fields change;
   schema validity without understandable review is incomplete.

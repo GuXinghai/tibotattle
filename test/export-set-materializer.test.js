@@ -26,7 +26,6 @@ import {
 } from "../src/export/index.js";
 import { exportSetChunkBasenames, validateExportSetManifest } from "../src/export-set-schema.js";
 import {
-  localExportSetMaterialization,
   localExportSetVerification,
   localExportSourcePipeline,
   localExportWorkspace,
@@ -42,18 +41,78 @@ import {
   deriveParticipantId,
 } from "../src/platform/index.js";
 import { exportCompatibilityTuple } from "../src/export-contract.js";
+import { createSyntheticWindowsExportProtection } from "./helpers/synthetic-windows-export-protection.mjs";
 
 const { createLocalExportWorkspace } = localExportSourcePipeline.controller;
-const { materializeLocalExportSet } = localExportSetMaterialization;
 const { verifyLocalExportSet } = localExportSetVerification;
 const { openExportWorkspace } = localExportWorkspace;
 
 const SECRET = Buffer.alloc(32, 61);
 const PRIVATE_MATERIALIZER_CANARY = "PRIVATE_MATERIALIZER_PROMPT_DO_NOT_EXPORT";
+const syntheticWindowsArtifactProtection = process.platform === "win32"
+  ? createSyntheticWindowsExportProtection()
+  : null;
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
+
+function createTestMaterializerContext({
+  workspace = localExportWorkspace,
+  protection = syntheticWindowsArtifactProtection,
+} = {}) {
+  const destination = createLocalExportArtifactStorageContext({
+    createStorage: (configuration) => createOwnerOnlyExportArtifactStorageContext({
+      ...configuration,
+      ...(protection ? {
+        windowsFilesystemFactory: () => protection.filesystem,
+        windowsSourceAccessFactory: () => protection.sourceAccess,
+      } : {}),
+    }),
+    activityMarkerFile: () => null,
+  });
+  return createLocalExportSetMaterializationContext({
+    workspace,
+    destination,
+    identity: { deriveExportPseudonym, deriveParticipantId },
+    resource: { createGuard: (options) => createExportResourceGuard({
+      ...options,
+      clock: () => Date.now(),
+      rss: () => process.memoryUsage().rss,
+    }) },
+    bundleVerification: { loadVerifiedLocalMetadataBundleBytes },
+    compatibilityTuple: exportCompatibilityTuple,
+    sha256Hex: sha256,
+  });
+}
+
+function withSyntheticSupplementalPlan(workspace, digest) {
+  return {
+    ...workspace,
+    async openExportWorkspace(options) {
+      const handle = await workspace.openExportWorkspace(options);
+      const descriptor = handle.getDescriptor();
+      return {
+        ...handle,
+        getDescriptor() {
+          return {
+            ...descriptor,
+            supplementalSourcePlan: {
+              ...descriptor.supplementalSourcePlan,
+              supplementalSourcePlanSha256: digest,
+              sourceFiles: 1,
+              sourceBytes: 0,
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+const { materializeLocalExportSet } = createTestMaterializerContext({
+  protection: syntheticWindowsArtifactProtection,
+});
 
 async function loadCompressedChunk(output, chunk, names) {
   const artifactBytes = await readFile(join(output, names.bundle));
@@ -206,7 +265,23 @@ test("materializer publishes deterministic independently verifiable chunks and a
       assert.equal(verified.bundleSha256, chunk.bundleSha256);
       assert.equal(loaded.bundleBytes.length, chunk.bundleBytes);
     }
-    assert.equal((await stat(join(value.output, EXPORT_SET_MANIFEST_BASENAME))).mode & 0o777, 0o600);
+    if (syntheticWindowsArtifactProtection) {
+      const directoryFacts = syntheticWindowsArtifactProtection.inspectPath(value.output);
+      const manifestFacts = syntheticWindowsArtifactProtection.inspectPath(
+        join(value.output, EXPORT_SET_MANIFEST_BASENAME),
+      );
+      for (const facts of [directoryFacts, manifestFacts]) {
+        assert.equal(facts.ownerMatches, true);
+        assert.equal(facts.nullDacl, false);
+        assert.equal(facts.daclProtected, true);
+        assert.equal(facts.broadAccess, false);
+        assert.equal(facts.nonOwnerAllow, false);
+        assert.equal(facts.unrecognizedAce, false);
+      }
+    } else {
+      // POSIX mode bits remain the relevant test contract on non-Windows hosts.
+      assert.equal((await stat(join(value.output, EXPORT_SET_MANIFEST_BASENAME))).mode & 0o777, 0o600);
+    }
     const privateArtifacts = [
       join(value.workspace, "workspace.sqlite3"),
       join(value.output, EXPORT_SET_MANIFEST_BASENAME),
@@ -442,24 +517,28 @@ test("combined source-plan commitment frames both digests and totals", () => {
 });
 
 test("materializer binds supplemental source commitments into set and bundle identities", async () => {
-  const first = await fixture({ collectorContents: "" });
-  const second = await fixture({ collectorContents: "", codexHome: first.home });
+  const first = await fixture();
+  const second = await fixture();
   try {
-    const firstResult = await materializeLocalExportSet({
+    const firstWorkspacePort = withSyntheticSupplementalPlan(localExportWorkspace, "a".repeat(64));
+    const secondWorkspacePort = withSyntheticSupplementalPlan(localExportWorkspace, "b".repeat(64));
+    const firstMaterializer = createTestMaterializerContext({ workspace: firstWorkspacePort });
+    const secondMaterializer = createTestMaterializerContext({ workspace: secondWorkspacePort });
+    const firstResult = await firstMaterializer.materializeLocalExportSet({
       workspaceDirectory: first.workspace,
       outputDirectory: first.output,
       secret: SECRET,
       maximumRecordsPerChunk: 2,
     });
-    const secondResult = await materializeLocalExportSet({
+    const secondResult = await secondMaterializer.materializeLocalExportSet({
       workspaceDirectory: second.workspace,
       outputDirectory: second.output,
       secret: SECRET,
       maximumRecordsPerChunk: 2,
     });
     assert.equal(firstResult.manifest.totals.logicalRecordsSha256, secondResult.manifest.totals.logicalRecordsSha256);
-    const firstWorkspace = await openExportWorkspace({ directory: first.workspace });
-    const secondWorkspace = await openExportWorkspace({ directory: second.workspace });
+    const firstWorkspace = await firstWorkspacePort.openExportWorkspace({ directory: first.workspace });
+    const secondWorkspace = await secondWorkspacePort.openExportWorkspace({ directory: second.workspace });
     let firstDescriptor;
     let secondDescriptor;
     try {
@@ -773,19 +852,9 @@ test("current writer and verifier roundtrip aggregate source counts beyond the r
           };
         },
       };
-      const materializer = createLocalExportSetMaterializationContext({
+      const materializer = createTestMaterializerContext({
         workspace,
-        destination: createLocalExportArtifactStorageContext({
-          createStorage: createOwnerOnlyExportArtifactStorageContext,
-          activityMarkerFile: () => null,
-        }),
-        identity: { deriveExportPseudonym, deriveParticipantId },
-        resource: { createGuard: (options) => createExportResourceGuard({
-          ...options, clock: () => Date.now(), rss: () => process.memoryUsage().rss,
-        }) },
-        bundleVerification: { loadVerifiedLocalMetadataBundleBytes },
-        compatibilityTuple: exportCompatibilityTuple,
-        sha256Hex: sha256,
+        protection: syntheticWindowsArtifactProtection,
       });
       const result = await materializer.materializeLocalExportSet({
         workspaceDirectory: value.workspace, outputDirectory: value.output, secret: SECRET,

@@ -5,7 +5,7 @@ import {
   APP_PRICE_REGISTRY_OBSERVED_AT,
 } from "./price-registry.js";
 
-export const LOCAL_API_PRICING_METHOD_VERSION = "provider-neutral-api-price-equivalent-v0.3";
+export const LOCAL_API_PRICING_METHOD_VERSION = "provider-neutral-api-price-equivalent-v0.4";
 
 const CODEX_TOOL_UNIT_MAPPING = Object.freeze({
   responses_web_search_call: Object.freeze({ name: "web_search_units", unit: "search" }),
@@ -17,7 +17,22 @@ const UNKNOWN_PROVIDER_TOOL_UNIT = Object.freeze({
   unit: "custom",
 });
 
+// This adapter prices only the supplied provider-billable tool-unit subset.
+// Explicit token zeros keep that intentionally scoped result separate from a
+// general usage event whose absent token map is unavailable evidence.
+const TOOL_ONLY_ZERO_TOKEN_COMPONENTS = Object.freeze({
+  input_uncached_tokens: 0,
+  input_cache_read_tokens: 0,
+  input_cache_write_tokens: 0,
+  output_text_tokens: 0,
+  output_reasoning_tokens: 0,
+});
+
 function canonicalEventTime(value) {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) return null;
+    value = value.toISOString();
+  }
   if (typeof value !== "string" || value.length > 32) return null;
   const epoch = Date.parse(value);
   return Number.isFinite(epoch) && new Date(epoch).toISOString() === value
@@ -68,10 +83,11 @@ export function priceCodexUsageEvent(event, {
   priceEpochBasis = "event_time",
   apiServiceTier = "standard",
   region = null,
+  eventTime = null,
 } = {}) {
   if (!event || typeof event !== "object") throw new TypeError("Codex usage event is required");
   const registry = priceCardsAndManifest(priceCards);
-  const epoch = priceEpoch({ eventTime: event.timestamp, priceEpochBasis });
+  const epoch = priceEpoch({ eventTime: event.timestamp ?? eventTime, priceEpochBasis });
   const rawInputContext = event.rawAvailability === undefined || event.rawAvailability?.input_tokens === true
     ? event.raw?.input_tokens
     : undefined;
@@ -146,7 +162,7 @@ export function priceCodexProviderToolUnits(serverBillableUnits, {
     surface: "openai.responses",
     apiTier: "standard",
     pricedAt: epoch.pricedAt,
-    components: {},
+    components: TOOL_ONLY_ZERO_TOKEN_COMPONENTS,
     billableToolUnits: codexProviderBillableToolUnits(serverBillableUnits),
   }, {
     priceCards: registry.priceCards,

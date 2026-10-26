@@ -248,41 +248,6 @@ const HOSTED_IDENTITY_RESULT_ROUTES = Object.freeze({
     schemaVersion: IDENTITY_GOOGLE_RESULT_SCHEMA_VERSION
   })
 });
-const LOCAL_PREPARATION_ERROR_CODES = new Set([
-  "coverage_unavailable",
-  "coverage_invalid",
-  "identity_unavailable",
-  "identity_migration_required",
-  "no_safe_records",
-  "export_too_large",
-  "privacy_verification_failed",
-  "review_archive_invalid",
-  "prepared_spool_invalid",
-  "preparation_in_progress",
-  "preparation_failed",
-  "consent_already_current"
-]);
-
-/**
- * A resource-bounded preparation failure carries the bound it stopped on: an
- * identifier-shaped code and two counts, nothing else. It is read back under
- * the same shape test the companion applies so nothing but a code and numbers
- * can be shown to the reader or filed against a reference.
- */
-function preparationDetail(value) {
-  if (typeof value?.code !== "string"
-      || !SAFE_ERROR_CODE_PATTERN.test(value.code)) {
-    return null;
-  }
-  const count = (candidate) =>
-    Number.isSafeInteger(candidate) && candidate >= 0 ? candidate : null;
-  return Object.freeze({
-    code: value.code,
-    observed: count(value.observed),
-    limit: count(value.limit)
-  });
-}
-
 function array(value) {
   if (Array.isArray(value)) return value;
   if (Array.isArray(value?.rows)) return value.rows;
@@ -1265,13 +1230,29 @@ export function normalizeLocalContributionPreparation(payload) {
 
 export const LOCAL_WINDOW_BREAKDOWN_SCHEMA_VERSION = "local-window-breakdown-v0.1";
 
+function isNonNegativeBreakdownNumber(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+function isBreakdownCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
 function windowBreakdownSpeedRow(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)
+      || !isNonNegativeBreakdownNumber(value.costUsd)
+      || !isBreakdownCount(value.tokens)
+      || !isBreakdownCount(value.events)
+      || !isBreakdownCount(value.unpricedEvents)
+      || value.unpricedEvents > value.events
+      || !isNonNegativeBreakdownNumber(value.unpricedShare)
+      || value.unpricedShare > 1) return null;
   return {
-    costUsd: nonNegative(value?.costUsd, 0),
-    tokens: count(value?.tokens, 0),
-    events: count(value?.events, 0),
-    unpricedEvents: count(value?.unpricedEvents, 0),
-    unpricedShare: nonNegative(value?.unpricedShare, 0),
+    costUsd: value.costUsd,
+    tokens: value.tokens,
+    events: value.events,
+    unpricedEvents: value.unpricedEvents,
+    unpricedShare: value.unpricedShare,
   };
 }
 
@@ -1286,17 +1267,17 @@ export function normalizeWindowBreakdown(payload) {
     status: "unavailable",
     from: null,
     to: null,
-    events: 0,
-    unpricedShare: 0,
-    costUsd: 0,
-    tokens: 0,
-    fastCostUsd: 0,
-    fastEvents: 0,
+    events: null,
+    unpricedShare: null,
+    costUsd: null,
+    tokens: null,
+    fastCostUsd: null,
+    fastEvents: null,
     ultrafastCostUsd: null,
     ultrafastEvents: null,
     byModel: [],
     bySpeed: {},
-    spark: { events: 0, costUsd: 0 },
+    spark: { events: null, costUsd: null },
   };
   const breakdown = payload?.breakdown;
   if (payload?.schemaVersion !== LOCAL_COMPANION_SCHEMA_VERSION
@@ -1308,42 +1289,84 @@ export function normalizeWindowBreakdown(payload) {
   if (breakdown.status !== "available") {
     return { ...unavailable, status: text(breakdown.status, "unavailable") };
   }
-  const byModel = (Array.isArray(breakdown.byModel) ? breakdown.byModel : [])
-    .filter((row) => typeof row?.model === "string" && row.model.length > 0)
-    .map((row) => ({
+  const from = breakdown.from;
+  const to = breakdown.to;
+  const spark = breakdown.spark;
+  const hasUltrafastCost = Object.hasOwn(breakdown, "ultrafastCostUsd");
+  const hasUltrafastEvents = Object.hasOwn(breakdown, "ultrafastEvents");
+  const ultrafastPairAbsent = !hasUltrafastCost && !hasUltrafastEvents;
+  const ultrafastPairNull = breakdown.ultrafastCostUsd === null
+    && breakdown.ultrafastEvents === null;
+  const ultrafastPairAvailable = isNonNegativeBreakdownNumber(breakdown.ultrafastCostUsd)
+    && isBreakdownCount(breakdown.ultrafastEvents);
+  if (!isBreakdownCount(from)
+      || !isBreakdownCount(to)
+      || from > to
+      || !isBreakdownCount(breakdown.events)
+      || !isNonNegativeBreakdownNumber(breakdown.unpricedShare)
+      || breakdown.unpricedShare > 1
+      || !isNonNegativeBreakdownNumber(breakdown.costUsd)
+      || !isBreakdownCount(breakdown.tokens)
+      || !isNonNegativeBreakdownNumber(breakdown.fastCostUsd)
+      || !isBreakdownCount(breakdown.fastEvents)
+      || !Array.isArray(breakdown.byModel)
+      || !breakdown.byModel.every((row) => row !== null
+        && typeof row === "object"
+        && !Array.isArray(row)
+        && typeof row.model === "string"
+        && row.model.length > 0
+        && isNonNegativeBreakdownNumber(row.costUsd)
+        && isBreakdownCount(row.tokens)
+        && isBreakdownCount(row.events)
+        && isBreakdownCount(row.unpricedEvents)
+        && row.unpricedEvents <= row.events
+        && isNonNegativeBreakdownNumber(row.unpricedShare)
+        && row.unpricedShare <= 1)
+      || breakdown.bySpeed === null
+      || typeof breakdown.bySpeed !== "object"
+      || Array.isArray(breakdown.bySpeed)
+      || !Object.hasOwn(breakdown, "spark")
+      || spark === null
+      || typeof spark !== "object"
+      || Array.isArray(spark)
+      || !isBreakdownCount(spark.events)
+      || !isNonNegativeBreakdownNumber(spark.costUsd)
+      || hasUltrafastCost !== hasUltrafastEvents
+      || !(ultrafastPairAbsent || ultrafastPairNull || ultrafastPairAvailable)) {
+    return unavailable;
+  }
+  const byModel = breakdown.byModel.map((row) => ({
       model: row.model,
-      costUsd: nonNegative(row.costUsd, 0),
-      tokens: count(row.tokens, 0),
-      events: count(row.events, 0),
-      unpricedEvents: count(row.unpricedEvents, 0),
-      unpricedShare: nonNegative(row.unpricedShare, 0),
+      costUsd: row.costUsd,
+      tokens: row.tokens,
+      events: row.events,
+      unpricedEvents: row.unpricedEvents,
+      unpricedShare: row.unpricedShare,
       fastModeMultiplier: finite(row.fastModeMultiplier, null),
     }));
   const bySpeed = {};
-  const rawSpeed = breakdown.bySpeed;
-  if (rawSpeed && typeof rawSpeed === "object" && !Array.isArray(rawSpeed)) {
-    for (const [speed, value] of Object.entries(rawSpeed)) {
-      if (typeof speed !== "string" || speed.length === 0) continue;
-      bySpeed[speed] = windowBreakdownSpeedRow(value);
-    }
+  for (const [speed, value] of Object.entries(breakdown.bySpeed)) {
+    const row = windowBreakdownSpeedRow(value);
+    if (speed.length === 0 || row === null) return unavailable;
+    bySpeed[speed] = row;
   }
   return {
     status: "available",
-    from: count(breakdown.from, null),
-    to: count(breakdown.to, null),
-    events: count(breakdown.events, 0),
-    unpricedShare: nonNegative(breakdown.unpricedShare, 0),
-    costUsd: nonNegative(breakdown.costUsd, 0),
-    tokens: count(breakdown.tokens, 0),
-    fastCostUsd: nonNegative(breakdown.fastCostUsd, 0),
-    fastEvents: count(breakdown.fastEvents, 0),
-    ultrafastCostUsd: nonNegative(breakdown.ultrafastCostUsd, null),
-    ultrafastEvents: count(breakdown.ultrafastEvents, null),
+    from,
+    to,
+    events: breakdown.events,
+    unpricedShare: breakdown.unpricedShare,
+    costUsd: breakdown.costUsd,
+    tokens: breakdown.tokens,
+    fastCostUsd: breakdown.fastCostUsd,
+    fastEvents: breakdown.fastEvents,
+    ultrafastCostUsd: ultrafastPairAvailable ? breakdown.ultrafastCostUsd : null,
+    ultrafastEvents: ultrafastPairAvailable ? breakdown.ultrafastEvents : null,
     byModel,
     bySpeed,
     spark: {
-      events: count(breakdown.spark?.events, 0),
-      costUsd: nonNegative(breakdown.spark?.costUsd, 0),
+      events: spark.events,
+      costUsd: spark.costUsd,
     },
   };
 }
@@ -5034,19 +5057,19 @@ function normalizeHistoryCoverage(value = {}) {
   return {
     status: complete ? "complete" : "partial",
     phase,
-    sourceCount: sourceCount ?? 0,
+    sourceCount,
     indexedSourceCount: sourceCount === null || indexedSourceCount === null
-      ? 0
+      ? null
       : Math.min(indexedSourceCount, sourceCount),
     pendingSourceCount: sourceCount === null || pendingSourceCount === null
-      ? 0
+      ? null
       : Math.min(pendingSourceCount, sourceCount),
-    skippedSourceCount: explainedSkippedSources ? skippedSourceCount : 0,
-    skippedSourceBytes: explainedSkippedSources ? skippedSourceBytes : 0,
-    skippedThreadCount: explainedSkippedSources ? skippedThreadCount : 0,
-    sourceBytes: sourceBytes ?? 0,
-    indexedBytes: sourceBytes === null || indexedBytes === null
-      ? 0
+    skippedSourceCount: explainedSkippedSources ? skippedSourceCount : null,
+    skippedSourceBytes: explainedSkippedSources ? skippedSourceBytes : null,
+    skippedThreadCount: explainedSkippedSources ? skippedThreadCount : null,
+    sourceBytes,
+    indexedBytes: sourceBytes === null || indexedBytes === null || sourceCount === null
+      ? null
       : Math.min(indexedBytes, sourceBytes),
     generatedAt: generatedAt ?? "",
     responseUsageCoverageStatus: responseUnverifiedPrefixTurns === null
@@ -6063,102 +6086,6 @@ export class LocalCompanionClient {
     });
   }
 
-  async contributionSyncStatus() {
-    try {
-      return normalizeContributionSyncStatus(
-        await fetchJson(
-          this.fetchImpl,
-          `${LOCAL_ROOT}/contribution/sync-status`
-        )
-      );
-    } catch {
-      return normalizeContributionSyncStatus(null);
-    }
-  }
-
-  async contributionDiagnostics() {
-    try {
-      return normalizeLocalContributionDiagnostics(
-        await fetchJson(
-          this.fetchImpl,
-          `${LOCAL_ROOT}/diagnostics/contribution`
-        )
-      );
-    } catch {
-      return normalizeLocalContributionDiagnostics(null);
-    }
-  }
-
-  async hostedSignInHandoff() {
-    try {
-      return normalizeHostedSignInHandoff(await fetchJson(
-        this.fetchImpl,
-        `${LOCAL_ROOT}/identity/hosted-signin-handoff`,
-        { headers: { "X-Usage-Monitor-Local": "1" } }
-      ));
-    } catch {
-      return normalizeHostedSignInHandoff(null);
-    }
-  }
-
-  async storeHostedSignInHandoff({ provider, state, verifier } = {}) {
-    if (!["google", "apple"].includes(provider)
-        || typeof state !== "string"
-        || !HOSTED_SIGNIN_HANDOFF_BOUND_VALUE.test(state)
-        || typeof verifier !== "string"
-        || !HOSTED_SIGNIN_HANDOFF_BOUND_VALUE.test(verifier)) {
-      throw new TypeError("Hosted sign-in handoff is invalid.");
-    }
-    const payload = await fetchJson(
-      this.fetchImpl,
-      `${LOCAL_ROOT}/identity/hosted-signin-handoff`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Usage-Monitor-Local": "1"
-        },
-        body: JSON.stringify({ action: "store", provider, state, verifier })
-      }
-    );
-    const normalized = normalizeHostedSignInHandoff(payload);
-    if (normalized.status !== "pending") {
-      throw new Error("The local companion did not retain the sign-in handoff.");
-    }
-    return normalized;
-  }
-
-  async clearHostedSignInHandoff() {
-    const payload = await fetchJson(
-      this.fetchImpl,
-      `${LOCAL_ROOT}/identity/hosted-signin-handoff`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Usage-Monitor-Local": "1"
-        },
-        body: JSON.stringify({ action: "clear" })
-      }
-    );
-    const normalized = normalizeHostedSignInHandoff(payload);
-    if (normalized.status !== "absent") {
-      throw new Error("The local companion did not clear the sign-in handoff.");
-    }
-    return normalized;
-  }
-
-
-  async contributionSyncPreview() {
-    try {
-      return normalizeContributionSyncPreview(
-        await this.localContributionMutation("sync-next")
-      );
-    } catch {
-      return normalizeContributionSyncPreview(null);
-    }
-  }
-
   /**
    * The bounded status of the approved incremental full-history sync: the
    * durable consent verdict, day-count progress, the paused reason and the
@@ -6383,50 +6310,6 @@ export class LocalCompanionClient {
       },
       body: JSON.stringify(body),
     });
-  }
-
-  async prepareContribution(options = {}) {
-    if (!options
-        || typeof options !== "object"
-        || Array.isArray(options)
-        || Object.keys(options).some((key) => key !== "lookbackHours")) {
-      throw new TypeError("Contribution preparation options are invalid.");
-    }
-    const lookbackHours = options.lookbackHours ?? 24;
-    if (![1, 24, 7 * 24].includes(lookbackHours)) {
-      throw new TypeError("Contribution preparation lookback is invalid.");
-    }
-    const fetchImpl = this.fetchImpl;
-    const response = await fetchImpl(
-      `${LOCAL_ROOT}/contribution/prepare`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/json",
-          "Content-Type": "application/json",
-          "X-Usage-Monitor-Local": "1"
-        },
-        body: JSON.stringify({ lookbackHours })
-      }
-    );
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      const error = new Error(`Request failed (${response.status}).`);
-      error.status = response.status;
-      const known = payload?.schemaVersion
-        === "local-contribution-preparation-error-v0.1";
-      error.code = known
-        && LOCAL_PREPARATION_ERROR_CODES.has(payload?.errorCode)
-        ? payload.errorCode
-        : "preparation_failed";
-      // The coarse code names a family of bounds; the detail names the one
-      // that stopped this run. The companion already checked it against a
-      // closed vocabulary, so the shape test here is the only gate needed
-      // before it is shown and filed.
-      error.detail = known ? preparationDetail(payload?.detail) : null;
-      throw error;
-    }
-    return normalizeLocalContributionPreparation(payload);
   }
 
 }

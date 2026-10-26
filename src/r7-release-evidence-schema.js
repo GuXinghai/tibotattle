@@ -1,7 +1,6 @@
 import Ajv from "ajv";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, readdirSync } from "node:fs";
-import { createRequire } from "node:module";
 import {
   DEFAULT_EXPORT_RESOURCE_LIMITS,
   EXPORT_RESOURCE_POLICY_VERSION,
@@ -14,7 +13,7 @@ import {
   R7_RESOURCE_BENCHMARK_SELECTION_RULE_VERSION,
   R7_RESOURCE_BENCHMARK_UNIT_BY_DIMENSION,
 } from "./r7-resource-benchmark-schema.js";
-import { stableJson } from "./storage.js";
+import { stableJson } from "./export/canonical-json.js";
 
 export const R7_RELEASE_EVIDENCE_RECEIPT_VERSION = "r7-release-evidence-receipt-v0.1";
 export const R7_RELEASE_EVIDENCE_PROTOCOL_VERSION = "g1-r7-release-evidence-v0.1";
@@ -49,19 +48,12 @@ const schemaUrl = new URL(
 const moduleUrl = new URL("./r7-release-evidence-schema.js", import.meta.url);
 const policyUrl = new URL("./export-resource-policy.js", import.meta.url);
 const schemaBytes = readFileSync(schemaUrl);
-const moduleBytes = readFileSync(moduleUrl);
-const policyBytes = readFileSync(policyUrl);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
 export const R7_RELEASE_EVIDENCE_RECEIPT_SCHEMA_SHA256 = sha256(schemaBytes);
-export const R7_RELEASE_EVIDENCE_SCHEMA_MODULE_SHA256 = sha256(moduleBytes);
-export const R7_RELEASE_EVIDENCE_RESOURCE_POLICY_SOURCE_SHA256 = sha256(policyBytes);
-export const R7_RELEASE_EVIDENCE_RESOURCE_POLICY_VALUES_SHA256 = sha256(
-  stableJson(DEFAULT_EXPORT_RESOURCE_LIMITS),
-);
 
 function sortedDirectoryEntries(directoryUrl) {
   return readdirSync(directoryUrl, { withFileTypes: true })
@@ -136,8 +128,7 @@ export function collectR7ReleaseEvidenceRuntimeSourcePaths({
   return paths;
 }
 
-function workloadSourcePaths() {
-  const repositoryRoot = new URL("../", import.meta.url);
+function workloadSourcePaths(repositoryRoot = new URL("../", import.meta.url)) {
   const runtimeJsonPaths = [];
   const visitRuntimeJsonDirectory = (relativeDirectory) => {
     for (const entry of sortedDirectoryEntries(
@@ -169,12 +160,18 @@ function workloadSourcePaths() {
   ];
 }
 
-export const R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_PATHS = Object.freeze(
-  workloadSourcePaths(),
-);
+let currentWorkloadSourcePaths = null;
+
+function getCurrentWorkloadSourcePaths() {
+  if (currentWorkloadSourcePaths === null) {
+    currentWorkloadSourcePaths = Object.freeze(workloadSourcePaths());
+  }
+  return currentWorkloadSourcePaths;
+}
 
 export function computeR7ReleaseEvidenceWorkloadSourceProvenance({
   readSourceBytes,
+  sourcePaths = getCurrentWorkloadSourcePaths(),
 } = {}) {
   const repositoryRoot = new URL("../", import.meta.url);
   const readBytes = readSourceBytes ?? ((relativePath) => (
@@ -185,7 +182,7 @@ export function computeR7ReleaseEvidenceWorkloadSourceProvenance({
   }
   const digest = createHash("sha256");
   digest.update("app-usagemonitor/r7-release-workload-source-set/v1\0");
-  for (const relativePath of R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_PATHS) {
+  for (const relativePath of sourcePaths) {
     const bytes = Buffer.from(readBytes(relativePath));
     digest.update(relativePath);
     digest.update("\0");
@@ -195,18 +192,31 @@ export function computeR7ReleaseEvidenceWorkloadSourceProvenance({
   }
   return {
     sha256: digest.digest("hex"),
-    fileCount: R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_PATHS.length,
+    fileCount: sourcePaths.length,
   };
 }
 
-const currentWorkloadSource = computeR7ReleaseEvidenceWorkloadSourceProvenance();
-export const R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_SHA256 = currentWorkloadSource.sha256;
-export const R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_FILE_COUNT = currentWorkloadSource.fileCount;
+let currentProvenance = null;
 
-const require = createRequire(import.meta.url);
-export const r7ReleaseEvidenceReceiptSchema = require(
-  "../schemas/r7-release-evidence-v0.1/receipt.schema.json",
-);
+export function getCurrentR7ReleaseEvidenceProvenance() {
+  if (currentProvenance === null) {
+    const workloadSourcePaths = getCurrentWorkloadSourcePaths();
+    const workload = computeR7ReleaseEvidenceWorkloadSourceProvenance({
+      sourcePaths: workloadSourcePaths,
+    });
+    currentProvenance = Object.freeze({
+      schemaModuleSha256: sha256(readFileSync(moduleUrl)),
+      resourcePolicySourceSha256: sha256(readFileSync(policyUrl)),
+      resourcePolicyValuesSha256: sha256(stableJson(DEFAULT_EXPORT_RESOURCE_LIMITS)),
+      workloadSourcePaths,
+      workloadCodeSha256: workload.sha256,
+      workloadCodeFileCount: workload.fileCount,
+    });
+  }
+  return currentProvenance;
+}
+
+export const r7ReleaseEvidenceReceiptSchema = JSON.parse(schemaBytes.toString("utf8"));
 
 const ajv = new Ajv({ allErrors: true, strict: true });
 const validateSchema = ajv.compile(r7ReleaseEvidenceReceiptSchema);
@@ -238,7 +248,7 @@ function isAllZero(value) {
   return Object.values(value).every(isAllZero);
 }
 
-function provenanceErrors(receipt) {
+function provenanceErrors(receipt, { historicalReadback = false } = {}) {
   const errors = [];
   const { runtimeProvenance: runtime, contractProvenance: contract } = receipt;
   const version = runtime.runtimeVersion;
@@ -248,23 +258,31 @@ function provenanceErrors(receipt) {
       || (runtime.runtimeClass === "compatibility_crosscheck" && !crosscheck)) {
     errors.push(invariant("/runtimeProvenance/runtimeClass", "qualified-runtime-class"));
   }
-  const expected = {
-    receiptSchemaSha256: R7_RELEASE_EVIDENCE_RECEIPT_SCHEMA_SHA256,
-    schemaModuleSha256: R7_RELEASE_EVIDENCE_SCHEMA_MODULE_SHA256,
-    resourcePolicySourceSha256: R7_RELEASE_EVIDENCE_RESOURCE_POLICY_SOURCE_SHA256,
-    resourcePolicyValuesSha256: R7_RELEASE_EVIDENCE_RESOURCE_POLICY_VALUES_SHA256,
-    workloadCodeSha256: R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_SHA256,
-  };
-  for (const [field, digest] of Object.entries(expected)) {
-    if (contract[field] !== digest) {
-      errors.push(invariant(`/contractProvenance/${field}`, `current-${field}`));
-    }
-  }
-  if (contract.workloadCodeFileCount !== R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_FILE_COUNT) {
+  if (contract.receiptSchemaSha256 !== R7_RELEASE_EVIDENCE_RECEIPT_SCHEMA_SHA256) {
     errors.push(invariant(
-      "/contractProvenance/workloadCodeFileCount",
-      "current-workloadCodeFileCount",
+      "/contractProvenance/receiptSchemaSha256",
+      "current-receiptSchemaSha256",
     ));
+  }
+  if (!historicalReadback) {
+    const current = getCurrentR7ReleaseEvidenceProvenance();
+    const expected = {
+      schemaModuleSha256: current.schemaModuleSha256,
+      resourcePolicySourceSha256: current.resourcePolicySourceSha256,
+      resourcePolicyValuesSha256: current.resourcePolicyValuesSha256,
+      workloadCodeSha256: current.workloadCodeSha256,
+    };
+    for (const [field, digest] of Object.entries(expected)) {
+      if (contract[field] !== digest) {
+        errors.push(invariant(`/contractProvenance/${field}`, `current-${field}`));
+      }
+    }
+    if (contract.workloadCodeFileCount !== current.workloadCodeFileCount) {
+      errors.push(invariant(
+        "/contractProvenance/workloadCodeFileCount",
+        "current-workloadCodeFileCount",
+      ));
+    }
   }
   return errors;
 }
@@ -587,9 +605,9 @@ function completedOutcomeErrors(receipt) {
   return errors;
 }
 
-function semanticErrors(receipt) {
+function semanticErrors(receipt, { historicalReadback = false } = {}) {
   const errors = [
-    ...provenanceErrors(receipt),
+    ...provenanceErrors(receipt, { historicalReadback }),
     ...operationErrors(receipt),
     ...boundaryErrors(receipt),
     ...determinismErrors(receipt),
@@ -603,12 +621,21 @@ function semanticErrors(receipt) {
   return errors.slice(0, 20);
 }
 
-export function validateR7ReleaseEvidenceReceipt(receipt) {
+function validateReceipt(receipt, options) {
   if (!validateSchema(receipt)) {
     return { valid: false, errors: safeValidationErrors(validateSchema.errors) };
   }
-  const errors = semanticErrors(receipt);
+  const errors = semanticErrors(receipt, options);
   return { valid: errors.length === 0, errors };
+}
+
+export function validateR7ReleaseEvidenceReceipt(receipt) {
+  return validateReceipt(receipt, { historicalReadback: false });
+}
+
+/** Validates retained v0.1 bytes without treating current source/policy freshness as historical truth. */
+export function validateHistoricalR7ReleaseEvidenceReceipt(receipt) {
+  return validateReceipt(receipt, { historicalReadback: true });
 }
 
 export function assertValidR7ReleaseEvidenceReceipt(receipt) {

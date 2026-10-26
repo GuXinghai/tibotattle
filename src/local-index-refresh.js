@@ -96,6 +96,32 @@ function fixedError(code) {
   return error;
 }
 
+const LOCAL_INDEX_WORKER_CURSOR_KEYS = Object.freeze([
+  "nextOffset", "finalModel", "finalEffort", "finalTierRaw", "finalTierObservedAtMs",
+  "finalTierSource", "finalTotals", "finalCwd", "finalCompactionPending",
+  "finalTurnContextPending", "turnContextSeen", "snapshotsPersisted", "windows", "segments",
+].sort());
+
+export function validateLocalIndexWorkerCursor(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)
+      || ![Object.prototype, null].includes(Object.getPrototypeOf(value))
+      || Object.keys(value).sort().join("\0") !== LOCAL_INDEX_WORKER_CURSOR_KEYS.join("\0")) {
+    throw fixedError("local_index_worker_message_invalid");
+  }
+  const { finalTierRaw, finalTierObservedAtMs, finalTierSource } = value;
+  if (!(finalTierRaw === null || typeof finalTierRaw === "string")
+      || !(finalTierObservedAtMs === null || Number.isSafeInteger(finalTierObservedAtMs))
+      || !(finalTierSource === null
+        || finalTierSource === "turn_override"
+        || finalTierSource === "rollout_thread_settings")
+      || (finalTierSource === null
+        ? finalTierRaw !== null || finalTierObservedAtMs !== null
+        : !Number.isSafeInteger(finalTierObservedAtMs))) {
+    throw fixedError("local_index_worker_message_invalid");
+  }
+  return value;
+}
+
 export function defaultLocalIndexFile(root) {
   return resolve(root, "local-index-store-v1.sqlite");
 }
@@ -138,6 +164,16 @@ function tierRow(tier) {
       providerTierRaw: null,
     };
   }
+  const tierSource = tier.inherited === true ? "lineage_inherited" : tier.tierSource;
+  if (!["lineage_inherited", "turn_override", "rollout_thread_settings"].includes(tierSource)) {
+    return {
+      apiServiceTier: "unknown",
+      billingSurface: CODEX_BILLING_SURFACE,
+      codexSpeedMode: "unknown",
+      tierSource: "unobserved",
+      providerTierRaw: null,
+    };
+  }
   const raw = tier.providerTierRaw;
   const normalized = typeof raw === "string" ? raw.toLowerCase() : null;
   let codexSpeedMode = "unknown";
@@ -151,9 +187,7 @@ function tierRow(tier) {
     codexSpeedMode,
     // Provenance, not strength: a tier seeded from the lineage must not
     // masquerade as a declaration read from this file.
-    tierSource: tier.inherited === true
-      ? "lineage_inherited"
-      : tier.tierSource ?? "rollout_thread_settings",
+    tierSource,
     providerTierRaw: raw ?? null,
   };
 }
@@ -240,10 +274,12 @@ function carriedTotals(row) {
 }
 
 function carriedTier(row) {
-  if (row.carry_tier_observed_at_ms === null) return null;
+  if (row.carry_tier_observed_at_ms === null
+      || !["turn_override", "rollout_thread_settings"].includes(row.carry_tier_source)) return null;
   return {
     providerTierRaw: row.carry_tier_raw ?? null,
     observedAtMs: Number(row.carry_tier_observed_at_ms),
+    tierSource: row.carry_tier_source,
   };
 }
 
@@ -1415,6 +1451,7 @@ async function runRefresh({
               carryEffort: outcome.finalEffort,
               carryTierRaw: ownObservedTier(outcome.finalTier)?.providerTierRaw ?? null,
               carryTierObservedAtMs: ownObservedTier(outcome.finalTier)?.observedAtMs ?? null,
+              carryTierSource: ownObservedTier(outcome.finalTier)?.tierSource ?? null,
               carryTotals: outcome.finalTotals,
               carryWorkDirectoryId: writer.internWorkDirectory(outcome.finalCwd ?? null),
               compactionPending: outcome.finalCompactionPending,
@@ -1480,6 +1517,9 @@ async function runRefresh({
       signal,
       onBatch: (message) => {
         if (walPressure()) throw fixedError("local_index_wal_limit");
+        if (message.final === true && message.quarantineReason == null) {
+          validateLocalIndexWorkerCursor(message.cursor);
+        }
         const info = sourcesByKey.get(message.rolloutKey);
         if (info === undefined) return;
         const state = sourceStates.get(info);
@@ -1536,6 +1576,7 @@ async function runRefresh({
                   carryEffort: cursor.finalEffort,
                   carryTierRaw: cursor.finalTierRaw,
                   carryTierObservedAtMs: cursor.finalTierObservedAtMs,
+                  carryTierSource: cursor.finalTierSource,
                   carryTotals: cursor.finalTotals,
                   carryWorkDirectoryId: writer.internWorkDirectory(cursor.finalCwd ?? null),
                   compactionPending: cursor.finalCompactionPending,

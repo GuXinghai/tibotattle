@@ -40,8 +40,8 @@ generated from them. Apply the repository root guidance first.
 - Run `npm run telemetry:check`, `npm run telemetry:browser:check`, and
   `npm run telemetry:upload-schemas:check` for contract changes. Use the matching
   generation commands only when canonical sources intentionally changed.
-- Run `npm run product:worker:check` when package exports, schemas, or installed
-  contents change; the Worker guards an independent npm-installed copy.
+- Run isolated package and browser-mirror parity tests when exports or schemas
+  change. This checkout has no Worker installation or Worker validation gate.
 - Add negative cases for nested forbidden keys/values, extra properties, bounds,
   version mismatch, and unsafe validation errors.
 - Treat compatibility, consent, migration, deletion, and already-prepared local

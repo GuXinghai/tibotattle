@@ -5,6 +5,30 @@
   "records": [
     {
       "classification": "build_release_operation",
+      "owner": "test_isolation",
+      "canonicalPath": "scripts/run-isolated-tests.mjs",
+      "stableAlias": "test",
+      "stableAliasReason": null,
+      "additionalAliases": [
+        "docs:api:check",
+        "product:electron:test",
+        "product:local:test",
+        "product:ui:test",
+        "release:trust:check",
+        "telemetry:check"
+      ],
+      "callers": [
+        "scripts/test-lanes.mjs",
+        "test/test-isolated-runner.test.js",
+        "CONTRIBUTING.md"
+      ],
+      "decision": "retain_as_ordinary_synthetic_test_boundary",
+      "provenance": null,
+      "provenanceReason": "Ordinary test execution creates disposable synthetic state and strips inherited qualification; it grants no native credential qualification.",
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
       "owner": "electron_packaging",
       "canonicalPath": "scripts/lib/windows-candidate-process.mjs",
       "stableAlias": null,
@@ -364,17 +388,17 @@
     {
       "classification": "build_release_operation",
       "owner": "repository_operations",
-      "canonicalPath": "scripts/check-http-cache-exception.mjs",
+      "canonicalPath": "scripts/check-http-cache-backport.mjs",
       "stableAlias": null,
-      "stableAliasReason": "The OSV workflow invokes this temporary exact-source, advisory-status and expiry guard directly; it is not a supported npm command.",
+      "stableAliasReason": "The OSV workflow invokes this exact downstream-patch and installed-consumer verifier directly; it is not a supported npm command.",
       "additionalAliases": [],
       "callers": [
         ".github/workflows/osv-scanner.yml",
-        "docs/decisions/2026-10-03-v0-1-27-http-cache-advisory-exception.md",
-        "test/http-cache-exception.test.js"
+        "docs/runbooks/2026-10-27-http-cache-backport-verification.md",
+        "test/http-cache-backport.test.js"
       ],
-      "decision": "retain_until_reviewed_exception_removal",
-      "provenance": "docs/decisions/2026-10-03-v0-1-27-http-cache-advisory-exception.md",
+      "decision": "retain_as_downstream_backport_verification_gate",
+      "provenance": "docs/runbooks/2026-10-27-http-cache-backport-verification.md",
       "provenanceReason": null,
       "legacyPaths": []
     },

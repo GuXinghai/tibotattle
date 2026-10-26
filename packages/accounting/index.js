@@ -37,6 +37,7 @@ export {
 } from "./src/subscription-speed.js";
 
 export {
+  LOCAL_API_PRICING_METHOD_VERSION,
   aggregateLocalApiPriceResults,
   apiPriceResolutionSummary,
   costWarningCodes,

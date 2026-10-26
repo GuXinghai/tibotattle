@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import identity from "../../../config/application-identity.cjs";
-import { applicationProfilePaths, pinApplicationProfilePaths, readApplicationPackage } from "../application-profile.js";
+import {
+  applicationProfilePaths,
+  pinApplicationProfilePaths,
+  prepareApplicationProfileDirectories,
+  readApplicationPackage,
+  readApplicationPackageSync,
+} from "../application-profile.js";
 
 const appData = "C:\\Users\\Ada\\AppData\\Roaming";
 function manifest(profile = "stable", productName = "Synthetic Brand") {
@@ -45,22 +51,50 @@ test("packaged authority rejects missing, foreign, newer or mixed profile metada
   assert.equal((await packaged(manifest("development"))).identity.profile, "development");
 });
 
-test("profile paths are pinned before ready through protected directory preparation", () => {
+test("synchronous packaged metadata supports pre-ready path selection", () => {
+  const value = manifest("stable");
+  const selected = readApplicationPackageSync({
+    app: { isPackaged: true, getAppPath: () => "C:\\application\\app.asar" },
+    readManifest: () => Buffer.from(JSON.stringify(value)),
+  });
+  assert.equal(selected.identity.profile, "stable");
+  assert.throws(() => readApplicationPackageSync({
+    app: { isPackaged: true, getAppPath: () => "C:\\application\\app.asar" },
+    readManifest: async () => Buffer.from(JSON.stringify(value)),
+  }), { code: "electron_shell_electron_configuration_invalid" });
+});
+
+test("profile paths pin before separate protected directory preparation", () => {
   const calls = [];
-  const app = { getPath: () => appData, isReady: () => false,
-    setPath: (...args) => calls.push(["set", ...args]) };
-  const result = pinApplicationProfilePaths({ app, platform: "win32", profile: "stable",
-    prepareDirectory: (...args) => calls.push(["prepare", ...args]) });
-  assert.deepEqual(calls, [["prepare", result.userData, "state"],
-    ["prepare", result.sessionData, "session"], ["set", "userData", result.userData],
+  const selectedPaths = { appData };
+  const existingDirectories = new Set([appData]);
+  const app = { getPath: (name) => selectedPaths[name] ?? appData, isReady: () => false,
+    setPath: (name, path) => {
+      if (!existingDirectories.has(path)) throw new Error("Electron setPath directory does not exist");
+      calls.push(["set", name, path]);
+      selectedPaths[name] = path;
+    } };
+  const expected = applicationProfilePaths({ appData, profile: "stable", platform: "win32" });
+  assert.throws(() => pinApplicationProfilePaths({ app, platform: "win32", profile: "stable" }),
+    /directory does not exist/);
+  assert.deepEqual(calls, []);
+  existingDirectories.add(expected.userData);
+  existingDirectories.add(expected.sessionData);
+  const result = pinApplicationProfilePaths({ app, platform: "win32", profile: "stable" });
+  assert.deepEqual(result, expected);
+  assert.deepEqual(calls, [["set", "userData", result.userData],
     ["set", "sessionData", result.sessionData]]);
+  prepareApplicationProfileDirectories({ app, appData, profile: "stable", platform: "win32",
+    prepareDirectory: (...args) => calls.push(["prepare", ...args]) });
+  assert.deepEqual(calls, [["set", "userData", result.userData],
+    ["set", "sessionData", result.sessionData], ["prepare", result.userData, "state"],
+    ["prepare", result.sessionData, "session"]]);
   for (const profile of ["..", "stable/../development", "unknown"]) {
     assert.throws(() => applicationProfilePaths({ appData, profile, platform: "win32" }));
   }
   assert.throws(() => pinApplicationProfilePaths({ app: { ...app, isReady: () => true },
-    profile: "stable", platform: "win32", prepareDirectory() {} }));
-  calls.length = 0;
-  assert.throws(() => pinApplicationProfilePaths({ app, profile: "stable", platform: "win32",
-    prepareDirectory() { throw new Error("protected preparation refused"); } }));
-  assert.deepEqual(calls, []);
+    profile: "stable", platform: "win32" }));
+  assert.throws(() => prepareApplicationProfileDirectories({ app, appData, profile: "development",
+    platform: "win32", prepareDirectory() {} }),
+  { code: "electron_shell_electron_configuration_invalid" });
 });

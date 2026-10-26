@@ -17,6 +17,7 @@ import {
 import { REVIEWED_MODEL_CATALOG } from "./model-catalog.js";
 
 const ROOT = "urn:usagemonitor:schema:telemetry-performance-v1:";
+const PERFORMANCE_HISTOGRAM_SCHEMA_ID = `${ROOT}performance-histogram.schema.json`;
 const DAY = "^\\d{4}-\\d{2}-\\d{2}$";
 const PERFORMANCE_PROVIDERS = Object.freeze([
   ...new Set(REVIEWED_MODEL_CATALOG.map(({ provider }) => provider)),
@@ -190,19 +191,19 @@ const RECORD_SCHEMA = {
     speedDurationMs: COUNT,
     speedHistogram: {
       allOf: [
-        { $ref: "performance-histogram.schema.json" },
+        { $ref: PERFORMANCE_HISTOGRAM_SCHEMA_ID },
         { properties: { metric: { const: "speed" } } },
       ],
     },
     ttftHistogram: {
       allOf: [
-        { $ref: "performance-histogram.schema.json" },
+        { $ref: PERFORMANCE_HISTOGRAM_SCHEMA_ID },
         { properties: { metric: { const: "ttft" } } },
       ],
     },
     completionHistogram: {
       allOf: [
-        { $ref: "performance-histogram.schema.json" },
+        { $ref: PERFORMANCE_HISTOGRAM_SCHEMA_ID },
         { properties: { metric: { const: "turnDuration" } } },
       ],
     },

@@ -24,7 +24,16 @@ const response = (headers) => ({ status: 200, headers: { date: new Date().toUTCS
 test("the installed builder chain uses the reviewed pinned patch bytes", () => {
   const bytes = readFileSync(cacheRequire.resolve("http-cache-semantics"));
   assert.equal(createHash("sha256").update(bytes).digest("hex"),
-    "fc7b3f0265b7a7d0fee83bafa47186a66495720d3179801c2be3083de6d0cf76");
+    "59d8952163820dc7ed24a1839eae7ee372ecb1a85d909fdad67b7cdac95f8a67");
+});
+
+test("the 4.3 Vary behavior still requires matching selecting headers", () => {
+  const selected = language => ({ ...requestData(), headers: { host: "cache.invalid", "accept-language": language } });
+  const policy = new CachePolicy(selected("en"), response({ "cache-control": "max-age=60", vary: "Accept-Language" }));
+  assert.equal(policy.satisfiesWithoutRevalidation(selected("en")), true);
+  assert.equal(policy.satisfiesWithoutRevalidation(selected("fr")), false);
+  const star = new CachePolicy(requestData(), response({ "cache-control": "max-age=60", vary: " * " }));
+  assert.equal(star.satisfiesWithoutRevalidation(requestData()), false);
 });
 
 test("max-stale cannot reuse responses restricted for security", () => {
@@ -34,6 +43,7 @@ test("max-stale cannot reuse responses restricted for security", () => {
     { "cache-control": "max-age=3600, no-cache" },
     { "cache-control": "max-age=3600, no-store" },
     { "cache-control": "max-age=3600, private" },
+    { "cache-control": "max-age=3600, must-revalidate" },
   ]) {
     const policy = new CachePolicy(requestData(), response(headers));
     assert.equal(policy.satisfiesWithoutRevalidation(requestData("max-stale=999999")), false);

@@ -72,6 +72,8 @@ import {
 import {
   appendObservation,
   appendJsonLinesOwnerOnly,
+  assertOwnerOnlyAtomicPublisherAvailable,
+  assertInputOutputPathsDistinct,
   defaultContaminationFile,
   defaultContaminationReportFile,
   defaultCorrectionReportFile,
@@ -869,6 +871,8 @@ export async function run(
     }
     args.outputFile ??= defaultTransitionFile();
     args.auditFile ??= defaultTransitionAuditFile(args.endAt);
+    await assertInputOutputPathsDistinct([], [args.outputFile, args.auditFile]);
+    await assertOwnerOnlyAtomicPublisherAvailable();
     const dataset = await mineCodexTransitions({
       startAt: args.startAt,
       endAt: args.endAt,
@@ -890,6 +894,8 @@ export async function run(
     const dataset = JSON.parse(await readFile(args.inputFile, "utf8"));
     args.reportFile ??= defaultInferenceReportFile(dataset.scope?.endAt ?? dataset.materializedAt);
     const report = inferCapacityFromTransitions(dataset);
+    await assertInputOutputPathsDistinct([args.inputFile], [args.outputFile, args.reportFile]);
+    await assertOwnerOnlyAtomicPublisherAvailable();
     await writeJsonOwnerOnlyAtomic(args.outputFile, report);
     await writeOwnerOnlyAtomic(args.reportFile, renderInferenceReport(report));
     console.log(`Inference verdict: ${report.overallVerdict}.`);
@@ -907,6 +913,8 @@ export async function run(
     const dataset = JSON.parse(await readFile(args.inputFile, "utf8"));
     const report = analyzeWeeklyLimitHistory(dataset);
     args.reportFile ??= defaultWeeklyHistoryReportFile(dataset.scope?.endAt ?? dataset.materializedAt);
+    await assertInputOutputPathsDistinct([args.inputFile], [args.outputFile, args.reportFile]);
+    await assertOwnerOnlyAtomicPublisherAvailable();
     await writeJsonOwnerOnlyAtomic(args.outputFile, report);
     await writeOwnerOnlyAtomic(args.reportFile, renderWeeklyLimitHistoryReport(report));
     console.log(`History verdict: ${report.verdict}; usable reset groups: ${report.quality.usableDiagnosticResetGroups}.`);
@@ -921,12 +929,28 @@ export async function run(
     }
     const capturedAt = new Date().toISOString();
     const collectorStateFile = defaultCollectorStateFile();
+    const cacheSidecarFile = defaultLocalHistoryCacheValidationFile();
+    const usesDefaultHistoryCache = args.inputFile === defaultLocalHistoryFile();
+    args.outputFile ??= defaultProviderCrosscheckFile();
+    args.reportFile ??= defaultProviderCrosscheckReportFile(args.endAt);
+    await assertInputOutputPathsDistinct(
+      [
+        args.inputFile,
+        args.providerUiFile ?? defaultProviderUiObservationFile(),
+        collectorStateFile,
+      ].filter(Boolean),
+      [
+        args.outputFile,
+        args.reportFile,
+        ...(!args.inputFile ? [defaultLocalHistoryFile()] : []),
+        ...(usesDefaultHistoryCache ? [cacheSidecarFile] : []),
+      ],
+    );
+    await assertOwnerOnlyAtomicPublisherAvailable();
     // Crosscheck is a normal managed-state reader. Migrate before querying so
     // an older JSON-only installation is never silently treated as having no
     // prospective evidence.
     await prepareLocalCollectorState({ stateFile: collectorStateFile });
-    const cacheSidecarFile = defaultLocalHistoryCacheValidationFile();
-    const usesDefaultHistoryCache = args.inputFile === defaultLocalHistoryFile();
     const localScanPromise = args.inputFile
       ? Promise.all([
           readFile(args.inputFile, "utf8").then(JSON.parse),
@@ -984,8 +1008,6 @@ export async function run(
       prospectiveCollectorAccumulator,
       cacheValidation,
     });
-    args.outputFile ??= defaultProviderCrosscheckFile();
-    args.reportFile ??= defaultProviderCrosscheckReportFile(args.endAt);
     await writeJsonOwnerOnlyAtomic(args.outputFile, report);
     await writeOwnerOnlyAtomic(args.reportFile, renderProviderCrosscheckReport(report));
     console.log(`Provider crosscheck: ${report.comparisons.comparableDayCount} comparable day(s); local/provider token ratio ${report.comparisons.aggregateLocalToOfficialTokenRatio ?? "unavailable"}.`);
@@ -997,9 +1019,15 @@ export async function run(
   if (args.command === "quality") {
     args.inputFile ??= defaultTransitionFile();
     args.outputFile ??= defaultMonitoringQualityFile();
-    const transitionDataset = JSON.parse(await readFile(args.inputFile, "utf8"));
-    const collectorStateFile = defaultCollectorStateFile();
     const analyzedAt = new Date().toISOString();
+    args.reportFile ??= defaultMonitoringQualityReportFile(analyzedAt);
+    const collectorStateFile = defaultCollectorStateFile();
+    await assertInputOutputPathsDistinct(
+      [args.inputFile, args.collectorFile ?? collectorStateFile],
+      [args.outputFile, args.reportFile],
+    );
+    await assertOwnerOnlyAtomicPublisherAvailable();
+    const transitionDataset = JSON.parse(await readFile(args.inputFile, "utf8"));
     let collectorRecords = [];
     let collectorSummary = null;
     if (args.collectorFile === null) {
@@ -1031,7 +1059,6 @@ export async function run(
       collectorSummary,
       now: analyzedAt,
     });
-    args.reportFile ??= defaultMonitoringQualityReportFile(report.analyzedAt);
     await writeJsonOwnerOnlyAtomic(args.outputFile, report);
     await writeOwnerOnlyAtomic(args.reportFile, renderMonitoringQualityReport(report));
     console.log(`Monitoring quality: collector ${report.collector.status}; app-server ${report.collector.appServerStatus}; ${report.opportunities.filter((row) => row.priority === "P0").length} P0 improvement(s).`);
@@ -1077,6 +1104,8 @@ export async function run(
     const transitionDataset = JSON.parse(await readFile(args.inputFile, "utf8"));
     const report = analyzeWeeklyCalibration(transitionDataset);
     args.reportFile ??= defaultWeeklyCalibrationReportFile(report.materializedAt);
+    await assertInputOutputPathsDistinct([args.inputFile], [args.outputFile, args.reportFile]);
+    await assertOwnerOnlyAtomicPublisherAvailable();
     await writeJsonOwnerOnlyAtomic(args.outputFile, report);
     await writeOwnerOnlyAtomic(args.reportFile, renderWeeklyCalibrationReport(report));
     console.log(`Weekly calibration: ${report.selection.selectedCandidateLabel}; ${report.quality.qualifyingResetValues} qualifying reset value(s); ${report.prospectiveStyleValidation.scoredResets} prior-reset validation(s).`);
@@ -1124,13 +1153,14 @@ export async function run(
   }
   if (args.command === "experiment") {
     if (!args.manifestFile) throw new Error("experiment requires --manifest");
+    args.resultFile ??= defaultExperimentResultsFile();
+    await assertInputOutputPathsDistinct([args.manifestFile], [args.resultFile]);
     const manifest = JSON.parse(await readFile(args.manifestFile, "utf8"));
     const result = await runExperiment({
       manifest,
       executeLive: args.executeLive,
       offline: args.offline,
     });
-    args.resultFile ??= defaultExperimentResultsFile();
     await appendJsonLinesOwnerOnly(args.resultFile, [result]);
     console.log(`Experiment ${result.experimentId}: ${result.status}.`);
     console.log(`Projected API price: ${formatMoney(result.projection.totalUsd)}; stop reasons: ${result.stopReasons.join(", ") || "none"}.`);
@@ -1144,12 +1174,19 @@ export async function run(
     args.experimentsFile ??= defaultExperimentResultsFile();
     args.observationsFile ??= defaultDataFile();
     args.outputFile ??= defaultContaminationFile();
+    // This analysis only reads its inputs before publication; collision and
+    // capability checks still precede the first output write.
     const transitionDataset = JSON.parse(await readFile(args.transitionsFile, "utf8"));
     const inferenceReport = JSON.parse(await readFile(args.inferenceFile, "utf8"));
     const experimentResults = await readObservations(args.experimentsFile);
     const captureObservations = await readObservations(args.observationsFile);
     const report = analyzeContamination({ transitionDataset, inferenceReport, experimentResults, captureObservations });
     args.reportFile ??= defaultContaminationReportFile(transitionDataset.scope?.endAt ?? transitionDataset.materializedAt);
+    await assertInputOutputPathsDistinct(
+      [args.transitionsFile, args.inferenceFile, args.experimentsFile, args.observationsFile],
+      [args.outputFile, args.reportFile],
+    );
+    await assertOwnerOnlyAtomicPublisherAvailable();
     await writeJsonOwnerOnlyAtomic(args.outputFile, report);
     await writeOwnerOnlyAtomic(args.reportFile, renderContaminationReport(report));
     console.log(`Contamination intervals: ${report.summary.intervals}; unexplained: ${report.views.unexplainedMovement.count}; negative deltas: ${report.views.negativeDeltas.count}.`);
@@ -1163,6 +1200,10 @@ export async function run(
     if (!Number.isFinite(Date.parse(args.startAt)) || !Number.isFinite(Date.parse(args.endAt))) {
       throw new Error("--since and --until must be valid ISO timestamps");
     }
+    args.outputFile ??= defaultToolMechanismFile();
+    args.reportFile ??= defaultToolMechanismReportFile(args.endAt);
+    await assertInputOutputPathsDistinct([], [args.outputFile, args.reportFile]);
+    await assertOwnerOnlyAtomicPublisherAvailable();
     const scan = await scanCodexLogEvents({ startAt: args.startAt, endAt: args.endAt });
     const clientSources = Object.entries(scan.toolObservationsBySource)
       .filter(([sourceKind]) => sourceKind.startsWith("client_"));
@@ -1190,8 +1231,6 @@ export async function run(
       replayedToolCallsSkipped: scan.diagnostics.replayedToolCallsSkipped,
       sourceLayoutBoundary: "rollout_file_count_excluded_because_later_forks_can_add_lineage_files_without_changing_fixed_interval_aggregates",
     };
-    args.outputFile ??= defaultToolMechanismFile();
-    args.reportFile ??= defaultToolMechanismReportFile(args.endAt);
     await writeJsonOwnerOnlyAtomic(args.outputFile, analysis);
     await writeOwnerOnlyAtomic(args.reportFile, renderToolMechanismReport(analysis));
     console.log(`Tool mechanism gate: ${analysis.acceptanceGate.passed ? "pass" : "fail"} (${analysis.acceptanceGate.basis}).`);
@@ -1205,15 +1244,28 @@ export async function run(
     args.transitionsFile ??= frozenTransitionFile();
     args.correctionsFile ??= defaultCorrectionsFile();
     args.outputFile ??= defaultEffectiveObservationsFile();
+    const correctionsLockFile = `${args.correctionsFile}.lock`;
+    // The report's default name depends on transition metadata. Check every
+    // already-known path before reading inputs, then repeat the full collision
+    // check once that output name is known and before acquiring the lock.
+    await assertInputOutputPathsDistinct(
+      [args.observationsFile, args.transitionsFile, args.correctionsFile],
+      [args.outputFile, ...(args.reportFile ? [args.reportFile] : []), correctionsLockFile],
+    );
     const observations = await readObservations(args.observationsFile);
     const transitionDataset = JSON.parse(await readFile(args.transitionsFile, "utf8"));
-    const migration = await withOwnerOnlyFileLock(`${args.correctionsFile}.lock`, async () => {
+    args.reportFile ??= defaultCorrectionReportFile(transitionDataset.scope.endAt);
+    await assertInputOutputPathsDistinct(
+      [args.observationsFile, args.transitionsFile, args.correctionsFile],
+      [args.outputFile, args.reportFile, correctionsLockFile],
+    );
+    await assertOwnerOnlyAtomicPublisherAvailable();
+    const migration = await withOwnerOnlyFileLock(correctionsLockFile, async () => {
       const existingCorrections = await readObservations(args.correctionsFile);
       const planned = planBaselineCorrectionMigration({ observations, transitionDataset, existingCorrections });
       await appendJsonLinesOwnerOnly(args.correctionsFile, planned.recordsToAppend);
       return planned;
     });
-    args.reportFile ??= defaultCorrectionReportFile(transitionDataset.scope.endAt);
     await writeJsonOwnerOnlyAtomic(args.outputFile, migration.resolution);
     await writeOwnerOnlyAtomic(args.reportFile, renderCorrectionReport(migration.resolution));
     const effective = migration.resolution.effectiveByOriginalId[migration.baselineObservationId];

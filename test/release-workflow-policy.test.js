@@ -91,6 +91,22 @@ test("release trust workflow stays read-only and triggers on PRs and main", asyn
   assert.doesNotMatch(workflow, /^\s+[a-z-]+: write$/mu);
 });
 
+test("release trust workflow runs its exact test files through the isolated runner", async () => {
+  const workflow = await readFile(new URL(
+    "../.github/workflows/release-trust-policy.yml",
+    import.meta.url,
+  ), "utf8");
+  assert.match(
+    workflow,
+    /node \.\/scripts\/run-isolated-tests\.mjs -- test\/tool-inventory\.test\.js/u,
+  );
+  assert.match(
+    workflow,
+    /node \.\/scripts\/run-isolated-tests\.mjs -- test\/codex-contract-drift\.test\.js test\/release-workflow-policy\.test\.js test\/release-evidence\.test\.js test\/release-attestation-action\.test\.js test\/release-sbom-action\.test\.js/u,
+  );
+  assert.doesNotMatch(workflow, /node --test/u);
+});
+
 test("workflow policy accepts local actions and full immutable action SHAs", () => {
   assert.deepEqual(inspectWorkflowSource(`
 steps:

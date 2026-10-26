@@ -1,4 +1,7 @@
-import { loadWindowsSourceReadBinding } from './windows-filesystem.js';
+import {
+  loadWindowsSourceReadBinding,
+  WINDOWS_SOURCE_READ_CONTRACT,
+} from './windows-filesystem.js';
 
 const NATIVE_READ_BYTES = 64 * 1024;
 const safe = (ok, code) => { if (!ok) throw new Error(code); };
@@ -10,6 +13,11 @@ export function createSourceFileAccess({ platform = process.platform,
   safe(platform === 'win32', 'unsupported_platform');
   const native = loadWindowsBinding();
   return Object.freeze({
+    contractVersion: WINDOWS_SOURCE_READ_CONTRACT,
+    inspectPath(path) {
+      safe(typeof native.inspectPath === 'function', 'source_metadata_unavailable');
+      return native.inspectPath(path);
+    },
     async open(path) {
       const lease = native.openSourceFile(path);
       let closed = false;

@@ -31,6 +31,7 @@ import {
   quotaWeightedApiPriceEquivalent,
   FAST_MODE_ASSUMED_MULTIPLIER,
   FAST_MODE_QUOTA_MULTIPLIERS,
+  LOCAL_API_PRICING_METHOD_VERSION,
   priceCodexUsageEvent,
   APP_OFFICIAL_PRICE_CARDS,
   APP_PRICE_REGISTRY_MANIFEST,
@@ -140,8 +141,10 @@ import {
 // local-index components, contradictory output and partial/assumed provenance.
 // v0.23: derive every displayed monetary margin from exact decimal accumulation
 // so weighted groups and individual events have identical half-up rounding.
+// v0.25: require the exact public API-pricing method and rebuild caches produced
+// before missing-component coverage and Date timestamp support were corrected.
 export const REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION =
-  "local-replay-safe-accounting-v0.24";
+  "local-replay-safe-accounting-v0.25";
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
   "codex-primary-allowance-capacity-v0.1";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
@@ -4259,6 +4262,7 @@ export async function buildReplaySafeAccountingCache({
     accountingMethod:
       "lineage_aware_cumulative_snapshot_replay_exclusion",
     priceBasis: "official_api_price_equivalent_not_subscription_allowance",
+    pricingMethodVersion: LOCAL_API_PRICING_METHOD_VERSION,
     priceEpochBasis: HISTORICAL_PRICE_EPOCH_BASIS,
     priceRegistryVersion: APP_PRICE_REGISTRY_MANIFEST.version,
     priceRegistryObservedAt: APP_PRICE_REGISTRY_MANIFEST.observedAt,
@@ -5262,6 +5266,7 @@ function validCache(value) {
       || canonicalInstant(value.coveredAt?.endAt) === null
       || value.accountingMethod
         !== "lineage_aware_cumulative_snapshot_replay_exclusion"
+      || value.pricingMethodVersion !== LOCAL_API_PRICING_METHOD_VERSION
       || value.priceEpochBasis !== HISTORICAL_PRICE_EPOCH_BASIS
       // A replay-safe total is meaningful only under the exact price registry
       // that produced it. Never let an older, higher price card silently
@@ -5437,6 +5442,7 @@ export async function readReplaySafeAccountingCache({
     unavailableErrorCode = registryOutdated
       ? "cache_price_registry_outdated"
       : parsed?.schemaVersion !== REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
+        || parsed?.pricingMethodVersion !== LOCAL_API_PRICING_METHOD_VERSION
         || parsed?.priceEpochBasis !== HISTORICAL_PRICE_EPOCH_BASIS
         ? "cache_accounting_semantics_outdated"
         : "cache_invalid";

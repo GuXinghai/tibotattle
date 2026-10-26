@@ -42,7 +42,7 @@ import {
 
 export const LOCAL_INDEX_STORE_FAMILY = "local-index-store";
 export const LOCAL_INDEX_STORE_APPLICATION_ID = 0x554d4932;
-export const LOCAL_INDEX_STORE_USER_VERSION = 8;
+export const LOCAL_INDEX_STORE_USER_VERSION = 9;
 // A confirmed native response receipt repaired this derived model. Reparse clears it.
 export const EVENT_FLAG_RUNTIME_MODEL = 32;
 // Increment when reviewed identity additions can repair previously unknown
@@ -232,6 +232,8 @@ const SCHEMA = `
     carry_effort TEXT,
     carry_tier_raw TEXT,
     carry_tier_observed_at_ms INTEGER,
+    carry_tier_source TEXT CHECK(carry_tier_source IS NULL OR carry_tier_source IN (
+      'turn_override', 'rollout_thread_settings')),
     carry_total_input INTEGER,
     carry_total_cached INTEGER,
     carry_total_cache_write INTEGER,
@@ -465,7 +467,7 @@ function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
     throw fixedError("local_index_newer_version");
   }
   if (userVersion < LOCAL_INDEX_STORE_USER_VERSION
-        && !(allowWorkloadPredecessor && [4,5,6,7].includes(userVersion))) {
+        && !(allowWorkloadPredecessor && [4,5,6,7,8].includes(userVersion))) {
     throw fixedError("local_index_family_mismatch");
   }
 }
@@ -519,27 +521,37 @@ function installCalculationRevisionTriggers(database) {
         UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END`);
     }
   }
-  const sourceColumns = ["source_local", "source_ordinal", "session_id", "surface_id",
-    "presence", "parser_version", "quarantine_code", "snapshots_persisted",
-    "carry_model", "carry_effort", "carry_tier_raw", "carry_tier_observed_at_ms",
-    "carry_work_directory_id", "compacted_at_ms", "compaction_offset", "turn_context_pending"];
+  installCalculationSourceRevisionTriggers(database);
   for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
-    const when = operation === "UPDATE" ? `WHEN ${sourceColumns.map(name => `OLD.${name} IS NOT NEW.${name}`).join(" OR ")}
-      OR (OLD.scanned_bytes = OLD.size_bytes) IS NOT (NEW.scanned_bytes = NEW.size_bytes)
-      OR (OLD.scanned_bytes IS NOT NEW.scanned_bytes AND (
-        ${["usage_event", "usage_event_boundary", "quota_occurrence", "tool_class_fact", "work_lifecycle_fact"].map(table => `EXISTS(SELECT 1 FROM ${table} WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes))`).join(" OR ")}
-      ))
-      OR (CASE WHEN json_valid(OLD.lineage_json) THEN json_remove(OLD.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE OLD.lineage_json END)
-        IS NOT (CASE WHEN json_valid(NEW.lineage_json) THEN json_remove(NEW.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE NEW.lineage_json END)` : "";
-    database.exec(`CREATE TRIGGER calculation_source_${operation.toLowerCase()}
-      AFTER ${operation} ON source ${when} BEGIN
-      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END`);
     const benign = CALCULATION_METADATA_DIAGNOSTICS.map(code => `'${code}'`).join(",");
     const condition = operation === "INSERT" ? `NEW.code NOT IN (${benign})`
       : operation === "DELETE" ? `OLD.code NOT IN (${benign})`
         : `(OLD.code NOT IN (${benign}) OR NEW.code NOT IN (${benign})) AND (OLD.code IS NOT NEW.code OR OLD.count IS NOT NEW.count)`;
     database.exec(`CREATE TRIGGER calculation_diagnostic_${operation.toLowerCase()}
       AFTER ${operation} ON source_diagnostic WHEN ${condition} BEGIN
+      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END`);
+  }
+}
+
+function installCalculationSourceRevisionTriggers(database, { replaceExisting = false } = {}) {
+  const availableColumns = new Set(database.prepare("PRAGMA table_info(source)").all().map((row) => row.name));
+  const sourceColumns = ["source_local", "source_ordinal", "session_id", "surface_id",
+    "presence", "parser_version", "quarantine_code", "snapshots_persisted",
+    "carry_model", "carry_effort", "carry_tier_raw", "carry_tier_observed_at_ms",
+    ...(availableColumns.has("carry_tier_source") ? ["carry_tier_source"] : []),
+    "carry_work_directory_id", "compacted_at_ms", "compaction_offset", "turn_context_pending"];
+  for (const operation of ["INSERT", "UPDATE", "DELETE"]) {
+    const name = `calculation_source_${operation.toLowerCase()}`;
+    if (replaceExisting) database.exec(`DROP TRIGGER IF EXISTS ${name}`);
+    const when = operation === "UPDATE" ? `WHEN ${sourceColumns.map(column => `OLD.${column} IS NOT NEW.${column}`).join(" OR ")}
+      OR (OLD.scanned_bytes = OLD.size_bytes) IS NOT (NEW.scanned_bytes = NEW.size_bytes)
+      OR (OLD.scanned_bytes IS NOT NEW.scanned_bytes AND (
+        ${["usage_event", "usage_event_boundary", "quota_occurrence", "tool_class_fact", "work_lifecycle_fact"].map(table => `EXISTS(SELECT 1 FROM ${table} WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes))`).join(" OR ")}
+      ))
+      OR (CASE WHEN json_valid(OLD.lineage_json) THEN json_remove(OLD.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE OLD.lineage_json END)
+        IS NOT (CASE WHEN json_valid(NEW.lineage_json) THEN json_remove(NEW.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE NEW.lineage_json END)` : "";
+    database.exec(`CREATE TRIGGER ${name}
+      AFTER ${operation} ON source ${when} BEGIN
       UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END`);
   }
 }
@@ -658,6 +670,26 @@ export function openLocalIndexStore(file, {
         database.exec("ALTER TABLE store_state ADD COLUMN calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)");
         installCalculationRevisionTriggers(database);
         database.exec("PRAGMA user_version=8");
+        database.exec("COMMIT");
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    }
+    if (existed && !readOnly
+        && database.prepare("PRAGMA user_version").get().user_version === 8) {
+      database.exec("BEGIN IMMEDIATE");
+      try {
+        if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
+          throw fixedError("local_index_family_mismatch");
+        }
+        // v8 stored raw tier and observation time without provenance. Preserve
+        // those rows verbatim and leave the additive source field NULL: the
+        // missing source cannot be reconstructed from those columns.
+        database.exec(`ALTER TABLE source ADD COLUMN carry_tier_source TEXT
+          CHECK(carry_tier_source IS NULL OR carry_tier_source IN ('turn_override','rollout_thread_settings'))`);
+        installCalculationSourceRevisionTriggers(database, { replaceExisting: true });
+        database.exec("PRAGMA user_version=9");
         database.exec("COMMIT");
       } catch (error) {
         database.exec("ROLLBACK");
@@ -1335,6 +1367,10 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
           && !QUARANTINE_CODES.includes(state.quarantineCode)) {
         throw fixedError("local_index_quarantine_invalid");
       }
+      if (state.carryTierSource !== null && state.carryTierSource !== undefined
+          && !["turn_override", "rollout_thread_settings"].includes(state.carryTierSource)) {
+        throw fixedError("local_index_source_state_invalid");
+      }
       database.prepare(`
         UPDATE source SET
           session_id = ?, surface_id = ?, path = ?, rollout_key = ?,
@@ -1343,7 +1379,7 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
           head_digest = ?, boundary_digest = ?, tail_digest = ?, verified_at_ms = ?,
           verified_bytes = ?, parser_version = ?, quarantine_code = ?,
           snapshots_persisted = ?, turn_context_seen = ?, carry_model = ?,
-          carry_effort = ?, carry_tier_raw = ?, carry_tier_observed_at_ms = ?,
+          carry_effort = ?, carry_tier_raw = ?, carry_tier_observed_at_ms = ?, carry_tier_source = ?,
           carry_total_input = ?, carry_total_cached = ?,
           carry_total_cache_write = ?, carry_total_output = ?,
           carry_total_reasoning = ?, carry_total_total = ?,
@@ -1359,6 +1395,7 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
         state.snapshotsPersisted ? 1 : 0, state.turnContextSeen ? 1 : 0,
         state.carryModel ?? null, state.carryEffort ?? null,
         state.carryTierRaw ?? null, state.carryTierObservedAtMs ?? null,
+        state.carryTierSource ?? null,
         state.carryTotals?.input_tokens ?? null,
         state.carryTotals?.cached_input_tokens ?? null,
         state.carryTotals?.cache_write_input_tokens ?? null,

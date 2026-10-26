@@ -45,7 +45,7 @@ Do not:
   sidecars, or the device salt;
 - use **Erase local data** or **Reset identity and device** as a diagnosis or
   repair;
-- open a store whose `user_version` is above 8 with a build that does not know
+- open a store whose `user_version` is above 9 with a build that does not know
   that version, or open any store writable with an older build;
 - copy the store without its sidecars, or copy it without the device salt;
 - hand-edit `usage_rollup`, `work_rollup`, `cache_candidate` or
@@ -84,7 +84,7 @@ new location or merge it with a new profile.
 | Code or observation | Meaning | First action |
 | --- | --- | --- |
 | `local_index_family_mismatch` | Wrong `application_id`, or an unsupported predecessor version. Not a store this build can open. | Preserve. Find where the file came from before anything else. Do not relabel. |
-| `local_index_newer_version` | `user_version` above 8. Written by a newer build. | Install the newer compatible build. Do not open it with this build. |
+| `local_index_newer_version` | `user_version` above 9. Written by a newer build. | Install the newer compatible build. Do not open it with this build. |
 | `local_index_file_invalid` | Not a single-link regular file, a symbolic link, or an unsafe directory. | Check ownership and links. Do not chmod, replace or recreate the file. |
 | `local_index_unavailable` | The file cannot be opened or stat'ed. | Check that the file exists, is not locked by another process, and that the disk has space. |
 | `local_index_journal_mode_refused` | WAL mode could not be set. | Confirm the store sits on a local volume. |
@@ -143,7 +143,7 @@ There is no current hosted delivery command; preserving identity remains require
 The private tool helper `verifyColdLocalStateBackup` in
 `scripts/lib/profile-sqlite-backup.mjs` compares two explicitly supplied,
 non-overlapping local roots. It accepts only the fixed current index database
-(application ID `0x554d4932`, version 8) with its original device salt, or the
+(application ID `0x554d4932`, version 9) with its original device salt, or the
 fixed collector database (application ID `0x554d4353`, physical version 1 and
 `local-collector-state-v1` marker). It has no standalone command, profile
 discovery, copy, conversion, activation or receipt-writing entrypoint. This is
@@ -238,7 +238,7 @@ opened with `readOnly: true`. Run:
 PRAGMA query_only = ON;
 PRAGMA quick_check;
 PRAGMA application_id;                       -- expect 1431128370
-PRAGMA user_version;                         -- current: 8; retained predecessors keep their original version
+PRAGMA user_version;                         -- current: 9; retained predecessors keep their original version
 SELECT key, value FROM meta
   WHERE key IN ('family', 'parser_version', 'rollup_basis');
   -- family: local-index-store

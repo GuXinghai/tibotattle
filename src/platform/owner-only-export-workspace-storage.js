@@ -4,6 +4,11 @@ import { chmod, lstat, mkdir, open, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { isProxy } from "node:util/types";
 import { readCompressedRolloutBytes } from "./bounded-rollout-bytes.js";
+import {
+  createWindowsFilesystemAdapter,
+  isWindowsFilesystemIdentity,
+} from "./windows-filesystem.js";
+import { prepareProtectedSqliteDatabaseFile } from "./windows-protected-sqlite.js";
 
 function configurationFailure() {
   throw new TypeError("Owner-only export workspace storage configuration is invalid");
@@ -138,10 +143,29 @@ export function createOwnerOnlyExportWorkspaceStorageContext(configuration = {})
 function filesystemIdentity(value) { return (Number.isSafeInteger(value) && value >= 0) || (typeof value === "string" && /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) <= 18446744073709551615n); }
 function encodeFilesystemIdentity(value) { return typeof value === "string" ? `u64:${value}` : value; }
 function decodeFilesystemIdentity(value) { if (typeof value === "string" && value.startsWith("u64:")) { const id = value.slice(4); if (!filesystemIdentity(id)) fail("schema"); return id; } if (!Number.isSafeInteger(value) || value < 0) fail("schema"); return value; }
+const MAX_U64_FILESYSTEM_ID = 18446744073709551615n;
+const MAX_U128_FILESYSTEM_ID = 340282366920938463463374607431768211455n;
+function canonicalSourceIdentity(value, maximum) {
+  if (Number.isSafeInteger(value) && value >= 0) value = String(value);
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,38})$/.test(value)) return null;
+  try { return BigInt(value) <= maximum ? value : null; } catch { return null; }
+}
+function encodeSourceIdentity(value, maximum) {
+  if (value === null || value === undefined) return null;
+  const canonical = canonicalSourceIdentity(value, maximum);
+  if (canonical === null) fail("schema");
+  return canonical;
+}
+function decodeSourceIdentity(value, maximum) {
+  if (value === null) return null;
+  const canonical = canonicalSourceIdentity(value, maximum);
+  if (canonical === null || canonical !== value) fail("schema");
+  return canonical;
+}
 const DATABASE_NAME = EXPORT_WORKSPACE_DATABASE_BASENAME;
 const EXPORT_WORKSPACE_APPLICATION_ID = 0x55534d34;
-const EXPORT_WORKSPACE_USER_VERSION = 5;
-const EXPORT_WORKSPACE_SCHEMA_SHA256 = "5dcbc93efec12938bb336cc2465bab962d74ce49a6b12bdb2e9e22eae9456652";
+const EXPORT_WORKSPACE_USER_VERSION = 6;
+const EXPORT_WORKSPACE_SCHEMA_SHA256 = "81244b35a407956d11ec8530f4549287c481035dbe1007405d4200959567fb09";
 const DEFAULT_CRASH_RECOVERY_RESERVATION_MS = 5_000;
 const OCCURRENCE_KINDS = new Set(["usage_event", "tool_call"]);
 const SNAPSHOT_KINDS = new Set(["cumulative_usage", "tool_call"]);
@@ -177,7 +201,7 @@ const WORKSPACE_COLUMNS = Object.freeze({
   ],
   seen_occurrences: ["kind", "occurrence_key", "source_key", "line_ordinal"],
   source_checkpoints: [
-    "source_key", "phase", "byte_offset", "line_ordinal", "checkpoint_seq", "parser_version",
+    "source_key", "phase", "byte_offset", "line_ordinal", "tier_line_count", "checkpoint_seq", "parser_version",
     "state_json", "last_batch_sha256",
   ],
   source_diagnostics: ["source_key", "code", "count"],
@@ -216,8 +240,95 @@ function descriptorWorkspaceCeiling(descriptor, requested) {
   return Math.min(requested, persisted);
 }
 
+let workspaceWindowsFilesystemAdapter;
+let workspaceWindowsFilesystemAdapterResolved = false;
+
+function getWorkspaceWindowsFilesystemAdapter(errorCode) {
+  if (process.platform !== "win32") return null;
+  if (!workspaceWindowsFilesystemAdapterResolved) {
+    workspaceWindowsFilesystemAdapterResolved = true;
+    try {
+      workspaceWindowsFilesystemAdapter = createWindowsFilesystemAdapter();
+    } catch {
+      workspaceWindowsFilesystemAdapter = null;
+    }
+  }
+  if (!workspaceWindowsFilesystemAdapter) fail(errorCode);
+  return workspaceWindowsFilesystemAdapter;
+}
+
+function sameWindowsFilesystemIdentity(left, right) {
+  return left?.volumeSerialNumber === right?.volumeSerialNumber
+    && left?.fileId === right?.fileId
+    && left?.linkCount === right?.linkCount;
+}
+
+function validProtectedDirectoryInspection(value) {
+  try {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      && value.isDirectory === true
+      && value.isRegularFile === false
+      && value.isReparsePoint === false
+      && value.ownerMatches === true
+      && value.nullDacl === false
+      && value.daclProtected === true
+      && value.broadAccess === false
+      && value.nonOwnerAllow === false
+      && value.unrecognizedAce === false
+      && value.finalPathResolved === true
+      && isWindowsFilesystemIdentity(value.identity)
+      && value.identity.linkCount > 0;
+  } catch {
+    return false;
+  }
+}
+
+function inspectProtectedWorkspaceDirectory(path, { create = false } = {}) {
+  const adapter = getWorkspaceWindowsFilesystemAdapter("directory");
+  let createdIdentity = null;
+  if (create) {
+    try {
+      createdIdentity = adapter.ensureDirectory(path);
+    } catch {
+      fail("directory");
+    }
+  }
+  let inspection;
+  try {
+    inspection = adapter.inspectPath(path);
+  } catch (error) {
+    if (!create && error?.code === "ENOENT") fail("missing");
+    fail("directory");
+  }
+  if (!validProtectedDirectoryInspection(inspection)
+      || (createdIdentity !== null
+        && !sameWindowsFilesystemIdentity(createdIdentity, inspection.identity))) {
+    fail("directory");
+  }
+}
+
+function prepareProtectedWorkspaceDatabase(path, { createIfMissing = false } = {}) {
+  const adapter = getWorkspaceWindowsFilesystemAdapter("database_permissions");
+  let prepared;
+  try {
+    prepared = prepareProtectedSqliteDatabaseFile({ adapter, path, createIfMissing });
+  } catch {
+    fail("database_permissions");
+  }
+  if (createIfMissing && !prepared.created) fail("exists");
+  return prepared;
+}
+
 async function ensureOwnerDirectory(directory, { create = false } = {}) {
   const target = resolve(directory);
+  if (process.platform === "win32") {
+    inspectProtectedWorkspaceDirectory(target, { create });
+    try {
+      return await realpath(target);
+    } catch {
+      fail("directory");
+    }
+  }
   if (create) await mkdir(target, { recursive: true, mode: 0o700 });
   let stats;
   try {
@@ -233,12 +344,24 @@ async function ensureOwnerDirectory(directory, { create = false } = {}) {
 }
 
 function assertDatabaseStats(stats) {
+  const singleLink = typeof stats.nlink === "bigint" ? stats.nlink === 1n : stats.nlink === 1;
   if (!stats.isFile() || stats.isSymbolicLink()) fail("database_type");
-  if (stats.nlink !== 1) fail("database_links");
-  if (typeof process.getuid === "function" && stats.uid !== process.getuid()) fail("database_owner");
+  if (!singleLink) fail("database_links");
+  if (typeof process.getuid === "function") {
+    const currentUid = typeof stats.uid === "bigint" ? BigInt(process.getuid()) : process.getuid();
+    if (stats.uid !== currentUid) fail("database_owner");
+  }
 }
 
 async function precreateDatabase(path) {
+  if (process.platform === "win32") {
+    const created = prepareProtectedWorkspaceDatabase(path, { createIfMissing: true });
+    const inspection = await inspectExistingDatabase(path);
+    if (!sameWindowsFilesystemIdentity(created.identity, inspection.windowsIdentity)) {
+      fail("database_changed");
+    }
+    return inspection;
+  }
   let handle;
   try {
     handle = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
@@ -250,25 +373,50 @@ async function precreateDatabase(path) {
   } finally {
     await handle?.close().catch(() => {});
   }
+  return null;
+}
+
+async function databasePathStats(path) {
+  return process.platform === "win32" ? lstat(path, { bigint: true }) : lstat(path);
+}
+
+async function databaseHandleStats(handle) {
+  return process.platform === "win32" ? handle.stat({ bigint: true }) : handle.stat();
+}
+
+function sameDatabaseStatsIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 async function inspectExistingDatabase(path) {
   let pathStats;
   try {
-    pathStats = await lstat(path);
+    pathStats = await databasePathStats(path);
   } catch (error) {
     if (error.code === "ENOENT") fail("missing");
     throw error;
   }
   assertDatabaseStats(pathStats);
+  const windowsIdentity = process.platform === "win32"
+    ? prepareProtectedWorkspaceDatabase(path).identity
+    : null;
   const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
   try {
-    const descriptorStats = await handle.stat();
+    const descriptorStats = await databaseHandleStats(handle);
     assertDatabaseStats(descriptorStats);
-    if (descriptorStats.dev !== pathStats.dev || descriptorStats.ino !== pathStats.ino) fail("database_changed");
-    return { dev: descriptorStats.dev, ino: descriptorStats.ino };
+    if (!sameDatabaseStatsIdentity(descriptorStats, pathStats)) fail("database_changed");
+    return { dev: descriptorStats.dev, ino: descriptorStats.ino, windowsIdentity };
   } finally {
     await handle.close();
+  }
+}
+
+async function assertDatabaseIdentityUnchanged(path, expected) {
+  const current = await inspectExistingDatabase(path);
+  if (!sameDatabaseStatsIdentity(current, expected)
+      || (process.platform === "win32"
+        && !sameWindowsFilesystemIdentity(current.windowsIdentity, expected.windowsIdentity))) {
+    fail("database_changed");
   }
 }
 
@@ -336,8 +484,18 @@ function initializeSchema(database) {
       parent_source_key TEXT REFERENCES source_plan(source_key),
       is_fork INTEGER NOT NULL DEFAULT 0 CHECK(is_fork IN (0, 1)),
       parent_missing INTEGER NOT NULL DEFAULT 0 CHECK(parent_missing IN (0, 1)),
-      device INTEGER,
-      inode INTEGER,
+      device TEXT CHECK(device IS NULL OR (
+        length(device) BETWEEN 1 AND 20
+        AND device NOT GLOB '*[^0-9]*'
+        AND (device = '0' OR substr(device, 1, 1) BETWEEN '1' AND '9')
+        AND (length(device) < 20 OR device <= '18446744073709551615')
+      )),
+      inode TEXT CHECK(inode IS NULL OR (
+        length(inode) BETWEEN 1 AND 39
+        AND inode NOT GLOB '*[^0-9]*'
+        AND (inode = '0' OR substr(inode, 1, 1) BETWEEN '1' AND '9')
+        AND (length(inode) < 39 OR inode <= '340282366920938463463374607431768211455')
+      )),
       birthtime_ms INTEGER,
       prefix_bytes INTEGER NOT NULL CHECK(prefix_bytes >= 0),
       prefix_sha256 TEXT NOT NULL CHECK(length(prefix_sha256) = 64),
@@ -349,6 +507,7 @@ function initializeSchema(database) {
       phase TEXT NOT NULL CHECK(phase IN ('tier_scan', 'record_scan', 'complete')),
       byte_offset INTEGER NOT NULL CHECK(byte_offset >= 0),
       line_ordinal INTEGER NOT NULL CHECK(line_ordinal >= 0),
+      tier_line_count INTEGER NOT NULL DEFAULT 0 CHECK(tier_line_count >= 0),
       checkpoint_seq INTEGER NOT NULL CHECK(checkpoint_seq >= 0),
       parser_version TEXT NOT NULL,
       state_json TEXT NOT NULL,
@@ -658,9 +817,9 @@ function buildWorkspaceApi(database, directory, {
     ON CONFLICT(code) DO UPDATE SET count = excluded.count
   `);
   const selectCheckpoint = database.prepare(`
-    SELECT c.source_key, c.phase, c.byte_offset, c.line_ordinal, c.checkpoint_seq,
+    SELECT c.source_key, c.phase, c.byte_offset, c.line_ordinal, c.tier_line_count, c.checkpoint_seq,
            c.parser_version, c.state_json, c.last_batch_sha256,
-           p.source_path, p.prefix_bytes, p.parent_source_key, p.is_fork, p.parent_missing
+           p.source_path, p.prefix_bytes, p.prefix_sha256, p.parent_source_key, p.is_fork, p.parent_missing
     FROM source_checkpoints c JOIN source_plan p USING(source_key)
     WHERE c.source_key = ?
   `);
@@ -704,11 +863,18 @@ function buildWorkspaceApi(database, directory, {
 
   function checkpointFromRow(row) {
     if (!row || row.parser_version !== EXPORT_CHECKPOINT_PARSER_VERSION) fail("schema");
+    const tierLineCount = Number(row.tier_line_count);
+    if (!safeCount(tierLineCount)
+        || tierLineCount > Number(row.prefix_bytes)
+        || (row.phase === "record_scan" && tierLineCount === 0 && Number(row.prefix_bytes) > 0)) {
+      fail("schema");
+    }
     return {
       sourceKey: row.source_key,
       phase: row.phase,
       byteOffset: Number(row.byte_offset),
       lineOrdinal: Number(row.line_ordinal),
+      tierLineCount,
       checkpointSeq: Number(row.checkpoint_seq),
       parserVersion: row.parser_version,
       parserState: normalizeCodexCheckpointState(parseCanonical(row.state_json)),
@@ -798,8 +964,8 @@ function buildWorkspaceApi(database, directory, {
         parentSourceKey: row.parent_source_key,
         isFork: row.is_fork === 1,
         parentMissing: row.parent_missing === 1,
-        dev: row.device,
-        ino: row.inode,
+        dev: decodeSourceIdentity(row.device, MAX_U64_FILESYSTEM_ID),
+        ino: decodeSourceIdentity(row.inode, MAX_U128_FILESYSTEM_ID),
         birthtimeMs: row.birthtime_ms,
         prefixBytes: row.prefix_bytes,
         prefixSha256: row.prefix_sha256,
@@ -877,9 +1043,9 @@ function buildWorkspaceApi(database, directory, {
     },
     loadNextSourceCheckpoint() {
       const row = database.prepare(`
-        SELECT c.source_key, c.phase, c.byte_offset, c.line_ordinal, c.checkpoint_seq,
+        SELECT c.source_key, c.phase, c.byte_offset, c.line_ordinal, c.tier_line_count, c.checkpoint_seq,
                c.parser_version, c.state_json, c.last_batch_sha256,
-               p.source_path, p.prefix_bytes, p.parent_source_key, p.is_fork, p.parent_missing
+               p.source_path, p.prefix_bytes, p.prefix_sha256, p.parent_source_key, p.is_fork, p.parent_missing
         FROM source_checkpoints c JOIN source_plan p USING(source_key)
         LEFT JOIN source_checkpoints parent ON parent.source_key = p.parent_source_key
         WHERE p.scan_status = 'pending' AND c.phase != 'complete'
@@ -1005,6 +1171,17 @@ function buildWorkspaceApi(database, directory, {
         workspaceHighWaterBytes: Number(row.workspace_high_water_bytes),
         recoveryReservations: Number(row.recovery_reservations),
       };
+    },
+    async reserveResourceLineReads(lineCount) {
+      if (!safeCount(lineCount)) fail("schema");
+      transaction(database, () => {
+        const current = database.prepare("SELECT lines FROM resource_usage WHERE singleton = 1").get();
+        const lines = Number(current?.lines);
+        if (!safeCount(lines) || lines > Number.MAX_SAFE_INTEGER - lineCount) fail("schema");
+        database.prepare("UPDATE resource_usage SET lines = lines + ? WHERE singleton = 1")
+          .run(lineCount);
+      });
+      await assertDiskBudget();
     },
     beginInvocation({
       nowMs = Date.now(),
@@ -1182,6 +1359,10 @@ function buildWorkspaceApi(database, directory, {
           fail("checkpoint_mismatch");
         }
         if (effectiveNextLineOrdinal - expected.lineOrdinal !== resourceDeltas.lines) fail("checkpoint_mismatch");
+        const nextTierLineCount = current.phase === "tier_scan" && batch.next.phase === "record_scan"
+          ? completedPhaseCursor.lineOrdinal
+          : batch.next.phase === "complete" ? 0 : Number(current.tier_line_count);
+        if (!safeCount(nextTierLineCount)) fail("schema");
 
         let insertedRecords = 0;
         let insertedRecordBytes = 0;
@@ -1277,12 +1458,14 @@ function buildWorkspaceApi(database, directory, {
         );
         database.prepare(`
           UPDATE source_checkpoints SET phase = ?, byte_offset = ?, line_ordinal = ?,
-            checkpoint_seq = checkpoint_seq + 1, state_json = ?, last_batch_sha256 = ?
+            tier_line_count = ?, checkpoint_seq = checkpoint_seq + 1,
+            state_json = ?, last_batch_sha256 = ?
           WHERE source_key = ?
         `).run(
           batch.next.phase,
           batch.next.byteOffset,
           batch.next.lineOrdinal,
+          nextTierLineCount,
           serializeCodexCheckpointState(parserState),
           batch.batchSha256,
           batch.sourceKey,
@@ -1630,10 +1813,13 @@ async function createExportWorkspace({
   const workspaceDirectory = await ensureOwnerDirectory(directory, { create: true });
   if (basename(workspaceDirectory) === DATABASE_NAME) fail("directory");
   const databaseFile = join(workspaceDirectory, DATABASE_NAME);
-  await precreateDatabase(databaseFile);
+  const precreatedDatabase = await precreateDatabase(databaseFile);
   const DatabaseSync = await loadSqlite();
   const database = new DatabaseSync(databaseFile);
   try {
+    if (precreatedDatabase !== null) {
+      await assertDatabaseIdentityUnchanged(databaseFile, precreatedDatabase);
+    }
     configureDatabase(database);
     initializeSchema(database);
     validateWorkspaceSchema(database);
@@ -1648,9 +1834,9 @@ async function createExportWorkspace({
       `);
       const insertCheckpoint = database.prepare(`
         INSERT INTO source_checkpoints(
-          source_key, phase, byte_offset, line_ordinal, checkpoint_seq,
+          source_key, phase, byte_offset, line_ordinal, tier_line_count, checkpoint_seq,
           parser_version, state_json, last_batch_sha256
-        ) VALUES (?, 'tier_scan', 0, 0, 0, ?, ?, NULL)
+        ) VALUES (?, 'tier_scan', 0, 0, 0, 0, ?, ?, NULL)
       `);
       const insertSupplementalSource = database.prepare(`
         INSERT INTO supplemental_source_plan(
@@ -1672,8 +1858,8 @@ async function createExportWorkspace({
           source.parentSourceKey ?? null,
           source.isFork ? 1 : 0,
           source.parentMissing ? 1 : 0,
-          Number.isSafeInteger(source.dev) ? source.dev : null,
-          Number.isSafeInteger(source.ino) ? source.ino : null,
+          encodeSourceIdentity(source.dev, MAX_U64_FILESYSTEM_ID),
+          encodeSourceIdentity(source.ino, MAX_U128_FILESYSTEM_ID),
           Number.isFinite(source.birthtimeMs) ? Math.trunc(source.birthtimeMs) : null,
           source.prefixBytes,
           source.prefixSha256,
@@ -1723,7 +1909,7 @@ async function createExportWorkspace({
           + descriptor.supplementalSourcePlan.sourceBytes,
       );
     });
-    await chmod(databaseFile, 0o600);
+    if (process.platform !== "win32") await chmod(databaseFile, 0o600);
     const api = buildWorkspaceApi(database, workspaceDirectory, {
       maximumWorkspaceBytes: descriptorWorkspaceCeiling(descriptor, maximumWorkspaceBytes),
     });
@@ -1746,14 +1932,20 @@ async function openExportWorkspace({
   const DatabaseSync = await loadSqlite();
   const reader = new DatabaseSync(databaseFile, { readOnly: true });
   try { validateWorkspaceSchema(reader); } finally { reader.close(); }
+  if (process.platform === "win32") await assertDatabaseIdentityUnchanged(databaseFile, before);
   const database = new DatabaseSync(databaseFile, { readOnly: false });
   try {
+    if (process.platform === "win32") await assertDatabaseIdentityUnchanged(databaseFile, before);
     validateWorkspaceSchema(database);
     configureDatabase(database);
     validateWorkspaceSchema(database);
-    const after = await lstat(databaseFile);
-    assertDatabaseStats(after);
-    if (after.dev !== before.dev || after.ino !== before.ino) fail("database_changed");
+    if (process.platform === "win32") {
+      await assertDatabaseIdentityUnchanged(databaseFile, before);
+    } else {
+      const after = await lstat(databaseFile);
+      assertDatabaseStats(after);
+      if (after.dev !== before.dev || after.ino !== before.ino) fail("database_changed");
+    }
     const descriptorRow = database.prepare("SELECT value_json FROM workspace_meta WHERE key = 'descriptor'").get();
     if (!descriptorRow) fail("schema");
     const descriptor = parseCanonical(descriptorRow.value_json);
@@ -1786,9 +1978,6 @@ async function inspectExportWorkspaceDiscardState({ directory } = {}) {
   try {
     database.exec("PRAGMA query_only=ON; PRAGMA trusted_schema=OFF; PRAGMA foreign_keys=ON");
     validateWorkspaceSchema(database);
-    const after = await lstat(databaseFile);
-    assertDatabaseStats(after);
-    if (after.dev !== before.dev || after.ino !== before.ino) fail("database_changed");
     const poisonRow = database.prepare("SELECT value_json FROM workspace_meta WHERE key = 'poison'").get();
     const scanRow = database.prepare("SELECT value_json FROM workspace_meta WHERE key = 'scan_status'").get();
     const manifestRows = Number(database.prepare("SELECT COUNT(*) AS count FROM workspace_meta WHERE key = 'manifest'").get().count);
@@ -1799,6 +1988,13 @@ async function inspectExportWorkspaceDiscardState({ directory } = {}) {
     const incompleteSupplementalCheckpoints = Number(database.prepare(`
       SELECT COUNT(*) AS count FROM supplemental_source_checkpoints WHERE status != 'complete'
     `).get().count);
+    if (process.platform === "win32") {
+      await assertDatabaseIdentityUnchanged(databaseFile, before);
+    } else {
+      const after = await lstat(databaseFile);
+      assertDatabaseStats(after);
+      if (after.dev !== before.dev || after.ino !== before.ino) fail("database_changed");
+    }
     const poisoned = poisonRow ? parseCanonical(poisonRow.value_json).code === "source_integrity" : false;
     const scanComplete = scanRow
       ? parseCanonical(scanRow.value_json).status === "complete"

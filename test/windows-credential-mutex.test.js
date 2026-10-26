@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { assertWindowsCredentialQualificationIsolation,
+  windowsCredentialQualificationSkipReason } from "./helpers/windows-credential-qualification.js";
 
 import {
   WindowsCredentialMutexError,
@@ -118,8 +120,9 @@ test("credential mutex collapses hostile native output and errors", () => {
 });
 
 test("native credential mutex contract loads on Windows x64", {
-  skip: process.platform !== "win32" || process.arch !== "x64",
-}, () => {
+  skip: windowsCredentialQualificationSkipReason(),
+}, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const context = createWindowsCredentialMutexContext();
   const lease = context.acquire(0);
   try {

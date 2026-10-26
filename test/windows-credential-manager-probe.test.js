@@ -12,6 +12,10 @@ import {
 import {
   windowsNativeUnsignedContentDigest,
 } from "../src/platform/index.js";
+import {
+  assertWindowsCredentialQualificationIsolation,
+  windowsCredentialQualificationSkipReason,
+} from "./helpers/windows-credential-qualification.js";
 
 const require = createRequire(import.meta.url);
 const WINDOWS_KEYTAR_PATH = require.resolve(
@@ -155,8 +159,9 @@ test("Credential Manager cleanup failure takes precedence over operation failure
 });
 
 test("Credential Manager native x64 binding completes a disposable round trip", {
-  skip: process.platform !== "win32" || process.arch !== "x64",
+  skip: windowsCredentialQualificationSkipReason(),
 }, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const binding = loadAuditedWindowsCredentialBinding();
   const receipt = await runWindowsCredentialManagerProbe({ binding });
   assert.equal(receipt.status, "passed");

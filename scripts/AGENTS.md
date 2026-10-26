@@ -61,7 +61,7 @@ scripts must not add macOS, Linux, Sparkle, AppImage, Keychain, or Secret Servic
   `npm run test:preflight` for layout/docs tooling and
   `npm run architecture:check` when dependency scanning or boundaries change.
 - Use the owning surface gate for build/release tooling. Changes to Windows
-  Electron packaging, Worker deployment, release trust, or the public site require
-  those exact gates; `npm test` alone is insufficient.
+  Electron packaging or release trust require those exact gates; `npm test`
+  alone is insufficient. Retired surfaces have no runnable gate in this checkout.
 - Test only safe modes unless the user explicitly authorizes the exact external
   or destructive operation. State protected or unavailable validation separately.

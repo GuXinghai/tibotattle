@@ -29,7 +29,7 @@ local-only and never leave the owner-only file.
 | File name | `local-index-store-v1.sqlite` | Stable machine path in the state root. The `v1` is a name, not the schema version. |
 | `PRAGMA application_id` | `1431128370` (`0x554D4932`) | Format guard. A mismatch fails with `local_index_family_mismatch`. |
 | `meta.family` | `local-index-store` | Logical family, written once at creation. |
-| `PRAGMA user_version` | `8` | Format version. A writer migrates 4, 5, 6 or 7 forward transactionally; read-only open requires 8. |
+| `PRAGMA user_version` | `9` | Format version. A writer migrates 4 through 8 forward transactionally; read-only open requires 9. |
 | Parser stamp | `local-index-rollout-typed-v3+unified-rollout-typed-v22` | Bounds legacy overlap by occurrence, rejects conflicting response copies and retains captured request speed. Existing present sources reparse under the new semantics; original records and retained absent-source facts remain untouched. |
 | Telemetry publication parser label | `unified-rollout-typed-v22` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint retain store provenance; no hosted schema is widened. |
 | Commit sequence | `store_state.commit_seq` | Monotonic publication counter. Readers key their caches and the companion generation id off it. |
@@ -39,15 +39,15 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
 
 - A wrong `application_id` refuses the file with `local_index_family_mismatch`.
   `meta.family` is written at creation; the open path does not re-check it.
-- A `user_version` greater than 8 fails with `local_index_newer_version`. The
+- A `user_version` greater than 9 fails with `local_index_newer_version`. The
   file is not opened writable and must not be relabelled.
-- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6, then upgrades the cursor contract to 7 without deleting facts. Version 7 advances to 8 by atomically adding the calculation revision and its semantic-change triggers; interrupted installation rolls back and can be retried.
+- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6, then upgrades the cursor contract to 7 without deleting facts. Version 7 advances to 8 by atomically adding the calculation revision and its semantic-change triggers. Version 8 advances to 9 by atomically adding nullable `source.carry_tier_source` and replacing the source calculation-revision triggers. Interrupted installation rolls back and can be retried.
   Refresh first performs a bounded read-only identity inspection accepting only
-  the reviewed v4/v5/v6/v7 predecessors or current v8, validates the existing device salt,
+  the reviewed v4/v5/v6/v7/v8 predecessors or current v9, validates the existing device salt,
   and only then opens the writer. This inspection exposes no database handle or
   old-format projection and makes no schema changes. Missing salt, foreign state,
   and newer versions are refused before any migration or salt creation.
-  Earlier versions and read-only version-4/version-5/version-6/version-7 opens fail with
+  Earlier versions and read-only version-4/version-5/version-6/version-7/version-8 opens fail with
   `local_index_family_mismatch`; readers never migrate state.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it
   fails with `local_index_journal_mode_refused`.
@@ -88,10 +88,10 @@ timer until a global refresh retries it. No UI report is published by the timer.
 Queued receipts do not advance `calculation_revision`: accounting reads the
 published usage facts, not this queue. Applying or retracting a model repair at
 the foreground boundary updates `usage_event` and advances both the calculation
-revision and publication sequence. A validated writable v8 open atomically
+revision and publication sequence. A validated writable v9 open atomically
 retires only the three earlier `calculation_runtime_model_evidence_*` triggers
 when present. Read-only opens never perform this correction. It preserves all
-receipts, facts, cursors, revision values and the v8 physical schema; repeated
+receipts, facts, cursors, revision values and the v9 physical schema; repeated
 opens do not repeat the DDL.
 Missing logs, capture failures, replacement and observed coverage gaps remain
 distinct. Closing the companion stops capture and cannot protect upstream logs
@@ -257,9 +257,12 @@ the preserved source. No database format or accounting-cache relabel is needed.
 The accounting reader preserves nullable components and canonical output
 representation instead of substituting zero. Partial, assumed-zero and
 conflicting evidence cannot establish fully observed pricing. Derived replay
-caches use `local-replay-safe-accounting-v0.24`; older caches are rebuilt, not
-relabeled. All six-place monetary margins use exact decimal accumulation and
-half-up rounding, independent of whether events are grouped. Context partitions come
+caches use `local-replay-safe-accounting-v0.25`; older caches remain stale until
+rebuilt from their original retained evidence, and are never relabeled or
+cleared as a substitute for rebuilding. This accounting-cache revision is
+independent of the local-index schema migration above and does not delete
+accumulated history. All six-place monetary margins use exact decimal
+accumulation and half-up rounding, independent of whether events are grouped. Context partitions come
 from reviewed model cards across tiers; a missing Priority long-context card
 remains unpriced rather than inheriting the short-context rate.
 
@@ -294,7 +297,7 @@ The checkpoint workspace retains a private,
 domain-separated proof alongside each opaque response identity; identical copies
 deduplicate and conflicting evidence poisons that workspace. Old proofless
 checkpoints fail version compatibility rather than silently resuming. These
-semantic revisions do not change the physical index schema version 8.
+semantic revisions do not change the physical index schema version 9.
 
 Unknown models and missing/conflicting evidence remain model `unknown`, with
 unknown tier and unpriced amounts; Token counts remain available.
@@ -523,10 +526,14 @@ rollout header, what to do with a file:
   segment. `verified_at_ms` and `verified_bytes` record the last full
   verification.
 - Carried state for the next append: `carry_model`, `carry_effort`,
-  `carry_tier_raw`, `carry_tier_observed_at_ms`, the six `carry_total_*`
+  `carry_tier_raw`, `carry_tier_observed_at_ms`, nullable
+  `carry_tier_source` (`turn_override` or `rollout_thread_settings`), the six `carry_total_*`
   counters, `carry_work_directory_id`, `turn_context_seen`,
   `turn_context_pending`, `compacted_at_ms` with `compaction_offset`, and
   `snapshots_persisted`.
+  Version-8 carry rows have no source evidence; the v9 migration leaves their
+  `carry_tier_source` NULL. A resumed event does not use that carry as an
+  observed tier and remains `unobserved` until a new source declaration is read.
 - `lineage_json`: the rollout lineage header, so an unchanged source needs no
   header read.
 - `quarantine_code`: one of the extraction codes `codex_rollout_content_invalid`,
@@ -607,7 +614,7 @@ only after identity/stat and committed-prefix digest checks; a mismatching
 prefix rescans instead of retaining stale facts. The cursor can remain below
 `size_bytes` only with the exact persisted deferred-byte diagnostic. Completing
 the newline atomically publishes the record, new cursor, totals and digests;
-repeated refreshes do not count it again. A v8 store refuses older readers and
+repeated refreshes do not count it again. A v9 store refuses older readers and
 writers through the version gate; do not relabel it to run an older app.
 
 Cold builds read new sources in parallel lanes. Those lanes write facts beyond
@@ -735,7 +742,7 @@ one build. Rediscovered unchanged sources restore `present` in a transaction
 without replaying retained facts; that transition advances publication and
 calculation revisions.
 
-The v8 `calculation_revision` advances transactionally for material fact,
+The v9 `calculation_revision` advances transactionally for material fact,
 dimension, ownership/order, coverage and diagnostic changes. Metadata-only
 cursor/stat updates may leave it unchanged; the global publication sequence
 still advances. Background runtime-evidence capture is an unapplied queue and

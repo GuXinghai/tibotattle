@@ -82,7 +82,7 @@ jobs:
         run: npm run docs:check
 
       - name: Test documentation and agent-guidance policy
-        run: node --test test/documentation-governance.test.js test/agent-guidance.test.js
+        run: node ./scripts/run-isolated-tests.mjs -- test/documentation-governance.test.js test/agent-guidance.test.js
 
       - name: Test source-to-documentation parity
-        run: node --test test/api-surface-reference.test.js test/cli-reference.test.js test/public-documentation-contract.test.js
+        run: node ./scripts/run-isolated-tests.mjs -- test/api-surface-reference.test.js test/cli-reference.test.js test/public-documentation-contract.test.js

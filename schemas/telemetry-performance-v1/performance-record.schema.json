@@ -184,7 +184,7 @@
     "speedHistogram": {
       "allOf": [
         {
-          "$ref": "performance-histogram.schema.json"
+          "$ref": "urn:usagemonitor:schema:telemetry-performance-v1:performance-histogram.schema.json"
         },
         {
           "properties": {
@@ -198,7 +198,7 @@
     "ttftHistogram": {
       "allOf": [
         {
-          "$ref": "performance-histogram.schema.json"
+          "$ref": "urn:usagemonitor:schema:telemetry-performance-v1:performance-histogram.schema.json"
         },
         {
           "properties": {
@@ -212,7 +212,7 @@
     "completionHistogram": {
       "allOf": [
         {
-          "$ref": "performance-histogram.schema.json"
+          "$ref": "urn:usagemonitor:schema:telemetry-performance-v1:performance-histogram.schema.json"
         },
         {
           "properties": {

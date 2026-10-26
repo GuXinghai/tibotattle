@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, fork, spawnSync } from "node:child_process";
+import { execFileSync, fork, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmod, copyFile, link, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, symlink, unlink, writeFile,
@@ -31,12 +31,18 @@ import {
   validateExportWorkspaceDiscardReceipt,
 } from "../src/export-workspace-discard-schema.js";
 import { stableJson } from "../src/storage.js";
+import {
+  assertWindowsOwnerOnly,
+  createProtectedFixtureDirectory,
+  writeInitialProtectedFixtureFile,
+} from "./helpers/windows-owner-only-fixture.js";
 
 const {
   buildExportWorkspaceDescriptor,
   createExportWorkspace,
   inspectExportWorkspaceDiscardState,
   openExportWorkspace,
+  withExistingExportWorkspaceLease,
 } = localExportWorkspace;
 const { createLocalExportWorkspace } = localExportSourcePipeline.controller;
 
@@ -203,6 +209,7 @@ test("workspace discard refuses complete, manifested, chunked, unexpected, symli
 
 test("wrong and stale confirmation tokens mutate nothing", async () => {
   const value = await fixture();
+  let replacementBytes = null;
   try {
     const before = await snapshot(value.workspace);
     await assert.rejects(discardLocalExportWorkspace({
@@ -214,8 +221,19 @@ test("wrong and stale confirmation tokens mutate nothing", async () => {
 
     const plan = await planLocalExportWorkspaceDiscard({ workspaceDirectory: value.workspace });
     const database = join(value.workspace, "workspace.sqlite3");
-    const replacement = join(value.root, "replacement.sqlite3");
-    await copyFile(database, replacement);
+    const replacementDirectory = join(value.root, "protected-replacement");
+    if (process.platform === "win32") createProtectedFixtureDirectory(replacementDirectory);
+    else await mkdir(replacementDirectory, { mode: 0o700 });
+    const replacement = join(replacementDirectory, "replacement.sqlite3");
+    replacementBytes = await readFile(database);
+    if (process.platform === "win32") {
+      writeInitialProtectedFixtureFile(replacement, replacementBytes);
+    } else {
+      await writeFile(replacement, replacementBytes, { mode: 0o600 });
+    }
+    const replacementIdentity = process.platform === "win32"
+      ? assertWindowsOwnerOnly(replacement).identity
+      : null;
     await unlink(database);
     await rename(replacement, database);
     const next = await planLocalExportWorkspaceDiscard({ workspaceDirectory: value.workspace });
@@ -225,7 +243,14 @@ test("wrong and stale confirmation tokens mutate nothing", async () => {
       confirmationToken: plan.confirmationToken,
     }), (error) => error.code === "export_workspace_discard_execute_confirmation");
     assert.equal((await stat(database)).isFile(), true);
-  } finally { await rm(value.root, { recursive: true, force: true }); }
+    assert.deepEqual(await readFile(database), replacementBytes);
+    if (replacementIdentity !== null) {
+      assert.deepEqual(assertWindowsOwnerOnly(database).identity, replacementIdentity);
+    }
+  } finally {
+    replacementBytes?.fill(0);
+    await rm(value.root, { recursive: true, force: true });
+  }
 });
 
 test("confirmed workspace discard removes only fixed workspace storage and is idempotently recoverable", async () => {
@@ -340,30 +365,55 @@ test("SIGKILL after the committed marker leaves a recoverable durable workspace"
   }
 });
 
-test("receipt and control filesystem failures recover after explicit local transient-lock cleanup", async () => {
+test("synthetic interruptions at receipt and control boundaries recover after explicit transient-lock cleanup", async () => {
   const cases = [
     {
       label: "receipt publication",
-      shouldMakeReadOnly: (stage, detail) => stage === "after_inventory_unlink" && detail?.ordinal === 1,
+      shouldInterruptAtBoundary: (stage, detail) => stage === "after_inventory_unlink" && detail?.ordinal === 1,
     },
     {
       label: "journal durable unlink",
-      shouldMakeReadOnly: (stage) => stage === "after_journal_quarantine",
+      shouldInterruptAtBoundary: (stage) => stage === "after_journal_quarantine",
     },
     {
       label: "marker durable unlink",
-      shouldMakeReadOnly: (stage) => stage === "after_commit_marker_quarantine",
+      shouldInterruptAtBoundary: (stage) => stage === "after_commit_marker_quarantine",
     },
   ];
-  for (const { label, shouldMakeReadOnly } of cases) {
+  for (const { label, shouldInterruptAtBoundary } of cases) {
     const value = await fixture({ sidecars: ["journal"] });
     try {
       const plan = await planLocalExportWorkspaceDiscard({ workspaceDirectory: value.workspace });
+      const injectedFailure = new ExportWorkspaceDiscardExecutionError("replacement");
+      const withSyntheticRetainedLock = async (directory, callback) => {
+        try {
+          return await withExistingExportWorkspaceLease(directory, callback);
+        } catch (error) {
+          if (error !== injectedFailure) throw error;
+          // The real lease unwinds; the test then retains a synthetic lock so
+          // recovery still requires the documented local cleanup.
+          const lockPath = join(directory, ".app-usagemonitor-export-workspace.lock");
+          const lockText = stableJson({
+            version: "export-workspace-lock-v1",
+            pid: process.pid,
+            token: "11111111-1111-4111-8111-111111111111",
+          });
+          if (process.platform === "win32") {
+            writeInitialProtectedFixtureFile(lockPath, lockText);
+          } else {
+            await writeFile(lockPath, lockText, { flag: "wx", mode: 0o600 });
+          }
+          throw error;
+        }
+      };
       await assert.rejects(discardLocalExportWorkspace({
         workspaceDirectory: value.workspace,
         confirmationToken: plan.confirmationToken,
+        withLease: withSyntheticRetainedLock,
         async failpoint(stage, detail) {
-          if (shouldMakeReadOnly(stage, detail)) await chmod(value.workspace, 0o500);
+          // These are explicit synthetic interruptions after durable protocol
+          // boundaries, not operating-system permission-denial tests.
+          if (shouldInterruptAtBoundary(stage, detail)) throw injectedFailure;
         },
       }), (error) => error.code === "export_workspace_discard_execute_replacement"
         && !error.message.includes(value.workspace));
@@ -384,15 +434,12 @@ test("receipt and control filesystem failures recover after explicit local trans
         assert.equal(interruptedEntries.includes(".app-usagemonitor-workspace-discard-journal.json"), false, label);
         assert.equal(interruptedEntries.includes(".app-usagemonitor-workspace-discard-quarantine-commit"), true, label);
       }
-      await chmod(value.workspace, 0o700);
-      // The forced permissions failure also prevents the lease's final lock
-      // cleanup. This test explicitly performs local transient-lock cleanup;
-      // it is not evidence of autonomous stale-lock recovery.
+      // This test explicitly performs local transient-lock cleanup; it is not
+      // evidence of autonomous stale-lock recovery.
       await unlink(join(value.workspace, ".app-usagemonitor-export-workspace.lock")).catch(() => {});
       await recoverLocalExportWorkspaceDiscard({ workspaceDirectory: value.workspace });
       await assertDiscarded(value);
     } finally {
-      await chmod(value.workspace, 0o700).catch(() => {});
       await rm(value.root, { recursive: true, force: true });
     }
   }
@@ -506,18 +553,52 @@ test("recovery refuses and preserves a foreign export transaction root", async (
 
 test("WAL-backed poisoned eligibility remains authorized after sidecars are removed", async () => {
   const value = await fixture({ complete: true });
+  let child;
   try {
     const databasePath = join(value.workspace, "workspace.sqlite3");
-    const child = spawnSync(process.execPath, ["-e", `
+    child = spawn(process.execPath, ["-e", `
       const { DatabaseSync } = require("node:sqlite");
       process.umask(0o077);
       const database = new DatabaseSync(process.argv[1]);
       database.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0");
       const poison = JSON.stringify({ code: "source_integrity" }, null, 2) + "\\n";
       database.prepare("INSERT OR REPLACE INTO workspace_meta(key, value_json) VALUES ('poison', ?)").run(poison);
-      process.kill(process.pid, "SIGKILL");
-    `, databasePath], { encoding: "utf8", timeout: 10_000 });
-    assert.equal(child.signal, "SIGKILL", child.stderr);
+      process.stdout.write("wal-transaction-committed\\n");
+      setInterval(() => {}, 1_000);
+    `, databasePath], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+    child.stderr.resume();
+    let output = "";
+    await new Promise((resolveReady, rejectReady) => {
+      const timer = setTimeout(() => finish(rejectReady, new Error("WAL child readiness timed out")), 10_000);
+      const finish = (callback, value) => {
+        clearTimeout(timer);
+        child.stdout.off("data", onData);
+        child.off("error", onError);
+        child.off("exit", onExit);
+        callback(value);
+      };
+      const onData = (chunk) => {
+        output += chunk;
+        if (output.includes("wal-transaction-committed\n")) finish(resolveReady);
+      };
+      const onError = (error) => finish(rejectReady, error);
+      const onExit = (code, signal) => finish(rejectReady,
+        new Error(`WAL child exited before commit acknowledgement (${code}/${signal})`));
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", onData);
+      child.once("error", onError);
+      child.once("exit", onExit);
+    });
+    assert.equal(child.exitCode, null);
+    assert.equal(child.signalCode, null);
+    const exited = new Promise((resolveExit) => {
+      child.once("exit", (code, signal) => resolveExit({ code, signal }));
+    });
+    assert.equal(child.kill("SIGKILL"), true);
+    assert.equal(child.killed, true);
+    const exit = await exited;
+    assert.ok(exit.signal === "SIGKILL"
+      || (process.platform === "win32" && exit.signal === null && exit.code !== 0));
     for (const suffix of ["wal", "shm"]) await chmod(`${databasePath}-${suffix}`, 0o600);
 
     const immutable = new DatabaseSync(`${pathToFileURL(databasePath).href}?immutable=1`, { readOnly: true });
@@ -541,7 +622,14 @@ test("WAL-backed poisoned eligibility remains authorized after sidecars are remo
     }), /crash after WAL-backed authorization sidecars/);
     await recoverLocalExportWorkspaceDiscard({ workspaceDirectory: value.workspace });
     await assertDiscarded(value);
-  } finally { await rm(value.root, { recursive: true, force: true }); }
+  } finally {
+    if (child && child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
+      child.kill("SIGKILL");
+      await exited;
+    }
+    await rm(value.root, { recursive: true, force: true });
+  }
 });
 
 test("no-replace quarantine preserves a destination created in the link gap", async () => {

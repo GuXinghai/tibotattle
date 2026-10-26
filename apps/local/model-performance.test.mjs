@@ -6,6 +6,8 @@ import { join } from "node:path";
 import { request as httpRequest } from "node:http";
 import { startLocalCompanionServer } from "./server.js";
 
+const localReadHeaders = Object.freeze({ "X-Usage-Monitor-Local": "1" });
+
 async function fixture(t, options = {}) {
   const root = await mkdtemp(join(tmpdir(), "model-performance-route-"));
   const resourceRoot = join(root, "resources");
@@ -38,7 +40,7 @@ test("model performance accepts only one standard period and preserves read guar
   });
   const route = `${base}/api/local/model-performance`;
   for (const period of ["7", "30", "all"]) {
-    const response = await fetch(`${route}?period=${period}`);
+    const response = await fetch(`${route}?period=${period}`, { headers: localReadHeaders });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).period, period);
     assert.equal(response.headers.get("cache-control"), "no-store");
@@ -65,6 +67,31 @@ test("model performance accepts only one standard period and preserves read guar
   assert.deepEqual(requests, ["7", "30", "all"].map(period => ({ period, speedMode: "standard" })));
 });
 
+test("model performance rejects unmarked and foreign-origin GETs before reading", async (t) => {
+  let reads = 0;
+  const { base } = await fixture(t, {
+    modelPerformanceProvider: async (period, options) => {
+      reads++;
+      return { status: "ready", period, ...options, models: [] };
+    },
+  });
+  const route = `${base}/api/local/model-performance?period=all`;
+
+  assert.equal((await fetch(route)).status, 403);
+  assert.equal((await fetch(route, { headers: {
+    ...localReadHeaders,
+    Origin: "https://foreign.invalid",
+  } })).status, 403);
+  assert.equal(reads, 0, "authorization must precede the injected reader");
+
+  const admitted = await fetch(route, { headers: {
+    ...localReadHeaders,
+    Origin: base,
+  } });
+  assert.equal(admitted.status, 200);
+  assert.equal(reads, 1);
+});
+
 test("model performance remains readable while accounting builds and after it fails", async (t) => {
   let failBuild;
   const barrier = new Promise((resolve, reject) => { failBuild = reject; });
@@ -74,10 +101,10 @@ test("model performance remains readable while accounting builds and after it fa
   });
   try {
     const route = `${base}/api/local/model-performance?period=all`;
-    assert.equal((await fetch(route, { signal: AbortSignal.timeout(2000) })).status, 200);
+    assert.equal((await fetch(route, { signal: AbortSignal.timeout(2000), headers: localReadHeaders })).status, 200);
     failBuild(new Error("synthetic_snapshot_failure"));
     await assert.rejects(app.snapshotReady, /synthetic_snapshot_failure/u);
-    const response = await fetch(route, { signal: AbortSignal.timeout(2000) });
+    const response = await fetch(route, { signal: AbortSignal.timeout(2000), headers: localReadHeaders });
     assert.equal(response.status, 200);
     assert.equal((await response.json()).status, "loading");
     assert.equal((await fetch(`${base}/api/local/overview`)).status, 503);
@@ -93,7 +120,7 @@ test("timing failures return a fixed content-free error without changing account
     },
   });
   await app.snapshotReady;
-  const response = await fetch(`${base}/api/local/model-performance?period=all`);
+  const response = await fetch(`${base}/api/local/model-performance?period=all`, { headers: localReadHeaders });
   assert.equal(response.status, 503);
   const body = await response.text();
   assert.match(body, /model_performance_unavailable/u);
@@ -109,7 +136,7 @@ test("model performance accepts an exact rolling anchor and rejects ambiguous bo
   } });
   const endAt = '2026-09-01T12:34:56.000Z';
   const route = `${base}/api/local/model-performance?period=1`;
-  assert.equal((await fetch(`${route}&endAt=${encodeURIComponent(endAt)}`)).status, 200);
+  assert.equal((await fetch(`${route}&endAt=${encodeURIComponent(endAt)}`, { headers: localReadHeaders })).status, 200);
   assert.deepEqual(calls, [{ period: '1', options: { endAt, speedMode: 'standard' } }]);
   for (const query of ['&endAt=2026-09-01', '&endAt=', `&endAt=${endAt}&endAt=${endAt}`, '&endAt=9999-01-01T00:00:00.000Z']) {
     assert.equal((await fetch(`${route}${query}`)).status, 400);
@@ -125,7 +152,7 @@ test("model performance mode selectors preserve optional exact windows and rejec
   const endAt = '2026-09-01T12:34:56.000Z';
   const route = `${base}/api/local/model-performance`;
   for (const speedMode of ['standard', 'fast', 'ultrafast']) for (const anchored of [false, true]) {
-    const response = await fetch(`${route}?period=1&speedMode=${speedMode}${anchored ? `&endAt=${endAt}` : ''}`);
+    const response = await fetch(`${route}?period=1&speedMode=${speedMode}${anchored ? `&endAt=${endAt}` : ''}`, { headers: localReadHeaders });
     assert.equal(response.status, 200);
     assert.deepEqual(await response.json(), { period: '1', speedMode, ...(anchored ? { endAt } : {}) });
   }

@@ -317,6 +317,7 @@ async function run() {
             tier: outcome.finalTier,
           });
         }
+        const finalOwnTier = ownObservedTier(outcome.finalTier);
         flush(source.rolloutKey, true, {
           relevantLines: outcome.diagnostics.relevantLines,
           malformedLines: outcome.diagnostics.malformedLines,
@@ -353,8 +354,9 @@ async function run() {
           // Own-file declarations only: an inherited seed is re-derived from
           // the exact physical base or legacy inline ancestor chain on the
           // next pass, keeping its provenance.
-          finalTierRaw: ownObservedTier(outcome.finalTier)?.providerTierRaw ?? null,
-          finalTierObservedAtMs: ownObservedTier(outcome.finalTier)?.observedAtMs ?? null,
+          finalTierRaw: finalOwnTier?.providerTierRaw ?? null,
+          finalTierObservedAtMs: finalOwnTier?.observedAtMs ?? null,
+          finalTierSource: finalOwnTier?.tierSource ?? null,
           finalTotals: outcome.finalTotals,
           finalCwd: outcome.finalCwd ?? null,
           finalCompactionPending: outcome.finalCompactionPending,

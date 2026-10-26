@@ -65,7 +65,10 @@ export {
   loadWindowsReleaseOperationBinding,
   loadWindowsLegacyStateReadBinding,
 } from "./windows-filesystem.js";
-export { configureGuardedSqliteConnection } from "./windows-protected-sqlite.js";
+export {
+  configureGuardedSqliteConnection,
+  prepareProtectedSqliteDatabaseFile,
+} from "./windows-protected-sqlite.js";
 export {
   windowsNativeUnsignedContentDigest,
 } from "./windows-native-unsigned-content.js";
@@ -118,6 +121,7 @@ export {
   ExportIdentityKeychainError,
 } from "./credential-capabilities.js";
 export {
+  createOwnerOnlyLocalMetadataBundlePairReader,
   readOwnerOnlyLocalMetadataBundlePair,
   sha256Hex,
 } from "./local-metadata-bundle-files.js";
@@ -187,3 +191,4 @@ export { createWorkUsageProjectResolver, normalizeWorkUsageRepositoryOrigin } fr
 export { openTimingStore, ingestTimingFile, timingReport, readTimingRows } from './inference-timing-store.js';
 export { forEachRolloutLine, ROLLOUT_LINE_BYTES } from './rollout-line-reader.js';
 export { readCodexRuntimeLogBatch } from './codex-runtime-log-reader.js';
+export { createOwnerOnlyAtomicFilePublisher } from "./owner-only-atomic-file-storage.js";

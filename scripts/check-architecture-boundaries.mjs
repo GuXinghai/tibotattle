@@ -294,7 +294,6 @@ export const LEGACY_STORAGE_DIRECT_IMPORTERS = Object.freeze([
   "src/cli.js",
   "src/local-collector-state.js",
   "src/passive-collector.js",
-  "src/r7-release-evidence-schema.js",
   "src/r7-resource-benchmark-fixture.js",
   "src/r7-resource-benchmark-schema.js",
   "src/r7-resource-benchmark.js",

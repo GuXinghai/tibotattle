@@ -318,6 +318,7 @@ export async function launchDesktopRuntime({
   supervisorOptions = {},
   lifecycleOptions = {},
   qualificationContext = null,
+  singleInstanceLockAcquired: preAcquiredSingleInstanceLock = undefined,
   platform = process.platform,
   architecture = process.arch,
   platformServices,
@@ -443,12 +444,17 @@ export async function launchDesktopRuntime({
   let dashboardReady = false;
   let deepLinkIntakeCleanup = () => {};
 
-  // This lock and the app-link listeners are intentionally established before
-  // Electron readiness and before first-run/settings work. A secondary
-  // process therefore cannot open a companion of its own, .
-  const singleInstanceLockAcquired = typeof app.requestSingleInstanceLock === "function"
-    ? app.requestSingleInstanceLock()
-    : true;
+  // The executable bootstrap may already own this lock after pinning the
+  // selected profile paths and before full profile preparation. Direct
+  // composition callers acquire it here before first-run/settings work.
+  const singleInstanceLockAcquired = preAcquiredSingleInstanceLock === undefined
+    ? (typeof app.requestSingleInstanceLock === "function"
+      ? app.requestSingleInstanceLock()
+      : true)
+    : preAcquiredSingleInstanceLock;
+  if (typeof singleInstanceLockAcquired !== "boolean") {
+    throw shellError("electron_configuration_invalid");
+  }
   if (!singleInstanceLockAcquired) {
     await stopStartup("secondary_instance");
     app.quit?.();

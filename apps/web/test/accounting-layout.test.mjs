@@ -144,7 +144,7 @@ test("one chart-level note describes only actual global exclusions", () => {
     for (const count of [1, 2, 3]) assert.ok(combined.includes(String(count)));
     assert.equal(note(base), "", "coverage clears when the selected period becomes complete");
     if (locale === "en-US") {
-      assert.match(ordering, /not a complete period total/u);
+      assert.match(ordering, /prefix equivalence and actual avoidable loss remain unverified/iu);
       assert.match(ordering, /uncertain event order: 1/u);
       assert.doesNotMatch(ordering, /unavailable|without supported prices/u);
       assert.match(price, /without supported prices: 3/u);
@@ -195,7 +195,7 @@ test("usage keeps a compact summary and opens full analysis through light disclo
   assert.match(appSource, /workUsageView.setMetric\(usageSimpleMetric\)/u);
 });
 
-test("overhead cards keep only the speed-priced amount and actionable coverage gaps", () => {
+test("overhead cards retain the unknown cache-evidence disclosure beside priced drops", () => {
   const element = (tagName, className = "", textContent = "") => ({
     tagName,
     className,
@@ -224,7 +224,12 @@ test("overhead cards keep only the speed-priced amount and actionable coverage g
     uncoveredConfigurationChanges: 0,
   }, (details) => { details.textContent = "Full diagnostic detail"; });
 
-  assert.deepEqual(list.children.map((item) => item.textContent), ["124 priced drops"]);
+  assert.deepEqual(list.children.map((item) => item.textContent), [
+    "124 priced drops",
+    translate("accounting.cacheImpact.evidenceUnknown", {}, "en-US"),
+  ]);
+  assert.match(list.children[1].textContent, /reusable prefix unverified/iu);
+  assert.match(list.children[1].textContent, /actual avoidable loss is unknown/iu);
   assert.doesNotMatch(list.children.map((item) => item.textContent).join(" "), /Standard|sessions excluded/u);
   assert.equal(list.title, "Full diagnostic detail");
 });

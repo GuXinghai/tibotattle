@@ -1750,6 +1750,33 @@ test("history coverage only becomes complete from coherent archive evidence", ()
       .pricing.historyCoverage.status,
     "complete",
   );
+  const missingCounts = normalizeDashboardPayload({ pricing: { historyCoverage: {
+    ...complete,
+    sourceCount: undefined,
+    indexedSourceCount: undefined,
+    pendingSourceCount: undefined,
+    sourceBytes: undefined,
+    indexedBytes: undefined,
+  } } }).pricing.historyCoverage;
+  assert.equal(missingCounts.status, "partial");
+  for (const field of [
+    "sourceCount", "indexedSourceCount", "pendingSourceCount", "sourceBytes",
+    "indexedBytes", "skippedSourceCount", "skippedSourceBytes", "skippedThreadCount",
+  ]) assert.equal(missingCounts[field], null, `${field} remains unknown when absent`);
+  const measuredZero = normalizeDashboardPayload({ pricing: { historyCoverage: {
+    ...complete,
+    status: "partial",
+    phase: "not_started",
+    sourceCount: 0,
+    indexedSourceCount: 0,
+    pendingSourceCount: 0,
+    sourceBytes: 0,
+    indexedBytes: 0,
+  } } }).pricing.historyCoverage;
+  assert.equal(measuredZero.status, "partial");
+  assert.equal(measuredZero.sourceCount, 0);
+  assert.equal(measuredZero.indexedSourceCount, 0);
+  assert.equal(measuredZero.sourceBytes, 0);
   assert.equal(
     normalizeDashboardPayload({ pricing: { historyCoverage: {
       ...complete, responseUnverifiedPrefixTurns: 1,
@@ -3005,35 +3032,6 @@ test("local contribution queue status remains bounded and fails closed", async (
     "unavailable"
   );
 
-  const calls = [];
-  const client = new LocalCompanionClient({
-    fetchImpl: async (url) => {
-      calls.push(url);
-      return new Response(JSON.stringify({
-        schemaVersion: CONTRIBUTION_SYNC_STATUS_SCHEMA_VERSION,
-        status: "available",
-        paused: true,
-        counts: {
-          pending: 1,
-          inFlight: 0,
-          accepted: 0,
-          retryable: 0,
-          rejected: 0
-        },
-        dueNow: 1,
-        nextAttemptAt: null,
-        lastAcceptedAt: null,
-        includesContent: false,
-        includesPaths: false,
-        includesCredentials: false
-      }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-  assert.equal((await client.contributionSyncStatus()).state, "paused");
-  assert.deepEqual(calls, ["/api/local/contribution/sync-status"]);
 });
 
 test("contribution diagnostics project only fixed, content-free support state", async () => {
@@ -3136,24 +3134,9 @@ test("contribution diagnostics project only fixed, content-free support state", 
     );
   }
 
-  const calls = [];
-  const client = new LocalCompanionClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  assert.equal((await client.contributionDiagnostics()).status, "available");
-  assert.deepEqual(calls, [{
-    url: "/api/local/diagnostics/contribution",
-    options: { headers: { Accept: "application/json" } },
-  }]);
 });
 
-test("the local OAuth recovery client is fixed-route, exact-shape, and fail closed", async () => {
+test("the retired hosted sign-in handoff DTO is exact-shape and fails closed", () => {
   const state = "s".repeat(64);
   const verifier = "v".repeat(64);
   const startedAt = Date.parse("2026-08-19T12:00:00.000Z");
@@ -3182,45 +3165,6 @@ test("the local OAuth recovery client is fixed-route, exact-shape, and fail clos
     assert.equal(normalizeHostedSignInHandoff(invalid).status, "unavailable");
   }
 
-  const calls = [];
-  const client = new LocalCompanionClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      const action = options.body ? JSON.parse(options.body).action : "read";
-      const payload = action === "clear"
-        ? {
-          schemaVersion: "local-hosted-signin-handoff-v1",
-          status: "absent",
-        }
-        : pending;
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  assert.equal((await client.hostedSignInHandoff()).status, "pending");
-  assert.equal((await client.storeHostedSignInHandoff({
-    provider: "google",
-    state,
-    verifier,
-  })).status, "pending");
-  assert.equal((await client.clearHostedSignInHandoff()).status, "absent");
-  assert.equal(calls.length, 3);
-  for (const call of calls) {
-    assert.equal(
-      call.url,
-      "/api/local/identity/hosted-signin-handoff",
-    );
-    assert.equal(call.options.headers["X-Usage-Monitor-Local"], "1");
-  }
-  assert.deepEqual(JSON.parse(calls[1].options.body), {
-    action: "store",
-    provider: "google",
-    state,
-    verifier,
-  });
-  assert.deepEqual(JSON.parse(calls[2].options.body), { action: "clear" });
 });
 
 test("the browser client no longer exposes automatic contribution controls", () => {
@@ -3238,7 +3182,7 @@ test("the browser client no longer exposes automatic contribution controls", () 
   assert.deepEqual(calls, []);
 });
 
-test("local reviewed-queue and device pairing stay behind fixed loopback routes", async () => {
+test("local reviewed-queue normalizer fails closed and device pairing keeps its fixed request shape", async () => {
   const privateCanary = "/Users/private/telemetry-secret.json";
   const previewPayload = {
     schemaVersion: CONTRIBUTION_SYNC_PREVIEW_SCHEMA_VERSION,
@@ -3340,14 +3284,14 @@ test("local reviewed-queue and device pairing stay behind fixed loopback routes"
   const client = new LocalCompanionClient({
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });
-      const body = url.endsWith("device-pair") ? pairedPayload : previewPayload;
+      assert.equal(url, "/api/local/contribution/device-pair");
+      const body = pairedPayload;
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { "Content-Type": "application/json" }
       });
     }
   });
-  assert.equal((await client.contributionSyncPreview()).state, "ready");
   const pairingCode =
     "um_pair_00000000-0000-4000-8000-000000000000.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
   assert.equal(
@@ -3357,15 +3301,13 @@ test("local reviewed-queue and device pairing stay behind fixed loopback routes"
   assert.equal(client.runContributionSyncOnce, undefined);
   assert.equal(client.setContributionSyncPaused, undefined);
   assert.deepEqual(calls.map((call) => call.url), [
-    "/api/local/contribution/sync-next",
     "/api/local/contribution/device-pair"
   ]);
   for (const call of calls) {
     assert.equal(call.options.method, "POST");
     assert.equal(call.options.headers["X-Usage-Monitor-Local"], "1");
   }
-  assert.equal(calls[0].options.body, "{}");
-  assert.equal(calls[1].options.body, JSON.stringify({ pairingCode }));
+  assert.equal(calls[0].options.body, JSON.stringify({ pairingCode }));
 });
 
 test("the local review bootstrap is independent of delivery scheduling", () => {
@@ -3552,7 +3494,7 @@ test("exact prepared review uses a fixed local mutation route", async () => {
   assert.equal(calls[0].options.headers["X-Usage-Monitor-Local"], "1");
 });
 
-test("local contribution preparation exposes only verified bounded results", async () => {
+test("local contribution preparation DTO normalization stays bounded and fail closed", () => {
   const privateCanary = "/Users/private/raw-rollout.jsonl";
   const payload = {
     schemaVersion: "local-contribution-preparation-result-v0.1",
@@ -3599,122 +3541,6 @@ test("local contribution preparation exposes only verified bounded results", asy
     "unavailable"
   );
 
-  const requestedLookbacks = [];
-  const successClient = new LocalCompanionClient({
-    fetchImpl: async (url, options) => {
-      assert.equal(url, "/api/local/contribution/prepare");
-      assert.equal(options.method, "POST");
-      assert.equal(options.headers["X-Usage-Monitor-Local"], "1");
-      const request = JSON.parse(options.body);
-      assert.deepEqual(Object.keys(request), ["lookbackHours"]);
-      assert.ok([1, 24, 7 * 24].includes(request.lookbackHours));
-      requestedLookbacks.push(request.lookbackHours);
-      return new Response(JSON.stringify(payload), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-  assert.equal((await successClient.prepareContribution()).status, "prepared");
-  assert.equal(
-    (await successClient.prepareContribution({ lookbackHours: 1 })).status,
-    "prepared",
-  );
-  assert.equal(
-    (await successClient.prepareContribution({
-      lookbackHours: 7 * 24,
-    })).status,
-    "prepared",
-  );
-  assert.deepEqual(requestedLookbacks, [24, 1, 7 * 24]);
-  await assert.rejects(
-    successClient.prepareContribution({ lookbackHours: 2 }),
-    /lookback is invalid/u,
-  );
-  await assert.rejects(
-    successClient.prepareContribution({
-      lookbackHours: 24,
-      privatePath: "/Users/private",
-    }),
-    /options are invalid/u,
-  );
-
-  const failureClient = new LocalCompanionClient({
-    fetchImpl: async () => new Response(JSON.stringify({
-      schemaVersion: "local-contribution-preparation-error-v0.1",
-      status: "failed",
-      errorCode: "identity_unavailable",
-      privatePath: privateCanary
-    }), {
-      status: 503,
-      headers: { "Content-Type": "application/json" }
-    })
-  });
-  await assert.rejects(
-    failureClient.prepareContribution(),
-    (error) => error.code === "identity_unavailable"
-      && error.message === "Request failed (503)."
-      && error.detail === null
-      && !JSON.stringify(error).includes(privateCanary)
-  );
-
-  const migrationClient = new LocalCompanionClient({
-    fetchImpl: async () => new Response(JSON.stringify({
-      schemaVersion: "local-contribution-preparation-error-v0.1",
-      status: "failed",
-      errorCode: "identity_migration_required",
-      privatePath: privateCanary,
-    }), {
-      status: 503,
-      headers: { "Content-Type": "application/json" },
-    }),
-  });
-  await assert.rejects(
-    migrationClient.prepareContribution(),
-    (error) => error.code === "identity_migration_required"
-      && error.message === "Request failed (503)."
-      && error.detail === null
-      && !JSON.stringify(error).includes(privateCanary),
-  );
-
-  // export_too_large classifies a whole family of ceilings. The bound the
-  // companion named must reach the reader's error, and nothing else may.
-  const boundedClient = (detail) => new LocalCompanionClient({
-    fetchImpl: async () => new Response(JSON.stringify({
-      schemaVersion: "local-contribution-preparation-error-v0.1",
-      status: "failed",
-      errorCode: "export_too_large",
-      detail,
-      privatePath: privateCanary
-    }), {
-      status: 413,
-      headers: { "Content-Type": "application/json" }
-    })
-  });
-  await assert.rejects(
-    boundedClient({
-      code: "export_resource_expanded_record_bytes",
-      observed: 33_554_645,
-      limit: 33_554_432
-    }).prepareContribution(),
-    (error) => error.code === "export_too_large"
-      && error.detail.code === "export_resource_expanded_record_bytes"
-      && error.detail.observed === 33_554_645
-      && error.detail.limit === 33_554_432
-      && !JSON.stringify(error).includes(privateCanary)
-  );
-  for (const hostile of [
-    { code: `Failed reading ${privateCanary}`, observed: 2, limit: 1 },
-    { code: 42 },
-    null
-  ]) {
-    await assert.rejects(
-      boundedClient(hostile).prepareContribution(),
-      (error) => error.code === "export_too_large"
-        && error.detail === null
-        && !JSON.stringify(error).includes(privateCanary)
-    );
-  }
 });
 
 test("no client-side Google authorization path survives in the shipped modules", async () => {
@@ -3812,7 +3638,24 @@ test("backend readiness accepts fail-closed 503 state without calling it ready",
   );
 });
 
-test("retired granular contribution methods are absent from the browser adapter", () => {
+test("retired local sharing and hosted handoff wrappers are absent from the browser adapter", () => {
+  const calls = [];
+  const client = new LocalCompanionClient({
+    fetchImpl: async (...args) => {
+      calls.push(args);
+      throw new Error("retired local route was called");
+    },
+  });
+  for (const method of [
+    "contributionSyncStatus",
+    "contributionDiagnostics",
+    "hostedSignInHandoff",
+    "storeHostedSignInHandoff",
+    "clearHostedSignInHandoff",
+    "contributionSyncPreview",
+    "prepareContribution",
+  ]) assert.equal(client[method], undefined, `${method} is not exposed`);
+  assert.deepEqual(calls, []);
 });
 
 test("historical granular deletion receipts remain parse-only and fail closed", () => {
@@ -7814,8 +7657,6 @@ test("divergence window-breakdown normalizer sanitizes to content-free numbers",
           unpricedShare: 0,
           fastModeMultiplier: 2.5,
         },
-        // A row with no model name is not evidence and must be dropped.
-        { costUsd: 1, events: 1 },
       ],
       bySpeed: {
         standard: { costUsd: 8, tokens: 2_000, events: 15, unpricedEvents: 0, unpricedShare: 0 },
@@ -7849,6 +7690,23 @@ test("divergence window-breakdown normalizer sanitizes to content-free numbers",
   assert.equal(explicitZero.ultrafastEvents, 0);
   assert.equal(normalized.spark.events, 2);
 
+  for (const malformed of [
+    { ...payload.breakdown, events: undefined },
+    { ...payload.breakdown, from: undefined },
+    { ...payload.breakdown, byModel: undefined },
+    { ...payload.breakdown, byModel: [{ ...payload.breakdown.byModel[0], tokens: undefined }] },
+    { ...payload.breakdown, byModel: [{ costUsd: 1, events: 1 }] },
+    { ...payload.breakdown, bySpeed: undefined },
+    { ...payload.breakdown, bySpeed: { standard: { ...payload.breakdown.bySpeed.standard, unpricedEvents: undefined } } },
+    { ...payload.breakdown, spark: { events: 0 } },
+    { ...payload.breakdown, ultrafastCostUsd: 0 },
+  ]) {
+    const invalid = normalizeWindowBreakdown({ ...payload, breakdown: malformed });
+    assert.equal(invalid.status, "unavailable");
+    assert.equal(invalid.events, null);
+    assert.equal(invalid.costUsd, null);
+  }
+
   // Wrong schema, unavailable status, and a null payload all read back as
   // an explicit unavailable breakdown, never an empty-but-priced mix.
   assert.equal(normalizeWindowBreakdown(null).status, "unavailable");
@@ -7862,6 +7720,7 @@ test("divergence window-breakdown normalizer sanitizes to content-free numbers",
   });
   assert.equal(degraded.status, "unavailable");
   assert.deepEqual(degraded.byModel, []);
+  assert.equal(degraded.costUsd, null);
 });
 
 test("divergence window-breakdown client sends bounded integers and degrades on 404", async () => {

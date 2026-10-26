@@ -13,6 +13,8 @@ import {
 import { createWindowsCredentialOperationAuditStore } from "../src/platform/windows-credential-operation-audit.js";
 import { createWindowsCredentialOperationLeaseContext } from "../src/platform/windows-credential-operation-lease.js";
 import { EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES } from "../src/platform/credential-capabilities.js";
+import { assertWindowsCredentialQualificationIsolation,
+  windowsCredentialQualificationSkipReason } from "./helpers/windows-credential-qualification.js";
 
 const CHILD = fileURLToPath(new URL(
   "./fixtures/windows-credential-mutex-child.mjs",
@@ -65,8 +67,9 @@ function startHoldingWorker(capabilityId) {
 }
 
 test("native named mutex serializes separate Windows processes per capability", {
-  skip: process.platform !== "win32" || process.arch !== "x64",
-}, () => {
+  skip: windowsCredentialQualificationSkipReason(),
+}, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const context = createWindowsCredentialMutexContext();
   const lease = context.acquire(0);
   try {
@@ -90,8 +93,9 @@ test("native named mutex serializes separate Windows processes per capability", 
 });
 
 test("native mutex registry remains safe across Node worker threads", {
-  skip: process.platform !== "win32" || process.arch !== "x64",
+  skip: windowsCredentialQualificationSkipReason(),
 }, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const context = createWindowsCredentialMutexContext();
   const lease = context.acquire(0);
   try {
@@ -117,8 +121,9 @@ test("native mutex registry remains safe across Node worker threads", {
 });
 
 test("worker termination never strands a native credential mutex", {
-  skip: process.platform !== "win32" || process.arch !== "x64",
+  skip: windowsCredentialQualificationSkipReason(),
 }, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const { worker, acquired } = startHoldingWorker(0);
   assert.equal(
     await acquired,
@@ -138,8 +143,9 @@ test("worker termination never strands a native credential mutex", {
 });
 
 test("native lease recovers a durable prepared row after abrupt process termination", {
-  skip: process.platform !== "win32" || process.arch !== "x64",
+  skip: windowsCredentialQualificationSkipReason(),
 }, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const root = await mkdtemp(join(tmpdir(), "usagemonitor-windows-mutex-crash-"));
   const filePath = join(root, "private", "windows-credential-operation-audit-v1.sqlite");
   try {

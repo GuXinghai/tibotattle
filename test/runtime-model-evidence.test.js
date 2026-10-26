@@ -114,7 +114,7 @@ test('v5 forward migration preserves facts and adds only the new evidence store'
   // Reconstruct the actual predecessor on synthetic state: v5 did not have
   // v8 calculation triggers or its revision column.
   for(const trigger of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all())db.exec(`DROP TRIGGER ${trigger.name}`);
-  db.exec('ALTER TABLE store_state DROP COLUMN calculation_revision; DROP TABLE runtime_model_evidence; PRAGMA user_version=5');db.close();
+  db.exec('ALTER TABLE store_state DROP COLUMN calculation_revision; ALTER TABLE source DROP COLUMN carry_tier_source; DROP TABLE runtime_model_evidence; PRAGMA user_version=5');db.close();
   assert.throws(()=>openLocalIndexStore(w.indexFile,{readOnly:true}),{code:'local_index_family_mismatch'});
   const migrated=openLocalIndexStore(w.indexFile);migrated.close();assert.deepEqual(facts(w.indexFile),before);
  }finally{w.cleanup();}

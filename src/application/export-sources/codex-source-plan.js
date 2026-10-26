@@ -8,7 +8,10 @@ import {
   stableJson,
   summarizeExportSourcePlan,
 } from "../../export/index.js";
-import { validSha256 } from "./source-validation.js";
+import {
+  normalizeCodexSourcePlanFilesystemId,
+  validSha256,
+} from "./source-validation.js";
 
 export function createCodexSourcePlanContext(configuration) {
 const {
@@ -16,6 +19,7 @@ const {
   codexLogPorts,
   createHash,
   currentUid,
+  exactSourceLstat: lstat,
   fsConstants: constants,
   open,
 } = configuration;
@@ -52,10 +56,15 @@ function sourceKey(rolloutKey) {
 }
 
 function sameIdentity(stats, expected) {
-  if (Number.isSafeInteger(expected?.dev) && stats.dev !== expected.dev) return false;
-  if (Number.isSafeInteger(expected?.ino) && stats.ino !== expected.ino) return false;
-  if (Number.isFinite(expected?.birthtimeMs)
-      && Math.trunc(stats.birthtimeMs) !== Math.trunc(expected.birthtimeMs)) return false;
+  const actualDev = normalizeCodexSourcePlanFilesystemId(stats?.dev, "device");
+  const expectedDev = normalizeCodexSourcePlanFilesystemId(expected?.dev, "device");
+  const actualIno = normalizeCodexSourcePlanFilesystemId(stats?.ino, "inode");
+  const expectedIno = normalizeCodexSourcePlanFilesystemId(expected?.ino, "inode");
+  if (actualDev === null || expectedDev === null || actualDev !== expectedDev
+      || actualIno === null || expectedIno === null || actualIno !== expectedIno) return false;
+  if (expected?.birthtimeMs !== undefined
+      && (!Number.isFinite(expected.birthtimeMs) || !Number.isFinite(stats.birthtimeMs)
+        || Math.trunc(stats.birthtimeMs) !== Math.trunc(expected.birthtimeMs))) return false;
   return true;
 }
 
@@ -67,18 +76,25 @@ function assertSafeSourceStats(stats) {
 }
 
 async function openSource(path, expectedIdentity = null) {
+  let pathStats;
   let handle;
   try {
+    pathStats = await lstat(path);
+    assertSafeSourceStats(pathStats);
+    // The path snapshot supplements the held-handle checks. On Windows the
+    // port uses native reparse-aware inspection and a native source lease;
+    // compare both views before accepting the opened source identity.
     handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const stats = await handle.stat();
     assertSafeSourceStats(stats);
+    if (!sameIdentity(pathStats, stats)) fail("source_changed");
     if (expectedIdentity && !sameIdentity(stats, expectedIdentity)) fail("source_changed");
     return { handle, stats };
   } catch (error) {
     await handle?.close().catch(() => {});
     if (error instanceof ExportSourcePlanError) throw error;
-    if (error?.code === "ENOENT") fail("source_missing");
-    if (error?.code === "ELOOP") fail("source_type");
+    if (error?.code === "ENOENT" || error?.code === "WINDOWS_FILESYSTEM_NOT_FOUND") fail("source_missing");
+    if (error?.code === "ELOOP" || error?.code === "WINDOWS_FILESYSTEM_REPARSE_POINT") fail("source_type");
     fail("source_changed");
   }
 }
@@ -232,7 +248,15 @@ async function createCodexExportSourcePlan({
   endAt,
   resourceGuard = null,
 } = {}) {
-  const infos = await discoverCodexRolloutInfos({ codexHome, startAt, endAt, resourceGuard });
+  let infos;
+  try {
+    infos = await discoverCodexRolloutInfos({ codexHome, startAt, endAt, resourceGuard });
+  } catch (error) {
+    if (error?.code === "WINDOWS_FILESYSTEM_OPERATION_FAILED"
+        || error?.code === "WINDOWS_FILESYSTEM_REPARSE_POINT"
+        || error?.code === "WINDOWS_FILESYSTEM_NOT_FOUND") fail("source_changed");
+    throw error;
+  }
   const discovery = codexRolloutDiscoveryReceipt(infos);
   if (discovery.status === "partial") {
     fail(Object.keys(discovery.reasonCounts).sort()[0]
@@ -260,13 +284,14 @@ async function createCodexExportSourcePlan({
         ordinal,
         sourceKey: sourceKey(info.rolloutKey),
         path: info.path,
-        dev: stats.dev,
-        ino: stats.ino,
+        dev: normalizeCodexSourcePlanFilesystemId(stats.dev, "device"),
+        ino: normalizeCodexSourcePlanFilesystemId(stats.ino, "inode"),
         birthtimeMs: Math.trunc(stats.birthtimeMs),
         prefixBytes,
         prefixSha256: inspected?.sha256 ?? await sha256Prefix(handle, prefixBytes, resourceGuard),
         rolloutInfo: { ...info, size: prefixBytes },
       };
+      if (source.dev === null || source.ino === null) fail("source_changed");
       // Discovery metadata must still describe the exact opened prefix. A
       // frozen private bundle must not carry stale reset/inline semantics.
       await verifyFrozenMetadata(source, handle, resourceGuard);
@@ -331,7 +356,8 @@ async function verifyCodexExportSourceHandle(source, handle, {
   resourceGuard = null,
   stats: suppliedStats = null,
 } = {}) {
-  if (!source || !handle || !Number.isInteger(handle.fd)) fail("source_changed");
+  if (!source || !handle || typeof handle.stat !== "function"
+      || typeof handle.read !== "function" || typeof handle.close !== "function") fail("source_changed");
   const stats = suppliedStats ?? await handle.stat();
   assertSafeSourceStats(stats);
   if (isCompressedSource(source)) {

@@ -303,6 +303,19 @@ function requestedQualification(environment) {
     && environment.USAGE_MONITOR_TEST_LANE === WINDOWS_ELECTRON_TEST_LANE;
 }
 
+export function isWindowsElectronQualificationRequested({
+  app,
+  environment = process.env,
+  platform = process.platform,
+  architecture = process.arch,
+} = {}) {
+  return requestedQualification(environment)
+    && platform === WINDOWS_BINDING_PLATFORM
+    && architecture === WINDOWS_BINDING_ARCHITECTURE
+    && app?.isPackaged === true
+    && typeof app?.getAppPath === "function";
+}
+
 /**
  * Read and authenticate the exact packaged Windows development artifact.
  *
@@ -317,11 +330,7 @@ export async function createWindowsElectronQualificationContext({
   platform = process.platform,
   architecture = process.arch,
 } = {}) {
-  if (!requestedQualification(environment)
-      || platform !== WINDOWS_BINDING_PLATFORM
-      || architecture !== WINDOWS_BINDING_ARCHITECTURE
-      || app?.isPackaged !== true
-      || typeof app?.getAppPath !== "function") {
+  if (!isWindowsElectronQualificationRequested({ app, environment, platform, architecture })) {
     return null;
   }
   let rawAppPath;

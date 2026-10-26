@@ -11,6 +11,7 @@ import {
   costWarningCodes,
   FAST_MODE_ASSUMED_MULTIPLIER,
   fastModeModelFamilyKey,
+  LOCAL_API_PRICING_METHOD_VERSION,
   quotaWeightedApiPriceEquivalent,
   priceCodexUsageEvent,
 } from "@app-usagemonitor/accounting";
@@ -24,7 +25,7 @@ import {
 const SCHEMA_VERSION = "0.3";
 const { scanCodexLogEvents } = localCodexLogScanner;
 export const PARSER_VERSION = "0.3.2";
-const ESTIMATOR_VERSION = "provider-neutral-api-price-equivalent-v0.3";
+const ESTIMATOR_VERSION = LOCAL_API_PRICING_METHOD_VERSION;
 const COMPONENT_NAMES = [
   "input_uncached_tokens",
   "input_cache_read_tokens",

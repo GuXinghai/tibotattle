@@ -11,7 +11,7 @@
 - [ ] `npm test`
 - [ ] `npm run docs:check`
 - [ ] `npm run codex:contract:check`
-- [ ] `npm run product:worker:check`
+- [ ] Applicable isolated package/UI/Electron/local tests (name the exact scope)
 - [ ] `npm run architecture:check`
 - [ ] `npm run check` (or the environment-blocked lanes are named below)
 

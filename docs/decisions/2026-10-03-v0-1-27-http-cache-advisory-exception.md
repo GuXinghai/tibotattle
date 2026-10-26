@@ -7,6 +7,12 @@ status: accepted
 
 ## Accepted boundary
 
+Historical boundary: this exception expired on 2026-10-10 and is not current
+operational authority. The [2026-10-27 downstream backport verification](../runbooks/2026-10-27-http-cache-backport-verification.md)
+replaces its source guard and removes its suppression. Commands, source hashes
+and test paths below describe their original recorded revisions, including
+subsequently retired files; they must not be used as current instructions.
+
 The owner explicitly approved the reviewed 0.1.27 release route, including this
 build-only exception, remaining limitation and exact expiry, on 2026-10-03
 (America/New_York). The root-local OSV config, exact-source/status guard and

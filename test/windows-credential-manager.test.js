@@ -17,6 +17,10 @@ import {
 } from "../src/platform/windows-credential-operation-lease.js";
 import { createWindowsCredentialMutexContext } from "../src/platform/windows-credential-mutex.js";
 import { createWindowsCredentialOperationAuditStore } from "../src/platform/windows-credential-operation-audit.js";
+import {
+  assertWindowsCredentialQualificationIsolation,
+  windowsCredentialQualificationSkipReason,
+} from "./helpers/windows-credential-qualification.js";
 
 const EXPORT_CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.exportIdentity;
 const ACCOUNT_CAPABILITY = EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation;
@@ -527,8 +531,9 @@ test("Windows backend maps audited loader failures to fixed content-free errors"
 });
 
 test("native Windows x64 qualification adapter loads the audited binding without touching credentials", {
-  skip: process.platform !== "win32" || process.arch !== "x64",
+  skip: windowsCredentialQualificationSkipReason(),
 }, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const backend = createWindowsCredentialManagerBackend();
   try {
     for (const capability of [
@@ -554,10 +559,9 @@ test("native Windows x64 qualification adapter loads the audited binding without
 });
 
 test("native qualification exercises and cleans all retained credential lifecycles", {
-  skip: process.platform !== "win32"
-    || process.arch !== "x64"
-    || process.env.USAGE_MONITOR_WINDOWS_QUALIFICATION !== "1",
+  skip: windowsCredentialQualificationSkipReason(),
 }, async () => {
+  await assertWindowsCredentialQualificationIsolation();
   const firstBackend = createWindowsCredentialManagerBackend();
   const capabilities = [
     EXPORT_CAPABILITY,

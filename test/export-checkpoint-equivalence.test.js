@@ -553,9 +553,9 @@ test("checkpoint scanner streams oversized message text containing tool-like pro
       quotaSnapshots: 2,
       activityMarkers: 0,
     });
-    // Tier, response reconciliation, and record publication each perform a
-    // bounded read; all three must charge the oversized-line resource budget.
-    assert.equal(result.resourceUsage.counters.oversizedIrrelevantLines, 3);
+    // The initial tier pass also builds the response plan, so this fresh scan
+    // reads the oversized line once in tier_scan and once in record_scan.
+    assert.equal(result.resourceUsage.counters.oversizedIrrelevantLines, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

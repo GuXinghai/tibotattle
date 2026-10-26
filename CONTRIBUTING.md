@@ -25,6 +25,15 @@ installation into system locations, or changes to real credentials/profile data.
 Run the smallest meaningful direct tests first, then the owning gates. Root
 checks use pnpm; serial test configurations must remain serial.
 
+Ordinary test aliases create fresh synthetic home, application-state, Codex,
+temporary, and tool-configuration directories. For a focused check, use
+`node ./scripts/run-isolated-tests.mjs -- test/your-test.test.js` instead of
+invoking the Node test runner directly. The runner removes inherited native
+credential qualification and preload settings from test children. Real native
+credential qualification is a separate explicit operation, never an ordinary
+test prerequisite. Environment isolation is not a sandbox: review new tests for
+direct native-service calls and paths outside their synthetic fixtures.
+
 ```sh
 pnpm run test:preflight
 pnpm run architecture:check

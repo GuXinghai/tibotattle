@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
-import { refreshLocalIndex } from "../src/local-index-refresh.js";
+import { refreshLocalIndex, validateLocalIndexWorkerCursor } from "../src/local-index-refresh.js";
 import { LOCAL_INDEX_PARSER_VERSION } from "../src/local-index-store.js";
 import { LOCAL_UNIFIED_INDEX_PARSER_VERSION } from "../src/codex-usage-vocabulary.js";
 import { appendSyntheticCodexEvents } from "../src/synthetic-codex-rollout-corpus.js";
@@ -12,6 +12,40 @@ import {
   createWorkspace,
   v2Facts,
 } from "./helpers/local-index-facts.js";
+
+test("parallel worker cursor closes tier provenance and rejects unknown or missing provenance", () => {
+  const cursor = {
+    nextOffset: 32,
+    finalModel: null,
+    finalEffort: null,
+    finalTierRaw: "priority",
+    finalTierObservedAtMs: 1_790_000_000_000,
+    finalTierSource: "turn_override",
+    finalTotals: null,
+    finalCwd: null,
+    finalCompactionPending: null,
+    finalTurnContextPending: false,
+    turnContextSeen: true,
+    snapshotsPersisted: false,
+    windows: { head: null, boundary: null, tail: null },
+    segments: null,
+  };
+  assert.equal(validateLocalIndexWorkerCursor(cursor), cursor);
+  assert.throws(() => validateLocalIndexWorkerCursor({ ...cursor, finalTierSource: "unknown" }), {
+    code: "local_index_worker_message_invalid",
+  });
+  assert.throws(() => validateLocalIndexWorkerCursor({
+    ...cursor,
+    finalTierRaw: null,
+    finalTierObservedAtMs: null,
+    finalTierSource: null,
+    privateExtra: "synthetic",
+  }), { code: "local_index_worker_message_invalid" });
+  assert.throws(() => validateLocalIndexWorkerCursor({
+    ...cursor,
+    finalTierSource: null,
+  }), { code: "local_index_worker_message_invalid" });
+});
 
 test("a cold build in lanes equals the sequential cold build", async () => {
   const workspace = createWorkspace();

@@ -49,6 +49,41 @@ test('source handle serves large Uint8Array reads and EOF through bounded native
   await assert.rejects(handle.stat(), /source_file_closed/);
 });
 
+test('source adapter exposes native inspection and refuses a missing inspection method', () => {
+  const metadata = Object.freeze({
+    isDirectory: false,
+    isRegularFile: true,
+    isReparsePoint: false,
+    ownerMatches: true,
+    nullDacl: false,
+    daclProtected: true,
+    broadAccess: false,
+    nonOwnerAllow: false,
+    unrecognizedAce: false,
+    finalPathResolved: true,
+    identity: {
+      volumeSerialNumber: '0000000000000001',
+      fileId: '00000000000000000000000000000002',
+      linkCount: 1,
+    },
+  });
+  const access = createSourceFileAccess({
+    platform: 'win32',
+    loadWindowsBinding: () => ({ inspectPath: (path) => {
+      assert.equal(path, 'synthetic.json');
+      return metadata;
+    } }),
+  });
+  assert.equal(access.contractVersion, 'windows-source-read-v1');
+  assert.equal(access.inspectPath('synthetic.json'), metadata);
+
+  const missing = createSourceFileAccess({
+    platform: 'win32',
+    loadWindowsBinding: () => ({}),
+  });
+  assert.throws(() => missing.inspectPath('synthetic.json'), /source_metadata_unavailable/);
+});
+
 test('shared JSONL reader accepts source handles without an fd and leaves ownership to its caller', async () => {
   const long = 'x'.repeat(300_000);
   const f = fixture(Buffer.from(`first\n${long}\nlast\n`));

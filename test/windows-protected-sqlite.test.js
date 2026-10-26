@@ -13,7 +13,9 @@ import {
   acquireProtectedSqliteFiles,
   configureGuardedSqliteConnection,
   isWindowsProtectedSqliteError,
+  prepareProtectedSqliteDatabaseFile,
 } from "../src/platform/windows-protected-sqlite.js";
+import { createWindowsFilesystemAdapter } from "../src/platform/windows-filesystem.js";
 
 const IDENTITY = Object.freeze({
   volumeSerialNumber: "0000000000000001", fileId: "00000000000000000000000000000002", linkCount: 1,
@@ -35,6 +37,69 @@ function fixture() {
     releaseCredentialAuditFileGuard(guard) { released.push(guard.path); guards.delete(guard); },
   };
   return { native, guards, released };
+}
+
+function protectedMetadata(identity = IDENTITY, overrides = {}) {
+  return {
+    identity,
+    isDirectory: false,
+    isRegularFile: true,
+    isReparsePoint: false,
+    ownerMatches: true,
+    nullDacl: false,
+    daclProtected: true,
+    broadAccess: false,
+    nonOwnerAllow: false,
+    unrecognizedAce: false,
+    finalPathResolved: true,
+    ...overrides,
+  };
+}
+
+function filesystemFixture({ metadataOverrides = {}, existing = false, race = false } = {}) {
+  const calls = [];
+  const files = new Map();
+  const path = "C:\\synthetic\\state\\collector.sqlite";
+  const native = {
+    contractVersion: "windows-filesystem-v1",
+    securityContractVersion: "windows-filesystem-security-v1",
+    credentialAuditFileGuardContractVersion: "windows-credential-audit-file-guard-v1",
+    credentialMutexContractVersion: "windows-credential-mutex-v1",
+    productionSafe: false,
+    pathWalkRaceSafe: false,
+    credentialMutexSafe: true,
+    credentialAuditFileGuardSafe: true,
+    ensureDirectory(directory) { calls.push(["ensureDirectory", directory]); return IDENTITY; },
+    inspectPath(selected) {
+      calls.push(["inspectPath", selected]);
+      if (!files.has(selected)) throw { code: "WINDOWS_FILESYSTEM_NOT_FOUND" };
+      return protectedMetadata(files.get(selected).identity, metadataOverrides);
+    },
+    createFile(selected, bytes) {
+      calls.push(["createFile", selected]);
+      if (existing || race || files.has(selected)) {
+        if (race && !files.has(selected)) files.set(selected, { identity: IDENTITY, bytes: Buffer.from(bytes) });
+        throw { code: "WINDOWS_FILESYSTEM_ALREADY_EXISTS" };
+      }
+      files.set(selected, { identity: IDENTITY, bytes: Buffer.from(bytes) });
+      return IDENTITY;
+    },
+    readFile: () => ({ data: Buffer.alloc(0), identity: IDENTITY }),
+    deleteFile: () => ({ deleted: true, identity: IDENTITY }),
+    replaceFile: () => IDENTITY,
+    acquireCredentialAuditFileGuard: () => ({ lease: {} }),
+    releaseCredentialAuditFileGuard() {},
+    acquireCredentialMutex: () => ({ lease: {}, abandoned: false }),
+    releaseCredentialMutex() {},
+    acquireAccountlessInstallationCredentialMutex: () => ({ lease: {}, abandoned: false }),
+    releaseAccountlessInstallationCredentialMutex() {},
+  };
+  return {
+    adapter: createWindowsFilesystemAdapter({ platform: "win32", architecture: "x64", binding: native }),
+    calls,
+    files,
+    path,
+  };
 }
 
 function fixedError(code) {
@@ -87,6 +152,34 @@ test("shared SQLite guard rejects malformed bindings and paths before mutation",
   assert.throws(() => acquireProtectedSqliteFiles({
     native: { ...native, credentialAuditFileGuardSafe: false }, path: "/private/store.sqlite", pathApi: posix,
   }), fixedError("invalid_configuration"));
+});
+
+test("collector SQLite file preparation creates only a protected new file", () => {
+  const { adapter, calls, files, path } = filesystemFixture();
+  const prepared = prepareProtectedSqliteDatabaseFile({ adapter, path, createIfMissing: true });
+  assert.equal(prepared.created, true);
+  assert.deepEqual([...files.get(path).bytes], []);
+  assert.deepEqual(calls.map(([name]) => name), ["ensureDirectory", "createFile", "inspectPath"]);
+});
+
+test("collector SQLite file preparation treats EEXIST, including empty files, as existing", () => {
+  for (const race of [false, true]) {
+    const { adapter, calls, files, path } = filesystemFixture({ existing: !race, race });
+    if (!race) files.set(path, { identity: IDENTITY, bytes: Buffer.alloc(0) });
+    const prepared = prepareProtectedSqliteDatabaseFile({ adapter, path, createIfMissing: true });
+    assert.equal(prepared.created, false);
+    assert.deepEqual([...files.get(path).bytes], []);
+    assert.equal(calls.some(([name]) => name === "inspectPath"), true);
+  }
+});
+
+test("collector SQLite file preparation rejects unsafe existing state without repair", () => {
+  const { adapter, files, path } = filesystemFixture({ metadataOverrides: { broadAccess: true } });
+  const bytes = Buffer.from("synthetic-existing-state");
+  files.set(path, { identity: IDENTITY, bytes: Buffer.from(bytes) });
+  assert.throws(() => prepareProtectedSqliteDatabaseFile({ adapter, path, createIfMissing: true }),
+    fixedError("security_policy"));
+  assert.deepEqual(files.get(path).bytes, bytes);
 });
 
 test("guarded SQLite startup failures remain fixed and leave cleanup to the owning store", () => {

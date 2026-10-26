@@ -5,8 +5,8 @@ import { readFile, mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Executable Bash control-flow proof for the OSV job. Platform-neutral exception
-// contracts remain in http-cache-exception.test.js and the root test suite.
+// Executable Bash control-flow proof for the OSV job. Backport contracts
+// remain in http-cache-backport.test.js and the root test suite.
 test("scanner shell retains download, checksum and direct scanner failure status", async () => {
   const workflow = await readFile(new URL("../.github/workflows/osv-scanner.yml", import.meta.url), "utf8");
   const match = workflow.match(/      - name: Run scanner\n        shell: bash\n        run: \|\n((?:          .*\n)+)/);

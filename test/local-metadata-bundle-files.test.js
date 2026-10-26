@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
-  createOwnerOnlyLocalMetadataBundlePairReader,
+  createOwnerOnlyLocalMetadataBundlePairReader as createPlatformReader,
 } from "../src/platform/local-metadata-bundle-files.js";
 
 class SafeFileError extends Error {
@@ -19,6 +19,13 @@ const OWNER_UID = typeof process.getuid === "function"
 const PARENT_PATH = resolve("virtual");
 const BUNDLE_PATH = join(PARENT_PATH, "bundle.json");
 const RECEIPT_PATH = join(PARENT_PATH, "receipt.json");
+
+function createOwnerOnlyLocalMetadataBundlePairReader(options = {}) {
+  return createPlatformReader({
+    platform: "linux",
+    ...options,
+  });
+}
 
 function directoryStats({
   dev = 1,
@@ -153,6 +160,90 @@ function createFakeFileSystem({
   return { calls, fileSystem };
 }
 
+const WINDOWS_VOLUME_ID = "0000000000000001";
+const WINDOWS_PARENT_ID = "00000000000000000000000000000010";
+
+function windowsPathMetadata(kind, fileId, overrides = {}) {
+  return {
+    identity: { volumeSerialNumber: WINDOWS_VOLUME_ID, fileId, linkCount: 1 },
+    isDirectory: kind === "directory",
+    isRegularFile: kind === "file",
+    isReparsePoint: false,
+    ownerMatches: true,
+    nullDacl: false,
+    daclProtected: true,
+    broadAccess: false,
+    nonOwnerAllow: false,
+    unrecognizedAce: false,
+    finalPathResolved: true,
+    ...overrides,
+  };
+}
+
+function createFakeWindowsSourceAccess({
+  bundleBytes = Buffer.from("bundle"),
+  receiptBytes = Buffer.from("receipt"),
+  metadataOverride = null,
+  statOverride = null,
+} = {}) {
+  const parentPath = dirname(resolve(BUNDLE_PATH));
+  const sources = new Map([
+    [resolve(BUNDLE_PATH), bundleBytes],
+    [resolve(RECEIPT_PATH), receiptBytes],
+  ]);
+  const fileIds = new Map([
+    [resolve(BUNDLE_PATH), "00000000000000000000000000000021"],
+    [resolve(RECEIPT_PATH), "00000000000000000000000000000022"],
+  ]);
+  const calls = { inspections: [], opens: [], reads: [], closes: [] };
+  const inspectionCounts = new Map();
+  const sourceAccess = {
+    contractVersion: "windows-source-read-v1",
+    inspectPath(path) {
+      calls.inspections.push(path);
+      const key = resolve(path);
+      const call = (inspectionCounts.get(key) ?? 0) + 1;
+      inspectionCounts.set(key, call);
+      let metadata;
+      if (key === parentPath) metadata = windowsPathMetadata("directory", WINDOWS_PARENT_ID);
+      else if (sources.has(key)) metadata = windowsPathMetadata("file", fileIds.get(key));
+      else throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      return metadataOverride ? metadataOverride(path, metadata, call) ?? metadata : metadata;
+    },
+    async open(path) {
+      const key = resolve(path);
+      calls.opens.push(path);
+      const bytes = sources.get(key);
+      const fileId = fileIds.get(key);
+      if (!bytes || !fileId) throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      return {
+        async stat() {
+          const result = {
+            dev: WINDOWS_VOLUME_ID,
+            ino: fileId,
+            nlink: 1,
+            size: bytes.byteLength,
+            mtimeMs: 100,
+            ctimeMs: 100,
+            isFile: () => true,
+            isSymbolicLink: () => false,
+          };
+          return statOverride ? statOverride(path, result) ?? result : result;
+        },
+        async read(target, offset, length, position) {
+          calls.reads.push({ path, length, position });
+          if (position >= bytes.byteLength) return { bytesRead: 0 };
+          const bytesRead = Math.min(length, bytes.byteLength - position);
+          target.set(bytes.subarray(position, position + bytesRead), offset);
+          return { bytesRead };
+        },
+        async close() { calls.closes.push(path); },
+      };
+    },
+  };
+  return { calls, sourceAccess };
+}
+
 function readerOptions(overrides = {}) {
   return {
     bundleFile: BUNDLE_PATH,
@@ -168,6 +259,85 @@ function assertCode(expectedCode) {
   return (error) =>
     error instanceof SafeFileError && error.code === expectedCode;
 }
+
+test("Windows metadata reads fail closed before Node path access without qualified source access", async () => {
+  const { calls, fileSystem } = createFakeFileSystem();
+  const readPair = createPlatformReader({ fileSystem, platform: "win32" });
+
+  await assert.rejects(
+    readPair(readerOptions()),
+    assertCode("windows_protection_unavailable"),
+  );
+  assert.equal(calls.realpaths.length, 0);
+  assert.equal(calls.lstats.length, 0);
+  assert.equal(calls.opens.length, 0);
+  assert.equal(calls.allocations.length, 0);
+});
+
+test("Windows metadata reads use native ACL facts and held source handles", async () => {
+  const { calls: nodeCalls, fileSystem } = createFakeFileSystem();
+  const { calls: sourceCalls, sourceAccess } = createFakeWindowsSourceAccess();
+  const readPair = createPlatformReader({
+    fileSystem,
+    platform: "win32",
+    windowsSourceAccessFactory: () => sourceAccess,
+  });
+
+  const result = await readPair(readerOptions());
+
+  assert.deepEqual(result.bundleBytes, Buffer.from("bundle"));
+  assert.deepEqual(result.receiptBytes, Buffer.from("receipt"));
+  assert.deepEqual(sourceCalls.opens, [RECEIPT_PATH, BUNDLE_PATH]);
+  assert.equal(sourceCalls.closes.length, 2);
+  assert.ok(sourceCalls.inspections.length >= 8);
+  assert.equal(nodeCalls.realpaths.length, 0);
+  assert.equal(nodeCalls.lstats.length, 0);
+  assert.equal(nodeCalls.opens.length, 0);
+  assert.deepEqual(nodeCalls.allocations, [7, 1, 6, 1]);
+});
+
+test("Windows metadata reads refuse missing DACL evidence before opening a source", async () => {
+  const { fileSystem } = createFakeFileSystem();
+  const { calls, sourceAccess } = createFakeWindowsSourceAccess({
+    metadataOverride(path, metadata) {
+      return resolve(path) === resolve(RECEIPT_PATH)
+        ? { ...metadata, daclProtected: false }
+        : metadata;
+    },
+  });
+  const readPair = createPlatformReader({
+    fileSystem,
+    platform: "win32",
+    windowsSourceAccessFactory: () => sourceAccess,
+  });
+
+  await assert.rejects(readPair(readerOptions()), assertCode("receipt_permissions"));
+  assert.deepEqual(calls.opens, []);
+  assert.deepEqual(calls.reads, []);
+});
+
+test("Windows metadata reads bind inspected ACL identity to the opened handle", async () => {
+  const { fileSystem } = createFakeFileSystem();
+  const { calls, sourceAccess } = createFakeWindowsSourceAccess({
+    statOverride(path, stats) {
+      return resolve(path) === resolve(RECEIPT_PATH)
+        ? { ...stats, ino: "00000000000000000000000000000099" }
+        : stats;
+    },
+  });
+  const readPair = createPlatformReader({
+    fileSystem,
+    platform: "win32",
+    windowsSourceAccessFactory: () => sourceAccess,
+  });
+
+  await assert.rejects(
+    readPair(readerOptions()),
+    assertCode("receipt_changed_during_open"),
+  );
+  assert.deepEqual(calls.reads, []);
+  assert.deepEqual(calls.closes, [RECEIPT_PATH]);
+});
 
 test("limits fail closed before any filesystem operation", async () => {
   for (const scenario of [

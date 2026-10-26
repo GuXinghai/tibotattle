@@ -17,8 +17,26 @@ const LOCAL_RUNTIME_MODULE = new URL("../src/local-node-runtime.js", import.meta
 
 const HEAP_WORKER = String.raw`
 const runtime = await import(process.env.HEAP_LOCAL_RUNTIME_MODULE);
-const { createLocalExportWorkspace } = runtime.localExportSourcePipeline.controller;
+const {
+  createLocalExportWorkspace,
+  resumeLocalExportWorkspace,
+} = runtime.localExportSourcePipeline.controller;
 const { openExportWorkspace } = runtime.localExportWorkspace;
+if (process.env.HEAP_INSPECT_USAGE_ONLY === "1") {
+  const workspace = await openExportWorkspace({ directory: process.env.HEAP_WORKSPACE_DIRECTORY });
+  try {
+    const source = workspace.loadSourcePlan().sources[0];
+    const checkpoint = workspace.loadSourceCheckpoint(source.sourceKey);
+    process.stdout.write(JSON.stringify({
+      lines: workspace.resourceUsage().lines,
+      tierLineCount: checkpoint.tierLineCount,
+      phase: checkpoint.phase,
+    }) + "\n");
+  } finally {
+    workspace.close();
+  }
+  process.exit(0);
+}
 const secret = Buffer.from(process.env.HEAP_SECRET_HEX, "hex");
 const options = {
   directory: process.env.HEAP_WORKSPACE_DIRECTORY,
@@ -31,33 +49,108 @@ const options = {
 if (process.env.HEAP_CHECKPOINT_LINES_PER_BATCH) {
   options.checkpointLinesPerBatch = Number(process.env.HEAP_CHECKPOINT_LINES_PER_BATCH);
 }
-const result = await createLocalExportWorkspace(options);
-const workspace = await openExportWorkspace({ directory: process.env.HEAP_WORKSPACE_DIRECTORY });
-let usageRecords = 0;
-let localShellTools = 0;
-try {
-  for (const row of workspace.iterateRecords()) {
-    if (row.family !== "usageEvents") continue;
-    usageRecords += 1;
-    localShellTools += row.record.toolClassCounts.localShell;
+let syntheticClockValue = 0;
+if (process.env.HEAP_SYNTHETIC_CLOCK === "1") {
+  options.resourceClock = () => ++syntheticClockValue;
+  options.resourceRss = () => 0;
+}
+if (process.env.HEAP_MAXIMUM_ELAPSED_MS) {
+  options.resourceLimits = { maximumElapsedMs: Number(process.env.HEAP_MAXIMUM_ELAPSED_MS) };
+}
+if (process.env.HEAP_RESUME_AFTER_TIER === "1") {
+  let interrupted = false;
+  try {
+    await createLocalExportWorkspace({
+      ...options,
+      failpoint(name, checkpoint) {
+        if (!interrupted && name === "after_source_checkpoint_batch"
+            && checkpoint?.phase === "record_scan") {
+          interrupted = true;
+          const error = new Error("synthetic checkpoint interruption");
+          error.code = "synthetic_checkpoint_interruption";
+          throw error;
+        }
+      },
+    });
+  } catch (error) {
+    if (error.code !== "synthetic_checkpoint_interruption") throw error;
   }
-  const sourcePlan = workspace.loadSourcePlan();
-  const openTasks = sourcePlan.sources.reduce(
-    (sum, source) => sum + workspace.sourceOpenTaskKeys(source.sourceKey).length,
-    0,
-  );
-  process.stdout.write(JSON.stringify({
-    scanComplete: result.status.scanComplete,
-    recordCounts: result.status.recordCounts,
-    sourceFiles: sourcePlan.sources.length,
-    openTasks,
-    usageRecords,
-    localShellTools,
-    diagnostics: workspace.diagnostics(),
-    lines: workspace.resourceUsage().lines,
-  }) + "\n");
-} finally {
-  workspace.close();
+  if (!interrupted) throw new Error("tier checkpoint interruption was not observed");
+  if (process.env.HEAP_STOP_AFTER_TIER === "1") {
+    const workspace = await openExportWorkspace({ directory: process.env.HEAP_WORKSPACE_DIRECTORY });
+    try {
+      const source = workspace.loadSourcePlan().sources[0];
+      const checkpoint = workspace.loadSourceCheckpoint(source.sourceKey);
+      process.stdout.write(JSON.stringify({
+        lines: workspace.resourceUsage().lines,
+        tierLineCount: checkpoint.tierLineCount,
+        phase: checkpoint.phase,
+      }) + "\n");
+    } finally {
+      workspace.close();
+    }
+    process.exit(0);
+  }
+}
+let result;
+let expectedLimitResult = null;
+try {
+  const runOptions = process.env.HEAP_HARD_CRASH_AFTER_RESPONSE_PLAN === "1"
+    ? {
+      ...options,
+      failpoint(name) {
+        if (name === "after_response_plan_rebuild") process.exit(86);
+      },
+    }
+    : options;
+  const resume = process.env.HEAP_RESUME_AFTER_TIER === "1"
+    || process.env.HEAP_HARD_CRASH_AFTER_RESPONSE_PLAN === "1";
+  result = await (resume ? resumeLocalExportWorkspace(runOptions) : createLocalExportWorkspace(runOptions));
+} catch (error) {
+  if (process.env.HEAP_EXPECT_ELAPSED_LIMIT === "1"
+      && error.code === "export_resource_elapsed_time") {
+    expectedLimitResult = {
+      resourceLimitCode: error.code,
+      observed: error.observed,
+      limit: error.limit,
+    };
+  } else {
+    throw error;
+  }
+}
+if (expectedLimitResult !== null) {
+  process.stdout.write(JSON.stringify(expectedLimitResult) + "\n");
+} else {
+  const workspace = await openExportWorkspace({ directory: process.env.HEAP_WORKSPACE_DIRECTORY });
+  let usageRecords = 0;
+  let localShellTools = 0;
+  try {
+    for (const row of workspace.iterateRecords()) {
+      if (row.family !== "usageEvents") continue;
+      usageRecords += 1;
+      localShellTools += row.record.toolClassCounts.localShell;
+    }
+    const sourcePlan = workspace.loadSourcePlan();
+    const openTasks = sourcePlan.sources.reduce(
+      (sum, source) => sum + workspace.sourceOpenTaskKeys(source.sourceKey).length,
+      0,
+    );
+    process.stdout.write(JSON.stringify({
+      scanComplete: result.status.scanComplete,
+      recordCounts: result.status.recordCounts,
+      sourceFiles: sourcePlan.sources.length,
+      openTasks,
+      usageRecords,
+      localShellTools,
+      diagnostics: workspace.diagnostics(),
+      lines: result.resourceUsage.counters.lines,
+      ...(process.env.HEAP_SYNTHETIC_CLOCK === "1"
+        ? { cumulativeElapsedMs: result.resourceUsage.cumulativeElapsedMs }
+        : {}),
+    }) + "\n");
+  } finally {
+    workspace.close();
+  }
 }
 `;
 
@@ -72,7 +165,7 @@ function cumulativeUsage(total) {
   };
 }
 
-async function fixture() {
+async function fixture(eventCount = EVENT_COUNT) {
   const root = await mkdtemp(join(tmpdir(), "usage-monitor-checkpoint-heap-"));
   const home = join(root, "codex-home");
   const sessions = join(home, "sessions");
@@ -83,7 +176,7 @@ async function fixture() {
     JSON.stringify({ timestamp: "2026-07-24T12:00:00.000Z", type: "session_meta", payload: { id: "PRIVATE_HEAP_SESSION" } }),
     JSON.stringify({ timestamp: "2026-07-24T12:00:00.001Z", type: "turn_context", payload: { model: "gpt-5.6-sol" } }),
   ];
-  for (let index = 1; index <= EVENT_COUNT; index += 1) {
+  for (let index = 1; index <= eventCount; index += 1) {
     const base = Date.parse("2026-07-24T12:01:00.000Z") + (index * 10);
     const turnId = `PRIVATE_TASK_${index}`;
     lines.push(
@@ -123,7 +216,7 @@ async function fixture() {
     );
   }
   await writeFile(source, `${lines.join("\n")}\n`, { mode: 0o600 });
-  return { root, home, source, workspace: join(root, "workspace") };
+  return { root, home, source, sourceLineCount: lines.length, workspace: join(root, "workspace") };
 }
 
 async function openTaskFixture() {
@@ -196,7 +289,16 @@ async function forkSnapshotFixture() {
   return { root, home, source: parentSource, workspace: join(root, "workspace") };
 }
 
-function runHeapWorker(value, { checkpointLinesPerBatch } = {}) {
+function runHeapWorker(value, {
+  checkpointLinesPerBatch,
+  resumeAfterTier = false,
+  syntheticClock = false,
+  maximumElapsedMs,
+  expectElapsedLimit = false,
+  stopAfterTier = false,
+  inspectUsageOnly = false,
+  hardCrashAfterResponsePlan = false,
+} = {}) {
   const child = spawnSync(process.execPath, [
     "--max-old-space-size=64",
     "--input-type=module",
@@ -218,17 +320,26 @@ function runHeapWorker(value, { checkpointLinesPerBatch } = {}) {
       ...(checkpointLinesPerBatch === undefined
         ? {}
         : { HEAP_CHECKPOINT_LINES_PER_BATCH: String(checkpointLinesPerBatch) }),
+      ...(resumeAfterTier ? { HEAP_RESUME_AFTER_TIER: "1" } : {}),
+      ...(stopAfterTier ? { HEAP_STOP_AFTER_TIER: "1" } : {}),
+      ...(inspectUsageOnly ? { HEAP_INSPECT_USAGE_ONLY: "1" } : {}),
+      ...(hardCrashAfterResponsePlan ? { HEAP_HARD_CRASH_AFTER_RESPONSE_PLAN: "1" } : {}),
+      ...(syntheticClock ? { HEAP_SYNTHETIC_CLOCK: "1" } : {}),
+      ...(maximumElapsedMs === undefined
+        ? {}
+        : { HEAP_MAXIMUM_ELAPSED_MS: String(maximumElapsedMs) }),
+      ...(expectElapsedLimit ? { HEAP_EXPECT_ELAPSED_LIMIT: "1" } : {}),
     },
   });
   assert.equal(child.error, undefined, child.error?.message);
   assert.equal(child.signal, null, child.stderr);
-  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.status, hardCrashAfterResponsePlan ? 86 : 0, child.stderr);
   for (const output of [child.stdout, child.stderr]) {
     assert.equal(output.includes(PRIVATE_CANARY), false);
     assert.equal(output.includes(value.root), false);
     assert.equal(output.includes(value.source), false);
   }
-  return JSON.parse(child.stdout);
+  return hardCrashAfterResponsePlan ? null : JSON.parse(child.stdout);
 }
 
 test("checkpoint scanner completes a task/tool-heavy export under a constrained old-space heap", { timeout: 60_000 }, async () => {
@@ -246,6 +357,69 @@ test("checkpoint scanner completes a task/tool-heavy export under a constrained 
       // same-handle frozen-metadata check each read its first session_meta.
       lines: ((2 + (EVENT_COUNT * 4)) * 2) + 2,
     });
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("checkpoint resource meter counts actual line reads and bounded restart reconciliation", { timeout: 60_000 }, async () => {
+  const value = await fixture(10);
+  const baseline = { ...value, workspace: join(value.root, "workspace-baseline") };
+  const resumed = { ...value, workspace: join(value.root, "workspace-resumed") };
+  try {
+    const complete = runHeapWorker(baseline, { syntheticClock: true });
+    assert.equal(complete.lines, (value.sourceLineCount * 2) + 2,
+      "tier plus response reconciliation share the first source pass");
+
+    const afterRestart = runHeapWorker(resumed, {
+      syntheticClock: true,
+      resumeAfterTier: true,
+    });
+    assert.equal(afterRestart.lines, complete.lines + value.sourceLineCount + 2,
+      "restart accounting includes the bounded fallback source pass and its two source identity verification reads");
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("restart reconciliation remains charged to the existing elapsed-time cap", { timeout: 60_000 }, async () => {
+  const value = await fixture(10);
+  const baseline = { ...value, workspace: join(value.root, "workspace-baseline") };
+  const resumed = { ...value, workspace: join(value.root, "workspace-resumed") };
+  try {
+    const complete = runHeapWorker(baseline, { syntheticClock: true });
+    const rejected = runHeapWorker(resumed, {
+      syntheticClock: true,
+      resumeAfterTier: true,
+      maximumElapsedMs: complete.cumulativeElapsedMs,
+      expectElapsedLimit: true,
+    });
+    assert.equal(rejected.resourceLimitCode, "export_resource_elapsed_time");
+    assert.equal(rejected.limit, complete.cumulativeElapsedMs);
+    assert.ok(rejected.observed > rejected.limit);
+  } finally {
+    await rm(value.root, { recursive: true, force: true });
+  }
+});
+
+test("hard crash after fallback reservation preserves actual read accounting", { timeout: 60_000 }, async () => {
+  const value = await fixture(10);
+  try {
+    const tierCheckpoint = runHeapWorker(value, {
+      syntheticClock: true,
+      resumeAfterTier: true,
+      stopAfterTier: true,
+    });
+    assert.equal(tierCheckpoint.phase, "record_scan");
+    assert.equal(tierCheckpoint.tierLineCount, value.sourceLineCount);
+
+    runHeapWorker(value, { hardCrashAfterResponsePlan: true });
+
+    const afterHardCrash = runHeapWorker(value, { inspectUsageOnly: true });
+    assert.equal(afterHardCrash.phase, "record_scan");
+    assert.equal(afterHardCrash.tierLineCount, value.sourceLineCount);
+    assert.equal(afterHardCrash.lines, tierCheckpoint.lines + value.sourceLineCount,
+      "the durable exact-count reservation survives process.exit before finishInvocation");
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }

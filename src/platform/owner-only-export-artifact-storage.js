@@ -16,6 +16,8 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { isProxy } from "node:util/types";
 
+import { createSourceFileAccess } from "./source-file-access.js";
+import { createWindowsFilesystemAdapter } from "./windows-filesystem.js";
 import { readBoundedDirectoryEntries } from "./bounded-directory-reader.js";
 import {
   assertOwnerControlledDirectory,
@@ -153,6 +155,17 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     "recoveryFileCloseFailpoint",
     "Local export storage configuration is invalid",
   );
+  const configuredPlatform = process.platform;
+  const configuredWindowsFilesystemFactory = guardedRead(
+    selected,
+    "windowsFilesystemFactory",
+    "Local export storage configuration is invalid",
+  ) ?? null;
+  const configuredWindowsSourceAccessFactory = guardedRead(
+    selected,
+    "windowsSourceAccessFactory",
+    "Local export storage configuration is invalid",
+  ) ?? null;
   if (typeof stableJson !== "function" || isProxy(stableJson)) {
     throw new TypeError("stableJson must be a function");
   }
@@ -179,6 +192,223 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
   if (configuredRecoveryFileCloseFailpoint !== undefined
       && (typeof configuredRecoveryFileCloseFailpoint !== "function" || isProxy(configuredRecoveryFileCloseFailpoint))) {
     throw new TypeError("recoveryFileCloseFailpoint must be a function when configured");
+  }
+  if (typeof configuredPlatform !== "string"
+      || (configuredWindowsFilesystemFactory !== null
+        && (typeof configuredWindowsFilesystemFactory !== "function" || isProxy(configuredWindowsFilesystemFactory)))
+      || (configuredWindowsSourceAccessFactory !== null
+        && (typeof configuredWindowsSourceAccessFactory !== "function" || isProxy(configuredWindowsSourceAccessFactory)))) {
+    throw new TypeError("Windows export protection configuration is invalid");
+  }
+
+  let cachedWindowsFilesystem = null;
+  let cachedWindowsSourceAccess = null;
+  function windowsFilesystem() {
+    if (configuredPlatform !== "win32") {
+      throw new Error("Windows owner-only export protection is unavailable");
+    }
+    if (cachedWindowsFilesystem === null) {
+      let adapter;
+      try {
+        adapter = configuredWindowsFilesystemFactory === null
+          ? createWindowsFilesystemAdapter({ platform: "win32" })
+          : configuredWindowsFilesystemFactory();
+      } catch {
+        throw new Error("Windows owner-only export protection is unavailable");
+      }
+      if (!adapter || typeof adapter !== "object"
+          || typeof adapter.inspectPath !== "function"
+          || typeof adapter.ensureDirectory !== "function"
+          || typeof adapter.createFile !== "function") {
+        throw new Error("Windows owner-only export protection is unavailable");
+      }
+      cachedWindowsFilesystem = adapter;
+    }
+    return cachedWindowsFilesystem;
+  }
+
+  function windowsSourceAccess() {
+    if (configuredPlatform !== "win32") {
+      throw new Error("Windows owner-only export source access is unavailable");
+    }
+    if (cachedWindowsSourceAccess === null) {
+      let sourceAccess;
+      try {
+        sourceAccess = configuredWindowsSourceAccessFactory === null
+          ? createSourceFileAccess({ platform: "win32" })
+          : configuredWindowsSourceAccessFactory();
+      } catch {
+        throw new Error("Windows owner-only export source access is unavailable");
+      }
+      if (!sourceAccess || sourceAccess.contractVersion !== "windows-source-read-v1"
+          || typeof sourceAccess.inspectPath !== "function"
+          || typeof sourceAccess.open !== "function") {
+        throw new Error("Windows owner-only export source access is unavailable");
+      }
+      cachedWindowsSourceAccess = sourceAccess;
+    }
+    return cachedWindowsSourceAccess;
+  }
+
+  function preflightWindowsArtifactRead() {
+    if (configuredPlatform !== "win32") return;
+    windowsFilesystem();
+    windowsSourceAccess();
+  }
+
+  function validWindowsIdentity(identity) {
+    return identity !== null && typeof identity === "object" && !Array.isArray(identity)
+      && typeof identity.volumeSerialNumber === "string"
+      && /^[0-9a-f]{16}$/u.test(identity.volumeSerialNumber)
+      && typeof identity.fileId === "string"
+      && /^[0-9a-f]{32}$/u.test(identity.fileId)
+      && Number.isSafeInteger(identity.linkCount) && identity.linkCount >= 0;
+  }
+
+  function sameWindowsIdentity(left, right) {
+    return validWindowsIdentity(left) && validWindowsIdentity(right)
+      && left.volumeSerialNumber === right.volumeSerialNumber
+      && left.fileId === right.fileId
+      && left.linkCount === right.linkCount;
+  }
+
+  function sameWindowsObject(left, right) {
+    return validWindowsIdentity(left) && validWindowsIdentity(right)
+      && left.volumeSerialNumber === right.volumeSerialNumber
+      && left.fileId === right.fileId;
+  }
+
+  function windowsInspectPath(path) {
+    let metadata;
+    try { metadata = windowsFilesystem().inspectPath(path); }
+    catch (error) {
+      if (error?.code === "ENOENT" || error?.code === "WINDOWS_FILESYSTEM_NOT_FOUND") throw error;
+      throw new Error("Windows owner-only export protection is unavailable");
+    }
+    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)
+        || !validWindowsIdentity(metadata.identity)
+        || typeof metadata.isDirectory !== "boolean"
+        || typeof metadata.isRegularFile !== "boolean"
+        || typeof metadata.isReparsePoint !== "boolean"
+        || typeof metadata.ownerMatches !== "boolean"
+        || typeof metadata.nullDacl !== "boolean"
+        || typeof metadata.daclProtected !== "boolean"
+        || typeof metadata.broadAccess !== "boolean"
+        || typeof metadata.nonOwnerAllow !== "boolean"
+        || typeof metadata.unrecognizedAce !== "boolean"
+        || typeof metadata.finalPathResolved !== "boolean") {
+      throw new Error("Windows owner-only export protection is unavailable");
+    }
+    return metadata;
+  }
+
+  function assertWindowsSecurityMetadata(metadata, kind, {
+    linkCounts = [1],
+    parentProtected = false,
+    allowReparsePoint = false,
+  } = {}) {
+    const correctType = kind === "directory"
+      ? metadata.isDirectory === true && metadata.isRegularFile === false
+      : kind === "file"
+        ? metadata.isDirectory === false && metadata.isRegularFile === true
+        : kind === "link"
+          ? metadata.isDirectory === false && metadata.isRegularFile === true
+          : false;
+    const linkCountValid = kind === "directory"
+      || linkCounts.includes(metadata.identity.linkCount);
+    if (!correctType || (!allowReparsePoint && metadata.isReparsePoint !== false)
+        || (allowReparsePoint && metadata.isReparsePoint !== true)
+        || metadata.ownerMatches !== true
+        || metadata.nullDacl !== false
+        || metadata.broadAccess !== false
+        || metadata.nonOwnerAllow !== false
+        || metadata.unrecognizedAce !== false
+        || metadata.finalPathResolved !== true
+        || !linkCountValid
+        || (kind === "directory" && metadata.daclProtected !== true)
+        || (kind !== "directory" && metadata.daclProtected !== true && !parentProtected)) {
+      throw new Error(`Invalid Windows owner-only export ${kind}`);
+    }
+    return metadata.identity;
+  }
+
+  function inspectWindowsDirectory(path, { requireProtected = true } = {}) {
+    const metadata = windowsInspectPath(path);
+    if (requireProtected) return assertWindowsSecurityMetadata(metadata, "directory");
+    if (metadata.isDirectory !== true || metadata.isRegularFile !== false
+        || metadata.isReparsePoint !== false || metadata.ownerMatches !== true
+        || metadata.finalPathResolved !== true) {
+      throw new Error("Invalid Windows owner-only export directory");
+    }
+    return metadata.identity;
+  }
+
+  function inspectWindowsFile(path, { linkCounts = [1], allowReparsePoint = false } = {}) {
+    const parentIdentity = inspectWindowsDirectory(dirname(path));
+    const metadata = windowsInspectPath(path);
+    const identity = assertWindowsSecurityMetadata(metadata, allowReparsePoint ? "link" : "file", {
+      linkCounts,
+      parentProtected: true,
+      allowReparsePoint,
+    });
+    return { metadata, identity, parentIdentity };
+  }
+
+  function ensureWindowsDirectory(path, { exclusive = false } = {}) {
+    const before = (() => {
+      try { return windowsInspectPath(path); }
+      catch (error) {
+        if (error?.code === "ENOENT" || error?.code === "WINDOWS_FILESYSTEM_NOT_FOUND") return null;
+        throw error;
+      }
+    })();
+    if (exclusive && before !== null) throw new Error("Windows owner-only export directory already exists");
+    if (before !== null) assertWindowsSecurityMetadata(before, "directory");
+    let result;
+    try {
+      result = windowsFilesystem().ensureDirectory(path);
+    } catch {
+      throw new Error("Windows owner-only export directory could not be prepared");
+    }
+    const metadata = windowsInspectPath(path);
+    const identity = assertWindowsSecurityMetadata(metadata, "directory");
+    if (validWindowsIdentity(result) && !sameWindowsIdentity(result, identity)) {
+      throw new Error("Windows owner-only export directory changed during preparation");
+    }
+    return identity;
+  }
+
+  function windowsObjectIdentity(path, { requireProtected = true } = {}) {
+    return inspectWindowsDirectory(path, { requireProtected });
+  }
+
+  function windowsObjectMatches(path, expected, { requireProtected = true } = {}) {
+    return sameWindowsObject(
+      windowsObjectIdentity(path, { requireProtected }),
+      expected,
+    );
+  }
+
+  async function assertOwnerControlledDirectoryPath(path) {
+    if (configuredPlatform === "win32") {
+      inspectWindowsDirectory(path);
+      return;
+    }
+    await assertOwnerControlledDirectory(path);
+  }
+
+  async function ensureOwnerOnlyDirectoryPath(path, { exclusive = false, recursive = true } = {}) {
+    if (configuredPlatform === "win32") {
+      return ensureWindowsDirectory(path, { exclusive });
+    }
+    try {
+      await mkdir(path, { recursive, mode: 0o700 });
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      if (exclusive) throw error;
+    }
+    await assertOwnerControlledDirectory(path);
+    return null;
   }
 
   async function synchronizeDirectory(directory) {
@@ -239,7 +469,15 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
   const MAX_LOCAL_RECEIPT_BYTES = 1024 * 1024;
   const destinationStates = new WeakMap();
 
-  function snapshotDirectoryIdentity(stats) {
+  function snapshotDirectoryIdentity(stats, path = null, { requireProtected = true } = {}) {
+    if (configuredPlatform === "win32" && path !== null) {
+      const identity = windowsObjectIdentity(path, { requireProtected });
+      return Object.freeze({
+        volumeSerialNumber: identity.volumeSerialNumber,
+        fileId: identity.fileId,
+        linkCount: identity.linkCount,
+      });
+    }
     return Object.freeze({ dev: stats.dev, ino: stats.ino });
   }
 
@@ -247,23 +485,34 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     return stats.dev === expected.dev && stats.ino === expected.ino;
   }
 
-  function assertOwnerControlledDirectoryStats(stats) {
+  function sameDirectoryIdentityAt(path, stats, expected, { requireProtected = true } = {}) {
+    if (configuredPlatform === "win32" && expected?.volumeSerialNumber) {
+      return windowsObjectMatches(path, expected, { requireProtected });
+    }
+    return sameDirectoryIdentity(stats, expected);
+  }
+
+  function assertOwnerControlledDirectoryStats(stats, path = null, { requireProtected = true } = {}) {
     if (!stats.isDirectory() || stats.isSymbolicLink()) {
       throw new Error("Export destination must be a real directory");
     }
     if (typeof process.getuid === "function" && stats.uid !== process.getuid()) {
       throw new Error("Export destination must be owned by the current user");
     }
+    if (configuredPlatform === "win32") {
+      if (typeof path !== "string") throw new Error("Windows owner-only export path is unavailable");
+      inspectWindowsDirectory(path, { requireProtected });
+    }
   }
 
-  // The OS user is the local trust boundary. These path identity checks reject
-  // other-UID, symlink, hardlink, and cooperative-process replacement, but
-  // Node has no portable openat-style directory capability that could isolate
-  // against malicious code already executing as this same user.
+  // The OS user is the local trust boundary. Windows additionally requires
+  // native owner-only DACL evidence for each protected directory.
+  // These checks do not claim path-walk race safety against malicious code
+  // already executing as this same user.
   async function assertPinnedDestination(state) {
     const current = await lstat(state.directory);
-    assertOwnerControlledDirectoryStats(current);
-    if (!sameDirectoryIdentity(current, state.identity)) {
+    assertOwnerControlledDirectoryStats(current, state.directory);
+    if (!sameDirectoryIdentityAt(state.directory, current, state.identity)) {
       throw new Error("Owner-only export destination changed");
     }
     return current;
@@ -271,8 +520,8 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
 
   async function assertPinnedAbsentDestinationParent(state) {
     const current = await lstat(state.parentDirectory);
-    assertOwnerControlledDirectoryStats(current);
-    if (!sameDirectoryIdentity(current, state.parentIdentity)) {
+    assertOwnerControlledDirectoryStats(current, state.parentDirectory, { requireProtected: false });
+    if (!sameDirectoryIdentityAt(state.parentDirectory, current, state.parentIdentity, { requireProtected: false })) {
       throw new Error("Owner-only export destination parent changed");
     }
     return current;
@@ -412,9 +661,35 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
 
   async function prepareOwnerOnlyFile(path, content) {
     const expectedBytes = Buffer.byteLength(content);
-    const handle = await open(path, "wx", 0o600);
+    let windowsBefore = null;
+    let handle;
+    if (configuredPlatform === "win32") {
+      const createdIdentity = windowsFilesystem().createFile(path, Buffer.alloc(0));
+      windowsBefore = inspectWindowsFile(path);
+      if (windowsBefore.identity.linkCount !== 1
+          || (validWindowsIdentity(createdIdentity)
+            && !sameWindowsIdentity(createdIdentity, windowsBefore.identity))) {
+        throw new Error("Export staging artifact changed after protected creation");
+      }
+      handle = await open(path, constants.O_WRONLY);
+      try {
+        const initiallyEmpty = await handle.stat();
+        const pathBeforeWrite = await lstat(path);
+        if (!initiallyEmpty.isFile() || initiallyEmpty.isSymbolicLink()
+            || initiallyEmpty.size !== 0 || initiallyEmpty.nlink !== 1
+            || !sameFileIdentity(initiallyEmpty, snapshotFileIdentity(pathBeforeWrite))) {
+          throw new Error("Invalid owner-only export staging artifact");
+        }
+      } catch (error) {
+        await handle.close();
+        handle = null;
+        throw error;
+      }
+    } else {
+      handle = await open(path, "wx", 0o600);
+    }
     try {
-      await handle.chmod(0o600);
+      if (configuredPlatform !== "win32") await handle.chmod(0o600);
       await handle.writeFile(content);
       const written = await handle.stat();
       assertOwnerOnlyFileStats(written, {
@@ -429,12 +704,26 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
       if (!sameFileIdentity(pathAfterWrite, writtenIdentity)) {
         throw new Error("Export staging artifact changed after write");
       }
+      if (configuredPlatform === "win32") {
+        const inspected = inspectWindowsFile(path);
+        if (!sameWindowsIdentity(inspected.identity, windowsBefore.identity)
+            || !sameWindowsObject(inspected.parentIdentity, windowsBefore.parentIdentity)) {
+          throw new Error("Export staging artifact protection changed after write");
+        }
+      }
       await handle.sync();
       const synced = await handle.stat();
       const pathAfterSync = await lstat(path);
       if (!sameFileIdentity(synced, writtenIdentity)
           || !sameFileIdentity(pathAfterSync, writtenIdentity)) {
         throw new Error("Export staging artifact changed after synchronization");
+      }
+      if (configuredPlatform === "win32") {
+        const inspected = inspectWindowsFile(path);
+        if (!sameWindowsIdentity(inspected.identity, windowsBefore.identity)
+            || !sameWindowsObject(inspected.parentIdentity, windowsBefore.parentIdentity)) {
+          throw new Error("Export staging artifact protection changed after synchronization");
+        }
       }
     } finally {
       await handle.close();
@@ -446,7 +735,147 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     maximumBytes,
     expectedBytes = null,
     maximumLinks = 1,
+    expectedLinkedPath = null,
   } = {}) {
+    if (configuredPlatform === "win32") {
+      const before = inspectWindowsFile(path, { linkCounts: maximumLinks >= 2 ? [1, 2] : [1] });
+      const linkCount = before.identity.linkCount;
+      if (linkCount > maximumLinks || (linkCount === 2 && typeof expectedLinkedPath !== "string")) {
+        throw new Error(`Invalid export recovery ${label}`);
+      }
+      let counterpartBefore = null;
+      if (linkCount === 2) {
+        counterpartBefore = inspectWindowsFile(expectedLinkedPath, { linkCounts: [2] });
+        if (!sameWindowsIdentity(before.identity, counterpartBefore.identity)) {
+          throw new Error(`Invalid export recovery ${label} hardlink pair`);
+        }
+      }
+      const readWithHandle = async (handle, descriptorStats, checkIdentity) => {
+        assertOwnerOnlyFileStats(descriptorStats, {
+          label: `recovery ${label}`,
+          maximumBytes,
+          expectedBytes,
+          maximumLinks,
+          errorMessage: `Invalid export recovery ${label}`,
+        });
+        const bytes = Buffer.allocUnsafe(descriptorStats.size);
+        let offset = 0;
+        while (offset < bytes.length) {
+          const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+          if (!Number.isSafeInteger(bytesRead) || bytesRead < 1
+              || bytesRead > bytes.length - offset) {
+            throw new Error(`Export recovery ${label} changed during read`);
+          }
+          offset += bytesRead;
+        }
+        const overflow = Buffer.allocUnsafe(1);
+        const { bytesRead: overflowBytes } = await handle.read(
+          overflow, 0, overflow.length, descriptorStats.size,
+        );
+        if (overflowBytes !== 0 || !(await checkIdentity())) {
+          throw new Error(`Export recovery ${label} changed during read`);
+        }
+        return bytes;
+      };
+
+      if (linkCount === 1) {
+        const lease = await windowsSourceAccess().open(path);
+        let readCompleted = false;
+        let readStats;
+        try {
+          const descriptorStats = await lease.stat();
+          if (descriptorStats.dev !== before.identity.volumeSerialNumber
+              || descriptorStats.ino !== before.identity.fileId
+              || descriptorStats.nlink !== 1) {
+            throw new Error(`Export recovery ${label} changed during open`);
+          }
+          assertOwnerOnlyFileStats(descriptorStats, {
+            label: `recovery ${label}`,
+            maximumBytes,
+            expectedBytes,
+            maximumLinks: 1,
+            errorMessage: `Invalid export recovery ${label}`,
+          });
+          const bytes = Buffer.allocUnsafe(descriptorStats.size);
+          let offset = 0;
+          while (offset < bytes.length) {
+            const requested = Math.min(64 * 1024, bytes.length - offset);
+            const { bytesRead } = await lease.read(bytes, offset, requested, offset);
+            if (!Number.isSafeInteger(bytesRead) || bytesRead < 1 || bytesRead > requested) {
+              throw new Error(`Export recovery ${label} changed during read`);
+            }
+            offset += bytesRead;
+          }
+          const overflow = Buffer.allocUnsafe(1);
+          const { bytesRead: overflowBytes } = await lease.read(
+            overflow, 0, 1, descriptorStats.size,
+          );
+          const afterStats = await lease.stat();
+          const after = inspectWindowsFile(path);
+          if (overflowBytes !== 0
+              || afterStats.dev !== descriptorStats.dev
+              || afterStats.ino !== descriptorStats.ino
+              || afterStats.size !== descriptorStats.size
+              || afterStats.nlink !== descriptorStats.nlink
+              || !sameWindowsIdentity(before.identity, after.identity)
+              || !sameWindowsObject(before.parentIdentity, after.parentIdentity)) {
+            throw new Error(`Export recovery ${label} changed during read`);
+          }
+          readStats = descriptorStats;
+          readCompleted = true;
+          return { bytes, stats: readStats };
+        } finally {
+          try { await closeRecoveryFile(lease); }
+          catch {
+            if (readCompleted) throw new Error("Local export storage recovery file close failed");
+          }
+        }
+      }
+
+      const pathStats = await lstat(path);
+      assertOwnerOnlyFileStats(pathStats, {
+        label: `recovery ${label}`,
+        maximumBytes,
+        expectedBytes,
+        maximumLinks: 2,
+        errorMessage: `Invalid export recovery ${label}`,
+      });
+      const pathIdentity = snapshotFileIdentity(pathStats);
+      let handle;
+      let readCompleted = false;
+      try {
+        handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+        const descriptorStats = await handle.stat();
+        if (!sameFileIdentity(descriptorStats, pathIdentity)
+            || descriptorStats.nlink !== 2) {
+          throw new Error(`Export recovery ${label} changed during open`);
+        }
+        const bytes = await readWithHandle(handle, descriptorStats, async () => {
+          const descriptorAfter = await handle.stat();
+          const pathAfter = await lstat(path);
+          const sourceAfter = inspectWindowsFile(path, { linkCounts: [2] });
+          const linkedAfter = inspectWindowsFile(expectedLinkedPath, { linkCounts: [2] });
+          return sameFileIdentity(descriptorAfter, pathIdentity)
+            && sameFileIdentity(pathAfter, pathIdentity)
+            && sameWindowsIdentity(sourceAfter.identity, before.identity)
+            && sameWindowsObject(sourceAfter.parentIdentity, before.parentIdentity)
+            && sameWindowsIdentity(linkedAfter.identity, counterpartBefore.identity)
+            && sameWindowsObject(linkedAfter.parentIdentity, counterpartBefore.parentIdentity);
+        });
+        readCompleted = true;
+        return {
+          bytes,
+          stats: { ...descriptorStats, dev: before.identity.volumeSerialNumber, ino: before.identity.fileId },
+        };
+      } finally {
+        if (handle) {
+          try { await closeRecoveryFile(handle); }
+          catch {
+            if (readCompleted) throw new Error("Local export storage recovery file close failed");
+          }
+        }
+      }
+    }
     const pathStats = await lstat(path);
     assertOwnerOnlyFileStats(pathStats, {
       label: `recovery ${label}`,
@@ -525,7 +954,7 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     const { bytes } = await readOwnerOnlyRecoveryFile(path, {
       label: "manifest",
       maximumBytes: 64 * 1024,
-      maximumLinks: 2,
+      maximumLinks: 1,
     });
     let manifest;
     try {
@@ -566,21 +995,34 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     return manifest;
   }
   
-  async function assertOwnerOnlyOrphan(path) {
+  async function assertOwnerOnlyOrphan(path, expectedLinkedPath = null) {
     const stats = await lstat(path);
     if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink < 1 || stats.nlink > 2
         || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
       throw new Error("Invalid pre-commit export recovery artifact");
     }
+    if (configuredPlatform === "win32") {
+      const inspected = inspectWindowsFile(path, { linkCounts: [1, 2] });
+      if (inspected.identity.linkCount === 2) {
+        if (typeof expectedLinkedPath !== "string") {
+          throw new Error("Invalid pre-commit export recovery hardlink");
+        }
+        const linked = inspectWindowsFile(expectedLinkedPath, { linkCounts: [2] });
+        if (!sameWindowsIdentity(inspected.identity, linked.identity)) {
+          throw new Error("Invalid pre-commit export recovery hardlink");
+        }
+      }
+    }
     return stats;
   }
   
-  async function assertStagedArtifact(path, expected, maximumBytes) {
+  async function assertStagedArtifact(path, expected, maximumBytes, expectedLinkedPath) {
     const { bytes, stats } = await readOwnerOnlyRecoveryFile(path, {
       label: "stage",
       maximumBytes,
       expectedBytes: expected.bytes,
       maximumLinks: 2,
+      expectedLinkedPath,
     });
     if (sha256(bytes) !== expected.sha256) throw new Error("Invalid export recovery stage digest");
     return stats;
@@ -589,7 +1031,15 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
   async function finalState(path, stageStats) {
     const stats = await lstatIfExists(path);
     if (!stats) return "absent";
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.dev !== stageStats.dev || stats.ino !== stageStats.ino) return "conflict";
+    if (!stats.isFile() || stats.isSymbolicLink()) return "conflict";
+    if (configuredPlatform === "win32") {
+      const inspected = inspectWindowsFile(path, { linkCounts: [1, 2] });
+      if (inspected.identity.volumeSerialNumber !== stageStats.dev
+          || inspected.identity.fileId !== stageStats.ino
+          || inspected.identity.linkCount !== stageStats.nlink) return "conflict";
+      return "same_inode";
+    }
+    if (stats.dev !== stageStats.dev || stats.ino !== stageStats.ino) return "conflict";
     return "same_inode";
   }
   
@@ -636,6 +1086,23 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
   
   async function readExportDestinationLock(path) {
     const stats = await lstat(path);
+    if (configuredPlatform === "win32") {
+      const inspected = inspectWindowsFile(path, { allowReparsePoint: true, linkCounts: [1, 2] });
+      if (!stats.isSymbolicLink() || stats.nlink < 1 || stats.nlink > 2) {
+        throw new Error("Local export destination has an invalid lock");
+      }
+      const target = await readlink(path);
+      const after = inspectWindowsFile(path, { allowReparsePoint: true, linkCounts: [1, 2] });
+      if (!sameWindowsIdentity(inspected.identity, after.identity)
+          || !sameWindowsObject(inspected.parentIdentity, after.parentIdentity)) {
+        throw new Error("Local export destination lock changed during inspection");
+      }
+      const match = /^pid=(\d+);token=([0-9a-f-]{36})$/.exec(target);
+      if (!match) throw new Error("Local export destination has an invalid lock");
+      const pid = Number(match[1]);
+      if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("Local export destination has an invalid lock");
+      return { pid, stats };
+    }
     if (!stats.isSymbolicLink() || stats.nlink < 1 || stats.nlink > 2
         || (typeof process.getuid === "function" && stats.uid !== process.getuid())) {
       throw new Error("Local export destination has an invalid lock");
@@ -664,6 +1131,12 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
           || current.ino !== expectedStats.ino
           || (typeof process.getuid === "function" && current.uid !== process.getuid())) {
         throw new Error(changedMessage);
+      }
+      if (configuredPlatform === "win32") {
+        const inspected = inspectWindowsFile(path, { allowReparsePoint: true, linkCounts: [1, 2] });
+        if (!sameWindowsObject(inspected.parentIdentity, inspectWindowsDirectory(destinationDirectory))) {
+          throw new Error(changedMessage);
+        }
       }
       await unlink(path);
       await synchronizeDirectory(destinationDirectory);
@@ -757,8 +1230,10 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
           }
         }
         try {
+          if (configuredPlatform === "win32") await assertOwnerControlledDirectoryPath(destinationDirectory);
           await symlink(target, lockPath);
           lockOwnership = await readNewLockStats(lockPath);
+          if (configuredPlatform === "win32") inspectWindowsFile(lockPath, { allowReparsePoint: true, linkCounts: [1] });
           await synchronizeDirectory(destinationDirectory);
           await releaseOwnedClaim();
           break;
@@ -768,8 +1243,10 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
       }
 
       try {
+        if (configuredPlatform === "win32") await assertOwnerControlledDirectoryPath(destinationDirectory);
         await symlink(target, lockPath);
         lockOwnership = await readNewLockStats(lockPath);
+        if (configuredPlatform === "win32") inspectWindowsFile(lockPath, { allowReparsePoint: true, linkCounts: [1] });
         await synchronizeDirectory(destinationDirectory);
         const postAcquireClaims = (await boundedDirectoryEntries(destinationDirectory))
           .filter((name) => name.startsWith(EXPORT_DESTINATION_CLAIM_PREFIX));
@@ -818,9 +1295,10 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     const leaseCallback = guardedFunction(callback, "Export destination lease callback is required");
     const selectedOptions = snapshotOperationOptions(options);
     const target = resolve(directory);
-    await assertOwnerControlledDirectory(target);
+    await assertOwnerControlledDirectoryPath(target);
     const canonicalTarget = await realpath(target);
     const canonicalStats = await lstat(canonicalTarget);
+    assertOwnerControlledDirectoryStats(canonicalStats, canonicalTarget);
     return withExportDestinationLock(
       canonicalTarget,
       () => REFLECT_APPLY(leaseCallback, undefined, [canonicalTarget, canonicalStats]),
@@ -845,16 +1323,20 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     const destinationStats = await lstatIfExists(requested);
     let state;
     if (destinationStats) {
-      assertOwnerControlledDirectoryStats(destinationStats);
+      assertOwnerControlledDirectoryStats(destinationStats, requested);
       const canonicalDirectory = await realpath(requested);
       const canonicalStats = await lstat(canonicalDirectory);
-      assertOwnerControlledDirectoryStats(canonicalStats);
-      if (!sameDirectoryIdentity(canonicalStats, snapshotDirectoryIdentity(destinationStats))) {
+      assertOwnerControlledDirectoryStats(canonicalStats, canonicalDirectory);
+      if (!sameDirectoryIdentityAt(
+        canonicalDirectory,
+        canonicalStats,
+        snapshotDirectoryIdentity(destinationStats, requested),
+      )) {
         throw new Error("Owner-only export destination changed during open");
       }
       state = {
         directory: canonicalDirectory,
-        identity: snapshotDirectoryIdentity(canonicalStats),
+        identity: snapshotDirectoryIdentity(canonicalStats, canonicalDirectory),
         status: "present",
         parentDirectory: null,
         parentIdentity: null,
@@ -866,11 +1348,16 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
       }
       const parentDirectory = dirname(requested);
       const requestedParentStats = await lstat(parentDirectory);
-      assertOwnerControlledDirectoryStats(requestedParentStats);
+      assertOwnerControlledDirectoryStats(requestedParentStats, parentDirectory, { requireProtected: false });
       const canonicalParent = await realpath(parentDirectory);
       const parentStats = await lstat(canonicalParent);
-      assertOwnerControlledDirectoryStats(parentStats);
-      if (!sameDirectoryIdentity(parentStats, snapshotDirectoryIdentity(requestedParentStats))) {
+      assertOwnerControlledDirectoryStats(parentStats, canonicalParent, { requireProtected: false });
+      if (!sameDirectoryIdentityAt(
+        canonicalParent,
+        parentStats,
+        snapshotDirectoryIdentity(requestedParentStats, parentDirectory, { requireProtected: false }),
+        { requireProtected: false },
+      )) {
         throw new Error("Owner-only export destination parent changed during open");
       }
       state = {
@@ -878,7 +1365,7 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
         identity: null,
         status: "absent",
         parentDirectory: canonicalParent,
-        parentIdentity: snapshotDirectoryIdentity(parentStats),
+        parentIdentity: snapshotDirectoryIdentity(parentStats, canonicalParent, { requireProtected: false }),
       };
     }
     const destination = Object.freeze(Object.create(null));
@@ -892,15 +1379,11 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
       return state.directory;
     }
     await assertPinnedAbsentDestinationParent(state);
-    try {
-      await mkdir(state.directory, { mode: 0o700 });
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-    }
+    await ensureOwnerOnlyDirectoryPath(state.directory, { exclusive: true, recursive: false });
     const destinationStats = await lstat(state.directory);
-    assertOwnerControlledDirectoryStats(destinationStats);
+    assertOwnerControlledDirectoryStats(destinationStats, state.directory);
     await assertPinnedAbsentDestinationParent(state);
-    state.identity = snapshotDirectoryIdentity(destinationStats);
+    state.identity = snapshotDirectoryIdentity(destinationStats, state.directory);
     state.status = "present";
     await assertPinnedDestination(state);
     return state.directory;
@@ -965,13 +1448,23 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
   async function unlinkSameInode(path, expectedStats) {
     const current = await lstat(path);
     if (!current.isFile() || current.isSymbolicLink()
-        || current.dev !== expectedStats.dev || current.ino !== expectedStats.ino) {
+        || (configuredPlatform !== "win32"
+          && (current.dev !== expectedStats.dev || current.ino !== expectedStats.ino))) {
       throw new Error("Export recovery destination changed before cleanup");
+    }
+    if (configuredPlatform === "win32") {
+      const inspected = inspectWindowsFile(path, { linkCounts: [2] });
+      if (inspected.identity.volumeSerialNumber !== expectedStats.dev
+          || inspected.identity.fileId !== expectedStats.ino
+          || inspected.identity.linkCount !== 2) {
+        throw new Error("Export recovery destination protection changed before cleanup");
+      }
     }
     await unlink(path);
   }
   
   async function writeOwnerOnlyPairNoClobberUnlocked(pair, options, batch = null) {
+    preflightWindowsArtifactRead();
     const { firstPath, firstContent, secondPath, secondContent } = pair;
     const firstBytes = pairContentByteLength(firstContent);
     const secondBytes = pairContentByteLength(secondContent);
@@ -992,10 +1485,10 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     }
     const firstDirectory = dirname(first);
     const secondDirectory = dirname(second);
-    await mkdir(firstDirectory, { recursive: true, mode: 0o700 });
-    await mkdir(secondDirectory, { recursive: true, mode: 0o700 });
-    await assertOwnerControlledDirectory(firstDirectory);
-    await assertOwnerControlledDirectory(secondDirectory);
+    await ensureOwnerOnlyDirectoryPath(firstDirectory, { recursive: true });
+    await ensureOwnerOnlyDirectoryPath(secondDirectory, { recursive: true });
+    await assertOwnerControlledDirectoryPath(firstDirectory);
+    await assertOwnerControlledDirectoryPath(secondDirectory);
     const firstResolved = join(await realpath(firstDirectory), basename(first));
     const secondResolved = join(await realpath(secondDirectory), basename(second));
     if (firstResolved === secondResolved) throw new Error("Bundle and privacy receipt paths must be distinct");
@@ -1011,14 +1504,14 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
       if (transactionRoot !== batch.root) throw new Error("Export batch destination mismatch");
       await assertPinnedBatch(batch);
     } else {
-      await mkdir(transactionRoot, { recursive: true, mode: 0o700 });
-      await assertOwnerControlledDirectory(transactionRoot);
-      await chmod(transactionRoot, 0o700);
-      await assertOwnerControlledDirectory(transactionRoot);
+      await ensureOwnerOnlyDirectoryPath(transactionRoot, { recursive: false });
+      await assertOwnerControlledDirectoryPath(transactionRoot);
+      if (configuredPlatform !== "win32") await chmod(transactionRoot, 0o700);
+      await assertOwnerControlledDirectoryPath(transactionRoot);
     }
     const transactionId = `${process.pid}.${randomUUID()}`;
     const transactionDirectory = join(transactionRoot, transactionId);
-    await mkdir(transactionDirectory, { mode: 0o700 });
+    await ensureOwnerOnlyDirectoryPath(transactionDirectory, { exclusive: true, recursive: false });
     const bundleStage = join(transactionDirectory, "bundle.stage");
     const receiptStage = join(transactionDirectory, "receipt.stage");
     const manifestPath = join(transactionDirectory, "manifest.json");
@@ -1080,12 +1573,13 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     }
     const first = resolve(firstPath);
     const second = resolve(secondPath);
+    preflightWindowsArtifactRead();
     const firstDirectory = dirname(first);
     const secondDirectory = dirname(second);
-    await mkdir(firstDirectory, { recursive: true, mode: 0o700 });
-    await mkdir(secondDirectory, { recursive: true, mode: 0o700 });
-    await assertOwnerControlledDirectory(firstDirectory);
-    await assertOwnerControlledDirectory(secondDirectory);
+    await ensureOwnerOnlyDirectoryPath(firstDirectory, { recursive: true });
+    await ensureOwnerOnlyDirectoryPath(secondDirectory, { recursive: true });
+    await assertOwnerControlledDirectoryPath(firstDirectory);
+    await assertOwnerControlledDirectoryPath(secondDirectory);
     const canonicalFirstDirectory = await realpath(firstDirectory);
     const canonicalSecondDirectory = await realpath(secondDirectory);
     if (canonicalFirstDirectory !== canonicalSecondDirectory) {
@@ -1109,10 +1603,11 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     }
     const first = resolve(firstPath);
     const second = resolve(secondPath);
+    preflightWindowsArtifactRead();
     const firstDirectory = dirname(first);
     const secondDirectory = dirname(second);
-    await assertOwnerControlledDirectory(firstDirectory);
-    await assertOwnerControlledDirectory(secondDirectory);
+    await assertOwnerControlledDirectoryPath(firstDirectory);
+    await assertOwnerControlledDirectoryPath(secondDirectory);
     const canonicalFirstDirectory = await realpath(firstDirectory);
     const canonicalSecondDirectory = await realpath(secondDirectory);
     if (canonicalFirstDirectory !== canonicalSecondDirectory) {
@@ -1126,16 +1621,17 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
   }
   
   async function recoverOwnerOnlyPairTransactionsUnlocked(request, options, batch = null) {
+    preflightWindowsArtifactRead();
     if (batch) await assertPinnedBatch(batch);
     const { directory } = request;
     if (!directory) throw new Error("Export recovery directory is required");
     const destinationDirectory = resolve(directory);
-    await assertOwnerControlledDirectory(destinationDirectory);
+    await assertOwnerControlledDirectoryPath(destinationDirectory);
     const destinationResolved = await realpath(destinationDirectory);
     const transactionRoot = join(destinationResolved, EXPORT_TRANSACTION_DIRECTORY);
     const rootStats = await lstatIfExists(transactionRoot);
     if (!rootStats) return { recovered: 0, transactionsFound: 0 };
-    await assertOwnerControlledDirectory(transactionRoot);
+    await assertOwnerControlledDirectoryPath(transactionRoot);
     const transactionNames = await boundedDirectoryEntries(transactionRoot, { sort: true });
     let recovered = 0;
     for (const transactionName of transactionNames) {
@@ -1144,7 +1640,7 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
         throw new Error("Unexpected entry in export transaction directory");
       }
       const transactionDirectory = join(transactionRoot, transactionName);
-      await assertOwnerControlledDirectory(transactionDirectory);
+      await assertOwnerControlledDirectoryPath(transactionDirectory);
       const entries = await boundedDirectoryEntries(transactionDirectory, { sort: true });
       if (!entries.includes("manifest.json")) {
         if (entries.some((name) => !["bundle.stage", "manifest.prepared", "receipt.stage"].includes(name))) {
@@ -1165,7 +1661,11 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
       }
       if (entries.includes("manifest.prepared")) {
         const manifestStats = await lstat(join(transactionDirectory, "manifest.json"));
-        const preparedStats = await assertOwnerOnlyOrphan(join(transactionDirectory, "manifest.prepared"));
+        const preparedPath = join(transactionDirectory, "manifest.prepared");
+        const preparedStats = await assertOwnerOnlyOrphan(
+          preparedPath,
+          join(transactionDirectory, "manifest.json"),
+        );
         if (manifestStats.dev !== preparedStats.dev || manifestStats.ino !== preparedStats.ino) {
           throw new Error("Export recovery manifest publication mismatch");
         }
@@ -1182,8 +1682,14 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
         bundleStage,
         manifest.artifacts.bundle,
         MAX_LOCAL_FIRST_ARTIFACT_BYTES,
+        bundleFinal,
       );
-      const receiptStats = await assertStagedArtifact(receiptStage, manifest.artifacts.receipt, MAX_LOCAL_RECEIPT_BYTES);
+      const receiptStats = await assertStagedArtifact(
+        receiptStage,
+        manifest.artifacts.receipt,
+        MAX_LOCAL_RECEIPT_BYTES,
+        receiptFinal,
+      );
       let bundleState = await finalState(bundleFinal, bundleStats);
       let receiptState = await finalState(receiptFinal, receiptStats);
       if (bundleState === "conflict" || receiptState === "conflict") {
@@ -1222,8 +1728,9 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     const { directory } = selectedRequest;
     if (!directory) throw new Error("Export recovery directory is required");
     if (typeof directory !== "string") throw new Error("Export recovery directory is required");
+    preflightWindowsArtifactRead();
     const destinationDirectory = resolve(directory);
-    await assertOwnerControlledDirectory(destinationDirectory);
+    await assertOwnerControlledDirectoryPath(destinationDirectory);
     const canonicalDirectory = await realpath(destinationDirectory);
     return withExportDestinationLock(canonicalDirectory, () =>
       recoverOwnerOnlyPairTransactionsUnlocked({ directory: canonicalDirectory }, selectedOptions), selectedOptions);
@@ -1235,8 +1742,9 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     const { directory } = selectedRequest;
     if (!directory) throw new Error("Export recovery directory is required");
     if (typeof directory !== "string") throw new Error("Export recovery directory is required");
+    preflightWindowsArtifactRead();
     const destinationDirectory = resolve(directory);
-    await assertOwnerControlledDirectory(destinationDirectory);
+    await assertOwnerControlledDirectoryPath(destinationDirectory);
     const canonicalDirectory = await realpath(destinationDirectory);
     return recoverOwnerOnlyPairTransactionsUnlocked({ directory: canonicalDirectory }, selectedOptions);
   }
@@ -1244,8 +1752,8 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
   async function assertPinnedBatch(batch) {
     await assertPinnedDestination(batch.destination);
     const current = await lstat(batch.root);
-    assertOwnerControlledDirectoryStats(current);
-    if (!sameDirectoryIdentity(current, batch.identity)
+    assertOwnerControlledDirectoryStats(current, batch.root);
+    if (!sameDirectoryIdentityAt(batch.root, current, batch.identity)
         || await realpath(batch.root) !== batch.root) {
       throw new Error("Owner-only export transaction root changed");
     }
@@ -1281,20 +1789,20 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     const selectedCallback = guardedFunction(callback, "Export destination batch callback is required");
     const selectedOptions = snapshotOperationOptions(options);
     if (state.batch) throw new Error("Nested export destination batches are unsupported");
+    preflightWindowsArtifactRead();
     const directory = await ensureWritableDestination(state);
     const rejectionMarker = Object.freeze({});
     let batchRejection = null;
     return withExportDestinationLock(directory, async (lockIdentity) => {
       await assertPinnedDestination(state);
       const root = join(directory, EXPORT_TRANSACTION_DIRECTORY);
-      try { await mkdir(root, { mode: 0o700 }); }
-      catch (error) { if (error.code !== "EEXIST") throw error; }
+      await ensureOwnerOnlyDirectoryPath(root, { recursive: false });
       const rootStats = await lstat(root);
-      assertOwnerControlledDirectoryStats(rootStats);
+      assertOwnerControlledDirectoryStats(rootStats, root);
       const batch = { active: true, pending: null, failure: null, root,
-        identity: snapshotDirectoryIdentity(rootStats), lockIdentity, destination: state };
+        identity: snapshotDirectoryIdentity(rootStats, root), lockIdentity, destination: state };
       await assertPinnedBatch(batch);
-      await chmod(root, 0o700);
+      if (configuredPlatform !== "win32") await chmod(root, 0o700);
       await assertPinnedBatch(batch);
       await synchronizeDirectory(directory);
       const capability = Object.freeze(Object.create(null));
@@ -1339,6 +1847,7 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
       await assertPinnedAbsentDestinationParent(state);
       return { recovered: 0, transactionsFound: 0 };
     }
+    preflightWindowsArtifactRead();
     if (state.batch) {
       return runBatchOperation(state.batch, () => recoverOwnerOnlyPairTransactionsUnlocked(
         { directory: state.directory }, selectedOptions, state.batch,
@@ -1364,6 +1873,7 @@ export function createOwnerOnlyExportArtifactStorageContext(configuration = {}) 
     const state = requireDestination(destination);
     const selectedPair = snapshotDestinationPair(pair);
     const selectedOptions = snapshotOperationOptions(options);
+    preflightWindowsArtifactRead();
     if (state.batch) {
       return runBatchOperation(state.batch, () => writeOwnerOnlyPairNoClobberUnlocked({
         firstPath: join(state.directory, selectedPair.firstBasename),

@@ -16,6 +16,23 @@ coverage is checked against `src/cli.js` by
 `test/cli-reference.test.js`; the CLI's own usage output remains the authority
 for exact flags.
 
+Analysis commands reject input/output/report paths that identify the same file,
+including canonical parent, case, symbolic-link, and hard-link aliases, before
+their first persistent mutation. An explicitly selected independent report may
+still be updated; selecting an input as the report is never an update request.
+Generic report publication currently returns
+`OWNER_ONLY_ATOMIC_WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE` on Windows before any
+directory or file creation. A qualified protected publisher is required to
+restore that write path; changing permissions or disabling the gate is not a fix.
+
+Export workspace v0.6 (physical schema 6) preserves exact Windows volume/file
+identities as private canonical decimal strings, bounded to U64/U128
+respectively. The public source summary omits these identities. Older workspace
+schemas are refused before writable configuration and preserved unchanged;
+they are not relabeled or automatically converted. The separate collector v0.2
+plan retains its U64-per-identity contract and rejects larger file IDs. These
+source-level contracts are not installed native qualification.
+
 Commands operate on local files or the reviewed local Codex subprocess. Codex
 may itself need provider network access for fresh account evidence. A live
 research experiment requires an explicit `--execute-live` and reviewed manifest;

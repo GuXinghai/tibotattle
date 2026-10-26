@@ -16,7 +16,11 @@ import {
   truncateDurably,
   unlinkDurably,
 } from "./storage.js";
-import { readBoundedUtf8LineEntries } from "./platform/index.js";
+import {
+  createWindowsFilesystemAdapter,
+  prepareProtectedSqliteDatabaseFile,
+  readBoundedUtf8LineEntries,
+} from "./platform/index.js";
 import { validAbortSignal } from "./valid-abort-signal.js";
 
 // This database is deliberately the one durable owner-controlled store for
@@ -55,6 +59,31 @@ const MANAGED_LEGACY_BASENAMES = new Set([
   "local-replay-safe-accounting-v0.1.json",
   "local-replay-safe-accounting-v0.2.json",
 ]);
+
+let localCollectorWindowsFilesystemAdapter;
+
+function getLocalCollectorWindowsFilesystemAdapter() {
+  if (process.platform !== "win32") return null;
+  if (localCollectorWindowsFilesystemAdapter !== undefined) {
+    return localCollectorWindowsFilesystemAdapter;
+  }
+  try {
+    localCollectorWindowsFilesystemAdapter = createWindowsFilesystemAdapter();
+    return localCollectorWindowsFilesystemAdapter;
+  } catch {
+    throw fixedError("local_collector_state_unavailable");
+  }
+}
+
+function sameWindowsFileIdentity(left, right) {
+  return left?.volumeSerialNumber === right?.volumeSerialNumber
+    && left?.fileId === right?.fileId
+    && left?.linkCount === right?.linkCount;
+}
+
+async function setLocalCollectorStateOwnerOnlyMode(stateFile) {
+  if (process.platform !== "win32") await chmod(stateFile, 0o600);
+}
 
 function lstatExact(path) {
   return fsPromises.lstat(path, { bigint: true });
@@ -288,7 +317,11 @@ function validateDatabase(database) {
 
 async function assertSafeStateFile(
   path,
-  { allowMissing = false, exactIdentity = false } = {},
+  {
+    allowMissing = false,
+    exactIdentity = false,
+    expectedWindowsIdentity = null,
+  } = {},
 ) {
   let metadata;
   try {
@@ -302,6 +335,21 @@ async function assertSafeStateFile(
   }
   if (!ownerOnlyRegularFile(metadata)) {
     throw fixedError("local_collector_state_unavailable");
+  }
+  if (process.platform === "win32") {
+    let protectedFile;
+    try {
+      protectedFile = prepareProtectedSqliteDatabaseFile({
+        adapter: getLocalCollectorWindowsFilesystemAdapter(),
+        path,
+      });
+    } catch {
+      throw fixedError("local_collector_state_unavailable");
+    }
+    if (expectedWindowsIdentity !== null
+        && !sameWindowsFileIdentity(protectedFile.identity, expectedWindowsIdentity)) {
+      throw fixedError("local_collector_state_unavailable");
+    }
   }
   return metadata;
 }
@@ -566,14 +614,45 @@ async function syncStateFile(stateFile) {
 }
 
 async function ensureDatabase(stateFile) {
-  const exists = await prepareStateFile(stateFile);
+  let create = false;
+  let expectedWindowsIdentity = null;
+  if (process.platform === "win32") {
+    try {
+      const prepared = prepareProtectedSqliteDatabaseFile({
+        adapter: getLocalCollectorWindowsFilesystemAdapter(),
+        path: stateFile,
+        createIfMissing: true,
+      });
+      create = prepared.created;
+      expectedWindowsIdentity = prepared.identity;
+    } catch {
+      throw fixedError("local_collector_state_unavailable");
+    }
+    const metadata = await assertSafeStateFile(stateFile, {
+      exactIdentity: true,
+      expectedWindowsIdentity,
+    });
+    if (!create && (metadata.size === 0 || metadata.size === 0n)) {
+      // A raced EEXIST or pre-existing empty file is not permission to let
+      // SQLite initialize an object this process did not create.
+      throw fixedError("local_collector_state_schema_invalid");
+    }
+  } else {
+    create = !(await prepareStateFile(stateFile));
+  }
   let database;
   try {
-    database = openDatabase(stateFile, { readOnly: false, create: !exists });
+    database = openDatabase(stateFile, { readOnly: false, create });
   } finally {
     database?.close();
   }
-  await chmod(stateFile, 0o600);
+  if (process.platform === "win32") {
+    await assertSafeStateFile(stateFile, {
+      exactIdentity: true,
+      expectedWindowsIdentity,
+    });
+  }
+  await setLocalCollectorStateOwnerOnlyMode(stateFile);
   await syncStateFile(stateFile);
 }
 
@@ -1307,7 +1386,7 @@ export async function commitLocalCollectorState({
   } finally {
     database?.close();
   }
-  await chmod(stateFile, 0o600);
+  await setLocalCollectorStateOwnerOnlyMode(stateFile);
   await syncStateFile(stateFile);
   return result;
 }
@@ -1449,7 +1528,7 @@ export async function openLocalCollectorStateSession({
         });
         verified = true;
       }
-      await chmod(stateFile, 0o600);
+      await setLocalCollectorStateOwnerOnlyMode(stateFile);
       await syncStateFile(stateFile);
       return { batches, inserted, verified };
     },
@@ -1517,7 +1596,7 @@ export async function writeLocalCollectorAccountingCache({
   } finally {
     database?.close();
   }
-  await chmod(stateFile, 0o600);
+  await setLocalCollectorStateOwnerOnlyMode(stateFile);
   await syncStateFile(stateFile);
 }
 
@@ -1942,7 +2021,7 @@ async function migrateLegacyLocalCollectorStateUnlocked({
   } finally {
     database?.close();
   }
-  await chmod(stateFile, 0o600);
+  await setLocalCollectorStateOwnerOnlyMode(stateFile);
   await syncStateFile(stateFile);
 
   const migrated = await readLocalCollectorState({ stateFile, includeRecords: false });

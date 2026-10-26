@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { appendFile, chmod, lstat, mkdir, open, readFile, realpath, rename, unlink } from "node:fs/promises";
+import { appendFile, chmod, lstat, mkdir, open, readFile, realpath, rename, stat, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   DEFAULT_EXPORT_RESOURCE_LIMITS,
@@ -8,6 +8,7 @@ import {
 import { stableJson } from "./export/canonical-json.js";
 import {
   assertOwnerControlledDirectory,
+  createOwnerOnlyAtomicFilePublisher,
   createOwnerOnlyExportArtifactStorageContext,
   defaultActivityMarkerFile,
   lstatIfExists,
@@ -18,6 +19,8 @@ export { defaultActivityMarkerFile };
 export { syncDirectory };
 
 export { stableJson };
+
+const publishOwnerOnlyAtomic = createOwnerOnlyAtomicFilePublisher();
 
 export function defaultDataFile() {
   return resolve(process.cwd(), ".usage-monitor", "observations.jsonl");
@@ -129,25 +132,73 @@ export function defaultWeeklyCalibrationReportFile(endAt) {
 }
 
 export async function writeOwnerOnlyAtomic(path, content) {
-  const directory = dirname(path);
-  await mkdir(directory, { recursive: true });
-  const temporaryPath = `${path}.${process.pid}.tmp`;
-  let handle;
+  return publishOwnerOnlyAtomic(path, content);
+}
+
+/** Check the atomic publisher's platform capability without touching paths. */
+export async function assertOwnerOnlyAtomicPublisherAvailable() {
+  return publishOwnerOnlyAtomic.assertAvailable();
+}
+
+function pathSafetyFailure(code) {
+  const error = new Error("CLI input and output paths are unsafe");
+  error.code = `CLI_PATH_SAFETY_${code}`;
+  return error;
+}
+
+async function canonicalPathSnapshot(path) {
+  if (typeof path !== "string" || path.length === 0) throw pathSafetyFailure("INVALID_PATH");
+  const requested = resolve(path);
+  let cursor = requested;
+  const missingComponents = [];
+  let canonical;
+  while (true) {
+    try {
+      canonical = resolve(await realpath(cursor), ...missingComponents);
+      break;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const parent = dirname(cursor);
+      if (parent === cursor) throw error;
+      missingComponents.unshift(basename(cursor));
+      cursor = parent;
+    }
+  }
+  let identity = null;
   try {
-    handle = await open(temporaryPath, "w", 0o600);
-    await handle.chmod(0o600);
-    await handle.writeFile(content, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await rename(temporaryPath, path);
-    await syncDirectory(directory);
+    const details = await stat(requested, { bigint: true });
+    if (details.isFile() && details.ino !== 0n) identity = { dev: details.dev, ino: details.ino };
   } catch (error) {
-    await handle?.close().catch(() => {});
-    await unlink(temporaryPath).catch((cleanupError) => {
-      if (cleanupError.code !== "ENOENT") throw cleanupError;
-    });
-    throw error;
+    if (error.code !== "ENOENT") throw error;
+  }
+  return Object.freeze({
+    key: canonical.normalize("NFC").toLowerCase(),
+    identity,
+  });
+}
+
+/** Reject input/output aliases before a CLI command publishes any result. */
+export async function assertInputOutputPathsDistinct(inputPaths, outputPaths) {
+  if (!Array.isArray(inputPaths) || !Array.isArray(outputPaths)
+      || inputPaths.length > 32 || outputPaths.length < 1 || outputPaths.length > 32) {
+    throw pathSafetyFailure("INVALID_LIST");
+  }
+  const [inputs, outputs] = await Promise.all([
+    Promise.all(inputPaths.map(canonicalPathSnapshot)),
+    Promise.all(outputPaths.map(canonicalPathSnapshot)),
+  ]);
+  const sameTarget = (left, right) => left.key === right.key
+    || (left.identity !== null && right.identity !== null
+      && left.identity.dev === right.identity.dev && left.identity.ino === right.identity.ino);
+  for (const output of outputs) {
+    if (inputs.some((input) => sameTarget(input, output))) {
+      throw pathSafetyFailure("INPUT_OUTPUT_COLLISION");
+    }
+  }
+  for (let index = 0; index < outputs.length; index += 1) {
+    if (outputs.slice(0, index).some((output) => sameTarget(output, outputs[index]))) {
+      throw pathSafetyFailure("OUTPUT_COLLISION");
+    }
   }
 }
 

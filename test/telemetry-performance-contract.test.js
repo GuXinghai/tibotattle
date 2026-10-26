@@ -251,6 +251,10 @@ test("performance JSON Schemas express closed shape and simple runtime relations
   const ajv = new Ajv({ strict: false, allErrors: true });
   ajv.addSchema(schemas["performance-histogram.schema.json"]);
   const validateHistogram = ajv.getSchema(schemas["performance-histogram.schema.json"].$id);
+  assert.equal(
+    schemas["performance-record.schema.json"].properties.speedHistogram.allOf[0].$ref,
+    schemas["performance-histogram.schema.json"].$id,
+  );
   const validateRecord = ajv.compile(schemas["performance-record.schema.json"]);
   assert.equal(validateHistogram(speedHistogram()), true);
   assert.equal(validateHistogram(completionHistogram()), true);

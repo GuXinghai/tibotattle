@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { createSourceFileAccess } from "./source-file-access.js";
 
 const DEFAULT_FILE_SYSTEM = Object.freeze({
   allocate(size) {
@@ -11,6 +12,9 @@ const DEFAULT_FILE_SYSTEM = Object.freeze({
   open,
   realpath,
 });
+const WINDOWS_SOURCE_READ_CONTRACT = "windows-source-read-v1";
+const WINDOWS_ID_PATTERN = /^[0-9a-f]{16}$/u;
+const WINDOWS_FILE_ID_PATTERN = /^[0-9a-f]{32}$/u;
 
 function failureContext(createError) {
   if (typeof createError !== "function") {
@@ -98,6 +102,209 @@ function sameParentIdentity(snapshot, canonicalPath, stats) {
   return canonicalPath === snapshot.canonicalPath
     && stats.dev === snapshot.dev
     && stats.ino === snapshot.ino;
+}
+
+function validWindowsIdentity(identity) {
+  return identity !== null
+    && typeof identity === "object"
+    && !Array.isArray(identity)
+    && typeof identity.volumeSerialNumber === "string"
+    && WINDOWS_ID_PATTERN.test(identity.volumeSerialNumber)
+    && typeof identity.fileId === "string"
+    && WINDOWS_FILE_ID_PATTERN.test(identity.fileId)
+    && Number.isSafeInteger(identity.linkCount)
+    && identity.linkCount >= 0;
+}
+
+function sameWindowsIdentity(identity, stats) {
+  return validWindowsIdentity(identity)
+    && stats?.dev === identity.volumeSerialNumber
+    && stats?.ino === identity.fileId
+    && stats?.nlink === identity.linkCount;
+}
+
+function assertWindowsAclEvidence(metadata, kind, label, failures) {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)
+      || !validWindowsIdentity(metadata.identity)
+      || typeof metadata.isDirectory !== "boolean"
+      || typeof metadata.isRegularFile !== "boolean"
+      || typeof metadata.isReparsePoint !== "boolean"
+      || typeof metadata.ownerMatches !== "boolean"
+      || typeof metadata.nullDacl !== "boolean"
+      || typeof metadata.daclProtected !== "boolean"
+      || typeof metadata.broadAccess !== "boolean"
+      || typeof metadata.nonOwnerAllow !== "boolean"
+      || typeof metadata.unrecognizedAce !== "boolean"
+      || typeof metadata.finalPathResolved !== "boolean") {
+    failures.fail("windows_protection_unavailable");
+  }
+  if (metadata.isReparsePoint !== false
+      || metadata.ownerMatches !== true
+      || metadata.nullDacl !== false
+      || metadata.daclProtected !== true
+      || metadata.broadAccess !== false
+      || metadata.nonOwnerAllow !== false
+      || metadata.unrecognizedAce !== false
+      || metadata.finalPathResolved !== true) {
+    failures.fail(`${label}_permissions`);
+  }
+  if (kind === "directory") {
+    if (metadata.isDirectory !== true || metadata.isRegularFile !== false) {
+      failures.fail("parent_directory_type");
+    }
+  } else if (metadata.isDirectory !== false
+      || metadata.isRegularFile !== true
+      || metadata.identity.linkCount !== 1) {
+    failures.fail(`${label}_not_regular`);
+  }
+  return metadata.identity;
+}
+
+function validatedWindowsSourceAccess(sourceAccess, failures) {
+  if (sourceAccess?.contractVersion !== WINDOWS_SOURCE_READ_CONTRACT
+      || typeof sourceAccess.inspectPath !== "function"
+      || typeof sourceAccess.open !== "function") {
+    failures.fail("windows_protection_unavailable");
+  }
+  return sourceAccess;
+}
+
+async function inspectWindowsPath(sourceAccess, path, kind, label, failures) {
+  let metadata;
+  try {
+    metadata = await sourceAccess.inspectPath(path);
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "WINDOWS_FILESYSTEM_NOT_FOUND") {
+      failures.fail(kind === "directory" ? "parent_directory" : `${label}_missing`);
+    }
+    failures.fail("windows_protection_unavailable");
+  }
+  return assertWindowsAclEvidence(metadata, kind, label, failures);
+}
+
+async function revalidateWindowsParent(sourceAccess, path, expected, failures) {
+  const current = await inspectWindowsPath(sourceAccess, path, "directory", "parent", failures);
+  if (current.volumeSerialNumber !== expected.volumeSerialNumber
+      || current.fileId !== expected.fileId) {
+    failures.fail("parent_directory_changed");
+  }
+}
+
+async function readWindowsOwnerOnlyArtifact({
+  sourceAccess,
+  path,
+  parentPath,
+  parentIdentity,
+  label,
+  maximumBytes,
+  failures,
+  fileSystem,
+}) {
+  const pathIdentity = await inspectWindowsPath(sourceAccess, path, "file", label, failures);
+  await revalidateWindowsParent(sourceAccess, parentPath, parentIdentity, failures);
+  let handle;
+  try {
+    handle = await sourceAccess.open(path);
+    const descriptorStats = await handle.stat();
+    assertOwnerOnlyRegular(descriptorStats, label, maximumBytes, failures);
+    if (!sameWindowsIdentity(pathIdentity, descriptorStats)) {
+      failures.fail(`${label}_changed_during_open`);
+    }
+    const openedMetadata = await inspectWindowsPath(sourceAccess, path, "file", label, failures);
+    if (openedMetadata.volumeSerialNumber !== pathIdentity.volumeSerialNumber
+        || openedMetadata.fileId !== pathIdentity.fileId) {
+      failures.fail(`${label}_changed_during_open`);
+    }
+    await revalidateWindowsParent(sourceAccess, parentPath, parentIdentity, failures);
+    const bytes = await readExactDescriptorBytes(
+      handle,
+      descriptorStats,
+      label,
+      failures,
+      fileSystem,
+    );
+    const postDescriptorStats = await handle.stat();
+    assertOwnerOnlyRegular(postDescriptorStats, label, maximumBytes, failures);
+    if (!sameReadVersion(descriptorStats, postDescriptorStats)) {
+      failures.fail(`${label}_changed_during_read`);
+    }
+    const postMetadata = await inspectWindowsPath(sourceAccess, path, "file", label, failures);
+    if (postMetadata.volumeSerialNumber !== pathIdentity.volumeSerialNumber
+        || postMetadata.fileId !== pathIdentity.fileId) {
+      failures.fail(`${label}_changed_during_read`);
+    }
+    await revalidateWindowsParent(sourceAccess, parentPath, parentIdentity, failures);
+    return bytes;
+  } catch (error) {
+    if (failures.issued(error)) throw error;
+    failures.fail(`${label}_read`);
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+async function readWindowsOwnerOnlyPair({
+  bundlePath,
+  receiptPath,
+  maximumBundleBytes,
+  maximumReceiptBytes,
+  sourceAccessFactory,
+  failures,
+  fileSystem,
+}) {
+  if (bundlePath.toLowerCase() === receiptPath.toLowerCase()) {
+    failures.fail("paths_not_distinct");
+  }
+  let sourceAccess;
+  try {
+    if (typeof sourceAccessFactory !== "function") failures.fail("windows_protection_unavailable");
+    sourceAccess = validatedWindowsSourceAccess(sourceAccessFactory(), failures);
+  } catch (error) {
+    if (failures.issued(error)) throw error;
+    failures.fail("windows_protection_unavailable");
+  }
+  const bundleParentPath = dirname(bundlePath);
+  const receiptParentPath = dirname(receiptPath);
+  const bundleParentIdentity = await inspectWindowsPath(
+    sourceAccess,
+    bundleParentPath,
+    "directory",
+    "parent",
+    failures,
+  );
+  const receiptParentIdentity = await inspectWindowsPath(
+    sourceAccess,
+    receiptParentPath,
+    "directory",
+    "parent",
+    failures,
+  );
+  if (bundleParentIdentity.volumeSerialNumber !== receiptParentIdentity.volumeSerialNumber
+      || bundleParentIdentity.fileId !== receiptParentIdentity.fileId) {
+    failures.fail("paths_not_adjacent");
+  }
+
+  const receiptBytes = await readWindowsOwnerOnlyArtifact({
+    sourceAccess,
+    path: receiptPath,
+    parentPath: receiptParentPath,
+    parentIdentity: receiptParentIdentity,
+    label: "receipt",
+    maximumBytes: maximumReceiptBytes,
+    failures,
+    fileSystem,
+  });
+  const bundleBytes = await readWindowsOwnerOnlyArtifact({
+    sourceAccess,
+    path: bundlePath,
+    parentPath: bundleParentPath,
+    parentIdentity: bundleParentIdentity,
+    label: "bundle",
+    maximumBytes: maximumBundleBytes,
+    failures,
+    fileSystem,
+  });
+  return Object.freeze({ bundleBytes, receiptBytes });
 }
 
 function validatedFileSystem(fileSystem) {
@@ -296,8 +503,11 @@ export function sha256Hex(value) {
 
 export function createOwnerOnlyLocalMetadataBundlePairReader({
   fileSystem = DEFAULT_FILE_SYSTEM,
+  platform = process.platform,
+  windowsSourceAccessFactory = null,
 } = {}) {
   const files = validatedFileSystem(fileSystem);
+  if (typeof platform !== "string") throw new TypeError("platform must be a string");
   return async function readOwnerOnlyLocalMetadataBundlePair({
     bundleFile,
     receiptFile,
@@ -320,6 +530,17 @@ export function createOwnerOnlyLocalMetadataBundlePairReader({
     const bundlePath = resolve(bundleFile);
     const receiptPath = resolve(receiptFile);
     if (bundlePath === receiptPath) failures.fail("paths_not_distinct");
+    if (platform === "win32") {
+      return readWindowsOwnerOnlyPair({
+        bundlePath,
+        receiptPath,
+        maximumBundleBytes,
+        maximumReceiptBytes,
+        sourceAccessFactory: windowsSourceAccessFactory,
+        failures,
+        fileSystem: files,
+      });
+    }
 
     const bundleParentPath = dirname(bundlePath);
     const receiptParentPath = dirname(receiptPath);
@@ -380,4 +601,9 @@ export function createOwnerOnlyLocalMetadataBundlePairReader({
 }
 
 export const readOwnerOnlyLocalMetadataBundlePair =
-  createOwnerOnlyLocalMetadataBundlePairReader();
+  createOwnerOnlyLocalMetadataBundlePairReader({
+    platform: process.platform,
+    // The default Windows path stays lazy and fail-closed. Every caller of the
+    // shared platform facade therefore uses the same native ACL/handle reader.
+    windowsSourceAccessFactory: () => createSourceFileAccess({ platform: "win32" }),
+  });

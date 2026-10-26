@@ -201,7 +201,8 @@ export function deriveTelemetryPlanEraIdV1({
       && (typeof enrollmentNamespace !== "string" || !ENROLLMENT_NAMESPACE_PATTERN.test(enrollmentNamespace))) {
     throw new TypeError("Account-track enrollment namespace is invalid");
   }
-  if (destination === null || accountObservationSecret == null || enrollmentNamespace == null
+  if (accountTrackId === UNATTRIBUTED_ACCOUNT_TRACK_ID
+      || destination === null || accountObservationSecret == null || enrollmentNamespace == null
       || eraStartOccurrenceId === null || planType === "unknown") return null;
   return deriveExportPseudonym(accountObservationSecret, "plan-era", JSON.stringify([
     "openai_codex", destination, enrollmentNamespace, accountTrackId, planType, eraStartOccurrenceId,

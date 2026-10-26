@@ -1,4 +1,9 @@
 import { win32 } from "node:path";
+import {
+  isWindowsFilesystemAdapter,
+  isWindowsFilesystemAlreadyExists,
+  isWindowsFilesystemIdentity,
+} from "./windows-filesystem.js";
 
 const CONTRACT_VERSION = "windows-credential-audit-file-guard-v1";
 const trustedErrors = new WeakSet();
@@ -22,6 +27,89 @@ export function isWindowsProtectedSqliteError(error) {
 }
 
 function fail(code) { throw new WindowsProtectedSqliteError(code); }
+
+function validProtectedDatabaseInspection(value) {
+  try {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+      && value.isDirectory === false
+      && value.isRegularFile === true
+      && value.isReparsePoint === false
+      && value.ownerMatches === true
+      && value.nullDacl === false
+      && value.daclProtected === true
+      && value.broadAccess === false
+      && value.nonOwnerAllow === false
+      && value.unrecognizedAce === false
+      && value.finalPathResolved === true
+      && isWindowsFilesystemIdentity(value.identity)
+      && value.identity.linkCount === 1;
+  } catch {
+    return false;
+  }
+}
+
+function sameIdentity(left, right) {
+  return left?.volumeSerialNumber === right?.volumeSerialNumber
+    && left?.fileId === right?.fileId
+    && left?.linkCount === right?.linkCount;
+}
+
+/**
+ * Create or inspect one collector SQLite database with a native protected DACL.
+ * This does not hold a SQLite path lease or claim path-walk race safety.
+ */
+export function prepareProtectedSqliteDatabaseFile({
+  adapter,
+  path,
+  createIfMissing = false,
+} = {}) {
+  let valid = false;
+  try {
+    valid = isWindowsFilesystemAdapter(adapter)
+      && typeof path === "string"
+      && path.length > 0
+      && path.length <= 4_096
+      && !path.includes("\0")
+      && win32.isAbsolute(path)
+      && typeof createIfMissing === "boolean";
+  } catch {
+    valid = false;
+  }
+  if (!valid) fail("invalid_configuration");
+
+  try {
+    // The native operation creates missing directories with protected
+    // owner-only DACLs and validates existing final directories without repair.
+    adapter.ensureDirectory(win32.dirname(path));
+  } catch {
+    fail("security_policy");
+  }
+
+  let created = false;
+  let createdIdentity = null;
+  if (createIfMissing) {
+    try {
+      createdIdentity = adapter.createFile(path, Buffer.alloc(0));
+      created = true;
+    } catch (error) {
+      if (!isWindowsFilesystemAlreadyExists(error)) fail("unavailable");
+      // EEXIST is an existing object, including an empty file. It must pass
+      // inspection and remain on the existing-schema validation path.
+    }
+  }
+
+  let inspection;
+  try {
+    inspection = adapter.inspectPath(path);
+  } catch {
+    fail("unavailable");
+  }
+  if (!validProtectedDatabaseInspection(inspection)
+      || (created && !sameIdentity(createdIdentity, inspection.identity))) {
+    fail("security_policy");
+  }
+  return Object.freeze({ created, identity: inspection.identity });
+}
 
 function nativeErrorCode(error, operation) {
   let code;

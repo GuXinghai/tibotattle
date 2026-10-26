@@ -270,6 +270,10 @@ function dedupeWarnings(warnings) {
 }
 
 function canonicalPriceInstant(value) {
+  if (value instanceof Date) {
+    if (!Number.isFinite(value.getTime())) return null;
+    value = value.toISOString();
+  }
   if (typeof value !== "string" || value.length > 32) return null;
   const epoch = Date.parse(value);
   return Number.isFinite(epoch) && new Date(epoch).toISOString() === value
@@ -336,6 +340,9 @@ function observedComponentInput(provider, rawComponents, availability) {
   }
   for (const [key, isAvailable] of Object.entries(availability ?? {})) {
     if (isAvailable === false && providerMap[key]) unavailable.add(providerMap[key]);
+  }
+  if (Object.keys(rawComponents ?? {}).length === 0) {
+    for (const component of new Set(Object.values(providerMap))) unavailable.add(component);
   }
   return { observed, unavailable: [...unavailable].sort() };
 }
