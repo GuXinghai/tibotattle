@@ -3,7 +3,7 @@ title: Current product and qualification status
 date: 2026-10-27
 type: status
 status: current
-source_commit: fdd66671bf643b09f2b3b2e957e20db17778d45a
+source_commit: 6a95117075a6df7075f14df1a999931b21975624
 observation_date: 2026-10-27
 ---
 
@@ -13,9 +13,10 @@ observation_date: 2026-10-27
 Source version 0.1.27 is a development identifier, not a published release.
 Codex is the only supported usage provider. The owner accepted the
 [Codex-only scope](./decisions/2026-10-27-codex-only-product.md) on this date;
-active provider cleanup was committed at the source revision above. Historical
-format readback does not enable a retired provider. Subsequent debt repairs and
-their isolated validation are working-tree changes, not a release qualification.
+active provider cleanup and the subsequent debt repairs are included at the
+source revision above. Historical format readback does not enable a retired
+provider. The committed repairs and their isolated validation do not establish
+release qualification.
 The [identity and cloud-retirement decision](./decisions/2026-10-23-local-product-identity-and-cloud-retirement.md)
 supersedes inherited service and publication wiring. No download website,
 update feed, signing account or external support destination is configured.
