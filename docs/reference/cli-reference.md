@@ -20,16 +20,32 @@ Analysis commands reject input/output/report paths that identify the same file,
 including canonical parent, case, symbolic-link, and hard-link aliases, before
 their first persistent mutation. An explicitly selected independent report may
 still be updated; selecting an input as the report is never an update request.
-Generic report publication currently returns
-`OWNER_ONLY_ATOMIC_WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE` on Windows before any
-directory or file creation. A qualified protected publisher is required to
-restore that write path; changing permissions or disabling the gate is not a fix.
+Generic reports use the separate `windows-report-publication-v1` native
+capability, verified against the adjacent binary manifest. Missing or mismatched
+capability returns `OWNER_ONLY_ATOMIC_WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE`
+before destination creation. Only fixed local drives are accepted; mapped
+network and removable drives are refused before directory creation. Reports
+are limited to 64 MiB, 32767 UTF-16 path units and 256 path components. Newly created parent
+directories and staged files have protected current-owner-only DACLs; existing
+unsafe directories or targets are refused without permission repair. Publication
+flushes and validates the stage, then atomically renames it relative to the held
+parent. New targets use no-clobber rename; replacements recheck the old identity.
+A dedicated same-session mutex serializes cooperating report writers. This is
+not compare-and-swap against a hostile same-user process or a cross-session lock.
+Pre-commit failures clean only this operation's stage. A
+`OWNER_ONLY_ATOMIC_COMMIT_UNCERTAIN` error can mean publication already occurred;
+do not delete the destination or blindly retry. Cleanup failure is reported as
+`OWNER_ONLY_ATOMIC_CLEANUP_FAILED`. General production/path-walk approval and
+installed-artifact qualification remain separate.
 
 Export workspace v0.6 (physical schema 6) preserves exact Windows volume/file
 identities as private canonical decimal strings, bounded to U64/U128
 respectively. The public source summary omits these identities. Older workspace
 schemas are refused before writable configuration and preserved unchanged;
-they are not relabeled or automatically converted. The separate collector v0.2
+they are not relabeled or automatically converted. Compatibility is scoped to a
+[one-time controlled pre-release migration](../decisions/2026-10-27-pre-release-state-migration.md),
+not a permanent legacy writer. That migration is not an implemented CLI command.
+The separate collector v0.2
 plan retains its U64-per-identity contract and rejects larger file IDs. These
 source-level contracts are not installed native qualification.
 

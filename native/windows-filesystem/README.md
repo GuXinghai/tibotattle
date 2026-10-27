@@ -88,6 +88,48 @@ step fails.
   interactive Windows session. A deliberate same-UID process can bypass that
   lease and replace a name; that hostile case is outside this cooperation
   contract and is not a generic conditional-replacement/CAS gate.
+- `publishReport(path, bytes)` is a separate bounded report-publication API.
+  It accepts a local absolute output path on a fixed local drive, with a safe
+  file name and at most 64 MiB of bytes. The UTF-16 path length is bounded
+  before allocating the path string, and mapped network/removable drives are
+  refused before parent-directory creation. It creates missing parent
+  directories with protected
+  owner-only DACLs, then reopens and pins the validated parent chain without
+  delete sharing. Existing parents and destination files are validated rather
+  than repaired; created directories are retained after a later failure, and
+  the volume root cannot be used as the output directory.
+  Publication writes and flushes a protected same-directory stage before a
+  handle-relative atomic rename. A missing destination uses no-clobber rename;
+  an existing destination must pass owner/DACL, reparse, regular-file and
+  single-link checks, and its observed file identity is rechecked immediately
+  before replacement. The return value is the published file identity.
+
+  After opening and pinning the parent, this operation serializes cooperating
+  publishers to that directory with a dedicated owner-only mutex whose
+  `Local\` name is derived from the current SID and parent volume/file identity;
+  it is separate from all credential mutexes and contains no path. Waiting is
+  bounded to 30 seconds. An abandoned
+  mutex fails closed with `WINDOWS_FILESYSTEM_REPORT_PUBLISH_MUTEX_ABANDONED`;
+  the prior destination and any abandoned stage are left untouched. The lock
+  covers one interactive Windows session. It protects cooperating writers,
+  not a hostile same-owner process that deliberately bypasses the mutex and
+  races the final name check.
+
+  Before a known-uncommitted failure, cleanup marks only this call's held stage
+  handle for deletion. If that fails, the operation returns
+  `WINDOWS_FILESYSTEM_REPORT_PUBLISH_STAGE_CLEANUP_FAILED`; it never unlinks a
+  path or deletes the old destination. If the rename may have committed, or
+  post-rename flush/readback/identity verification fails, it returns
+  `WINDOWS_FILESYSTEM_REPORT_PUBLISH_COMMIT_UNCERTAIN` and preserves the held
+  replacement handle. The caller must inspect the destination before retrying.
+  A mutex-release failure after a verified publish returns
+  `WINDOWS_FILESYSTEM_REPORT_PUBLISH_MUTEX_RELEASE_FAILED`; the destination is
+  already published, so the caller should inspect it before retrying.
+  A successful rename is atomic for readers of the final name, but the native
+  operation does not flush the parent directory and makes no power-loss
+  durability claim. This narrow source API does not enable the global
+  `productionSafe` or `pathWalkRaceSafe` flags and remains subject to native
+  Windows x64 qualification.
 - `inspectProtectedChild(root, rootIdentity, child)`,
   `readProtectedChild(root, rootIdentity, child, maximumBytes)`,
   `createProtectedChild(root, rootIdentity, child, bytes)`,
@@ -236,11 +278,16 @@ and exposes a FileHandle-like interface to the existing readers.
 
 Timing and credential audit use `windows-protected-sqlite.js` for protected
 owner-only database/journal creation and the existing native guard lifecycle.
-Before any schema query, it enters EXCLUSIVE locking, selects PERSIST journaling,
-forces recovery, then returns to NORMAL locking and releases the temporary lock
-with a read. PERSIST alone does not prevent journal deletion during hot-journal
-recovery. The shared sequence has portable SQLite crash/reopen coverage; native
-Windows recovery remains a qualification gate. SQLite closes before guards
+The writable guarded-connection setup enters EXCLUSIVE locking, selects PERSIST
+journaling, forces recovery, then returns to NORMAL locking and releases the
+temporary lock with a read. PERSIST alone does not prevent journal deletion
+during hot-journal recovery. Existing timing stores first undergo a separate
+read-only schema preflight; a hot journal can make that preflight fail with
+`SQLITE_READONLY_ROLLBACK` (776) before guarded recovery runs. Isolated synthetic
+Windows tests reproduce this with both the report-publisher binding and its
+baseline; that recovery debt remains open. The shared writable sequence has
+portable SQLite crash/reopen coverage, which does not qualify this earlier
+timing-store preflight. SQLite closes before guards
 release. Timing refuses WAL/SHM residue and non-rollback headers without deletion;
 no schema migration is introduced.
 

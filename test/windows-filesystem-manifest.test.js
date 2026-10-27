@@ -13,7 +13,13 @@ import {
   buildWindowsFilesystemBindingManifest,
   createWindowsFilesystemBindingManifest,
 } from "../scripts/build-windows-filesystem-manifest.mjs";
-import { WINDOWS_RELEASE_OPERATION_METHODS, WINDOWS_LEGACY_STATE_READ_METHODS, WINDOWS_BROWSER_PROFILE_METHODS } from "../src/platform/windows-filesystem.js";
+import {
+  WINDOWS_RELEASE_OPERATION_METHODS,
+  WINDOWS_LEGACY_STATE_READ_METHODS,
+  WINDOWS_BROWSER_PROFILE_METHODS,
+  WINDOWS_REPORT_PUBLICATION_CONTRACT,
+  WINDOWS_REPORT_PUBLICATION_METHODS,
+} from "../src/platform/windows-filesystem.js";
 
 const BYTES = Buffer.from("reviewed native bytes", "utf8");
 
@@ -27,6 +33,34 @@ test('browser profile manifest requires both bounded repair and access inspectio
     assert.throws(() => createWindowsFilesystemBindingManifest({ bytes: BYTES,
       binding: binding({ ...extension, [name]: undefined }) }), { code: 'WINDOWS_FILESYSTEM_MANIFEST_INVALID_BROWSER_PROFILE' });
   }
+});
+
+test("report publication manifest binds the exact native method and contract", () => {
+  const extension = {
+    reportPublicationContractVersion: WINDOWS_REPORT_PUBLICATION_CONTRACT,
+    publishReport() {},
+  };
+  const result = createWindowsFilesystemBindingManifest({
+    bytes: BYTES,
+    binding: binding(extension),
+  });
+  assert.deepEqual(result.reportPublication, {
+    contractVersion: WINDOWS_REPORT_PUBLICATION_CONTRACT,
+    approved: true,
+  });
+  assert.equal(result.approvedPolicy.productionSafe, false);
+  assert.equal(result.approvedPolicy.pathWalkRaceSafe, false);
+
+  for (const name of WINDOWS_REPORT_PUBLICATION_METHODS) {
+    assert.throws(() => createWindowsFilesystemBindingManifest({
+      bytes: BYTES,
+      binding: binding({ ...extension, [name]: undefined }),
+    }), { code: "WINDOWS_FILESYSTEM_MANIFEST_INVALID_REPORT_PUBLICATION" });
+  }
+  assert.throws(() => createWindowsFilesystemBindingManifest({
+    bytes: BYTES,
+    binding: binding({ ...extension, reportPublicationContractVersion: "future-contract" }),
+  }), { code: "WINDOWS_FILESYSTEM_MANIFEST_INVALID_REPORT_PUBLICATION" });
 });
 
 test('legacy copy manifest binds all frozen read and streaming copy methods', () => {

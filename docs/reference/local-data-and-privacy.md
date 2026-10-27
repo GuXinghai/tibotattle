@@ -212,10 +212,23 @@ the reviewed handle-bound source port rather than relying on `O_NOFOLLOW`,
 which is unavailable on Windows. Synthetic adapter tests establish these
 refusal and consistency rules, not installed native qualification.
 
+Generic CLI JSON/Markdown reports use the separate manifest-bound native report
+publisher, capped at 64 MiB. It creates protected owner-only staging files,
+flushes and checks their handle identity/security, and publishes by a
+parent-handle-relative atomic rename. Existing unsafe parents, reparse points,
+multi-link targets and changed identities are refused without ACL repair.
+Failed uncommitted stages are deleted through their own held handles; a possible
+committed destination is never deleted as cleanup. A dedicated same-session
+mutex coordinates cooperating report writers, without claiming hostile
+same-user compare-and-swap or cross-session exclusion. This capability does not
+enable general production/path-walk approval or migrate existing state.
+
 New collector SQLite files must be created with a protected owner-only Windows
 DACL before SQLite initialization. Existing state directories and database
 files with unprotected or broader ACLs are refused without ACL repair or data
-replacement. Such older state needs a separately reviewed recovery workflow;
+replacement. Such older state belongs to the
+[one-time controlled pre-release migration](../decisions/2026-10-27-pre-release-state-migration.md)
+on protected copies, not a permanent compatibility layer;
 an unavailable cache does not authorize deleting its accumulated evidence.
 These creation checks do not establish a full-lifetime SQLite file lease or
 change the native manifest's broader race-safety qualification.

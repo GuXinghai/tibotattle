@@ -1,10 +1,13 @@
-import { constants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, realpath, lstat, rename, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { isProxy } from "node:util/types";
 
-import { syncDirectory } from "./owner-only-filesystem.js";
+import {
+  loadWindowsReportPublicationBinding,
+  WINDOWS_REPORT_PUBLICATION_CONTRACT,
+} from "./windows-filesystem.js";
+
+const MAXIMUM_REPORT_BYTES = 64 * 1024 * 1024;
 
 function failure(code) {
   const error = new Error("Owner-only atomic publication failed");
@@ -12,43 +15,6 @@ function failure(code) {
   error.code = `OWNER_ONLY_ATOMIC_${code}`;
   return error;
 }
-
-const DEFAULT_FILESYSTEM = Object.freeze({
-  mkdir,
-  realpath,
-  lstat,
-  openExclusive(path, mode) {
-    return open(
-      path,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0),
-      mode,
-    );
-  },
-  rename,
-  unlink,
-  syncDirectory,
-});
-
-const DEFAULT_POLICY = Object.freeze({
-  assertPlatformSupported() {
-    if (process.platform !== "win32") throw failure("PLATFORM_UNSUPPORTED");
-    throw failure("WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE");
-  },
-  assertDirectory({ stats }) {
-    if (!stats.isDirectory()
-        || (typeof process.getuid === "function" && stats.uid !== BigInt(process.getuid()))
-        || (stats.mode & 0o022n) !== 0n) {
-      throw failure("DIRECTORY_UNPROTECTED");
-    }
-  },
-  assertStage({ stats, expectedBytes }) {
-    if (!stats.isFile() || stats.nlink !== 1n || (stats.mode & 0o077n) !== 0n
-        || (typeof process.getuid === "function" && stats.uid !== BigInt(process.getuid()))
-        || (expectedBytes !== null && stats.size !== BigInt(expectedBytes))) {
-      throw failure("STAGE_UNPROTECTED");
-    }
-  },
-});
 
 function ownValue(object, key) {
   const descriptor = Object.getOwnPropertyDescriptor(object, key);
@@ -85,11 +51,76 @@ async function lstatIfExists(filesystem, path) {
   }
 }
 
+function snapshotReportPublicationBinding(binding) {
+  const record = snapshotRecord(binding);
+  const contractVersion = ownValue(record, "reportPublicationContractVersion");
+  const publishReport = ownValue(record, "publishReport");
+  if (contractVersion !== WINDOWS_REPORT_PUBLICATION_CONTRACT
+      || typeof publishReport !== "function"
+      || isProxy(publishReport)) {
+    throw failure("WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE");
+  }
+  return Object.freeze({ publishReport: publishReport.bind(record) });
+}
+
+function createNativeReportPublisher(injectedBinding = null) {
+  let nativePort = injectedBinding === null
+    ? null
+    : snapshotReportPublicationBinding(injectedBinding);
+  const getNativePort = () => {
+    if (nativePort !== null) return nativePort;
+    try {
+      nativePort = snapshotReportPublicationBinding(loadWindowsReportPublicationBinding());
+      return nativePort;
+    } catch (error) {
+      if (error?.code === "WINDOWS_FILESYSTEM_UNSUPPORTED_PLATFORM") {
+        throw failure("PLATFORM_UNSUPPORTED");
+      }
+      throw failure("WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE");
+    }
+  };
+  const publishOwnerOnlyAtomic = async function publishOwnerOnlyAtomic(path, content) {
+    if (typeof path !== "string" || path.length === 0) throw failure("INVALID_REQUEST");
+    if (typeof content !== "string" && !Buffer.isBuffer(content) && !(content instanceof Uint8Array)) {
+      throw failure("INVALID_REQUEST");
+    }
+    const byteLength = typeof content === "string"
+      ? Buffer.byteLength(content, "utf8")
+      : content.byteLength;
+    if (byteLength > MAXIMUM_REPORT_BYTES) throw failure("REPORT_TOO_LARGE");
+    const bytes = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
+    const absolutePath = resolve(path);
+    let port;
+    try {
+      port = getNativePort();
+      await port.publishReport(absolutePath, bytes);
+    } catch (error) {
+      const code = typeof error?.code === "string" ? error.code : "";
+      if (code === "WINDOWS_FILESYSTEM_REPORT_PUBLISH_COMMIT_UNCERTAIN"
+          || code === "WINDOWS_FILESYSTEM_REPORT_PUBLISH_MUTEX_RELEASE_FAILED") {
+        throw failure("COMMIT_UNCERTAIN");
+      }
+      if (code === "WINDOWS_FILESYSTEM_REPORT_PUBLISH_STAGE_CLEANUP_FAILED") {
+        throw failure("CLEANUP_FAILED");
+      }
+      if (code.startsWith("OWNER_ONLY_ATOMIC_")) throw error;
+      throw failure("PUBLICATION_FAILED");
+    }
+  };
+  Object.defineProperty(publishOwnerOnlyAtomic, "assertAvailable", {
+    enumerable: false,
+    value: async function assertAvailable() {
+      getNativePort();
+    },
+  });
+  return Object.freeze(publishOwnerOnlyAtomic);
+}
+
 /**
  * Create an atomic single-file publisher over explicit filesystem and policy
- * ports. The default policy enforces the current production platform gate;
- * tests may inject a synthetic filesystem/policy pair without enabling a
- * native backend.
+ * ports. Supplying explicit filesystem/policy ports selects the synthetic
+ * seam. The production default lazily loads the separately verified native
+ * report-publication capability and has no JavaScript filesystem fallback.
  */
 export function createOwnerOnlyAtomicFilePublisher(configuration = undefined) {
   const selected = configuration === undefined
@@ -97,12 +128,24 @@ export function createOwnerOnlyAtomicFilePublisher(configuration = undefined) {
     : snapshotRecord(configuration);
   const filesystemValue = ownValue(selected, "filesystem");
   const policyValue = ownValue(selected, "policy");
-  const filesystem = filesystemValue === undefined
-    ? DEFAULT_FILESYSTEM
-    : snapshotRecord(filesystemValue);
-  const policy = policyValue === undefined
-    ? DEFAULT_POLICY
-    : snapshotRecord(policyValue);
+  const nativeBindingForTest = ownValue(selected, "nativeBindingForTest");
+  if (nativeBindingForTest !== undefined) {
+    if (nativeBindingForTest === null
+        || filesystemValue !== undefined
+        || policyValue !== undefined) {
+      throw failure("INVALID_CONFIGURATION");
+    }
+    // This bypasses manifest verification only for isolated contract tests.
+    return createNativeReportPublisher(nativeBindingForTest);
+  }
+  if (filesystemValue === undefined && policyValue === undefined) {
+    return createNativeReportPublisher();
+  }
+  if (filesystemValue === undefined || policyValue === undefined) {
+    throw failure("INVALID_CONFIGURATION");
+  }
+  const filesystem = snapshotRecord(filesystemValue);
+  const policy = snapshotRecord(policyValue);
   const filesystemMethods = ["mkdir", "realpath", "lstat", "openExclusive", "rename", "unlink", "syncDirectory"];
   const policyMethods = ["assertPlatformSupported", "assertDirectory", "assertStage"];
   for (const method of filesystemMethods) {
@@ -154,8 +197,8 @@ export function createOwnerOnlyAtomicFilePublisher(configuration = undefined) {
         throw failure("STAGE_UNPROTECTED");
       }
       createdIdentity = fileIdentity(openedStats);
-      // Mode bits supplement the injected policy; the production Windows
-      // policy fails before reaching this path and never treats chmod as DACL proof.
+      // This injected synthetic policy may supplement mode bits. The native
+      // production writer uses its own Windows DACL checks, not chmod.
       await handle.chmod(0o600);
       const protectedStats = await handle.stat({ bigint: true });
       await call(policyPort, "assertStage", [{ phase: "before_write", path: temporaryPath, stats: protectedStats, expectedBytes: null }]);

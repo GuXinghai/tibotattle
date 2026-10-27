@@ -26,6 +26,9 @@ import {
   loadWindowsReleaseOperationBinding, WINDOWS_RELEASE_OPERATION_METHODS,
   loadWindowsLegacyStateReadBinding, WINDOWS_LEGACY_STATE_READ_METHODS,
   loadWindowsBrowserProfileBinding, WINDOWS_BROWSER_PROFILE_METHODS,
+  loadWindowsReportPublicationBinding,
+  WINDOWS_REPORT_PUBLICATION_CONTRACT,
+  WINDOWS_REPORT_PUBLICATION_METHODS,
   WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../src/platform/windows-filesystem.js";
@@ -117,6 +120,61 @@ test('release storage loader binds approval and the complete guard surface to ve
     { ...sidecar.releaseOperation, extra: true }, { ...sidecar.releaseOperation, contractVersion: 'future' }]) {
     assert.throws(() => loadWindowsReleaseOperationBinding({ ...options,
       readManifest: () => JSON.stringify({ ...sidecar, releaseOperation }) }), { code: 'WINDOWS_FILESYSTEM_INVALID_MANIFEST' });
+  }
+});
+
+test("report publication loader requires exact manifest approval and native ABI", () => {
+  const native = binding({
+    reportPublicationContractVersion: WINDOWS_REPORT_PUBLICATION_CONTRACT,
+    publishReport() {},
+  });
+  const sidecar = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: native });
+  const options = {
+    platform: "win32",
+    architecture: "x64",
+    bindingPath: "C:\\checkout\\native\\windows-filesystem\\build\\Release\\windows_filesystem.node",
+    readManifest: () => JSON.stringify(sidecar),
+    readBindingBytes: () => BINDING_BYTES,
+    requireBinding: () => native,
+  };
+  assert.equal(loadWindowsReportPublicationBinding(options), native);
+  assert.equal(loadWindowsFilesystemBinding(options), native);
+
+  const oldNative = binding();
+  const oldManifest = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: oldNative });
+  const oldOptions = {
+    ...options,
+    readManifest: () => JSON.stringify(oldManifest),
+    requireBinding: () => oldNative,
+  };
+  assert.equal(loadWindowsFilesystemBinding(oldOptions), oldNative);
+  assert.throws(() => loadWindowsReportPublicationBinding(oldOptions), {
+    code: "WINDOWS_FILESYSTEM_REPORT_PUBLICATION_UNQUALIFIED",
+  });
+
+  for (const name of WINDOWS_REPORT_PUBLICATION_METHODS) {
+    assert.throws(() => loadWindowsReportPublicationBinding({
+      ...options,
+      requireBinding: () => ({ ...native, [name]: undefined }),
+    }), { code: "WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH" });
+  }
+  assert.throws(() => loadWindowsReportPublicationBinding({
+    ...options,
+    requireBinding: () => ({
+      ...native,
+      reportPublicationContractVersion: "future-contract",
+    }),
+  }), { code: "WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH" });
+
+  for (const reportPublication of [
+    { ...sidecar.reportPublication, approved: false },
+    { ...sidecar.reportPublication, extra: true },
+    { ...sidecar.reportPublication, contractVersion: "future-contract" },
+  ]) {
+    assert.throws(() => loadWindowsReportPublicationBinding({
+      ...options,
+      readManifest: () => JSON.stringify({ ...sidecar, reportPublication }),
+    }), { code: "WINDOWS_FILESYSTEM_INVALID_MANIFEST" });
   }
 });
 

@@ -76,6 +76,10 @@ export const WINDOWS_BROWSER_PROFILE_CONTRACT = 'windows-browser-profile-v2';
 export const WINDOWS_BROWSER_PROFILE_METHODS = Object.freeze([
   'prepareBrowserProfile', 'inspectBrowserProfile',
 ]);
+export const WINDOWS_REPORT_PUBLICATION_CONTRACT = 'windows-report-publication-v1';
+export const WINDOWS_REPORT_PUBLICATION_METHODS = Object.freeze([
+  'publishReport',
+]);
 
 const MANIFEST_KEYS = Object.freeze([
   "schemaVersion",
@@ -168,11 +172,18 @@ function assertBindingManifest(manifest) {
   const legacyStateRead = manifest.legacyStateRead;
   const hasBrowserProfile = Object.hasOwn(manifest, 'browserProfile');
   const browserProfile = manifest.browserProfile;
+  const hasReportPublication = Object.hasOwn(manifest, 'reportPublication');
+  const reportPublication = manifest.reportPublication;
   const valid = manifestKeys.length === MANIFEST_KEYS.length + (hasSourceRead ? 1 : 0)
-    + (hasReleaseOperation ? 1 : 0) + (hasLegacyStateRead ? 1 : 0) + (hasBrowserProfile ? 1 : 0)
+    + (hasReleaseOperation ? 1 : 0) + (hasLegacyStateRead ? 1 : 0)
+    + (hasBrowserProfile ? 1 : 0) + (hasReportPublication ? 1 : 0)
     && (!hasBrowserProfile || (browserProfile !== null && typeof browserProfile === 'object'
       && !Array.isArray(browserProfile) && Object.keys(browserProfile).sort().join(',') === 'approved,contractVersion'
       && browserProfile.contractVersion === WINDOWS_BROWSER_PROFILE_CONTRACT && browserProfile.approved === true))
+    && (!hasReportPublication || (reportPublication !== null && typeof reportPublication === 'object'
+      && !Array.isArray(reportPublication) && Object.keys(reportPublication).sort().join(',') === 'approved,contractVersion'
+      && reportPublication.contractVersion === WINDOWS_REPORT_PUBLICATION_CONTRACT
+      && reportPublication.approved === true))
     && (!hasLegacyStateRead || (legacyStateRead !== null && typeof legacyStateRead === 'object'
       && !Array.isArray(legacyStateRead) && Object.keys(legacyStateRead).sort().join(',') === 'approved,contractVersion'
       && legacyStateRead.contractVersion === WINDOWS_LEGACY_STATE_READ_CONTRACT && legacyStateRead.approved === true))
@@ -242,6 +253,7 @@ function assertBindingManifest(manifest) {
     requiredMethods: Object.freeze([...requiredMethods]),
     ...(hasSourceRead ? { sourceRead: Object.freeze({ ...sourceRead }) } : {}),
     ...(hasBrowserProfile ? { browserProfile: Object.freeze({ ...browserProfile }) } : {}),
+    ...(hasReportPublication ? { reportPublication: Object.freeze({ ...reportPublication }) } : {}),
   });
 }
 
@@ -336,6 +348,11 @@ function verifyBindingIntegrity({
       || !WINDOWS_BROWSER_PROFILE_METHODS.every(name => typeof binding[name] === 'function'))) {
     throw failure('MANIFEST_BINDING_MISMATCH');
   }
+  if (manifest.reportPublication
+      && (binding.reportPublicationContractVersion !== manifest.reportPublication.contractVersion
+        || !WINDOWS_REPORT_PUBLICATION_METHODS.every(name => typeof binding[name] === 'function'))) {
+    throw failure('MANIFEST_BINDING_MISMATCH');
+  }
   return Object.freeze({ binding, manifest });
 }
 
@@ -420,6 +437,15 @@ export function loadWindowsLegacyStateReadBinding(options = {}) {
 export function loadWindowsBrowserProfileBinding(options = {}) {
   const { binding, manifest } = loadVerifiedWindowsFilesystemBinding(options);
   if (manifest.browserProfile?.approved !== true) throw failure('BROWSER_PROFILE_UNQUALIFIED');
+  return binding;
+}
+
+export function loadWindowsReportPublicationBinding(options = {}) {
+  const { binding, manifest } = loadVerifiedWindowsFilesystemBinding(options);
+  if (manifest.reportPublication?.approved !== true
+      || manifest.reportPublication.contractVersion !== WINDOWS_REPORT_PUBLICATION_CONTRACT) {
+    throw failure('REPORT_PUBLICATION_UNQUALIFIED');
+  }
   return binding;
 }
 

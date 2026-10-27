@@ -3,9 +3,13 @@ import assert from "node:assert/strict";
 import { constants } from "node:fs";
 import { link, lstat, mkdir, mkdtemp, open, readFile, readdir, realpath, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { createOwnerOnlyAtomicFilePublisher } from "../src/platform/index.js";
+import {
+  loadWindowsReportPublicationBinding,
+  WINDOWS_REPORT_PUBLICATION_CONTRACT,
+} from "../src/platform/windows-filesystem.js";
 import { assertInputOutputPathsDistinct } from "../src/storage.js";
 
 const syntheticFilesystem = Object.freeze({
@@ -178,16 +182,106 @@ test("availability preflight calls only the policy gate and performs no filesyst
   assert.equal(filesystemCalls, 0);
 });
 
-test("production publisher fails closed before creating a directory", async () => {
+test("native test binding receives an absolute path and copied report bytes without path I/O", async () => {
+  const root = await createWorkspace();
+  const output = join(root, "not-created", "report.md");
+  const input = Buffer.from("synthetic report\n", "utf8");
+  const calls = [];
+  const publish = createOwnerOnlyAtomicFilePublisher({
+    nativeBindingForTest: {
+      reportPublicationContractVersion: WINDOWS_REPORT_PUBLICATION_CONTRACT,
+      publishReport(path, bytes) {
+        calls.push({ path, bytes });
+      },
+    },
+  });
+  try {
+    await publish.assertAvailable();
+    assert.deepEqual(calls, []);
+    await assert.rejects(lstat(dirname(output)), { code: "ENOENT" });
+
+    await publish(output, input);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].path, resolve(output));
+    assert.notEqual(calls[0].bytes, input);
+    assert.deepEqual(calls[0].bytes, input);
+    await assert.rejects(lstat(dirname(output)), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("native publication failures map to fixed content-free categories", async () => {
+  const root = await createWorkspace();
+  const output = join(root, "synthetic-private-path-canary", "report.md");
+  const categories = [
+    ["WINDOWS_FILESYSTEM_REPORT_PUBLISH_COMMIT_UNCERTAIN", "OWNER_ONLY_ATOMIC_COMMIT_UNCERTAIN"],
+    ["WINDOWS_FILESYSTEM_REPORT_PUBLISH_MUTEX_RELEASE_FAILED", "OWNER_ONLY_ATOMIC_COMMIT_UNCERTAIN"],
+    ["WINDOWS_FILESYSTEM_REPORT_PUBLISH_STAGE_CLEANUP_FAILED", "OWNER_ONLY_ATOMIC_CLEANUP_FAILED"],
+    ["WINDOWS_FILESYSTEM_OPERATION_FAILED", "OWNER_ONLY_ATOMIC_PUBLICATION_FAILED"],
+  ];
+  try {
+    for (const [nativeCode, expectedCode] of categories) {
+      const publish = createOwnerOnlyAtomicFilePublisher({
+        nativeBindingForTest: {
+          reportPublicationContractVersion: WINDOWS_REPORT_PUBLICATION_CONTRACT,
+          publishReport() {
+            throw Object.assign(new Error(output), { code: nativeCode });
+          },
+        },
+      });
+      await assert.rejects(publish(output, Buffer.from("synthetic report\n")), (error) => {
+        assert.equal(error.code, expectedCode);
+        assert.equal(error.message, "Owner-only atomic publication failed");
+        assert.equal(`${error.stack}\n${JSON.stringify(error)}`.includes(output), false);
+        return true;
+      });
+    }
+    await assert.rejects(lstat(dirname(output)), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("native report byte limit refuses oversize content before invoking the binding", async () => {
+  const root = await createWorkspace();
+  const output = join(root, "not-created", "report.md");
+  let calls = 0;
+  const publish = createOwnerOnlyAtomicFilePublisher({
+    nativeBindingForTest: {
+      reportPublicationContractVersion: WINDOWS_REPORT_PUBLICATION_CONTRACT,
+      publishReport() { calls += 1; },
+    },
+  });
+  try {
+    await assert.rejects(
+      publish(output, Buffer.alloc(64 * 1024 * 1024 + 1, 0x53)),
+      { code: "OWNER_ONLY_ATOMIC_REPORT_TOO_LARGE" },
+    );
+    assert.equal(calls, 0);
+    await assert.rejects(lstat(dirname(output)), { code: "ENOENT" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("production publisher capability is native-backed and preflight performs no path I/O", async () => {
   const root = await createWorkspace();
   const output = join(root, "not-created", "report.md");
   try {
-    const code = process.platform === "win32"
-      ? "OWNER_ONLY_ATOMIC_WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE"
-      : "OWNER_ONLY_ATOMIC_PLATFORM_UNSUPPORTED";
-    await assert.rejects(createOwnerOnlyAtomicFilePublisher().assertAvailable(), { code });
-    await assert.rejects(lstat(dirname(output)), { code: "ENOENT" });
-    await assert.rejects(createOwnerOnlyAtomicFilePublisher()(output, "report"), { code });
+    const publish = createOwnerOnlyAtomicFilePublisher();
+    if (process.platform === "win32" && process.arch === "x64") {
+      const native = loadWindowsReportPublicationBinding();
+      assert.equal(native.reportPublicationContractVersion, WINDOWS_REPORT_PUBLICATION_CONTRACT);
+      assert.equal(typeof native.publishReport, "function");
+      await publish.assertAvailable();
+    } else {
+      const code = process.platform === "win32"
+        ? "OWNER_ONLY_ATOMIC_WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE"
+        : "OWNER_ONLY_ATOMIC_PLATFORM_UNSUPPORTED";
+      await assert.rejects(publish.assertAvailable(), { code });
+      await assert.rejects(publish(output, "report"), { code });
+    }
     await assert.rejects(lstat(dirname(output)), { code: "ENOENT" });
   } finally {
     await rm(root, { recursive: true, force: true });

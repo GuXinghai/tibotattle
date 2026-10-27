@@ -3,7 +3,7 @@ title: Current product and qualification status
 date: 2026-10-27
 type: status
 status: current
-source_commit: 6a95117075a6df7075f14df1a999931b21975624
+source_commit: 1a1d780971b18c1e6c4d809f2ce38e2686ca28d2
 observation_date: 2026-10-27
 ---
 
@@ -39,11 +39,23 @@ qualification is a separate explicit gate. Earlier testing exposed an unsafe
 default-backend test, so earlier assertions that local audit state was unchanged
 are not verified. The repair does not inspect, recover, or roll back that state.
 
-Generic atomic report publication currently fails closed on Windows because no
-qualified general publisher is available. This deliberately blocks unprotected
-report writes before creating directories or files; it is an availability gap,
-not successful native publication evidence. Source-reader and installed-app
-capabilities remain separate gates.
+The source adds the separate `windows-report-publication-v1`
+capability after the baseline revision above. Its exact Node 26.2.0 native build passed isolated Windows
+synthetic tests for protected creation/replacement, ACL/link/path refusal,
+bounded bytes, concurrent writers and no-clobber failure cleanup. The default
+CLI JSON/Markdown writer uses this capability, with no JavaScript filesystem
+fallback. Missing or mismatched capability still fails before destination
+creation. The capability covers fixed local drives and cooperating writers in
+one Windows session, not hostile same-user conditional replacement or
+power-loss durability. Global safety flags and installed/release gates remain
+unchanged.
+
+Expanded synthetic native regression exposed an existing timing SQLite
+hot-journal recovery gap: the read-only schema preflight returns
+`SQLITE_READONLY_ROLLBACK` (776) before writable guarded recovery. A separately
+rebuilt baseline binding reproduces the same failure. The report-specific
+tests passed, but the broader native filesystem suite is not fully passing;
+this recovery debt remains open. No real database was inspected or changed.
 
 The repair adds local-index schema 9 without guessing missing historical tier
 provenance, and export workspace v0.6 / physical schema 6 with exact private
@@ -52,6 +64,11 @@ workspaces are refused before writable configuration, not converted or relabeled
 Collector SQLite files now require native protected-DACL creation/checks;
 unprotected older state is preserved and refused, not repaired implicitly.
 These are source and isolated synthetic-test results, not a real-data upgrade.
+The owner scoped remaining ACL/workspace compatibility to a
+[one-time controlled pre-release migration](./decisions/2026-10-27-pre-release-state-migration.md).
+It does not require permanent old-format writers. The combined migration tool
+and its synthetic acceptance remain unfinished; real-data execution is not
+authorized by this scope decision.
 The [HTTP cache backport gate](./runbooks/2026-10-27-http-cache-backport-verification.md)
 replaces the expired build dependency exception without any OSV suppression;
 an actual scanner run and hosted CI remain separate evidence.

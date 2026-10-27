@@ -94,7 +94,7 @@ test("calibrate-weekly rejects input/output identity before publishing and prese
   }
 });
 
-test("migrate-corrections fails publisher preflight before reading or appending its synthetic ledger", async () => {
+test("migrate-corrections preserves path preflight before native publication or ledger mutation", async () => {
   const root = await mkdtemp(join(tmpdir(), "rhetrion-cli-publisher-preflight-synthetic-"));
   const observations = join(root, "observations.jsonl");
   const transitions = join(root, "transitions.json");
@@ -150,22 +150,34 @@ test("migrate-corrections fails publisher preflight before reading or appending 
   const observationBytes = Buffer.from(`${JSON.stringify(observation)}\n`);
   const transitionBytes = Buffer.from(`${JSON.stringify(transitionDataset)}\n`);
   const correctionsBytes = Buffer.from("");
-  const unavailableCode = process.platform === "win32"
-    ? "OWNER_ONLY_ATOMIC_WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE"
-    : "OWNER_ONLY_ATOMIC_PLATFORM_UNSUPPORTED";
   try {
     await writeFile(observations, observationBytes);
     await writeFile(transitions, transitionBytes);
     await writeFile(corrections, correctionsBytes);
 
-    await assert.rejects(run([
+    const command = [
       "migrate-corrections",
       "--observations", observations,
       "--transitions", transitions,
       "--corrections", corrections,
       "--output", output,
       "--report-file", report,
-    ]), { code: unavailableCode });
+    ];
+    if (process.platform === "win32" && process.arch === "x64") {
+      // The native capability is available on the qualified host. A direct
+      // collision must still stop the command before capability use, reads,
+      // a lock, or any durable mutation.
+      const collidingCommand = [...command];
+      collidingCommand[collidingCommand.indexOf("--output") + 1] = observations;
+      await assert.rejects(run(collidingCommand), {
+        code: "CLI_PATH_SAFETY_INPUT_OUTPUT_COLLISION",
+      });
+    } else {
+      const unavailableCode = process.platform === "win32"
+        ? "OWNER_ONLY_ATOMIC_WINDOWS_ATOMIC_PUBLISHER_UNAVAILABLE"
+        : "OWNER_ONLY_ATOMIC_PLATFORM_UNSUPPORTED";
+      await assert.rejects(run(command), { code: unavailableCode });
+    }
 
     assert.deepEqual(await readFile(observations), observationBytes);
     assert.deepEqual(await readFile(transitions), transitionBytes);

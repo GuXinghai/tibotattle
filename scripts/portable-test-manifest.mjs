@@ -57,6 +57,7 @@ export const PORTABLE_TEST_GROUPS = Object.freeze({
     "test/telemetry-schema-mirror.test.js",
   ]),
   storageAndCompanion: Object.freeze([
+    "test/cli-report-publication.test.js",
     "test/contribution-device-sync.test.js",
     "test/contribution-sync-queue.test.js",
     "test/export-identity-production.test.js",
@@ -92,6 +93,7 @@ export const PORTABLE_TEST_GROUPS = Object.freeze({
     "test/windows-filesystem-manifest.test.js",
     "test/windows-filesystem-native-contract.test.js",
     "test/windows-filesystem-security.test.js",
+    "test/windows-report-publication-native.test.js",
     "test/windows-inference-timing.test.js",
     "test/windows-thread-metadata.test.js",
     "test/windows-protected-sqlite.test.js",

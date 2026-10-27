@@ -32,6 +32,9 @@
 namespace {
 
 constexpr std::size_t kMaximumFileBytes = 1024 * 1024;
+constexpr std::size_t kMaximumReportBytes = 64 * 1024 * 1024;
+constexpr std::size_t kMaximumReportPathComponents = 256;
+constexpr DWORD kReportPublicationMutexWaitMilliseconds = 30000;
 
 // The Win32 CreateFile API has no root-directory parameter.  Calling it once
 // for every component, even with FILE_FLAG_OPEN_REPARSE_POINT, leaves a
@@ -109,6 +112,9 @@ constexpr DWORD kDirectoryShareMode = FILE_SHARE_READ
 constexpr DWORD kCredentialMutexAccess = READ_CONTROL
     | SYNCHRONIZE
     | MUTEX_MODIFY_STATE;
+constexpr DWORD kReportPublicationMutexAccess = READ_CONTROL
+    | SYNCHRONIZE
+    | MUTEX_MODIFY_STATE;
 constexpr NativeNtStatus kStatusObjectNameNotFound = static_cast<NativeNtStatus>(0xC0000034L);
 constexpr NativeNtStatus kStatusObjectPathNotFound = static_cast<NativeNtStatus>(0xC000003AL);
 constexpr NativeNtStatus kStatusObjectNameCollision = static_cast<NativeNtStatus>(0xC0000035L);
@@ -184,6 +190,13 @@ Failure NotRegularFile() { return {"NOT_REGULAR_FILE"}; }
 Failure TooLarge() { return {"FILE_TOO_LARGE"}; }
 Failure IdentityMismatch() { return {"IDENTITY_MISMATCH"}; }
 Failure OperationFailed() { return {"OPERATION_FAILED"}; }
+Failure ReportPublishMutexContended() { return {"REPORT_PUBLISH_MUTEX_CONTENDED"}; }
+Failure ReportPublishMutexAbandoned() { return {"REPORT_PUBLISH_MUTEX_ABANDONED"}; }
+Failure ReportPublishMutexReleaseFailed() { return {"REPORT_PUBLISH_MUTEX_RELEASE_FAILED"}; }
+Failure ReportPublishStageCleanupFailed() { return {"REPORT_PUBLISH_STAGE_CLEANUP_FAILED"}; }
+Failure ReportPublishUncertain() {
+  return {"REPORT_PUBLISH_COMMIT_UNCERTAIN", nullptr, "commit_uncertain"};
+}
 Failure CredentialMutexInvalidCapability() { return {"CREDENTIAL_MUTEX_INVALID_CAPABILITY"}; }
 Failure CredentialMutexContended() { return {"CREDENTIAL_MUTEX_CONTENDED"}; }
 Failure CredentialMutexAbandoned() { return {"CREDENTIAL_MUTEX_ABANDONED"}; }
@@ -643,7 +656,9 @@ bool ReadSecurity(HANDLE handle, SecuritySnapshot* snapshot) {
   return ReadObjectSecurity(handle, SE_FILE_OBJECT, snapshot);
 }
 
-bool IsOwnerOnlySecurity(const SecuritySnapshot& descriptor) {
+bool IsOwnerOnlySecurityForAccess(
+    const SecuritySnapshot& descriptor,
+    DWORD accessMask) {
   return descriptor.ownerMatches
       && !descriptor.nullDacl
       && descriptor.daclProtected
@@ -652,7 +667,11 @@ bool IsOwnerOnlySecurity(const SecuritySnapshot& descriptor) {
       && !descriptor.unrecognizedAce
       && !descriptor.denyAce
       && descriptor.ownerAllowAceCount == 1
-      && descriptor.ownerAllowMask == kCredentialMutexAccess;
+      && descriptor.ownerAllowMask == accessMask;
+}
+
+bool IsOwnerOnlySecurity(const SecuritySnapshot& descriptor) {
+  return IsOwnerOnlySecurityForAccess(descriptor, kCredentialMutexAccess);
 }
 
 bool HasReparsePoint(HANDLE handle, bool* result) {
@@ -1315,6 +1334,52 @@ bool ReadHandleBounded(
   return true;
 }
 
+bool VerifyHandleBytes(
+    HANDLE handle,
+    const std::uint8_t* expected,
+    std::size_t expectedBytes,
+    Failure* failure) {
+  if (handle == INVALID_HANDLE_VALUE
+      || (expected == nullptr && expectedBytes != 0)
+      || expectedBytes > kMaximumReportBytes) {
+    *failure = InvalidConfiguration();
+    return false;
+  }
+  LARGE_INTEGER size{};
+  if (!GetFileSizeEx(handle, &size)
+      || size.QuadPart < 0
+      || static_cast<unsigned long long>(size.QuadPart) != expectedBytes) {
+    *failure = OperationFailed();
+    return false;
+  }
+  LARGE_INTEGER beginning{};
+  if (!SetFilePointerEx(handle, beginning, nullptr, FILE_BEGIN)) {
+    *failure = FromLastError();
+    return false;
+  }
+  std::array<std::uint8_t, 64 * 1024> buffer{};
+  std::size_t offset = 0;
+  while (offset < expectedBytes) {
+    const DWORD requested = static_cast<DWORD>(
+        std::min<std::size_t>(expectedBytes - offset, buffer.size()));
+    DWORD read = 0;
+    if (!ReadFile(handle, buffer.data(), requested, &read, nullptr)) {
+      *failure = FromLastError();
+      return false;
+    }
+    if (read == 0
+        || !std::equal(
+            buffer.begin(),
+            buffer.begin() + read,
+            expected + offset)) {
+      *failure = OperationFailed();
+      return false;
+    }
+    offset += read;
+  }
+  return true;
+}
+
 bool ReadHandle(HANDLE handle, std::vector<std::uint8_t>* bytes, Failure* failure) {
   return ReadHandleBounded(handle, kMaximumFileBytes, bytes, failure);
 }
@@ -1419,6 +1484,7 @@ bool RenameHandleRelative(
     HANDLE handle,
     HANDLE parent,
     const std::wstring& target,
+    bool replaceIfExists,
     Failure* failure) {
   if (target.empty()
       || target.size() > static_cast<std::size_t>(ULONG_MAX / sizeof(wchar_t))) {
@@ -1434,7 +1500,7 @@ bool RenameHandleRelative(
   const std::size_t headerBytes = offsetof(NativeFileRenameInformation, fileName);
   std::vector<BYTE> buffer(headerBytes + bytes, 0);
   auto* information = reinterpret_cast<NativeFileRenameInformation*>(buffer.data());
-  information->replaceIfExists = TRUE;
+  information->replaceIfExists = replaceIfExists ? TRUE : FALSE;
   information->rootDirectory = parent;
   information->fileNameLength = static_cast<ULONG>(bytes);
   std::memcpy(information->fileName, target.data(), bytes);
@@ -1577,7 +1643,7 @@ bool ReplaceOpenFile(
     CloseHandle(*target);
     *target = INVALID_HANDLE_VALUE;
     for (int attempt = 0; attempt < 8; ++attempt) {
-      success = RenameHandleRelative(replacement, parent, targetName, failure);
+      success = RenameHandleRelative(replacement, parent, targetName, true, failure);
       renamed = success;
       if (success) break;
       const DWORD renameError = GetLastError();
@@ -1912,6 +1978,666 @@ bool EnsureDirectoryPath(
   }
   *failure = InvalidPath();
   return false;
+}
+
+struct ScopedReportPublicationMutex {
+  HANDLE handle = nullptr;
+  bool owned = false;
+
+  ~ScopedReportPublicationMutex() {
+    release();
+  }
+
+  bool release() {
+    if (handle == nullptr) return true;
+    bool success = true;
+    if (owned) {
+      success = ReleaseMutex(handle) != FALSE;
+      if (success) owned = false;
+    }
+    CloseHandle(handle);
+    handle = nullptr;
+    return success;
+  }
+};
+
+bool ReportPublicationMutexName(
+    const HandleIdentity& parentIdentity,
+    std::wstring* name) {
+  std::vector<BYTE> ownerSid;
+  if (!GetCurrentUserSid(&ownerSid)) return false;
+  LPWSTR sidText = nullptr;
+  if (!ConvertSidToStringSidW(ownerSid.data(), &sidText) || sidText == nullptr) {
+    return false;
+  }
+  const std::string fileId = HexIdentity(parentIdentity);
+  std::wstringstream stream;
+  stream << L"Local\\UsageMonitor-ReportPublication-v1-"
+         << sidText
+         << L'-'
+         << std::hex
+         << parentIdentity.volumeSerialNumber
+         << L'-'
+         << std::wstring(fileId.begin(), fileId.end());
+  *name = stream.str();
+  LocalFree(sidText);
+  return true;
+}
+
+bool AcquireReportPublicationMutex(
+    const HandleIdentity& parentIdentity,
+    ScopedReportPublicationMutex* mutex,
+    Failure* failure) {
+  if (mutex == nullptr || mutex->handle != nullptr) {
+    *failure = InvalidConfiguration();
+    return false;
+  }
+  std::wstring name;
+  if (!ReportPublicationMutexName(parentIdentity, &name)) {
+    *failure = OperationFailed();
+    return false;
+  }
+
+  std::vector<BYTE> ownerSid;
+  PACL acl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  SECURITY_ATTRIBUTES attributes{};
+  if (!BuildOwnerOnlyObjectSecurity(
+          kReportPublicationMutexAccess,
+          &ownerSid,
+          &acl,
+          &descriptor,
+          &attributes)) {
+    *failure = OperationFailed();
+    return false;
+  }
+  HANDLE handle = CreateMutexExW(
+      &attributes,
+      name.c_str(),
+      0,
+      kReportPublicationMutexAccess);
+  FreeOwnerOnlySecurity(acl, descriptor);
+  if (handle == nullptr) {
+    *failure = FromLastError();
+    return false;
+  }
+
+  SecuritySnapshot security;
+  if (!ReadObjectSecurity(handle, SE_KERNEL_OBJECT, &security)
+      || !IsOwnerOnlySecurityForAccess(security, kReportPublicationMutexAccess)) {
+    CloseHandle(handle);
+    *failure = SecurityPolicy("report_publication_mutex_security");
+    return false;
+  }
+
+  const DWORD waitResult = WaitForSingleObject(
+      handle,
+      kReportPublicationMutexWaitMilliseconds);
+  if (waitResult == WAIT_ABANDONED_0) {
+    const bool released = ReleaseMutex(handle) != FALSE;
+    CloseHandle(handle);
+    *failure = released
+        ? ReportPublishMutexAbandoned()
+        : ReportPublishMutexReleaseFailed();
+    return false;
+  }
+  if (waitResult != WAIT_OBJECT_0) {
+    CloseHandle(handle);
+    *failure = waitResult == WAIT_TIMEOUT
+        ? ReportPublishMutexContended()
+        : OperationFailed();
+    return false;
+  }
+  // This mutex is specific to the held parent identity and current owner. It
+  // serializes cooperating report writers to this directory only.
+  mutex->handle = handle;
+  mutex->owned = true;
+  return true;
+}
+
+std::wstring TemporaryReportPublicationName() {
+  static std::atomic<unsigned long> sequence{0};
+  const unsigned long serial = sequence.fetch_add(1, std::memory_order_relaxed);
+  std::wstringstream stream;
+  stream << L".usagemonitor-report-"
+         << GetCurrentProcessId()
+         << L'-'
+         << GetTickCount64()
+         << L'-'
+         << serial
+         << L".tmp";
+  return stream.str();
+}
+
+bool OpenReportParentDirectory(
+    const ParsedPath& outputPath,
+    ParsedPath* parentPath,
+    std::wstring* outputName,
+    HandleIdentity* parentIdentity,
+    RelativeHandles* openedParent,
+    Failure* failure) {
+  if (parentPath == nullptr || outputName == nullptr || parentIdentity == nullptr
+      || openedParent == nullptr
+      || outputPath.components.empty()) {
+    *failure = InvalidPath();
+    return false;
+  }
+  *parentPath = outputPath;
+  *outputName = parentPath->components.back();
+  parentPath->components.pop_back();
+  // A volume root is not an owner-private report directory. Requiring at
+  // least one path component also prevents publishing directly into C:\.
+  if (parentPath->components.empty()) {
+    *failure = SecurityPolicy("report_parent_not_private");
+    return false;
+  }
+
+  HANDLE ensured = INVALID_HANDLE_VALUE;
+  HandleIdentity ensuredIdentity;
+  if (!EnsureDirectoryPath(*parentPath, &ensured, &ensuredIdentity, failure)) {
+    return false;
+  }
+  CloseHandle(ensured);
+
+  OpenRelativeOptions options;
+  options.finalDirectoryKnown = true;
+  options.finalDirectory = true;
+  options.access = kDirectoryTraversalAccess | FILE_ADD_FILE | FILE_DELETE_CHILD;
+  // Keep every path component pinned through the publication so ordinary
+  // rename/delete operations cannot move the selected parent mid-write.
+  options.shareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  options.protectedAncestorDepth = parentPath->components.size();
+  options.protectedAncestorShareMode = FILE_SHARE_READ | FILE_SHARE_WRITE;
+  options.disposition = kFileOpen;
+  bool finalMissing = false;
+  if (!OpenRelativePath(
+          *parentPath,
+          options,
+          openedParent,
+          &finalMissing,
+          failure)
+      || finalMissing
+      || openedParent->final == INVALID_HANDLE_VALUE) {
+    return false;
+  }
+
+  HandleIdentity observedIdentity;
+  SecuritySnapshot security;
+  if (!ValidateSecurity(
+          openedParent->final,
+          true,
+          failure,
+          &observedIdentity,
+          &security)) {
+    return false;
+  }
+  if (!EqualIdentity(observedIdentity, ensuredIdentity)) {
+    *failure = IdentityMismatch();
+    return false;
+  }
+  if (security.denyAce || security.ownerAllowAceCount == 0) {
+    *failure = SecurityPolicy("report_parent_security");
+    return false;
+  }
+  if (!ResolveFinalPath(openedParent->final, parentPath)) {
+    *failure = OperationFailed();
+    return false;
+  }
+  *parentIdentity = observedIdentity;
+  return true;
+}
+
+enum class ReportTargetObservation {
+  kMissing,
+  kExpected,
+  kPublished,
+  kOther,
+  kUninspectable,
+};
+
+ReportTargetObservation ObserveReportTarget(
+    HANDLE parent,
+    const std::wstring& outputName,
+    bool expectedExists,
+    const HandleIdentity& expectedIdentity,
+    const HandleIdentity& publishedIdentity) {
+  ScopedHandle observed;
+  ULONG_PTR information = 0;
+  Failure failure = OperationFailed();
+  if (!OpenRelativeComponent(
+          parent,
+          outputName,
+          READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kFileOpen,
+          0,
+          nullptr,
+          &observed.handle,
+          &information,
+          &failure)) {
+    return failure.code == NotFound().code
+        ? ReportTargetObservation::kMissing
+        : ReportTargetObservation::kUninspectable;
+  }
+  HandleIdentity identity;
+  SecuritySnapshot security;
+  if (!GetIdentity(observed.handle, &identity)
+      || !ValidateSecurity(
+          observed.handle,
+          identity.directory,
+          &failure,
+          &identity,
+          &security)
+      || security.denyAce
+      || security.ownerAllowAceCount == 0) {
+    return ReportTargetObservation::kUninspectable;
+  }
+  if (identity.directory) return ReportTargetObservation::kOther;
+  if (EqualIdentity(identity, publishedIdentity)) {
+    return ReportTargetObservation::kPublished;
+  }
+  if (expectedExists && EqualIdentity(identity, expectedIdentity)) {
+    return ReportTargetObservation::kExpected;
+  }
+  return ReportTargetObservation::kOther;
+}
+
+bool PublishReportInParent(
+    const ParsedPath& outputPath,
+    const std::wstring& outputName,
+    HANDLE parent,
+    const std::uint8_t* bytes,
+    std::size_t byteCount,
+    HandleIdentity* publishedIdentity,
+    Failure* failure) {
+  if (publishedIdentity == nullptr
+      || parent == INVALID_HANDLE_VALUE
+      || (bytes == nullptr && byteCount != 0)
+      || byteCount > kMaximumReportBytes) {
+    *failure = byteCount > kMaximumReportBytes
+        ? TooLarge()
+        : InvalidConfiguration();
+    return false;
+  }
+
+  // Snapshot the existing destination identity while holding the dedicated
+  // parent-specific report mutex. If absent, the later rename is no-clobber;
+  // if present, its identity and security are rechecked before replacement.
+  ScopedHandle target;
+  HandleIdentity expectedIdentity;
+  bool expectedExists = false;
+  ULONG_PTR targetInformation = 0;
+  if (OpenRelativeComponent(
+          parent,
+          outputName,
+          DELETE | READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kFileOpen,
+          kFileNonDirectoryFile,
+          nullptr,
+          &target.handle,
+          &targetInformation,
+          failure)) {
+    SecuritySnapshot targetSecurity;
+    if (!ValidateSecurity(
+            target.handle,
+            false,
+            failure,
+            &expectedIdentity,
+            &targetSecurity)) {
+      return false;
+    }
+    if (targetSecurity.denyAce || targetSecurity.ownerAllowAceCount == 0) {
+      *failure = SecurityPolicy("report_target_security");
+      return false;
+    }
+    expectedExists = true;
+  } else if (failure->code != NotFound().code) {
+    return false;
+  }
+
+  std::vector<BYTE> ownerSid;
+  PACL acl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  SECURITY_ATTRIBUTES attributes{};
+  if (!BuildOwnerOnlySecurity(&ownerSid, &acl, &descriptor, &attributes)) {
+    *failure = OperationFailed();
+    return false;
+  }
+
+  ScopedHandle stage;
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    const std::wstring stageName = TemporaryReportPublicationName();
+    ULONG_PTR createInformation = 0;
+    if (OpenRelativeComponent(
+            parent,
+            stageName,
+            FILE_READ_DATA | GENERIC_WRITE | DELETE | READ_CONTROL | WRITE_DAC
+                | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            FILE_SHARE_READ,
+            kFileCreate,
+            kFileNonDirectoryFile,
+            attributes.lpSecurityDescriptor,
+            &stage.handle,
+            &createInformation,
+            failure)) {
+      if (createInformation != kFileCreated) {
+        CloseHandle(stage.handle);
+        stage.handle = INVALID_HANDLE_VALUE;
+        FreeOwnerOnlySecurity(acl, descriptor);
+        *failure = OperationFailed();
+        return false;
+      }
+      break;
+    }
+    if (failure->code != AlreadyExists().code) {
+      FreeOwnerOnlySecurity(acl, descriptor);
+      return false;
+    }
+  }
+  FreeOwnerOnlySecurity(acl, descriptor);
+  if (stage.handle == INVALID_HANDLE_VALUE) {
+    *failure = AlreadyExists();
+    return false;
+  }
+
+  auto cleanupStage = [&]() {
+    if (!MarkHandleForDeletion(stage.handle)) {
+      *failure = ReportPublishStageCleanupFailed();
+    }
+    return false;
+  };
+
+  if (!SetOwnerOnlyDacl(stage.handle)) {
+    *failure = SecurityPolicy("report_stage_dacl");
+    return cleanupStage();
+  }
+  HandleIdentity stageIdentity;
+  SecuritySnapshot stageSecurity;
+  if (!ValidateSecurity(
+          stage.handle,
+          false,
+          failure,
+          &stageIdentity,
+          &stageSecurity)) {
+    return cleanupStage();
+  }
+  if (stageSecurity.denyAce || stageSecurity.ownerAllowAceCount == 0) {
+    *failure = SecurityPolicy("report_stage_security");
+    return cleanupStage();
+  }
+  if (!WriteAndFlushHandle(stage.handle, bytes, byteCount, failure)) {
+    return cleanupStage();
+  }
+  HandleIdentity writtenIdentity;
+  SecuritySnapshot writtenSecurity;
+  if (!ValidateSecurity(
+          stage.handle,
+          false,
+          failure,
+          &writtenIdentity,
+          &writtenSecurity)) {
+    return cleanupStage();
+  }
+  if (!EqualIdentity(stageIdentity, writtenIdentity)
+      || writtenSecurity.denyAce
+      || writtenSecurity.ownerAllowAceCount == 0) {
+    *failure = IdentityMismatch();
+    return cleanupStage();
+  }
+  *publishedIdentity = stageIdentity;
+
+  if (expectedExists) {
+    ScopedHandle finalCheck;
+    ULONG_PTR checkInformation = 0;
+    if (!OpenRelativeComponent(
+            parent,
+            outputName,
+            READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            kFileOpen,
+            kFileNonDirectoryFile,
+            nullptr,
+            &finalCheck.handle,
+            &checkInformation,
+            failure)) {
+      *failure = failure->code == NotFound().code
+          ? IdentityMismatch()
+          : *failure;
+      return cleanupStage();
+    }
+    HandleIdentity currentIdentity;
+    SecuritySnapshot currentSecurity;
+    if (!ValidateSecurity(
+            finalCheck.handle,
+            false,
+            failure,
+            &currentIdentity,
+            &currentSecurity)) {
+      return cleanupStage();
+    }
+    if (currentSecurity.denyAce || currentSecurity.ownerAllowAceCount == 0) {
+      *failure = SecurityPolicy("report_target_security");
+      return cleanupStage();
+    }
+    if (!EqualIdentity(currentIdentity, expectedIdentity)) {
+      *failure = IdentityMismatch();
+      return cleanupStage();
+    }
+    CloseHandle(finalCheck.handle);
+    finalCheck.handle = INVALID_HANDLE_VALUE;
+    CloseHandle(target.handle);
+    target.handle = INVALID_HANDLE_VALUE;
+  }
+
+  bool committed = false;
+  for (int attempt = 0; attempt < 8; ++attempt) {
+    if (RenameHandleRelative(
+            stage.handle,
+            parent,
+            outputName,
+            expectedExists,
+            failure)) {
+      committed = true;
+      break;
+    }
+
+    const DWORD renameError = GetLastError();
+    const ReportTargetObservation observed = ObserveReportTarget(
+        parent,
+        outputName,
+        expectedExists,
+        expectedIdentity,
+        *publishedIdentity);
+    if (observed == ReportTargetObservation::kPublished) {
+      committed = true;
+      *failure = ReportPublishUncertain();
+      return false;
+    }
+    const bool expectedStillNamed = expectedExists
+        ? observed == ReportTargetObservation::kExpected
+        : observed == ReportTargetObservation::kMissing;
+    if (!expectedStillNamed) {
+      if (observed == ReportTargetObservation::kOther) {
+        const bool definiteNoClobberCollision = !expectedExists
+            && (renameError == ERROR_ALREADY_EXISTS
+                || renameError == ERROR_FILE_EXISTS);
+        if (definiteNoClobberCollision) {
+          *failure = AlreadyExists();
+          return cleanupStage();
+        }
+        // A changed destination after an attempted rename could be a hostile
+        // same-owner swap after commit. Preserve the stage rather than risk
+        // deleting a file that may already have been published.
+        *failure = ReportPublishUncertain();
+        return false;
+      }
+      // If the final name cannot be inspected, the rename's commit state is
+      // unknowable. Keep the held stage handle intact: it may now be the
+      // published destination, and deleting it would risk deleting the report.
+      *failure = ReportPublishUncertain();
+      return false;
+    }
+
+    if ((renameError != ERROR_ACCESS_DENIED
+            && renameError != ERROR_SHARING_VIOLATION)
+        || attempt == 7) {
+      return cleanupStage();
+    }
+    Sleep(static_cast<DWORD>(10 * (attempt + 1)));
+  }
+
+  if (!committed) {
+    return cleanupStage();
+  }
+
+  // The rename has committed. Any subsequent failure is uncertain from the
+  // caller's perspective, but the replacement handle must never be marked for
+  // deletion because it now identifies the published file.
+  if (!FlushFileBuffers(stage.handle)) {
+    *failure = ReportPublishUncertain();
+    return false;
+  }
+  if (!VerifyHandleBytes(stage.handle, bytes, byteCount, failure)) {
+    *failure = ReportPublishUncertain();
+    return false;
+  }
+
+  ScopedHandle publishedName;
+  ULONG_PTR publishedInformation = 0;
+  if (!OpenRelativeComponent(
+          parent,
+          outputName,
+          READ_CONTROL | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+          kFileOpen,
+          kFileNonDirectoryFile,
+          nullptr,
+          &publishedName.handle,
+          &publishedInformation,
+          failure)) {
+    *failure = ReportPublishUncertain();
+    return false;
+  }
+  HandleIdentity finalIdentity;
+  SecuritySnapshot finalSecurity;
+  if (!ValidateSecurity(
+          publishedName.handle,
+          false,
+          failure,
+          &finalIdentity,
+          &finalSecurity)
+      || finalSecurity.denyAce
+      || finalSecurity.ownerAllowAceCount == 0
+      || !EqualIdentity(finalIdentity, *publishedIdentity)
+      || !ResolveFinalPath(publishedName.handle, &outputPath)) {
+    *failure = ReportPublishUncertain();
+    return false;
+  }
+  return true;
+}
+
+bool PublishReportFile(
+    const ParsedPath& outputPath,
+    const std::uint8_t* bytes,
+    std::size_t byteCount,
+    HandleIdentity* publishedIdentity,
+    Failure* failure) {
+  if (publishedIdentity == nullptr
+      || (bytes == nullptr && byteCount != 0)
+      || byteCount > kMaximumReportBytes) {
+    *failure = byteCount > kMaximumReportBytes
+        ? TooLarge()
+        : InvalidConfiguration();
+    return false;
+  }
+  ParsedPath parentPath;
+  std::wstring outputName;
+  HandleIdentity parentIdentity;
+  RelativeHandles openedParent;
+  if (!OpenReportParentDirectory(
+          outputPath,
+          &parentPath,
+          &outputName,
+          &parentIdentity,
+          &openedParent,
+          failure)) {
+    return false;
+  }
+
+  ScopedReportPublicationMutex mutex;
+  if (!AcquireReportPublicationMutex(parentIdentity, &mutex, failure)) {
+    return false;
+  }
+  const bool published = PublishReportInParent(
+      outputPath,
+      outputName,
+      openedParent.final,
+      bytes,
+      byteCount,
+      publishedIdentity,
+      failure);
+  if (!mutex.release() && published) {
+    *failure = ReportPublishMutexReleaseFailed();
+    return false;
+  }
+  return published;
+}
+
+napi_value PublishReportCallback(napi_env env, napi_callback_info info) {
+  std::vector<napi_value> arguments;
+  if (!GetArguments(env, info, &arguments, 2)) {
+    return ThrowFailure(env, InvalidConfiguration());
+  }
+  napi_valuetype pathType = napi_undefined;
+  std::size_t pathLength = 0;
+  if (napi_typeof(env, arguments[0], &pathType) != napi_ok
+      || pathType != napi_string
+      || napi_get_value_string_utf16(
+          env,
+          arguments[0],
+          nullptr,
+          0,
+          &pathLength) != napi_ok) {
+    return ThrowFailure(env, InvalidConfiguration());
+  }
+  if (pathLength > 32767) return ThrowFailure(env, InvalidPath());
+
+  std::wstring path;
+  const std::uint8_t* bytes = nullptr;
+  std::size_t byteCount = 0;
+  if (!GetString(env, arguments[0], &path)
+      || path.empty()
+      || path.back() == L'\\'
+      || path.back() == L'/'
+      || !GetBuffer(env, arguments[1], &bytes, &byteCount)) {
+    return ThrowFailure(env, InvalidConfiguration());
+  }
+  if (byteCount > kMaximumReportBytes) return ThrowFailure(env, TooLarge());
+
+  ParsedPath parsed;
+  Failure failure = OperationFailed();
+  if (!ParseAndValidatePath(path, false, &parsed, &failure)) {
+    return ThrowFailure(env, failure);
+  }
+  std::wstring driveRoot = parsed.root;
+  if (driveRoot.rfind(L"\\\\?\\", 0) == 0) driveRoot.erase(0, 4);
+  if (GetDriveTypeW(driveRoot.c_str()) != DRIVE_FIXED) {
+    return ThrowFailure(env, SecurityPolicy("report_volume_not_fixed"));
+  }
+  if (parsed.components.size() > kMaximumReportPathComponents) {
+    return ThrowFailure(env, InvalidPath());
+  }
+
+  HandleIdentity identity;
+  const bool published = PublishReportFile(
+      parsed,
+      bytes,
+      byteCount,
+      &identity,
+      &failure);
+  if (!published) return ThrowFailure(env, failure);
+  return IdentityValue(env, identity);
 }
 
 napi_value EnsureDirectoryCallback(napi_env env, napi_callback_info info) {
@@ -3902,6 +4628,18 @@ NAPI_MODULE_INIT() {
   DefineMethod(env, exports, "createFile", CreateFileCallback);
   DefineMethod(env, exports, "deleteFile", DeleteFileCallback);
   DefineMethod(env, exports, "replaceFile", ReplaceFileCallback);
+  DefineMethod(env, exports, "publishReport", PublishReportCallback);
+  napi_value reportPublicationVersion;
+  napi_create_string_utf8(
+      env,
+      "windows-report-publication-v1",
+      NAPI_AUTO_LENGTH,
+      &reportPublicationVersion);
+  napi_set_named_property(
+      env,
+      exports,
+      "reportPublicationContractVersion",
+      reportPublicationVersion);
   DefineMethod(env, exports, "inspectProtectedChild", InspectProtectedChildCallback);
   DefineMethod(env, exports, "readProtectedChild", ReadProtectedChildCallback);
   DefineMethod(env, exports, "createProtectedChild", CreateProtectedChildCallback);

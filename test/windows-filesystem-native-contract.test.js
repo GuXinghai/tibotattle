@@ -212,5 +212,20 @@ test("native source contract keeps sensitive opens handle-relative and replaceme
   assert.match(source, /"windows-credential-audit-file-guard-v1"/u);
   assert.match(source, /napi_get_boolean\(env, false, &productionSafe\)/u);
   assert.match(source, /napi_get_boolean\(env, false, &pathWalkRaceSafe\)/u);
+  assert.match(source, /kMaximumReportPathComponents = 256/u);
+  const reportCallbackStart = source.indexOf("napi_value PublishReportCallback(");
+  const reportCallbackEnd = source.indexOf("napi_value EnsureDirectoryCallback(", reportCallbackStart);
+  assert.notEqual(reportCallbackStart, -1);
+  assert.notEqual(reportCallbackEnd, -1);
+  const reportCallback = source.slice(reportCallbackStart, reportCallbackEnd);
+  const utf16LengthGate = reportCallback.indexOf("if (pathLength > 32767)");
+  const pathAllocation = reportCallback.indexOf("GetString(env, arguments[0]");
+  // Guard mapped-volume behavior without probing a real network share.
+  const fixedVolumeGate = reportCallback.indexOf("GetDriveTypeW(driveRoot.c_str()) != DRIVE_FIXED");
+  const componentBound = reportCallback.indexOf("parsed.components.size() > kMaximumReportPathComponents");
+  const firstPublicationIo = reportCallback.indexOf("PublishReportFile(");
+  assert.ok(utf16LengthGate !== -1 && utf16LengthGate < pathAllocation);
+  assert.ok(fixedVolumeGate !== -1 && fixedVolumeGate < firstPublicationIo);
+  assert.ok(componentBound !== -1 && componentBound < firstPublicationIo);
   assert.doesNotMatch(source, /ValidateComponents\(/u);
 });
