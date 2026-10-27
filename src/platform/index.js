@@ -188,7 +188,8 @@ export {
   rotateParticipantSecret,
   withParticipantSecretLease,
 } from "./participant-identity.js";
-export { createWorkUsageProjectResolver, normalizeWorkUsageRepositoryOrigin } from "./work-usage-projects.js";
+export { createWorkUsageProjectResolver, createCodexWorkUsageProjectResolver, normalizeWorkUsageRepositoryOrigin } from "./work-usage-projects.js";
+export { readCodexLocalProjectMemberships } from "./local-codex-projects.js";
 
 export { openTimingStore, ingestTimingFile, timingReport, readTimingRows } from './inference-timing-store.js';
 export { forEachRolloutLine, ROLLOUT_LINE_BYTES } from './rollout-line-reader.js';

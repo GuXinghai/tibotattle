@@ -94,6 +94,20 @@ test("selected metadata resolves display names and explicit worker parents witho
   assert.deepEqual(await Promise.all([readFile(databaseFile), readFile(namesFile)]), before);
 });
 
+test("project ancestry cannot cross an unresolved internal-review terminal", async t => {
+  const { home, databaseFile, rolloutPath } = await addAutoReview(t);
+  await writeFile(rolloutPath, autoReviewSession(AUTO_REVIEW, ABSENT) + "\n", { mode: 0o600 });
+  const db = new DatabaseSync(databaseFile);
+  try {
+    db.prepare("INSERT INTO threads(id,source,thread_source) VALUES(?,?,?)")
+      .run(ABSENT, JSON.stringify({ subagent: { other: "guardian" } }), "guardian_review");
+  } finally { db.close(); }
+  const result = await readCodexLocalThreadUsageRelations(home, [AUTO_REVIEW], { includeProjectAncestry: true });
+  assert.equal(result.get(AUTO_REVIEW).root, AUTO_REVIEW);
+  assert.equal(result.get(AUTO_REVIEW).ancestryKnown, false);
+  assert.deepEqual(result.get(AUTO_REVIEW).ancestors, []);
+});
+
 test("accounting ancestry follows nested workers without reading guardian rollout parents", async (t) => {
   const { home, databaseFile, rolloutPath } = await addAutoReview(t);
   const grandchild = "55555555-5555-4555-8555-555555555555";

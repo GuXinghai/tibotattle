@@ -14,6 +14,11 @@ digests are checked separately against an independent per-event public-ledger
 oracle, including unknown speeds and unavailable tier/context prices. No current
 pricing values are regenerated into the frozen fixture.
 
+The accepted 2026-10-27 project-membership change leaves this historical fixture
+intact. Its Standard readback explicitly uses the original repository grouping;
+the current full work-cell comparison uses Codex assignments and verified
+source-header ancestry. Both keep the independent per-event pricing checks.
+
 Integers, strings and identities are
 exact; the only sanctioned difference is binary-float rounding of money
 (deviation N1 in the redesign plan). Large cache-impact breakdowns are held as

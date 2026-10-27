@@ -147,10 +147,11 @@ function isCodexSessionPath(codexHome, rolloutPath) {
 /**
  * Guardian-review records have no parent column in Codex's thread store. Their
  * own first, bounded session-metadata record is the only accepted source for
- * this relationship. It is never retained or exposed: this returns one UUID
- * only after both the selected thread and its source classification agree.
+ * this relationship. Existing metadata callers receive only the parent UUID.
+ * The indexed source-only path can also verify ordinary worker/root headers
+ * and receives a narrowed relation without retaining the source record.
  */
-async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usageRelations = false) {
+async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usageRelations = false, includeWorker = false) {
   if (typeof rolloutPath !== "string" || rolloutPath.length === 0
       || !isAbsolute(rolloutPath)) return null;
   let handle;
@@ -183,24 +184,61 @@ async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usag
     }
     if (typeof line !== "string" || line.includes("\ufffd")) return null;
     const record = JSON.parse(line);
-    const parentId = threadId(record?.payload?.parent_thread_id);
+    const header = record?.type === "session_meta" && threadId(record.payload?.id) === id;
+    const worker = includeWorker && header ? workerMetadata(record.payload?.source, id) : null;
+    const root = includeWorker && header && (record.payload?.thread_source === "user"
+      || ["cli", "exec", "vscode"].includes(record.payload?.source))
+      && !record.payload?.source?.subagent;
+    const parentId = worker?.parentId ?? threadId(record?.payload?.parent_thread_id);
     const verified = isAutoReviewSessionMetadata(record, id)
       || usageRelations && record?.type === "session_meta" && threadId(record.payload?.id) === id
         && record.payload?.thread_source === "subagent" && isAutoReviewSource(record.payload?.source);
-    if (!verified || parentId === null || parentId === id) {
+    if ((!verified && !worker && !root) || (!root && (parentId === null || parentId === id))) {
       return null;
     }
     const after = await handle.stat();
     return filesystem.same(before, after)
         && before.size === after.size && before.mtimeMs === after.mtimeMs
         && filesystem.same(before, await filesystem.namedStat(path, handle))
-      ? parentId
+      ? includeWorker ? { parentId: root ? null : parentId, origin: verified ? "auto_review" : null } : parentId
       : null;
   } catch {
     return null;
   } finally {
     await handle?.close();
   }
+}
+
+// Use retained source paths when an index already has them. This path reads
+// bounded headers only and never opens Codex's live SQLite/WAL/SHM files.
+async function readSourceUsageRelations(codexHome, ids, sourcePaths, knownThreadIds, filesystem, signal) {
+  const selected = new Map(), pending = new Set(ids);
+  let reads = 0;
+  for (const id of pending) {
+    signal?.throwIfAborted();
+    if (pending.size > 50_000) return new Map();
+    const paths = (typeof sourcePaths === "function" ? sourcePaths(id) : sourcePaths.get(id)) ?? [];
+    if (!Array.isArray(paths) || paths.length > 32) continue;
+    if (paths.length === 0) {
+      // An explicit Codex membership authenticates a terminal parent even when
+      // that parent's rollout is outside the retained index.
+      if (knownThreadIds.has(id)) selected.set(id, { parentId: null, origin: null });
+      continue;
+    }
+    let accepted = null, invalid = false;
+    for (const path of paths) {
+      if (++reads > 50_000) return new Map();
+      const record = await readAutoReviewParent(codexHome, path, id, filesystem, true, true);
+      if (!record || accepted && (accepted.parentId !== record.parentId || accepted.origin !== record.origin)) {
+        invalid = true; break;
+      }
+      accepted = record;
+    }
+    if (invalid || !accepted) continue;
+    selected.set(id, accepted);
+    if (accepted.parentId) pending.add(accepted.parentId);
+  }
+  return selected;
 }
 
 function boundedTextColumn(columns, name, maximumLength) {
@@ -495,24 +533,32 @@ export async function readCodexLocalThreadMetadata(codexHome, threadIds, {
 export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
   platform = process.platform, loadWindowsBinding, databaseFactory = openMetadataDatabase, signal,
   includeOriginEvidence = false,
+  includeProjectAncestry = false,
+  sourcePaths = null,
+  knownThreadIds = new Set(),
   onOriginDiagnostic = null,
 } = {}) {
   const report = (code, count) => reportOriginDiagnostic(onOriginDiagnostic, code, count);
   const filesystem = createLocalCodexMetadataFilesystem({ platform, loadWindowsBinding });
   if (!Array.isArray(threadIds) || threadIds.length > 25_000) { report("metadata_invalid_request"); return new Map(); }
+  if (sourcePaths !== null && (!(sourcePaths instanceof Map) && typeof sourcePaths !== "function"
+      || !(knownThreadIds instanceof Set))) { report("metadata_invalid_request"); return new Map(); }
   if (!await filesystem.validHome(codexHome)) { report("metadata_home_unavailable"); return new Map(); }
   const ids = [...new Set(threadIds.map(threadId))];
   if (ids.includes(null)) { report("metadata_invalid_request"); return new Map(); }
   report("requested", ids.length);
-  const selected = await readSelectedThreadMetadata(codexHome, ids, {
-    ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal, onOriginDiagnostic,
-  });
+  const selected = sourcePaths instanceof Map || typeof sourcePaths === "function"
+    ? await readSourceUsageRelations(codexHome, ids, sourcePaths, knownThreadIds, filesystem, signal)
+    : await readSelectedThreadMetadata(codexHome, ids, {
+      ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal, onOriginDiagnostic,
+    });
   const known = ids.filter(id => selected.has(id)).length;
   report("known", known);
   report("unknown", ids.length - known);
   return new Map(ids.map(id => {
     let current = id;
     const seen = new Set();
+    const ancestors = [];
     let valid = true;
     for (let depth = 0; ; depth++) {
       if (depth >= 64 || seen.has(current)) { valid = false; break; }
@@ -521,11 +567,15 @@ export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
       if (!record) { valid = false; break; }
       if (!record.parentId) break;
       current = record.parentId;
+      ancestors.push(current);
     }
     const autoReview = selected.get(id)?.origin === "auto_review";
+    const blockedReviewTerminal = autoReview && selected.get(current)?.origin === "auto_review";
     // Never attach to a missing, cyclic, or internal-review terminal parent.
-    if (!valid || autoReview && selected.get(current)?.origin === "auto_review") current = id;
+    if (!valid || blockedReviewTerminal) current = id;
     return [id, { root: current, autoReview,
+      ...(includeProjectAncestry ? { ancestors: valid && !blockedReviewTerminal ? ancestors : [],
+        ancestryKnown: valid && !blockedReviewTerminal } : {}),
       ...(includeOriginEvidence ? {originKnown:selected.has(id)} : {}) }];
   }));
 }

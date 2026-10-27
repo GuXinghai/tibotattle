@@ -4,6 +4,37 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { realpath, stat } from "node:fs/promises";
 const run = promisify(execFile);
 
+/** Project ownership is explicit Codex metadata; locations only decorate it. */
+export function createCodexWorkUsageProjectResolver({ memberships, relations, digest } = {}) {
+  return function resolveCodexProject(uuid, location) {
+    const workspace = location ? {
+      worktree: location.worktree, worktreeName: location.worktreeName,
+    } : {};
+    const unknown = () => location ? { ...workspace, method: "codex_project_unknown" } : null;
+    let membership = memberships?.threads.get(uuid);
+    let inherited = false;
+    if (!membership) {
+      const relation = relations?.get(uuid);
+      if (relation?.ancestryKnown) {
+        for (const parent of relation.ancestors) {
+          membership = memberships?.threads.get(parent);
+          if (membership) { inherited = true; break; }
+        }
+      }
+    }
+    if (!membership || membership.kind === "unknown") return unknown();
+    if (membership.kind === "non_project") return {
+      ...workspace, project: "non-project", projectName: "Non-project tasks",
+      method: inherited ? "codex_parent_projectless" : "codex_projectless",
+    };
+    const project = memberships.projects.get(membership.projectId);
+    if (!project) return unknown();
+    return { ...workspace, project: digest("codex-project", membership.projectId),
+      projectName: project.name,
+      method: inherited ? "codex_parent_project" : "codex_project" };
+  };
+}
+
 // An identity only: this URL is never requested or included in report output.
 export function normalizeWorkUsageRepositoryOrigin(value) {
   if (typeof value !== "string" || value.length > 4096 || /[\u0000-\u0020\u007f\\]/u.test(value)) return null;

@@ -220,7 +220,9 @@ export async function readGoldenViewsFromStore() {
           secretFile: workspace.secretFile, nowMs,
         }));
         const oracleOptions = { nowMs, codexHome: workspace.codexHome, secretFile: workspace.secretFile };
-        views.standardWork[name] = goldenWorkView(await workPricingOracle(database, facts, { ...oracleOptions, standard: true }));
+        views.standardWork[name] = goldenWorkView(await workPricingOracle(database, facts, {
+          ...oracleOptions, standard: true, historicalProjectGrouping: true,
+        }));
         views.speedWork[name] = goldenWorkView(await workPricingOracle(database, facts, oracleOptions));
         views.speedReports[name] = reportSpeedOracle(facts, nowMs, GOLDEN_LEDGER);
       }

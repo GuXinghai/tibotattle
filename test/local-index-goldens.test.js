@@ -48,13 +48,22 @@ function expectSame(label, expected, actual, minimumValues) {
   assert.ok(stats.exact + stats.money >= minimumValues, `${label}: compared ${stats.exact + stats.money} values`);
 }
 
-test("the frozen Standard reports, work identities and calibration remain unchanged", async () => {
+test("the frozen Standard reports remain unchanged", async () => {
   const actual = await readViews();
   assert.equal(actual.corpus, golden.corpus, "the generator still produces the corpus the goldens were made from");
   for (const [name] of GOLDEN_CLOCKS) {
     expectSame(`Standard report at ${name}`, golden.reports[name], standardReportView(actual.reports[name]), 400);
-    expectSame(`per-event Standard work at ${name}`, golden.work[name], actual.standardWork[name], 40);
   }
+});
+
+test("historical Standard work identities remain frozen across project-policy changes", async () => {
+  const actual = await readViews();
+  for (const [name] of GOLDEN_CLOCKS)
+    expectSame(`per-event Standard work at ${name}`, golden.work[name], actual.standardWork[name], 40);
+});
+
+test("the frozen calibration layers remain unchanged", async () => {
+  const actual = await readViews();
   for (const name of ["no-ledger", "ledger"]) {
     expectSame(`calibration layer (${name})`, golden.layers[name], actual.layers[name], 300);
   }

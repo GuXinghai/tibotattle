@@ -191,7 +191,7 @@ async function makeFixture({ events, useCustomSecret = false }) {
     const cwd = item.cwd === "WORKTREE" ? worktree : (item.cwd ?? repository);
     if (item.context === "settings") {
       lines.push({ timestamp: item.timestamp, type: "event_msg", payload: {
-        type: "thread_settings_applied", thread_settings: { cwd, model: "gpt-5.6-sol" },
+        type: "thread_settings_applied", thread_settings: { cwd, model: "gpt-5.6-sol", service_tier: "default" },
       } });
     } else if (item.context !== "none") {
       lines.push(turnContext(item.timestamp, cwd, index + 1));
@@ -244,6 +244,11 @@ async function makeFixture({ events, useCustomSecret = false }) {
   };
   if (secretFile !== null) buildOptions.secretFile = secretFile;
   await refreshLocalIndex(buildOptions);
+  await writeFile(join(codexHome, ".codex-global-state.json"), JSON.stringify({
+    "local-projects": { synthetic: { id: "synthetic", name: "main", rootPaths: [repository] } },
+    "thread-project-assignments": { [THREAD_ID]: { projectKind: "local", projectId: "synthetic" } },
+    "projectless-thread-ids": [],
+  }), { mode: 0o600 });
   return {
     root,
     codexHome,
@@ -324,7 +329,7 @@ test("canonical source resolves main and linked worktree to one project and cons
     const worktreeEntries = Object.entries(result.display.worktrees);
     assert.equal(projectEntries.length, 1);
     assert.equal(projectEntries[0][1].name, "main");
-    assert.equal(projectEntries[0][1].method, "git_observation");
+    assert.equal(projectEntries[0][1].method, "codex_project");
     assert.deepEqual(worktreeEntries.map(([, value]) => value.name).sort(), [
       "feature-worktree",
       "main",
@@ -391,7 +396,7 @@ test("same-inode append growth leaves the indexed prefix attributable and exclud
     const projectEntries = Object.entries(result.display.projects);
     assert.equal(projectEntries.length, 1);
     assert.equal(projectEntries[0][1].name, "main");
-    assert.equal(projectEntries[0][1].method, "git_observation");
+    assert.equal(projectEntries[0][1].method, "codex_project");
     const projects = query(result, "project");
     assert.equal(projects.totals.tokens, 100);
     assert.equal(projects.totals.events, 1);
@@ -959,7 +964,7 @@ test("bounded collaboration ancestry follows nested workers, preserves absent ro
   } finally {await rm(home,{recursive:true,force:true});}
 });
 
-test("project resolution observes repository changes afresh on every read", async () => {
+test("explicit project membership survives Git changes and is reread on every report", async () => {
   const fixture = await makeFixture({ events: [
     { timestamp: "2026-08-24T00:01:00Z", total: 100, last: 100 },
     { timestamp: "2026-08-24T00:02:00Z", kind: "quota-repeat", total: 100, last: 100 },
@@ -973,8 +978,16 @@ test("project resolution observes repository changes afresh on every read", asyn
     await rename(join(fixture.repository, ".git"), join(fixture.repository, ".git-saved"));
     const remapped = await readSnapshot(options);
     assert.equal(query(remapped, "project").totals.tokens, 100);
-    assert.notEqual(query(remapped, "project").rows[0].id, query(cold, "project").rows[0].id,
-      "fresh Git resolution cannot be replaced by a cached repository mapping");
+    assert.equal(query(remapped, "project").rows[0].id, query(cold, "project").rows[0].id,
+      "Git changes do not change explicit Codex ownership");
+    const file = join(fixture.codexHome, ".codex-global-state.json");
+    const metadata = JSON.parse(await readFile(file, "utf8"));
+    metadata["thread-project-assignments"] = {};
+    metadata["projectless-thread-ids"] = [THREAD_ID];
+    await writeFile(file, JSON.stringify(metadata), { mode: 0o600 });
+    const changed = await readSnapshot(options);
+    assert.equal(query(changed, "project").rows[0].id, "non-project");
+    assert.equal(query(changed, "project").totals.tokens, 100);
   } finally { await rm(fixture.root, { recursive: true, force: true }); }
 });
 
@@ -1105,13 +1118,16 @@ for (const { platform, paths, root, newline } of [
   });
 }
 
-test("canonical source groups unavailable non-project folders and conserves usage", async () => {
+test("canonical source groups explicitly projectless tasks and conserves unavailable-location usage", async () => {
   const absentRoot = await mkdtemp(join(tmpdir(), "work-usage-absent-"));
   const fixture = await makeFixture({ events: [
     { timestamp: "2026-08-24T00:01:00Z", total: 100, last: 100, cwd: join(absentRoot, "first") },
     { timestamp: "2026-08-24T00:02:00Z", total: 400, last: 300, cwd: join(absentRoot, "second") },
   ] });
   try {
+    await writeFile(join(fixture.codexHome, ".codex-global-state.json"), JSON.stringify({
+      "local-projects": {}, "thread-project-assignments": {}, "projectless-thread-ids": [THREAD_ID],
+    }), { mode: 0o600 });
     const result = await readSnapshot({
       ...fixture,
       ...interval("2026-08-24T00:00:00Z", "2026-08-25T00:00:00Z"),
@@ -1123,7 +1139,7 @@ test("canonical source groups unavailable non-project folders and conserves usag
     assert.equal(projects.rows[0].tokens, 400);
     assert.equal(projects.totals.tokens, 400);
     assert.equal(result.display.projects["non-project"].name, "Non-project tasks");
-    assert.equal(result.display.projects["non-project"].method, "non_project");
+    assert.equal(result.display.projects["non-project"].method, "codex_projectless");
     assert.deepEqual(query(result, "worktree").rows.map(row => row.tokens).sort((a, b) => a - b), [100, 300]);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });

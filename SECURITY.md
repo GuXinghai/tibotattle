@@ -64,8 +64,14 @@ contributions and browser storage. Under the accepted
 current source uses the owner-only v2 local store to retain source paths and
 working directories. Those paths never enter exports, diagnostics, contributions
 or browser storage and never leave the machine. Source cutover does not prove an
-installed release has adopted v2. Repository grouping describes
-last-observed local workspace mappings, not verified historical ownership.
+installed release has adopted v2. Project grouping follows explicit Codex
+assignments and verified collaboration parents, including non-Git projects.
+The bounded global-state reader projects only local-projects,
+thread-project-assignments and projectless-thread-ids. Missing or conflicting
+ownership stays Unassigned. Git may enrich worktree labels; it does not determine
+project ownership. These are current observed assignments, not verified
+historical ownership. See the
+[project-membership decision](docs/decisions/2026-10-27-codex-project-membership.md).
 Transient metadata uses the approved native source reader's current-owner,
 single-link and reparse-point checks.
 Existing SQLite files are held through connection close; metadata never changes

@@ -36,7 +36,11 @@ local `config.toml` and the app-server methods `account/read`,
 privacy boundaries. Prompts, responses, raw commands, credentials and session
 contents must not enter derived reports. Private paths stay in the owner-only
 local index. Projects & threads labels are local-display metadata and are not
-exported or uploaded.
+exported or uploaded. Project grouping uses explicit Codex assignments,
+including non-Git projects, and verified parent inheritance for subworkers.
+Only explicit projectless markers appear as Non-project tasks; missing or
+conflicting membership remains Unassigned. A bounded read of Codex's global-state
+file supplies these current assignments without rewriting historical usage.
 
 ## Settings and optional features
 

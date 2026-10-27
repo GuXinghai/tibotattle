@@ -406,16 +406,17 @@ to 512 characters inside SQLite before reaching JavaScript; whitespace is
 normalized and control-containing values are rejected. Titles can include opening
 message text, but are never exported, uploaded or persisted by this feature.
 No transcript or response bodies are read. The cache-drop tables and ancestry
-reader retain their title-free contract. A bounded local Git lookup groups worktrees
-and clones with the same normalized origin. An owner-controlled, read-only SQLite
-snapshot may read up to 25,000 rows of `cwd` and `git_origin_url`, each bounded to
-4,096 characters and UTF-8 bytes. Credentials, query strings and fragments are
-removed from recognized network origins. Unambiguous retained origins recover
-repository identity only for missing folders; existing non-Git folders override
-stale hints. Conflicting hints stay unresolved. Raw origins remain transient and
-never reach the browser, index, export or telemetry. Folders without identifiable
-repositories share Non-project tasks; missing source context stays Unassigned.
-Display labels and
+reader retain their title-free contract. Project ownership follows the
+[explicit Codex membership decision](../decisions/2026-10-27-codex-project-membership.md).
+A protected read of `.codex-global-state.json` projects only `local-projects`,
+`thread-project-assignments` and `projectless-thread-ids`, with an 8 MiB byte
+limit, bounded record counts and identity/size/timestamp revalidation. A direct
+assignment wins; a verified subworker inherits its nearest explicitly assigned
+ancestor. Explicit projectless markers alone supply Non-project tasks. Missing,
+conflicting, unsupported or dangling membership stays Unassigned. Non-Git
+projects retain their Codex identity. Git may supply worktree labels and handles,
+but cannot override ownership. These are current assignments, not reconstructed
+historical ownership. Display labels and
 basenames are transient display decoration. No raw path, name or project handle
 is written to exports, diagnostics, contributions or browser storage. The
 owner-only local index store holds working directories and rollout paths, as the
@@ -424,9 +425,11 @@ they never leave the machine. Raw repository origins are not stored there.
 Explicit collaboration parent links are read in a bounded local metadata pass
 to group subworkers into primary-thread families. Cycles and unresolved ancestry
 remain separate; names and title policy are independent of this grouping.
-The usage-only relation reader also verifies automatic-review parents from the
-first bounded session header against the local thread-store classification.
-It supports current and legacy guardian classifications and compressed headers,
+The indexed work view locates bounded session headers through retained local
+source paths and verifies collaboration parents there. This relation path never
+opens Codex's live SQLite database or WAL/SHM files. Other display/ancestry callers
+retain their separately protected thread-store reader. Both support current and
+legacy guardian classifications and compressed headers,
 without reading transcripts or titles. Missing, conflicting, inaccessible or
 cyclic relationships remain unlinked. Each usage cell contributes exactly once;
 live task details partition primary, subworker and automatic-review usage.

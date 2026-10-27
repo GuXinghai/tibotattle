@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import { APP_PRICE_REGISTRY_MANIFEST } from "@app-usagemonitor/accounting";
 import {
   createWorkUsageProjectResolver,
-  readCodexLocalRepositoryOrigins,
+  createCodexWorkUsageProjectResolver,
+  readCodexLocalProjectMemberships,
   readCodexLocalThreadUsageRelations,
 } from "./platform/index.js";
 import { createWorkUsageAccumulator, workUsageError } from "./reporting/index.js";
@@ -92,14 +93,31 @@ export async function readLocalIndexWorkUsage({
   let deviceSalt = null;
   let metadataAvailable = true;
   let resolver = resolveProject;
+  const memberships = await readCodexLocalProjectMemberships(codexHome, { signal });
+  const windowFrom = Math.min(...periods.map(p => p.fromMs)), windowTo = Math.max(...periods.map(p => p.toMs));
+  const sessionRows = database.prepare(`SELECT id, session_local, session_uuid FROM session WHERE id IN
+    (SELECT DISTINCT u.session_id FROM usage_event u WHERE u.observed_at_ms>=? AND u.observed_at_ms<?
+      AND ${committedPredicate("u")}) LIMIT 25001`).all(windowFrom, windowTo);
+  if (sessionRows.length > 25_000) throw workUsageError("work_usage_capacity_exceeded");
+  const sessions = new Map(sessionRows.map(row => [Number(row.id), { local: row.session_local,
+    uuid: UUID.test(row.session_uuid ?? "") ? row.session_uuid.toLowerCase() : null }]));
+  // Resolve paths lazily as verified edges discover parents. Unrelated old
+  // sessions cannot invalidate a small current window or grow this lookup.
+  const sourcePathQuery = database.prepare(`SELECT DISTINCT src.path FROM source src
+    JOIN session s ON s.id=src.session_id WHERE s.session_uuid=? COLLATE NOCASE
+      AND src.quarantine_code IS NULL AND src.scanned_bytes>0 LIMIT 33`);
+  const sourcePaths = uuid => sourcePathQuery.all(uuid).map(row => row.path);
+  const threadRelations = await readCodexLocalThreadUsageRelations(codexHome,
+    [...sessions.values()].map(s => s.uuid).filter(Boolean), {
+      signal, sourcePaths, knownThreadIds: new Set(memberships.threads.keys()), includeProjectAncestry: true,
+    });
+  metadataAvailable = memberships.status === "available";
   try {
+    deviceSalt = await readExistingDeviceSalt(
+      secretFile ?? defaultLocalUnifiedIndexSecretPath(indexFile),
+    );
     if (resolver === null) {
-      deviceSalt = await readExistingDeviceSalt(
-        secretFile ?? defaultLocalUnifiedIndexSecretPath(indexFile),
-      );
-      const repositoryOrigins = await readCodexLocalRepositoryOrigins(codexHome);
       resolver = createWorkUsageProjectResolver({
-        repositoryOrigins,
         digest: (kind, value) => localDigest(deviceSalt, `work-usage-${kind}`, value).toString("hex"),
       });
     }
@@ -145,11 +163,26 @@ export async function readLocalIndexWorkUsage({
     const { project, failed } = resolved[index];
     if (failed) metadataAvailable = false;
     projectByDirectory.set(Number(row.id), project);
-    if (project) {
-      projects[project.project] = { name: project.projectName, method: project.method };
-      worktrees[project.worktree] = { name: project.worktreeName };
-    }
+    if (project?.worktree) worktrees[project.worktree] = { name: project.worktreeName };
   });
+
+  const resolveOwnership = createCodexWorkUsageProjectResolver({ memberships, relations: threadRelations,
+    digest: (kind, value) => localDigest(deviceSalt, `work-usage-${kind}`, value).toString("hex"),
+  });
+  const ownership = new Map();
+  function projectFor(uuid, directoryId) {
+    const key = JSON.stringify([uuid, directoryId]);
+    if (ownership.has(key)) return ownership.get(key);
+    if (ownership.size >= MAX_WORK_CELLS) throw workUsageError("work_usage_capacity_exceeded");
+    const project = deviceSalt ? resolveOwnership(uuid, projectByDirectory.get(directoryId)) : null;
+    if (project?.project) {
+      const previous = projects[project.project];
+      if (!previous || project.method === "codex_project" || project.method === "codex_projectless")
+        projects[project.project] = { name: project.projectName, method: project.method };
+    }
+    ownership.set(key, project);
+    return project;
+  }
 
   const commitSeq = readCommitSeq(database);
   const generation = Object.freeze({
@@ -167,6 +200,7 @@ export async function readLocalIndexWorkUsage({
     nowMs,
     codexHome,
     deviceSalt,
+    threadRelations,
     projects,
     worktrees,
     metadata: () => ({
@@ -186,8 +220,6 @@ export async function readLocalIndexWorkUsage({
   const tiers = new Map(database.prepare("SELECT id, codex_speed_mode, api_service_tier FROM tier_semantics").all().map(row => [Number(row.id), { codexSpeedMode: row.codex_speed_mode, apiServiceTier: row.api_service_tier }]));
   const models = new Map(database.prepare("SELECT id, model_id FROM model").all()
     .map((row) => [Number(row.id), row.model_id]));
-  const sessions = new Map(database.prepare("SELECT id, session_local, session_uuid FROM session").all()
-    .map((row) => [Number(row.id), { local: row.session_local, uuid: row.session_uuid }]));
   const priceOf = (record) => {
     const priced = usageProjection(record, declaredSpeedModeAt(declaredSpeedBaselines, Date.parse(record.observedAt)) ?? "unknown", pricer)?.speedPriced;
     return { amount: ["fully_priced", "partially_priced"].includes(priced?.coverageStatus) ? priced.totalUsd : null, status: priced?.coverageStatus ?? "unpriced" };
@@ -241,7 +273,7 @@ export async function readLocalIndexWorkUsage({
         observedAtMs: Number(row.first_at), lastAtMs: Number(row.last_at),
         accountScopeId: Number(row.account_scope_id), sessionLocal: session.local, sessionUuid: session.uuid,
         modelId, components, statusOnly,
-        project: projectByDirectory.get(Number(row.directory_id)) ?? null,
+        project: projectFor(session.uuid, Number(row.directory_id)),
         cacheWriteAssumedZero: (prov & 2) !== 0, partial: (prov & 1) !== 0,
         price: statusOnly ? { amount: null, status: "unpriced" } : priceOf({
           observedAt: new Date(Number(row.first_at)).toISOString(), model: modelId,
@@ -288,6 +320,7 @@ export function createWorkUsageCollectorCore({
   nowMs,
   codexHome,
   deviceSalt = null,
+  threadRelations = null,
   projects = {},
   worktrees = {},
   metadata = () => ({
@@ -389,7 +422,7 @@ export function createWorkUsageCollectorCore({
         ),
       ),
     ];
-    const relations = await readCodexLocalThreadUsageRelations(codexHome, ids, { signal });
+    const relations = threadRelations ?? await readCodexLocalThreadUsageRelations(codexHome, ids, { signal });
     for (const state of scopeStates.values()) {
       const { threads, threadLookup, id: selectedScope } = state;
       const threadFamilies = {};
@@ -453,9 +486,9 @@ export function createWorkUsageCollectorCore({
           .digest("hex"),
       },
       metadata: {
-        method: "last_observed_location",
+        method: "codex_explicit_project_membership",
         usageClassification: "verified-quota-status-v2",
-        resolverVersion: "work-location-v4-review-families",
+        resolverVersion: "work-location-v5-codex-project-membership",
         discoveryFingerprint: described.discoveryFingerprint,
         observationDigest: described.observationDigest,
         observedAt: Date.now(),

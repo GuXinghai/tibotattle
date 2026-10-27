@@ -24,6 +24,18 @@ No remote resources were modified by the source retirement.
 
 ## Evidence boundaries
 
+The owner-approved [Codex project-membership contract](./decisions/2026-10-27-codex-project-membership.md)
+is implemented in the working tree: explicit assignments take precedence,
+verified subworkers inherit their nearest assigned parent, and non-Git projects
+remain projects. Focused isolated synthetic checks and a read-only projection of
+an existing retained real-data copy passed. The copy was verified unchanged;
+the readback did not open the active index or Codex's live SQLite/WAL/SHM files.
+The wider frozen Standard report and historical work-identity checks still fail;
+the same 133 report differences and 12 work-identity differences were reproduced
+with the original implementation at `b5c737ceebad5240392bc8bc8712675cf8504567`
+under isolated synthetic data. Their fixture was not rewritten. The existing
+running package has not yet adopted this source change.
+
 Brand configuration, neutral package identity and explicit profile paths are
 implemented in source. The approved editable SVG and raster/ICO/tray variants
 are included. Source staging has completed on Windows with Node 26.2.0.

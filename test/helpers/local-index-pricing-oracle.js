@@ -2,7 +2,9 @@ import { addUsdStrings, priceCodexUsageEvent } from "@app-usagemonitor/accountin
 import { recognizedCodexModelId } from "../../src/export/index.js";
 import { declaredSpeedModeAt } from "../../src/codex-speed-baseline.js";
 import { localDigest, readExistingDeviceSalt } from "../../src/local-device-salt.js";
-import { createWorkUsageProjectResolver, readCodexLocalRepositoryOrigins } from "../../src/platform/index.js";
+import { createWorkUsageProjectResolver, createCodexWorkUsageProjectResolver,
+  readCodexLocalProjectMemberships, readCodexLocalThreadUsageRelations,
+  readCodexLocalRepositoryOrigins } from "../../src/platform/index.js";
 import { createWorkUsageCollectorCore } from "../../src/local-index-work-usage.js";
 import { readCommitSeq } from "../../src/local-index-store.js";
 import { projectRecordedTokenComponents } from "../../src/reporting/index.js";
@@ -121,10 +123,27 @@ export function reportSpeedOracle(facts, nowMs, ledger) {
 
 // Reuse only identity/family assembly and exact cell accumulation. Fact reading,
 // period membership, pricing and per-event coverage bypass the grouped reader.
-export async function workPricingOracle(database, facts, { nowMs, codexHome, secretFile, standard = false, ledger = [] }) {
+export async function workPricingOracle(database, facts, { nowMs, codexHome, secretFile, standard = false,
+  historicalProjectGrouping = false, ledger = [] }) {
   const salt = await readExistingDeviceSalt(secretFile);
+  const memberships = await readCodexLocalProjectMemberships(codexHome);
+  const sourcePaths = new Map();
+  for (const row of database.prepare(`SELECT s.session_uuid, src.path FROM source src
+    JOIN session s ON s.id=src.session_id WHERE src.quarantine_code IS NULL AND src.scanned_bytes>0`).iterate()) {
+    if (!row.session_uuid) continue;
+    const paths = sourcePaths.get(row.session_uuid) ?? [];
+    if (!paths.includes(row.path)) paths.push(row.path);
+    sourcePaths.set(row.session_uuid, paths);
+  }
+  const threadRelations = await readCodexLocalThreadUsageRelations(codexHome,
+    [...new Set(facts.map(row => row.session_uuid).filter(Boolean))], {
+      sourcePaths, knownThreadIds: new Set(memberships.threads.keys()), includeProjectAncestry: true,
+    });
   const resolveProject = createWorkUsageProjectResolver({
-    repositoryOrigins: await readCodexLocalRepositoryOrigins(codexHome),
+    ...(historicalProjectGrouping ? { repositoryOrigins: await readCodexLocalRepositoryOrigins(codexHome) } : {}),
+    digest: (kind, value) => localDigest(salt, `work-usage-${kind}`, value).toString("hex"),
+  });
+  const resolveOwnership = createCodexWorkUsageProjectResolver({ memberships, relations: threadRelations,
     digest: (kind, value) => localDigest(salt, `work-usage-${kind}`, value).toString("hex"),
   });
   const locations = new Map([[0, null]]);
@@ -136,7 +155,7 @@ export async function workPricingOracle(database, facts, { nowMs, codexHome, sec
     scopeRows: database.prepare("SELECT id, status, scope_local, reason, plan_type FROM account_scope ORDER BY id").all(),
     periods: [["24h", 86_400_000], ["7d", 7 * 86_400_000], ["30d", 30 * 86_400_000], ["all", Infinity]]
       .map(([id, span]) => ({ id, fromMs: Math.max(0, nowMs - span), toMs: nowMs })),
-    nowMs, codexHome, deviceSalt: salt,
+    nowMs, codexHome, deviceSalt: salt, threadRelations: historicalProjectGrouping ? null : threadRelations,
   });
   for (const row of facts) {
     const statusOnly = (Number(row.flags) & 8) !== 0 && Object.values(row.components).every((value) => value === null);
@@ -144,7 +163,9 @@ export async function workPricingOracle(database, facts, { nowMs, codexHome, sec
     core.add({
       observedAtMs: Number(row.observed_at_ms), accountScopeId: Number(row.account_scope_id),
       sessionLocal: row.session_local, sessionUuid: row.session_uuid,
-      modelId: row.model, components: row.components, statusOnly, project: locations.get(Number(row.work_directory_id)) ?? null,
+      modelId: row.model, components: row.components, statusOnly,
+      project: historicalProjectGrouping ? locations.get(Number(row.work_directory_id)) ?? null
+        : resolveOwnership(row.session_uuid, locations.get(Number(row.work_directory_id)) ?? null),
       cacheWriteAssumedZero: (Number(row.flags) & 4) !== 0, partial: (Number(row.flags) & 1) !== 0,
       price: { amount: !statusOnly && usable(price) ? price.totalUsd : null, status: price.coverageStatus },
     });
