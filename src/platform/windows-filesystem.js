@@ -80,6 +80,10 @@ export const WINDOWS_REPORT_PUBLICATION_CONTRACT = 'windows-report-publication-v
 export const WINDOWS_REPORT_PUBLICATION_METHODS = Object.freeze([
   'publishReport',
 ]);
+export const WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT = 'windows-local-volume-query-v1';
+export const WINDOWS_LOCAL_VOLUME_QUERY_METHODS = Object.freeze([
+  'isFixedLocalVolume',
+]);
 
 const MANIFEST_KEYS = Object.freeze([
   "schemaVersion",
@@ -174,9 +178,12 @@ function assertBindingManifest(manifest) {
   const browserProfile = manifest.browserProfile;
   const hasReportPublication = Object.hasOwn(manifest, 'reportPublication');
   const reportPublication = manifest.reportPublication;
+  const hasLocalVolumeQuery = Object.hasOwn(manifest, 'localVolumeQuery');
+  const localVolumeQuery = manifest.localVolumeQuery;
   const valid = manifestKeys.length === MANIFEST_KEYS.length + (hasSourceRead ? 1 : 0)
     + (hasReleaseOperation ? 1 : 0) + (hasLegacyStateRead ? 1 : 0)
     + (hasBrowserProfile ? 1 : 0) + (hasReportPublication ? 1 : 0)
+    + (hasLocalVolumeQuery ? 1 : 0)
     && (!hasBrowserProfile || (browserProfile !== null && typeof browserProfile === 'object'
       && !Array.isArray(browserProfile) && Object.keys(browserProfile).sort().join(',') === 'approved,contractVersion'
       && browserProfile.contractVersion === WINDOWS_BROWSER_PROFILE_CONTRACT && browserProfile.approved === true))
@@ -184,6 +191,11 @@ function assertBindingManifest(manifest) {
       && !Array.isArray(reportPublication) && Object.keys(reportPublication).sort().join(',') === 'approved,contractVersion'
       && reportPublication.contractVersion === WINDOWS_REPORT_PUBLICATION_CONTRACT
       && reportPublication.approved === true))
+    && (!hasLocalVolumeQuery || (localVolumeQuery !== null && typeof localVolumeQuery === 'object'
+      && !Array.isArray(localVolumeQuery)
+      && Object.keys(localVolumeQuery).sort().join(',') === 'approved,contractVersion'
+      && localVolumeQuery.contractVersion === WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT
+      && localVolumeQuery.approved === true))
     && (!hasLegacyStateRead || (legacyStateRead !== null && typeof legacyStateRead === 'object'
       && !Array.isArray(legacyStateRead) && Object.keys(legacyStateRead).sort().join(',') === 'approved,contractVersion'
       && legacyStateRead.contractVersion === WINDOWS_LEGACY_STATE_READ_CONTRACT && legacyStateRead.approved === true))
@@ -254,6 +266,7 @@ function assertBindingManifest(manifest) {
     ...(hasSourceRead ? { sourceRead: Object.freeze({ ...sourceRead }) } : {}),
     ...(hasBrowserProfile ? { browserProfile: Object.freeze({ ...browserProfile }) } : {}),
     ...(hasReportPublication ? { reportPublication: Object.freeze({ ...reportPublication }) } : {}),
+    ...(hasLocalVolumeQuery ? { localVolumeQuery: Object.freeze({ ...localVolumeQuery }) } : {}),
   });
 }
 
@@ -353,6 +366,11 @@ function verifyBindingIntegrity({
         || !WINDOWS_REPORT_PUBLICATION_METHODS.every(name => typeof binding[name] === 'function'))) {
     throw failure('MANIFEST_BINDING_MISMATCH');
   }
+  if (manifest.localVolumeQuery
+      && (binding.localVolumeQueryContractVersion !== manifest.localVolumeQuery.contractVersion
+        || !WINDOWS_LOCAL_VOLUME_QUERY_METHODS.every(name => typeof binding[name] === 'function'))) {
+    throw failure('MANIFEST_BINDING_MISMATCH');
+  }
   return Object.freeze({ binding, manifest });
 }
 
@@ -445,6 +463,15 @@ export function loadWindowsReportPublicationBinding(options = {}) {
   if (manifest.reportPublication?.approved !== true
       || manifest.reportPublication.contractVersion !== WINDOWS_REPORT_PUBLICATION_CONTRACT) {
     throw failure('REPORT_PUBLICATION_UNQUALIFIED');
+  }
+  return binding;
+}
+
+export function loadWindowsLocalVolumeQueryBinding(options = {}) {
+  const { binding, manifest } = loadVerifiedWindowsFilesystemBinding(options);
+  if (manifest.localVolumeQuery?.approved !== true
+      || manifest.localVolumeQuery.contractVersion !== WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT) {
+    throw failure('LOCAL_VOLUME_QUERY_UNQUALIFIED');
   }
   return binding;
 }

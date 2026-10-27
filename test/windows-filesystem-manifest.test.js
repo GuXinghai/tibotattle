@@ -19,6 +19,8 @@ import {
   WINDOWS_BROWSER_PROFILE_METHODS,
   WINDOWS_REPORT_PUBLICATION_CONTRACT,
   WINDOWS_REPORT_PUBLICATION_METHODS,
+  WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT,
+  WINDOWS_LOCAL_VOLUME_QUERY_METHODS,
 } from "../src/platform/windows-filesystem.js";
 
 const BYTES = Buffer.from("reviewed native bytes", "utf8");
@@ -61,6 +63,38 @@ test("report publication manifest binds the exact native method and contract", (
     bytes: BYTES,
     binding: binding({ ...extension, reportPublicationContractVersion: "future-contract" }),
   }), { code: "WINDOWS_FILESYSTEM_MANIFEST_INVALID_REPORT_PUBLICATION" });
+});
+
+test("local volume query manifest binds the complete read-only native ABI", () => {
+  const extension = {
+    localVolumeQueryContractVersion: WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT,
+    isFixedLocalVolume() { return true; },
+  };
+  const result = createWindowsFilesystemBindingManifest({
+    bytes: BYTES,
+    binding: binding(extension),
+  });
+  assert.deepEqual(result.localVolumeQuery, {
+    contractVersion: WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT,
+    approved: true,
+  });
+  assert.equal(result.approvedPolicy.productionSafe, false);
+  assert.equal(result.approvedPolicy.pathWalkRaceSafe, false);
+
+  assert.throws(() => createWindowsFilesystemBindingManifest({
+    bytes: BYTES,
+    binding: binding({ isFixedLocalVolume() { return true; } }),
+  }), { code: "WINDOWS_FILESYSTEM_MANIFEST_INVALID_LOCAL_VOLUME_QUERY" });
+  for (const name of WINDOWS_LOCAL_VOLUME_QUERY_METHODS) {
+    assert.throws(() => createWindowsFilesystemBindingManifest({
+      bytes: BYTES,
+      binding: binding({ ...extension, [name]: undefined }),
+    }), { code: "WINDOWS_FILESYSTEM_MANIFEST_INVALID_LOCAL_VOLUME_QUERY" });
+  }
+  assert.throws(() => createWindowsFilesystemBindingManifest({
+    bytes: BYTES,
+    binding: binding({ ...extension, localVolumeQueryContractVersion: "future-contract" }),
+  }), { code: "WINDOWS_FILESYSTEM_MANIFEST_INVALID_LOCAL_VOLUME_QUERY" });
 });
 
 test('legacy copy manifest binds all frozen read and streaming copy methods', () => {

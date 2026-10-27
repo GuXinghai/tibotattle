@@ -1,6 +1,6 @@
 {
   "schemaVersion": "tool-inventory-v0.1",
-  "reviewedAt": "2026-09-28",
+  "reviewedAt": "2026-10-27",
   "scope": "Executable and executable-adjacent sources under root scripts/** and tools/**, legacy root report builders and verifiers, and product contribution preparation.",
   "records": [
     {
@@ -242,6 +242,32 @@
       ],
       "decision": "retain_as_cold_sqlite_backup_verification",
       "provenance": "docs/runbooks/local-index-recovery.md",
+      "provenanceReason": null,
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
+      "owner": "windows_profile_recovery",
+      "canonicalPath": "scripts/lib/pre-release-index-conversion.mjs",
+      "stableAlias": null,
+      "stableAliasReason": "Explicit protected cold-index copy conversion only; no discovery, backup selection, startup upgrade or activation command.",
+      "additionalAliases": [],
+      "callers": ["test/pre-release-index-conversion.test.js"],
+      "decision": "retain_for_one_time_pre_release_index_copy_upgrade",
+      "provenance": "docs/runbooks/2026-10-27-pre-release-index-copy-upgrade.md",
+      "provenanceReason": null,
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
+      "owner": "windows_profile_recovery",
+      "canonicalPath": "scripts/lib/pre-release-index-v8-schema.mjs",
+      "stableAlias": null,
+      "stableAliasReason": "Closed historical DDL catalog for the explicit copy converter; not a runtime legacy reader or command.",
+      "additionalAliases": [],
+      "callers": ["scripts/lib/pre-release-index-conversion.mjs", "test/pre-release-index-conversion.test.js"],
+      "decision": "retain_as_closed_pre_release_v8_schema_admission",
+      "provenance": "docs/runbooks/2026-10-27-pre-release-index-copy-upgrade.md",
       "provenanceReason": null,
       "legacyPaths": []
     },

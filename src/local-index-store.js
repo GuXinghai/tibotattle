@@ -610,6 +610,34 @@ function initialize(database) {
  * mutates it. Writers also run provisional-fact recovery.
  */
 const EVIDENCE_WRITE=Symbol('evidence-write');
+// Connection-only forward conversion. The caller owns filesystem protection,
+// journal mode and copy/source isolation; this helper never opens a path or
+// configures SQLite. Normal opens and one-time copy conversion share this SQL.
+export function upgradeLocalIndexV8ToV9(database) {
+  if (database.isTransaction) throw fixedError("local_index_upgrade_transaction_active");
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (database.prepare("PRAGMA application_id").get().application_id !== LOCAL_INDEX_STORE_APPLICATION_ID
+        || database.prepare("PRAGMA user_version").get().user_version !== 8) {
+      throw fixedError("local_index_upgrade_version_mismatch");
+    }
+    if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
+      throw fixedError("local_index_family_mismatch");
+    }
+    // v8 stored raw tier and observation time without provenance. Preserve
+    // those rows verbatim and leave the additive source field NULL: the
+    // missing source cannot be reconstructed from those columns.
+    database.exec(`ALTER TABLE source ADD COLUMN carry_tier_source TEXT
+      CHECK(carry_tier_source IS NULL OR carry_tier_source IN ('turn_override','rollout_thread_settings'))`);
+    installCalculationSourceRevisionTriggers(database, { replaceExisting: true });
+    database.exec("PRAGMA user_version=9");
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 // Background receipt capture shares the database but must never run ingestion recovery
 // while the foreground writer has intentionally committed provisional source batches.
 export function openLocalIndexEvidenceStore(file){return openLocalIndexStore(file,{[EVIDENCE_WRITE]:true});}
@@ -678,23 +706,7 @@ export function openLocalIndexStore(file, {
     }
     if (existed && !readOnly
         && database.prepare("PRAGMA user_version").get().user_version === 8) {
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
-          throw fixedError("local_index_family_mismatch");
-        }
-        // v8 stored raw tier and observation time without provenance. Preserve
-        // those rows verbatim and leave the additive source field NULL: the
-        // missing source cannot be reconstructed from those columns.
-        database.exec(`ALTER TABLE source ADD COLUMN carry_tier_source TEXT
-          CHECK(carry_tier_source IS NULL OR carry_tier_source IN ('turn_override','rollout_thread_settings'))`);
-        installCalculationSourceRevisionTriggers(database, { replaceExisting: true });
-        database.exec("PRAGMA user_version=9");
-        database.exec("COMMIT");
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
+      upgradeLocalIndexV8ToV9(database);
     }
     assertFamily(database);
     if (!readOnly) retireRuntimeCaptureRevisionTriggers(database);

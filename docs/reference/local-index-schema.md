@@ -38,9 +38,11 @@ local-only and never leave the owner-only file.
 Fail-closed rules, in the order `openLocalIndexStore` applies them:
 
 - A wrong `application_id` refuses the file with `local_index_family_mismatch`.
-  `meta.family` is written at creation; the open path does not re-check it.
+  `meta.family` is written at creation and checked again inside the v8→v9
+  conversion transaction.
 - A `user_version` greater than 9 fails with `local_index_newer_version`. The
-  file is not opened writable and must not be relabelled.
+  guard runs before write-mode configuration and schema migration; the file
+  must not be relabelled.
 - A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6, then upgrades the cursor contract to 7 without deleting facts. Version 7 advances to 8 by atomically adding the calculation revision and its semantic-change triggers. Version 8 advances to 9 by atomically adding nullable `source.carry_tier_source` and replacing the source calculation-revision triggers. Interrupted installation rolls back and can be retried.
   Refresh first performs a bounded read-only identity inspection accepting only
   the reviewed v4/v5/v6/v7/v8 predecessors or current v9, validates the existing device salt,
@@ -51,6 +53,16 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
   `local_index_family_mismatch`; readers never migrate state.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it
   fails with `local_index_journal_mode_refused`.
+
+`upgradeLocalIndexV8ToV9(database)` is the shared connection-only conversion
+transaction. It opens no file and does not select a journal mode, replay sources,
+repair provisional facts or reconcile rollups. Its caller must establish copy
+isolation, cold-state admission and the protected SQLite lifecycle separately.
+It rejects an existing transaction and rechecks application, exact version 8 and
+family under its own transaction before adding the nullable column. Ordinary
+writer opens reuse the same conversion SQL; a one-time protected-copy tool can
+run it without invoking the ordinary WAL writer. This helper alone is not a
+filesystem, backup, activation or release qualification boundary.
 
 The extractor's parser revisions set the meaning of each stored fact. A change
 of extractor revision changes the parser stamp. Each source whose stamp differs

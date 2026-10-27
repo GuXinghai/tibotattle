@@ -366,7 +366,10 @@ bool IsReservedDeviceName(const std::wstring& component) {
       || EqualInsensitive(base, L"LPT9");
 }
 
-bool ParsePath(const std::wstring& supplied, ParsedPath* result) {
+bool ParsePath(
+    const std::wstring& supplied,
+    ParsedPath* result,
+    bool allowRoot = false) {
   if (supplied.empty() || supplied.find(L'\0') != std::wstring::npos) return false;
   std::wstring path = supplied;
   std::replace(path.begin(), path.end(), L'/', L'\\');
@@ -406,7 +409,7 @@ bool ParsePath(const std::wstring& supplied, ParsedPath* result) {
     }
     result->components.push_back(std::move(component));
   }
-  return !result->components.empty();
+  return allowRoot || !result->components.empty();
 }
 
 // Protected-state child operations receive a root identity separately from a
@@ -2640,6 +2643,50 @@ napi_value PublishReportCallback(napi_env env, napi_callback_info info) {
   return IdentityValue(env, identity);
 }
 
+napi_value IsFixedLocalVolumeCallback(napi_env env, napi_callback_info info) {
+  std::vector<napi_value> arguments;
+  if (!GetArguments(env, info, &arguments, 1)) {
+    return ThrowFailure(env, InvalidConfiguration());
+  }
+  napi_valuetype pathType = napi_undefined;
+  std::size_t pathLength = 0;
+  if (napi_typeof(env, arguments[0], &pathType) != napi_ok
+      || pathType != napi_string
+      || napi_get_value_string_utf16(
+          env,
+          arguments[0],
+          nullptr,
+          0,
+          &pathLength) != napi_ok) {
+    return ThrowFailure(env, InvalidConfiguration());
+  }
+  if (pathLength > 32767) return ThrowFailure(env, InvalidPath());
+
+  std::wstring path;
+  if (!GetString(env, arguments[0], &path)) {
+    return ThrowFailure(env, InvalidConfiguration());
+  }
+  std::wstring normalizedPath = path;
+  std::replace(normalizedPath.begin(), normalizedPath.end(), L'/', L'\\');
+  // The general path parser intentionally accepts an extended drive spelling
+  // for other native callers. This query only accepts ordinary DOS drive
+  // paths; UNC, device and extended-device namespaces are refused before any
+  // drive-type probe.
+  if (normalizedPath.rfind(L"\\\\?\\", 0) == 0
+      || normalizedPath.rfind(L"\\\\.\\", 0) == 0) {
+    return ThrowFailure(env, InvalidPath());
+  }
+
+  ParsedPath parsed;
+  if (!ParsePath(path, &parsed, true)) {
+    return ThrowFailure(env, InvalidPath());
+  }
+  const UINT driveType = GetDriveTypeW(parsed.root.c_str());
+  napi_value result;
+  napi_get_boolean(env, driveType == DRIVE_FIXED, &result);
+  return result;
+}
+
 napi_value EnsureDirectoryCallback(napi_env env, napi_callback_info info) {
   std::vector<napi_value> arguments;
   if (!GetArguments(env, info, &arguments, 1)) return ThrowFailure(env, InvalidConfiguration());
@@ -4618,6 +4665,18 @@ NAPI_MODULE_INIT() {
   napi_create_string_utf8(env, "windows-usage-directory-freeze-qualification-v1", NAPI_AUTO_LENGTH, &usageFreezeVersion);
   napi_set_named_property(env, exports, "usageFreezeQualificationContractVersion", usageFreezeVersion);
   DefineMethod(env, exports, "inspectPath", InspectPathCallback);
+  DefineMethod(env, exports, "isFixedLocalVolume", IsFixedLocalVolumeCallback);
+  napi_value localVolumeQueryVersion;
+  napi_create_string_utf8(
+      env,
+      "windows-local-volume-query-v1",
+      NAPI_AUTO_LENGTH,
+      &localVolumeQueryVersion);
+  napi_set_named_property(
+      env,
+      exports,
+      "localVolumeQueryContractVersion",
+      localVolumeQueryVersion);
   DefineMethod(env, exports, "ensureDirectory", EnsureDirectoryCallback);
   DefineMethod(env, exports, "prepareBrowserProfile", PrepareBrowserProfileCallback);
   DefineMethod(env, exports, "inspectBrowserProfile", InspectBrowserProfileCallback);

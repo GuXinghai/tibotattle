@@ -29,6 +29,9 @@ import {
   loadWindowsReportPublicationBinding,
   WINDOWS_REPORT_PUBLICATION_CONTRACT,
   WINDOWS_REPORT_PUBLICATION_METHODS,
+  loadWindowsLocalVolumeQueryBinding,
+  WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT,
+  WINDOWS_LOCAL_VOLUME_QUERY_METHODS,
   WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../src/platform/windows-filesystem.js";
@@ -176,6 +179,87 @@ test("report publication loader requires exact manifest approval and native ABI"
       readManifest: () => JSON.stringify({ ...sidecar, reportPublication }),
     }), { code: "WINDOWS_FILESYSTEM_INVALID_MANIFEST" });
   }
+});
+
+test("local volume query loader is bound to its exact capability, ABI and binary digest", () => {
+  const native = binding({
+    localVolumeQueryContractVersion: WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT,
+    isFixedLocalVolume() { return true; },
+  });
+  const sidecar = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: native });
+  const options = {
+    platform: "win32",
+    architecture: "x64",
+    bindingPath: "C:\\checkout\\native\\windows-filesystem\\build\\Release\\windows_filesystem.node",
+    readManifest: () => JSON.stringify(sidecar),
+    readBindingBytes: () => BINDING_BYTES,
+    requireBinding: () => native,
+  };
+  assert.equal(loadWindowsLocalVolumeQueryBinding(options), native);
+  assert.equal(loadWindowsFilesystemBinding(options), native);
+  assert.equal(sidecar.approvedPolicy.productionSafe, false);
+  assert.equal(sidecar.approvedPolicy.pathWalkRaceSafe, false);
+  const adapter = createWindowsFilesystemAdapter(options);
+  assert.equal(adapter.productionSafe, false);
+  assert.equal(adapter.pathWalkRaceSafe, false);
+
+  const oldNative = binding();
+  const oldManifest = createWindowsFilesystemBindingManifest({ bytes: BINDING_BYTES, binding: oldNative });
+  const oldOptions = {
+    ...options,
+    readManifest: () => JSON.stringify(oldManifest),
+    requireBinding: () => oldNative,
+  };
+  assert.equal(loadWindowsFilesystemBinding(oldOptions), oldNative);
+  assert.throws(() => loadWindowsLocalVolumeQueryBinding(oldOptions), {
+    code: "WINDOWS_FILESYSTEM_LOCAL_VOLUME_QUERY_UNQUALIFIED",
+  });
+  const capabilityMissingFromManifest = {
+    ...options,
+    readManifest: () => JSON.stringify(oldManifest),
+    requireBinding: () => native,
+  };
+  assert.equal(loadWindowsFilesystemBinding(capabilityMissingFromManifest), native);
+  assert.throws(() => loadWindowsLocalVolumeQueryBinding(capabilityMissingFromManifest), {
+    code: "WINDOWS_FILESYSTEM_LOCAL_VOLUME_QUERY_UNQUALIFIED",
+  });
+
+  for (const name of WINDOWS_LOCAL_VOLUME_QUERY_METHODS) {
+    assert.throws(() => loadWindowsLocalVolumeQueryBinding({
+      ...options,
+      requireBinding: () => ({ ...native, [name]: undefined }),
+    }), { code: "WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH" });
+  }
+  assert.throws(() => loadWindowsLocalVolumeQueryBinding({
+    ...options,
+    requireBinding: () => ({ ...native, localVolumeQueryContractVersion: undefined }),
+  }), { code: "WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH" });
+  assert.throws(() => loadWindowsLocalVolumeQueryBinding({
+    ...options,
+    requireBinding: () => ({
+      ...native,
+      localVolumeQueryContractVersion: "future-contract",
+    }),
+  }), { code: "WINDOWS_FILESYSTEM_MANIFEST_BINDING_MISMATCH" });
+  assert.throws(() => loadWindowsLocalVolumeQueryBinding({
+    ...options,
+    readBindingBytes: () => Buffer.from("tampered binding", "utf8"),
+  }), { code: "WINDOWS_FILESYSTEM_BINDING_INTEGRITY_MISMATCH" });
+
+  for (const localVolumeQuery of [
+    { ...sidecar.localVolumeQuery, approved: false },
+    { ...sidecar.localVolumeQuery, extra: true },
+    { ...sidecar.localVolumeQuery, contractVersion: "future-contract" },
+  ]) {
+    assert.throws(() => loadWindowsLocalVolumeQueryBinding({
+      ...options,
+      readManifest: () => JSON.stringify({ ...sidecar, localVolumeQuery }),
+    }), { code: "WINDOWS_FILESYSTEM_INVALID_MANIFEST" });
+  }
+  assert.throws(() => loadWindowsLocalVolumeQueryBinding({
+    ...options,
+    readManifest: () => JSON.stringify({ ...sidecar, unrecognizedCapability: true }),
+  }), { code: "WINDOWS_FILESYSTEM_INVALID_MANIFEST" });
 });
 
 function sha256(bytes) {

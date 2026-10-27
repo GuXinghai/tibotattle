@@ -66,6 +66,16 @@ step fails.
 - `inspectPath(path)` opens the final object without following a reparse point,
   records volume/file identity, link count, owner/DACL facts, and final-path
   resolution, and returns a metadata object for diagnostics.
+- `isFixedLocalVolume(path)` is a content-free volume-type query exported under
+  `windows-local-volume-query-v1`. It accepts an absolute DOS drive path,
+  including a drive-root path such as `C:\`, checks its root syntax before
+  calling `GetDriveTypeW`, and returns `true` only for `DRIVE_FIXED`. Mapped
+  network, removable and unknown drive types return `false`; malformed, UNC,
+  device and extended-device paths fail with a fixed path error. It queries
+  only the drive root: it does not open the supplied path, inspect its
+  components or reparse points, or create directories/files. A separate
+  optional manifest capability binds this method to the native binary digest;
+  it does not change the global production or path-walk policy.
 - `ensureDirectory(path)` creates a missing directory with a protected,
   non-inheriting owner DACL and validates an existing directory.
 - `readFile(path)` opens and validates a regular file through its handle,

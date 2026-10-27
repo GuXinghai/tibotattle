@@ -1,0 +1,1237 @@
+{
+  "sourceRevision": "63e8753a27a0da0c67d8ddd3226df4dd855ad055",
+  "writer": "src/local-index-store.js",
+  "schemaVersion": 8,
+  "schema": [
+    {
+      "type": "index",
+      "name": "quota_observation_series",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE INDEX quota_observation_series\n    ON quota_observation(limit_id, duration_mins, observed_at_ms,\n                         slot, plan_type, used_percent, resets_at_ms)",
+      "sqlSha256": "6234cb2133172156870ff3657d905acc9133b500a2e840d8679559f327e51c40"
+    },
+    {
+      "type": "index",
+      "name": "quota_occurrence_canonical",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE INDEX quota_occurrence_canonical\n    ON quota_occurrence(canonical_observation_id)",
+      "sqlSha256": "f70e9c246be6490314b7438b543998912c43e79a365a1b2fe22319ba02928a09"
+    },
+    {
+      "type": "index",
+      "name": "quota_occurrence_observed",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE INDEX quota_occurrence_observed\n    ON quota_occurrence(observed_at_ms)",
+      "sqlSha256": "e262f42f1229118a5305b063959a5b36e1f379a40f4fa7f7806eeee51620344c"
+    },
+    {
+      "type": "index",
+      "name": "runtime_model_evidence_response",
+      "tbl_name": "runtime_model_evidence",
+      "sql": "CREATE INDEX runtime_model_evidence_response ON runtime_model_evidence(response_key)",
+      "sqlSha256": "824abfe0e2321d0ba800fc2785ac0d9e9d910dd6a5c29b4c3126f374e7fa8f4f"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_observed",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_observed\n    ON usage_event(observed_at_ms)",
+      "sqlSha256": "0d4c06c9e2f50c99a023f9846fdcf900f922d9b0696133462b8db84767f96aa9"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_pairing",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_pairing\n    ON usage_event(session_id, source_id, source_offset, observed_at_ms,\n                   model_id, reasoning_effort, tier_id, surface_id,\n                   tokens_in_cache_read)\n    WHERE COALESCE(tokens_in_uncached, 0) + COALESCE(tokens_in_cache_read, 0)\n        + COALESCE(tokens_in_cache_write, 0) > 0",
+      "sqlSha256": "9036bf23bbfb5d36a8cbf989382f8715c6022cc345fbb63e5d9e4efee4e548a2"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_quota",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_quota\n    ON usage_event(quota_observation_id) WHERE quota_observation_id IS NOT NULL",
+      "sqlSha256": "ed15860461126bc68da64afcf60753c575d34763a0d559994a388681d5937028"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_response_identity",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_response_identity ON usage_event(event_key) WHERE (flags & 16)<>0",
+      "sqlSha256": "41958d10d8d6e353949c130fbc4e4923e07ebf88766a99315cc94058bfe95184"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_session",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_session\n    ON usage_event(session_id, observed_at_ms)",
+      "sqlSha256": "b45af1ee78cdebe3da3619c46d30add97a270d6ebe9c75de7f0396760f700abf"
+    },
+    {
+      "type": "table",
+      "name": "account_scope",
+      "tbl_name": "account_scope",
+      "sql": "CREATE TABLE account_scope(\n    id INTEGER PRIMARY KEY,\n    status TEXT NOT NULL,\n    reason TEXT,\n    plan_type TEXT,\n    scope_local BLOB,\n    UNIQUE(status, reason, plan_type, scope_local)) STRICT",
+      "sqlSha256": "30e3b6622598ab35c8a6326e69a0da987d40193430eebc01c5e84a8d505f7659"
+    },
+    {
+      "type": "table",
+      "name": "cache_candidate",
+      "tbl_name": "cache_candidate",
+      "sql": "CREATE TABLE cache_candidate(\n    source_id INTEGER NOT NULL,\n    source_offset INTEGER NOT NULL,\n    previous_offset INTEGER NOT NULL,\n    session_id INTEGER NOT NULL,\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "15962ab84b584ebeb4240239520c6e3c6da620ec9a42d31f0ff5414f9550dbdc"
+    },
+    {
+      "type": "table",
+      "name": "commit_log",
+      "tbl_name": "commit_log",
+      "sql": "CREATE TABLE commit_log(\n    seq INTEGER PRIMARY KEY,\n    committed_at_ms INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('cold', 'refresh', 'verify')),\n    sources_changed INTEGER NOT NULL,\n    events_added INTEGER NOT NULL,\n    events_removed INTEGER NOT NULL) STRICT",
+      "sqlSha256": "7fef101fcc91fa86dff5170f01b22731352a876af590c4e0970244598a8e8009"
+    },
+    {
+      "type": "table",
+      "name": "lineage_snapshot",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TABLE lineage_snapshot(\n    session_id INTEGER NOT NULL REFERENCES session,\n    snapshot_local BLOB NOT NULL,\n    PRIMARY KEY(session_id, snapshot_local)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "174e32cde95f3494b49022a131c925819d88310c0fa998d92b3bbee891bd6c14"
+    },
+    {
+      "type": "table",
+      "name": "meta",
+      "tbl_name": "meta",
+      "sql": "CREATE TABLE meta(\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL) STRICT",
+      "sqlSha256": "22196088cf290d1bf11bd0ae15534420271d46df841ade4dfd6c700300ed81f3"
+    },
+    {
+      "type": "table",
+      "name": "model",
+      "tbl_name": "model",
+      "sql": "CREATE TABLE model(\n    id INTEGER PRIMARY KEY,\n    model_id TEXT NOT NULL UNIQUE,\n    recognition TEXT NOT NULL) STRICT",
+      "sqlSha256": "f9d804dc420ab4b3a571d937dfd3cb5983ebe7b4d7ea40a338c33e58cbc013e6"
+    },
+    {
+      "type": "table",
+      "name": "quota_observation",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TABLE quota_observation(\n    id INTEGER PRIMARY KEY,\n    observed_at_ms INTEGER NOT NULL,\n    limit_id TEXT NOT NULL,\n    slot TEXT NOT NULL,\n    plan_type TEXT,\n    used_percent REAL,\n    resets_at_ms INTEGER,\n    duration_mins INTEGER,\n    UNIQUE(observed_at_ms, limit_id, slot)) STRICT",
+      "sqlSha256": "3e68c26ef9359a5bc8c2c07458decbc86be57ec877d2682153ea1fbc704de40a"
+    },
+    {
+      "type": "table",
+      "name": "quota_occurrence",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TABLE quota_occurrence(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    slot_order INTEGER NOT NULL CHECK(slot_order >= 0),\n    surface_id INTEGER NOT NULL REFERENCES surface_class,\n    canonical_observation_id INTEGER NOT NULL REFERENCES quota_observation,\n    observed_at_ms INTEGER NOT NULL,\n    provider TEXT NOT NULL,\n    plan_type TEXT,\n    limit_id TEXT NOT NULL,\n    slot TEXT NOT NULL,\n    used_percent REAL NOT NULL CHECK(used_percent >= 0 AND used_percent <= 100),\n    resets_at_ms INTEGER,\n    duration_mins INTEGER NOT NULL CHECK(duration_mins >= 1),\n    admission TEXT NOT NULL CHECK(admission IN ('admitted', 'held', 'suppressed')),\n    PRIMARY KEY(source_id, source_offset, slot_order)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "78c817ee09f35ef0c3aa3266f4ae0e36a28b2082214bbbb7de2bdaed09b0ae7d"
+    },
+    {
+      "type": "table",
+      "name": "rollup_context_start",
+      "tbl_name": "rollup_context_start",
+      "sql": "CREATE TABLE rollup_context_start(\n    start_tokens INTEGER PRIMARY KEY CHECK(start_tokens >= 0)) STRICT",
+      "sqlSha256": "4cfa4dde33b5428c2cb316eb900a6c134ccaa53240e8d86a998d59a8c3d15277"
+    },
+    {
+      "type": "table",
+      "name": "runtime_model_evidence",
+      "tbl_name": "runtime_model_evidence",
+      "sql": "CREATE TABLE runtime_model_evidence(\n    evidence_key BLOB PRIMARY KEY CHECK(length(evidence_key)=32),\n    response_key BLOB CHECK(response_key IS NULL OR length(response_key)=32),\n    thread_key BLOB NOT NULL CHECK(length(thread_key)=32),\n    turn_key BLOB CHECK(turn_key IS NULL OR length(turn_key)=32),\n    observed_at_ms INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('response_completed','fallback_succeeded','fallback_failed','request_context','response_reference')),\n    model TEXT NOT NULL,\n    previous_model TEXT,\n    digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "c930e18b35a2230629f47e67fa80966e0f6ddb7b1231cb8bae5c9895e9369b1b"
+    },
+    {
+      "type": "table",
+      "name": "session",
+      "tbl_name": "session",
+      "sql": "CREATE TABLE session(\n    id INTEGER PRIMARY KEY,\n    session_local BLOB NOT NULL UNIQUE CHECK(length(session_local) = 32),\n    session_uuid TEXT) STRICT",
+      "sqlSha256": "d09d7f843e5adda188c3fe178b35eff5348d5d2d4b45877382bd7a05d858f762"
+    },
+    {
+      "type": "table",
+      "name": "session_positive",
+      "tbl_name": "session_positive",
+      "sql": "CREATE TABLE session_positive(\n    session_id INTEGER NOT NULL,\n    source_id INTEGER NOT NULL,\n    events INTEGER NOT NULL,\n    PRIMARY KEY(session_id, source_id)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "30d092828c8c1bae3572b7dac0563e85f08b6b428cf67a44fea57415fee56e4c"
+    },
+    {
+      "type": "table",
+      "name": "source",
+      "tbl_name": "source",
+      "sql": "CREATE TABLE source(\n    id INTEGER PRIMARY KEY,\n    source_local BLOB NOT NULL UNIQUE CHECK(length(source_local) = 32),\n    source_ordinal INTEGER NOT NULL UNIQUE CHECK(source_ordinal >= 0),\n    session_id INTEGER REFERENCES session,\n    surface_id INTEGER REFERENCES surface_class,\n    path TEXT NOT NULL,\n    rollout_key TEXT NOT NULL,\n    presence TEXT NOT NULL CHECK(presence IN ('present', 'absent')),\n    -- Exact \"device:inode\" in decimal. NTFS file ids use up to 64 bits, which\n    -- doubles cannot hold, so the identity is text and is compared by equality.\n    -- NULL means the platform reported no usable file id.\n    file_id TEXT,\n    birthtime_ms REAL,\n    size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),\n    mtime_ms REAL NOT NULL,\n    ctime_ms REAL,\n    scanned_bytes INTEGER NOT NULL CHECK(scanned_bytes >= 0),\n    head_digest BLOB,\n    boundary_digest BLOB,\n    tail_digest BLOB,\n    verified_at_ms INTEGER,\n    verified_bytes INTEGER NOT NULL DEFAULT 0,\n    parser_version TEXT NOT NULL,\n    quarantine_code TEXT CHECK(quarantine_code IS NULL OR quarantine_code IN (\n      'codex_rollout_content_invalid',\n      'codex_rollout_tail_incomplete',\n      'codex_rollout_lineage_invalid',\n      'codex_rollout_compression_unsupported',\n      'codex_rollout_filename_identity_mismatch',\n      'codex_rollout_generation_ambiguous')),\n    snapshots_persisted INTEGER NOT NULL DEFAULT 0,\n    turn_context_seen INTEGER NOT NULL DEFAULT 0,\n    carry_model TEXT,\n    carry_effort TEXT,\n    carry_tier_raw TEXT,\n    carry_tier_observed_at_ms INTEGER,\n    carry_total_input INTEGER,\n    carry_total_cached INTEGER,\n    carry_total_cache_write INTEGER,\n    carry_total_output INTEGER,\n    carry_total_reasoning INTEGER,\n    carry_total_total INTEGER,\n    carry_work_directory_id INTEGER REFERENCES work_directory,\n    compacted_at_ms INTEGER,\n    compaction_offset INTEGER,\n    turn_context_pending INTEGER NOT NULL DEFAULT 0,\n    -- Rollout lineage, stored so an unchanged source needs no header read.\n    lineage_json TEXT,\n    CHECK((compacted_at_ms IS NULL) = (compaction_offset IS NULL))) STRICT",
+      "sqlSha256": "041169be0a32aac55478d59c2fb30847c94ba8ee0a5f62194445ed6fd09c2ee1"
+    },
+    {
+      "type": "table",
+      "name": "source_diagnostic",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TABLE source_diagnostic(\n    source_id INTEGER NOT NULL REFERENCES source ON DELETE CASCADE,\n    code TEXT NOT NULL,\n    count INTEGER NOT NULL CHECK(count >= 0),\n    PRIMARY KEY(source_id, code)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "718f7835bb6fba76c2320f43555f32d45b1f6c1e9c8a7c943781bf7d0c4421d0"
+    },
+    {
+      "type": "table",
+      "name": "source_segment",
+      "tbl_name": "source_segment",
+      "sql": "CREATE TABLE source_segment(\n    source_id INTEGER NOT NULL REFERENCES source ON DELETE CASCADE,\n    segment INTEGER NOT NULL CHECK(segment >= 0),\n    digest BLOB NOT NULL CHECK(length(digest) = 32),\n    PRIMARY KEY(source_id, segment)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "b6f58c4e1962e2cc03282af352feff9e0113c7554baa9ba3112181a35e6e724d"
+    },
+    {
+      "type": "table",
+      "name": "store_state",
+      "tbl_name": "store_state",
+      "sql": "CREATE TABLE store_state(\n    id INTEGER PRIMARY KEY CHECK(id = 1),\n    commit_seq INTEGER NOT NULL,\n    calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)) STRICT",
+      "sqlSha256": "93a2fdef793102cbbed2ab6a7d7b18c182253e92758439e2460059d83a555546"
+    },
+    {
+      "type": "table",
+      "name": "surface_class",
+      "tbl_name": "surface_class",
+      "sql": "CREATE TABLE surface_class(\n    id INTEGER PRIMARY KEY,\n    agent_scope TEXT NOT NULL,\n    surface TEXT NOT NULL,\n    thread_source TEXT NOT NULL,\n    lineage_disposition TEXT NOT NULL,\n    UNIQUE(agent_scope, surface, thread_source, lineage_disposition)) STRICT",
+      "sqlSha256": "6c4fc324c900b583da82be48251551abc2113cefd21bcb29d55b529cae81b1e1"
+    },
+    {
+      "type": "table",
+      "name": "tier_semantics",
+      "tbl_name": "tier_semantics",
+      "sql": "CREATE TABLE tier_semantics(\n    id INTEGER PRIMARY KEY,\n    api_service_tier TEXT NOT NULL,\n    billing_surface TEXT NOT NULL,\n    codex_speed_mode TEXT NOT NULL,\n    tier_source TEXT NOT NULL,\n    provider_tier_raw TEXT,\n    UNIQUE(api_service_tier, billing_surface, codex_speed_mode,\n           tier_source, provider_tier_raw)) STRICT",
+      "sqlSha256": "efabbc0e9b07185df4d2a8ec1cf2cb01f3452bf78671a0a5630bee53e7747267"
+    },
+    {
+      "type": "table",
+      "name": "tool_class_fact",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TABLE tool_class_fact(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    tool_ordinal INTEGER NOT NULL CHECK(tool_ordinal >= 0),\n    event_key BLOB NOT NULL CHECK(length(event_key) = 32),\n    session_id INTEGER NOT NULL REFERENCES session,\n    observed_at_ms INTEGER NOT NULL,\n    tool_class TEXT NOT NULL CHECK(length(tool_class) BETWEEN 1 AND 64),\n    source_kind TEXT NOT NULL CHECK(length(source_kind) BETWEEN 1 AND 64),\n    PRIMARY KEY(source_id, source_offset, tool_ordinal)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "0d6147e759975ee3cd271e3adf9702dcf6dc93f1da7976cd6022045847d27425"
+    },
+    {
+      "type": "table",
+      "name": "usage_event",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TABLE usage_event(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    observed_at_ms INTEGER NOT NULL,\n    event_key BLOB NOT NULL CHECK(length(event_key) = 32),\n    session_id INTEGER NOT NULL REFERENCES session,\n    account_scope_id INTEGER NOT NULL REFERENCES account_scope,\n    model_id INTEGER NOT NULL REFERENCES model,\n    tier_id INTEGER NOT NULL REFERENCES tier_semantics,\n    surface_id INTEGER NOT NULL REFERENCES surface_class,\n    quota_observation_id INTEGER REFERENCES quota_observation,\n    tier_observed_at_ms INTEGER,\n    reasoning_effort INTEGER NOT NULL,\n    flags INTEGER NOT NULL DEFAULT 0,\n    -- The working directory in force at this record; NULL is unknown.\n    work_directory_id INTEGER REFERENCES work_directory,\n    tokens_in_uncached INTEGER,\n    tokens_in_cache_read INTEGER,\n    tokens_in_cache_write INTEGER,\n    tokens_out_text INTEGER,\n    tokens_out_reasoning INTEGER,\n    tokens_out_combined INTEGER,\n    total_input_context INTEGER,\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "1875033654db41715c677ead4b149f45b03d9975a33d5fcbe885cea8ff16946d"
+    },
+    {
+      "type": "table",
+      "name": "usage_event_boundary",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TABLE usage_event_boundary(\n    source_id INTEGER NOT NULL,\n    source_offset INTEGER NOT NULL,\n    compaction_before INTEGER NOT NULL CHECK(compaction_before IN (0, 1)),\n    turn_context_before INTEGER NOT NULL CHECK(turn_context_before IN (0, 1)),\n    compacted_at_ms INTEGER,\n    CHECK(compaction_before = (compacted_at_ms IS NOT NULL)),\n    CHECK(compaction_before = 1 OR turn_context_before = 1),\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "2e537dc9e3b5fd2eba401cbc19fa76753d0d219ef47a00bac116046349f20dae"
+    },
+    {
+      "type": "table",
+      "name": "usage_rollup",
+      "tbl_name": "usage_rollup",
+      "sql": "CREATE TABLE usage_rollup(\n    bucket_ms INTEGER NOT NULL,\n    model_id INTEGER NOT NULL,\n    tier_id INTEGER NOT NULL,\n    surface_id INTEGER NOT NULL,\n    account_scope_id INTEGER NOT NULL,\n    shape INTEGER NOT NULL,\n    ctx_class INTEGER NOT NULL,\n    events INTEGER NOT NULL,\n    in_uncached INTEGER NOT NULL,\n    in_cache_read INTEGER NOT NULL,\n    in_cache_write INTEGER NOT NULL,\n    out_text INTEGER NOT NULL,\n    out_reasoning INTEGER NOT NULL,\n    out_combined INTEGER NOT NULL,\n    PRIMARY KEY(bucket_ms, model_id, tier_id, surface_id, account_scope_id,\n                shape, ctx_class)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "0b7d83ee7d0de22f410f8397dce445f97a4abdec835673ed77097de88a485f85"
+    },
+    {
+      "type": "table",
+      "name": "work_directory",
+      "tbl_name": "work_directory",
+      "sql": "CREATE TABLE work_directory(\n    id INTEGER PRIMARY KEY,\n    path TEXT NOT NULL UNIQUE CHECK(length(path) BETWEEN 1 AND 4096)) STRICT",
+      "sqlSha256": "09466b3eb501ead2aa1a01d2fb593085a15f3bd2dba49e725d809edc483ecb66"
+    },
+    {
+      "type": "table",
+      "name": "work_lifecycle_fact",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TABLE work_lifecycle_fact(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    session_id INTEGER NOT NULL REFERENCES session,\n    task_key BLOB NOT NULL CHECK(length(task_key) = 32),\n    observed_at_ms INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('start', 'complete', 'abort')),\n    duration_ms INTEGER CHECK(duration_ms >= 0),\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "2023a6ddc3960f500342ff40e3c9526b4ff289e6b8c179397ba8e3ff5748cb7d"
+    },
+    {
+      "type": "table",
+      "name": "work_rollup",
+      "tbl_name": "work_rollup",
+      "sql": "CREATE TABLE work_rollup(\n    day_ms INTEGER NOT NULL,\n    session_id INTEGER NOT NULL,\n    work_directory_id INTEGER NOT NULL,\n    model_id INTEGER NOT NULL,\n    account_scope_id INTEGER NOT NULL,\n    shape INTEGER NOT NULL,\n    ctx_class INTEGER NOT NULL,\n    prov INTEGER NOT NULL,\n    events INTEGER NOT NULL,\n    in_uncached INTEGER NOT NULL,\n    in_cache_read INTEGER NOT NULL,\n    in_cache_write INTEGER NOT NULL,\n    out_text INTEGER NOT NULL,\n    out_reasoning INTEGER NOT NULL,\n    out_combined INTEGER NOT NULL,\n    last_at_ms INTEGER,\n    PRIMARY KEY(day_ms, session_id, work_directory_id, model_id,\n                account_scope_id, shape, ctx_class, prov)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "f8e66837ad727cdb82bc7aebcceb62509d5e15c73726baa06e9eb39817496975"
+    },
+    {
+      "type": "trigger",
+      "name": "cache_pairing_advance",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER cache_pairing_advance\n  AFTER UPDATE OF scanned_bytes ON source\n  WHEN NEW.scanned_bytes > OLD.scanned_bytes\n  BEGIN\n    INSERT OR REPLACE INTO cache_candidate(source_id, source_offset, previous_offset, session_id)\n    \n    SELECT w.source_id, w.source_offset, w.previous_offset, w.session_id\n    FROM (\n      SELECT u.source_id AS source_id, u.source_offset AS source_offset,\n             u.session_id AS session_id, u.model_id AS model_id,\n             u.reasoning_effort AS reasoning_effort,\n             LAG(u.source_offset) OVER request_order AS previous_offset,\n             LAG(u.model_id) OVER request_order AS previous_model_id,\n             LAG(u.reasoning_effort) OVER request_order AS previous_reasoning_effort\n      FROM usage_event u\n      WHERE u.source_id = NEW.id\n        AND COALESCE(u.tokens_in_uncached, 0)\n        + COALESCE(u.tokens_in_cache_read, 0)\n        + COALESCE(u.tokens_in_cache_write, 0) > 0\n        AND u.source_offset <= NEW.scanned_bytes\n        AND u.source_offset >= COALESCE((\n          SELECT MAX(p.source_offset) FROM usage_event p\n          WHERE p.source_id = NEW.id AND p.source_offset <= OLD.scanned_bytes\n            AND COALESCE(p.tokens_in_uncached, 0)\n        + COALESCE(p.tokens_in_cache_read, 0)\n        + COALESCE(p.tokens_in_cache_write, 0) > 0), 0)\n      WINDOW request_order AS (PARTITION BY u.source_id ORDER BY u.source_offset)\n    ) w\n    LEFT JOIN usage_event_boundary b\n      ON b.source_id = w.source_id AND b.source_offset = w.source_offset\n    WHERE w.source_offset > OLD.scanned_bytes\n      AND w.previous_offset IS NOT NULL\n      AND (w.model_id != w.previous_model_id\n        OR w.reasoning_effort != w.previous_reasoning_effort\n        OR b.turn_context_before = 1\n        OR b.compaction_before = 1);\n    INSERT INTO session_positive(session_id, source_id, events)\n    \n    SELECT u.session_id, u.source_id, COUNT(*) AS events\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > OLD.scanned_bytes\n      AND u.source_offset <= NEW.scanned_bytes AND COALESCE(u.tokens_in_uncached, 0)\n        + COALESCE(u.tokens_in_cache_read, 0)\n        + COALESCE(u.tokens_in_cache_write, 0) > 0\n    GROUP BY u.session_id, u.source_id\n    ON CONFLICT(session_id, source_id) DO UPDATE SET\n        events = events + excluded.events;\n  END",
+      "sqlSha256": "fbc7782404a75ae0ba5954e6dd84e2a7ce4b0de710153071882d3cca4438cdae"
+    },
+    {
+      "type": "trigger",
+      "name": "cache_pairing_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER cache_pairing_delete\n  AFTER DELETE ON usage_event\n  WHEN OLD.source_offset <= (SELECT scanned_bytes FROM source WHERE id = OLD.source_id)\n  BEGIN\n    DELETE FROM cache_candidate\n    WHERE source_id = OLD.source_id AND source_offset = OLD.source_offset;\n    UPDATE session_positive SET events = events - 1\n    WHERE session_id = OLD.session_id AND source_id = OLD.source_id\n      AND COALESCE(OLD.tokens_in_uncached, 0)\n        + COALESCE(OLD.tokens_in_cache_read, 0)\n        + COALESCE(OLD.tokens_in_cache_write, 0) > 0;\n    DELETE FROM session_positive\n    WHERE session_id = OLD.session_id AND source_id = OLD.source_id AND events <= 0;\n  END",
+      "sqlSha256": "2db3e8f7336ae5546bbf0f3c11d93e9542295787d55e473b3afce9b354ff5aca"
+    },
+    {
+      "type": "trigger",
+      "name": "cache_pairing_retreat",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER cache_pairing_retreat\n  AFTER UPDATE OF scanned_bytes ON source\n  WHEN NEW.scanned_bytes < OLD.scanned_bytes\n  BEGIN\n    DELETE FROM cache_candidate\n    WHERE source_id = NEW.id AND source_offset > NEW.scanned_bytes;\n    INSERT INTO session_positive(session_id, source_id, events)\n    \n    SELECT u.session_id, u.source_id, -COUNT(*) AS events\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > NEW.scanned_bytes\n      AND u.source_offset <= OLD.scanned_bytes AND COALESCE(u.tokens_in_uncached, 0)\n        + COALESCE(u.tokens_in_cache_read, 0)\n        + COALESCE(u.tokens_in_cache_write, 0) > 0\n    GROUP BY u.session_id, u.source_id\n    ON CONFLICT(session_id, source_id) DO UPDATE SET\n        events = events + excluded.events;\n    DELETE FROM session_positive WHERE source_id = NEW.id AND events <= 0;\n  END",
+      "sqlSha256": "bdc8ba39f50831e0a52b3e7ac25f5e80ee68942fde9b2f4a733763e2ea152a44"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_account_scope_delete",
+      "tbl_name": "account_scope",
+      "sql": "CREATE TRIGGER calculation_account_scope_delete\n        AFTER DELETE ON account_scope  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "df0df34ea4fe33959866294de73ae3cc72d135a1a7f9b583fa2c194d8ebd1d81"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_account_scope_update",
+      "tbl_name": "account_scope",
+      "sql": "CREATE TRIGGER calculation_account_scope_update\n        AFTER UPDATE ON account_scope WHEN OLD.id IS NOT NEW.id OR OLD.status IS NOT NEW.status OR OLD.reason IS NOT NEW.reason OR OLD.plan_type IS NOT NEW.plan_type OR OLD.scope_local IS NOT NEW.scope_local BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "ea91255d4e852a7d9a39cc7cdfdafbf591395f216af39c0eb9367f422eb5edc4"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_diagnostic_delete",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TRIGGER calculation_diagnostic_delete\n      AFTER DELETE ON source_diagnostic WHEN OLD.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords') BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "590e8ef5c3746869dcf289a2ef6bdfa16272ce60e3763114bbe70c1d1aed03f2"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_diagnostic_insert",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TRIGGER calculation_diagnostic_insert\n      AFTER INSERT ON source_diagnostic WHEN NEW.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords') BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "d78e9b98563bb9587bb0305bc634dc7488d88e83d4faaad0a00318cd6b650890"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_diagnostic_update",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TRIGGER calculation_diagnostic_update\n      AFTER UPDATE ON source_diagnostic WHEN (OLD.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords') OR NEW.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords')) AND (OLD.code IS NOT NEW.code OR OLD.count IS NOT NEW.count) BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "3ae314cd2114050bb4063cfc88fdd87415b3b8a05cab0ffb4f603448cc128438"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_lineage_snapshot_delete",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TRIGGER calculation_lineage_snapshot_delete\n        AFTER DELETE ON lineage_snapshot  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "febd02078d25c0849e3787064f868ce9f9e4c15480ae09c6eb8bbe6eabffd27a"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_lineage_snapshot_insert",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TRIGGER calculation_lineage_snapshot_insert\n        AFTER INSERT ON lineage_snapshot  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "192d0e5e4a798e97b071b0fd1065597432f3adaeadddb006f946e42699515485"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_lineage_snapshot_update",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TRIGGER calculation_lineage_snapshot_update\n        AFTER UPDATE ON lineage_snapshot WHEN OLD.session_id IS NOT NEW.session_id OR OLD.snapshot_local IS NOT NEW.snapshot_local BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "8701279dee34afcde9dbb1f13792417aa245f2853660b2a9264ae8e7a80c5f05"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_model_delete",
+      "tbl_name": "model",
+      "sql": "CREATE TRIGGER calculation_model_delete\n        AFTER DELETE ON model  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "f9cb1d91e87ae3b1c32cade081dd923769ddfc2a4c33a998cb9bc8924738d3d5"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_model_update",
+      "tbl_name": "model",
+      "sql": "CREATE TRIGGER calculation_model_update\n        AFTER UPDATE ON model WHEN OLD.id IS NOT NEW.id OR OLD.model_id IS NOT NEW.model_id OR OLD.recognition IS NOT NEW.recognition BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "3d266badf1299b43eebe6af1d1962cd765ce4b9366b0fe479bab2532428672ab"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_observation_delete",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TRIGGER calculation_quota_observation_delete\n        AFTER DELETE ON quota_observation  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "ab5af6da3994d44cf97b0ce735c10ec51ca229ebaed54ed868907e687cf47783"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_observation_insert",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TRIGGER calculation_quota_observation_insert\n        AFTER INSERT ON quota_observation  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "fbc954350ff3e9ef866bf9daa4f745ffdb3a80145673e781a9f323fb5c554c9d"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_observation_update",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TRIGGER calculation_quota_observation_update\n        AFTER UPDATE ON quota_observation WHEN OLD.id IS NOT NEW.id OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.limit_id IS NOT NEW.limit_id OR OLD.slot IS NOT NEW.slot OR OLD.plan_type IS NOT NEW.plan_type OR OLD.used_percent IS NOT NEW.used_percent OR OLD.resets_at_ms IS NOT NEW.resets_at_ms OR OLD.duration_mins IS NOT NEW.duration_mins BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "98e2f8f1195928c5a36b4964ad128ca1a130238db2aa640f295ba3b1e6973026"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_occurrence_delete",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TRIGGER calculation_quota_occurrence_delete\n        AFTER DELETE ON quota_occurrence  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "cb0260a64545a4da06536b348e675671eb0bb2530c5b6cfea2f0bcb9c11fdf00"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_occurrence_insert",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TRIGGER calculation_quota_occurrence_insert\n        AFTER INSERT ON quota_occurrence  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "980e9870d758be2a0ae3d27bc10a530db59fa4887984094c6c38e02941d9faeb"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_occurrence_update",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TRIGGER calculation_quota_occurrence_update\n        AFTER UPDATE ON quota_occurrence WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.slot_order IS NOT NEW.slot_order OR OLD.surface_id IS NOT NEW.surface_id OR OLD.canonical_observation_id IS NOT NEW.canonical_observation_id OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.provider IS NOT NEW.provider OR OLD.plan_type IS NOT NEW.plan_type OR OLD.limit_id IS NOT NEW.limit_id OR OLD.slot IS NOT NEW.slot OR OLD.used_percent IS NOT NEW.used_percent OR OLD.resets_at_ms IS NOT NEW.resets_at_ms OR OLD.duration_mins IS NOT NEW.duration_mins OR OLD.admission IS NOT NEW.admission BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "f1ae020eda70917bc0139559a3b2eb7a3963f8928ab80b0f7767fe80d113f697"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_session_delete",
+      "tbl_name": "session",
+      "sql": "CREATE TRIGGER calculation_session_delete\n        AFTER DELETE ON session  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "f0edb4d013bb9d082bbf37f59e24bb4a789dd9fb51690f16cc8fb76edc2f728b"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_session_update",
+      "tbl_name": "session",
+      "sql": "CREATE TRIGGER calculation_session_update\n        AFTER UPDATE ON session WHEN OLD.id IS NOT NEW.id OR OLD.session_local IS NOT NEW.session_local OR OLD.session_uuid IS NOT NEW.session_uuid BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "3913782be673d5bdb7fa6c2b39af3bddc9160f2cd17f5ecdb4631fa75b1d7180"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_source_delete",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER calculation_source_delete\n      AFTER DELETE ON source  BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "7470a7c729520469811ed8b4a17aef01e52cf9c4f45ac5db66406065e3de0055"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_source_insert",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER calculation_source_insert\n      AFTER INSERT ON source  BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "9de338dac1d89e044afc506bdda8804b9f268464b79c2bb89fbfecbfde5e7dc1"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_source_update",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER calculation_source_update\n      AFTER UPDATE ON source WHEN OLD.source_local IS NOT NEW.source_local OR OLD.source_ordinal IS NOT NEW.source_ordinal OR OLD.session_id IS NOT NEW.session_id OR OLD.surface_id IS NOT NEW.surface_id OR OLD.presence IS NOT NEW.presence OR OLD.parser_version IS NOT NEW.parser_version OR OLD.quarantine_code IS NOT NEW.quarantine_code OR OLD.snapshots_persisted IS NOT NEW.snapshots_persisted OR OLD.carry_model IS NOT NEW.carry_model OR OLD.carry_effort IS NOT NEW.carry_effort OR OLD.carry_tier_raw IS NOT NEW.carry_tier_raw OR OLD.carry_tier_observed_at_ms IS NOT NEW.carry_tier_observed_at_ms OR OLD.carry_work_directory_id IS NOT NEW.carry_work_directory_id OR OLD.compacted_at_ms IS NOT NEW.compacted_at_ms OR OLD.compaction_offset IS NOT NEW.compaction_offset OR OLD.turn_context_pending IS NOT NEW.turn_context_pending\n      OR (OLD.scanned_bytes = OLD.size_bytes) IS NOT (NEW.scanned_bytes = NEW.size_bytes)\n      OR (OLD.scanned_bytes IS NOT NEW.scanned_bytes AND (\n        EXISTS(SELECT 1 FROM usage_event WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM usage_event_boundary WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM quota_occurrence WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM tool_class_fact WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM work_lifecycle_fact WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes))\n      ))\n      OR (CASE WHEN json_valid(OLD.lineage_json) THEN json_remove(OLD.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE OLD.lineage_json END)\n        IS NOT (CASE WHEN json_valid(NEW.lineage_json) THEN json_remove(NEW.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE NEW.lineage_json END) BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "387900319f7bc5d4d0ec3843481d86b3e4f0584d36f9e8b491cc18d40a591aa1"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_surface_class_delete",
+      "tbl_name": "surface_class",
+      "sql": "CREATE TRIGGER calculation_surface_class_delete\n        AFTER DELETE ON surface_class  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "6d5b01b1d1d91f711698cc1a1212716f8795224fbf2565966baa53c090540a5a"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_surface_class_update",
+      "tbl_name": "surface_class",
+      "sql": "CREATE TRIGGER calculation_surface_class_update\n        AFTER UPDATE ON surface_class WHEN OLD.id IS NOT NEW.id OR OLD.agent_scope IS NOT NEW.agent_scope OR OLD.surface IS NOT NEW.surface OR OLD.thread_source IS NOT NEW.thread_source OR OLD.lineage_disposition IS NOT NEW.lineage_disposition BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "ba4d5ee2197175fd4875cf8751653b955c1aed0baacaac2616ec6f35d5b26a5c"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tier_semantics_delete",
+      "tbl_name": "tier_semantics",
+      "sql": "CREATE TRIGGER calculation_tier_semantics_delete\n        AFTER DELETE ON tier_semantics  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "d8c5847da0843f488e430dfad7f016c14130c4d9ab0fd25553c580e12dfa9103"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tier_semantics_update",
+      "tbl_name": "tier_semantics",
+      "sql": "CREATE TRIGGER calculation_tier_semantics_update\n        AFTER UPDATE ON tier_semantics WHEN OLD.id IS NOT NEW.id OR OLD.api_service_tier IS NOT NEW.api_service_tier OR OLD.billing_surface IS NOT NEW.billing_surface OR OLD.codex_speed_mode IS NOT NEW.codex_speed_mode OR OLD.tier_source IS NOT NEW.tier_source OR OLD.provider_tier_raw IS NOT NEW.provider_tier_raw BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "43412f0c18877b5bf960941755546e815ff38d1a959b862245eb699d1a825b6d"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tool_class_fact_delete",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TRIGGER calculation_tool_class_fact_delete\n        AFTER DELETE ON tool_class_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "a52ef1e43c32ac11962b0a232155925de23f31bddfdc45a20f1df870d2d1f3a1"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tool_class_fact_insert",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TRIGGER calculation_tool_class_fact_insert\n        AFTER INSERT ON tool_class_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "0e8d6e49e7a2fceddbe2c1ebf34f739f0944e4525bcb7e5c3bcb4099edb68400"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tool_class_fact_update",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TRIGGER calculation_tool_class_fact_update\n        AFTER UPDATE ON tool_class_fact WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.tool_ordinal IS NOT NEW.tool_ordinal OR OLD.event_key IS NOT NEW.event_key OR OLD.session_id IS NOT NEW.session_id OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.tool_class IS NOT NEW.tool_class OR OLD.source_kind IS NOT NEW.source_kind BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "57dddb6ad4e740e41050985bcf5b31f96386bcd29d9d7993d266faa11a18b57f"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_boundary_delete",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TRIGGER calculation_usage_event_boundary_delete\n        AFTER DELETE ON usage_event_boundary  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "cb3cfd121a39fac588ee0a3659d715059dd5ccc6dafcdd642452d5b1233ae3b6"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_boundary_insert",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TRIGGER calculation_usage_event_boundary_insert\n        AFTER INSERT ON usage_event_boundary  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "01ca14c285b38f68984aaf71e32f4cc449c2913c0cc2099322dd4ebea98609a0"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_boundary_update",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TRIGGER calculation_usage_event_boundary_update\n        AFTER UPDATE ON usage_event_boundary WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.compaction_before IS NOT NEW.compaction_before OR OLD.turn_context_before IS NOT NEW.turn_context_before OR OLD.compacted_at_ms IS NOT NEW.compacted_at_ms BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "4f4637f8a0ddc2e0275f8350638707abf7075d67e5074f80277b72dfc5e5f68e"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER calculation_usage_event_delete\n        AFTER DELETE ON usage_event  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "276faaa0f1aa5244521cc73190f041a8a2320be6fc87fb01d4c6efa1c0130fce"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_insert",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER calculation_usage_event_insert\n        AFTER INSERT ON usage_event  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "6e7f4aeed9a8bead5c3fe5b6639e1d1887b447806bb67f8205a09d57e2e8dc31"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_update",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER calculation_usage_event_update\n        AFTER UPDATE ON usage_event WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.event_key IS NOT NEW.event_key OR OLD.session_id IS NOT NEW.session_id OR OLD.account_scope_id IS NOT NEW.account_scope_id OR OLD.model_id IS NOT NEW.model_id OR OLD.tier_id IS NOT NEW.tier_id OR OLD.surface_id IS NOT NEW.surface_id OR OLD.quota_observation_id IS NOT NEW.quota_observation_id OR OLD.tier_observed_at_ms IS NOT NEW.tier_observed_at_ms OR OLD.reasoning_effort IS NOT NEW.reasoning_effort OR OLD.flags IS NOT NEW.flags OR OLD.work_directory_id IS NOT NEW.work_directory_id OR OLD.tokens_in_uncached IS NOT NEW.tokens_in_uncached OR OLD.tokens_in_cache_read IS NOT NEW.tokens_in_cache_read OR OLD.tokens_in_cache_write IS NOT NEW.tokens_in_cache_write OR OLD.tokens_out_text IS NOT NEW.tokens_out_text OR OLD.tokens_out_reasoning IS NOT NEW.tokens_out_reasoning OR OLD.tokens_out_combined IS NOT NEW.tokens_out_combined OR OLD.total_input_context IS NOT NEW.total_input_context BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "7aaad8c52ad965c886dffe35251dfc7b03e07a9471a4fd876603cbae9d96ebc0"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_directory_delete",
+      "tbl_name": "work_directory",
+      "sql": "CREATE TRIGGER calculation_work_directory_delete\n        AFTER DELETE ON work_directory  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "1e2819569ca15f67d04e3413ecbf5221fdcbfdae974175172df02cd049f0036f"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_directory_update",
+      "tbl_name": "work_directory",
+      "sql": "CREATE TRIGGER calculation_work_directory_update\n        AFTER UPDATE ON work_directory WHEN OLD.id IS NOT NEW.id OR OLD.path IS NOT NEW.path BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "769513e375b4d499785026e38603ea649ea8c3edc2e85d84155b944561f02ccf"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_lifecycle_fact_delete",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TRIGGER calculation_work_lifecycle_fact_delete\n        AFTER DELETE ON work_lifecycle_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "0d7ff9f578f1d96ca3dc623c763e2fa1e0fb971059ac396df0a3a3b4005b4039"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_lifecycle_fact_insert",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TRIGGER calculation_work_lifecycle_fact_insert\n        AFTER INSERT ON work_lifecycle_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "5609e9284df4e94ff6da43d1b2eefe82ada567814c0d6158d838eb36069eeecc"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_lifecycle_fact_update",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TRIGGER calculation_work_lifecycle_fact_update\n        AFTER UPDATE ON work_lifecycle_fact WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.session_id IS NOT NEW.session_id OR OLD.task_key IS NOT NEW.task_key OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.kind IS NOT NEW.kind OR OLD.duration_ms IS NOT NEW.duration_ms BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "44235ee6a66ea584e41b49f489477ded935ba69bcabee3952f19e95901a45626"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_cursor_advance",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER usage_rollup_cursor_advance\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes > OLD.scanned_bytes\n    BEGIN\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 900000) * 900000 ELSE ((u.observed_at_ms - 899999) / 900000) * 900000 END AS bucket_ms,\n           u.model_id AS model_id,\n           u.tier_id AS tier_id,\n           u.surface_id AS surface_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           COUNT(*) AS events,\n           SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > OLD.scanned_bytes AND u.source_offset <= NEW.scanned_bytes\n    GROUP BY bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "12c1dd58a430cda4466047ce9feb7af7433b3ad2d7c499bd79b3aaba0d770d85"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_cursor_retreat",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER usage_rollup_cursor_retreat\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes < OLD.scanned_bytes\n    BEGIN\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 900000) * 900000 ELSE ((u.observed_at_ms - 899999) / 900000) * 900000 END AS bucket_ms,\n           u.model_id AS model_id,\n           u.tier_id AS tier_id,\n           u.surface_id AS surface_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           -COUNT(*) AS events,\n           -SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           -SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           -SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           -SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           -SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           -SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > NEW.scanned_bytes AND u.source_offset <= OLD.scanned_bytes\n    GROUP BY bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "8bd2521755f1d1ff1eb51af14b6456677c334bac8135469054e9b1a92065c1c2"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER usage_rollup_delete AFTER DELETE ON usage_event\n    WHEN OLD.source_offset <= (SELECT scanned_bytes FROM source WHERE id = OLD.source_id)\n    BEGIN\n      UPDATE usage_rollup SET\n        events = events - 1,\n        in_uncached = in_uncached - COALESCE(OLD.tokens_in_uncached, 0),\n        in_cache_read = in_cache_read - COALESCE(OLD.tokens_in_cache_read, 0),\n        in_cache_write = in_cache_write - COALESCE(OLD.tokens_in_cache_write, 0),\n        out_text = out_text - COALESCE(OLD.tokens_out_text, 0),\n        out_reasoning = out_reasoning - COALESCE(OLD.tokens_out_reasoning, 0),\n        out_combined = out_combined - COALESCE(OLD.tokens_out_combined, 0)\n      WHERE bucket_ms = CASE WHEN OLD.observed_at_ms >= 0 THEN (OLD.observed_at_ms / 900000) * 900000 ELSE ((OLD.observed_at_ms - 899999) / 900000) * 900000 END\n        AND model_id = OLD.model_id\n        AND tier_id = OLD.tier_id\n        AND surface_id = OLD.surface_id\n        AND account_scope_id = OLD.account_scope_id\n        AND shape = (((OLD.tokens_in_uncached IS NULL) << 0) | ((OLD.tokens_in_cache_read IS NULL) << 1) | ((OLD.tokens_in_cache_write IS NULL) << 2) | ((OLD.tokens_out_text IS NULL) << 3) | ((OLD.tokens_out_reasoning IS NULL) << 4) | ((OLD.tokens_out_combined IS NULL) << 5) | ((COALESCE(OLD.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(OLD.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(OLD.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(OLD.tokens_out_text, 0) > 0) << 9) | ((COALESCE(OLD.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(OLD.tokens_out_combined, 0) > 0) << 11) | ((OLD.tokens_out_text IS NOT NULL AND OLD.tokens_out_reasoning IS NOT NULL AND OLD.tokens_out_combined IS NOT NULL AND OLD.tokens_out_combined != OLD.tokens_out_text + OLD.tokens_out_reasoning) << 12))\n        AND ctx_class = CASE WHEN COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END)) END;\n    END",
+      "sqlSha256": "69c35512d8120969fc73b4a8a838dc783f9813182bc8f26d35b6429fb365469b"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_insert",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER usage_rollup_insert AFTER INSERT ON usage_event\n    WHEN NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id = NEW.source_id)\n    BEGIN\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      VALUES (CASE WHEN NEW.observed_at_ms >= 0 THEN (NEW.observed_at_ms / 900000) * 900000 ELSE ((NEW.observed_at_ms - 899999) / 900000) * 900000 END, NEW.model_id, NEW.tier_id, NEW.surface_id, NEW.account_scope_id, (((NEW.tokens_in_uncached IS NULL) << 0) | ((NEW.tokens_in_cache_read IS NULL) << 1) | ((NEW.tokens_in_cache_write IS NULL) << 2) | ((NEW.tokens_out_text IS NULL) << 3) | ((NEW.tokens_out_reasoning IS NULL) << 4) | ((NEW.tokens_out_combined IS NULL) << 5) | ((COALESCE(NEW.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(NEW.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(NEW.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(NEW.tokens_out_text, 0) > 0) << 9) | ((COALESCE(NEW.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(NEW.tokens_out_combined, 0) > 0) << 11) | ((NEW.tokens_out_text IS NOT NULL AND NEW.tokens_out_reasoning IS NOT NULL AND NEW.tokens_out_combined IS NOT NULL AND NEW.tokens_out_combined != NEW.tokens_out_text + NEW.tokens_out_reasoning) << 12)), CASE WHEN COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END)) END, 1,\n          COALESCE(NEW.tokens_in_uncached, 0), COALESCE(NEW.tokens_in_cache_read, 0), COALESCE(NEW.tokens_in_cache_write, 0), COALESCE(NEW.tokens_out_text, 0), COALESCE(NEW.tokens_out_reasoning, 0), COALESCE(NEW.tokens_out_combined, 0))\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "7ffba371b63cde71215fce2a77c66ffd6f4c2114c59339b23548a9e447d411bd"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_model_update",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER usage_rollup_model_update\n    AFTER UPDATE OF model_id ON usage_event\n    WHEN OLD.model_id <> NEW.model_id AND NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id=NEW.source_id)\n    BEGIN\n      UPDATE usage_rollup SET events=events-1,\n        in_uncached=in_uncached-COALESCE(OLD.tokens_in_uncached, 0), in_cache_read=in_cache_read-COALESCE(OLD.tokens_in_cache_read, 0), in_cache_write=in_cache_write-COALESCE(OLD.tokens_in_cache_write, 0), out_text=out_text-COALESCE(OLD.tokens_out_text, 0), out_reasoning=out_reasoning-COALESCE(OLD.tokens_out_reasoning, 0), out_combined=out_combined-COALESCE(OLD.tokens_out_combined, 0)\n      WHERE bucket_ms=CASE WHEN OLD.observed_at_ms >= 0 THEN (OLD.observed_at_ms / 900000) * 900000 ELSE ((OLD.observed_at_ms - 899999) / 900000) * 900000 END AND model_id=OLD.model_id AND tier_id=OLD.tier_id AND surface_id=OLD.surface_id AND account_scope_id=OLD.account_scope_id AND shape=(((OLD.tokens_in_uncached IS NULL) << 0) | ((OLD.tokens_in_cache_read IS NULL) << 1) | ((OLD.tokens_in_cache_write IS NULL) << 2) | ((OLD.tokens_out_text IS NULL) << 3) | ((OLD.tokens_out_reasoning IS NULL) << 4) | ((OLD.tokens_out_combined IS NULL) << 5) | ((COALESCE(OLD.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(OLD.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(OLD.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(OLD.tokens_out_text, 0) > 0) << 9) | ((COALESCE(OLD.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(OLD.tokens_out_combined, 0) > 0) << 11) | ((OLD.tokens_out_text IS NOT NULL AND OLD.tokens_out_reasoning IS NOT NULL AND OLD.tokens_out_combined IS NOT NULL AND OLD.tokens_out_combined != OLD.tokens_out_text + OLD.tokens_out_reasoning) << 12)) AND ctx_class=CASE WHEN COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END)) END;\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class,events,in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      VALUES (CASE WHEN NEW.observed_at_ms >= 0 THEN (NEW.observed_at_ms / 900000) * 900000 ELSE ((NEW.observed_at_ms - 899999) / 900000) * 900000 END, NEW.model_id, NEW.tier_id, NEW.surface_id, NEW.account_scope_id, (((NEW.tokens_in_uncached IS NULL) << 0) | ((NEW.tokens_in_cache_read IS NULL) << 1) | ((NEW.tokens_in_cache_write IS NULL) << 2) | ((NEW.tokens_out_text IS NULL) << 3) | ((NEW.tokens_out_reasoning IS NULL) << 4) | ((NEW.tokens_out_combined IS NULL) << 5) | ((COALESCE(NEW.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(NEW.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(NEW.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(NEW.tokens_out_text, 0) > 0) << 9) | ((COALESCE(NEW.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(NEW.tokens_out_combined, 0) > 0) << 11) | ((NEW.tokens_out_text IS NOT NULL AND NEW.tokens_out_reasoning IS NOT NULL AND NEW.tokens_out_combined IS NOT NULL AND NEW.tokens_out_combined != NEW.tokens_out_text + NEW.tokens_out_reasoning) << 12)), CASE WHEN COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END)) END,1,COALESCE(NEW.tokens_in_uncached, 0), COALESCE(NEW.tokens_in_cache_read, 0), COALESCE(NEW.tokens_in_cache_write, 0), COALESCE(NEW.tokens_out_text, 0), COALESCE(NEW.tokens_out_reasoning, 0), COALESCE(NEW.tokens_out_combined, 0))\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "51aea8844b43a45027a93a739716f37baeb3b67fcbba672a8f89ee77b4bd33c7"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_cursor_advance",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER work_rollup_cursor_advance\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes > OLD.scanned_bytes\n    BEGIN\n      INSERT INTO work_rollup(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined, last_at_ms)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 86400000) * 86400000 ELSE ((u.observed_at_ms - 86399999) / 86400000) * 86400000 END AS day_ms,\n           u.session_id AS session_id,\n           COALESCE(u.work_directory_id, 0) AS work_directory_id,\n           u.model_id AS model_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           ((u.flags & 1) | ((u.flags & 4) >> 1) | ((u.flags & 8) >> 1)) AS prov,\n           COUNT(*) AS events,\n           SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined,\n           MAX(u.observed_at_ms) AS last_at_ms\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > OLD.scanned_bytes AND u.source_offset <= NEW.scanned_bytes\n    GROUP BY day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov\n      ON CONFLICT(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined,\n        last_at_ms = MAX(last_at_ms, excluded.last_at_ms);\n    END",
+      "sqlSha256": "b21aff5ca4d8cb7f3c8165387f51b0a90d0315e10a3e2f7268dc52091aa3f808"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_cursor_retreat",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER work_rollup_cursor_retreat\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes < OLD.scanned_bytes\n    BEGIN\n      INSERT INTO work_rollup(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined, last_at_ms)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 86400000) * 86400000 ELSE ((u.observed_at_ms - 86399999) / 86400000) * 86400000 END AS day_ms,\n           u.session_id AS session_id,\n           COALESCE(u.work_directory_id, 0) AS work_directory_id,\n           u.model_id AS model_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           ((u.flags & 1) | ((u.flags & 4) >> 1) | ((u.flags & 8) >> 1)) AS prov,\n           -COUNT(*) AS events,\n           -SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           -SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           -SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           -SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           -SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           -SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined,\n           MAX(u.observed_at_ms) AS last_at_ms\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > NEW.scanned_bytes AND u.source_offset <= OLD.scanned_bytes\n    GROUP BY day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov\n      ON CONFLICT(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined,\n        last_at_ms = NULL;\n    END",
+      "sqlSha256": "b4ef3edc0be6ee274909f2ea443cbfca66d6a311f27466e37fb8d2cfed25f5dd"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER work_rollup_delete AFTER DELETE ON usage_event\n    WHEN OLD.source_offset <= (SELECT scanned_bytes FROM source WHERE id = OLD.source_id)\n    BEGIN\n      UPDATE work_rollup SET\n        events = events - 1,\n        in_uncached = in_uncached - COALESCE(OLD.tokens_in_uncached, 0),\n        in_cache_read = in_cache_read - COALESCE(OLD.tokens_in_cache_read, 0),\n        in_cache_write = in_cache_write - COALESCE(OLD.tokens_in_cache_write, 0),\n        out_text = out_text - COALESCE(OLD.tokens_out_text, 0),\n        out_reasoning = out_reasoning - COALESCE(OLD.tokens_out_reasoning, 0),\n        out_combined = out_combined - COALESCE(OLD.tokens_out_combined, 0),\n        last_at_ms = CASE WHEN last_at_ms = OLD.observed_at_ms THEN NULL ELSE last_at_ms END\n      WHERE day_ms = CASE WHEN OLD.observed_at_ms >= 0 THEN (OLD.observed_at_ms / 86400000) * 86400000 ELSE ((OLD.observed_at_ms - 86399999) / 86400000) * 86400000 END\n        AND session_id = OLD.session_id\n        AND work_directory_id = COALESCE(OLD.work_directory_id, 0)\n        AND model_id = OLD.model_id\n        AND account_scope_id = OLD.account_scope_id\n        AND shape = (((OLD.tokens_in_uncached IS NULL) << 0) | ((OLD.tokens_in_cache_read IS NULL) << 1) | ((OLD.tokens_in_cache_write IS NULL) << 2) | ((OLD.tokens_out_text IS NULL) << 3) | ((OLD.tokens_out_reasoning IS NULL) << 4) | ((OLD.tokens_out_combined IS NULL) << 5) | ((COALESCE(OLD.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(OLD.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(OLD.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(OLD.tokens_out_text, 0) > 0) << 9) | ((COALESCE(OLD.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(OLD.tokens_out_combined, 0) > 0) << 11) | ((OLD.tokens_out_text IS NOT NULL AND OLD.tokens_out_reasoning IS NOT NULL AND OLD.tokens_out_combined IS NOT NULL AND OLD.tokens_out_combined != OLD.tokens_out_text + OLD.tokens_out_reasoning) << 12))\n        AND ctx_class = CASE WHEN COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END)) END\n        AND prov = ((OLD.flags & 1) | ((OLD.flags & 4) >> 1) | ((OLD.flags & 8) >> 1));\n    END",
+      "sqlSha256": "f53ab56cf8b33c2f574ba533e6b53d55e3256c9ab84431c1bd9bb1a97d9089b1"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_insert",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER work_rollup_insert AFTER INSERT ON usage_event\n    WHEN NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id = NEW.source_id)\n    BEGIN\n      INSERT INTO work_rollup(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined, last_at_ms)\n      VALUES (CASE WHEN NEW.observed_at_ms >= 0 THEN (NEW.observed_at_ms / 86400000) * 86400000 ELSE ((NEW.observed_at_ms - 86399999) / 86400000) * 86400000 END, NEW.session_id, COALESCE(NEW.work_directory_id, 0), NEW.model_id, NEW.account_scope_id, (((NEW.tokens_in_uncached IS NULL) << 0) | ((NEW.tokens_in_cache_read IS NULL) << 1) | ((NEW.tokens_in_cache_write IS NULL) << 2) | ((NEW.tokens_out_text IS NULL) << 3) | ((NEW.tokens_out_reasoning IS NULL) << 4) | ((NEW.tokens_out_combined IS NULL) << 5) | ((COALESCE(NEW.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(NEW.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(NEW.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(NEW.tokens_out_text, 0) > 0) << 9) | ((COALESCE(NEW.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(NEW.tokens_out_combined, 0) > 0) << 11) | ((NEW.tokens_out_text IS NOT NULL AND NEW.tokens_out_reasoning IS NOT NULL AND NEW.tokens_out_combined IS NOT NULL AND NEW.tokens_out_combined != NEW.tokens_out_text + NEW.tokens_out_reasoning) << 12)), CASE WHEN COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END)) END, ((NEW.flags & 1) | ((NEW.flags & 4) >> 1) | ((NEW.flags & 8) >> 1)), 1,\n          COALESCE(NEW.tokens_in_uncached, 0), COALESCE(NEW.tokens_in_cache_read, 0), COALESCE(NEW.tokens_in_cache_write, 0), COALESCE(NEW.tokens_out_text, 0), COALESCE(NEW.tokens_out_reasoning, 0), COALESCE(NEW.tokens_out_combined, 0), NEW.observed_at_ms)\n      ON CONFLICT(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined,\n        last_at_ms = MAX(last_at_ms, excluded.last_at_ms);\n    END",
+      "sqlSha256": "406585af1f385a3cb8458ff8ad33380c9038e48fc1ec33f42f42b7f271a3fa71"
+    }
+  ],
+  "targetVersion": 9,
+  "targetSchema": [
+    {
+      "type": "index",
+      "name": "quota_observation_series",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE INDEX quota_observation_series\n    ON quota_observation(limit_id, duration_mins, observed_at_ms,\n                         slot, plan_type, used_percent, resets_at_ms)",
+      "sqlSha256": "6234cb2133172156870ff3657d905acc9133b500a2e840d8679559f327e51c40"
+    },
+    {
+      "type": "index",
+      "name": "quota_occurrence_canonical",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE INDEX quota_occurrence_canonical\n    ON quota_occurrence(canonical_observation_id)",
+      "sqlSha256": "f70e9c246be6490314b7438b543998912c43e79a365a1b2fe22319ba02928a09"
+    },
+    {
+      "type": "index",
+      "name": "quota_occurrence_observed",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE INDEX quota_occurrence_observed\n    ON quota_occurrence(observed_at_ms)",
+      "sqlSha256": "e262f42f1229118a5305b063959a5b36e1f379a40f4fa7f7806eeee51620344c"
+    },
+    {
+      "type": "index",
+      "name": "runtime_model_evidence_response",
+      "tbl_name": "runtime_model_evidence",
+      "sql": "CREATE INDEX runtime_model_evidence_response ON runtime_model_evidence(response_key)",
+      "sqlSha256": "824abfe0e2321d0ba800fc2785ac0d9e9d910dd6a5c29b4c3126f374e7fa8f4f"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_observed",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_observed\n    ON usage_event(observed_at_ms)",
+      "sqlSha256": "0d4c06c9e2f50c99a023f9846fdcf900f922d9b0696133462b8db84767f96aa9"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_pairing",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_pairing\n    ON usage_event(session_id, source_id, source_offset, observed_at_ms,\n                   model_id, reasoning_effort, tier_id, surface_id,\n                   tokens_in_cache_read)\n    WHERE COALESCE(tokens_in_uncached, 0) + COALESCE(tokens_in_cache_read, 0)\n        + COALESCE(tokens_in_cache_write, 0) > 0",
+      "sqlSha256": "9036bf23bbfb5d36a8cbf989382f8715c6022cc345fbb63e5d9e4efee4e548a2"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_quota",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_quota\n    ON usage_event(quota_observation_id) WHERE quota_observation_id IS NOT NULL",
+      "sqlSha256": "ed15860461126bc68da64afcf60753c575d34763a0d559994a388681d5937028"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_response_identity",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_response_identity ON usage_event(event_key) WHERE (flags & 16)<>0",
+      "sqlSha256": "41958d10d8d6e353949c130fbc4e4923e07ebf88766a99315cc94058bfe95184"
+    },
+    {
+      "type": "index",
+      "name": "usage_event_session",
+      "tbl_name": "usage_event",
+      "sql": "CREATE INDEX usage_event_session\n    ON usage_event(session_id, observed_at_ms)",
+      "sqlSha256": "b45af1ee78cdebe3da3619c46d30add97a270d6ebe9c75de7f0396760f700abf"
+    },
+    {
+      "type": "table",
+      "name": "account_scope",
+      "tbl_name": "account_scope",
+      "sql": "CREATE TABLE account_scope(\n    id INTEGER PRIMARY KEY,\n    status TEXT NOT NULL,\n    reason TEXT,\n    plan_type TEXT,\n    scope_local BLOB,\n    UNIQUE(status, reason, plan_type, scope_local)) STRICT",
+      "sqlSha256": "30e3b6622598ab35c8a6326e69a0da987d40193430eebc01c5e84a8d505f7659"
+    },
+    {
+      "type": "table",
+      "name": "cache_candidate",
+      "tbl_name": "cache_candidate",
+      "sql": "CREATE TABLE cache_candidate(\n    source_id INTEGER NOT NULL,\n    source_offset INTEGER NOT NULL,\n    previous_offset INTEGER NOT NULL,\n    session_id INTEGER NOT NULL,\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "15962ab84b584ebeb4240239520c6e3c6da620ec9a42d31f0ff5414f9550dbdc"
+    },
+    {
+      "type": "table",
+      "name": "commit_log",
+      "tbl_name": "commit_log",
+      "sql": "CREATE TABLE commit_log(\n    seq INTEGER PRIMARY KEY,\n    committed_at_ms INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('cold', 'refresh', 'verify')),\n    sources_changed INTEGER NOT NULL,\n    events_added INTEGER NOT NULL,\n    events_removed INTEGER NOT NULL) STRICT",
+      "sqlSha256": "7fef101fcc91fa86dff5170f01b22731352a876af590c4e0970244598a8e8009"
+    },
+    {
+      "type": "table",
+      "name": "lineage_snapshot",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TABLE lineage_snapshot(\n    session_id INTEGER NOT NULL REFERENCES session,\n    snapshot_local BLOB NOT NULL,\n    PRIMARY KEY(session_id, snapshot_local)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "174e32cde95f3494b49022a131c925819d88310c0fa998d92b3bbee891bd6c14"
+    },
+    {
+      "type": "table",
+      "name": "meta",
+      "tbl_name": "meta",
+      "sql": "CREATE TABLE meta(\n    key TEXT PRIMARY KEY,\n    value TEXT NOT NULL) STRICT",
+      "sqlSha256": "22196088cf290d1bf11bd0ae15534420271d46df841ade4dfd6c700300ed81f3"
+    },
+    {
+      "type": "table",
+      "name": "model",
+      "tbl_name": "model",
+      "sql": "CREATE TABLE model(\n    id INTEGER PRIMARY KEY,\n    model_id TEXT NOT NULL UNIQUE,\n    recognition TEXT NOT NULL) STRICT",
+      "sqlSha256": "f9d804dc420ab4b3a571d937dfd3cb5983ebe7b4d7ea40a338c33e58cbc013e6"
+    },
+    {
+      "type": "table",
+      "name": "quota_observation",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TABLE quota_observation(\n    id INTEGER PRIMARY KEY,\n    observed_at_ms INTEGER NOT NULL,\n    limit_id TEXT NOT NULL,\n    slot TEXT NOT NULL,\n    plan_type TEXT,\n    used_percent REAL,\n    resets_at_ms INTEGER,\n    duration_mins INTEGER,\n    UNIQUE(observed_at_ms, limit_id, slot)) STRICT",
+      "sqlSha256": "3e68c26ef9359a5bc8c2c07458decbc86be57ec877d2682153ea1fbc704de40a"
+    },
+    {
+      "type": "table",
+      "name": "quota_occurrence",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TABLE quota_occurrence(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    slot_order INTEGER NOT NULL CHECK(slot_order >= 0),\n    surface_id INTEGER NOT NULL REFERENCES surface_class,\n    canonical_observation_id INTEGER NOT NULL REFERENCES quota_observation,\n    observed_at_ms INTEGER NOT NULL,\n    provider TEXT NOT NULL,\n    plan_type TEXT,\n    limit_id TEXT NOT NULL,\n    slot TEXT NOT NULL,\n    used_percent REAL NOT NULL CHECK(used_percent >= 0 AND used_percent <= 100),\n    resets_at_ms INTEGER,\n    duration_mins INTEGER NOT NULL CHECK(duration_mins >= 1),\n    admission TEXT NOT NULL CHECK(admission IN ('admitted', 'held', 'suppressed')),\n    PRIMARY KEY(source_id, source_offset, slot_order)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "78c817ee09f35ef0c3aa3266f4ae0e36a28b2082214bbbb7de2bdaed09b0ae7d"
+    },
+    {
+      "type": "table",
+      "name": "rollup_context_start",
+      "tbl_name": "rollup_context_start",
+      "sql": "CREATE TABLE rollup_context_start(\n    start_tokens INTEGER PRIMARY KEY CHECK(start_tokens >= 0)) STRICT",
+      "sqlSha256": "4cfa4dde33b5428c2cb316eb900a6c134ccaa53240e8d86a998d59a8c3d15277"
+    },
+    {
+      "type": "table",
+      "name": "runtime_model_evidence",
+      "tbl_name": "runtime_model_evidence",
+      "sql": "CREATE TABLE runtime_model_evidence(\n    evidence_key BLOB PRIMARY KEY CHECK(length(evidence_key)=32),\n    response_key BLOB CHECK(response_key IS NULL OR length(response_key)=32),\n    thread_key BLOB NOT NULL CHECK(length(thread_key)=32),\n    turn_key BLOB CHECK(turn_key IS NULL OR length(turn_key)=32),\n    observed_at_ms INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('response_completed','fallback_succeeded','fallback_failed','request_context','response_reference')),\n    model TEXT NOT NULL,\n    previous_model TEXT,\n    digest BLOB NOT NULL CHECK(length(digest)=32)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "c930e18b35a2230629f47e67fa80966e0f6ddb7b1231cb8bae5c9895e9369b1b"
+    },
+    {
+      "type": "table",
+      "name": "session",
+      "tbl_name": "session",
+      "sql": "CREATE TABLE session(\n    id INTEGER PRIMARY KEY,\n    session_local BLOB NOT NULL UNIQUE CHECK(length(session_local) = 32),\n    session_uuid TEXT) STRICT",
+      "sqlSha256": "d09d7f843e5adda188c3fe178b35eff5348d5d2d4b45877382bd7a05d858f762"
+    },
+    {
+      "type": "table",
+      "name": "session_positive",
+      "tbl_name": "session_positive",
+      "sql": "CREATE TABLE session_positive(\n    session_id INTEGER NOT NULL,\n    source_id INTEGER NOT NULL,\n    events INTEGER NOT NULL,\n    PRIMARY KEY(session_id, source_id)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "30d092828c8c1bae3572b7dac0563e85f08b6b428cf67a44fea57415fee56e4c"
+    },
+    {
+      "type": "table",
+      "name": "source",
+      "tbl_name": "source",
+      "sql": "CREATE TABLE source(\n    id INTEGER PRIMARY KEY,\n    source_local BLOB NOT NULL UNIQUE CHECK(length(source_local) = 32),\n    source_ordinal INTEGER NOT NULL UNIQUE CHECK(source_ordinal >= 0),\n    session_id INTEGER REFERENCES session,\n    surface_id INTEGER REFERENCES surface_class,\n    path TEXT NOT NULL,\n    rollout_key TEXT NOT NULL,\n    presence TEXT NOT NULL CHECK(presence IN ('present', 'absent')),\n    -- Exact \"device:inode\" in decimal. NTFS file ids use up to 64 bits, which\n    -- doubles cannot hold, so the identity is text and is compared by equality.\n    -- NULL means the platform reported no usable file id.\n    file_id TEXT,\n    birthtime_ms REAL,\n    size_bytes INTEGER NOT NULL CHECK(size_bytes >= 0),\n    mtime_ms REAL NOT NULL,\n    ctime_ms REAL,\n    scanned_bytes INTEGER NOT NULL CHECK(scanned_bytes >= 0),\n    head_digest BLOB,\n    boundary_digest BLOB,\n    tail_digest BLOB,\n    verified_at_ms INTEGER,\n    verified_bytes INTEGER NOT NULL DEFAULT 0,\n    parser_version TEXT NOT NULL,\n    quarantine_code TEXT CHECK(quarantine_code IS NULL OR quarantine_code IN (\n      'codex_rollout_content_invalid',\n      'codex_rollout_tail_incomplete',\n      'codex_rollout_lineage_invalid',\n      'codex_rollout_compression_unsupported',\n      'codex_rollout_filename_identity_mismatch',\n      'codex_rollout_generation_ambiguous')),\n    snapshots_persisted INTEGER NOT NULL DEFAULT 0,\n    turn_context_seen INTEGER NOT NULL DEFAULT 0,\n    carry_model TEXT,\n    carry_effort TEXT,\n    carry_tier_raw TEXT,\n    carry_tier_observed_at_ms INTEGER,\n    carry_total_input INTEGER,\n    carry_total_cached INTEGER,\n    carry_total_cache_write INTEGER,\n    carry_total_output INTEGER,\n    carry_total_reasoning INTEGER,\n    carry_total_total INTEGER,\n    carry_work_directory_id INTEGER REFERENCES work_directory,\n    compacted_at_ms INTEGER,\n    compaction_offset INTEGER,\n    turn_context_pending INTEGER NOT NULL DEFAULT 0,\n    -- Rollout lineage, stored so an unchanged source needs no header read.\n    lineage_json TEXT, carry_tier_source TEXT\n      CHECK(carry_tier_source IS NULL OR carry_tier_source IN ('turn_override','rollout_thread_settings')),\n    CHECK((compacted_at_ms IS NULL) = (compaction_offset IS NULL))) STRICT",
+      "sqlSha256": "9236cb439954b622d7f6db0151009da91f18cad788d5745a924448a965e4abcb"
+    },
+    {
+      "type": "table",
+      "name": "source_diagnostic",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TABLE source_diagnostic(\n    source_id INTEGER NOT NULL REFERENCES source ON DELETE CASCADE,\n    code TEXT NOT NULL,\n    count INTEGER NOT NULL CHECK(count >= 0),\n    PRIMARY KEY(source_id, code)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "718f7835bb6fba76c2320f43555f32d45b1f6c1e9c8a7c943781bf7d0c4421d0"
+    },
+    {
+      "type": "table",
+      "name": "source_segment",
+      "tbl_name": "source_segment",
+      "sql": "CREATE TABLE source_segment(\n    source_id INTEGER NOT NULL REFERENCES source ON DELETE CASCADE,\n    segment INTEGER NOT NULL CHECK(segment >= 0),\n    digest BLOB NOT NULL CHECK(length(digest) = 32),\n    PRIMARY KEY(source_id, segment)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "b6f58c4e1962e2cc03282af352feff9e0113c7554baa9ba3112181a35e6e724d"
+    },
+    {
+      "type": "table",
+      "name": "store_state",
+      "tbl_name": "store_state",
+      "sql": "CREATE TABLE store_state(\n    id INTEGER PRIMARY KEY CHECK(id = 1),\n    commit_seq INTEGER NOT NULL,\n    calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)) STRICT",
+      "sqlSha256": "93a2fdef793102cbbed2ab6a7d7b18c182253e92758439e2460059d83a555546"
+    },
+    {
+      "type": "table",
+      "name": "surface_class",
+      "tbl_name": "surface_class",
+      "sql": "CREATE TABLE surface_class(\n    id INTEGER PRIMARY KEY,\n    agent_scope TEXT NOT NULL,\n    surface TEXT NOT NULL,\n    thread_source TEXT NOT NULL,\n    lineage_disposition TEXT NOT NULL,\n    UNIQUE(agent_scope, surface, thread_source, lineage_disposition)) STRICT",
+      "sqlSha256": "6c4fc324c900b583da82be48251551abc2113cefd21bcb29d55b529cae81b1e1"
+    },
+    {
+      "type": "table",
+      "name": "tier_semantics",
+      "tbl_name": "tier_semantics",
+      "sql": "CREATE TABLE tier_semantics(\n    id INTEGER PRIMARY KEY,\n    api_service_tier TEXT NOT NULL,\n    billing_surface TEXT NOT NULL,\n    codex_speed_mode TEXT NOT NULL,\n    tier_source TEXT NOT NULL,\n    provider_tier_raw TEXT,\n    UNIQUE(api_service_tier, billing_surface, codex_speed_mode,\n           tier_source, provider_tier_raw)) STRICT",
+      "sqlSha256": "efabbc0e9b07185df4d2a8ec1cf2cb01f3452bf78671a0a5630bee53e7747267"
+    },
+    {
+      "type": "table",
+      "name": "tool_class_fact",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TABLE tool_class_fact(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    tool_ordinal INTEGER NOT NULL CHECK(tool_ordinal >= 0),\n    event_key BLOB NOT NULL CHECK(length(event_key) = 32),\n    session_id INTEGER NOT NULL REFERENCES session,\n    observed_at_ms INTEGER NOT NULL,\n    tool_class TEXT NOT NULL CHECK(length(tool_class) BETWEEN 1 AND 64),\n    source_kind TEXT NOT NULL CHECK(length(source_kind) BETWEEN 1 AND 64),\n    PRIMARY KEY(source_id, source_offset, tool_ordinal)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "0d6147e759975ee3cd271e3adf9702dcf6dc93f1da7976cd6022045847d27425"
+    },
+    {
+      "type": "table",
+      "name": "usage_event",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TABLE usage_event(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    observed_at_ms INTEGER NOT NULL,\n    event_key BLOB NOT NULL CHECK(length(event_key) = 32),\n    session_id INTEGER NOT NULL REFERENCES session,\n    account_scope_id INTEGER NOT NULL REFERENCES account_scope,\n    model_id INTEGER NOT NULL REFERENCES model,\n    tier_id INTEGER NOT NULL REFERENCES tier_semantics,\n    surface_id INTEGER NOT NULL REFERENCES surface_class,\n    quota_observation_id INTEGER REFERENCES quota_observation,\n    tier_observed_at_ms INTEGER,\n    reasoning_effort INTEGER NOT NULL,\n    flags INTEGER NOT NULL DEFAULT 0,\n    -- The working directory in force at this record; NULL is unknown.\n    work_directory_id INTEGER REFERENCES work_directory,\n    tokens_in_uncached INTEGER,\n    tokens_in_cache_read INTEGER,\n    tokens_in_cache_write INTEGER,\n    tokens_out_text INTEGER,\n    tokens_out_reasoning INTEGER,\n    tokens_out_combined INTEGER,\n    total_input_context INTEGER,\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "1875033654db41715c677ead4b149f45b03d9975a33d5fcbe885cea8ff16946d"
+    },
+    {
+      "type": "table",
+      "name": "usage_event_boundary",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TABLE usage_event_boundary(\n    source_id INTEGER NOT NULL,\n    source_offset INTEGER NOT NULL,\n    compaction_before INTEGER NOT NULL CHECK(compaction_before IN (0, 1)),\n    turn_context_before INTEGER NOT NULL CHECK(turn_context_before IN (0, 1)),\n    compacted_at_ms INTEGER,\n    CHECK(compaction_before = (compacted_at_ms IS NOT NULL)),\n    CHECK(compaction_before = 1 OR turn_context_before = 1),\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "2e537dc9e3b5fd2eba401cbc19fa76753d0d219ef47a00bac116046349f20dae"
+    },
+    {
+      "type": "table",
+      "name": "usage_rollup",
+      "tbl_name": "usage_rollup",
+      "sql": "CREATE TABLE usage_rollup(\n    bucket_ms INTEGER NOT NULL,\n    model_id INTEGER NOT NULL,\n    tier_id INTEGER NOT NULL,\n    surface_id INTEGER NOT NULL,\n    account_scope_id INTEGER NOT NULL,\n    shape INTEGER NOT NULL,\n    ctx_class INTEGER NOT NULL,\n    events INTEGER NOT NULL,\n    in_uncached INTEGER NOT NULL,\n    in_cache_read INTEGER NOT NULL,\n    in_cache_write INTEGER NOT NULL,\n    out_text INTEGER NOT NULL,\n    out_reasoning INTEGER NOT NULL,\n    out_combined INTEGER NOT NULL,\n    PRIMARY KEY(bucket_ms, model_id, tier_id, surface_id, account_scope_id,\n                shape, ctx_class)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "0b7d83ee7d0de22f410f8397dce445f97a4abdec835673ed77097de88a485f85"
+    },
+    {
+      "type": "table",
+      "name": "work_directory",
+      "tbl_name": "work_directory",
+      "sql": "CREATE TABLE work_directory(\n    id INTEGER PRIMARY KEY,\n    path TEXT NOT NULL UNIQUE CHECK(length(path) BETWEEN 1 AND 4096)) STRICT",
+      "sqlSha256": "09466b3eb501ead2aa1a01d2fb593085a15f3bd2dba49e725d809edc483ecb66"
+    },
+    {
+      "type": "table",
+      "name": "work_lifecycle_fact",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TABLE work_lifecycle_fact(\n    source_id INTEGER NOT NULL REFERENCES source,\n    source_offset INTEGER NOT NULL CHECK(source_offset >= 0),\n    session_id INTEGER NOT NULL REFERENCES session,\n    task_key BLOB NOT NULL CHECK(length(task_key) = 32),\n    observed_at_ms INTEGER NOT NULL,\n    kind TEXT NOT NULL CHECK(kind IN ('start', 'complete', 'abort')),\n    duration_ms INTEGER CHECK(duration_ms >= 0),\n    PRIMARY KEY(source_id, source_offset)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "2023a6ddc3960f500342ff40e3c9526b4ff289e6b8c179397ba8e3ff5748cb7d"
+    },
+    {
+      "type": "table",
+      "name": "work_rollup",
+      "tbl_name": "work_rollup",
+      "sql": "CREATE TABLE work_rollup(\n    day_ms INTEGER NOT NULL,\n    session_id INTEGER NOT NULL,\n    work_directory_id INTEGER NOT NULL,\n    model_id INTEGER NOT NULL,\n    account_scope_id INTEGER NOT NULL,\n    shape INTEGER NOT NULL,\n    ctx_class INTEGER NOT NULL,\n    prov INTEGER NOT NULL,\n    events INTEGER NOT NULL,\n    in_uncached INTEGER NOT NULL,\n    in_cache_read INTEGER NOT NULL,\n    in_cache_write INTEGER NOT NULL,\n    out_text INTEGER NOT NULL,\n    out_reasoning INTEGER NOT NULL,\n    out_combined INTEGER NOT NULL,\n    last_at_ms INTEGER,\n    PRIMARY KEY(day_ms, session_id, work_directory_id, model_id,\n                account_scope_id, shape, ctx_class, prov)) STRICT, WITHOUT ROWID",
+      "sqlSha256": "f8e66837ad727cdb82bc7aebcceb62509d5e15c73726baa06e9eb39817496975"
+    },
+    {
+      "type": "trigger",
+      "name": "cache_pairing_advance",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER cache_pairing_advance\n  AFTER UPDATE OF scanned_bytes ON source\n  WHEN NEW.scanned_bytes > OLD.scanned_bytes\n  BEGIN\n    INSERT OR REPLACE INTO cache_candidate(source_id, source_offset, previous_offset, session_id)\n    \n    SELECT w.source_id, w.source_offset, w.previous_offset, w.session_id\n    FROM (\n      SELECT u.source_id AS source_id, u.source_offset AS source_offset,\n             u.session_id AS session_id, u.model_id AS model_id,\n             u.reasoning_effort AS reasoning_effort,\n             LAG(u.source_offset) OVER request_order AS previous_offset,\n             LAG(u.model_id) OVER request_order AS previous_model_id,\n             LAG(u.reasoning_effort) OVER request_order AS previous_reasoning_effort\n      FROM usage_event u\n      WHERE u.source_id = NEW.id\n        AND COALESCE(u.tokens_in_uncached, 0)\n        + COALESCE(u.tokens_in_cache_read, 0)\n        + COALESCE(u.tokens_in_cache_write, 0) > 0\n        AND u.source_offset <= NEW.scanned_bytes\n        AND u.source_offset >= COALESCE((\n          SELECT MAX(p.source_offset) FROM usage_event p\n          WHERE p.source_id = NEW.id AND p.source_offset <= OLD.scanned_bytes\n            AND COALESCE(p.tokens_in_uncached, 0)\n        + COALESCE(p.tokens_in_cache_read, 0)\n        + COALESCE(p.tokens_in_cache_write, 0) > 0), 0)\n      WINDOW request_order AS (PARTITION BY u.source_id ORDER BY u.source_offset)\n    ) w\n    LEFT JOIN usage_event_boundary b\n      ON b.source_id = w.source_id AND b.source_offset = w.source_offset\n    WHERE w.source_offset > OLD.scanned_bytes\n      AND w.previous_offset IS NOT NULL\n      AND (w.model_id != w.previous_model_id\n        OR w.reasoning_effort != w.previous_reasoning_effort\n        OR b.turn_context_before = 1\n        OR b.compaction_before = 1);\n    INSERT INTO session_positive(session_id, source_id, events)\n    \n    SELECT u.session_id, u.source_id, COUNT(*) AS events\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > OLD.scanned_bytes\n      AND u.source_offset <= NEW.scanned_bytes AND COALESCE(u.tokens_in_uncached, 0)\n        + COALESCE(u.tokens_in_cache_read, 0)\n        + COALESCE(u.tokens_in_cache_write, 0) > 0\n    GROUP BY u.session_id, u.source_id\n    ON CONFLICT(session_id, source_id) DO UPDATE SET\n        events = events + excluded.events;\n  END",
+      "sqlSha256": "fbc7782404a75ae0ba5954e6dd84e2a7ce4b0de710153071882d3cca4438cdae"
+    },
+    {
+      "type": "trigger",
+      "name": "cache_pairing_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER cache_pairing_delete\n  AFTER DELETE ON usage_event\n  WHEN OLD.source_offset <= (SELECT scanned_bytes FROM source WHERE id = OLD.source_id)\n  BEGIN\n    DELETE FROM cache_candidate\n    WHERE source_id = OLD.source_id AND source_offset = OLD.source_offset;\n    UPDATE session_positive SET events = events - 1\n    WHERE session_id = OLD.session_id AND source_id = OLD.source_id\n      AND COALESCE(OLD.tokens_in_uncached, 0)\n        + COALESCE(OLD.tokens_in_cache_read, 0)\n        + COALESCE(OLD.tokens_in_cache_write, 0) > 0;\n    DELETE FROM session_positive\n    WHERE session_id = OLD.session_id AND source_id = OLD.source_id AND events <= 0;\n  END",
+      "sqlSha256": "2db3e8f7336ae5546bbf0f3c11d93e9542295787d55e473b3afce9b354ff5aca"
+    },
+    {
+      "type": "trigger",
+      "name": "cache_pairing_retreat",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER cache_pairing_retreat\n  AFTER UPDATE OF scanned_bytes ON source\n  WHEN NEW.scanned_bytes < OLD.scanned_bytes\n  BEGIN\n    DELETE FROM cache_candidate\n    WHERE source_id = NEW.id AND source_offset > NEW.scanned_bytes;\n    INSERT INTO session_positive(session_id, source_id, events)\n    \n    SELECT u.session_id, u.source_id, -COUNT(*) AS events\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > NEW.scanned_bytes\n      AND u.source_offset <= OLD.scanned_bytes AND COALESCE(u.tokens_in_uncached, 0)\n        + COALESCE(u.tokens_in_cache_read, 0)\n        + COALESCE(u.tokens_in_cache_write, 0) > 0\n    GROUP BY u.session_id, u.source_id\n    ON CONFLICT(session_id, source_id) DO UPDATE SET\n        events = events + excluded.events;\n    DELETE FROM session_positive WHERE source_id = NEW.id AND events <= 0;\n  END",
+      "sqlSha256": "bdc8ba39f50831e0a52b3e7ac25f5e80ee68942fde9b2f4a733763e2ea152a44"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_account_scope_delete",
+      "tbl_name": "account_scope",
+      "sql": "CREATE TRIGGER calculation_account_scope_delete\n        AFTER DELETE ON account_scope  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "df0df34ea4fe33959866294de73ae3cc72d135a1a7f9b583fa2c194d8ebd1d81"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_account_scope_update",
+      "tbl_name": "account_scope",
+      "sql": "CREATE TRIGGER calculation_account_scope_update\n        AFTER UPDATE ON account_scope WHEN OLD.id IS NOT NEW.id OR OLD.status IS NOT NEW.status OR OLD.reason IS NOT NEW.reason OR OLD.plan_type IS NOT NEW.plan_type OR OLD.scope_local IS NOT NEW.scope_local BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "ea91255d4e852a7d9a39cc7cdfdafbf591395f216af39c0eb9367f422eb5edc4"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_diagnostic_delete",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TRIGGER calculation_diagnostic_delete\n      AFTER DELETE ON source_diagnostic WHEN OLD.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords') BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "590e8ef5c3746869dcf289a2ef6bdfa16272ce60e3763114bbe70c1d1aed03f2"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_diagnostic_insert",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TRIGGER calculation_diagnostic_insert\n      AFTER INSERT ON source_diagnostic WHEN NEW.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords') BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "d78e9b98563bb9587bb0305bc634dc7488d88e83d4faaad0a00318cd6b650890"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_diagnostic_update",
+      "tbl_name": "source_diagnostic",
+      "sql": "CREATE TRIGGER calculation_diagnostic_update\n      AFTER UPDATE ON source_diagnostic WHEN (OLD.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords') OR NEW.code NOT IN ('relevantLines','turnContexts','tokenCounts','tierEvents','toolRecords','responseDuplicateCopies','responseForeignThreadRecords')) AND (OLD.code IS NOT NEW.code OR OLD.count IS NOT NEW.count) BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "3ae314cd2114050bb4063cfc88fdd87415b3b8a05cab0ffb4f603448cc128438"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_lineage_snapshot_delete",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TRIGGER calculation_lineage_snapshot_delete\n        AFTER DELETE ON lineage_snapshot  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "febd02078d25c0849e3787064f868ce9f9e4c15480ae09c6eb8bbe6eabffd27a"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_lineage_snapshot_insert",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TRIGGER calculation_lineage_snapshot_insert\n        AFTER INSERT ON lineage_snapshot  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "192d0e5e4a798e97b071b0fd1065597432f3adaeadddb006f946e42699515485"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_lineage_snapshot_update",
+      "tbl_name": "lineage_snapshot",
+      "sql": "CREATE TRIGGER calculation_lineage_snapshot_update\n        AFTER UPDATE ON lineage_snapshot WHEN OLD.session_id IS NOT NEW.session_id OR OLD.snapshot_local IS NOT NEW.snapshot_local BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "8701279dee34afcde9dbb1f13792417aa245f2853660b2a9264ae8e7a80c5f05"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_model_delete",
+      "tbl_name": "model",
+      "sql": "CREATE TRIGGER calculation_model_delete\n        AFTER DELETE ON model  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "f9cb1d91e87ae3b1c32cade081dd923769ddfc2a4c33a998cb9bc8924738d3d5"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_model_update",
+      "tbl_name": "model",
+      "sql": "CREATE TRIGGER calculation_model_update\n        AFTER UPDATE ON model WHEN OLD.id IS NOT NEW.id OR OLD.model_id IS NOT NEW.model_id OR OLD.recognition IS NOT NEW.recognition BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "3d266badf1299b43eebe6af1d1962cd765ce4b9366b0fe479bab2532428672ab"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_observation_delete",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TRIGGER calculation_quota_observation_delete\n        AFTER DELETE ON quota_observation  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "ab5af6da3994d44cf97b0ce735c10ec51ca229ebaed54ed868907e687cf47783"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_observation_insert",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TRIGGER calculation_quota_observation_insert\n        AFTER INSERT ON quota_observation  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "fbc954350ff3e9ef866bf9daa4f745ffdb3a80145673e781a9f323fb5c554c9d"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_observation_update",
+      "tbl_name": "quota_observation",
+      "sql": "CREATE TRIGGER calculation_quota_observation_update\n        AFTER UPDATE ON quota_observation WHEN OLD.id IS NOT NEW.id OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.limit_id IS NOT NEW.limit_id OR OLD.slot IS NOT NEW.slot OR OLD.plan_type IS NOT NEW.plan_type OR OLD.used_percent IS NOT NEW.used_percent OR OLD.resets_at_ms IS NOT NEW.resets_at_ms OR OLD.duration_mins IS NOT NEW.duration_mins BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "98e2f8f1195928c5a36b4964ad128ca1a130238db2aa640f295ba3b1e6973026"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_occurrence_delete",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TRIGGER calculation_quota_occurrence_delete\n        AFTER DELETE ON quota_occurrence  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "cb0260a64545a4da06536b348e675671eb0bb2530c5b6cfea2f0bcb9c11fdf00"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_occurrence_insert",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TRIGGER calculation_quota_occurrence_insert\n        AFTER INSERT ON quota_occurrence  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "980e9870d758be2a0ae3d27bc10a530db59fa4887984094c6c38e02941d9faeb"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_quota_occurrence_update",
+      "tbl_name": "quota_occurrence",
+      "sql": "CREATE TRIGGER calculation_quota_occurrence_update\n        AFTER UPDATE ON quota_occurrence WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.slot_order IS NOT NEW.slot_order OR OLD.surface_id IS NOT NEW.surface_id OR OLD.canonical_observation_id IS NOT NEW.canonical_observation_id OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.provider IS NOT NEW.provider OR OLD.plan_type IS NOT NEW.plan_type OR OLD.limit_id IS NOT NEW.limit_id OR OLD.slot IS NOT NEW.slot OR OLD.used_percent IS NOT NEW.used_percent OR OLD.resets_at_ms IS NOT NEW.resets_at_ms OR OLD.duration_mins IS NOT NEW.duration_mins OR OLD.admission IS NOT NEW.admission BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "f1ae020eda70917bc0139559a3b2eb7a3963f8928ab80b0f7767fe80d113f697"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_session_delete",
+      "tbl_name": "session",
+      "sql": "CREATE TRIGGER calculation_session_delete\n        AFTER DELETE ON session  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "f0edb4d013bb9d082bbf37f59e24bb4a789dd9fb51690f16cc8fb76edc2f728b"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_session_update",
+      "tbl_name": "session",
+      "sql": "CREATE TRIGGER calculation_session_update\n        AFTER UPDATE ON session WHEN OLD.id IS NOT NEW.id OR OLD.session_local IS NOT NEW.session_local OR OLD.session_uuid IS NOT NEW.session_uuid BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "3913782be673d5bdb7fa6c2b39af3bddc9160f2cd17f5ecdb4631fa75b1d7180"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_source_delete",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER calculation_source_delete\n      AFTER DELETE ON source  BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "7470a7c729520469811ed8b4a17aef01e52cf9c4f45ac5db66406065e3de0055"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_source_insert",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER calculation_source_insert\n      AFTER INSERT ON source  BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "9de338dac1d89e044afc506bdda8804b9f268464b79c2bb89fbfecbfde5e7dc1"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_source_update",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER calculation_source_update\n      AFTER UPDATE ON source WHEN OLD.source_local IS NOT NEW.source_local OR OLD.source_ordinal IS NOT NEW.source_ordinal OR OLD.session_id IS NOT NEW.session_id OR OLD.surface_id IS NOT NEW.surface_id OR OLD.presence IS NOT NEW.presence OR OLD.parser_version IS NOT NEW.parser_version OR OLD.quarantine_code IS NOT NEW.quarantine_code OR OLD.snapshots_persisted IS NOT NEW.snapshots_persisted OR OLD.carry_model IS NOT NEW.carry_model OR OLD.carry_effort IS NOT NEW.carry_effort OR OLD.carry_tier_raw IS NOT NEW.carry_tier_raw OR OLD.carry_tier_observed_at_ms IS NOT NEW.carry_tier_observed_at_ms OR OLD.carry_tier_source IS NOT NEW.carry_tier_source OR OLD.carry_work_directory_id IS NOT NEW.carry_work_directory_id OR OLD.compacted_at_ms IS NOT NEW.compacted_at_ms OR OLD.compaction_offset IS NOT NEW.compaction_offset OR OLD.turn_context_pending IS NOT NEW.turn_context_pending\n      OR (OLD.scanned_bytes = OLD.size_bytes) IS NOT (NEW.scanned_bytes = NEW.size_bytes)\n      OR (OLD.scanned_bytes IS NOT NEW.scanned_bytes AND (\n        EXISTS(SELECT 1 FROM usage_event WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM usage_event_boundary WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM quota_occurrence WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM tool_class_fact WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes)) OR EXISTS(SELECT 1 FROM work_lifecycle_fact WHERE source_id=NEW.id AND source_offset>MIN(OLD.scanned_bytes,NEW.scanned_bytes) AND source_offset<=MAX(OLD.scanned_bytes,NEW.scanned_bytes))\n      ))\n      OR (CASE WHEN json_valid(OLD.lineage_json) THEN json_remove(OLD.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE OLD.lineage_json END)\n        IS NOT (CASE WHEN json_valid(NEW.lineage_json) THEN json_remove(NEW.lineage_json,'$.statSize','$.size','$.contentSha256') ELSE NEW.lineage_json END) BEGIN\n      UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "1aea49ec875cc6e700857a2cb09a2c6072d3b56a3304bef8238449de2c86c54a"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_surface_class_delete",
+      "tbl_name": "surface_class",
+      "sql": "CREATE TRIGGER calculation_surface_class_delete\n        AFTER DELETE ON surface_class  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "6d5b01b1d1d91f711698cc1a1212716f8795224fbf2565966baa53c090540a5a"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_surface_class_update",
+      "tbl_name": "surface_class",
+      "sql": "CREATE TRIGGER calculation_surface_class_update\n        AFTER UPDATE ON surface_class WHEN OLD.id IS NOT NEW.id OR OLD.agent_scope IS NOT NEW.agent_scope OR OLD.surface IS NOT NEW.surface OR OLD.thread_source IS NOT NEW.thread_source OR OLD.lineage_disposition IS NOT NEW.lineage_disposition BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "ba4d5ee2197175fd4875cf8751653b955c1aed0baacaac2616ec6f35d5b26a5c"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tier_semantics_delete",
+      "tbl_name": "tier_semantics",
+      "sql": "CREATE TRIGGER calculation_tier_semantics_delete\n        AFTER DELETE ON tier_semantics  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "d8c5847da0843f488e430dfad7f016c14130c4d9ab0fd25553c580e12dfa9103"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tier_semantics_update",
+      "tbl_name": "tier_semantics",
+      "sql": "CREATE TRIGGER calculation_tier_semantics_update\n        AFTER UPDATE ON tier_semantics WHEN OLD.id IS NOT NEW.id OR OLD.api_service_tier IS NOT NEW.api_service_tier OR OLD.billing_surface IS NOT NEW.billing_surface OR OLD.codex_speed_mode IS NOT NEW.codex_speed_mode OR OLD.tier_source IS NOT NEW.tier_source OR OLD.provider_tier_raw IS NOT NEW.provider_tier_raw BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "43412f0c18877b5bf960941755546e815ff38d1a959b862245eb699d1a825b6d"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tool_class_fact_delete",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TRIGGER calculation_tool_class_fact_delete\n        AFTER DELETE ON tool_class_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "a52ef1e43c32ac11962b0a232155925de23f31bddfdc45a20f1df870d2d1f3a1"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tool_class_fact_insert",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TRIGGER calculation_tool_class_fact_insert\n        AFTER INSERT ON tool_class_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "0e8d6e49e7a2fceddbe2c1ebf34f739f0944e4525bcb7e5c3bcb4099edb68400"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_tool_class_fact_update",
+      "tbl_name": "tool_class_fact",
+      "sql": "CREATE TRIGGER calculation_tool_class_fact_update\n        AFTER UPDATE ON tool_class_fact WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.tool_ordinal IS NOT NEW.tool_ordinal OR OLD.event_key IS NOT NEW.event_key OR OLD.session_id IS NOT NEW.session_id OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.tool_class IS NOT NEW.tool_class OR OLD.source_kind IS NOT NEW.source_kind BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "57dddb6ad4e740e41050985bcf5b31f96386bcd29d9d7993d266faa11a18b57f"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_boundary_delete",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TRIGGER calculation_usage_event_boundary_delete\n        AFTER DELETE ON usage_event_boundary  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "cb3cfd121a39fac588ee0a3659d715059dd5ccc6dafcdd642452d5b1233ae3b6"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_boundary_insert",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TRIGGER calculation_usage_event_boundary_insert\n        AFTER INSERT ON usage_event_boundary  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "01ca14c285b38f68984aaf71e32f4cc449c2913c0cc2099322dd4ebea98609a0"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_boundary_update",
+      "tbl_name": "usage_event_boundary",
+      "sql": "CREATE TRIGGER calculation_usage_event_boundary_update\n        AFTER UPDATE ON usage_event_boundary WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.compaction_before IS NOT NEW.compaction_before OR OLD.turn_context_before IS NOT NEW.turn_context_before OR OLD.compacted_at_ms IS NOT NEW.compacted_at_ms BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "4f4637f8a0ddc2e0275f8350638707abf7075d67e5074f80277b72dfc5e5f68e"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER calculation_usage_event_delete\n        AFTER DELETE ON usage_event  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "276faaa0f1aa5244521cc73190f041a8a2320be6fc87fb01d4c6efa1c0130fce"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_insert",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER calculation_usage_event_insert\n        AFTER INSERT ON usage_event  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "6e7f4aeed9a8bead5c3fe5b6639e1d1887b447806bb67f8205a09d57e2e8dc31"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_usage_event_update",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER calculation_usage_event_update\n        AFTER UPDATE ON usage_event WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.event_key IS NOT NEW.event_key OR OLD.session_id IS NOT NEW.session_id OR OLD.account_scope_id IS NOT NEW.account_scope_id OR OLD.model_id IS NOT NEW.model_id OR OLD.tier_id IS NOT NEW.tier_id OR OLD.surface_id IS NOT NEW.surface_id OR OLD.quota_observation_id IS NOT NEW.quota_observation_id OR OLD.tier_observed_at_ms IS NOT NEW.tier_observed_at_ms OR OLD.reasoning_effort IS NOT NEW.reasoning_effort OR OLD.flags IS NOT NEW.flags OR OLD.work_directory_id IS NOT NEW.work_directory_id OR OLD.tokens_in_uncached IS NOT NEW.tokens_in_uncached OR OLD.tokens_in_cache_read IS NOT NEW.tokens_in_cache_read OR OLD.tokens_in_cache_write IS NOT NEW.tokens_in_cache_write OR OLD.tokens_out_text IS NOT NEW.tokens_out_text OR OLD.tokens_out_reasoning IS NOT NEW.tokens_out_reasoning OR OLD.tokens_out_combined IS NOT NEW.tokens_out_combined OR OLD.total_input_context IS NOT NEW.total_input_context BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "7aaad8c52ad965c886dffe35251dfc7b03e07a9471a4fd876603cbae9d96ebc0"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_directory_delete",
+      "tbl_name": "work_directory",
+      "sql": "CREATE TRIGGER calculation_work_directory_delete\n        AFTER DELETE ON work_directory  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "1e2819569ca15f67d04e3413ecbf5221fdcbfdae974175172df02cd049f0036f"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_directory_update",
+      "tbl_name": "work_directory",
+      "sql": "CREATE TRIGGER calculation_work_directory_update\n        AFTER UPDATE ON work_directory WHEN OLD.id IS NOT NEW.id OR OLD.path IS NOT NEW.path BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "769513e375b4d499785026e38603ea649ea8c3edc2e85d84155b944561f02ccf"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_lifecycle_fact_delete",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TRIGGER calculation_work_lifecycle_fact_delete\n        AFTER DELETE ON work_lifecycle_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "0d7ff9f578f1d96ca3dc623c763e2fa1e0fb971059ac396df0a3a3b4005b4039"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_lifecycle_fact_insert",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TRIGGER calculation_work_lifecycle_fact_insert\n        AFTER INSERT ON work_lifecycle_fact  BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "5609e9284df4e94ff6da43d1b2eefe82ada567814c0d6158d838eb36069eeecc"
+    },
+    {
+      "type": "trigger",
+      "name": "calculation_work_lifecycle_fact_update",
+      "tbl_name": "work_lifecycle_fact",
+      "sql": "CREATE TRIGGER calculation_work_lifecycle_fact_update\n        AFTER UPDATE ON work_lifecycle_fact WHEN OLD.source_id IS NOT NEW.source_id OR OLD.source_offset IS NOT NEW.source_offset OR OLD.session_id IS NOT NEW.session_id OR OLD.task_key IS NOT NEW.task_key OR OLD.observed_at_ms IS NOT NEW.observed_at_ms OR OLD.kind IS NOT NEW.kind OR OLD.duration_ms IS NOT NEW.duration_ms BEGIN\n        UPDATE store_state SET calculation_revision=calculation_revision+1 WHERE id=1; END",
+      "sqlSha256": "44235ee6a66ea584e41b49f489477ded935ba69bcabee3952f19e95901a45626"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_cursor_advance",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER usage_rollup_cursor_advance\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes > OLD.scanned_bytes\n    BEGIN\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 900000) * 900000 ELSE ((u.observed_at_ms - 899999) / 900000) * 900000 END AS bucket_ms,\n           u.model_id AS model_id,\n           u.tier_id AS tier_id,\n           u.surface_id AS surface_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           COUNT(*) AS events,\n           SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > OLD.scanned_bytes AND u.source_offset <= NEW.scanned_bytes\n    GROUP BY bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "12c1dd58a430cda4466047ce9feb7af7433b3ad2d7c499bd79b3aaba0d770d85"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_cursor_retreat",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER usage_rollup_cursor_retreat\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes < OLD.scanned_bytes\n    BEGIN\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 900000) * 900000 ELSE ((u.observed_at_ms - 899999) / 900000) * 900000 END AS bucket_ms,\n           u.model_id AS model_id,\n           u.tier_id AS tier_id,\n           u.surface_id AS surface_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           -COUNT(*) AS events,\n           -SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           -SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           -SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           -SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           -SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           -SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > NEW.scanned_bytes AND u.source_offset <= OLD.scanned_bytes\n    GROUP BY bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "8bd2521755f1d1ff1eb51af14b6456677c334bac8135469054e9b1a92065c1c2"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER usage_rollup_delete AFTER DELETE ON usage_event\n    WHEN OLD.source_offset <= (SELECT scanned_bytes FROM source WHERE id = OLD.source_id)\n    BEGIN\n      UPDATE usage_rollup SET\n        events = events - 1,\n        in_uncached = in_uncached - COALESCE(OLD.tokens_in_uncached, 0),\n        in_cache_read = in_cache_read - COALESCE(OLD.tokens_in_cache_read, 0),\n        in_cache_write = in_cache_write - COALESCE(OLD.tokens_in_cache_write, 0),\n        out_text = out_text - COALESCE(OLD.tokens_out_text, 0),\n        out_reasoning = out_reasoning - COALESCE(OLD.tokens_out_reasoning, 0),\n        out_combined = out_combined - COALESCE(OLD.tokens_out_combined, 0)\n      WHERE bucket_ms = CASE WHEN OLD.observed_at_ms >= 0 THEN (OLD.observed_at_ms / 900000) * 900000 ELSE ((OLD.observed_at_ms - 899999) / 900000) * 900000 END\n        AND model_id = OLD.model_id\n        AND tier_id = OLD.tier_id\n        AND surface_id = OLD.surface_id\n        AND account_scope_id = OLD.account_scope_id\n        AND shape = (((OLD.tokens_in_uncached IS NULL) << 0) | ((OLD.tokens_in_cache_read IS NULL) << 1) | ((OLD.tokens_in_cache_write IS NULL) << 2) | ((OLD.tokens_out_text IS NULL) << 3) | ((OLD.tokens_out_reasoning IS NULL) << 4) | ((OLD.tokens_out_combined IS NULL) << 5) | ((COALESCE(OLD.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(OLD.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(OLD.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(OLD.tokens_out_text, 0) > 0) << 9) | ((COALESCE(OLD.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(OLD.tokens_out_combined, 0) > 0) << 11) | ((OLD.tokens_out_text IS NOT NULL AND OLD.tokens_out_reasoning IS NOT NULL AND OLD.tokens_out_combined IS NOT NULL AND OLD.tokens_out_combined != OLD.tokens_out_text + OLD.tokens_out_reasoning) << 12))\n        AND ctx_class = CASE WHEN COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END)) END;\n    END",
+      "sqlSha256": "69c35512d8120969fc73b4a8a838dc783f9813182bc8f26d35b6429fb365469b"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_insert",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER usage_rollup_insert AFTER INSERT ON usage_event\n    WHEN NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id = NEW.source_id)\n    BEGIN\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      VALUES (CASE WHEN NEW.observed_at_ms >= 0 THEN (NEW.observed_at_ms / 900000) * 900000 ELSE ((NEW.observed_at_ms - 899999) / 900000) * 900000 END, NEW.model_id, NEW.tier_id, NEW.surface_id, NEW.account_scope_id, (((NEW.tokens_in_uncached IS NULL) << 0) | ((NEW.tokens_in_cache_read IS NULL) << 1) | ((NEW.tokens_in_cache_write IS NULL) << 2) | ((NEW.tokens_out_text IS NULL) << 3) | ((NEW.tokens_out_reasoning IS NULL) << 4) | ((NEW.tokens_out_combined IS NULL) << 5) | ((COALESCE(NEW.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(NEW.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(NEW.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(NEW.tokens_out_text, 0) > 0) << 9) | ((COALESCE(NEW.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(NEW.tokens_out_combined, 0) > 0) << 11) | ((NEW.tokens_out_text IS NOT NULL AND NEW.tokens_out_reasoning IS NOT NULL AND NEW.tokens_out_combined IS NOT NULL AND NEW.tokens_out_combined != NEW.tokens_out_text + NEW.tokens_out_reasoning) << 12)), CASE WHEN COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END)) END, 1,\n          COALESCE(NEW.tokens_in_uncached, 0), COALESCE(NEW.tokens_in_cache_read, 0), COALESCE(NEW.tokens_in_cache_write, 0), COALESCE(NEW.tokens_out_text, 0), COALESCE(NEW.tokens_out_reasoning, 0), COALESCE(NEW.tokens_out_combined, 0))\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "7ffba371b63cde71215fce2a77c66ffd6f4c2114c59339b23548a9e447d411bd"
+    },
+    {
+      "type": "trigger",
+      "name": "usage_rollup_model_update",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER usage_rollup_model_update\n    AFTER UPDATE OF model_id ON usage_event\n    WHEN OLD.model_id <> NEW.model_id AND NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id=NEW.source_id)\n    BEGIN\n      UPDATE usage_rollup SET events=events-1,\n        in_uncached=in_uncached-COALESCE(OLD.tokens_in_uncached, 0), in_cache_read=in_cache_read-COALESCE(OLD.tokens_in_cache_read, 0), in_cache_write=in_cache_write-COALESCE(OLD.tokens_in_cache_write, 0), out_text=out_text-COALESCE(OLD.tokens_out_text, 0), out_reasoning=out_reasoning-COALESCE(OLD.tokens_out_reasoning, 0), out_combined=out_combined-COALESCE(OLD.tokens_out_combined, 0)\n      WHERE bucket_ms=CASE WHEN OLD.observed_at_ms >= 0 THEN (OLD.observed_at_ms / 900000) * 900000 ELSE ((OLD.observed_at_ms - 899999) / 900000) * 900000 END AND model_id=OLD.model_id AND tier_id=OLD.tier_id AND surface_id=OLD.surface_id AND account_scope_id=OLD.account_scope_id AND shape=(((OLD.tokens_in_uncached IS NULL) << 0) | ((OLD.tokens_in_cache_read IS NULL) << 1) | ((OLD.tokens_in_cache_write IS NULL) << 2) | ((OLD.tokens_out_text IS NULL) << 3) | ((OLD.tokens_out_reasoning IS NULL) << 4) | ((OLD.tokens_out_combined IS NULL) << 5) | ((COALESCE(OLD.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(OLD.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(OLD.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(OLD.tokens_out_text, 0) > 0) << 9) | ((COALESCE(OLD.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(OLD.tokens_out_combined, 0) > 0) << 11) | ((OLD.tokens_out_text IS NOT NULL AND OLD.tokens_out_reasoning IS NOT NULL AND OLD.tokens_out_combined IS NOT NULL AND OLD.tokens_out_combined != OLD.tokens_out_text + OLD.tokens_out_reasoning) << 12)) AND ctx_class=CASE WHEN COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END)) END;\n      INSERT INTO usage_rollup(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class,events,in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined)\n      VALUES (CASE WHEN NEW.observed_at_ms >= 0 THEN (NEW.observed_at_ms / 900000) * 900000 ELSE ((NEW.observed_at_ms - 899999) / 900000) * 900000 END, NEW.model_id, NEW.tier_id, NEW.surface_id, NEW.account_scope_id, (((NEW.tokens_in_uncached IS NULL) << 0) | ((NEW.tokens_in_cache_read IS NULL) << 1) | ((NEW.tokens_in_cache_write IS NULL) << 2) | ((NEW.tokens_out_text IS NULL) << 3) | ((NEW.tokens_out_reasoning IS NULL) << 4) | ((NEW.tokens_out_combined IS NULL) << 5) | ((COALESCE(NEW.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(NEW.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(NEW.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(NEW.tokens_out_text, 0) > 0) << 9) | ((COALESCE(NEW.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(NEW.tokens_out_combined, 0) > 0) << 11) | ((NEW.tokens_out_text IS NOT NULL AND NEW.tokens_out_reasoning IS NOT NULL AND NEW.tokens_out_combined IS NOT NULL AND NEW.tokens_out_combined != NEW.tokens_out_text + NEW.tokens_out_reasoning) << 12)), CASE WHEN COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END)) END,1,COALESCE(NEW.tokens_in_uncached, 0), COALESCE(NEW.tokens_in_cache_read, 0), COALESCE(NEW.tokens_in_cache_write, 0), COALESCE(NEW.tokens_out_text, 0), COALESCE(NEW.tokens_out_reasoning, 0), COALESCE(NEW.tokens_out_combined, 0))\n      ON CONFLICT(bucket_ms, model_id, tier_id, surface_id, account_scope_id, shape, ctx_class) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined;\n    END",
+      "sqlSha256": "51aea8844b43a45027a93a739716f37baeb3b67fcbba672a8f89ee77b4bd33c7"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_cursor_advance",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER work_rollup_cursor_advance\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes > OLD.scanned_bytes\n    BEGIN\n      INSERT INTO work_rollup(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined, last_at_ms)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 86400000) * 86400000 ELSE ((u.observed_at_ms - 86399999) / 86400000) * 86400000 END AS day_ms,\n           u.session_id AS session_id,\n           COALESCE(u.work_directory_id, 0) AS work_directory_id,\n           u.model_id AS model_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           ((u.flags & 1) | ((u.flags & 4) >> 1) | ((u.flags & 8) >> 1)) AS prov,\n           COUNT(*) AS events,\n           SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined,\n           MAX(u.observed_at_ms) AS last_at_ms\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > OLD.scanned_bytes AND u.source_offset <= NEW.scanned_bytes\n    GROUP BY day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov\n      ON CONFLICT(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined,\n        last_at_ms = MAX(last_at_ms, excluded.last_at_ms);\n    END",
+      "sqlSha256": "b21aff5ca4d8cb7f3c8165387f51b0a90d0315e10a3e2f7268dc52091aa3f808"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_cursor_retreat",
+      "tbl_name": "source",
+      "sql": "CREATE TRIGGER work_rollup_cursor_retreat\n    AFTER UPDATE OF scanned_bytes ON source\n    WHEN NEW.scanned_bytes < OLD.scanned_bytes\n    BEGIN\n      INSERT INTO work_rollup(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined, last_at_ms)\n      \n    SELECT CASE WHEN u.observed_at_ms >= 0 THEN (u.observed_at_ms / 86400000) * 86400000 ELSE ((u.observed_at_ms - 86399999) / 86400000) * 86400000 END AS day_ms,\n           u.session_id AS session_id,\n           COALESCE(u.work_directory_id, 0) AS work_directory_id,\n           u.model_id AS model_id,\n           u.account_scope_id AS account_scope_id,\n           (((u.tokens_in_uncached IS NULL) << 0) | ((u.tokens_in_cache_read IS NULL) << 1) | ((u.tokens_in_cache_write IS NULL) << 2) | ((u.tokens_out_text IS NULL) << 3) | ((u.tokens_out_reasoning IS NULL) << 4) | ((u.tokens_out_combined IS NULL) << 5) | ((COALESCE(u.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(u.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(u.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(u.tokens_out_text, 0) > 0) << 9) | ((COALESCE(u.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(u.tokens_out_combined, 0) > 0) << 11) | ((u.tokens_out_text IS NOT NULL AND u.tokens_out_reasoning IS NOT NULL AND u.tokens_out_combined IS NOT NULL AND u.tokens_out_combined != u.tokens_out_text + u.tokens_out_reasoning) << 12)) AS shape,\n           CASE WHEN COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(u.total_input_context, CASE WHEN u.tokens_in_uncached IS NOT NULL AND u.tokens_in_cache_read IS NOT NULL AND u.tokens_in_cache_write IS NOT NULL THEN u.tokens_in_uncached + u.tokens_in_cache_read + u.tokens_in_cache_write END)) END AS ctx_class,\n           ((u.flags & 1) | ((u.flags & 4) >> 1) | ((u.flags & 8) >> 1)) AS prov,\n           -COUNT(*) AS events,\n           -SUM(COALESCE(u.tokens_in_uncached, 0)) AS in_uncached,\n           -SUM(COALESCE(u.tokens_in_cache_read, 0)) AS in_cache_read,\n           -SUM(COALESCE(u.tokens_in_cache_write, 0)) AS in_cache_write,\n           -SUM(COALESCE(u.tokens_out_text, 0)) AS out_text,\n           -SUM(COALESCE(u.tokens_out_reasoning, 0)) AS out_reasoning,\n           -SUM(COALESCE(u.tokens_out_combined, 0)) AS out_combined,\n           MAX(u.observed_at_ms) AS last_at_ms\n    FROM usage_event u\n    WHERE u.source_id = NEW.id AND u.source_offset > NEW.scanned_bytes AND u.source_offset <= OLD.scanned_bytes\n    GROUP BY day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov\n      ON CONFLICT(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined,\n        last_at_ms = NULL;\n    END",
+      "sqlSha256": "b4ef3edc0be6ee274909f2ea443cbfca66d6a311f27466e37fb8d2cfed25f5dd"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_delete",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER work_rollup_delete AFTER DELETE ON usage_event\n    WHEN OLD.source_offset <= (SELECT scanned_bytes FROM source WHERE id = OLD.source_id)\n    BEGIN\n      UPDATE work_rollup SET\n        events = events - 1,\n        in_uncached = in_uncached - COALESCE(OLD.tokens_in_uncached, 0),\n        in_cache_read = in_cache_read - COALESCE(OLD.tokens_in_cache_read, 0),\n        in_cache_write = in_cache_write - COALESCE(OLD.tokens_in_cache_write, 0),\n        out_text = out_text - COALESCE(OLD.tokens_out_text, 0),\n        out_reasoning = out_reasoning - COALESCE(OLD.tokens_out_reasoning, 0),\n        out_combined = out_combined - COALESCE(OLD.tokens_out_combined, 0),\n        last_at_ms = CASE WHEN last_at_ms = OLD.observed_at_ms THEN NULL ELSE last_at_ms END\n      WHERE day_ms = CASE WHEN OLD.observed_at_ms >= 0 THEN (OLD.observed_at_ms / 86400000) * 86400000 ELSE ((OLD.observed_at_ms - 86399999) / 86400000) * 86400000 END\n        AND session_id = OLD.session_id\n        AND work_directory_id = COALESCE(OLD.work_directory_id, 0)\n        AND model_id = OLD.model_id\n        AND account_scope_id = OLD.account_scope_id\n        AND shape = (((OLD.tokens_in_uncached IS NULL) << 0) | ((OLD.tokens_in_cache_read IS NULL) << 1) | ((OLD.tokens_in_cache_write IS NULL) << 2) | ((OLD.tokens_out_text IS NULL) << 3) | ((OLD.tokens_out_reasoning IS NULL) << 4) | ((OLD.tokens_out_combined IS NULL) << 5) | ((COALESCE(OLD.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(OLD.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(OLD.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(OLD.tokens_out_text, 0) > 0) << 9) | ((COALESCE(OLD.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(OLD.tokens_out_combined, 0) > 0) << 11) | ((OLD.tokens_out_text IS NOT NULL AND OLD.tokens_out_reasoning IS NOT NULL AND OLD.tokens_out_combined IS NOT NULL AND OLD.tokens_out_combined != OLD.tokens_out_text + OLD.tokens_out_reasoning) << 12))\n        AND ctx_class = CASE WHEN COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(OLD.total_input_context, CASE WHEN OLD.tokens_in_uncached IS NOT NULL AND OLD.tokens_in_cache_read IS NOT NULL AND OLD.tokens_in_cache_write IS NOT NULL THEN OLD.tokens_in_uncached + OLD.tokens_in_cache_read + OLD.tokens_in_cache_write END)) END\n        AND prov = ((OLD.flags & 1) | ((OLD.flags & 4) >> 1) | ((OLD.flags & 8) >> 1));\n    END",
+      "sqlSha256": "f53ab56cf8b33c2f574ba533e6b53d55e3256c9ab84431c1bd9bb1a97d9089b1"
+    },
+    {
+      "type": "trigger",
+      "name": "work_rollup_insert",
+      "tbl_name": "usage_event",
+      "sql": "CREATE TRIGGER work_rollup_insert AFTER INSERT ON usage_event\n    WHEN NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id = NEW.source_id)\n    BEGIN\n      INSERT INTO work_rollup(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov, events, in_uncached, in_cache_read, in_cache_write, out_text, out_reasoning, out_combined, last_at_ms)\n      VALUES (CASE WHEN NEW.observed_at_ms >= 0 THEN (NEW.observed_at_ms / 86400000) * 86400000 ELSE ((NEW.observed_at_ms - 86399999) / 86400000) * 86400000 END, NEW.session_id, COALESCE(NEW.work_directory_id, 0), NEW.model_id, NEW.account_scope_id, (((NEW.tokens_in_uncached IS NULL) << 0) | ((NEW.tokens_in_cache_read IS NULL) << 1) | ((NEW.tokens_in_cache_write IS NULL) << 2) | ((NEW.tokens_out_text IS NULL) << 3) | ((NEW.tokens_out_reasoning IS NULL) << 4) | ((NEW.tokens_out_combined IS NULL) << 5) | ((COALESCE(NEW.tokens_in_uncached, 0) > 0) << 6) | ((COALESCE(NEW.tokens_in_cache_read, 0) > 0) << 7) | ((COALESCE(NEW.tokens_in_cache_write, 0) > 0) << 8) | ((COALESCE(NEW.tokens_out_text, 0) > 0) << 9) | ((COALESCE(NEW.tokens_out_reasoning, 0) > 0) << 10) | ((COALESCE(NEW.tokens_out_combined, 0) > 0) << 11) | ((NEW.tokens_out_text IS NOT NULL AND NEW.tokens_out_reasoning IS NOT NULL AND NEW.tokens_out_combined IS NOT NULL AND NEW.tokens_out_combined != NEW.tokens_out_text + NEW.tokens_out_reasoning) << 12)), CASE WHEN COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END) IS NULL THEN -1 ELSE (SELECT COUNT(*) FROM rollup_context_start WHERE start_tokens <= COALESCE(NEW.total_input_context, CASE WHEN NEW.tokens_in_uncached IS NOT NULL AND NEW.tokens_in_cache_read IS NOT NULL AND NEW.tokens_in_cache_write IS NOT NULL THEN NEW.tokens_in_uncached + NEW.tokens_in_cache_read + NEW.tokens_in_cache_write END)) END, ((NEW.flags & 1) | ((NEW.flags & 4) >> 1) | ((NEW.flags & 8) >> 1)), 1,\n          COALESCE(NEW.tokens_in_uncached, 0), COALESCE(NEW.tokens_in_cache_read, 0), COALESCE(NEW.tokens_in_cache_write, 0), COALESCE(NEW.tokens_out_text, 0), COALESCE(NEW.tokens_out_reasoning, 0), COALESCE(NEW.tokens_out_combined, 0), NEW.observed_at_ms)\n      ON CONFLICT(day_ms, session_id, work_directory_id, model_id, account_scope_id, shape, ctx_class, prov) DO UPDATE SET\n        events = events + excluded.events,\n        in_uncached = in_uncached + excluded.in_uncached,\n        in_cache_read = in_cache_read + excluded.in_cache_read,\n        in_cache_write = in_cache_write + excluded.in_cache_write,\n        out_text = out_text + excluded.out_text,\n        out_reasoning = out_reasoning + excluded.out_reasoning,\n        out_combined = out_combined + excluded.out_combined,\n        last_at_ms = MAX(last_at_ms, excluded.last_at_ms);\n    END",
+      "sqlSha256": "406585af1f385a3cb8458ff8ad33380c9038e48fc1ec33f42f42b7f271a3fa71"
+    }
+  ],
+  "seeds": {
+    "meta": [
+      {
+        "key": "family",
+        "value": "local-index-store"
+      },
+      {
+        "key": "parser_version",
+        "value": "local-index-rollout-typed-v3+unified-rollout-typed-v22"
+      },
+      {
+        "key": "rollup_basis",
+        "value": "d39e13940ce361cc7bf481e17829060d44ea78035d4db74fda80d3a12d7b005f"
+      }
+    ],
+    "store_state": [
+      {
+        "id": 1,
+        "commit_seq": 0,
+        "calculation_revision": 0
+      }
+    ],
+    "rollup_context_start": [
+      {
+        "start_tokens": 271999
+      },
+      {
+        "start_tokens": 272000
+      },
+      {
+        "start_tokens": 272001
+      },
+      {
+        "start_tokens": 272002
+      }
+    ]
+  }
+}

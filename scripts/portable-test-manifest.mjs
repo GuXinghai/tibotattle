@@ -57,6 +57,8 @@ export const PORTABLE_TEST_GROUPS = Object.freeze({
     "test/telemetry-schema-mirror.test.js",
   ]),
   storageAndCompanion: Object.freeze([
+    "test/pre-release-index-conversion.test.js",
+    "test/pre-release-index-sqlite-lifecycle.test.js",
     "test/cli-report-publication.test.js",
     "test/contribution-device-sync.test.js",
     "test/contribution-sync-queue.test.js",

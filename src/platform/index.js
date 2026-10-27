@@ -64,8 +64,10 @@ export {
   isWindowsFilesystemIdentity,
   loadWindowsReleaseOperationBinding,
   loadWindowsLegacyStateReadBinding,
+  loadWindowsLocalVolumeQueryBinding,
 } from "./windows-filesystem.js";
 export {
+  acquireProtectedSqliteFiles,
   configureGuardedSqliteConnection,
   prepareProtectedSqliteDatabaseFile,
 } from "./windows-protected-sqlite.js";

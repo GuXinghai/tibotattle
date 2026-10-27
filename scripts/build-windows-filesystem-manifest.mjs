@@ -25,6 +25,7 @@ import {
   WINDOWS_LEGACY_STATE_READ_CONTRACT, WINDOWS_LEGACY_STATE_READ_METHODS,
   WINDOWS_BROWSER_PROFILE_CONTRACT, WINDOWS_BROWSER_PROFILE_METHODS,
   WINDOWS_REPORT_PUBLICATION_CONTRACT, WINDOWS_REPORT_PUBLICATION_METHODS,
+  WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT, WINDOWS_LOCAL_VOLUME_QUERY_METHODS,
 } from "../src/platform/windows-filesystem.js";
 
 const require = createRequire(import.meta.url);
@@ -101,6 +102,8 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
   const hasBrowserProfile = native.browserProfileContractVersion !== undefined;
   const hasReportPublication = native.reportPublicationContractVersion !== undefined
     || native.publishReport !== undefined;
+  const hasLocalVolumeQuery = native.localVolumeQueryContractVersion !== undefined
+    || native.isFixedLocalVolume !== undefined;
   if (hasBrowserProfile && (native.browserProfileContractVersion !== WINDOWS_BROWSER_PROFILE_CONTRACT
       || !WINDOWS_BROWSER_PROFILE_METHODS.every(name => typeof native[name] === 'function'))) {
     throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_BROWSER_PROFILE');
@@ -121,6 +124,10 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
       || !WINDOWS_REPORT_PUBLICATION_METHODS.every(name => typeof native[name] === 'function'))) {
     throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_REPORT_PUBLICATION');
   }
+  if (hasLocalVolumeQuery && (native.localVolumeQueryContractVersion !== WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT
+      || !WINDOWS_LOCAL_VOLUME_QUERY_METHODS.every(name => typeof native[name] === 'function'))) {
+    throw failure('WINDOWS_FILESYSTEM_MANIFEST_INVALID_LOCAL_VOLUME_QUERY');
+  }
   return Object.freeze({
     ...(hasBrowserProfile ? { browserProfile: {
       contractVersion: WINDOWS_BROWSER_PROFILE_CONTRACT, approved: true,
@@ -136,6 +143,9 @@ export function createWindowsFilesystemBindingManifest({ bytes, binding }) {
     } } : {}),
     ...(hasReportPublication ? { reportPublication: {
       contractVersion: WINDOWS_REPORT_PUBLICATION_CONTRACT, approved: true,
+    } } : {}),
+    ...(hasLocalVolumeQuery ? { localVolumeQuery: {
+      contractVersion: WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT, approved: true,
     } } : {}),
     schemaVersion: WINDOWS_FILESYSTEM_BINDING_MANIFEST_SCHEMA_VERSION,
     bindingFile: BINDING_FILE,
