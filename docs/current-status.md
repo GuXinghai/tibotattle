@@ -3,7 +3,7 @@ title: Current product and qualification status
 date: 2026-10-27
 type: status
 status: current
-source_commit: 1a1d780971b18c1e6c4d809f2ce38e2686ca28d2
+source_commit: 8597769cbd3def4b2683ec0d3ec6fb6f949cb233
 observation_date: 2026-10-27
 ---
 
@@ -39,8 +39,8 @@ qualification is a separate explicit gate. Earlier testing exposed an unsafe
 default-backend test, so earlier assertions that local audit state was unchanged
 are not verified. The repair does not inspect, recover, or roll back that state.
 
-The source adds the separate `windows-report-publication-v1`
-capability after the baseline revision above. Its exact Node 26.2.0 native build passed isolated Windows
+The source includes the separate `windows-report-publication-v1`
+capability. Its exact Node 26.2.0 native build passed isolated Windows
 synthetic tests for protected creation/replacement, ACL/link/path refusal,
 bounded bytes, concurrent writers and no-clobber failure cleanup. The default
 CLI JSON/Markdown writer uses this capability, with no JavaScript filesystem
@@ -55,7 +55,9 @@ hot-journal recovery gap: the read-only schema preflight returns
 `SQLITE_READONLY_ROLLBACK` (776) before writable guarded recovery. A separately
 rebuilt baseline binding reproduces the same failure. The report-specific
 tests passed, but the broader native filesystem suite is not fully passing;
-this recovery debt remains open. No real database was inspected or changed.
+this recovery debt remains open. Those regression runs used synthetic databases.
+The subsequent migration investigation read real database headers only, without
+opening a SQLite connection or changing data.
 
 The repair adds local-index schema 9 without guessing missing historical tier
 provenance, and export workspace v0.6 / physical schema 6 with exact private
@@ -66,21 +68,48 @@ unprotected older state is preserved and refused, not repaired implicitly.
 These are source and isolated synthetic-test results, not a real-data upgrade.
 The owner scoped remaining ACL/workspace compatibility to a
 [one-time controlled pre-release migration](./decisions/2026-10-27-pre-release-state-migration.md).
-It does not require permanent old-format writers. The combined migration tool
-and its synthetic acceptance remain unfinished; real-data execution is not
-authorized by this scope decision.
+It does not require permanent old-format writers. The current concrete upgrade
+is local-index schema 8 to 9, with collector schema 1 preserved. No old export
+workspace has been found in the bounded filename-only checks; that is not proof
+of absence elsewhere and is not a reason to run a speculative workspace upgrade.
+The new upgrade tool and its acceptance remain unfinished.
 The [HTTP cache backport gate](./runbooks/2026-10-27-http-cache-backport-verification.md)
 replaces the expired build dependency exception without any OSV suppression;
 an actual scanner run and hosted CI remain separate evidence.
 
-Real application data has not been moved or converted. Scope update, 2026-10-25:
-the owner approved [usage-only cutover](./decisions/2026-10-25-usage-only-state-cutover.md),
-not whole-profile migration. A protected cold backup/readback of the explicit
-usage bundle, timing conversion, semantic continuity checks and journaled
-activation/recovery remain required. X, background and generic Chromium state
-are not migrated and stay untouched at the source; their restart/decryption or
-helper-registry rebinding is not a usage-cutover gate. The bounded legacy
-continuity copy is not a usage-bundle selector or complete migration tool.
+The prior brand/usage cutover is complete, separately from this new format
+upgrade. On 2026-10-27 the owner relayed another chat's read-only verification of
+the historical `activated_verified` receipt, restored-permission receipts and
+the current `activated / existing_only` startup policy. Its execution tools are
+ignored local files under the candidate checkout's `.release-build/brand-cutover`;
+checking out a commit alone does not recover those tools or receipts. This
+source-status update does not independently requalify that historical operation.
+
+The authoritative source for the new upgrade is the active stable profile's
+`companion-state`, under the neutral `UsageMonitor` state root, plus only the
+reviewed calculation settings from its sibling `desktop-settings`. The older
+TiboTattle source and its prior backup/conversion are historical preservation,
+not a substitute for a new cold backup containing post-cutover history. The
+read-only header observation found index schema 8 and collector schema 1; the
+application and its index WAL were active, so this is not cold-snapshot proof.
+The schema 9 upgrade has not been executed on real data.
+
+The running candidate source revision `de8edcc8` accepts index versions only
+through 8 and rejects schema 9 with `local_index_newer_version`, including on
+read-only opens. It must not be used as the upgraded index reader. Preparing a
+compatible exact candidate is a prerequisite, not a post-upgrade repair. Its
+later desktop changes and the current source diverge; a whole-branch merge
+requires separate integration review and cannot be treated as a routine build.
+The copy-only conversion entrypoint also needs protected SQLite sidecar
+lifecycle acceptance before real use; the ordinary evidence writer forces WAL.
+
+The [usage-only scope](./decisions/2026-10-25-usage-only-state-cutover.md) remains
+in force. New protected backup/readback, copy-only conversion, semantic
+continuity and compatible candidate admission are required before the format
+upgrade's separate activation. Do not replay the old brand activation or alter
+its existing startup policy implicitly. X, background and generic Chromium
+state remain outside this upgrade. The legacy continuity-copy bundle is not
+the selector for either the active usage bundle or this format upgrade.
 
 Current work and exact outstanding gates are tracked in the
 [cutover plan](./plans/2026-10-23-rhetrion-brand-identity-and-local-state-cutover.md).

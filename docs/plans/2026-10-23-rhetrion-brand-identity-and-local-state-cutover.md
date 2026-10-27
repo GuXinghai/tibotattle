@@ -7,6 +7,21 @@ status: in-progress
 
 # 状态与边界
 
+## 当前阶段更正（2026-10-27）
+
+Owner 转述另一线程的只读核验：上次品牌与用量切换已完成，最终回执为
+`activated_verified`，当前启动策略为 `activated / existing_only`。执行工具与回执
+位于候选工作树的 Git 忽略目录；下文“尚未迁移”等段落是原准备阶段记录，不能作为
+当前运行状态。此处记录 owner 提供的核验，不冒充本线程重新执行或独立验收。
+
+当前新任务是[发布前一次性格式升级](../decisions/2026-10-27-pre-release-state-migration.md)：
+以正在使用的 UsageMonitor stable profile 用量目录为源，完成索引 schema 8→9；
+collector schema 1 保留。必须重新冷备当前新增历史，另建受保护转换目标，并验证
+新候选与现有启动策略兼容后再切换。不得用旧 TiboTattle 源、旧备份或旧激活脚本
+覆盖当前 profile。本次真实格式升级尚未执行；未找到确切旧导出工作区，不作推定迁移。
+
+## 原品牌切换准备阶段记录
+
 本计划定义新品牌、稳定内部身份和一次性本地数据切换的实施顺序。源码与品牌资源替换正在进行，
 尚未执行真实数据备份、迁移或切换。实施基于 `63e8753a27a0da0c67d8ddd3226df4dd855ad055`；原调查基于
 `fix/windows-codex-refresh` 分支、提交 `94cc26f3a63fc12b726fd47da8a83b44ba27e425`

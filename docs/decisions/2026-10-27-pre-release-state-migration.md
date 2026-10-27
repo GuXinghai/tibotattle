@@ -21,6 +21,26 @@ This decision authorizes source work and isolated synthetic rehearsal. It does
 not authorize access to, migration of, or rollback of existing user data.
 Real execution and activation require separately authorized exact targets.
 
+## Current admitted upgrade
+
+The previous brand cutover is complete according to the owner's 2026-10-27
+read-only receipt verification; it is not the operation planned here. The new
+source is the active `UsageMonitor` stable profile's usage state, including
+post-cutover history. Preserve the prior TiboTattle source, backup, converted
+copy and activation receipts as historical material; never replay them over
+the current active state.
+
+The observed index is schema 8 and the source change targets schema 9;
+collector schema 1 is unchanged. Prepare a fresh protected cold backup and a
+separate conversion target. Keep the currently active profile authoritative
+until the new copy and compatible candidate have passed acceptance. Existing
+`activated / existing_only` startup policy belongs to the completed cutover
+and is not authorization to mutate or replace it for this upgrade.
+
+No old export workspace was found in the bounded filename-only inventory. Do
+not create a migration task for an assumed workspace; admit one only after an
+exact existing target is independently identified.
+
 ## Migration boundary
 
 - Preserve the original files, ACLs, database versions and historical evidence.
