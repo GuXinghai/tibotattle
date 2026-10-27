@@ -20,8 +20,8 @@ test("reviewed identity catalog covers priced OpenAI models and explicit aliases
     && card.model !== "openai-provider-tools").flatMap((card) => [card.model, ...(card.aliases ?? [])]));
   assert.deepEqual(models.filter((entry) => entry.pricingStatus !== "unpriced").map((entry) => entry.id).sort(), [...priced].sort());
   assert.deepEqual(models.filter((entry) => entry.pricingStatus === "unpriced").map((entry) => entry.id), ["gpt-5.3-codex-spark", "gpt-6.1-astra"]);
-  assert.equal(models.length, 44);
-  for (const id of ["gpt-5.1-codex-max", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
+  assert.equal(models.length, 45);
+  for (const id of ["gpt-6.1-terra", "gpt-5.1-codex-max", "gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna"]) {
     assert.equal(reviewedModelIdentity(id).priceModelId, id);
     assert.equal(reviewedModelIdentity(id).pricingStatus, "published");
   }
@@ -52,10 +52,10 @@ test("active catalog is Codex-only while frozen telemetry enums retain legacy ID
     "claude-fable-5", "claude-haiku-4-5-20251001", "claude-opus-4-8",
     "claude-sonnet-4-6", "claude-sonnet-5",
   ]);
-  assert.deepEqual(TELEMETRY_MODEL_IDS.slice(-8), [
+  assert.deepEqual(TELEMETRY_MODEL_IDS.slice(-9), [
     "gpt-6-luna",
     "gpt-6.1-astra", "claude-fable-5-1", "claude-mythos-5-1",
-    "claude-opus-5", "claude-opus-5-5", "gpt-6.1-sol", "gpt-5.1-codex-max",
+    "claude-opus-5", "claude-opus-5-5", "gpt-6.1-sol", "gpt-5.1-codex-max", "gpt-6.1-terra",
   ]);
   assert.equal(reviewedModelIdentity("claude-sonnet-5"), null);
   assert.equal(browser.reviewedModelIdentity("claude-sonnet-5"), null);

@@ -47,7 +47,7 @@ export const LOCAL_INDEX_STORE_USER_VERSION = 9;
 export const EVENT_FLAG_RUNTIME_MODEL = 32;
 // Increment when reviewed identity additions can repair previously unknown
 // models. Only affected sources reparse, with a per-source committed receipt.
-export const LOCAL_INDEX_MODEL_RECOGNITION_VERSION = 1;
+export const LOCAL_INDEX_MODEL_RECOGNITION_VERSION = 2;
 // Names the shared extractor revision it was built with, so a change to the
 // extractor's semantics cannot leave facts that no reparse will replace.
 // test/local-index-refresh.test.js pins the two together.

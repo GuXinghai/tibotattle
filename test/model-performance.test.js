@@ -17,6 +17,16 @@ const NOW = Date.parse('2026-09-09T12:00:00Z'), DAY = 86400000;
 const row = (patch = {}) => ({ at: NOW, speed_mode: 'standard', model: 'gpt-5.6-sol', sample_method: 'receipt',
   sample_tokens: 100, sample_duration: 1000, sample_responses: 1, sample_total_responses: 2,
   ttft: 5000, ...patch });
+test('Terra 6.1 performance remains separate from the old Terra and unknown suffixes', () => {
+  const result = modelPerformanceProjection([
+    row({ model: 'gpt-6.1-terra' }), row({ model: 'gpt-5.6-terra' }),
+    row({ model: 'gpt-6.1-terra-private' }),
+  ], { now: NOW });
+  assert.equal(isModelPerformanceSnapshot(result), true);
+  assert.deepEqual(result.models.map(model => [model.id, model.label]).sort(),
+    [['gpt-5.6-terra', 'Terra'], ['gpt-6.1-terra', 'GPT-6.1 Terra']]);
+});
+
 test('GPT-6 Sol and Luna retain separate model generations and observed speed modes', () => {
   const rows = ['sol', 'luna'].flatMap(name => [
     row({ model: `gpt-5.6-${name}`, sample_tokens: 100 }),

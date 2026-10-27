@@ -135,4 +135,5 @@ export const TELEMETRY_MODEL_IDS = Object.freeze([
   "claude-opus-5-5",
   "gpt-6.1-sol",
   "gpt-5.1-codex-max",
+  "gpt-6.1-terra",
 ]);

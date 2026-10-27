@@ -47,17 +47,27 @@ function price({ provider, model, tier = "standard", pricedAt = "2026-07-26", co
   });
 }
 
+test("Terra 6.1 appends independent cards without changing existing price evidence", () => {
+  const cards = OPENAI_OFFICIAL_PRICE_CARDS.filter(card => card.model === "gpt-6.1-terra");
+  assert.equal(cards.length, 8);
+  assert.equal(sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.openaiTerra61), cards[0].metadata.provenance.evidence_sha256);
+  assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter(card => card.model !== "gpt-6.1-terra")),
+    "14d655a17d41e263ff98cee5028e9ffd50c7c35e1f6015c2194541858dff4bdf");
+  assert.ok(cards.every(card => card.effective.from === undefined
+    && card.metadata.provenance.vendor_effective_from === null));
+});
+
 test("registry validates and preserves exact decimal strings and provenance", () => {
   assert.equal(validateOfficialPriceRegistry(), APP_OFFICIAL_PRICE_CARDS);
   assert.equal(APP_OFFICIAL_PRICE_CARDS.every((card) => card.provider === "openai"), true);
-  assert.equal(OPENAI_OFFICIAL_PRICE_CARDS.length, 170);
+  assert.equal(OPENAI_OFFICIAL_PRICE_CARDS.length, 178);
   assert.equal(PROVIDER_TOOL_PRICE_CARDS.length, 1);
   const batch54 = OPENAI_OFFICIAL_PRICE_CARDS.find((card) => card.model === "gpt-5.4" && card.service_tier === "batch");
   assert.equal(batch54.components.find((item) => item.usage_component === "input_cache_read_tokens").price.amount, "0.13");
   assert.match(batch54.metadata.provenance.evidence_sha256, /^[a-f0-9]{64}$/);
   assert.match(APP_PRICE_REGISTRY_SHA256, /^[a-f0-9]{64}$/);
   assert.equal(APP_PRICE_REGISTRY_MANIFEST.sha256, APP_PRICE_REGISTRY_SHA256);
-  assert.equal(APP_PRICE_REGISTRY_MANIFEST.sources.length, 5);
+  assert.equal(APP_PRICE_REGISTRY_MANIFEST.sources.length, 6);
   assert.equal(batch54.metadata.provenance.vendor_effective_from, null);
   assert.equal(OPENAI_PRICE_EVIDENCE_START_DATE, "2026-07-26");
   assert.equal(batch54.effective.from, undefined);
@@ -77,7 +87,7 @@ test("registry validates and preserves exact decimal strings and provenance", ()
   // Later model additions must not change the provenance bytes of legacy cards.
   assert.equal(
     sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => ![
-      "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-5.1-codex-max",
+      "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-5.1-codex-max", "gpt-6.1-terra",
     ].includes(card.model))),
     "ed6259cf730144202bf1e427fe719eef92516a4d68188d6a7979a7f4654105ba",
   );
@@ -92,7 +102,7 @@ test("GPT-5.1 Codex Max has an independent historical Standard card and no inven
   assert.equal(cards[0].metadata.provenance.vendor_effective_from, null);
   assert.equal(sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.openaiCodexMax), cards[0].metadata.provenance.evidence_sha256);
   // A new review must not rewrite any previously shipped price/provenance bytes.
-  assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => card.model !== "gpt-5.1-codex-max")),
+  assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => !["gpt-5.1-codex-max", "gpt-6.1-terra"].includes(card.model))),
     "8b0ce65aa2c6d9eda831b9da045bc6d69ed9379f59adbcc61e9986882d878deb");
   for (const pricedAt of ["2025-11-22", "2026-10-19"]) {
     const result = price({ provider: "openai", model: "gpt-5.1-codex-max", pricedAt,
@@ -194,7 +204,7 @@ test("Sol and Luna retain exact launch prices across every tier, component, and 
     APP_PRICE_REGISTRY_MANIFEST.sources.find((source) => source.evidenceVersion === "openai-sol-luna-api-pricing-reviewed-2026-09-22").evidenceSha256);
   // Cards predating the Sol/Luna and Codex Max additions retain their exact bytes.
   assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => ![
-    "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-5.1-codex-max",
+    "gpt-6-sol", "gpt-6-luna", "gpt-6.1-sol", "gpt-5.1-codex-max", "gpt-6.1-terra",
   ].includes(card.model) && card.service_tier !== "ultrafast")),
     "e2762f5bb37bf579845983fef7c275130547e43b8d63536aaa684c702caa7da1");
 });
@@ -242,7 +252,7 @@ test("Sol 6.1 and Astra Ultrafast price every published component at the release
   assert.equal(sha256Json(NORMALIZED_PRICE_EVIDENCE_ROWS.openaiSol61Ultrafast),
     APP_PRICE_REGISTRY_MANIFEST.sources.find((source) => source.evidenceVersion === sourceVersion).evidenceSha256);
   // Every previously shipped card, including each old Astra tier, is byte-stable.
-  assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => card.source.version !== sourceVersion && card.model !== "gpt-5.1-codex-max")),
+  assert.equal(sha256Json(APP_OFFICIAL_PRICE_CARDS.filter((card) => card.source.version !== sourceVersion && !["gpt-5.1-codex-max", "gpt-6.1-terra"].includes(card.model))),
     "24833c8b5df9da3221c40bedbff12aaab5101da25a79876b2a91b4800b062d75");
 });
 

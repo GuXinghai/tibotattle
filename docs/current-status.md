@@ -1,10 +1,10 @@
 ---
 title: Current product and qualification status
-date: 2026-10-27
+date: 2026-10-28
 type: status
 status: current
-source_commit: 04a91eca3f49fb08b2a93fe99dd70623c87426c7
-observation_date: 2026-10-27
+source_commit: 1679350c98e964c000dca18a82e70643128a4734
+observation_date: 2026-10-28
 ---
 
 # Current product and qualification status
@@ -12,7 +12,7 @@ observation_date: 2026-10-27
 衡川 · Rhetrion is an independent, unpublished local Windows x64 product.
 Source version 0.1.27 is a development identifier, not a published release.
 Codex is the only supported usage provider. The owner accepted the
-[Codex-only scope](./decisions/2026-10-27-codex-only-product.md) on this date;
+[Codex-only scope](./decisions/2026-10-27-codex-only-product.md) on 2026-10-27;
 active provider cleanup and the subsequent debt repairs are included at the
 source revision above. Historical format readback does not enable a retired
 provider. The committed repairs and their isolated validation do not establish
@@ -24,6 +24,25 @@ No remote resources were modified by the source retirement.
 
 ## Evidence boundaries
 
+GPT-6.1 Terra support is added in the working tree: reviewed model identity,
+independent Standard/Batch/Flex/Fast API-equivalent prices, strict above-272K
+context selection, and performance labels. Sources:
+[official model page](https://developers.openai.com/api/docs/models/gpt-6.1-terra)
+and [official pricing](https://developers.openai.com/api/docs/pricing), reviewed
+2026-10-28 JST. No vendor-effective date or Ultrafast price is invented. Existing
+price cards remain byte-identical. Model-recognition revision 2 reuses the bounded
+recovery queue for unknown-model sources; missing sources remain unknown and
+replays preserve token and occurrence identity. The retired cloud history roster
+remains frozen independently of the local catalog. Validation uses isolated
+synthetic state; this addition has not been packaged or activated on real data.
+The focused model/pricing/recovery suite passed 89 checks; targeted browser,
+response attribution and performance checks also passed. Contract generation,
+schema/browser mirrors, architecture and preflight passed. The broader root
+suite reported failures (including native publication, file-identity and old
+export-list checks) and was stopped after the failure gate; it is not a passing
+full-suite qualification. A read-only GPT-6 Luna xhigh review found no confirmed
+defect in the Terra diff. No real user state or backups were changed for this work.
+
 The owner-approved [Codex project-membership contract](./decisions/2026-10-27-codex-project-membership.md)
 is implemented in the working tree: explicit assignments take precedence,
 verified subworkers inherit their nearest assigned parent, and non-Git projects
@@ -33,8 +52,9 @@ the readback did not open the active index or Codex's live SQLite/WAL/SHM files.
 The wider frozen Standard report and historical work-identity checks still fail;
 the same 133 report differences and 12 work-identity differences were reproduced
 with the original implementation at `b5c737ceebad5240392bc8bc8712675cf8504567`
-under isolated synthetic data. Their fixture was not rewritten. The existing
-running package has not yet adopted this source change.
+under isolated synthetic data. Their fixture was not rewritten. The project
+repair was adopted by the unsigned local stable candidate at
+`e059d12d4a5481355b2127b1c01632155e285667`; that package predates Terra support.
 
 Brand configuration, neutral package identity and explicit profile paths are
 implemented in source. The approved editable SVG and raster/ICO/tray variants

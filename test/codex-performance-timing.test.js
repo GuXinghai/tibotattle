@@ -143,8 +143,8 @@ function rowFor(rows) {
   return result[0];
 }
 
-test('GPT-6.1 Sol, GPT-6 Sol and Luna preserve observed timing and model identity across parser restart', () => {
-  for (const model of ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
+test('reviewed GPT-6 models preserve observed timing and model identity across parser restart', () => {
+  for (const model of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6-luna']) {
     const rows = performanceFixture({ model });
     const before = parse(rows.slice(0, 6));
     const resumed = parse(rows.slice(6), JSON.parse(JSON.stringify(before.parser.state())));

@@ -86,6 +86,12 @@ test("Codex Max does not change the coverage of retained September 29 history", 
   assert.deepEqual(browser.expandAdminModelHistoryDay(prior), old);
 });
 
+test("retired cloud history does not expand with local Terra support", () => {
+  assert.equal(ADMIN_MODEL_HISTORY_CATALOG_VERSION, "reviewed-model-catalog-2026-10-27.1");
+  assert.equal(ADMIN_MODEL_CONFIG.some(model => model.modelId === "gpt-6.1-terra"), false);
+  assert.equal(projectAdminModelHistoryDay({ ...current(), values: [["gpt-6.1-terra", 1, 1]] }), null);
+});
+
 test("70 complete catalog days remain bounded even at maximum count/number serialization", () => {
   const day = { ...current(), ...Object.fromEntries(Object.keys(counts()).map((key) => [key, 0])),
     fittedParticipantCount: Number.MAX_SAFE_INTEGER,

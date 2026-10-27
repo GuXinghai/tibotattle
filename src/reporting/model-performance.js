@@ -3,6 +3,7 @@ const DAY = 86_400_000;
 const SPEED_MODES = ['standard', 'fast', 'ultrafast'];
 const LABELS = new Map([
   ['gpt-6.1-sol', 'GPT-6.1 Sol'],
+  ['gpt-6.1-terra', 'GPT-6.1 Terra'],
   ['gpt-6-luna', 'GPT-6 Luna'], ['gpt-6-sol', 'GPT-6 Sol'],
   ['gpt-5.6-luna', 'Luna'], ['gpt-5.6-terra', 'Terra'],
   ['gpt-6-astra', 'Astra'], ['gpt-5.6-sol', 'Sol'],

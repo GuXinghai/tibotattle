@@ -8,7 +8,8 @@ import { refreshCodexHome, withReadOnlyStore } from './helpers/local-index-rollo
 import { readLocalIndexUsage } from '../src/local-index-report.js';
 import { createLocalIndexBackend } from '../src/local-index-backend.js';
 
-test('reviewed model recovery is bounded, restartable, idempotent and preserves unknown speed and tokens', async () => {
+for (const reviewedModel of ['gpt-5.1-codex-max', 'gpt-6.1-terra']) {
+test(`${reviewedModel} recovery is bounded, restartable, idempotent and preserves unknown speed and tokens`, async () => {
   const root = await mkdtemp(join(tmpdir(), 'model-recognition-'));
   const indexFile = join(root, 'index.sqlite');
   const at = '2025-11-22T00:00:00.000Z';
@@ -27,7 +28,7 @@ test('reviewed model recovery is bounded, restartable, idempotent and preserves 
     await mkdir(join(root, 'sessions'));
     for (let i = 0; i < 11; i++) {
       const id = `10000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}`;
-      const model = i < 8 ? 'gpt-5.1-codex-max' : i < 10 ? 'synthetic-unreviewed' : 'gpt-5.1-codex';
+      const model = i < 8 ? reviewedModel : i < 10 ? 'synthetic-unreviewed' : 'gpt-5.1-codex';
       const records = [
         { timestamp: at, type: 'session_meta', payload: { id } },
         { timestamp: at, type: 'turn_context', payload: { model } },
@@ -45,8 +46,8 @@ test('reviewed model recovery is bounded, restartable, idempotent and preserves 
     try {
       db.exec(`BEGIN;
         UPDATE usage_event SET model_id=(SELECT id FROM model WHERE model_id='unknown')
-          WHERE model_id=(SELECT id FROM model WHERE model_id='gpt-5.1-codex-max');
-        DELETE FROM source_diagnostic WHERE code='modelRecognitionVersion';
+          WHERE model_id=(SELECT id FROM model WHERE model_id='${reviewedModel}');
+        UPDATE source_diagnostic SET count=1 WHERE code='modelRecognitionVersion';
         COMMIT;`);
     } finally { db.close(); }
     const before = inspect();
@@ -80,3 +81,4 @@ test('reviewed model recovery is bounded, restartable, idempotent and preserves 
     assert.deepEqual(inspect(), after);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
+}

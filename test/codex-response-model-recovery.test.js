@@ -21,6 +21,14 @@ test('exact checkpoint joins late context without using a time tolerance or addi
  assert.equal(out.responseAt(2).model,'gpt-6.1-sol');assert.equal(out.responseAt(3),null);assert.equal(out.diagnostics.responses,1);assert.equal(out.diagnostics.modelsRecovered,1);assert.equal(out.diagnostics.unattributedModels,0);
  assert.ok(!JSON.stringify(out.responseAt(2)).includes('synthetic-turn'));
 });
+test('Terra response and exact compaction evidence retain their own model identity',()=>{
+ const r=response(2);
+ const direct=replay([meta,ctx(1,'gpt-6.1-terra'),r]);
+ assert.equal(direct.responseAt(2).model,'gpt-6.1-terra');
+ const recovered=replay([meta,started,r,checkpoint(3,r,'gpt-6.1-terra'),ctx(4,'gpt-6.1-terra')]);
+ assert.equal(recovered.responseAt(2).model,'gpt-6.1-terra');
+});
+
 test('old and replacement models differ: successful model fallback cannot be assumed',()=>{
  const r=response(2);const out=replay([meta,started,r,checkpoint(3,r),ctx(4,'gpt-6-astra')]);assert.equal(out.responseAt(2).model,null);assert.equal(out.diagnostics.unattributedModels,1);
 });

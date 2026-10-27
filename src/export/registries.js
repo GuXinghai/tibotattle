@@ -4,8 +4,8 @@ import {
 } from "@app-usagemonitor/telemetry-contract";
 
 // These identify the existing v0.1 wire dictionary, not current provider support.
-export const TELEMETRY_V01_REGISTRY_VERSION = "telemetry-v0.1-registry-2026-10-19.1";
-export const TELEMETRY_V01_REVIEWED_AT = "2026-10-19";
+export const TELEMETRY_V01_REGISTRY_VERSION = "telemetry-v0.1-registry-2026-10-28.1";
+export const TELEMETRY_V01_REVIEWED_AT = "2026-10-28";
 
 export const OPENAI_CODEX_MODEL_IDS = REVIEWED_CODEX_MODEL_IDS;
 

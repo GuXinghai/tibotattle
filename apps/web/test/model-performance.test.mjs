@@ -14,10 +14,10 @@ function payload() {
 }
 test('GPT-6.1 Sol and older Sol and Luna DTOs retain generation labels and refuse unreviewed suffixes', () => {
   const data = payload();
-  data.models.push(...[['gpt-6.1-sol', 'GPT-6.1 Sol'], ['gpt-6-sol', 'GPT-6 Sol'], ['gpt-6-luna', 'GPT-6 Luna'], ['gpt-5.6-luna', 'Luna']]
+  data.models.push(...[['gpt-6.1-sol', 'GPT-6.1 Sol'], ['gpt-6.1-terra', 'GPT-6.1 Terra'], ['gpt-6-sol', 'GPT-6 Sol'], ['gpt-6-luna', 'GPT-6 Luna'], ['gpt-5.6-luna', 'Luna']]
     .map(([id, label]) => ({ ...structuredClone(data.models[0]), id, label })));
   assert.equal(normalizeModelPerformance(data), data);
-  for (const model of ['gpt-6.1-sol', 'gpt-6-sol', 'gpt-6-luna']) {
+  for (const model of ['gpt-6.1-sol', 'gpt-6.1-terra', 'gpt-6-sol', 'gpt-6-luna']) {
     const suffix = structuredClone(data);
     suffix.models.find(row => row.id === model).id += '-unreviewed';
     assert.equal(normalizeModelPerformance(suffix), null);
@@ -236,6 +236,18 @@ const performanceClient = handler => {
 };
 
 
+
+test('Terra 6.1 renders its reviewed name and measured chart from synthetic evidence', async () => {
+  const dom = focusHarness(), data = payload();
+  Object.assign(data.models[0], { id: 'gpt-6.1-terra', label: 'GPT-6.1 Terra' });
+  const controller = mountModelPerformance({ ...dom, client: { modelPerformance: async () => data },
+    t: (key, values) => translate(key, values, 'en-US') });
+  try {
+    dom.show(); await controller.refresh();
+    assert.ok(dom.root.all().some(node => node.textContent === 'GPT-6.1 Terra'));
+    assert.ok(dom.root.all().some(node => node.id === 'performance-model-panel'));
+  } finally { controller.destroy(); }
+});
 
 test('legacy independent distributions reject mixed-mode evidence without rendering charts', async () => {
   const dom = focusHarness(), data = legacyToolFreePayload();

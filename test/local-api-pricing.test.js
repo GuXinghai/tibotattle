@@ -135,8 +135,29 @@ test("Sol 6.1 and Astra Ultrafast preserve exact event-time token accounting", (
   }
 });
 
+test("Terra 6.1 uses its own exact prices and strict long-context boundary", () => {
+  for (const [apiServiceTier, short, long] of [
+    ["standard", "0.695", "1.14"], ["batch", "0.3475", "0.57"],
+    ["flex", "0.3475", "0.57"], ["priority", "1.39", "2.28"],
+  ]) {
+    const event = { timestamp: "2026-10-27T00:00:00.000Z", model: "gpt-6.1-terra",
+      totalInputContextTokens: 272_000,
+      components: { input_uncached_tokens: 100_000, input_cache_read_tokens: 100_000,
+        input_cache_write_tokens: 72_000, output_text_tokens: 40_000, output_reasoning_tokens: 60_000 },
+    };
+    assert.equal(priceCodexUsageEvent(event, { apiServiceTier }).totalUsd, short);
+    assert.equal(priceCodexUsageEvent({ ...event, totalInputContextTokens: 272_001 }, { apiServiceTier }).totalUsd, long);
+    assert.equal(priceCodexUsageEvent(event, { apiServiceTier }).coverageStatus, "fully_priced");
+    const missing = priceCodexUsageEvent({ ...event, componentAvailability: {
+      input_uncached_tokens: true, input_cache_read_tokens: true, input_cache_write_tokens: false,
+      output_text_tokens: true, output_reasoning_tokens: true,
+    } }, { apiServiceTier });
+    assert.equal(missing.coverageStatus, "partially_priced");
+  }
+});
+
 test("unpublished Ultrafast pairs never borrow Standard prices or Astra's multiplier", () => {
-  for (const model of ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol"]) {
+  for (const model of ["gpt-6.1-sol", "gpt-6.1-terra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol"]) {
     for (const totalInputContextTokens of [272_000, 272_001]) {
       const result = priceCodexUsageEvent({
         timestamp: "2026-09-29T12:00:00.000Z", model, totalInputContextTokens,

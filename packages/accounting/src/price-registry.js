@@ -1,12 +1,12 @@
 // Reviewed provider price evidence shared by local and edge accounting adapters.
-export const APP_PRICE_REGISTRY_OBSERVED_AT = "2026-10-18T17:03:53Z";
+export const APP_PRICE_REGISTRY_OBSERVED_AT = "2026-10-27T17:58:54Z";
 // First official-page review. This is the review boundary, not a lower bound
 // on the reviewed model rates: recognized OpenAI/Codex events before this date
 // remain priceable unless a card has an explicit vendor-effective boundary.
 const OPENAI_FIRST_OBSERVED_DATE = "2026-07-26";
 export const OPENAI_PRICE_EVIDENCE_START_DATE = OPENAI_FIRST_OBSERVED_DATE;
 const PER_MILLION = "1000000";
-export const APP_PRICE_REGISTRY_VERSION = "app-official-api-prices-v0.11";
+export const APP_PRICE_REGISTRY_VERSION = "app-official-api-prices-v0.12";
 
 export const OFFICIAL_PRICE_SOURCE_URLS = Object.freeze({
   openai: "https://developers.openai.com/api/docs/pricing",
@@ -86,13 +86,37 @@ const SOURCE_DEFINITIONS = Object.freeze({
     provider: "openai",
     name: "openai-official-codex-max-api-pricing",
     url: "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max",
-    observedAt: APP_PRICE_REGISTRY_OBSERVED_AT,
+    observedAt: "2026-10-18T17:03:53Z",
     evidenceVersion: "openai-codex-max-api-pricing-reviewed-2026-10-19",
     evidenceUrls: Object.freeze([
       "https://developers.openai.com/api/docs/models/gpt-5.1-codex-max",
     ]),
   }),
+  openaiTerra61: Object.freeze({
+    provider: "openai",
+    name: "openai-official-terra61-api-pricing",
+    url: "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+    observedAt: APP_PRICE_REGISTRY_OBSERVED_AT,
+    evidenceVersion: "openai-terra61-api-pricing-reviewed-2026-10-28",
+    evidenceUrls: Object.freeze([
+      OFFICIAL_PRICE_SOURCE_URLS.openai,
+      "https://developers.openai.com/api/docs/models/gpt-6.1-terra",
+    ]),
+  }),
 });
+
+// Review date is provenance, not an invented vendor launch/effective date.
+// No Ultrafast card is published for Terra; leave that pair unpriced.
+const OPENAI_TERRA61_ROWS = Object.freeze([
+  ["gpt-6.1-terra", "standard", "1", "0.05", "1.25", "5", "short"],
+  ["gpt-6.1-terra", "standard", "2", "0.1", "2.5", "7.5", "long"],
+  ["gpt-6.1-terra", "batch", "0.5", "0.025", "0.625", "2.5", "short"],
+  ["gpt-6.1-terra", "batch", "1", "0.05", "1.25", "3.75", "long"],
+  ["gpt-6.1-terra", "flex", "0.5", "0.025", "0.625", "2.5", "short"],
+  ["gpt-6.1-terra", "flex", "1", "0.05", "1.25", "3.75", "long"],
+  ["gpt-6.1-terra", "priority", "2", "0.1", "2.5", "10", "short"],
+  ["gpt-6.1-terra", "priority", "4", "0.2", "5", "15", "long"],
+]);
 
 // Standalone reviewed model; do not alias it to GPT-5.1 Codex or assume its
 // unpublished service tiers. The review date does not bound historical usage.
@@ -353,6 +377,7 @@ export const NORMALIZED_PRICE_EVIDENCE_ROWS = deepFreeze({
   openaiSolLuna: [OPENAI_SOL_LUNA_ROWS],
   openaiSol61Ultrafast: [OPENAI_SOL61_ULTRAFAST_ROWS],
   openaiCodexMax: [OPENAI_CODEX_MAX_ROWS],
+  openaiTerra61: [OPENAI_TERRA61_ROWS],
 });
 
 // These hashes are generated from the normalized reviewed rows during an
@@ -364,6 +389,7 @@ const EVIDENCE_HASHES = Object.freeze({
   openaiAstra: "546af74276392ac5cd4f3faab783fff6d2b62235c7a5288012e8a24fd309301b",
   openaiSol61Ultrafast: "aaba22387dcf21551b86be6abe7ffea6d88a33447fa46e91b442f5d6ef265687",
   openaiCodexMax: "10328a483af5fdbc38f39789a9126fc5308835dca6a1443f25d2c396143f9024",
+  openaiTerra61: "678660ea125150541117ec83f93cbbb45671bec0c88a8976c7b5f28cebc815b5",
 });
 
 function component(usageComponent, amount, conditions) {
@@ -483,15 +509,16 @@ const OPENAI_ALIAS_ASSUMPTIONS = Object.freeze({
 
 function hasStrictAbove272KBoundary(model) {
   return model === "gpt-6-astra" || model === "gpt-6-sol" || model === "gpt-6-luna"
-    || model === "gpt-6.1-sol";
+    || model === "gpt-6.1-sol" || model === "gpt-6.1-terra";
 }
 
 function openAiCard([model, tier, input, cacheRead, cacheWrite, output, contextBand = null, period = null]) {
   const isAstra = model === "gpt-6-astra";
   const isSolLuna = model === "gpt-6-sol" || model === "gpt-6-luna";
   const isSol61 = model === "gpt-6.1-sol";
+  const isTerra61 = model === "gpt-6.1-terra";
   const strictAbove272K = hasStrictAbove272KBoundary(model);
-  const sourceKey = model === "gpt-5.1-codex-max" ? "openaiCodexMax"
+  const sourceKey = isTerra61 ? "openaiTerra61" : model === "gpt-5.1-codex-max" ? "openaiCodexMax"
     : isSol61 || (isAstra && tier === "ultrafast")
     ? "openaiSol61Ultrafast"
     : isAstra ? "openaiAstra" : isSolLuna ? "openaiSolLuna" : "openai";
@@ -535,6 +562,8 @@ function openAiCard([model, tier, input, cacheRead, cacheWrite, output, contextB
       ...(contextBand ? {
         coverage_note: isAstra
           ? "Astra short-context prices apply through 272,000 total request input tokens; above 272,000, long prices apply to the entire request."
+          : isTerra61
+          ? "GPT-6.1 Terra short-context prices apply through 272,000 total request input tokens; above 272,000, long prices apply to the entire request."
           : isSol61
           ? "GPT-6.1 Sol short-context prices apply through 272,000 total request input tokens; above 272,000, long prices apply to the entire request."
           : isSolLuna
@@ -577,6 +606,7 @@ export const OPENAI_OFFICIAL_PRICE_CARDS = deepFreeze([
   ...OPENAI_ROWS, ...OPENAI_ASTRA_ROWS, ...OPENAI_SOL_LUNA_ROWS,
   ...OPENAI_SOL61_ULTRAFAST_ROWS,
   ...OPENAI_CODEX_MAX_ROWS,
+  ...OPENAI_TERRA61_ROWS,
 ].map(openAiCard));
 export const PROVIDER_TOOL_PRICE_CARDS = deepFreeze([
   providerToolCard("openai", "openai-provider-tools", OPENAI_TOOL_ROWS),
@@ -587,7 +617,7 @@ export const APP_OFFICIAL_PRICE_CARDS = deepFreeze([
 ]);
 
 export const APP_PRICE_REGISTRY_SHA256 =
-  "14d655a17d41e263ff98cee5028e9ffd50c7c35e1f6015c2194541858dff4bdf";
+  "3a7ebcf503e482f879ebca6097bfc9dc66ad8650304ee54b20076713917a1c0b";
 
 export const APP_PRICE_REGISTRY_MANIFEST = deepFreeze({
   version: APP_PRICE_REGISTRY_VERSION,

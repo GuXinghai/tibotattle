@@ -96,7 +96,8 @@
         "claude-sonnet-4-6",
         "claude-sonnet-5",
         "gpt-6.1-sol",
-        "gpt-5.1-codex-max"
+        "gpt-5.1-codex-max",
+        "gpt-6.1-terra"
       ]
     },
     "modelRecognition": {

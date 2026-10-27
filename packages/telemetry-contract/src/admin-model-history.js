@@ -1,30 +1,19 @@
 import {
   REVIEWED_MODEL_CATALOG,
-  REVIEWED_MODEL_CATALOG_VERSION,
 } from "./model-catalog.js";
 
 // Owner-only aggregate history, not a device upload or entitlement contract.
 // Strings are reviewed identities; the remaining fields are aggregate counts
 // and API-price-equivalent dollars. No participant or source identifiers enter.
-export const ADMIN_MODEL_HISTORY_CATALOG_VERSION = REVIEWED_MODEL_CATALOG_VERSION;
+// The deployed, retired cloud contract is frozen independently of local models.
+export const ADMIN_MODEL_HISTORY_CATALOG_VERSION = "reviewed-model-catalog-2026-10-27.1";
 export const LEGACY_ADMIN_MODEL_HISTORY_CATALOG_VERSION = "admin-model-roster-v0.2";
 export const PREVIOUS_ADMIN_MODEL_HISTORY_CATALOG_VERSION = "reviewed-model-catalog-2026-09-22.1";
 export const OLDER_ADMIN_MODEL_HISTORY_CATALOG_VERSION = "reviewed-model-catalog-2026-09-03.1";
-export const ADMIN_MODEL_CONFIG = Object.freeze(REVIEWED_MODEL_CATALOG
-  .filter((model) => model.provider === "openai_codex")
-  .map((model) => Object.freeze({
-    modelId: model.id,
-    label: model.label,
-    allowanceTrack: model.allowanceTrack,
-    pricingStatus: model.pricingStatus,
-  })));
 
 const adminHistoryLegacyIds = Object.freeze([
   "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
 ]);
-const adminHistoryCurrentIds = Object.freeze(ADMIN_MODEL_CONFIG
-  .filter((model) => model.allowanceTrack === "primary")
-  .map((model) => model.modelId));
 // Frozen roster for reviewed-model-catalog-2026-09-22.1.
 const adminHistoryPreviousIds = Object.freeze([
   "codex-auto-review", "gpt-4-turbo-2024-04-09", "gpt-4.1", "gpt-4.1-mini",
@@ -46,6 +35,19 @@ const adminHistorySeptember29Version = "reviewed-model-catalog-2026-09-29.1";
 const adminHistorySeptember29Ids = Object.freeze([
   ...adminHistorySeptember23Ids, "gpt-6.1-sol",
 ]);
+const adminHistoryOctober27Ids = Object.freeze([
+  ...adminHistorySeptember29Ids, "gpt-5.1-codex-max",
+]);
+const frozenAdminIds = new Set([...adminHistoryOctober27Ids, "gpt-5.3-codex-spark"]);
+export const ADMIN_MODEL_CONFIG = Object.freeze(REVIEWED_MODEL_CATALOG
+  .filter((model) => model.provider === "openai_codex" && frozenAdminIds.has(model.id))
+  .map((model) => Object.freeze({
+    modelId: model.id,
+    label: model.label,
+    allowanceTrack: model.allowanceTrack,
+    pricingStatus: model.pricingStatus,
+  })));
+const adminHistoryCurrentIds = adminHistoryOctober27Ids;
 // Frozen roster for reviewed-model-catalog-2026-09-03.1.
 const adminHistoryOlderIds = Object.freeze([
   "codex-auto-review", "gpt-4-turbo-2024-04-09", "gpt-4.1", "gpt-4.1-mini",

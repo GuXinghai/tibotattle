@@ -85,7 +85,8 @@
         "gpt-6-luna",
         "gpt-6.1-astra",
         "gpt-6.1-sol",
-        "gpt-5.1-codex-max"
+        "gpt-5.1-codex-max",
+        "gpt-6.1-terra"
       ]
     },
     "reasoningEffort": {
@@ -280,7 +281,8 @@
               "gpt-6-luna",
               "gpt-6.1-astra",
               "gpt-6.1-sol",
-              "gpt-5.1-codex-max"
+              "gpt-5.1-codex-max",
+              "gpt-6.1-terra"
             ]
           }
         }

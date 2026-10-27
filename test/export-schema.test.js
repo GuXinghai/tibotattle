@@ -193,12 +193,13 @@ test("arbitrary source-like fields cannot pass the strict usage schema", () => {
   ), { numRuns: 100 });
 });
 
-test("the Codex registry stays within the unchanged historical schema vocabulary", () => {
+test("the Codex registry appends Terra while preserving the historical schema vocabulary", () => {
   const registry = exportRegistrySnapshot();
   const historicalModelIds = exportSchemas.usageEvent.properties.modelId.enum;
-  // Preserve both the values and positions recorded before provider retirement.
+  // New reviewed IDs append; preserve every historical value and ordinal.
+  assert.equal(historicalModelIds.at(-1), "gpt-6.1-terra");
   assert.equal(
-    createHash("sha256").update(JSON.stringify(historicalModelIds)).digest("hex"),
+    createHash("sha256").update(JSON.stringify(historicalModelIds.slice(0, -1))).digest("hex"),
     "0eda40785735e36f956754ced532e805a3502f24e4dee32c8183acfa742fd89a",
   );
   assert.deepEqual(TELEMETRY_PROVIDER_IDS, ["openai_codex"]);
@@ -208,6 +209,7 @@ test("the Codex registry stays within the unchanged historical schema vocabulary
     assert.ok(historicalModelIds.includes(id), `unversioned export model: ${id}`);
   }
   assert.ok(registry.providers.openai_codex.modelIds.includes("gpt-6.1-sol"));
+  assert.ok(registry.providers.openai_codex.modelIds.includes("gpt-6.1-terra"));
   assert.deepEqual(
     exportSchemas.quotaSnapshot.properties.limitId.enum,
     ["unknown", ...registry.providers.openai_codex.limitIds],
