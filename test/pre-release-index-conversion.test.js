@@ -16,6 +16,7 @@ import {
   PRE_RELEASE_INDEX_V8_OBJECT_SQL_SHA256,
   PRE_RELEASE_INDEX_V8_TEST_SEEDS,
   PRE_RELEASE_INDEX_V9_MIGRATED_OBJECT_SQL_SHA256,
+  PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL,
 } from "../scripts/lib/pre-release-index-v8-schema.mjs";
 import { loadWindowsLegacyStateReadBinding } from "../src/platform/index.js";
 import { assertWindowsOwnerOnly } from "./helpers/windows-owner-only-fixture.js";
@@ -41,10 +42,19 @@ function installV8SourceTriggers(database) {
   }
 }
 
-function createCanonicalV8Schema(database) {
+function createCanonicalV8Schema(database, { alteredStoreState = false } = {}) {
   database.prepare("PRAGMA journal_mode=WAL").get();
   database.exec("PRAGMA foreign_keys=ON");
-  for (const object of PRE_RELEASE_INDEX_V8_SCHEMA_OBJECTS.filter(row => row.type === "table")) database.exec(object.sql);
+  for (const object of PRE_RELEASE_INDEX_V8_SCHEMA_OBJECTS.filter(row => row.type === "table")) {
+    if (alteredStoreState && object.name === 'store_state') {
+      database.exec(`CREATE TABLE store_state(
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    commit_seq INTEGER NOT NULL) STRICT`);
+      database.exec('ALTER TABLE store_state ADD COLUMN calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)');
+      assert.equal(database.prepare("SELECT sql FROM sqlite_schema WHERE name='store_state'").get().sql,
+        PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL);
+    } else database.exec(object.sql);
+  }
   for (const object of PRE_RELEASE_INDEX_V8_SCHEMA_OBJECTS.filter(row => row.type === "index")) database.exec(object.sql);
   for (const object of PRE_RELEASE_INDEX_V8_SCHEMA_OBJECTS.filter(row => row.type === "trigger")) {
     if (!object.name.startsWith("calculation_source_")) database.exec(object.sql);
@@ -92,7 +102,7 @@ function insertSyntheticRows(database) {
   );
 }
 
-async function makeFixture(t, { mutateSource = null } = {}) {
+async function makeFixture(t, { mutateSource = null, alteredStoreState = false } = {}) {
   const native = loadWindowsLegacyStateReadBinding();
   const root = resolve(".release-build", `pre-release-index-conversion-${randomUUID()}`);
   native.ensureDirectory(root);
@@ -107,7 +117,7 @@ async function makeFixture(t, { mutateSource = null } = {}) {
 
   const writer = new DatabaseSync(workFile);
   try {
-    createCanonicalV8Schema(writer);
+    createCanonicalV8Schema(writer, { alteredStoreState });
     insertSyntheticRows(writer);
     writer.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   } finally { writer.close(); }
@@ -171,6 +181,15 @@ function sourceSnapshot(fixture) {
     mainSha256: entries.find(entry => entry.name === FILE_NAME)?.sha256,
   };
 }
+
+test('the exact historical ALTER-created store_state spelling preserves rows and schema SQL', { skip: NATIVE_SKIP }, async t => {
+  const fixture = await makeFixture(t, { alteredStoreState: true });
+  const result = await convertPreReleaseIndexCopy(fixture.options());
+  assert.equal(result.sourceLogicalSha256, result.targetLogicalSha256);
+  const database = new DatabaseSync(`${pathToFileURL(join(fixture.destinationRoot, FILE_NAME)).href}?mode=ro&immutable=1`, { readOnly: true });
+  try { assert.equal(database.prepare("SELECT sql FROM sqlite_schema WHERE name='store_state'").get().sql,
+    PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL); } finally { database.close(); }
+});
 
 test("configuration is closed and rejects accessors, proxies, foreign objects, empty hashes and root overlap", async () => {
   const valid = {

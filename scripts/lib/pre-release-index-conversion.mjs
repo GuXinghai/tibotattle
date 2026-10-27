@@ -13,6 +13,7 @@ import {
   PRE_RELEASE_INDEX_V8_OBJECT_TABLE_NAMES,
   PRE_RELEASE_INDEX_V9_MIGRATED_OBJECT_SQL_SHA256,
   PRE_RELEASE_INDEX_V9_MIGRATED_OBJECT_TABLE_NAMES,
+  PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL_SHA256,
 } from "./pre-release-index-v8-schema.mjs";
 import {
   LOCAL_INDEX_STORE_APPLICATION_ID,
@@ -464,9 +465,11 @@ function assertSchema(database, version) {
   for (const row of rows) {
     const key = `${row.type}:${row.name}`;
     const expectedHash = allowedSqlHashes[key];
+    const actualHash = createHash("sha256").update(row.sql ?? "").digest("hex");
     if (typeof expectedHash !== "string" || !HASH_PATTERN.test(expectedHash)
         || allowedTableNames[key] !== row.tbl_name
-        || createHash("sha256").update(row.sql ?? "").digest("hex") !== expectedHash) {
+        || (actualHash !== expectedHash && !(key === 'table:store_state'
+          && actualHash === PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL_SHA256))) {
       fail("SCHEMA_UNSUPPORTED");
     }
   }

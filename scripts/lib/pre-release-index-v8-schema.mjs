@@ -103,6 +103,14 @@ try { catalog = buildCatalog(canonical); } catch { /* Refuse conversion until th
 export const PRE_RELEASE_INDEX_SCHEMA_ALLOWLIST_READY = catalog !== null;
 export const PRE_RELEASE_INDEX_V8_OBJECT_SQL_SHA256 = catalog?.source.hashes ?? Object.freeze({});
 export const PRE_RELEASE_INDEX_V9_MIGRATED_OBJECT_SQL_SHA256 = catalog?.target.hashes ?? Object.freeze({});
+// The existing v6→v7 ALTER TABLE path appends this column with a space,
+// whereas a newly created store uses a newline. Admit that exact historical
+// SQL spelling only; do not normalize arbitrary input or constraints.
+export const PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL = `CREATE TABLE store_state(
+    id INTEGER PRIMARY KEY CHECK(id = 1),
+    commit_seq INTEGER NOT NULL, calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)) STRICT`;
+export const PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL_SHA256 = createHash('sha256')
+  .update(PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL).digest('hex');
 export const PRE_RELEASE_INDEX_V8_OBJECT_TABLE_NAMES = catalog?.source.tableNames ?? Object.freeze({});
 export const PRE_RELEASE_INDEX_V9_MIGRATED_OBJECT_TABLE_NAMES = catalog?.target.tableNames ?? Object.freeze({});
 export const PRE_RELEASE_INDEX_V8_SCHEMA_OBJECTS = catalog?.source.rows ?? Object.freeze([]);

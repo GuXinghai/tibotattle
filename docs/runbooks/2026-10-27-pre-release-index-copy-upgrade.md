@@ -28,8 +28,12 @@ Existing accepted empty sidecars are frozen and preserved, not cleaned.
 
 Schema 8 is necessary but insufficient. The source's complete object SQL must
 match the closed catalog captured from the actual `63e8753a` v8 writer, including
-its secondary/response indexes. Listed optional indexes may be absent. Unknown
-or differently defined tables, indexes or triggers refuse even if their names
+its secondary/response indexes. Listed optional indexes may be absent.
+The exact `store_state` SQL spelling produced by the historical
+`ALTER TABLE ... ADD COLUMN calculation_revision` path is also admitted:
+it differs from fresh creation only by a space in place of a newline. Its
+constraints remain exact; arbitrary whitespace normalization is not used.
+Unknown or differently defined tables, indexes or triggers refuse even if their names
 and version labels look correct. Other legitimate historical DDL variants need
 separate admission review on a copy; this is not a general v8 compatibility
 reader. The catalog and its raw SQL provenance are committed beside the tool.
