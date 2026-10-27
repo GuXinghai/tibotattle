@@ -3,7 +3,7 @@ title: Current product and qualification status
 date: 2026-10-27
 type: status
 status: current
-source_commit: 8597769cbd3def4b2683ec0d3ec6fb6f949cb233
+source_commit: 09fa850a617864c1144e35434d532241c5e0ac87
 observation_date: 2026-10-27
 ---
 
@@ -72,7 +72,9 @@ It does not require permanent old-format writers. The current concrete upgrade
 is local-index schema 8 to 9, with collector schema 1 preserved. No old export
 workspace has been found in the bounded filename-only checks; that is not proof
 of absence elsewhere and is not a reason to run a speculative workspace upgrade.
-The new upgrade tool and its acceptance remain unfinished.
+The standalone [index-copy upgrade step](./runbooks/2026-10-27-pre-release-index-copy-upgrade.md)
+is implemented and has isolated Windows synthetic acceptance. It is not a
+combined fresh-backup/activation tool or actual-profile admission evidence.
 The [HTTP cache backport gate](./runbooks/2026-10-27-http-cache-backport-verification.md)
 replaces the expired build dependency exception without any OSV suppression;
 an actual scanner run and hosted CI remain separate evidence.
@@ -100,8 +102,19 @@ read-only opens. It must not be used as the upgraded index reader. Preparing a
 compatible exact candidate is a prerequisite, not a post-upgrade repair. Its
 later desktop changes and the current source diverge; a whole-branch merge
 requires separate integration review and cannot be treated as a routine build.
-The copy-only conversion entrypoint also needs protected SQLite sidecar
-lifecycle acceptance before real use; the ordinary evidence writer forces WAL.
+The copy-only entrypoint now runs the shared v8→v9 transaction on a protected
+PERSIST connection, without entering the ordinary WAL writer. Native synthetic
+tests cover its source preservation, exact known DDL, typed row equality,
+sidecar protection and cleanup, no-clobber, unsafe ACL/link and hot-state
+refusal. Other historical DDL variants remain refused, not guessed.
+
+The candidate owner supplied schema 9 candidate revision `6c5a55f8` for isolated
+copy acceptance, not real activation. The received ASAR SHA-256 was independently
+matched to the handoff receipt. Its source selectively adopts the schema 9
+store/refresh/worker contract and is not a full merge of the current source;
+its UI/runtime test results and six reproduced baseline index failures remain
+the candidate owner's separate evidence. The upgraded copy has not yet been
+admitted against the actual active profile or activated with that candidate.
 
 The [usage-only scope](./decisions/2026-10-25-usage-only-state-cutover.md) remains
 in force. New protected backup/readback, copy-only conversion, semantic
