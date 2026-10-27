@@ -7,6 +7,10 @@ status: maintained
 
 # Scope and admission
 
+The owner-authorized one-time upgrade has completed; see
+[current status](../current-status.md). This procedure remains a manual recovery
+reference, not a request to run conversion again against new active history.
+
 This is the standalone index-copy step for the
 [one-time pre-release upgrade](../decisions/2026-10-27-pre-release-state-migration.md).
 It is not a profile backup, source discovery, activation or brand-cutover tool.

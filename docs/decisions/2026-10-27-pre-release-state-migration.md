@@ -21,6 +21,11 @@ This decision authorizes source work and isolated synthetic rehearsal. It does
 not authorize access to, migration of, or rollback of existing user data.
 Real execution and activation require separately authorized exact targets.
 
+The owner subsequently authorized completing the simplified one-time migration
+with originals and backups retained. That execution is now complete; see the
+[current status](../current-status.md) for its separate operational evidence.
+This does not authorize replay against new history or generalize the tool.
+
 ## Current admitted upgrade
 
 The previous brand cutover is complete according to the owner's 2026-10-27
@@ -30,7 +35,7 @@ post-cutover history. Preserve the prior TiboTattle source, backup, converted
 copy and activation receipts as historical material; never replay them over
 the current active state.
 
-The observed index is schema 8 and the source change targets schema 9;
+Before this execution the observed index was schema 8; the upgrade targets schema 9;
 collector schema 1 is unchanged. Prepare a fresh protected cold backup and a
 separate conversion target. Keep the currently active profile authoritative
 until the new copy and compatible candidate have passed acceptance. Existing

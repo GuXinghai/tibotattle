@@ -3,7 +3,7 @@ title: Current product and qualification status
 date: 2026-10-27
 type: status
 status: current
-source_commit: 09fa850a617864c1144e35434d532241c5e0ac87
+source_commit: 04a91eca3f49fb08b2a93fe99dd70623c87426c7
 observation_date: 2026-10-27
 ---
 
@@ -65,11 +65,12 @@ Windows identities and durable auxiliary-read reservations. Older export
 workspaces are refused before writable configuration, not converted or relabeled.
 Collector SQLite files now require native protected-DACL creation/checks;
 unprotected older state is preserved and refused, not repaired implicitly.
-These are source and isolated synthetic-test results, not a real-data upgrade.
+Those source and isolated-test results are separate from the real index upgrade
+recorded below; they do not qualify all repairs in a packaged release.
 The owner scoped remaining ACL/workspace compatibility to a
 [one-time controlled pre-release migration](./decisions/2026-10-27-pre-release-state-migration.md).
-It does not require permanent old-format writers. The current concrete upgrade
-is local-index schema 8 to 9, with collector schema 1 preserved. No old export
+It does not require permanent old-format writers. The concrete upgrade from
+local-index schema 8 to 9 is complete, with collector schema 1 preserved. No old export
 workspace has been found in the bounded filename-only checks; that is not proof
 of absence elsewhere and is not a reason to run a speculative workspace upgrade.
 The standalone [index-copy upgrade step](./runbooks/2026-10-27-pre-release-index-copy-upgrade.md)
@@ -87,16 +88,16 @@ ignored local files under the candidate checkout's `.release-build/brand-cutover
 checking out a commit alone does not recover those tools or receipts. This
 source-status update does not independently requalify that historical operation.
 
-The authoritative source for the new upgrade is the active stable profile's
+The authoritative source for the completed format upgrade was the active stable profile's
 `companion-state`, under the neutral `UsageMonitor` state root, plus only the
 reviewed calculation settings from its sibling `desktop-settings`. The older
 TiboTattle source and its prior backup/conversion are historical preservation,
 not a substitute for a new cold backup containing post-cutover history. The
-read-only header observation found index schema 8 and collector schema 1; the
-application and its index WAL were active, so this is not cold-snapshot proof.
-The schema 9 upgrade has not been executed on real data.
+initial read-only header observation found index schema 8 and collector schema 1
+while the application was active. A new protected cold backup was subsequently
+made after normal shutdown, including its retained WAL and current history.
 
-The running candidate source revision `de8edcc8` accepts index versions only
+The previous candidate source revision `de8edcc8` accepts index versions only
 through 8 and rejects schema 9 with `local_index_newer_version`, including on
 read-only opens. It must not be used as the upgraded index reader. Preparing a
 compatible exact candidate is a prerequisite, not a post-upgrade repair. Its
@@ -108,18 +109,39 @@ tests cover its source preservation, exact known DDL, typed row equality,
 sidecar protection and cleanup, no-clobber, unsafe ACL/link and hot-state
 refusal. Other historical DDL variants remain refused, not guessed.
 
-The candidate owner supplied schema 9 candidate revision `6c5a55f8` for isolated
-copy acceptance, not real activation. The received ASAR SHA-256 was independently
-matched to the handoff receipt. Its source selectively adopts the schema 9
+The candidate owner supplied schema 9 candidate revision `6c5a55f8`. Its ASAR
+SHA-256 was independently matched to the handoff receipt, and the converter's
+output passed an isolated packaged-candidate run before real execution.
+Its source selectively adopts the schema 9
 store/refresh/worker contract and is not a full merge of the current source;
 its UI/runtime test results and six reproduced baseline index failures remain
-the candidate owner's separate evidence. The upgraded copy has not yet been
-admitted against the actual active profile or activated with that candidate.
+the candidate owner's separate evidence.
+
+On 2026-10-27 the owner explicitly authorized the simplified one-time migration.
+The protected cold backup was read back byte-for-byte; only another working
+copy was checkpointed and converted. The actual schema differed from fresh
+creation only in the exact historical ALTER-created `store_state` SQL spelling;
+that spelling was reproduced and admitted with isolated synthetic tests.
+Every original table/column retained its typed logical digest and row count;
+the new provenance remained NULL. Other admitted usage files were copied
+unchanged, and the active databases passed integrity checks.
+
+After native writer exclusion and final source/target checks, the original
+usage directory and previous package were retained at explicit sibling paths.
+The verified schema 9 copy and compatible package now occupy the existing
+active paths. Runtime files also matched the prior working package; the new
+ASAR and executable matched their independently pinned candidate hashes.
+Normal startup reached desktop and snapshot ready. Operational readback
+confirmed schema 9, unchanged originals/backups, original salt, source selection,
+pause/preferred-model settings and existing startup policy. Exact paths,
+identities, hashes and recovery records remain in owner-only local receipts,
+not in repository evidence. No original deletion, registry change, credential
+qualification, old brand replay or new migration framework was performed.
 
 The [usage-only scope](./decisions/2026-10-25-usage-only-state-cutover.md) remains
-in force. New protected backup/readback, copy-only conversion, semantic
-continuity and compatible candidate admission are required before the format
-upgrade's separate activation. Do not replay the old brand activation or alter
+in force. Fresh backup/readback, copy-only conversion, semantic continuity and
+compatible candidate admission were completed for this activation. Do not
+repeat the migration against accumulated new history, replay the old brand activation or alter
 its existing startup policy implicitly. X, background and generic Chromium
 state remain outside this upgrade. The legacy continuity-copy bundle is not
 the selector for either the active usage bundle or this format upgrade.
