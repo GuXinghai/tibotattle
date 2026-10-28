@@ -3,7 +3,7 @@ title: Current product and qualification status
 date: 2026-10-28
 type: status
 status: current
-source_commit: 1679350c98e964c000dca18a82e70643128a4734
+source_commit: 4f99be5e29ee60b325d8afc4bd8b911b7795aee7
 observation_date: 2026-10-28
 ---
 
@@ -24,7 +24,7 @@ No remote resources were modified by the source retirement.
 
 ## Evidence boundaries
 
-The working-tree accounting-reuse repair distinguishes stable missing-thread
+The committed accounting-reuse repair distinguishes stable missing-thread
 origin evidence from failed metadata reads. Equal origin evidence, including the
 same unknown membership, may reuse the qualified process-local result while
 preserving unknown interval reasons and the original evaluation clock. Origin
@@ -221,13 +221,31 @@ receipts apply only to their own original project, source, bytes and dates. No
 user-owned Claude profile/source content, settings, ledger, callback state,
 credential, or file has been inspected, moved, or cleaned up for this decision.
 
-## Desktop calculation separation working tree
+## Desktop calculation separation and format activation
 
-The current working tree separates bounded desktop calibration from complete
-research analysis, adds an explicit unresolved-speed setting and prepares a
-copy-only settings/cache conversion. Settings and cache formats are current-only;
-old results are preserved in a separate protected historical envelope rather
-than relabelled. No real profile conversion, commit, package activation or
-real-data validation is performed by this implementation. See the
-[decision](./decisions/2026-10-28-desktop-calculation-and-unknown-speed.md) and
-[preservation inventory](./plans/2026-10-28-desktop-calculation-preservation.md).
+The desktop calculation and unknown-speed policy are committed in `36755be1`;
+`c15bf496` adds exact v0.24 historical preservation. The ordinary path does not
+execute complete research analysis. Settings v6 and cache v0.26 are current-only,
+with Standard as the default unresolved-speed assumption.
+
+On 2026-10-28, the owner-authorized one-time conversion of the active stable
+usage state was activated after cold backup, copy conversion and readback.
+The entire old cache remains in its historical envelope with its original
+version and time. Typed collector rows were equal after normal application
+startup. The original usage directory, complete cold backup, previous program
+and private operation receipts are retained. Index bytes, salt, saved usage
+snapshots and unrelated settings were preserved; the existing startup policy
+and X/browser state were not changed. Do not replay the old brand or schema 9
+migration, or automatically restore earlier history.
+
+The active unsigned local candidate was built from `045f7a53`, build
+`2026102807`, with ASAR SHA-256
+`f6934174486840050b98eece129c965960baf5836a7c6ba9f3f858e6bca7fc96`.
+Normal startup and a ready local snapshot were read back separately from the
+isolated automated gates. New-format active accounting is published only by
+a real calculation; preserved historical results are never relabelled as a new
+calculation. All automated tests and interruption rehearsals used synthetic
+profiles, including the full 30-item migration bundle. Operational readback is
+not a real-data test, and no installed, signed-release or publication gate is
+claimed. See the [decision](./decisions/2026-10-28-desktop-calculation-and-unknown-speed.md)
+and [preservation inventory](./plans/2026-10-28-desktop-calculation-preservation.md).
