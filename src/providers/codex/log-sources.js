@@ -457,13 +457,14 @@ export function createCodexLogSources({ filesystem, lineReader }) {
     resourceGuard = null,
     signal = null,
     discoveryLimiter = null,
+    diagnosticTimer = null,
   ) {
     const files = [];
     async function walk(directory) {
       throwIfAborted(signal);
       let entries;
       try {
-        entries = await filesystem.openDirectory(directory);
+        entries = diagnosticTimer ? await diagnosticTimer.measure("discovery_directory",()=>filesystem.openDirectory(directory),{aggregate:true}) : await filesystem.openDirectory(directory);
       } catch (error) {
         // Both Codex roots are optional on a fresh install. Absence is an empty
         // source set; every other filesystem failure means coverage is unknown
@@ -483,7 +484,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
               || entry.name.endsWith(".jsonl.zst"))) {
           throwIfAborted(signal);
           discoveryLimiter?.observeRolloutFile();
-          const metadata = await filesystem.statPath(path);
+          const metadata = diagnosticTimer ? await diagnosticTimer.measure("discovery_stat",()=>filesystem.statPath(path),{aggregate:true}) : await filesystem.statPath(path);
           // Discovery walks bounded history to resolve ancestry, but charges
           // selected sources once before parsing.
           resourceGuard?.checkRuntime();
@@ -629,6 +630,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
     // header read and cold-source decode, so an unchanged corpus costs only
     // the directory walk. Absent, discovery inspects every file as before.
     inspectionCache = null,
+    diagnosticTimer = null,
   }) {
     if (!validAbortSignal(signal)) throw new TypeError("signal must be an AbortSignal or null");
     if (inspectionCache !== null && typeof inspectionCache !== "function") {
@@ -636,7 +638,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
     }
     throwIfAborted(signal);
     if (selectedRolloutNames === undefined) {
-      selectedRolloutNames = await filesystem.readSelectedRolloutNames(codexHome);
+      selectedRolloutNames = diagnosticTimer ? await diagnosticTimer.measure("discovery_selected",()=>filesystem.readSelectedRolloutNames(codexHome)) : await filesystem.readSelectedRolloutNames(codexHome);
     }
     if (selectedRolloutNames !== null && !(selectedRolloutNames instanceof Map)) {
       throw new TypeError("selectedRolloutNames must be a Map or null");
@@ -645,20 +647,24 @@ export function createCodexLogSources({ filesystem, lineReader }) {
     const discoveryLimiter = createDiscoveryLimiter(discoveryLimits);
     const cutoffMs = new Date(startAt).getTime();
     const endMs = endAt === null ? Number.POSITIVE_INFINITY : new Date(endAt).getTime();
+    const finishWalk = diagnosticTimer?.start("discovery_walk");
     const [active, archived] = await Promise.all([
       collectJsonlFileInfos(
         filesystem.joinPath(codexHome, "sessions"),
         resourceGuard,
         signal,
         discoveryLimiter,
+        diagnosticTimer,
       ),
       collectJsonlFileInfos(
         filesystem.joinPath(codexHome, "archived_sessions"),
         resourceGuard,
         signal,
         discoveryLimiter,
+        diagnosticTimer,
       ),
     ]);
+    finishWalk?.();
     throwIfAborted(signal);
     // Preserve every representation until its identity and content have been
     // compared. Selecting the active path by basename here used to hide a
@@ -683,6 +689,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
         else activeDecoders -= 1;
       }
     }
+    const finishInspect = diagnosticTimer?.start("discovery_inspect");
     const all = await mapWithConcurrency(representations, 16, async ([key, info]) => {
       throwIfAborted(signal);
       const filename = parseCodexRolloutFilename(info.path);
@@ -717,7 +724,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
           compressionReason = "codex_rollout_compression_unsupported";
         } else {
           try {
-            inspection = await inspectColdSource(info.path);
+            inspection = diagnosticTimer ? await diagnosticTimer.measure("discovery_decode",()=>inspectColdSource(info.path),{aggregate:true}) : await inspectColdSource(info.path);
             if (inspection.size > 0 && inspection.lastByte !== 0x0a) {
               compressionReason = "codex_rollout_tail_incomplete";
             }
@@ -740,7 +747,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
           startOrdinalValid: false,
           surfaceClassification: classifySessionSurface(null),
         }
-        : await readRolloutLineage(info.path, {
+        : await (async()=>{const finish=diagnosticTimer?.start("discovery_headers",{aggregate:true});try{return await readRolloutLineage(info.path, {
           resourceGuard,
           // Session metadata is the first Codex rollout record. Bound damaged
           // files that never provide it to a generous metadata-only ceiling,
@@ -754,7 +761,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
           maximumTotalBytes: MAXIMUM_ROLLOUT_LINEAGE_BYTES,
           signal,
           prefix: inspection?.prefix ?? null,
-        });
+        });}finally{finish?.();}})();
       return {
         ...info,
         ...(inspection === null ? {} : {
@@ -778,6 +785,8 @@ export function createCodexLogSources({ filesystem, lineReader }) {
     });
     throwIfAborted(signal);
 
+    finishInspect?.();
+    const finishGraph = diagnosticTimer?.start("discovery_graph");
     // Validate the physical and logical graphs before selecting a time
     // window. Invalid old groups are remembered locally but do not poison an
     // unrelated recent request: only selected groups enter the receipt below.
@@ -1395,6 +1404,7 @@ export function createCodexLogSources({ filesystem, lineReader }) {
       quarantineFingerprint: hashString(JSON.stringify(quarantineMaterial)),
     });
     DISCOVERY_RECEIPTS.set(result, receipt);
+    finishGraph?.();
     return result;
   }
 

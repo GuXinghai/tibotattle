@@ -80,8 +80,9 @@ export function createLocalIndexAccountingReuse({
     if (snapshot.id !== generation?.id) { report("generation_changed"); return null; }
     const evidence = snapshot.sessions.length === 0 ? { complete: true, relations: new Map() }
       : await timing.measure("proof_origins", () => readOrigins(codexHome, snapshot.sessions.map(row => row.session_uuid),
-      { signal, includeOriginEvidence: true, withOriginReadReceipt: true, onOriginDiagnostic: value =>
+      { signal, includeOriginEvidence: true, withOriginReadReceipt: true, diagnosticTimer: timing, onOriginDiagnostic: value =>
         reportLocalRefreshOriginDiagnostic(onOriginDiagnostic, diagnosticPhase, value?.code, value?.count) }));
+    timing.flush();
     throwIfAborted(signal);
     // Only a complete, guarded read can distinguish an absent row from an unread store.
     const relations = evidence?.relations;

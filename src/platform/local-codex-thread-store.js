@@ -151,24 +151,25 @@ function isCodexSessionPath(codexHome, rolloutPath) {
  * The indexed source-only path can also verify ordinary worker/root headers
  * and receives a narrowed relation without retaining the source record.
  */
-async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usageRelations = false, includeWorker = false) {
+async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usageRelations = false, includeWorker = false, diagnosticTimer = null) {
   if (typeof rolloutPath !== "string" || rolloutPath.length === 0
       || !isAbsolute(rolloutPath)) return null;
   let handle;
   try {
-    const home = await realpath(codexHome);
+    const home = diagnosticTimer ? await diagnosticTimer.measure("origin_realpath",()=>realpath(codexHome),{aggregate:true}) : await realpath(codexHome);
     let path;
-    try { path = await realpath(rolloutPath); }
+    try { path = diagnosticTimer ? await diagnosticTimer.measure("origin_realpath",()=>realpath(rolloutPath),{aggregate:true}) : await realpath(rolloutPath); }
     catch (error) {
       if (!usageRelations || error.code !== "ENOENT" || !rolloutPath.endsWith(".jsonl")) return null;
-      path = await realpath(`${rolloutPath}.zst`);
+      path = diagnosticTimer ? await diagnosticTimer.measure("origin_realpath",()=>realpath(`${rolloutPath}.zst`),{aggregate:true}) : await realpath(`${rolloutPath}.zst`);
     }
     if (!isCodexSessionPath(home, path)
         && !(usageRelations && relative(home, path).startsWith(`archived_sessions${sep}`))) return null;
-    const opened = await filesystem.openFile(path);
+    const opened = diagnosticTimer ? await diagnosticTimer.measure("origin_open",()=>filesystem.openFile(path),{aggregate:true}) : await filesystem.openFile(path);
     handle = opened.handle;
     const before = opened.before;
     let line;
+    const finishRead = diagnosticTimer?.start("origin_read",{aggregate:true});
     if (path.endsWith(".zst")) {
       for await (const entry of readBoundedUtf8LineEntries(compressedRolloutHandle(handle), {
         maximumLineBytes: MAX_SESSION_METADATA_LINE_BYTES,
@@ -182,8 +183,9 @@ async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usag
       if (newline < 0) return null;
       line = bytes.toString("utf8", 0, newline);
     }
+    finishRead?.();
     if (typeof line !== "string" || line.includes("\ufffd")) return null;
-    const record = JSON.parse(line);
+    const record = diagnosticTimer ? diagnosticTimer.measureSync("origin_parse",()=>JSON.parse(line),{aggregate:true}) : JSON.parse(line);
     const header = record?.type === "session_meta" && threadId(record.payload?.id) === id;
     const worker = includeWorker && header ? workerMetadata(record.payload?.source, id) : null;
     const root = includeWorker && header && (record.payload?.thread_source === "user"
@@ -196,22 +198,26 @@ async function readAutoReviewParent(codexHome, rolloutPath, id, filesystem, usag
     if ((!verified && !worker && !root) || (!root && (parentId === null || parentId === id))) {
       return null;
     }
+    const finishValidate = diagnosticTimer?.start("origin_validate",{aggregate:true});
     const after = await handle.stat();
-    return filesystem.same(before, after)
+    const relation = filesystem.same(before, after)
         && before.size === after.size && before.mtimeMs === after.mtimeMs
         && filesystem.same(before, await filesystem.namedStat(path, handle))
       ? includeWorker ? { parentId: root ? null : parentId, origin: verified ? "auto_review" : null } : parentId
       : null;
+    finishValidate?.();
+    return relation;
   } catch {
     return null;
   } finally {
-    await handle?.close();
+    if (diagnosticTimer) await diagnosticTimer.measure("origin_close",()=>handle?.close(),{aggregate:true});
+    else await handle?.close();
   }
 }
 
 // Use retained source paths when an index already has them. This path reads
 // bounded headers only and never opens Codex's live SQLite/WAL/SHM files.
-async function readSourceUsageRelations(codexHome, ids, sourcePaths, knownThreadIds, filesystem, signal) {
+async function readSourceUsageRelations(codexHome, ids, sourcePaths, knownThreadIds, filesystem, signal, diagnosticTimer = null) {
   const selected = new Map(), pending = new Set(ids);
   let reads = 0;
   for (const id of pending) {
@@ -228,7 +234,7 @@ async function readSourceUsageRelations(codexHome, ids, sourcePaths, knownThread
     let accepted = null, invalid = false;
     for (const path of paths) {
       if (++reads > 50_000) return new Map();
-      const record = await readAutoReviewParent(codexHome, path, id, filesystem, true, true);
+      const record = await readAutoReviewParent(codexHome, path, id, filesystem, true, true, diagnosticTimer);
       if (!record || accepted && (accepted.parentId !== record.parentId || accepted.origin !== record.origin)) {
         invalid = true; break;
       }
@@ -303,7 +309,7 @@ function reportOriginDiagnostic(observer, code, count = 1) {
   catch { /* Optional diagnostics never change protected metadata access. */ }
 }
 
-async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, usageRelations = false, allowTitleFallback = false, signal, filesystem, databaseFactory, onOriginDiagnostic = null, withOriginReadReceipt = false } = {}) {
+async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, usageRelations = false, allowTitleFallback = false, signal, filesystem, databaseFactory, onOriginDiagnostic = null, withOriginReadReceipt = false, diagnosticTimer = null } = {}) {
   const report = (code, count) => reportOriginDiagnostic(onOriginDiagnostic, code, count);
   const databaseFile = join(codexHome, "state_5.sqlite");
   let database;
@@ -367,7 +373,7 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
       const verifiedAutoReview = sourceAutoReview && (threadStoreAutoReview || usageRelations && row.thread_source === "subagent");
       const worker = autoReview ? null : workerMetadata(source, id);
       const parentId = verifiedAutoReview && (!ancestryOnly || usageRelations)
-        ? await readAutoReviewParent(codexHome, row.rollout_path, id, filesystem, usageRelations)
+        ? await readAutoReviewParent(codexHome, row.rollout_path, id, filesystem, usageRelations, false, diagnosticTimer)
         : worker?.parentId ?? null;
       if (parentId !== null) parentIds.add(parentId);
       result.set(id, {
@@ -394,7 +400,7 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
         const verifiedReview = isAutoReviewSource(source)
           && [AUTO_REVIEW_THREAD_SOURCE, "subagent"].includes(row.thread_source);
         const parentId = usageRelations && verifiedReview
-          ? await readAutoReviewParent(codexHome, row.rollout_path, id, filesystem, true)
+          ? await readAutoReviewParent(codexHome, row.rollout_path, id, filesystem, true, false, diagnosticTimer)
           : ancestryOnly && !review ? workerMetadata(source, id)?.parentId ?? null : null;
         if (parentId) parentIds.add(parentId);
         result.set(id, { name: selectedName(row), nickname: null, parentId, origin: review ? "auto_review" : null });
@@ -552,6 +558,7 @@ export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
   sourcePaths = null,
   knownThreadIds = new Set(),
   onOriginDiagnostic = null,
+  diagnosticTimer = null,
 } = {}) {
   const report = (code, count) => reportOriginDiagnostic(onOriginDiagnostic, code, count);
   const unavailable = () => withOriginReadReceipt ? { complete: false, relations: new Map() } : new Map();
@@ -565,15 +572,16 @@ export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
   if (ids.includes(null)) { report("metadata_invalid_request"); return unavailable(); }
   report("requested", ids.length);
   const selection = sourcePaths instanceof Map || typeof sourcePaths === "function"
-    ? await readSourceUsageRelations(codexHome, ids, sourcePaths, knownThreadIds, filesystem, signal)
+    ? await readSourceUsageRelations(codexHome, ids, sourcePaths, knownThreadIds, filesystem, signal, diagnosticTimer)
     : await readSelectedThreadMetadata(codexHome, ids, {
-      ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal, onOriginDiagnostic, withOriginReadReceipt,
+      ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal, onOriginDiagnostic, withOriginReadReceipt, diagnosticTimer,
     });
   const selected = withOriginReadReceipt ? selection?.selected : selection;
   if (!(selected instanceof Map)) return unavailable();
   const known = ids.filter(id => selected.has(id)).length;
   report("known", known);
   report("unknown", ids.length - known);
+  const finishParents = diagnosticTimer?.start("origin_parent_chain");
   const relations = new Map(ids.map(id => {
     let current = id;
     const seen = new Set();
@@ -597,6 +605,7 @@ export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
         ancestryKnown: valid && !blockedReviewTerminal } : {}),
       ...(includeOriginEvidence ? {originKnown:selected.has(id)} : {}) }];
   }));
+  finishParents?.();
   return withOriginReadReceipt ? { complete: selection.complete === true, relations } : relations;
 }
 

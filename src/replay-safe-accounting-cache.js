@@ -3379,7 +3379,7 @@ function createCompositionFitConsumer({
   const recentMix = {};
   const recentCostsByBin = new Map();
   let processed = 0;
-  const consume = async (row) => {
+  const consumeCore = async (row) => {
     processed += 1;
     if (processed % ACCOUNTING_RSS_CHECK_INTERVAL === 0) {
       throwIfAborted(signal);
@@ -3396,15 +3396,15 @@ function createCompositionFitConsumer({
     const model = row[1];
     const binStartMs = Math.floor(observedAtMs / grainMs) * grainMs;
     const intervalStartMs = Date.parse(row[20]?.[2] ?? "");
-    const association = classifyUsageAttribution(attributionIndex, {
+    const association = fitTiming.measureSync("fit_attribution",()=>classifyUsageAttribution(attributionIndex, {
       contextKey, observedAtMs,
       ...(Number.isSafeInteger(intervalStartMs) ? { intervalStartMs } : {}),
       observedPlanType: row[20]?.[0] === "same_record" ? row[20][1] : null,
-    }, { planType });
-    const planTimelineEvent = compactPlanScopedTimelineEvent(
+    }, { planType }),{aggregate:true});
+    const planTimelineEvent = fitTiming.measureSync("fit_event_projection",()=>compactPlanScopedTimelineEvent(
       row,
       declaredSpeedBaselines,
-    );
+    ),{aggregate:true});
     if (planTimelineEvent === null) {
       planScopedDiagnostics.malformedEvents += 1;
     } else {
@@ -3455,7 +3455,9 @@ function createCompositionFitConsumer({
       recentCosts.set(model, (recentCosts.get(model) ?? 0) + costUsd);
     }
   };
+  const consume = row => fitTiming.measure("fit_row_processing",()=>consumeCore(row),{aggregate:true});
   const finish = async () => {
+    fitTiming.flush();
     const quotaRows = [];
     // Use admitted plan-preserving snapshots, not the generic timeline whose
     // same-instant collapse may already have chosen a different plan's row.
@@ -4057,6 +4059,7 @@ export async function buildReplaySafeAccountingCache({
   // are a typed failure or a calibration falsely labelled complete-but-empty;
   // fail closed, and the next refresh reopens it from scratch.
   const calibrationCorpus = await timing.measure("accounting_corpus_open", () => calibrationSource.open({
+    onTiming, monotonicClock,
     endMs,
     limits,
     declaredSpeedBaselines: baselines,

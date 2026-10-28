@@ -150,11 +150,11 @@ export async function openStableRolloutSource(info) {
   }
 }
 
-export async function withStableRolloutSource(info, operation) {
+export async function withStableRolloutSource(info, operation, diagnosticTimer = null) {
   if (typeof operation !== "function") {
     throw new TypeError("rollout source operation must be a function");
   }
-  const snapshot = await openStableRolloutSource(info);
+  const snapshot = diagnosticTimer ? await diagnosticTimer.measure("source_open",()=>openStableRolloutSource(info),{aggregate:true}) : await openStableRolloutSource(info);
   let operationFailed = false;
   let operationError;
   let result;
@@ -167,12 +167,14 @@ export async function withStableRolloutSource(info, operation) {
   let verificationFailed = false;
   let verificationError;
   try {
-    await snapshot.verify();
+    if (diagnosticTimer) await diagnosticTimer.measure("source_verify",()=>snapshot.verify(),{aggregate:true});
+    else await snapshot.verify();
   } catch (error) {
     verificationFailed = true;
     verificationError = error;
   } finally {
-    await snapshot.close().catch(() => {});
+    if (diagnosticTimer) await diagnosticTimer.measure("source_close",()=>snapshot.close().catch(() => {}),{aggregate:true});
+    else await snapshot.close().catch(() => {});
   }
   // A parse result or parse failure from bytes that changed during the pass
   // is never trustworthy. Prefer the retryable integrity verdict so a

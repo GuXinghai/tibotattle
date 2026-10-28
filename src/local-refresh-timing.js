@@ -17,6 +17,10 @@ export const LOCAL_REFRESH_TIMING_STAGES = Object.freeze([
   "accounting_fit_stream", "accounting_fit_current_finish", "accounting_fit_historical_finish",
   "accounting_fit_observations", "accounting_fit_solver", "accounting_fit_timeline",
   "projection_report", "projection_work", "work_memberships", "work_origins", "work_projects", "work_aggregate", "work_finalize",
+  "discovery_selected", "discovery_walk", "discovery_directory", "discovery_stat", "discovery_inspect", "discovery_headers", "discovery_decode", "discovery_graph",
+  "index_begin", "index_source_state", "index_history_seed", "index_parent_model", "index_tier_seed", "index_digest_windows", "source_open", "source_verify", "source_close",
+  "corpus_sql", "corpus_project", "corpus_consume", "corpus_cadence", "fit_attribution", "fit_event_projection", "fit_row_processing",
+  "origin_path_query", "origin_realpath", "origin_open", "origin_read", "origin_parse", "origin_validate", "origin_close", "origin_parent_chain",
 ]);
 const STAGES = new Set(LOCAL_REFRESH_TIMING_STAGES);
 const REUSE_PHASES = new Set(["proof_before", "lookup", "proof_after", "remember", "index"]);
@@ -62,7 +66,12 @@ const duration = (start, end) => start !== null && end !== null && end >= start 
 export function createLocalRefreshTimer({ onTiming = null, clock = monotonicNow } = {}) {
   if (onTiming !== null && typeof onTiming !== "function") throw new TypeError("onTiming must be a function or null");
   if (typeof clock !== "function") throw new TypeError("timing clock must be a function");
-  function start(stage) {
+  const accumulated = new Map();
+  const emit = value => {
+    try { Promise.resolve(onTiming?.(Object.freeze(value))).catch(() => {}); }
+    catch { /* Optional diagnostics cannot affect work. */ }
+  };
+  function start(stage, { aggregate = false } = {}) {
     if (!STAGES.has(stage)) throw new TypeError("unknown refresh timing stage");
     const began = onTiming === null ? null : instant(clock);
     let done = false;
@@ -73,23 +82,28 @@ export function createLocalRefreshTimer({ onTiming = null, clock = monotonicNow 
       const wallMs = duration(began, instant(clock));
       if (wallMs === null) return;
       const outcome = error === null ? "completed" : error?.name === "AbortError" ? "cancelled" : "failed";
+      if (aggregate) {
+        const key = `${stage}:${outcome}`, previous = accumulated.get(key);
+        if ((previous?.wallMs ?? 0) + wallMs <= MAX_MS) accumulated.set(key, { stage, outcome, wallMs: (previous?.wallMs ?? 0) + wallMs });
+        return;
+      }
       try {
         // Optional observers cannot change accounting, cancellation or writes.
         Promise.resolve(onTiming(Object.freeze({ stage, wallMs, outcome }))).catch(() => {});
       } catch { /* Diagnostics are independent of the operation's result. */ }
     };
   }
-  async function measure(stage, work) {
-    const finish = start(stage);
+  async function measure(stage, work, options) {
+    const finish = start(stage, options);
     try { const value = await work(); finish(); return value; }
     catch (error) { finish(error ?? {}); throw error; }
   }
-  function measureSync(stage, work) {
-    const finish = start(stage);
+  function measureSync(stage, work, options) {
+    const finish = start(stage, options);
     try { const value = work(); finish(); return value; }
     catch (error) { finish(error ?? {}); throw error; }
   }
-  return { start, measure, measureSync };
+  return { start, measure, measureSync, flush() { for (const value of accumulated.values()) emit(value); accumulated.clear(); } };
 }
 
 export function createLocalRefreshTimingRecorder({ clock = monotonicNow } = {}) {

@@ -4,6 +4,7 @@ import { REPLAY_SAFE_CALIBRATION_INTERNALS } from "./replay-safe-accounting-cach
 import { readCodexLocalThreadUsageRelations } from "./platform/index.js";
 import { buildWeeklyApiIntervals, unavailableWeeklyApiIntervals } from "./weekly-api-intervals.js";
 import { speedApiPrice } from "./speed-api-cost.js";
+import { createLocalRefreshTimer } from "./local-refresh-timing.js";
 
 const {
   ACCOUNTING_RSS_CHECK_INTERVAL,
@@ -74,7 +75,9 @@ export async function openLocalIndexCalibrationCorpus({
   declaredSpeedBaselines = [],
   signal = null,
   checkRuntimeMemory = () => {},
+  onTiming = null, monotonicClock = undefined,
 }) {
+  const timing = createLocalRefreshTimer({onTiming,clock:monotonicClock});
   let database;
   try {
     database = openLocalIndexStore(indexFile, { readOnly: true });
@@ -402,6 +405,9 @@ export async function openLocalIndexCalibrationCorpus({
     // again by the shared predicate, so the stream yields exactly the retained
     // rows between its bounds.
     function projectUsageRow(row, position) {
+      return timing.measureSync("corpus_project",()=>projectUsageRowCore(row,position),{aggregate:true});
+    }
+    function projectUsageRowCore(row, position) {
       const observedMs = Number(row.observed_at_ms);
       if (!Number.isSafeInteger(observedMs) || !retainedByLightFilter(row)) return null;
       const basisIndex = memoBasis[position];
@@ -474,9 +480,10 @@ export async function openLocalIndexCalibrationCorpus({
       if (closed) throw fixedError("accounting_calibration_corpus_unavailable");
       if (residentRows !== null) {
         for (let position = low; position < high; position += 1) {
-          await cadence();
-          await consume(residentRows[position]);
+          await timing.measure("corpus_cadence",()=>cadence(),{aggregate:true});
+          await timing.measure("corpus_consume",()=>consume(residentRows[position]),{aggregate:true});
         }
+        timing.flush();
         return;
       }
       const bound = [usageMs[high - 1], usageSource[high - 1], usageOffset[high - 1]];
@@ -485,14 +492,14 @@ export async function openLocalIndexCalibrationCorpus({
       let served = 0;
       try {
         for (;;) {
-          const batch = statement.all(...cursor, ...bound);
+          const batch = timing.measureSync("corpus_sql",()=>statement.all(...cursor, ...bound),{aggregate:true});
           if (batch.length === 0) break;
           for (const row of batch) {
-            await cadence();
+            await timing.measure("corpus_cadence",()=>cadence(),{aggregate:true});
             const projected = projectUsageRow(row, low + served);
             if (projected === null) continue;
             served += 1;
-            await consume(projected);
+            await timing.measure("corpus_consume",()=>consume(projected),{aggregate:true});
           }
           const last = batch.at(-1);
           cursor = [Number(last.observed_at_ms), Number(last.source_id), Number(last.source_offset)];
@@ -509,7 +516,9 @@ export async function openLocalIndexCalibrationCorpus({
       if (served !== high - low) {
         throw fixedError("accounting_unified_generation_changed");
       }
+      timing.flush();
     };
+    timing.flush();
     return {
       commitSeq,
       coveredAt: {
@@ -527,7 +536,8 @@ export async function openLocalIndexCalibrationCorpus({
         const selected = sessions.filter(row => typeof row.session_uuid === "string"
           && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(row.session_uuid));
         const relations = codexHome ? await readCodexLocalThreadUsageRelations(codexHome,
-          selected.map(row => row.session_uuid), { signal,includeOriginEvidence:true }) : new Map();
+          selected.map(row => row.session_uuid), { signal,includeOriginEvidence:true,diagnosticTimer:timing }) : new Map();
+        timing.flush();
         weeklyApiOrigins = new Map(selected.map(row => [Number(row.id), {
           autoReview: relations.get(row.session_uuid)?.autoReview === true,
           originKnown: relations.get(row.session_uuid)?.originKnown === true,

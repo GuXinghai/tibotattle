@@ -109,11 +109,13 @@ export async function readLocalIndexWorkUsage({
   const sourcePathQuery = database.prepare(`SELECT DISTINCT src.path FROM source src
     JOIN session s ON s.id=src.session_id WHERE s.session_uuid=? COLLATE NOCASE
       AND src.quarantine_code IS NULL AND src.scanned_bytes>0 LIMIT 33`);
-  const sourcePaths = uuid => sourcePathQuery.all(uuid).map(row => row.path);
+  const sourcePaths = uuid => timing.measureSync("origin_path_query",()=>sourcePathQuery.all(uuid).map(row => row.path),{aggregate:true});
   const threadRelations = await timing.measure("work_origins",()=>readCodexLocalThreadUsageRelations(codexHome,
     [...sessions.values()].map(s => s.uuid).filter(Boolean), {
       signal, sourcePaths, knownThreadIds: new Set(memberships.threads.keys()), includeProjectAncestry: true,
+      diagnosticTimer: timing,
     }));
+  timing.flush();
   metadataAvailable = memberships.status === "available";
   try {
     deviceSalt = await readExistingDeviceSalt(

@@ -31,6 +31,10 @@ no source paths, session identities or content enter these diagnostics. Inclusiv
 and parallel spans must not be summed as independent wall time. Cold-start
 measurement preserves existing user data and caches; it does not mean a cleared
 operating-system file cache or a destructive first-use rebuild.
+Fine-grained diagnostics additionally separate discovery walking/stat/header
+inspection, source open/verification and history seeds, corpus read/projection/
+consumption, and origin path/open/read/validation. High-frequency durations are
+aggregated before reporting; parallel totals are not critical-path durations.
 
 Timestamp-only changes to a fully indexed, uncompressed source can preserve its
 facts after stable full-byte verification against all segment and tail digests.

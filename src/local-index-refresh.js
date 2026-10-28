@@ -635,7 +635,7 @@ export async function refreshLocalIndex({
   const database = openLocalIndexStore(resolvedIndexFile, { create: true });
   const writer = createLocalIndexWriter(database);
   for (const [method, stage] of [["deleteSourceFacts", "index_delete"], ["finishSourceCandidate", "index_candidate_compare"],
-    ["commitSourceState", "index_cursor"], ["commit", "index_commit"]]) {
+    ["commitSourceState", "index_cursor"], ["commit", "index_commit"], ["begin", "index_begin"]]) {
     const original = writer[method].bind(writer);
     writer[method] = (...args) => timing.measureSync(stage, () => original(...args));
   }
@@ -653,8 +653,10 @@ export async function refreshLocalIndex({
       const roundedHits = new Map();
       infos = await timing.measure("index_discovery",()=>discover({
         codexHome, startAt, endAt, signal, discoveryLimits,
+        diagnosticTimer: timing,
         inspectionCache: createInspectionCache(catalog, { disabled, roundedHits }),
       }));
+      timing.flush();
       const receipt = localCodexLogScanner.codexRolloutDiscoveryReceipt(infos);
       const fileIds = await timing.measure("index_file_ids",()=>resolveFileIds([...infos, ...receipt.quarantined]));
       // A cached inspection found through a rounded inode is trusted only if
@@ -682,6 +684,7 @@ export async function refreshLocalIndex({
     });
     return result;
   } finally {
+    timing.flush();
     if (database.isOpen) database.close();
   }
 }
@@ -1348,7 +1351,7 @@ async function runRefresh({
           const countsBeforeCandidate = { ...counts };
           writer.begin();
           try {
-            const state = stateFor(info, row);
+            const state = timing.measureSync("index_source_state",()=>stateFor(info, row));
             if (dependencyUnavailable(info)) {
               counts.usageEventsRemoved += writer.deleteSourceFacts(state.sourceId);
               writer.commitSourceState(state.sourceId, quarantineState(
@@ -1372,7 +1375,7 @@ async function runRefresh({
             const ownTier = resuming ? carriedTier(row) : null;
             const logicalSeed = paginated || resuming ? null : {
               ...seedForNew(info),
-              seedTier: await lineageSeedTier(info),
+              seedTier: await timing.measure("index_tier_seed",()=>lineageSeedTier(info)),
             };
             const cursorSeed = resuming ? {
               seedModel: row.carry_model ?? null,
@@ -1384,9 +1387,9 @@ async function runRefresh({
             const needsHistorySeed = !resuming || (paginated && ownTier === null
               && info.lineage?.historyBase != null);
             const historySeed = needsHistorySeed
-              ? await historySeeds.resolveSeed(info, {
+              ? await timing.measure("index_history_seed",()=>historySeeds.resolveSeed(info, {
                 includeSnapshots: !resuming && collector !== null,
-              })
+              }))
               : null;
             const selectedSeed = selectRolloutUsageSeed(info, {
               historySeed, logicalSeed, cursorSeed,
@@ -1413,7 +1416,7 @@ async function runRefresh({
               }
             }
             const parentModelAt = selectedSeed.seedModel === null
-              ? await parentModels.forSource(info) : null;
+              ? await timing.measure("index_parent_model",()=>parentModels.forSource(info)) : null;
             const { outcome, tapSegments, windows } = await withStableRolloutSource(
               info,
               async (handle) => {
@@ -1448,9 +1451,9 @@ async function runRefresh({
                 return {
                   outcome: extracted,
                   tapSegments: tap?.finish(extracted.read.nextOffset) ?? null,
-                  windows: await digestWindows(handle, extracted.read.nextOffset),
+                  windows: await timing.measure("index_digest_windows",()=>digestWindows(handle, extracted.read.nextOffset)),
                 };
-              },
+              }, timing,
             );
             if (signal?.aborted || outcome.read.aborted === true) {
               throw fixedError("local_index_aborted");
