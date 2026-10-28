@@ -203,7 +203,7 @@ export function mountXReader(options) {
   const settings=iconButton('settings',onOpenSettings,'x-reader-settings'),newPosts=button(t('newPosts'),()=>{pendingItems=null;content.scrollTop=0;void loadList();},'x-reader-new');newPosts.hidden=true;
   const backSlot=node('div','x-reader-back-slot'),back=iconButton('back',()=>{const parent=detailTrail.pop();detail=parent?.detail??null;++detailRequest;renderContent();content.scrollTop=parent?.scroll??detailScroll;},'x-reader-back');back.hidden=true;backSlot.append(back);
   toolbar.append(backSlot,tabs,refresh,settings);root.append(toolbar,statusLine,loginPanel,newPosts,content);container.append(root);
-  const records=new Map(TABS.map(tab=>[tab,{items:[],cursor:null,scroll:0,loaded:false}])),full=new Map(),fullFailed=new Set(),autoTried=new Set(),queued=new Set(),mediaCleanups=new Set(),renderedPosts=new Map();
+  const records=new Map(TABS.map(tab=>[tab,{items:[],cursor:null,scroll:0,loaded:false}])),full=new Map(),fullFailed=new Set(),autoTried=new Set(),queued=new Set(),mediaCleanups=new Set(),renderedPosts=new Map(),avatarLoads=new Set();
   // Until the first service response, login is unknown rather than absent.
   let active='posts',shown=false,disposed=false,status={auth:'restoring',operation:'idle'},generation=0,listRequest=0,detailRequest=0,detail=null,detailScroll=0,detailTrail=[],pollTimer=null,fullActive=0,loginMethod=null,loginChoiceOpen=false,importSetupError=false,pendingItems=null,updatedAt=null,loading=false,viewer=null;
   const tabButtons=new Map();
@@ -237,7 +237,7 @@ export function mountXReader(options) {
   content.addEventListener('load',scheduleNextPage,true);
   const pageResize=typeof win.ResizeObserver==='function'?new win.ResizeObserver(scheduleNextPage):null;
   pageResize?.observe(content);
-  function setStatus(value){if(!value)return;const previous=status.auth;status={...value,auth:AUTH.includes(value.auth)?value.auth:'disconnected',operation:OPERATIONS.includes(value.operation)?value.operation:'error'};if(['authorizing','challenge'].includes(status.auth)&&['web','session'].includes(status.loginMethod))loginMethod=status.loginMethod;else if(previous==='authorizing'&&status.auth!=='authorizing')loginMethod=null;renderStatus();}
+  function setStatus(value){if(!value)return;const previous=status.auth;status={...value,auth:AUTH.includes(value.auth)?value.auth:'disconnected',operation:OPERATIONS.includes(value.operation)?value.operation:'error'};if(['authorizing','challenge'].includes(status.auth)&&['web','session'].includes(status.loginMethod))loginMethod=status.loginMethod;else if(previous==='authorizing'&&status.auth!=='authorizing')loginMethod=null;renderStatus();if(shown&&status.auth==='ready')for(const load of avatarLoads)load();}
   function renderStatus(){
     const operation=status.operation==='error'?'failed':status.operation;
     const hasItems=records.get(active).items.length>0;
@@ -320,9 +320,20 @@ export function mountXReader(options) {
       element.addEventListener('error',()=>{if(!wrap.querySelector('p'))wrap.append(node('p','x-reader-muted',t('mediaFailed')));});wrap.append(element);parent.append(wrap);
     }
   }
+  function authorAvatar(author){
+    const slot=node('span','x-reader-avatar-slot'),fallback=node('span','x-reader-avatar-fallback',Array.from(author.name.trim()||author.handle)[0]??''),image=node('img','x-reader-avatar');
+    slot.setAttribute('aria-hidden','true');image.alt='';image.loading='lazy';image.hidden=true;slot.append(fallback,image);
+    let attempts=0,pending=false,loaded=false,cancelled=false;
+    const load=()=>{if(cancelled||disposed||!shown||status.auth!=='ready'||pending||loaded||attempts>=2)return;attempts++;pending=true;image.hidden=false;image.src=author.avatar;};
+    const success=()=>{if(cancelled)return;pending=false;loaded=true;image.hidden=false;fallback.hidden=true;};
+    const failure=()=>{if(cancelled)return;pending=false;image.hidden=true;fallback.hidden=false;image.removeAttribute('src');};
+    image.addEventListener('load',success);image.addEventListener('error',failure);avatarLoads.add(load);
+    mediaCleanups.add(()=>{cancelled=true;avatarLoads.delete(load);image.removeEventListener('load',success);image.removeEventListener('error',failure);image.removeAttribute('src');});
+    load();return slot;
+  }
   function card(value,{clickable=true,quoted=false}={}){
     const previousCleanups=new Set(mediaCleanups),post=full.get(value.id)??value,article=node('article',quoted?'x-reader-post x-reader-quote':'x-reader-post'),header=node('div','x-reader-byline');
-    if(post.author.avatar){const avatar=node('img','x-reader-avatar');avatar.src=post.author.avatar;avatar.alt='';avatar.loading='lazy';header.append(avatar);}
+    if(post.author.avatar)header.append(authorAvatar(post.author));
     const time=node('time','x-reader-muted',formatXClocks(post.createdAt,options.deviceTimeZone)??t('unknownTime'));time.dateTime=post.createdAt;
     const body=node('p','x-reader-body',post.text);header.append(node('strong','',post.author.name),node('span','x-reader-muted',`@${post.author.handle}`),time);article.append(header,body);
     const fullState=node('p','x-reader-muted');if(!post.complete){renderFullState(fullState,post.id);article.append(fullState);}

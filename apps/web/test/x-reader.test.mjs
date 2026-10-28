@@ -22,6 +22,32 @@ test('first entry checks login without flashing the chooser while status and cac
   }
 });
 
+test('cached author and quote avatars wait for session readiness, retry once and keep a fallback on failure',async()=>{
+  const f=dom();let finishStatus;
+  const avatar='usagemonitor-x-media://resource/11111111-1111-4111-8111-111111111111';
+  const value=post('123',{author:{name:'Example',handle:'example',avatar},quotedPost:post('124',{author:{name:'Quote',handle:'quote',avatar}})});
+  const reader=mountXReader({container:f.container,bridge:bridge({getXStatus:()=>new Promise(resolve=>finishStatus=resolve),listXPosts:async()=>({items:[value],source:'cache',status:{auth:'restoring',operation:'idle'}})})});
+  const showing=reader.show();await flush();
+  const images=walk(f.container).filter(el=>el.className==='x-reader-avatar');assert.equal(images.length,2);
+  for(const image of images){assert.equal(image.src,undefined);assert.equal(image.hidden,true);}
+  finishStatus({auth:'ready',operation:'idle'});await showing;
+  for(const image of images){assert.equal(image.src,avatar);await image.dispatch('error');assert.equal(image.hidden,true);}
+  reader.handleUpdate({auth:'ready',operation:'idle'});await flush();
+  for(const image of images){assert.equal(image.hidden,false);await image.dispatch('error');}
+  reader.handleUpdate({auth:'ready',operation:'idle'});await flush();
+  for(const image of images)assert.equal(image.hidden,true,'retry budget is not reset by status polls');
+  reader.hide();reader.handleUpdate({auth:'ready',operation:'idle'});await flush();
+  for(const image of images)assert.equal(image.hidden,true,'hidden cards cannot restart image requests');reader.dispose();
+});
+
+test('a successful avatar replaces its decorative fallback and disposed cards ignore late events',async()=>{
+  const f=dom(),avatar='usagemonitor-x-media://resource/11111111-1111-4111-8111-111111111111';
+  const reader=mountXReader({container:f.container,bridge:bridge({listXPosts:async()=>({items:[post('123',{author:{name:'Example',handle:'example',avatar}})]})})});
+  await reader.show();const image=walk(f.container).find(el=>el.className==='x-reader-avatar'),fallback=walk(f.container).find(el=>el.className==='x-reader-avatar-fallback');
+  await image.dispatch('load');assert.equal(image.hidden,false);assert.equal(fallback.hidden,true);
+  reader.dispose();await image.dispatch('error');assert.equal(fallback.hidden,true);assert.equal(f.listeners.size,0);
+});
+
 test('a confirmed missing session shows login, while initial status read failure exposes retry without assuming logout',async()=>{
   for(const failed of [false,true]){
     const fixture=dom();let finishStatus,failStatus,finishList;

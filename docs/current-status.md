@@ -34,7 +34,16 @@ price cards remain byte-identical. Model-recognition revision 2 reuses the bound
 recovery queue for unknown-model sources; missing sources remain unknown and
 replays preserve token and occurrence identity. The retired cloud history roster
 remains frozen independently of the local catalog. Validation uses isolated
-synthetic state; this addition has not been packaged or activated on real data.
+synthetic state. The unsigned local stable build `2026102802` adopted Terra
+support at candidate revision `5acae835f7977c3892ef0dfe0c92f8c9b50e596c`;
+startup and the served catalog were verified separately from source tests.
+The X reader's working-tree avatar repair defers protected image requests until
+the saved session is ready, bounds retries to two attempts per mounted avatar,
+and retains a decorative initial when loading fails. Author and quoted-author
+loading, recovery and disposal use synthetic tests; it does not clear caches or
+change authentication. The bare custom-protocol image path also loaded a
+synthetic image in an isolated Electron profile. This does not establish the
+precise network failure of the owner's prior cached image requests.
 The focused model/pricing/recovery suite passed 89 checks; targeted browser,
 response attribution and performance checks also passed. Contract generation,
 schema/browser mirrors, architecture and preflight passed. The broader root
