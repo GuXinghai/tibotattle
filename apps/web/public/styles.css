@@ -5259,6 +5259,23 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 .dashboard-shell .work-usage-filter-controls { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
 .dashboard-shell .work-usage-actions { gap: 8px 12px; margin: 12px 0; }
 .dashboard-shell .work-usage-actions .work-usage-status { margin: 0; }
+.dashboard-shell button:is(.work-usage-cancel, [data-performance-focus="cancel"]),
+.dashboard-shell button:is(.work-usage-cancel, [data-performance-focus="cancel"]):hover {
+  min-height: 24px;
+  padding: 5px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 400;
+  text-decoration: underline dashed;
+  text-underline-offset: 4px;
+}
+@media (pointer: coarse) {
+  .dashboard-shell button:is(.work-usage-cancel, [data-performance-focus="cancel"]) { min-height: 44px; }
+}
 .dashboard-shell .work-usage-evidence { display: flex; flex-wrap: wrap; gap: 8px 20px; padding: 12px 0; margin: 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: .75rem; }
 .dashboard-shell .work-usage-evidence > div { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
 .dashboard-shell .work-usage-evidence :is(dt,dd) { margin: 0; font-size: inherit; font-variant-numeric: tabular-nums; }

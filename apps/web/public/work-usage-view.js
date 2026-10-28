@@ -955,6 +955,7 @@ export function mountWorkUsageView(options = {}) {
     setStatus("cancelled");
   });
   cancel.hidden = true;
+  cancel.classList.add("work-usage-cancel");
   // Re-issues the exact current query (cursor and filters preserved) through
   // load(), which owns cancellation, serial fencing and lease handling.
   const retryButton = button(tr("retry"), () => {
