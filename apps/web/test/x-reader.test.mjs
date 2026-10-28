@@ -22,22 +22,67 @@ test('first entry checks login without flashing the chooser while status and cac
   }
 });
 
-test('cached author and quote avatars wait for session readiness, retry once and keep a fallback on failure',async()=>{
-  const f=dom();let finishStatus;
+test('cached author and quote avatars wait for session readiness and manual refresh retries failures immediately',async()=>{
+  const f=dom();let finishStatus,auth='restoring';
   const avatar='usagemonitor-x-media://resource/11111111-1111-4111-8111-111111111111';
   const value=post('123',{author:{name:'Example',handle:'example',avatar},quotedPost:post('124',{author:{name:'Quote',handle:'quote',avatar}})});
-  const reader=mountXReader({container:f.container,bridge:bridge({getXStatus:()=>new Promise(resolve=>finishStatus=resolve),listXPosts:async()=>({items:[value],source:'cache',status:{auth:'restoring',operation:'idle'}})})});
+  const reader=mountXReader({container:f.container,bridge:bridge({getXStatus:()=>new Promise(resolve=>finishStatus=resolve),listXPosts:async()=>({items:[value],source:'cache',status:{auth,operation:'idle'}})})});
   const showing=reader.show();await flush();
   const images=walk(f.container).filter(el=>el.className==='x-reader-avatar');assert.equal(images.length,2);
   for(const image of images){assert.equal(image.src,undefined);assert.equal(image.hidden,true);}
-  finishStatus({auth:'ready',operation:'idle'});await showing;
+  auth='ready';finishStatus({auth,operation:'idle'});await showing;
   for(const image of images){assert.equal(image.src,avatar);await image.dispatch('error');assert.equal(image.hidden,true);}
   reader.handleUpdate({auth:'ready',operation:'idle'});await flush();
+  for(const image of images)assert.equal(image.hidden,true,'ordinary status polls do not retry failures');
+  const refresh=walk(f.container).find(el=>el.getAttribute('aria-label')==='刷新');
+  await refresh.dispatch('click');await flush();
   for(const image of images){assert.equal(image.hidden,false);await image.dispatch('error');}
+  await refresh.dispatch('click');await flush();
+  for(const image of images){assert.equal(image.hidden,false,'manual refresh is not exhausted after two failures');await image.dispatch('error');}
   reader.handleUpdate({auth:'ready',operation:'idle'});await flush();
-  for(const image of images)assert.equal(image.hidden,true,'retry budget is not reset by status polls');
+  for(const image of images)assert.equal(image.hidden,true,'ordinary status polls retain the fallback');
   reader.hide();reader.handleUpdate({auth:'ready',operation:'idle'});await flush();
   for(const image of images)assert.equal(image.hidden,true,'hidden cards cannot restart image requests');reader.dispose();
+});
+
+test('automatic avatar retries use capped exponential backoff and preserve loaded images',async()=>{
+  const f=dom();let now=0,round=0;
+  const avatar='usagemonitor-x-media://resource/11111111-1111-4111-8111-111111111111';
+  const value=post('123',{author:{name:'Author',handle:'author',avatar},quotedPost:post('124',{author:{name:'Quote',handle:'quote',avatar}})});
+  const reader=mountXReader({container:f.container,clock:()=>now,bridge:bridge({listXPosts:async()=>({items:[value]})})});
+  await reader.show();const images=walk(f.container).filter(el=>el.className==='x-reader-avatar');
+  const [failed,loaded]=images;let requests=1,loadedRequests=1;
+  Object.defineProperty(failed,'src',{get:()=>avatar,set:()=>{requests++;},configurable:true});
+  Object.defineProperty(loaded,'src',{get:()=>avatar,set:()=>{loadedRequests++;},configurable:true});
+  await failed.dispatch('error');await loaded.dispatch('load');
+  const refresh=async()=>{reader.handleUpdate({auth:'ready',operation:'idle',lastUpdated:new Date(Date.UTC(2026,9,28)+ ++round*1000).toISOString()});await flush();};
+  for(const delay of [60000,120000,240000,480000,960000,1800000,1800000]){
+    const before=requests;now+=delay-1;await refresh();assert.equal(requests,before);
+    now++;await refresh();assert.equal(requests,before+1);
+    await refresh();assert.equal(requests,before+1,'overlapping refreshes share the pending image');
+    await failed.dispatch('error');assert.equal(failed.hidden,true);
+  }
+  let before=requests;now+=1800000;
+  reader.handleUpdate({auth:'ready',operation:'idle'});await flush();assert.equal(requests,before,'elapsed time alone does not turn a poll into a refresh');
+  assert.equal(loadedRequests,1);assert.equal(loaded.hidden,false);
+  assert.equal(walk(f.container).find(el=>el.className==='x-reader-avatar'),failed,'unchanged cards remain mounted');
+  f.doc.hidden=true;await refresh();assert.equal(requests,before,'background documents cannot retry');
+  f.doc.hidden=false;await refresh();assert.equal(requests,before+1);await failed.dispatch('error');before=requests;
+  reader.handleUpdate({auth:'disconnected',operation:'idle'});await flush();
+  await walk(f.container).find(el=>el.getAttribute('aria-label')==='刷新').dispatch('click');await flush();assert.equal(requests,before,'logout stops retries');
+  reader.hide();await refresh();assert.equal(requests,before,'hidden readers stop retries');reader.dispose();
+});
+
+test('manual detail refresh retries failed avatars before waiting for post fetching',async()=>{
+  const f=dom();let finish;
+  const avatar='usagemonitor-x-media://resource/11111111-1111-4111-8111-111111111111';
+  const value=post('123',{author:{name:'Author',handle:'author',avatar}});
+  const reader=mountXReader({container:f.container,bridge:bridge({getXPost:async({force})=>force?new Promise(resolve=>finish=resolve):{post:value,replies:[],status:{auth:'ready',operation:'idle'}}})});
+  await reader.show();await reader.openPost('123');
+  const image=walk(f.container).find(el=>el.className==='x-reader-avatar');await image.dispatch('error');
+  const refreshing=walk(f.container).find(el=>el.getAttribute('aria-label')==='刷新').dispatch('click');await flush();assert.equal(image.hidden,false);
+  finish({post:value,replies:[],status:{auth:'ready',operation:'idle'}});await refreshing;
+  assert.equal(walk(f.container).find(el=>el.className==='x-reader-avatar'),image);reader.dispose();
 });
 
 test('a successful avatar replaces its decorative fallback and disposed cards ignore late events',async()=>{

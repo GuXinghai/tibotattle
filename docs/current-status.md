@@ -37,9 +37,14 @@ remains frozen independently of the local catalog. Validation uses isolated
 synthetic state. The unsigned local stable build `2026102802` adopted Terra
 support at candidate revision `5acae835f7977c3892ef0dfe0c92f8c9b50e596c`;
 startup and the served catalog were verified separately from source tests.
-The X reader's working-tree avatar repair defers protected image requests until
-the saved session is ready, bounds retries to two attempts per mounted avatar,
-and retains a decorative initial when loading fails. Author and quoted-author
+The X reader defers protected image requests until the saved session is ready
+and retains a decorative initial when loading fails. The working-tree retry
+repair retries failed avatars only on newer automatic-refresh timestamps, after
+1/2/4/8/16/30-minute backoff (capped at 30 minutes); ordinary status polls cannot
+trigger retries. Manual refresh bypasses the delay, including when post fetching
+is still pending. Loaded or in-flight avatars remain unchanged; hidden readers
+and unauthenticated sessions cannot retry. No extra retry timer or persisted
+state is introduced. Author and quoted-author
 loading, recovery and disposal use synthetic tests; it does not clear caches or
 change authentication. The bare custom-protocol image path also loaded a
 synthetic image in an isolated Electron profile. This does not establish the

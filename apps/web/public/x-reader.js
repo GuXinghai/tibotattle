@@ -204,6 +204,8 @@ export function mountXReader(options) {
   const backSlot=node('div','x-reader-back-slot'),back=iconButton('back',()=>{const parent=detailTrail.pop();detail=parent?.detail??null;++detailRequest;renderContent();content.scrollTop=parent?.scroll??detailScroll;},'x-reader-back');back.hidden=true;backSlot.append(back);
   toolbar.append(backSlot,tabs,refresh,settings);root.append(toolbar,statusLine,loginPanel,newPosts,content);container.append(root);
   const records=new Map(TABS.map(tab=>[tab,{items:[],cursor:null,scroll:0,loaded:false}])),full=new Map(),fullFailed=new Set(),autoTried=new Set(),queued=new Set(),mediaCleanups=new Set(),renderedPosts=new Map(),avatarLoads=new Set();
+  const avatarClock=options.clock??Date.now;
+  let avatarRefreshAt=-Infinity;
   // Until the first service response, login is unknown rather than absent.
   let active='posts',shown=false,disposed=false,status={auth:'restoring',operation:'idle'},generation=0,listRequest=0,detailRequest=0,detail=null,detailScroll=0,detailTrail=[],pollTimer=null,fullActive=0,loginMethod=null,loginChoiceOpen=false,importSetupError=false,pendingItems=null,updatedAt=null,loading=false,viewer=null;
   const tabButtons=new Map();
@@ -237,7 +239,15 @@ export function mountXReader(options) {
   content.addEventListener('load',scheduleNextPage,true);
   const pageResize=typeof win.ResizeObserver==='function'?new win.ResizeObserver(scheduleNextPage):null;
   pageResize?.observe(content);
-  function setStatus(value){if(!value)return;const previous=status.auth;status={...value,auth:AUTH.includes(value.auth)?value.auth:'disconnected',operation:OPERATIONS.includes(value.operation)?value.operation:'error'};if(['authorizing','challenge'].includes(status.auth)&&['web','session'].includes(status.loginMethod))loginMethod=status.loginMethod;else if(previous==='authorizing'&&status.auth!=='authorizing')loginMethod=null;renderStatus();if(shown&&status.auth==='ready')for(const load of avatarLoads)load();}
+  function setStatus(value){
+    if(!value)return;const previous=status.auth;status={...value,auth:AUTH.includes(value.auth)?value.auth:'disconnected',operation:OPERATIONS.includes(value.operation)?value.operation:'error'};
+    if(['authorizing','challenge'].includes(status.auth)&&['web','session'].includes(status.loginMethod))loginMethod=status.loginMethod;else if(previous==='authorizing'&&status.auth!=='authorizing')loginMethod=null;
+    // A status poll is not a completed automatic refresh. Only a newer source
+    // timestamp offers failed avatars another attempt, subject to their backoff.
+    const stamp=Date.parse(status.lastUpdated),retry=Number.isFinite(stamp)&&stamp>avatarRefreshAt;
+    if(retry)avatarRefreshAt=stamp;
+    renderStatus();if(shown&&status.auth==='ready')for(const load of avatarLoads)load({retry});
+  }
   function renderStatus(){
     const operation=status.operation==='error'?'failed':status.operation;
     const hasItems=records.get(active).items.length>0;
@@ -295,7 +305,9 @@ export function mountXReader(options) {
     finally{if(request===listRequest){loading=false;if(shown){renderStatus();scheduleNextPage();}}}
   }
   async function refreshVisible(){
-    if(loading||detail?.loading||detail?.moreLoading||!shown)return;
+    if(!shown||disposed)return;
+    for(const load of avatarLoads)load({force:true});
+    if(loading||detail?.loading||detail?.moreLoading)return;
     // Capture the target before awaiting. Normal request generations prevent a
     // refresh completed after navigation from reopening or replacing that view.
     if(detail)await openDetail(detail.id,{force:true});
@@ -323,10 +335,14 @@ export function mountXReader(options) {
   function authorAvatar(author){
     const slot=node('span','x-reader-avatar-slot'),fallback=node('span','x-reader-avatar-fallback',Array.from(author.name.trim()||author.handle)[0]??''),image=node('img','x-reader-avatar');
     slot.setAttribute('aria-hidden','true');image.alt='';image.loading='lazy';image.hidden=true;slot.append(fallback,image);
-    let attempts=0,pending=false,loaded=false,cancelled=false;
-    const load=()=>{if(cancelled||disposed||!shown||status.auth!=='ready'||pending||loaded||attempts>=2)return;attempts++;pending=true;image.hidden=false;image.src=author.avatar;};
-    const success=()=>{if(cancelled)return;pending=false;loaded=true;image.hidden=false;fallback.hidden=true;};
-    const failure=()=>{if(cancelled)return;pending=false;image.hidden=true;fallback.hidden=false;image.removeAttribute('src');};
+    let failures=0,nextRetryAt=0,pending=false,loaded=false,cancelled=false;
+    const load=({retry=false,force=false}={})=>{
+      if(cancelled||disposed||!shown||documentRef.hidden||status.auth!=='ready'||pending||loaded)return;
+      if(failures&&!force&&(!retry||avatarClock()<nextRetryAt))return;
+      pending=true;image.hidden=false;image.src=author.avatar;
+    };
+    const success=()=>{if(cancelled)return;pending=false;loaded=true;failures=0;nextRetryAt=0;image.hidden=false;fallback.hidden=true;};
+    const failure=()=>{if(cancelled)return;pending=false;failures=Math.min(6,failures+1);nextRetryAt=avatarClock()+Math.min(1_800_000,60_000*2**(failures-1));image.hidden=true;fallback.hidden=false;image.removeAttribute('src');};
     image.addEventListener('load',success);image.addEventListener('error',failure);avatarLoads.add(load);
     mediaCleanups.add(()=>{cancelled=true;avatarLoads.delete(load);image.removeEventListener('load',success);image.removeEventListener('error',failure);image.removeAttribute('src');});
     load();return slot;
