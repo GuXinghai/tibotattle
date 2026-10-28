@@ -43,7 +43,6 @@ import {
   historyCoverageNoticeKind,
   historyIndexContinuationDecision,
   refreshAccountingStatus,
-  refreshQuickResultStatus,
   refreshNeedsContinuation,
   serviceRequestId,
 } from "./lib.js";
@@ -130,6 +129,7 @@ const t = localization.t;
 const tPlural = localization.tPlural;
 
 const localClient = new LocalCompanionClient();
+const localProgressEvents = localClient.progressEvents();
 let dashboard = null;
 // Private, local-only display enrichment. Thread names never become part of
 // an accounting/dashboard DTO or browser storage.
@@ -262,6 +262,7 @@ let overviewPublicationPollingStarted = false;
 let lastObservedRefreshPublication = null;
 let lastOverviewScheduleError = null;
 let localRefreshCancelRequested = false;
+let localRefreshObservationWait = null;
 let sidebarRefreshSummaryTimer = null;
 let sidebarRefreshSummaryVersion = 0;
 // The companion owns business scheduling. Electron leases only protect the
@@ -474,7 +475,7 @@ function renderDesktopEvidenceState(state) {
   }
   for (const status of document.querySelectorAll("[data-dashboard-load-status]")) {
     status.hidden = state === "ready";
-    setLocalizedText(status, state === "error" ? "dashboard.unavailable.dashboardTitle" : "refresh.progress.saved");
+    setLocalizedText(status, state === "error" ? "dashboard.unavailable.dashboardTitle" : "refresh.stage.localData");
   }
   if (state === "ready") {
     for (const [control, disabled] of pendingEvidenceControls) control.disabled = disabled;
@@ -534,12 +535,12 @@ function renderRefreshProgress(button, phase, { processed = null, selected = nul
   button.classList.add("refresh-progress");
   const label = node("span", "refresh-progress-phase", phase);
   const phaseMessages = new Map([
-    ["Starting detailed accounting…", "refresh.progress.startingDetailed"],
-    ["Starting local analysis…", "refresh.progress.starting"],
-    ["Update running…", "refresh.progress.running"],
-    ["Reading allowance…", "refresh.progress.quota"],
-    ["Allowance updated; calculating usage…", "refresh.progress.quotaUpdatedCalculating"],
-    ["Update running; reconnecting…", "refresh.progress.reconnecting"],
+    ["Starting detailed accounting…", "refresh.stage.usageStatistics"],
+    ["Starting local analysis…", "refresh.stage.localData"],
+    ["Update running…", "refresh.stage.localData"],
+    ["Reading allowance…", "refresh.stage.quota"],
+    ["Allowance updated; calculating usage…", "refresh.stage.usageRecords"],
+    ["Update running; reconnecting…", "refresh.stage.reconnecting"],
     ["Stopping safely…", "refresh.progress.stopping"],
     ["Scanning local history…", "refresh.progress.history"],
     ["Calculating usage and allowance…", "refresh.progress.calculating"],
@@ -548,9 +549,9 @@ function renderRefreshProgress(button, phase, { processed = null, selected = nul
     ["Analyzing…", "refresh.progress.analyzing"],
     ["Continuing local analysis…", "refresh.progress.continuing"],
     ["Stopping timed-out analysis…", "refresh.progress.timeout"],
-    ["Loading saved results…", "refresh.progress.saved"],
-    ["Loading updated evidence…", "refresh.progress.updated"],
-    ["Loading evidence…", "refresh.progress.loading"],
+    ["Loading saved results…", "refresh.stage.localData"],
+    ["Loading updated evidence…", "refresh.stage.localData"],
+    ["Loading evidence…", "refresh.stage.localData"],
     ["Calculating accounting…", "refresh.progress.accounting"],
     ["Preparing local summary…", "refresh.progress.summary"],
     ["Local summary updated · checking full history…", "refresh.progress.summaryReady"],
@@ -589,7 +590,7 @@ function renderRefreshProgress(button, phase, { processed = null, selected = nul
 
 /**
  * Keep the elapsed display on wall-clock second boundaries instead of tying it
- * to the 750 ms companion-status poll. The self-correcting timeout deliberately
+ * to companion notifications. The self-correcting timeout deliberately
  * recalculates its next boundary after every callback: a delayed renderer may
  * skip a hidden second, but it does not accumulate drift or create a repeating
  * fast-fast-fast-slow beat.
@@ -874,9 +875,8 @@ function renderGlobalState() {
   if (!pill) return;
   const state = localRefreshInProgress ? "updating" : globalState.state;
   pill.hidden = state === "live" || $("#refresh-button")?.getAttribute("data-sidebar-refresh") === "true" && state === "updating";
-  pill.className = `state-pill state-${state}`;
+  pill.className = `global-status state-${state}`;
   pill.replaceChildren(
-    node("span", "state-dot"),
     document.createTextNode(t(keys[state] ?? "status.unknown")),
   );
 }
@@ -9213,7 +9213,9 @@ async function loadLocalDashboardSecondaryState({ isCurrent, primaryAvailable = 
     renderLocalOnboarding(value);
   });
   const refreshStatusVersion = localRefreshStatusVersion;
-  const refresh = read(() => localClient.refreshStatus(), (refreshState) => {
+  // A one-time fallback for environments without EventSource. An ordinary
+  // connected session receives its current state from the event stream.
+  const refresh = localProgressEvents.connection() !== "unavailable" ? Promise.resolve(null) : read(() => localClient.refreshStatus(), (refreshState) => {
     if (refreshState === null || refreshStatusVersion !== localRefreshStatusVersion) return;
     accountingRebuildDeferral =
       refreshState?.refresh?.result?.accountingRebuildDeferred ?? null;
@@ -9467,7 +9469,9 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
   let sidebarResultKey = "refresh.sidebar.failed";
   let refreshSucceeded = false;
   let observationInterrupted = false;
+  let observationExpired = false;
   let observedRefreshId = null;
+  let eventCursor = localProgressEvents.cursor();
   localRefreshStatusVersion += 1;
   localRefreshObserverActive = true;
   localActionBusy = true;
@@ -9507,31 +9511,45 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
       ? "Starting detailed accounting…"
       : "Starting local analysis…");
     const pollingBudget = createRefreshPollingBudget();
-    let consecutiveStatusFailures = 0;
     let outcome = "running";
     let finalErrorCode = null;
     let finalFailedStep = null;
     let finalFailureCode = null;
     let finalRefreshState = null;
-    let pollCount = 0;
     let timeoutSettlementNoted = false;
     while (pollingBudget.hasTime()
         && ["running", "cancelling"].includes(outcome)) {
-      if (!initialRefresh) await new Promise((resolve) => setTimeout(resolve, 750));
-      pollCount += 1;
+      if (!initialRefresh) {
+        if (["unavailable", "closed"].includes(localProgressEvents.connection())) {
+          observationInterrupted = true;
+          throw new Error("Refresh observation unavailable.");
+        }
+        const remaining = pollingBudget.remainingMs();
+        if (remaining <= 0) break;
+        const waitController = new AbortController();
+        localRefreshObservationWait = waitController;
+        try {
+          await localProgressEvents.wait(eventCursor, { signal: waitController.signal, timeoutMs: remaining });
+        } finally {
+          if (localRefreshObservationWait === waitController) localRefreshObservationWait = null;
+        }
+        if (!pollingBudget.hasTime()) break;
+        const nextCursor = localProgressEvents.cursor();
+        if (waitController.signal.aborted && nextCursor === eventCursor) continue;
+        eventCursor = nextCursor;
+        if (localProgressEvents.connection() !== "connected") {
+          refreshProgressClock.update("Update running; reconnecting…");
+          continue;
+        }
+      }
       let status;
       try {
         status = initialRefresh ? { refresh: initialRefresh } : await localClient.refreshStatus();
         initialRefresh = null;
-        consecutiveStatusFailures = 0;
       } catch (error) {
-        consecutiveStatusFailures += 1;
         refreshProgressClock.update("Update running; reconnecting…");
-        if (consecutiveStatusFailures >= 8) {
-          observationInterrupted = true;
-          throw error;
-        }
-        continue;
+        observationInterrupted = true;
+        throw error;
       }
       const refresh = status?.refresh ?? {};
       if (refresh.refreshId && refresh.refreshId !== observedRefreshId) {
@@ -9571,23 +9589,11 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
         ? progress.filesSelected : null;
       const phase = outcome === "cancelling"
         ? "Stopping safely…"
-        : quickResultLoaded && refresh.quota?.status === "published" && refresh.usage?.status === "running"
-          ? "Allowance updated; calculating usage…"
         : refresh.quota?.status === "running"
           ? "Reading allowance…"
-        : accountingStatus !== null
-          ? accountingStatus
-        : collectorProgress && progress?.phase === "quick_result"
-          ? refreshQuickResultStatus({
-              dashboardLoaded: quickResultLoaded,
-            })
-        : unifiedIndexScanning && (selected === null || selected === 0)
-          ? "Scanning local history…"
-        : processed !== null && selected !== null
-        ? selected > 0 && processed >= selected
-          ? "Calculating usage and allowance…"
-          : "Analyzing files…"
-        : pollCount < 3 ? "Analyzing local evidence…" : "Analyzing…";
+        : accountingStatus !== null ? "Starting detailed accounting…"
+        : refresh.usage?.status === "running" ? "Allowance updated; calculating usage…"
+        : "Starting local analysis…";
       refreshProgressClock.update(phase, { processed, selected });
       updateLocalActionButtons();
       if (detailed && refresh.mode === "detailed" && refresh.running === false && refreshNeedsContinuation({
@@ -9637,9 +9643,16 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
       // request. Keep one observer across the controller's bounded follow-up.
       if (refresh.pending !== null && typeof refresh.pending === "object"
           && !["running", "cancelling"].includes(outcome)) outcome = "running";
+      if (!["running", "cancelling"].includes(outcome)) {
+        const published = localProgressEvents.current()?.refresh;
+        if (localProgressEvents.connection() !== "connected" || !published
+            || published.refreshId !== refresh.refreshId || published.publication === "running"
+            || ["running", "cancelling"].includes(published.status) || published.pending) outcome = "running";
+      }
     }
     if (["running", "cancelling"].includes(outcome)) {
       observationInterrupted = true;
+      observationExpired = true;
       throw new Error("Refresh observation needs reconnection.");
     }
     if (finalRefreshState?.finishedAt) {
@@ -9700,7 +9713,7 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
     if (detailed && !observeOnly) scheduleReindexAutoContinuation();
   } catch (error) {
     if (observationInterrupted) {
-      sidebarResultKey = "refresh.progress.reconnecting";
+      sidebarResultKey = observationExpired ? "refresh.stage.observationStopped" : "refresh.stage.reconnecting";
       return;
     }
     if (dashboard) {
@@ -9765,7 +9778,7 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
     if (nativeEvidenceReloadPending) void reloadLocalEvidenceAfterNativeRefresh();
     updateLocalActionButtons();
     void refreshElectronCadenceHealth();
-    setSidebarRefreshSummary(refreshSucceeded ? "refresh.sidebar.succeeded" : sidebarResultKey, { success: refreshSucceeded });
+    setSidebarRefreshSummary(refreshSucceeded ? "refresh.stage.complete" : sidebarResultKey, { success: refreshSucceeded });
     // Restore verified evidence freshness after settlement. A disconnected
     // observer retains the last confirmed busy state until it can read again.
     const currentDashboardState = dashboard
@@ -9788,6 +9801,7 @@ async function requestRefresh({ autoContinue = false, detailed = false, observeO
 async function cancelLocalAnalysis() {
   if (!localRefreshInProgress || localRefreshCancelRequested) return;
   localRefreshCancelRequested = true;
+  localRefreshObservationWait?.abort();
   updateLocalActionButtons();
   try {
     await localClient.cancelRefresh();
@@ -10196,6 +10210,7 @@ document.addEventListener("scroll", () => {
 
 const workUsageView = mountWorkUsageView({
   root: document.querySelector("#projects"), t, renderInformationLabel: informationLabel,
+  localProgressEvents,
   sharedReporting: true, reportingWindow: null, compact: true,
   controlsRoot: document.querySelector(".usage-simple-controls"),
   onFilters(filters) {
@@ -10229,6 +10244,7 @@ for (const button of document.querySelectorAll("[data-usage-metric]")) {
 }
 const modelPerformance = mountModelPerformance({
   root: document.querySelector("#performance"), client: localClient,
+  localProgressEvents,
   t, locale: () => localization.formatLocale(), sharedReporting: true, reportingWindow: null,
 });
 window.addEventListener("usagemonitor:locale-change", () => {
@@ -10530,6 +10546,7 @@ mountDashboardNavigation({
 });
 
 async function bootstrapDashboard() {
+  startOverviewPublicationPolling();
   renderDesktopEvidenceState("loading");
   renderSharedInstallerJourney(document, {
     formatLocale: getFormattingLocale(),
@@ -10537,7 +10554,7 @@ async function bootstrapDashboard() {
   });
   updateLocalActionButtons();
   await loadLocalDashboard();
-  startOverviewPublicationPolling();
+  if (localProgressEvents.current()) void observeOverviewPublication();
 }
 
 // Observe publication, never trigger refresh here. The companion alone owns
@@ -10545,14 +10562,17 @@ async function bootstrapDashboard() {
 let overviewPublicationReadPending = false;
 
 async function observeOverviewPublication() {
+  if (localProgressEvents.current()?.refresh?.publication === "running") return;
   if (overviewPublicationReadPending || localRefreshObserverActive
       || localRefreshSubmissionPending || localActionBusy
       || dashboard?.mode === "demo" || !localAnalysisAllowed()) return;
   overviewPublicationReadPending = true;
+  const eventCursor = localProgressEvents.cursor();
   const statusVersion = localRefreshStatusVersion;
   try {
     const status = await localClient.refreshStatus();
     if (statusVersion !== localRefreshStatusVersion) return;
+    accountingRebuildDeferral = status?.refresh?.result?.accountingRebuildDeferred ?? null;
     const scheduleError = typeof status?.overviewSchedule?.errorCode === "string"
       ? status.overviewSchedule.errorCode : null;
     const previousScheduleError = lastOverviewScheduleError;
@@ -10578,7 +10598,7 @@ async function observeOverviewPublication() {
           setSidebarRefreshSummary(refresh.status === "cancelled" ? "refresh.sidebar.cancelled" : "refresh.sidebar.failed");
           if (refresh.status === "failed") showConnectionNotice({ titleKey: "refresh.failedTitle", copyKey: "refresh.failedCopy", kind: "error" });
         } else {
-          setSidebarRefreshSummary(refresh.status === "degraded" ? "refresh.sidebar.partial" : "refresh.sidebar.succeeded", { success: refresh.status === "succeeded" });
+          setSidebarRefreshSummary(refresh.status === "degraded" ? "refresh.sidebar.partial" : "refresh.stage.complete", { success: refresh.status === "succeeded" });
           publishRefreshResultNotice(refresh);
         }
       }
@@ -10586,28 +10606,31 @@ async function observeOverviewPublication() {
     if (scheduleError) setSidebarRefreshSummary("refresh.schedule.failedTitle");
   } catch {
     // A transport read cannot establish that the controller's work failed.
-    if (localRefreshInProgress) setSidebarRefreshSummary("refresh.progress.reconnecting");
+    if (localRefreshInProgress) setSidebarRefreshSummary("refresh.stage.reconnecting");
   } finally {
     overviewPublicationReadPending = false;
+    if (localProgressEvents.cursor() !== eventCursor && localProgressEvents.connection() === "connected")
+      void observeOverviewPublication();
   }
 }
 
 function startOverviewPublicationPolling() {
   if (overviewPublicationPollingStarted) return;
   overviewPublicationPollingStarted = true;
-  const poll = async () => {
-    try { await observeOverviewPublication(); }
-    finally { window.setTimeout(poll, 2000); }
-  };
+  localProgressEvents.subscribe(event => {
+    if (event.connection !== "connected") {
+      if (localRefreshInProgress) setSidebarRefreshSummary("refresh.stage.reconnecting");
+      return;
+    }
+    void observeOverviewPublication();
+  });
   const resume = () => {
     if (document.visibilityState === "hidden") return;
-    // Refresh ages immediately after sleep; this never schedules business work.
     if (dashboard) observationFreshnessClock.update(dashboard);
-    void observeOverviewPublication();
   };
   document.addEventListener("visibilitychange", resume);
   window.addEventListener("focus", resume);
-  window.setTimeout(poll, 2000);
+  window.addEventListener("pagehide", event => { if (!event.persisted) localProgressEvents.close(); });
 }
 
 bootstrapDashboard();

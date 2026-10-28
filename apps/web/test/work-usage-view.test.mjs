@@ -10,9 +10,19 @@ import { createWorkUsageService } from "../../../src/application/index.js";
 import { formatApiMoney, formatSharePercent, formatLocal } from "../public/ui-format.js";
 import { translate } from "../public/localization.js";
 import {
-  mountWorkUsageView,
+  mountWorkUsageView as mountWorkUsageViewImpl,
   validateWorkUsageResponse,
 } from "../public/work-usage-view.js";
+
+function mountWorkUsageView(options) {
+  return mountWorkUsageViewImpl({ localProgressEvents: options.windowRef?.localProgressEvents, ...options });
+}
+function syntheticProgress() {
+  const listeners = new Set(); let state = "connected";
+  return { connection: () => state, setConnection(value) { state = value; for (const fn of [...listeners]) fn({ connection: value, report: null }); }, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    wake() { for (const fn of [...listeners]) fn({ connection: "connected", report: { kind: "work_usage", status: "ready" } }); },
+    listenerCount: () => listeners.size };
+}
 
 const NOW = 1_700_000_000_000;
 const SNAPSHOT = "snapshot-synthetic";
@@ -451,7 +461,9 @@ function mountedRoot() {
   const root = documentRef.createElement("section");
   root.id = "projects";
   root.inert = false;
-  return { documentRef, root, windowRef: new MountedWindow() };
+  const windowRef = new MountedWindow();
+  windowRef.localProgressEvents = syntheticProgress();
+  return { documentRef, root, windowRef, localProgressEvents: windowRef.localProgressEvents };
 }
 
 function mountedLeaseRoot() {
@@ -483,6 +495,7 @@ function mountedLeaseRoot() {
     dispatch,
     changed: () => observers.filter(observer => observer.connected).forEach(observer => observer.callback()),
     runTimer(delay) {
+      if (delay === 750 || delay === 1500) { windowRef.localProgressEvents.wake(); return; }
       const next = [...timers].find(([, timer]) => timer.delay === delay);
       assert.ok(next, `expected a ${delay}ms timer`);
       timers.delete(next[0]);
@@ -1037,7 +1050,7 @@ test("mounted auto review rows link only the parent or remain non-linkable", asy
   view.destroy();
 });
 
-test("period switches reuse the available report anchor, polling drops it, and refresh starts fresh", async () => {
+test("period switches reuse the available report anchor, event re-read drops it, and refresh starts fresh", async () => {
   const { root, windowRef } = mountedRoot();
   const calls = [];
   const view = mountWorkUsageView({ root, windowRef, t: mountedTranslator,
@@ -1053,7 +1066,8 @@ test("period switches reuse the available report anchor, polling drops it, and r
     await settleMountedView();
     assert.equal(calls[1].sourceSnapshotId, PROJECT_ROWS_RESPONSE.snapshotId);
     assert.equal(calls[1].snapshotId, undefined);
-    await new Promise(resolve => setTimeout(resolve, 800));
+    windowRef.localProgressEvents.wake();
+    await settleMountedView();
     assert.equal(calls[2].snapshotId, "related-report");
     assert.equal(calls[2].sourceSnapshotId, undefined);
     view.refresh();
@@ -2093,7 +2107,7 @@ test("preload resumes a preparing report after document hiding cancels its respo
   await settleMountedView();
   assert.deepEqual(calls.map((query) => query.period), ["7d"]);
   assert.equal(calls[0].snapshotId, undefined);
-  assert.ok([...harness.timers.values()].some((timer) => timer.delay === 750));
+  assert.equal([...harness.timers.values()].some((timer) => timer.delay === 750), false);
 
   harness.runTimer(750);
   await settleMountedView();
@@ -2126,39 +2140,21 @@ test("preload resumes a preparing report after document hiding cancels its respo
   assert.equal(calls.at(-1).snapshotId, selected.snapshotId);
 });
 
-test("cold startup polls back off while retaining a fixed request budget", async (t) => {
-  for (const becomesReady of [true, false]) {
-    await t.test(becomesReady ? "late readiness warms every period" : "never-ready work stops", async (t) => {
-      const harness = mountedLeaseRoot();
-      harness.root.inert = true;
-      const calls = [];
-      const view = mountWorkUsageView({ ...harness, t: mountedTranslator,
-        fetchRef: async (_url, init) => {
-          const query = JSON.parse(init.body);
-          calls.push(query);
-          if (becomesReady && calls.length >= 10)
-            return httpResponse(warmReport(`ready-${query.period}`, "Ready report"));
-          return httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "cold" });
-        },
-      });
-      t.after(() => view.destroy());
-      const preloading = view.preload();
-      await settleMountedView();
-      const delays = [750, 1500, 3000, 6000, ...Array(16).fill(10_000)];
-      for (const delay of delays.slice(0, becomesReady ? 9 : 20)) {
-        assert.ok([...harness.timers.values()].some(timer => timer.delay === delay));
-        harness.runTimer(delay);
-        await settleMountedView();
-      }
-      assert.equal(await preloading, becomesReady);
-      assert.equal(calls.length, becomesReady ? 13 : 21);
-      assert.equal(harness.timers.size, 0, "inactive startup has no endless poll");
-      if (becomesReady) {
-        assert.deepEqual(calls.slice(-3).map(query => query.period), ["24h", "30d", "all"]);
-        assert.match(harness.root.textContent, /Ready report/);
-      }
-    });
-  }
+test("cold startup waits for report events and cancels without polling", async (t) => {
+  const harness = mountedLeaseRoot(); harness.root.inert = true;
+  let calls = 0;
+  const view = mountWorkUsageView({ ...harness, t: mountedTranslator, fetchRef: async () => {
+    calls++;
+    return httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "cold" });
+  } });
+  const preloading = view.preload(); await settleMountedView();
+  assert.equal(calls, 1);
+  assert.equal([...harness.timers.values()].some(timer => timer.delay === 750), false);
+  harness.localProgressEvents.wake(); await settleMountedView();
+  assert.equal(calls, 2);
+  view.destroy();
+  assert.equal(await preloading, false);
+  assert.equal(harness.localProgressEvents.listenerCount(), 0);
 });
 
 function retainedResponse({ namesAvailable = false, refreshing = true } = {}) {
@@ -2241,7 +2237,7 @@ test("first load shows anonymous saved figures while polling the replacement sna
   const body = root.children.at(-1);
   assert.equal(body.hidden, false);
   assert.equal(body.inert, true);
-  assert.match(root.textContent, /Saved report as of .+Updating/);
+  assert.match(root.textContent, /Showing saved data as of .+Updating/);
   assert.match(body.textContent, /Saved project 1/);
   assert.match(body.textContent, /Saved project 2/);
   assert.match(body.textContent, /names will return after the report refreshes/);
@@ -2398,7 +2394,7 @@ test("advancing the shared end bound keeps the dated previous report read-only u
   assert.equal(body.hidden, false);
   assert.equal(body.inert, true);
   assert.equal(body.textContent, previous);
-  assert.match(harness.root.textContent, /Saved report as of .+Updating/);
+  assert.match(harness.root.textContent, /Showing saved data as of .+Updating/);
   assert.equal(calls[1].endAt, windowAt(NOW + 1000).endAt);
   assert.equal(calls[1].snapshotId, undefined);
   assert.equal(calls[1].sourceSnapshotId, undefined);
@@ -2712,4 +2708,140 @@ test("review contributions render separately and unlinked reviews never navigate
   const invalid = structuredClone(response);
   invalid.rows[0].contributions.push(structuredClone(invalid.rows[0].contributions[0]));
   assert.throws(()=>validateWorkUsageResponse(invalid), /invalid_response/);
+});
+
+
+test("report event before preparing response triggers one current-query read", async () => {
+  const harness = mountedLeaseRoot(); harness.root.inert = true;
+  const first = deferred(); let calls = 0, active = 0, maximum = 0;
+  const view = mountWorkUsageView({ ...harness, t: mountedTranslator, fetchRef: async (_url, init) => {
+    calls++; active++; maximum = Math.max(maximum, active);
+    try {
+      if (calls === 1) return await first.promise;
+      const query = JSON.parse(init.body);
+      return httpResponse(warmReport(`event-${query.period}`, "Event result"));
+    } finally { active--; }
+  } });
+  const operation = view.preload(); await settleMountedView();
+  harness.localProgressEvents.wake(); harness.localProgressEvents.wake();
+  first.resolve(httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "event-pending" }));
+  assert.equal(await operation, true);
+  assert.equal(maximum, 1);
+  assert.equal(calls, 5, "one reread plus three period warmups");
+  view.destroy(); assert.equal(harness.localProgressEvents.listenerCount(), 0);
+});
+
+
+test("disconnected waiting report reconnects and re-reads without a timer", async () => {
+  const h = mountedLeaseRoot(); let calls = 0;
+  const view = mountWorkUsageView({ ...h, t: mountedTranslator, fetchRef: async () => {
+    calls++;
+    return httpResponse(calls === 1 ? { schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "pending" } : PROJECT_ROWS_RESPONSE);
+  } });
+  await settleMountedView(); h.localProgressEvents.setConnection("disconnected");
+  assert.match(h.root.textContent, /Connection interrupted/); assert.equal(calls, 1);
+  h.localProgressEvents.setConnection("connected"); await settleMountedView();
+  assert.equal(calls, 2); assert.match(h.root.textContent, /Project A/);
+  view.destroy(); assert.equal(h.localProgressEvents.listenerCount(), 0);
+});
+
+
+test("missing event source ends preparing with an unavailable read and no pending waiter", async () => {
+  const h = mountedLeaseRoot(); let calls = 0;
+  const view = mountWorkUsageView({ ...h, localProgressEvents: null, t: mountedTranslator,
+    fetchRef: async () => { calls++; return httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "pending" }); } });
+  await settleMountedView(); assert.equal(calls, 1); assert.match(h.root.textContent, /Could not load this report/);
+  view.destroy();
+});
+
+
+test("first event-stream connection rereads a report that settled before subscription", async () => {
+  const h = mountedLeaseRoot(); h.localProgressEvents.setConnection("connecting"); let calls = 0;
+  const view = mountWorkUsageView({ ...h, t: mountedTranslator, fetchRef: async () => {
+    calls++; return httpResponse(calls === 1 ? { schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "pending" } : PROJECT_ROWS_RESPONSE);
+  } });
+  await settleMountedView(); assert.equal(calls, 1);
+  h.localProgressEvents.setConnection("connected"); await settleMountedView();
+  assert.equal(calls, 2); view.destroy();
+});
+
+
+test("pending report lease survives beyond the idle window without polling and stops on settlement", async () => {
+  const h = mountedLeaseRoot(); h.root.inert = true; let now = NOW, queries = 0, touches = 0;
+  const done = deferred();
+  const service = createWorkUsageService({ clock: () => now, idleMs: 300_000,
+    newId: () => "synthetic-pending", build: () => done.promise,
+    onSettled: () => h.localProgressEvents.wake() });
+  const view = mountWorkUsageView({ ...h, t: mountedTranslator, fetchRef: async (_url, init) => {
+    const q = JSON.parse(init.body); if (q.action === "touch") touches++; else queries++;
+    try { return httpResponse(await service.query(q)); }
+    catch (error) { return { ok: false, status: 409, json: async () => ({ error: { code: error.code } }) }; }
+  } });
+  try {
+    const operation = view.preload(); await settleMountedView();
+    assert.equal(queries, 1);
+    for (let i = 0; i < 6; i++) { now += 60_000; await h.runTimer(60_000); await settleMountedView(); }
+    assert.equal(touches, 6); assert.equal(queries, 1, "lease touches do not poll the report");
+    assert.equal((await service.query({ schemaVersion: WORK_USAGE_SCHEMA, action: "touch", snapshotId: "synthetic-pending" })).status, "preparing");
+    done.resolve({ status: "unavailable" }); await settleMountedView();
+    assert.equal(await operation, false); assert.equal(queries, 2);
+    assert.equal(h.timers.size, 0);
+  } finally { view.destroy(); await service.close(); }
+});
+
+test("saved replacement and speculative preparing work renew the actual pending ID", async t => {
+  for (const kind of ["replacement", "speculative"]) await t.test(kind, async () => {
+    const h = mountedLeaseRoot(); const requests = []; let now = 0, touchedAt = 0;
+    const view = mountWorkUsageView({ ...h, t: mountedTranslator, fetchRef: async (_url, init) => {
+      const q = JSON.parse(init.body); requests.push(q);
+      if (q.action === "touch") {
+        if (q.snapshotId === "selected") return httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "available", snapshotId: "selected" });
+        assert.equal(q.snapshotId, "pending-report");
+        assert.ok(now - touchedAt <= 300_000); touchedAt = now;
+        return httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "pending-report" });
+      }
+      if (kind === "replacement") return httpResponse(retainedResponse());
+      if (q.sourceSnapshotId || q.snapshotId === "pending-report")
+        return httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "pending-report" });
+      return httpResponse(warmReport("selected", "Selected"));
+    } });
+    try {
+      await settleMountedView();
+      if (kind === "speculative") { h.runTimer(250); await settleMountedView(); }
+      const queryCount = requests.length;
+      for (let i = 0; i < 6; i++) {
+        now += 60_000;
+        const pending = [...h.timers.values()].find(timer => timer.delay === 60_000);
+        assert.ok(pending); // Ready-report renewal can coexist with the speculative lease.
+        for (const [id, timer] of [...h.timers]) if (timer.delay === 60_000) {
+          h.timers.delete(id); await timer.callback();
+        }
+        await settleMountedView();
+      }
+      assert.ok(requests.filter(q => q.action === "touch" && q.snapshotId === "pending-report").length >= 6);
+      assert.equal(requests.filter(q => q.action !== "touch").length, queryCount);
+      h.documentRef.visibilityState = "hidden"; h.dispatch(h.documentRef, "visibilitychange");
+      await settleMountedView(); assert.equal(h.timers.size, 0);
+    } finally { view.destroy(); }
+  });
+});
+
+
+test("pending lease timeout ends waiting even when the client ignores abort", async () => {
+  const h = mountedLeaseRoot(); const touch = deferred(); const diagnostics = []; let signal;
+  const view = mountWorkUsageView({ ...h, t: mountedTranslator, onDiagnostic: value => diagnostics.push(value.code), fetchRef: async (_url, init) => {
+    const q = JSON.parse(init.body);
+    if (q.action === "touch") { signal = init.signal; return touch.promise; }
+    return httpResponse({ schemaVersion: WORK_USAGE_SCHEMA, status: "preparing", snapshotId: "pending" });
+  } });
+  try {
+    await settleMountedView(); h.runTimer(60_000); await settleMountedView();
+    h.runTimer(10_000); await settleMountedView();
+    assert.equal(signal.aborted, true); assert.match(h.root.textContent, /Could not load this report/);
+    assert.ok(diagnostics.includes("work_usage_timeout"));
+    assert.ok(!diagnostics.includes("work_usage_network"));
+    assert.equal(h.timers.size, 0);
+    touch.resolve(httpResponse({ status: "preparing" })); await settleMountedView();
+    assert.equal(h.timers.size, 0, "late touch cannot revive waiting");
+  } finally { view.destroy(); }
 });

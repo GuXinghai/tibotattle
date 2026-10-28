@@ -91,8 +91,7 @@
             </div>
           </div>
         </details>
-        <span class="state-pill state-connecting" id="global-state">
-          <span class="state-dot" aria-hidden="true"></span>
+        <span class="global-status state-connecting" id="global-state">
           Connecting
         </span>
       </div>
@@ -139,7 +138,7 @@
         </div>
         <div class="freshness-card" aria-live="polite">
           <span data-i18n="dashboard.freshness.observation">Refreshed</span>
-          <strong id="latest-observation">Checking…</strong>
+          <strong id="latest-observation"></strong>
           <small id="data-source"></small>
           <small id="automatic-refresh-health" class="automatic-refresh-health" hidden></small>
         </div>
@@ -239,7 +238,7 @@
       </details>
 
       <section class="dashboard-section" id="overview" aria-labelledby="overview-title" data-dashboard-page="overview" data-requires-evidence>
-        <p class="dashboard-load-status" data-dashboard-load-status role="status" data-i18n="refresh.progress.saved">Loading saved results…</p>
+        <p class="dashboard-load-status" data-dashboard-load-status role="status" data-i18n="refresh.stage.localData"></p>
         <div class="sr-only">
           <div>
             <h2 id="overview-title">Where your allowance stands</h2>

@@ -13,10 +13,11 @@ import { createModelPerformanceSnapshotStore, isCompleteModelPerformanceSnapshot
 export function createModelPerformanceController({ directory, codexHome,
   idleMs = 60_000, snapshotNow = () => Date.now(), snapshotWriteIntervalMs = 60 * 60 * 1_000,
   workerFactory = options => new Worker(new URL('./model-performance-worker.js', import.meta.url), options),
-  snapshotStoreFactory = options => createModelPerformanceSnapshotStore(options) }) {
+  snapshotStoreFactory = options => createModelPerformanceSnapshotStore(options), onSettled = () => {} }) {
   if (typeof snapshotNow !== 'function') throw new TypeError('snapshotNow must be a function');
   if (!Number.isSafeInteger(snapshotWriteIntervalMs) || snapshotWriteIntervalMs < 1)
     throw new TypeError('snapshotWriteIntervalMs must be a positive integer');
+  const notify = status => { try { Promise.resolve(onSettled(status)).catch(() => {}); } catch {} };
   const cache = new Map(), settled = new Map(), windows = new Map();
   const diagnostics = new Set();
   const onDiagnostic = code => { if (MODEL_PERFORMANCE_DIAGNOSTICS.includes(code)) diagnostics.add(code); };
@@ -98,6 +99,7 @@ export function createModelPerformanceController({ directory, codexHome,
   function fail(code = 'timing_worker_failed') {
     onDiagnostic(code);
     failedAt = Date.now();
+    notify('failed');
     for (const [period, value] of cache) cache.set(period, { ...value, collecting: false, stale: true });
   }
   function scheduleIdleStop() {
@@ -144,12 +146,14 @@ export function createModelPerformanceController({ directory, codexHome,
         if (message?.type === 'diagnostics' && Array.isArray(message.codes)) {
           const sourceDetails = readModelPerformanceSourceDiagnostics(message.sourceDetails === undefined ? [] : message.sourceDetails);
           if (sourceDetails === null) { fail('timing_projection_failed'); return; }
+          const previousDiagnostics = JSON.stringify([[...diagnostics].sort(), sourceDiagnostics]);
           for (const code of ['timing_scan_failed', 'timing_store_failed', 'timing_projection_failed', 'timing_history_unavailable', 'timing_source_recovery_failed',
             'timing_source_decode_failed', 'timing_source_read_failed', 'timing_source_limit', 'timing_source_unsupported']) diagnostics.delete(code);
           if (message.codes.length > MODEL_PERFORMANCE_DIAGNOSTICS.length
               || message.codes.some(code => !MODEL_PERFORMANCE_DIAGNOSTICS.includes(code))) { fail('timing_projection_failed'); return; }
           message.codes.forEach(onDiagnostic);
           sourceDiagnostics = sourceDetails;
+          if (previousDiagnostics !== JSON.stringify([[...diagnostics].sort(), sourceDiagnostics])) notify('changed');
           return;
         }
         if (message?.type === 'snapshots' && Array.isArray(message.values)) {
@@ -163,11 +167,16 @@ export function createModelPerformanceController({ directory, codexHome,
               || new Set(entries.map(value => value.key)).size !== entries.length) { fail('timing_projection_failed'); return; }
           diagnostics.delete('timing_worker_failed');
           let changed = false;
+          let visibleChanged = false;
           for (const { key, snapshot: value } of entries) {
             // A late projection for an evicted window cannot resurrect it or
             // replace the requested period's independently keyed snapshot.
             if (key !== modelPerformanceSnapshotKey(value.period, value.speedMode) && !windows.has(key)) continue;
+            const priorVisible = cache.get(key);
             const previous = settled.get(key);
+            const before = priorVisible && [priorVisible.status, priorVisible.collecting, priorVisible.stale, priorVisible.historyProgress];
+            const after = [value.status, value.collecting, value.stale, value.historyProgress];
+            if (JSON.stringify(before) !== JSON.stringify(after)) visibleChanged = true;
             if (isCompleteModelPerformanceSnapshot(value)
                 || message.cacheable === true && isSettledModelPerformanceSnapshot(value)) {
               settled.set(key, value);
@@ -178,7 +187,8 @@ export function createModelPerformanceController({ directory, codexHome,
                 historyProgress: value.historyProgress });
             } else cache.set(key, value);
           }
-          if (changed) { revision++; persist(); }
+          if (changed) { revision++; persist(); notify('ready'); }
+          else if (visibleChanged) notify('changed');
         } else if (message?.type === 'unavailable') fail(MODEL_PERFORMANCE_DIAGNOSTICS.includes(message.code) ? message.code : 'timing_worker_failed');
       });
       current.on('error', () => { if (!closed && worker === current) fail(); });

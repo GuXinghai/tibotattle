@@ -3033,3 +3033,40 @@ test("loopback timeout exposes the actual writer lock until the original runner 
     assert.equal(store.reloads, 0);
   } finally { writer.resolve(); await app.close(); await rm(files.root, { recursive: true }); }
 });
+
+test("event stream is snapshot-independent and requires same-origin evidence", async () => {
+  const files = await fixture();
+  const blocked = deferred();
+  const store = fakeStore();
+  store.initialize = () => blocked.promise;
+  const app = await startLocalCompanionServer({ resourceRoot: files.resourceRoot, stateRoot: files.stateRoot,
+    codexHome: files.codexHome, staticRoot: files.staticRoot, dataStore: store,
+    refreshRunner: async () => ({}), port: 0 });
+  const base = `http://127.0.0.1:${app.port}`;
+  let reader;
+  try {
+    assert.equal((await fetch(`${base}/api/local/events`)).status, 403);
+    assert.equal((await fetch(`${base}/api/local/events`, { headers: { origin: 'http://evil.example' } })).status, 403);
+    assert.equal((await fetch(`${base}/api/local/events?x=1`, { headers: { origin: base } })).status, 400);
+    assert.equal((await fetch(`${base}/api/local/events`, { method: 'POST', headers: { origin: base } })).status, 405);
+    const response = await fetch(`${base}/api/local/events`, { headers: { origin: base } });
+    assert.equal(response.status, 200);
+    reader = response.body.getReader();
+    const first = new TextDecoder().decode((await reader.read()).value);
+    const initial = JSON.parse(first.split('data: ')[1]);
+    assert.equal(initial.snapshot.status, 'building');
+    assert.equal(initial.refresh.status, 'idle');
+    blocked.resolve();
+    const second = new TextDecoder().decode((await reader.read()).value);
+    const ready = JSON.parse(second.split('data: ')[1]);
+    assert.equal(ready.snapshot.status, 'ready');
+    assert.ok(ready.sequence > initial.sequence);
+    assert.equal(ready.instanceId, initial.instanceId);
+    assert.equal(JSON.stringify(ready).includes(files.root), false);
+  } finally {
+    blocked.resolve();
+    await reader?.cancel();
+    await app.close();
+    await rm(files.root, { recursive: true });
+  }
+});

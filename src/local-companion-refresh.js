@@ -1551,6 +1551,8 @@ export class LocalCompanionRefreshController {
   #quota = { status: "skipped", errorCode: null, publishedAt: null };
   #usage = { status: "skipped" };
   #timing = null;
+  #listeners = new Set();
+  #publication = null;
 
   constructor({
     runner,
@@ -1655,7 +1657,36 @@ export class LocalCompanionRefreshController {
     };
   }
 
-  getStatus() {
+  subscribe(listener) {
+    if (typeof listener !== "function") throw new TypeError("listener must be a function");
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  getProgressStatus() {
+    const state = this.#state;
+    const { quota, usage } = this.#subsystemStatuses();
+    const progress = state.progress;
+    const safeProgress = progress === null ? null : Object.fromEntries(
+      ["kind", "status", "phase", "filesDiscovered", "filesSelected", "filesProcessed", "recordsWritten"]
+        .filter((key) => Object.hasOwn(progress, key)).map((key) => [key, progress[key]]),
+    );
+    const safe = { refreshId: state.refreshId, status: state.status, mode: state.mode,
+      reason: this.#reason, quota: { status: quota.status }, usage: { status: usage.status },
+      progress: safeProgress, pending: this.#pendingRequest === null ? null : { mode: this.#pendingRequest.mode },
+      quickResultPublished: state.quickResultAt !== null, publication: this.#publication };
+    return safe;
+  }
+
+  #notify() {
+    if (this.#listeners.size === 0) return;
+    const safe = this.getProgressStatus();
+    for (const listener of this.#listeners) {
+      try { Promise.resolve(listener(structuredClone(safe))).catch(() => {}); } catch { /* Observers cannot affect refresh. */ }
+    }
+  }
+
+  #subsystemStatuses() {
     const capabilities = this.#state.mode === null ? null : refreshCapabilities(this.#state.mode);
     const usage = { ...this.#usage };
     if (capabilities?.usage && !["running", "cancelling"].includes(this.#state.status)) {
@@ -1672,6 +1703,12 @@ export class LocalCompanionRefreshController {
       quota.status = this.#state.status === "cancelled" ? "cancelled"
         : this.#state.status === "failed" ? "failed" : "skipped";
     }
+    return { quota, usage };
+  }
+
+  getStatus() {
+    const capabilities = this.#state.mode === null ? null : refreshCapabilities(this.#state.mode);
+    const { quota, usage } = this.#subsystemStatuses();
     return structuredClone({ ...this.#state, timing: this.#timing?.snapshot() ?? null, running: this.#inFlight !== null,
       capabilities, reason: this.#reason, quota, usage,
       pending: this.#pendingRequest === null ? null : { mode: this.#pendingRequest.mode,
@@ -1691,6 +1728,7 @@ export class LocalCompanionRefreshController {
     if (needsFollowUp && this.#state.status === "running") {
       if (this.#pendingRequest === null || rank[mode] > rank[this.#pendingRequest.mode]) {
         this.#pendingRequest = { mode, reason };
+        this.#notify();
       }
     }
     return { started: false, joined: !needsFollowUp,
@@ -1717,6 +1755,8 @@ export class LocalCompanionRefreshController {
     // Bound settlement independently so an injected or defective runner that
     // ignores AbortSignal cannot hold the foreground refresh lock for the
     // remainder of a four-hour cold-accounting allowance.
+    this.#publication = null;
+    this.#notify();
     this.#beginCancellationSettlement?.();
     this.#abortController.abort();
     return true;
@@ -1842,6 +1882,8 @@ export class LocalCompanionRefreshController {
       };
       // The timeout IS the terminal failure the user sees, and a hung runner
       // may never settle — file the trail entry now, not at settlement.
+      this.#publication = null;
+      this.#notify();
       this.#notifyTerminalFailure();
     };
     const armTimeoutFromStart = (budgetMs) => {
@@ -1906,6 +1948,7 @@ export class LocalCompanionRefreshController {
           else this.#quota = { status: quota?.attempted === true ? "failed" : "skipped",
             errorCode: quota?.errorCode ? safeCollectorErrorCode(quota.errorCode) : null, publishedAt: null };
           if (isCurrent() && mode !== "quick") this.#usage = { status: "running" };
+          this.#notify();
         },
         onProgress: async (progress) => {
           if (this.#state.refreshId !== refreshId
@@ -1934,6 +1977,7 @@ export class LocalCompanionRefreshController {
               || projected.kind === ACCOUNTING_PROGRESS_KIND
               || projected.phase === "quick_result")) this.#usage = { status: "running" };
           this.#state = { ...this.#state, progress: projected };
+          this.#notify();
         },
       })));
     const work = Promise.race([runnerWork, cancellationSettlement])
@@ -1983,6 +2027,8 @@ export class LocalCompanionRefreshController {
           return;
         }
         if (!(mode === "quick" && quickResultReloadPublished)) {
+          this.#publication = "running";
+          this.#notify();
           await timer.measure("snapshot_reload", () => this.#dataStore.reload({
             purpose: mode === "overview" ? "overview" : mode === "quick" ? "quick" : "full",
             isCurrent,
@@ -2005,6 +2051,7 @@ export class LocalCompanionRefreshController {
         if (this.#cancelRequested || timedOut || controller.signal.aborted) {
           throw new Error("Refresh interrupted during snapshot reload");
         }
+        this.#publication = null;
         const finalProgress = publicIndexingResult(result?.indexing);
         const degradation = unifiedIndexDegradation(result)
           ?? ((quotaReadyReceived && this.#quota.status === "failed") || result?.quotaRefresh?.errorCode
@@ -2029,6 +2076,7 @@ export class LocalCompanionRefreshController {
           errorCode: degradation === null ? null : "refresh_degraded",
           ...(degradation ?? {}),
         };
+        this.#notify();
         this.#notifyTerminalFailure();
         // A budget miss is a SOFT outcome: the run succeeded serving the
         // retained cache. File the degraded-event note (kept from the incident)
@@ -2102,6 +2150,8 @@ export class LocalCompanionRefreshController {
         this.#notifyTerminalFailure();
       })
       .finally(() => {
+        this.#publication = null;
+        this.#notify();
         runTiming.finish();
         this.#clearTimeoutImpl(timeout);
         this.#clearTimeoutImpl(cancellationSettlementTimeout);
@@ -2118,6 +2168,7 @@ export class LocalCompanionRefreshController {
       });
     armTimeoutFromStart(selectedTimeoutMs);
     this.#inFlight = work;
+    this.#notify();
     return true;
   }
 }

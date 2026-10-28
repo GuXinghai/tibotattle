@@ -10,6 +10,7 @@ import {
   createWorkUsageAccumulator,
 } from "../../src/reporting/index.js";
 import { startLocalCompanionServer } from "./server.js";
+import { createWorkUsageService } from "../../src/application/index.js";
 
 function event({ project, tokens, thread = `thread-${project}` }) {
   return {
@@ -388,4 +389,41 @@ test("loopback companion restart restores anonymous saved figures before a delay
     if (second) await closeFixture(second);
     await closeFixture(first);
   }
+});
+
+
+test("expired and evicted pending builds notify once and abort without observer side effects", async () => {
+  let now = 0, nextId = 0; const events = [], signals = [];
+  const service = createWorkUsageService({ clock: () => now, idleMs: 300_000, maximumSnapshots: 2,
+    newId: () => `synthetic-${++nextId}`, build: (_, { signal }) => { signals.push(signal); return new Promise(() => {}); },
+    onSettled: status => { events.push(status); throw new Error("synthetic observer failure"); } });
+  const query = period => ({ schemaVersion: WORK_USAGE_SCHEMA, period });
+  try {
+    const first = await service.query(query("7d")); await new Promise(setImmediate);
+    now = 300_001;
+    const second = await service.query(query("24h")); await new Promise(setImmediate);
+    assert.deepEqual(events, ["cancelled"]); assert.equal(signals[0].aborted, true);
+    await assert.rejects(service.query({ ...query("7d"), snapshotId: first.snapshotId }), { code: "work_usage_snapshot_expired" });
+    await service.query(query("30d")); await new Promise(setImmediate);
+    assert.equal(signals[1].aborted, true); assert.deepEqual(events, ["cancelled", "cancelled"]);
+    await assert.rejects(service.query({ ...query("24h"), snapshotId: second.snapshotId }), { code: "work_usage_snapshot_expired" });
+  } finally { await service.close(); }
+  assert.deepEqual(events, ["cancelled", "cancelled"], "shutdown does not publish spurious notifications");
+});
+
+
+test("capacity eviction notifies observers and keeps the new report available", async () => {
+  const events = []; let nextId = 0;
+  const service = createWorkUsageService({ clock: () => 1_000_000_000, maximumSnapshots: 2,
+    newId: () => `capacity-${++nextId}`, build: async () => buildResult([event({ project: "synthetic", tokens: 1 })]),
+    onSettled: status => events.push(status) });
+  const query = period => ({ schemaVersion: WORK_USAGE_SCHEMA, period });
+  try {
+    const first = await service.query(query("7d")); await new Promise(setImmediate);
+    await service.query(query("24h")); await new Promise(setImmediate);
+    const third = await service.query(query("30d")); await new Promise(setImmediate);
+    assert.deepEqual(events, ["ready", "ready", "cancelled", "ready"]);
+    await assert.rejects(service.query({ ...query("7d"), snapshotId: first.snapshotId }), { code: "work_usage_snapshot_expired" });
+    assert.equal((await service.query({ ...query("30d"), snapshotId: third.snapshotId })).status, "available");
+  } finally { await service.close(); }
 });

@@ -22,12 +22,7 @@ const PERIOD_IDS = REPORTING_PERIODS;
 // already shares one all-period projection, while each report still occupies
 // one of its two live snapshot slots.
 const PERIOD_PRELOAD_DELAY_MS = 250;
-const PREPARING_POLL_DELAY_MS = 750;
-const MAX_PREPARING_POLLS = 20;
 const COVERAGE_NOTICE_THRESHOLD = 0.95;
-// Cold accounting can take minutes. Spread the same bounded request budget
-// over that work instead of exhausting it in the first fifteen seconds.
-const preloadPollDelay = attempt => Math.min(10_000, PREPARING_POLL_DELAY_MS * 2 ** attempt);
 const PRELOAD_REQUEST_TIMEOUT_MS = 10_000;
 const COMPONENTS = [
   "input_uncached_tokens",
@@ -277,6 +272,88 @@ export function mountWorkUsageView(options = {}) {
   const clearLeaseTimer = windowRef.clearTimeout?.bind(windowRef) ?? clearTimeout;
   const visible = () => !destroyed && !root.inert && documentRef.visibilityState !== "hidden";
   const documentVisible = () => !destroyed && documentRef.visibilityState !== "hidden";
+  let reportRevision = 0, progressConnection = options.localProgressEvents?.connection?.() ?? null;
+  let renderProgressConnection = () => {};
+  const reportWaiters = new Set();
+  const unsubscribeProgress = options.localProgressEvents?.subscribe?.(event => {
+    const reconnected = event?.connection === "connected"
+      && progressConnection !== "connected";
+    const previousConnection = progressConnection;
+    progressConnection = event?.connection ?? progressConnection;
+    if (previousConnection !== progressConnection) renderProgressConnection();
+    if (reconnected || progressConnection === "connected" && event?.report?.kind === "work_usage") {
+      reportRevision++;
+      for (const wake of [...reportWaiters]) wake();
+    }
+  }) ?? (() => {});
+  function waitForReport(since, signal) {
+    if (!options.localProgressEvents || progressConnection === "unavailable")
+      return Promise.reject(new Error("unavailable"));
+    if (reportRevision !== since) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const cleanup = () => { reportWaiters.delete(wake); signal?.removeEventListener("abort", abort); };
+      const wake = () => { cleanup(); resolve(); };
+      const abort = () => { cleanup(); reject(Object.assign(new Error("aborted"), { name: "AbortError" })); };
+      reportWaiters.add(wake);
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) abort();
+      else if (reportRevision !== since) wake();
+    });
+  }
+
+  // Keep each pending build's own lease alive while waiting for an event. A
+  // touch never projects report data; cancellation and the event both stop it.
+  function waitForReportWithLease(since, snapshotId, signal) {
+    return new Promise((resolve, reject) => {
+      const waiting = new AbortController();
+      let timerId = null, deadline = null, touchController = null, settled = false;
+      const finish = (error = null) => {
+        if (settled) return;
+        settled = true;
+        clearLeaseTimer(timerId);
+        clearLeaseTimer(deadline);
+        touchController?.abort();
+        waiting.abort();
+        signal.removeEventListener("abort", abort);
+        if (error) reject(error); else resolve();
+      };
+      const abort = () => finish(Object.assign(new Error("aborted"), { name: "AbortError" }));
+      const queue = () => {
+        timerId = scheduleLease(touch, 60_000);
+        timerId?.unref?.();
+      };
+      async function touch() {
+        timerId = null;
+        if (settled) return;
+        touchController = new AbortController();
+        const current = touchController;
+        let timedOut = false;
+        deadline = scheduleLease(() => { timedOut = true; current.abort(); finish(Object.assign(new Error("timeout"), { name: "TimeoutError" })); }, 10_000);
+        deadline?.unref?.();
+        try {
+          const http = await fetchRef("/api/local/work-usage/query", {
+            method: "POST", headers: { "content-type": "application/json", "x-usage-monitor-local": "1" },
+            cache: "no-store", body: JSON.stringify({ schemaVersion: SCHEMA, action: "touch", snapshotId }),
+            signal: current.signal,
+          });
+          if (settled) return;
+          if (current.signal.aborted) throw new Error(timedOut ? "timeout" : "aborted");
+          if (!http.ok) throw new Error(http.status === 409 ? "expired" : http.status === 401 || http.status === 403 ? "permission" : "unavailable");
+          queue();
+        } catch (error) {
+          if (!settled) finish(error);
+        } finally {
+          clearLeaseTimer(deadline);
+          deadline = null;
+          if (touchController === current) touchController = null;
+        }
+      }
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) { abort(); return; }
+      waitForReport(since, waiting.signal).then(() => finish(), finish);
+      queue();
+    });
+  }
 
   function generationKey(value) {
     const generation = value?.generation;
@@ -340,45 +417,15 @@ export function mountWorkUsageView(options = {}) {
     periodPreloadAllowInactive = false;
   }
 
-  function delayPeriodPreload(milliseconds, signal) {
-    return new Promise((resolve, reject) => {
-      let settled = false;
-      let timerId = null;
-      let abort;
-      const cleanup = () => {
-        if (abort) signal?.removeEventListener?.("abort", abort);
-      };
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        resolve();
-      };
-      abort = () => {
-        if (settled) return;
-        settled = true;
-        clearLeaseTimer(timerId);
-        timerId = null;
-        cleanup();
-        const error = new Error("aborted");
-        error.name = "AbortError";
-        reject(error);
-      };
-      timerId = scheduleLease(finish, milliseconds);
-      timerId?.unref?.();
-      signal?.addEventListener?.("abort", abort, { once: true });
-      if (signal?.aborted) abort();
-    });
-  }
-
   async function requestPeriodPreload(periodId, baseQuery, anchor, signal) {
     let bodyQuery = {
       ...baseQuery,
       period: periodId,
       sourceSnapshotId: anchor.snapshotId,
     };
-    for (let attempt = 0; attempt <= MAX_PREPARING_POLLS; attempt += 1) {
+    for (;;) {
       if (signal.aborted) throw Object.assign(new Error("aborted"), { name: "AbortError" });
+      const revision = reportRevision;
       const requestController = new AbortController();
       const forwardAbort = () => requestController.abort();
       let preloadTimedOut = false;
@@ -421,6 +468,7 @@ export function mountWorkUsageView(options = {}) {
           return { result: null, invalidated: http.status === 401 || http.status === 403 };
         }
         const result = validateWorkUsageResponse(payload);
+        clearLeaseTimer(requestTimer);
         // A saved report cannot anchor speculative periods or become a live
         // report through warming. Its replacement belongs to the foreground.
         if (result.retained) return { result: null, invalidated: false };
@@ -430,8 +478,7 @@ export function mountWorkUsageView(options = {}) {
           }
           return { result, invalidated: false };
         }
-        if (attempt === MAX_PREPARING_POLLS) return { result: null, invalidated: false };
-        await delayPeriodPreload(preloadPollDelay(attempt), signal);
+        await waitForReportWithLease(revision, result.snapshotId, signal);
         bodyQuery = {
           ...baseQuery,
           period: periodId,
@@ -588,12 +635,15 @@ export function mountWorkUsageView(options = {}) {
       : sharedReporting && key === "missing"
         ? reportTranslate("unavailable")
         : tr(messageKey, values);
+    if (progressConnection === "disconnected" && ["preparing", "savedUpdating"].includes(key))
+      message.textContent = t("refresh.stage.reconnecting");
     message.dataset.state = key === "snapshot" ? "ready" : key === "preparing" ? "loading" : key;
     // Only a failed or unavailable top-level query can be re-issued from here.
     // Preparing, expired (use Refresh), retained saved reports and invalid
     // input are not helped by repeating the same request.
     retryButton.hidden = !RETRYABLE_STATUS.has(key);
   };
+  renderProgressConnection = () => setStatus(statusKey, statusValues);
   const button = (label, action, className = "button button-secondary") => {
     const b = el("button", className, label);
     b.type = "button";
@@ -966,7 +1016,7 @@ export function mountWorkUsageView(options = {}) {
     delete initialQuery.search;
     initialQuery[row.kind] = row.id;
     detailView = mountWorkUsageView({
-      root: detailContent, t, windowRef, fetchRef,
+      root: detailContent, t, windowRef, fetchRef, localProgressEvents: options.localProgressEvents,
       sharedReporting: true,
       reportingWindow: { period: query.period, startAt: query.period === "all" ? null : new Date(Math.max(0, response.toMs - REPORTING_DURATION_MS[query.period])).toISOString(), endAt: new Date(response.toMs).toISOString() },
       initialQuery, detailTitle: label(row),
@@ -1865,7 +1915,7 @@ export function mountWorkUsageView(options = {}) {
       loadInFlightBackground = false;
       foregroundLoadQueued = false;
     }
-    const promise = performLoad(recoverExpired, { background, preparingAttempt: 0 });
+    const promise = performLoad(recoverExpired, { background });
     const key = queryKey();
     let tracked;
     tracked = promise.finally(() => {
@@ -1883,7 +1933,7 @@ export function mountWorkUsageView(options = {}) {
 
   async function performLoad(
     recoverExpired = true,
-    { background = false, preparingAttempt = 0 } = {},
+    { background = false } = {},
   ) {
     if (destroyed || composing) return;
     clearSearchTimer();
@@ -1951,6 +2001,7 @@ export function mountWorkUsageView(options = {}) {
       b.setAttribute("aria-pressed", String(b.dataset.period === query.period));
     sort.control.value = query.sort;
     let requestTimedOut = false;
+    const revision = reportRevision;
     try {
       const requestController = background ? new AbortController() : loadController;
       const requestSignal = requestController.signal;
@@ -1992,7 +2043,7 @@ export function mountWorkUsageView(options = {}) {
           delete query.sourceSnapshotId;
           resetPage();
           restorePageDepth = pageDepth;
-          return performLoad(false, { background, preparingAttempt: 0 });
+          return performLoad(false, { background });
         }
       }
       if (!http.ok) {
@@ -2020,19 +2071,8 @@ export function mountWorkUsageView(options = {}) {
       query.snapshotId = result.snapshotId;
       delete query.sourceSnapshotId;
       if (result.status === "preparing") {
-        if (background) {
-          if (preparingAttempt >= MAX_PREPARING_POLLS) return;
-          await delayPeriodPreload(preloadPollDelay(preparingAttempt), loadController.signal);
-          return performLoad(recoverExpired, {
-            background,
-            preparingAttempt: preparingAttempt + 1,
-          });
-        }
-        timer = scheduleLease(
-          () => load(recoverExpired, { background }),
-          PREPARING_POLL_DELAY_MS,
-        );
-        return;
+        await waitForReportWithLease(revision, query.snapshotId, loadController.signal);
+        return performLoad(recoverExpired, { background });
       }
       if (result.status !== "available") {
         liveAnchor = null;
@@ -2054,7 +2094,7 @@ export function mountWorkUsageView(options = {}) {
         pages.push(query.cursor ?? null);
         query.cursor = result.nextCursor;
         restorePageDepth--;
-        return performLoad(recoverExpired, { background, preparingAttempt: 0 });
+        return performLoad(recoverExpired, { background });
       }
       if (!result.retained) restorePageDepth = 0;
       response = result;
@@ -2101,12 +2141,8 @@ export function mountWorkUsageView(options = {}) {
         body.dataset.state = result.refreshing ? "loading" : "error";
         if (result.refreshing) {
           query.snapshotId = result.refreshSnapshotId;
-          if (background) {
-            if (preparingAttempt >= MAX_PREPARING_POLLS) return;
-            await delayPeriodPreload(preloadPollDelay(preparingAttempt), loadController.signal);
-            return performLoad(recoverExpired, { background, preparingAttempt: preparingAttempt + 1 });
-          }
-          timer = scheduleLease(() => load(recoverExpired), PREPARING_POLL_DELAY_MS);
+          await waitForReportWithLease(revision, query.snapshotId, loadController.signal);
+          return performLoad(recoverExpired, { background });
         }
       } else if (retainForInactive) {
         stopLease();
@@ -2126,7 +2162,7 @@ export function mountWorkUsageView(options = {}) {
       body.dataset.state = error.message === "expired" ? "expired" : "error";
     } finally {
       if (token === serial) {
-        cancel.hidden = timer === null;
+        cancel.hidden = true;
         if (cancel.hidden) root.removeAttribute("aria-busy");
       }
     }
@@ -2245,15 +2281,25 @@ export function mountWorkUsageView(options = {}) {
     if (!documentVisible()) {
       stopPeriodPreload();
       foregroundLoadQueued = false;
-      if (loadInFlightBackground) {
+      if (loadInFlight) {
         serial++;
         controller?.abort();
         clearLeaseTimer(timer);
         timer = null;
+        started = false;
+        cancel.hidden = true;
+        root.removeAttribute("aria-busy");
       }
       return;
     }
     if (!visible()) {
+      if (loadInFlight && !loadInFlightBackground) {
+        serial++;
+        controller?.abort();
+        started = false;
+        cancel.hidden = true;
+        root.removeAttribute("aria-busy");
+      }
       if (detailDialog.open) detailDialog.close();
       if (!periodPreloadAllowInactive) stopPeriodPreload();
       return;
@@ -2346,6 +2392,7 @@ export function mountWorkUsageView(options = {}) {
       if (detailDialog.open) detailDialog.close();
       detailView?.destroy();
       destroyed = true;
+      unsubscribeProgress();
       clearSearchTimer();
       stopLease();
       stopPeriodPreload();

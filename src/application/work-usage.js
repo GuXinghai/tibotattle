@@ -143,7 +143,9 @@ export function createWorkUsageService({
   idleMs = 300_000,
   maximumSnapshots = 2,
   snapshotStore = null,
+  onSettled = () => {},
 } = {}) {
+  const notify = status => { try { Promise.resolve(onSettled(status)).catch(() => {}); } catch {} };
   const snapshots = new Map();
   let active = null;
   let closed = false;
@@ -169,10 +171,11 @@ export function createWorkUsageService({
     writes.add(write);
     void write.finally(() => writes.delete(write));
   }
-  const dispose = (entry) => {
+  const dispose = (entry, { announce = true } = {}) => {
     entry.controller.abort();
     snapshots.delete(entry.id);
     if (active === entry) active = null;
+    if (announce) notify("cancelled");
   };
   function sweep() {
     for (const entry of snapshots.values())
@@ -184,7 +187,7 @@ export function createWorkUsageService({
     close() {
       closed = true;
       clearInterval(expiryTimer);
-      for (const entry of snapshots.values()) dispose(entry);
+      for (const entry of snapshots.values()) dispose(entry, { announce: false });
       completed.clear();
       return Promise.allSettled([...writes]);
     },
@@ -317,6 +320,7 @@ export function createWorkUsageService({
                 : "work_usage_unavailable";
             })
             .finally(() => {
+              if (snapshots.has(selected.id)) notify(selected.status === "available" ? "ready" : "failed");
               if (active === selected) active = null;
             });
         }

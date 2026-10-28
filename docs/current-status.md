@@ -24,6 +24,20 @@ No remote resources were modified by the source retirement.
 
 ## Evidence boundaries
 
+The working tree uses a local event stream for startup snapshot, refresh, and
+independent report completion notifications. The dashboard re-reads the relevant
+validated state after a notification; an event does not itself prove that a
+particular report or refresh succeeded. Lease renewal, request deadlines and
+fault recovery remain separate from waiting for a report to become ready. A
+broken stream is shown as disconnected while reconnection proceeds. This is source-level
+work under validation, not evidence for an installed application or release.
+
+The event-driven boundary repair keeps preparation leases independent of progress
+queries, revalidates collecting performance results after notifications, and
+bounds refresh observation by its remaining deadline. Observer timeout does not
+establish backend failure. These repairs require isolated regression checks and
+independent review before packaging; existing user state is outside their scope.
+
 GPT-6.1 Terra support is added in the working tree: reviewed model identity,
 independent Standard/Batch/Flex/Fast API-equivalent prices, strict above-272K
 context selection, and performance labels. Sources:

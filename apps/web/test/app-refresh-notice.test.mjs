@@ -25,6 +25,7 @@ test("overview refresh failures use localized safe copy instead of internal code
         localRefreshSubmissionPending: false,
         localActionBusy: false,
         localRefreshCancelRequested: false,
+        localProgressEvents: { current: () => null, cursor: () => 0, connection: () => "connected" },
         overviewPublicationPollingStarted: false,
         lastObservedRefreshPublication: null, lastOverviewScheduleError: null,
         updateLocalActionButtons() {},
@@ -54,9 +55,8 @@ test("overview refresh failures use localized safe copy instead of internal code
         },
       };
 
-      runInNewContext(`${pollingSource}\nstartOverviewPublicationPolling();`, context);
-      assert.equal(timers[0].delay, 2000);
-      await timers[0].callback();
+      runInNewContext(pollingSource, context);
+      await context.observeOverviewPublication();
 
       assert.equal(notices.length, statusName === "cancelled" ? 0 : 1);
       if (statusName === "cancelled") continue;
@@ -71,12 +71,13 @@ test("overview refresh failures use localized safe copy instead of internal code
 });
 
 
-test("publication polling has one owner and foreground recovery only rereads state and age", async () => {
+test("publication events have one owner and returning to the foreground only updates age", async () => {
   const timers = [];
   const documentListeners = [];
   const windowListeners = [];
   const ages = [];
   let reads = 0;
+  const subscriptions = [];
   let release;
   const pending = new Promise(resolve => { release = resolve; });
   const context = {
@@ -84,6 +85,8 @@ test("publication polling has one owner and foreground recovery only rereads sta
     localRefreshObserverActive: false, localRefreshSubmissionPending: false,
     localRefreshStatusVersion: 0, localActionBusy: false,
     overviewPublicationPollingStarted: false, lastObservedRefreshPublication: null, lastOverviewScheduleError: null,
+    localProgressEvents: { subscribe: fn => subscriptions.push(fn), current: () => null, cursor: () => 0,
+      connection: () => "connected", close() {} },
     localAnalysisAllowed: () => true, updateLocalActionButtons() {},
     localClient: { refreshStatus: async () => { reads += 1; return pending; } },
     observationFreshnessClock: { update: data => ages.push(data) },
@@ -94,17 +97,18 @@ test("publication polling has one owner and foreground recovery only rereads sta
     },
   };
   runInNewContext(`${pollingSource}\nstartOverviewPublicationPolling(); startOverviewPublicationPolling();`, context);
-  assert.equal(timers.length, 1);
+  assert.equal(timers.length, 0);
+  assert.equal(subscriptions.length, 1);
   assert.deepEqual(documentListeners.map(item => item.name), ["visibilitychange"]);
-  assert.deepEqual(windowListeners.map(item => item.name), ["focus"]);
-  const scheduledPoll = timers[0].callback();
+  assert.deepEqual(windowListeners.map(item => item.name), ["focus", "pagehide"]);
+  subscriptions[0]({ connection: "connected" });
   windowListeners[0].callback();
   documentListeners[0].callback();
   assert.equal(reads, 1, "focus and tab switches cannot overlap a pending status read");
   assert.equal(ages.length, 2, "evidence ages update immediately on return");
   release({ refresh: { status: "idle", running: false } });
-  await scheduledPoll;
-  assert.equal(timers.length, 2, "the existing observation cadence remains singular");
+  await new Promise(setImmediate);
+  assert.equal(timers.length, 0, "no periodic publication polling is scheduled");
 });
 
 
@@ -118,6 +122,7 @@ test("scheduler failure is distinct from unreadable status and is deduplicated u
     localRefreshObserverActive: false, localRefreshSubmissionPending: false,
     localRefreshStatusVersion: 0, localActionBusy: false,
     overviewPublicationPollingStarted: false, lastObservedRefreshPublication: null,
+    localProgressEvents: { current: () => null, cursor: () => 0, connection: () => "connected" },
     lastOverviewScheduleError: null, localAnalysisAllowed: () => true,
     updateLocalActionButtons() {}, showConnectionNotice: notice => notices.push(notice),
     setSidebarRefreshSummary: key => summaries.push(key),

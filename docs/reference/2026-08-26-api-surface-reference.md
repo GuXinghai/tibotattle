@@ -15,13 +15,14 @@ release. There is no hosted Worker, public site, remote relay or cloud runtime.
 
 | Surface | Owner | Callable boundary | Authority |
 | --- | --- | --- | --- |
-| Local companion API | Browser/native shell → loopback Node companion | 17 paths, 18 method/path operations |
+| Local companion API | Browser/native shell → loopback Node companion | 18 paths, 19 method/path operations |
 
 ## Local route inventory
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/local/health` | Companion readiness, refresh state, schema versions, and configured capabilities |
+| `GET` | `/api/local/events` | Same-origin, query-free server-sent lifecycle notifications for the startup snapshot, refresh and independent reports; available before snapshot readiness. Events are read hints, not report or refresh success receipts. |
 | `GET` | `/api/local/desktop-status` | Closed lifecycle plus a current direct display allowance from bounded published-overview metadata; strict v2 notification evidence remains receipt-only. Optional `notificationEvidenceStatus: "expired"` identifies age-only expiry after fresh completion without authorizing an alert or clearing comparison baselines. Available before the first snapshot and without account identifiers or filesystem paths. |
 | `POST` | `/api/local/diagnostics/note` | Record one bounded fixed-vocabulary local diagnostic note |
 | `GET` | `/api/local/onboarding` | Local installation and evidence-source readiness |

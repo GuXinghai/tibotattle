@@ -18,6 +18,7 @@
  */
 
 import { normalizeWeeklyApiIntervals } from './weekly-api-intervals.js';
+import { createLocalProgressEvents } from './local-progress-events.js';
 import {
   codexCacheReasoningConfiguration,
   REVIEWED_CODEX_MODEL_IDS,
@@ -6048,6 +6049,10 @@ export class LocalCompanionClient {
 
   refreshStatus() {
     return fetchJson(this.fetchImpl, `${LOCAL_ROOT}/refresh`);
+  }
+
+  progressEvents(options = {}) {
+    return createLocalProgressEvents({ ...options, url: `${LOCAL_ROOT}/events` });
   }
 
   /**

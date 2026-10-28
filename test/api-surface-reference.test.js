@@ -163,7 +163,7 @@ test("both maintained API references cover every registered HTTP boundary", asyn
   const localPolicy = localRoutePolicy(local);
   const reportPolicy = reportRoutePolicy(reports);
 
-  assert.equal(localPolicy.length, 17, "review local route-count changes");
+  assert.equal(localPolicy.length, 18, "review local route-count changes");
   assert.equal(reportPolicy.length, 4, "review fixed report-count changes");
 
   for (const [name, reference] of [

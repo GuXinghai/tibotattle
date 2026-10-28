@@ -17,12 +17,8 @@ const MAX_READY_PERIODS = 12;
 // each entry is eventually revalidated. The cache holds at most the four
 // shared periods in three speed modes; it never persists measurements in browser storage.
 const PERIOD_CACHE_TTL_MS = 300_000;
-// A first history pass can take minutes. Continue bounded background retries
-// while the document is visible instead of giving up after ten seconds.
-const PRELOAD_MAX_ATTEMPTS = 24;
-const preloadRetryDelay = attempt => Math.min(30_000, 5_000 * 2 ** attempt);
 // Source recovery has its own budget: it must not spend the cold-history
-// polling budget or turn a persistent warning into endless foreground work.
+// pending report wait or turn a persistent warning into endless foreground work.
 // Span the worker's one-minute rediscovery cadence while keeping every gap
 // below its one-minute idle lease. Reads do not force a history scan.
 const SOURCE_RETRY_DELAYS = [5_000, 10_000, 20_000, 30_000];
@@ -210,16 +206,31 @@ export function mountModelPerformance(options = {}) {
   // local view. Shared end bounds can change as accounting snapshots advance.
   // No measurements or identity-bearing data enter browser storage.
   const readyPeriods = new Map();
-  const rememberReady = (key, value) => {
+  const rememberReady = (key, value, revision) => {
     readyPeriods.delete(key);
-    readyPeriods.set(key, { payload: value, cachedAt: Date.now() });
+    readyPeriods.set(key, { payload: value, cachedAt: Date.now(), revision });
     while (readyPeriods.size > MAX_READY_PERIODS)
       readyPeriods.delete(readyPeriods.keys().next().value);
   };
   const pendingPeriods = new Map();
   let lifecycle = 0, scopeGeneration = 0, scopeUnavailable = false, destroyed = false;
-  let preloadPromise = null, preloadComplete = false;
+  let preloadPromise = null, preloadComplete = false, pendingWait = false;
+  let cancelForegroundWait = null;
   const preloadWaiters = new Map();
+  const expiryChecks = new Map();
+  let reportRevision = 0, progressConnection = options.localProgressEvents?.connection?.() ?? null;
+  let renderProgressConnection = () => {};
+  const unsubscribeProgress = options.localProgressEvents?.subscribe?.(event => {
+    const reconnected = event?.connection === "connected"
+      && progressConnection !== "connected";
+    const previousConnection = progressConnection;
+    progressConnection = event?.connection ?? progressConnection;
+    if (previousConnection !== progressConnection) renderProgressConnection();
+    if (reconnected || progressConnection === "connected" && event?.report?.kind === "model_performance") {
+      reportRevision++;
+      for (const finish of [...preloadWaiters.values()]) finish(true);
+    }
+  }) ?? (() => {});
   let chartCursors = [];
   let selectedInterval = null;
   const showInterval = (at) => { if (at === selectedInterval) return; selectedInterval = at; for (const update of chartCursors) update(at); };
@@ -591,11 +602,13 @@ export function mountModelPerformance(options = {}) {
       const sourceFailure = sourceDiagnostics.find(row => !RETRYABLE_SOURCE_CHANGES.includes(row.code));
       status.textContent = state === 'error' ? translate(`error.${code || 'timing_request_failed'}`)
         : state === 'waiting' ? reportTranslate('waiting') : translate(state === 'updating' ? 'collectingCompact' : `status.${state}`);
+      if (progressConnection === "disconnected" && (['loading', 'updating'].includes(state) || state === 'stale' && payload?.collecting))
+        status.textContent = t("refresh.stage.reconnecting");
       if (state === 'error' && sourceFailure) status.textContent += ` · ${translate(`source.${sourceFailure.code}`)}`;
       if (retryExhausted && state === 'error') status.textContent += ` · ${translate('retryExhausted')}`;
       if (payload?.updatedAt && ['error','stale','unavailable'].includes(state)) status.textContent += ` · ${instant(payload.updatedAt)}`;
       actions.append(status);
-      if (loading && !retrying) actions.append(button(translate('cancel'), 'cancel', cancelRefresh));
+      if ((loading || pendingWait) && !retrying) actions.append(button(translate('cancel'), 'cancel', cancelRefresh));
       else if (['error','unavailable','stale'].includes(state)) actions.append(button(translate('retry'), 'retry', () => { pendingAttempts = 0; resetSourceRetry(); refresh(); }));
       append(actions);
     }
@@ -634,7 +647,8 @@ export function mountModelPerformance(options = {}) {
     sourceDiagnostics = sourceDiagnosticsByKey.get(key) ?? [];
     return readyPeriods.get(key)?.payload ?? null;
   };
-  const cacheFresh = entry => entry && Date.now() - entry.cachedAt < PERIOD_CACHE_TTL_MS;
+  const cacheFresh = entry => entry && entry.revision === reportRevision && !entry.payload.collecting
+    && Date.now() - entry.cachedAt < PERIOD_CACHE_TTL_MS;
   const preloadTargets = () => {
     if (!sharedReporting) return PRELOAD_PERIODS.map(value => ({ value, mode: speedMode, window: null }));
     if (!reportingWindow) return [];
@@ -722,6 +736,7 @@ export function mountModelPerformance(options = {}) {
     const controller = new AbortController();
     const startedLifecycle = lifecycle;
     const startedScope = scopeGeneration;
+    const startedRevision = reportRevision;
     let timedOut = false;
     const deadline = windowRef.setTimeout(() => { timedOut = true; controller.abort(); }, 15_000);
     const record = { controller, promise: null, speculative };
@@ -759,7 +774,7 @@ export function mountModelPerformance(options = {}) {
         if (result.status === "unavailable") invalidateScope(value, result, cacheKey);
         else {
           scopeUnavailable = false;
-          if (result.status === "ready") rememberReady(cacheKey, result);
+          if (result.status === "ready") rememberReady(cacheKey, result, startedRevision);
         }
         return result;
       } catch (error) {
@@ -777,23 +792,40 @@ export function mountModelPerformance(options = {}) {
     pendingPeriods.set(cacheKey, record);
     return promise;
   }
-  function waitForPreload(delay, runLifecycle, runScope) {
+  function waitForPreload(revision, runLifecycle, runScope, cacheKey, foreground = false) {
+    if (!options.localProgressEvents || progressConnection === "unavailable") return Promise.resolve(false);
+    if (revision !== reportRevision) return Promise.resolve(canPreload(runLifecycle, runScope));
     return new Promise(resolve => {
-      let timeout;
+      const key = {};
+      let fallback;
       const finish = value => {
-        if (!preloadWaiters.delete(timeout)) return;
-        windowRef.clearTimeout(timeout);
+        if (!preloadWaiters.delete(key)) return;
+        windowRef.clearTimeout(fallback);
+        if (cancelForegroundWait === cancel) cancelForegroundWait = null;
         resolve(value && canPreload(runLifecycle, runScope));
       };
-      timeout = windowRef.setTimeout(() => finish(true), delay);
-      preloadWaiters.set(timeout, finish);
+      const cancel = () => finish(false);
+      preloadWaiters.set(key, finish);
+      const entry = readyPeriods.get(cacheKey);
+      if (entry && expiryChecks.get(cacheKey) !== revision) {
+        const delay = Math.max(0, entry.cachedAt + PERIOD_CACHE_TTL_MS - Date.now());
+        fallback = windowRef.setTimeout(() => {
+          expiryChecks.set(cacheKey, revision);
+          while (expiryChecks.size > MAX_READY_PERIODS) expiryChecks.delete(expiryChecks.keys().next().value);
+          finish(true);
+        }, delay);
+      }
+      if (foreground) cancelForegroundWait = cancel;
+      if (revision !== reportRevision) finish(true);
     });
   }
   async function preloadPeriod({ value, mode, window }, runLifecycle, runScope) {
-    for (let attempt = 0; attempt < PRELOAD_MAX_ATTEMPTS; attempt++) {
+    let force = false;
+    for (;;) {
       if (!canPreload(runLifecycle, runScope)) return null;
+      const revision = reportRevision;
       let result = null;
-      try { result = await requestPeriod(value, { speculative: true, mode, window }); }
+      try { result = await requestPeriod(value, { force, speculative: true, mode, window }); }
       catch (error) {
         if (canPreload(runLifecycle, runScope) && mode === speedMode && value === selectedRequestPeriod()) {
           failed = true; failureCode = error.code; render();
@@ -807,10 +839,10 @@ export function mountModelPerformance(options = {}) {
       if (!canPreload(runLifecycle, runScope)) return null;
       if (result) {
         if (mode === speedMode && presentResult(value, result)) render();
-        if (result.status === "ready" && !result.collecting) return result;
+        if (result.status === "ready" && !result.collecting && revision === reportRevision) return result;
       }
-      if (attempt + 1 < PRELOAD_MAX_ATTEMPTS
-          && !await waitForPreload(preloadRetryDelay(attempt), runLifecycle, runScope)) return null;
+      if (!await waitForPreload(revision, runLifecycle, runScope, cacheKeyFor(value, mode, window))) return null;
+      force = true;
     }
     return null;
   }
@@ -820,7 +852,7 @@ export function mountModelPerformance(options = {}) {
         Number(right.value === selectedRequestPeriod()) - Number(left.value === selectedRequestPeriod()));
       for (const target of targets) {
         const result = await preloadPeriod(target, runLifecycle, runScope);
-        if (result?.status === "unavailable" || !canPreload(runLifecycle, runScope)) return;
+        if (!result || result.status === "unavailable" || !canPreload(runLifecycle, runScope)) return;
       }
       return;
     }
@@ -869,6 +901,8 @@ export function mountModelPerformance(options = {}) {
       render();
       return;
     }
+    cancelForegroundWait?.();
+    pendingWait = false;
     const current = ++request;
     const startedLifecycle = lifecycle;
     const startedScope = scopeGeneration;
@@ -886,11 +920,28 @@ export function mountModelPerformance(options = {}) {
     // A cached period remains visible while its replacement is fetched.
     if (!payload || hadFailure) render();
     let changed = false, shouldWarm = false;
+    const revision = reportRevision;
     try {
       const result = await requestPeriod(targetPeriod, { force: true });
       if (request !== current || lifecycle !== startedLifecycle || destroyed || !result) return;
       shouldWarm = !sharedReporting && result.status !== "unavailable";
       changed = presentResult(targetPeriod, result);
+      if (revision !== reportRevision && !pendingResult()) {
+        queueMicrotask(() => {
+          if (request === current && lifecycle === startedLifecycle && scopeGeneration === startedScope && visible() && !destroyed) void refresh();
+        });
+      }
+      if (pendingResult() && !recoverableSourceWarning()) {
+        pendingWait = true;
+        void waitForPreload(revision, startedLifecycle, startedScope, targetKey, true).then(ready => {
+          if (request !== current || destroyed) return;
+          pendingWait = false;
+          if (ready && visible()) void refresh();
+          else if (!options.localProgressEvents || progressConnection === "unavailable") {
+            failed = true; failureCode = 'timing_request_failed'; render();
+          }
+        });
+      }
     } catch (error) {
       if (request !== current || lifecycle !== startedLifecycle || destroyed) return;
       // Keep a good period visible through transient foreground failures. A
@@ -906,9 +957,6 @@ export function mountModelPerformance(options = {}) {
         retryExhausted = recoveryWarning && !retrying;
         if (retryExhausted) { failed = true; failureCode = 'timing_source_recovery_failed'; }
         if (!failed && !diagnostics.length && !sourceDiagnostics.length) resetSourceRetry();
-        if (!failed && !recoveryWarning && pendingResult() && pendingAttempts >= PRELOAD_MAX_ATTEMPTS - 1) {
-          failed = true; failureCode = 'timing_timeout';
-        }
         loading = false; if (changed || failed || diagnostics.length || sourceDiagnostics.length || hadFailure || !payload) render();
         if (visible()) {
           if (retrying) {
@@ -920,9 +968,6 @@ export function mountModelPerformance(options = {}) {
               sourceRetryAttempts++;
               void refresh();
             }, SOURCE_RETRY_DELAYS[sourceRetryAttempts]);
-          } else if (!failed && !sourceDiagnostics.length && !diagnostics.includes('timing_source_recovery_failed')
-              && pendingResult() && pendingAttempts < PRELOAD_MAX_ATTEMPTS - 1) {
-            timer = windowRef.setTimeout(refresh, preloadRetryDelay(pendingAttempts++));
           }
           if (shouldWarm && !scopeUnavailable) void warmOtherPeriods();
         }
@@ -930,8 +975,10 @@ export function mountModelPerformance(options = {}) {
     }
   }
   function cancelRefresh() {
-    if (!loading && !retrying) return;
+    if (!loading && !retrying && !pendingWait) return;
     resetSourceRetry();
+    cancelForegroundWait?.();
+    pendingWait = false;
     request++;
     const key = foregroundKey;
     const entry = key ? pendingPeriods.get(key) : null;
@@ -961,6 +1008,8 @@ export function mountModelPerformance(options = {}) {
       // document-visible speculative preload is allowed to finish for the
       // first visit. Document hiding below cancels both kinds of work.
       cancelPending({ includeSpeculative: false });
+      cancelForegroundWait?.();
+      pendingWait = false;
     }
   };
   const documentVisibilityChanged = () => {
@@ -1034,6 +1083,7 @@ export function mountModelPerformance(options = {}) {
   }) : null;
   resizeObserver?.observe(root);
   documentRef.addEventListener("visibilitychange", documentVisibilityChanged);
+  renderProgressConnection = () => { if (!destroyed) render(); };
   render();
   if (visible()) refresh();
   return {
@@ -1045,6 +1095,7 @@ export function mountModelPerformance(options = {}) {
     destroy() {
       closeDetails();
       destroyed = true;
+      unsubscribeProgress();
       lifecycle++;
       readyPeriods.clear();
       diagnosticsByKey.clear(); sourceDiagnosticsByKey.clear(); resetSourceRetry();

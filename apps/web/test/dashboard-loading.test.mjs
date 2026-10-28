@@ -37,7 +37,7 @@ test("desktop keeps navigation through loading, failure, retry and ready; contro
     context.setJourneyState("first-run");
     assert.ok(elements.every(element => !element.hidden));
     assert.ok(controls.every(control => control.disabled));
-    assert.equal(status.key, state === "error" ? "dashboard.unavailable.dashboardTitle" : "refresh.progress.saved");
+    assert.equal(status.key, state === "error" ? "dashboard.unavailable.dashboardTitle" : "refresh.stage.localData");
     assert.equal(elements[2].attributes["aria-busy"], String(state === "loading"));
   }
   context.renderDesktopEvidenceState("ready");

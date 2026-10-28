@@ -1,3 +1,4 @@
+import { createLocalProgressEvents } from "./local-progress-events.js";
 import { createWorkUsageService } from "../../src/application/index.js";
 import { createWorkUsageSnapshotStore } from "./work-usage-snapshots.js";
 import {
@@ -347,6 +348,7 @@ const API_ROUTES = new Set([
   "/api/local/quality",
   "/api/local/timeline/window-breakdown",
   "/api/local/model-performance",
+  "/api/local/events",
   "/api/local/refresh",
   "/api/local/refresh/quick",
   "/api/local/refresh/overview",
@@ -357,6 +359,7 @@ const API_ROUTES = new Set([
 // snapshot is still being built (or even if it fails): readiness, diagnostics,
 // and the independently reconstructed timing analysis.
 const SNAPSHOT_INDEPENDENT_API_ROUTES = new Set([
+  "/api/local/events",
   "/api/local/health",
   "/api/local/desktop-status",
   "/api/local/diagnostics/note",
@@ -1111,6 +1114,7 @@ function createPreparedLocalCompanionServer({
     modelPerformanceController ??= createModelPerformanceController({
       directory: join(stateRoot, "inference-timing-v2"),
       codexHome,
+      onSettled: status => progressEvents.publish({ kind: "model_performance", status }),
     });
     return modelPerformanceController.read(period, options);
   });
@@ -1208,6 +1212,7 @@ function createPreparedLocalCompanionServer({
           runtimeModelEvidence.start();
           overviewScheduler.start();
           snapshotState = { status: "ready", errorCode: null };
+          progressEvents.publish();
           announceSnapshotOutcome();
           // Last-good is readable before the one lifecycle startup intent.
           void requestStartupRefresh();
@@ -1219,6 +1224,7 @@ function createPreparedLocalCompanionServer({
               ? error.code
               : "snapshot_unavailable",
           };
+          progressEvents.publish();
           announceSnapshotOutcome();
           try {
             const reference = diagnosticReferenceFactory();
@@ -1278,6 +1284,7 @@ function createPreparedLocalCompanionServer({
   const configuredRefreshInterval = environment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS;
   const intervalSeconds = configuredRefreshInterval === undefined ? 300 : Number(configuredRefreshInterval);
   const configuredRefreshPause = environment.USAGE_MONITOR_REFRESH_PAUSED;
+  const progressEvents = createLocalProgressEvents({ snapshotStatus: () => snapshotState, refresh });
   if (configuredRefreshPause !== undefined && !["true", "false"].includes(configuredRefreshPause)) throw new TypeError("refresh pause is invalid");
   const refreshPaused = configuredRefreshPause === "true";
   if (!validOverviewRefreshIntervalSeconds(intervalSeconds)) throw new TypeError("refresh interval is invalid");
@@ -1312,6 +1319,7 @@ function createPreparedLocalCompanionServer({
   const overviewScheduler = createOverviewRefreshScheduler({ refresh, onError, clock, intervalSeconds, paused: refreshPaused,
     canAutomaticallyRefresh });
   const workUsage = createWorkUsageService({ build: workUsageBuild, enrich: workUsageEnrich,
+    onSettled: status => progressEvents.publish({ kind: "work_usage", status }),
     snapshotStore: createWorkUsageSnapshotStore({
       snapshotFile: join(stateRoot, "work-usage-snapshot.json"),
       codexHome, indexFile: unifiedStoreFile,
@@ -1327,6 +1335,7 @@ function createPreparedLocalCompanionServer({
     shutdownRequested = true;
     startupSnapshotAbort.abort();
     overviewScheduler.close();
+    progressEvents.close();
     refresh.cancel();
   };
   const server = createServer(async (request, response) => {
@@ -1379,6 +1388,19 @@ function createPreparedLocalCompanionServer({
           sendError(response, 503, "snapshot_unavailable");
           return;
         }
+      }
+
+      if (path === "/api/local/events") {
+        if (request.method !== "GET") { sendError(response, 405, "method_not_allowed"); return; }
+        const origin = request.headers.origin;
+        const site = request.headers["sec-fetch-site"];
+        if ((origin !== undefined && !sameOrigin(request))
+            || (site !== undefined && site !== "same-origin")
+            || (origin === undefined && site !== "same-origin")) {
+          sendError(response, 403, "events_not_authorized"); return;
+        }
+        if (!progressEvents.connect(request, response)) sendError(response, 503, "events_capacity_exceeded");
+        return;
       }
 
       if (path === "/api/local/health") {
@@ -1794,6 +1816,7 @@ function createPreparedLocalCompanionServer({
   });
 
   server.on("close", () => {
+    progressEvents.close();
     overviewScheduler.close();
     void closeWorkUsage().catch(() => onError("work_usage_shutdown_failed"));
     void closeProjectionReader().catch(() => onError("local_projection_shutdown_failed"));

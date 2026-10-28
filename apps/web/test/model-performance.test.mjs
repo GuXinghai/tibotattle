@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeModelPerformance, performanceSegments, performanceDomain, performanceYScale, performanceDateTicks, performanceHoverBin, mountModelPerformance } from '../public/model-performance.js';
+import { normalizeModelPerformance, performanceSegments, performanceDomain, performanceYScale, performanceDateTicks, performanceHoverBin, mountModelPerformance as mountModelPerformanceImpl } from '../public/model-performance.js';
 import { LocalCompanionClient } from '../public/data-client.js';
 import { translate, SUPPORTED_LOCALES } from '../public/localization.js';
+function mountModelPerformance(options) {
+  return mountModelPerformanceImpl({ localProgressEvents: options.windowRef?.localProgressEvents, ...options });
+}
+function syntheticProgress() {
+  const listeners = new Set(); let state = 'connected';
+  return { connection: () => state, setConnection(value) { state = value; for (const fn of [...listeners]) fn({ connection: value, report: null }); }, subscribe(fn) { listeners.add(fn); return () => listeners.delete(fn); },
+    wake(status = 'ready') { for (const fn of [...listeners]) fn({ connection: 'connected', report: { kind: 'model_performance', status } }); },
+    listenerCount: () => listeners.size };
+}
 const DAY = 86400000;
 const point = (at = 2 * DAY, n = 5) => ({ at, n, mean: n < 3 ? 50 : 55,
   p10: n < 5 ? null : 30, p25: n < 5 ? null : 40, median: 50,
@@ -214,7 +223,8 @@ function focusHarness() {
     clearTimeout: id => { timers.delete(id); timerDelays.delete(id); },
     MutationObserver: class { constructor(callback) { visibilityObserver = callback; } observe() {} disconnect() {} },
   };
-  return { root, documentRef, windowRef, show: () => { inactive = false; },
+  windowRef.localProgressEvents = syntheticProgress();
+  return { root, documentRef, windowRef, localProgressEvents: windowRef.localProgressEvents, show: () => { inactive = false; },
     navigate: (shown) => { inactive = !shown; visibilityObserver?.(); },
     find: key => root.all().find(node => node.dataset.performanceFocus === key),
     timerIds: () => [...timers.keys()], timerDelay: id => timerDelays.get(id),
@@ -466,9 +476,8 @@ test('page preload retries a cold loading response with a bounded retry', async 
   const operation = controller.preload();
   await settle();
   assert.deepEqual(calls.map(call => call.period), ['all']);
-  const retry = dom.timerIds()[0];
-  assert.ok(retry, 'loading response schedules a retry');
-  dom.runTimer(retry);
+  assert.equal(dom.timerIds().length, 0, 'without a retained cache loading waits for an event');
+  dom.localProgressEvents.wake();
   await operation; await settle();
   assert.deepEqual(calls.map(call => call.period), ['all', 'all', '7', '30']);
   controller.destroy();
@@ -483,11 +492,10 @@ test('background timing preload continues past the first ten seconds of a cold h
     t: (key, values) => translate(key, values, 'en-US') });
   try {
     const operation = controller.preload();
-    for (const delay of [5_000, 10_000, 20_000, 30_000]) {
+    for (let i = 0; i < 4; i++) {
       await settle();
-      const timer = dom.timerIds().find(id => dom.timerDelay(id) === delay);
-      assert.ok(timer, `cold history schedules a ${delay}ms retry`);
-      dom.runTimer(timer);
+      assert.equal(dom.timerIds().length, 0);
+      dom.localProgressEvents.wake();
     }
     await operation;
     assert.equal(calls.filter(call => call.period === 'all').length, 5);
@@ -1044,13 +1052,14 @@ test('mean uses straight segments, breaks missing bins, fits the axis and toggle
   c.destroy();
 });
 
-test('ready reports have no recurring timer and loading requests stop at the bounded budget',async()=>{
+test('ready reports have no recurring timer and loading waits for an event',async()=>{
   const dom=focusHarness();let data=payload(),calls=0;
   const c=mountModelPerformance({...dom,sharedReporting:true,reportingWindow:{period:'all',startAt:null,endAt:new Date(data.end).toISOString()},client:{modelPerformance:async()=>{calls++;return data;}},t:(k,v)=>translate(k,v,'en-US')});
   dom.show();await c.refresh();assert.equal(dom.timerIds().length,0);
-  data={...data,status:'loading',models:[]};await c.refresh();
-  for(let i=0;i<30;i++){const timers=dom.timerIds().filter(id=>dom.timerDelay(id)!==15000);if(!timers.length)break;dom.runTimer(timers.at(-1));await settle();}
-  assert.equal(calls,25,'one completed report plus at most 24 pending reads');c.destroy();
+  data={...data,status:'loading',models:[]};await c.refresh(); await settle();
+  assert.equal(calls,2); assert.equal(dom.timerIds().length, 1); assert.ok(dom.timerDelay(dom.timerIds()[0]) <= 300_000);
+  dom.localProgressEvents.wake(); await settle(); assert.equal(calls,3);
+  c.cancel(); c.destroy(); assert.equal(dom.localProgressEvents.listenerCount(),0);
 });
 
 test('request diagnostics are closed and separate from the v6 DTO',async()=>{
@@ -1086,8 +1095,8 @@ test('saved-source warnings never block bounded reads of a cold live reporting w
   const dom=focusHarness();let pending=true;
   const c=mountModelPerformance({...dom,sharedReporting:true,reportingWindow:{period:'all',startAt:null,endAt:new Date(payload().end).toISOString()},
     client:{modelPerformance:async(_,options)=>{options.onDiagnostics(['timing_snapshot_scope_mismatch']);return pending?{...payload(),status:'loading',models:[]}:payload();}},t:(k,v)=>translate(k,v,'en-US')});
-  dom.show();await c.refresh();const retry=dom.timerIds().find(id=>dom.timerDelay(id)===5000);assert.ok(retry);
-  pending=false;dom.runTimer(retry);await settle();assert.equal(hasPanel(dom),true);
+  dom.show();await c.refresh();assert.equal(dom.timerIds().length,0);
+  pending=false;dom.localProgressEvents.wake();await settle();assert.equal(hasPanel(dom),true);
   assert.match(dom.root.all().find(n=>n.className==='performance-status').textContent,/source mismatch/);
   c.destroy();
 });
@@ -1198,7 +1207,7 @@ test('missing, unreadable, replaced and truncated sources stay explicit and mixe
     const h = sourceRecoveryHarness({ details: [{ code: 'source_grew_during_read', count: 1 }, { code, count: 2 }] });
     h.state.data = { ...h.state.data, collecting: true, stale: true };
     h.show(); await h.controller.refresh();
-    assert.equal(h.status().dataset.state, 'error'); assert.equal(h.timerIds().length, 0);
+    assert.equal(h.status().dataset.state, 'error'); assert.equal(h.timerIds().length, 1); assert.ok(h.timerDelay(h.timerIds()[0]) <= 300_000);
     assert.ok(h.text().includes(translate(`performance.source.${code}`, {}, 'zh-CN')));
     assert.doesNotMatch(h.text(), /正在重试|等待日志稳定/); assert.equal(hasPanel(h), true);
     h.controller.destroy();
@@ -1292,4 +1301,143 @@ test('malformed source diagnostics reject a retry rather than silently accepting
   dom.show(); await c.refresh(); bad = true; dom.runTimer(dom.timerIds()[0]); await settle();
   assert.equal(dom.timerIds().length, 0); assert.equal(hasPanel(dom), true);
   assert.match(dom.root.all().find(node => node.dataset.state).textContent, /测量校验失败/); c.destroy();
+});
+
+
+test('report event before a loading response coalesces into one reread', async () => {
+  const dom = focusHarness(), first = Promise.withResolvers(); let calls = 0, active = 0, maximum = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => { calls++; active++; maximum = Math.max(maximum, active);
+      try { return calls === 1 ? await first.promise : payload(); } finally { active--; }
+    } }, t: (k,v) => translate(k,v,'en-US') });
+  dom.show(); const operation = c.refresh(); await settle();
+  dom.localProgressEvents.wake(); dom.localProgressEvents.wake();
+  first.resolve({ ...payload(), status: 'loading', models: [] });
+  await operation; await settle(); await settle();
+  assert.equal(calls, 2); assert.equal(maximum, 1); assert.equal(hasPanel(dom), true);
+  c.destroy(); assert.equal(dom.localProgressEvents.listenerCount(), 0);
+});
+
+
+test('disconnected pending measurements re-read on reconnect', async () => {
+  const dom = focusHarness(); let calls = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => ++calls === 1 ? { ...payload(), status: 'loading', models: [] } : payload() },
+    t: (k,v) => translate(k,v,'en-US') });
+  dom.show(); await c.refresh(); dom.localProgressEvents.setConnection('disconnected');
+  assert.match(dom.root.all().find(node => node.dataset.state).textContent, /Connection interrupted/);
+  assert.equal(calls, 1); dom.localProgressEvents.setConnection('connected'); await settle(); await settle();
+  assert.equal(calls, 2); assert.equal(hasPanel(dom), true);
+  c.destroy(); assert.equal(dom.localProgressEvents.listenerCount(), 0);
+});
+
+
+test('missing event source exposes a read failure without polling', async () => {
+  const dom = focusHarness(); let calls = 0;
+  const c = mountModelPerformance({ ...dom, localProgressEvents: null, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => { calls++; return { ...payload(), status: 'loading', models: [] }; } },
+    t: (k,v) => translate(k,v,'en-US') });
+  dom.show(); await c.refresh(); await settle();
+  assert.equal(calls, 1); assert.equal(dom.timerIds().length, 0);
+  assert.equal(dom.root.all().find(node => node.dataset.state).dataset.state, 'error'); c.destroy();
+});
+
+
+test('first event-stream connection rereads pending measurements', async () => {
+  const dom = focusHarness(); dom.localProgressEvents.setConnection('connecting'); let calls = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => ++calls === 1 ? { ...payload(), status: 'loading', models: [] } : payload() },
+    t: (k,v) => translate(k,v,'en-US') });
+  dom.show(); await c.refresh(); assert.equal(calls, 1);
+  dom.localProgressEvents.setConnection('connected'); await settle(); await settle();
+  assert.equal(calls, 2); assert.equal(hasPanel(dom), true); c.destroy();
+});
+
+test('preload re-reads retained collecting data after a report event and coalesces requests', async () => {
+  const dom = focusHarness(); let calls = 0, active = 0, maximum = 0;
+  const release = Promise.withResolvers();
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => { calls++; active++; maximum = Math.max(maximum, active);
+      try { if (calls === 1) return { ...payload(), collecting: true }; return await release.promise; }
+      finally { active--; } } }, t: (k,v) => translate(k,v,'en-US') });
+  const operation = c.preload(); await settle();
+  assert.equal(calls, 1); assert.equal(hasPanel(dom), true);
+  dom.localProgressEvents.wake(); await settle();
+  assert.equal(calls, 2); assert.equal(c.preload(), operation);
+  dom.localProgressEvents.wake(); release.resolve(payload());
+  await settle(); await settle();
+  // The event arrived before the response and therefore needs one more read.
+  assert.equal(calls, 3); await operation;
+  assert.equal(maximum, 1); assert.equal(hasPanel(dom), true);
+  c.destroy();
+});
+
+test('pending preload has a bounded fallback and cancels it when hidden', async () => {
+  const dom = focusHarness(); let calls = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => ++calls === 1 ? { ...payload(), collecting: true } : payload() },
+    t: (k,v) => translate(k,v,'en-US') });
+  const operation = c.preload(); await settle();
+  assert.equal(calls, 1); assert.equal(dom.timerIds().length, 1); assert.ok(dom.timerDelay(dom.timerIds()[0]) <= 300_000);
+  dom.runTimer(dom.timerIds()[0]); await operation;
+  assert.equal(calls, 2); assert.equal(dom.timerIds().length, 0);
+  c.destroy();
+
+  const hidden = focusHarness(); let hiddenCalls = 0;
+  const other = mountModelPerformance({ ...hidden, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => { hiddenCalls++; return { ...payload(), collecting: true }; } },
+    t: (k,v) => translate(k,v,'en-US') });
+  const pending = other.preload(); await settle(); hidden.setDocumentHidden(true); await pending;
+  assert.equal(hidden.timerIds().length, 0); assert.equal(hiddenCalls, 1); other.destroy();
+});
+
+test('a completed cache is invalidated by a model event while its display remains available', async () => {
+  const dom = focusHarness(); let calls = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => { calls++; return payload(); } },
+    t: (k,v) => translate(k,v,'en-US') });
+  await c.preload(); assert.equal(calls, 1); assert.equal(hasPanel(dom), true);
+  dom.localProgressEvents.wake('changed'); await c.preload();
+  assert.equal(calls, 2); assert.equal(hasPanel(dom), true); c.destroy();
+});
+
+test('preload reconnect revalidates collecting data and destruction clears a disconnected wait', async () => {
+  const dom = focusHarness(); dom.localProgressEvents.setConnection('connecting'); let calls = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => ++calls === 1 ? { ...payload(), collecting: true } : payload() },
+    t: (k,v) => translate(k,v,'en-US') });
+  const initial = c.preload(); await settle();
+  dom.localProgressEvents.setConnection('connected'); await initial;
+  assert.equal(calls, 2); c.destroy(); assert.equal(dom.timerIds().length, 0);
+
+  const disconnected = focusHarness(); let count = 0;
+  const other = mountModelPerformance({ ...disconnected, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => { count++; return { ...payload(), collecting: true }; } },
+    t: (k,v) => translate(k,v,'en-US') });
+  const pending = other.preload(); await settle();
+  disconnected.localProgressEvents.setConnection('disconnected'); other.destroy(); await pending;
+  assert.equal(count, 1); assert.equal(disconnected.timerIds().length, 0);
+  disconnected.localProgressEvents.setConnection('connected'); await settle(); assert.equal(count, 1);
+});
+
+test('an expired retained cache is rechecked once without becoming recurring polling', async () => {
+  const dom = focusHarness(); let calls = 0;
+  const c = mountModelPerformance({ ...dom, sharedReporting: true,
+    reportingWindow: { period: 'all', startAt: null, endAt: new Date(payload().end).toISOString() },
+    client: { modelPerformance: async () => { calls++; return { ...payload(), collecting: true }; } },
+    t: (k,v) => translate(k,v,'en-US') });
+  const operation = c.preload(); await settle();
+  assert.equal(dom.timerIds().length, 1); dom.runTimer(dom.timerIds()[0]); await settle();
+  assert.equal(calls, 2); assert.equal(dom.timerIds().length, 0);
+  c.destroy(); await operation;
 });

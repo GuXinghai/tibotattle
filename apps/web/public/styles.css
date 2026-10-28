@@ -482,7 +482,7 @@ body.native-dashboard #setup-card { display: none !important; }
   opacity: .46;
 }
 .allowance-window-note { margin: -8px 0 18px; }
-.state-pill, .evidence-chip {
+.evidence-chip {
   display: inline-flex;
   align-items: center;
   gap: .45rem;
@@ -496,7 +496,11 @@ body.native-dashboard #setup-card { display: none !important; }
   font-weight: var(--weight-semibold);
   letter-spacing: .01em;
 }
-.state-dot { width: 7px; height: 7px; border-radius: var(--radius-round); background: currentColor; }
+.global-status {
+  font-size: .74rem;
+  font-weight: var(--weight-semibold);
+  letter-spacing: .01em;
+}
 .history-index-badge {
   display: inline-flex;
   align-items: center;
@@ -520,6 +524,7 @@ body.native-dashboard #setup-card { display: none !important; }
 .state-insufficient, .state-offline { color: var(--rust); background: var(--rust-soft); }
 .state-demo { color: var(--blue); background: var(--blue-soft); }
 .state-connecting { color: var(--muted); background: var(--surface-sunken); }
+#global-state { background: none; }
 
 .button {
   appearance: none;
@@ -2321,7 +2326,7 @@ footer p { margin: 0; }
 @media (max-width: 760px) {
   main, footer { width: min(100% - 28px, 1240px); }
   .topbar { padding-inline: 14px; }
-  .state-pill { max-width: 118px; overflow: hidden; white-space: nowrap; }
+  .global-status { max-width: 118px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* The detailed in-page history badge shares this class and is defined later
      in the sheet. Scope the narrow-screen override to the toolbar so that
      later evidence-card styling cannot make the header badge reappear and
@@ -2371,16 +2376,6 @@ footer p { margin: 0; }
   h2 { font-size: 2.25rem; }
   .topbar { grid-template-columns: minmax(0, 1fr) auto; }
   body:not(.community-site) > .topbar .brand > span { display: none; }
-  .state-pill {
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    max-width: none;
-    padding: 0;
-    gap: 0;
-    overflow: hidden;
-    font-size: 0;
-  }
   .primary-nav a {
     flex: 0 0 auto;
     flex-direction: column;
@@ -4482,7 +4477,6 @@ html[data-theme="dark"] body {
 
 html[data-theme="dark"] .primary-nav a:hover,
 html[data-theme="dark"] .primary-nav a.active,
-html[data-theme="dark"] .state-pill,
 html[data-theme="dark"] .evidence-chip {
   border-color: color-mix(in srgb, var(--green) 24%, transparent);
 }

@@ -4610,3 +4610,33 @@ test("reviewed provider transport errors continue usage while durable collector 
   const result = await runner({ mode: "overview" });
   assert.equal(usage, 1); assert.equal(result.quotaRefresh.errorCode, "temporary_disconnect");
 });
+
+test("progress subscribers observe queued refresh and real publication without private results", async () => {
+  const quota = Promise.withResolvers(), reload = Promise.withResolvers();
+  const seen = [];
+  const controller = new LocalCompanionRefreshController({
+    runner: async ({ mode, onQuotaReady, onProgress }) => {
+      if (mode === 'quick') { await quota.promise; await onQuotaReady({ attempted: true, recordWritten: true }); }
+      else await onProgress({ kind: 'accounting', status: 'calculating' });
+      return { secret: 'private-marker' };
+    },
+    dataStore: { publishQuota: async () => ({ published: true }), reload: async ({ purpose }) => {
+      if (purpose === 'full') await reload.promise;
+    } },
+  });
+  const unsubscribe = controller.subscribe(value => { seen.push(value); throw new Error('observer failure'); });
+  controller.request({ mode: 'quick' });
+  controller.request({ mode: 'detailed' });
+  assert.equal(seen.at(-1).pending.mode, 'detailed');
+  quota.resolve();
+  for (let i = 0; i < 100 && !seen.some(value => value.publication === 'running'); i++) await new Promise(setImmediate);
+  assert.ok(seen.some(value => value.status === 'succeeded' && value.pending?.mode === 'detailed'));
+  assert.ok(seen.some(value => value.progress?.kind === 'accounting'));
+  assert.equal(seen.at(-1).publication, 'running');
+  assert.equal(JSON.stringify(seen).includes('private-marker'), false);
+  reload.resolve();
+  await controller.whenSettled();
+  assert.equal(seen.at(-1).status, 'succeeded');
+  assert.equal(seen.at(-1).publication, null);
+  unsubscribe();
+});
