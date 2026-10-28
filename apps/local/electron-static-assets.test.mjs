@@ -37,6 +37,7 @@ test("Electron settings and bridge have a real loopback route and retained clien
     for (const file of ASSETS) {
       const response = await fetch(`${origin}/${file}`);
       assert.equal(response.status, 200, file);
+      if (file === "local-progress-events.js") assert.match(response.headers.get("content-type"), /^text\/javascript/u);
       assert.equal(await response.text(), await readFile(join(staticRoot, file), "utf8"), file);
       assert.equal(response.headers.get("access-control-allow-origin"), null);
       assert.ok([...RUNTIME_WEB_MODULE_ENTRYPOINTS, ...surfaceFiles("electron-runtime")]
