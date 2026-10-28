@@ -939,6 +939,10 @@ export async function launchDesktopRuntime({
     sendDashboardCommand,
     onLanguageChanged: (value) => updateDesktopLanguage(value),
     onAppearanceChanged: updateDesktopAppearance,
+    onUnknownSpeedPolicyChanged: async (policy) => {
+      childEnvironment.USAGE_MONITOR_UNKNOWN_SPEED_POLICY = JSON.stringify(policy);
+      await supervisor.setUnknownSpeedPolicy(policy);
+    },
     onRefreshIntervalChanged: async (seconds, paused) => {
       childEnvironment.USAGE_MONITOR_REFRESH_INTERVAL_SECONDS = String(seconds);
       childEnvironment.USAGE_MONITOR_REFRESH_PAUSED = String(paused);

@@ -9,7 +9,7 @@ import {
 import { SUPPORTED_LOCALES, translate } from "../public/localization.js";
 
 const BASIS_FAMILY =
-  "codex_primary:speed_priced_api_equivalent:v4:published_speed_card_ratio_2026_09_29:event_time:observed_declared_scenario";
+  "codex_primary:speed_priced_api_equivalent:v5:published_speed_card_ratio_2026_09_29:event_time:observed_declared_scenario";
 const COHORT_ID = "a".repeat(64);
 
 function planScope(planType) {
@@ -17,6 +17,7 @@ function planScope(planType) {
     methodVersion: "plan-era-v1",
     planType,
     basisFamilyId: BASIS_FAMILY,
+    basisId: `${BASIS_FAMILY}:unresolved_as_standard`,
     cohortId: COHORT_ID,
     sourceGeneration: 17,
     sourceGenerationFingerprint: "generation-fingerprint-17",
@@ -47,6 +48,7 @@ function allowanceCapacity(planType) {
     reason: null,
     basisFamilyId: BASIS_FAMILY,
     selectedScenario: "unresolved_as_standard",
+      unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
     scenarios: {
       unresolved_as_standard: capacityScenario("unresolved_as_standard"),
       unresolved_as_fast: capacityScenario("unresolved_as_fast"),
@@ -85,7 +87,7 @@ function compactPlanRow(row) {
       "output_text_tokens", "output_reasoning_tokens", "output_combined_tokens"].map((key) => row.components[key] ?? 0),
     row.apiPriceEquivalentUsd, row.allowanceWeighting[1], row.allowanceWeighting[9],
     row.allowanceWeighting[3], row.allowanceWeighting[4], row.pricingCoverage.fullyPricedEvents,
-    row.pricingCoverage.partiallyPricedEvents, row.totalTokens];
+    row.pricingCoverage.partiallyPricedEvents, row.totalTokens, row.allowanceWeighting[1]];
 }
 
 function population(planType, value, comparisonEligibility = "unavailable") {
@@ -157,18 +159,19 @@ function dashboard({ current = "plus", plus = null, comparison = "unavailable",
     })),
     timeline: {
       allowanceWeightingEncoding: {
-        schemaVersion: "quota-weighted-timeline-v0.1",
+        schemaVersion: "quota-weighted-timeline-v0.2",
         basisFamilyId: BASIS_FAMILY,
         scenarioOrder: ["unresolved_as_standard", "unresolved_as_fast"],
         selectedScenario: "unresolved_as_standard",
+      unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
       },
       usage: [usageRow({ events: 2, standardUsd: 10, fastUsd: 20 })],
       calibrationUsage: [],
       allowanceCapacity: allowanceCapacity(current),
       historicalPlanComparisons: historical,
       planScoped: {
-        schemaVersion: "local-plan-scoped-accounting-timeline-v1",
-        encoding: "plan_bucket_v1",
+        schemaVersion: "local-plan-scoped-accounting-timeline-v2",
+        encoding: "plan_bucket_v2",
         status: "available",
         reason: null,
         planScope: planScope(current),
@@ -189,7 +192,7 @@ test('the primary header selects the requested weekly plan before any five-hour 
   const input=dashboard({current:'pro',plus:100});let header;
   const context=createContext({input,activeWeeklyPlanType:'plus',selectAllowancePlanPopulation,
     allowanceWindowView:data=>({...data,allowanceWindowDurationMinutes:300,weekly:{planType:'free',planPopulations:[]}}),
-    renderAllowanceWindowChrome:()=>{},renderWeeklyPlanControl:value=>{header=value;},renderStaleServeNote:()=>{},$:()=>({})});
+    renderAllowanceWindowChrome:()=>{},renderPublishedUnknownSpeedPolicy:()=>{},renderWeeklyPlanControl:value=>{header=value;},renderStaleServeNote:()=>{},$:()=>({})});
   runInContext(`${source.slice(start,end)}}\nrenderWeekly(input);`,context);
   assert.equal(header.allowancePlanSelection.planType,'plus');
   assert.deepEqual(header.weekly.planPopulations.map(row=>row.planType),['pro','plus']);
@@ -485,7 +488,7 @@ function historicalLane(planType = "plus") {
   const start = Date.parse("2026-08-29T11:45:00Z"), end = start + 900_000;
   const row = {...usageRow(), startAt:new Date(start).toISOString(),endAt:new Date(end).toISOString()};
   return {planType, failure:null, allowanceCapacity:allowanceCapacity(planType), planScoped:{
-    schemaVersion:"local-plan-scoped-accounting-timeline-v1",encoding:"plan_bucket_v1",
+    schemaVersion:"local-plan-scoped-accounting-timeline-v2",encoding:"plan_bucket_v2",
     status:"available",reason:null,planScope:planScope(planType),usage:[compactPlanRow(row)],
     comparisonIntervals:[[start,end]],quota:[[start,end/1000,30]],
     excludedIntervals:[[start-900_000,start,"plan_transition_interval"]],

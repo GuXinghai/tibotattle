@@ -19,6 +19,7 @@ import {
   SEVEN_DAY_WINDOW_MINUTES,
   WORKLOAD_POLICY,
 } from "@app-usagemonitor/quota-analysis";
+import { DEFAULT_UNKNOWN_SPEED_POLICY, validateUnknownSpeedPolicy, unknownSpeedScenario, mixUnknownSpeedUsd } from "./unknown-speed-policy.js";
 import { codexPrimaryAllowanceBasis } from "./codex-primary-allowance-basis.js";
 import {
   deterministicSample,
@@ -92,15 +93,16 @@ const MAX_REPLAY_SAFE_CACHE_AGE_MS = 30 * 60 * 1_000;
 const MAX_COLLECTOR_LIVE_AGE_MS = MAX_REPLAY_SAFE_CACHE_AGE_MS;
 export const INFORMATIONAL_HISTORY_GAP_MAX_SHARE = 0.01;
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
-  "codex-primary-allowance-capacity-v0.1";
+  "codex-primary-allowance-capacity-v0.2";
 const ALLOWANCE_SCENARIOS = Object.freeze([
   "unresolved_as_standard",
   "unresolved_as_fast",
+  "unresolved_as_custom",
 ]);
 const TIMELINE_ALLOWANCE_WEIGHTING_SCHEMA_VERSION =
-  "quota-weighted-timeline-v0.1";
+  "quota-weighted-timeline-v0.2";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
-  "local-plan-scoped-accounting-timeline-v1";
+  "local-plan-scoped-accounting-timeline-v2";
 const PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION = "plan-era-v1";
 const TIMELINE_WEIGHTING_STATUS_CODE = Object.freeze({
   complete: 0,
@@ -791,16 +793,15 @@ function projectSelectedAllowanceWeeklyCalibration(
   cache,
   cacheReadErrorCode = null,
 ) {
-  // The ordinary weekly summary is a diagnostic model-selection result.
-  // Allowance-facing copy instead uses the forced speed scenario that matches
-  // the timeline numerator: the default unresolved-as-Standard scenario.
-  const scenario = DEFAULT_UNRESOLVED_SPEED_SCENARIO;
   const container = cache?.allowanceCapacityByScenario;
+  const policy = publishedUnknownSpeedPolicy(container);
+  if (policy === null) return unavailableLiveWeekly("allowance_capacity_cache_unavailable");
+  const scenario = unknownSpeedScenario(policy);
   const source = container?.scenarios?.[scenario];
-  const expected = codexPrimaryAllowanceBasis(scenario);
+  const expected = codexPrimaryAllowanceBasis(scenario, policy);
   if (container?.schemaVersion !== ALLOWANCE_CAPACITY_SCHEMA_VERSION
       || container?.basisFamilyId !== expected.basisFamilyId
-      || !allowanceBasisMatches(source?.basis, scenario)) {
+      || !allowanceBasisMatches(source?.basis, scenario, policy)) {
     return unavailableLiveWeekly(
       cacheReadErrorCode === "cache_invalid"
         || cacheReadErrorCode === "cache_malformed"
@@ -821,6 +822,7 @@ function projectSelectedAllowanceWeeklyCalibration(
       scenario,
       basisFamilyId: expected.basisFamilyId,
       basisId: expected.basisId,
+      unknownSpeedPolicy: { ...policy },
     },
   };
 }
@@ -855,8 +857,15 @@ function hasFittedAllowancePopulation(history) {
     )) === true;
 }
 
-function allowanceBasisMatches(value, scenario) {
-  const expected = codexPrimaryAllowanceBasis(scenario);
+function publishedUnknownSpeedPolicy(container) {
+  try {
+    const policy = validateUnknownSpeedPolicy(container?.unknownSpeedPolicy);
+    return container?.selectedScenario === unknownSpeedScenario(policy) ? policy : null;
+  } catch { return null; }
+}
+
+function allowanceBasisMatches(value, scenario, policy = DEFAULT_UNKNOWN_SPEED_POLICY) {
+  const expected = codexPrimaryAllowanceBasis(scenario, policy);
   return value && typeof value === "object" && !Array.isArray(value)
     && Object.entries(expected).every(([key, expectedValue]) => (
       value[key] === expectedValue
@@ -864,10 +873,10 @@ function allowanceBasisMatches(value, scenario) {
     && Object.keys(value).length === Object.keys(expected).length;
 }
 
-function projectAllowanceCapacityScenario(container, scenario) {
+function projectAllowanceCapacityScenario(container, scenario, policy) {
   const source = container?.scenarios?.[scenario];
   const calibration = source?.calibration;
-  if (!allowanceBasisMatches(source?.basis, scenario)
+  if (!allowanceBasisMatches(source?.basis, scenario, policy)
       || !validLiveWeeklyCalibration(calibration)
       || calibration.status !== "estimated") return null;
   const estimate = calibration.estimate;
@@ -907,9 +916,8 @@ function projectAllowanceCapacityScenario(container, scenario) {
 
 
 function projectAllowanceCapacity(container, sourceDescriptor = null, { staleCompatibility = false } = {}) {
-  const standardBasis = codexPrimaryAllowanceBasis(
-    "unresolved_as_standard",
-  );
+  const policy = publishedUnknownSpeedPolicy(container);
+  const standardBasis = codexPrimaryAllowanceBasis("unresolved_as_standard");
   const unavailable = (reason, scenarios = {
     unresolved_as_standard: null,
     unresolved_as_fast: null,
@@ -925,7 +933,7 @@ function projectAllowanceCapacity(container, sourceDescriptor = null, { staleCom
       maySpanMultipleAccounts: true,
     },
   });
-  if (!container || typeof container !== "object" || Array.isArray(container)
+  if (policy === null || !container || typeof container !== "object" || Array.isArray(container)
       || container.schemaVersion !== ALLOWANCE_CAPACITY_SCHEMA_VERSION
       || container.basisFamilyId !== standardBasis.basisFamilyId) {
     return unavailable("allowance_capacity_cache_unavailable");
@@ -941,7 +949,7 @@ function projectAllowanceCapacity(container, sourceDescriptor = null, { staleCom
   }
   const internal = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
     scenario,
-    projectAllowanceCapacityScenario(container, scenario),
+    scenario === unknownSpeedScenario(policy) ? projectAllowanceCapacityScenario(container, scenario, policy) : null,
   ]));
   const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => {
     const row = internal[scenario];
@@ -949,13 +957,14 @@ function projectAllowanceCapacity(container, sourceDescriptor = null, { staleCom
     const { cohort: _cohort, planType: _planType, ...projected } = row;
     return [scenario, projected];
   }));
-  const selectedScenario = DEFAULT_UNRESOLVED_SPEED_SCENARIO;
+  const selectedScenario = unknownSpeedScenario(policy);
   if (internal[selectedScenario] === null) {
     return unavailable("selected_allowance_capacity_unavailable", scenarios);
   }
   const selected = internal[selectedScenario];
   if ((hasScope && (container.planScope.planType !== selected.planType
-      || container.planScope.cohortId !== selected.cohortId))
+      || container.planScope.cohortId !== selected.cohortId
+      || container.planScope.basisId !== selected.basisId))
       || (!staleCompatibility && (sourceDescriptor?.mode !== "unified"
       || sourceDescriptor.generation === null
       || sourceDescriptor.generation === undefined
@@ -968,11 +977,13 @@ function projectAllowanceCapacity(container, sourceDescriptor = null, { staleCom
     reason: null,
     basisFamilyId: standardBasis.basisFamilyId,
     selectedScenario,
+    unknownSpeedPolicy: { ...policy },
     scenarios,
     planScope: staleCompatibility ? null : {
       methodVersion: container.planScope.methodVersion,
       planType: container.planScope.planType,
       basisFamilyId: container.planScope.basisFamilyId,
+      basisId: container.planScope.basisId,
       cohortId: container.planScope.cohortId,
       sourceGeneration: sourceDescriptor.generation,
       sourceGenerationFingerprint: sourceDescriptor.generationFingerprint,
@@ -1104,6 +1115,40 @@ function projectStaleAccountingServe(staleCache, provenance) {
   return { ...provenance, periods };
 }
 
+// A migrated historical receipt is a new closed format, not an old-cache reader.
+// Only original API/Token scalars may cross this fallback; no allowance input.
+export function projectPreservedAccountingHistory(value) {
+  if (value?.schemaVersion !== "local-accounting-preserved-history-summary-v1"
+      || value.status !== "historical_only" || typeof value.priceBasis !== "string"
+      || !Number.isFinite(Date.parse(value.generatedAt ?? ""))
+      || !Number.isFinite(Date.parse(value.coveredAt?.startAt ?? ""))
+      || !Number.isFinite(Date.parse(value.coveredAt?.endAt ?? ""))
+      || Date.parse(value.coveredAt.startAt) > Date.parse(value.coveredAt.endAt)
+      || !Array.isArray(value.periods) || value.periods.length > 5) return null;
+  const sources = [...value.periods];
+  if (!sources.some(row => row.id === "all") && value.history?.totals) {
+    sources.push({ ...value.history.totals, id: "all" });
+  }
+  const periods = [];
+  const seen = new Set();
+  for (const row of sources) {
+    if (!["24h", "7d", "30d", "all"].includes(row?.id) || seen.has(row.id)
+        || typeof row.label !== "string" || row.label.length === 0 || row.label.length > 128
+        || !Number.isSafeInteger(row.events) || row.events < 0
+        || !Number.isSafeInteger(row.totalTokens) || row.totalTokens < 0
+        || !Number.isFinite(row.apiPriceEquivalentUsd) || row.apiPriceEquivalentUsd < 0) return null;
+    seen.add(row.id);
+    periods.push({ periodId: row.id, periodLabel: row.label, events: row.events,
+      totalTokens: row.totalTokens, apiPriceEquivalentUsd: row.apiPriceEquivalentUsd });
+  }
+  if (periods.length === 0) return null;
+  return { stale: true, status: "historical_only", reason: "preserved_accounting_history",
+    schemaVersion: value.schemaVersion, computedAt: value.generatedAt,
+    coveredAt: { startAt: value.coveredAt.startAt, endAt: value.coveredAt.endAt },
+    priceBasis: value.priceBasis, periods };
+}
+
+const PREMIUM_ALLOWANCE_SCENARIOS = ["unresolved_as_standard", "unresolved_as_fast"];
 const CACHE_SWITCH_ALLOWANCE_INTERPRETATION =
   "conditional_historical_estimate_not_provider_allowance";
 
@@ -1176,7 +1221,7 @@ function projectCachePremiumWeighting(value) {
       || value.basisFamilyId !== expectedFamily) {
     return unavailable("malformed_projection");
   }
-  const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
+  const scenarios = Object.fromEntries(PREMIUM_ALLOWANCE_SCENARIOS.map((scenario) => [
     scenario,
     projectCachePremiumScenario(
       value.scenarios?.[scenario],
@@ -1675,7 +1720,7 @@ function inferredFastEventsInPeriod(inference, periodId, nowMs) {
   return events;
 }
 
-function fastModeProjection(period, { inference, nowMs }) {
+function fastModeProjection(period, { inference, nowMs, unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY }) {
   const summary = summarizeQuotaWeightedAccounting({
     speedWeighting: safeSpeedWeighting(period?.speedWeighting),
     declaredSpeedWeighting: safeSpeedWeighting(period?.declaredSpeedWeighting),
@@ -1685,9 +1730,18 @@ function fastModeProjection(period, { inference, nowMs }) {
       nowMs,
     ),
     inference,
+    unresolvedScenario: "unresolved_as_standard",
   });
+  const upper = summarizeQuotaWeightedAccounting({
+    speedWeighting: safeSpeedWeighting(period?.speedWeighting),
+    declaredSpeedWeighting: safeSpeedWeighting(period?.declaredSpeedWeighting),
+    unresolvedScenario: "unresolved_as_fast", inference,
+  });
+  const selectedUsd = mixUnknownSpeedUsd(summary.quotaWeightedApiPriceEquivalentUsd,
+    upper.quotaWeightedApiPriceEquivalentUsd, unknownSpeedPolicy);
   return {
-    unresolvedScenario: summary.unresolvedScenario,
+    unresolvedScenario: unknownSpeedScenario(unknownSpeedPolicy),
+    unknownSpeedPolicy: { ...unknownSpeedPolicy },
     // Applied settings and supported turn contexts provide tier evidence.
     // Observed values forward-fill and always win; turns
     // that precede the first observation in their session and carry no
@@ -1706,7 +1760,7 @@ function fastModeProjection(period, { inference, nowMs }) {
     multipliers: { ...FAST_MODE_QUOTA_MULTIPLIERS },
     multiplierSource: { ...FAST_MODE_MULTIPLIER_SOURCE },
     quotaWeightedApiPriceEquivalentUsd:
-      summary.quotaWeightedApiPriceEquivalentUsd,
+      selectedUsd,
     standardApiPriceEquivalentUsd: summary.standardApiPriceEquivalentUsd,
     unweightedUnknownApiPriceEquivalentUsd:
       summary.unweightedUnknownApiPriceEquivalentUsd,
@@ -1742,13 +1796,13 @@ function fastModeGapStatus(coverage) {
 // quota-weighted amount. The full speed crossing stays server-side. If an old
 // or malformed producer omitted any event/cost from the crossing, the bucket
 // is explicit unknown and carries no usable weighted scalar.
-function quotaWeightedUsageTimeline(rows, { inference }) {
+function quotaWeightedUsageTimeline(rows, { inference, unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY }) {
   return rows.map((row) => {
     const speedWeighting = safeSpeedWeighting(row.speedWeighting);
     const declaredSpeedWeighting = safeSpeedWeighting(
       row.declaredSpeedWeighting,
     );
-    const summaries = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
+    const summaries = Object.fromEntries(PREMIUM_ALLOWANCE_SCENARIOS.map((scenario) => [
       scenario,
       summarizeQuotaWeightedAccounting({
         speedWeighting,
@@ -1757,6 +1811,14 @@ function quotaWeightedUsageTimeline(rows, { inference }) {
         inference,
       }),
     ]));
+    const timelineScenarios = unknownSpeedPolicy.mode === "custom" ? ALLOWANCE_SCENARIOS : PREMIUM_ALLOWANCE_SCENARIOS;
+    const lower = summaries.unresolved_as_standard;
+    const upper = summaries.unresolved_as_fast;
+    if (unknownSpeedPolicy.mode === "custom") summaries.unresolved_as_custom = {
+      ...lower,
+      quotaWeightedApiPriceEquivalentUsd: mixUnknownSpeedUsd(lower.quotaWeightedApiPriceEquivalentUsd,
+        upper.quotaWeightedApiPriceEquivalentUsd, unknownSpeedPolicy),
+    };
     const crossingComplete = Object.values(summaries).every((summary) => (
       summary.coverage.totalEvents === row.usageEvents
       && Math.abs(
@@ -1765,8 +1827,8 @@ function quotaWeightedUsageTimeline(rows, { inference }) {
     ));
     const hasUnpricedEvents = (row.pricingCoverage?.unpricedEvents ?? 0) > 0;
     const crossingUsable = crossingComplete && !hasUnpricedEvents;
-    const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => {
-      const basis = codexPrimaryAllowanceBasis(scenario);
+    const scenarios = Object.fromEntries(timelineScenarios.map((scenario) => {
+      const basis = codexPrimaryAllowanceBasis(scenario, unknownSpeedPolicy);
       const summary = summaries[scenario];
       const complete = crossingUsable
         && summary.weightingStatus === "complete"
@@ -1809,7 +1871,7 @@ function quotaWeightedUsageTimeline(rows, { inference }) {
       // covered USD, observed events, declared events, assumed events,
       // inferred events, unresolved events. The browser reconstructs and
       // validates the verbose shape before any allowance arithmetic.
-      allowanceWeighting: ALLOWANCE_SCENARIOS.flatMap((scenario) => {
+      allowanceWeighting: timelineScenarios.flatMap((scenario) => {
         const value = scenarios[scenario];
         const coverage = value.coverage;
         return [
@@ -1846,13 +1908,14 @@ function projectPlanScopedUsageTimeline(cache, allowanceCapacity, capacityContai
   if (source?.schemaVersion !== PLAN_SCOPED_TIMELINE_SCHEMA_VERSION
       || source?.status !== "available"
       || source.reason !== null
-      || source.encoding !== "plan_bucket_v1"
+      || source.encoding !== "plan_bucket_v2"
       || !Array.isArray(source.usage)
       || !Array.isArray(source.quota) || !Array.isArray(source.comparisonIntervals)
       || sourceDescriptor?.mode !== "unified"
       || scope?.methodVersion !== PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION
       || scope.planType !== expectedScope?.planType
       || scope.basisFamilyId !== expectedScope?.basisFamilyId
+      || scope.basisId !== expectedScope?.basisId
       || scope.cohortId !== expectedScope?.cohortId
       || scope.sourceGeneration !== expectedScope?.sourceGeneration
       || scope.sourceGenerationFingerprint
@@ -1877,7 +1940,7 @@ function projectPlanScopedUsageTimeline(cache, allowanceCapacity, capacityContai
     schemaVersion: PLAN_SCOPED_TIMELINE_SCHEMA_VERSION,
     status: "available",
     reason: null,
-    encoding: "plan_bucket_v1",
+    encoding: "plan_bucket_v2",
     planScope: { ...scope },
     usage,
     comparisonIntervals: source.comparisonIntervals.map(([startMs, endMs]) => [startMs, endMs]),
@@ -1910,14 +1973,15 @@ function projectHistoricalPlanComparisons(cache) {
   });
 }
 
-function timelineAllowanceWeightingEncoding() {
+function timelineAllowanceWeightingEncoding(unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY) {
   return {
     schemaVersion: TIMELINE_ALLOWANCE_WEIGHTING_SCHEMA_VERSION,
     basisFamilyId: codexPrimaryAllowanceBasis(
       "unresolved_as_standard",
     ).basisFamilyId,
-    scenarioOrder: [...ALLOWANCE_SCENARIOS],
-    selectedScenario: DEFAULT_UNRESOLVED_SPEED_SCENARIO,
+    scenarioOrder: [...(unknownSpeedPolicy.mode === "custom" ? ALLOWANCE_SCENARIOS : PREMIUM_ALLOWANCE_SCENARIOS)],
+    selectedScenario: unknownSpeedScenario(unknownSpeedPolicy),
+    unknownSpeedPolicy: { ...unknownSpeedPolicy },
   };
 }
 
@@ -2360,9 +2424,11 @@ export async function buildLocalCompanionSnapshot({
       allowanceCapacity = { ...staleCapacity, stale: staleProvenance };
     }
   }
-  const staleAccountingServe = staleReplaySafe === null
+  const staleAccountingServe = (staleReplaySafe === null
     ? null
-    : projectStaleAccountingServe(staleReplaySafe, staleProvenance);
+    : projectStaleAccountingServe(staleReplaySafe, staleProvenance))
+    ?? (replaySafeCache === null && !unifiedAvailable
+      ? projectPreservedAccountingHistory(replaySafeAccounting.preservedHistory) : null);
   // Whether anything is actually being stale-served: the quiet recalculating
   // label then replaces the withheld-cache warning banner. If provenance
   // exists but every extraction refused, the banner stays — a silent
@@ -2515,6 +2581,7 @@ export async function buildLocalCompanionSnapshot({
     fastModeCalibrationWindows(replaySafeCache?.weeklyCalibration),
   );
   const fastModeContext = {
+    unknownSpeedPolicy: replaySafeCache?.unknownSpeedPolicy ?? DEFAULT_UNKNOWN_SPEED_POLICY,
     inference: fastModeInference,
     nowMs,
   };
@@ -2900,7 +2967,7 @@ export async function buildLocalCompanionSnapshot({
           : replaySafeCache?.bucketMinutes
             ?? collector.timeline.bucketMinutes,
         coveredAt: timelineCoveredAt,
-        allowanceWeightingEncoding: timelineAllowanceWeightingEncoding(),
+        allowanceWeightingEncoding: timelineAllowanceWeightingEncoding(replaySafeCache?.unknownSpeedPolicy ?? DEFAULT_UNKNOWN_SPEED_POLICY),
         usage: exactUsageTimeline,
         allowanceCapacity,
         planScoped: planScopedTimeline,
@@ -3408,7 +3475,7 @@ const PROJECTION_SURFACES = Object.freeze([
       return capacity?.status === "available"
         && scope?.methodVersion === PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION
         && scope.methodVersion === capacity.planScope?.methodVersion
-        && ["planType", "basisFamilyId", "cohortId", "sourceGeneration",
+        && ["planType", "basisFamilyId", "basisId", "cohortId", "sourceGeneration",
           "sourceGenerationFingerprint"].every((key) => scope[key] != null
             && scope[key] === capacity.planScope?.[key]);
     },

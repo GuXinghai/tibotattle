@@ -70,15 +70,15 @@ test("strict preference contract rejects unknown, duplicated, empty and contradi
   assert.deepEqual(validateDesktopTrayPreferences({ ...defaults, sections: [], metrics: [], showChart: false }).sections, []);
 });
 
-test("new installs, unconfigured upgrades and all community legacy choices retain distinct defaults", async () => {
+test("new installs retain defaults while old settings require explicit migration", async () => {
   assert.equal((await createDesktopSettingsStore().getSettings()).tray.preset, "weekly");
   const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v2" };
   delete legacy.tray;
   delete legacy.refreshPaused;
   legacy.notifications = { enabled: false, threshold: "off" };
   const upgraded = createDesktopSettingsStore({ backend: { load: async () => legacy, save: async () => {} } });
-  assert.equal((await upgraded.getSettings()).tray.preset, "automatic");
-  assert.equal(upgraded.lastLoadFailed, false);
+  await assert.rejects(upgraded.getSettings(), { code: "desktop_settings_load_failed" });
+  assert.equal(upgraded.lastLoadFailed, true);
   for (const [raw, expected] of [["five-hour", "five-hour"], ["weekly", "weekly"], ["both", "both"], ["off", "icon-only"]]) {
     const migrated = migrateDesktopTrayPreferences(raw);
     assert.equal(migrated.preset, expected);
@@ -98,7 +98,7 @@ test("persistence is atomic, survives relaunch, and never overwrites newer or un
   assert.equal((await store.getSettings()).tray.historyRange, "30d");
   fail = false; disk.tray.schemaVersion = 2;
   const newer = createDesktopSettingsStore({ backend }); const before = JSON.stringify(disk); const beforeWrites = writes;
-  await newer.getSettings();
+  await assert.rejects(newer.getSettings(), { code: "desktop_settings_load_failed" });
   await assert.rejects(newer.update({ tray: defaults }));
   await assert.rejects(newer.setLanguage("es"));
   assert.equal(writes, beforeWrites); assert.equal(JSON.stringify(disk), before);

@@ -3333,6 +3333,7 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "useDefaultCodexHome",
     "setLanguage",
     "setAppearance",
+    "setUnknownSpeedPolicy",
     "setRefreshInterval",
     "setRefreshPaused",
     "setStartAtLogin",
@@ -3355,6 +3356,11 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "refreshSettled",
   ]);
   assert.equal(bridge.version, "v1");
+  await bridge.setUnknownSpeedPolicy({ mode: "custom", customFastRatioBps: 303 });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())).request, { action: "setUnknownSpeedPolicy", args: { value: { mode: "custom", customFastRatioBps: 303 } } });
+  for (const value of [{ mode: "custom", customFastRatioBps: null }, { mode: "custom", customFastRatioBps: 10001 }, { mode: "standard", customFastRatioBps: 300, extra: true }]) {
+    await assert.rejects(bridge.setUnknownSpeedPolicy(value));
+  }
   await bridge.getApplicationMenu();
   assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())).request, { action: "getApplicationMenu", args: {} });
   await bridge.openApplicationMenu({ menu: "file", x: 12, y: 40 });

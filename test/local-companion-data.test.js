@@ -1614,7 +1614,7 @@ test("usage timeline retention keeps its matching metadata without retaining cur
           bucketMinutes: generation === 1 ? 15 : 30,
           history: { status: populated ? "complete" : "loading", coveredAt, generatedAt },
           allowanceWeightingEncoding: {
-            schemaVersion: "quota-weighted-timeline-v0.1",
+            schemaVersion: "quota-weighted-timeline-v0.2",
             scenarioOrder: generation === 1
               ? ["unresolved_as_standard", "unresolved_as_fast"]
               : ["unresolved_as_fast", "unresolved_as_standard"],
@@ -2130,15 +2130,15 @@ test("every surface a withheld projection empties is registered for retention", 
 
 test("Trends retains plan-scoped history through refresh only with its matching capacity", async (t) => {
   const scope = {
-    methodVersion: "plan-era-v1", planType: "pro", basisFamilyId: "synthetic-basis",
+    methodVersion: "plan-era-v1", planType: "pro", basisFamilyId: "synthetic-basis", basisId: "synthetic-basis:unresolved_as_standard",
     cohortId: "a".repeat(64), sourceGeneration: 35,
     sourceGenerationFingerprint: "synthetic-generation-35",
   };
   const available = {
-    schemaVersion: "local-plan-scoped-accounting-timeline-v1",
-    status: "available", reason: null, encoding: "plan_bucket_v1", planScope: scope,
+    schemaVersion: "local-plan-scoped-accounting-timeline-v2",
+    status: "available", reason: null, encoding: "plan_bucket_v2", planScope: scope,
     usage: [[Date.parse("2026-09-07T11:45:00.000Z"), 1,
-      1000, 0, 0, 0, 0, 0, 4, 4, 8, 0, 0, 1, 0, 1000]],
+      1000, 0, 0, 0, 0, 0, 4, 4, 8, 0, 0, 1, 0, 1000, 4]],
     quota: [[Date.parse("2026-09-07T11:45:00.000Z"),
       Date.parse("2026-09-08T00:00:00.000Z") / 1000, 30]],
     comparisonIntervals: [[Date.parse("2026-09-07T11:45:00.000Z"),

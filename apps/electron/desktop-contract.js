@@ -1,11 +1,10 @@
-import { DESKTOP_TRAY_DEFAULTS, migrateDesktopTrayPreferences, validateDesktopTrayPreferences } from "./desktop-tray-preferences.js";
+import { DESKTOP_TRAY_DEFAULTS, validateDesktopTrayPreferences } from "./desktop-tray-preferences.js";
 import { parseCodexThreadURL } from "./loopback-policy.js";
 import { validateWindowBackgroundPatch } from "./desktop-background.js";
 import {
   DESKTOP_CODEX_ROOT_MAX,
   createDefaultCodexHomes,
   isValidCodexRootId,
-  migrateLegacyCodexHome,
   normalizeCodexHomes,
   normalizePathFreeCodexHomes,
   projectCodexHomesPathFree,
@@ -22,15 +21,7 @@ import {
 
 export const DESKTOP_BRIDGE_VERSION = "v1";
 export const DESKTOP_IPC_CHANNEL = "usagemonitor:desktop:v1";
-export const DESKTOP_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v5";
-export const DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v3";
-export const DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v2";
-export const DESKTOP_LEGACY_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v1";
-export const DESKTOP_LEGACY_LAUNCHER_SETTINGS_SCHEMA_VERSION = "usage-monitor-launcher-settings-v1";
-// Internal, non-serialized marker used by the storage adapter to tell the
-// store that a legacy record was decoded and must be atomically rewritten as
-// v2.  Symbols cannot cross JSON or the renderer bridge.
-export const DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER = Symbol("desktop-settings-legacy-migration");
+export const DESKTOP_SETTINGS_SCHEMA_VERSION = "usagemonitor-desktop-settings-v6";
 export const DESKTOP_CODEX_ROOT_LIMIT = DESKTOP_CODEX_ROOT_MAX;
 
 export const DESKTOP_LANGUAGES = Object.freeze([
@@ -108,6 +99,7 @@ export const DESKTOP_ACTIONS = Object.freeze([
   "chooseWindowBackground",
   "restoreWindowBackground",
   "setRefreshInterval",
+  "setUnknownSpeedPolicy",
   "setRefreshPaused",
   "setStartAtLogin",
   "setNotificationPreferences",
@@ -152,6 +144,7 @@ const ACTION_ARGUMENT_KEYS = Object.freeze({
   chooseWindowBackground: Object.freeze([]),
   restoreWindowBackground: Object.freeze([]),
   setRefreshInterval: Object.freeze(["seconds"]),
+  setUnknownSpeedPolicy: Object.freeze(["value"]),
   setRefreshPaused: Object.freeze(["paused"]),
   setStartAtLogin: Object.freeze(["enabled"]),
   setNotificationPreferences: Object.freeze(["threshold"]),
@@ -184,6 +177,7 @@ export const DESKTOP_DEFAULT_SETTINGS = Object.freeze({
   appearance: "system",
   refreshIntervalSeconds: 300,
   refreshPaused: false,
+  unknownSpeedPolicy: Object.freeze({ mode: "standard", customFastRatioBps: null }),
   startAtLogin: false,
   notifications: DEFAULT_NOTIFICATIONS,
   sidebarCollapsed: false,
@@ -294,6 +288,9 @@ export function validateDesktopRequest(request) {
     case "setAppearance":
       assertEnum(args.value, DESKTOP_APPEARANCES, "value");
       break;
+    case "setUnknownSpeedPolicy":
+      validateDesktopUnknownSpeedPolicy(args.value);
+      break;
     case "setRefreshInterval":
       assertSeconds(args.seconds);
       break;
@@ -339,7 +336,7 @@ export function validateDesktopRequest(request) {
 
   return Object.freeze({
     action,
-    args: Object.freeze({ ...args, ...(action === "setTrayPreferences" ? { value: validateDesktopTrayPreferences(args.value) } : {}) }),
+    args: Object.freeze({ ...args, ...(action === "setTrayPreferences" ? { value: validateDesktopTrayPreferences(args.value) } : {}), ...(action === "setUnknownSpeedPolicy" ? { value: validateDesktopUnknownSpeedPolicy(args.value) } : {}) }),
   });
 }
 
@@ -354,25 +351,25 @@ const SETTINGS_KEYS = Object.freeze([
   "appearance",
   "refreshIntervalSeconds",
   "refreshPaused",
+  "unknownSpeedPolicy",
   "startAtLogin",
   "notifications",
   "sidebarCollapsed",
   "tray",
 ]);
 
-const LEGACY_SETTINGS_BASE_KEYS = Object.freeze([
-  "schemaVersion",
-  "codexHome",
-  "language",
-  "refreshIntervalSeconds",
-  "startAtLogin",
-  "notifications",
-]);
-
-const LEGACY_SETTINGS_SCHEMA_VERSIONS = new Set([
-  DESKTOP_LEGACY_SETTINGS_SCHEMA_VERSION,
-  DESKTOP_LEGACY_LAUNCHER_SETTINGS_SCHEMA_VERSION,
-]);
+export function validateDesktopUnknownSpeedPolicy(value) {
+  assertExactKeys(value, ["mode", "customFastRatioBps"], "unknownSpeedPolicy");
+  assertEnum(value.mode, ["standard", "fast", "custom"], "unknownSpeedPolicy.mode");
+  if (value.customFastRatioBps !== null && (!Number.isInteger(value.customFastRatioBps)
+      || value.customFastRatioBps < 0 || value.customFastRatioBps > 10000)) {
+    throw new TypeError("unknownSpeedPolicy.customFastRatioBps is invalid");
+  }
+  if (value.mode === "custom" && value.customFastRatioBps === null) {
+    throw new TypeError("unknownSpeedPolicy.customFastRatioBps is required");
+  }
+  return Object.freeze({ ...value });
+}
 
 function validateSettingsScalarFields(snapshot) {
   assertEnum(snapshot.language, DESKTOP_LANGUAGES, "language");
@@ -392,7 +389,7 @@ function validateSettingsScalarFields(snapshot) {
 }
 
 /**
- * Validate the persisted v5 settings schema with a persistent refresh pause. This does not resolve or
+ * Validate the persisted v6 settings schema with a persistent refresh pause. This does not resolve or
  * inspect paths; path policy belongs to the injected main-process picker and
  * platform validator.  A missing custom path therefore remains valid so its
  * configured root can report partial/LKG coverage after reload.
@@ -414,6 +411,7 @@ export function validateDesktopSettingsSnapshot(snapshot) {
     appearance: snapshot.appearance,
     refreshIntervalSeconds: snapshot.refreshIntervalSeconds,
     refreshPaused: snapshot.refreshPaused,
+    unknownSpeedPolicy: validateDesktopUnknownSpeedPolicy(snapshot.unknownSpeedPolicy),
     startAtLogin: snapshot.startAtLogin,
     notifications: Object.freeze({ ...snapshot.notifications }),
     sidebarCollapsed,
@@ -439,6 +437,7 @@ export function validateDesktopSettingsProjection(snapshot) {
     appearance: snapshot.appearance,
     refreshIntervalSeconds: snapshot.refreshIntervalSeconds,
     refreshPaused: snapshot.refreshPaused,
+    unknownSpeedPolicy: validateDesktopUnknownSpeedPolicy(snapshot.unknownSpeedPolicy),
     startAtLogin: snapshot.startAtLogin,
     notifications: Object.freeze({ ...snapshot.notifications }),
     sidebarCollapsed,
@@ -456,6 +455,7 @@ export function projectDesktopSettingsPathFree(snapshot) {
     appearance: validated.appearance,
     refreshIntervalSeconds: validated.refreshIntervalSeconds,
     refreshPaused: validated.refreshPaused,
+    unknownSpeedPolicy: validated.unknownSpeedPolicy,
     startAtLogin: validated.startAtLogin,
     notifications: { ...validated.notifications },
     sidebarCollapsed: validated.sidebarCollapsed,
@@ -464,100 +464,5 @@ export function projectDesktopSettingsPathFree(snapshot) {
 }
 
 export const pathFreeDesktopSettingsProjection = projectDesktopSettingsPathFree;
-
-function isLegacySettingsShape(snapshot) {
-  if (!isPlainRecord(snapshot)
-      || !LEGACY_SETTINGS_SCHEMA_VERSIONS.has(snapshot.schemaVersion)) {
-    return false;
-  }
-  const actualKeys = Reflect.ownKeys(snapshot);
-  if (actualKeys.length === 2
-      && Object.hasOwn(snapshot, "schemaVersion")
-      && Object.hasOwn(snapshot, "codexHome")) {
-    return true;
-  }
-  const hasAppearance = Object.hasOwn(snapshot, "appearance");
-  const hasSidebarCollapsed = Object.hasOwn(snapshot, "sidebarCollapsed");
-  const hasTray = Object.hasOwn(snapshot, "tray");
-  const hasMenuBar = Object.hasOwn(snapshot, "menuBarDisplayMode");
-  const expected = [
-    ...LEGACY_SETTINGS_BASE_KEYS,
-    ...(hasAppearance ? ["appearance"] : []),
-    ...(hasSidebarCollapsed ? ["sidebarCollapsed"] : []),
-    ...(hasTray ? ["tray"] : []),
-    ...(hasMenuBar ? ["menuBarDisplayMode"] : []),
-  ];
-  return actualKeys.length === expected.length
-    && expected.every((key) => Object.hasOwn(snapshot, key));
-}
-
-/**
- * Migrate legacy root, presentation, and notification choices forward to v5. `idFactory` is injected by
- * the main process so IDs are opaque and testable; successful store loading
- * persists the result, making the generated ID stable across later reloads.
- * Both the historic Electron object form and the native launcher's scalar
- * path form are accepted for a bounded compatibility window.
- */
-function migrateLegacyNotificationPreferences(value) {
-  assertExactKeys(value, ["enabled", "threshold"], "legacy notifications");
-  assertBoolean(value.enabled, "legacy notifications.enabled");
-  assertEnum(value.threshold, ["off", "ninety", "eighty_and_ninety"], "legacy notifications.threshold");
-  const threshold = value.enabled && value.threshold !== "off" ? 90 : -1;
-  return { enabled: threshold !== -1, threshold };
-}
-
-export function migrateDesktopSettingsSnapshot(snapshot, { idFactory } = {}) {
-  if (isPlainRecord(snapshot) && snapshot.schemaVersion === "usagemonitor-desktop-settings-v4") {
-    if (!hasExactKeys(snapshot, SETTINGS_KEYS.filter(key => key !== "refreshPaused"))) throw new TypeError("legacy settings has unexpected keys");
-    return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION, refreshPaused: false });
-  }
-  if (isPlainRecord(snapshot) && [DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION, DESKTOP_PRE_NUMERIC_SETTINGS_SCHEMA_VERSION].includes(snapshot.schemaVersion)) {
-    const previousKeys = SETTINGS_KEYS.filter(key => key !== "refreshPaused");
-    const expected = snapshot.schemaVersion === DESKTOP_PRE_TRAY_SETTINGS_SCHEMA_VERSION
-      ? previousKeys.filter((key) => (key !== "tray" && key !== "sidebarCollapsed") || Object.hasOwn(snapshot, key)) : previousKeys;
-    if (!hasExactKeys(snapshot, expected)) throw new TypeError("legacy settings has unexpected keys");
-    if (!DESKTOP_REFRESH_INTERVAL_SECONDS.includes(snapshot.refreshIntervalSeconds)) throw new TypeError("legacy seconds is invalid");
-    return validateDesktopSettingsSnapshot({ ...snapshot, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION, refreshPaused: false,
-      notifications: migrateLegacyNotificationPreferences(snapshot.notifications),
-      sidebarCollapsed: snapshot.sidebarCollapsed ?? false, tray: migrateDesktopTrayPreferences(snapshot.tray) });
-  }
-  if (!isLegacySettingsShape(snapshot)) return snapshot;
-  if (snapshot.refreshIntervalSeconds !== undefined
-      && !DESKTOP_REFRESH_INTERVAL_SECONDS.includes(snapshot.refreshIntervalSeconds)) {
-    throw new TypeError("legacy seconds is invalid");
-  }
-  const codexHomes = migrateLegacyCodexHome(snapshot.codexHome, { idFactory });
-  const appearance = snapshot.appearance === undefined
-    ? DESKTOP_DEFAULT_SETTINGS.appearance
-    : snapshot.appearance;
-  const sidebarCollapsed = snapshot.sidebarCollapsed === undefined
-    ? false
-    : snapshot.sidebarCollapsed;
-  return {
-    schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION,
-    codexHomes,
-    language: snapshot.language === undefined
-      ? DESKTOP_DEFAULT_SETTINGS.language
-      : snapshot.language,
-    appearance,
-    refreshPaused: false,
-    refreshIntervalSeconds: snapshot.refreshIntervalSeconds === undefined
-      ? DESKTOP_DEFAULT_SETTINGS.refreshIntervalSeconds
-      : snapshot.refreshIntervalSeconds,
-    startAtLogin: snapshot.startAtLogin === undefined
-      ? DESKTOP_DEFAULT_SETTINGS.startAtLogin
-      : snapshot.startAtLogin,
-    notifications: snapshot.notifications === undefined
-      ? { ...DESKTOP_DEFAULT_SETTINGS.notifications }
-      : migrateLegacyNotificationPreferences(snapshot.notifications),
-    sidebarCollapsed,
-    tray: migrateDesktopTrayPreferences(snapshot.tray ?? snapshot.menuBarDisplayMode),
-  };
-}
-
-/** Migrate a standalone legacy scalar/object codexHome record. */
-export function migrateLegacyDesktopSettingsSnapshot(snapshot, options = {}) {
-  return migrateDesktopSettingsSnapshot(snapshot, options);
-}
 
 export const DESKTOP_ACTION_ARGUMENT_KEYS = ACTION_ARGUMENT_KEYS;

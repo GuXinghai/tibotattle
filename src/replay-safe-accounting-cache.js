@@ -1,3 +1,4 @@
+import { DEFAULT_UNKNOWN_SPEED_POLICY, validateUnknownSpeedPolicy, unknownSpeedScenario, unknownSpeedCalculationIdentity, unknownSpeedCalibrationOptions, mixUnknownSpeedUsd } from "./unknown-speed-policy.js";
 import { speedApiPrice, addSpeedApiCost, speedApiCostSummary } from "./speed-api-cost.js";
 import { createLocalRefreshTimer } from "./local-refresh-timing.js";
 import { createHash } from "node:crypto";
@@ -61,6 +62,7 @@ import {
   defaultLocalCollectorStatePath,
   prepareLocalCollectorState,
   readLocalCollectorAccountingCache,
+  readLocalCollectorPreservedAccountingHistory,
   serializeLocalCollectorAccountingCache,
   writeLocalCollectorAccountingCache,
 } from "./local-collector-state.js";
@@ -144,15 +146,16 @@ import {
 // v0.25: require the exact public API-pricing method and rebuild caches produced
 // before missing-component coverage and Date timestamp support were corrected.
 export const REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION =
-  "local-replay-safe-accounting-v0.25";
+  "local-replay-safe-accounting-v0.26";
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
-  "codex-primary-allowance-capacity-v0.1";
+  "codex-primary-allowance-capacity-v0.2";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
-  "local-plan-scoped-accounting-timeline-v1";
+  "local-plan-scoped-accounting-timeline-v2";
 const PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION = "plan-era-v1";
 const ALLOWANCE_SCENARIO_CANDIDATES = Object.freeze({
   unresolved_as_standard: "speed_lower",
   unresolved_as_fast: "speed_upper",
+  unresolved_as_custom: "speed_custom",
 });
 
 export const REPLAY_SAFE_ACCOUNTING_SOURCE_MODES = Object.freeze([
@@ -205,7 +208,7 @@ const TIMELINE_BUCKET_MS = 15 * 60 * 1_000;
 // lane as a whole rather than truncating history or failing ordinary accounting.
 const MAX_PLAN_TIMELINE_ROWS = 100_000;
 const MAX_PLAN_TIMELINE_BYTES = 4 * 1024 * 1024;
-const PLAN_TIMELINE_ENCODING = "plan_bucket_v1";
+const PLAN_TIMELINE_ENCODING = "plan_bucket_v2";
 const MAX_QUOTA_TIMELINE_ROWS = 10_000;
 const WEEKLY_WINDOW_MINUTES = SEVEN_DAY_WINDOW_MINUTES;
 const ALLOWANCE_HISTORY_WINDOW_MINUTES = new Set([
@@ -2674,6 +2677,7 @@ function addCompactPlanScopedTimelineEvent(buckets, event) {
     scenarioWeighting: {
       unresolved_as_standard: 0,
       unresolved_as_fast: 0,
+      unresolved_as_custom: 0,
     },
     weightingCoverage: {
       observedEvents: 0,
@@ -2687,6 +2691,7 @@ function addCompactPlanScopedTimelineEvent(buckets, event) {
   bucket.scenarioWeighting.unresolved_as_standard +=
     event.standardScenarioUsd;
   bucket.scenarioWeighting.unresolved_as_fast += event.fastScenarioUsd;
+  // Mix aggregate endpoint costs once, when the bucket is finalized.
   addComponents(bucket.components, event.components);
   bucket.pricingCoverage[
     event.pricingCoverageStatus === "fully_priced"
@@ -2706,6 +2711,7 @@ function addCompactPlanScopedTimelineEvent(buckets, event) {
 }
 
 function finalizePlanScopedTimelineDraft({
+  unknownSpeedPolicy,
   buckets,
   invalidBuckets,
   attributionIndex,
@@ -2735,6 +2741,9 @@ function finalizePlanScopedTimelineDraft({
       invalidBuckets.add(bucket.startMs);
       continue;
     }
+    bucket.scenarioWeighting.unresolved_as_custom = mixUnknownSpeedUsd(
+      roundedMoney(bucket.scenarioWeighting.unresolved_as_standard),
+      roundedMoney(bucket.scenarioWeighting.unresolved_as_fast), unknownSpeedPolicy);
     rows.push({
       startAt: new Date(bucket.startMs).toISOString(),
       endAt: new Date(bucket.startMs + TIMELINE_BUCKET_MS).toISOString(),
@@ -2841,11 +2850,12 @@ function encodePlanScopedTimelineRow(row) {
     row.weightingCoverage.observedEvents,
     row.weightingCoverage.declaredFromConfigEvents,
     row.pricingCoverage.fullyPricedEvents,
-    row.pricingCoverage.partiallyPricedEvents, row.totalTokens];
+    row.pricingCoverage.partiallyPricedEvents, row.totalTokens,
+    row.scenarioWeighting.unresolved_as_custom];
 }
 
 export function decodePlanScopedTimelineRow(row) {
-  if (!Array.isArray(row) || row.length !== 16
+  if (!Array.isArray(row) || row.length !== 17
       || row.some((value) => typeof value !== "number" || !Number.isFinite(value))
       || !Number.isSafeInteger(row[0]) || row[0] % TIMELINE_BUCKET_MS !== 0
       || !Number.isFinite(new Date(row[0] + TIMELINE_BUCKET_MS).getTime())
@@ -2859,7 +2869,7 @@ export function decodePlanScopedTimelineRow(row) {
     endAt: new Date(row[0] + TIMELINE_BUCKET_MS).toISOString(),
     usageEvents: row[1], totalTokens: row[15], components,
     apiPriceEquivalentUsd: row[8],
-    scenarioWeighting: { unresolved_as_standard: row[9], unresolved_as_fast: row[10] },
+    scenarioWeighting: { unresolved_as_standard: row[9], unresolved_as_fast: row[10], unresolved_as_custom: row[16] },
     weightingCoverage: { observedEvents: row[11], declaredFromConfigEvents: row[12],
       assumedEvents: row[1] - row[11] - row[12] },
     pricingCoverage: { fullyPricedEvents: row[13], partiallyPricedEvents: row[14],
@@ -2948,7 +2958,7 @@ function allowanceCapacityForPlan(container, planType) {
   }
   return { ...container, scenarios, planScope: {
     ...container.planScope, planType,
-    cohortId: calibrationCohortId(scenarios.unresolved_as_standard.calibration),
+    cohortId: calibrationCohortId(scenarios[container.selectedScenario].calibration),
   } };
 }
 
@@ -3329,6 +3339,7 @@ function createCompositionFitConsumer({
   planAttributionIndex = null,
   selectedPlanType = null,
   declaredSpeedBaselines = [],
+  unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY,
 }) {
   const grainMs = MODEL_COMPOSITION_POLICY.grainMs;
   const contextKey = planAttributionContextKey("openai_codex", "codex");
@@ -3525,6 +3536,7 @@ function createCompositionFitConsumer({
       })
       : null;
     const planScopedTimeline = finalizePlanScopedTimelineDraft({
+      unknownSpeedPolicy,
       buckets: planScopedBuckets,
       invalidBuckets: invalidPlanScopedBuckets,
       attributionIndex,
@@ -3646,6 +3658,7 @@ export async function buildReplaySafeAccountingCache({
   // it was actually observed over, so a reading can never reach back before it
   // happened. An absent or unreadable ledger is simply no coverage.
   declaredSpeedBaselines = [],
+  unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY,
   transitionResourceLimits: requestedTransitionResourceLimits = null,
   rss = () => process.memoryUsage().rss,
   maximumRssBytes = MAX_ACCOUNTING_RSS_BYTES,
@@ -3669,6 +3682,7 @@ export async function buildReplaySafeAccountingCache({
       && typeof onCalibrationCorpusMetrics !== "function") {
     throw new TypeError("onCalibrationCorpusMetrics must be a function or null");
   }
+  unknownSpeedPolicy = validateUnknownSpeedPolicy(unknownSpeedPolicy);
   const selectedSourceMode = normalizeAccountingSourceMode(sourceMode);
   const selectedContextBehavior = normalizeContextBehavior(contextBehavior);
   if (expectedGeneration === null || expectedGeneration === undefined) {
@@ -3844,6 +3858,7 @@ export async function buildReplaySafeAccountingCache({
       indexedHistory: { onUsage: historyOnUsage, onUsageGroup: historyOnUsage },
       usageBoundaryMs: Object.values(starts),
       declaredSpeedBaselines: baselines,
+        unknownSpeedPolicy,
       onUsage: (rawEvent) => {
         throwIfAborted(signal);
         const observedAt = canonicalInstant(rawEvent?.timestamp);
@@ -3989,6 +4004,7 @@ export async function buildReplaySafeAccountingCache({
           scan: historyScan,
           signal,
           declaredSpeedBaselines: baselines,
+        unknownSpeedPolicy,
           rss,
           maximumRssBytes: effectiveMaximumRssBytes,
         });
@@ -4041,6 +4057,7 @@ export async function buildReplaySafeAccountingCache({
     endMs,
     limits,
     declaredSpeedBaselines: baselines,
+        unknownSpeedPolicy,
     signal,
     checkRuntimeMemory,
     expectedGeneration: unifiedCoverage?.generation ?? null,
@@ -4085,6 +4102,7 @@ export async function buildReplaySafeAccountingCache({
         checkRuntimeMemory,
         planAttributionIndex: calibrationAttribution.index,
         declaredSpeedBaselines: baselines,
+        unknownSpeedPolicy,
       }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType));
       historicalPlanDrafts = fits.historicalPlanDrafts;
       compositionFitFailure = fits.compositionFitFailure;
@@ -4182,7 +4200,7 @@ export async function buildReplaySafeAccountingCache({
   };
   const weeklyCalibration = projectBoundedWeeklyCalibrationSummary(
     weeklyCalibrationDataset,
-    { composition },
+    { composition, ...unknownSpeedCalibrationOptions(unknownSpeedPolicy) },
   );
   if (compositionFitFailure !== null) {
     // Additive v0.7 field, present only when the fit itself threw: a blank
@@ -4200,40 +4218,33 @@ export async function buildReplaySafeAccountingCache({
       basis: "quota_weighted_api_equivalent_by_unresolved_speed_scenario",
     },
   };
-  const allowanceScenarios = Object.fromEntries(
-    Object.entries(ALLOWANCE_SCENARIO_CANDIDATES).map(([
-      scenario,
-      forcedCandidateId,
-    ]) => [scenario, {
-      basis: codexPrimaryAllowanceBasis(scenario),
-      calibration: projectBoundedWeeklyCalibrationSummary(
-        allowanceCapacityDataset,
-        { forcedCandidateId },
-      ),
-    }]),
-  );
-  const selectedAllowanceCalibration = allowanceScenarios
-    .unresolved_as_standard.calibration;
-  const fiveHourAllowanceCalibration = projectBoundedWeeklyCalibrationSummary(
-    allowanceCapacityDataset,
-    {
-      forcedCandidateId:
-        ALLOWANCE_SCENARIO_CANDIDATES.unresolved_as_standard,
-      windowDurationMinutes: FIVE_HOUR_WINDOW_MINUTES,
+  const selectedScenario = unknownSpeedScenario(unknownSpeedPolicy);
+  const calibrationOptions = unknownSpeedCalibrationOptions(unknownSpeedPolicy);
+  const allowanceScenarios = {
+    [selectedScenario]: {
+      basis: codexPrimaryAllowanceBasis(selectedScenario, unknownSpeedPolicy),
+      calibration: projectBoundedWeeklyCalibrationSummary(allowanceCapacityDataset, calibrationOptions),
     },
+  };
+  const selectedAllowanceCalibration = allowanceScenarios[selectedScenario].calibration;
+  const fiveHourAllowanceCalibration = projectBoundedWeeklyCalibrationSummary(
+    allowanceCapacityDataset, { ...calibrationOptions, windowDurationMinutes: FIVE_HOUR_WINDOW_MINUTES },
   );
   const capacityPlanScope = {
     methodVersion: PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION,
+    basisId: allowanceScenarios[selectedScenario].basis.basisId,
     planType: selectedAllowanceCalibration.selectedPlanType,
     basisFamilyId:
-      allowanceScenarios.unresolved_as_standard.basis.basisFamilyId,
+      allowanceScenarios[selectedScenario].basis.basisFamilyId,
     cohortId: calibrationCohortId(selectedAllowanceCalibration),
   };
   const allowanceCapacityByScenario = {
     schemaVersion: ALLOWANCE_CAPACITY_SCHEMA_VERSION,
     basisFamilyId:
-      allowanceScenarios.unresolved_as_standard.basis.basisFamilyId,
+      allowanceScenarios[selectedScenario].basis.basisFamilyId,
     planScope: capacityPlanScope,
+    unknownSpeedPolicy,
+    selectedScenario,
     scenarios: allowanceScenarios,
   };
   const planScopedTimeline = planScopedTimelineReceipt({
@@ -4253,6 +4264,7 @@ export async function buildReplaySafeAccountingCache({
   throwIfAborted(signal);
   const cache = {
     schemaVersion: REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION,
+    unknownSpeedPolicy,
     generatedAt: new Date(endMs).toISOString(),
     coveredAt: {
       startAt: new Date(startMs).toISOString(),
@@ -4937,7 +4949,7 @@ function validTimelineSpeedWeighting(row) {
 function validAllowanceCalibrationSummary(
   value,
   forcedCandidateId,
-  { windowDurationMinutes = SEVEN_DAY_WINDOW_MINUTES } = {},
+  { windowDurationMinutes = SEVEN_DAY_WINDOW_MINUTES, customFastRatioBps = null } = {},
 ) {
   if (!value || typeof value !== "object" || Array.isArray(value)
       || value.schemaVersion !== "weekly-calibration-summary-v0.1"
@@ -4947,6 +4959,7 @@ function validAllowanceCalibrationSummary(
       || value.accountAttribution?.status !== "historical_unattributed"
       || value.accountAttribution?.maySpanMultipleAccounts !== true
       || value.validation?.selectedCostBasis !== forcedCandidateId
+      || (forcedCandidateId === "speed_custom" && value.customFastRatioBps !== customFastRatioBps)
       || !Array.isArray(value.recentResets)
       || value.recentResets.length > BOUNDED_WEEKLY_CALIBRATION_RESET_LIMIT) {
     return false;
@@ -4965,6 +4978,8 @@ function validAllowanceCalibrationSummary(
 }
 
 function validAllowanceCapacityByScenario(value) {
+  let selected;
+  try { selected = unknownSpeedScenario(value?.unknownSpeedPolicy); } catch { return false; }
   if (!value || typeof value !== "object" || Array.isArray(value)
       || value.schemaVersion !== ALLOWANCE_CAPACITY_SCHEMA_VERSION
       || value.planScope?.methodVersion
@@ -4972,20 +4987,22 @@ function validAllowanceCapacityByScenario(value) {
       || typeof value.planScope?.planType !== "string"
       || !/^[a-z][a-z0-9_-]{0,31}$/u.test(value.planScope.planType)
       || value.planScope.basisFamilyId !== value.basisFamilyId
+      || value.planScope.basisId !== codexPrimaryAllowanceBasis(selected, value.unknownSpeedPolicy).basisId
       || !(value.planScope.cohortId === null
         || (typeof value.planScope.cohortId === "string"
           && /^[a-f0-9]{64}$/u.test(value.planScope.cohortId)))
       || !value.scenarios || typeof value.scenarios !== "object"
       || Array.isArray(value.scenarios)
       || Object.keys(value.scenarios).sort().join(",")
-        !== Object.keys(ALLOWANCE_SCENARIO_CANDIDATES).sort().join(",")) {
+        !== selected || value.selectedScenario !== selected) {
     return false;
   }
   for (const [scenario, forcedCandidateId] of Object.entries(
-    ALLOWANCE_SCENARIO_CANDIDATES,
+    { [selected]: ALLOWANCE_SCENARIO_CANDIDATES[selected] },
   )) {
     const row = value.scenarios[scenario];
-    const expectedBasis = codexPrimaryAllowanceBasis(scenario);
+    if (selected === "unresolved_as_custom" && row?.calibration?.customFastRatioBps !== value.unknownSpeedPolicy.customFastRatioBps) return false;
+    const expectedBasis = codexPrimaryAllowanceBasis(scenario, value.unknownSpeedPolicy);
     if (!row || typeof row !== "object" || Array.isArray(row)
         || stableJson(row.basis) !== stableJson(expectedBasis)
         || value.basisFamilyId !== expectedBasis.basisFamilyId
@@ -4993,18 +5010,20 @@ function validAllowanceCapacityByScenario(value) {
         || !validAllowanceCalibrationSummary(
           row.calibration,
           forcedCandidateId,
+          { customFastRatioBps: value.unknownSpeedPolicy.customFastRatioBps },
         ) || !validWeeklyPlanPopulations(row.calibration, (population) => (
-          validAllowanceCalibrationSummary(population, forcedCandidateId)
+          validAllowanceCalibrationSummary(population, forcedCandidateId, { customFastRatioBps: value.unknownSpeedPolicy.customFastRatioBps })
         ))) return false;
   }
-  const selectedCalibration = value.scenarios.unresolved_as_standard.calibration;
+  const selectedCalibration = value.scenarios[selected].calibration;
   return value.planScope.cohortId === calibrationCohortId(selectedCalibration);
 }
 
-function validFiveHourAllowanceCalibration(value) {
+function validFiveHourAllowanceCalibration(value, policy) {
   const selectedBasis =
-    ALLOWANCE_SCENARIO_CANDIDATES.unresolved_as_standard;
-  const options = { windowDurationMinutes: FIVE_HOUR_WINDOW_MINUTES };
+    unknownSpeedCalibrationOptions(policy).forcedCandidateId;
+  const options = { windowDurationMinutes: FIVE_HOUR_WINDOW_MINUTES, customFastRatioBps: policy.customFastRatioBps };
+  if (policy.mode === "custom" && value?.customFastRatioBps !== policy.customFastRatioBps) return false;
   return validAllowanceCalibrationSummary(value, selectedBasis, options)
     && validWeeklyPlanPopulations(value, (population) => (
       validAllowanceCalibrationSummary(population, selectedBasis, options)
@@ -5055,6 +5074,7 @@ function validPlanScopedTimeline(value, sourceDescriptor, capacity) {
       || typeof scope.planType !== "string"
       || !/^[a-z][a-z0-9_-]{0,31}$/u.test(scope.planType)
       || scope.basisFamilyId !== capacity?.basisFamilyId
+      || scope.basisId !== capacity?.planScope?.basisId
       || scope.planType !== capacity?.planScope?.planType
       || scope.cohortId !== capacity?.planScope?.cohortId
       || scope.sourceGeneration !== sourceDescriptor?.generation
@@ -5122,6 +5142,8 @@ function validPlanScopedTimeline(value, sourceDescriptor, capacity) {
     const interval = value.comparisonIntervals[intervalAt];
     if (!interval || interval[0] > startMs || interval[1] < endMs) return false;
     const scenarios = row?.scenarioWeighting;
+    const mixed = mixUnknownSpeedUsd(scenarios?.unresolved_as_standard, scenarios?.unresolved_as_fast, capacity.unknownSpeedPolicy);
+    if (mixed === null || Math.abs(mixed - scenarios?.unresolved_as_custom) > 0.00002) return false;
     const coverage = row?.weightingCoverage;
     const pricing = row?.pricingCoverage;
     if (!Number.isFinite(startMs) || !Number.isFinite(endMs)
@@ -5170,7 +5192,7 @@ function validHistoricalPlanComparisons(value) {
     seen.add(row.planType);
     intervals.push(...row.planScopedTimeline.comparisonIntervals);
   }
-  const expectedPlans = value.allowanceCapacityByScenario.scenarios.unresolved_as_standard.calibration.planPopulations
+  const expectedPlans = value.allowanceCapacityByScenario.scenarios[value.allowanceCapacityByScenario.selectedScenario].calibration.planPopulations
     .map((row) => row.planType).filter((plan) => plan !== "unknown");
   if (expectedPlans.some((plan) => !seen.has(plan))) return false;
   intervals.sort((a, b) => a[0] - b[0]);
@@ -5259,6 +5281,7 @@ function validWeeklyCalibrationCompositionStatus(value, composition) {
 }
 
 function validCache(value) {
+  try { validateUnknownSpeedPolicy(value?.unknownSpeedPolicy); validateUnknownSpeedPolicy(value?.allowanceCapacityByScenario?.unknownSpeedPolicy); } catch { return false; }
   if (!value || typeof value !== "object" || Array.isArray(value)
       || value.schemaVersion !== REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
       || canonicalInstant(value.generatedAt) === null
@@ -5273,6 +5296,7 @@ function validCache(value) {
       // survive a registry correction just because its JSON shape is valid.
       || value.priceRegistryVersion !== APP_PRICE_REGISTRY_MANIFEST.version
       || value.priceRegistryObservedAt !== APP_PRICE_REGISTRY_MANIFEST.observedAt
+      || unknownSpeedCalculationIdentity(value.unknownSpeedPolicy) !== unknownSpeedCalculationIdentity(value.allowanceCapacityByScenario?.unknownSpeedPolicy)
       || !validSourceDescriptor(value.sourceDescriptor)
       || !validHistory(value.history)
       || value.history.generation !== value.sourceDescriptor.generation
@@ -5292,7 +5316,7 @@ function validCache(value) {
         value.allowanceCapacityByScenario,
       )
       || !validFiveHourAllowanceCalibration(
-        value.fiveHourAllowanceCalibration,
+        value.fiveHourAllowanceCalibration, value.unknownSpeedPolicy,
       )
       || !validPlanScopedTimeline(
         value.planScopedTimeline,
@@ -5304,12 +5328,14 @@ function validCache(value) {
         || (value.weeklyApiIntervals.status === "available" && (
           value.weeklyApiIntervals.sourceGeneration !== String(value.sourceDescriptor.generation)
           || value.weeklyApiIntervals.sourceFingerprint !== value.sourceDescriptor.generationFingerprint))))
+      || value.weeklyCalibration?.validation?.selectedCostBasis !== unknownSpeedCalibrationOptions(value.unknownSpeedPolicy).forcedCandidateId
+      || (value.unknownSpeedPolicy.mode === "custom" && value.weeklyCalibration?.customFastRatioBps !== value.unknownSpeedPolicy.customFastRatioBps)
       || value.weeklyCalibration?.schemaVersion
         !== "weekly-calibration-summary-v0.1"
       || value.weeklyCalibration.windowDurationMinutes
         !== SEVEN_DAY_WINDOW_MINUTES
       || !validWeeklyPlanPopulations(value.weeklyCalibration, (population) => (
-        validAllowanceCalibrationSummary(population, population.validation?.selectedCostBasis)
+        validAllowanceCalibrationSummary(population, unknownSpeedCalibrationOptions(value.unknownSpeedPolicy).forcedCandidateId, { customFastRatioBps: value.unknownSpeedPolicy.customFastRatioBps })
           && validWeeklyCalibrationComposition(population.composition)
       ))
       || canonicalInstant(value.weeklyCalibration.generatedAt) === null
@@ -5439,48 +5465,26 @@ export async function readReplaySafeAccountingCache({
       || parsed?.priceRegistryObservedAt
         !== APP_PRICE_REGISTRY_MANIFEST.observedAt
     );
-    unavailableErrorCode = registryOutdated
+    unavailableErrorCode = parsed?.schemaVersion !== REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
+      ? "cache_migration_required"
+      : registryOutdated
       ? "cache_price_registry_outdated"
       : parsed?.schemaVersion !== REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
         || parsed?.pricingMethodVersion !== LOCAL_API_PRICING_METHOD_VERSION
         || parsed?.priceEpochBasis !== HISTORICAL_PRICE_EPOCH_BASIS
         ? "cache_accounting_semantics_outdated"
         : "cache_invalid";
-    // The one refusal every updater walks through: prices are current but the
-    // accounting semantics version changed, so the artifact fails the CURRENT
-    // validator by design. Withholding it entirely is what put every
-    // large-history user on a "$0.00 until the rebuild lands" surface — and
-    // the rebuild can take a while at scale. The prior artifact is therefore
-    // returned on a SEPARATE, explicitly stale channel: provenance names the
-    // semantic version it was computed under and when, the current-cache
-    // contract (`cache`) stays null so no caller can mistake it for current,
-    // and consumers that choose to serve it must label it. A registry-outdated
-    // cache stays fully withheld — its prices are wrong, not merely
-    // differently derived — as does a structurally invalid one.
-    if (unavailableErrorCode === "cache_accounting_semantics_outdated"
-        && typeof parsed.schemaVersion === "string"
-        && parsed.schemaVersion.length > 0
-        && canonicalInstant(parsed.generatedAt) !== null
-        && canonicalInstant(parsed.coveredAt?.startAt) !== null
-        && canonicalInstant(parsed.coveredAt?.endAt) !== null) {
-      staleCache = {
-        stale: true,
-        schemaVersion: parsed.schemaVersion,
-        computedAt: parsed.generatedAt,
-        coveredAt: {
-          startAt: parsed.coveredAt.startAt,
-          endAt: parsed.coveredAt.endAt,
-        },
-        cache: parsed,
-      };
-    }
     parsed = null;
   }
   if (parsed === null) {
+    let preservedHistory = null;
+    try { preservedHistory = await readLocalCollectorPreservedAccountingHistory({ stateFile: selectedStateFile }); }
+    catch { /* Invalid preservation evidence stays withheld, never rewritten. */ }
     return {
       status: "unavailable",
       errorCode: unavailableErrorCode ?? "cache_unavailable",
       cache: null,
+      ...(preservedHistory === null ? {} : { preservedHistory }),
       ...(staleCache === null ? {} : { staleCache }),
     };
   }

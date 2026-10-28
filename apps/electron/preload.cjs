@@ -314,6 +314,18 @@ function installDesktopBridge() {
       values,
       (value) => enumMethod("setAppearance", value, APPEARANCES),
     ),
+    setUnknownSpeedPolicy: (...values) => oneArgument(
+      "setUnknownSpeedPolicy", values, value => {
+        if (!exactObject(value, ["mode", "customFastRatioBps"], "unknownSpeedPolicy")
+            || !["standard", "fast", "custom"].includes(value.mode)
+            || value.customFastRatioBps !== null && (!Number.isInteger(value.customFastRatioBps)
+              || value.customFastRatioBps < 0 || value.customFastRatioBps > 10000)
+            || value.mode === "custom" && value.customFastRatioBps === null) {
+          return rejected("unknownSpeedPolicy is invalid");
+        }
+        return invoke("setUnknownSpeedPolicy", { value: { ...value } });
+      },
+    ),
     setRefreshInterval: (...values) => oneArgument(
       "setRefreshInterval",
       values,

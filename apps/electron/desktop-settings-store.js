@@ -4,11 +4,10 @@ import {
   isDesktopNotificationThreshold,
   DESKTOP_APPEARANCES,
   isDesktopRefreshIntervalSeconds,
-  DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER,
   DESKTOP_SETTINGS_SCHEMA_VERSION,
-  migrateDesktopSettingsSnapshot,
   projectDesktopSettingsPathFree,
   validateDesktopSettingsSnapshot,
+  validateDesktopUnknownSpeedPolicy,
 } from "./desktop-contract.js";
 import {
   addCodexHomeToConfiguration,
@@ -37,6 +36,7 @@ const UPDATE_KEYS = Object.freeze([
   "appearance",
   "refreshIntervalSeconds",
   "refreshPaused",
+  "unknownSpeedPolicy",
   "startAtLogin",
   "notifications",
   "sidebarCollapsed",
@@ -61,6 +61,7 @@ function defaultSettings() {
     appearance: DESKTOP_DEFAULT_SETTINGS.appearance,
     refreshIntervalSeconds: DESKTOP_DEFAULT_SETTINGS.refreshIntervalSeconds,
     refreshPaused: DESKTOP_DEFAULT_SETTINGS.refreshPaused,
+    unknownSpeedPolicy: DESKTOP_DEFAULT_SETTINGS.unknownSpeedPolicy,
     startAtLogin: DESKTOP_DEFAULT_SETTINGS.startAtLogin,
     notifications: { ...DESKTOP_DEFAULT_SETTINGS.notifications },
     sidebarCollapsed: DESKTOP_DEFAULT_SETTINGS.sidebarCollapsed,
@@ -69,7 +70,7 @@ function defaultSettings() {
 }
 
 function cloneSettings(settings, idFactory) {
-  const migrated = validateDesktopSettingsSnapshot({ ...migrateDesktopSettingsSnapshot(settings, { idFactory }) });
+  const migrated = validateDesktopSettingsSnapshot(settings);
   return validateDesktopSettingsSnapshot({
     schemaVersion: migrated.schemaVersion,
     codexHomes: migrated.codexHomes,
@@ -77,6 +78,7 @@ function cloneSettings(settings, idFactory) {
     appearance: migrated.appearance,
     refreshIntervalSeconds: migrated.refreshIntervalSeconds,
     refreshPaused: migrated.refreshPaused,
+    unknownSpeedPolicy: migrated.unknownSpeedPolicy,
     startAtLogin: migrated.startAtLogin,
     notifications: { ...migrated.notifications },
     sidebarCollapsed: migrated.sidebarCollapsed,
@@ -133,7 +135,7 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
   let writeBlocked = false;
 
   async function ensureLoaded() {
-    if (loaded) return state;
+    if (loaded) { if (lastLoadError) throw lastLoadError; return state; }
     if (loadPromise !== null) return loadPromise;
     loadPromise = (async () => {
       let stored;
@@ -147,37 +149,23 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
           writeBlocked = true;
           loaded = true;
         }
-        return state;
+        throw lastLoadError;
       }
       try {
         lastLoadError = null;
         if (stored === null || stored === undefined) {
           state = defaultSettings();
         } else {
-          const migrated = migrateDesktopSettingsSnapshot(stored, { idFactory });
-          state = cloneSettings(migrated, idFactory);
-          // Persist a legacy migration as one normal backend transaction. The
-          // backend owns its atomic/no-clobber publication boundary. Keep the
-          // migrated state usable in memory if that publication is unavailable
-          // and expose only a fixed diagnostic to the caller.
-          if (stored.schemaVersion !== DESKTOP_SETTINGS_SCHEMA_VERSION
-              || stored[DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER] === true) {
-            try {
-              await persistence.save(state);
-            } catch (error) {
-              lastLoadError = loadError();
-              void error;
-            }
-          }
+          state = cloneSettings(stored, idFactory);
         }
       } catch (error) {
-        // A corrupt/unavailable preference backend must never make the desktop
-        // shell unusable. Keep the exact defaults and expose only a fixed
-        // diagnostic through the store state, never the backend error.
-        state = defaultSettings();
+        // An incompatible or malformed record requires explicit offline recovery.
+        // Never present defaults as though the existing settings loaded successfully.
         writeBlocked = true;
+        loaded = true;
         lastLoadError = loadError();
         void error;
+        throw lastLoadError;
       }
       loaded = true;
       return state;
@@ -209,7 +197,7 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
     try {
       // Another app version may have replaced the file after this process loaded it.
       // Revalidate its version before allowing this older reader to publish.
-      if (latest !== null && latest !== undefined) validateDesktopSettingsSnapshot({ ...migrateDesktopSettingsSnapshot(latest, { idFactory }) });
+      if (latest !== null && latest !== undefined) validateDesktopSettingsSnapshot(latest);
     } catch {
       writeBlocked = true;
       throw persistenceError();
@@ -258,6 +246,7 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
         ...current,
         codexHomes,
         refreshPaused: patch.refreshPaused === undefined ? current.refreshPaused : patch.refreshPaused,
+        unknownSpeedPolicy: patch.unknownSpeedPolicy === undefined ? current.unknownSpeedPolicy : validateDesktopUnknownSpeedPolicy(patch.unknownSpeedPolicy),
         tray: patch.tray === undefined ? current.tray : patch.tray,
         language: patch.language === undefined ? current.language : patch.language,
         appearance: patch.appearance === undefined ? current.appearance : patch.appearance,
@@ -309,6 +298,11 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
       throw new TypeError("seconds is invalid");
     }
     return enqueueUpdate((current) => ({ ...current, refreshIntervalSeconds: seconds }));
+  }
+
+  async function setUnknownSpeedPolicy(value) {
+    const policy = validateDesktopUnknownSpeedPolicy(value);
+    return enqueueUpdate(current => ({ ...current, unknownSpeedPolicy: policy }));
   }
 
   async function setRefreshPaused(paused) {
@@ -401,6 +395,7 @@ export function createDesktopSettingsStore({ backend = DEFAULT_BACKEND, idFactor
     setAppearance,
     setRefreshInterval,
     setRefreshPaused,
+    setUnknownSpeedPolicy,
     setStartAtLogin,
     setNotificationPreferences,
     setSidebarCollapsed,

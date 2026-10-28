@@ -2088,8 +2088,18 @@ function allowanceTimelineUsage(data) {
     : data.timeline?.usage ?? [];
 }
 
+function renderPublishedUnknownSpeedPolicy(target, data) {
+  if (!target) return;
+  const policy = data?.timeline?.unknownSpeedPolicy;
+  target.hidden = !policy;
+  if (!policy) { target.textContent = ""; return; }
+  setLocalizedText(target, `allowance.unknownSpeed.${policy.mode}`, policy.mode === "custom"
+    ? { percent: formatDecimal(policy.customFastRatioBps / 100, 2) } : {});
+}
+
 function renderComparison(data) {
   data = selectAllowancePlanPopulation(data, activeWeeklyPlanType);
+  renderPublishedUnknownSpeedPolicy($("#calibration-unknown-speed-policy"), data);
   const gapValue = $("#comparison-gap");
   const status = $("#comparison-status");
   if (gapValue) gapValue.textContent = "—";
@@ -2127,14 +2137,10 @@ function renderComparison(data) {
         ?? summary.pointsWithin80BandFraction,
     )
     : null;
-  // The weekly estimator is the canonical fitted-rate source. The
-  // composition-aware blended rate (cost-weighted over the recent model mix)
-  // is preferred when the v0.7 cache fitted one; the across-reset median is
-  // the fallback, and older gradient artifacts remain a compatibility
-  // fallback for old demo payloads.
+  // Allowance rates use the published unknown-speed scenario capacity.
+  // The independent Standard-priced composition vector remains model detail.
   const capacity = finite(
-    weeklySummary.blended_capacity_usd
-      ?? weeklySummary.median_weekly_value_usd
+    weeklySummary.median_weekly_value_usd
       ?? weeklySummary.medianWeeklyValueUsd
       ?? (legacyDemo ? summary.capacity_usd ?? summary.capacityUsd : null),
   );
@@ -7120,6 +7126,7 @@ function renderWeekly(data) {
   const windowMinutes = data.allowanceWindowDurationMinutes;
   renderAllowanceWindowChrome(rootData, windowMinutes);
   renderWeeklyPlanControl(selectAllowancePlanPopulation(rootData, activeWeeklyPlanType));
+  renderPublishedUnknownSpeedPolicy($("#weekly-unknown-speed-policy"), data);
   // A weekly estimate carried over from the previous app version while the
   // recalculation runs announces itself here, quietly.
   renderStaleServeNote(

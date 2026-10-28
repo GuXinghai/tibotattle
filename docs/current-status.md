@@ -24,6 +24,13 @@ No remote resources were modified by the source retirement.
 
 ## Evidence boundaries
 
+The working-tree accounting-reuse repair distinguishes stable missing-thread
+origin evidence from failed metadata reads. Equal origin evidence, including the
+same unknown membership, may reuse the qualified process-local result while
+preserving unknown interval reasons and the original evaluation clock. Origin
+changes or unavailable read evidence invalidate reuse. No persisted schema or
+existing user state is changed by this policy repair.
+
 The working tree uses a local event stream for startup snapshot, refresh, and
 independent report completion notifications. The dashboard re-reads the relevant
 validated state after a notification; an event does not itself prove that a
@@ -213,3 +220,14 @@ signed-release, updater or public deployment behavior. Retained historical
 receipts apply only to their own original project, source, bytes and dates. No
 user-owned Claude profile/source content, settings, ledger, callback state,
 credential, or file has been inspected, moved, or cleaned up for this decision.
+
+## Desktop calculation separation working tree
+
+The current working tree separates bounded desktop calibration from complete
+research analysis, adds an explicit unresolved-speed setting and prepares a
+copy-only settings/cache conversion. Settings and cache formats are current-only;
+old results are preserved in a separate protected historical envelope rather
+than relabelled. No real profile conversion, commit, package activation or
+real-data validation is performed by this implementation. See the
+[decision](./decisions/2026-10-28-desktop-calculation-and-unknown-speed.md) and
+[preservation inventory](./plans/2026-10-28-desktop-calculation-preservation.md).

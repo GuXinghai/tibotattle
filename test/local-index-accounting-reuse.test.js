@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { join } from "node:path";
+import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { createLocalIndexAccountingReuse } from "../src/local-index-accounting-reuse.js";
 import { buildLocalIndexAccountingCache } from "../src/local-index-accounting-cache.js";
@@ -26,7 +27,7 @@ test("process-local semantic reuse recomposes metadata and preserves the evaluat
   };
   const reuse = createLocalIndexAccountingReuse({ indexFile, codexHome: workspace.codexHome,
     stateFile: join(workspace.state, "collector.sqlite"), readIdentity,
-    readOrigins: async (_home, ids) => new Map(ids.map(id => [id, { autoReview: origin, originKnown: known }])),
+    readOrigins: async (_home, ids) => ({ complete: true, relations: new Map(ids.map(id => [id, { autoReview: known && origin, originKnown: known }])) }),
     write: async ({ cache }) => { assertReplaySafeAccountingCache(cache); writes++; },
   });
   const firstGeneration = readIdentity();
@@ -84,12 +85,31 @@ test("process-local semantic reuse recomposes metadata and preserves the evaluat
   assert.equal(await reuse.reuse({ proof: await reuse.readProof({ generation }), nowMs: NOW + 60_000, maximumAgeMs: 1_800_000 }), null);
   known = false;
   const originCounts = [];
-  assert.equal(await reuse.readProof({ generation, onReuseDiagnostic, onOriginDiagnostic: value => originCounts.push(value) }), null);
-  assert.deepEqual(reasons.pop(), { phase: "proof_before", code: "origins_unknown" });
+  const unknownProof = await reuse.readProof({ generation, onReuseDiagnostic, onOriginDiagnostic: value => originCounts.push(value) });
+  assert.ok(unknownProof);
+  assert.notEqual(unknownProof.key, proof.key);
+  assert.deepEqual(reasons.pop(), { phase: "proof_before", code: "proof_available" });
   assert.deepEqual(originCounts, [
     { phase: "proof_before", code: "unknown_with_usage", count: 1 },
     { phase: "proof_before", code: "unknown_without_usage", count: 0 },
   ]);
+  const october = Date.parse("2026-10-10T03:00:00.000Z");
+  const uncertain = await buildLocalIndexAccountingCache({ indexFile, codexHome: workspace.codexHome,
+    expectedGeneration: generation, now: () => october });
+  uncertain.weeklyApiIntervals.rows = [{ startMs: october - 120_000, endMs: october - 60_000,
+    planType: "plus", segment: 1, quotaPp: 1, apiUsd: "1", weeklyUsd: null,
+    reason: "review_origin_unresolved", usageEvents: 1, unknownSpeedEvents: 0,
+    excludedReviewEvents: 0, excludedReviewUsd: "0", priceCardIds: [] }];
+  assertReplaySafeAccountingCache(uncertain);
+  reuse.remember({ cache: uncertain, before: unknownProof, after: await reuse.readProof({ generation }) });
+  const retainedUnknown = await reuse.reuse({ proof: unknownProof, nowMs: october, maximumAgeMs: 1_800_000 });
+  assert.ok(retainedUnknown);
+  assert.deepEqual(retainedUnknown.weeklyApiIntervals, uncertain.weeklyApiIntervals);
+  assert.equal(retainedUnknown.weeklyApiIntervals.rows[0].reason, "review_origin_unresolved");
+  known = true;
+  assert.equal(await reuse.reuse({ proof: await reuse.readProof({ generation }), nowMs: october, maximumAgeMs: 1_800_000 }), null,
+    "unknown becoming known invalidates reuse");
+  known = false;
   reuse.remember({ cache: result, before: proof, after: null, onReuseDiagnostic });
   assert.deepEqual(reasons.pop(), { phase: "remember", code: "proof_unavailable" });
   known = true; origin = false;
@@ -194,4 +214,77 @@ test("runtime capture during accounting preserves the proof and the next refresh
   finally { changed.close(); }
   assert.equal((await refresh()).accounting.refreshStatus, "rebuilt", "changed facts still invalidate reuse");
   assert.equal(rebuilds, 2);
+});
+
+test("complete unknown origins are stable inputs; per-session changes and incomplete receipts fail closed", async t => {
+  const workspace = createWorkspace({ files: 2, events: 10, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile, secretFile: workspace.secretFile, workerCount: 1 });
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  let statuses = ["unknown", "normal"], complete = true, idsSeen = [];
+  const reuse = createLocalIndexAccountingReuse({ indexFile, codexHome: workspace.codexHome,
+    stateFile: join(workspace.state, "collector.sqlite"), readOrigins: async (_home, ids, options) => {
+      assert.equal(options.withOriginReadReceipt, true); idsSeen = ids;
+      return { complete, relations: new Map(ids.map((id, index) => [id,
+        { originKnown: statuses[index] !== "unknown", autoReview: statuses[index] === "auto_review" }])) };
+    } });
+  const before = await reuse.readProof({ generation });
+  assert.equal(idsSeen.length, 2); assert.ok(before);
+  assert.equal(idsSeen.some(id => JSON.stringify(before).includes(id)), false);
+  const cache = await buildLocalIndexAccountingCache({ indexFile, codexHome: workspace.codexHome,
+    expectedGeneration: generation, now: () => NOW });
+  reuse.remember({ cache, before, after: await reuse.readProof({ generation }) });
+  assert.ok(await reuse.reuse({ proof: before, nowMs: NOW, maximumAgeMs: 1_800_000 }));
+  statuses = ["normal", "unknown"];
+  const changedUnknownIdentity = await reuse.readProof({ generation });
+  assert.notEqual(changedUnknownIdentity.key, before.key);
+  assert.equal(await reuse.reuse({ proof: changedUnknownIdentity, nowMs: NOW, maximumAgeMs: 1_800_000 }), null);
+  statuses = ["unknown", "unknown"];
+  const allUnknown = await reuse.readProof({ generation });
+  assert.ok(allUnknown); assert.notEqual(allUnknown.key, before.key);
+  reuse.remember({ cache, before: allUnknown, after: await reuse.readProof({ generation }) });
+  assert.ok(await reuse.reuse({ proof: allUnknown, nowMs: NOW, maximumAgeMs: 1_800_000 }));
+  statuses = ["unknown", "auto_review"];
+  assert.equal(await reuse.reuse({ proof: await reuse.readProof({ generation }), nowMs: NOW, maximumAgeMs: 1_800_000 }), null);
+  complete = false;
+  assert.equal(await reuse.readProof({ generation }), null);
+  reuse.remember({ cache, before: allUnknown, after: null });
+  assert.equal(reuse.matches(allUnknown), false);
+});
+
+
+test("an empty index with no published generation cannot authorize reuse", async t => {
+  const workspace = createWorkspace({ files: 1, events: 1, days: 1 });
+  t.after(() => workspace.cleanup());
+  const home = join(workspace.root, "empty-codex"); mkdirSync(home);
+  const indexFile = join(workspace.state, "empty.sqlite");
+  await refreshLocalIndex({ codexHome: home, indexFile, secretFile: workspace.secretFile, workerCount: 1 });
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  let reads = 0;
+  const reuse = createLocalIndexAccountingReuse({ indexFile, codexHome: home,
+    stateFile: join(workspace.state, "collector.sqlite"), readOrigins: async () => { reads++; throw new Error("unexpected"); } });
+  const first = await reuse.readProof({ generation });
+  assert.equal(first, null); assert.equal(reads, 0);
+});
+
+test("calculation proofs bind the effective unknown-speed assumption, not an inactive input", async t => {
+  const workspace = createWorkspace({ files: 1, events: 2, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile,
+    secretFile: workspace.secretFile, workerCount: 1 });
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  const reuse = createLocalIndexAccountingReuse({ indexFile, stateFile: join(workspace.state, "collector.sqlite"),
+    codexHome: workspace.codexHome, readOrigins: async (_home, ids) => ({ complete: true,
+      relations: new Map(ids.map(id => [id, { originKnown: false, autoReview: false }])) }) });
+  const proof = policy => reuse.readProof({ generation, unknownSpeedPolicy: policy });
+  const standard = await proof({ mode: "standard", customFastRatioBps: null });
+  assert.ok(standard);
+  assert.equal((await proof({ mode: "standard", customFastRatioBps: 300 })).key, standard.key);
+  assert.notEqual((await proof({ mode: "fast", customFastRatioBps: null })).key, standard.key);
+  const custom = await proof({ mode: "custom", customFastRatioBps: 300 });
+  assert.notEqual(custom.key, standard.key);
+  assert.notEqual((await proof({ mode: "custom", customFastRatioBps: 301 })).key, custom.key);
+  await assert.rejects(proof({ mode: "custom", customFastRatioBps: null }), /policy is invalid/);
 });

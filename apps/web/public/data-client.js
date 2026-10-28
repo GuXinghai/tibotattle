@@ -2498,7 +2498,7 @@ function normalizeCacheSwitchAllowanceImpact(value) {
       || value?.basisFamilyId !== ALLOWANCE_BASIS_FAMILY_ID
       || value?.interpretation !== CACHE_SWITCH_ALLOWANCE_INTERPRETATION
       || value?.reason !== null) return unavailableAllowanceImpact();
-  const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
+  const scenarios = Object.fromEntries(ENDPOINT_ALLOWANCE_SCENARIOS.map((scenario) => [
     scenario,
     value.scenarios?.[scenario] === null
       ? null
@@ -2549,7 +2549,7 @@ function normalizeCacheSwitchAllowanceImpact(value) {
       || rangeLower === null || rangeUpper === null || rangeLower > rangeUpper) {
     return unavailableAllowanceImpact();
   }
-  const medians = ALLOWANCE_SCENARIOS.map(
+  const medians = ENDPOINT_ALLOWANCE_SCENARIOS.map(
     (scenario) => scenarios[scenario].medianPercentagePoints
   );
   if (Math.abs(rangeLower - Math.min(...medians)) > 0.000002
@@ -2605,7 +2605,7 @@ function normalizeCachePremiumWeighting(value, pricedDrops, standardPremium) {
   if (!value || typeof value !== "object" || Array.isArray(value)
       || !["complete", "range", "unavailable"].includes(value.status)
       || value.basisFamilyId !== ALLOWANCE_BASIS_FAMILY_ID) return null;
-  const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
+  const scenarios = Object.fromEntries(ENDPOINT_ALLOWANCE_SCENARIOS.map((scenario) => [
     scenario,
     value.scenarios?.[scenario] === null
       ? null
@@ -2629,7 +2629,7 @@ function normalizeCachePremiumWeighting(value, pricedDrops, standardPremium) {
   } else if (value.status === "range") {
     const lower = nonNegative(value?.rangePremiumUsd?.lower, null);
     const upper = nonNegative(value?.rangePremiumUsd?.upper, null);
-    const premiums = ALLOWANCE_SCENARIOS.map(
+    const premiums = ENDPOINT_ALLOWANCE_SCENARIOS.map(
       (scenario) => scenarios[scenario]?.quotaWeightedPremiumUsd ?? null
     );
     if (selectedScenario !== null || selectedPremiumUsd !== null
@@ -3569,14 +3569,16 @@ const FAST_MODE_METRIC_EXPLAINER =
   "Standard-rate API prices, with Fast and Ultrafast increments priced at published API rates for the exact model, context, and date. Where no eligible Priority rate exists, Fast retains a disclosed assumed 2x Standard; unsupported Ultrafast remains unpriced. These comparisons do not measure included subscription allowance consumption.";
 const ALLOWANCE_SCENARIOS = Object.freeze([
   "unresolved_as_standard",
-  "unresolved_as_fast"
+  "unresolved_as_fast",
+  "unresolved_as_custom"
 ]);
+const ENDPOINT_ALLOWANCE_SCENARIOS = ALLOWANCE_SCENARIOS.slice(0, 2);
 const ALLOWANCE_BASIS_FAMILY_ID =
-  "codex_primary:speed_priced_api_equivalent:v4:published_speed_card_ratio_2026_09_29:event_time:observed_declared_scenario";
+  "codex_primary:speed_priced_api_equivalent:v5:published_speed_card_ratio_2026_09_29:event_time:observed_declared_scenario";
 const TIMELINE_ALLOWANCE_WEIGHTING_SCHEMA_VERSION =
-  "quota-weighted-timeline-v0.1";
+  "quota-weighted-timeline-v0.2";
 const PLAN_SCOPED_TIMELINE_SCHEMA_VERSION =
-  "local-plan-scoped-accounting-timeline-v1";
+  "local-plan-scoped-accounting-timeline-v2";
 const PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION = "plan-era-v1";
 const TIMELINE_WEIGHTING_STATUS_BY_CODE = Object.freeze([
   "complete",
@@ -3584,7 +3586,20 @@ const TIMELINE_WEIGHTING_STATUS_BY_CODE = Object.freeze([
   "unknown"
 ]);
 
-function allowanceBasisId(scenario) {
+function normalizeUnknownSpeedPolicy(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).length !== 2
+      || !Object.hasOwn(value, "mode") || !Object.hasOwn(value, "customFastRatioBps")
+      || !["standard", "fast", "custom"].includes(value.mode)
+      || !(value.customFastRatioBps === null || Number.isInteger(value.customFastRatioBps)
+        && value.customFastRatioBps >= 0 && value.customFastRatioBps <= 10000)
+      || value.mode === "custom" && value.customFastRatioBps === null) return null;
+  return { mode: value.mode, customFastRatioBps: value.customFastRatioBps };
+}
+
+function allowanceBasisId(scenario, policy = null) {
+  if (scenario === "unresolved_as_custom") return policy?.mode === "custom"
+    ? `${ALLOWANCE_BASIS_FAMILY_ID}:${scenario}:${policy.customFastRatioBps}` : null;
   return `${ALLOWANCE_BASIS_FAMILY_ID}:${scenario}`;
 }
 
@@ -3621,14 +3636,14 @@ function normalizeAllowanceCoverage(value, usageEvents) {
   };
 }
 
-function normalizeAllowanceScenario(value, scenario, usageEvents, standardUsd) {
+function normalizeAllowanceScenario(value, scenario, usageEvents, standardUsd, policy = null) {
   const sourceWeightingStatus = ["complete", "partial", "unknown"].includes(
     value?.sourceWeightingStatus
   ) ? value.sourceWeightingStatus : null;
   const quotaWeightedUsd = nonNegative(value?.quotaWeightedUsd, null);
   const coveredSubtotalUsd = nonNegative(value?.coveredSubtotalUsd, null);
   const coverage = normalizeAllowanceCoverage(value?.coverage, usageEvents);
-  if (value?.basisId !== allowanceBasisId(scenario)
+  if (value?.basisId !== allowanceBasisId(scenario, policy)
       || sourceWeightingStatus === null || coveredSubtotalUsd === null
       || coverage === null
       || coveredSubtotalUsd > standardUsd * 6 + 0.00002
@@ -3639,7 +3654,7 @@ function normalizeAllowanceScenario(value, scenario, usageEvents, standardUsd) {
           || quotaWeightedUsd > standardUsd * 6 + 0.00002
         : quotaWeightedUsd !== null)) return null;
   return {
-    basisId: allowanceBasisId(scenario),
+    basisId: allowanceBasisId(scenario, policy),
     sourceWeightingStatus,
     quotaWeightedUsd,
     coveredSubtotalUsd,
@@ -3653,13 +3668,16 @@ function normalizeAllowanceWeighting(value, usageEvents, standardUsd) {
       || !["complete", "range", "unavailable"].includes(value.status)) {
     return null;
   }
-  const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
+  const policy = normalizeUnknownSpeedPolicy(value.unknownSpeedPolicy);
+  if (policy === null) return null;
+  const scenarioOrder = policy.mode === "custom" ? ALLOWANCE_SCENARIOS : ENDPOINT_ALLOWANCE_SCENARIOS;
+  const scenarios = Object.fromEntries(scenarioOrder.map((scenario) => [
     scenario,
     normalizeAllowanceScenario(
       value.scenarios?.[scenario],
       scenario,
       usageEvents,
-      standardUsd
+      standardUsd, policy
     )
   ]));
   if (Object.values(scenarios).includes(null)) return null;
@@ -3670,14 +3688,14 @@ function normalizeAllowanceWeighting(value, usageEvents, standardUsd) {
   const rangeLower = nonNegative(value.rangeUsd?.lower, null);
   const rangeUpper = nonNegative(value.rangeUsd?.upper, null);
   if (value.status === "complete") {
-    if (selectedScenario === null || selectedUsd === null
+    if (selectedScenario === null || selectedScenario !== `unresolved_as_${policy.mode}` || selectedUsd === null
         || scenarios[selectedScenario].quotaWeightedUsd === null
         || Math.abs(
           selectedUsd - scenarios[selectedScenario].quotaWeightedUsd
         ) > 0.00002
         || value.rangeUsd !== null) return null;
   } else if (value.status === "range") {
-    const values = ALLOWANCE_SCENARIOS.map(
+    const values = scenarioOrder.map(
       (scenario) => scenarios[scenario].quotaWeightedUsd
     );
     if (selectedScenario !== null || selectedUsd !== null
@@ -3690,6 +3708,7 @@ function normalizeAllowanceWeighting(value, usageEvents, standardUsd) {
     status: value.status,
     basisFamilyId: ALLOWANCE_BASIS_FAMILY_ID,
     selectedScenario,
+    unknownSpeedPolicy: policy,
     selectedUsd,
     scenarios,
     rangeUsd: value.status === "range"
@@ -3699,26 +3718,18 @@ function normalizeAllowanceWeighting(value, usageEvents, standardUsd) {
 }
 
 function normalizeTimelineAllowanceWeightingEncoding(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)
-      || Object.keys(value).length !== 4
-      || value.schemaVersion
-        !== TIMELINE_ALLOWANCE_WEIGHTING_SCHEMA_VERSION
+  const policy = normalizeUnknownSpeedPolicy(value?.unknownSpeedPolicy);
+  const scenarioOrder = policy?.mode === "custom" ? ALLOWANCE_SCENARIOS : ENDPOINT_ALLOWANCE_SCENARIOS;
+  if (policy === null || !value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).length !== 5
+      || value.schemaVersion !== TIMELINE_ALLOWANCE_WEIGHTING_SCHEMA_VERSION
       || value.basisFamilyId !== ALLOWANCE_BASIS_FAMILY_ID
-      || !Array.isArray(value.scenarioOrder)
-      || value.scenarioOrder.length !== ALLOWANCE_SCENARIOS.length
-      || !value.scenarioOrder.every(
-        (scenario, index) => scenario === ALLOWANCE_SCENARIOS[index]
-      )
-      || (value.selectedScenario !== null
-        && !ALLOWANCE_SCENARIOS.includes(value.selectedScenario))) {
-    return null;
-  }
-  return {
-    schemaVersion: TIMELINE_ALLOWANCE_WEIGHTING_SCHEMA_VERSION,
-    basisFamilyId: ALLOWANCE_BASIS_FAMILY_ID,
-    scenarioOrder: [...ALLOWANCE_SCENARIOS],
-    selectedScenario: value.selectedScenario
-  };
+      || !Array.isArray(value.scenarioOrder) || value.scenarioOrder.length !== scenarioOrder.length
+      || !value.scenarioOrder.every((scenario, index) => scenario === scenarioOrder[index])
+      || value.selectedScenario !== `unresolved_as_${policy.mode}`) return null;
+  return { schemaVersion: TIMELINE_ALLOWANCE_WEIGHTING_SCHEMA_VERSION,
+    basisFamilyId: ALLOWANCE_BASIS_FAMILY_ID, scenarioOrder: [...scenarioOrder],
+    selectedScenario: value.selectedScenario, unknownSpeedPolicy: policy };
 }
 
 function normalizeCompactTimelineAllowanceScenario(
@@ -3726,14 +3737,15 @@ function normalizeCompactTimelineAllowanceScenario(
   offset,
   scenario,
   usageEvents,
-  standardUsd
+  standardUsd,
+  policy
 ) {
   const sourceWeightingStatus = Number.isSafeInteger(tuple[offset])
     ? TIMELINE_WEIGHTING_STATUS_BY_CODE[tuple[offset]] ?? null
     : null;
   if (sourceWeightingStatus === null) return null;
   return normalizeAllowanceScenario({
-    basisId: allowanceBasisId(scenario),
+    basisId: allowanceBasisId(scenario, policy),
     sourceWeightingStatus,
     quotaWeightedUsd: tuple[offset + 1],
     coveredSubtotalUsd: tuple[offset + 2],
@@ -3745,7 +3757,7 @@ function normalizeCompactTimelineAllowanceScenario(
       inferredEvents: tuple[offset + 6],
       unknownEvents: tuple[offset + 7]
     }
-  }, scenario, usageEvents, standardUsd);
+  }, scenario, usageEvents, standardUsd, policy);
 }
 
 function normalizeCompactTimelineAllowanceWeighting(
@@ -3754,20 +3766,21 @@ function normalizeCompactTimelineAllowanceWeighting(
   usageEvents,
   standardUsd
 ) {
-  if (!Array.isArray(value) || value.length !== 16) return null;
-  const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map(
+  if (!Array.isArray(value) || value.length !== encoding.scenarioOrder.length * 8) return null;
+  const scenarios = Object.fromEntries(encoding.scenarioOrder.map(
     (scenario, index) => [scenario,
       normalizeCompactTimelineAllowanceScenario(
         value,
         index * 8,
         scenario,
         usageEvents,
-        standardUsd
+        standardUsd,
+        encoding.unknownSpeedPolicy
       )]
   ));
   if (Object.values(scenarios).includes(null)) return null;
   const selectedScenario = encoding.selectedScenario;
-  const scenarioValues = ALLOWANCE_SCENARIOS.map(
+  const scenarioValues = encoding.scenarioOrder.map(
     (scenario) => scenarios[scenario].quotaWeightedUsd
   );
   const bothComplete = !scenarioValues.includes(null);
@@ -3787,6 +3800,7 @@ function normalizeCompactTimelineAllowanceWeighting(
     : null;
   return normalizeAllowanceWeighting({
     status,
+    unknownSpeedPolicy: encoding.unknownSpeedPolicy,
     basisFamilyId: ALLOWANCE_BASIS_FAMILY_ID,
     selectedScenario: status === "complete" ? selectedScenario : null,
     selectedUsd,
@@ -3812,9 +3826,8 @@ function normalizeFastMode(value) {
   const coverage = value?.coverage ?? {};
   const inference = value?.inference ?? {};
   return {
-    unresolvedScenario: value?.unresolvedScenario === "unresolved_as_fast"
-      ? "unresolved_as_fast"
-      : "unresolved_as_standard",
+    unresolvedScenario: ALLOWANCE_SCENARIOS.includes(value?.unresolvedScenario) ? value.unresolvedScenario : null,
+    unknownSpeedPolicy: normalizeUnknownSpeedPolicy(value?.unknownSpeedPolicy),
     // Applied thread settings and explicit turn contexts provide speed
     // evidence. Older sources can still omit the initial tier.
     logRecordsTierChangesOnly: false,
@@ -3984,6 +3997,8 @@ function normalizePlanScope(value, { allowMissingCohort = false } = {}) {
   if (value?.methodVersion !== PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION
       || planType === "unknown"
       || value?.basisFamilyId !== ALLOWANCE_BASIS_FAMILY_ID
+      || typeof value?.basisId !== "string"
+      || !value.basisId.startsWith(`${ALLOWANCE_BASIS_FAMILY_ID}:unresolved_as_`)
       || (cohortId === null && !(allowMissingCohort && value?.cohortId === null))
       || sourceGeneration === ""
       || sourceGenerationFingerprint === "") return null;
@@ -3991,6 +4006,7 @@ function normalizePlanScope(value, { allowMissingCohort = false } = {}) {
     methodVersion: PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION,
     planType,
     basisFamilyId: ALLOWANCE_BASIS_FAMILY_ID,
+    basisId: value.basisId,
     cohortId,
     sourceGeneration,
     sourceGenerationFingerprint
@@ -4002,13 +4018,14 @@ function matchingPlanScope(left, right) {
     && left.methodVersion === right.methodVersion
     && left.planType === right.planType
     && left.basisFamilyId === right.basisFamilyId
+    && left.basisId === right.basisId
     && left.cohortId === right.cohortId
     && left.sourceGeneration === right.sourceGeneration
     && left.sourceGenerationFingerprint
       === right.sourceGenerationFingerprint;
 }
 
-function normalizeAllowanceCapacityScenario(value, scenario) {
+function normalizeAllowanceCapacityScenario(value, scenario, policy) {
   if (value === null || value === undefined) return null;
   const medianCapacityUsd = nonNegative(value?.medianCapacityUsd, null);
   const lower = nonNegative(value?.plausibleRangeUsd?.lower, null);
@@ -4031,7 +4048,7 @@ function normalizeAllowanceCapacityScenario(value, scenario) {
   ]));
   const scoredPriorResets = count(validation.scoredPriorResets, null);
   const scoredPriorPoints = count(validation.scoredPriorPoints, null);
-  if (value?.basisId !== allowanceBasisId(scenario)
+  if (value?.basisId !== allowanceBasisId(scenario, policy)
       || medianCapacityUsd === null || medianCapacityUsd <= 0
       || lower === null || lower <= 0 || upper === null
       || lower > medianCapacityUsd || medianCapacityUsd > upper
@@ -4043,7 +4060,7 @@ function normalizeAllowanceCapacityScenario(value, scenario) {
     return null;
   }
   return {
-    basisId: allowanceBasisId(scenario),
+    basisId: allowanceBasisId(scenario, policy),
     medianCapacityUsd,
     plausibleRangeUsd: { lower, upper },
     qualifyingResets,
@@ -4068,7 +4085,8 @@ const LOCAL_ACCOUNTING_PROJECTION_REASONS = new Set([
   "local_unified_index_unavailable",
   "typed_tool_history_partial",
   "unified_index_generation_incomplete",
-  "unified_index_partial"
+  "unified_index_partial",
+  "preserved_accounting_history"
 ]);
 
 function safeLocalProjectionReason(value, fallback) {
@@ -4208,9 +4226,11 @@ function normalizeAllowanceCapacity(value) {
       || value.accountAttribution?.maySpanMultipleAccounts !== true) {
     return unavailableAllowanceCapacity("allowance_capacity_invalid");
   }
+  const policy = normalizeUnknownSpeedPolicy(value.unknownSpeedPolicy);
+  if (policy === null && value.status !== "unavailable") return unavailableAllowanceCapacity("allowance_capacity_invalid");
   const scenarios = Object.fromEntries(ALLOWANCE_SCENARIOS.map((scenario) => [
     scenario,
-    normalizeAllowanceCapacityScenario(value.scenarios?.[scenario], scenario)
+    normalizeAllowanceCapacityScenario(value.scenarios?.[scenario], scenario, policy)
   ]));
   const selectedScenario = ALLOWANCE_SCENARIOS.includes(value.selectedScenario)
     ? value.selectedScenario
@@ -4221,9 +4241,10 @@ function normalizeAllowanceCapacity(value) {
   // stale scalar for historical display, never as a current plan numerator.
   const legacyStale = value.planScope == null && stale !== null;
   if (value.status === "available") {
-    if (selectedScenario === null || scenarios[selectedScenario] === null
+    if (selectedScenario === null || selectedScenario !== `unresolved_as_${policy.mode}` || scenarios[selectedScenario] === null
         || (!legacyStale && (planScope === null
-          || planScope.cohortId !== scenarios[selectedScenario].cohortId))) {
+          || planScope.cohortId !== scenarios[selectedScenario].cohortId
+          || planScope.basisId !== scenarios[selectedScenario].basisId))) {
       return unavailableAllowanceCapacity("allowance_capacity_invalid");
     }
   } else if (selectedScenario !== null || planScope !== null) {
@@ -4244,6 +4265,7 @@ function normalizeAllowanceCapacity(value) {
       : null,
     basisFamilyId: ALLOWANCE_BASIS_FAMILY_ID,
     selectedScenario,
+    unknownSpeedPolicy: policy,
     scenarios,
     planScope,
     stale,
@@ -4269,7 +4291,7 @@ function unavailablePlanScopedTimeline(reason = "plan_scoped_timeline_unavailabl
 function normalizePlanScopedTimeline(value, weightingEncoding, capacity) {
   if (value?.schemaVersion !== PLAN_SCOPED_TIMELINE_SCHEMA_VERSION
       || value?.status !== "available" || value.reason !== null
-      || value.encoding !== "plan_bucket_v1") {
+      || value.encoding !== "plan_bucket_v2") {
     return unavailablePlanScopedTimeline();
   }
   // A source-scoped usage projection does not require a successful capacity
@@ -4278,7 +4300,9 @@ function normalizePlanScopedTimeline(value, weightingEncoding, capacity) {
   const planScope = normalizePlanScope(value.planScope, { allowMissingCohort: true });
   const capacityScope = capacity?.status === "available"
     ? capacity.planScope : null;
-  if (planScope === null || (capacityScope !== null
+  if (planScope === null || weightingEncoding == null
+      || planScope.basisId !== allowanceBasisId(weightingEncoding.selectedScenario, weightingEncoding.unknownSpeedPolicy)
+      || (capacityScope !== null
       && !matchingPlanScope(planScope, capacityScope))) {
     return unavailablePlanScopedTimeline("plan_scoped_timeline_scope_mismatch");
   }
@@ -4316,7 +4340,7 @@ function normalizePlanScopedTimeline(value, weightingEncoding, capacity) {
     if (comparisonIntervals[coveredAt]?.[0] < row[1]) return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
     excludedIntervals.push([...row]); priorEnd = row[1];
   }
-  const decodedUsage = value.usage.map(decodePlanTimelineUsage);
+  const decodedUsage = value.usage.map(row => decodePlanTimelineUsage(row, weightingEncoding));
   if (decodedUsage.includes(null)) return unavailablePlanScopedTimeline("plan_scoped_timeline_invalid");
   const usage = normalizeLocalUsageTimeline(decodedUsage, weightingEncoding, 100_000);
   const quota = decodePlanQuotaRows(value.quota, planScope);
@@ -4386,8 +4410,8 @@ function decodePlanQuotaRows(rows, scope) {
   return result.length === rows.length ? result : null;
 }
 
-function decodePlanTimelineUsage(row) {
-  if (!Array.isArray(row) || row.length !== 16
+function decodePlanTimelineUsage(row, encoding) {
+  if (!encoding || !Array.isArray(row) || row.length !== 17
       || row.some((n) => typeof n !== "number" || !Number.isFinite(n))
       || !Number.isSafeInteger(row[0]) || row[0] % 900_000 !== 0
       || !Number.isFinite(new Date(row[0] + 900_000).getTime())
@@ -4403,7 +4427,7 @@ function decodePlanTimelineUsage(row) {
       unpricedEvents: row[1] - row[13] - row[14] },
     // Existing weighting encoding: complete=0, unknown=2; unpriced events
     // withhold the whole bucket, while unresolved speed remains a scenario.
-    allowanceWeighting: [row[9], row[10]].flatMap((usd) => [
+    allowanceWeighting: (encoding.unknownSpeedPolicy.mode === "custom" ? [row[9], row[10], row[16]] : [row[9], row[10]]).flatMap((usd) => [
       priced ? 0 : 2, priced ? usd : null, priced ? usd : 0,
       priced ? row[11] : 0, priced ? row[12] : 0,
       priced ? row[1] - row[11] - row[12] : 0, 0, priced ? 0 : row[1],
@@ -4426,7 +4450,13 @@ function normalizeLocalTimeline(value = {}, accounting = {}) {
     value.calibrationUsage,
     weightingEncoding
   );
-  const allowanceCapacity = normalizeAllowanceCapacity(value.allowanceCapacity);
+  let allowanceCapacity = normalizeAllowanceCapacity(value.allowanceCapacity);
+  if (allowanceCapacity.status === "available"
+      && (weightingEncoding == null || allowanceCapacity.selectedScenario !== weightingEncoding.selectedScenario
+        || (allowanceCapacity.unknownSpeedPolicy.mode === "custom"
+          && allowanceCapacity.unknownSpeedPolicy.customFastRatioBps !== weightingEncoding.unknownSpeedPolicy.customFastRatioBps))) {
+    allowanceCapacity = unavailableAllowanceCapacity("allowance_capacity_basis_mismatch");
+  }
   const planScoped = normalizePlanScopedTimeline(
     value.planScoped,
     weightingEncoding,
@@ -4484,6 +4514,7 @@ function normalizeLocalTimeline(value = {}, accounting = {}) {
     },
     usage,
     calibrationUsage,
+    unknownSpeedPolicy: weightingEncoding?.unknownSpeedPolicy ?? null,
     allowanceCapacity,
     planScoped,
     historicalPlanComparisons,
@@ -4695,6 +4726,10 @@ function normalizeStaleAccountingServe(value) {
     provenance.sourceGeneration = generation;
     provenance.sourceGenerationFingerprint = value.sourceGenerationFingerprint;
   }
+  if (value.status === "historical_only" && (!Array.isArray(value.periods)
+      || value.periods.some(row => !Number.isSafeInteger(row?.events) || row.events < 0
+        || !Number.isSafeInteger(row?.totalTokens) || row.totalTokens < 0
+        || !Number.isFinite(row?.apiPriceEquivalentUsd) || row.apiPriceEquivalentUsd < 0))) return null;
   const periods = array(value.periods).flatMap((period) => (
     ["24h", "7d", "30d", "all"].includes(period?.periodId)
       && typeof period.periodLabel === "string"
@@ -4709,6 +4744,11 @@ function normalizeStaleAccountingServe(value) {
       : []
   )).slice(0, 5);
   if (periods.length === 0) return null;
+  if (value.status === "historical_only") {
+    if (value.schemaVersion !== "local-accounting-preserved-history-summary-v1"
+        || value.reason !== "preserved_accounting_history" || typeof value.priceBasis !== "string") return null;
+    return { ...provenance, status: "historical_only", priceBasis: value.priceBasis, periods };
+  }
   return { ...provenance, periods };
 }
 

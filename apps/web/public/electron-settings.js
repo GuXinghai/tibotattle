@@ -35,6 +35,23 @@ export function validSettingsRefreshSeconds(value) {
     && value % 60 === 0 && Number.isSafeInteger(value * 1000));
 }
 
+export function parseSettingsFastPercent(value) {
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)(?:\.[0-9]{1,2})?$/.test(value)) return null;
+  const [whole, fraction = ""] = value.split(".");
+  const bps = Number(whole) * 100 + Number(fraction.padEnd(2, "0"));
+  return Number.isSafeInteger(bps) && bps >= 0 && bps <= 10000 ? bps : null;
+}
+
+function validUnknownSpeedPolicy(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && Reflect.ownKeys(value).length === 2
+    && ["standard", "fast", "custom"].includes(value.mode)
+    && Object.hasOwn(value, "customFastRatioBps")
+    && (value.customFastRatioBps === null || Number.isInteger(value.customFastRatioBps)
+      && value.customFastRatioBps >= 0 && value.customFastRatioBps <= 10000)
+    && (value.mode !== "custom" || value.customFastRatioBps !== null);
+}
+
 export function validSettingsNotificationThreshold(value) {
   return value === -1 || (Number.isInteger(value) && value >= 1 && value <= 100);
 }
@@ -57,6 +74,7 @@ export const SETTINGS_ACTION_NAMES = Object.freeze([
   "reorderCodexHomes",
   "useDefaultCodexHome",
   "setRefreshInterval",
+  "setUnknownSpeedPolicy",
   "setStartAtLogin",
   "setNotificationPreferences",
   "sendTestNotification",
@@ -422,6 +440,8 @@ export function normalizeSettingsState(raw, settingsRoots = null) {
   return Object.freeze({
     language,
     appearance,
+    unknownSpeedPolicy: validUnknownSpeedPolicy(settings.unknownSpeedPolicy)
+      ? { ...settings.unknownSpeedPolicy } : null,
     tray: settings.tray,
     traySettingsStatus: settings.traySettingsStatus,
     trayCapabilities: settings.trayCapabilities,
@@ -496,6 +516,8 @@ function fixedActionValue(actionName, value) {
       return valueIn(SETTINGS_LANGUAGE_VALUES, value);
     case "setAppearance":
       return valueIn(SETTINGS_APPEARANCE_VALUES, value);
+    case "setUnknownSpeedPolicy":
+      return validUnknownSpeedPolicy(value);
     case "setRefreshInterval":
       return validSettingsRefreshSeconds(value);
     case "setNotificationPreferences":
@@ -698,6 +720,15 @@ function renderSettingsState(
 
   language.value = state.language;
   appearance.value = state.appearance;
+  const unknownMode = documentRef.querySelector("#settings-unknown-speed-mode");
+  const unknownRatio = documentRef.querySelector("#settings-fast-ratio");
+  if (unknownMode && unknownRatio) {
+    unknownMode.value = state.unknownSpeedPolicy?.mode ?? "";
+    unknownMode.disabled = !bridgeAvailable || state.unknownSpeedPolicy === null;
+    unknownRatio.value = state.unknownSpeedPolicy?.customFastRatioBps == null
+      ? "" : String(state.unknownSpeedPolicy.customFastRatioBps / 100);
+    unknownRatio.disabled = unknownMode.disabled || unknownMode.value !== "custom";
+  }
   renderCodexRoots(documentRef, state, bridgeAvailable, localizer, onRootAction);
   refresh.value = String(state.refreshIntervalSeconds === -1 ? -1 : state.refreshIntervalSeconds / 60);
   refresh.disabled = !bridgeAvailable;
@@ -1123,6 +1154,25 @@ async function mountSettingsPageOnce({
     if (primary?.kind === "custom") void invoke("editCodexHome", { rootId: primary.rootId });
     else void invoke("chooseCodexHome");
   });
+  const unknownMode = documentRef.querySelector("#settings-unknown-speed-mode");
+  const unknownRatio = documentRef.querySelector("#settings-fast-ratio");
+  const saveUnknownSpeed = () => {
+    if (!unknownMode || !unknownRatio) return;
+    unknownRatio.disabled = unknownMode.value !== "custom";
+    const custom = unknownMode.value === "custom";
+    const ratio = custom ? parseSettingsFastPercent(unknownRatio.value)
+      : currentState.unknownSpeedPolicy?.customFastRatioBps ?? null;
+    const policy = { mode: unknownMode.value, customFastRatioBps: ratio };
+    const valid = validUnknownSpeedPolicy(policy);
+    const error = documentRef.querySelector("#settings-fast-ratio-error");
+    if (error) error.hidden = valid;
+    unknownRatio.setAttribute("aria-invalid", String(!valid));
+    if (valid) void invoke("setUnknownSpeedPolicy", policy);
+  };
+  if (unknownMode && unknownRatio) {
+    listen(unknownMode, "change", saveUnknownSpeed);
+    listen(unknownRatio, "change", saveUnknownSpeed);
+  }
   listen(queryRequired(documentRef, "#settings-refresh-interval"), "change", (event) => {
     const minutes = Number(event.target.value);
     const seconds = minutes === -1 ? -1 : minutes * 60;

@@ -1,4 +1,5 @@
 import { createLocalProgressEvents } from "./local-progress-events.js";
+import { createUnknownSpeedPolicyConfiguration, attachUnknownSpeedPolicyChannel } from "./unknown-speed-policy-channel.js";
 import { createWorkUsageService } from "../../src/application/index.js";
 import { createWorkUsageSnapshotStore } from "./work-usage-snapshots.js";
 import {
@@ -913,6 +914,7 @@ export function createLocalCompanionServer(options = {}) {
     throw new TypeError("environment must be an object");
   }
   const semanticOpenTarget = configuredSemanticOpenTarget(environment);
+  const unknownSpeedPolicyConfiguration = createUnknownSpeedPolicyConfiguration(environment);
   const parentWatchdogPid = configuredParentWatchdogPid(environment);
   const homeDirectory = configuredHomeDirectory(environment);
   const resourceRoot = options.resourceRoot
@@ -945,6 +947,7 @@ export function createLocalCompanionServer(options = {}) {
       ?? join(installation.stateRoot, DIAGNOSTICS_LOG_FILE_NAME),
   );
   return createPreparedLocalCompanionServer({
+    unknownSpeedPolicyConfiguration,
     ...options,
     environment,
     resourceRoot: installation.resourceRoot,
@@ -960,6 +963,7 @@ export function createLocalCompanionServer(options = {}) {
 }
 
 function createPreparedLocalCompanionServer({
+  unknownSpeedPolicyConfiguration,
   environment,
   resourceRoot,
   stateRoot,
@@ -1060,6 +1064,7 @@ function createPreparedLocalCompanionServer({
     }, { ...controls, selectProjection: projection => selectSharedWorkUsageSnapshot(projection, query) }),
   workUsageEnrich = (query) => enrichWorkUsageRows({ ...query, codexHome }),
   refreshRunner = createLocalCollectorRefreshRunner({
+    getUnknownSpeedPolicy: unknownSpeedPolicyConfiguration.get,
     codexHome,
     stateFile: statePaths.collectorStateFile,
     accountObservationOperationLockFile:
@@ -1828,6 +1833,7 @@ function createPreparedLocalCompanionServer({
     refresh,
     setRefreshIntervalSeconds: (seconds) => overviewScheduler.setIntervalSeconds(seconds),
     setRefreshPaused: (paused) => overviewScheduler.setPaused(paused),
+    setUnknownSpeedPolicy: unknownSpeedPolicyConfiguration.set,
     [PARENT_WATCHDOG_PID]: parentWatchdogPid,
     async initialize() {
       await acquireInstanceLock();
@@ -1944,6 +1950,10 @@ if (process.argv[1]
         setPaused: app.setRefreshPaused,
       } }) : () => {};
     app.server.once("close", detachRefreshInterval);
+    const detachUnknownSpeedPolicy = typeof process.send === "function"
+      ? attachUnknownSpeedPolicyChannel({ channel: process, setPolicy: app.setUnknownSpeedPolicy })
+      : () => {};
+    app.server.once("close", detachUnknownSpeedPolicy);
     process.stdout.write(`USAGE_MONITOR_READY http://${app.host}:${app.port}/\n`);
     let closing = false;
     const close = () => {

@@ -1,4 +1,5 @@
 export { createSourceFileAccess } from './source-file-access.js';
+export { withProtectedSqliteReadSnapshot } from './protected-sqlite-read.js';
 export {
   createWindowsBrowserProfileStore, isWindowsBrowserProfileStore,
   isWindowsBrowserProfileStoreError, WindowsBrowserProfileStoreError,

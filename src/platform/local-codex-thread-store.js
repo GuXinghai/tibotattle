@@ -303,7 +303,7 @@ function reportOriginDiagnostic(observer, code, count = 1) {
   catch { /* Optional diagnostics never change protected metadata access. */ }
 }
 
-async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, usageRelations = false, allowTitleFallback = false, signal, filesystem, databaseFactory, onOriginDiagnostic = null } = {}) {
+async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false, usageRelations = false, allowTitleFallback = false, signal, filesystem, databaseFactory, onOriginDiagnostic = null, withOriginReadReceipt = false } = {}) {
   const report = (code, count) => reportOriginDiagnostic(onOriginDiagnostic, code, count);
   const databaseFile = join(codexHome, "state_5.sqlite");
   let database;
@@ -338,6 +338,10 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
       ancestryOnly ? "NULL AS agent_nickname" : boundedTextColumn(columns, "agent_nickname", MAX_AGENT_NICKNAME_LENGTH),
       boundedTextColumn(columns, "source", MAX_THREAD_SOURCE_LENGTH),
       boundedTextColumn(columns, "thread_source", MAX_THREAD_SOURCE_CLASS_LENGTH),
+      ...(withOriginReadReceipt && columns.has("source") && columns.has("thread_source") ? [
+        `CASE WHEN source IS NULL OR (typeof(source) = 'text' AND instr(source, char(0)) = 0 AND length(CAST(source AS BLOB)) <= ${MAX_THREAD_SOURCE_LENGTH * 4} AND length(source) <= ${MAX_THREAD_SOURCE_LENGTH}) THEN 1 ELSE 0 END AS origin_source_valid`,
+        `CASE WHEN thread_source IS NULL OR (typeof(thread_source) = 'text' AND instr(thread_source, char(0)) = 0 AND length(CAST(thread_source AS BLOB)) <= ${MAX_THREAD_SOURCE_CLASS_LENGTH * 4} AND length(thread_source) <= ${MAX_THREAD_SOURCE_CLASS_LENGTH}) THEN 1 ELSE 0 END AS origin_class_valid`,
+      ] : []),
       boundedTextColumn(columns, "rollout_path", MAX_ROLLOUT_PATH_LENGTH),
     ].join(", ");
     const statement = database.prepare(`SELECT ${selected} FROM threads WHERE id = ?`);
@@ -352,6 +356,8 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
       const row = statement.get(id);
       if (row === undefined) { missingRows++; continue; }
       if (threadId(row.id) !== id) { invalidRows++; continue; }
+      if (withOriginReadReceipt && columns.has("source") && columns.has("thread_source")
+          && (row.origin_source_valid !== 1 || row.origin_class_valid !== 1)) invalidRows++;
       const source = parseThreadSource(row.source);
       const threadStoreAutoReview = isAutoReviewThreadSource(row.thread_source);
       const sourceAutoReview = isAutoReviewSource(source);
@@ -397,7 +403,9 @@ async function readSelectedThreadMetadata(codexHome, ids, { ancestryOnly = false
     if (!await guard.validate()) { report("metadata_database_changed"); return new Map(); }
     report("thread_row_missing", missingRows);
     report("thread_row_invalid", invalidRows);
-    return result;
+    return withOriginReadReceipt
+      ? { selected: result, complete: columns.has("source") && columns.has("thread_source") && invalidRows === 0 }
+      : result;
   } catch (error) {
     signal?.throwIfAborted();
     const code = error?.code;
@@ -529,33 +537,44 @@ export async function readCodexLocalThreadMetadata(codexHome, threadIds, {
   }));
 }
 
-/** Read only explicit collaboration edges; no names or prompt-bearing titles. */
+/**
+ * Read only explicit collaboration edges; no names or prompt-bearing titles.
+ * The default result remains a Map. The opt-in origin receipt is solely for
+ * cache proof checks: complete means a guarded, validated database read and
+ * successful close, so an absent row differs from an unreadable store. It does
+ * not assert that an absent thread has an ordinary origin.
+ */
 export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
   platform = process.platform, loadWindowsBinding, databaseFactory = openMetadataDatabase, signal,
   includeOriginEvidence = false,
+  withOriginReadReceipt = false,
   includeProjectAncestry = false,
   sourcePaths = null,
   knownThreadIds = new Set(),
   onOriginDiagnostic = null,
 } = {}) {
   const report = (code, count) => reportOriginDiagnostic(onOriginDiagnostic, code, count);
+  const unavailable = () => withOriginReadReceipt ? { complete: false, relations: new Map() } : new Map();
   const filesystem = createLocalCodexMetadataFilesystem({ platform, loadWindowsBinding });
-  if (!Array.isArray(threadIds) || threadIds.length > 25_000) { report("metadata_invalid_request"); return new Map(); }
+  if (withOriginReadReceipt && (!includeOriginEvidence || sourcePaths !== null)) return unavailable();
+  if (!Array.isArray(threadIds) || threadIds.length > 25_000) { report("metadata_invalid_request"); return unavailable(); }
   if (sourcePaths !== null && (!(sourcePaths instanceof Map) && typeof sourcePaths !== "function"
-      || !(knownThreadIds instanceof Set))) { report("metadata_invalid_request"); return new Map(); }
-  if (!await filesystem.validHome(codexHome)) { report("metadata_home_unavailable"); return new Map(); }
+      || !(knownThreadIds instanceof Set))) { report("metadata_invalid_request"); return unavailable(); }
+  if (!await filesystem.validHome(codexHome)) { report("metadata_home_unavailable"); return unavailable(); }
   const ids = [...new Set(threadIds.map(threadId))];
-  if (ids.includes(null)) { report("metadata_invalid_request"); return new Map(); }
+  if (ids.includes(null)) { report("metadata_invalid_request"); return unavailable(); }
   report("requested", ids.length);
-  const selected = sourcePaths instanceof Map || typeof sourcePaths === "function"
+  const selection = sourcePaths instanceof Map || typeof sourcePaths === "function"
     ? await readSourceUsageRelations(codexHome, ids, sourcePaths, knownThreadIds, filesystem, signal)
     : await readSelectedThreadMetadata(codexHome, ids, {
-      ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal, onOriginDiagnostic,
+      ancestryOnly: true, usageRelations: true, filesystem, databaseFactory, signal, onOriginDiagnostic, withOriginReadReceipt,
     });
+  const selected = withOriginReadReceipt ? selection?.selected : selection;
+  if (!(selected instanceof Map)) return unavailable();
   const known = ids.filter(id => selected.has(id)).length;
   report("known", known);
   report("unknown", ids.length - known);
-  return new Map(ids.map(id => {
+  const relations = new Map(ids.map(id => {
     let current = id;
     const seen = new Set();
     const ancestors = [];
@@ -578,6 +597,7 @@ export async function readCodexLocalThreadUsageRelations(codexHome, threadIds, {
         ancestryKnown: valid && !blockedReviewTerminal } : {}),
       ...(includeOriginEvidence ? {originKnown:selected.has(id)} : {}) }];
   }));
+  return withOriginReadReceipt ? { complete: selection.complete === true, relations } : relations;
 }
 
 export async function readCodexLocalThreadAncestry(codexHome, threadIds, {

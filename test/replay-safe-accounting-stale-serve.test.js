@@ -1,4 +1,7 @@
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
+import { preserveDesktopAccountingCacheV025 } from "../scripts/lib/desktop-calculation-migration.mjs";
+import { PRESERVED_ACCOUNTING_HISTORY_META_KEY } from "../src/local-accounting-preserved-history.js";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,17 +26,9 @@ import { readLocalIndexGenerationIdentity } from "../src/local-index-companion-s
 import { appendSyntheticCodexEvents } from "../src/synthetic-codex-rollout-corpus.js";
 import { createProtectedFixtureDirectory } from "./helpers/windows-owner-only-fixture.js";
 
-// Serve-stale-labeled (2026-08-19). A cache whose semantic identity mismatches
-// the current code — the exact state every updater enters, because a schema
-// bump is how an accounting-semantics change announces itself — used to be
-// withheld outright: "$0.00 / Historical event-time accounting changed" until
-// the local rebuild landed, which takes a while at large-history scale. The
-// prior artifact is now returned on an explicitly stale channel and served
-// with provenance (the semantic version it was computed under and when),
-// while the current-cache contract stays null so nothing can mistake it for
-// current. These tests pin the read channel, the snapshot projections and
-// their provenance, the banner replacement, the fresh-account non-regression,
-// and the retention/atomic-swap lifecycle around the rebuild.
+// Runtime accepts only current cache format. Old data is retained untouched;
+// one-time migration writes a new historical-only receipt for basic figures.
+// A current-format generation mismatch remains a separately fenced stale serve.
 
 const NOW = Date.parse("2026-08-20T12:00:00.000Z");
 const DAY_MS = 24 * 60 * 60 * 1_000;
@@ -128,8 +123,32 @@ async function writeOutdatedPriorCache(stateFile) {
     ...structuredClone(current),
     schemaVersion: OUTDATED_SCHEMA_VERSION,
   };
-  await writeLocalCollectorAccountingCache({ stateFile, cache: outdated });
+  const database = new DatabaseSync(stateFile);
+  try { database.prepare("UPDATE meta SET value_json=? WHERE key='accounting_cache'").run(JSON.stringify(outdated)); }
+  finally { database.close(); }
   return outdated;
+}
+
+async function writeMigratedPriorHistory(stateFile) {
+  const current = await refreshReplaySafeAccountingCache({ stateFile,
+    now: () => NOW - 60 * 60_000, scan: estimatorWorthyScan() });
+  const previous = { ...structuredClone(current), schemaVersion: "local-replay-safe-accounting-v0.25" };
+  delete previous.unknownSpeedPolicy;
+  const envelope = preserveDesktopAccountingCacheV025(JSON.stringify(previous));
+  const database = new DatabaseSync(stateFile);
+  try {
+    database.exec("BEGIN IMMEDIATE");
+    database.prepare("INSERT INTO meta(key,value_json) VALUES (?,?)").run(PRESERVED_ACCOUNTING_HISTORY_META_KEY, JSON.stringify(envelope));
+    database.prepare("DELETE FROM meta WHERE key='accounting_cache'").run();
+    database.exec("COMMIT");
+  } finally { database.close(); }
+  return { previous, envelope };
+}
+
+function preservedBytes(stateFile) {
+  const database = new DatabaseSync(stateFile, { readOnly: true });
+  try { return database.prepare("SELECT value_json FROM meta WHERE key=?").get(PRESERVED_ACCOUNTING_HISTORY_META_KEY)?.value_json; }
+  finally { database.close(); }
 }
 
 async function fixtureRoot() {
@@ -194,28 +213,21 @@ test("a newer index serves prior generation costs with original provenance and n
   } finally { workspace.cleanup(); }
 });
 
-test("a semantics-outdated cache is returned on the explicit stale channel with provenance", async () => {
+test("old cache format is refused without runtime compatibility or rewriting", async () => {
   const root = await fixtureRoot();
   const stateFile = join(root, ".usage-monitor", "local-collector-state-v1.sqlite");
   try {
     const outdated = await writeOutdatedPriorCache(stateFile);
     const read = await readReplaySafeAccountingCache({ stateFile });
     assert.equal(read.status, "unavailable");
-    assert.equal(read.errorCode, "cache_accounting_semantics_outdated");
-    // The current-cache contract stays null: no caller can mistake the stale
-    // artifact for a current one.
+    assert.equal(read.errorCode, "cache_migration_required");
     assert.equal(read.cache, null);
-    assert.equal(read.staleCache.stale, true);
-    assert.equal(read.staleCache.schemaVersion, OUTDATED_SCHEMA_VERSION);
-    assert.equal(read.staleCache.computedAt, outdated.generatedAt);
-    assert.deepEqual(read.staleCache.coveredAt, outdated.coveredAt);
-    assert.deepEqual(read.staleCache.cache, outdated);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    assert.equal(Object.hasOwn(read, "staleCache"), false);
+    assert.deepEqual((await readLocalCollectorAccountingCache({ stateFile })).cache, outdated);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("a synthetic v0.24 cache stays byte-identical on stale read while v0.25 withholds it", async () => {
+test("a previous pricing cache remains byte-identical when current runtime requires migration", async () => {
   const root = await fixtureRoot();
   const stateFile = join(root, ".usage-monitor", "local-collector-state-v1.sqlite");
   try {
@@ -228,7 +240,9 @@ test("a synthetic v0.24 cache stays byte-identical on stale read while v0.25 wit
     previous.schemaVersion = PREVIOUS_PRICING_SCHEMA_VERSION;
     delete previous.pricingMethodVersion;
     const previousBytes = Buffer.from(serializeLocalCollectorAccountingCache(previous));
-    await writeLocalCollectorAccountingCache({ stateFile, cache: previous });
+    const database = new DatabaseSync(stateFile);
+    try { database.prepare("UPDATE meta SET value_json=? WHERE key='accounting_cache'").run(JSON.stringify(previous)); }
+    finally { database.close(); }
 
     const retainedBeforeRead = await readLocalCollectorAccountingCache({ stateFile });
     assert.deepEqual(
@@ -238,13 +252,9 @@ test("a synthetic v0.24 cache stays byte-identical on stale read while v0.25 wit
 
     const read = await readReplaySafeAccountingCache({ stateFile });
     assert.equal(read.status, "unavailable");
-    assert.equal(read.errorCode, "cache_accounting_semantics_outdated");
+    assert.equal(read.errorCode, "cache_migration_required");
     assert.equal(read.cache, null);
-    assert.equal(read.staleCache.stale, true);
-    assert.equal(read.staleCache.schemaVersion, PREVIOUS_PRICING_SCHEMA_VERSION);
-    assert.equal(read.staleCache.cache.schemaVersion, PREVIOUS_PRICING_SCHEMA_VERSION);
-    assert.equal(Object.hasOwn(read.staleCache.cache, "pricingMethodVersion"), false);
-    assert.deepEqual(read.staleCache.cache, previous);
+    assert.equal(Object.hasOwn(read, "staleCache"), false);
 
     const retainedAfterRead = await readLocalCollectorAccountingCache({ stateFile });
     assert.deepEqual(
@@ -285,96 +295,49 @@ test("a price-registry-outdated cache stays fully withheld: no stale channel", a
   }
 });
 
-test("the snapshot serves stale-labeled cost, allowance, and capacity projections instead of empty panels", async () => {
+test("migrated history serves original cost and tokens without old allowance projections", async () => {
   const root = await fixtureRoot();
   const stateFile = join(root, ".usage-monitor", "local-collector-state-v1.sqlite");
   try {
-    const outdated = await writeOutdatedPriorCache(stateFile);
-    const snapshot = await buildLocalCompanionSnapshot(
-      snapshotOptions(root, stateFile),
-    );
-    // The machine-readable verdict on the CURRENT cache stays honest.
-    assert.equal(
-      snapshot.overview.freshness.accountingStatus,
-      "unavailable",
-    );
-    // Cost view: the prior-version per-period headline scalars, labeled.
-    const staleServe = snapshot.overview.accounting.staleServe;
-    assert.equal(staleServe.stale, true);
-    assert.equal(staleServe.schemaVersion, OUTDATED_SCHEMA_VERSION);
-    assert.equal(staleServe.computedAt, outdated.generatedAt);
-    assert.deepEqual(staleServe.coveredAt, outdated.coveredAt);
-    const staleAll = staleServe.periods.find(
-      (period) => period.periodId === "all",
-    );
-    const priorAll = outdated.periods.find((period) => period.id === "all");
-    assert.deepEqual(staleAll, {
-      periodId: "all",
-      periodLabel: priorAll.label,
-      events: priorAll.events,
-      totalTokens: priorAll.totalTokens,
-      apiPriceEquivalentUsd: priorAll.apiPriceEquivalentUsd,
-    });
-    assert.ok(staleAll.events > 0);
-    assert.ok(staleAll.apiPriceEquivalentUsd > 0);
-    // Allowance estimate: served from the stale calibration with provenance,
-    // not "insufficient evidence".
-    assert.equal(snapshot.weekly.status, "available");
-    assert.equal(snapshot.weekly.stale.stale, true);
-    assert.equal(snapshot.weekly.stale.schemaVersion, OUTDATED_SCHEMA_VERSION);
-    // The weekly panel serves the forced allowance scenario, not the
-    // diagnostic model-selection summary — same as a current cache.
-    assert.equal(
-      snapshot.weekly.datasets.summary[0].median_weekly_value_usd,
-      outdated.allowanceCapacityByScenario.scenarios.unresolved_as_standard
-        .calibration.estimate.medianApiPriceEquivalentUsd,
-    );
-    // Trends comparability: the capacity behind the expected line is served
-    // from the stale calibration with the same provenance.
-    const capacity = snapshot.overview.timeline.allowanceCapacity;
-    assert.equal(capacity.status, "available");
-    assert.equal(capacity.planScope, null, "a stale scalar cannot claim a current plan/generation scope");
-    assert.equal(capacity.stale.stale, true);
-    assert.equal(capacity.stale.schemaVersion, OUTDATED_SCHEMA_VERSION);
-    assert.ok(
-      capacity.scenarios.unresolved_as_standard.medianCapacityUsd > 0,
-    );
-    const dashboard = normalizeDashboardPayload({
-      ...snapshot.overview, weekly: snapshot.weekly,
-    });
-    assert.equal(dashboard.timeline.allowanceCapacity.status, "available");
-    assert.equal(dashboard.timeline.allowanceCapacity.stale.stale, true);
-    assert.equal(dashboard.timeline.allowanceCapacity.planScope, null);
-    assert.equal(selectAllowancePlanPopulation(dashboard).allowancePlanSelection.comparisonAvailable, false,
-      "a legacy stale scalar must not supply a current selected-plan comparison");
-    // The alert-styled withheld banner is replaced by the quiet label.
-    assert.ok(!snapshot.overview.warnings.includes(WITHHELD_SENTENCE));
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    const { previous, envelope } = await writeMigratedPriorHistory(stateFile);
+    const before = preservedBytes(stateFile);
+    const snapshot = await buildLocalCompanionSnapshot(snapshotOptions(root, stateFile));
+    const serve = snapshot.overview.accounting.staleServe;
+    assert.equal(serve.status, "historical_only");
+    assert.equal(serve.schemaVersion, "local-accounting-preserved-history-summary-v1");
+    assert.equal(serve.computedAt, previous.generatedAt);
+    assert.deepEqual(serve.coveredAt, previous.coveredAt);
+    const originalAll = previous.periods.find(row => row.id === "all");
+    assert.deepEqual(serve.periods.find(row => row.periodId === "all"), {
+      periodId: "all", periodLabel: originalAll.label, events: originalAll.events,
+      totalTokens: originalAll.totalTokens, apiPriceEquivalentUsd: originalAll.apiPriceEquivalentUsd });
+    assert.equal(snapshot.weekly.status, "unavailable");
+    assert.equal(snapshot.overview.timeline.allowanceCapacity.status, "unavailable");
+    assert.equal(snapshot.weekly.stale, undefined);
+    const dashboard = normalizeDashboardPayload({ ...snapshot.overview, weekly: snapshot.weekly });
+    assert.deepEqual(dashboard.accounting.staleServe, serve);
+    assert.equal(dashboard.timeline.allowanceCapacity.status, "unavailable");
+    assert.equal(preservedBytes(stateFile), before);
+    assert.equal(JSON.parse(before).sourceCacheJson, envelope.sourceCacheJson);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-test("stale capacity accepts absent legacy scope but rejects contradictory supplied scope", async () => {
+test("current cache cannot publish an absent or contradictory allowance scope", async () => {
   const root = await fixtureRoot();
   const stateFile = join(root, ".usage-monitor", "local-collector-state-v1.sqlite");
   try {
-    const outdated = await writeOutdatedPriorCache(stateFile);
-    const unscoped = structuredClone(outdated);
-    delete unscoped.allowanceCapacityByScenario.planScope;
-    await writeLocalCollectorAccountingCache({ stateFile, cache: unscoped });
-    const legacy = await buildLocalCompanionSnapshot(snapshotOptions(root, stateFile));
-    assert.equal(legacy.overview.timeline.allowanceCapacity.status, "available");
-    assert.equal(legacy.overview.timeline.allowanceCapacity.planScope, null);
-    assert.equal(legacy.overview.timeline.allowanceCapacity.stale.stale, true);
-    const conflicting = structuredClone(outdated);
-    conflicting.allowanceCapacityByScenario.planScope.cohortId = "f".repeat(64);
-    await writeLocalCollectorAccountingCache({ stateFile, cache: conflicting });
-    const refused = await buildLocalCompanionSnapshot(snapshotOptions(root, stateFile));
-    assert.equal(refused.overview.timeline.allowanceCapacity.status, "unavailable");
-    assert.equal(refused.overview.timeline.allowanceCapacity.planScope, null);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    const current = await refreshReplaySafeAccountingCache({ stateFile, now: () => NOW, scan: estimatorWorthyScan() });
+    for (const mutate of [x => { delete x.allowanceCapacityByScenario.planScope; },
+      x => { x.allowanceCapacityByScenario.planScope.basisId = "wrong-basis"; }]) {
+      const malformed = structuredClone(current); mutate(malformed);
+      await writeLocalCollectorAccountingCache({ stateFile, cache: malformed });
+      const read = await readReplaySafeAccountingCache({ stateFile });
+      assert.equal(read.status, "unavailable");
+      const snapshot = await buildLocalCompanionSnapshot(snapshotOptions(root, stateFile));
+      assert.equal(snapshot.overview.timeline.allowanceCapacity.status, "unavailable");
+      assert.equal(snapshot.overview.accounting.staleServe, null);
+    }
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("a fresh account with no prior cache keeps today's honest empty states", async () => {
@@ -401,52 +364,25 @@ test("a fresh account with no prior cache keeps today's honest empty states", as
   }
 });
 
-test("the stale cache survives a failed rebuild and is atomically replaced by a successful one", async () => {
+test("migrated historical evidence survives failed and successful current rebuilds", async () => {
   const root = await fixtureRoot();
   const stateFile = join(root, ".usage-monitor", "local-collector-state-v1.sqlite");
   try {
-    const outdated = await writeOutdatedPriorCache(stateFile);
-    // A rebuild that misses its memory budget defers; control never reaches
-    // the write, so the stale artifact must survive byte-for-byte and the
-    // stale-labeled serve must remain in place.
-    const deferred = await refreshReplaySafeAccountingCache({
-      stateFile,
-      now: () => NOW,
-      maximumRssBytes: 100,
-      rss: (() => {
-        const samples = [50, 50];
-        return () => samples.shift() ?? 101;
-      })(),
-      scan: estimatorWorthyScan(),
-    });
+    const { previous } = await writeMigratedPriorHistory(stateFile);
+    const before = preservedBytes(stateFile);
+    const deferred = await refreshReplaySafeAccountingCache({ stateFile, now: () => NOW,
+      maximumRssBytes: 100, rss: (() => { const samples = [50, 50]; return () => samples.shift() ?? 101; })(),
+      scan: estimatorWorthyScan() });
     assert.equal(deferred.status, "accounting_rebuild_deferred");
-    const retained = await readLocalCollectorAccountingCache({ stateFile });
-    assert.deepEqual(retained.cache, outdated);
-    const staleSnapshot = await buildLocalCompanionSnapshot(
-      snapshotOptions(root, stateFile),
-    );
-    assert.equal(
-      staleSnapshot.overview.accounting.staleServe.schemaVersion,
-      OUTDATED_SCHEMA_VERSION,
-    );
-    assert.equal(staleSnapshot.weekly.stale.stale, true);
-    // The successful rebuild publishes the new artifact in one transactional
-    // replace: the stale copy exists until the commit and not after it, and
-    // the served projections flip from stale-labeled to current.
-    const rebuilt = await refreshReplaySafeAccountingCache({
-      stateFile,
-      now: () => NOW,
-      scan: estimatorWorthyScan(),
-    });
+    assert.equal((await readLocalCollectorAccountingCache({ stateFile })).cache, null);
+    assert.equal(preservedBytes(stateFile), before);
+    const historical = await buildLocalCompanionSnapshot(snapshotOptions(root, stateFile));
+    assert.equal(historical.overview.accounting.staleServe.computedAt, previous.generatedAt);
+    assert.equal(historical.weekly.status, "unavailable");
+    const rebuilt = await refreshReplaySafeAccountingCache({ stateFile, now: () => NOW, scan: estimatorWorthyScan() });
     assert.equal(rebuilt.schemaVersion, REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION);
-    const swapped = await readLocalCollectorAccountingCache({ stateFile });
-    assert.deepEqual(swapped.cache, rebuilt);
-    const read = await readReplaySafeAccountingCache({ stateFile });
-    assert.equal(read.status, "available");
-    assert.equal(Object.hasOwn(read, "staleCache"), false);
-    // The companion-side flip back to current is not asserted here: its bound
-    // read needs a unified index generation this fixture does not write.
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+    assert.deepEqual((await readLocalCollectorAccountingCache({ stateFile })).cache, rebuilt);
+    assert.equal(preservedBytes(stateFile), before, "publishing current results must not delete the only historical receipt");
+    assert.equal((await readReplaySafeAccountingCache({ stateFile })).status, "available");
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

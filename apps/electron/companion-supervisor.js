@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { validateDesktopUnknownSpeedPolicy } from "./desktop-contract.js";
 import { spawn as nodeSpawn } from "node:child_process";
 
 import {
@@ -74,6 +76,7 @@ const COMPANION_ENVIRONMENT_KEYS = Object.freeze([
   "USAGE_MONITOR_STATE_ROOT",
   "USAGE_MONITOR_REFRESH_INTERVAL_SECONDS",
   "USAGE_MONITOR_REFRESH_PAUSED",
+  "USAGE_MONITOR_UNKNOWN_SPEED_POLICY",
   "USAGE_MONITOR_PREPARED_DIRECTORY",
   "USAGE_MONITOR_WINDOWS_ELECTRON_QUALIFICATION",
   "USAGE_MONITOR_TEST_LANE",
@@ -154,6 +157,7 @@ export function createCompanionSupervisor({
   environment = process.env,
   startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS,
   shutdownTimeoutMs = DEFAULT_SHUTDOWN_TIMEOUT_MS,
+  unknownSpeedPolicyTimeoutMs = 5_000,
   parentPid = process.pid,
   onUnexpectedExit,
   onChildLifecycleEvent,
@@ -177,6 +181,7 @@ export function createCompanionSupervisor({
   }
   assertTimeout(startupTimeoutMs, "startupTimeoutMs");
   assertTimeout(shutdownTimeoutMs, "shutdownTimeoutMs");
+  assertTimeout(unknownSpeedPolicyTimeoutMs, "unknownSpeedPolicyTimeoutMs");
   if (!Number.isSafeInteger(parentPid) || parentPid < 2) {
     throw new TypeError("parentPid is invalid");
   }
@@ -197,6 +202,8 @@ export function createCompanionSupervisor({
   let credentialBroker = null;
   let activeChildLifecycleObservation = null;
   let refreshIntervalSeconds = null;
+  let unknownSpeedPolicy = null;
+  const pendingPolicyUpdates = new Set();
   const selectedAccountObservationBroker = attachWindowsAccountObservationBroker;
   const requiresNodeIpc = selectedAccountObservationBroker !== undefined;
   const credentialBrokerKind = selectedAccountObservationBroker !== undefined
@@ -380,7 +387,7 @@ export function createCompanionSupervisor({
           env: companionEnvironment(environment, parentPid, credentialBrokerKind),
           // Fixed schedule control and the credential broker share the
           // inherited channel; neither exposes a general command transport.
-          stdio: selectedAccountObservationBroker || refreshIntervalSeconds !== null
+          stdio: selectedAccountObservationBroker || refreshIntervalSeconds !== null || unknownSpeedPolicy !== null
             ? ["ignore", "pipe", "pipe", "ipc"] : ["ignore", "pipe", "pipe"],
           windowsHide: true,
         });
@@ -430,6 +437,7 @@ export function createCompanionSupervisor({
   }
 
   function stop() {
+    for (const finish of [...pendingPolicyUpdates]) finish(false);
     if (stopPromise !== null) return stopPromise;
     if (child === null) {
       if (state === "starting") return Promise.reject(shellError("companion_busy"));
@@ -477,9 +485,88 @@ export function createCompanionSupervisor({
     return stopPromise;
   }
 
+  function applyUnknownSpeedPolicy(policy, expectedGeneration) {
+    if (state !== "ready" || child === null || generation !== expectedGeneration) {
+      return Promise.reject(shellError("companion_unknown_speed_policy_unavailable"));
+    }
+      if (typeof child.send !== "function" || child.connected === false) {
+        throw shellError("companion_unknown_speed_policy_unavailable");
+      }
+      if (pendingPolicyUpdates.size >= 16) throw shellError("companion_unknown_speed_policy_unavailable");
+      const currentChild = child;
+      const requestId = randomUUID();
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let timer;
+        const finish = success => {
+          if (settled) return;
+          settled = true;
+          if (timer !== undefined) clearTimer(timer);
+          currentChild.off?.("message", onMessage);
+          currentChild.off?.("exit", onUnavailable);
+          currentChild.off?.("disconnect", onUnavailable);
+          currentChild.off?.("error", onUnavailable);
+          pendingPolicyUpdates.delete(finish);
+          if (success) resolve(true);
+          else reject(shellError("companion_unknown_speed_policy_unavailable"));
+        };
+        const onUnavailable = () => finish(false);
+        const onMessage = message => {
+          if (message === null || typeof message !== "object" || Array.isArray(message)
+              || Reflect.ownKeys(message).length !== 2
+              || message.type !== "usagemonitor.unknown-speed-policy-applied.v1"
+              || message.requestId !== requestId) return;
+          finish(child === currentChild && state === "ready");
+        };
+        pendingPolicyUpdates.add(finish);
+        currentChild.on("message", onMessage);
+        currentChild.once("exit", onUnavailable);
+        currentChild.once("disconnect", onUnavailable);
+        currentChild.once("error", onUnavailable);
+        timer = setTimer(onUnavailable, unknownSpeedPolicyTimeoutMs);
+        timer?.unref?.();
+        try {
+          currentChild.send({ type: "usagemonitor.unknown-speed-policy.v1", requestId, policy }, error => {
+            if (error) finish(false);
+            // The send callback only confirms transport, never configuration application.
+          });
+        } catch { finish(false); }
+      });
+  }
+
   return Object.freeze({
     start,
     stop,
+    setUnknownSpeedPolicy(value) {
+      const policy = validateDesktopUnknownSpeedPolicy(value);
+      unknownSpeedPolicy = policy;
+      environment.USAGE_MONITOR_UNKNOWN_SPEED_POLICY = JSON.stringify(policy);
+      const expectedGeneration = generation;
+      if (state === "starting" && startPromise !== null) {
+        if (pendingPolicyUpdates.size >= 16) throw shellError("companion_unknown_speed_policy_unavailable");
+        const starting = startPromise;
+        return new Promise((resolve, reject) => {
+          let settled = false;
+          const finish = success => {
+            if (settled) return;
+            settled = true;
+            pendingPolicyUpdates.delete(finish);
+            if (!success) {
+              reject(shellError("companion_unknown_speed_policy_unavailable"));
+              return;
+            }
+            // Startup captured the environment before this change. Apply the latest
+            // desired policy after READY; never replay an older waiting call's value.
+            Promise.resolve().then(() => applyUnknownSpeedPolicy(unknownSpeedPolicy, expectedGeneration)).then(resolve, reject);
+          };
+          pendingPolicyUpdates.add(finish);
+          starting.then(() => finish(true), () => finish(false));
+        });
+      }
+      if (state === "stopping") return Promise.reject(shellError("companion_unknown_speed_policy_unavailable"));
+      if (child === null || state !== "ready") return false;
+      return applyUnknownSpeedPolicy(policy, expectedGeneration);
+    },
     setRefreshInterval(seconds, paused = false) {
       if (!isDesktopRefreshIntervalSeconds(seconds)) throw new TypeError("refresh interval is invalid");
       if (typeof paused !== "boolean") throw new TypeError("refresh pause is invalid");

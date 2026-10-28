@@ -101,6 +101,24 @@ export function addUsdStrings(...values) {
   return values.reduce((total, value) => addDecimals(total, value), "0");
 }
 
+// Mix already-priced USD values at nanodollar precision. The caller owns the
+// meaning of the endpoints and the aggregation boundary; this is money math,
+// not speed evidence or a subscription-capacity model.
+export function mixUsdByBasisPoints(left, right, ratioBps) {
+  if (!Number.isInteger(ratioBps) || ratioBps < 0 || ratioBps > 10_000) {
+    throw new TypeError("USD mixture ratio must be integer basis points");
+  }
+  if (![left, right].every(value => Number.isFinite(value) && value >= 0)) return null;
+  if (ratioBps === 0 || left === right) return left;
+  if (ratioBps === 10_000) return right;
+  const nanos = amount => {
+    if (amount >= 1e12) throw new RangeError("USD mixture exceeds precision bound");
+    return BigInt(amount.toFixed(9).replace(".", ""));
+  };
+  return Number((nanos(left) * BigInt(10_000 - ratioBps)
+    + nanos(right) * BigInt(ratioBps) + 5_000n) / 10_000n) / 1e9;
+}
+
 function positive(quantity) {
   return decimalParts(quantity).value > 0n;
 }

@@ -1,3 +1,4 @@
+import { DEFAULT_UNKNOWN_SPEED_POLICY, validateUnknownSpeedPolicy, unknownSpeedScenario, unknownSpeedCalibrationOptions } from "./unknown-speed-policy.js";
 import { openLocalIndexStore, readCommitSeq } from "./local-index-store.js";
 import { REPLAY_SAFE_CALIBRATION_INTERNALS } from "./replay-safe-accounting-cache.js";
 import { readCodexLocalThreadUsageRelations } from "./platform/index.js";
@@ -581,6 +582,7 @@ export async function buildCalibrationLayer({
   endMs,
   limits = transitionResourceLimits(null),
   declaredSpeedBaselines = [],
+  unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY,
   signal = null,
   checkRuntimeMemory = () => {},
   sourceMode = "unified",
@@ -588,6 +590,7 @@ export async function buildCalibrationLayer({
   generationFingerprint = null,
   codexHome = null,
 } = {}) {
+  unknownSpeedPolicy = validateUnknownSpeedPolicy(unknownSpeedPolicy);
   const baselines = Array.isArray(declaredSpeedBaselines) ? declaredSpeedBaselines : [];
   let composition = null;
   let planScopedTimelineDraft = null;
@@ -620,6 +623,7 @@ export async function buildCalibrationLayer({
         checkRuntimeMemory,
         planAttributionIndex: calibrationAttribution.index,
         declaredSpeedBaselines: baselines,
+        unknownSpeedPolicy,
       }, calibrationAttribution.summary.planTypes, calibrationAttribution.summary.latestPlanType);
       historicalPlanDrafts = fits.historicalPlanDrafts;
       compositionFitFailure = fits.compositionFitFailure;
@@ -703,7 +707,7 @@ export async function buildCalibrationLayer({
   };
   const weeklyCalibration = projectBoundedWeeklyCalibrationSummary(
     weeklyCalibrationDataset,
-    { composition },
+    { composition, ...unknownSpeedCalibrationOptions(unknownSpeedPolicy) },
   );
   if (compositionFitFailure !== null) {
     weeklyCalibration.compositionStatus = compositionFitFailure;
@@ -714,37 +718,29 @@ export async function buildCalibrationLayer({
       basis: "quota_weighted_api_equivalent_by_unresolved_speed_scenario",
     },
   };
-  const allowanceScenarios = Object.fromEntries(
-    Object.entries(ALLOWANCE_SCENARIO_CANDIDATES).map(([
-      scenario,
-      forcedCandidateId,
-    ]) => [scenario, {
-      basis: codexPrimaryAllowanceBasis(scenario),
-      calibration: projectBoundedWeeklyCalibrationSummary(
-        allowanceCapacityDataset,
-        { forcedCandidateId },
-      ),
-    }]),
-  );
-  const selectedAllowanceCalibration = allowanceScenarios
-    .unresolved_as_standard.calibration;
+  const selectedScenario = unknownSpeedScenario(unknownSpeedPolicy);
+  const calibrationOptions = unknownSpeedCalibrationOptions(unknownSpeedPolicy);
+  const allowanceScenarios = { [selectedScenario]: {
+    basis: codexPrimaryAllowanceBasis(selectedScenario, unknownSpeedPolicy),
+    calibration: projectBoundedWeeklyCalibrationSummary(allowanceCapacityDataset, calibrationOptions),
+  } };
+  const selectedAllowanceCalibration = allowanceScenarios[selectedScenario].calibration;
   const fiveHourAllowanceCalibration = projectBoundedWeeklyCalibrationSummary(
-    allowanceCapacityDataset,
-    {
-      forcedCandidateId: ALLOWANCE_SCENARIO_CANDIDATES.unresolved_as_standard,
-      windowDurationMinutes: FIVE_HOUR_WINDOW_MINUTES,
-    },
+    allowanceCapacityDataset, { ...calibrationOptions, windowDurationMinutes: FIVE_HOUR_WINDOW_MINUTES },
   );
   const capacityPlanScope = {
     methodVersion: PLAN_SCOPED_ATTRIBUTION_METHOD_VERSION,
+    basisId: allowanceScenarios[selectedScenario].basis.basisId,
     planType: selectedAllowanceCalibration.selectedPlanType,
-    basisFamilyId: allowanceScenarios.unresolved_as_standard.basis.basisFamilyId,
+    basisFamilyId: allowanceScenarios[selectedScenario].basis.basisFamilyId,
     cohortId: calibrationCohortId(selectedAllowanceCalibration),
   };
   const allowanceCapacityByScenario = {
     schemaVersion: ALLOWANCE_CAPACITY_SCHEMA_VERSION,
-    basisFamilyId: allowanceScenarios.unresolved_as_standard.basis.basisFamilyId,
+    basisFamilyId: allowanceScenarios[selectedScenario].basis.basisFamilyId,
     planScope: capacityPlanScope,
+    unknownSpeedPolicy,
+    selectedScenario,
     scenarios: allowanceScenarios,
   };
   const planScopedTimeline = planScopedTimelineReceipt({
@@ -759,6 +755,7 @@ export async function buildCalibrationLayer({
     { sourceMode, generation, generationFingerprint },
   );
   return {
+    unknownSpeedPolicy,
     historicalPlanComparisons,
     weeklyApiIntervals,
     weeklyCalibration,

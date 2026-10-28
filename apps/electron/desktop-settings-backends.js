@@ -1,8 +1,6 @@
 import { basename } from "node:path";
 
 import {
-  DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER,
-  migrateDesktopSettingsSnapshot,
   validateDesktopSettingsSnapshot,
 } from "./desktop-contract.js";
 import {
@@ -168,17 +166,7 @@ function decodeSnapshot(bytes) {
     fail("corrupt");
   }
   try {
-    const migrated = migrateDesktopSettingsSnapshot(parsed);
-    const validated = validateDesktopSettingsSnapshot(migrated);
-    if (parsed?.schemaVersion !== validated.schemaVersion) {
-      const marked = { ...validated };
-      Object.defineProperty(marked, DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER, {
-        value: true,
-        enumerable: false,
-      });
-      return Object.freeze(marked);
-    }
-    return validated;
+    return validateDesktopSettingsSnapshot(parsed);
   } catch {
     fail("corrupt");
   }
@@ -201,17 +189,7 @@ function defaultRecordCodec() {
     },
     decodeValue(value) {
       try {
-        const migrated = migrateDesktopSettingsSnapshot(value);
-        const validated = validateDesktopSettingsSnapshot(migrated);
-        if (value?.schemaVersion !== validated.schemaVersion) {
-          const marked = { ...validated };
-          Object.defineProperty(marked, DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER, {
-            value: true,
-            enumerable: false,
-          });
-          return Object.freeze(marked);
-        }
-        return validated;
+        return validateDesktopSettingsSnapshot(value);
       } catch {
         fail("corrupt");
       }

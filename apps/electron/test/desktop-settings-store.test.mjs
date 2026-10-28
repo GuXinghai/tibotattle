@@ -14,22 +14,16 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-test("v4 migrates pause to false; pause persists across reload without replacing the interval", async () => {
-  let record = { ...clone(DESKTOP_DEFAULT_SETTINGS), schemaVersion: "usagemonitor-desktop-settings-v4", refreshIntervalSeconds: 420 };
-  delete record.refreshPaused;
-  const backend = { load: async () => record, save: async value => { record = clone(value); } };
-  const store = createDesktopSettingsStore({ backend });
-  assert.equal((await store.getSettings()).refreshPaused, false);
-  assert.equal(record.schemaVersion, "usagemonitor-desktop-settings-v5");
-  await store.setRefreshPaused(true);
-  await store.setRefreshInterval(900);
-  const reloaded = createDesktopSettingsStore({ backend });
-  assert.equal((await reloaded.getSettings()).refreshPaused, true);
-  assert.equal((await reloaded.getSettings()).refreshIntervalSeconds, 900);
-  await reloaded.setRefreshPaused(false);
-  assert.equal(record.refreshPaused, false);
-  assert.equal(record.refreshIntervalSeconds, 900);
-  await assert.rejects(reloaded.setRefreshPaused("true"), TypeError);
+test("old settings are refused without writes or default publication", async () => {
+  for (const schemaVersion of ["usagemonitor-desktop-settings-v1", "usagemonitor-desktop-settings-v4", "usagemonitor-desktop-settings-v5"]) {
+    let writes = 0;
+    const record = { ...clone(DESKTOP_DEFAULT_SETTINGS), schemaVersion };
+    const store = createDesktopSettingsStore({ backend: { load: async () => record, save: async () => { writes++; } } });
+    await assert.rejects(store.getSettings(), { code: "desktop_settings_load_failed" });
+    await assert.rejects(store.setRefreshPaused(true));
+    assert.equal(writes, 0);
+    assert.equal(record.schemaVersion, schemaVersion);
+  }
 });
 
 test("failed pause writes preserve the previous preference and surface the failure", async () => {
@@ -143,14 +137,14 @@ test("settings writes are serialized and retain the last working state after fai
   assert.equal((await store.setStartAtLogin(false)).startAtLogin, false);
 });
 
-test("settings load failures fail soft to defaults without exposing backend details", async () => {
+test("settings load failures refuse defaults without exposing backend details", async () => {
   const store = createDesktopSettingsStore({
     backend: {
       async load() { throw new Error("private path detail"); },
       async save() {},
     },
   });
-  assert.deepEqual(await store.getSettings(), projectDesktopSettingsPathFree(DESKTOP_DEFAULT_SETTINGS));
+  await assert.rejects(store.getSettings(), { code: "desktop_settings_load_failed" });
   assert.equal(store.lastLoadFailed, true);
 });
 
@@ -170,7 +164,7 @@ test("transient pre-write reads remain retriable while invalid newer records sta
   failRead = false;
   assert.equal((await store.setLanguage("es")).language, "es");
   assert.equal(writes, 1);
-  stored.schemaVersion = "usagemonitor-desktop-settings-v6";
+  stored.schemaVersion = "usagemonitor-desktop-settings-v7";
   await assert.rejects(store.setLanguage("en"), { code: "desktop_settings_persistence_failed" });
   stored = clone(DESKTOP_DEFAULT_SETTINGS);
   await assert.rejects(store.setLanguage("en"), { code: "desktop_settings_persistence_failed" });
@@ -186,8 +180,8 @@ test("an initial unavailable read retries before mutating the recovered settings
     async load() { if (unavailable) throw new Error("synthetic read failure"); return stored; },
     async save(next) { stored = clone(next); ++writes; },
   } });
-  assert.equal((await store.getSettings()).refreshIntervalSeconds, 300);
-  await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_persistence_failed" });
+  await assert.rejects(store.getSettings(), { code: "desktop_settings_load_failed" });
+  await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_load_failed" });
   assert.equal(writes, 0);
   unavailable = false;
   await store.setLanguage("es");
@@ -205,11 +199,12 @@ test("branded backend validation refusals stay invalid while a matching unbrande
         async load() { if (failure) throw failure; return null; },
         async save() { ++writes; },
       } });
-      await store.getSettings();
+      if (phase === "initial") await assert.rejects(store.getSettings(), { code: "desktop_settings_load_failed" });
+      else await store.getSettings();
       failure = new DesktopSettingsBackendError(code);
-      await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_persistence_failed" });
+      await assert.rejects(store.setLanguage("es"), { code: phase === "initial" ? "desktop_settings_load_failed" : "desktop_settings_persistence_failed" });
       failure = null;
-      await assert.rejects(store.setLanguage("es"), { code: "desktop_settings_persistence_failed" });
+      await assert.rejects(store.setLanguage("es"), { code: phase === "initial" ? "desktop_settings_load_failed" : "desktop_settings_persistence_failed" });
       assert.equal(store.traySettingsStatus, "invalid");
       assert.equal(writes, 0);
     }
@@ -218,7 +213,7 @@ test("branded backend validation refusals stay invalid while a matching unbrande
   const store = createDesktopSettingsStore({ backend: {
     async load() { if (failure) throw failure; return null; }, async save() {},
   } });
-  await store.getSettings();
+  await assert.rejects(store.getSettings(), { code: "desktop_settings_load_failed" });
   assert.equal(store.traySettingsStatus, "current");
   failure = null;
   assert.equal((await store.setLanguage("es")).language, "es");
@@ -243,38 +238,28 @@ test("custom refresh minutes and threshold-only preferences survive reload", asy
 test("a future settings schema cannot be overwritten by the current reader", async () => {
   let saves = 0;
   const store = createDesktopSettingsStore({ backend: {
-    async load() { return { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v6" }; },
+    async load() { return { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v7" }; },
     async save() { saves += 1; },
   } });
-  await store.getSettings();
+  await assert.rejects(store.getSettings(), { code: "desktop_settings_load_failed" });
   assert.equal(store.lastLoadFailed, true);
-  await assert.rejects(store.setRefreshInterval(420), { code: "desktop_settings_persistence_failed" });
+  await assert.rejects(store.setRefreshInterval(420), { code: "desktop_settings_load_failed" });
   assert.equal(saves, 0);
 });
 
-test("store migrates v1 once and retains the generated root ID", async () => {
-  const legacy = {
-    schemaVersion: "usagemonitor-desktop-settings-v1",
-    codexHome: { mode: "custom", path: "D:\\Codex" },
-    language: "en",
-    appearance: "system",
-    refreshIntervalSeconds: 300,
-    startAtLogin: false,
-    notifications: { enabled: false, threshold: "off" },
-  };
-  const saves = [];
-  const store = createDesktopSettingsStore({
-    idFactory: () => ROOT_A,
-    backend: {
-      async load() { return legacy; },
-      async save(value) { saves.push(clone(value)); },
-    },
-  });
-  assert.equal((await store.getCodexHomesForSettings()).activityRoots[0].rootId, ROOT_A);
-  assert.equal(saves.length, 1);
-  assert.equal(saves[0].schemaVersion, "usagemonitor-desktop-settings-v5");
-  assert.equal(saves[0].codexHomes.activityRoots[0].path, "D:\\Codex");
-  assert.equal(store.lastLoadFailed, false);
+test("unknown speed settings preserve precision, custom draft and unrelated choices across reload", async () => {
+ let record = { ...clone(DESKTOP_DEFAULT_SETTINGS), refreshPaused: true, refreshIntervalSeconds: 420 };
+ const backend = { load: async () => record, save: async value => { record = clone(value); } };
+ let store = createDesktopSettingsStore({ backend });
+ await store.setUnknownSpeedPolicy({ mode: "custom", customFastRatioBps: 303 });
+ await store.setUnknownSpeedPolicy({ mode: "fast", customFastRatioBps: 303 });
+ store = createDesktopSettingsStore({ backend });
+ const value = await store.getSettings();
+ assert.deepEqual(value.unknownSpeedPolicy, { mode: "fast", customFastRatioBps: 303 });
+ assert.equal(value.refreshPaused, true);
+ assert.equal(value.refreshIntervalSeconds, 420);
+ await assert.rejects(store.setUnknownSpeedPolicy({ mode: "custom", customFastRatioBps: null }), TypeError);
+ assert.equal(record.unknownSpeedPolicy.mode, "fast");
 });
 
 test("store root mutations are bounded, atomic, and preserve primary on reorder", async () => {

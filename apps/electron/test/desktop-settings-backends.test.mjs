@@ -16,7 +16,6 @@ import { join } from "node:path";
 
 import {
   DESKTOP_DEFAULT_SETTINGS,
-  DESKTOP_SETTINGS_LEGACY_MIGRATION_MARKER,
   validateDesktopSettingsSnapshot,
 } from "../desktop-contract.js";
 import {

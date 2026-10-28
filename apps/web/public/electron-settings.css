@@ -1114,3 +1114,16 @@ main .settings-window[data-dashboard-page] { width: 100%; margin: 0; padding: 0 
 
 .settings-window .background-rgb input::-webkit-inner-spin-button,
 .settings-window .background-rgb input::-webkit-outer-spin-button { appearance: none; margin: 0; }
+
+.settings-window .settings-unknown-speed-card .settings-numeric-field {
+  grid-column: 2;
+}
+.settings-window .settings-unknown-speed-card .settings-numeric-field > span {
+  white-space: nowrap;
+}
+.settings-window #settings-unknown-speed-hint {
+  grid-column: 1 / -1;
+  justify-self: end;
+  text-align: right;
+  margin: 0;
+}

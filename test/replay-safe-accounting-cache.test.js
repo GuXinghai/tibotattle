@@ -1,3 +1,4 @@
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -130,6 +131,14 @@ function readReplaySafeAccountingCache({ cacheFile, ...options } = {}) {
 }
 
 async function writeTestCache(stateFile, cache) {
+  // Deliberately seed an incompatible artifact in an already-isolated database.
+  // Production writers correctly refuse overwriting across cache versions.
+  if (cache.schemaVersion !== REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION) {
+    const database = new DatabaseSync(stateFile);
+    try { database.prepare("UPDATE meta SET value_json=? WHERE key='accounting_cache'").run(JSON.stringify(cache)); }
+    finally { database.close(); }
+    return;
+  }
   await writeLocalCollectorAccountingCache({ stateFile, cache });
 }
 
@@ -1291,7 +1300,7 @@ test("the same lineage-aware scan produces a bounded weekly calibration summary"
     Date.parse("2026-08-06T00:00:00.000Z"),
     Date.parse("2026-08-13T00:00:00.000Z"),
   ];
-  const cache = await buildReplaySafeAccountingCache({
+  const options = {
     now: () => Date.parse("2026-08-20T12:00:00.000Z"),
     // Re-pinned 31 -> 365 (2026-08-08): the window floor is now 365 days.
     windowDays: 365,
@@ -1338,50 +1347,20 @@ test("the same lineage-aware scan produces a bounded weekly calibration summary"
         },
       };
     },
-  });
+  };
+  const cache = await buildReplaySafeAccountingCache(options);
 
   assert.equal(cache.weeklyCalibration.status, "estimated");
   assert.equal(cache.weeklyCalibration.estimate.qualifyingResets, 3);
   assert.equal(cache.weeklyCalibration.recentResets.length, 3);
   const standardCapacity = cache.allowanceCapacityByScenario.scenarios
     .unresolved_as_standard;
-  const fastCapacity = cache.allowanceCapacityByScenario.scenarios
-    .unresolved_as_fast;
-  assert.equal(
-    cache.allowanceCapacityByScenario.schemaVersion,
-    "codex-primary-allowance-capacity-v0.1",
-  );
-  assert.equal(
-    standardCapacity.basis.basisFamilyId,
-    fastCapacity.basis.basisFamilyId,
-  );
-  assert.notEqual(standardCapacity.basis.basisId, fastCapacity.basis.basisId);
-  assert.equal(
-    standardCapacity.basis.unresolvedScenario,
-    "unresolved_as_standard",
-  );
-  assert.equal(fastCapacity.basis.unresolvedScenario, "unresolved_as_fast");
-  assert.equal(
-    standardCapacity.basis.multiplierRegistryRecordedAt,
-    "2026-09-29",
-  );
-  assert.equal(
-    standardCapacity.calibration.validation.selectedCostBasis,
-    "speed_lower",
-  );
-  assert.equal(
-    fastCapacity.calibration.validation.selectedCostBasis,
-    "speed_upper",
-  );
+  assert.equal(cache.allowanceCapacityByScenario.schemaVersion, "codex-primary-allowance-capacity-v0.2");
+  assert.deepEqual(Object.keys(cache.allowanceCapacityByScenario.scenarios), ["unresolved_as_standard"]);
+  assert.equal(standardCapacity.basis.unresolvedScenario, "unresolved_as_standard");
+  assert.equal(standardCapacity.basis.multiplierRegistryRecordedAt, "2026-09-29");
+  assert.equal(standardCapacity.calibration.validation.selectedCostBasis, "speed_lower");
   assert.equal(standardCapacity.calibration.status, "estimated");
-  assert.equal(fastCapacity.calibration.status, "estimated");
-  assert.equal(
-    Number((fastCapacity.calibration.estimate.medianApiPriceEquivalentUsd
-      / standardCapacity.calibration.estimate.medianApiPriceEquivalentUsd)
-      .toFixed(6)),
-    // The published GPT-5.6 Priority/Standard price ratio.
-    2,
-  );
   assert.deepEqual(cache.weeklyCalibration.accountAttribution, {
     status: "historical_unattributed",
     maySpanMultipleAccounts: true,
@@ -1406,6 +1385,30 @@ test("the same lineage-aware scan produces a bounded weekly calibration summary"
     "insufficient_observations",
   );
   assert.equal(cache.weeklyCalibration.composition.capacityUsdByModel, null);
+  for (const policy of [{ mode: "fast", customFastRatioBps: null },
+    { mode: "custom", customFastRatioBps: 300 }, { mode: "custom", customFastRatioBps: 0 }]) {
+    const selected = await buildReplaySafeAccountingCache({ ...options, unknownSpeedPolicy: policy });
+    assertReplaySafeAccountingCache(selected);
+    assert.deepEqual(selected.unknownSpeedPolicy, policy);
+    assert.equal(Object.keys(selected.allowanceCapacityByScenario.scenarios).length, 1);
+    assert.deepEqual(selected.periods, cache.periods, "raw API and Token accounting do not depend on the assumption");
+    if (policy.mode === "custom") {
+      assert.equal(selected.weeklyCalibration.customFastRatioBps, policy.customFastRatioBps);
+      assert.equal(selected.fiveHourAllowanceCalibration.customFastRatioBps, policy.customFastRatioBps);
+      const forged = structuredClone(selected);
+      forged.unknownSpeedPolicy.customFastRatioBps = 301;
+      assert.throws(() => assertReplaySafeAccountingCache(forged), "top-level and nested policy cannot diverge");
+      for (const key of ["weeklyCalibration", "fiveHourAllowanceCalibration"]) {
+        const mismatch = structuredClone(selected);
+        mismatch[key].planPopulations[0].customFastRatioBps = 301;
+        assert.throws(() => assertReplaySafeAccountingCache(mismatch), "every population binds the ratio");
+      }
+      const nested = structuredClone(selected);
+      nested.allowanceCapacityByScenario.scenarios.unresolved_as_custom.calibration.planPopulations[0].customFastRatioBps = 301;
+      assert.throws(() => assertReplaySafeAccountingCache(nested));
+    }
+  }
+
 });
 
 test("the replay cache retains and fits plan-scoped five-hour allowance history", async () => {
@@ -1620,7 +1623,7 @@ test("a mix-varied corpus yields a fitted per-model composition that survives th
 
 test("compact plan buckets preserve event-summed tokens and reject malformed evidence", () => {
   const compact = [Date.parse("2026-08-10T00:00:00Z"), 2, 1, 2, 3, 4, 5, 6,
-    .5, 1, 2, 1, 0, 1, 1, 21];
+    .5, 1, 2, 1, 0, 1, 1, 21, 1];
   const decoded = decodePlanScopedTimelineRow(compact);
   assert.equal(decoded.totalTokens, 21, "combined and split output totals cannot overwrite one another");
   assert.equal(decoded.usageEvents, 2);
@@ -2351,16 +2354,10 @@ test("a v0.7 cache with the permanently empty spark series is withheld for rebui
 
   const read = await readReplaySafeAccountingCache({ cacheFile });
   assert.equal(read.status, "unavailable");
-  assert.equal(read.errorCode, "cache_accounting_semantics_outdated");
-  // The CURRENT-cache contract stays withheld; the artifact additionally
-  // rides the explicit stale channel so the post-update recalculation can
-  // serve it labeled (see replay-safe-accounting-stale-serve.test.js).
+  assert.equal(read.errorCode, "cache_migration_required");
   assert.equal(read.cache, null);
-  assert.equal(
-    read.staleCache.schemaVersion,
-    "local-replay-safe-accounting-v0.7",
-  );
-  assert.equal(read.staleCache.stale, true);
+  assert.equal(read.staleCache, undefined, "old schemas require the separate one-time converter");
+
 });
 
 test("exact retained quota points make an eligible comparison window testable", async () => {
@@ -2504,7 +2501,7 @@ test("replay cache rejects the old prefix-priced version and unreviewed model cr
       components: { input_uncached_tokens: 1_000 },
     })]),
   });
-  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.25");
+  assert.equal(cache.schemaVersion, "local-replay-safe-accounting-v0.26");
   assert.equal(cache.pricingMethodVersion, LOCAL_API_PRICING_METHOD_VERSION);
   assert.doesNotThrow(() => assertReplaySafeAccountingCache(cache));
   const oldPricingMethod = structuredClone(cache);
@@ -2565,14 +2562,10 @@ test("a cache from the former current-price basis is withheld for deterministic 
 
   const read = await readReplaySafeAccountingCache({ cacheFile });
   assert.equal(read.status, "unavailable");
-  assert.equal(read.errorCode, "cache_accounting_semantics_outdated");
+  assert.equal(read.errorCode, "cache_migration_required");
   assert.equal(read.cache, null);
-  // The deterministic rebuild still happens; meanwhile the artifact rides the
-  // explicit stale channel with its outdated identity named.
-  assert.equal(
-    read.staleCache.schemaVersion,
-    "local-replay-safe-accounting-v0.1",
-  );
+  assert.equal(read.staleCache, undefined, "runtime must not project an unmigrated old schema");
+
 });
 
 test("refresh forwards AbortSignal and never writes an aborted projection", async () => {

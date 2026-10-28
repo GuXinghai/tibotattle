@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { DEFAULT_UNKNOWN_SPEED_POLICY, unknownSpeedCalculationIdentity } from "./unknown-speed-policy.js";
 import { createLocalRefreshTimer, reportLocalRefreshReuseDiagnostic, reportLocalRefreshOriginDiagnostic } from "./local-refresh-timing.js";
 import { lstatSync } from "node:fs";
 import { readCodexLocalThreadUsageRelations } from "./platform/index.js";
@@ -38,7 +39,7 @@ export function createLocalIndexAccountingReuse({
 } = {}) {
   let retained = null;
 
-  async function readProof({ generation, declaredSpeedBaselines = [], signal = null, onTiming = null, monotonicClock = undefined,
+  async function readProof({ generation, declaredSpeedBaselines = [], unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY, signal = null, onTiming = null, monotonicClock = undefined,
     onReuseDiagnostic = null, onOriginDiagnostic = null, diagnosticPhase = "proof_before" }) {
     const report = code => reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, diagnosticPhase, code);
     const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
@@ -61,7 +62,7 @@ export function createLocalIndexAccountingReuse({
           && /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/iu.test(row.session_uuid));
         const diagnostics = Object.fromEntries(database.prepare(`SELECT code, SUM(count) AS count
           FROM source_diagnostic GROUP BY code ORDER BY code`).all().map(row => [row.code, Number(row.count)]));
-        return { id: commitSeq, calculationRevision: readCalculationRevision(database),
+        return { invalidSessions: ids.length !== sessions.length, id: commitSeq, calculationRevision: readCalculationRevision(database),
           coverage: readLocalIndexCoverage(database), sessions: ids, diagnostics,
           usageRange: database.prepare(`SELECT
             (SELECT MIN(observed_at_ms) FROM usage_event) AS first,
@@ -75,28 +76,37 @@ export function createLocalIndexAccountingReuse({
       finally { finishIndex(indexError); }
     }
     if (!snapshot) { report("session_limit"); return null; }
+    if (snapshot.invalidSessions) { report("origins_unavailable"); return null; }
     if (snapshot.id !== generation?.id) { report("generation_changed"); return null; }
-    const relations = await timing.measure("proof_origins", () => readOrigins(codexHome, snapshot.sessions.map(row => row.session_uuid),
-      { signal, includeOriginEvidence: true, onOriginDiagnostic: value =>
+    const evidence = snapshot.sessions.length === 0 ? { complete: true, relations: new Map() }
+      : await timing.measure("proof_origins", () => readOrigins(codexHome, snapshot.sessions.map(row => row.session_uuid),
+      { signal, includeOriginEvidence: true, withOriginReadReceipt: true, onOriginDiagnostic: value =>
         reportLocalRefreshOriginDiagnostic(onOriginDiagnostic, diagnosticPhase, value?.code, value?.count) }));
     throwIfAborted(signal);
-    // Missing origin evidence is not proof that an internal-review origin was absent.
-    if (!(relations instanceof Map)) { report("origins_unavailable"); return null; }
+    // Only a complete, guarded read can distinguish an absent row from an unread store.
+    const relations = evidence?.relations;
+    if (evidence?.complete !== true || !(relations instanceof Map)) { report("origins_unavailable"); return null; }
+    if (snapshot.sessions.some(row => {
+      const value = relations.get(row.session_uuid);
+      return !value || typeof value.originKnown !== "boolean" || typeof value.autoReview !== "boolean"
+        || (!value.originKnown && value.autoReview);
+    })) { report("origins_unavailable"); return null; }
     const unresolved = snapshot.sessions.filter(row => relations.get(row.session_uuid)?.originKnown !== true);
     reportLocalRefreshOriginDiagnostic(onOriginDiagnostic, diagnosticPhase, "unknown_with_usage", unresolved.filter(row => row.has_usage).length);
     reportLocalRefreshOriginDiagnostic(onOriginDiagnostic, diagnosticPhase, "unknown_without_usage", unresolved.filter(row => !row.has_usage).length);
-    if (unresolved.length) {
-      report("origins_unknown"); return null;
-    }
-    const originKey = digest(snapshot.sessions.map(row => [Number(row.id),
-      relations.get(row.session_uuid).autoReview === true]));
+    const originKey = digest(snapshot.sessions.map(row => {
+      const relation = relations.get(row.session_uuid);
+      return [Number(row.id), relation.originKnown ? relation.autoReview ? "auto_review" : "normal" : "unknown"];
+    }));
     const identity = readIdentity({ indexFile });
     if (!sameGeneration(identity, generation) || identity.calculationRevision !== snapshot.calculationRevision
         || digest(fileKey) !== digest(fileIdentity(indexFile))) { report("identity_changed"); return null; }
     report("proof_available");
     return { ...snapshot, sessions: undefined, fileKey, fingerprint: identity.fingerprint,
+      unknownSpeedPolicyIdentity: unknownSpeedCalculationIdentity(unknownSpeedPolicy),
       key: digest([fileKey, snapshot.calculationRevision,
-        relevantBaselines(declaredSpeedBaselines, snapshot.usageRange), originKey]) };
+        relevantBaselines(declaredSpeedBaselines, snapshot.usageRange), originKey,
+        unknownSpeedCalculationIdentity(unknownSpeedPolicy)]) };
   }
 
   function remember({ cache, before, after, onReuseDiagnostic = null }) {
@@ -107,6 +117,11 @@ export function createLocalIndexAccountingReuse({
         || String(cache?.sourceDescriptor?.generation) !== String(after.id)
         || cache?.sourceDescriptor?.generationFingerprint !== after.fingerprint) { report("proof_changed"); return; }
     try { assertReplaySafeAccountingCache(cache); } catch { report("cache_invalid"); return; }
+    try {
+      if (unknownSpeedCalculationIdentity(cache.unknownSpeedPolicy) !== after.unknownSpeedPolicyIdentity) {
+        report("proof_changed"); return;
+      }
+    } catch { report("cache_invalid"); return; }
     if (Buffer.byteLength(serializeLocalCollectorAccountingCache(cache))
         > REPLAY_SAFE_CALIBRATION_INTERNALS.MAX_CACHE_BYTES) { report("cache_oversize"); return; }
     // A private clone prevents mutation by a consumer from corrupting the proof.

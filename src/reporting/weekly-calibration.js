@@ -2,7 +2,7 @@ import {
   FIVE_HOUR_WINDOW_MINUTES,
   SEVEN_DAY_WINDOW_MINUTES,
 } from "@app-usagemonitor/quota-analysis";
-import { addUsdStrings } from "@app-usagemonitor/accounting";
+import { addUsdStrings, mixUsdByBasisPoints } from "@app-usagemonitor/accounting";
 
 const SCHEMA_VERSION = "weekly-calibration-v0.2";
 const WEEKLY_WINDOW_MINS = SEVEN_DAY_WINDOW_MINUTES;
@@ -162,6 +162,13 @@ function boundaryCost(row, candidate, side) {
   if (candidate.kind === "standard") return standard;
   if (candidate.kind === "lower") return lower;
   if (candidate.kind === "upper") return upper;
+  if (candidate.kind === "custom") {
+    if (candidate.fastRatioBps === 0) return lower;
+    if (candidate.fastRatioBps === 10_000) return upper;
+    if (!Number.isFinite(lower) || !Number.isFinite(upper)) return null;
+    if (lower === upper) return lower;
+    return mixUsdByBasisPoints(lower, upper, candidate.fastRatioBps);
+  }
   return Number.isFinite(lower) && Number.isFinite(upper) ? (lower + upper) / 2 : null;
 }
 
@@ -663,6 +670,7 @@ function fitReset(
   rows,
   candidate,
   windowDurationMinutes = WEEKLY_WINDOW_MINS,
+  includeReportDetails = true,
 ) {
   const points = uniquePoints(rows, candidate, windowDurationMinutes);
   if (points.length < 8) return null;
@@ -684,7 +692,7 @@ function fitReset(
   const relativeCentral80Width = fitRelativeCentral80Width(fullFit);
   if (!Number.isFinite(relativeCentral80Width) || relativeCentral80Width > 1) return null;
   const inSampleScore = scoreFromAnchor(points.slice(1), fullFit.capacityUsd, points[0]);
-  const pricing = priceCardProvenance(rows);
+  const pricing = includeReportDetails ? priceCardProvenance(rows) : {};
   return {
     pointCount: points.length,
     percentSpan: fullSpanPp,
@@ -969,17 +977,29 @@ function capacityDistribution(values) {
   };
 }
 
-export function analyzeWeeklyCalibration(
+function prepareWeeklyCalibration(
   dataset,
   {
     priorWindow = 3,
     forcedCandidateId = null,
     planType = null,
     windowDurationMinutes = WEEKLY_WINDOW_MINS,
+    customFastRatioBps = null,
   } = {},
+  { research = false } = {},
 ) {
+  const custom = !research && forcedCandidateId === "speed_custom";
+  if (custom && (!Number.isInteger(customFastRatioBps)
+      || customFastRatioBps < 0 || customFastRatioBps > 10_000)) {
+    throw new TypeError("Invalid custom Fast ratio");
+  }
+  if (!custom && customFastRatioBps !== null) throw new TypeError("Unexpected custom Fast ratio");
+  const costCandidates = custom
+    ? [{ id: "speed_custom", kind: "custom", fastRatioBps: customFastRatioBps }]
+    : !research && forcedCandidateId !== null
+      ? CANDIDATES.filter((candidate) => candidate.id === forcedCandidateId) : CANDIDATES;
   if (forcedCandidateId !== null
-      && !CANDIDATES.some((candidate) => candidate.id === forcedCandidateId)) {
+      && !costCandidates.some((candidate) => candidate.id === forcedCandidateId)) {
     throw new TypeError("Unknown forced weekly calibration candidate");
   }
   if (windowDurationMinutes !== FIVE_HOUR_WINDOW_MINUTES
@@ -1003,14 +1023,14 @@ export function analyzeWeeklyCalibration(
     // rejected row makes a valid estimate describe itself as diagnostic-only
     // and correctly fail the bounded cache validator.
     const first = group.firstEligible ?? group.first;
-    const fits = Object.fromEntries(CANDIDATES.map((candidate) => [
+    const fits = Object.fromEntries(costCandidates.map((candidate) => [
       candidate.id,
-      fitReset(group.rows, candidate, windowDurationMinutes),
+      fitReset(group.rows, candidate, windowDurationMinutes, research),
     ]));
-    const lagFits = Object.fromEntries(LAG_CANDIDATES.map((candidate) => [
+    const lagFits = research ? Object.fromEntries(LAG_CANDIDATES.map((candidate) => [
       candidate.id,
-      fitReset(group.rows, candidate, windowDurationMinutes),
-    ]));
+      fitReset(group.rows, candidate, windowDurationMinutes, research),
+    ])) : {};
     return {
       accountScopeId: first.accountScopeId ?? "unattributed",
       provider: first.provider,
@@ -1029,8 +1049,8 @@ export function analyzeWeeklyCalibration(
       totalTransitions: group.rows.length,
       eligibleTransitions: group.eligibleCount,
       speed: speedCounts(group.rows, windowDurationMinutes),
-      evidenceProfile: summarizeEvidence(group.rows, windowDurationMinutes),
-      ...priceCardProvenance(group.rows),
+      evidenceProfile: research ? summarizeEvidence(group.rows, windowDurationMinutes) : null,
+      ...(research ? priceCardProvenance(group.rows) : {}),
       fits,
       lagFits,
     };
@@ -1040,7 +1060,8 @@ export function analyzeWeeklyCalibration(
   // Keep their diagnostics, but each candidate gets at most one primary vote.
   // Apply its actual fit gates first, then span/points/end/stable-key ordering.
   const fragmentDiagnostics = [];
-  for (const [field, definitions] of [["fits", CANDIDATES], ["lagFits", LAG_CANDIDATES]]) {
+  for (const [field, definitions] of research
+    ? [["fits", costCandidates], ["lagFits", LAG_CANDIDATES]] : [["fits", costCandidates]]) {
     for (const candidate of definitions) {
       const parents = new Map();
       for (const reset of resetFits) {
@@ -1058,7 +1079,7 @@ export function analyzeWeeklyCalibration(
             || left.planEraKey.localeCompare(right.planEraKey);
         });
         for (const fragment of fragments.slice(1)) {
-          if (field === "fits") fragmentDiagnostics.push({
+          if (research && field === "fits") fragmentDiagnostics.push({
             resetParentKey: fragment.resetParentKey,
             planEraKey: fragment.planEraKey,
             planType: fragment.planType,
@@ -1074,11 +1095,7 @@ export function analyzeWeeklyCalibration(
     }
   }
 
-  const candidates = CANDIDATES.map((candidate) => candidateSummary(candidate, resetFits));
-  const lagCandidates = LAG_CANDIDATES.map((candidate) => candidateSummary(candidate, resetFits.map((reset) => ({
-    ...reset,
-    fits: reset.lagFits,
-  }))));
+  const candidates = costCandidates.map((candidate) => candidateSummary(candidate, resetFits));
   const eligibleCandidates = candidates.filter((candidate) => candidate.qualifyingResets >= 3 && Number.isFinite(candidate.medianResetHoldoutMaePp));
   eligibleCandidates.sort((left, right) => left.medianResetHoldoutMaePp - right.medianResetHoldoutMaePp
     || left.pooledHoldoutMaePp - right.pooledHoldoutMaePp
@@ -1122,6 +1139,20 @@ export function analyzeWeeklyCalibration(
     };
   }
 
+  return { priorWindow, forcedCandidateId, windowDurationMinutes, selectedPlanType,
+    grouped, resetFits, fragmentDiagnostics, candidates, selectedCandidate, selectedId, rows };
+}
+
+// Only the explicit research entrypoint runs experimental diagnostics. Desktop
+// summaries share the admitted fits and historical validation, not this report.
+export function analyzeWeeklyCalibration(dataset, options = {}) {
+  const { priorWindow, forcedCandidateId, windowDurationMinutes, selectedPlanType,
+    grouped, resetFits, fragmentDiagnostics, candidates, selectedCandidate, selectedId, rows }
+    = prepareWeeklyCalibration(dataset, options, { research: true });
+  const lagCandidates = LAG_CANDIDATES.map((candidate) => candidateSummary(candidate, resetFits.map((reset) => ({
+    ...reset,
+    fits: reset.lagFits,
+  }))));
   const standard = candidates.find((candidate) => candidate.id === "standard_api");
   const comparableStandard = Number.isFinite(standard?.medianResetHoldoutMaePp) && standard.medianResetHoldoutMaePp > 0;
   const forecastModelSelection = evaluateForecastMethods(rows);
@@ -1574,9 +1605,55 @@ export function projectBoundedWeeklyCalibrationSummary(dataset, options = {}) {
   };
 }
 
+function prepareDesktopCalibrationEvidence(dataset, options) {
+  const { rows, selectedId, selectedCandidate, selectedPlanType, windowDurationMinutes }
+    = prepareWeeklyCalibration(dataset, options);
+  const priorPredictions = rows.map((row) => row.priorPrediction).filter(Boolean);
+  const priorPoints = priorPredictions.flatMap((prediction) => prediction.rows);
+  const capacities = rows.map((row) => row.selectedFit.fullCapacityUsd);
+  return {
+    selectedPlanType,
+    windowDurationMinutes,
+    materializedAt: dataset.scope?.endAt ?? dataset.materializedAt ?? new Date().toISOString(),
+    weeklyValueSummary: capacities.length === 0 ? null : {
+      resetCount: rows.length,
+      medianApiPriceEquivalentUsd: round(median(capacities)),
+      central80AcrossResetsUsd: { lower: round(quantile(capacities, 0.1)), upper: round(quantile(capacities, 0.9)) },
+      minimumUsd: round(Math.min(...capacities)),
+      maximumUsd: round(Math.max(...capacities)),
+    },
+    selection: { selectedCandidateId: selectedId },
+    accuracyFloorAssessment: {
+      sameResetMaePp: selectedCandidate?.pooledHoldoutMaePp ?? null,
+      priorResetMaePp: round(mean(priorPoints.map((point) => point.absoluteErrorPp))),
+      priorResetAbsoluteBiasPp: round(Math.abs(round(mean(priorPoints.map((point) => point.residualPp))))),
+      p80AbsoluteForecastErrorPp: round(quantile(priorPoints.map((point) => point.absoluteErrorPp), 0.8)),
+    },
+    prospectiveStyleValidation: { scoredResets: priorPredictions.length, scoredPoints: priorPoints.length },
+    quality: { qualifyingResetValues: rows.length },
+    resetValues: rows.slice(-BOUNDED_WEEKLY_CALIBRATION_RESET_LIMIT).map((row) => ({
+      planType: row.planType,
+      planVariant: row.planVariant,
+      planEraKey: row.planEraKey,
+      aggregationEligibility: row.aggregationEligibility,
+      resetIdentity: row.resetIdentity,
+      firstObservedAt: row.firstObservedAt,
+      lastObservedAt: row.lastObservedAt,
+      slot: row.slot,
+      percentSpan: round(row.selectedFit.percentSpan),
+      apiPriceEquivalentUsd: round(row.selectedFit.fullCapacityUsd),
+      central80PairwiseUsd: { lower: round(row.selectedFit.central80Usd?.lower), upper: round(row.selectedFit.central80Usd?.upper) },
+      eligibleTransitions: row.eligibleTransitions,
+      pointCount: row.selectedFit.pointCount,
+      speedEvidence: row.speed,
+      chronologicalHoldout: { meanAbsoluteErrorPp: row.selectedFit.holdoutScore.meanAbsoluteErrorPp },
+    })),
+  };
+}
+
 function projectWeeklyPlanSummary(dataset, options) {
   const { composition = null, ...analysisOptions } = options;
-  const report = analyzeWeeklyCalibration(dataset, analysisOptions);
+  const report = prepareDesktopCalibrationEvidence(dataset, analysisOptions);
   const value = report.weeklyValueSummary;
   const resets = report.resetValues
     .slice(-BOUNDED_WEEKLY_CALIBRATION_RESET_LIMIT)
@@ -1615,6 +1692,8 @@ function projectWeeklyPlanSummary(dataset, options) {
     }));
   return {
     schemaVersion: "weekly-calibration-summary-v0.1",
+    ...(analysisOptions.forcedCandidateId === "speed_custom"
+      ? { customFastRatioBps: analysisOptions.customFastRatioBps } : {}),
     windowDurationMinutes: report.windowDurationMinutes,
     planType: report.selectedPlanType,
     planAttribution: {

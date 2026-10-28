@@ -15,7 +15,6 @@ import {
   DESKTOP_MAX_REFRESH_INTERVAL_SECONDS,
   DESKTOP_SYSTEM_SETTINGS_TARGETS,
   createDesktopRequest,
-  migrateDesktopSettingsSnapshot,
   projectDesktopSettingsPathFree,
   validateDesktopRequest,
   validateDesktopSettingsSnapshot,
@@ -47,6 +46,7 @@ test("desktop contract freezes the exact bridge action and enum vocabulary", () 
     "chooseWindowBackground",
     "restoreWindowBackground",
     "setRefreshInterval",
+    "setUnknownSpeedPolicy",
     "setRefreshPaused",
     "setStartAtLogin",
     "setNotificationPreferences",
@@ -258,6 +258,7 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
     appearance: "system",
     refreshIntervalSeconds: 300,
     refreshPaused: false,
+    unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
     startAtLogin: false,
     notifications: { enabled: false, threshold: -1 },
     sidebarCollapsed: false,
@@ -290,8 +291,7 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
     language: "system", appearance: "system", refreshIntervalSeconds: 300,
     startAtLogin: false, notifications: { enabled: false, threshold: "off" },
   };
-  assert.equal(migrateDesktopSettingsSnapshot(prior).sidebarCollapsed, false);
-  assert.equal(migrateDesktopSettingsSnapshot(prior).tray.preset, "automatic");
+  assert.throws(() => validateDesktopSettingsSnapshot(prior), TypeError);
   assert.throws(() => validateDesktopSettingsSnapshot({ ...prior, schemaVersion: DESKTOP_SETTINGS_SCHEMA_VERSION }), TypeError);
 
 
@@ -327,34 +327,11 @@ test("settings snapshot validator enforces the exact schema and defaults", () =>
   }
 });
 
-test("v1 scalar migration creates one stable v2 root and path-free projection", () => {
-  const legacy = {
-    schemaVersion: "usagemonitor-desktop-settings-v1",
-    codexHome: { mode: "custom", path: "C:\\Users\\adam\\.codex" },
-    language: "en",
-    appearance: "light",
-    refreshIntervalSeconds: 900,
-    startAtLogin: true,
-    notifications: { enabled: false, threshold: "off" },
-  };
-  const migrated = migrateDesktopSettingsSnapshot(legacy, {
-    idFactory: () => "11111111-1111-4111-8111-111111111111",
-  });
-  assert.equal(migrated.schemaVersion, DESKTOP_SETTINGS_SCHEMA_VERSION);
-  assert.equal(migrated.codexHomes.activityRoots[0].rootId, "11111111-1111-4111-8111-111111111111");
-  const projected = projectDesktopSettingsPathFree(migrated);
-  assert.equal(Object.hasOwn(projected.codexHomes.activityRoots[0], "path"), false);
-  assert.equal(JSON.stringify(projected).includes("Users"), false);
-
-  const scalar = migrateDesktopSettingsSnapshot({
-    schemaVersion: "usage-monitor-launcher-settings-v1",
-    codexHome: "/Users/adam/.codex",
-  });
-  assert.equal(scalar.schemaVersion, DESKTOP_SETTINGS_SCHEMA_VERSION);
-  assert.equal(scalar.language, "system");
-  assert.equal(scalar.codexHomes.activityRoots[0].kind, "custom");
+test("runtime settings validators reject legacy versions", () => {
+ for (const schemaVersion of ["usagemonitor-desktop-settings-v1", "usagemonitor-desktop-settings-v5", "usage-monitor-launcher-settings-v1"]) {
+  assert.throws(() => validateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, schemaVersion }), TypeError);
+ }
 });
-
 
 test("test notification accepts no renderer content", () => {
   assert.deepEqual(createDesktopRequest("sendTestNotification", {}), {
@@ -382,10 +359,17 @@ test("numeric settings reject fractional and unsafe values and migrate legacy ch
   for (const [enabled, mode, expected] of [[false, "ninety", -1], [true, "off", -1], [true, "ninety", 90], [true, "eighty_and_ninety", 90]]) {
     const legacy = { ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v3", notifications: { enabled, threshold: mode } };
     delete legacy.refreshPaused;
-    const migrated = migrateDesktopSettingsSnapshot(legacy);
-    assert.equal(migrated.schemaVersion, DESKTOP_SETTINGS_SCHEMA_VERSION);
-    assert.deepEqual(migrated.notifications, { enabled: expected !== -1, threshold: expected });
+    assert.throws(() => validateDesktopSettingsSnapshot(legacy), TypeError);
   }
-  assert.throws(() => migrateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v3", notifications: { enabled: true, threshold: 90 } }), TypeError);
+  assert.throws(() => validateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, schemaVersion: "usagemonitor-desktop-settings-v3", notifications: { enabled: true, threshold: 90 } }), TypeError);
   assert.throws(() => validateDesktopSettingsSnapshot({ ...DESKTOP_DEFAULT_SETTINGS, notifications: { enabled: false, threshold: 90 } }), TypeError);
+});
+
+test("unknown speed IPC rejects open shapes and invalid ratios", () => {
+ for (const mode of ["standard", "fast", "custom"]) {
+  assert.deepEqual(createDesktopRequest("setUnknownSpeedPolicy", { value: { mode, customFastRatioBps: 303 } }).args.value, { mode, customFastRatioBps: 303 });
+ }
+ for (const value of [{ mode: "custom", customFastRatioBps: null }, { mode: "custom", customFastRatioBps: 1.2 }, { mode: "fast", customFastRatioBps: 10001 }, { mode: "standard", customFastRatioBps: -1 }, { mode: "custom", customFastRatioBps: 300, extra: true }, { mode: "other", customFastRatioBps: null }]) {
+  assert.throws(() => createDesktopRequest("setUnknownSpeedPolicy", { value }), TypeError);
+ }
 });

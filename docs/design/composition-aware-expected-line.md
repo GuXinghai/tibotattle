@@ -24,6 +24,16 @@ limitations explicit instead of turning them into confident residuals.
 
 ## Contract
 
+### Current selected-policy allowance comparison
+
+The [2026-10-28 decision](../decisions/2026-10-28-desktop-calculation-and-unknown-speed.md)
+requires desktop allowance comparison and runtime to use the selected policy's
+capacity with costs from that same basis. A Standard-priced composition blend
+must not override a speed-weighted selected-policy capacity. The independent
+composition model and its per-model evidence remain retained; the composition
+method below describes that separate model, not an interchangeable allowance
+numerator/denominator.
+
 ### Composition-aware calibration
 
 Fit a non-negative per-model API-price-equivalent capacity vector from the same

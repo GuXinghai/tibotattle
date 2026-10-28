@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
   analyzeWeeklyCalibration,
@@ -601,4 +602,173 @@ test("holdout error contributions form a complete audit allocation", () => {
   assert.ok(Math.abs(totalShare - 1) < 1e-5);
   assert.ok(report.errorConcentration.resets.every((row) => row.evidenceProfile.coverage));
   assert.equal(verifyWeeklyCalibration(report).status, "passed");
+});
+
+
+async function calibrationModuleFromSource(transform) {
+  const original = await readFile(new URL("../src/reporting/weekly-calibration.js", import.meta.url), "utf8");
+  const source = transform(original).replace(/from "(@app-usagemonitor\/[^"]+)"/gu,
+    (_, specifier) => `from ${JSON.stringify(import.meta.resolve(specifier))}`);
+  return import(`data:text/javascript;base64,${Buffer.from(`${source}\n//# sourceURL=weekly-calibration-synthetic-probe.js`).toString("base64")}`);
+}
+
+function summarySplitDataset() {
+  return dataset([1_785_000_000, 1_785_604_800, 1_786_209_600, 1_786_814_400]
+    .flatMap((reset, index) => resetTransitions({ reset, capacityUsd: 600 + index * 10 })));
+}
+
+test("research report and Markdown retain their pre-split synthetic results", () => {
+  const report = analyzeWeeklyCalibration(summarySplitDataset());
+  const hash = (value) => createHash("sha256").update(value).digest("hex");
+  assert.equal(hash(JSON.stringify(report)), "f2a03eacb2236bfa9e21231c6b445fc89d36a46ad15c7a8c77366a43927069a1");
+  assert.equal(hash(renderWeeklyCalibrationReport(report)), "3c87dd05902d65ff371d949141cb0cb055816f1c7b06b0e5c264fe8f4a3e4069");
+});
+
+test("desktop summaries equal the full research projection for mixed plans and both durations", async () => {
+  // Restore the old report-first call in an in-memory module. This checks the
+  // entire bounded DTO rather than selecting a few headline values.
+  const reference = await calibrationModuleFromSource(source => {
+    const needle = "const report = prepareDesktopCalibrationEvidence(dataset, analysisOptions);";
+    assert.ok(source.includes(needle));
+    return source.replace(needle, "const report = analyzeWeeklyCalibration(dataset, analysisOptions);");
+  });
+  const resets = [1_785_000_000, 1_785_604_800, 1_786_209_600, 1_786_814_400];
+  const input = dataset(resets.flatMap((reset, index) => [
+    ...resetTransitions({ reset, capacityUsd: 600 + index * 10 }),
+    ...resetTransitions({ reset: reset + 5_000, capacityUsd: 45, windowDurationMins: 300 })
+      .map(row => ({ ...row, planType: "plus" })),
+  ]));
+  for (const basis of [null, "standard_api", "speed_lower", "speed_midpoint", "speed_upper"]) {
+    for (const windowDurationMinutes of [300, 10_080]) {
+      const options = { forcedCandidateId: basis, windowDurationMinutes };
+      assert.deepEqual(projectBoundedWeeklyCalibrationSummary(input, options),
+        reference.projectBoundedWeeklyCalibrationSummary(input, options));
+    }
+  }
+  assert.deepEqual(projectBoundedWeeklyCalibrationSummary(dataset([])),
+    reference.projectBoundedWeeklyCalibrationSummary(dataset([])));
+});
+
+test("desktop summary never runs research diagnostics or reads delay envelopes", async () => {
+  const audited = await calibrationModuleFromSource(source => {
+    for (const name of ["evaluateForecastMethods", "evaluateFixedBoundaryHypothesis", "evaluateOnlineCalibration",
+      "summarizeEvidence", "aggregateCoverage", "capacityDistribution", "priceCardProvenance"]) {
+      const start = source.indexOf(`function ${name}(`);
+      assert.ok(start >= 0, name);
+      const body = source.indexOf("{", start);
+      source = `${source.slice(0, body + 1)} throw new Error("research diagnostic called"); ${source.slice(body + 1)}`;
+    }
+    return source;
+  });
+  const input = summarySplitDataset();
+  for (const row of input.transitions) {
+    Object.defineProperty(row, "displayLagEnvelopes", { get() { throw new Error("research delay read"); } });
+  }
+  assert.equal(audited.projectBoundedWeeklyCalibrationSummary(input).status, "estimated");
+  assert.throws(() => audited.analyzeWeeklyCalibration(input), /research/);
+});
+
+test("custom Fast ratios fit mixed boundary costs and preserve exact endpoint estimates", () => {
+  const input = summarySplitDataset();
+  for (const row of input.transitions) {
+    row.lastPriorCumulativeQuotaWeightedUpperUsd = row.lastPriorCumulativeQuotaWeightedLowerUsd * 2;
+    row.firstNextCumulativeQuotaWeightedUpperUsd = row.firstNextCumulativeQuotaWeightedLowerUsd * 2;
+  }
+  const summary = bps => projectBoundedWeeklyCalibrationSummary(input,
+    { forcedCandidateId: "speed_custom", customFastRatioBps: bps });
+  const lower = projectBoundedWeeklyCalibrationSummary(input, { forcedCandidateId: "speed_lower" });
+  const upper = projectBoundedWeeklyCalibrationSummary(input, { forcedCandidateId: "speed_upper" });
+  assert.deepEqual(summary(0).estimate, lower.estimate);
+  assert.deepEqual(summary(10_000).estimate, upper.estimate);
+  assert.equal(summary(2_500).estimate.medianApiPriceEquivalentUsd,
+    lower.estimate.medianApiPriceEquivalentUsd * 1.25);
+  assert.equal(summary(2_500).validation.selectedCostBasis, "speed_custom");
+  assert.equal(summary(2_500).customFastRatioBps, 2_500);
+  assert.ok(summary(2_500).planPopulations.every(row => row.customFastRatioBps === 2_500));
+  assert.equal(Object.hasOwn(lower, "customFastRatioBps"), false);
+  for (const bad of [null, -1, 10_001, 0.1, NaN, Infinity, "2500"]) {
+    assert.throws(() => summary(bad), /Invalid custom Fast ratio/);
+  }
+  assert.throws(() => analyzeWeeklyCalibration(input, {
+    forcedCandidateId: "speed_custom", customFastRatioBps: 2_500,
+  }), /Unexpected custom Fast ratio/);
+});
+
+test("custom Fast ratios leave already resolved boundary costs unchanged", () => {
+  const input = summarySplitDataset();
+  const lower = projectBoundedWeeklyCalibrationSummary(input, { forcedCandidateId: "speed_lower" });
+  for (const bps of [0, 3, 5000, 9999, 10_000]) {
+    const actual = projectBoundedWeeklyCalibrationSummary(input,
+      { forcedCandidateId: "speed_custom", customFastRatioBps: bps });
+    assert.deepEqual(actual.estimate, lower.estimate);
+    assert.deepEqual(actual.recentResets, lower.recentResets);
+  }
+});
+
+
+test("forced desktop calibration fits only the selected cost candidate", async () => {
+  const audited = await calibrationModuleFromSource(source => {
+    const start = source.indexOf("function fitReset(");
+    const body = source.indexOf(") {", start) + 3;
+    assert.ok(body > start);
+    return `export const fitCalls = [];\n${source.slice(0, body)} fitCalls.push(candidate.id); ${source.slice(body)}`;
+  });
+  audited.projectBoundedWeeklyCalibrationSummary(summarySplitDataset(), {
+    forcedCandidateId: "speed_custom", customFastRatioBps: 3_700,
+  });
+  assert.equal(audited.fitCalls.length, 4);
+  assert.deepEqual([...new Set(audited.fitCalls)], ["speed_custom"]);
+});
+
+test("custom calibration equals fitting pre-mixed costs rather than interpolating fitted capacities", () => {
+  const input = summarySplitDataset();
+  // Different incremental patterns put the lower/upper pairwise slopes in
+  // different orders; a median need not commute with mixing these inputs.
+  for (let i = 0; i < input.transitions.length; i++) {
+    const row = input.transitions[i];
+    const prior = row.priorUsedPercent;
+    const next = row.nextUsedPercent;
+    const lower = p => p * 6 + Math.sin(p * 0.7) * 2;
+    const upper = p => p * 9 + Math.cos(p * 0.4) * 4;
+    row.lastPriorCumulativeQuotaWeightedLowerUsd = lower(prior);
+    row.firstNextCumulativeQuotaWeightedLowerUsd = lower(next);
+    row.lastPriorCumulativeQuotaWeightedUpperUsd = upper(prior);
+    row.firstNextCumulativeQuotaWeightedUpperUsd = upper(next);
+  }
+  const actual = projectBoundedWeeklyCalibrationSummary(input, {
+    forcedCandidateId: "speed_custom", customFastRatioBps: 3_700,
+  });
+  const premixed = structuredClone(input);
+  for (const row of premixed.transitions) {
+    for (const prefix of ["lastPrior", "firstNext"]) {
+      row[`${prefix}CumulativeQuotaWeightedLowerUsd`] =
+        (row[`${prefix}CumulativeQuotaWeightedLowerUsd`] * 6_300
+          + row[`${prefix}CumulativeQuotaWeightedUpperUsd`] * 3_700) / 10_000;
+    }
+  }
+  const expected = projectBoundedWeeklyCalibrationSummary(premixed, { forcedCandidateId: "speed_lower" });
+  assert.equal(actual.status, "estimated");
+  assert.deepEqual(actual.estimate, expected.estimate);
+  assert.deepEqual(actual.recentResets, expected.recentResets);
+  const lower = projectBoundedWeeklyCalibrationSummary(input, { forcedCandidateId: "speed_lower" });
+  const upper = projectBoundedWeeklyCalibrationSummary(input, { forcedCandidateId: "speed_upper" });
+  assert.notEqual(actual.estimate.medianApiPriceEquivalentUsd,
+    lower.estimate.medianApiPriceEquivalentUsd * 0.63 + upper.estimate.medianApiPriceEquivalentUsd * 0.37);
+});
+
+
+test("custom endpoints do not require the unused scenario while mixtures preserve missing evidence", () => {
+  const input = summarySplitDataset();
+  for (const row of input.transitions) {
+    delete row.lastPriorCumulativeQuotaWeightedUpperUsd;
+    delete row.firstNextCumulativeQuotaWeightedUpperUsd;
+  }
+  const lower = projectBoundedWeeklyCalibrationSummary(input, { forcedCandidateId: "speed_lower" });
+  const endpoint = projectBoundedWeeklyCalibrationSummary(input, {
+    forcedCandidateId: "speed_custom", customFastRatioBps: 0,
+  });
+  assert.deepEqual(endpoint.estimate, lower.estimate);
+  assert.equal(projectBoundedWeeklyCalibrationSummary(input, {
+    forcedCandidateId: "speed_custom", customFastRatioBps: 1,
+  }).status, "insufficient_evidence");
 });

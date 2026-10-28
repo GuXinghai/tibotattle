@@ -9,6 +9,7 @@ const SAFE_ERROR_CODES = new Set([
   "companion_shutdown_timeout",
   "companion_busy",
   "companion_not_running",
+  "companion_unknown_speed_policy_unavailable",
   "invalid_loopback_origin",
   "unsupported_platform",
   "windows_readiness_unavailable",

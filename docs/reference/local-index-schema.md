@@ -269,9 +269,12 @@ the preserved source. No database format or accounting-cache relabel is needed.
 The accounting reader preserves nullable components and canonical output
 representation instead of substituting zero. Partial, assumed-zero and
 conflicting evidence cannot establish fully observed pricing. Derived replay
-caches use `local-replay-safe-accounting-v0.25`; older caches remain stale until
-rebuilt from their original retained evidence, and are never relabeled or
-cleared as a substitute for rebuilding. This accounting-cache revision is
+caches use `local-replay-safe-accounting-v0.26`. Older cache formats require
+the explicit copy-only conversion: their complete original values and dated
+history are preserved in a new historical envelope before a new calculation
+may publish. Runtime code does not interpret old cache schemas, relabel them,
+or clear the collector database. The selected unknown-speed assumption and
+custom ratio bind each new calculation and its allowance basis. This accounting-cache revision is
 independent of the local-index schema migration above and does not delete
 accumulated history. All six-place monetary margins use exact decimal
 accumulation and half-up rounding, independent of whether events are grouped. Context partitions come
@@ -767,10 +770,15 @@ followed by replay. No source evidence is removed by this optimization.
 
 The refresh runner retains one bounded process-local calculation proof. Reuse
 requires the same semantic revision, database identity, applicable speed
-windows and independently checked known origin evidence. It validates the cache,
+windows and independently checked origin evidence. A complete, consistent
+metadata read may establish a stable unknown origin when a thread is absent.
+The proof distinguishes ordinary, automatic-review and unknown origins and binds
+the unknown membership; unchanged unknown evidence can reuse an equally qualified
+result without promoting its uncertainty. Failed, incomplete or changing metadata
+reads cannot establish this proof. It validates the cache,
 preserves its original evaluation time and age, and composes fresh publication
-metadata through the existing atomic writer. A restart, unknown origin, changed
-input or expired age forces rebuilding outside explicitly labelled budget
+metadata through the existing atomic writer. A restart, unavailable origin proof,
+changed input (including a resolved or newly unknown origin) or expired age forces rebuilding outside explicitly labelled budget
 backoff. This proof does not persist identities or relax generation checks.
 Budget backoff does not itself qualify a result as reused. A validated old
 generation can be read only through an explicit stale channel, retaining its

@@ -5,6 +5,11 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { createWorkspace } from "./helpers/local-index-facts.js";
+import { refreshLocalIndex } from "../src/local-index-refresh.js";
+import { readLocalIndexGenerationIdentity } from "../src/local-index-companion-source.js";
+import { createLocalIndexAccountingReuse } from "../src/local-index-accounting-reuse.js";
+import { buildLocalIndexAccountingCache } from "../src/local-index-accounting-cache.js";
 import { readCodexSelectedRolloutNames, readCodexLocalThreadMetadata, readCodexLocalThreadAncestry,
   readCodexLocalRepositoryOrigins, readCodexLocalThreadUsageRelations } from "../src/platform/local-codex-thread-store.js";
 
@@ -305,4 +310,66 @@ test("optional metadata bounds concurrent database connections and releases ever
   assert.equal(active, 0);
   assert.equal(f.leases.size, 0);
   assert.equal((await readCodexLocalRepositoryOrigins(f.home, f.options)).size, 1);
+});
+
+test("origin receipt distinguishes guarded absent rows from failed or incomplete metadata reads", async t => {
+  const f = await fixture(t), absent = "55555555-5555-4555-8555-555555555555";
+  const options = { ...f.options, includeOriginEvidence: true, withOriginReadReceipt: true };
+  const complete = await readCodexLocalThreadUsageRelations(f.home, [ROOT, absent], options);
+  assert.equal(complete.complete, true);
+  assert.equal(complete.relations.get(ROOT).originKnown, true);
+  assert.equal(complete.relations.get(absent).originKnown, false);
+  const allMissing = await readCodexLocalThreadUsageRelations(f.home, [absent], options);
+  assert.equal(allMissing.complete, true); assert.equal(allMissing.relations.get(absent).originKnown, false);
+  const busy = await readCodexLocalThreadUsageRelations(f.home, [ROOT], { ...options,
+    databaseFactory: () => { throw Object.assign(new Error("synthetic"), { errcode: 5 }); } });
+  assert.equal(busy.complete, false);
+  const changed = await readCodexLocalThreadUsageRelations(f.home, [ROOT], { ...options,
+    databaseFactory: (path, controls) => { const db = new DatabaseSync(path, controls);
+      const time = new Date(Date.now() - 100_000); utimesSync(f.path, time, time); return db; } });
+  assert.equal(changed.complete, false);
+  const invalid = new DatabaseSync(f.path);
+  invalid.prepare("UPDATE threads SET source=? WHERE id=?").run("x".repeat(4097), ROOT);
+  invalid.close();
+  assert.equal((await readCodexLocalThreadUsageRelations(f.home, [ROOT], options)).complete, false);
+  const failedClose = wrappedDatabase(db => ({
+    get isOpen() { return db.isOpen; }, exec: sql => db.exec(sql), prepare: sql => db.prepare(sql),
+    close() { db.close(); throw new Error("synthetic close failure"); },
+  }));
+  await assert.rejects(readCodexLocalThreadUsageRelations(f.home, [ROOT], { ...options, databaseFactory: failedClose }),
+    /local_metadata_unavailable/);
+  await rm(f.path);
+  const missing = await readCodexLocalThreadUsageRelations(f.home, [ROOT], options);
+  assert.equal(missing.complete, false);
+});
+
+test("origin receipt rejects a metadata schema without both origin columns", async t => {
+  const f = await fixture(t);
+  const db = new DatabaseSync(f.path);
+  db.exec("ALTER TABLE threads DROP COLUMN thread_source"); db.close();
+  const result = await readCodexLocalThreadUsageRelations(f.home, [ROOT],
+    { ...f.options, includeOriginEvidence: true, withOriginReadReceipt: true });
+  assert.equal(result.complete, false);
+});
+
+
+test("real guarded metadata receipt permits unchanged absent origins to reuse calculations", async t => {
+  const f = await fixture(t);
+  const workspace = createWorkspace({ files: 1, events: 10, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile, secretFile: workspace.secretFile, workerCount: 1 });
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  const reuse = createLocalIndexAccountingReuse({ indexFile, codexHome: f.home,
+    stateFile: join(workspace.state, "collector.sqlite"), readOrigins: (home, ids, options) =>
+      readCodexLocalThreadUsageRelations(home, ids, { ...options, ...f.options }) });
+  const before = await reuse.readProof({ generation });
+  assert.ok(before);
+  const now = Date.parse("2026-09-01T01:00:00.000Z");
+  const cache = await buildLocalIndexAccountingCache({ indexFile, codexHome: workspace.codexHome,
+    expectedGeneration: generation, now: () => now });
+  reuse.remember({ cache, before, after: await reuse.readProof({ generation }) });
+  assert.ok(await reuse.reuse({ proof: await reuse.readProof({ generation }), nowMs: now, maximumAgeMs: 1_800_000 }));
+  f.refuse(() => true);
+  assert.equal(await reuse.readProof({ generation }), null);
 });

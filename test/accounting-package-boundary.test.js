@@ -9,6 +9,7 @@ import {
 
 const COST_EXPORTS = Object.freeze([
   "addUsdStrings",
+  "mixUsdByBasisPoints",
   "priceUsageEvent",
 ]);
 const REGISTRY_EXPORTS = Object.freeze([
@@ -43,6 +44,7 @@ const SUBSCRIPTION_SPEED_EXPORTS = Object.freeze([
   "summarizeQuotaWeightedAccounting",
 ]);
 const LOCAL_EXPORTS = Object.freeze([
+  "LOCAL_API_PRICING_METHOD_VERSION",
   "aggregateLocalApiPriceResults",
   "apiPriceResolutionSummary",
   "costWarningCodes",

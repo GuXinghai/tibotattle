@@ -182,6 +182,8 @@ export const APP_OFFICIAL_PRICE_CARDS: readonly PriceCard[];
 export const APP_PRICE_REGISTRY_MANIFEST: OfficialPriceRegistryManifest;
 
 export function addUsdStrings(...values: Array<string | number>): DecimalString;
+/** Mix priced USD endpoints, rounding half up at nanodollar precision. */
+export function mixUsdByBasisPoints(left: number, right: number, ratioBps: number): number | null;
 export function priceUsageEvent(
   event: NormalizedUsageEvent,
   options?: PriceUsageOptions,

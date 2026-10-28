@@ -1,4 +1,5 @@
 import { randomInt, randomUUID } from "node:crypto";
+import { DEFAULT_UNKNOWN_SPEED_POLICY, validateUnknownSpeedPolicy, unknownSpeedCalculationIdentity } from "./unknown-speed-policy.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
@@ -753,6 +754,7 @@ export function createLocalCollectorRefreshRunner({
   runCollector = runCollectorOnce,
   readAccountingCache = readReplaySafeAccountingCache,
   refreshAccounting = null,
+  getUnknownSpeedPolicy = () => DEFAULT_UNKNOWN_SPEED_POLICY,
   // Cursor-based incremental advance of the local index. An ordinary
   // pass reads only the bytes the rollout corpus grew since the last one, so
   // it is safe to run on every foreground refresh.
@@ -800,6 +802,8 @@ export function createLocalCollectorRefreshRunner({
     }
   }
   if (typeof clock !== "function") throw new TypeError("clock must be a function");
+  if (typeof getUnknownSpeedPolicy !== "function") throw new TypeError("getUnknownSpeedPolicy must be a function");
+  let lastUnknownSpeedIdentity = null;
   // Cross-invocation backoff for a memory-budget miss. Held in the runner
   // closure so it survives between the external scheduler's ticks: once a
   // rebuild defers, the FULL rebuild is skipped (the retained cache is served)
@@ -828,6 +832,19 @@ export function createLocalCollectorRefreshRunner({
     onOriginDiagnostic = null,
     mode = "detailed",
   } = {}) {
+    const unknownSpeedPolicy = validateUnknownSpeedPolicy(getUnknownSpeedPolicy());
+    const unknownSpeedIdentity = unknownSpeedCalculationIdentity(unknownSpeedPolicy);
+    const cachePolicyMatches = cache => {
+      try { return unknownSpeedCalculationIdentity(cache?.unknownSpeedPolicy) === unknownSpeedIdentity; }
+      catch { return false; }
+    };
+    // A budget miss for another estimation policy cannot delay this policy's
+    // first attempt or authorize its retained-cache fallback.
+    if (lastUnknownSpeedIdentity !== unknownSpeedIdentity) {
+      accountingRebuildDeferUntilMs = 0;
+      accountingRebuildDeferredStreak = 0;
+      lastUnknownSpeedIdentity = unknownSpeedIdentity;
+    }
     const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
     if (onQuotaReady !== null && typeof onQuotaReady !== "function") {
       throw new TypeError("onQuotaReady must be a function");
@@ -1032,7 +1049,7 @@ export function createLocalCollectorRefreshRunner({
       try {
         if (signal?.aborted !== true) {
           calculationProof = await timing.measure("reuse_proof_before", () => calculationReuse.readProof({
-            generation: unifiedIndex.generation, declaredSpeedBaselines, signal, onTiming, monotonicClock, onReuseDiagnostic, onOriginDiagnostic,
+            generation: unifiedIndex.generation, declaredSpeedBaselines, unknownSpeedPolicy, signal, onTiming, monotonicClock, onReuseDiagnostic, onOriginDiagnostic,
           }));
           accounting = await timing.measure("reuse_check", () => calculationReuse.reuse({
             proof: calculationProof, nowMs: clock(),
@@ -1081,6 +1098,7 @@ export function createLocalCollectorRefreshRunner({
               && (existing?.status === "available" || withinRebuildBackoff)
               && selected?.schemaVersion
                 === REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
+              && cachePolicyMatches(selected)
               && (withinRebuildBackoff || selected?.weeklyApiIntervals?.status === "available")
               && unifiedAccountingCacheHasZeroFallback(selected)) {
             accounting = selected;
@@ -1127,6 +1145,7 @@ export function createLocalCollectorRefreshRunner({
             expectedGeneration: unifiedIndex.generation,
             contextBehavior: "source_native",
             declaredSpeedBaselines,
+            unknownSpeedPolicy,
             signal,
             onTiming,
             monotonicClock,
@@ -1179,6 +1198,7 @@ export function createLocalCollectorRefreshRunner({
               const selected = existing?.status === "available" ? existing.cache : retained;
               if (selected?.schemaVersion
                     === REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION
+                  && cachePolicyMatches(selected)
                   && unifiedAccountingCacheHasZeroFallback(selected)) {
                 accounting = selected;
                 accountingRetainedGeneration = retained !== null;
@@ -1193,7 +1213,7 @@ export function createLocalCollectorRefreshRunner({
             }
           }
         } else if (rebuilt !== null) {
-          if (!unifiedAccountingCacheHasZeroFallback(rebuilt)) {
+          if (!unifiedAccountingCacheHasZeroFallback(rebuilt) || !cachePolicyMatches(rebuilt)) {
             // A unified cache is authoritative only when its source receipt
             // proves that no legacy/raw fallback was used. Do not publish a
             // plausible-looking result when the attestation is absent or
@@ -1206,7 +1226,7 @@ export function createLocalCollectorRefreshRunner({
             accountingRefreshStatus = "rebuilt";
             try {
               const after = await timing.measure("reuse_proof_after", () => calculationReuse.readProof({
-                generation: unifiedIndex.generation, declaredSpeedBaselines, signal, onTiming, monotonicClock,
+                generation: unifiedIndex.generation, declaredSpeedBaselines, unknownSpeedPolicy, signal, onTiming, monotonicClock,
                 onReuseDiagnostic, onOriginDiagnostic, diagnosticPhase: "proof_after",
               }));
               timing.measureSync("reuse_remember", () => calculationReuse.remember({ cache: accounting, before: calculationProof, after, onReuseDiagnostic }));

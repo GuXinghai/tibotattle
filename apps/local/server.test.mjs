@@ -787,6 +787,36 @@ test("loopback schedule honors disabled startup and live interval changes withou
   }
 });
 
+test("loopback server retains parent-only unknown-speed configuration without starting refresh", async () => {
+  const files = await fixture();
+  let refreshes = 0;
+  const app = await startLocalCompanionServer({
+    resourceRoot: files.resourceRoot, stateRoot: files.stateRoot,
+    codexHome: files.codexHome, staticRoot: files.staticRoot,
+    dataStore: fakeStore(), refreshRunner: async () => { refreshes++; return {}; },
+    environment: { ...process.env, USAGE_MONITOR_REFRESH_INTERVAL_SECONDS: "-1",
+      USAGE_MONITOR_UNKNOWN_SPEED_POLICY: JSON.stringify({ mode: "custom", customFastRatioBps: 300 }) }, port: 0,
+  });
+  try {
+    await app.snapshotReady;
+    const base = `http://127.0.0.1:${app.port}`;
+    const before = refreshes;
+    assert.doesNotThrow(() => app.setUnknownSpeedPolicy({ mode: "fast", customFastRatioBps: 300 }));
+    assert.throws(() => app.setUnknownSpeedPolicy({ mode: "custom", customFastRatioBps: null }));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(refreshes, before);
+    const response = await fetch(`${base}/api/local/unknown-speed-policy`, {
+      method: "POST", headers: { Origin: base, "Content-Type": "application/json", "x-usage-monitor-local": "1" },
+      body: JSON.stringify({ mode: "fast", customFastRatioBps: null }),
+    });
+    assert.equal(response.status, 404);
+    assert.equal((await fetch(`${base}/api/local/refresh`)).status, 200);
+  } finally {
+    await app.close();
+    await rm(files.root, { recursive: true });
+  }
+});
+
 test("loopback persistent pause blocks startup and every refresh route, then cancels pending work", async () => {
   const files = await fixture(), gate = deferred(); let calls = 0;
   const app = await startLocalCompanionServer({ ...files, dataStore: fakeStore(), port: 0,
@@ -2692,14 +2722,16 @@ test("diagnostic notes are bounded, fixed-vocabulary, and land in a local log", 
 test("a degraded index failure keeps its fixed HTTP code and a bounded rate-limited diagnostic note", async () => {
   const files = await fixture();
   const diagnosticsLogFile = join(files.stateRoot, 'diagnostics-v0.1.log');
+  const now = Date.parse('2026-10-22T12:00:00.000Z');
   const app = await startLocalCompanionServer({
     resourceRoot: files.resourceRoot, stateRoot: files.stateRoot, codexHome: files.codexHome,
-    staticRoot: files.staticRoot, dataStore: fakeStore(), diagnosticsLogFile,
-    clock: () => Date.parse('2026-10-22T12:00:00.000Z'), port: 0,
+    staticRoot: files.staticRoot, dataStore: fakeStore({ clock: () => new Date(now).toISOString() }), diagnosticsLogFile,
+    clock: () => now, port: 0,
     refreshRunner: async () => ({ unifiedIndex: { status: 'failed',
       errorCode: 'codex_response_usage_legacy_conflict', message: 'synthetic private payload' } }),
   });
   try {
+    await app.snapshotReady;
     const base = `http://127.0.0.1:${app.port}`;
     for (let attempt = 0; attempt < 2; attempt++) {
       const response = await fetch(`${base}/api/local/refresh`, { method: 'POST', body: '{}',

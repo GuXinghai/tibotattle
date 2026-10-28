@@ -376,7 +376,9 @@ async function renderWeeklyHero(data, { span, rangeDays, locale = "en-US", planT
     chartStart >= 0 && allowanceWindowStart > chartEnd && weeklyStart > allowanceWindowEnd,
     "renderWeekly and its allowance-window selector are available",
   );
-  const section = `${appSource.slice(chartStart, chartEnd)}\n`
+  const policyStart = appSource.indexOf("function renderPublishedUnknownSpeedPolicy(");
+  const policyEnd = appSource.indexOf("\nfunction renderComparison", policyStart);
+  const section = `${appSource.slice(policyStart, policyEnd)}\n${appSource.slice(chartStart, chartEnd)}\n`
     + `${appSource.slice(allowanceWindowStart, allowanceWindowEnd)}\n`
     + appSource.slice(weeklyStart, weeklyEnd);
 
@@ -2438,7 +2440,7 @@ test("an absent or hostile Fast-mode projection degrades to an explicit unknown"
   assert.equal(result.accounting.quotaWeightedApiPriceEquivalentUsd, null);
   assert.equal(
     result.accounting.fastMode.unresolvedScenario,
-    "unresolved_as_standard",
+    null,
   );
   assert.equal(result.accounting.fastMode.weightingStatus, "unknown");
   assert.equal(result.accounting.fastMode.coverage.totalEvents, 0);
@@ -2621,14 +2623,15 @@ test("web timeline quota normalization accepts documented plan types and fails c
 
 test("web timeline expands the compact weighted tuple and rejects encoding drift", () => {
   const encoding = {
-    schemaVersion: "quota-weighted-timeline-v0.1",
+    schemaVersion: "quota-weighted-timeline-v0.2",
     basisFamilyId:
-      "codex_primary:speed_priced_api_equivalent:v4:published_speed_card_ratio_2026_09_29:event_time:observed_declared_scenario",
+      "codex_primary:speed_priced_api_equivalent:v5:published_speed_card_ratio_2026_09_29:event_time:observed_declared_scenario",
     scenarioOrder: [
       "unresolved_as_standard",
       "unresolved_as_fast"
     ],
-    selectedScenario: "unresolved_as_standard"
+    selectedScenario: "unresolved_as_standard",
+    unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null }
   };
   const row = {
     startAt: "2026-08-03T12:00:00.000Z",

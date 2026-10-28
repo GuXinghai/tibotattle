@@ -291,6 +291,7 @@ test("controller initializes persisted cadence and projects truthful settings st
         },
         refreshIntervalSeconds: 300,
         refreshPaused: false,
+      unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         startAtLogin: {
           status: "disabled",
           canSet: true,
@@ -1328,4 +1329,18 @@ test("manual notification test preserves settings and coordinator policy and bou
   const unsupported = fixture({ actionOverrides: { notificationDelivery: { sendTest: () => ({ status: "unsupported" }) } } });
   await assert.rejects(unsupported.controller.handlers.sendTestNotification({}), { code: "desktop_notifications_unavailable" });
   await assert.rejects(fixture().controller.handlers.sendTestNotification({}), { code: "desktop_notifications_unavailable" });
+});
+
+test("unknown-speed saving synchronizes policy without scheduling a refresh or changing pause", async () => {
+ const policies = [];
+ const value = fixture({ settingsLoad: async () => ({ ...DESKTOP_DEFAULT_SETTINGS, refreshPaused: true }), actionOverrides: { onUnknownSpeedPolicyChanged: async policy => policies.push(policy) } });
+ await value.controller.initialize();
+ const timersBefore = value.timers.length;
+ const result = await value.controller.handlers.setUnknownSpeedPolicy({ value: { mode: "custom", customFastRatioBps: 303 } });
+ assert.equal(result.settings.refreshPaused, true);
+ assert.deepEqual(result.settings.unknownSpeedPolicy, { mode: "custom", customFastRatioBps: 303 });
+ assert.deepEqual(policies, [DESKTOP_DEFAULT_SETTINGS.unknownSpeedPolicy, { mode: "custom", customFastRatioBps: 303 }]);
+ assert.equal(value.timers.length, timersBefore);
+ assert.equal(value.commands.at(-1).command, "settingsChanged");
+ await value.controller.dispose();
 });

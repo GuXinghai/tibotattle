@@ -411,6 +411,7 @@ const REUSABLE_ACCOUNTING_CACHE = Object.freeze({
   diagnostics: Object.freeze({
     forkReplayEventsExcluded: 29,
   }),
+  unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
   sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
 });
 
@@ -773,6 +774,7 @@ test("local refresh routes collector, credential lock, and accounting writes ben
           generatedAt: "2026-07-23T12:00:00.000Z",
           periods: [],
           diagnostics: {},
+          unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
           sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
         };
       },
@@ -843,6 +845,7 @@ test("unified accounting mode never advances the legacy archive and passes expli
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 1 }],
         diagnostics: {},
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: { fallbackCount: 0 },
       };
     },
@@ -908,6 +911,7 @@ test("tool-only partial coverage and an inherited legacy indexing status do not 
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 1 }],
         diagnostics: {},
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: { fallbackCount: 0 },
       };
     },
@@ -972,6 +976,7 @@ test("rollout quarantine remains accounting-authoritative but terminates the con
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 1 }],
         diagnostics: {},
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: {
           fallbackCount: 0,
           coverage: {
@@ -1058,6 +1063,7 @@ test("unified authority keeps quota-only collection prospective and softens a co
       generatedAt: "2026-07-23T12:00:00.000Z",
       periods: [{ id: "7d", events: 3 }],
       diagnostics: {},
+      unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
       sourceDescriptor: { fallbackCount: 0 },
     }),
   });
@@ -1112,6 +1118,7 @@ test("a reusable unified accounting cache does not announce a cold rebuild", asy
         errorCode: null,
         cache: {
           ...REUSABLE_ACCOUNTING_CACHE,
+          unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
           sourceDescriptor: {
             mode: "unified",
             fallbackCount: 0,
@@ -1283,6 +1290,7 @@ test("a fresh unified machine completes its first refresh when the app-server re
         generatedAt: "2026-08-19T12:00:00.000Z",
         periods: [{ id: "7d", events: 0 }],
         diagnostics: {},
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: { fallbackCount: 0 },
       }),
       clock: () => Date.parse("2026-08-19T12:00:00.000Z"),
@@ -1461,6 +1469,7 @@ test("detailed refresh keeps quota and unified-index failures independent and re
       generatedAt: "2026-08-19T12:00:00.000Z",
       periods: [{ id: "7d", events: 0 }],
       diagnostics: {},
+      unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
       sourceDescriptor: { fallbackCount: 0 },
     }),
   });
@@ -1979,6 +1988,7 @@ test("unified accounting rejects a cache whose fallback attestation is nonzero",
     refreshAccounting: async () => ({
       generatedAt: "2026-07-23T12:00:00.000Z",
       periods: [{ id: "7d", events: 4 }],
+      unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
       sourceDescriptor: { fallbackCount: 1 },
     }),
   });
@@ -2131,6 +2141,7 @@ test("zero-write local refresh rebuilds when the cache cannot be safely reused",
             generatedAt: "2026-07-23T12:00:00.000Z",
             periods: [{ id: "7d", events: 23 }],
             diagnostics: { forkReplayEventsExcluded: 31 },
+            unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
             sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
           };
         },
@@ -2228,6 +2239,7 @@ test("a memory-budget rebuild miss serves the retained cache, reports deferred, 
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 41 }],
         diagnostics: { forkReplayEventsExcluded: 3 },
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
       };
     },
@@ -2553,6 +2565,7 @@ test("local refresh rebuilds when rollout usage changes or no definitive count i
             generatedAt: "2026-07-23T12:00:00.000Z",
             periods: [],
             diagnostics: {},
+            unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
             sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
           };
         },
@@ -2599,6 +2612,7 @@ test("local refresh forwards its AbortSignal into replay-safe accounting", async
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 17 }],
         diagnostics: { forkReplayEventsExcluded: 29 },
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
       };
     },
@@ -2676,6 +2690,7 @@ test("the unified index advances before accounting reads it for calibration", as
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [],
         diagnostics: {},
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: { fallbackCount: 0 },
       };
     },
@@ -2766,6 +2781,7 @@ test("local refresh publishes a quick-result boundary before deep accounting", a
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 17 }],
         diagnostics: { forkReplayEventsExcluded: 29 },
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
       };
     },
@@ -2963,6 +2979,7 @@ test("seven changed sources hand off to accounting until the full snapshot is pu
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 17 }],
         diagnostics: {},
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: { fallbackCount: 0 },
       };
     },
@@ -3313,6 +3330,7 @@ test("partial recent coverage publishes a quick result before deep accounting", 
         generatedAt: "2026-07-23T12:00:00.000Z",
         periods: [{ id: "7d", events: 17 }],
         diagnostics: { forkReplayEventsExcluded: 29 },
+        unknownSpeedPolicy: { mode: "standard", customFastRatioBps: null },
         sourceDescriptor: UNIFIED_SOURCE_DESCRIPTOR,
       };
     },

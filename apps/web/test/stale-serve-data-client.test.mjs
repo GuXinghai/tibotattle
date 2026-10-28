@@ -133,37 +133,13 @@ test("the stale cost-view serve survives normalization with its provenance, and 
   assert.equal(current.accounting.staleServe, null);
 });
 
-test("the trends capacity keeps its staleness provenance through normalization", () => {
-  const normalized = normalizeDashboardPayload({
-    mode: "real_local_evidence",
-    timeline: { allowanceCapacity: staleCapacity() },
-  });
-  const capacity = normalized.timeline.allowanceCapacity;
-  assert.equal(capacity.status, "available");
-  assert.deepEqual(capacity.stale, STALE_PROVENANCE);
-  assert.equal(capacity.planScope, null);
-  assert.equal(
-    capacity.scenarios.unresolved_as_standard.medianCapacityUsd,
-    100,
-  );
-
-  const unmarked = normalizeDashboardPayload({
-    mode: "real_local_evidence",
-    timeline: { allowanceCapacity: staleCapacity(null) },
-  });
-  assert.equal(unmarked.timeline.allowanceCapacity.stale, null);
-  assert.equal(unmarked.timeline.allowanceCapacity.status, "unavailable",
-    "unscoped capacity cannot be published as current");
-  normalized.weekly = {
-    planType: "pro",
-    selectedPlanType: "pro",
-    planAttribution: { methodVersion: "plan-era-v1" },
-    planPopulations: [{ planType: "pro", status: "available" }],
-  };
-  const selected = selectAllowancePlanPopulation(normalized);
-  assert.equal(selected.allowancePlanSelection.comparisonAvailable, false);
-  assert.equal(selected.timeline.allowanceCapacity, null,
-    "retained legacy capacity cannot stand in for a scoped Trends fit");
+test("previous-format allowance capacity is refused rather than upgraded by a stale label", () => {
+  for (const stale of [STALE_PROVENANCE, null]) {
+    const normalized = normalizeDashboardPayload({ mode: "real_local_evidence",
+      timeline: { allowanceCapacity: staleCapacity(stale) } });
+    assert.equal(normalized.timeline.allowanceCapacity.status, "unavailable");
+    assert.equal(normalized.timeline.allowanceCapacity.stale, null);
+  }
 });
 
 test("the weekly allowance keeps its staleness provenance through normalization", () => {

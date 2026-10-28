@@ -1,5 +1,6 @@
 export {
   addUsdStrings,
+  mixUsdByBasisPoints,
   priceUsageEvent,
 } from "./src/cost-ledger.js";
 

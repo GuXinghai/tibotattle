@@ -152,7 +152,7 @@ objects are closed; producer, consumer, consent, storage, relay, public
 projection, and deletion/export paths must declare the same transition.
 
 Local API valuation methodology is `provider-neutral-api-price-equivalent-v0.4`
-and replay materialization is `local-replay-safe-accounting-v0.25`. Current
+and replay materialization is `local-replay-safe-accounting-v0.26`. Current
 companion readers and writers require `source_native` context behavior: absent
 context remains unavailable rather than becoming observed zero. An inferred
 input total is usable only when its component observations are complete; known
@@ -162,8 +162,11 @@ to the full ledger for incomplete evidence. Old materialization is withheld for
 rebuild; the retired `legacy_zero` adapter and legacy source mode are refused.
 Missing input context cannot become observed zero. This does not
 rewrite stored source observations or alter retained price-card evidence.
-Earlier v0.24 caches retain their old identity and are withheld as stale until
-rebuilt; they are never relabeled as v0.25. Missing or empty token observations
+Old formats are accepted only by the explicit one-time copy converter;
+v0.25 results are retained losslessly as historical evidence in a new envelope,
+not interpreted by runtime compatibility or relabelled as v0.26. Settings v6
+likewise require explicit conversion from v5. The selected unknown-speed policy
+and active custom ratio are part of cache calculation identity. Missing or empty token observations
 are unavailable, while explicitly observed zero remains zero. Valid `Date`
 timestamps and their canonical ISO strings select the same event-time prices.
 

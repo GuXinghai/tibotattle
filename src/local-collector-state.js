@@ -20,8 +20,10 @@ import {
   createWindowsFilesystemAdapter,
   prepareProtectedSqliteDatabaseFile,
   readBoundedUtf8LineEntries,
+  withProtectedSqliteReadSnapshot,
 } from "./platform/index.js";
 import { validAbortSignal } from "./valid-abort-signal.js";
+import { PRESERVED_ACCOUNTING_HISTORY_META_KEY, projectPreservedAccountingHistorySummary } from "./local-accounting-preserved-history.js";
 
 // This database is deliberately the one durable owner-controlled store for
 // local collector facts, cursors, quota observations and derived accounting.
@@ -1576,6 +1578,18 @@ export async function writeLocalCollectorAccountingCache({
     throw new TypeError("Local collector accounting cache is invalid");
   }
   throwIfAccountingCachePublicationAborted(signal);
+  // Reject a different cache generation before any write-mode preparation,
+  // journal recovery or pragma. The transaction repeats this check to fence
+  // a cooperating publication between this read and the final replacement.
+  if (await assertSafeStateFile(stateFile, { allowMissing: true }) !== null) {
+    await withProtectedSqliteReadSnapshot({ path: stateFile, read(existing) {
+      validateDatabase(existing);
+      const prior = existing.prepare("SELECT json_extract(value_json, '$.schemaVersion') AS version FROM meta WHERE key='accounting_cache'").get();
+      if (prior && prior.version !== (cache.schemaVersion ?? null)) {
+        throw fixedError("local_collector_accounting_migration_required");
+      }
+    } });
+  }
   await ensureDatabase(stateFile);
   // Database preparation crosses asynchronous filesystem boundaries. A
   // refresh can be cancelled while those owner-only durability checks are in
@@ -1590,6 +1604,10 @@ export async function writeLocalCollectorAccountingCache({
     // replacement. Keep the check adjacent to that boundary.
     throwIfAccountingCachePublicationAborted(signal);
     transaction(database, () => {
+      const prior = database.prepare("SELECT json_extract(value_json, '$.schemaVersion') AS version FROM meta WHERE key='accounting_cache'").get();
+      if (prior && prior.version !== (cache.schemaVersion ?? null)) {
+        throw fixedError("local_collector_accounting_migration_required");
+      }
       writeMeta(database, "accounting_cache", cache);
     });
     database.exec("PRAGMA optimize");
@@ -1608,6 +1626,23 @@ export async function readLocalCollectorAccountingCache({
     status: state.status,
     cache: state.accountingCache,
   };
+}
+
+// A one-time converter may retain the only surviving historical figures here.
+// Read the new envelope only; do not prepare/migrate state or parse its opaque
+// old cache string, and never return that local preservation payload to a UI.
+export async function readLocalCollectorPreservedAccountingHistory({
+  stateFile = defaultLocalCollectorStatePath(),
+} = {}) {
+  if (typeof stateFile !== "string" || stateFile.length < 1) {
+    throw new TypeError("Preserved accounting history request is invalid");
+  }
+  if (await assertSafeStateFile(stateFile, { allowMissing: true }) === null) return null;
+  return withProtectedSqliteReadSnapshot({ path: stateFile, read(database) {
+    validateDatabase(database);
+    const record = readMeta(database, PRESERVED_ACCOUNTING_HISTORY_META_KEY);
+    return record === null ? null : projectPreservedAccountingHistorySummary(record);
+  } });
 }
 
 async function readOwnedJson(path, maximumBytes) {

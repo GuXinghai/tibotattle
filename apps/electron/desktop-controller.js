@@ -349,6 +349,7 @@ export function createDesktopController({
   automaticRefreshCadence,
   overviewRefreshOwnedByCompanion = false,
   onRefreshIntervalChanged = async () => {},
+  onUnknownSpeedPolicyChanged = async () => {},
   clock = () => Date.now(),
   setRecurringTimer = setTimeout,
   clearRecurringTimer = clearTimeout,
@@ -418,6 +419,7 @@ export function createDesktopController({
     showDiagnosticsAction,
     revealLocalDataAction,
     onRefreshIntervalChanged,
+    onUnknownSpeedPolicyChanged,
   })) {
     if (typeof value !== "function") throw new TypeError(`${name} is required`);
   }
@@ -888,6 +890,7 @@ export function createDesktopController({
           : { codexHomes: codexHomesSummary(codexHomes) }),
         refreshIntervalSeconds: settings.refreshIntervalSeconds,
         refreshPaused: settings.refreshPaused === true,
+        unknownSpeedPolicy: settings.unknownSpeedPolicy ? Object.freeze({ ...settings.unknownSpeedPolicy }) : null,
         startAtLogin: Object.freeze({
           ...login,
           canOpenSettings: true,
@@ -910,6 +913,7 @@ export function createDesktopController({
       const settings = await store.getSettings();
       notifyLanguageChanged(settings.language);
       notifyAppearanceChanged(settings.appearance);
+      if (settings.unknownSpeedPolicy) await onUnknownSpeedPolicyChanged(settings.unknownSpeedPolicy);
       await initializeNotificationCoordinator(settings.notifications);
       const persistedCodexHomes = hasCodexHomesStore
         ? await readCodexHomes()
@@ -1353,6 +1357,14 @@ export function createDesktopController({
             resolvedTheme,
           }));
         }
+        return snapshot();
+      });
+    },
+    async setUnknownSpeedPolicy({ value }) {
+      return enqueue(async () => {
+        const settings = await store.setUnknownSpeedPolicy(value);
+        await onUnknownSpeedPolicyChanged(settings.unknownSpeedPolicy);
+        emitDashboardCommand(createDesktopCommand("settingsChanged"));
         return snapshot();
       });
     },
