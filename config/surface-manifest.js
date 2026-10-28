@@ -30,6 +30,7 @@ const SHARED_WEB_FILES = Object.freeze([
   "apps/web/public/window-background.css",
   "apps/web/public/electron-refresh-lifecycle.js",
   "apps/web/public/local-refresh-pause.js",
+  "apps/web/public/local-progress-events.js",
   "apps/web/public/electron-settings.css",
   "apps/web/public/electron-settings.html",
   "apps/web/public/electron-settings.js",
