@@ -1372,6 +1372,12 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       return removed;
     },
 
+    /** Only after a stable full-byte comparison; no fact or cursor changes. */
+    markContentUnchanged(sourceId, info) {
+      assertTransaction();
+      database.prepare("UPDATE source SET path=?, mtime_ms=?, ctime_ms=? WHERE id=?")
+        .run(info.path, Number(info.mtimeMs), Number(info.ctimeMs), sourceId);
+    },
     /** Replace a source's segment digests and diagnostics, then move its cursor. */
     commitSourceState(sourceId, state) {
       assertTransaction();

@@ -137,8 +137,10 @@ test("process-local semantic reuse recomposes metadata and preserves the evaluat
   finally { changed.close(); }
   const materialGeneration = readIdentity();
   assert.notEqual(materialGeneration.calculationRevision, generation.calculationRevision);
+  const changeReasons = [];
   assert.equal(await reuse.reuse({ proof: await reuse.readProof({ generation: materialGeneration }),
-    nowMs: NOW + 60_000, maximumAgeMs: 1_800_000 }), null);
+    nowMs: NOW + 60_000, maximumAgeMs: 1_800_000, onReuseDiagnostic: value => changeReasons.push(value.code) }), null);
+  assert.ok(changeReasons.includes("inputs_revision_changed"));
 });
 
 test("runtime capture during accounting preserves the proof and the next refresh reuses calculations", async t => {

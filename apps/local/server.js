@@ -45,6 +45,7 @@ import {
   LocalCompanionRefreshController,
   createDeferredAccountingRebuildRecorder,
   createLocalCollectorRefreshRunner,
+  createLocalRefreshTimer,
   createTerminalRefreshFailureRecorder,
 } from "../../src/local-companion-refresh.js";
 import {
@@ -1081,7 +1082,8 @@ function createPreparedLocalCompanionServer({
     // ordinary pass reads only the bytes the rollout corpus grew.
     refreshUnifiedIndex: async options=>{
       const result=await localIndexBackend.refreshUnifiedIndex(options);
-      await runtimeModelEvidence.tick();return result;
+      const timing=createLocalRefreshTimer({onTiming:options.onTiming,clock:options.monotonicClock});
+      await timing.measure("index_runtime_capture",()=>runtimeModelEvidence.tick());return result;
     },
     unifiedIndexFile: unifiedStoreFile,
     unifiedIndexSecretFile: statePaths.unifiedIndexSecretFile,

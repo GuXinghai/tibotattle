@@ -32,10 +32,15 @@ test("the work breakdown from stored facts keeps its invariants at every boundar
         END_MS - 3 * 86_400_000 - 7 * 60_000 - 13_123,
         END_MS - 8 * 86_400_000 + 5,
       ]) {
+        const spans = [];
         const actual = await readLocalIndexWorkUsage({
           database, indexFile: v2File, codexHome: workspace.codexHome,
           secretFile: workspace.secretFile, nowMs,
+          onTiming: value => spans.push(value),
         });
+        for (const stage of ["work_memberships", "work_origins", "work_projects", "work_aggregate", "work_finalize"]) {
+          assert.ok(spans.some(row => row.stage === stage && row.outcome === "completed"));
+        }
         assert.equal(actual.status, "available");
         assert.deepEqual(Object.keys(actual.periods).sort(), ["24h", "30d", "7d", "all"]);
         // A wider window never holds fewer events for any scope.

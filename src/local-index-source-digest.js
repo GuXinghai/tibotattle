@@ -153,9 +153,10 @@ export async function createSegmentTap(handle, { startOffset = 0 } = {}) {
  * the stored digests. Returns the first mismatching segment index, or -1.
  * A missing stored digest counts as a mismatch.
  */
-export async function verifySegments(handle, storedSegments, scannedBytes) {
+export async function verifySegments(handle, storedSegments, scannedBytes, { signal = null } = {}) {
   const complete = Math.floor(scannedBytes / SEGMENT_BYTES);
   for (let index = 0; index < complete; index += 1) {
+    signal?.throwIfAborted();
     const stored = storedSegments.get(index);
     if (stored === undefined) return index;
     const actual = await digestRange(handle, index * SEGMENT_BYTES, SEGMENT_BYTES);

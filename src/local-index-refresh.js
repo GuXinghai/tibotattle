@@ -31,6 +31,7 @@ import {
   releaseWorkerBatch,
 } from "./local-index-batching.js";
 import { withStableRolloutSource } from "./rollout-source-snapshot.js";
+import { createLocalRefreshTimer, reportLocalRefreshReuseDiagnostic } from "./local-refresh-timing.js";
 import {
   localDigest,
   readExistingDeviceSalt,
@@ -594,6 +595,7 @@ export async function refreshLocalIndex({
   walLimits = LOCAL_INDEX_WAL_LIMITS,
   discover = discoverCodexRolloutInfos,
   onProgress = null,
+  onTiming = null, monotonicClock = undefined, onReuseDiagnostic = null,
   now = () => Date.now(),
 } = {}) {
   if (typeof codexHome !== "string" || codexHome.length < 1) {
@@ -613,6 +615,8 @@ export async function refreshLocalIndex({
     throw new TypeError("requireExistingDeviceSalt must be a boolean");
   }
   const startedAt = performance.now();
+  const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
+  const finishPrepare = timing.start("index_prepare");
   const resolvedIndexFile = resolve(indexFile);
   let existingIdentity = requireExistingDeviceSalt || (ordinalSeed !== null && ordinalSeed.size > 0);
   // Inspect existing state read-only before permitting salt creation. Opening
@@ -630,23 +634,29 @@ export async function refreshLocalIndex({
     ? readExistingDeviceSalt(saltFile) : readOrCreateDeviceSalt(saltFile));
   const database = openLocalIndexStore(resolvedIndexFile, { create: true });
   const writer = createLocalIndexWriter(database);
+  for (const [method, stage] of [["deleteSourceFacts", "index_delete"], ["finishSourceCandidate", "index_candidate_compare"],
+    ["commitSourceState", "index_cursor"], ["commit", "index_commit"]]) {
+    const original = writer[method].bind(writer);
+    writer[method] = (...args) => timing.measureSync(stage, () => original(...args));
+  }
   try {
     const catalog = loadCatalog(database);
     // A store that already holds facts may predate a reader index that the
     // rescan path also leans on; make it before any source is rewritten. A new
     // store builds them after its bulk load instead.
     if (catalog.size > 0) createLocalIndexSecondaryIndexes(database);
+    finishPrepare();
     let infos;
     let discoveryReceipt;
     const disabled = new Set();
     for (;;) {
       const roundedHits = new Map();
-      infos = await discover({
+      infos = await timing.measure("index_discovery",()=>discover({
         codexHome, startAt, endAt, signal, discoveryLimits,
         inspectionCache: createInspectionCache(catalog, { disabled, roundedHits }),
-      });
+      }));
       const receipt = localCodexLogScanner.codexRolloutDiscoveryReceipt(infos);
-      const fileIds = await resolveFileIds([...infos, ...receipt.quarantined]);
+      const fileIds = await timing.measure("index_file_ids",()=>resolveFileIds([...infos, ...receipt.quarantined]));
       // A cached inspection found through a rounded inode is trusted only if
       // the exact id agrees; otherwise discover again without that entry.
       const stale = [];
@@ -668,6 +678,7 @@ export async function refreshLocalIndex({
       database, writer, deviceSalt, infos, catalog, workerCount, maximumLineBytes,
       signal, ordinalSeed, verify, now, startedAt, discoveredAt, discoveryReceipt,
       indexFile: resolvedIndexFile, walLimits, onProgress,
+      timing, onReuseDiagnostic,
     });
     return result;
   } finally {
@@ -679,6 +690,7 @@ async function runRefresh({
   database, writer, deviceSalt, infos, catalog, workerCount, maximumLineBytes,
   signal, ordinalSeed, verify, now, startedAt, discoveredAt, discoveryReceipt,
   indexFile, walLimits, onProgress,
+  timing, onReuseDiagnostic,
 }) {
   let deferred = null;
   let walBytesPeak = 0;
@@ -740,7 +752,9 @@ async function runRefresh({
 
   // 1. Classify every discovered source by stat, then confirm growth by windows.
   const classification = new Map();
+  const finishClassify = timing.start("index_classify");
   const verifiedSources = [];
+  const contentUnchanged = [];
   // Scoped recovery version lives beside the source's committed diagnostics.
   // Do not bump the global parser and invalidate every historical source.
   const modelRecovery=readPendingResponseModelRecoverySources(database, RESPONSE_MODEL_RECOVERY_VERSION);
@@ -749,6 +763,33 @@ async function runRefresh({
   for (const info of infos) {
     const row = catalog.get(hexOf(info));
     let decision = classifyFromStat(info, row, LOCAL_INDEX_PARSER_VERSION);
+    // A timestamp change is not a fact change. Authenticate the entire committed
+    // byte range before taking this path, including the incomplete last segment.
+    // Missing digests, partial cursors, replacements and parser/model repairs
+    // retain the ordinary replay path; quota and lineage facts stay untouched.
+    if (decision.reason === "same_size_changed" && !info.compressed
+        && row.quarantine_code === null && Number(row.scanned_bytes) > 0
+        && Number(row.scanned_bytes) === Number(row.size_bytes)
+        && !modelRecovery.has(Number(row.id))) {
+      try {
+        const unchanged = await withStableRolloutSource(info, async handle => {
+          const stored = new Map(database.prepare(
+            "SELECT segment, digest FROM source_segment WHERE source_id = ?",
+          ).all(Number(row.id)).map(entry => [Number(entry.segment), entry.digest]));
+          return await verifySegments(handle, stored, Number(row.scanned_bytes), { signal }) === -1
+            && await windowsMatch(handle, row);
+        });
+        signal?.throwIfAborted();
+        if (unchanged) {
+          decision = { mode: "skip" };
+          contentUnchanged.push({ id: Number(row.id), info });
+          counts.sourcesSemanticNoop += 1;
+        }
+      } catch (error) {
+        if (signal?.aborted) signal.throwIfAborted();
+        // An unavailable or changing source cannot authorize preservation.
+      }
+    }
     if(['skip','append'].includes(decision.mode)&&row?.quarantine_code===null&&modelRecovery.has(Number(row.id))){
       const bytes=Number(info.size??0);
       if(modelRecoverySources>=8||(modelRecoverySources>0&&modelRecoveryBytes+bytes>256*1024*1024)){
@@ -815,6 +856,8 @@ async function runRefresh({
     classification.set(info, { ...decision, row });
   }
 
+  finishClassify();
+  const finishPlan = timing.start("index_plan");
   // Sources discovery rejects now may hold facts from when they were accepted.
   // Remove those facts, keep the catalog row (and its ordinal), and record why.
   const rejected = [];
@@ -848,10 +891,14 @@ async function runRefresh({
       throw error;
     }
   }
-  if (verifiedSources.length > 0) {
+  if (verifiedSources.length > 0 || contentUnchanged.length > 0) {
     writer.begin();
     try {
       for (const id of verifiedSources) writer.markVerified(id, now());
+      for (const { id, info } of contentUnchanged) {
+        writer.markContentUnchanged(id, info);
+        writer.markVerified(id, now());
+      }
       writer.commit({ kind: "verify", sourcesChanged: 0, bumpSeq: false });
     } catch (error) {
       writer.rollback();
@@ -967,6 +1014,10 @@ async function runRefresh({
   // Lanes take whole lineage components that are entirely new: their seeds are
   // produced in-lane, and no existing source is replaced, so nothing readers
   // can see is rewritten. Everything else runs sequentially.
+  finishPlan();
+  for (const { plans } of totalWork) for (const plan of plans) {
+    if (plan.mode === "rescan") reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, "index", `rescan_${plan.reason ?? "other"}`);
+  }
   const isUnchanged = (plan) => plan.mode === "skip" || plan.mode === "quarantined";
   const laneComponents = totalWork.filter(({ plans }) => (
     plans.every((plan) => plan.mode === "new")
@@ -1133,10 +1184,11 @@ async function runRefresh({
   }
 
   if (!useLanes) {
-    await runSequential();
+    await timing.measure("index_execute",()=>runSequential());
   } else {
-    await runLanes();
+    await timing.measure("index_execute",()=>runLanes());
   }
+  const finishPost = timing.start("index_post");
   if (deferred === null) createLocalIndexSecondaryIndexes(database);
   if(deferred===null&&modelRecoveryPending>0)deferred={reason:'model_attribution_recovery',pendingSources:modelRecoveryPending};
 
@@ -1167,6 +1219,7 @@ async function runRefresh({
   }
 
   const finished = performance.now();
+  finishPost();
   return {
     status: deferred === null ? "refreshed" : "deferred",
     deferred,
@@ -1367,7 +1420,7 @@ async function runRefresh({
                 const tap = info.compressed === true
                   ? null
                   : await createSegmentTap(handle, { startOffset });
-                const extracted = await extractRolloutUsage(tap?.handle ?? handle, {
+                const extracted = await timing.measure("index_extract",()=>extractRolloutUsage(tap?.handle ?? handle, {
                   responseSource: handle,
                   size: Number(info.size ?? 0),
                   startOffset,
@@ -1391,7 +1444,7 @@ async function runRefresh({
                   onBoundary: (event) => sink.writeBoundary(state, event),
                   onTool: (event) => sink.writeTool(state, event),
                   onWork: (event) => sink.writeWork(state, event),
-                });
+                }));
                 return {
                   outcome: extracted,
                   tapSegments: tap?.finish(extracted.read.nextOffset) ?? null,
@@ -1475,6 +1528,7 @@ async function runRefresh({
               continue;
             }
             if (mode === "append" && error?.code === "codex_response_usage_rescan_required") {
+              reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, "index", "rescan_response_reconciliation");
               plan.mode = "rescan";
               plan.candidateDisabled = true;
               sourceIndex -= 1;

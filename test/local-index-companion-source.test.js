@@ -29,7 +29,9 @@ test("the v2 projection carries the snapshot envelope and a complete generation"
       workerCount: 1,
     });
     const nowMs = END_MS + 3_600_000;
-    const actual = await readLocalIndexCompanionProjection({ indexFile: v2File, nowMs });
+    const spans = [];
+    const actual = await readLocalIndexCompanionProjection({ indexFile: v2File, nowMs, onTiming: value => spans.push(value) });
+    assert.ok(spans.some(row => row.stage === "projection_report" && row.outcome === "completed"));
     for (const key of ENVELOPE_KEYS) assert.ok(key in actual, `envelope key ${key}`);
     assert.equal(actual.status, "available");
 

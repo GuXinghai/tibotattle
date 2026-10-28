@@ -11,15 +11,26 @@ export const LOCAL_REFRESH_TIMING_STAGES = Object.freeze([
   "accounting_fit", "accounting_weekly_origins", "accounting_weekly_intervals",
   "accounting_transitions", "accounting_corpus_finish", "accounting_finalize",
   "accounting_prepare_state", "accounting_validate", "accounting_publish",
+  "index_prepare", "index_discovery", "index_file_ids", "index_classify", "index_plan",
+  "index_execute", "index_extract", "index_delete", "index_candidate_compare", "index_cursor", "index_commit",
+  "index_post", "index_maintenance", "index_descriptor", "index_runtime_evidence", "index_runtime_capture",
+  "accounting_fit_stream", "accounting_fit_current_finish", "accounting_fit_historical_finish",
+  "accounting_fit_observations", "accounting_fit_solver", "accounting_fit_timeline",
+  "projection_report", "projection_work", "work_memberships", "work_origins", "work_projects", "work_aggregate", "work_finalize",
 ]);
 const STAGES = new Set(LOCAL_REFRESH_TIMING_STAGES);
-const REUSE_PHASES = new Set(["proof_before", "lookup", "proof_after", "remember"]);
+const REUSE_PHASES = new Set(["proof_before", "lookup", "proof_after", "remember", "index"]);
 const REUSE_CODES = new Set([
   "context_unavailable", "file_unavailable", "session_limit", "generation_changed",
   "origins_unavailable", "origins_unknown", "identity_changed", "proof_available",
   "proof_unavailable", "retained_absent", "inputs_changed", "clock_invalid", "expired",
   "fallback_present", "intervals_unavailable", "cache_invalid", "cache_oversize",
   "proof_changed", "retained", "reused", "republished", "operation_failed",
+  "inputs_file_changed", "inputs_revision_changed", "inputs_baselines_changed", "inputs_origins_changed", "inputs_policy_changed",
+  "rescan_parser_version", "rescan_identity_changed", "rescan_cursor_invalid", "rescan_same_size_changed",
+  "rescan_compressed_changed", "rescan_quarantine_changed", "rescan_shrink", "rescan_boundary_changed",
+  "rescan_response_reconciliation", "rescan_model_attribution_recovery", "rescan_segment_mismatch",
+  "rescan_dependency_quarantine_changed", "rescan_session_rescan", "rescan_other",
 ]);
 const ORIGIN_CODES = new Set([
   "requested", "known", "unknown", "thread_row_missing", "thread_row_invalid",
@@ -34,6 +45,7 @@ export function reportLocalRefreshOriginDiagnostic(observer, phase, code, count)
   catch { /* Origin diagnostics cannot change proof eligibility. */ }
 }
 export function reportLocalRefreshReuseDiagnostic(observer, phase, code) {
+  if (phase === "index" && typeof code === "string" && /^rescan_[a-z_]+$/u.test(code) && !REUSE_CODES.has(code)) code = "rescan_other";
   if (typeof observer !== "function" || !REUSE_PHASES.has(phase) || !REUSE_CODES.has(code)) return;
   try { Promise.resolve(observer(Object.freeze({ phase, code }))).catch(() => {}); }
   catch { /* Diagnostic observers cannot affect the cache gate. */ }

@@ -23,6 +23,7 @@ import {
 import { auditWorkRollups } from "./local-index-work-rollup.js";
 import { readLocalIndexWindowBreakdown } from "./local-index-window-breakdown.js";
 import {reconcileRuntimeModelEvidence} from './local-index-runtime-model-evidence.js';
+import { createLocalRefreshTimer } from "./local-refresh-timing.js";
 export { readLocalIndexWorkload, readWorkloadQuotaEvidence, workloadStateStore, workloadState } from "./local-index-workload.js";
 
 // The v2 index as one backend the local companion composes.
@@ -158,7 +159,9 @@ export function createLocalIndexBackend({
     secretFile: requestedSecret = null,
     onProgress = null,
     signal = null,
+    onTiming = null, monotonicClock = undefined, onReuseDiagnostic = null,
   } = {}) {
+    const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
     const file = requestedFile ?? indexFile;
     const options = {
       codexHome,
@@ -166,6 +169,7 @@ export function createLocalIndexBackend({
       secretFile: requestedSecret ?? secretFile,
       workerCount,
       signal,
+      onTiming, monotonicClock, onReuseDiagnostic,
       ordinalSeed: legacyOrdinalSeed(file),
       requireExistingDeviceSalt: legacyIndexFile !== null && existsSync(legacyIndexFile),
       ...(onProgress === null ? {} : { onProgress }),
@@ -195,12 +199,12 @@ export function createLocalIndexBackend({
     // is not a publication accounting may treat as complete.
     if (result.status !== "refreshed") throw fixedError("local_unified_index_publication_busy");
     result = { ...result, ...totals, unchanged: !changed };
-    const runtimeEvidence=reconcileRuntimeModelEvidence({indexFile:file,signal});
+    const runtimeEvidence=timing.measureSync("index_runtime_evidence",()=>reconcileRuntimeModelEvidence({indexFile:file,signal}));
     if(runtimeEvidence.applied>0)result.unchanged=false;
     // First completed refresh in every process (including after a crash), then
     // daily at this idle ingestion boundary. Never run on a report read path.
-    const maintenanceResult = await maintainIfDue(file, signal);
-    const generation = await describeCurrentGeneration(file);
+    const maintenanceResult = await timing.measure("index_maintenance",()=>maintainIfDue(file, signal));
+    const generation = await timing.measure("index_descriptor",()=>describeCurrentGeneration(file));
     if (generation === null) throw fixedError("local_unified_index_generation_invalid");
     const scanned = count(result.sourcesResumed) + count(result.sourcesRescanned)
       + count(result.sourcesNew);

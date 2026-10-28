@@ -134,6 +134,12 @@ test("segment verification finds an interior edit that stat and windows miss", a
         segments.set(index, await digestRange(reader, index * SEGMENT_BYTES, SEGMENT_BYTES));
       }
       assert.equal(await verifySegments(reader, segments, size), -1);
+      const controller = new AbortController();
+      await assert.rejects(verifySegments({ read: async (...args) => {
+        const result = await reader.read(...args);
+        controller.abort();
+        return result;
+      } }, segments, size, { signal: controller.signal }), { name: "AbortError" });
       const writer = openSync(file, "r+");
       writeSync(writer, Buffer.from([1, 2, 3]), 0, 3, SEGMENT_BYTES + 100_000);
       closeSync(writer);

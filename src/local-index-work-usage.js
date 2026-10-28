@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createLocalRefreshTimer } from "./local-refresh-timing.js";
 import { APP_PRICE_REGISTRY_MANIFEST } from "@app-usagemonitor/accounting";
 import {
   createWorkUsageProjectResolver,
@@ -73,7 +74,9 @@ export async function readLocalIndexWorkUsage({
   pricer = createAccountingPricer(),
   resolveProject = null,
   declaredSpeedBaselines = [],
+  onTiming = null, monotonicClock = undefined,
 } = {}) {
+  const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
   if (!Number.isSafeInteger(maximumCells) || maximumCells < 1 || maximumCells > MAX_WORK_CELLS) {
     const error = new Error("work_usage_capacity_exceeded");
     error.code = "work_usage_capacity_exceeded";
@@ -93,7 +96,7 @@ export async function readLocalIndexWorkUsage({
   let deviceSalt = null;
   let metadataAvailable = true;
   let resolver = resolveProject;
-  const memberships = await readCodexLocalProjectMemberships(codexHome, { signal });
+  const memberships = await timing.measure("work_memberships",()=>readCodexLocalProjectMemberships(codexHome, { signal }));
   const windowFrom = Math.min(...periods.map(p => p.fromMs)), windowTo = Math.max(...periods.map(p => p.toMs));
   const sessionRows = database.prepare(`SELECT id, session_local, session_uuid FROM session WHERE id IN
     (SELECT DISTINCT u.session_id FROM usage_event u WHERE u.observed_at_ms>=? AND u.observed_at_ms<?
@@ -107,10 +110,10 @@ export async function readLocalIndexWorkUsage({
     JOIN session s ON s.id=src.session_id WHERE s.session_uuid=? COLLATE NOCASE
       AND src.quarantine_code IS NULL AND src.scanned_bytes>0 LIMIT 33`);
   const sourcePaths = uuid => sourcePathQuery.all(uuid).map(row => row.path);
-  const threadRelations = await readCodexLocalThreadUsageRelations(codexHome,
+  const threadRelations = await timing.measure("work_origins",()=>readCodexLocalThreadUsageRelations(codexHome,
     [...sessions.values()].map(s => s.uuid).filter(Boolean), {
       signal, sourcePaths, knownThreadIds: new Set(memberships.threads.keys()), includeProjectAncestry: true,
-    });
+    }));
   metadataAvailable = memberships.status === "available";
   try {
     deviceSalt = await readExistingDeviceSalt(
@@ -140,7 +143,7 @@ export async function readLocalIndexWorkUsage({
   const resolved = new Array(toResolve.length);
   let nextIndex = 0;
   let fatal = null;
-  await Promise.all(Array.from({ length: Math.min(WORK_RESOLVE_CONCURRENCY, toResolve.length) }, async () => {
+  await timing.measure("work_projects",()=>Promise.all(Array.from({ length: Math.min(WORK_RESOLVE_CONCURRENCY, toResolve.length) }, async () => {
     for (;;) {
       if (fatal !== null) return;
       const index = nextIndex;
@@ -157,7 +160,7 @@ export async function readLocalIndexWorkUsage({
         resolved[index] = { project: null, failed: true };
       }
     }
-  }));
+  })));
   if (fatal !== null) throw fatal;
   toResolve.forEach((row, index) => {
     const { project, failed } = resolved[index];
@@ -245,7 +248,7 @@ export async function readLocalIndexWorkUsage({
   }
   const bounds = database.prepare(`SELECT MIN(u.observed_at_ms) AS first_at, MAX(u.observed_at_ms) AS last_at
     FROM usage_event u WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND ${committedPredicate("u")}`).get(lowest, highest);
-  if (bounds.first_at === null) return core.finish();
+  if (bounds.first_at === null) return timing.measure("work_finalize",()=>core.finish());
   const first = Math.max(lowest, Number(bounds.first_at));
   const last = Math.min(highest, Number(bounds.last_at) + 1);
   cuts.add(first); cuts.add(last);
@@ -261,6 +264,7 @@ export async function readLocalIndexWorkUsage({
     FROM usage_event u WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND ${committedPredicate("u")}
     GROUP BY u.session_id, directory_id, u.model_id, u.account_scope_id, u.tier_id, shape, ctx_class, prov`);
   for (let interval = 0; interval + 1 < ordered.length; interval += 1) {
+    const finishAggregate = timing.start("work_aggregate");
     signal?.throwIfAborted();
     for (const row of grouped.iterate(ordered[interval], ordered[interval + 1])) {
       const components = componentsOf(row);
@@ -283,9 +287,10 @@ export async function readLocalIndexWorkUsage({
         weight: Number(row.events),
       });
     }
+    finishAggregate();
     await new Promise(resolve => setImmediate(resolve));
   }
-  return core.finish();
+  return timing.measure("work_finalize",()=>core.finish());
 }
 
 function scopeKey(row) {

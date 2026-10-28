@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createLocalRefreshTimer } from "./local-refresh-timing.js";
 import { lstatSync } from "node:fs";
 
 import {
@@ -259,7 +260,9 @@ export async function readLocalIndexCompanionProjection({
   codexHome,
   secretFile = null,
   signal = null,
+  onTiming = null, monotonicClock = undefined,
 } = {}) {
+  const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
   const complete = (companion, workUsage = null) => includeWorkUsage
     ? {
       companion,
@@ -301,7 +304,7 @@ export async function readLocalIndexCompanionProjection({
   }
   try {
     const { companion, workUsage } = await readSnapshot({
-      database, indexFile, nowMs, baselines, includeWorkUsage, codexHome, secretFile, signal, size,
+      database, indexFile, nowMs, baselines, includeWorkUsage, codexHome, secretFile, signal, size, timing, onTiming, monotonicClock,
     });
     return complete(companion, workUsage);
   } catch (error) {
@@ -316,15 +319,15 @@ export async function readLocalIndexCompanionProjection({
 }
 
 async function readSnapshot({
-  database, indexFile, nowMs, baselines, includeWorkUsage, codexHome, secretFile, signal, size,
+  database, indexFile, nowMs, baselines, includeWorkUsage, codexHome, secretFile, signal, size, timing, onTiming, monotonicClock,
 }) {
   // The report and the work breakdown must describe the same publication. The
   // work read is asynchronous, so it cannot sit inside the synchronous
   // snapshot; its `commit_seq` is compared afterwards instead.
-  const report = withReadSnapshot(database, ({ commitSeq }) => ({
+  const report = timing.measureSync("projection_report",()=>withReadSnapshot(database, ({ commitSeq }) => ({
     commitSeq,
     result: readLocalIndexReport(database, { nowMs, declaredSpeedBaselines: baselines }),
-  }));
+  })));
   signal?.throwIfAborted();
   const generation = describeLocalIndexGeneration(database, report.result, report.commitSeq);
   const { commitSeq, buildInProgress, expandedBuckets, readWallMs, ...projection } = report.result;
@@ -345,9 +348,10 @@ async function readSnapshot({
   let workUsage = null;
   if (includeWorkUsage) {
     try {
-      workUsage = await readLocalIndexWorkUsage({
+      workUsage = await timing.measure("projection_work",()=>readLocalIndexWorkUsage({
         database, indexFile, codexHome, secretFile, nowMs, signal, declaredSpeedBaselines: baselines,
-      });
+        onTiming, monotonicClock,
+      }));
       const settled = Number(database.prepare(
         "SELECT commit_seq AS n FROM store_state WHERE id = 1",
       ).get().n);

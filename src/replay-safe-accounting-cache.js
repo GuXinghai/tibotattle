@@ -3332,6 +3332,7 @@ function compositionFitFailureReason(error) {
 // is never resident. It folds rows in the same order with the same cadence as
 // the per-event fold it replaced.
 function createCompositionFitConsumer({
+  onTiming = null, monotonicClock = undefined,
   weeklyRateLimitSnapshots,
   endMs,
   signal = null,
@@ -3341,6 +3342,7 @@ function createCompositionFitConsumer({
   declaredSpeedBaselines = [],
   unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY,
 }) {
+  const fitTiming = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
   const grainMs = MODEL_COMPOSITION_POLICY.grainMs;
   const contextKey = planAttributionContextKey("openai_codex", "codex");
   const attributionIndex = planAttributionIndex ?? buildPlanAttributionIndex(
@@ -3525,17 +3527,17 @@ function createCompositionFitConsumer({
     binCosts.clear();
     recentCostsByBin.clear();
     const { observations, voidedBinCount, poolCount } =
-      buildCompositionObservations({ usageRows, quotaRows: quotaRows.filter((row) => (
+      fitTiming.measureSync("accounting_fit_observations",()=>buildCompositionObservations({ usageRows, quotaRows: quotaRows.filter((row) => (
         !excludedBins.has(Math.floor(row.observedAtMs / grainMs) * grainMs)
-      )) });
-    const fit = calibrateCompositionCapacities(observations);
+      )) }));
+    const fit = fitTiming.measureSync("accounting_fit_solver",()=>calibrateCompositionCapacities(observations));
     const blendedRecentMixUsd = fit.status === "fitted"
       ? blendedCompositionCapacityUsd(recentMix, {
         capacityUsdByModel: fit.capacityUsdByModel,
         fallbackCapacityUsd: fit.singleConstantUsd,
       })
       : null;
-    const planScopedTimeline = finalizePlanScopedTimelineDraft({
+    const planScopedTimeline = fitTiming.measureSync("accounting_fit_timeline",()=>finalizePlanScopedTimelineDraft({
       unknownSpeedPolicy,
       buckets: planScopedBuckets,
       invalidBuckets: invalidPlanScopedBuckets,
@@ -3546,7 +3548,7 @@ function createCompositionFitConsumer({
       endMs,
       resourceLimited: planTimelineResourceLimited,
       quota: [...scopedQuota.values()].filter((row) => row !== null).sort((a, b) => a[0] - b[0]),
-    });
+    }));
     return {
       planType,
       attributionExcludedBins: excludedBins.size,
@@ -3587,6 +3589,7 @@ async function fitCompositionFromCorpusStream(options) {
 // Per-plan failures remain optional enrichment failures; a failed shared read
 // invalidates all unfinished fits, and cancellation always escapes.
 async function fitPlanCompositionsFromCorpus(options, planTypes, currentPlanType) {
+  const fitTiming = createLocalRefreshTimer({ onTiming: options.onTiming, clock: options.monotonicClock });
   if (!Array.isArray(planTypes) || planTypes.length > 16) {
     throw fixedError("accounting_transition_derivation_limit_exceeded");
   }
@@ -3610,13 +3613,13 @@ async function fitPlanCompositionsFromCorpus(options, planTypes, currentPlanType
   throwIfAborted(options.signal);
   options.checkRuntimeMemory?.();
   try {
-    await options.forEachUsageRow(async row => {
+    await fitTiming.measure("accounting_fit_stream",()=>options.forEachUsageRow(async row => {
       for (const lane of lanes) {
         if (lane.consumer === null) continue;
         try { await lane.consumer.consume(row); }
         catch (error) { failed(lane, error); }
       }
-    });
+    }));
   } catch (error) {
     for (const lane of lanes) if (lane.consumer !== null) failed(lane, error);
     throwIfAborted(options.signal);
@@ -3626,7 +3629,7 @@ async function fitPlanCompositionsFromCorpus(options, planTypes, currentPlanType
     throwIfAborted(options.signal);
     options.checkRuntimeMemory?.();
     if (lane.consumer === null) continue;
-    try { lane.result = await lane.consumer.finish(); }
+    try { lane.result = await fitTiming.measure(lane === lanes[0] ? "accounting_fit_current_finish" : "accounting_fit_historical_finish",()=>lane.consumer.finish()); }
     catch (error) { failed(lane, error); }
     finally { lane.consumer = null; }
   }
@@ -4095,6 +4098,7 @@ export async function buildReplaySafeAccountingCache({
     // on-disk cache stays a rejected older artifact.
     try {
       const fits = await timing.measure("accounting_fit", () => fitPlanCompositionsFromCorpus({
+        onTiming, monotonicClock,
         forEachUsageRow: calibrationCorpus.forEachRetainedUsage,
         weeklyRateLimitSnapshots: calibrationCorpus.weeklyRateLimitSnapshots,
         endMs,

@@ -2263,6 +2263,7 @@ export async function buildLocalCompanionSnapshot({
       })),
       timing.measure("snapshot_index_projection", () => unifiedProjectionReader(
         {
+          onTiming, monotonicClock,
           indexFile: unifiedIndexFile,
           nowMs,
           declaredSpeedBaselines,

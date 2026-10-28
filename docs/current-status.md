@@ -24,6 +24,22 @@ No remote resources were modified by the source retirement.
 
 ## Evidence boundaries
 
+Refresh diagnostics expose process-local, closed stage timings for index
+discovery, classification, replay, maintenance, model fitting and work projection.
+Rescan reasons and changed cache-proof components use fixed category codes only;
+no source paths, session identities or content enter these diagnostics. Inclusive
+and parallel spans must not be summed as independent wall time. Cold-start
+measurement preserves existing user data and caches; it does not mean a cleared
+operating-system file cache or a destructive first-use rebuild.
+
+Timestamp-only changes to a fully indexed, uncompressed source can preserve its
+facts after stable full-byte verification against all segment and tail digests.
+This leaves quota and lineage relationships intact and avoids changing the
+accounting proof merely for file timestamps. Missing digest evidence, partial
+cursors, parser/model repairs and actual byte changes retain the replay path.
+This source change does not qualify the running packaged candidate or establish
+an improvement to the previously observed real refresh duration.
+
 The committed accounting-reuse repair distinguishes stable missing-thread
 origin evidence from failed metadata reads. Equal origin evidence, including the
 same unknown membership, may reuse the qualified process-local result while

@@ -132,3 +132,14 @@ test("reuse reasons are closed, bounded, isolated and cannot interfere with oper
   }
   await new Promise(resolve => setImmediate(resolve));
 });
+
+test("detailed startup diagnostics retain only fixed stage and reason codes", () => {
+  const recorder = createLocalRefreshTimingRecorder();
+  for (const code of ["rescan_response_reconciliation", "rescan_same_size_changed"]) {
+    reportLocalRefreshReuseDiagnostic(recorder.recordReuse, "index", code);
+  }
+  reportLocalRefreshReuseDiagnostic(recorder.recordReuse, "lookup", "inputs_revision_changed");
+  reportLocalRefreshReuseDiagnostic(recorder.recordReuse, "index", "private/path");
+  assert.deepEqual(recorder.snapshot().reuse.map(row => row.code),
+    ["rescan_response_reconciliation", "rescan_same_size_changed", "inputs_revision_changed"]);
+});

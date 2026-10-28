@@ -104,6 +104,9 @@ export function createLocalIndexAccountingReuse({
     report("proof_available");
     return { ...snapshot, sessions: undefined, fileKey, fingerprint: identity.fingerprint,
       unknownSpeedPolicyIdentity: unknownSpeedCalculationIdentity(unknownSpeedPolicy),
+      components: { file: digest(fileKey), revision: snapshot.calculationRevision,
+        baselines: digest(relevantBaselines(declaredSpeedBaselines, snapshot.usageRange)),
+        origins: originKey, policy: unknownSpeedCalculationIdentity(unknownSpeedPolicy) },
       key: digest([fileKey, snapshot.calculationRevision,
         relevantBaselines(declaredSpeedBaselines, snapshot.usageRange), originKey,
         unknownSpeedCalculationIdentity(unknownSpeedPolicy)]) };
@@ -139,7 +142,12 @@ export function createLocalIndexAccountingReuse({
     const miss = code => { report(code); retained = null; return null; };
     if (!proof) return miss("proof_unavailable");
     if (!retained) return miss("retained_absent");
-    if (proof.key !== retained.proof.key) return miss("inputs_changed");
+    if (proof.key !== retained.proof.key) {
+      for (const part of ["file", "revision", "baselines", "origins", "policy"]) {
+        if (proof.components?.[part] !== retained.proof.components?.[part]) report(`inputs_${part}_changed`);
+      }
+      return miss("inputs_changed");
+    }
     const previous = retained.cache;
     const evaluatedAt = Date.parse(previous.coveredAt.endAt);
     if (!Number.isFinite(nowMs) || !Number.isFinite(maximumAgeMs) || maximumAgeMs < 0

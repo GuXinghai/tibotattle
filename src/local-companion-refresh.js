@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import { createLocalRefreshTimer, createLocalRefreshTimingRecorder, reportLocalRefreshReuseDiagnostic } from "./local-refresh-timing.js";
+export { createLocalRefreshTimer };
 import {
   createResetEventClassifier,
   isValidQuotaWindowDuration,
@@ -1013,6 +1014,7 @@ export function createLocalCollectorRefreshRunner({
       // to the bounded window and says so.
       try {
         unifiedIndex = publicUnifiedIndexResult(await timing.measure("index_refresh", () => refreshUnifiedIndex({
+          onTiming, monotonicClock, onReuseDiagnostic,
           codexHome,
           ...(unifiedIndexFile === null ? {} : { indexFile: unifiedIndexFile }),
           ...(unifiedIndexSecretFile === null

@@ -1,17 +1,99 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { readFileSync, writeFileSync, statSync, utimesSync } from "node:fs";
 import { test } from "node:test";
 
 import { refreshLocalIndex, validateLocalIndexWorkerCursor } from "../src/local-index-refresh.js";
 import { LOCAL_INDEX_PARSER_VERSION } from "../src/local-index-store.js";
 import { LOCAL_UNIFIED_INDEX_PARSER_VERSION } from "../src/codex-usage-vocabulary.js";
 import { appendSyntheticCodexEvents } from "../src/synthetic-codex-rollout-corpus.js";
+import { createLocalIndexAccountingReuse } from "../src/local-index-accounting-reuse.js";
+import { readLocalIndexGenerationIdentity } from "../src/local-index-companion-source.js";
 import {
   assertSameFacts,
   createWorkspace,
   v2Facts,
 } from "./helpers/local-index-facts.js";
+
+test("timestamp-only changes preserve quota facts and accounting proof after full byte verification", async t => {
+  const w = createWorkspace({ files: 1, events: 48, forkFraction: 0, fillerBytesPerEvent: 16_000 });
+  t.after(() => w.cleanup());
+  const indexFile = join(w.state, "index.sqlite");
+  const spans = [];
+  const refresh = () => refreshLocalIndex({ codexHome: w.codexHome, indexFile,
+    secretFile: w.secretFile, workerCount: 1, onTiming: value => spans.push(value) });
+  await refresh();
+  for (const stage of ["index_discovery", "index_file_ids", "index_classify", "index_plan", "index_extract", "index_commit"]) {
+    assert.ok(spans.some(row => row.stage === stage && row.outcome === "completed"));
+  }
+  assert.ok(spans.every(row => Object.keys(row).sort().join() === "outcome,stage,wallMs"));
+  const before = v2Facts(indexFile);
+  assert.ok(before.occurrences.length > 0);
+  const reuse = createLocalIndexAccountingReuse({ indexFile, codexHome: w.codexHome,
+    stateFile: join(w.state, "collector.sqlite"), readOrigins: async (_home, ids) => ({
+      complete: true, relations: new Map(ids.map(id => [id, { originKnown: false, autoReview: false }])),
+    }) });
+  const proof = () => reuse.readProof({ generation: readLocalIndexGenerationIdentity({ indexFile }) });
+  const originalProof = await proof();
+  const db = new DatabaseSync(indexFile, { readOnly: true });
+  let path;
+  try { path = db.prepare("SELECT path FROM source LIMIT 1").get().path; }
+  finally { db.close(); }
+  const touch = () => { const st = statSync(path); utimesSync(path, st.atime, new Date(st.mtimeMs + 5_000)); };
+  touch();
+  const result = await refresh();
+  assert.equal(result.sourcesSemanticNoop, 1);
+  assert.equal(result.sourcesRescanned, 0);
+  assert.equal(result.usageEventsRemoved, 0);
+  assert.equal(result.usageEvents, 0);
+  assert.equal(result.bytesScanned, 0);
+  assertSameFacts(v2Facts(indexFile), before, "timestamp-only preservation");
+  assert.equal((await proof()).key, originalProof.key);
+  assert.equal((await refresh()).writeTransactions, 0, "new file metadata is retained");
+
+  // An interior edit outside head/boundary/tail must be caught by full segments.
+  const original = readFileSync(path, "utf8");
+  const marker = '"filler":"';
+  const interior = original.indexOf(marker, 256 * 1024) + marker.length + 100;
+  assert.ok(interior > 256 * 1024 && interior < 2 * 256 * 1024);
+  const edited = original.slice(0, interior)
+    + (original[interior] === "a" ? "b" : "a") + original.slice(interior + 1);
+  writeFileSync(path, edited);
+  touch();
+  assert.equal((await refresh()).sourcesRescanned, 1);
+
+  // Same-sized real changes must still replay and invalidate the proof.
+  const text = readFileSync(path, "utf8");
+  const changed = text.replace(/"input_tokens":(\d+)/, (_match, value) =>
+    '"input_tokens":' + (value[0] === "1" ? "2" : "1") + value.slice(1));
+  assert.notEqual(changed, text);
+  assert.equal(Buffer.byteLength(changed), Buffer.byteLength(text));
+  writeFileSync(path, changed);
+  touch();
+  assert.equal((await refresh()).sourcesRescanned, 1);
+  assert.notEqual((await proof()).key, originalProof.key);
+});
+
+test("missing segment evidence prevents the timestamp-only preservation path", async t => {
+  const w = createWorkspace({ files: 1, events: 48, forkFraction: 0, fillerBytesPerEvent: 16_000 });
+  t.after(() => w.cleanup());
+  const indexFile = join(w.state, "index.sqlite");
+  const refresh = () => refreshLocalIndex({ codexHome: w.codexHome, indexFile,
+    secretFile: w.secretFile, workerCount: 1 });
+  await refresh();
+  const db = new DatabaseSync(indexFile);
+  let path;
+  try {
+    path = db.prepare("SELECT path FROM source LIMIT 1").get().path;
+    assert.ok(db.prepare("DELETE FROM source_segment WHERE segment=0").run().changes > 0);
+  } finally { db.close(); }
+  const st = statSync(path);
+  utimesSync(path, st.atime, new Date(st.mtimeMs + 5_000));
+  const result = await refresh();
+  assert.equal(result.sourcesSemanticNoop, 0);
+  assert.equal(result.sourcesRescanned, 1);
+});
 
 test("parallel worker cursor closes tier provenance and rejects unknown or missing provenance", () => {
   const cursor = {
