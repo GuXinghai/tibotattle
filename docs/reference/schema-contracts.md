@@ -163,7 +163,7 @@ rebuild; the retired `legacy_zero` adapter and legacy source mode are refused.
 Missing input context cannot become observed zero. This does not
 rewrite stored source observations or alter retained price-card evidence.
 Old formats are accepted only by the explicit one-time copy converter;
-v0.25 results are retained losslessly as historical evidence in a new envelope,
+v0.24/v0.25 results are retained losslessly as historical evidence in a new envelope,
 not interpreted by runtime compatibility or relabelled as v0.26. Settings v6
 likewise require explicit conversion from v5. The selected unknown-speed policy
 and active custom ratio are part of cache calculation identity. Missing or empty token observations
