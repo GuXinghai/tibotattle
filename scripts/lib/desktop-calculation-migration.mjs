@@ -15,6 +15,7 @@ import {
 const SETTINGS = "desktop-settings-v1.json", STATE = "local-collector-state-v1.sqlite";
 const RECEIPT = "desktop-calculation-copy-operation-v1.json";
 const OLD_CACHE = "local-replay-safe-accounting-v0.25";
+const PRE_METHOD_CACHE = "local-replay-safe-accounting-v0.24";
 const MAX_CACHE = 64 * 1024 * 1024, MAX_STATE = 1024 ** 3;
 // A SQLite close failure must not release the native identity/writer guards
 // while the connection may still be live. Keep them pinned until process exit.
@@ -44,13 +45,15 @@ export function preserveDesktopAccountingCacheV025(sourceCacheJson) {
   if (typeof sourceCacheJson !== "string" || Buffer.byteLength(sourceCacheJson) > MAX_CACHE) fail("CACHE_SIZE");
   let cache;
   try { cache = JSON.parse(sourceCacheJson); } catch { fail("CACHE_INVALID"); }
-  if (!cache || cache.schemaVersion !== OLD_CACHE) fail("CACHE_VERSION");
-  if (Object.keys(cache).some(key => ![...CACHE_KEYS, "weekly"].includes(key))
-      || CACHE_KEYS.some(key => !Object.hasOwn(cache, key))) fail("CACHE_SHAPE");
+  if (!cache || ![PRE_METHOD_CACHE, OLD_CACHE].includes(cache.schemaVersion)) fail("CACHE_VERSION");
+  const keys = cache.schemaVersion === PRE_METHOD_CACHE ? CACHE_KEYS.filter(key => key !== "pricingMethodVersion") : CACHE_KEYS;
+  if (Object.keys(cache).some(key => ![...keys, "weekly"].includes(key))
+      || keys.some(key => !Object.hasOwn(cache, key))) fail("CACHE_SHAPE");
   const value = {
     schemaVersion: PRESERVED_ACCOUNTING_HISTORY_SCHEMA, status: "historical_only",
-    sourceSchemaVersion: OLD_CACHE, sourceJsonSha256: sha(sourceCacheJson), sourceCacheJson,
-    summary: Object.fromEntries(SUMMARY_KEYS.map(key => [key, structuredClone(cache[key])])),
+    sourceSchemaVersion: cache.schemaVersion, sourceJsonSha256: sha(sourceCacheJson), sourceCacheJson,
+    summary: Object.fromEntries(SUMMARY_KEYS.map(key => [key,
+      key === "pricingMethodVersion" && cache.schemaVersion === PRE_METHOD_CACHE ? null : structuredClone(cache[key])])),
   };
   try { validatePreservedAccountingHistoryEnvelope(value); } catch { fail("CACHE_INVALID"); }
   return value;

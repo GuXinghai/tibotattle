@@ -16,6 +16,9 @@ import { loadWindowsLegacyStateReadBinding } from "../src/platform/index.js";
 // content-free synthetic event and the resident calibration test seam.
 const cacheJson = await readFile(new URL("./fixtures/desktop-accounting-v025.json", import.meta.url), "utf8");
 const cache = JSON.parse(cacheJson);
+// Generated independently using candidate 0084cbef's actual v0.24 builder
+// and validator; this is not a newer fixture with a relabelled version.
+const cacheV024Json = await readFile(new URL("./fixtures/desktop-accounting-v024.json", import.meta.url), "utf8");
 const hash = value => createHash("sha256").update(value).digest("hex");
 const failure = code => e => e.code === `DESKTOP_CALCULATION_MIGRATION_${code}`;
 const nativeSkip = process.platform === "win32" && process.arch === "x64" ? false : "physical Windows x64 only";
@@ -68,13 +71,30 @@ test("one-time cache admission refuses unknown versions, fields, malformed evide
   assert.throws(() => validatePreservedAccountingHistoryEnvelope({ ...envelope, rawThread: "synthetic" }), { code: "preserved_accounting_history_invalid" });
 });
 
+test("v0.24 one-time preservation retains its original schema and missing pricing-method evidence", () => {
+  const original = JSON.parse(cacheV024Json), envelope = preserveDesktopAccountingCacheV025(cacheV024Json);
+  assert.equal(envelope.sourceSchemaVersion, "local-replay-safe-accounting-v0.24");
+  assert.equal(envelope.sourceCacheJson, cacheV024Json);
+  assert.equal(envelope.sourceJsonSha256, hash(cacheV024Json));
+  assert.equal(envelope.summary.pricingMethodVersion, null);
+  assert.equal(Object.hasOwn(original, "pricingMethodVersion"), false);
+  assert.deepEqual(envelope.summary.history, original.history);
+  assert.deepEqual(envelope.summary.periods, original.periods);
+  assert.deepEqual(envelope.summary.timeline, original.timeline);
+  assert.equal(projectPreservedAccountingHistorySummary(envelope).generatedAt, original.generatedAt);
+  assert.throws(() => preserveDesktopAccountingCacheV025(JSON.stringify({ ...original,
+    pricingMethodVersion: "invented" })), failure("CACHE_SHAPE"));
+  assert.throws(() => preserveDesktopAccountingCacheV025(JSON.stringify({ ...original,
+    schemaVersion: "local-replay-safe-accounting-v0.23" })), failure("CACHE_VERSION"));
+});
+
 test("copy arguments are explicit and unique with no discovery or default paths", () => {
   assert.throws(() => parseDesktopCalculationMigrationArguments([]));
   assert.throws(() => parseDesktopCalculationMigrationArguments(["--source-state-directory", "x", "--source-state-directory", "y"]));
   assert.throws(() => parseDesktopCalculationMigrationArguments(["--activate", "yes"]));
 });
 
-async function fixture({ cachePresent = true, lock = false, hot = false } = {}) {
+async function fixture({ cachePresent = true, lock = false, hot = false, legacyCacheJson = cacheJson } = {}) {
   const native = loadWindowsLegacyStateReadBinding();
   const root = join(tmpdir(), `desktop-calculation-copy-${randomUUID()}`);
   native.ensureDirectory(root);
@@ -96,7 +116,7 @@ async function fixture({ cachePresent = true, lock = false, hot = false } = {}) 
     put.run("schema_version", JSON.stringify("local-collector-state-v1"));
     put.run("checkpoint", JSON.stringify({ files: {}, collectionStartedAt: "2026-07-01T00:00:00Z", sourceAbsent: true }));
     put.run("legacy_refresh_use", JSON.stringify({ used: 7 }));
-    if (cachePresent) put.run("accounting_cache", cacheJson);
+    if (cachePresent) put.run("accounting_cache", legacyCacheJson);
     d.prepare("INSERT INTO records VALUES(1,?,?,?,?,?,?,?)").run("synthetic-event", "a".repeat(64), "codex_quota_snapshot",
       "2026-07-26T12:00:00.000Z", 1785067200000, '{"synthetic":true,"sourceAbsent":true}', "2026-07-26T12:00:01.000Z");
     if (lock) d.prepare("INSERT INTO instance_locks VALUES('synthetic',123,'2026-07-26T12:00:00Z')").run();
@@ -146,6 +166,27 @@ test("physical copy with no old cache retains facts without inventing history", 
   const f = await fixture({ cachePresent: false });
   assert.equal((await convertDesktopCalculationCopy(f.options)).preservedHistory, false);
   assert.equal(await readLocalCollectorPreservedAccountingHistory({ stateFile: join(f.options.targetStateDirectory, "local-collector-state-v1.sqlite") }), null);
+});
+
+test("physical v0.24 copy preserves exact older history without promotion to the current cache", { skip: nativeSkip }, async () => {
+  const f = await fixture({ legacyCacheJson: cacheV024Json });
+  assert.equal((await convertDesktopCalculationCopy(f.options)).preservedHistory, true);
+  assert.deepEqual(await readFile(f.statePath), f.originalState);
+  assert.deepEqual(await readFile(f.settingsPath), f.settingsBytes);
+  const target = join(f.options.targetStateDirectory, "local-collector-state-v1.sqlite");
+  const d = new DatabaseSync(target, { readOnly: true });
+  try {
+    const envelope = JSON.parse(d.prepare("SELECT value_json FROM meta WHERE key='accounting_cache_history_v1'").get().value_json);
+    assert.equal(envelope.sourceCacheJson, cacheV024Json);
+    assert.equal(envelope.sourceSchemaVersion, "local-replay-safe-accounting-v0.24");
+    assert.equal(envelope.summary.pricingMethodVersion, null);
+    assert.equal(d.prepare("SELECT 1 FROM meta WHERE key='accounting_cache'").get(), undefined);
+    assert.equal(d.prepare("SELECT COUNT(*) AS n FROM records").get().n, 1);
+  } finally { d.close(); }
+  const summary = await readLocalCollectorPreservedAccountingHistory({ stateFile: target });
+  assert.equal(summary.status, "historical_only");
+  assert.equal(summary.history.totals.events, 1);
+  assert.equal((await convertDesktopCalculationCopy(f.options)).status, "already_complete");
 });
 
 test("normal cache publication refuses a different version before touching the original database", { skip: nativeSkip }, async () => {

@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 export const PRESERVED_ACCOUNTING_HISTORY_SCHEMA = "local-accounting-preserved-history-v1";
 export const PRESERVED_ACCOUNTING_HISTORY_META_KEY = "accounting_cache_history_v1";
 export const PRESERVED_ACCOUNTING_HISTORY_MAXIMUM_BYTES = 128 * 1024 * 1024;
-const SOURCE_SCHEMA = "local-replay-safe-accounting-v0.25";
+const SOURCE_SCHEMAS = ["local-replay-safe-accounting-v0.24", "local-replay-safe-accounting-v0.25"];
 const SOURCE_LIMIT = 64 * 1024 * 1024;
 const SUMMARY_KEYS = ["generatedAt", "coveredAt", "sourceDescriptor", "history", "periods", "timeline",
   "quotaTimeline", "sparkUsageTimeline", "sparkQuotaTimeline", "priceBasis", "pricingMethodVersion",
@@ -41,7 +41,7 @@ function boundedJson(value) {
 
 export function validatePreservedAccountingHistoryEnvelope(value) {
   if (!exact(value, KEYS) || value.schemaVersion !== PRESERVED_ACCOUNTING_HISTORY_SCHEMA
-      || value.status !== "historical_only" || value.sourceSchemaVersion !== SOURCE_SCHEMA
+      || value.status !== "historical_only" || !SOURCE_SCHEMAS.includes(value.sourceSchemaVersion)
       || typeof value.sourceCacheJson !== "string" || Buffer.byteLength(value.sourceCacheJson) < 2
       || Buffer.byteLength(value.sourceCacheJson) > SOURCE_LIMIT
       || !/^[a-f0-9]{64}$/u.test(value.sourceJsonSha256)
@@ -55,7 +55,10 @@ export function validatePreservedAccountingHistoryEnvelope(value) {
       || value.summary.periods.length > 32
       || !["timeline", "quotaTimeline", "sparkUsageTimeline", "sparkQuotaTimeline"]
         .every(key => Array.isArray(value.summary[key]) && value.summary[key].length <= 1_000_000)
-      || !["priceBasis", "pricingMethodVersion", "priceEpochBasis", "priceRegistryVersion", "priceRegistryObservedAt"]
+      || !(value.sourceSchemaVersion === "local-replay-safe-accounting-v0.24"
+        ? value.summary.pricingMethodVersion === null
+        : typeof value.summary.pricingMethodVersion === "string" && value.summary.pricingMethodVersion.length <= 256)
+      || !["priceBasis", "priceEpochBasis", "priceRegistryVersion", "priceRegistryObservedAt"]
         .every(key => typeof value.summary[key] === "string" && value.summary[key].length <= 256)
       || Buffer.byteLength(JSON.stringify(value)) > PRESERVED_ACCOUNTING_HISTORY_MAXIMUM_BYTES) {
     throw Object.assign(new Error("Preserved accounting history is invalid"), { code: "preserved_accounting_history_invalid" });

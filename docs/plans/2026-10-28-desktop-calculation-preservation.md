@@ -39,10 +39,13 @@ never be erased or replaced by an empty cache database.
 
 Only explicit cold source and independent, existing empty protected target
 directories are accepted. Source data is held read-only and copied without overwrite. The
-converter accepts settings v5 and cache v0.25, produces settings v6 and a
+converter accepts settings v5 and the exact cache v0.24/v0.25 families, produces settings v6 and a
 `local-accounting-preserved-history-v1` record, and leaves the active accounting
 cache absent until a genuine calculation publishes the new current format.
 This is not version relabelling.
+The v0.24 family has no `pricingMethodVersion` field. Its preserved summary
+records that value as NULL rather than inventing a newer pricing method, and
+the original source schema and complete JSON remain unchanged.
 
 The history record preserves the entire original cache JSON string and its
 SHA-256 digest. Its bounded new-format summary preserves original history,
