@@ -5261,6 +5261,8 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 .dashboard-shell .work-usage-actions .work-usage-status { margin: 0; }
 .dashboard-shell button:is(.work-usage-cancel, [data-performance-focus="cancel"]),
 .dashboard-shell button:is(.work-usage-cancel, [data-performance-focus="cancel"]):hover {
+  flex-shrink: 0;
+  white-space: nowrap;
   min-height: 24px;
   padding: 5px 0;
   border: 0;
