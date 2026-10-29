@@ -44,12 +44,22 @@ cursors, parser/model repairs and actual byte changes retain the replay path.
 This source change does not qualify the running packaged candidate or establish
 an improvement to the previously observed real refresh duration.
 
-The committed accounting-reuse repair distinguishes stable missing-thread
-origin evidence from failed metadata reads. Equal origin evidence, including the
-same unknown membership, may reuse the qualified process-local result while
-preserving unknown interval reasons and the original evaluation clock. Origin
-changes or unavailable read evidence invalidate reuse. No persisted schema or
-existing user state is changed by this policy repair.
+Accounting reuse distinguishes stable missing-thread origin evidence from failed
+metadata reads. A bounded versioned certificate in the protected collector meta
+store binds the exact cache bytes to its input digest. Cache and certificate are
+published in one transaction; ordinary cache replacement invalidates the old
+certificate. Certificates contain no session identities, paths or content.
+Cold startup may verify this certificate without a prior in-memory calculation.
+Existing caches without certificates remain preserved but need one qualified
+calculation before cross-process reuse. No old artifact is relabeled as proven.
+Historical calculations invalidate on facts, origins, speed evidence, effective
+settings, calculation rules or future-record admission changes, not 30-minute
+wall-clock age. Stable unknown evidence remains unknown. Moving windows and
+current-time projections update separately from historical fitting; observation
+freshness remains independent. This change does not migrate or delete history.
+Public weekly-summary timestamps label the moving-window evaluation; durable
+historical calculation timestamps remain original. Snapshot recent periods use
+the current index projection rather than old disk-window totals.
 
 The working tree uses a local event stream for startup snapshot, refresh, and
 independent report completion notifications. The dashboard re-reads the relevant

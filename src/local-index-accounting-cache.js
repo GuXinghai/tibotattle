@@ -13,6 +13,7 @@ import {
   REPLAY_SAFE_CALIBRATION_INTERNALS,
   buildReplaySafeAccountingCache,
   refreshReplaySafeAccountingCache,
+  projectReplaySafeAccountingTime,
 } from "./replay-safe-accounting-cache.js";
 
 // The replay-safe accounting cache, built from the v2 local index store.
@@ -166,7 +167,7 @@ export function createLocalIndexAccountingScan({
         const generation = describeLocalIndexGeneration(database, report, commitSeq);
         if (generation === null) throw fixedError("local_unified_index_coverage_unavailable");
         const coverage = coverageFor(database, generation, report);
-        const history = report.coveredAt.startAt === null || report.coveredAt.endAt === null
+        const history = indexedHistory === undefined || report.coveredAt.startAt === null || report.coveredAt.endAt === null
           ? null
           : {
             startMs: Date.parse(report.coveredAt.startAt),
@@ -499,6 +500,15 @@ export async function buildLocalIndexAccountingCache({
       indexFile,
       contextBehavior: contextBehavior ?? "source_native",
     }),
+    calibrationSource: localIndexCalibrationSource({ indexFile }),
+  });
+}
+
+// Refresh moving windows without rebuilding historical calibration or ledgers.
+export async function projectLocalIndexAccountingTime({ indexFile, cache, expectedGeneration,
+  contextBehavior = "source_native", ...options } = {}) {
+  return projectReplaySafeAccountingTime({ ...options, cache, expectedGeneration,
+    scan: createLocalIndexAccountingScan({ indexFile, contextBehavior }),
     calibrationSource: localIndexCalibrationSource({ indexFile }),
   });
 }

@@ -89,8 +89,7 @@ const snapshotQuotaPublicationScopes = new WeakMap();
 // store, and the timeline it can honestly draw is capped at this many days.
 // With the unified index available the timeline and the "all" period cover
 // the index's whole span instead.
-const MAX_REPLAY_SAFE_CACHE_AGE_MS = 30 * 60 * 1_000;
-const MAX_COLLECTOR_LIVE_AGE_MS = MAX_REPLAY_SAFE_CACHE_AGE_MS;
+const MAX_COLLECTOR_LIVE_AGE_MS = 30 * 60 * 1_000;
 export const INFORMATIONAL_HISTORY_GAP_MAX_SHARE = 0.01;
 const ALLOWANCE_CAPACITY_SCHEMA_VERSION =
   "codex-primary-allowance-capacity-v0.2";
@@ -674,6 +673,7 @@ function projectLiveWeeklyCalibration(
   {
     population = false,
     windowDurationMinutes = SEVEN_DAY_WINDOW_MINUTES,
+    evaluatedAt = null,
   } = {},
 ) {
   const weekly = cache?.weeklyCalibration;
@@ -705,11 +705,15 @@ function projectLiveWeeklyCalibration(
         { weeklyCalibration: value }, null, {
           population: true,
           windowDurationMinutes,
+          evaluatedAt,
         },
       )),
     } : {}),
     status: weekly.status === "estimated" ? "available" : "insufficient_evidence",
-    generatedAt: weekly.generatedAt,
+    // This projection includes the moving recent-model mix. Its existing
+    // display timestamp must identify that evaluation, not a fresh snapshot
+    // or the older historical fit. The durable fit clock stays untouched.
+    generatedAt: evaluatedAt ?? weekly.generatedAt,
     artifactStatus: weekly.status,
     errorCode: null,
     dataClass: "live_replay_safe_cache",
@@ -814,7 +818,7 @@ function projectSelectedAllowanceWeeklyCalibration(
   }
   const projected = projectLiveWeeklyCalibration({
     weeklyCalibration: source.calibration,
-  }, cacheReadErrorCode);
+  }, cacheReadErrorCode, { evaluatedAt: cache?.coveredAt?.endAt ?? null });
   if (projected.status === "unavailable") return projected;
   return {
     ...projected,
@@ -847,6 +851,7 @@ function projectFiveHourAllowanceCalibration(
     weeklyCalibration: fiveHour,
   }, cacheReadErrorCode, {
     windowDurationMinutes: FIVE_HOUR_WINDOW_MINUTES,
+    evaluatedAt: cache?.coveredAt?.endAt ?? null,
   });
 }
 
@@ -2255,7 +2260,6 @@ export async function buildLocalCompanionSnapshot({
       timing.measure("snapshot_accounting_read", () => readReplaySafeAccountingCache({
         stateFile: collectorStateFile,
         now: () => nowMs,
-        maximumAgeMs: MAX_REPLAY_SAFE_CACHE_AGE_MS,
         // Unified authority is bound only after the parallel index projection
         // supplies its immutable generation below. This first read is merely a
         // cheap cache-presence probe; never label it as a bound unified read.
@@ -2301,7 +2305,6 @@ export async function buildLocalCompanionSnapshot({
       replaySafeAccounting = await timing.measure("snapshot_accounting_read", () => readReplaySafeAccountingCache({
         stateFile: collectorStateFile,
         now: () => nowMs,
-        maximumAgeMs: MAX_REPLAY_SAFE_CACHE_AGE_MS,
         sourceMode: "unified",
         contextBehavior: "source_native",
         expectedGeneration: unified.generation,
@@ -2505,19 +2508,9 @@ export async function buildLocalCompanionSnapshot({
   // list names the withheld pricing - so conflating them buys nothing and
   // costs the reader a true statement.
   const freshnessStatus = collectorFreshnessStatus;
-  // The cache reader's "stale" verdict is wall-clock age alone:
-  // now - coveredAt.endAt > MAX_REPLAY_SAFE_CACHE_AGE_MS. But coveredAt.endAt
-  // is stamped only when the cache is REBUILT, and the foreground refresh
-  // deliberately reuses the cache untouched whenever a pass writes no new
-  // rollout usage records (local-companion-refresh.js). An idle stretch —
-  // quota observations arriving, no token usage — therefore ages the cache
-  // past the threshold while the newest observation stays seconds-fresh, and
-  // the "stale" verdict indicts totals that in fact cover every known usage
-  // record. Wall clock is the wrong comparator. The honest question is
-  // whether exportable evidence exists beyond the cache's coverage end, the
-  // same comparison the unified-index lag warning below already makes, so the
-  // verdict is re-derived against that clock here and "stale" survives only
-  // when newer evidence genuinely outruns the coverage end.
+  // Historical calculations do not expire with wall-clock age. Observation
+  // freshness is independent; an explicitly stale result can be restored only
+  // when its coverage actually includes the latest known exportable evidence.
   const accountingCoverageEndMs = replaySafeCache === null
     ? Number.NaN
     : Date.parse(replaySafeCache.coveredAt.endAt);
@@ -2533,18 +2526,19 @@ export async function buildLocalCompanionSnapshot({
   const accountingCoversKnownEvidence = Number.isFinite(accountingCoverageEndMs)
     && (latestExportableRecordAt === null
       || latestExportableRecordAt - accountingCoverageEndMs
-        <= MAX_REPLAY_SAFE_CACHE_AGE_MS);
+        <= 0);
   const accountingStatus =
     replaySafeAccounting.status === "stale" && accountingCoversKnownEvidence
       ? "available"
       : replaySafeAccounting.status;
-  // Recent periods prefer the freshly refreshed replay-safe cache, then the
-  // unified index (also replay-suppressed), and fall back to the raw collector
-  // projection — which counts fork replay — only when neither exists.
-  const recentUsage = replaySafeCache?.periods
-    ?? (unifiedAvailable
+  // The authoritative index projection evaluates these moving windows at
+  // this snapshot's now. A disk cache may have unchanged historical inputs
+  // while its old 24h/7d/30d windows no longer describe the present.
+  const recentUsage = unifiedAvailable
       ? unified.usage
-      : unifiedAccountingWithheld
+      : replaySafeCache?.periods
+    ?? (
+      unifiedAccountingWithheld
         ? insufficientEvidenceUsagePeriods()
         : collector.usage);
   // The unified index owns the broadest period whenever it is present: its
@@ -3074,9 +3068,9 @@ export async function buildLocalCompanionSnapshot({
           reportingWindow: (() => {
             const endAt = period.id === "history"
               ? historyAccounting.generatedAt
-              : period.id === "all" && unifiedAvailable
-                ? unified.generatedAt
-                : replaySafeCache?.generatedAt
+              : unifiedAvailable
+                ? new Date(nowMs).toISOString()
+                : replaySafeCache?.coveredAt?.endAt
                   ?? (unifiedAvailable ? unified.generatedAt : null);
             const endMs = Date.parse(endAt ?? "");
             if (!Number.isFinite(endMs)) return null;

@@ -2046,7 +2046,6 @@ test("zero-write local refresh reuses a current valid accounting cache without a
     now: clock,
     sourceMode: "unified",
     contextBehavior: "source_native",
-    maximumAgeMs: 30 * 60 * 1_000,
   });
   assert.equal(expectedGeneration.id, UNIFIED_GENERATION.id);
   assert.equal(expectedGeneration.fingerprint, UNIFIED_GENERATION.fingerprint);
@@ -2310,7 +2309,7 @@ test("a memory-budget rebuild miss serves the retained cache, reports deferred, 
   });
 });
 
-test("zero-write budget backoff keeps an expired accounting result deferred", async () => {
+test("zero-write refresh does not rebuild an unchanged result for wall-clock age", async () => {
   let nowMs = Date.parse("2026-07-23T12:00:00.000Z");
   let rebuilds = 0;
   const runner = createLocalCollectorRefreshRunner({
@@ -2329,12 +2328,12 @@ test("zero-write budget backoff keeps an expired accounting result deferred", as
         reason: "accounting_transition_rss_limit_exceeded", retained: true };
     },
   });
-  assert.equal((await runner()).accounting.refreshStatus, "deferred");
+  assert.equal((await runner()).accounting.refreshStatus, "reused");
   nowMs += 60_000;
   const second = await runner();
-  assert.equal(second.accounting.refreshStatus, "deferred");
+  assert.equal(second.accounting.refreshStatus, "reused");
   assert.equal(second.accounting.generatedAt, REUSABLE_ACCOUNTING_CACHE.generatedAt);
-  assert.equal(rebuilds, 1);
+  assert.equal(rebuilds, 0);
 });
 
 test("budget backoff serves a real prior-generation cache only as deferred", async t => {

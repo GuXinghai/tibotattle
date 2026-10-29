@@ -12,6 +12,7 @@ import {
 import { selectProductionAccountObservationSecret } from "./account-observation-production.js";
 import { runCollectorOnce } from "./passive-collector.js";
 import { createLocalIndexAccountingReuse } from "./local-index-accounting-reuse.js";
+import { projectLocalIndexAccountingTime } from "./local-index-accounting-cache.js";
 import {
   REPLAY_SAFE_ACCOUNTING_SCHEMA_VERSION,
   readReplaySafeAccountingCache,
@@ -31,7 +32,6 @@ const EARLY_HEADLINE_RECENT_RUN_BYTES = 128 * 1024 * 1024;
 const EARLY_HEADLINE_RECENT_TAIL_BYTES = 4 * 1024 * 1024;
 const EARLY_HEADLINE_RECENT_PRELUDE_BYTES = 512 * 1024;
 const EARLY_HEADLINE_BUFFERED_LINE_BYTES = 1024 * 1024;
-const MAX_REUSABLE_ACCOUNTING_CACHE_AGE_MS = 30 * 60 * 1_000;
 // After an accounting rebuild misses its memory budget the FULL rebuild is
 // backed off for this long. The refresh endpoint is driven by an external
 // ~5-minute scheduler, and without a backoff every tick re-ran the same doomed
@@ -754,6 +754,7 @@ export function createLocalCollectorRefreshRunner({
   readAccountAttributionBinding = null,
   runCollector = runCollectorOnce,
   readAccountingCache = readReplaySafeAccountingCache,
+  projectAccountingTime = projectLocalIndexAccountingTime,
   refreshAccounting = null,
   getUnknownSpeedPolicy = () => DEFAULT_UNKNOWN_SPEED_POLICY,
   // Cursor-based incremental advance of the local index. An ordinary
@@ -781,6 +782,9 @@ export function createLocalCollectorRefreshRunner({
   if (typeof runCollector !== "function") throw new TypeError("runCollector must be a function");
   if (typeof readAccountingCache !== "function") {
     throw new TypeError("readAccountingCache must be a function");
+  }
+  if (typeof projectAccountingTime !== "function") {
+    throw new TypeError("projectAccountingTime must be a function");
   }
   if (refreshAccounting !== null && typeof refreshAccounting !== "function") {
     throw new TypeError("refreshAccounting must be a function or null");
@@ -1048,19 +1052,42 @@ export function createLocalCollectorRefreshRunner({
         && accountingMayRun
         && unifiedAccountingReady) {
       let calculationProof = null;
+      let timeProjectionFailed = false;
       try {
         if (signal?.aborted !== true) {
           calculationProof = await timing.measure("reuse_proof_before", () => calculationReuse.readProof({
-            generation: unifiedIndex.generation, declaredSpeedBaselines, unknownSpeedPolicy, signal, onTiming, monotonicClock, onReuseDiagnostic, onOriginDiagnostic,
+            generation: unifiedIndex.generation, declaredSpeedBaselines, unknownSpeedPolicy, nowMs: clock(), signal, onTiming, monotonicClock, onReuseDiagnostic, onOriginDiagnostic,
           }));
           accounting = await timing.measure("reuse_check", () => calculationReuse.reuse({
             proof: calculationProof, nowMs: clock(),
-            maximumAgeMs: MAX_REUSABLE_ACCOUNTING_CACHE_AGE_MS, signal, onReuseDiagnostic,
+            signal, onReuseDiagnostic,
           }));
+        }
+        if (accounting !== null && unifiedIndexFile !== null && stateFile !== null) {
+          try {
+            accounting = await timing.measure("accounting_time_projection", () => projectAccountingTime({
+              indexFile: unifiedIndexFile, cache: accounting, expectedGeneration: unifiedIndex.generation,
+              now: clock, declaredSpeedBaselines, signal, onTiming, monotonicClock,
+            }));
+            const after = await calculationReuse.readProof({ generation: unifiedIndex.generation,
+              declaredSpeedBaselines, unknownSpeedPolicy, nowMs: clock(), signal });
+            if (!await calculationReuse.persist({ cache: accounting, before: calculationProof, after, signal })) {
+              throw new Error("accounting_time_projection_inputs_changed");
+            }
+          } catch (error) {
+            accounting = null;
+            timeProjectionFailed = true;
+            throw error;
+          }
         }
         if (accounting !== null) accountingRefreshStatus = "reused";
       } catch (error) {
         if (error?.name === "AbortError") throw error;
+        if (timeProjectionFailed) {
+          const failure = new Error("accounting_unified_source_unavailable");
+          failure.code = "accounting_unified_source_unavailable";
+          throw failure;
+        }
         // A missing or changing proof is an ordinary cache miss. Preserve the
         // existing authoritative reader/rebuild path and its last-good state.
         reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, "lookup", "operation_failed");
@@ -1075,8 +1102,8 @@ export function createLocalCollectorRefreshRunner({
       // off: within this window we serve the retained cache rather than re-run
       // the doomed pass on every scheduler tick and blank the surface again.
       const withinRebuildBackoff = clock() < accountingRebuildDeferUntilMs;
-      const existingCalculationProven = unifiedIndexFile === null || stateFile === null
-        || calculationReuse.matches(calculationProof);
+      const existingCalculationProven = !timeProjectionFailed && (unifiedIndexFile === null || stateFile === null
+        || calculationReuse.matches(calculationProof));
       if (accounting === null
           && (collectorWroteNoRolloutUsage || withinRebuildBackoff)
           && (withinRebuildBackoff || existingCalculationProven)
@@ -1088,7 +1115,6 @@ export function createLocalCollectorRefreshRunner({
             sourceMode: "unified",
             contextBehavior: "source_native",
             expectedGeneration: unifiedIndex.generation,
-            maximumAgeMs: MAX_REUSABLE_ACCOUNTING_CACHE_AGE_MS,
             ...(withinRebuildBackoff ? { includeStaleGeneration: true } : {}),
           }));
           const retained = withinRebuildBackoff
@@ -1228,10 +1254,10 @@ export function createLocalCollectorRefreshRunner({
             accountingRefreshStatus = "rebuilt";
             try {
               const after = await timing.measure("reuse_proof_after", () => calculationReuse.readProof({
-                generation: unifiedIndex.generation, declaredSpeedBaselines, unknownSpeedPolicy, signal, onTiming, monotonicClock,
+                generation: unifiedIndex.generation, declaredSpeedBaselines, unknownSpeedPolicy, nowMs: clock(), signal, onTiming, monotonicClock,
                 onReuseDiagnostic, onOriginDiagnostic, diagnosticPhase: "proof_after",
               }));
-              timing.measureSync("reuse_remember", () => calculationReuse.remember({ cache: accounting, before: calculationProof, after, onReuseDiagnostic }));
+              await timing.measure("reuse_remember", () => calculationReuse.persist({ cache: accounting, before: calculationProof, after, signal, onReuseDiagnostic }));
             } catch (error) {
               if (error?.name === "AbortError") throw error;
               reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, "remember", "operation_failed");

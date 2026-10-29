@@ -10,6 +10,7 @@ import { refreshLocalIndex } from "../src/local-index-refresh.js";
 import { assertReplaySafeAccountingCache } from "../src/replay-safe-accounting-cache.js";
 import { createWorkspace } from "./helpers/local-index-facts.js";
 import { createLocalCollectorRefreshRunner } from "../src/local-companion-refresh.js";
+import { readLocalCollectorAccountingReuse } from "../src/local-collector-state.js";
 import { captureRuntimeModelEvidence } from "../src/local-index-runtime-model-evidence.js";
 
 const NOW = Date.parse("2026-09-01T01:00:00.000Z");
@@ -75,9 +76,9 @@ test("process-local semantic reuse recomposes metadata and preserves the evaluat
   assert.equal(writes, 1, "same-generation process hits do not republish SQLite");
   assert.equal(String(cache.sourceDescriptor.generation), String(firstGeneration.id), "original artifact is not mutated");
   const remember = () => reuse.remember({ cache: result, before: proof, after: proof });
-  assert.equal(await reuse.reuse({ proof, nowMs: NOW + 1_800_001, maximumAgeMs: 1_800_000, onReuseDiagnostic }), null);
-  assert.deepEqual(reasons.pop(), { phase: "lookup", code: "expired" });
-  assert.equal(reuse.matches(proof), false, "an expired process clone is released before rebuilding");
+  assert.ok(await reuse.reuse({ proof, nowMs: NOW + 1_800_001, onReuseDiagnostic }));
+  assert.deepEqual(reasons.pop(), { phase: "lookup", code: "reused" });
+  assert.equal(reuse.matches(proof), true, "time alone does not invalidate historical calculations");
   remember();
   assert.equal(await reuse.reuse({ proof, nowMs: NOW - 1, maximumAgeMs: 1_800_000 }), null);
   remember();
@@ -289,4 +290,144 @@ test("calculation proofs bind the effective unknown-speed assumption, not an ina
   assert.notEqual(custom.key, standard.key);
   assert.notEqual((await proof({ mode: "custom", customFastRatioBps: 301 })).key, custom.key);
   await assert.rejects(proof({ mode: "custom", customFastRatioBps: null }), /policy is invalid/);
+});
+
+
+test("durable receipts reuse a cold cache after hours and reject changed inputs", async t => {
+  const workspace = createWorkspace({ files: 1, events: 20, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite");
+  const stateFile = join(workspace.state, "collector.sqlite");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile,
+    secretFile: workspace.secretFile, workerCount: 1 });
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  let known = true;
+  const options = { indexFile, stateFile, codexHome: workspace.codexHome,
+    readOrigins: async (_home, ids) => ({ complete: true,
+      relations: new Map(ids.map(id => [id, { originKnown: known, autoReview: false }])) }) };
+  const first = createLocalIndexAccountingReuse(options);
+  const before = await first.readProof({ generation, nowMs: NOW });
+  const cache = await buildLocalIndexAccountingCache({ indexFile, codexHome: workspace.codexHome,
+    expectedGeneration: generation, now: () => NOW });
+  assert.equal(await first.persist({ cache, before, after: await first.readProof({ generation, nowMs: NOW }) }), true);
+  const cold = createLocalIndexAccountingReuse(options);
+  const later = NOW + 3 * 3_600_000;
+  const restored = await cold.reuse({ proof: await cold.readProof({ generation, nowMs: later }), nowMs: later });
+  assert.deepEqual(restored, cache, "cold restore preserves original calculation clock and all history");
+  known = false;
+  const changed = createLocalIndexAccountingReuse(options);
+  assert.equal(await changed.reuse({ proof: await changed.readProof({ generation, nowMs: later }), nowMs: later }), null);
+  const policy = createLocalIndexAccountingReuse(options);
+  assert.equal(await policy.reuse({ proof: await policy.readProof({ generation, nowMs: later,
+    unknownSpeedPolicy: { mode: "fast", customFastRatioBps: null } }), nowMs: later }), null);
+  known = true;
+  const rollback = createLocalIndexAccountingReuse(options);
+  assert.equal(await rollback.reuse({ proof: before, nowMs: NOW - 1 }), null);
+  const cancelled = createLocalIndexAccountingReuse(options);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(cancelled.reuse({ proof: before, nowMs: NOW, signal: controller.signal }), { name: "AbortError" });
+});
+
+
+test("retained future facts entering the admission window invalidate proof without another write", async t => {
+  const workspace = createWorkspace({ files: 1, events: 2, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile,
+    secretFile: workspace.secretFile, workerCount: 1 });
+  const db = new DatabaseSync(indexFile);
+  try { db.prepare("UPDATE usage_event SET observed_at_ms=?")
+    .run(NOW + 10 * 60_000); } finally { db.close(); }
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  const reuse = createLocalIndexAccountingReuse({ indexFile, codexHome: workspace.codexHome,
+    stateFile: join(workspace.state, "collector.sqlite"), readOrigins: async (_home, ids) => ({ complete: true,
+      relations: new Map(ids.map(id => [id, { originKnown: true, autoReview: false }])) }) });
+  const before = await reuse.readProof({ generation, nowMs: NOW });
+  const after = await reuse.readProof({ generation, nowMs: NOW + 6 * 60_000 });
+  assert.equal(before.calculationRevision, after.calculationRevision);
+  assert.notEqual(before.key, after.key);
+});
+
+
+test("cold time-projection failure preserves durable history and never falls through to full rebuild", async t => {
+  const workspace = createWorkspace({ files: 1, events: 10, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite"), stateFile = join(workspace.state, "collector.sqlite");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile, secretFile: workspace.secretFile, workerCount: 1 });
+  const db = new DatabaseSync(indexFile, { readOnly: true });
+  let ids; try { ids = db.prepare("SELECT session_uuid FROM session").all(); } finally { db.close(); }
+  const metadata = new DatabaseSync(join(workspace.codexHome, "state_5.sqlite"));
+  try {
+    metadata.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, source TEXT, thread_source TEXT, rollout_path TEXT)");
+    for (const row of ids) metadata.prepare("INSERT INTO threads VALUES (?,NULL,'cli',NULL)").run(row.session_uuid);
+  } finally { metadata.close(); }
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  const publisher = createLocalIndexAccountingReuse({ indexFile, stateFile, codexHome: workspace.codexHome });
+  const proof = await publisher.readProof({ generation, nowMs: NOW });
+  const cache = await buildLocalIndexAccountingCache({ indexFile, codexHome: workspace.codexHome,
+    expectedGeneration: generation, now: () => NOW });
+  assert.equal(await publisher.persist({ cache, before: proof, after: proof }), true);
+  const original = await readLocalCollectorAccountingReuse({ stateFile });
+  let projections = 0, rebuilds = 0;
+  const runner = createLocalCollectorRefreshRunner({ stateFile, unifiedIndexFile: indexFile,
+    codexHome: workspace.codexHome, clock: () => NOW + 3_600_000,
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => ({ rolloutRecordsWritten: 0, filesDiscovered: 1,
+      refresh: { attempted: false, recordWritten: false, errorCode: null } }),
+    refreshUnifiedIndex: async () => ({ status: "ingested", unchanged: true, generation: {
+      ...generation, status: "complete", discoveryComplete: true, diagnosticsComplete: true,
+      usageProvenanceComplete: true, sourceOrderComplete: true, quotaProvenanceComplete: true,
+      toolProvenanceComplete: true } }),
+    projectAccountingTime: async () => { projections++; throw Object.assign(new Error("synthetic resource limit"),
+      { code: "accounting_refresh_memory_exceeded" }); },
+    refreshAccounting: async () => { rebuilds++; throw new Error("unexpected full rebuild"); },
+  });
+  await assert.rejects(runner(), { code: "accounting_unified_source_unavailable" });
+  assert.equal(projections, 1);
+  assert.equal(rebuilds, 0);
+  assert.deepEqual(await readLocalCollectorAccountingReuse({ stateFile }), original);
+});
+
+test("cold runner updates time projections without rebuilding and leaves another reusable receipt", async t => {
+  const workspace = createWorkspace({ files: 1, events: 10, days: 1 });
+  t.after(() => workspace.cleanup());
+  const indexFile = join(workspace.state, "index.sqlite"), stateFile = join(workspace.state, "collector.sqlite");
+  await refreshLocalIndex({ codexHome: workspace.codexHome, indexFile, secretFile: workspace.secretFile, workerCount: 1 });
+  const db = new DatabaseSync(indexFile, { readOnly: true });
+  let ids; try { ids = db.prepare("SELECT session_uuid FROM session").all(); } finally { db.close(); }
+  const metadata = new DatabaseSync(join(workspace.codexHome, "state_5.sqlite"));
+  try {
+    metadata.exec("CREATE TABLE threads(id TEXT PRIMARY KEY, source TEXT, thread_source TEXT, rollout_path TEXT)");
+    for (const row of ids) metadata.prepare("INSERT INTO threads VALUES (?,NULL,'cli',NULL)").run(row.session_uuid);
+  } finally { metadata.close(); }
+  const generation = readLocalIndexGenerationIdentity({ indexFile });
+  const publisher = createLocalIndexAccountingReuse({ indexFile, stateFile, codexHome: workspace.codexHome });
+  const proof = await publisher.readProof({ generation, nowMs: NOW });
+  const cache = await buildLocalIndexAccountingCache({ indexFile, codexHome: workspace.codexHome,
+    expectedGeneration: generation, now: () => NOW });
+  assert.equal(await publisher.persist({ cache, before: proof, after: proof }), true);
+  const original = await readLocalCollectorAccountingReuse({ stateFile });
+  let rebuilds = 0;
+  const later = NOW + 3 * 3_600_000;
+  const runner = createLocalCollectorRefreshRunner({ stateFile, unifiedIndexFile: indexFile,
+    codexHome: workspace.codexHome, clock: () => later,
+    selectAccountObservationSecret: () => ({ loadAccountObservationSecret: null }),
+    runCollector: async () => ({ rolloutRecordsWritten: 0, filesDiscovered: 1,
+      refresh: { attempted: false, recordWritten: false, errorCode: null } }),
+    refreshUnifiedIndex: async () => ({ status: "ingested", unchanged: true, generation: {
+      ...generation, status: "complete", discoveryComplete: true, diagnosticsComplete: true,
+      usageProvenanceComplete: true, sourceOrderComplete: true, quotaProvenanceComplete: true,
+      toolProvenanceComplete: true } }),
+    refreshAccounting: async () => { rebuilds++; throw new Error("unexpected full rebuild"); },
+  });
+  const result = await runner();
+  assert.equal(result.accounting.refreshStatus, "reused");
+  assert.equal(rebuilds, 0);
+  const stored = await readLocalCollectorAccountingReuse({ stateFile });
+  assert.equal(stored.cache.generatedAt, original.cache.generatedAt);
+  assert.equal(stored.cache.coveredAt.endAt, new Date(later).toISOString());
+  assert.ok(stored.proof);
+  const next = createLocalIndexAccountingReuse({ indexFile, stateFile, codexHome: workspace.codexHome });
+  const nextProof = await next.readProof({ generation, nowMs: later });
+  assert.deepEqual(await next.reuse({ proof: nextProof, nowMs: later }), stored.cache);
 });

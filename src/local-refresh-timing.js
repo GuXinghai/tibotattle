@@ -4,7 +4,7 @@ import { performance } from "node:perf_hooks";
 // inclusive; concurrent or nested spans must never be summed as total time.
 export const LOCAL_REFRESH_TIMING_STAGES = Object.freeze([
   "refresh_runner", "refresh_setup", "quota_collect", "quota_publish", "index_refresh",
-  "reuse_proof_before", "reuse_check", "cache_read", "accounting_rebuild",
+  "reuse_proof_before", "reuse_check", "cache_read", "accounting_rebuild", "accounting_time_projection",
   "reuse_proof_after", "reuse_remember", "proof_index_read", "proof_origins",
   "snapshot_reload", "snapshot_build", "snapshot_clone", "snapshot_persist", "snapshot_prepare_state", "snapshot_accounting_read", "snapshot_index_projection",
   "snapshot_collector_projection", "accounting_scan", "accounting_corpus_open",

@@ -6,10 +6,13 @@ import { readCodexLocalThreadUsageRelations } from "./platform/index.js";
 import { readLocalIndexGenerationIdentity } from "./local-index-companion-source.js";
 import { readLocalIndexCoverage } from "./local-index-report.js";
 import { openLocalIndexStore, readCalculationRevision, withReadSnapshot } from "./local-index-store.js";
-import { serializeLocalCollectorAccountingCache, writeLocalCollectorAccountingCache } from "./local-collector-state.js";
+import { readLocalCollectorAccountingReuse, serializeLocalCollectorAccountingCache, writeLocalCollectorAccountingCache } from "./local-collector-state.js";
 import { assertReplaySafeAccountingCache, REPLAY_SAFE_CALIBRATION_INTERNALS } from "./replay-safe-accounting-cache.js";
 
 const { throwIfAborted } = REPLAY_SAFE_CALIBRATION_INTERNALS;
+// Bump when historical calculation semantics change without another input revision.
+const CALCULATION_VERSION = "local-accounting-calculation-v1";
+const PROOF_VERSION = "local-accounting-reuse-proof-v1";
 const digest = value => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const sameGeneration = (a, b) => a?.id === b?.id && a?.fingerprint === b?.fingerprint;
 const fileIdentity = path => {
@@ -29,18 +32,20 @@ function relevantBaselines(windows, range) {
   });
 }
 
-// Proofs and calculation components live only in the refresh runner's process.
-// In particular, neither session identities nor an origin/ledger proof is stored.
+// Durable receipts contain only digests and calculation metadata, never session
+// identities or source paths. Storage binds each receipt to its exact cache bytes.
 export function createLocalIndexAccountingReuse({
   indexFile, codexHome, stateFile,
   readOrigins = readCodexLocalThreadUsageRelations,
   readIdentity = readLocalIndexGenerationIdentity,
   write = writeLocalCollectorAccountingCache,
+  read = readLocalCollectorAccountingReuse,
 } = {}) {
   let retained = null;
 
-  async function readProof({ generation, declaredSpeedBaselines = [], unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY, signal = null, onTiming = null, monotonicClock = undefined,
+  async function readProof({ generation, nowMs = Date.now(), declaredSpeedBaselines = [], unknownSpeedPolicy = DEFAULT_UNKNOWN_SPEED_POLICY, signal = null, onTiming = null, monotonicClock = undefined,
     onReuseDiagnostic = null, onOriginDiagnostic = null, diagnosticPhase = "proof_before" }) {
+    if (!Number.isFinite(nowMs)) throw new TypeError("proof clock must be finite");
     const report = code => reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, diagnosticPhase, code);
     const timing = createLocalRefreshTimer({ onTiming, clock: monotonicClock });
     if (!indexFile || !stateFile) { report("context_unavailable"); return null; }
@@ -64,6 +69,12 @@ export function createLocalIndexAccountingReuse({
           FROM source_diagnostic GROUP BY code ORDER BY code`).all().map(row => [row.code, Number(row.count)]));
         return { invalidSessions: ids.length !== sessions.length, id: commitSeq, calculationRevision: readCalculationRevision(database),
           coverage: readLocalIndexCoverage(database), sessions: ids, diagnostics,
+          // Facts already retained but not yet admitted must invalidate the receipt
+          // when time reaches their admission boundary, even without a DB write.
+          admission: [
+            Number(database.prepare("SELECT COUNT(*) AS n FROM usage_event WHERE observed_at_ms > ?").get(nowMs + 5 * 60_000).n),
+            Number(database.prepare("SELECT COUNT(*) AS n FROM quota_occurrence WHERE observed_at_ms > ?").get(nowMs).n),
+          ],
           usageRange: database.prepare(`SELECT
             (SELECT MIN(observed_at_ms) FROM usage_event) AS first,
             (SELECT MAX(observed_at_ms) FROM usage_event) AS last`).get(),
@@ -108,7 +119,7 @@ export function createLocalIndexAccountingReuse({
       components: { file: digest(fileKey), revision: snapshot.calculationRevision,
         baselines: digest(relevantBaselines(declaredSpeedBaselines, snapshot.usageRange)),
         origins: originKey, policy: unknownSpeedCalculationIdentity(unknownSpeedPolicy) },
-      key: digest([fileKey, snapshot.calculationRevision,
+      key: digest([CALCULATION_VERSION, fileKey, snapshot.calculationRevision, snapshot.admission,
         relevantBaselines(declaredSpeedBaselines, snapshot.usageRange), originKey,
         unknownSpeedCalculationIdentity(unknownSpeedPolicy)]) };
   }
@@ -133,7 +144,24 @@ export function createLocalIndexAccountingReuse({
     report("retained");
   }
 
-  async function reuse({ proof, nowMs, maximumAgeMs, signal = null, onReuseDiagnostic = null }) {
+  const receiptFor = (cache, proof) => ({ schemaVersion: PROOF_VERSION, key: proof.key,
+    generation: proof.id, fingerprint: proof.fingerprint, evaluatedAt: cache.coveredAt.endAt });
+
+  async function persist({ cache, before, after, signal = null, onReuseDiagnostic = null }) {
+    remember({ cache, before, after, onReuseDiagnostic });
+    if (retained === null) return false;
+    throwIfAborted(signal);
+    const identity = readIdentity({ indexFile });
+    if (!sameGeneration(identity, after) || identity.calculationRevision !== after.calculationRevision
+        || digest(fileIdentity(indexFile)) !== digest(after.fileKey)) { retained = null; return false; }
+    try {
+      await write({ stateFile, cache, reuseProof: receiptFor(cache, after), signal });
+      throwIfAborted(signal);
+      return true;
+    } catch (error) { retained = null; throw error; }
+  }
+
+  async function reuse({ proof, nowMs, signal = null, onReuseDiagnostic = null }) {
     const report = code => reportLocalRefreshReuseDiagnostic(onReuseDiagnostic, "lookup", code);
     throwIfAborted(signal);
     // The durable last-good artifact is retained independently. Drop an
@@ -142,18 +170,30 @@ export function createLocalIndexAccountingReuse({
     // revokes matches(), which authorizes the runner's durable-cache fallback.
     const miss = code => { report(code); retained = null; return null; };
     if (!proof) return miss("proof_unavailable");
-    if (!retained) return miss("retained_absent");
+    if (!retained) {
+      const stored = await read({ stateFile });
+      throwIfAborted(signal);
+      const receipt = stored?.proof, cache = stored?.cache;
+      if (!receipt || receipt.schemaVersion !== PROOF_VERSION) return miss("retained_absent");
+      try { assertReplaySafeAccountingCache(cache); } catch { return miss("cache_invalid"); }
+      if (receipt.evaluatedAt !== cache.coveredAt.endAt
+          || receipt.generation !== Number(cache.sourceDescriptor.generation)
+          || receipt.fingerprint !== cache.sourceDescriptor.generationFingerprint
+          || unknownSpeedCalculationIdentity(cache.unknownSpeedPolicy) !== proof.unknownSpeedPolicyIdentity) {
+        return miss("cache_invalid");
+      }
+      retained = { cache: structuredClone(cache), proof: { id: receipt.generation,
+        fingerprint: receipt.fingerprint, key: receipt.key } };
+    }
     if (proof.key !== retained.proof.key) {
       for (const part of ["file", "revision", "baselines", "origins", "policy"]) {
-        if (proof.components?.[part] !== retained.proof.components?.[part]) report(`inputs_${part}_changed`);
+        if (retained.proof.components && proof.components?.[part] !== retained.proof.components[part]) report(`inputs_${part}_changed`);
       }
       return miss("inputs_changed");
     }
     const previous = retained.cache;
     const evaluatedAt = Date.parse(previous.coveredAt.endAt);
-    if (!Number.isFinite(nowMs) || !Number.isFinite(maximumAgeMs) || maximumAgeMs < 0
-        || nowMs < evaluatedAt) return miss("clock_invalid");
-    if (nowMs - evaluatedAt > maximumAgeMs) return miss("expired");
+    if (!Number.isFinite(nowMs) || nowMs < evaluatedAt) return miss("clock_invalid");
     if (previous.sourceDescriptor.fallbackCount !== 0) return miss("fallback_present");
     if (previous.weeklyApiIntervals?.status !== "available") return miss("intervals_unavailable");
     // This is a newly composed publication of calculations evaluated at the
@@ -203,13 +243,13 @@ export function createLocalIndexAccountingReuse({
     if (Buffer.byteLength(serializeLocalCollectorAccountingCache(cache)) > MAX_CACHE_BYTES) { report("cache_oversize"); return null; }
     throwIfAborted(signal);
     if (!stillCurrent()) return miss("identity_changed");
-    await write({ stateFile, cache, signal });
+    await write({ stateFile, cache, reuseProof: receiptFor(cache, proof), signal });
     retained = { cache: structuredClone(cache), proof };
     report("republished");
     return cache;
   }
 
-  return { readProof, remember, reuse,
+  return { readProof, remember, persist, reuse,
     matches: proof => Boolean(proof && retained && proof.key === retained.proof.key),
   };
 }

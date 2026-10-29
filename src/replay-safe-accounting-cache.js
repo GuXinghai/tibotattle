@@ -4337,6 +4337,167 @@ export async function buildReplaySafeAccountingCache({
   });
 }
 
+/** Re-evaluate only moving windows from a proven historical result.
+ * generatedAt and all historical calculation clocks remain unchanged;
+ * coveredAt is the window evaluation boundary, not a claim of new evidence.
+ */
+export async function projectReplaySafeAccountingTime({ cache, scan, calibrationSource,
+  expectedGeneration, now = () => Date.now(), declaredSpeedBaselines = [], signal = null,
+  windowDays = 365, onTiming = null, monotonicClock = undefined,
+  rss = () => process.memoryUsage().rss, maximumRssBytes = MAX_ACCOUNTING_RSS_BYTES,
+} = {}) {
+  assertReplaySafeAccountingCache(cache);
+  const endMs = now(), previousEnd = Date.parse(cache.coveredAt.endAt);
+  if (!Number.isSafeInteger(endMs) || endMs < previousEnd
+      || !Number.isSafeInteger(windowDays) || windowDays < 1 || windowDays > MAXIMUM_WINDOW_DAYS) {
+    throw fixedError("accounting_time_projection_invalid");
+  }
+  if (endMs === previousEnd) return structuredClone(cache);
+  const baselineRss = rss();
+  if (!Number.isSafeInteger(baselineRss) || baselineRss < 0
+      || !Number.isSafeInteger(maximumRssBytes) || maximumRssBytes < 1) {
+    throw fixedError("accounting_transition_rss_measurement_invalid");
+  }
+  const ceiling = Math.min(maximumRssBytes, baselineRss + ACCOUNTING_RSS_DELTA_BUDGET_BYTES);
+  const checkRuntimeMemory = (additionalBytes = 0) => {
+    const current = rss();
+    if (!Number.isSafeInteger(current) || current < 0) throw fixedError("accounting_transition_rss_measurement_invalid");
+    if (current > ceiling) throw fixedError("accounting_transition_rss_limit_exceeded");
+    if (additionalBytes > ceiling - current) throw fixedError("accounting_transition_memory_budget_exceeded");
+  };
+  checkRuntimeMemory();
+  const result = structuredClone(cache);
+  const startMs = endMs - windowDays * 86_400_000;
+  const starts = { "24h": endMs - 86_400_000, "7d": endMs - 7 * 86_400_000,
+    "30d": endMs - 30 * 86_400_000, all: startMs };
+  const periods = new Map(cache.periods.map(period => [period.id, newPeriod(period.id, period.label)]));
+  const timeline = new Map(), sparkTimeline = new Map(), quota = new Map(), sparkQuota = new Map();
+  const pace = [], price = createAccountingPricer();
+  let processed = 0;
+  const onUsage = raw => {
+    throwIfAborted(signal);
+    if (++processed % ACCOUNTING_RSS_CHECK_INTERVAL === 0) checkRuntimeMemory();
+    const observedMs = Date.parse(raw?.timestamp);
+    if (!Number.isFinite(observedMs) || observedMs < startMs || observedMs > endMs) return;
+    const event = eventProjection(raw, price);
+    if (event === null) return;
+    event.declaredSpeed = event.speed === "unknown"
+      ? declaredSpeedModeAt(declaredSpeedBaselines, observedMs) ?? "unknown" : "unknown";
+    for (const [id, period] of periods) if (observedMs >= starts[id]) addEvent(period, event);
+    addTimelineEvent(event.isSpark ? sparkTimeline : timeline, event);
+  };
+  const scanned = await scan({ startAt: new Date(startMs).toISOString(), endAt: new Date(endMs).toISOString(),
+    usageBoundaryMs: Object.values(starts), declaredSpeedBaselines, signal,
+    onUsage, onUsageGroup: onUsage, onRateLimitSnapshot: snapshot => {
+      throwIfAborted(signal);
+      if (++processed % ACCOUNTING_RSS_CHECK_INTERVAL === 0) checkRuntimeMemory();
+      const at = Date.parse(snapshot?.timestamp), window = snapshot?.window;
+      if (!Number.isFinite(at) || at < startMs || at > endMs) return;
+      if (SPARK_QUOTA_LIMIT_IDS.includes(window?.limitId) && window.provider === "openai_codex"
+          && isValidQuotaWindowDuration(window.windowDurationMins)) {
+        retainQuotaTimeline(sparkQuota, snapshot, { limitId: window.limitId, durationMinutes: null });
+      } else if (window?.limitId === "codex" && window.windowDurationMins === WEEKLY_WINDOW_MINUTES) {
+        retainQuotaTimeline(quota, snapshot, { limitId: "codex", durationMinutes: WEEKLY_WINDOW_MINUTES });
+        const projected = weeklyPaceSnapshotProjection(snapshot);
+        if (projected !== null) pace.push(projected);
+      }
+    },
+  });
+  const coverage = normalizeUnifiedCoverage(scanned, expectedGeneration);
+  if (String(coverage.generation) !== String(cache.sourceDescriptor.generation)
+      || coverage.generationFingerprint !== cache.sourceDescriptor.generationFingerprint) {
+    throw fixedError("accounting_unified_generation_mismatch");
+  }
+  result.periods = [...periods.values()].map(finalizePeriod);
+  result.timeline = finalizeTimeline(timeline);
+  result.sparkUsageTimeline = finalizeTimeline(sparkTimeline);
+  result.quotaTimeline = finalizeWeeklyQuotaTimeline(quota);
+  result.sparkQuotaTimeline = finalizeWeeklyQuotaTimeline(sparkQuota);
+  result.coveredAt = { startAt: new Date(startMs).toISOString(), endAt: new Date(endMs).toISOString() };
+  const forecast = projectWeeklyPaceForecast(pace, endMs);
+  if (forecast === null) delete result.weekly;
+  else result.weekly = { paceForecast: forecast };
+
+  // Read attribution evidence once and project only the recent usage range.
+  // No fit, transition derivation, weekly interval rebuild or origin reads.
+  const corpus = await calibrationSource.open({ expectedGeneration: coverage.generation, endMs,
+    limits: transitionResourceLimits(null), declaredSpeedBaselines, signal, checkRuntimeMemory, onTiming, monotonicClock });
+  if (corpus === null) throw fixedError("accounting_calibration_corpus_unavailable");
+  try {
+    const compositions = [];
+    const summaries = [result.weeklyCalibration, result.fiveHourAllowanceCalibration,
+      ...Object.values(result.allowanceCapacityByScenario.scenarios).map(row => row.calibration),
+      ...result.historicalPlanComparisons.flatMap(row => Object.values(row.allowanceCapacityByScenario?.scenarios ?? {}).map(scenario => scenario.calibration))];
+    for (const summary of summaries) {
+      if (summary?.composition) compositions.push(summary.composition);
+      for (const population of summary?.planPopulations ?? []) if (population.composition) compositions.push(population.composition);
+    }
+    const plans = new Map();
+    for (const composition of compositions) if (composition.status === "fitted") {
+      if (!plans.has(composition.planType)) plans.set(composition.planType, { bins: new Map(), invalid: new Set() });
+    }
+    const recentStart = endMs - COMPOSITION_RECENT_MIX_DAYS * 86_400_000;
+    const binStart = Math.floor(recentStart / MODEL_COMPOSITION_POLICY.grainMs) * MODEL_COMPOSITION_POLICY.grainMs;
+    let low = 0, high = corpus.retainedUsageEvents;
+    while (low < high) { const mid = (low + high) >>> 1; if (corpus.usageMs[mid] < binStart) low = mid + 1; else high = mid; }
+    for (let from = low; from < corpus.retainedUsageEvents; from += UNIFIED_CALIBRATION_READ_BATCH_ROWS) {
+      const rows = await corpus.readUsageSlice(from, Math.min(from + UNIFIED_CALIBRATION_READ_BATCH_ROWS, corpus.retainedUsageEvents));
+      for (const row of rows) {
+        const at = Date.parse(row[0]), bin = Math.floor(at / MODEL_COMPOSITION_POLICY.grainMs) * MODEL_COMPOSITION_POLICY.grainMs;
+        for (const [planType, state] of plans) {
+          const intervalStartMs = Date.parse(row[20]?.[2] ?? "");
+          const association = classifyUsageAttribution(corpus.planAttribution.index, {
+            contextKey: planAttributionContextKey("openai_codex", "codex"), observedAtMs: at,
+            ...(Number.isSafeInteger(intervalStartMs) ? { intervalStartMs } : {}),
+            observedPlanType: row[20]?.[0] === "same_record" ? row[20][1] : null,
+          }, { planType });
+          if (association.disposition === "incompatible") continue;
+          if (association.disposition === "unresolved" || row[20]?.[0] === "conflicted") { state.invalid.add(bin); continue; }
+          if (at < recentStart) continue;
+          const costs = state.bins.get(bin) ?? new Map();
+          costs.set(row[1], (costs.get(row[1]) ?? 0) + Number(row[10])); state.bins.set(bin, costs);
+        }
+      }
+    }
+    for (const composition of compositions) {
+      const mix = {}, state = plans.get(composition.planType);
+      for (const [bin, costs] of state?.bins ?? []) {
+        const lookup = planEraForInterval(corpus.planAttribution.index, {
+          contextKey: planAttributionContextKey("openai_codex", "codex"),
+          intervalStartMs: bin, observedAtMs: bin + MODEL_COMPOSITION_POLICY.grainMs - 1,
+        });
+        if (state.invalid.has(bin) || lookup.status !== "matched" || lookup.era.planType !== composition.planType) continue;
+        for (const [model, cost] of costs) mix[model] = (mix[model] ?? 0) + cost;
+      }
+      const blended = composition.status === "fitted" ? blendedCompositionCapacityUsd(mix, {
+        capacityUsdByModel: composition.capacityUsdByModel, fallbackCapacityUsd: composition.singleConstantUsd,
+      }) : null;
+      composition.blendedRecentMixUsd = Number.isFinite(blended) ? Number(blended.toFixed(2)) : null;
+    }
+    // Comparison geometry follows the proven plan eras, including quiet time.
+    for (const receipt of [result.planScopedTimeline, ...result.historicalPlanComparisons.map(row => row.planScopedTimeline)]) {
+      if (receipt.status !== "available") continue;
+      const invalid = new Set();
+      for (const [from, to, reason] of receipt.excludedIntervals) if (reason === "usage_attribution_unresolved") {
+        for (let at = from; at < to; at += TIMELINE_BUCKET_MS) invalid.add(at);
+      }
+      const draft = finalizePlanScopedTimelineDraft({ unknownSpeedPolicy: cache.unknownSpeedPolicy,
+        buckets: new Map(receipt.usage.map(row => { const value = decodePlanScopedTimelineRow(row); return [row[0], { ...value, startMs: row[0] }]; })),
+        invalidBuckets: invalid, attributionIndex: corpus.planAttribution.index,
+        contextKey: planAttributionContextKey("openai_codex", "codex"), planType: receipt.planScope.planType,
+        diagnostics: receipt.diagnostics, endMs, resourceLimited: false, quota: receipt.observedQuota,
+      });
+      receipt.comparisonIntervals = draft.comparisonIntervals;
+      receipt.excludedIntervals = draft.excludedIntervals;
+      receipt.quota = draft.quota;
+    }
+  } finally { corpus.dispose(); }
+  throwIfAborted(signal);
+  checkRuntimeMemory();
+  assertReplaySafeAccountingCache(result);
+  return result;
+}
+
 export async function refreshReplaySafeAccountingCache({
   stateFile = null,
   // A JSON cache is no longer a supported durable target. Keeping this

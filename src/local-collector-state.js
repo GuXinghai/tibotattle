@@ -677,6 +677,19 @@ export function serializeLocalCollectorAccountingCache(cache) {
   return JSON.stringify(cache);
 }
 
+const ACCOUNTING_REUSE_META_KEY = "accounting_reuse_proof";
+function validAccountingReuseProof(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).sort().join() === "evaluatedAt,fingerprint,generation,key,schemaVersion"
+    && value.schemaVersion === "local-accounting-reuse-proof-v1"
+    && /^[a-f0-9]{64}$/u.test(value.key)
+    && Number.isSafeInteger(value.generation) && value.generation >= 0
+    && typeof value.fingerprint === "string" && value.fingerprint.length > 0 && value.fingerprint.length <= 256
+    && /^[a-zA-Z0-9_-]+$/u.test(value.fingerprint)
+    && typeof value.evaluatedAt === "string" && Number.isFinite(Date.parse(value.evaluatedAt))
+    && new Date(value.evaluatedAt).toISOString() === value.evaluatedAt;
+}
+
 function writeMeta(database, key, value) {
   database.prepare(`
     INSERT INTO meta(key, value_json) VALUES (?, ?)
@@ -1569,11 +1582,13 @@ export async function saveLocalCollectorCheckpoint({
 export async function writeLocalCollectorAccountingCache({
   stateFile = defaultLocalCollectorStatePath(),
   cache,
+  reuseProof = null,
   signal = null,
 } = {}) {
   if (!cache
       || typeof cache !== "object"
       || Array.isArray(cache)
+      || (reuseProof !== null && !validAccountingReuseProof(reuseProof))
       || !validAbortSignal(signal)) {
     throw new TypeError("Local collector accounting cache is invalid");
   }
@@ -1609,6 +1624,14 @@ export async function writeLocalCollectorAccountingCache({
         throw fixedError("local_collector_accounting_migration_required");
       }
       writeMeta(database, "accounting_cache", cache);
+      if (reuseProof === null) {
+        database.prepare("DELETE FROM meta WHERE key = ?").run(ACCOUNTING_REUSE_META_KEY);
+      } else {
+        writeMeta(database, ACCOUNTING_REUSE_META_KEY, {
+          proof: reuseProof,
+          cacheSha256: sha256(serializeLocalCollectorAccountingCache(cache)),
+        });
+      }
     });
     database.exec("PRAGMA optimize");
   } finally {
@@ -1626,6 +1649,35 @@ export async function readLocalCollectorAccountingCache({
     status: state.status,
     cache: state.accountingCache,
   };
+}
+
+// The reuse certificate is private local control state, never a cache/UI field.
+// Read both rows in one protected snapshot so a concurrent publication cannot
+// pair a certificate with another calculation. Missing/invalid certificates do
+// not invalidate or remove the retained historical artifact.
+export async function readLocalCollectorAccountingReuse({
+  stateFile = defaultLocalCollectorStatePath(),
+} = {}) {
+  if (typeof stateFile !== "string" || stateFile.length < 1) {
+    throw new TypeError("Local collector accounting reuse request is invalid");
+  }
+  if (await assertSafeStateFile(stateFile, { allowMissing: true }) === null) {
+    return { status: "missing", cache: null, proof: null };
+  }
+  return withProtectedSqliteReadSnapshot({ path: stateFile, read(database) {
+    validateDatabase(database);
+    const cache = readMeta(database, "accounting_cache");
+    const row = database.prepare("SELECT value_json FROM meta WHERE key = ? AND length(CAST(value_json AS BLOB)) <= 2048")
+      .get(ACCOUNTING_REUSE_META_KEY);
+    let envelope = null;
+    try { envelope = row ? JSON.parse(row.value_json) : null; } catch { /* Certificate miss; retain history. */ }
+    const proof = envelope && Object.keys(envelope).sort().join() === "cacheSha256,proof"
+      && validAccountingReuseProof(envelope.proof)
+      && /^[a-f0-9]{64}$/u.test(envelope.cacheSha256)
+      && cache !== null && envelope.cacheSha256 === sha256(serializeLocalCollectorAccountingCache(cache))
+      ? envelope.proof : null;
+    return { status: "available", cache, proof };
+  } });
 }
 
 // A one-time converter may retain the only surviving historical figures here.
