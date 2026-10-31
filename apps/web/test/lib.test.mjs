@@ -3109,7 +3109,7 @@ test("first run is a truthful install and local preflight journey", async () => 
   assert.match(appSource, /rolloutFilesObservedCapped/u);
   assert.match(appSource, /setup-check-again.*checkLocalSetup/su);
   assert.match(appSource, /setJourneyState\(ready \? "local-ready" : "needs-local-setup"\)/u);
-  assert.match(appSource, /setup: "status\.setUpMac"/u);
+  assert.match(appSource, /setup: "status\.needsLocalSetup"/u);
   assert.match(appSource, /if \(!ready\) setGlobalState\("setup"/u);
   assert.doesNotMatch(appSource, /product laboratory/u);
   assert.match(styles, /body\.first-run \[data-requires-evidence\]/u);
@@ -4893,7 +4893,6 @@ test("self-resolving degraded notes are classed informational and keep the quiet
   const informationalSentences = [
     "Quota tracking started fresh on this computer, so its retained records begin"
       + " on ${trackingStartDate}. Coverage of anything earlier is not claimed.",
-    "Local history indexing has no published aggregate. Complete historical totals are unavailable.",
   ];
   for (const sentence of informationalSentences) {
     assert.ok(

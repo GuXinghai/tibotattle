@@ -861,7 +861,7 @@ function renderGlobalState() {
     updating: "status.running",
     stale: "status.needsRefresh",
     insufficient: "status.moreDataNeeded",
-    setup: "status.setUpMac",
+    setup: "status.needsLocalSetup",
     offline: globalState.companionReachable
       ? "status.readyToAnalyze"
       : "status.openMacApp",
@@ -2013,6 +2013,7 @@ function renderEvidenceWarnings(data) {
   ]);
   for (const message of Array.isArray(data?.warnings) ? data.warnings : []) {
     if (typeof message !== "string" || message === "") continue;
+    if (/^Local history indexing has no published aggregate\./u.test(message)) continue;
     const localized = evidenceWarningLocalization(message);
     if (localized?.key === "dashboard.warning.collectorOld") continue;
     if (localized?.key === "dashboard.warning.indexing") continue;

@@ -2043,11 +2043,9 @@ function unifiedPartialReason(unified) {
 // moment the data store serves retained full-authority evidence in its place,
 // which is exactly what every quick milestone and every mismatch-window full
 // build does. The store therefore needs to recognize these sentences to
-// drop them (owner-reported, 2026-08-21: both banners on screen through
-// every refresh cycle while the figures were complete and current), so they
-// are named constants rather than inline strings.
-const UNIFIED_DEFERRED_LOADING_WARNING =
-  "Local history indexing has no published aggregate. Complete historical totals are unavailable.";
+// drop them (owner-reported, 2026-08-21: retained-data banners stayed on
+// screen through every refresh cycle while the figures were complete and
+// current), so the remaining source-owned warnings are named constants.
 const UNIFIED_WITHHELD_PARTIAL_WARNING =
   "The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.";
 const UNIFIED_WITHHELD_MISSING_WARNING =
@@ -2061,7 +2059,6 @@ const HISTORY_TOTALS_HIDDEN_WARNING =
 const HISTORY_AGGREGATE_UNAVAILABLE_WARNING =
   "The history scan is complete, but the current accounting summary is unavailable. Update local usage to retry.";
 export const RETAINED_EVIDENCE_RELABELED_WARNINGS = Object.freeze([
-  UNIFIED_DEFERRED_LOADING_WARNING,
   UNIFIED_WITHHELD_PARTIAL_WARNING,
   UNIFIED_WITHHELD_MISSING_WARNING,
   UNIFIED_WITHHELD_UNREADABLE_WARNING,
@@ -2741,9 +2738,7 @@ export async function buildLocalCompanionSnapshot({
     );
   }
   if (unifiedAccountingWithheld) {
-    warnings.push(unified.status === "deferred"
-      ? UNIFIED_DEFERRED_LOADING_WARNING
-      : unifiedAuthorityPartial
+    if (unified.status !== "deferred") warnings.push(unifiedAuthorityPartial
         ? UNIFIED_WITHHELD_PARTIAL_WARNING
         : unified.status === "missing"
           ? UNIFIED_WITHHELD_MISSING_WARNING
@@ -2751,9 +2746,7 @@ export async function buildLocalCompanionSnapshot({
             ? UNIFIED_SCHEMA_NEWER_WARNING
             : UNIFIED_WITHHELD_UNREADABLE_WARNING);
   } else if (!unifiedAvailable) {
-    if (unified.status === "deferred") {
-      warnings.push(UNIFIED_DEFERRED_LOADING_WARNING);
-    } else {
+    if (unified.status !== "deferred") {
       warnings.push(unified.status === "missing"
         ? `The unified local index has not been built yet. Usage history and the broadest period are bounded to the recent ${RECENT_TIMELINE_DAYS}-day collector window until it is.`
         : `The unified local index is unreadable. Usage history and the broadest period are bounded to the recent ${RECENT_TIMELINE_DAYS}-day collector window until it recovers.`);

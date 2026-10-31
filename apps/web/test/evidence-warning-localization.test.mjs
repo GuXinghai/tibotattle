@@ -14,8 +14,8 @@ test("every fixed companion projection warning has translated presentation copy"
   const source = await readFile(new URL("../../../src/local-companion-data.js", import.meta.url), "utf8");
   const warnings = [...source.matchAll(/(?:const|export const) [A-Z_]+_WARNING\s*=\s*"([^"]+)";/gu)]
     .map((match) => match[1]);
-  // 7 since the retained-evidence "recalculating" sentence was retired (2026-10-14).
-  assert.ok(warnings.length >= 7);
+  // 6 since the deferred-history banner was retired (2026-10-31).
+  assert.ok(warnings.length >= 6);
   for (const warning of warnings) {
     const message = evidenceWarningLocalization(warning);
     assert.ok(message, warning);

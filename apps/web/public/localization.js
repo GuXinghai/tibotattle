@@ -117,7 +117,6 @@ function interpolate(message, values = {}) {
 // Match only these sentences and bounded numeric/date slots: arbitrary service
 // or provider text remains raw and cannot be interpreted as product copy.
 const EVIDENCE_WARNING_MESSAGES = Object.freeze({
-  "loading": ["Local history indexing has no published aggregate. Complete historical totals are unavailable.", "本地历史汇总尚未发布，暂不显示完整历史总计。", "No hay un agregado publicado del historial local. Los totales históricos completos no están disponibles."],
   "partialIndex": ["The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.", "统一本地索引可读取，但覆盖不完整。完整且与当前索引版本一致的结果发布前，不显示用量总计和时间线。", "El índice local unificado se puede leer, pero su cobertura es parcial. Los totales y las cronologías no se muestran hasta disponer de una publicación completa vinculada a la generación del índice."],
   "missingIndex": ["The unified local index has not been built yet. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "尚未建立统一本地索引。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado aún no se ha creado. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
   "unavailableIndex": ["The unified local index is unavailable. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "统一本地索引不可用。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado no está disponible. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
@@ -213,7 +212,7 @@ export const WEB_MESSAGES = Object.freeze({
   "status.updating": ["Updating", "正在更新", "Actualizando"],
   "status.needsRefresh": ["Needs refresh", "需要刷新", "Necesita actualización"],
   "status.moreDataNeeded": ["More data needed", "需要更多数据", "Se necesitan más datos"],
-  "status.setUpMac": ["Set up this computer", "设置这台电脑", "Configura este equipo"],
+  "status.needsLocalSetup": ["Complete local setup", "需要完成本地设置", "Completa la configuración local"],
   "status.readyToAnalyze": ["Ready to analyze", "可以开始分析", "Listo para analizar"],
   "status.openMacApp": ["Open the Windows app", "打开 Windows 应用", "Abre la app para Windows"],
 

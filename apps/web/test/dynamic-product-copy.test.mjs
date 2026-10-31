@@ -16,8 +16,8 @@ function element(tag = "span", className = "", textContent = "") {
     setAttribute(key, value) { this.attributes[key] = value; }, addEventListener() {} };
 }
 
-test("recognized evidence warnings localize while unknown text retains the raw boundary", () => {
-  const warning = "Local history indexing has no published aggregate. Complete historical totals are unavailable.";
+test("retired deferred-history copy is not rendered while unknown text retains the raw boundary", () => {
+  const retiredWarning = ["Local history indexing", " has no published aggregate. Complete historical totals are unavailable."].join("");
   for (const locale of ["zh-Hans", "en-US", "es", "zh-Hans"]) {
     const list = element("ul");
     const context = createContext({ EVIDENCE_WARNING_ROUTES: [], EVIDENCE_WARNING_FALLBACK: "#warnings",
@@ -27,15 +27,11 @@ test("recognized evidence warnings localize while unknown text retains the raw b
       setRawText(target, text) { target.textContent = text; target.setAttribute("data-i18n-skip", ""); },
     });
     runInContext(productionFunction("evidenceWarningTarget") + "\n" + productionFunction("renderEvidenceWarnings"), context);
-    context.renderEvidenceWarnings({ warnings: [warning,
+    context.renderEvidenceWarnings({ warnings: [retiredWarning,
       "History indexing has no complete aggregate available. Complete historical totals remain unavailable.", "Ready"] });
-    assert.equal(list.children.length, 2, "the redundant indexing notice is omitted without hiding other warnings");
-    assert.equal(list.children[0].textContent, translate("dashboard.warning.loading", {}, locale));
-    assert.doesNotMatch(list.children[0].textContent, /正在|in progress|está en curso/iu);
-    assert.equal(list.children[0].attributes["data-i18n-skip"], undefined);
-    assert.equal(list.children[0].className, "evidence-warning informational");
-    assert.equal(list.children[1].textContent, "Ready");
-    assert.equal(list.children[1].attributes["data-i18n-skip"], "");
+    assert.equal(list.children.length, 1, "the retired deferred notice and redundant indexing notice are omitted");
+    assert.equal(list.children[0].textContent, "Ready");
+    assert.equal(list.children[0].attributes["data-i18n-skip"], "");
   }
 });
 
