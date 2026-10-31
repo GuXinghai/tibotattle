@@ -309,6 +309,12 @@ test("npm JS entrypoint reads version and generates a contract without a shell",
     const workflow = await readFile(join(REPOSITORY_ROOT, ".github/workflows/codex-contract-drift.yml"), "utf8");
     assert.match(workflow, /--binary "standalone_latest=\$RUNNER_TEMP\/codex-release\/node_modules\/@openai\/codex\/bin\/codex\.js"/u);
     assert.doesNotMatch(workflow, /\.bin\/codex\.cmd/u);
+    const install = workflow.indexOf('name: Install locked workspace dependencies');
+    const offline = workflow.indexOf('name: Check the checked-in contract offline');
+    assert.ok(install >= 0 && install < offline, 'workspace packages must be installed before importing the checker');
+    const preparation = workflow.slice(install, offline);
+    assert.match(preparation, /corepack prepare pnpm@11\.9\.0 --activate/u);
+    assert.match(preparation, /pnpm install --frozen-lockfile --ignore-scripts/u);
     await writeFile(binaryPath, `
       import { writeFile } from 'node:fs/promises';
       import { join } from 'node:path';
