@@ -17,6 +17,39 @@ release. There is no hosted Worker, public site, remote relay or cloud runtime.
 | --- | --- | --- | --- |
 | Local companion API | Browser/native shell → loopback Node companion | 18 paths, 19 method/path operations |
 
+## Report failure diagnostics
+
+`POST /api/local/diagnostics/note` still requires the local header, same-origin
+checks and the four existing fields (`reference`, `surface`, `code`, `requestId`).
+For the closed `work_usage_*` failure vocabulary on `local_refresh`, it also
+accepts an optional, closed `workUsage` object. Its seven required fields are:
+
+| Field | Accepted value |
+| --- | --- |
+| `schemaVersion` | `work-usage-request-diagnostic-v1` |
+| `phase` | `query`, `lease`, `preload`, `nested`, `cancel` |
+| `stage` | `request`, `response_body`, `validation`, `unknown` |
+| `elapsedMs` | Integer 0–86,400,000, or `null` when a monotonic measurement is unavailable |
+| `timeoutMs` | 10,000, 30,000, or `null` when no request timer is configured |
+| `httpStatus` | Integer 100–599, or `null` before a response is available |
+| `background` | Boolean |
+
+The accepted codes are `work_usage_timeout`, `work_usage_invalid_response`,
+`work_usage_expired`, `work_usage_unavailable`, `work_usage_permission`,
+`work_usage_capacity` and `work_usage_network`. Unknown fields, values, surfaces
+or code/context combinations are refused before logging. No query, search term,
+project name, thread/snapshot ID, path, response body or raw error is included.
+Measurements describe browser-observed request progress, not server execution
+or a proven timeout cause. No successful-request stream is added.
+
+The optional object is stored beside the same support reference in the bounded
+local log. The outer `local-diagnostic-note-v0.1` log and response contracts,
+rotation, authorization and rate limits are unchanged. Existing four-field
+clients and existing log records remain valid; old records cannot acquire
+missing measurements retroactively. An older server can reject the new object;
+the UI then reports that the diagnostic was not recorded, without silently
+retrying a stripped note or claiming a write receipt.
+
 ## Local route inventory
 
 | Method | Path | Purpose |
@@ -81,12 +114,6 @@ The breakdown is bounded to 128 models; missing, unsupported or inconsistent
 breakdowns normalize to `null` while All models remains available. An empty
 array means no eligible same-configuration models were found.
 
-When contribution preparation encounters a preserved legacy export identity
-without a usable modern credential, it returns the fixed
-`identity_migration_required` code. This request does not migrate or replace the
-identity. Quit TiboTattle and contact support with this code. Preserve the legacy
-credential and app data; do not delete or reset credentials or app data. The
-current Electron release has no credential migration approval entrypoint.
 Startup blocked by required credential migration instead reports
 `SECURE_STORAGE_MIGRATION_REQUIRED` before Settings is available. Retry only
 repeats the silent readiness check; neither Retry nor reinstalling this release
@@ -113,6 +140,12 @@ direct pages remain intentionally addressable for operator review.
 The trusted dashboard frame uses the frozen desktop IPC allowlist for Settings,
 notification preferences, refresh and original-quality background resources.
 Paths and arbitrary external destinations are not renderer capabilities.
+The X bridge's `configureXImport` action explicitly prepares or repairs the
+fixed Chrome bridge assets and current-user Native Messaging registration;
+`openXImportFolder` has no renderer arguments and reveals only the fixed,
+verified extension folder. Routine import setup verifies existing approval and
+registration without granting Chrome permission or reading cookies. Cookie
+access still requires the user action in Chrome and application preflight.
 
 ## Process and module boundaries
 
@@ -130,6 +163,12 @@ public facade. Windows filesystem, source reading, credential mutex/audit,
 protected state and browser profile capabilities belong to `src/platform/index.js`
 and its narrow native adapter. Qualification of one capability never enables
 another. Reusable workspace packages expose only their reviewed public roots.
+
+`@app-usagemonitor/codex-catalog` exposes the reviewed Codex plan types and display
+names, model catalog and lookup, reasoning-configuration helpers and the catalog
+completeness validator. It has no entitlement, quota, pricing or telemetry-schema
+API. The local browser mirror exposes the vocabulary and lookup helpers; the
+completeness validator stays in source verification.
 
 `test/api-surface-reference.test.js` compares both maintained HTTP tables to the
 local route/method allowlists. Schema mirrors and generators have their own

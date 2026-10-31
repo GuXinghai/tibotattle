@@ -73,7 +73,7 @@ test("release provenance binds both executable R7 worker scripts", () => {
   );
   assert.equal(
     R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_PATHS.includes(
-      "schemas/telemetry-v0.1/usage-event.schema.json",
+      "schemas/local-export-v1/usage-event.schema.json",
     ),
     true,
   );
@@ -109,51 +109,7 @@ test("release provenance binds both executable R7 worker scripts", () => {
       "packages/telemetry-contract/",
     ),
   );
-  assert.deepEqual(telemetryPaths, [
-    "packages/telemetry-contract/src/admin-model-history.js",
-    "packages/telemetry-contract/src/constants.js",
-    "packages/telemetry-contract/src/envelope.js",
-    "packages/telemetry-contract/src/errors.js",
-    "packages/telemetry-contract/src/model-catalog-contract.js",
-    "packages/telemetry-contract/src/model-catalog.js",
-    "packages/telemetry-contract/src/performance-histogram.js",
-    "packages/telemetry-contract/src/primitives.js",
-    "packages/telemetry-contract/src/telemetry-performance-v1-schemas.js",
-    "packages/telemetry-contract/src/telemetry-performance-v1.js",
-    "packages/telemetry-contract/src/telemetry-v0.1.js",
-    "packages/telemetry-contract/src/telemetry-v0.2.js",
-    "packages/telemetry-contract/src/telemetry-v1.1-domain.js",
-    "packages/telemetry-contract/src/telemetry-v1.1-schemas.js",
-    "packages/telemetry-contract/src/telemetry-v1.1.js",
-    "packages/telemetry-contract/src/telemetry-v1.2-domain.js",
-    "packages/telemetry-contract/src/telemetry-v1.2-schemas.js",
-    "packages/telemetry-contract/src/telemetry-v1.2.js",
-    "packages/telemetry-contract/src/upload.js",
-    "packages/telemetry-contract/index.js",
-    "packages/telemetry-contract/schemas/performance-v1/performance-histogram.schema.json",
-    "packages/telemetry-contract/schemas/performance-v1/performance-record.schema.json",
-    "packages/telemetry-contract/schemas/v0.2/activity-marker.schema.json",
-    "packages/telemetry-contract/schemas/v0.2/contribution.schema.json",
-    "packages/telemetry-contract/schemas/v0.2/quota-snapshot.schema.json",
-    "packages/telemetry-contract/schemas/v0.2/usage-event.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/account-plan-attribution.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/contribution.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/day-manifest.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/domain-manifest.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/envelope.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/quota-observation.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/session-dimension.schema.json",
-    "packages/telemetry-contract/schemas/v1.1/usage-event.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/account-plan-attribution.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/contribution.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/day-manifest.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/domain-manifest.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/envelope.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/quota-observation.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/session-dimension.schema.json",
-    "packages/telemetry-contract/schemas/v1.2/usage-event.schema.json",
-    "packages/telemetry-contract/package.json",
-  ]);
+  assert.deepEqual(telemetryPaths, []);
   assert.equal(
     R7_RELEASE_EVIDENCE_WORKLOAD_SOURCE_PATHS.includes("pnpm-workspace.yaml"),
     true,
@@ -171,6 +127,9 @@ test("reviewed R7 runtime source trees reject unsupported files and symlinks", a
   const repositoryRoot = pathToFileURL(`${temporaryRoot}${sep}`);
   try {
     await mkdir(join(temporaryRoot, "src"));
+    await mkdir(join(temporaryRoot, "packages", "codex-catalog", "src"), { recursive: true });
+    await writeFile(join(temporaryRoot, "packages", "codex-catalog", "src", "model-catalog.js"), "export const catalog = [];\n");
+    await writeFile(join(temporaryRoot, "packages", "codex-catalog", "index.js"), "export * from './src/model-catalog.js';\n");
     // `shared/` was dissolved into packages/quota-analysis; the reviewed tree
     // list follows the code, so the fixture exercises the new location.
     await mkdir(
@@ -257,8 +216,8 @@ test("reviewed R7 runtime source trees reject unsupported files and symlinks", a
         "packages/quota-analysis/src/windows/module.mjs",
         "packages/accounting/src/kernel.js",
         "packages/accounting/index.js",
-        "packages/telemetry-contract/src/contract.js",
-        "packages/telemetry-contract/index.js",
+        "packages/codex-catalog/src/model-catalog.js",
+        "packages/codex-catalog/index.js",
         "packages/identity-core/src/pseudonym.js",
       ],
     );
@@ -729,7 +688,7 @@ test("semantic self hash and current code, schema, and policy hashes are mandato
 });
 
 test("changing a runtime-loaded non-receipt schema invalidates workload provenance", () => {
-  const target = "schemas/telemetry-v0.1/usage-event.schema.json";
+  const target = "schemas/local-export-v1/usage-event.schema.json";
   const repositoryRoot = new URL("../", import.meta.url);
   const mutated = computeR7ReleaseEvidenceWorkloadSourceProvenance({
     readSourceBytes(relativePath) {
@@ -748,8 +707,8 @@ test("changing a runtime-loaded non-receipt schema invalidates workload provenan
   ));
 });
 
-test("changing package telemetry runtime code invalidates workload provenance", () => {
-  const target = "packages/telemetry-contract/src/telemetry-v0.1.js";
+test("changing package catalog runtime code invalidates workload provenance", () => {
+  const target = "packages/codex-catalog/src/plans.js";
   const repositoryRoot = new URL("../", import.meta.url);
   const mutated = computeR7ReleaseEvidenceWorkloadSourceProvenance({
     readSourceBytes(relativePath) {

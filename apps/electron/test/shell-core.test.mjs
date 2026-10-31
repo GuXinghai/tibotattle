@@ -1,7 +1,7 @@
 import applicationIdentity from "../../../config/application-identity.cjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { createRequire } from "node:module";
 import {
@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { createDesktopNotificationDelivery } from "../desktop-notification-delivery.js";
 import vm from "node:vm";
 
 import {
@@ -77,6 +78,7 @@ import {
   createWindowsFilesystemAdapter,
   WINDOWS_FILESYSTEM_BINDING_REQUIRED_METHODS,
 } from "../../../src/platform/windows-filesystem.js";
+import { loadWindowsLegacyStateReadBinding } from "../../../src/platform/index.js";
 import {
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_ENV,
   WINDOWS_ACCOUNT_OBSERVATION_BROKER_IPC_MARKER,
@@ -2144,6 +2146,27 @@ test("desktop lifecycle composes secure window, tray, single instance, retry, an
     command: { command: "dashboardSection", section: "overview" },
   });
   assert.equal(lifecycle.navigateDashboardSection("https://evil.example"), false);
+  let toast;
+  let shown = 0;
+  class Notification extends EventEmitter {
+    static isSupported() { return true; }
+    constructor() { super(); toast = this; }
+    show() { shown++; }
+  }
+  const delivery = createDesktopNotificationDelivery({ Notification,
+    app: { isPackaged: true }, platform: "win32", windowsIdentityReady: true,
+    onClick: () => lifecycle.navigateDashboardSection("allowance"),
+  });
+  secondDashboard.emit("close", { preventDefault() {} });
+  assert.equal(secondDashboard.visible, false);
+  assert.deepEqual(delivery.sendTest(), { status: "delivered" });
+  assert.equal(shown, 1);
+  toast.emit("click");
+  assert.equal(secondDashboard.visible, true);
+  assert.deepEqual(secondDashboard.webContents.sent.at(-1), {
+    channel: "usagemonitor:desktop-command:v1",
+    command: { command: "dashboardSection", section: "allowance" },
+  });
   await lifecycle.requestQuit();
   assert.equal(supervisor.stops, 2);
   assert.equal(app.quitCalls, 1);
@@ -3076,10 +3099,20 @@ test("dependency-injected composition leaves physical Electron profile paths unt
     ["stable", "Rhetrion", { usageMonitorIdentity: applicationIdentity.applicationMetadata("stable"), usageMonitorDistribution: stableDistribution }],
     ["Dev", "Rhetrion Dev", { usageMonitorIdentity: applicationIdentity.applicationMetadata("development") }],
   ]) {
-    const root = await mkdtemp(join(tmpdir(), "usagemonitor-ordinary-shell-"));
+    // The real stable startup policy reader correctly refuses inherited temp ACLs.
+    // Give this synthetic profile its own private root; never repair shared ACLs.
+    const root = process.platform === "win32"
+      ? join(REPOSITORY_ROOT, ".release-build", `ordinary-shell-${randomUUID()}`)
+      : await mkdtemp(join(tmpdir(), "usagemonitor-ordinary-shell-"));
+    if (process.platform === "win32") loadWindowsLegacyStateReadBinding().ensureDirectory(root);
     const appPath = join(root, "Rhetrion.app", "Contents", "Resources", "app.asar");
     const appData = join(root, "app-data");
     const userData = join(appData, "Rhetrion");
+    if (process.platform === "win32") {
+      const native = loadWindowsLegacyStateReadBinding();
+      native.ensureDirectory(appData);
+      native.ensureDirectory(userData);
+    }
     await Promise.all([
       mkdir(appPath, { recursive: true }),
       mkdir(userData, { recursive: true }),
@@ -3348,7 +3381,7 @@ test("preload exposes only the exact frozen v1 desktop bridge allowlist", async 
     "openDashboardInBrowser",
     "showDiagnostics",
     "revealLocalData",
-    "getXStatus", "refreshX", "getXSettings", "cancelXLogin", "configureXImport", "logoutX", "clearXCache",
+    "getXStatus", "refreshX", "getXSettings", "cancelXLogin", "configureXImport", "openXImportFolder", "logoutX", "clearXCache",
     "listXPosts", "getXPost", "beginXLogin", "setXSettings",
     "getRefreshStatus",
     "refreshStarted",

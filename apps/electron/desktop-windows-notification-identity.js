@@ -21,15 +21,19 @@ function isPlainRecord(value) {
     && Object.getPrototypeOf(value) === Object.prototype;
 }
 
+function normalizedClsid(value) {
+  if (typeof value !== "string") return null;
+  const plain = value.replace(/^\{(.*)\}$/u, "$1");
+  return /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/iu.test(plain)
+    ? plain.toLowerCase() : null;
+}
+
 function configuredIdentity(identity) {
   if (!isPlainRecord(identity)
       || Reflect.ownKeys(identity).length !== 2
       || typeof identity.appUserModelId !== "string"
       || identity.appUserModelId.length === 0
-      || typeof identity.toastActivatorClsid !== "string"
-      || !/^\{?[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\}?$/iu.test(
-        identity.toastActivatorClsid,
-      )) {
+      || normalizedClsid(identity.toastActivatorClsid) === null) {
     return null;
   }
   return identity;
@@ -56,8 +60,9 @@ function normalizedWindowsPath(value, pathApi) {
  * verification, which remains a release qualification responsibility.
  *
  * Electron 43 owns the toast registration. Its fixed CLSID is set only after
- * the Start Menu target and AppUserModelID are verified, rather than creating
- * or repairing a shortcut at application startup.
+ * the Start Menu target, AppUserModelID and any existing activator are verified.
+ * An absent installer activator is initialized with the fixed value. A mismatch
+ * is refused; this helper never repairs a shortcut or COM registration.
  */
 export function prepareWindowsNotificationIdentity({
   app,
@@ -99,7 +104,11 @@ export function prepareWindowsNotificationIdentity({
   }
   if (!isPlainRecord(shortcut)
       || normalizedWindowsPath(shortcut.target, pathApi) !== expectedTarget
-      || shortcut.appUserModelId !== selectedIdentity.appUserModelId) {
+      || shortcut.appUserModelId !== selectedIdentity.appUserModelId
+      // NSIS may leave this property absent before the first verified launch.
+      // Electron must not adopt a conflicting existing activator when probing.
+      || (shortcut.toastActivatorClsid !== undefined
+        && normalizedClsid(shortcut.toastActivatorClsid) !== normalizedClsid(selectedIdentity.toastActivatorClsid))) {
     return false;
   }
 

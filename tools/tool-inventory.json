@@ -1,7 +1,7 @@
 {
   "schemaVersion": "tool-inventory-v0.1",
   "reviewedAt": "2026-10-27",
-  "scope": "Executable and executable-adjacent sources under root scripts/** and tools/**, legacy root report builders and verifiers, and product contribution preparation.",
+  "scope": "Executable and executable-adjacent sources under root scripts/** and tools/**, legacy root report builders and verifiers..",
   "records": [
     {
       "classification": "build_release_operation",
@@ -14,13 +14,13 @@
         "product:electron:test",
         "product:local:test",
         "product:ui:test",
-        "release:trust:check",
-        "telemetry:check"
+        "release:trust:check"
       ],
       "callers": [
         "scripts/test-lanes.mjs",
         "test/test-isolated-runner.test.js",
-        "CONTRIBUTING.md"
+        "CONTRIBUTING.md",
+        "test/r7-resource-benchmark.test.js"
       ],
       "decision": "retain_as_ordinary_synthetic_test_boundary",
       "provenance": null,
@@ -252,7 +252,9 @@
       "stableAlias": null,
       "stableAliasReason": "Explicit protected cold-index copy conversion only; no discovery, backup selection, startup upgrade or activation command.",
       "additionalAliases": [],
-      "callers": ["test/pre-release-index-conversion.test.js"],
+      "callers": [
+        "test/pre-release-index-conversion.test.js"
+      ],
       "decision": "retain_for_one_time_pre_release_index_copy_upgrade",
       "provenance": "docs/runbooks/2026-10-27-pre-release-index-copy-upgrade.md",
       "provenanceReason": null,
@@ -265,7 +267,10 @@
       "stableAlias": null,
       "stableAliasReason": "Closed historical DDL catalog for the explicit copy converter; not a runtime legacy reader or command.",
       "additionalAliases": [],
-      "callers": ["scripts/lib/pre-release-index-conversion.mjs", "test/pre-release-index-conversion.test.js"],
+      "callers": [
+        "scripts/lib/pre-release-index-conversion.mjs",
+        "test/pre-release-index-conversion.test.js"
+      ],
       "decision": "retain_as_closed_pre_release_v8_schema_admission",
       "provenance": "docs/runbooks/2026-10-27-pre-release-index-copy-upgrade.md",
       "provenanceReason": null,
@@ -310,7 +315,9 @@
       "stableAlias": null,
       "stableAliasReason": "Pure projection of explicitly decoded usage controls into validated target settings; no source discovery or persistence.",
       "additionalAliases": [],
-      "callers": ["test/usage-state-controls.test.js"],
+      "callers": [
+        "test/usage-state-controls.test.js"
+      ],
       "decision": "retain_as_usage_control_target_projection",
       "provenance": "docs/runbooks/local-index-recovery.md",
       "provenanceReason": null,
@@ -323,7 +330,9 @@
       "stableAlias": null,
       "stableAliasReason": "Private native-backed usage-action intent and supplied-resource reconciliation journal; no physical usage mutation or automatic replay.",
       "additionalAliases": [],
-      "callers": ["test/usage-cutover-intent.test.js"],
+      "callers": [
+        "test/usage-cutover-intent.test.js"
+      ],
       "decision": "retain_as_usage_action_intent_journal",
       "provenance": "docs/runbooks/local-index-recovery.md",
       "provenanceReason": null,
@@ -336,7 +345,9 @@
       "stableAlias": null,
       "stableAliasReason": "Explicit isolated native qualification of selected usage objects, journaled ACL freeze/recovery, no-clobber byte backup and immutable SQLite inspection; no discovery, real-state CLI or activation.",
       "additionalAliases": [],
-      "callers": ["test/usage-bundle-freeze.test.js"],
+      "callers": [
+        "test/usage-bundle-freeze.test.js"
+      ],
       "decision": "retain_as_usage_bundle_native_qualification_contract",
       "provenance": "docs/runbooks/local-index-recovery.md",
       "provenanceReason": null,
@@ -355,21 +366,6 @@
       "decision": "retain_as_reusable_pricing_research_instrument",
       "provenance": null,
       "provenanceReason": "Findings were folded into the maintained quota-analysis calibration; the focused test retains the episode, settlement, and redaction contract without a narrative artifact.",
-      "legacyPaths": []
-    },
-    {
-      "classification": "shipped_product_operation",
-      "owner": "contribution",
-      "canonicalPath": "scripts/build-telemetry-contributions.js",
-      "stableAlias": "product:prepare-contribution",
-      "stableAliasReason": null,
-      "additionalAliases": [],
-      "callers": [
-        "README.md"
-      ],
-      "decision": "retain_in_product_source_until_a_product_composition_root_replaces_it",
-      "provenance": null,
-      "provenanceReason": "This is live product behavior rather than a dated research artifact; its contract is covered by contribution preparation tests.",
       "legacyPaths": []
     },
     {
@@ -461,7 +457,7 @@
     },
     {
       "classification": "build_release_operation",
-      "owner": "telemetry_contract",
+      "owner": "i18n",
       "canonicalPath": "scripts/generate-i18n-browser-mirror.js",
       "stableAlias": "i18n:browser:generate",
       "stableAliasReason": null,
@@ -479,7 +475,7 @@
     },
     {
       "classification": "build_release_operation",
-      "owner": "telemetry_contract",
+      "owner": "i18n",
       "canonicalPath": "scripts/generate-i18n-electron-copy.js",
       "stableAlias": "i18n:electron:generate",
       "stableAliasReason": null,
@@ -491,41 +487,6 @@
       ],
       "decision": "retain_as_generated_localization_support",
       "provenance": "docs/decisions/2026-09-13-engineering-simplification-evaluation.md",
-      "provenanceReason": null,
-      "legacyPaths": []
-    },
-    {
-      "classification": "build_release_operation",
-      "owner": "telemetry_contract",
-      "canonicalPath": "scripts/generate-telemetry-browser-mirror.js",
-      "stableAlias": "telemetry:browser:generate",
-      "stableAliasReason": null,
-      "additionalAliases": [
-        "telemetry:browser:check"
-      ],
-      "callers": [
-        "apps/web/test/telemetry-shared-parity.test.mjs"
-      ],
-      "decision": "retain_and_relocate_after_inventory",
-      "provenance": null,
-      "provenanceReason": "Generated output carries its generator marker and parity tests; no separate dated provenance artifact exists.",
-      "legacyPaths": []
-    },
-    {
-      "classification": "build_release_operation",
-      "owner": "telemetry_contract",
-      "canonicalPath": "scripts/generate-telemetry-contract.js",
-      "stableAlias": "telemetry:generate",
-      "stableAliasReason": null,
-      "additionalAliases": [
-        "telemetry:check"
-      ],
-      "callers": [
-        "docs/reference/schema-contracts.md",
-        "test/telemetry-contract.test.js"
-      ],
-      "decision": "retain_and_relocate_after_inventory",
-      "provenance": "docs/reference/schema-contracts.md",
       "provenanceReason": null,
       "legacyPaths": []
     },
@@ -660,7 +621,6 @@
         "test/architecture-boundaries.test.js",
         "test/codex-local-usage-analysis-boundary.test.js",
         "test/codex-provider-log-boundary.test.js",
-        "test/contribution-owner-boundary.test.js",
         "test/electron-app-package.test.js",
         "test/export-owner-boundary.test.js",
         "test/metadata-export-owner-boundary.test.js",
@@ -738,19 +698,6 @@
       "decision": "retain_without_modification_until_r7_source_freeze",
       "provenance": null,
       "provenanceReason": "R7 receipts bind this worker through source inventory, but no dated narrative artifact directly identifies the worker path.",
-      "legacyPaths": []
-    },
-    {
-      "classification": "build_release_operation",
-      "owner": "backend_acceptance",
-      "canonicalPath": "scripts/run-real-local-backend-acceptance.js",
-      "stableAlias": "product:local:acceptance",
-      "stableAliasReason": null,
-      "additionalAliases": [],
-      "callers": [],
-      "decision": "retain_and_relocate_after_inventory",
-      "provenance": null,
-      "provenanceReason": "Live acceptance launcher has no standalone dated provenance artifact.",
       "legacyPaths": []
     },
     {
@@ -1412,6 +1359,75 @@
       ],
       "decision": "retain_as_reusable_timing_research_instrument",
       "provenance": "docs/plans/2026-09-09-local-inference-timing.md",
+      "provenanceReason": null,
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
+      "owner": "codex_catalog",
+      "canonicalPath": "scripts/generate-codex-browser-mirror.js",
+      "stableAlias": "codex:browser:generate",
+      "stableAliasReason": null,
+      "additionalAliases": [
+        "codex:browser:check"
+      ],
+      "callers": [
+        "test/codex-catalog.test.js",
+        "docs/reference/schema-contracts.md"
+      ],
+      "decision": "retain_and_relocate_after_inventory",
+      "provenance": null,
+      "provenanceReason": "Generated output carries its generator marker and parity tests; no separate dated provenance artifact exists.",
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
+      "owner": "local_export",
+      "canonicalPath": "scripts/generate-local-export-contract.js",
+      "stableAlias": "export:contract:generate",
+      "stableAliasReason": null,
+      "additionalAliases": [
+        "export:contract:check"
+      ],
+      "callers": [
+        "test/local-export-contract.test.js",
+        "docs/reference/schema-contracts.md"
+      ],
+      "decision": "retain_and_relocate_after_inventory",
+      "provenance": null,
+      "provenanceReason": "Canonical local export v1 schemas and field policy with deterministic generated hashes.",
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
+      "owner": "desktop_calculation",
+      "canonicalPath": "scripts/migrate-desktop-calculation-copy.mjs",
+      "stableAlias": null,
+      "stableAliasReason": "Explicit copy-only owner operation; not invoked by ordinary runtime or validation.",
+      "additionalAliases": [],
+      "callers": [
+        "test/desktop-calculation-migration.test.js",
+        "docs/plans/2026-10-28-desktop-calculation-preservation.md"
+      ],
+      "decision": "retain_as_explicit_copy_operation",
+      "provenance": "docs/plans/2026-10-28-desktop-calculation-preservation.md",
+      "provenanceReason": null,
+      "legacyPaths": []
+    },
+    {
+      "classification": "build_release_operation",
+      "owner": "desktop_calculation",
+      "canonicalPath": "scripts/lib/desktop-calculation-migration.mjs",
+      "stableAlias": null,
+      "stableAliasReason": "Internal copy-only conversion library; product source does not import it.",
+      "additionalAliases": [],
+      "callers": [
+        "scripts/migrate-desktop-calculation-copy.mjs",
+        "test/desktop-calculation-migration.test.js",
+        "test/replay-safe-accounting-stale-serve.test.js"
+      ],
+      "decision": "retain_as_explicit_copy_operation",
+      "provenance": "docs/plans/2026-10-28-desktop-calculation-preservation.md",
       "provenanceReason": null,
       "legacyPaths": []
     }

@@ -3,11 +3,11 @@ import { normalizeQuotaResetEvent } from "./reset-events.js";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 export const WORKLOAD_POLICY = Object.freeze({
-  version: "task-workload-v12", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
+  version: "task-workload-v15", bucketMs: 5 * MINUTE, historyMs: 168 * HOUR,
   // currentMs retains the historical unresolved-task lookback; recent display
   // windows must not change task-boundary detection when their lengths change.
   currentMs: 15 * MINUTE, shortTermMs: 15 * MINUTE, trendMs: 60 * MINUTE,
-  minimumRecentWorkMs: MINUTE, minimumBins: 9, minimumClassBins: 3, minimumClassMs: MINUTE,
+  minimumBins: 9, minimumClassBins: 3, minimumClassMs: MINUTE,
   comparisonWindowMs: 168 * HOUR,
   comparisonDeadlineUncertaintyMs: 5 * MINUTE,
 });
@@ -242,26 +242,30 @@ function dateKey(atMs, formatter) {
 // Only preceding explicit observations anchor a period. Conflicting labels or
 // an explicit identity change break continuity; nothing backfills the first era.
 function workloadPlanPeriods(quota) {
-  const ordered=quota.map(q=>({...q,sourcePlanType:q.planType})).sort((a,b)=>a.atMs-b.atMs);
+  const ordered=quota.map(q=>({...q,sourcePlanType:q.planType})).sort((a,b)=>a.atMs-b.atMs
+    ||(a.observationOrder??-1)-(b.observationOrder??-1));
   const states=new Map(), result=[];
   for(let i=0;i<ordered.length;){
-    let end=i+1;while(end<ordered.length&&ordered[end].atMs===ordered[i].atMs)end++;
+    let end=i+1;while(end<ordered.length&&sameQuotaObservation(ordered[end],ordered[i]))end++;
     const groups=new Map();
     for(const q of ordered.slice(i,end)){const key=q.limitId??'codex',group=groups.get(key)??[];group.push(q);groups.set(key,group);}
     for(const [family,group] of groups){
-      const state=states.get(family)??{plan:null,period:null,account:null};states.set(family,state);
+      const state=states.get(family)??{plan:null,period:null,account:null,seen:false};states.set(family,state);
       const accounts=new Set(group.map(q=>q.accountKey).filter(x=>typeof x==='string'&&x.length));
       const account=accounts.size===1?[...accounts][0]:null;
       const identityConflict=accounts.size>1;
-      const accountChanged=identityConflict||account!==null&&state.account!==null&&account!==state.account;
+      const identityUnknown=group.some(q=>Object.hasOwn(q,'accountKey')&&!(typeof q.accountKey==='string'&&q.accountKey.length));
+      const accountChanged=identityConflict||identityUnknown||account!==null&&state.seen&&account!==state.account;
       if(accountChanged){state.plan=null;state.period=null;}
       if(account!==null)state.account=account;
+      else if(identityUnknown)state.account=null;
+      state.seen=true;
       const plans=new Set(group.map(q=>q.planType).filter(p=>typeof p==='string'&&p!=='unknown'&&/^[a-z][a-z0-9_]{0,63}$/u.test(p)));
       const conflict=identityConflict||plans.size>1||group.some(q=>q.conflict===true);
       if(conflict){state.plan=null;state.period=null;}
       else if(plans.size===1){const plan=[...plans][0];if(plan!==state.plan){state.plan=plan;state.period=group[0].atMs;}}
       const seen=new Set();
-      group.sort((a,b)=>Number(plans.has(b.planType))-Number(plans.has(a.planType))
+      group.sort((a,b)=>Number(b.direct===true)-Number(a.direct===true)||Number(plans.has(b.planType))-Number(plans.has(a.planType))
         ||Number(b.evidence===true)-Number(a.evidence===true)
         ||(a.resetAtMs??0)-(b.resetAtMs??0)||a.usedPercent-b.usedPercent);
       for(const q of group){
@@ -281,6 +285,30 @@ function workloadPlanPeriods(quota) {
     i=end;
   }
   return result;
+}
+
+// A collector sequence orders separate completed reads even when the clock
+// gives them the same millisecond. Unordered simultaneous evidence still has
+// no defensible first/last reading and retains the existing conflict checks.
+function sameQuotaObservation(a,b) {
+  return a.atMs===b.atMs&&(a.observationOrder??null)===(b.observationOrder??null);
+}
+
+// Recovery is an observed stage boundary, not a scheduled window reset or
+// negative consumption. Keep the source reset identity intact and pair only
+// inside each stage. Replaying the same ordered facts reconstructs the stages.
+function quotaConsumptionStages(observations) {
+  let prior=null,stage=0;
+  return observations.map(q=>{
+    if(q.conflict){prior=null;return {...q};}
+    if(q.comparisonStale)return {...q};
+    const same=prior&&prior.resetKey===q.resetKey&&!q.accountChanged;
+    const recovery=Boolean(same&&q.usedPercent<prior.usedPercent);
+    if(!same||recovery)stage++;
+    const result={...q,stageKey:`${q.resetKey}:stage:${stage}`,recovery};
+    prior=result;
+    return result;
+  });
 }
 
 // Shared by history and the startup comparison; their accumulation policies
@@ -304,7 +332,8 @@ function weeklyQuotaTracks(observations, resetEvents, history = false) {
         || !q.planType || q.planType === "unknown" || typeof q.limitId !== "string" || !q.limitId) {
       return { ...q, resetKey: `opaque:${q.resetKey}`, transition: "opaque" };
     }
-    const scope = history ? JSON.stringify([q.planType,q.limitId,q.planPeriod]) : `${q.planType}:${q.limitId}`;
+    const scope = history ? JSON.stringify([q.planType,q.limitId,q.planPeriod,q.accountKey??null])
+      :JSON.stringify([q.planType,q.limitId,q.accountKey??null]);
     const state = scopes.get(scope) ?? { current: null, retired: [] };
     scopes.set(scope, state);
     const prior = state.current;
@@ -354,6 +383,7 @@ function weeklyQuotaTracks(observations, resetEvents, history = false) {
 export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], capacity = null,
   capacityHistory = [], liveSinceMs = nowMs, sourceFresh = false, timeZone = "UTC", comparisonCapacityUsd = null,
   comparisonBaseline = null, comparisonQuota = [], comparisonResetEvents = [],
+  comparisonAccountKey = null,
   comparisonContinuityThroughMs = null, comparisonEvidenceError = null, estimationPlanType = null,
   quotaResetEvents = comparisonResetEvents, usageCoverageFromMs = 0 }) {
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new TypeError("workload_clock_invalid");
@@ -397,18 +427,19 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const daily = Array.from({ length: 7 }, (_, i) => ({ date: iso(todayUtc - (6 - i) * 24 * HOUR).slice(0,10),
     light: 0, medium: 0, heavy: 0, unclassified: 0, covered: false, inferred:false, plans:[] }));
   const dayMap = new Map(daily.map((d) => [d.date, d]));
-  const allObservations = [];
+  let allObservations = [];
   const resolvedQuota=weeklyQuotaTracks(workloadPlanPeriods(quota.filter((q)=>finite(q.atMs)&&q.atMs<=nowMs&&q.atMs>=0
     &&finite(q.usedPercent)&&q.usedPercent>=0&&q.usedPercent<=100)),quotaResetEvents,true);
   for (const x of resolvedQuota) {
     const last = allObservations.at(-1);
-    if (last?.atMs === x.atMs) {
+    if (last && sameQuotaObservation(last,x)) {
       if (x.conflict || last.usedPercent !== x.usedPercent || last.resetKey !== x.resetKey) {
         last.conflict = true;
         if(x.atMs>=fromMs)errors.push({ code: "quota_observation_conflict", stage: "quota" });
       }
     } else {allObservations.push({ ...x });if(x.conflict&&x.atMs>=fromMs)errors.push({code:'quota_observation_conflict',stage:'quota'});}
   }
+  allObservations=quotaConsumptionStages(allObservations);
   const observations=allObservations.filter(q=>q.atMs>=fromMs);
   if(observations.some(q=>q.transition==='ambiguous'))errors.push({code:'quota_reset_ambiguous',stage:'quota'});
   const latestPlanObservation=allObservations.filter(q=>!q.conflict&&q.planType&&q.planType!=='unknown').at(-1);
@@ -416,21 +447,19 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const estimatePeriod=latestPlanObservation?.planType===estimatePlan?latestPlanObservation.planPeriod:null;
   const forEstimate=q=>estimatePlan===null?!Object.hasOwn(q,'planType')||q.planType===undefined
     :q.planType===estimatePlan&&estimatePeriod!==null&&q.planPeriod===estimatePeriod;
-  const watermark = new Map(), pairs = [];
+  const pairs = [];
   let previous = null, staleQuota = 0;
   for (const b of allObservations) {
     if (b.conflict) { previous = null; continue; }
-    const high = watermark.get(b.resetKey);
-    if (b.comparisonStale || high !== undefined && b.usedPercent < high) {
+    if (b.comparisonStale) {
       b.stale = true; if(b.atMs>=fromMs)staleQuota++; continue;
     }
     // Integer quota readings are not per-request receipts. Equal readings
     // refresh observation freshness, never the first-change allocation anchor.
     // Keeping this policy here also prevents a renderer/reader second ledger.
-    if (previous?.resetKey === b.resetKey && b.usedPercent===previous.usedPercent) continue;
-    if (previous?.resetKey === b.resetKey && b.atMs>=fromMs)
-      pairs.push([previous,b,b.usedPercent-(high??previous.usedPercent)]);
-    watermark.set(b.resetKey,b.usedPercent);
+    if (previous?.stageKey === b.stageKey && b.usedPercent===previous.usedPercent) continue;
+    if (previous?.stageKey === b.stageKey && b.atMs>=fromMs)
+      pairs.push([previous,b,b.usedPercent-previous.usedPercent]);
     previous = b;
   }
   let actualPp = 0, actualWorkMs = 0, estimationPp=0, estimationWorkMs=0, estimateInferred=false;
@@ -496,9 +525,10 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   }
   const accepted = observations.filter((q) => !q.conflict && !q.stale);
   const last = observations.at(-1);
-  const latest = last?.conflict ? last : accepted.at(-1);
+  // Current balance is independent of the availability of consumption pairs.
+  const latest = last?.conflict || last?.direct===true ? last : accepted.at(-1);
   const remainingPercent = latest && !latest.conflict ? 100-latest.usedPercent : null;
-  const estimateRemaining=latest&&forEstimate(latest)&&!latest.conflict?remainingPercent:null;
+  const estimateRemaining=latest&&forEstimate(latest)&&!latest.conflict&&!latest.stale?remainingPercent:null;
   const workHours = ["heavy","medium","light"].map((level) => {
     const rows = bins.filter((b) => b.level === level && b.actualCovered);
     const ms = rows.reduce((s,b) => s+b.coveredWorkMs,0), pp=rows.reduce((s,b) => s+b.actualPp,0);
@@ -508,22 +538,33 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   const overallRate = estimationWorkMs>0 ? estimationPp/hours(estimationWorkMs) : null;
   workHours.push({ level:"composite", ratePpPerHour: overallRate, hours:ratioHours(estimateRemaining,overallRate), inferred:estimateInferred });
   const capacityUsd = finite(capacity?.usd) && capacity.usd>0 ? capacity.usd : null;
+  // Recent rates use elapsed hours. Train their independent cuts on complete,
+  // non-overlapping 15-minute receipt windows; lifecycle gaps do not define
+  // these denominators. Empty windows provide no observed usage sample.
+  const elapsedSamples=new Map(),sampleMs=WORKLOAD_POLICY.shortTermMs;
+  for(const u of selectedUsage){
+    const atMs=Math.floor((u.atMs-1)/sampleMs)*sampleMs;
+    if(atMs<Math.max(fromMs,usageCoverageFromMs)||atMs+sampleMs>nowMs)continue;
+    const sample=elapsedSamples.get(atMs)??{atMs,workMs:sampleMs,amounts:[],priced:true};
+    sample.priced&&=hasPrice(u);if(hasPrice(u))sample.amounts.push(u.usd);
+    elapsedSamples.set(atMs,sample);
+  }
+  const sumAmounts=amounts=>amounts.toSorted((a,b)=>a-b).reduce((sum,x)=>sum+x,0);
+  const recentModel=fitWorkload([...elapsedSamples.values()].map(({amounts,...sample})=>({...sample,usd:sumAmounts(amounts)})));
   function recentLoad(windowMs) {
-    const start=nowMs-windowMs, recent=usageBetween(start,nowMs), workMs=measure(start,nowMs);
-    const covered=start>=usageCoverageFromMs && completeWork(start,nowMs);
-    // These describe work in an elapsed-time window, not only a currently open
-    // task. A completed task retains its recent grade until it leaves the window.
-    const state=!sourceFresh||!covered ? "unknown" : workMs>0 ? "working"
-      : recent.length||work.active>0||work.unresolved>0 ? "unknown" : "idle";
-    const usdRate=state==="working"&&workMs>=WORKLOAD_POLICY.minimumRecentWorkMs&&recent.every(hasPrice)
-      ?recent.reduce((sum,u)=>sum+u.usd,0)/hours(workMs):null;
+    const start=nowMs-windowMs, recent=usageBetween(start,nowMs);
+    const candidate=sourceFresh&&start>=usageCoverageFromMs&&recent.length>0&&recent.every(hasPrice)
+      ?sumAmounts(recent.map(u=>u.usd))/hours(windowMs):null;
+    const usdRate=finite(candidate)&&candidate>=0?candidate:null;
+    const state=usdRate===null?'unknown':'available';
     const inPeriod=estimatePlan===null||estimatePeriod!==null&&start>=estimatePeriod;
-    const rate=inPeriod&&usdRate!==null&&capacityUsd!==null ? 100*usdRate/capacityUsd:null;
-    return {windowMinutes:windowMs/MINUTE,state,usdPerWorkHour:usdRate,level:state==="working"?classify(usdRate,model):null,
+    const converted=inPeriod&&usdRate!==null&&capacityUsd!==null ? 100*usdRate/capacityUsd:null;
+    const rate=finite(converted)&&converted>=0?converted:null;
+    return {windowMinutes:windowMs/MINUTE,state,usdPerHour:usdRate,level:state==='available'?classify(usdRate,recentModel):null,
       ratePpPerHour:rate,hours:ratioHours(remainingPercent,rate)};
   }
   function recentQuotaTrend(){
-    const empty={windowMinutes:WORKLOAD_POLICY.trendMs/MINUTE,state:'unknown',ratePpPerHour:null,
+    const empty={windowMinutes:WORKLOAD_POLICY.trendMs/MINUTE,state:'unknown',ratePpPerHour:null,usdPerHour:null,level:null,
       observedFrom:null,observedThrough:null,coveredMinutes:null,inferred:false};
     if(!sourceFresh)return empty;
     let anchor=null,end=null,inferred=false;
@@ -538,11 +579,20 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
         ||!Number.isSafeInteger(q.resetAtMs)||q.resetAtMs<=nowMs){
         anchor=null;end=null;inferred=false;continue;
       }
-      if(!anchor||q.resetKey!==anchor.resetKey||q.accountChanged){anchor=q;end=q;inferred=q.planAttribution==='inferred';}
+      if(!anchor||q.stageKey!==anchor.stageKey||q.accountChanged){anchor=q;end=q;inferred=q.planAttribution==='inferred';}
       else {end=q;inferred ||= q.planAttribution==='inferred';}
     }
     if(!anchor||!end||end.atMs<=anchor.atMs||end.usedPercent<=anchor.usedPercent)return empty;
-    return {...empty,state:'available',ratePpPerHour:(end.usedPercent-anchor.usedPercent)/hours(end.atMs-anchor.atMs),
+    const ratePpPerHour=(end.usedPercent-anchor.usedPercent)/hours(end.atMs-anchor.atMs);
+    // Capacity is selected by the composition root for the current plan/basis.
+    // An older account's estimate cannot grade the new account's quota suffix.
+    const accountBoundary=allObservations.filter(q=>q.accountChanged&&q.atMs<=end.atMs).at(-1)?.atMs??0;
+    const convertible=capacityUsd!==null&&Number.isSafeInteger(capacity?.availableAtMs)
+      &&capacity.availableAtMs>=accountBoundary&&capacity.availableAtMs<=nowMs;
+    const converted=convertible?ratePpPerHour*capacityUsd/100:null;
+    const usdPerHour=finite(converted)&&converted>0?converted:null;
+    return {...empty,state:'available',ratePpPerHour,usdPerHour,
+      level:usdPerHour===null?null:classify(usdPerHour,recentModel),
       observedFrom:iso(anchor.atMs),observedThrough:iso(end.atMs),coveredMinutes:(end.atMs-anchor.atMs)/MINUTE,inferred};
   }
   const current=recentLoad(WORKLOAD_POLICY.shortTermMs),trend=recentQuotaTrend();
@@ -557,54 +607,58 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
     :finite(initialCapacity?.usd)&&initialCapacity.usd>0?initialCapacity.usd:null;
   const comparisonCandidates=[...quota,...comparisonQuota.map(q=>({...q,evidence:true}))]
     .filter(q=>Number.isSafeInteger(q.atMs)&&q.atMs>=0&&q.atMs<=nowMs
+      &&(comparisonAccountKey===null||q.accountKey===comparisonAccountKey)
       &&finite(q.usedPercent)&&q.usedPercent>=0&&q.usedPercent<=100);
   if(comparisonBaseline&&comparisonBaseline.atMs>=startedAtMs&&comparisonBaseline.atMs<=nowMs
     &&finite(comparisonBaseline.usedPercent)&&comparisonBaseline.usedPercent>=0&&comparisonBaseline.usedPercent<=100)
-    comparisonCandidates.push({...comparisonBaseline});
+    if(!comparisonCandidates.some(q=>q.atMs===comparisonBaseline.atMs&&q.usedPercent===comparisonBaseline.usedPercent
+      &&q.resetAtMs===comparisonBaseline.resetAtMs&&q.planType===comparisonBaseline.planType&&q.limitId===comparisonBaseline.limitId))
+      comparisonCandidates.push({...comparisonBaseline});
   const comparisonObservations=[];
   // Share the overview's marked plan projection, not a second inheritance rule.
   // Raw labels remain available for persisting a baseline without promoting an
   // inferred label into an explicit observation on the next refresh.
   for(const q of workloadPlanPeriods(comparisonCandidates)){const last=comparisonObservations.at(-1);
-    if(last?.atMs===q.atMs){
+    if(last&&sameQuotaObservation(last,q)){
       const compatible=last.resetKey===q.resetKey||last.planType===q.planType&&last.limitId===q.limitId
         &&Math.abs(last.resetAtMs-q.resetAtMs)<=WORKLOAD_POLICY.comparisonDeadlineUncertaintyMs
         &&q.atMs<Math.min(last.resetAtMs,q.resetAtMs);
       if(last.usedPercent!==q.usedPercent||!compatible)last.conflict=true;
     }else comparisonObservations.push({...q});
   }
-  const startupHigh=new Map();let prior=null,observedFrom=null,observedThrough=null,cumulativePp=0,baseline=null;
+  let prior=null,observedFrom=null,observedThrough=null,cumulativePp=0,baseline=null;
   const comparisonRanges=[];let comparisonConflict=false,resetGap=false,resetAmbiguous=false,blocked=false;
   let identityChanged=Number.isSafeInteger(comparisonContinuityThroughMs);
   let confirmedThrough=null,comparisonInferred=false;
-  for(const q of weeklyQuotaTracks(comparisonObservations,comparisonResetEvents)){
+  for(const q of quotaConsumptionStages(weeklyQuotaTracks(comparisonObservations,comparisonResetEvents))){
     if(Number.isSafeInteger(comparisonContinuityThroughMs)&&q.atMs>=comparisonContinuityThroughMs){blocked=true;break;}
     if(q.comparisonStale)continue;
-    if(q.atMs<startedAtMs){if(!q.conflict)startupHigh.set(q.resetKey,Math.max(startupHigh.get(q.resetKey)??0,q.usedPercent));continue;}
-    if(q.accountChanged){identityChanged=true;blocked=true;break;}
+    if(q.atMs<startedAtMs)continue;
+    // A known identity at the exact comparison start is its new baseline,
+    // not a switch inside that comparison. Unknown identity still blocks it.
+    if(q.accountChanged&&(q.atMs>startedAtMs||q.accountKey===null)){identityChanged=true;blocked=true;break;}
     if(q.conflict){comparisonConflict=true;blocked=true;prior=null;continue;}
     if(prior&&((prior.planType&&q.planType&&prior.planType!=="unknown"&&q.planType!=="unknown"&&prior.planType!==q.planType)
       ||(prior.limitId&&q.limitId&&prior.limitId!==q.limitId))){identityChanged=true;blocked=true;break;}
     if(q.transition==="reset")blocked=false;
     if(prior && q.transition==="ambiguous"){resetAmbiguous=true;blocked=true;}
-    const high=startupHigh.get(q.resetKey);
-    if(prior && q.transition==="same" && q.atMs>=q.resetAtMs && high!==undefined && q.usedPercent<high){resetAmbiguous=true;blocked=true;}
-    if(high!==undefined&&q.usedPercent<high)continue;
+    // A recovery does not renew an already expired deadline. Keep window
+    // uncertainty separate from the valid within-window stage boundary.
+    if(prior&&q.transition==='same'&&q.atMs>=q.resetAtMs&&q.recovery){resetAmbiguous=true;blocked=true;}
     if(observedFrom===null){observedFrom=q.atMs;
       if(Number.isSafeInteger(q.resetAtMs)&&typeof q.planType==="string"&&typeof q.limitId==="string")
         baseline={atMs:q.atMs,usedPercent:q.usedPercent,resetAtMs:q.resetAtMs,planType:q.sourcePlanType,limitId:q.limitId};
     }
-    if(prior?.atMs===q.atMs&&prior.usedPercent!==q.usedPercent){comparisonConflict=true;blocked=true;prior=null;continue;}
     observedThrough=q.atMs;
-    if(prior?.resetKey===q.resetKey&&!blocked){
-      cumulativePp+=q.usedPercent-(high??prior.usedPercent);
+    if(prior?.stageKey===q.stageKey&&!blocked){
+      cumulativePp+=q.usedPercent-prior.usedPercent;
       comparisonRanges.push([prior.atMs,q.atMs]);
       comparisonInferred ||= prior.planAttribution==='inferred'||q.planAttribution==='inferred';
       confirmedThrough=q.atMs;
     }else if(prior?.resetKey!==q.resetKey&&prior&&usage.some(u=>u.atMs>prior.atMs&&u.atMs<=q.atMs)){
       resetGap=true;if(q.transition!=="reset")blocked=true;
     }
-    startupHigh.set(q.resetKey,q.usedPercent);prior=q;
+    prior=q;
   }
   const comparisonUsage=[];let rangeIndex=0;
   for(const u of [...usage].sort((a,b)=>a.atMs-b.atMs)){
@@ -633,22 +687,23 @@ export function analyzeWorkload({ nowMs, events = [], usage = [], quota = [], ca
   if (segmentPriceMissing||selectedUsage.some(u=>!hasPrice(u))) errors.push({code:"price_missing",stage:"pricing"});
   if(pairs.some(([a])=>a.atMs<usageCoverageFromMs))errors.push({code:'workload_history_incomplete',stage:'index'});
   const allowancePoints=new Map();
-  for(const q of observations)allowancePoints.set(`${Math.floor(q.atMs/WORKLOAD_POLICY.bucketMs)}:${q.resetKey}`,q);
+  for(const q of observations)allowancePoints.set(`${Math.floor(q.atMs/WORKLOAD_POLICY.bucketMs)}:${q.stageKey??q.resetKey}`,q);
   const allowanceRows=[...allowancePoints.values()].sort((a,b)=>a.atMs-b.atMs);
   const groupedErrors=new Map();
   for(const error of errors){const key=`${error.stage}:${error.code}`,prior=groupedErrors.get(key);
     groupedErrors.set(key,{...error,count:(prior?.count??0)+(error.count??1)});}
-  return { schemaVersion:"overview-workload-v7", policyVersion:WORKLOAD_POLICY.version,
+  return { schemaVersion:"overview-workload-v9", policyVersion:WORKLOAD_POLICY.version,
     generatedAt:iso(nowMs), timeZone, status:errors.length?"partial":"available", errors:[...groupedErrors.values()],
     adjustments:{workReplayEvents:work.replayed,workDurationDifferences:work.durationDifferences,quotaStaleObservations:staleQuota},
     allowance:{ remainingPercent, observedAt:latest?iso(latest.atMs):null,
       points:allowanceRows.map((q,i)=>({at:iso(q.atMs),remainingPercent:q.conflict||q.stale?null:100-q.usedPercent,
-        breakBefore:i===0||q.resetKey!==allowanceRows[i-1].resetKey||q.atMs-allowanceRows[i-1].atMs>15*MINUTE})) },
+        breakBefore:i===0||q.stageKey!==allowanceRows[i-1].stageKey||q.atMs-allowanceRows[i-1].atMs>15*MINUTE})) },
     planAttribution:{policyVersion:'observed-plan-period-v1',estimationPlanType:estimatePlan,
       inferredObservations:observations.filter(q=>q.planAttribution==='inferred').length,
       unresolvedObservations:observations.filter(q=>q.planType==='unknown').length},
-    workHours, classification:{ centers, version:WORKLOAD_POLICY.version }, daily, current, trend,
-    segmentation:{policyVersion:'first-quota-drop-v1',pendingSince:previous?iso(previous.atMs):null,
+    workHours, classification:{ centers, version:WORKLOAD_POLICY.version },
+    recentClassification:{centers:recentModel?.centers??null,version:'elapsed-fifteen-minute-v1'},daily, current, trend,
+    segmentation:{policyVersion:'quota-recovery-stages-v2',pendingSince:previous?iso(previous.atMs):null,
       plans:[...summaries.values()]},
     unallocated:{totalIntervals:unallocatedCount,plans:[...unallocatedPlans.values()],records:unallocatedRecords,
       truncated:unallocatedCount>unallocatedRecords.length},

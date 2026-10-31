@@ -1,23 +1,14 @@
 # Generated artifacts
 
-Committed release evidence and contract artifacts—never gitignore this
-directory and never edit its files by hand. Generators and exact-set tests
-validate artifact shape and provenance rules; a retained receipt still proves
-only its recorded source digest, environment, and date. It does not become
-current merely because the file remains checked in or its schema still passes.
+Committed contract outputs and frozen historical release evidence live here.
+Never edit their bytes by hand or gitignore this directory.
 
-Telemetry contract outputs are routine generated mirrors. R7 receipts are
-private-corpus, dual-runtime release evidence: any bound source change makes
-the retained set historical until an owner-authorized regeneration completes.
-Do not regenerate R7 merely to make a documentation or source checkout appear
-current.
+Generate current local export outputs with `pnpm run export:contract:generate`
+and verify exact source/policy/registry hashes with `pnpm run export:contract:check`.
+These routines do not inspect or mutate retained user exports or identities.
 
-Owning commands:
-
-```bash
-npm run benchmark:r7:release:regenerate   # r7-release-* evidence receipts
-npm run telemetry:generate                # telemetry contract artifacts
-```
-
-Use `npm run telemetry:check` for routine telemetry validation. Follow the
-maintained R7 receipt runbook before the protected regeneration command.
+Existing R7 receipts prove only their recorded source digest, environment and
+date. Generation is retired; do not regenerate or rewrite them to match current
+source. Use the [R7 preservation runbook](../docs/runbooks/2026-08-19-r7-release-evidence-receipt-maintenance.md)
+for explicit historical readback. Passing source checks does not qualify an
+installed application, signed artifact or release.

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
 
 import {
   createDesktopNotificationDelivery,
@@ -19,11 +20,13 @@ function fakeNotification({ supported = true, supportError = null, constructErro
     constructError,
     showError,
   };
-  class FakeNotification {
+  class FakeNotification extends EventEmitter {
     constructor(options) {
+      super();
       state.constructorCalls.push(options);
       if (state.constructError) throw state.constructError;
       this.options = options;
+      state.lastNotification = this;
     }
 
     show() {
@@ -90,6 +93,36 @@ test("delivery vocabulary and semantic notification validator are closed", () =>
   for (const value of invalid) {
     assert.throws(() => validateDesktopNotificationToDeliver(value), TypeError);
   }
+});
+
+test("identity-gated initialization happens once and status reads never probe native support", () => {
+  const fake = fakeNotification();
+  const delivery = createDesktopNotificationDelivery({ Notification: fake.Notification,
+    app: PACKAGED_APP, platform: "win32", windowsIdentityReady: true });
+  assert.equal(fake.state.supportCalls, 1);
+  for (let i = 0; i < 5; i++) assert.deepEqual(delivery.status(), { status: "ready" });
+  assert.equal(fake.state.supportCalls, 1);
+  fake.state.supported = false;
+  assert.deepEqual(delivery.status(), { status: "ready" }, "snapshot does not claim to re-read OS authorization");
+  assert.equal(fake.state.supportCalls, 1);
+});
+
+test("quota and test notification clicks use the main-process activation handler", () => {
+  const fake = fakeNotification();
+  let clicks = 0;
+  const delivery = createDesktopNotificationDelivery({ Notification: fake.Notification,
+    app: PACKAGED_APP, platform: "win32", windowsIdentityReady: true, onClick: () => { clicks++; } });
+  for (const send of [() => delivery.sendTest(), () => delivery.deliver({ key: DESKTOP_NOTIFICATION_KEYS.RESET })]) {
+    assert.deepEqual(send(), { status: "delivered" });
+    assert.equal(fake.state.lastNotification.listenerCount("click"), 1);
+    fake.state.lastNotification.emit("click");
+  }
+  assert.equal(clicks, 2);
+  assert.equal(fake.state.showCalls, 2);
+  const broken = createDesktopNotificationDelivery({ Notification: fake.Notification,
+    app: PACKAGED_APP, platform: "win32", windowsIdentityReady: true, onClick: () => { throw new Error("synthetic"); } });
+  broken.sendTest();
+  assert.doesNotThrow(() => fake.state.lastNotification.emit("click"));
 });
 test("packaged delivery maps each semantic output to complete localized copy", () => {
   const expectations = [

@@ -115,6 +115,7 @@ function assertOptions(options) {
     "locale",
     "systemLocales",
     "windowsIdentityReady",
+    "onClick",
   ]);
   if (Reflect.ownKeys(options).some((key) => !allowed.has(key))) {
     throw new TypeError("notification delivery options have unexpected fields");
@@ -174,17 +175,15 @@ export function createDesktopNotificationDelivery(options = {}) {
     throw new TypeError("systemLocales must be an array");
   }
 
-  const textOptions = { locale, systemLocales };
-
-  function status() {
-    const capability = capabilityStatus({
-      Notification,
-      app,
-      platform,
-      windowsIdentityReady,
-    });
-    return capability;
+  if (configuration.onClick !== undefined && typeof configuration.onClick !== "function") {
+    throw new TypeError("notification click handler must be a function");
   }
+  const textOptions = { locale, systemLocales };
+  // Initialization is deliberate: Electron can register COM/shortcut state
+  // here, and must never be reached without the verified identity gate.
+  const capability = capabilityStatus({ Notification, app, platform, windowsIdentityReady });
+
+  function status() { return capability; }
 
   function showCopy(copyFactory) {
     const capability = status();
@@ -202,6 +201,12 @@ export function createDesktopNotificationDelivery(options = {}) {
       // Exactly one native object and one show call are created for each
       // accepted semantic output. Policy-level dedupe and one-per-refresh
       // selection remain the caller's responsibility.
+      if (configuration.onClick) {
+        if (typeof nativeNotification.on !== "function") return fixedStatus("native_error");
+        nativeNotification.on("click", () => {
+          try { configuration.onClick(); } catch { /* Activation cannot break native event dispatch. */ }
+        });
+      }
       nativeNotification.show();
     } catch {
       return fixedStatus("native_error");

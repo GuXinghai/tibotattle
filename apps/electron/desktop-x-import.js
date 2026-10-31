@@ -7,10 +7,11 @@ import { spawn, execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 import { isWindowsProtectedStateStore, isWindowsProtectedStateStoreError } from '../../src/platform/index.js';
 import { normalizeXImportCookies, encodeXImportFrame, createXImportFrameReader, X_IMPORT_HOST, X_IMPORT_ORIGIN, X_IMPORT_EXTENSION_ID } from './x-import/contract.js';
+import { createXImportSetup, X_IMPORT_ASSETS } from './x-import/setup.js';
+import { createXImportRegistration } from './x-import/registration.js';
 
 const execFile = promisify(execFileCallback);
 const SOURCE = fileURLToPath(new URL('./x-import/', import.meta.url));
-const FILES = ['manifest.json', 'popup.html', 'popup.js', 'UsageMonitorXImport.exe'];
 const reply = (code, extra = {}) => ({ ok: ['bridge_ready', 'import_ready', 'imported', 'verification_pending'].includes(code), code, ...extra });
 const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).sort().join(',') === keys.slice().sort().join(',');
 
@@ -63,11 +64,34 @@ export async function buildDesktopXImportNative({ sourceDirectory = SOURCE, outp
   catch { throw new Error('x_import_build_failed'); }
 }
 
-export function createDesktopXImport({ protectedStore, onImport, sourceDirectory = SOURCE }) {
+export function createDesktopXImport({ protectedStore, onImport, sourceDirectory = SOURCE, revealFolder }) {
+  return createDesktopXImportWithRegistration({ protectedStore, onImport, sourceDirectory, revealFolder });
+}
+
+// Synthetic native transport tests retain genuine protected storage and the
+// real broker. Only registry I/O is replaced; this never qualifies Chrome/X.
+export function createDesktopXImportForTest(options, registration) {
+  if (!exactKeys(registration, ['register', 'verify']) || typeof registration.register !== 'function' || typeof registration.verify !== 'function') throw new Error('x_import_unavailable');
+  return createDesktopXImportWithRegistration(options, registration);
+}
+
+function createDesktopXImportWithRegistration({ protectedStore, onImport, sourceDirectory = SOURCE, revealFolder }, registrationOverride) {
   if (process.platform !== 'win32' || process.arch !== 'x64' || !isWindowsProtectedStateStore(protectedStore) || protectedStore.maxBytes < 1048576 || typeof onImport !== 'function') throw new Error('x_import_unavailable');
   const gate = createXImportRequestGate({ onImport });
-  let child = null, channel = null, starting = null, exiting = Promise.resolve(), configured = false, disposed = false, actionGeneration = 0, code = 'not_configured';
+  let child = null, channel = null, starting = null, exiting = Promise.resolve(), configured = false, disposed = false, actionGeneration = 0, code = 'not_configured', configuring = null, setupPromise = null;
   const hostPath = join(protectedStore.rootPath, 'UsageMonitorXImport.exe');
+  const registration = registrationOverride ?? createXImportRegistration({ rootPath: protectedStore.rootPath, windowsDirectory: process.env.SystemRoot, run: execFile });
+  async function setup() {
+    if (!setupPromise) setupPromise = (async () => {
+      const assets = Object.fromEntries(await Promise.all(X_IMPORT_ASSETS.filter(name => name !== 'native-host.json')
+        .map(async name => [name, await readFile(join(sourceDirectory, name))])));
+      assets['native-host.json'] = Buffer.from(JSON.stringify({ name: X_IMPORT_HOST, description: 'Rhetrion X session import', path: hostPath, type: 'stdio', allowed_origins: [X_IMPORT_ORIGIN] }));
+      return createXImportSetup({ store: protectedStore, assets,
+        isMissing: error => isWindowsProtectedStateStoreError(error) && error.code === 'windows_protected_state_store_missing',
+        registerHost: () => registration.register(), verifyHost: () => registration.verify() });
+    })().catch(error => { setupPromise = null; throw error; });
+    return setupPromise;
+  }
   const stop = () => {
     channel?.destroy(); channel = null;
     const old = child; child = null; starting = null;
@@ -76,12 +100,6 @@ export function createDesktopXImport({ protectedStore, onImport, sourceDirectory
       old.kill();
     }
   };
-  async function upsert(name, bytes) {
-    let previous;
-    try { previous = protectedStore.read(name); }
-    catch (error) { if (!isWindowsProtectedStateStoreError(error) || error.code !== 'windows_protected_state_store_missing') throw error; }
-    if (previous) protectedStore.replace(name, previous.identity, bytes); else protectedStore.create(name, bytes);
-  }
   async function openControl(name) {
     const deadline = Date.now() + 8000;
     while (!disposed && child && Date.now() < deadline) {
@@ -132,22 +150,38 @@ export function createDesktopXImport({ protectedStore, onImport, sourceDirectory
   return Object.freeze({
     async configure() {
       if (disposed) return status();
-      actionGeneration++; gate.cancel(); stop();
-      try {
-        protectedStore.ensureProtectedDirectory();
-        for (const name of FILES) await upsert(name, await readFile(join(sourceDirectory, name)));
-        await upsert('native-host.json', Buffer.from(JSON.stringify({ name: X_IMPORT_HOST, description: 'Rhetrion X session import', path: hostPath, type: 'stdio', allowed_origins: [X_IMPORT_ORIGIN] })));
-        const registry = join(process.env.SystemRoot, 'System32', 'reg.exe');
-        for (const view of ['32', '64']) await execFile(registry, ['ADD', `HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\${X_IMPORT_HOST}`, '/ve', '/t', 'REG_SZ', '/d', join(protectedStore.rootPath, 'native-host.json'), '/f', `/reg:${view}`], { windowsHide: true, timeout: 10000, maxBuffer: 4096 });
-        configured = true; await start();
-      } catch { configured = false; code = 'bridge_unavailable'; stop(); }
-      return status();
+      if (configuring) return configuring;
+      const action = ++actionGeneration; gate.cancel(); stop(); configured = false; code = 'not_configured';
+      configuring = (async () => {
+        try {
+          await exiting;
+          const prepared = await (await setup()).prepare({ explicit: true, isCurrent: () => action === actionGeneration && !disposed });
+          if (!prepared.ready || action !== actionGeneration || disposed) return status();
+          configured = true; await start();
+        } catch { if (action === actionGeneration && !disposed) { configured = false; code = 'bridge_unavailable'; stop(); } }
+        return status();
+      })().finally(() => { configuring = null; });
+      return configuring;
     },
     async begin() {
+      // A setup completion may re-arm the still-selected login through IPC.
+      // Never create a late permit after waiting for an independently cancelled
+      // setup operation.
+      if (configuring || disposed) return status();
       const action = ++actionGeneration;
-      try { await start(); if (action === actionGeneration && !disposed) { gate.begin(); code = 'import_ready'; } }
-      catch { code = 'bridge_unavailable'; }
+      try {
+        const prepared = await (await setup()).prepare({ isCurrent: () => action === actionGeneration && !disposed });
+        if (action !== actionGeneration || disposed) return status();
+        if (!prepared.ready) { configured = false; code = prepared.code; return status(); }
+        await start(); if (action === actionGeneration && !disposed) { gate.begin(); code = 'import_ready'; }
+      }
+      catch { if (action === actionGeneration && !disposed) code = 'bridge_unavailable'; }
       return status();
+    },
+    async reveal() {
+      if (disposed || typeof revealFolder !== 'function' || !(await setup()).verify()) throw new Error('x_import_unavailable');
+      await revealFolder(join(protectedStore.rootPath, 'manifest.json'));
+      return { ok: true };
     },
     cancel() { actionGeneration++; gate.cancel(); if (configured) code = 'bridge_ready'; return status(); },
     status,

@@ -87,7 +87,7 @@ test("fresh checked first run registers once and accepts only enabled snapshot s
   assert.deepEqual(value.calls.dialogs, []);
 });
 
-test("fresh checked first run reports needs approval and offers Login Items", async () => {
+test("fresh checked first run reports needs approval and offers Windows Startup apps", async () => {
   const value = fixture({ result: snapshot("needs-approval"), response: 0 });
   const result = await value.registrar.apply(firstRun());
   assert.deepEqual(result, { status: "needs_approval" });
@@ -96,7 +96,7 @@ test("fresh checked first run reports needs approval and offers Login Items", as
   assert.equal(value.calls.dialogs.length, 1);
   assert.deepEqual(value.calls.dialogs[0].buttons, [
     "Continue",
-    "Open Login Items Settings",
+    "Open Windows Startup apps settings",
   ]);
 });
 
@@ -136,7 +136,7 @@ test("registration failures continue startup and keep raw errors out of dialog/r
   assert.deepEqual(value.calls.openSystemSettings, []);
 });
 
-test("registration failures open Login Items only when the second dialog button is selected", async () => {
+test("registration failures open Windows Startup apps only when the second dialog button is selected", async () => {
   const value = fixture({ error: new Error("opaque"), response: 1 });
   const result = await value.registrar.apply(firstRun());
   assert.deepEqual(result, { status: "continued_without_login" });
@@ -165,16 +165,17 @@ test("dialog and system-settings failures are contained", async () => {
 
 test("system, English, Simplified Chinese, and Spanish copy is fixed and complete", () => {
   const expectations = [
-    ["en-US", "Rhetrion will continue without Start at login", "Continue", "Open Login Items Settings"],
-    ["zh-Hans", "衡川 将继续启动，但不会在登录时启动", "继续", "打开登录项设置"],
-    ["es", "Rhetrion continuará sin iniciarse al iniciar sesión", "Continuar", "Abrir configuración de elementos de inicio"],
+    ["en-US", "Rhetrion will continue without Start at login", "Continue", "Open Windows Startup apps settings", "Rhetrion will continue starting now. You can review or approve this setting in Windows Startup apps settings."],
+    ["zh-Hans", "衡川 将继续启动，但不会在登录时启动", "继续", "打开 Windows“启动应用”设置", "衡川 将继续启动。你可以在 Windows“启动应用”设置中查看或批准此设置。"],
+    ["es", "Rhetrion continuará sin iniciarse al iniciar sesión", "Continuar", "Abrir la configuración de aplicaciones de inicio de Windows", "Rhetrion seguirá iniciándose ahora. Puedes revisar o aprobar esta opción en las aplicaciones de inicio de Windows."],
   ];
-  for (const [locale, title, continueLabel, settingsLabel] of expectations) {
+  for (const [locale, title, continueLabel, settingsLabel, detail] of expectations) {
     const copy = desktopFirstRunLoginDialogCopy({ locale });
     assert.equal(copy.title, title);
     assert.deepEqual(copy.buttons, [continueLabel, settingsLabel]);
     assert.ok(copy.message.length > 0);
-    assert.ok(copy.detail.length > 0);
+    assert.equal(copy.detail, detail);
+    assert.doesNotMatch(copy.detail + copy.buttons[1], /Login Items|Elementos de inicio|登录项/u);
   }
   assert.equal(
     desktopFirstRunLoginDialogCopy({ locale: "system", systemLocales: ["es-ES"] }).buttons[0],

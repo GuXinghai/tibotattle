@@ -175,7 +175,7 @@ export async function writeDevelopmentHandoff({ target, outputDirectory }) {
       await retain(file, bytes, executable);
     } finally { await handle.close(); }
   }
-  const instructions = "Extract the complete bundle, keeping win-unpacked beside the launch files. Double-click UsageMonitor-Windows-Development-Launch.cmd. No separate Node.js installation or source checkout is needed. The persistent private test profile is under %LOCALAPPDATA%\\UsageMonitor\\electron-user-test\\win32-x64\\profile. The packaged main process verifies the development runtime and native binding before opening.";
+  const instructions = "Extract the complete bundle, keeping win-unpacked beside the launch files. Double-click UsageMonitor-Windows-Development-Launch.cmd. No separate Node.js installation or source checkout is needed. The persistent private test profile is under %LOCALAPPDATA%\\UsageMonitor\\electron-user-test\\win32-x64\\profile-v2. The packaged main process verifies the development runtime and native binding before opening.";
   await retain("DEVELOPMENT-TESTING.txt", Buffer.from([
     `Rhetrion Dev ${RELEASE_VERSION} — ${target}`,
     "",

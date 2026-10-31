@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import {
   createWindowsNormalCandidateCredentialHandoverForTest,
   createWindowsDevelopmentReadOnlyCredentialHandoverForTest,
+  createWindowsExistingObservationCredentialHandoverForTest,
 } from "../desktop-windows-accountless-credential.js";
 
 test("main enables the development reader only inside the qualified Windows lane", async () => {
@@ -14,7 +15,9 @@ test("main enables the development reader only inside the qualified Windows lane
   const select = new Function("productionEnabled", "platform", "architecture",
     "productionDistribution", "qualificationContext", "preparation", "environment",
     "WINDOWS_ELECTRON_TEST_LANE", "createWindowsNormalCandidateCredentialHandover",
-    "createWindowsDevelopmentReadOnlyCredentialHandover", `${block} return windowsNormalCandidateCredentialHandover;`);
+    "createWindowsDevelopmentReadOnlyCredentialHandover", "usageCutoverPolicy = null",
+    "createWindowsExistingObservationCredentialHandover = () => 'existing'",
+    `${block} return windowsNormalCandidateCredentialHandover;`);
   const valid = { platform: "win32", architecture: "x64", context: {},
     profile: "development", lane: "windows-electron-smoke" };
   for (const [change, expected] of [
@@ -29,6 +32,24 @@ test("main enables the development reader only inside the qualified Windows lane
   assert.equal(select(true, "win32", "x64", { target: "win32-x64" }, null,
     { applicationProfile: "stable" }, {}, "windows-electron-smoke",
     () => "normal", () => "reader"), "normal");
+  assert.equal(select(true, "win32", "x64", { target: "win32-x64" }, null,
+    { applicationProfile: "stable" }, {}, "windows-electron-smoke",
+    () => assert.fail("must not allow creation"), () => assert.fail("not development"),
+    { observationIdentity: "existing_only" }), "existing");
+});
+
+test("migrated stable handover fixes existing-only policy before backend creation", () => {
+  let options, constructed = 0;
+  const handover = createWindowsExistingObservationCredentialHandoverForTest({
+    platform: "win32", architecture: "x64",
+    createAccountObservationCredentialBackend: () => { constructed += 1; return {}; },
+    isAccountObservationBackendError: () => false,
+    attachBroker(value) { options = value; return {}; },
+  });
+  assert.equal(constructed, 0);
+  handover.attachWindowsAccountObservationBroker({});
+  assert.equal(options.readOnly, true);
+  assert.equal(constructed, 0);
 });
 
 test("development handover fixes read-only policy on the owned broker", () => {

@@ -1,3 +1,4 @@
+import { parseIsolatedTestArguments } from "../scripts/run-isolated-tests.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -23,10 +24,11 @@ import {
 } from "../scripts/r7-resource-benchmark-worker.js";
 
 test("the supported default suite keeps resource evidence serial", async () => {
+  assert.equal(parseIsolatedTestArguments(["--suite=root"]).concurrency, 1);
   const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
   assert.equal(
     packageJson.scripts.test,
-    "node --test --test-concurrency=1 test/*.test.js apps/web/test/*.test.mjs",
+    "node ./scripts/run-isolated-tests.mjs --suite=root",
   );
 });
 
@@ -40,12 +42,12 @@ test("R7 worker provenance binds shared and package runtime sources", async () =
   assert.equal(new Set(paths).size, paths.length);
   assert.equal(paths.some((path) => path.endsWith("/AGENTS.md")), false);
   for (const expected of [
+    "packages/codex-catalog/index.js",
+    "packages/codex-catalog/package.json",
+    "packages/codex-catalog/src/model-catalog.js",
     "packages/accounting/index.js",
     "packages/accounting/package.json",
     "packages/accounting/src/cost-ledger.js",
-    "packages/telemetry-contract/index.js",
-    "packages/telemetry-contract/package.json",
-    "packages/telemetry-contract/src/telemetry-v0.1.js",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",
   ]) assert.equal(paths.includes(expected), true, expected);

@@ -16,7 +16,7 @@ body[data-dashboard-page="x"] #reporting-period-toolbar { display: none; }
 .x-reader .x-reader-icon { display: inline-flex; align-items: center; justify-content: center; width: 2.25rem; min-width: 0; height: 2.25rem; padding: 0; border: 0; background: transparent; box-shadow: none; }
 .x-reader-icon::before { content: ''; display: block; width: 20px; height: 20px; background: currentColor; mask: var(--x-reader-icon) center / contain no-repeat; }
 .x-reader-back { --x-reader-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m12 5-7 7 7 7M5 12h14'/%3E%3C/svg%3E"); }
-.x-reader-refresh { --x-reader-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 7v5h-5M4 17v-5h5M6.1 6.1A8.3 8.3 0 0 1 20 12M4 12a8.3 8.3 0 0 0 13.9 5.9'/%3E%3C/svg%3E"); }
+.x-reader-refresh { --x-reader-icon: url("data:image/svg+xml,%3Csvg%20xmlns='http%3A//www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='black'%20stroke-width='1.7'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cg%20transform='rotate%28-180%2012%2012%29'%3E%3Cpath%20d='M6.1%206.1A8.3%208.3%200%200%201%2020%2012M4%2012a8.3%208.3%200%200%200%2013.9%205.9'/%3E%3Cpath%20d='M20%2012L15.3641%2010.1270M4%2012L8.6359%2013.8730'/%3E%3C/g%3E%3C/svg%3E"); }
 .x-reader-settings { --x-reader-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m9.5 3-.6 2.3-2 .9-2.1-.7-2.5 4.3L4 11.4v2.2l-1.7 1.6 2.5 4.3 2.1-.7 2 .9.6 2.3h5l.6-2.3 2-.9 2.1.7 2.5-4.3-1.7-1.6v-2.2l1.7-1.6-2.5-4.3-2.1.7-2-.9L14.5 3z'/%3E%3Ccircle cx='12' cy='12.5' r='3.2'/%3E%3C/svg%3E"); }
 .x-reader .x-reader-tab[aria-selected="true"] { border-bottom-color: #000; font-weight: 650; }
 .x-reader-status { min-height: 2.5rem; font-size: .875rem; padding-block: .35rem; }
@@ -55,5 +55,8 @@ body[data-dashboard-page="x"] #reporting-period-toolbar { display: none; }
 .x-settings > button { margin-top: 1rem; }
 body[data-dashboard-page="settings"] .x-settings-row { display: flex; grid-template-columns: none; }
 @keyframes x-reader-spin { to { transform: rotate(360deg); } }
+.x-reader-import-steps { padding-left:1.4rem; line-height:1.6; overflow-wrap:anywhere; }
+.x-reader-import-steps li + li { margin-top:.65rem; }
+.x-settings-import:not(:empty) { padding:1rem 0; border-bottom:1px solid var(--neutral-line); }
 @media (prefers-reduced-motion: reduce) { .x-reader-refresh.is-loading::before { animation: none; opacity: .5; } }
 @media (max-width: 520px) { .x-reader-tabs { gap: 1rem; } .x-reader-byline time { flex-basis: 100%; } .x-settings-row { align-items: flex-start; } .x-settings-actions { justify-content: flex-end; } .x-reader-image-viewer { padding: .75rem; } }

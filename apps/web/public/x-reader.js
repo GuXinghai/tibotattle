@@ -18,7 +18,7 @@ export const X_READER_COPY = {
     sessionChallenge:"Complete verification in X",
     sessionOpen:"Open X window",
     sessionFailureAt:"Failed step: ",
-    import_expired:"Import authorization expired. Select Session login again.",
+    import_expired:"Import authorization expired. Select Import from Chrome again.",
     import_bridge_failed:"The local bridge is unavailable. Check the extension and bridge setup.",
     login_failed:"Could not complete X login. Try again or choose another method.",
     login_timeout:"Login timed out. Try again or choose another method.",import_failed:"Could not import the X session.",invalid_import:"The imported session is invalid.",no_logged_in_session:"No signed-in X session was found in Chrome.",proxy_failed:"Could not connect through the X proxy.",
@@ -35,9 +35,12 @@ export const X_READER_COPY = {
     loading:'Loading…', empty:'No posts yet', failed:'Could not read updates', offline:'Cannot connect to X. Check the network or proxy.',
     rate_limited:'Requests paused due to rate limiting', parser_changed:'X changed its page format', stale:'Showing saved posts',
     disconnected:'Choose a login method', restoring:'Checking login…', authorizing:'Complete login in the X window',
-    expired:'Login expired', challenge:'Verification required', ready:'Connected', login:'Log in', web:'Web login', session:'Session login',
+    expired:'Login expired', challenge:'Verification required', ready:'Connected', login:'Log in', web:'Sign in to X', session:'Import from Chrome',
     sessionHint:'Import from a signed-in Chrome profile', back:'Back', otherLogin:'Back, choose another method', retry:'Retry',
-    importSetup:'Configure Chrome import', importHint:'Load the extension in Chrome, check the local connection, then import from your signed-in X tab.',
+    importSetup:'Prepare or repair Chrome import', importHint:'Chrome import is optional. Direct X login does not require an extension.',
+    importLoadStep:'First time: open Chrome’s Extensions → Manage extensions, enable Developer mode, and choose Load unpacked. Select the folder opened below.',
+    importUseStep:'From your signed-in X tab, open the extension and choose Import current X session. The request expires after two minutes; select Import from Chrome again if needed. After an app update, reload the extension in Chrome if prompted.',
+    importFolder:'Open extension folder',
     importBridgeReady:'Local bridge is ready',importWaiting:'Waiting for Chrome session import',importFailed:'Could not configure the local bridge',importNotConfigured:'Local bridge is not configured',
     newPosts:'New updates', more:'Load more', fullLoading:'Fetching full text…', fullFailed:'Could not fetch full text', repliesLoading:'Loading replies…', repliesFailed:'Could not load replies', repliesEmpty:'No replies yet',
     close:'Close', image:'View image', mediaFailed:'Could not load media', unknownTime:'Time unavailable',
@@ -64,7 +67,7 @@ export const X_READER_COPY = {
     sessionChallenge:"需要在 X 完成验证",
     sessionOpen:"打开 X 窗口",
     sessionFailureAt:"失败步骤：",
-    import_expired:"导入授权已过期，请重新选择 Session 登录。",
+    import_expired:"导入授权已过期，请重新选择“从 Chrome 导入”。",
     import_bridge_failed:"本机桥接不可用，请检查扩展与桥接配置。",
     login_failed:"未能完成 X 登录，请重试或选择其他方式。",
     login_timeout:"登录超时，请重试或选择其他方式。",import_failed:"X 会话导入失败。",invalid_import:"导入的会话无效。",no_logged_in_session:"未找到 Chrome 中已登录的 X 会话。",proxy_failed:"无法通过代理连接 X。",
@@ -81,9 +84,12 @@ export const X_READER_COPY = {
     loading:'正在加载…', empty:'暂无动态', failed:'读取失败', offline:'无法连接 X，请检查网络或代理。',
     rate_limited:'请求受限，已暂停获取', parser_changed:'X 页面结构发生变化，暂时无法读取', stale:'显示已保存的内容',
     disconnected:'选择登录方式', restoring:'正在检查登录…', authorizing:'请在 X 窗口完成登录',
-    expired:'登录已失效', challenge:'需要完成验证', ready:'已连接', login:'登录', web:'网页登录', session:'Session 登录',
+    expired:'登录已失效', challenge:'需要完成验证', ready:'已连接', login:'登录', web:'在应用内登录 X', session:'从 Chrome 导入',
     sessionHint:'从已登录的 Chrome 导入', back:'返回', otherLogin:'返回，选择其他方式', retry:'重试',
-    importSetup:'配置 Chrome 导入', importHint:'在 Chrome 加载扩展，点击扩展内的“检查本机连接”，再从已登录的 X 标签页导入。',
+    importSetup:'准备或修复 Chrome 导入', importHint:'Chrome 导入是可选方式；直接在应用内登录 X 无需扩展。',
+    importLoadStep:'首次使用：在 Chrome 的“扩展程序 → 管理扩展程序”开启开发者模式，点击“加载已解压的扩展程序”，选择下方按钮打开的目录。',
+    importUseStep:'切到已登录的 X 标签页，打开扩展并点击“导入当前 X 会话”。请求两分钟后过期，过期后重新选择“从 Chrome 导入”。应用更新后，如有提示，请在 Chrome 中重新加载扩展。',
+    importFolder:'打开扩展目录',
     importBridgeReady:'本机桥接已就绪',importWaiting:'等待从 Chrome 导入会话',importFailed:'本机桥接配置失败',importNotConfigured:'尚未配置本机桥接',
     newPosts:'有新动态', more:'加载更多', fullLoading:'正在获取全文…', fullFailed:'全文获取失败', repliesLoading:'正在加载评论…', repliesFailed:'评论加载失败', repliesEmpty:'暂无评论',
     close:'关闭', image:'查看图片', mediaFailed:'媒体加载失败', unknownTime:'时间未知',
@@ -127,9 +133,12 @@ export const X_READER_COPY = {
     loading:'Cargando…',empty:'Todavía no hay publicaciones',failed:'No se pudieron leer las novedades',offline:'No se puede conectar a X. Comprueba la red o el proxy.',
     rate_limited:'Solicitudes pausadas por el límite de frecuencia',parser_changed:'X cambió el formato de su página',stale:'Mostrando contenido guardado',
     disconnected:'Elige cómo iniciar sesión',restoring:'Comprobando la sesión…',authorizing:'Completa el inicio de sesión en la ventana de X',
-    expired:'La sesión ha caducado',challenge:'Se requiere verificación',ready:'Conectado',login:'Iniciar sesión',web:'Inicio de sesión web',session:'Importar sesión',
+    expired:'La sesión ha caducado',challenge:'Se requiere verificación',ready:'Conectado',login:'Iniciar sesión',web:'Iniciar sesión en X',session:'Importar desde Chrome',
     sessionHint:'Importar desde un perfil de Chrome con sesión iniciada',back:'Volver',otherLogin:'Volver y elegir otro método',retry:'Reintentar',
-    importSetup:'Configurar importación de Chrome',importHint:'Carga la extensión en Chrome, comprueba la conexión local e importa desde tu pestaña de X con sesión iniciada.',
+    importSetup:'Preparar o reparar importación de Chrome',importHint:'La importación de Chrome es opcional. Iniciar sesión directamente en X no requiere extensión.',
+    importLoadStep:'Primera vez: abre Extensiones → Gestionar extensiones en Chrome, activa el modo de desarrollador y elige Cargar descomprimida. Selecciona la carpeta indicada abajo.',
+    importUseStep:'En tu pestaña de X con sesión iniciada, abre la extensión e importa la sesión actual. La solicitud caduca en dos minutos; vuelve a iniciar la importación si es necesario. Tras actualizar la aplicación, recarga la extensión en Chrome si se solicita.',
+    importFolder:'Abrir carpeta de extensión',
     importBridgeReady:'El puente local está listo',importWaiting:'Esperando la importación de la sesión de Chrome',importFailed:'No se pudo configurar el puente local',importNotConfigured:'El puente local no está configurado',
     newPosts:'Hay novedades',more:'Cargar más',fullLoading:'Obteniendo el texto completo…',fullFailed:'No se pudo obtener el texto completo',repliesLoading:'Cargando respuestas…',repliesFailed:'No se pudieron cargar las respuestas',repliesEmpty:'Todavía no hay respuestas',
     close:'Cerrar',image:'Ver imagen',mediaFailed:'No se pudo cargar el contenido multimedia',unknownTime:'Hora no disponible',
@@ -183,7 +192,7 @@ export function formatXClocks(instant, deviceZone=Intl.DateTimeFormat().resolved
   try {return `${clock(deviceZone)}   ${clock('America/Los_Angeles')}`;} catch {return null;}
 }
 export function validateXSettings(value) {
-  return !!value && Number.isSafeInteger(value.refreshMinutes) && (value.refreshMinutes===-1 || value.refreshMinutes>0) &&
+  return !!value && Number.isSafeInteger(value.refreshMinutes) && (value.refreshMinutes===-1 || value.refreshMinutes>0 && value.refreshMinutes<=2147483647) &&
     ['system','local'].includes(value.proxyMode) && Number.isInteger(value.proxyPort) && value.proxyPort>=1 && value.proxyPort<=65535 &&
     typeof value.notifyPosts==='boolean' && typeof value.notifyReplies==='boolean';
 }
@@ -191,6 +200,13 @@ function helpers(documentRef) {
   const node=(tag,cls,text)=>{const result=documentRef.createElement(tag);if(cls)result.className=cls;if(text!==undefined)result.textContent=text;return result;};
   const button=(text,run,cls='')=>{const result=node('button',cls,text);result.type='button';result.addEventListener('click',run);return result;};
   return {node,button};
+}
+function appendImportGuide(root,{node,button,t,bridge,configured,onFailure}){
+  const steps=node('ol','x-reader-import-steps');
+  steps.append(node('li','',t('importLoadStep')),node('li','',t('importUseStep')));root.append(steps);
+  if(configured&&typeof bridge.openXImportFolder==='function')root.append(button(t('importFolder'),async()=>{
+    try{await bridge.openXImportFolder();}catch{onFailure();}
+  }));
 }
 export function mountXReader(options) {
   const {container,bridge,onOpenSettings=()=>{},documentRef=container.ownerDocument,loadHls}=options;
@@ -207,7 +223,7 @@ export function mountXReader(options) {
   const avatarClock=options.clock??Date.now;
   let avatarRefreshAt=-Infinity;
   // Until the first service response, login is unknown rather than absent.
-  let active='posts',shown=false,disposed=false,status={auth:'restoring',operation:'idle'},generation=0,listRequest=0,detailRequest=0,detail=null,detailScroll=0,detailTrail=[],pollTimer=null,fullActive=0,loginMethod=null,loginChoiceOpen=false,importSetupError=false,pendingItems=null,updatedAt=null,loading=false,viewer=null;
+  let active='posts',shown=false,disposed=false,status={auth:'restoring',operation:'idle'},generation=0,listRequest=0,detailRequest=0,detail=null,detailScroll=0,detailTrail=[],pollTimer=null,fullActive=0,loginMethod=null,loginChoiceOpen=false,importSetupError=false,importSetupBusy=false,pendingItems=null,updatedAt=null,loading=false,viewer=null;
   const tabButtons=new Map();
   for(const tab of TABS){const control=button(t(tab),()=>switchTab(tab),'x-reader-tab');control.setAttribute('role','tab');control.addEventListener('keydown',event=>{if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;event.preventDefault();const next=event.key==='Home'?0:event.key==='End'?TABS.length-1:(TABS.indexOf(active)+(event.key==='ArrowRight'?1:TABS.length-1))%TABS.length;switchTab(TABS[next]);tabButtons.get(TABS[next]).focus();});tabButtons.set(tab,control);tabs.append(control);}
   function stopMedia(){for(const cleanup of mediaCleanups)cleanup();mediaCleanups.clear();closeViewer();}
@@ -275,10 +291,16 @@ export function mountXReader(options) {
     loginPanel.append(node('p','',t(loginState)),button(t('otherLogin'),()=>void cancelLogin()));
     if(loginMethod==='session'){
       if(status.loginStage==='challenge')loginPanel.append(button(t('sessionOpen'),()=>void startLogin('web')));
-      if(!status.loginStage||['checking_bridge','waiting_import'].includes(status.loginStage))loginPanel.append(node('p','x-reader-muted',t('importHint')),button(t('importSetup'),async()=>{
-        const token=generation;try{const result=await bridge.configureXImport();if(token!==generation||!shown)return;const resultImport=result?.import??result;importSetupError=resultImport?.configured===false;status.import=resultImport;renderLogin();}catch{if(token===generation&&shown){importSetupError=true;renderLogin();}}
-      }));
-      const extensionDirectory=status.import?.extensionDirectory??status.bridge?.extensionDirectory;if(typeof extensionDirectory==='string'&&(!status.loginStage||['checking_bridge','waiting_import'].includes(status.loginStage)))loginPanel.append(node('p','x-reader-import-path',extensionDirectory));
+      if(!status.loginStage||['checking_bridge','waiting_import'].includes(status.loginStage)){
+        const configure=button(t('importSetup'),async()=>{
+          if(importSetupBusy)return;const token=generation;importSetupBusy=true;renderLogin();
+          try{const result=await bridge.configureXImport();if(token!==generation||!shown)return;const resultImport=result?.import??result;importSetupError=resultImport?.configured!==true;status.import=resultImport;}
+          catch{if(token===generation&&shown)importSetupError=true;}
+          finally{importSetupBusy=false;if(token===generation&&shown)renderLogin();}
+        });configure.disabled=importSetupBusy;loginPanel.append(node('p','x-reader-muted',t('importHint')),configure);
+        const token=generation;appendImportGuide(loginPanel,{node,button,t,bridge,configured:status.import?.configured===true,
+          onFailure:()=>{if(token===generation&&shown){importSetupError=true;renderLogin();}}});
+      }
       const connection=status.import?.code;
       const connectionKey=importSetupError?'importFailed':({bridge_ready:'importBridgeReady',import_ready:'importWaiting',bridge_unavailable:'importFailed',not_configured:'importNotConfigured'})[connection];
       if(connectionKey&&!(connectionKey==='importWaiting'&&status.loginStage==='waiting_import')&&(!status.loginStage||['checking_bridge','waiting_import'].includes(status.loginStage)))loginPanel.append(node('p','x-reader-muted',t(connectionKey)));
@@ -421,28 +443,101 @@ export function mountXReader(options) {
 
 export function mountXSettings(options){
   const {container,bridge,documentRef=container.ownerDocument}=options,translationOptions={...options,documentRef},t=translator(translationOptions),{node,button}=helpers(documentRef),root=node('section','x-settings');container.append(root);
-  let disposed=false,generation=0,current=null,lastStatus=null,messageKey=null,visible=false,statusTimer=null,statusGeneration=0;
+  let disposed=false,generation=0,current=null,lastStatus=null,messageKey=null,visible=false,statusTimer=null,statusGeneration=0,importSetupBusy=false;
   const settingsWindow=documentRef.defaultView??globalThis;
   const localized=[],text=(element,key)=>{element.textContent=t(key);localized.push({element,key});return element;},action=(key,run)=>text(button('',run),key),setMessage=key=>{messageKey=key;message.textContent=t(key);};
   const state=node('p','x-reader-status'),message=node('p','x-reader-status');state.setAttribute('role','status');message.setAttribute('role','status');
   const controls={};
   const row=(label,control,hint)=>{const item=node('div','x-settings-row'),labelNode=text(node('label'),label),right=node('div','x-settings-control');if(control.id)labelNode.htmlFor=control.id;right.append(control);if(hint)right.append(text(node('small','x-reader-muted'),hint));item.append(labelNode,right);root.append(item);return item;};
   root.append(state);
-  const login=node('div','x-settings-actions');login.append(action('web',()=>run(()=>bridge.beginXLogin({method:'web'}))),action('session',()=>run(()=>bridge.beginXLogin({method:'session'}))),action('otherLogin',()=>run(()=>bridge.cancelXLogin())),action('logout',()=>confirmAction('confirmLogout',()=>bridge.logoutX())));row('login',login);
+  const login=node('div','x-settings-actions'),loginActions={
+    web:action('web',()=>run(()=>bridge.beginXLogin({method:'web'}))),
+    session:action('session',()=>run(()=>bridge.beginXLogin({method:'session'}))),
+    other:action('otherLogin',()=>run(()=>bridge.cancelXLogin())),
+    logout:action('logout',()=>confirmAction('confirmLogout',()=>bridge.logoutX())),
+  };
+  for(const control of Object.values(loginActions)){control.hidden=true;login.append(control);}
+  const loginRow=row('login',login);loginRow.hidden=true;
+  const importTools=node('div','x-settings-import');root.append(importTools);
   function input(key,type,value){const el=node('input');el.id=`x-setting-${key}`;el.type=type;if(type==='checkbox')el.checked=value;else el.value=String(value);controls[key]=el;return el;}
-  const interval=input('refreshMinutes','number',5);interval.step='1';const intervalField=node('div','x-settings-actions');intervalField.append(interval,text(node('span'),'minutes'));row('interval',intervalField,'intervalHint');
+  const interval=input('refreshMinutes','number',5);interval.step='1';interval.max='2147483647';const intervalField=node('div','x-settings-actions');intervalField.append(interval,text(node('span'),'minutes'));row('interval',intervalField,'intervalHint');
   const proxy=node('select');proxy.id='x-setting-proxy';controls.proxyMode=proxy;for(const[value,label]of[['system','system'],['local','local']]){const option=text(node('option'),label);option.value=value;proxy.append(option);}row('proxy',proxy);
   const port=input('proxyPort','number',10809);port.min='1';port.max='65535';port.step='1';const portRow=row('port',port);portRow.hidden=true;proxy.addEventListener('change',()=>portRow.hidden=proxy.value!=='local');
   row('notifyPosts',input('notifyPosts','checkbox',false));row('notifyReplies',input('notifyReplies','checkbox',false));
   const cache=node('div','x-settings-actions'),bytes=node('span','x-reader-muted',t('cacheUnknown'));cache.append(bytes,action('clearCache',()=>confirmAction('confirmClear',()=>bridge.clearXCache())));row('cache',cache);
-  const save=action('save',async()=>{const value={refreshMinutes:Number(interval.value),proxyMode:proxy.value,proxyPort:Number(port.value),notifyPosts:controls.notifyPosts.checked,notifyReplies:controls.notifyReplies.checked};if(!validateXSettings(value)){setMessage('invalid');return;}save.disabled=true;await run(()=>bridge.setXSettings(value),false);save.disabled=false;});root.append(save,message);
+  let settingsQueue=Promise.resolve(),settingsRevision=0,settingsPending=0,settingsRequest=0;
+  const fieldRevisions=new Map(),pendingFields=new Map();
+  const writeControl=(key,value)=>{const control=controls[key];if(control.type==='checkbox')control.checked=value;else control.value=String(value);if(key==='proxyMode')portRow.hidden=value!=='local';};
+  for(const[key,control]of Object.entries(controls)){
+    control.disabled=true;
+    if(control.type==='number'){
+      control.addEventListener('input',()=>{fieldRevisions.set(key,(fieldRevisions.get(key)??0)+1);settingsRevision++;});
+      control.addEventListener('blur',()=>saveSetting(key));
+      control.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();return saveSetting(key);}});
+    }else control.addEventListener('change',()=>saveSetting(key));
+  }
+  function saveSetting(key){
+    if(disposed||!current)return Promise.resolve();
+    const control=controls[key],value=control.type==='checkbox'?control.checked:control.type==='number'?Number(control.value):control.value;
+    if(!validateXSettings({...current,[key]:value})){settingsRequest++;setMessage('invalid');writeControl(key,current[key]);return Promise.resolve();}
+    const pending=pendingFields.get(key);
+    if(pending?.value===value)return pending.promise;
+    if(!pending&&current[key]===value){writeControl(key,current[key]);return Promise.resolve();}
+    const revision=(fieldRevisions.get(key)??0)+1,request=++settingsRequest;
+    fieldRevisions.set(key,revision);settingsRevision++;settingsPending++;setMessage('loading');
+    const promise=settingsQueue.then(async()=>{
+      if(disposed)return;
+      try{
+        // The bridge requires a closed full settings object. Other fields come
+        // from confirmed state, never from unfinished edits in the controls.
+        if(current[key]!==value){
+          const valueToSave=Object.fromEntries(Object.keys(controls).map(field=>[field,field===key?value:current[field]]));
+          const result=await bridge.setXSettings(valueToSave),next=result?.settings??result;
+          if(!validateXSettings(next))throw new Error('invalid_settings_response');
+          current=next;
+        }
+        if(disposed)return;
+        if(fieldRevisions.get(key)===revision)writeControl(key,current[key]);
+        if(request===settingsRequest)setMessage('saved');
+      }catch(error){
+        if(disposed)return;
+        if(fieldRevisions.get(key)===revision)writeControl(key,current[key]);
+        if(request===settingsRequest)setMessage(sessionFailureKey(error)??'failed');
+      }
+    }).finally(()=>{settingsPending--;if(pendingFields.get(key)?.promise===promise)pendingFields.delete(key);});
+    pendingFields.set(key,{value,promise});settingsQueue=promise.catch(()=>{});return promise;
+  }
+  root.append(message);
   async function confirmAction(key,action){if(documentRef.defaultView?.confirm(t(key)))await run(action);}
   async function run(action,reload=true){const token=++generation;setMessage('loading');try{const value=await action();if(disposed||token!==generation)return;setMessage('saved');if(reload)await load();else current=value;}catch(error){if(!disposed&&token===generation)setMessage(sessionFailureKey(error)??'failed');}}
-  async function load(){const token=++generation;try{const[result,status]=await Promise.all([bridge.getXSettings(),bridge.getXStatus()]);if(disposed||token!==generation)return;const value=result?.settings??result;current=value;if(validateXSettings(value)){interval.value=String(value.refreshMinutes);proxy.value=value.proxyMode;port.value=String(value.proxyPort);controls.notifyPosts.checked=value.notifyPosts;controls.notifyReplies.checked=value.notifyReplies;portRow.hidden=value.proxyMode!=='local';}
+  async function load(){const token=++generation,settingsToken=settingsRevision,settingsIdle=settingsPending===0;try{const[result,status]=await Promise.all([bridge.getXSettings(),bridge.getXStatus()]);if(disposed||token!==generation)return;const value=result?.settings??result;if(settingsIdle&&settingsPending===0&&settingsToken===settingsRevision&&validateXSettings(value)){current=value;for(const[key,control]of Object.entries(controls)){writeControl(key,value[key]);control.disabled=false;}}
     lastStatus=status?.status??status;renderStatus();
     const size=result.cacheBytes??lastStatus.cacheBytes;bytes.textContent=Number.isSafeInteger(size)&&size>=0?`${new Intl.NumberFormat(options.locale,{maximumFractionDigits:1}).format(size/1048576)} MB`:t('cacheUnknown');
   }catch(error){if(!disposed&&token===generation)state.textContent=t(sessionFailureKey(error)??'failed');}}
-  function renderStatus(){if(!lastStatus)return;const failure=loginError(lastStatus),phase=failure?failedStage(lastStatus):null;state.textContent=(phase?t('sessionFailureAt')+t(phase)+' · ':'')+t(failure??(['authorizing','challenge'].includes(lastStatus.auth)&&lastStatus.loginMethod==='session'?LOGIN_STAGE_COPY[lastStatus.loginStage]??'authorizing':AUTH.includes(lastStatus.auth)?lastStatus.auth:'disconnected'));if(lastStatus.notificationStatus==='unavailable'||lastStatus.notificationsAvailable===false)state.append(node('span','x-reader-muted',` · ${t('notificationUnavailable')}`));}
+  function renderImportTools(){
+    importTools.replaceChildren();
+    if(!lastStatus||lastStatus.loginMethod!=='session'||lastStatus.auth!=='authorizing'
+      ||lastStatus.loginStage&&!['checking_bridge','waiting_import'].includes(lastStatus.loginStage))return;
+    const configure=button(t('importSetup'),async()=>{
+      if(importSetupBusy)return;const token=++generation;importSetupBusy=true;renderImportTools();setMessage('loading');
+      try{const result=await bridge.configureXImport();if(disposed||token!==generation||!visible)return;
+        setMessage(result?.configured===true?'importBridgeReady':'importFailed');
+        const value=await bridge.getXStatus();if(!disposed&&token===generation&&visible){lastStatus=value.status??value;renderStatus();}}
+      catch{if(!disposed&&token===generation&&visible)setMessage('importFailed');}
+      finally{importSetupBusy=false;if(!disposed&&token===generation)renderImportTools();}
+    });configure.disabled=importSetupBusy;importTools.append(node('p','x-reader-muted',t('importHint')),configure);
+    const token=generation;appendImportGuide(importTools,{node,button,t,bridge,configured:lastStatus.import?.configured===true,
+      onFailure:()=>{if(!disposed&&token===generation&&visible)setMessage('importFailed');}});
+  }
+  function renderLoginActions(){
+    const auth=lastStatus?.auth;
+    const pending=auth==='authorizing'||auth==='challenge'&&['web','session'].includes(lastStatus?.loginMethod);
+    const choose=!pending&&['disconnected','expired','challenge'].includes(auth);
+    loginActions.web.hidden=!choose;loginActions.session.hidden=!choose;
+    loginActions.other.hidden=!pending;loginActions.logout.hidden=auth!=='ready';
+    loginRow.hidden=Object.values(loginActions).every(control=>control.hidden);
+  }
+  function renderStatus(){renderLoginActions();renderImportTools();if(!lastStatus)return;const failure=loginError(lastStatus),phase=failure?failedStage(lastStatus):null;state.textContent=(phase?t('sessionFailureAt')+t(phase)+' · ':'')+t(failure??(['authorizing','challenge'].includes(lastStatus.auth)&&lastStatus.loginMethod==='session'?LOGIN_STAGE_COPY[lastStatus.loginStage]??'authorizing':AUTH.includes(lastStatus.auth)?lastStatus.auth:'disconnected'));if(lastStatus.notificationStatus==='unavailable'||lastStatus.notificationsAvailable===false)state.append(node('span','x-reader-muted',` · ${t('notificationUnavailable')}`));}
   function refreshLocale(value={}){if(disposed)return;Object.assign(translationOptions,value);for(const{element,key}of localized)element.textContent=t(key);if(messageKey)message.textContent=t(messageKey);renderStatus();}
   async function pollStatus(){const token=statusGeneration;try{const value=await bridge.getXStatus();if(disposed||!visible||token!==statusGeneration)return;lastStatus=value.status??value;renderStatus();}catch(error){if(!disposed&&visible&&token===statusGeneration)state.textContent=t(sessionFailureKey(error)??'failed');}finally{if(visible&&!disposed&&token===statusGeneration)statusTimer=settingsWindow.setTimeout(()=>void pollStatus(),lastStatus?.auth==='authorizing'?2000:15000);}}
   function hide(){visible=false;++statusGeneration;if(statusTimer)settingsWindow.clearTimeout(statusTimer);statusTimer=null;root.hidden=true;}

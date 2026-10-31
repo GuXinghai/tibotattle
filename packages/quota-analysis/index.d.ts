@@ -794,7 +794,9 @@ export interface WorkInterval { startMs: number; endMs: number }
 export interface WorkLifecycleEvent { key: string; session: string; kind: "start" | "complete" | "abort"; atMs: number; durationMs?: number | null; ancestors?: string[] }
 export interface WorkUsageEvent { session: string; atMs: number; usd: number | null; priced: boolean }
 export interface WorkQuotaObservation { atMs: number; usedPercent: number; resetKey: string;
-  resetAtMs?: number; planType?: string; limitId?: string; accountKey?: string }
+  resetAtMs?: number; planType?: string; limitId?: string; accountKey?: string | null; direct?: boolean;
+  /** Stable local collector order for distinct completed reads at the same timestamp. */
+  observationOrder?: number }
 export interface WorkloadInput {
   nowMs: number; events?: WorkLifecycleEvent[]; usage?: WorkUsageEvent[]; quota?: WorkQuotaObservation[];
   capacity?: { usd: number; availableAtMs: number } | null;
@@ -802,6 +804,7 @@ export interface WorkloadInput {
   liveSinceMs?: number; sourceFresh?: boolean; timeZone?: string; comparisonCapacityUsd?: number | null;
   comparisonBaseline?: WorkQuotaObservation | null;
   comparisonQuota?: WorkQuotaObservation[];
+  comparisonAccountKey?: string | null;
   comparisonResetEvents?: QuotaResetEvent[];
   comparisonContinuityThroughMs?: number | null;
   comparisonEvidenceError?: string | null;
@@ -811,22 +814,23 @@ export interface WorkloadInput {
 }
 export interface WorkloadBin { atMs: number; workMs: number; usd: number; priced: boolean; complete?: boolean }
 export type WorkloadLevel = "light" | "medium" | "heavy" | "unclassified";
-/** Evidence-backed intensity within the trailing elapsed-time window. */
+/** Recorded priced usage per elapsed hour within the trailing 15-minute window. */
 export interface RecentWorkload {
   windowMinutes: number;
-  state: "unknown" | "working" | "idle";
+  state: "unknown" | "available";
   level: WorkloadLevel | null;
-  usdPerWorkHour: number | null;
+  usdPerHour: number | null;
   ratePpPerHour: number | null;
   hours: number | null;
 }
-/** Observed quota points per elapsed hour, not an API-price workload grade. */
+/** Quota points per elapsed hour, with a capacity-based API-equivalent estimate and shared workload grade. */
 export interface RecentQuotaTrend {
   windowMinutes: 60; state: "available" | "unknown"; ratePpPerHour: number | null;
+  usdPerHour: number | null; level: WorkloadLevel | null;
   observedFrom: string | null; observedThrough: string | null; coveredMinutes: number | null; inferred: boolean;
 }
 export interface WorkloadResult {
-  schemaVersion: "overview-workload-v7"; policyVersion: string; generatedAt: string; timeZone: string;
+  schemaVersion: "overview-workload-v9"; policyVersion: string; generatedAt: string; timeZone: string;
   status: "available" | "partial"; errors: { code: string; stage: string; count?: number }[];
   adjustments: { workReplayEvents: number; workDurationDifferences: number; quotaStaleObservations: number };
   allowance: { remainingPercent: number | null; observedAt: string | null;
@@ -835,11 +839,12 @@ export interface WorkloadResult {
     inferredObservations: number; unresolvedObservations: number};
   workHours: { level: WorkloadLevel | "composite"; ratePpPerHour: number | null; hours: number | null; inferred: boolean }[];
   classification: { centers: number[] | null; version: string };
+  recentClassification: { centers: number[] | null; version: "elapsed-fifteen-minute-v1" };
   daily: { date: string; light: number; medium: number; heavy: number; unclassified: number; covered: boolean; inferred: boolean;
     plans: {planType: string; light: number; medium: number; heavy: number; unclassified: number; covered: boolean; inferred: boolean}[] }[];
   current: RecentWorkload & { windowMinutes: 15 };
   trend: RecentQuotaTrend;
-  segmentation: { policyVersion: "first-quota-drop-v1"; pendingSince: string | null;
+  segmentation: { policyVersion: "quota-recovery-stages-v2"; pendingSince: string | null;
     plans: { planType: string; closedIntervals: number; observedPp: number; dailyPp: number; outsidePp: number; unallocatedPp: number }[] };
   unallocated: { totalIntervals: number; plans: { planType: string; pp: number; intervals: number }[];
     records: { from: string; to: string; planType: string; pp: number;
@@ -851,7 +856,7 @@ export interface WorkloadResult {
   coverage: { workMs: number; actualWorkMs: number; actualPp: number; estimationWorkMs: number; estimationPp: number; activeTasks: number; unresolvedTasks: number };
 }
 export const WORKLOAD_POLICY: Readonly<{ version: string; bucketMs: number; historyMs: number; currentMs: number;
-  shortTermMs: number; trendMs: number; minimumRecentWorkMs: number;
+  shortTermMs: number; trendMs: number;
   minimumBins: number; minimumClassBins: number; minimumClassMs: number;
   comparisonWindowMs: number; comparisonDeadlineUncertaintyMs: number }>;
 export function unionWorkIntervals(intervals: readonly WorkInterval[], fromMs: number, toMs: number): WorkInterval[];

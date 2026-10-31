@@ -3,52 +3,43 @@ import { fileURLToPath } from "node:url";
 
 const SCHEMA_FILES = Object.freeze({
   "activity-marker.schema.json": new URL(
-    "../../schemas/telemetry-v0.1/activity-marker.schema.json",
+    "../../schemas/local-export-v1/activity-marker.schema.json",
     import.meta.url,
   ),
   "bundle.schema.json": new URL(
-    "../../schemas/telemetry-v0.1/bundle.schema.json",
+    "../../schemas/local-export-v1/bundle.schema.json",
     import.meta.url,
   ),
   "compatibility.schema.json": new URL(
-    "../../schemas/telemetry-v0.1/compatibility.schema.json",
+    "../../schemas/local-export-v1/compatibility.schema.json",
     import.meta.url,
   ),
   "privacy-receipt.schema.json": new URL(
-    "../../schemas/telemetry-v0.1/privacy-receipt.schema.json",
+    "../../schemas/local-export-v1/privacy-receipt.schema.json",
     import.meta.url,
   ),
   "quota-snapshot.schema.json": new URL(
-    "../../schemas/telemetry-v0.1/quota-snapshot.schema.json",
+    "../../schemas/local-export-v1/quota-snapshot.schema.json",
     import.meta.url,
   ),
   "usage-event.schema.json": new URL(
-    "../../schemas/telemetry-v0.1/usage-event.schema.json",
+    "../../schemas/local-export-v1/usage-event.schema.json",
     import.meta.url,
   ),
 });
 
 const FIELD_CONTRACT_FILE = new URL(
-  "../../generated/telemetry-v0.1-field-dictionary.json",
+  "../../generated/local-export-v1-field-dictionary.json",
   import.meta.url,
 );
 const GENERATED_COMPATIBILITY_FILE = new URL(
-  "../../generated/telemetry-v0.1-compatibility.json",
+  "../../generated/local-export-v1-compatibility.json",
   import.meta.url,
 );
 const PACKAGE_METADATA_FILE = new URL(
   "../../package.json",
   import.meta.url,
 );
-const CONSENT_STATUS_FILE = new URL(
-  "../../contracts/telemetry-v0.1/consent-status.json",
-  import.meta.url,
-);
-const CONTRACT_STATUS_FILE = new URL(
-  "../../contracts/telemetry-v0.1/contract-status.json",
-  import.meta.url,
-);
-
 function readArtifact(url, name) {
   const storedBytes = Buffer.from(readFileSync(fileURLToPath(url)));
   return Object.freeze({
@@ -80,7 +71,5 @@ export function readExportCompatibilityArtifactSet({
       GENERATED_COMPATIBILITY_FILE,
     ),
     packageMetadata: readArtifact(PACKAGE_METADATA_FILE),
-    consentStatus: readArtifact(CONSENT_STATUS_FILE),
-    contractStatus: readArtifact(CONTRACT_STATUS_FILE),
   });
 }

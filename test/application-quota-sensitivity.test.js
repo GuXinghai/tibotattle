@@ -21,7 +21,6 @@ const APPLICATION_PUBLIC_EXPORTS = [
   ...QUOTA_SENSITIVITY_EXPORTS,
   "USAGE_EXPLAINER_SCHEMA_VERSION",
   "createExportCompatibilityContext",
-  "createLocalContributionSyncQueueContext",
   "createLocalExportArtifactStorageContext",
   "createLocalExportDeletion",
   "createLocalExportSetVerificationContext",

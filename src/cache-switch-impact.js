@@ -1,7 +1,4 @@
-import {
-  codexCacheReasoningConfiguration,
-  REVIEWED_CODEX_MODEL_IDS,
-} from "@app-usagemonitor/telemetry-contract";
+import { codexCacheReasoningConfiguration, REVIEWED_CODEX_MODEL_IDS } from "@app-usagemonitor/codex-catalog";
 import {
   emptySpeedWeightingCrossing,
   speedModeModelFamilyKey,

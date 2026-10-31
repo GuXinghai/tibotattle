@@ -28,9 +28,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import {
-  TELEMETRY_PLAN_DISPLAY_NAMES,
-  TELEMETRY_PLAN_TYPES,
-} from "../packages/telemetry-contract/src/constants.js";
+  CODEX_PLAN_DISPLAY_NAMES,
+  CODEX_PLAN_TYPES,
+} from "@app-usagemonitor/codex-catalog";
 
 const execFile = promisify(execFileCallback);
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
@@ -222,6 +222,9 @@ export function validateCodexContractLedger(value) {
     requireBoundedString(plan.displayName, `ledger.plans[${index}].displayName`, {
       maxLength: 100,
     });
+    if (Object.hasOwn(plan, "productDisplayName")) {
+      requireBoundedString(plan.productDisplayName, `ledger.plans[${index}].productDisplayName`, { maxLength: 100 });
+    }
     if (!ALLOWED_PLAN_LIFECYCLES.has(plan.lifecycle)) {
       fail(
         "CODEX_CONTRACT_LEDGER_INVALID",
@@ -395,8 +398,8 @@ export function validateCodexContractLedger(value) {
 export function compareProductPlanRegistry(
   ledger,
   {
-    planDisplayNames = TELEMETRY_PLAN_DISPLAY_NAMES,
-    planTypes = TELEMETRY_PLAN_TYPES,
+    planDisplayNames = CODEX_PLAN_DISPLAY_NAMES,
+    planTypes = CODEX_PLAN_TYPES,
   } = {},
 ) {
   const issues = [];
@@ -434,13 +437,13 @@ export function compareProductPlanRegistry(
       ));
       continue;
     }
-    if (planDisplayNames[rawValue] !== ledgerPlan.displayName) {
+    if (planDisplayNames[rawValue] !== (ledgerPlan.productDisplayName ?? ledgerPlan.displayName)) {
       issues.push(issue(
         "product_display_name_mismatch",
         `Display name mismatch for ${rawValue}`,
         {
           actual: planDisplayNames[rawValue] ?? null,
-          expected: ledgerPlan.displayName,
+          expected: ledgerPlan.productDisplayName ?? ledgerPlan.displayName,
         },
       ));
     }
@@ -754,7 +757,7 @@ export function parsePlanTypeScript(source) {
   return planTypes;
 }
 
-export function compareBinaryPlanTypes(planTypes, productPlanTypes = TELEMETRY_PLAN_TYPES) {
+export function compareBinaryPlanTypes(planTypes, productPlanTypes = CODEX_PLAN_TYPES) {
   const issues = [];
   const productSet = new Set(productPlanTypes);
   const unsupported = planTypes.filter((planType) => !productSet.has(planType)).sort();
@@ -791,7 +794,11 @@ async function collectNamedFiles(rootDirectory, targetName, depth = 0) {
 }
 
 async function executeCodex(execute, binaryPath, argumentsList) {
-  return execute(binaryPath, argumentsList, {
+  // npm's Windows .cmd shim cannot be executed by execFile. Accept the
+  // package's JS entrypoint directly, without introducing shell parsing.
+  const nodeEntrypoint = /\.(?:mjs|cjs|js)$/iu.test(binaryPath);
+  return execute(nodeEntrypoint ? process.execPath : binaryPath,
+    nodeEntrypoint ? [binaryPath, ...argumentsList] : argumentsList, {
     encoding: "utf8",
     maxBuffer: EXECUTION_MAX_BUFFER_BYTES,
     timeout: EXECUTION_TIMEOUT_MS,

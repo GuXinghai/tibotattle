@@ -187,7 +187,7 @@ export function readLocalIndexGenerationIdentity({ indexFile } = {}) {
 }
 
 /**
- * The publication proof the contribution engine fences a pass with, over an
+ * The publication proof a local snapshot consumer fences a pass with, over an
  * open connection: the publication fingerprint plus the connection-level
  * change counters that detect another writer committing mid-pass. Throws
  * `local_unified_index_unavailable` when the store has never committed.

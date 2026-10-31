@@ -2047,7 +2047,7 @@ function unifiedPartialReason(unified) {
 // every refresh cycle while the figures were complete and current), so they
 // are named constants rather than inline strings.
 const UNIFIED_DEFERRED_LOADING_WARNING =
-  "Local history indexing is in progress. Complete historical totals will appear after the indexed aggregate is published.";
+  "Local history indexing has no published aggregate. Complete historical totals are unavailable.";
 const UNIFIED_WITHHELD_PARTIAL_WARNING =
   "The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.";
 const UNIFIED_WITHHELD_MISSING_WARNING =
@@ -2057,7 +2057,7 @@ const UNIFIED_WITHHELD_UNREADABLE_WARNING =
 const UNIFIED_SCHEMA_NEWER_WARNING =
   "This local history was created by a newer application build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.";
 const HISTORY_TOTALS_HIDDEN_WARNING =
-  "History indexing is still advancing. Complete historical totals stay hidden until an indexed aggregate is available.";
+  "History indexing has no complete aggregate available. Complete historical totals remain unavailable.";
 const HISTORY_AGGREGATE_UNAVAILABLE_WARNING =
   "The history scan is complete, but the current accounting summary is unavailable. Update local usage to retry.";
 export const RETAINED_EVIDENCE_RELABELED_WARNINGS = Object.freeze([
@@ -2224,6 +2224,7 @@ export async function buildLocalCompanionSnapshot({
   collectorProjectionReader = readLocalCollectorProjectionOffMain,
   signal = null,
   previousWorkload = null,
+  previousWorkloadScope = null,
   workloadLiveSinceMs = null,
   workloadSourceFresh = false,
   workloadErrors = [],
@@ -2768,7 +2769,7 @@ export async function buildLocalCompanionSnapshot({
         && Number.isSafeInteger(newestUsageMs)
         && newestUsageMs - indexEndMs > MAX_COLLECTOR_LIVE_AGE_MS) {
       warnings.push(
-        `The unified local index is ${Math.round((newestUsageMs - indexEndMs) / 60_000)} minutes behind the newest collector evidence and catches up on the next refresh.`,
+        `The unified local index is ${Math.round((newestUsageMs - indexEndMs) / 60_000)} minutes behind the newest collector evidence.`,
       );
     }
   }
@@ -2874,8 +2875,10 @@ export async function buildLocalCompanionSnapshot({
         ? "insufficient_evidence"
         : "collector_projection_unverified";
   let storedWorkloadState=null,workloadStateError=null;
+  const workloadScope=localCollectorQuotaPublicationScope(collector);
+  const workloadAccountScope=workloadScope?.observedAt===quota.observedAt?workloadScope.scopeToken:null;
   const workloadStore=workloadStateStore(unifiedIndexFile);
-  if(previousWorkload===null){try{storedWorkloadState=await workloadStore.read();}catch{workloadStateError="workload_state_read_failed";}}
+  try{storedWorkloadState=await workloadStore.read(workloadAccountScope);}catch{workloadStateError="workload_state_read_failed";}
   let quotaEvidence;
   try{quotaEvidence=await readWorkloadQuotaEvidence({stateFile:collectorStateFile,signal,
     fromMs:workloadLiveSinceMs??nowMs,nowMs,
@@ -2885,6 +2888,7 @@ export async function buildLocalCompanionSnapshot({
   const workload = readLocalIndexWorkload({ indexFile: unifiedIndexFile, nowMs,
     signal,
     quotaEvidence,
+    accountScopeToken:workloadAccountScope,previousAccountScopeToken:previousWorkloadScope,
     storedState: storedWorkloadState,
     declaredSpeedBaselines: codexSpeedBaselines,
     quotaWindows: quota.windows.map((window) => ({ ...window, observedAt: quota.observedAt })),
@@ -2892,7 +2896,7 @@ export async function buildLocalCompanionSnapshot({
     liveSinceMs: workloadLiveSinceMs ?? nowMs,
     sourceFresh: workloadSourceFresh });
   if(workloadSourceFresh&&["available","partial"].includes(workload.status)){
-    try{await workloadStore.write(workloadState(workload));}catch{workloadStateError="workload_state_write_failed";}
+    try{await workloadStore.write(workloadAccountScope,workloadState(workload));}catch{workloadStateError="workload_state_write_failed";}
   }
   if(workloadStateError){workload.errors.push({code:workloadStateError,stage:"publish"});if(workload.status==="available")workload.status="partial";}
   for(const error of workloadErrors){
@@ -3625,11 +3629,13 @@ export async function readLocalCompanionQuota({
   if (!Number.isFinite(nowMs)) throw new TypeError("now must return a finite epoch timestamp");
   let latest = null;
   let latestScope = null;
+  let latestRecordOrder = null;
+  let previousScope=undefined,epoch=null,latestEpoch=null;
   let count = 0;
   await forEachLocalCollectorRecord({
     stateFile: collectorStateFile,
     kinds: ["codex_quota_snapshot"],
-    onRecord: async (record) => {
+    onRecord: async (record, {recordId}) => {
       if (signal?.aborted) throw fixedError("local_companion_snapshot_reload_aborted");
       count += 1;
       if (count > 5_000_000) throw fixedError("collector_invalid_size");
@@ -3638,14 +3644,14 @@ export async function readLocalCompanionQuota({
           && record.provider === "openai_codex"
           && canonicalDesktopShellDisplayInstant(record.observedAt) !== null
           && observedMs !== null) {
-        if (latest === null || record.observedAt > latest.observedAt) {
+        const token=localCollectorQuotaRecordScopeToken(record);
+        if(token!==previousScope||token===null)epoch=recordId;
+        previousScope=token;
+        if (latest === null || record.observedAt >= latest.observedAt) {
           latest = record;
-          latestScope = localCollectorQuotaRecordScopeToken(record);
-        } else if (record.observedAt === latest.observedAt
-            && localCollectorQuotaRecordScopeToken(record) !== latestScope) {
-          // Two identities at one timestamp are ambiguous, even when their
-          // displayed percentages happen to agree.
-          latestScope = null;
+          latestScope = token;
+          latestRecordOrder = recordId;
+          latestEpoch = epoch;
         }
       }
       if (count % 256 === 0) await new Promise((resolve) => setImmediate(resolve));
@@ -3664,6 +3670,8 @@ export async function readLocalCompanionQuota({
     : Math.floor((nowMs - Date.parse(observedAt)) / 1_000);
   return {
     scopeToken,
+    recordOrder: latestRecordOrder,
+    epoch: latestEpoch,
     quota: {
       status: windows.length > 0 ? "available" : "unavailable",
       observedAt,
@@ -3696,6 +3704,8 @@ export class LocalCompanionDataStore {
   #publishedSequence = 0;
   #quotaPublication = null;
   #snapshotQuotaScopeToken = null;
+  #snapshotQuotaRecordOrder = null;
+  #snapshotQuotaEpoch = null;
   #snapshotFile;
   #snapshotReader;
   #snapshotWriter;
@@ -3779,7 +3789,7 @@ export class LocalCompanionDataStore {
     this.#latestReloadRequest = sequence;
     const previousWorkload=this.#snapshot?.overview?.workload;
     const candidate = await timing.measure("snapshot_build", () => this.#builder(previousWorkload
-      ? {...builderOptions,previousWorkload} : builderOptions));
+      ? {...builderOptions,previousWorkload,previousWorkloadScope:this.#snapshotQuotaScopeToken} : builderOptions));
     // Cancellation may arrive while an off-main projection is finishing. Do
     // not publish the candidate after the controller has cancelled its run.
     if (signal?.aborted === true) {
@@ -3802,13 +3812,20 @@ export class LocalCompanionDataStore {
     const matchingScope = latestQuota?.scopeToken !== null
       && latestQuota?.scopeToken !== undefined
       && candidateScope?.scopeToken === latestQuota.scopeToken
+      && candidateScope?.epoch === latestQuota.epoch
       && candidateScope.observedAt === candidateObservedAt;
     const olderQuota = latestQuota !== null
       && Date.parse(candidateObservedAt ?? "") < Date.parse(latestQuota.component.quota.observedAt);
     const sameQuota = latestQuota !== null
       && candidateObservedAt === latestQuota.component.quota.observedAt;
     let publishedScopeToken = candidateScope?.scopeToken ?? null;
-    if (sequence < this.#publishedSequence || olderQuota || (sameQuota && matchingScope)) {
+    const newerRecord = sameQuota && Number.isSafeInteger(candidateScope?.recordOrder)
+      && Number.isSafeInteger(latestQuota?.recordOrder) && candidateScope.recordOrder > latestQuota.recordOrder;
+    const olderRecord = sameQuota && Number.isSafeInteger(candidateScope?.recordOrder)
+      && Number.isSafeInteger(latestQuota?.recordOrder) && candidateScope.recordOrder < latestQuota.recordOrder;
+    let publishedRecordOrder = candidateScope?.recordOrder ?? null;
+    let publishedEpoch = candidateScope?.epoch ?? null;
+    if (sequence < this.#publishedSequence || olderQuota || olderRecord || (sameQuota && matchingScope && !newerRecord)) {
       // Only a directly observed scope and the exact observation represented
       // by the builder bind a historical candidate. Attribution status alone,
       // or an unknown identity, cannot establish account continuity.
@@ -3818,12 +3835,16 @@ export class LocalCompanionDataStore {
       next = this.#withQuotaComponent(next, latestQuota.component);
       persistenceCandidate = this.#withQuotaComponent(candidate, latestQuota.component);
       publishedScopeToken = latestQuota.scopeToken;
+      publishedRecordOrder = latestQuota.recordOrder;
+      publishedEpoch = latestQuota.epoch;
     } else if (latestQuota?.component.quota.observedAt !== candidate.overview?.quota?.observedAt
         || candidateScope?.scopeToken !== latestQuota?.scopeToken) {
       this.#quotaPublication = null;
     }
     this.#snapshot = next;
     this.#snapshotQuotaScopeToken = publishedScopeToken;
+    this.#snapshotQuotaRecordOrder = publishedRecordOrder;
+    this.#snapshotQuotaEpoch = publishedEpoch;
     this.#publishedSequence = Math.max(sequence, this.#publishedSequence);
     this.#desktopShellDisplayEvidence = desktopShellDisplayEvidence(this.#snapshot);
     await timing.measure("snapshot_persist", () => this.#persistAuthoritativeSnapshot(persistenceCandidate));
@@ -3862,8 +3883,13 @@ export class LocalCompanionDataStore {
     }
     const previousAt = this.#snapshot.overview?.quota?.observedAt ?? null;
     const scopeToken = result.scopeToken ?? null;
+    const sameRecord = Number.isSafeInteger(result.recordOrder) && result.recordOrder === this.#snapshotQuotaRecordOrder;
+    const olderRecord = Number.isSafeInteger(result.recordOrder) && Number.isSafeInteger(this.#snapshotQuotaRecordOrder)
+      && result.recordOrder < this.#snapshotQuotaRecordOrder;
+    const sameValues = JSON.stringify(result.quota) === JSON.stringify(this.#snapshot.overview.quota);
     if (previousAt !== null && (Date.parse(observedAt) < Date.parse(previousAt)
-        || (observedAt === previousAt && scopeToken === this.#snapshotQuotaScopeToken))) {
+        || (observedAt === previousAt && (olderRecord || (scopeToken === this.#snapshotQuotaScopeToken
+          && (sameRecord || !Number.isSafeInteger(result.recordOrder)&&sameValues)))))) {
       return { published: false, observedAt: previousAt };
     }
     const component = structuredClone({
@@ -3871,9 +3897,14 @@ export class LocalCompanionDataStore {
       quotaWindows: result.quotaWindows,
       quotaFreshness: result.quotaFreshness,
     });
+    const accountContinuous=scopeToken!==null&&scopeToken===this.#snapshotQuotaScopeToken
+      && result.epoch===this.#snapshotQuotaEpoch;
     this.#snapshot = this.#withQuotaComponent(this.#snapshot, component);
-    this.#quotaPublication = { sequence, scopeToken, component };
+    if(!accountContinuous)this.#snapshot.overview.workload=null;
+    this.#quotaPublication = { sequence, scopeToken, recordOrder: result.recordOrder ?? null, epoch:result.epoch??null, component };
     this.#snapshotQuotaScopeToken = scopeToken;
+    this.#snapshotQuotaRecordOrder = result.recordOrder ?? null;
+    this.#snapshotQuotaEpoch = result.epoch ?? null;
     this.#publishedSequence = sequence;
     this.#desktopShellDisplayEvidence = desktopShellDisplayEvidence(this.#snapshot);
     // Collector persistence owns quota durability. This publication does not
@@ -3882,7 +3913,16 @@ export class LocalCompanionDataStore {
   }
 
   #withQuotaComponent(snapshot, component) {
-    return { ...snapshot, overview: { ...snapshot.overview, ...component } };
+    let workload=snapshot.overview.workload;
+    const weekly=component.quota.windows?.find(q=>q.limitId==='codex'&&q.durationMinutes===10080);
+    if(workload?.allowance&&(component.quota.observedAt!==workload.allowance.observedAt
+      ||weekly?.remainingPercent!==workload.allowance.remainingPercent)){
+      // Historical rates remain evidence, but their remaining-hours outputs
+      // were evaluated against another balance. Rebuild those with analysis.
+      workload={...workload,workHours:workload.workHours?.map(row=>({...row,hours:null})),
+        current:workload.current?{...workload.current,hours:null}:workload.current};
+    }
+    return { ...snapshot, overview: { ...snapshot.overview, ...component, workload } };
   }
 
   async #restoreLastAuthoritativeSnapshot() {

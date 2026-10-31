@@ -49,11 +49,10 @@
     "migrate:legacy-reports": "node ./scripts/migrate-local-legacy-reports.mjs",
     "package:electron:development": "node ./scripts/package-electron-development.mjs",
     "package:electron:production:prepare": "node ./scripts/package-electron-production.mjs",
-    "product:check": "pnpm run architecture:check && pnpm run codex:contract:check && pnpm run tools:inventory:check && pnpm run i18n:browser:check && pnpm run i18n:electron:check && pnpm run telemetry:browser:check && pnpm run telemetry:upload-schemas:check && pnpm run product:ui:test && pnpm run product:electron:test && pnpm run product:local:test",
+    "product:check": "pnpm run architecture:check && pnpm run codex:contract:check && pnpm run tools:inventory:check && pnpm run i18n:browser:check && pnpm run i18n:electron:check && pnpm run codex:browser:check && pnpm run export:contract:check && pnpm run product:ui:test && pnpm run product:electron:test && pnpm run product:local:test",
     "product:electron:test": "node ./scripts/run-isolated-tests.mjs --suite=electron",
     "product:local": "node ./apps/local/server.js",
     "product:local:test": "node ./scripts/run-isolated-tests.mjs --suite=local",
-    "product:prepare-contribution": "node ./scripts/build-telemetry-contributions.js",
     "product:ui:test": "node ./scripts/run-isolated-tests.mjs --suite=ui",
     "quality": "node ./src/cli.js quality",
     "release:evidence:generate": "node ./scripts/generate-release-evidence.js",
@@ -61,12 +60,6 @@
     "release:trust:check": "npm run codex:contract:check && node ./scripts/run-isolated-tests.mjs -- test/codex-contract-drift.test.js test/release-workflow-policy.test.js test/release-evidence.test.js test/release-attestation-action.test.js test/release-sbom-action.test.js",
     "report": "node ./src/cli.js report",
     "rotate:identity": "node ./src/cli.js rotate-local-identity",
-    "telemetry:browser:check": "node ./scripts/generate-telemetry-browser-mirror.js --check",
-    "telemetry:browser:generate": "node ./scripts/generate-telemetry-browser-mirror.js",
-    "telemetry:check": "node ./scripts/generate-telemetry-contract.js --check && node ./scripts/run-isolated-tests.mjs -- test/telemetry-contract.test.js test/export-schema.test.js",
-    "telemetry:generate": "node ./scripts/generate-telemetry-contract.js",
-    "telemetry:upload-schemas:check": "node ./packages/telemetry-contract/scripts/sync-json-schemas.mjs --check",
-    "telemetry:upload-schemas:generate": "node ./packages/telemetry-contract/scripts/sync-json-schemas.mjs",
     "test": "node ./scripts/run-isolated-tests.mjs --suite=root",
     "test:changed": "node ./scripts/test-lanes.mjs changed",
     "test:changed:full": "node ./scripts/test-lanes.mjs changed --full",
@@ -77,27 +70,30 @@
     "tools:root-workspace:check": "node ./scripts/check-root-workspace-hygiene.mjs",
     "transitions": "node ./src/cli.js transitions",
     "verify:weekly-calibration": "node ./src/verify-weekly-calibration.js",
-    "product:local:acceptance": "node ./scripts/run-real-local-backend-acceptance.js"
+    "codex:browser:generate": "node ./scripts/generate-codex-browser-mirror.js",
+    "codex:browser:check": "node ./scripts/generate-codex-browser-mirror.js --check",
+    "export:contract:check": "node ./scripts/generate-local-export-contract.js --check",
+    "export:contract:generate": "node ./scripts/generate-local-export-contract.js"
   },
   "dependencies": {
     "@app-usagemonitor/accounting": "workspace:*",
     "@app-usagemonitor/i18n": "workspace:*",
     "@app-usagemonitor/identity-core": "workspace:*",
     "@app-usagemonitor/quota-analysis": "workspace:*",
-    "@app-usagemonitor/telemetry-contract": "workspace:*",
     "@github/keytar": "7.10.6",
     "ajv": "^8.20.0",
     "ccusage": "20.0.18",
     "electron-updater": "6.8.9",
     "hls.js": "1.7.3",
-    "runcost": "0.2.1"
+    "runcost": "0.2.1",
+    "@app-usagemonitor/codex-catalog": "workspace:*"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "packageManager": "pnpm@11.9.0",
   "devDependencies": {
-    "electron": "43.5.0",
+    "electron": "43.8.4",
     "electron-builder": "26.15.7",
     "es-module-lexer": "2.3.1",
     "fast-check": "^4.9.0"

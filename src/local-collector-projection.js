@@ -41,7 +41,9 @@ const quotaPublicationScopes = new WeakMap();
 // DTO; the worker transport rebinds it after its closed envelope is validated.
 export function bindLocalCollectorQuotaPublicationScope(projection, scope) {
   const valid = scope !== null && typeof scope === "object"
-    && Object.keys(scope).sort().join("\0") === "observedAt\0scopeToken"
+    && Object.keys(scope).sort().join("\0") === "epoch\0observedAt\0recordOrder\0scopeToken"
+    && Number.isSafeInteger(scope.recordOrder) && scope.recordOrder > 0
+    && Number.isSafeInteger(scope.epoch) && scope.epoch > 0 && scope.epoch <= scope.recordOrder
     && typeof scope.scopeToken === "string" && /^[a-f0-9]{64}$/u.test(scope.scopeToken)
     && typeof scope.observedAt === "string"
     && Number.isFinite(Date.parse(scope.observedAt))
@@ -165,12 +167,14 @@ export async function readLocalCollectorProjection(
   let latestExportableRecordAt = indexedSummary?.latestUsageObservedAtMs ?? null;
   let latestQuotaRecord = null;
   let latestQuotaScopeToken = null;
+  let latestQuotaRecordOrder = null;
+  let previousQuotaScope = undefined,quotaEpoch = null,latestQuotaEpoch = null;
   await forEachLocalCollectorRecord({
     stateFile,
     kinds: indexedSummary === null
       ? null
       : ["codex_quota_snapshot", "codex_tool_class_event"],
-    onRecord: (value) => {
+    onRecord: (value, {recordId}) => {
       if (indexedSummary === null) {
         recordCount += 1;
         if (recordCount > MAX_LEDGER_RECORDS) {
@@ -198,13 +202,15 @@ export async function readLocalCollectorProjection(
         }
       }
       if (value.kind === "codex_quota_snapshot" && observedMs !== null) {
+        const token=localCollectorQuotaRecordScopeToken(value);
+        if(token!==previousQuotaScope||token===null)quotaEpoch=recordId;
+        previousQuotaScope=token;
         if (latestQuotaRecord === null
-            || value.observedAt.localeCompare(latestQuotaRecord.observedAt) > 0) {
+            || value.observedAt.localeCompare(latestQuotaRecord.observedAt) >= 0) {
           latestQuotaRecord = value;
-          latestQuotaScopeToken = localCollectorQuotaRecordScopeToken(value);
-        } else if (value.observedAt === latestQuotaRecord.observedAt
-            && localCollectorQuotaRecordScopeToken(value) !== latestQuotaScopeToken) {
-          latestQuotaScopeToken = null;
+          latestQuotaScopeToken = token;
+          latestQuotaRecordOrder = recordId;
+          latestQuotaEpoch = quotaEpoch;
         }
         if (observedMs >= recentStartMs && observedMs <= nowMs + 5 * 60_000) {
           weeklyPaceSnapshots.push(
@@ -359,6 +365,8 @@ export async function readLocalCollectorProjection(
   bindLocalCollectorQuotaPublicationScope(projection, latestQuotaScopeToken === null ? null : {
     scopeToken: latestQuotaScopeToken,
     observedAt: latestQuotaRecord.observedAt,
+    recordOrder: latestQuotaRecordOrder,
+    epoch: latestQuotaEpoch,
   });
   return projection;
 }

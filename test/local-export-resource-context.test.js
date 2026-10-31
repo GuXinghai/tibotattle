@@ -61,7 +61,6 @@ const PLATFORM_PUBLIC_EXPORTS = Object.freeze([
   "createCompressedTimingReader",
   "createExportSetVerificationStorageContext",
   "createLocalCodexLogPorts",
-  "createLocalContributionSyncQueueStorageContext",
   "createLocalExportSourcePorts",
   "createOwnerOnlyAtomicFilePublisher",
   "createOwnerOnlyExportArtifactStorageContext",
@@ -161,6 +160,7 @@ const PLATFORM_PUBLIC_EXPORTS = Object.freeze([
   "windowsAccountObservationBrokerConfiguration",
   "windowsNativeUnsignedContentDigest",
   "withParticipantSecretLease",
+  "withProtectedSqliteReadSnapshot",
 ]);
 
 test("platform adapters expose one exact reviewed public API", () => {

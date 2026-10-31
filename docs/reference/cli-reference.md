@@ -38,7 +38,7 @@ do not delete the destination or blindly retry. Cleanup failure is reported as
 `OWNER_ONLY_ATOMIC_CLEANUP_FAILED`. General production/path-walk approval and
 installed-artifact qualification remain separate.
 
-Export workspace v0.6 (physical schema 6) preserves exact Windows volume/file
+Local export workspace v1 (physical schema 7) preserves exact Windows volume/file
 identities as private canonical decimal strings, bounded to U64/U128
 respectively. The public source summary omits these identities. Older workspace
 schemas are refused before writable configuration and preserved unchanged;

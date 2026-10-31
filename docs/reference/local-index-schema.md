@@ -386,24 +386,29 @@ displayed work coverage remains clipped to the seven-day range; complete change
 intervals retain their earlier work context for rate denominators. Missing,
 ambiguous or cyclic lineage never justifies deduplication.
 
-Quota consumption is the increase beyond each reset/plan track's previously
-observed high watermark. A lower stale snapshot never replaces its pairing
-anchor and its rebound cannot be charged again. Relevant pre-window evidence
-seeds the watermark. Equal balances refresh observation freshness but do not
-move the first-change anchor. Only a positive quota change closes an interval;
-its complete usage denominator is retained before presentation is clipped.
-Pending zero-change tails do not contribute historical rate samples. Conflicting
-same-time readings remain errors and break allocation coverage. Regressed
-observations remain in the store, appear as chart gaps and are counted in the
-projection's `adjustments`; the latest accepted observation retains its actual
-timestamp. This is an observed-consumption policy, not proof that a provider
-cannot issue a credit within a reset cycle.
+Quota consumption pairs observations inside an account/plan/window stage.
+The first confirmed plan observation establishes its baseline at that observed
+percentage and time. Earlier consumption is never backfilled into that plan,
+even when reset deadlines match. A first reading of 97% remaining followed by
+95% therefore contributes two percentage points, not five. Plan-stage boundaries
+and scheduled reset-window boundaries remain independent.
+An increase in used percentage closes a consumption interval. A decrease starts
+a new stage at that reading; it contributes neither negative consumption nor a
+scheduled reset claim. For example, used percentages 30, 36, 21, 30 produce
+6 + 9 = 15 percentage points. Historical high watermarks do not reject the
+recovered balance. Equal readings refresh freshness without moving the
+first-change allocation anchor. Complete interval usage denominators remain
+available before display clipping; pending zero-change tails do not train rates.
+The collector's durable record order distinguishes separate completed reads
+at the same millisecond. Same-observation contradictions and unordered
+simultaneous conflicts still break coverage. Source facts remain unchanged;
+replaying them reconstructs the same stages and totals.
 
 Overview groups committed usage timestamps into five-minute bins without
 splitting fifteen-minute display rollups. The `overview-workload-v7` comparison
 reports two startup totals in percentage points, without a rolling display
 window or relative-ratio curve. Actual consumption sums only within each reset
-identity, retaining the high watermark; unmatched usage across reset boundaries
+identity and recovery stage; unmatched usage across reset boundaries
 and simultaneous quota conflicts remain explicit. Expected consumption uses
 the same covered intervals and the first known capacity frozen for that startup.
 The seven-day history retains all plan periods. The
@@ -424,7 +429,7 @@ The response reports inferred/unresolved observations, per-day plan groups and
 inferred markers. Same-day plan groups render separately, and pairing never
 crosses plan-period or reset boundaries. Remaining-hour rates use only the most
 recent period matching the current plan; sparse samples remain unavailable.
-The v5 result adds `segmentation` (`first-quota-drop-v1`) and `unallocated`.
+The result includes `segmentation` (`quota-recovery-stages-v2`) and `unallocated`.
 Each segmentation plan reports `closedIntervals`, `observedPp`, `dailyPp`,
 `outsidePp` and `unallocatedPp`; the last three conserve the observed total
 within floating point tolerance. Plans are not pooled. Complete priced usage
@@ -513,9 +518,10 @@ An unused zero window can report observation-time plus seven days repeatedly;
 these readings remain one cycle until use/countdown anchors its deadline.
 An anchored active cycle retains fixed first-deadline jitter bounds. Natural
 renewal without an event still requires the old deadline to have elapsed and
-a substantially advanced, plausible new weekly deadline. Retired-cycle cache
-readings do not reopen a closed cycle, and high watermarks prevent replays or
-stale rebounds from charging the same quota twice.
+a substantially advanced, plausible new weekly deadline. Retired-cycle
+observations do not reopen a closed cycle. A recovery within the active window
+starts a consumption stage independently of cycle resolution. Source occurrence
+deduplication and deterministic replay prevent counting the same interval twice.
 
 Unproven changes report `comparison_reset_ambiguous`; usage in an unpaired reset
 interval reports `comparison_reset_gap`. Confirmed subtotals are retained, not

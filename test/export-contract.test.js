@@ -28,7 +28,7 @@ async function emptyBundle() {
 }
 
 test("generated compatibility manifest exactly matches all live contract inputs", async () => {
-  const generated = JSON.parse(await readFile(new URL("../generated/telemetry-v0.1-compatibility.json", import.meta.url), "utf8"));
+  const generated = JSON.parse(await readFile(new URL("../generated/local-export-v1-compatibility.json", import.meta.url), "utf8"));
   assert.deepEqual(generated, buildExportCompatibilityTuple());
   assert.deepEqual(exportCompatibilityTuple(), generated);
   assert.equal(generated.schemas.members.length, 6);
@@ -45,13 +45,10 @@ test("generated compatibility manifest exactly matches all live contract inputs"
   assert.equal(generated.providerAdapters.openaiCodex.capabilities.quotaSnapshots.rollout, "implemented");
   assert.equal(generated.providerAdapters.openaiCodex.capabilities.quotaSnapshots.collector, "implemented");
   assert.equal(generated.providerAdapters.openaiCodex.sourceFormats.collectorQuota.status, "implemented");
-  assert.equal(generated.providerAdapters.anthropicClaudeCode.status, "partial");
-  assert.equal(generated.providerAdapters.anthropicClaudeCode.capabilities.usageEvents, "implemented");
-  assert.equal(generated.providerAdapters.anthropicClaudeCode.capabilities.quotaSnapshots, "implemented");
-  assert.equal(generated.providerAdapters.anthropicClaudeCode.sourceFormats.statusLine.status, "implemented");
-  assert.equal(generated.providerAdapters.anthropicClaudeCode.sourceFormats.transcript.status, "implemented");
   assert.equal(generated.contract.transportReady, false);
-  assert.equal(generated.contract.externalParticipantsAuthorized, false);
+  assert.deepEqual(Object.keys(generated.providerAdapters), ["openaiCodex"]);
+  assert.equal("consent" in generated, false);
+  assert.equal(generated.contract.backwardCompatibility, "none");
 });
 
 test("executed scanner version is the version embedded in the bundle", async () => {

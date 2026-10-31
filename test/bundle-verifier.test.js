@@ -112,7 +112,7 @@ test("standalone verifier accepts an exact canonical owner-only pair", async () 
   try {
     const verified = await verifyLocalMetadataBundleFiles(pair);
     assert.equal(verified.verdict, "passed");
-    assert.equal(verified.contractFamily, "telemetry-v0.1");
+    assert.equal(verified.contractFamily, "local-export-v1");
     assert.equal(verified.contractStatus, "draft_local_only_unfrozen");
     assert.equal(verified.transportReady, false);
     assert.deepEqual(verified.recordCounts, { usageEvents: 0, quotaSnapshots: 0, activityMarkers: 0 });
@@ -406,7 +406,7 @@ test("verifier bounds quota receipt time and rejects receipt before observation"
     try {
       const bundle = structuredClone(pair.bundle);
       bundle.records.quotaSnapshots.push({
-        schemaVersion: "quota-snapshot-v0.1",
+        schemaVersion: "local-quota-snapshot-v1",
         observedTime: "2026-07-24T12:30:00.000Z",
         receivedTime: scenario.receivedTime,
         provider: "openai_codex",
@@ -442,7 +442,7 @@ test("verifier rejects an observed provider absent from the bundle declaration",
   try {
     const bundle = structuredClone(pair.bundle);
     bundle.records.usageEvents.push({
-      schemaVersion: "usage-event-v0.1",
+      schemaVersion: "local-usage-event-v1",
       eventTime: "2026-07-24T12:30:00.000Z",
       provider: "anthropic_claude_code",
       modelId: "unknown",

@@ -275,9 +275,9 @@ test("popover controller lazily positions, updates, routes, and destroys a trust
   assert.equal(window.options.type, undefined, "interactive popup must not use a macOS nonactivating panel");
   assert.equal(window.options.focusable, true);
   assert.equal(window.options.skipTaskbar, true);
-  assert.equal(window.options.height, 500);
+  assert.equal(window.options.height, 260);
   assert.equal(window.options.minWidth, 1);
-  assert.equal(window.options.maxWidth, 400);
+  assert.equal(window.options.maxWidth, 310);
   assert.equal(window.options.webPreferences.nodeIntegration, false);
   assert.equal(window.options.webPreferences.contextIsolation, true);
   assert.equal(window.options.webPreferences.sandbox, true);
@@ -295,7 +295,7 @@ test("popover controller lazily positions, updates, routes, and destroys a trust
       .map(({ value }) => value),
     [true],
   );
-  assert.deepEqual(window.positions, [[212, 52]]);
+  assert.deepEqual(window.positions, [[257, 52]]);
   assert.equal(popover.visible, true);
 
   const nextModel = createDesktopTrayPopoverModel({ trayStatus: status(), now: Date.parse("2026-08-22T12:04:00.000Z") });
@@ -466,7 +466,7 @@ test("content height fits the popup without reopening it and restores after a sm
     "ipc-message", event, TRAY_POPOVER_CONTENT_HEIGHT_CHANNEL, ...values,
   );
   report(476);
-  assert.deepEqual(window.getSize(), [400, 476]);
+  assert.deepEqual(window.getSize(), [310, 476]);
   assert.equal(window.showCalls, 1, "layout changes never show or focus the window again");
   assert.equal(window.focusCalls, 1);
   for (const value of [0, -1, 4097, 476.5, "600", NaN, Infinity, {}]) report(value);
@@ -475,7 +475,7 @@ test("content height fits the popup without reopening it and restores after a sm
     TRAY_POPOVER_CONTENT_HEIGHT_CHANNEL, 600);
   window.webContents.emit("ipc-message", { ...event, sender: {} },
     TRAY_POPOVER_CONTENT_HEIGHT_CHANNEL, 600);
-  assert.deepEqual(window.getSize(), [400, 476]);
+  assert.deepEqual(window.getSize(), [310, 476]);
   popover.hide();
   report(590);
   assert.equal(window.visible, false);
@@ -485,14 +485,14 @@ test("content height fits the popup without reopening it and restores after a sm
   assert.deepEqual(window.getSize(), [276, 276]);
   area = { x: 0, y: 24, width: 1200, height: 900 };
   popover.show();
-  assert.deepEqual(window.getSize(), [400, 590], "the natural size survives the work-area cap");
+  assert.deepEqual(window.getSize(), [310, 590], "the natural size survives the work-area cap");
   report(4096);
-  assert.deepEqual(window.getSize(), [400, 720]);
+  assert.deepEqual(window.getSize(), [310, 720]);
   report(1);
-  assert.deepEqual(window.getSize(), [400, 240]);
+  assert.deepEqual(window.getSize(), [310, 180]);
   window.webContents.currentURL = "http://127.0.0.1:54321/other";
   report(590);
-  assert.deepEqual(window.getSize(), [400, 240], "a navigated frame cannot resize the popup");
+  assert.deepEqual(window.getSize(), [310, 180], "a navigated frame cannot resize the popup");
   popover.destroy();
 });
 
@@ -504,7 +504,7 @@ test("popover accepts negative display origins, caps to work area, and dismisses
   const screen = {
     getDisplayMatching: (bounds) => {
       assert.deepEqual(bounds, trayBounds);
-      return { workArea: { x: -1_440, y: -900, width: 1_920, height: 460 } };
+      return { workArea: { x: -1_440, y: -900, width: 1_920, height: 220 } };
     },
   };
   const popover = createDesktopTrayPopover({
@@ -526,10 +526,10 @@ test("popover accepts negative display origins, caps to work area, and dismisses
   assert.equal(popover.show(), true);
   await new Promise((resolve) => setTimeout(resolve, 0));
   const window = windows[0];
-  assert.deepEqual(window.sizes, [[400, 436]]);
+  assert.deepEqual(window.sizes, [[310, 196]]);
   const [x, y] = window.positions.at(-1);
-  assert.ok(x >= -1_440 && x + 400 <= 480, `x=${x}`);
-  assert.ok(y >= -900 && y + 436 <= -440, `y=${y}`);
+  assert.ok(x >= -1_440 && x + 310 <= 480, `x=${x}`);
+  assert.ok(y >= -900 && y + 196 <= -680, `y=${y}`);
   assert.equal(popover.visible, true);
   window.emit("blur");
   assert.equal(popover.visible, false);

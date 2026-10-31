@@ -13,9 +13,6 @@ export {
   createLocalExportResourceContext,
 } from "./local-export-resource-context.js";
 export {
-  createLocalContributionSyncQueueContext,
-} from "./local-contribution-sync-queue.js";
-export {
   createLocalMetadataBundleVerificationContext,
 } from "./local-metadata-bundle-verification.js";
 export {

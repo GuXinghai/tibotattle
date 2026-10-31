@@ -474,7 +474,7 @@ function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
 
 /** Identity-only preflight for reviewed forward migrations. This never
  * returns a database handle or permits projections/writes against old state. */
-export function readLocalIndexIdentityBeforeMigration(file) {
+export function readLocalIndexIdentityBeforeMigration(file, { currentOnly = false } = {}) {
   const path = resolve(file);
   assertOwnerOnlyDirectory(dirname(path));
   assertOwnerOnlyTarget(path, { allowMissing: false });
@@ -482,7 +482,7 @@ export function readLocalIndexIdentityBeforeMigration(file) {
   try {
     database = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
     configure(database, { readOnly: true });
-    assertFamily(database, { allowWorkloadPredecessor: true });
+    assertFamily(database, { allowWorkloadPredecessor: !currentOnly });
     if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
       throw fixedError("local_index_family_mismatch");
     }
@@ -658,56 +658,11 @@ export function openLocalIndexStore(file, {
   try {
     database = new DatabaseSync(path, { readOnly, timeout: 5_000 });
     // Reject newer/foreign files before any write-mode connection pragmas.
-    if (existed) assertFamily(database, { allowWorkloadPredecessor: true });
+    if (existed) assertFamily(database);
     configure(database, { readOnly, bulkLoad });
     if (!existed) initialize(database);
-    if (existed && !readOnly
-        && database.prepare("PRAGMA application_id").get().application_id === LOCAL_INDEX_STORE_APPLICATION_ID
-        && [4,5].includes(database.prepare("PRAGMA user_version").get().user_version)) {
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        database.exec(SCHEMA);
-        database.exec(ROLLUP_TRIGGER_SCHEMA);
-        database.exec("PRAGMA user_version=6");
-        database.exec("COMMIT");
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-    }
-    if (existed && !readOnly
-        && database.prepare("PRAGMA user_version").get().user_version === 6) {
-      // v7 changes the meaning of a committed cursor, not the physical tables:
-      // a validated complete prefix may stop before a deferred trailing line.
-      // Keep every fact, ordinal and per-source parser stamp for scoped replay.
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) throw fixedError("local_index_family_mismatch");
-        database.prepare("UPDATE meta SET value=? WHERE key='parser_version'").run(LOCAL_INDEX_PARSER_VERSION);
-        database.exec("PRAGMA user_version=7");
-        database.exec("COMMIT");
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-    }
-    if (existed && !readOnly
-        && database.prepare("PRAGMA user_version").get().user_version === 7) {
-      database.exec("BEGIN IMMEDIATE");
-      try {
-        database.exec("ALTER TABLE store_state ADD COLUMN calculation_revision INTEGER NOT NULL DEFAULT 0 CHECK(calculation_revision >= 0)");
-        installCalculationRevisionTriggers(database);
-        database.exec("PRAGMA user_version=8");
-        database.exec("COMMIT");
-      } catch (error) {
-        database.exec("ROLLBACK");
-        throw error;
-      }
-    }
-    if (existed && !readOnly
-        && database.prepare("PRAGMA user_version").get().user_version === 8) {
-      upgradeLocalIndexV8ToV9(database);
-    }
+    // Pre-release predecessor conversion belongs to the standalone copy tool.
+    // Ordinary readers/writers never upgrade the owner's only database.
     assertFamily(database);
     if (!readOnly) retireRuntimeCaptureRevisionTriggers(database);
     if (!readOnly && !evidenceOnly) {

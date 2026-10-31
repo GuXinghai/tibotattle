@@ -108,16 +108,7 @@
   --topbar-height: 60px;
   --desktop-titlebar-height: 0px;
   --sidebar-width: 216px;
-  /* Both stacks lead with the platform's own UI face so that the dashboard
-     matches the native chrome it is embedded in rather than competing with
-     it. This was not a preference: Iowan Old Style is not installed on stock
-     macOS, so `--serif` was silently resolving to Baskerville - a print serif
-     with none of Iowan's screen weight - and every headline number was
-     rendering in a face the design never chose. `ui-serif` resolves to New
-     York, which Apple designed to sit beside SF Pro and which ships with the
-     OS, and the old names stay behind it so an installed Iowan still wins.
-     `--sans` leads the same way so an installed Inter cannot make the app
-     diverge from the sidebar and toolbar around it. */
+  /* Use system typography for the dashboard and its controls. */
   --serif: ui-serif, "Iowan Old Style", Baskerville, "Times New Roman", serif;
   --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", sans-serif;
 }
@@ -132,12 +123,9 @@
  * theme colour or theme background would override - the tokens themselves
  * are the theming surface, not the individual rules.
  *
- * The overrides are scoped to the app surfaces so the public release site
- * (`body.community-site`) and the operator console
- * (`body.admin-operator-page`) keep their own palettes from `:root`. The
- * tray popup does not load this sheet; it carries its own `--tray-*` roles.
+ * The tray popup carries its own `--tray-*` roles in its separate sheet.
  */
-body:not(.community-site):not(.admin-operator-page) {
+body {
   --paper: #fff;
   --paper-2: #fff;
   --white: #fff;
@@ -368,67 +356,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 .dashboard-content { min-width: 0; -webkit-user-select: text; user-select: text; }
 [data-dashboard-page][hidden] { display: none !important; }
-
-/* The packaged Windows app supplies a real AppKit header and sidebar. Keep this
-   document focused on the selected, readable report instead of rendering a
-   second browser-shaped navigation system inside the native shell. */
-html.native-dashboard body,
-body.native-dashboard {
-  min-height: 100%;
-  background: var(--paper);
-}
-html.native-dashboard .topbar,
-html.native-dashboard .dashboard-sidebar,
-body.native-dashboard .topbar,
-body.native-dashboard .dashboard-sidebar { display: none; }
-html.native-dashboard .dashboard-shell,
-body.native-dashboard .dashboard-shell {
-  display: block;
-  width: 100%;
-  min-height: 0;
-}
 .dashboard-load-status { display: none; }
 html.electron-dashboard .dashboard-load-status { display: block; min-block-size: 1.5em; }
 /* The current desktop Overview is the workload report. Do not flash the
    retired metric panels while its first saved result is being read. */
 html.electron-dashboard #overview > :is(.overview-allowances, .overview-panels) { display: none; }
-html.native-dashboard main,
-html.native-dashboard footer,
-body.native-dashboard main,
-body.native-dashboard footer {
-  width: min(1180px, calc(100% - 52px));
-}
-html.native-dashboard .page-heading,
-body.native-dashboard .page-heading {
-  gap: 32px;
-  padding-top: 30px;
-}
-html.native-dashboard h1,
-html.native-dashboard h2,
-body.native-dashboard h1,
-body.native-dashboard h2 {
-  font-family: var(--sans);
-  font-weight: var(--weight-semibold);
-  letter-spacing: -.035em;
-  line-height: 1.05;
-}
-html.native-dashboard h1,
-body.native-dashboard h1 { font-size: clamp(2.1rem, 3.6vw, 3rem); }
-html.native-dashboard h2,
-body.native-dashboard h2 { font-size: clamp(1.8rem, 3vw, 2.5rem); }
-/* The persistent AppKit control owns refresh in the installed app. Keep the
-   report's setup card descriptive instead of offering a competing sync path. */
-html.native-dashboard #setup-refresh,
-html.native-dashboard #refresh-button,
-html.native-dashboard #cancel-refresh,
-body.native-dashboard #setup-refresh,
-body.native-dashboard #refresh-button,
-body.native-dashboard #cancel-refresh { display: none; }
-/* Setup guidance belongs to the hosted fallback. If the report is already
-   inside the native app, surfacing instructions to install/open that app is
-   circular and misleading. */
-html.native-dashboard #setup-card,
-body.native-dashboard #setup-card { display: none !important; }
 .top-actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: .55rem; }
 /* Reserve the whole active status and its numeric tracks across phase changes.
    The existing narrow-toolbar rule hides this control below 760px. */
@@ -1527,17 +1459,17 @@ tbody tr:last-child td { border-bottom: 0; }
  * state, and the card itself stays on the plain surface. `--ink` flips with
  * the theme, so one block serves light and dark.
  */
-body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast {
+body .weekly-pace-forecast {
   --pace-accent: color-mix(in srgb, var(--ink) 60%, transparent);
   --pace-accent-text: var(--ink);
   --pace-accent-soft: color-mix(in srgb, var(--ink) 12%, transparent);
   --pace-accent-wash: var(--surface-raised);
   background: var(--surface-raised);
 }
-body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-on-pace { --pace-accent: color-mix(in srgb, var(--ink) 45%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-insufficient { --pace-accent: color-mix(in srgb, var(--ink) 30%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-over-pace { --pace-accent: color-mix(in srgb, var(--ink) 80%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .weekly-pace-forecast.is-over-pace.is-critical {
+body .weekly-pace-forecast.is-on-pace { --pace-accent: color-mix(in srgb, var(--ink) 45%, transparent); }
+body .weekly-pace-forecast.is-insufficient { --pace-accent: color-mix(in srgb, var(--ink) 30%, transparent); }
+body .weekly-pace-forecast.is-over-pace { --pace-accent: color-mix(in srgb, var(--ink) 80%, transparent); }
+body .weekly-pace-forecast.is-over-pace.is-critical {
   --pace-accent: var(--ink);
   --pace-accent-soft: color-mix(in srgb, var(--ink) 18%, transparent);
 }
@@ -2158,7 +2090,6 @@ h2 { font-size: clamp(2rem, 3.8vw, 3.25rem); }
 .evidence-chip.neutral { color: var(--muted); background: var(--surface-sunken); }
 .evidence-chip.error { color: var(--rust); background: var(--rust-soft); }
 .summary-facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-2); margin: var(--space-5) 0; }
-.sync-facts { grid-template-columns: repeat(3, 1fr); }
 .summary-facts > div { min-width: 0; padding: var(--pad-tile); border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-quiet); }
 .summary-facts dt { color: var(--muted); font-size: .58rem; text-transform: uppercase; }
 .summary-facts dd { margin: 4px 0 0; overflow-wrap: anywhere; font-size: .76rem; font-weight: var(--weight-semibold); }
@@ -2229,56 +2160,6 @@ h2 { font-size: clamp(2rem, 3.8vw, 3.25rem); }
   .snapshot-table td.numeric { text-align: end; }
 }
 
-/* Public landing hierarchy. Keep the community surface intentionally small;
-   the broader rules above remain shared with the loopback dashboard. */
-.community-site .community-hero {
-  grid-template-columns: minmax(0, 1fr);
-  align-items: start;
-  padding-bottom: 28px;
-}
-.community-site .topbar { grid-template-columns: auto minmax(0, 1fr) auto auto; column-gap: 12px; }
-.community-site .topbar .primary-nav { justify-self: end; }
-.community-site .community-hero .lede { max-width: 760px; }
-.community-hero-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 24px;
-}
-.community-site .community-section {
-  padding-top: 20px;
-  border-top: 0;
-}
-.community-site .community-section > .lede {
-  max-width: 850px;
-  margin-bottom: 24px;
-}
-.community-site .community-download { margin-top: 18px; }
-.community-site .community-trust-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-}
-.community-site .community-trust-grid .panel { height: 100%; }
-.community-site .community-trust-grid .panel h3 { margin-bottom: 10px; }
-.community-site .community-trust-grid .panel p:last-child {
-  margin-bottom: 0;
-  color: var(--muted);
-  font-size: .8rem;
-}
-.community-faq-list { display: grid; gap: 12px; }
-.community-faq-item { margin-top: 0; }
-.community-faq-item > summary { padding: 17px 20px; }
-.community-faq-item > summary strong {
-  margin-top: 0;
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: .82rem;
-  font-weight: var(--weight-semibold);
-}
-.community-faq-answer { padding: 0 20px 17px; }
-.community-faq-answer p { margin: 0; color: var(--muted); font-size: .78rem; }
-
 footer {
   display: flex;
   justify-content: space-between;
@@ -2341,8 +2222,6 @@ footer p { margin: 0; }
   .journey-disclosure > summary { align-items: flex-start; flex-direction: column; }
   #cancel-refresh.button.compact { display: inline-flex; }
   .page-heading { padding-top: 38px; }
-  .community-site .community-trust-grid { grid-template-columns: 1fr; }
-  .community-hero-actions .button { flex: 1 1 12rem; }
   .freshness-card { min-width: 0; }
   .dashboard-section { padding-bottom: var(--space-7); }
   [data-dashboard-page]:not(.dashboard-page-inactive) ~ .dashboard-section:not(.dashboard-page-inactive) {
@@ -2352,7 +2231,6 @@ footer p { margin: 0; }
   .metric-grid > :last-child { grid-column: auto; }
   .panel { padding: 21px; }
   .panel-heading, .chart-heading, .report-panel, .notice { align-items: flex-start; flex-direction: column; }
-  .sync-panel-summary { align-items: flex-start; flex-wrap: wrap; }
   .component-row { grid-template-columns: 110px 1fr auto; }
   .comparison-row { grid-template-columns: 1fr auto; }
   .comparison-row .bar-track { grid-column: 1 / -1; grid-row: 2; }
@@ -2375,7 +2253,7 @@ footer p { margin: 0; }
   h1 { font-size: 2.55rem; }
   h2 { font-size: 2.25rem; }
   .topbar { grid-template-columns: minmax(0, 1fr) auto; }
-  body:not(.community-site) > .topbar .brand > span { display: none; }
+  body > .topbar .brand > span { display: none; }
   .primary-nav a {
     flex: 0 0 auto;
     flex-direction: column;
@@ -2415,988 +2293,6 @@ footer p { margin: 0; }
   *, *::before, *::after { scroll-behavior: auto !important; animation: none !important; transition: none !important; }
 }
 
-/*
- * Public landing surface. Everything here is scoped so the installed app's
- * local dashboard keeps its existing layout and controls.
- */
-.community-site {
-  --site-green: #0c4038;
-  --site-green-deep: #082f2a;
-  --site-green-bright: #65c3aa;
-  --site-cream: #f5f0e5;
-  --site-paper: #fffdf7;
-  background: var(--site-cream);
-}
-.community-site .skip-link {
-  color: var(--site-green-deep);
-  background: var(--site-paper);
-}
-.community-site .topbar {
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
-  min-height: 64px;
-  column-gap: 10px;
-  padding-inline: max(24px, calc((100vw - 1180px) / 2));
-  border-color: rgba(255, 253, 247, .14);
-  background: rgba(8, 47, 42, .92);
-  backdrop-filter: blur(18px);
-}
-.community-site .brand {
-  min-width: 0;
-  gap: .68rem;
-  color: var(--site-paper);
-  font-size: 1rem;
-  letter-spacing: -.02em;
-}
-.community-site .brand > span {
-  font-size: 1.18rem;
-  line-height: 1;
-}
-.community-site .brand-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, .2);
-}
-.community-site .primary-nav {
-  display: flex;
-  min-width: 0;
-  overflow-x: auto;
-  overflow-y: hidden;
-  justify-self: stretch;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
-  gap: 4px;
-  margin-inline: 0;
-  scrollbar-width: none;
-}
-.community-site .topbar .primary-nav {
-  justify-self: stretch;
-}
-.community-site .primary-nav::-webkit-scrollbar {
-  display: none;
-}
-.community-site .primary-nav a {
-  width: auto;
-  min-height: 40px;
-  padding: .45rem .68rem;
-  color: rgba(255, 253, 247, .7);
-  font-size: .72rem;
-  letter-spacing: .01em;
-  white-space: nowrap;
-}
-.community-site .primary-nav a:hover,
-.community-site .primary-nav a:focus-visible {
-  color: var(--site-paper);
-  background: rgba(255, 255, 255, .09);
-}
-.community-site .header-download {
-  display: inline-flex;
-  align-items: center;
-  gap: .42rem;
-  justify-self: end;
-  min-height: 38px;
-  padding: .48rem .9rem;
-  border: 1px solid rgba(255, 253, 247, .34);
-  border-radius: var(--radius-pill);
-  color: var(--site-green-deep);
-  background: var(--site-paper);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .95), 0 5px 14px rgba(0, 0, 0, .12);
-  font-size: .72rem;
-  font-weight: var(--weight-bold);
-  text-decoration: none;
-  transition: transform .12s ease, box-shadow .12s ease, background-color .12s ease;
-}
-.community-site .header-download:hover {
-  color: var(--site-green-deep);
-  background: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 1), 0 9px 19px rgba(0, 0, 0, .18);
-  transform: translateY(-1px);
-}
-.community-site .header-download-icon {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-}
-.community-site .language-picker {
-  justify-self: start;
-}
-.community-site .language-picker select {
-  min-height: 34px;
-  min-width: 5.2rem;
-  max-width: 6.5rem;
-  padding: .32rem 1.3rem .32rem .55rem;
-  border-color: rgba(255, 253, 247, .2);
-  border-radius: var(--radius-sm);
-  color: rgba(255, 253, 247, .78);
-  background: rgba(255, 253, 247, .07);
-  box-shadow: none;
-  font-size: .65rem;
-  font-weight: var(--weight-semibold);
-}
-@media (max-width: 760px) {
-  .community-site .topbar {
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
-    min-height: 0;
-    column-gap: 8px;
-    padding-block: .45rem;
-  }
-}
-.community-site main {
-  width: 100%;
-  margin: 0;
-}
-.community-site .product-hero {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: clamp(42px, 4.5vw, 68px);
-  align-items: start;
-  min-height: min(790px, calc(100vh - 74px));
-  padding:
-    clamp(62px, 8vw, 104px)
-    max(24px, calc((100vw - 1180px) / 2))
-    clamp(66px, 8vw, 102px);
-  overflow: hidden;
-  color: var(--site-paper);
-  background:
-    radial-gradient(circle at 82% 14%, rgba(101, 195, 170, .16), transparent 31rem),
-    radial-gradient(circle at 12% 100%, rgba(101, 195, 170, .08), transparent 29rem),
-    var(--site-green-deep);
-}
-.community-site .hero-copy {
-  position: relative;
-  z-index: 1;
-  min-width: 0;
-}
-.community-site .product-hero h1 {
-  max-width: 690px;
-  margin: 0 0 22px;
-  color: var(--site-paper);
-  font-size: clamp(3.7rem, 6.4vw, 75px);
-  line-height: .88;
-  text-wrap: balance;
-}
-.community-site .hero-lede {
-  max-width: 580px;
-  margin: 0;
-  color: rgba(255, 253, 247, .7);
-  font-size: clamp(.98rem, 1.3vw, 1.13rem);
-  line-height: 1.62;
-}
-.community-site .install-cluster {
-  display: grid;
-  gap: 10px;
-  min-width: 0;
-  margin-top: 30px;
-}
-.community-site .platform-panel[hidden] {
-  display: none;
-}
-.community-site .platform-panel {
-  min-width: 0;
-}
-.community-site .platform-unavailable-panel {
-  width: min(100%, 560px);
-  padding: 22px 24px;
-  border: 1px solid rgba(255, 253, 247, .2);
-  border-radius: var(--radius-md);
-  background: rgba(0, 0, 0, .15);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
-}
-.community-site .platform-unavailable-panel .platform-availability {
-  margin: 0 0 7px;
-  color: var(--site-green-bright);
-  font-size: .58rem;
-  font-weight: var(--weight-bold);
-  letter-spacing: .13em;
-  text-transform: uppercase;
-}
-.community-site .platform-unavailable-panel h2 {
-  margin: 0;
-  color: var(--site-paper);
-  font-family: var(--sans);
-  font-size: clamp(1.2rem, 2vw, 1.45rem);
-  line-height: 1.15;
-  letter-spacing: -.02em;
-}
-.community-site .platform-unavailable-panel h2 + p {
-  margin: 8px 0 0;
-  color: rgba(255, 253, 247, .68);
-  font-size: .76rem;
-  line-height: 1.5;
-}
-.community-site .platform-unavailable-panel a {
-  display: inline-block;
-  margin-top: 13px;
-  color: var(--site-green-bright);
-  font-size: .72rem;
-  font-weight: var(--weight-bold);
-  text-underline-offset: 4px;
-}
-.community-site .install-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  min-width: 0;
-  gap: 12px 18px;
-}
-.community-site .download-button {
-  gap: .65rem;
-  min-height: 54px;
-  padding: .8rem 1.3rem .8rem 1.05rem;
-  border: 1px solid rgba(255, 253, 247, .56);
-  border-radius: var(--radius-pill);
-  color: var(--site-green-deep);
-  background: var(--site-paper);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .96), 0 14px 30px rgba(0, 0, 0, .2);
-  font-size: .84rem;
-  text-decoration: none;
-}
-.community-site .download-button:hover:not(:disabled) {
-  color: var(--site-green-deep);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 1), 0 19px 36px rgba(0, 0, 0, .27);
-}
-.community-site .download-button:disabled {
-  border-color: rgba(255, 253, 247, .24);
-  opacity: .78;
-  cursor: default;
-}
-.community-site .product-hero a:focus-visible {
-  outline-color: var(--site-green-bright);
-}
-.community-site .download-platform-icon {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 auto;
-}
-@media (min-width: 1121px) {
-  .community-site .install-actions {
-    width: calc(100% + 44px);
-  }
-}
-.community-site .installer-unavailable {
-  flex-basis: 100%;
-  width: fit-content;
-  padding: 0;
-  border: 0;
-  color: rgba(255, 253, 247, .58) !important;
-  background: transparent;
-  font-size: .68rem;
-}
-.community-site .open-installed-copy {
-  color: rgba(255, 253, 247, .56);
-  font-size: .72rem;
-}
-.community-site .open-installed-copy a {
-  margin-inline-start: .2rem;
-  color: var(--site-paper);
-  font-weight: var(--weight-semibold);
-  text-underline-offset: 3px;
-}
-.community-site .open-installed-copy a[aria-disabled="true"] {
-  opacity: .48;
-  cursor: not-allowed;
-}
-.community-site .installer-details-compact {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 14px;
-  max-width: 620px;
-  margin-top: 0;
-  color: rgba(255, 253, 247, .56);
-  font-size: .67rem;
-}
-.community-site .installer-summary {
-  display: inline-flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-.community-site .installer-summary-divider {
-  color: rgba(255, 253, 247, .34);
-}
-.community-site .installer-checksum-copy {
-  display: inline-flex;
-  align-items: center;
-  min-height: 27px;
-  padding: .2rem .45rem;
-  border: 1px solid rgba(255, 253, 247, .2);
-  border-radius: 5px;
-  color: rgba(255, 253, 247, .72);
-  background: rgba(255, 253, 247, .04);
-  cursor: pointer;
-  font: inherit;
-  font-size: .62rem;
-  font-weight: var(--weight-semibold);
-  line-height: 1;
-  transition: background-color .12s ease, border-color .12s ease, color .12s ease;
-}
-.community-site .installer-checksum-copy:hover:not(:disabled) {
-  border-color: rgba(101, 195, 170, .62);
-  color: var(--site-paper);
-  background: rgba(101, 195, 170, .12);
-}
-.community-site .installer-checksum-copy[data-copy-state="copied"] {
-  border-color: rgba(101, 195, 170, .72);
-  color: var(--site-green-bright);
-}
-.community-site .installer-checksum-copy:disabled {
-  cursor: wait;
-  opacity: .72;
-}
-.community-site .installer-checksum-copy:focus-visible {
-  outline: 2px solid var(--site-green-bright);
-  outline-offset: 3px;
-}
-.community-site .installer-checksum-fallback {
-  flex-basis: 100%;
-  max-width: min(100%, 42rem);
-  margin-top: 2px;
-  color: rgba(255, 253, 247, .72);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
-  font-size: .62rem;
-  line-height: 1.45;
-  overflow-wrap: anywhere;
-}
-.community-site .download-assurance {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px 8px;
-  align-items: center;
-  max-width: 620px;
-  margin: 16px 0 0;
-  color: rgba(255, 253, 247, .72);
-  font-size: .68rem;
-  line-height: 1.45;
-}
-.community-site .download-assurance[hidden] {
-  display: none;
-}
-.community-site .download-assurance-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  border: 1px solid rgba(101, 195, 170, .5);
-  border-radius: var(--radius-round);
-  color: var(--site-green-bright);
-  font-size: .65rem;
-  font-weight: var(--weight-bold);
-}
-.community-site .download-assurance-mark::before {
-  content: "✓";
-}
-.community-site .download-assurance strong {
-  color: rgba(255, 253, 247, .9);
-  font-weight: var(--weight-semibold);
-}
-.community-site .download-assurance a {
-  color: var(--site-green-bright);
-  font-weight: var(--weight-semibold);
-  text-underline-offset: 3px;
-}
-.community-site #open-installed-app-status {
-  margin: 0;
-  color: rgba(255, 253, 247, .7);
-  font-size: .7rem;
-}
-/*
- * The community's contribution totals, in the hero below the download. The
- * daily renderer writes the same `dl` it writes into the activity band, so
- * this styles that markup for a dark, narrow context rather than expecting
- * different DOM.
- *
- * It follows the community link and shares its rule: the link states the
- * freshness of exactly these figures, so a second separator between them
- * would split one claim into two.
- *
- * Hidden unless the page is holding current evidence. The renderer leaves the
- * host untouched on an unavailable answer, and it does not label retained
- * figures here the way the band does, so an unqualified claim in the hero
- * would outlive the evidence behind it. `data-live` is the same signal the
- * community link uses. A browser without `:has()` keeps the band hidden,
- * which fails in the safe direction.
- */
-.community-site .hero-contribution { display: none; }
-.community-site:has(.community-inline[data-live="true"]) .hero-contribution {
-  display: block;
-  max-width: 620px;
-  margin-top: 18px;
-}
-.community-site .hero-contribution h2 {
-  margin: 0;
-  color: rgba(255, 253, 247, .58);
-  font-family: var(--sans);
-  font-size: .69rem;
-  font-weight: var(--weight-semibold);
-  letter-spacing: .04em;
-  line-height: 1.4;
-  text-transform: uppercase;
-}
-.community-site .hero-contribution .snapshot-quality-grid {
-  grid-template-rows: auto auto auto;
-  gap: 16px 18px;
-  margin: 11px 0 0;
-}
-/* Tiles would be a second card inside a hero that is already one surface;
-   here the figures read directly off the dark ground. Sharing the grid's rows
-   keeps the four values on one line even when a label wraps and another does
-   not -- without it the longest label pushes its figure out of the row. */
-.community-site .hero-contribution .snapshot-quality-grid > div {
-  grid-row: span 3;
-  display: grid;
-  grid-template-rows: subgrid;
-  row-gap: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
-}
-.community-site .hero-contribution .snapshot-quality-grid dt {
-  color: rgba(255, 253, 247, .5);
-  font-size: .5rem;
-  letter-spacing: .08em;
-}
-.community-site .hero-contribution .snapshot-quality-grid dd {
-  margin-top: 3px;
-  color: var(--site-paper);
-  font-family: var(--serif);
-  font-size: clamp(1.08rem, 1.5vw, 1.4rem);
-  font-weight: var(--weight-regular);
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -.02em;
-  line-height: 1.05;
-}
-/* The qualifier travels with the figure: a spend total that does not say it
-   is not a bill, or a count that does not say across how many shared days,
-   is a stronger claim than the evidence supports. */
-.community-site .hero-contribution .snapshot-quality-grid small {
-  display: block;
-  margin-top: 4px;
-  color: rgba(255, 253, 247, .45);
-  font-size: .53rem;
-  line-height: 1.35;
-}
-@media (max-width: 700px) {
-  /* Two up on a phone. Four stacked figures would push the download most of a
-     screen down, and each value still has room for its qualifier. */
-  .community-site .hero-contribution .snapshot-quality-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-.community-site .community-inline {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr);
-  gap: 8px;
-  align-items: center;
-  max-width: 620px;
-  margin-top: 30px;
-  padding-top: 17px;
-  border-top: 1px solid rgba(255, 253, 247, .16);
-  color: rgba(255, 253, 247, .58);
-  font-size: .69rem;
-  text-decoration: none;
-}
-.community-site .community-inline:hover strong {
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.community-site .community-inline strong {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--site-paper);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.community-site .community-inline .evidence-chip {
-  color: rgba(255, 253, 247, .72);
-  border: 1px solid rgba(255, 253, 247, .14);
-  background: rgba(255, 255, 255, .08);
-  font-size: .55rem;
-}
-.community-site .community-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-round);
-  background: rgba(255, 253, 247, .5);
-  box-shadow: 0 0 0 4px rgba(255, 253, 247, .08);
-}
-/* Live-evidence heartbeat: the dot turns green and pulses once the daily
-   series has actually loaded (community.js stamps data-community-state). */
-.community-site [data-community-state="published"] .community-dot,
-.community-site .community-inline[data-live="true"] .community-dot {
-  background: #4ade80;
-  animation: community-dot-pulse 2.4s ease-in-out infinite;
-}
-@keyframes community-dot-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(74, 222, 128, .15); }
-  50% { box-shadow: 0 0 0 7px rgba(74, 222, 128, .35); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .community-site [data-community-state="published"] .community-dot,
-  .community-site .community-inline[data-live="true"] .community-dot {
-    animation: none;
-    box-shadow: 0 0 0 5px rgba(74, 222, 128, .25);
-  }
-}
-.community-site .community-window {
-  position: relative;
-  width: min(100%, 670px);
-  margin: 0;
-  overflow: hidden;
-  border: 1px solid rgba(255, 253, 247, .26);
-  border-radius: var(--radius-lg);
-  color: var(--ink);
-  background: var(--site-paper);
-  box-shadow: 0 38px 80px rgba(0, 0, 0, .32);
-  transform: rotate(.35deg);
-}
-.community-site .community-window::before {
-  position: absolute;
-  z-index: -1;
-  inset: 12% -12% -18% 14%;
-  border-radius: var(--radius-round);
-  background: rgba(101, 195, 170, .18);
-  filter: blur(45px);
-  content: "";
-}
-.community-site .community-window-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--line);
-  background: #f0ebdf;
-}
-.community-site .community-window-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: .72rem;
-}
-.community-site .community-window-brand img {
-  border-radius: var(--radius-sm);
-}
-.community-site .community-window-context {
-  padding: .28rem .48rem;
-  border: 1px solid rgba(23, 79, 69, .16);
-  border-radius: var(--radius-pill);
-  color: var(--site-green);
-  background: rgba(101, 195, 170, .12);
-  font-size: .55rem;
-  font-weight: var(--weight-bold);
-  letter-spacing: .05em;
-  text-transform: uppercase;
-}
-.community-site .community-window-actions {
-  display: inline-flex;
-  gap: 7px;
-  align-items: center;
-}
-.community-site .community-window-expand {
-  display: inline-grid;
-  place-items: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
-  border: 1px solid rgba(23, 79, 69, .16);
-  border-radius: var(--radius-sm);
-  color: var(--site-green);
-  background: rgba(255, 253, 247, .5);
-  cursor: pointer;
-}
-.community-site .community-window-expand[hidden] {
-  display: none;
-}
-.community-site .community-window-expand:hover {
-  border-color: rgba(23, 79, 69, .3);
-  background: var(--site-paper);
-}
-.community-site .community-window-expand:focus-visible {
-  outline: 2px solid var(--site-green);
-  outline-offset: 2px;
-}
-.community-site .community-window-expand svg {
-  width: 16px;
-  height: 16px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.7;
-}
-.community-site .community-window-content {
-  padding: 22px;
-}
-.community-site .hero-community-allowance .activity-heading {
-  padding-top: 0;
-  border-top: 0;
-}
-.community-site .community-window .activity-heading {
-  gap: 18px;
-}
-.community-site .community-window .activity-heading h2 {
-  margin: 0 0 5px;
-  color: var(--ink);
-  font-family: var(--sans);
-  font-size: .68rem;
-  font-weight: var(--weight-bold);
-  letter-spacing: .08em;
-  line-height: 1.25;
-  text-transform: uppercase;
-}
-.community-site .community-window .activity-heading p {
-  max-width: 46ch;
-  color: var(--muted);
-  font-size: .69rem;
-  line-height: 1.45;
-}
-.community-site .allowance-intro-copy {
-  max-width: 46ch;
-  color: var(--muted);
-  font-size: .69rem;
-  line-height: 1.45;
-}
-.community-site .allowance-intro-copy > span,
-.community-site .allowance-source-summary,
-.community-site .allowance-source-summary .snapshot-disclosure-details { display: inline; }
-.community-site .allowance-source-summary .snapshot-disclosure-details { margin: 0; }
-.community-site .allowance-source-summary .snapshot-disclosure-details > summary {
-  font-size: .69rem;
-  line-height: 1.45;
-}
-.community-site .allowance-source-summary .snapshot-disclosure-details[open] { display: block; }
-.community-site .community-window .allowance-controls {
-  gap: 8px;
-}
-.community-site .community-window .allowance-controls .evidence-chip {
-  font-size: .52rem;
-}
-.community-site .community-window .result-summary {
-  margin-top: 10px;
-}
-.community-site .community-window .allowance-headline-value strong {
-  font-size: clamp(2.65rem, 5.5vw, 4.35rem);
-}
-.community-site .community-window .snapshot-disclosure {
-  margin: 12px 0 0;
-  font-size: .65rem;
-  line-height: 1.45;
-}
-.community-site .feature-strip {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  width: min(1180px, calc(100% - 48px));
-  margin-inline: auto;
-  padding: clamp(38px, 5vw, 58px) 0;
-  border-bottom: 1px solid var(--line);
-}
-.community-site .feature-strip article {
-  min-width: 0;
-  padding: 0 clamp(24px, 4vw, 50px);
-  border-inline-start: 1px solid var(--line);
-}
-.community-site .feature-strip article:first-child {
-  padding-inline-start: 0;
-  border-inline-start: 0;
-}
-.community-site .feature-strip article:last-child {
-  padding-inline-end: 0;
-}
-.community-site .feature-step {
-  display: inline-grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  margin-bottom: 11px;
-  border: 1px solid rgba(23, 79, 69, .18);
-  border-radius: var(--radius-pill);
-  color: var(--site-green);
-  background: rgba(101, 195, 170, .14);
-  font-size: .66rem;
-  font-weight: var(--weight-bold);
-}
-.community-site .feature-strip h2 {
-  margin: 0 0 7px;
-  font-family: var(--serif);
-  font-size: clamp(1.6rem, 2.3vw, 2.2rem);
-  font-weight: var(--weight-display);
-  letter-spacing: -.035em;
-  line-height: 1;
-}
-.community-site .feature-strip p {
-  max-width: 31ch;
-  margin: 0;
-  color: var(--muted);
-  font-size: .78rem;
-  line-height: 1.6;
-}
-.community-site .community-proof {
-  width: min(1180px, calc(100% - 48px));
-  margin: 0 auto;
-}
-.community-site .community-proof-compact {
-  padding: clamp(24px, 3vw, 36px) 0 0;
-}
-.community-site .community-method {
-  margin: 0;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: rgba(255, 253, 247, .54);
-}
-.community-site .community-method > summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 16px 18px;
-  color: var(--green);
-  cursor: pointer;
-  font-size: .75rem;
-  font-weight: var(--weight-bold);
-  list-style: none;
-}
-.community-site .community-method > summary::-webkit-details-marker {
-  display: none;
-}
-.community-site .community-method > summary::after {
-  color: var(--muted);
-  content: "Show";
-  font-size: .65rem;
-}
-.community-site .community-method[open] > summary::after {
-  content: "Hide";
-}
-.community-site .community-method-body {
-  padding: 2px 18px 20px;
-}
-/*
- * Open is the default state, so the summary reads as the band's own rule and
- * the activity heading does not repeat it. Collapsed, the heading keeps the
- * separator it needs when the summary has no bottom edge of its own.
- */
-.community-site .community-method[open] > summary {
-  padding-bottom: 13px;
-  border-bottom: 1px solid var(--line);
-}
-.community-site .community-method[open] .activity-heading {
-  padding-top: 14px;
-  border-top: 0;
-}
-.community-site .activity-heading {
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  align-items: start;
-  padding-top: 18px;
-  border-top: 1px solid var(--line);
-}
-.community-site .activity-heading h3 {
-  margin: 0 0 4px;
-  font-size: .86rem;
-}
-.community-site .activity-heading p,
-.community-site .annotation {
-  margin: 0;
-  color: var(--muted);
-  font-size: .72rem;
-}
-.community-site .result-summary {
-  margin-top: 15px;
-}
-.community-site .result-summary > p {
-  font-size: .74rem;
-}
-.community-site .snapshot-disclosure {
-  color: var(--muted);
-  font-size: .72rem;
-}
-.community-site .snapshot-quality-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-/*
- * With the figures hosted in the hero, the band now opens on its chart. The
- * activity heading already carries the gap above it, so the chart does not
- * add a second one where the figures used to sit.
- */
-.community-site .community-proof .community-daily-chart:first-child {
-  margin-top: 0;
-}
-
-/*
- * Chart credit: the mark and the wordmark on the figure itself, the way a
- * published chart carries its source. It is meant to be read, so it is set in
- * the page's own display face at a legible size rather than washed into the
- * background.
- *
- * It is decoration -- it repeats the wordmark already in the header, the
- * footer and the hero -- so the empty alternative text keeps it out of the
- * accessible tree, and it takes no pointer target over the chart's own hit
- * areas beneath it. `--chart-credit-ink` defaults to whatever the chart's own
- * muted tone is, which is already contrast-checked against that surface.
- *
- * Each position below was chosen against a measured empty region of that
- * chart, not a house rule: these figures have different shapes and their busy
- * corners are in different places.
- */
-.community-site .cache-matrix-view::after,
-.community-site .performance-plot::after,
-.community-site #usage-timeline-chart::after,
-.community-site .community-daily-chart::after {
-  content: var(--product-name, "Usage Monitor") / "";
-  position: absolute;
-  z-index: 2;
-  padding-inline-start: 17px;
-  background: url("./app-icon.png") no-repeat left center / 13px 13px;
-  color: var(--chart-credit-ink, var(--muted));
-  font-family: var(--serif);
-  font-size: 11px;
-  font-weight: var(--weight-medium);
-  line-height: 15px;
-  white-space: nowrap;
-  pointer-events: none;
-  user-select: none;
-}
-.community-site .cache-matrix-view { --chart-credit-ink: var(--matrix-light, #17211e); }
-/* The medians ride the middle of the plot; only the top axis rule reaches
-   this corner, and a credit may sit on a rule. */
-.community-site .performance-plot::after {
-  inset-block-start: 2px;
-  inset-inline-end: 6px;
-}
-/* The week figure stacks two lanes. The lower lane's top right is the one
-   corner of the pair with no series, no axis label and no reset marker. */
-.community-site #usage-timeline-chart { position: relative; container-type: inline-size; }
-.community-site #usage-timeline-chart::after {
-  inset-block-start: 2px;
-  inset-inline-end: 8px;
-}
-@container (max-width: 399px) {
-  /* This lane keeps a 900:150 ratio, so by here it is barely seventy pixels
-     tall and the activity fill reaches its own top right. Every corner is
-     over data. A credit that covers the series is worse than none, and the
-     page states the wordmark in four other places. */
-  .community-site #usage-timeline-chart::after { content: none; }
-}
-/* Level with the legend, at the end of the row the legend leaves empty. */
-.community-site .community-daily-chart { position: relative; }
-.community-site .community-daily-chart::after {
-  inset-block-start: 12px;
-  inset-inline-end: 14px;
-}
-/* The hero window states the wordmark in its own title bar a few pixels
-   above this chart. A second one inside the same panel is clutter, not
-   attribution. The expanded dialog has no such bar and keeps its credit. */
-.community-site .hero-community-allowance .community-daily-chart::after {
-  content: none;
-}
-@media (forced-colors: active) {
-  /* A forced palette repaints the credit as solid text over the plot, and it
-     only repeats a wordmark the page states elsewhere. */
-  .community-site .performance-plot::after,
-  .community-site #usage-timeline-chart::after,
-  .community-site .community-daily-chart::after {
-    content: none;
-  }
-}
-.community-site .table-wrap {
-  margin-top: 16px;
-}
-.community-site .snapshot-breakdown > summary {
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  padding: 9px 12px;
-  font-size: .82rem;
-}
-.community-site .snapshot-breakdown > summary::after { margin-inline-start: auto; }
-@media (max-width: 640px) {
-  /* Keep a year of daily detail in a bounded, keyboard-scrollable region.
-     Two metric columns retain every value without 361 tall card stacks. */
-  .community-site .snapshot-table {
-    max-height: min(65dvh, 560px);
-    overflow: auto;
-    margin-top: 10px;
-  }
-  .community-site .snapshot-table tr {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 2px 12px;
-    margin: 0;
-    padding: 7px 10px;
-    border: 0;
-    border-radius: 0;
-  }
-  .community-site .snapshot-table tr + tr { border-top: 1px solid var(--line); }
-  .community-site .snapshot-table tbody th[scope="row"] {
-    grid-column: 1 / -1;
-    margin: 0;
-    padding: 0 0 3px;
-    border: 0;
-    font-size: .75rem;
-  }
-  .community-site .snapshot-table td {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    min-width: 0;
-    padding: 2px 0;
-    font-size: .76rem;
-    font-weight: var(--weight-semibold);
-    line-height: 1.2;
-  }
-  .community-site .snapshot-table td::before {
-    font-size: .62rem;
-    font-weight: var(--weight-medium);
-    line-height: 1.2;
-  }
-  .community-site .snapshot-table td.numeric { text-align: start; }
-}
-/*
- * The public daily-series chart. Inline SVG only — the site is CSP-strict and
- * dependency-free. Usage-event bars read on the left axis in the chart
- * accent; the combined-output line reads on the right axis in blue, matching
- * the dashboard's cost/value series colour.
- */
-.community-site .community-daily-chart {
-  margin-top: 16px;
-  padding: 14px 14px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface-quiet);
-}
-.community-site .community-daily-chart svg {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-.community-site .community-daily-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px;
-  margin: 0 0 8px;
-  color: var(--muted);
-  font-size: .66rem;
-}
-.community-site .community-daily-legend > span {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-.community-site .daily-legend-swatch {
-  width: 14px;
-  height: 9px;
-  border-radius: 2px;
-  background: var(--chart-accent);
-}
-.community-site .daily-legend-swatch.output {
-  height: 3px;
-  border-radius: 999px;
-  background: var(--blue);
-}
-.community-site .community-daily-chart .annotation {
-  margin-top: 6px;
-}
 .daily-events-bar { fill: var(--chart-accent); opacity: .82; }
 .daily-output-line {
   fill: none;
@@ -3408,45 +2304,6 @@ footer p { margin: 0; }
 .daily-output-dot { fill: var(--blue); }
 .daily-axis-events { fill: var(--green-text); }
 .daily-axis-output { fill: var(--blue); }
-/*
- * The community allowance figure: the section's centerpiece. Central fit and
- * band read in the brand green so the hero estimate is visually distinct from
- * the blue activity series below it.
- */
-.community-site .community-allowance {
-  margin: 0;
-}
-.community-site .allowance-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  align-items: flex-end;
-  flex-shrink: 0;
-}
-.community-site .allowance-controls .evidence-chip {
-  margin: 0;
-}
-.community-site .allowance-view-controls {
-  margin: 0;
-  max-width: 100%;
-}
-.community-site .allowance-view-controls button { min-height: 40px; }
-.community-site .allowance-picker-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 14px;
-}
-.community-site .allowance-picker-row .segmented-control { flex-shrink: 0; }
-@media (max-width: 700px) {
-  .community-site .allowance-picker-row .segmented-control button {
-    padding-inline: .5rem;
-    white-space: nowrap;
-  }
-}
-.community-site .community-chart-dialog-toolbar { flex-wrap: wrap; }
 .allowance-summary-cards {
   display: grid;
   /* Keep the four current personal plans together; narrow screens use two
@@ -3455,18 +2312,11 @@ footer p { margin: 0; }
   gap: 8px;
   margin-top: 8px;
 }
-.community-site .allowance-summary-cards {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
 @media (max-width: 600px) {
-  .community-site .allowance-summary-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .allowance-summary-card { padding: 8px 7px; }
   .allowance-summary-value { font-size: 1.25rem; }
   .allowance-summary-card h3 { font-size: .72rem; overflow-wrap: anywhere; }
   .allowance-summary-card p { font-size: .68rem; overflow-wrap: anywhere; }
-}
-@media (max-width: 340px) {
-  .community-site .allowance-summary-cards { grid-template-columns: minmax(0, 1fr); }
 }
 .allowance-summary-card {
   padding: 10px 11px;
@@ -3480,7 +2330,6 @@ footer p { margin: 0; }
 .allowance-summary-card h3 { font-size: .8rem; margin: 0; }
 .allowance-summary-card p { font-size: .72rem; line-height: 1.4; margin: 4px 0 0; }
 .allowance-summary-card .allowance-plan-value { color: var(--ink); }
-.community-site .allowance-legend-button.unavailable { opacity: .55; cursor: default; }
 .allowance-summary-value { font-family: var(--serif); font-size: 1.6rem; line-height: 1.1; }
 .allowance-summary-caption { color: var(--muted); font-size: .72rem; font-weight: var(--weight-semibold); margin: 12px 0 0; }
 .allowance-model-icon { width: 24px; height: 24px; flex: 0 0 auto; fill: none; stroke: var(--allowance-color); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
@@ -3505,73 +2354,25 @@ footer p { margin: 0; }
  * Every model and series class survives, and the identity hue becomes a grey
  * level, so a chart holding several series still tells its lines apart and a
  * model icon keeps an identity that is not just its neighbour's. The ladder is
- * ordered by class name and shared by icons, swatches and strokes. The public
- * release site and the operator console keep the colour classes above.
+ * ordered by class name and shared by icons, swatches and strokes.
  */
-body:not(.community-site):not(.admin-operator-page) .allowance-model-astra { --allowance-color: var(--ink); }
-body:not(.community-site):not(.admin-operator-page) .allowance-model-sol { --allowance-color: color-mix(in srgb, var(--ink) 86%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-model-review { --allowance-color: color-mix(in srgb, var(--ink) 74%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-model-terra { --allowance-color: color-mix(in srgb, var(--ink) 64%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-model-luna { --allowance-color: color-mix(in srgb, var(--ink) 54%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-model-classic { --allowance-color: color-mix(in srgb, var(--ink) 44%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-model-mini { --allowance-color: color-mix(in srgb, var(--ink) 44%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-0 { --allowance-color: var(--ink); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-1 { --allowance-color: color-mix(in srgb, var(--ink) 88%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-2 { --allowance-color: color-mix(in srgb, var(--ink) 76%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-3 { --allowance-color: color-mix(in srgb, var(--ink) 64%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-4 { --allowance-color: color-mix(in srgb, var(--ink) 52%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-5 { --allowance-color: color-mix(in srgb, var(--ink) 42%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-6 { --allowance-color: color-mix(in srgb, var(--ink) 32%, transparent); }
-body:not(.community-site):not(.admin-operator-page) .allowance-series-7 { --allowance-color: color-mix(in srgb, var(--ink) 24%, transparent); }
-.community-site .community-allowance-chart .daily-legend-swatch.allowance-central { background: var(--allowance-color, var(--green)); }
-.community-allowance-chart .allowance-central-line,
-.community-allowance-chart .allowance-band-mark { stroke: var(--allowance-color, var(--green)); }
-.community-allowance-chart .allowance-fit-dot,
-.community-allowance-chart .allowance-band-area { fill: var(--allowance-color, var(--green)); }
-.community-site .allowance-legend-button {
-  display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
-  padding: 4px 8px; border: 1px solid transparent; border-radius: var(--radius-xs);
-  font: inherit; color: var(--muted); background: transparent; cursor: pointer;
-}
-.community-site button.allowance-legend-button:hover,
-.community-site .allowance-legend-button[aria-pressed="true"] { color: var(--ink); background: var(--surface-raised); border-color: var(--line-strong); }
-.community-site .allowance-legend-button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-/* (4) The legend sat in its own block above the plot and cost ~40px of height
-   before a single datapoint was drawn. Overlaying it on the figure reclaims
-   that, and the buttons stay real buttons so focus and keyboard use are
-   unchanged. */
-.community-site .community-allowance-chart { position: relative; }
-.community-site .allowance-series-legend {
-  margin: 0;
-  gap: 2px;
-  position: absolute;
-  inset: 2px 6px auto auto;
-  z-index: 1;
-  background: color-mix(in srgb, var(--site-paper, #fffdf7) 88%, transparent);
-  border-radius: var(--radius-xs);
-  padding: 1px 3px;
-}
-.community-site .allowance-legend-button { min-height: 26px; padding: 2px 6px; font-size: .72rem; }
-/* The expanded chart keeps its credit. Reserve a separate legend row so six
-   model labels can wrap without covering the credit or the plotted values. */
-.community-site .community-chart-dialog .allowance-series-legend {
-  position: static;
-  padding-inline-end: 90px;
-  min-height: 30px;
-}
-
-/* Closed, this is one quiet line — it inherited the journey card treatment and
-   stood 105px tall shut, which is worse than the prose it replaced. */
-.community-site .snapshot-disclosure-details { margin: 6px 0 2px; border: 0; padding: 0; background: none; }
-.community-site .snapshot-disclosure-details > summary {
-  display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
-  padding: 0; margin: 0; list-style: none;
-  font-size: .68rem; color: var(--muted); text-decoration: underline dotted;
-}
-.community-site .snapshot-disclosure-details > summary::-webkit-details-marker { display: none; }
-.community-site .snapshot-disclosure-details > summary:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.community-site .snapshot-disclosure-details[open] > summary { margin-bottom: 4px; }
-.community-site .snapshot-disclosure-details .snapshot-disclosure { margin: 0 0 4px; font-size: .68rem; }
+/* Model glyphs share one ink and line weight; chart series keep their tones. */
+body .allowance-model-icon { stroke:var(--ink); stroke-width:1.7; opacity:1; }
+body .allowance-model-astra { --allowance-color: var(--ink); }
+body .allowance-model-sol { --allowance-color: color-mix(in srgb, var(--ink) 86%, transparent); }
+body .allowance-model-review { --allowance-color: color-mix(in srgb, var(--ink) 74%, transparent); }
+body .allowance-model-terra { --allowance-color: color-mix(in srgb, var(--ink) 64%, transparent); }
+body .allowance-model-luna { --allowance-color: color-mix(in srgb, var(--ink) 54%, transparent); }
+body .allowance-model-classic { --allowance-color: color-mix(in srgb, var(--ink) 44%, transparent); }
+body .allowance-model-mini { --allowance-color: color-mix(in srgb, var(--ink) 44%, transparent); }
+body .allowance-series-0 { --allowance-color: var(--ink); }
+body .allowance-series-1 { --allowance-color: color-mix(in srgb, var(--ink) 88%, transparent); }
+body .allowance-series-2 { --allowance-color: color-mix(in srgb, var(--ink) 76%, transparent); }
+body .allowance-series-3 { --allowance-color: color-mix(in srgb, var(--ink) 64%, transparent); }
+body .allowance-series-4 { --allowance-color: color-mix(in srgb, var(--ink) 52%, transparent); }
+body .allowance-series-5 { --allowance-color: color-mix(in srgb, var(--ink) 42%, transparent); }
+body .allowance-series-6 { --allowance-color: color-mix(in srgb, var(--ink) 32%, transparent); }
+body .allowance-series-7 { --allowance-color: color-mix(in srgb, var(--ink) 24%, transparent); }
 
 /* (5) Small multiples: one panel per plan, each with its own value axis. */
 .allowance-small-multiples { display: grid; gap: 10px; margin-top: 10px; }
@@ -3582,166 +2383,7 @@ body:not(.community-site):not(.admin-operator-page) .allowance-series-7 { --allo
   font-weight: var(--weight-semibold);
   color: var(--allowance-color, var(--ink));
 }
-.allowance-panel .community-allowance-chart { margin: 0; }
 .allowance-panel .allowance-series-legend { display: none; }
-.community-site .community-allowance-chart [data-muted="true"] { opacity: .07; }
-
-/*
- * The hero chart expands into a modal lightbox rather than taking over the
- * browser's fullscreen mode. Native <dialog> supplies background inertness,
- * focus containment and Escape dismissal; these rules provide the spacious
- * chart surface and keep the page behind it still.
- */
-html.community-chart-modal-open,
-html.community-chart-modal-open body {
-  overflow: hidden;
-}
-.community-site .community-chart-dialog {
-  width: min(1180px, calc(100vw - 32px));
-  max-width: none;
-  max-height: calc(100dvh - 32px);
-  padding: 0;
-  overflow: auto;
-  border: 1px solid rgba(23, 79, 69, .24);
-  border-radius: var(--radius-lg);
-  color: var(--ink);
-  background: var(--site-paper);
-  box-shadow: 0 30px 90px rgba(4, 24, 21, .38);
-}
-.community-site .community-chart-dialog::backdrop {
-  background: rgba(4, 24, 21, .68);
-  backdrop-filter: blur(5px);
-}
-.community-site .community-chart-dialog-surface {
-  min-width: 0;
-}
-.community-site .community-chart-dialog-header {
-  position: sticky;
-  z-index: 6;
-  top: 0;
-  display: flex;
-  justify-content: space-between;
-  gap: 28px;
-  align-items: flex-start;
-  padding: 18px clamp(20px, 3vw, 34px) 16px;
-  border-bottom: 1px solid var(--line);
-  background: rgba(255, 253, 247, .96);
-  backdrop-filter: blur(12px);
-}
-.community-site .community-chart-dialog-eyebrow {
-  display: block;
-  margin-bottom: 7px;
-  color: var(--site-green);
-  font-size: .59rem;
-  font-weight: var(--weight-bold);
-  letter-spacing: .12em;
-  text-transform: uppercase;
-}
-.community-site .community-chart-dialog-header h2 {
-  margin: 0;
-  font-family: var(--serif);
-  font-size: clamp(1.6rem, 3vw, 2.4rem);
-  font-weight: var(--weight-display);
-  letter-spacing: -.04em;
-  line-height: .98;
-}
-.community-site .community-chart-dialog-header p {
-  max-width: 68ch;
-  margin: 9px 0 0;
-  color: var(--muted);
-  font-size: .76rem;
-  line-height: 1.5;
-}
-.community-site .community-chart-dialog-close {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 7px;
-  align-items: center;
-  min-height: 40px;
-  padding: .55rem .72rem;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  color: var(--site-green-deep);
-  background: var(--surface-raised);
-  font-size: .66rem;
-  font-weight: var(--weight-bold);
-  cursor: pointer;
-}
-.community-site .community-chart-dialog-close:hover {
-  background: var(--surface-quiet);
-}
-.community-site .community-chart-dialog-close svg {
-  width: 14px;
-  height: 14px;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-width: 1.7;
-}
-.community-site .community-chart-dialog-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  align-items: center;
-  padding: 18px clamp(20px, 3vw, 34px) 0;
-  color: var(--muted);
-  font-size: .66rem;
-  font-weight: var(--weight-semibold);
-}
-.community-site .community-chart-dialog-result {
-  margin: 0;
-  padding: 0 clamp(20px, 3vw, 34px) 30px;
-}
-.community-site .community-chart-dialog-result .allowance-headline-value strong {
-  font-size: clamp(2.75rem, 5vw, 4.5rem);
-}
-.community-site .community-chart-dialog-result .community-daily-chart {
-  margin-top: 22px;
-  padding: 18px 18px 10px;
-}
-.community-site .allowance-headline {
-  margin-top: 15px;
-}
-.community-site .allowance-headline-value {
-  display: flex;
-  gap: 12px;
-  align-items: baseline;
-  margin: 0;
-}
-.community-site .allowance-headline-value strong {
-  font-family: var(--serif);
-  font-size: clamp(2rem, 3.4vw, 2.9rem);
-  font-weight: var(--weight-regular);
-  letter-spacing: -.03em;
-  line-height: 1;
-}
-.community-site .allowance-headline-value span {
-  max-width: 22ch;
-  color: var(--muted);
-  font-size: .72rem;
-  line-height: 1.35;
-}
-.community-site .allowance-headline-band,
-.community-site .allowance-headline-caveat {
-  margin: 6px 0 0;
-  color: var(--muted);
-  font-size: .74rem;
-}
-.community-site .daily-legend-swatch.allowance-central {
-  height: 3px;
-  border-radius: 999px;
-  background: var(--green);
-}
-.community-site .daily-legend-swatch.allowance-band {
-  background: var(--green);
-  opacity: .18;
-}
-.community-site .daily-legend-swatch.allowance-dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 999px;
-  background: var(--green);
-}
 .allowance-band-area {
   fill: var(--green);
   opacity: .14;
@@ -3761,13 +2403,6 @@ html.community-chart-modal-open body {
   vector-effect: non-scaling-stroke;
 }
 .allowance-fit-dot { fill: var(--green); }
-/*
- * Hover affordances for the allowance chart: a snap-to-day crosshair, a ring
- * around the active dot, a transparent capture layer, and the HTML tooltip.
- * Everything keys off data-visible so the static (no-JS / server) render shows
- * none of it, and the tooltip anchors to the figure, hence position: relative.
- */
-.community-site .community-allowance-chart { position: relative; }
 .allowance-hover-capture { cursor: crosshair; }
 .allowance-crosshair {
   stroke: var(--green);
@@ -3787,629 +2422,6 @@ html.community-chart-modal-open body {
   transition: opacity .12s ease;
 }
 .allowance-hover-dot[data-visible="false"] { opacity: 0; }
-.community-site .community-allowance-chart svg { outline: none; }
-.community-site .community-allowance-chart svg:focus-visible {
-  outline: 2px solid var(--green);
-  outline-offset: 2px;
-  border-radius: var(--radius-xs);
-}
-.community-site .allowance-tooltip {
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 4;
-  min-width: 140px;
-  max-width: 240px;
-  padding: 8px 10px;
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-xs);
-  background: var(--surface-raised);
-  box-shadow: var(--shadow-card);
-  color: var(--text);
-  font-size: .72rem;
-  line-height: 1.35;
-  pointer-events: none;
-  opacity: 1;
-  transform: translate(-50%, calc(-100% - 14px));
-  transition: opacity .12s ease;
-}
-.community-site .allowance-tooltip[data-placement="below"] {
-  transform: translate(-50%, 14px);
-}
-.community-site .allowance-tooltip[data-visible="false"] {
-  opacity: 0;
-  visibility: hidden;
-}
-/* Caret: a rotated square peeking out one edge. Above placement points down at
- * the dot; below points up. */
-.community-site .allowance-tooltip::after {
-  content: "";
-  position: absolute;
-  left: var(--caret-left, 50%);
-  width: 8px;
-  height: 8px;
-  background: var(--surface-raised);
-  border: 1px solid var(--line-strong);
-  transform: translateX(-50%) rotate(45deg);
-}
-.community-site .allowance-tooltip:not([data-placement="below"])::after {
-  bottom: -5px;
-  border-block-start: none;
-  border-inline-start: none;
-}
-.community-site .allowance-tooltip[data-placement="below"]::after {
-  top: -5px;
-  border-block-end: none;
-  border-inline-end: none;
-}
-.community-site .allowance-tooltip-date {
-  color: var(--muted);
-  font-size: .66rem;
-  letter-spacing: .01em;
-  text-transform: uppercase;
-}
-.community-site .allowance-tooltip-value {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin-top: 2px;
-  white-space: nowrap;
-}
-.community-site .allowance-tooltip-value strong {
-  color: var(--green);
-  font-family: var(--serif);
-  font-size: 1.05rem;
-  font-weight: var(--weight-regular);
-  letter-spacing: -.02em;
-}
-.community-site .allowance-tooltip-caption {
-  color: var(--muted);
-  font-size: .62rem;
-}
-.community-site .allowance-tooltip-range {
-  margin-top: 3px;
-  color: var(--green-text);
-}
-.community-site .allowance-tooltip-meta {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: .66rem;
-}
-.community-site .resource-main {
-  width: min(960px, calc(100% - 48px));
-  margin: 0 auto;
-  padding: clamp(58px, 8vw, 92px) 0 clamp(68px, 9vw, 108px);
-}
-.community-site .resource-heading {
-  max-width: 760px;
-}
-.community-site .resource-heading h1 {
-  max-width: 760px;
-  margin: 10px 0 20px;
-  font-size: clamp(3.35rem, 6vw, 5.5rem);
-}
-.community-site .resource-lede {
-  max-width: 68ch;
-  margin: 0;
-  color: var(--muted);
-  font-size: .95rem;
-  line-height: 1.65;
-}
-.community-site .resource-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 16px;
-  margin-top: 42px;
-}
-.community-site .resource-card {
-  padding: 24px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: rgba(255, 253, 247, .68);
-}
-.community-site .resource-card.wide {
-  grid-column: 1 / -1;
-}
-.community-site .resource-card h2 {
-  margin: 0 0 10px;
-  font-family: var(--serif);
-  font-size: 1.75rem;
-  font-weight: var(--weight-display);
-  letter-spacing: -.035em;
-}
-.community-site .resource-card p,
-.community-site .resource-card li {
-  color: var(--muted);
-  font-size: .78rem;
-  line-height: 1.65;
-}
-.community-site .resource-card p:last-child,
-.community-site .resource-card ul:last-child {
-  margin-bottom: 0;
-}
-.community-site .resource-card ul {
-  margin: 0;
-  padding-inline-start: 1.2rem;
-}
-.community-site .resource-card pre {
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: .75rem;
-  line-height: 1.6;
-}
-.community-site .download-security-card {
-  padding: clamp(26px, 4vw, 40px);
-}
-.community-site .download-security-card .security-eyebrow {
-  margin: 0 0 8px;
-  color: var(--green-text);
-  font-size: .65rem;
-  font-weight: var(--weight-bold);
-  letter-spacing: .1em;
-  text-transform: uppercase;
-}
-.community-site .download-security-card .security-lede {
-  max-width: 74ch;
-  margin: 0;
-  color: var(--ink);
-  font-size: .86rem;
-}
-.community-site .security-signals {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 24px;
-  padding: 0;
-  list-style: none;
-}
-.community-site .security-signals li {
-  display: grid;
-  gap: 4px;
-  padding: 16px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, .52);
-}
-.community-site .security-signals strong {
-  color: var(--ink);
-  font-size: .76rem;
-  font-weight: var(--weight-semibold);
-}
-.community-site .security-signals span {
-  color: var(--muted);
-  font-size: .72rem;
-  line-height: 1.55;
-}
-.community-site .security-signals a,
-.community-site .verification-guide a,
-.community-site .verification-guide-link a {
-  color: var(--green-text);
-  font-weight: var(--weight-semibold);
-  text-underline-offset: 3px;
-}
-.community-site .verification-guide-link {
-  margin: 22px 0 0;
-  color: var(--muted);
-  font-size: .75rem;
-  line-height: 1.65;
-}
-.community-site .verification-guide {
-  margin-top: 30px;
-  padding-top: 26px;
-  border-top: 1px solid var(--line);
-}
-.community-site .verification-guide h3,
-.community-site .verification-boundary h3 {
-  margin: 0 0 8px;
-  color: var(--ink);
-  font-family: var(--serif);
-  font-size: 1.35rem;
-  font-weight: var(--weight-display);
-  letter-spacing: -.025em;
-}
-.community-site .verification-guide > p,
-.community-site .verification-boundary p {
-  max-width: 76ch;
-  margin: 0;
-  color: var(--muted);
-  font-size: .75rem;
-  line-height: 1.65;
-}
-.community-site .verification-steps {
-  display: grid;
-  gap: 14px;
-  margin: 20px 0 0;
-  padding-inline-start: 1.35rem;
-}
-.community-site .verification-steps li {
-  padding-inline-start: 4px;
-  color: var(--muted);
-  font-size: .73rem;
-}
-.community-site .verification-boundary {
-  margin-top: 24px;
-  padding: 18px 20px;
-  border-inline-start: 3px solid var(--site-green);
-  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  background: rgba(101, 195, 170, .08);
-}
-.community-site .verification-boundary p + p {
-  margin-top: 8px;
-}
-.community-site .resource-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 28px;
-}
-.community-site .resource-actions a {
-  min-height: 38px;
-}
-.community-site footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 28px;
-  width: min(1180px, calc(100% - 48px));
-  margin: 0 auto;
-  padding: 18px 0 22px;
-}
-.community-site .footer-copy {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px 18px;
-}
-.community-site .footer-brand {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--ink);
-}
-.community-site .footer-brand img {
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-sm);
-}
-.community-site footer p {
-  margin: 0;
-  color: var(--muted);
-  font-size: .68rem;
-}
-.community-site .footer-links {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.community-site .footer-links a {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 32px;
-  padding: .35rem .58rem;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  color: var(--ink);
-  background: rgba(255, 253, 247, .6);
-  font-size: .69rem;
-  font-weight: var(--weight-semibold);
-  text-decoration: none;
-}
-.community-site .footer-links a:hover {
-  color: var(--green);
-  background: var(--site-paper);
-}
-.community-site .footer-links a.footer-resource {
-  padding-inline: .22rem;
-  border-color: transparent;
-  background: transparent;
-}
-.community-site .footer-links img {
-  flex: 0 0 auto;
-}
-
-@media (max-width: 1120px) {
-  .community-site .product-hero {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    min-height: 0;
-    gap: 36px;
-    padding: 52px 24px 64px;
-  }
-  .community-site .hero-copy {
-    width: min(100%, 760px);
-  }
-  .community-site .community-window {
-    width: min(100%, 620px);
-    justify-self: center;
-    transform: none;
-  }
-  .community-site .snapshot-quality-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@media (max-width: 700px) {
-  .community-site .topbar {
-    min-height: 0;
-    padding-inline: 14px;
-    grid-template-columns: auto auto minmax(0, 1fr) auto;
-    column-gap: 7px;
-  }
-  .community-site .brand {
-    gap: .45rem;
-    font-size: .82rem;
-  }
-  .community-site .brand > span {
-    min-width: 0;
-    max-width: clamp(4.4rem, 15vw, 7.2rem);
-    overflow: hidden;
-    font-size: clamp(.78rem, 2.1vw, .95rem);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .community-site .brand-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: var(--radius-sm);
-  }
-  .community-site .primary-nav {
-    display: flex;
-    justify-content: flex-start;
-    gap: 2px;
-    margin-inline-end: 0;
-    overflow-x: auto;
-    overflow-y: hidden;
-    scrollbar-width: none;
-  }
-  .community-site .primary-nav::-webkit-scrollbar {
-    display: none;
-  }
-  .community-site .primary-nav a {
-    min-height: 34px;
-    padding-inline: .48rem;
-    font-size: .67rem;
-  }
-  .community-site .header-download {
-    justify-content: center;
-    width: 36px;
-    min-height: 36px;
-    padding-inline: 0;
-  }
-  .community-site .header-download-label {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-  .community-site .language-picker select {
-    min-width: 4.75rem;
-    max-width: 5.6rem;
-  }
-  .community-site .product-hero {
-    gap: 32px;
-    padding: 48px 18px 56px;
-  }
-  .community-site .product-hero h1 {
-    max-width: 560px;
-    margin-bottom: 18px;
-  }
-  .community-site .hero-lede {
-    font-size: .92rem;
-  }
-  .community-site .install-cluster {
-    margin-top: 24px;
-  }
-  .community-site .community-inline {
-    grid-template-columns: auto minmax(0, 1fr);
-    row-gap: 2px;
-    margin-top: 22px;
-    padding-top: 14px;
-  }
-  .community-site .community-inline strong {
-    grid-column: 2;
-    white-space: normal;
-  }
-  .community-site .community-window-content {
-    padding: 20px;
-  }
-  .community-site .community-chart-dialog {
-    width: calc(100vw - 16px);
-    max-height: calc(100dvh - 16px);
-    border-radius: var(--radius-md);
-  }
-  .community-site .community-chart-dialog-header {
-    gap: 16px;
-    padding: 18px 16px 16px;
-  }
-  .community-site .community-chart-dialog-header h2 {
-    font-size: clamp(1.5rem, 6vw, 2rem);
-  }
-  .community-site .community-chart-dialog-toolbar {
-    justify-content: space-between;
-    padding: 14px 16px 0;
-  }
-  .community-site .community-chart-dialog-toolbar > span { display: none; }
-  .community-site .community-chart-dialog-result {
-    padding: 0 16px 20px;
-  }
-  .community-site .community-chart-dialog-result .allowance-headline-value {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .community-site .community-chart-dialog-result .community-daily-chart {
-    padding: 12px 10px 7px;
-  }
-  .community-site .community-window .activity-heading {
-    gap: 12px;
-  }
-  .community-site .feature-strip {
-    grid-template-columns: 1fr;
-    width: min(100% - 36px, 1180px);
-    padding: 34px 0;
-  }
-  .community-site .feature-strip article,
-  .community-site .feature-strip article:first-child,
-  .community-site .feature-strip article:last-child {
-    padding: 23px 0;
-    border-top: 1px solid var(--line);
-    border-inline-start: 0;
-  }
-  .community-site .feature-strip article:first-child {
-    padding-top: 0;
-    border-top: 0;
-  }
-  .community-site .feature-strip article:last-child {
-    padding-bottom: 0;
-  }
-  .community-site .community-proof {
-    width: min(100% - 36px, 1180px);
-  }
-  .community-site .community-proof-compact {
-    padding: 20px 0 0;
-  }
-  .community-site .activity-heading {
-    display: grid;
-  }
-  .community-site .allowance-controls {
-    align-items: flex-start;
-  }
-  .community-site .resource-main {
-    width: min(100% - 36px, 960px);
-    padding: 46px 0 64px;
-  }
-  .community-site .resource-heading h1 {
-    font-size: clamp(2.8rem, 13vw, 4rem);
-  }
-  .community-site .resource-grid {
-    grid-template-columns: 1fr;
-    margin-top: 30px;
-  }
-  .community-site .resource-card.wide {
-    grid-column: auto;
-  }
-  .community-site .security-signals {
-    grid-template-columns: 1fr;
-  }
-  .community-site footer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 10px 14px;
-    width: min(100% - 36px, 1180px);
-    padding: 16px 0 18px;
-  }
-  .community-site .footer-copy {
-    display: contents;
-  }
-  .community-site .footer-brand {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .community-site .footer-links {
-    grid-column: 2;
-    grid-row: 1;
-    gap: 4px;
-  }
-  .community-site .footer-links a.footer-social {
-    justify-content: center;
-    width: 32px;
-    padding: 0;
-  }
-  .community-site .footer-social-label {
-    display: none;
-  }
-  .community-site footer p {
-    grid-column: 1 / -1;
-    grid-row: 2;
-  }
-}
-
-@media (max-width: 420px) {
-  .community-site .brand span {
-    display: none;
-  }
-  .community-site .topbar {
-    column-gap: 3px;
-    padding-inline: 8px;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    row-gap: 2px;
-  }
-  .community-site .brand-icon {
-    width: 26px;
-    height: 26px;
-  }
-  .community-site .primary-nav {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    justify-content: center;
-    flex-wrap: wrap;
-    overflow: visible;
-  }
-  .community-site .primary-nav a {
-    padding-inline: .4rem;
-    font-size: .69rem;
-  }
-  .community-site .header-download {
-    padding-inline: 0;
-  }
-  .community-site .language-picker select {
-    min-width: 4.5rem;
-    max-width: 5.1rem;
-    padding-inline: .42rem 1.05rem;
-    font-size: .58rem;
-  }
-  .community-site .install-actions {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-  .community-site .download-button,
-  .community-site .installer-unavailable {
-    width: 100%;
-  }
-  .community-site .open-installed-copy {
-    width: 100%;
-  }
-  .community-site .community-window-bar {
-    padding: 10px 12px;
-  }
-  .community-site .community-window-context {
-    font-size: .5rem;
-  }
-  .community-site .community-window-actions {
-    gap: 5px;
-  }
-  .community-site .community-window-expand {
-    width: 34px;
-    height: 34px;
-  }
-  .community-site .community-chart-dialog-close {
-    width: 40px;
-    padding: 0;
-    justify-content: center;
-  }
-  .community-site .community-chart-dialog-close span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-  }
-  .community-site .snapshot-quality-grid {
-    grid-template-columns: 1fr;
-  }
-}
 [data-dashboard-page].dashboard-page-inactive {
   display: none !important;
 }
@@ -4423,8 +2435,7 @@ html.community-chart-modal-open body {
  * marker at document start, before this sheet paints, so there is no light
  * flash when Windows is using a dark appearance. The dark remap is the exact
  * inverse of the light tokens: black page, light text, grey chrome, and the
- * same theme-specific workload red/yellow/green. The public release site and
- * the operator console never set this marker and keep their own palettes.
+ * same theme-specific workload red/yellow/green.
  *
  * These tokens are declared on the app body, not on `html`, so they shadow
  * the light app block at the same element and specificity level.
@@ -4433,7 +2444,7 @@ html[data-theme="dark"] {
   color-scheme: dark;
   background: #161616;
 }
-html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) {
+html[data-theme="dark"] body {
   --paper: #161616;
   --paper-2: #161616;
   --white: #f2f2f2;
@@ -4576,7 +2587,7 @@ html[data-theme="dark"] .noscript {
 .allowance-model-spark { --allowance-color: #996315; }
 /* The spark model's copper becomes a mid grey in the app; see the model
    identity ladder above. */
-body:not(.community-site):not(.admin-operator-page) .allowance-model-spark { --allowance-color: color-mix(in srgb, var(--ink) 60%, transparent); }
+body .allowance-model-spark { --allowance-color: color-mix(in srgb, var(--ink) 60%, transparent); }
 /* Local Projects & threads: shared paper surfaces, typography and controls. */
 .work-usage-toolbar, .work-usage-pagination { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
 .work-usage-period { display:flex; gap:6px; flex-wrap:wrap; }
@@ -4677,7 +2688,7 @@ body:not(.community-site):not(.admin-operator-page) .allowance-model-spark { --a
 .work-usage-mix-legend strong { font-variant-numeric:tabular-nums; }
 .work-usage-search-note { padding-inline-start:var(--space-3); border-inline-start:3px solid var(--green-2); }
 
-/* Shared dashboard page chrome. Keep chart headings and public-site heroes separate. */
+/* Dashboard page chrome and chart headings. */
 .dashboard-shell main { width: calc(100% - 64px); padding-top: 32px; }
 .dashboard-shell .dashboard-section,
 .dashboard-shell .dashboard-section.lead-section { padding-top: 0; }
@@ -4767,15 +2778,7 @@ body:not(.community-site):not(.admin-operator-page) .allowance-model-spark { --a
   .dashboard-shell .dashboard-page-header :is(h1, h2) { font-size: 30px; }
 }
 
-/*
- * Shared dashboard components.
- *
- * The public pages use some of the same names (for example `.panel` and
- * `.button`), so the component contract lives under `.dashboard-shell`. This
- * keeps the companion report consistent while leaving the public site free to
- * keep its own spacing and interaction treatment. Existing dashboard names
- * remain aliases beside the names intended for new markup.
- */
+/* Dashboard components share spacing and interaction roles. */
 .dashboard-shell {
   --dashboard-control-height: 36px;
   --dashboard-card-gap: var(--space-5);
@@ -4783,7 +2786,7 @@ body:not(.community-site):not(.admin-operator-page) .allowance-model-spark { --a
 }
 
 /* Report context belongs to the persistent app header. */
-body:not(.community-site) > .topbar {
+body > .topbar {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 14px;
   padding-inline: 24px;
@@ -4808,16 +2811,16 @@ body:not(.community-site) > .topbar {
 /* The date explanation is also available by keyboard or click/tap. */
 .reporting-period-details:not([open]) > p { display: none; }
 
-body:not(.community-site) > .topbar #refresh-button.refresh-progress { width: clamp(250px, calc(100vw - 750px), 360px); min-width: 250px; grid-template-columns: minmax(0, 1fr) max-content max-content; }
-body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { grid-template-columns: minmax(0, 1fr); }
+body > .topbar #refresh-button.refresh-progress { width: clamp(250px, calc(100vw - 750px), 360px); min-width: 250px; grid-template-columns: minmax(0, 1fr) max-content max-content; }
+body > .topbar:has(#reporting-period-toolbar[hidden]) { grid-template-columns: minmax(0, 1fr); }
 @media (max-width: 760px) {
-  body:not(.community-site) > .topbar { grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; padding-block: 10px; }
+  body > .topbar { grid-template-columns: auto minmax(0, 1fr); gap: 8px 16px; padding-block: 10px; }
   .reporting-period-toolbar { grid-row: 2; grid-column: 1 / -1; }
-  body:not(.community-site) > .topbar .top-actions { grid-column: 1 / -1; grid-row: 1; }
+  body > .topbar .top-actions { grid-column: 1 / -1; grid-row: 1; }
 }
 @media (max-width: 760px) {
-  body:not(.community-site) > .topbar { padding-inline: 14px; }
-  body:not(.community-site) > .topbar #refresh-button.refresh-progress { display: none; }
+  body > .topbar { padding-inline: 14px; }
+  body > .topbar #refresh-button.refresh-progress { display: none; }
 }
 
 .dashboard-shell :is(.dashboard-control-group, .dashboard-filter-group) {
@@ -5220,15 +3223,15 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
 /* Counters are evidence: only the descriptive phase may truncate. */
 .refresh-progress-count, .refresh-progress-time { overflow: visible; text-overflow: clip; white-space: nowrap; }
 @media (min-width: 761px) and (max-width: 1100px) {
-  body:not(.community-site) > .topbar .brand > span { display: none; }
+  body > .topbar .brand > span { display: none; }
 }
 @media (min-width: 761px) and (max-width: 950px) {
-  body:not(.community-site) > .topbar #global-state { display: none; }
+  body > .topbar #global-state { display: none; }
 }
 
 @media (max-width: 760px) {
-  body:not(.community-site) > .topbar .top-actions { flex-wrap: wrap; min-width: 0; }
-  body:not(.community-site) > .topbar #refresh-button.refresh-progress {
+  body > .topbar .top-actions { flex-wrap: wrap; min-width: 0; }
+  body > .topbar #refresh-button.refresh-progress {
     display: grid; width: max-content; min-width: 0;
     grid-template-columns: max-content max-content;
   }
@@ -5323,15 +3326,13 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
   .model-picker option:focus-visible { outline: 2px solid var(--dashboard-focus-ring); outline-offset: -2px; }
   .model-picker selectedcontent { display: flex; align-items: center; gap: 9px; min-width: 0; overflow: hidden; }
   .model-picker selectedcontent > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .model-picker .allowance-model-icon {
-    width: 32px; height: 32px; padding: 6px; box-sizing: border-box;
-    flex-shrink: 0; border-radius: 9px;
-    background: color-mix(in srgb, var(--allowance-color) 10%, transparent);
-  }
-  .model-picker selectedcontent .allowance-model-icon { width: 28px; height: 28px; padding: 5px; border-radius: 7px; }
   .dashboard-shell .work-usage-select:has(.model-picker) { min-width: 0; max-width: 100%; }
   .dashboard-shell .work-usage-select .model-picker { width: 240px; min-width: 210px; max-width: 100%; padding: 6px 12px 6px 7px; background: var(--surface-raised); }
   .model-picker::picker-icon { color: var(--muted); font-size: .7rem; }
+  /* Compact pickers also use base-select through the window appearance sheet. */
+  body :is(.work-usage-select select, .cache-matrix-model-picker) option { display:flex; align-items:center; gap:10px; }
+  body :is(.work-usage-select select, .cache-matrix-model-picker) :is(option, selectedcontent) .allowance-model-icon { width:20px; height:20px; flex:0 0 20px; padding:0; border-radius:0; background:none; }
+
 }
 /* Equal allowance tanks: content and observed capacity share one surface. */
 .allowance-context { margin: 0 0 12px; color: var(--muted); font-size: .75rem; }
@@ -5452,13 +3453,13 @@ body:not(.community-site) > .topbar:has(#reporting-period-toolbar[hidden]) { gri
  * be mistaken for a severity. The public feature tour sets its own glass
  * tokens above and is untouched.
  */
-body:not(.community-site):not(.admin-operator-page) .quota-tank {
+body .quota-tank {
   --tank-edge: #b8b8b8; --tank-metal: #e2e2e2; --tank-bright: #ffffff;
   --tank-shadow: #707070; --tank-fluid: #6b6b6b; --tank-glow: #e8e8e8; --tank-deep: #3a3a3a;
 }
-body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="over"] { --tank-fluid: #4a4a4a; --tank-glow: #dcdcdc; --tank-deep: #242424; }
-body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="critical"] { --tank-fluid: #1c1c1c; --tank-glow: #cfcfcf; --tank-deep: #000000; }
-body:not(.community-site):not(.admin-operator-page) .quota-tank.stale { --tank-fluid: #a9a9a9; --tank-glow: #efefef; --tank-deep: #7c7c7c; }
+body .quota-tank[data-flow="over"] { --tank-fluid: #4a4a4a; --tank-glow: #dcdcdc; --tank-deep: #242424; }
+body .quota-tank[data-flow="critical"] { --tank-fluid: #1c1c1c; --tank-glow: #cfcfcf; --tank-deep: #000000; }
+body .quota-tank.stale { --tank-fluid: #a9a9a9; --tank-glow: #efefef; --tank-deep: #7c7c7c; }
 .quota-grid > .quota-tank.has-liquid-tank { --tank-height: 320px; padding: 10px 12px; gap: 4px; justify-content: flex-start; background: var(--surface-raised); }
 .quota-tank.has-liquid-tank .quota-tank-fuel { display: none; }
 /* Keep identity and period above the rocket, clear of the illustration. */
@@ -5488,10 +3489,10 @@ body:not(.community-site):not(.admin-operator-page) .quota-tank.stale { --tank-f
    fluid lightens instead of darkening, and "critical" is still the strongest
    reading. The light app block above would otherwise beat these declarations,
    so they repeat the app scope. */
-html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank { --tank-edge: #5a5a5a; --tank-metal: #3a3a3a; --tank-bright: #f2f2f2; --tank-shadow: #000000; --tank-fluid: #cfcfcf; --tank-glow: #f2f2f2; --tank-deep: #9a9a9a; }
-html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="over"] { --tank-fluid: #e6e6e6; --tank-glow: #ffffff; --tank-deep: #b3b3b3; }
-html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank[data-flow="critical"] { --tank-fluid: #ffffff; --tank-glow: #ffffff; --tank-deep: #d0d0d0; }
-html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quota-tank.stale { --tank-fluid: #9a9a9a; --tank-glow: #c0c0c0; --tank-deep: #707070; }
+html[data-theme="dark"] body .quota-tank { --tank-edge: #5a5a5a; --tank-metal: #3a3a3a; --tank-bright: #f2f2f2; --tank-shadow: #000000; --tank-fluid: #cfcfcf; --tank-glow: #f2f2f2; --tank-deep: #9a9a9a; }
+html[data-theme="dark"] body .quota-tank[data-flow="over"] { --tank-fluid: #e6e6e6; --tank-glow: #ffffff; --tank-deep: #b3b3b3; }
+html[data-theme="dark"] body .quota-tank[data-flow="critical"] { --tank-fluid: #ffffff; --tank-glow: #ffffff; --tank-deep: #d0d0d0; }
+html[data-theme="dark"] body .quota-tank.stale { --tank-fluid: #9a9a9a; --tank-glow: #c0c0c0; --tank-deep: #707070; }
 
 
 /* Quiet motion control; the system preference needs no status message. */
@@ -5654,15 +3655,6 @@ html[data-theme="dark"] body:not(.community-site):not(.admin-operator-page) .quo
   .trends-clock-content, .trends-live-metrics { flex-basis: 100%; }
   .trends-live-metrics strong { font-size: 24px; }
   .divergence-list { grid-template-columns: 1fr; }
-}
-
-/* Keep release checksum copying discreet without reducing keyboard visibility. */
-.community-site .electron-checksum-copy,
-.community-site .electron-checksum-copy:hover:not(:disabled),
-.community-site .electron-checksum-copy[data-copy-state="copied"] {
-  border: 0;
-  background: transparent;
-  padding-inline: 0;
 }
 
 /* Keep the rocket and collapsed pace forecast together on desktop windows. */
@@ -5951,6 +3943,7 @@ body[data-dashboard-page] .dashboard-shell .table-wrap { max-height: none; }
   --neutral-surface: #fff;
   --neutral-ink: #000;
   --neutral-muted: #000;
+  --neutral-placeholder: #6e6e6e;
   --neutral-line: #ddd;
   --neutral-track: #e6e6e6;
   --neutral-hover: #f4f4f4;
@@ -5963,6 +3956,7 @@ html[data-theme="dark"] {
   --neutral-surface: #161616;
   --neutral-ink: #f2f2f2;
   --neutral-muted: #b8b8b8;
+  --neutral-placeholder: #b8b8b8;
   --neutral-line: #484848;
   --neutral-track: #484848;
   --neutral-hover: #303030;
@@ -5987,13 +3981,21 @@ html[data-theme="dark"] {
 .workload-hour-track i { display:block; height:100%; border-radius:5px; }
 .workload-hours-row.is-composite { font-weight:700; }
 .workload-current-value { display:block; font-size:37px; margin:22px 0; }
-.workload-load-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+.workload-load-columns { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); column-gap:16px; }
+.workload-card[data-workload-card="current"] { container-type:inline-size; }
 .workload-card[data-workload-card="current"] h3 { margin-bottom:6px; }
-.workload-load-window { min-width:0; }
-.workload-load-label { font-weight:600; font-size:14px; }
+.workload-load-window { min-width:0; display:grid; grid-template-rows:subgrid; grid-row:span 3; }
+.workload-load-label { font-weight:600; font-size:14px; overflow-wrap:anywhere; }
 .workload-load-period { margin-left:3px; font-size:12px; font-weight:400; white-space:nowrap; }
 .workload-load-value { margin:6px 0; font-size:32px; overflow-wrap:anywhere; }
 .workload-load-value.is-unavailable { font-size:18px; min-height:40px; display:flex; align-items:center; }
+.workload-load-rate { display:grid; grid-template-rows:minmax(2.8em,1fr) auto; gap:4px; margin:8px 0; font-size:12px; color:var(--neutral-muted); }
+.workload-load-rate > span { min-height:2.8em; line-height:1.4; }
+.workload-load-rate strong { font-size:16px; color:var(--neutral-ink); font-variant-numeric:tabular-nums; overflow-wrap:anywhere; }
+@container (max-width:300px) {
+  .workload-load-columns { grid-template-columns:1fr; row-gap:16px; }
+  .workload-load-window { grid-row:auto; grid-template-rows:auto auto auto; }
+}
 .workload-current-rate,.workload-current-hours { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:baseline; gap:10px; margin:8px 0; font-size:14px; }
 .workload-current-hours strong { font-size:18px; }
 .workload-legend { display:flex; flex-wrap:wrap; gap:16px; color:var(--neutral-muted); font-size:13px; }
@@ -6200,13 +4202,13 @@ body[data-dashboard-page="allowance"] > .topbar { grid-template-columns:auto aut
 body.electron-dashboard:has(#reporting-period-toolbar[hidden]):has(#connection-notice[hidden]):has(#history-index-badge[hidden]):has(#global-state[hidden]) { --topbar-height: 0px; }
 body.electron-dashboard:has(#reporting-period-toolbar[hidden]):has(#connection-notice[hidden]):has(#history-index-badge[hidden]):has(#global-state[hidden]) > .topbar { display: none; }
 @media (max-width: 900px) {
-  body:not(.community-site):not(.admin-operator-page) .dashboard-shell { display: grid; grid-template-columns: 150px minmax(0, 1fr); }
-  body:not(.community-site):not(.admin-operator-page) .dashboard-sidebar { position: sticky; padding: 12px 8px; border-inline-end: 1px solid var(--neutral-line, var(--line)); border-bottom: 0; }
-  body:not(.community-site):not(.admin-operator-page) .primary-nav { display: grid; overflow: visible; }
-  body:not(.community-site):not(.admin-operator-page) .primary-nav a { width: 100%; white-space: normal; }
+  body .dashboard-shell { display: grid; grid-template-columns: 150px minmax(0, 1fr); }
+  body[data-dashboard-page] .dashboard-sidebar { position: sticky; padding: 12px 8px; border-inline-end: 1px solid var(--neutral-line, var(--line)); border-bottom: 0; }
+  body .primary-nav { display: grid; overflow: visible; }
+  body .primary-nav a { width: 100%; white-space: normal; }
 }
 @media (max-width: 500px) {
-  body:not(.community-site):not(.admin-operator-page) .dashboard-shell { grid-template-columns: 120px minmax(0, 1fr); }
+  body .dashboard-shell { grid-template-columns: 120px minmax(0, 1fr); }
   .sidebar-refresh-row { flex-wrap: wrap; }
   .sidebar-refresh-summary { flex-basis: 100%; padding-inline: 8px; }
 }

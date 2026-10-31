@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {join} from "node:path";
-import {writeFile,appendFile,readFile,rm,mkdir} from "node:fs/promises";
+import {writeFile,appendFile,readFile,rm} from "node:fs/promises";
 import {DatabaseSync} from "node:sqlite";
 import {createWorkspace} from "./helpers/local-index-facts.js";
 import {refreshLocalIndex} from "../src/local-index-refresh.js";
@@ -9,6 +9,7 @@ import {openLocalIndexStore} from "../src/local-index-store.js";
 import {readLocalIndexWorkload,readWorkloadQuotaEvidence,workloadStateStore,workloadState} from "../src/local-index-backend.js";
 import {codexPrimaryAllowanceBasis} from "../src/codex-primary-allowance-basis.js";
 import {commitLocalCollectorState} from "../src/local-collector-state.js";
+import {createWindowsFilesystemAdapter,createWindowsProtectedStateStore} from "../src/platform/index.js";
 const at=Date.parse("2026-09-01T00:00:00Z"),M=60000;
 const line=(atMs,type,payload)=>JSON.stringify({timestamp:new Date(atMs).toISOString(),type,payload})+"\n";
 
@@ -30,7 +31,7 @@ test('reader preserves old-plan history, infers unknown labels and leaves persis
     const options={indexFile,nowMs:at+120*M,timeZone:'UTC',quotaWindows:[{limitId:'codex',durationMinutes:10080,
       planType:'pro',usedPercent:2,observedAt:new Date(at+119*M).toISOString(),resetAt:new Date(reset*1000).toISOString()}]};
     const v=readLocalIndexWorkload(options);
-    assert.equal(v.schemaVersion,'overview-workload-v7',JSON.stringify(v.errors));
+    assert.equal(v.schemaVersion,'overview-workload-v9',JSON.stringify(v.errors));
     assert.equal(v.daily.at(-1).plans.find(p=>p.planType==='prolite').unclassified,10);
     assert.equal(v.daily.at(-1).plans.find(p=>p.planType==='pro').unclassified,2);
     assert.equal(v.planAttribution.inferredObservations,2);assert.equal(v.coverage.estimationPp,2);
@@ -154,7 +155,7 @@ test('reader includes pre-window usage in complete crossing-interval denominator
       q(at,10)+usage(at+M,1)+usage(at+6*day-M,2)+q(at+6*day,12));
     await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
     const before=await readFile(indexFile),options={indexFile,nowMs:at+8*day,timeZone:'UTC'};
-    const v=readLocalIndexWorkload(options);assert.equal(v.schemaVersion,'overview-workload-v7',JSON.stringify(v.errors));
+    const v=readLocalIndexWorkload(options);assert.equal(v.schemaVersion,'overview-workload-v9',JSON.stringify(v.errors));
     assert.equal(v.segmentation.plans[0].observedPp,2);assert.equal(v.segmentation.plans[0].outsidePp,1,JSON.stringify({unallocated:v.unallocated,errors:v.errors}));
     assert.equal(v.segmentation.plans[0].dailyPp,1);assert.equal(v.unallocated.totalIntervals,0);
     assert.deepEqual(readLocalIndexWorkload(options),v);assert.deepEqual(await readFile(indexFile),before);
@@ -179,7 +180,7 @@ test('reader preserves orphan receipts without extending work into later same-se
       work:db.prepare('SELECT * FROM work_lifecycle_fact ORDER BY source_offset').all(),
       usage:db.prepare('SELECT * FROM usage_event ORDER BY source_offset').all()};}finally{db.close();}};
     const before=facts(),v=readLocalIndexWorkload({indexFile,nowMs:end,timeZone:'UTC'});
-    assert.equal(v.policyVersion,'task-workload-v12');assert.equal(v.coverage.workMs,5*M);
+    assert.equal(v.policyVersion,'task-workload-v15');assert.equal(v.coverage.workMs,5*M);
     assert.equal(v.coverage.estimationPp,0);assert.equal(v.segmentation.plans[0].observedPp,2);
     assert.equal(v.daily.reduce((s,d)=>s+d.light+d.medium+d.heavy+d.unclassified,0),2);
     assert.ok(v.errors.some(e=>e.code==='work_boundary_incomplete'));
@@ -188,7 +189,7 @@ test('reader preserves orphan receipts without extending work into later same-se
     assert.doesNotMatch(JSON.stringify(v),/synthetic-orphan|synthetic-next|task_key|session_id/);
   }finally{w.cleanup();}
 });
-test("work lifecycle survives cold, incremental, replay and forward migration without leaking task identity",async()=>{
+test("work lifecycle survives cold, incremental, replay and reopen without leaking task identity",async()=>{
   const w=createWorkspace({files:1,events:5});
   try{
     const file=w.receipt.sources[0],indexFile=join(w.state,"work.sqlite");
@@ -205,11 +206,7 @@ test("work lifecycle survives cold, incremental, replay and forward migration wi
     db=openLocalIndexStore(indexFile);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);
     assert.equal(Buffer.from(db.prepare("SELECT task_key FROM work_lifecycle_fact LIMIT 1").get().task_key).length,32);
-    // Build the predecessor schema only in this content-free synthetic fixture.
-    for(const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all()) db.exec(`DROP TRIGGER ${row.name}`);
-    db.exec("ALTER TABLE store_state DROP COLUMN calculation_revision; ALTER TABLE source DROP COLUMN carry_tier_source; DROP TABLE work_lifecycle_fact; PRAGMA user_version=4");
-    db.prepare("UPDATE source SET parser_version='local-index-rollout-typed-v1+unified-rollout-typed-v19'").run();db.close();
-    assert.throws(()=>openLocalIndexStore(indexFile,{readOnly:true}),{code:"local_index_family_mismatch"});
+    db.close();
     const saltBefore=await readFile(w.secretFile);
     await refreshLocalIndex(options);
     db=openLocalIndexStore(indexFile,{readOnly:true});
@@ -318,7 +315,7 @@ test('reader resolves nested branch cancellation once and retains every stored a
   }finally{w.cleanup();}
 });
 
-test("v4 refresh refuses a missing device salt before any forward migration",async()=>{
+test("v4 refresh is refused before salt access or any forward migration",async()=>{
   const w=createWorkspace({files:1,events:5});
   const indexFile=join(w.state,"identity.sqlite");
   const options={codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1};
@@ -326,35 +323,39 @@ test("v4 refresh refuses a missing device salt before any forward migration",asy
     await refreshLocalIndex(options);
     let db=openLocalIndexStore(indexFile);db.exec("PRAGMA user_version=4");db.close();
     await rm(w.secretFile);
-    await assert.rejects(refreshLocalIndex(options),{code:"local_index_secret_unavailable"});
+    await assert.rejects(refreshLocalIndex(options),{code:"local_index_family_mismatch"});
     db=new DatabaseSync(indexFile,{readOnly:true});
     assert.equal(db.prepare("PRAGMA user_version").get().user_version,4);db.close();
     await assert.rejects(readFile(w.secretFile),{code:"ENOENT"});
   }finally{w.cleanup();}
 });
-test("startup comparison state persists, legacy state reads forward and downgrade writes are refused",async()=>{
+test("account workload state uses its new file and leaves the old unscoped state untouched",async()=>{
   const w=createWorkspace({files:1,events:1});
   try{
-    const legacyRoot=join(w.state,"legacy-root");await mkdir(legacyRoot);
-    const store=workloadStateStore(join(legacyRoot,"index.sqlite"));
-    assert.equal(await store.read(),null);
+    const legacyRoot=join(w.state,"legacy-root");
+    const indexFile=join(legacyRoot,"index.sqlite"),privateRoot=join(legacyRoot,"private");
+    const legacyStore=createWindowsProtectedStateStore({rootPath:privateRoot,adapter:createWindowsFilesystemAdapter()});
+    legacyStore.ensureProtectedDirectory();
+    const unscoped={schemaVersion:"overview-workload-state-v3",
+      comparison:{startedAtMs:at,capacityUsd:100,planType:"prolite",baseline:null},capacityHistory:[]};
+    legacyStore.createJson("overview-workload-state.json",unscoped);
+    const oldBytes=legacyStore.read("overview-workload-state.json").data;
+    const accountScopeToken="a".repeat(64),store=workloadStateStore(indexFile);
+    assert.equal(await store.read(accountScopeToken),null);
+    assert.deepEqual(legacyStore.read("overview-workload-state.json").data,oldBytes);
     const value={schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:100,planType:"prolite",baseline:null},capacityHistory:[]};
-    assert.equal(await store.write(value),true);assert.deepEqual(await store.read(),value);
-    assert.equal(JSON.parse(await readFile(join(legacyRoot,"private","overview-workload-state.json"),"utf8")).schemaVersion,value.schemaVersion);
-    await assert.rejects(readFile(join(legacyRoot,"overview-workload-state.json")),{code:"ENOENT"});
-    await assert.rejects(store.write({...value,private:"not allowed"}));assert.deepEqual(await store.read(),value);
-    const legacy={schemaVersion:"overview-workload-state-v1",comparison:{anchorMs:at},capacityHistory:[]};
-    await assert.rejects(store.write(legacy));
-    await writeFile(join(legacyRoot,"private","overview-workload-state.json"),JSON.stringify(legacy));
-    assert.deepEqual(await store.read(),legacy);
-    const v2={schemaVersion:"overview-workload-state-v2",comparison:{startedAtMs:at,capacityUsd:100,planType:"prolite"},capacityHistory:[]};
-    await writeFile(join(legacyRoot,"private","overview-workload-state.json"),JSON.stringify(v2));
-    assert.deepEqual(await store.read(),v2);await assert.rejects(store.write(v2));
-    const next={...value,comparison:{...value.comparison,startedAtMs:at+40*M}};await store.write(next);assert.deepEqual(await store.read(),next);
-    const future={...next,schemaVersion:"overview-workload-state-v4"};
-    const path=join(legacyRoot,"private","overview-workload-state.json");await writeFile(path,JSON.stringify(future));
-    await assert.rejects(store.read());await assert.rejects(store.write(next));
-    assert.deepEqual(JSON.parse(await readFile(path,"utf8")),future);
+    assert.equal(await store.write(accountScopeToken,value),true);
+    assert.deepEqual(await store.read(accountScopeToken),value);
+    await assert.rejects(store.write(accountScopeToken,{...value,private:"not allowed"}),{code:"workload_account_state_invalid"});
+    assert.deepEqual(await store.read(accountScopeToken),value);
+    const accountState=legacyStore.readJson("overview-workload-account-state.json").value;
+    assert.equal(accountState.schemaVersion,"overview-workload-account-state-v1");
+    assert.deepEqual(accountState.accounts,[{scopeToken:accountScopeToken,state:value}]);
+    assert.deepEqual(legacyStore.read("overview-workload-state.json").data,oldBytes);
+    const restarted=workloadStateStore(indexFile);
+    assert.deepEqual(await restarted.read(accountScopeToken),value);
+    assert.deepEqual(await restarted.read("b".repeat(64)),null);
+    await assert.rejects(restarted.read("not-a-scope-token"),{code:"workload_account_state_scope_invalid"});
   }finally{w.cleanup();}
 });
 
@@ -363,15 +364,15 @@ test("capacity history survives persisted plan switches without moving earlier a
   try{
     const indexFile=join(w.state,"capacity-plans.sqlite");
     await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
-    const store=workloadStateStore(indexFile),basisId=codexPrimaryAllowanceBasis("unresolved_as_standard").basisId;
+    const store=workloadStateStore(indexFile),accountScopeToken="c".repeat(64),basisId=codexPrimaryAllowanceBasis("unresolved_as_standard").basisId;
     const first={usd:100,availableAtMs:at-60*M,planType:"prolite",version:"a".repeat(64),basisId};
-    await store.write({schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:null,planType:null,baseline:null},capacityHistory:[first]});
+    await store.write(accountScopeToken,{schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:null,planType:null,baseline:null},capacityHistory:[first]});
     const read=async(plan,usd,version,nowMs)=>{
-      const value=readLocalIndexWorkload({indexFile,nowMs,timeZone:"UTC",sourceFresh:true,storedState:await store.read(),
+      const value=readLocalIndexWorkload({indexFile,nowMs,timeZone:"UTC",sourceFresh:true,storedState:await store.read(accountScopeToken),
         capacity:{status:"available",computedAt:new Date(nowMs).toISOString(),planScope:{planType:plan},selectedScenario:"synthetic",
           scenarios:{synthetic:{medianCapacityUsd:usd,cohortId:version,basisId}}}});
       assert.equal(value.status,"available",JSON.stringify(value.errors));
-      await store.write(workloadState(value));
+      await store.write(accountScopeToken,workloadState(value));
       return value;
     };
     const initial=await read("prolite",100,first.version,at);
@@ -380,7 +381,7 @@ test("capacity history survives persisted plan switches without moving earlier a
     assert.deepEqual(second.capacityHistory.map(c=>c.planType),["prolite","pro"]);
     const returned=await read("prolite",100,first.version,at+2*M);
     assert.deepEqual(returned.capacityHistory,second.capacityHistory);
-    assert.deepEqual((await store.read()).capacityHistory,second.capacityHistory);
+    assert.deepEqual((await store.read(accountScopeToken)).capacityHistory,second.capacityHistory);
     assert.equal(returned.capacityHistory[0].availableAtMs,first.availableAtMs);
   }finally{w.cleanup();}
 });
@@ -390,19 +391,19 @@ test("advancing the display window preserves persisted capacity versions from ev
   try{
     const indexFile=join(w.state,"capacity-window.sqlite"),day=24*60*M;
     await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
-    const store=workloadStateStore(indexFile),basisId=codexPrimaryAllowanceBasis("unresolved_as_standard").basisId;
+    const store=workloadStateStore(indexFile),accountScopeToken="d".repeat(64),basisId=codexPrimaryAllowanceBasis("unresolved_as_standard").basisId;
     const history=[{usd:150,availableAtMs:at-40*day,planType:"pro",version:"b".repeat(64),basisId},
       {usd:100,availableAtMs:at-30*day,planType:"prolite",version:"a".repeat(64),basisId},
       {usd:110,availableAtMs:at-20*day,planType:"prolite",version:"c".repeat(64),basisId},
       {usd:120,availableAtMs:at-day,planType:"prolite",version:"d".repeat(64),basisId}];
-    await store.write({schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:null,planType:null,baseline:null},capacityHistory:history});
+    await store.write(accountScopeToken,{schemaVersion:"overview-workload-state-v3",comparison:{startedAtMs:at,capacityUsd:null,planType:null,baseline:null},capacityHistory:history});
     for(const nowMs of [at,at+30*day]){
-      const value=readLocalIndexWorkload({indexFile,nowMs,timeZone:"UTC",sourceFresh:true,storedState:await store.read(),
+      const value=readLocalIndexWorkload({indexFile,nowMs,timeZone:"UTC",sourceFresh:true,storedState:await store.read(accountScopeToken),
         capacity:{status:"unavailable",planScope:{planType:"prolite"}}});
       assert.equal(value.status,"available",JSON.stringify(value.errors));
       assert.deepEqual(value.capacityHistory,history);
-      await store.write(workloadState(value));
-      assert.deepEqual((await store.read()).capacityHistory,history);
+      await store.write(accountScopeToken,workloadState(value));
+      assert.deepEqual((await store.read(accountScopeToken)).capacityHistory,history);
     }
   }finally{w.cleanup();}
 });

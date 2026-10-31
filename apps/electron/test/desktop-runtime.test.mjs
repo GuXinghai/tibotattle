@@ -305,12 +305,13 @@ function shellStatus({ usedPercent, observedAt }) {
 
 function fakeNotification({ supported = true } = {}) {
   const shown = [];
-  class FakeNotification {
+  class FakeNotification extends EventEmitter {
     static isSupported() {
       return supported;
     }
 
     constructor(options) {
+      super();
       shown.push(options);
     }
 

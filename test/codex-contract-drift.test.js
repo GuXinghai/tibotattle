@@ -28,9 +28,9 @@ import {
   validateCodexContractLedger,
 } from "../scripts/check-codex-contract-drift.mjs";
 import {
-  TELEMETRY_PLAN_DISPLAY_NAMES,
-  TELEMETRY_PLAN_TYPES,
-} from "@app-usagemonitor/telemetry-contract";
+  CODEX_PLAN_DISPLAY_NAMES,
+  CODEX_PLAN_TYPES,
+} from "@app-usagemonitor/codex-catalog";
 
 const execFile = promisify(execFileCallback);
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "..");
@@ -102,11 +102,11 @@ test("checked-in Codex contract ledger is valid and matches the product registry
   assert.deepEqual(compareProductPlanRegistry(ledger), { issues: [], ok: true });
   assert.deepEqual(
     ledger.plans.map((plan) => plan.rawValue),
-    TELEMETRY_PLAN_TYPES.filter((plan) => plan !== "unknown"),
+    CODEX_PLAN_TYPES.filter((plan) => plan !== "unknown"),
   );
   assert.deepEqual(
-    Object.fromEntries(ledger.plans.map((plan) => [plan.rawValue, plan.displayName])),
-    TELEMETRY_PLAN_DISPLAY_NAMES,
+    Object.fromEntries(ledger.plans.map((plan) => [plan.rawValue, plan.productDisplayName ?? plan.displayName])),
+    CODEX_PLAN_DISPLAY_NAMES,
   );
   assert.deepEqual(
     ledger.marketingSeats.map(({ id, displayName }) => [id, displayName]),
@@ -133,7 +133,7 @@ test("Pro Max vocabulary is binary-verified while allowance semantics remain unv
     const contract = ledger.verifiedContracts.find((entry) => (
       entry.channel === channel && entry.version === "codex-cli 0.160.0"
     ));
-    assert.equal(contract.planTypesSha256, planTypesSha256(TELEMETRY_PLAN_TYPES));
+    assert.equal(contract.planTypesSha256, planTypesSha256(CODEX_PLAN_TYPES.filter(plan => !["sci", "sci_plus"].includes(plan))));
   }
 });
 
@@ -149,8 +149,8 @@ test("provisional plans still block release despite an observed binary enum", as
       inspectBinary: async ({ channel }) => ({
         channel,
         generatorMode: "stable",
-        planTypes: TELEMETRY_PLAN_TYPES,
-        planTypesSha256: planTypesSha256(TELEMETRY_PLAN_TYPES),
+        planTypes: CODEX_PLAN_TYPES,
+        planTypesSha256: planTypesSha256(CODEX_PLAN_TYPES),
         version: "codex-cli 1.2.3",
       }),
       ledgerFile,
@@ -218,7 +218,7 @@ test("deprecated historical values may disappear without weakening telemetry acc
     ok: true,
     warnings: [],
   });
-  assert.equal(TELEMETRY_PLAN_TYPES.includes("go"), true);
+  assert.equal(CODEX_PLAN_TYPES.includes("go"), true);
 });
 
 test("source observation does not activate a provisional plan", async () => {
@@ -238,7 +238,7 @@ test("source observation does not activate a provisional plan", async () => {
 
 test("generated PlanType parser accepts only a literal union", async () => {
   const parsed = parsePlanTypeScript(await fixtureText(PLAN_TYPE_FIXTURE));
-  assert.deepEqual(parsed, TELEMETRY_PLAN_TYPES.filter((plan) => plan !== "promax"));
+  assert.deepEqual(parsed, CODEX_PLAN_TYPES.filter((plan) => !["promax", "sci", "sci_plus"].includes(plan)));
   assert.throws(
     () => parsePlanTypeScript("export type PlanType = string;\n"),
     { code: "CODEX_SCHEMA_INVALID" },
@@ -254,15 +254,15 @@ test("generated PlanType parser accepts only a literal union", async () => {
 });
 
 test("released binary comparison fails closed on a new plan or missing sentinel", () => {
-  assert.deepEqual(compareBinaryPlanTypes(TELEMETRY_PLAN_TYPES), {
+  assert.deepEqual(compareBinaryPlanTypes(CODEX_PLAN_TYPES), {
     issues: [],
     ok: true,
   });
-  const future = compareBinaryPlanTypes([...TELEMETRY_PLAN_TYPES, "future_plan"]);
+  const future = compareBinaryPlanTypes([...CODEX_PLAN_TYPES, "future_plan"]);
   assert.equal(future.ok, false);
   assert.equal(future.issues[0].code, "binary_plan_types_unsupported");
   const noUnknown = compareBinaryPlanTypes(
-    TELEMETRY_PLAN_TYPES.filter((plan) => plan !== "unknown"),
+    CODEX_PLAN_TYPES.filter((plan) => plan !== "unknown"),
   );
   assert.equal(noUnknown.ok, false);
   assert.equal(noUnknown.issues[0].code, "binary_unknown_sentinel_missing");
@@ -284,7 +284,7 @@ test("binary inspector supports stable generation and the older experimental fal
   });
   assert.equal(stable.generatorMode, "stable");
   assert.equal(stable.version, "codex-cli 1.2.3");
-  assert.equal(stable.planTypesSha256, planTypesSha256(TELEMETRY_PLAN_TYPES.filter((plan) => plan !== "promax")));
+  assert.equal(stable.planTypesSha256, planTypesSha256(CODEX_PLAN_TYPES.filter((plan) => !["promax", "sci", "sci_plus"].includes(plan))));
   assert.equal(stableCalls.some((args) => args.includes("--experimental")), false);
 
   const fallback = await inspectCodexBinaryContract({
@@ -301,6 +301,36 @@ test("binary inspector supports stable generation and the older experimental fal
   assert.equal(fallback.generatorMode, "experimental_compatibility");
 });
 
+test("npm JS entrypoint reads version and generates a contract without a shell", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codex entry & literal-"));
+  const binaryPath = join(root, "codex.js");
+  try {
+    await writeFile(join(root, "package.json"), '{"type":"module"}');
+    const workflow = await readFile(join(REPOSITORY_ROOT, ".github/workflows/codex-contract-drift.yml"), "utf8");
+    assert.match(workflow, /--binary "standalone_latest=\$RUNNER_TEMP\/codex-release\/node_modules\/@openai\/codex\/bin\/codex\.js"/u);
+    assert.doesNotMatch(workflow, /\.bin\/codex\.cmd/u);
+    await writeFile(binaryPath, `
+      import { writeFile } from 'node:fs/promises';
+      import { join } from 'node:path';
+      const args = process.argv.slice(2);
+      if (args[0] === '--version') console.log('codex-cli 1.2.3');
+      else if (args[0] === 'app-server' && args[1] === 'generate-ts') {
+        await writeFile(join(args[args.indexOf('--out') + 1], 'PlanType.ts'),
+          ${JSON.stringify('export type PlanType = "plus" | "unknown";')});
+      } else process.exit(2);
+    `);
+    const result = await inspectCodexBinaryContract({ binaryPath, channel: "npm_fixture" });
+    assert.equal(result.version, "codex-cli 1.2.3");
+    assert.equal(result.generatorMode, "stable");
+    assert.deepEqual(result.planTypes, ["plus", "unknown"]);
+    await writeFile(binaryPath, 'process.exit(9);');
+    await assert.rejects(inspectCodexBinaryContract({ binaryPath, channel: "npm_fixture" }),
+      { code: "CODEX_BINARY_VERSION_UNAVAILABLE" });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("machine report is path-free even when an explicit binary path is private", async () => {
   const checked = await checkCodexContractDrift({
     binaries: [{
@@ -310,8 +340,8 @@ test("machine report is path-free even when an explicit binary path is private",
     inspectBinary: async ({ channel }) => ({
       channel,
       generatorMode: "stable",
-      planTypes: TELEMETRY_PLAN_TYPES,
-      planTypesSha256: planTypesSha256(TELEMETRY_PLAN_TYPES),
+      planTypes: CODEX_PLAN_TYPES,
+      planTypesSha256: planTypesSha256(CODEX_PLAN_TYPES),
       version: "codex-cli 1.2.3",
     }),
   });
@@ -339,8 +369,8 @@ test("same-version recorded contract mutation is a release failure", async () =>
       inspectBinary: async ({ channel }) => ({
         channel,
         generatorMode: "stable",
-        planTypes: TELEMETRY_PLAN_TYPES,
-        planTypesSha256: planTypesSha256(TELEMETRY_PLAN_TYPES),
+        planTypes: CODEX_PLAN_TYPES,
+        planTypesSha256: planTypesSha256(CODEX_PLAN_TYPES),
         version: "codex-cli 9.9.9",
       }),
       ledgerFile,

@@ -7,11 +7,8 @@ import {
   assertValidExportSetManifest,
   EXPORT_SET_CONTRACT_VERSION,
   EXPORT_SET_MANIFEST_RECEIPT_VERSION,
-  EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_2,
   EXPORT_SET_MANIFEST_SCHEMA_SHA256,
   EXPORT_SET_MANIFEST_VERSION,
-  EXPORT_SET_MANIFEST_VERSION_V0_2,
-  isCompressedExportSetManifestVersion,
   EXPORT_SET_ORDER_VERSION,
   EXPORT_SET_PACKING_VERSION,
 } from "./set-schema.js";
@@ -92,7 +89,7 @@ function recordCounts(records) {
 function buildChunkBundle({ rows, descriptor, diagnostics, bundleId }) {
   const records = groupRecords(rows);
   const bundle = {
-    schemaVersion: "usage-metadata-bundle-v0.1", compatibility: structuredClone(descriptor.compatibility),
+    schemaVersion: "local-usage-metadata-bundle-v1", compatibility: structuredClone(descriptor.compatibility),
     bundleId, participantId: descriptor.participantId, createdAt: descriptor.createdAt,
     coveredAt: structuredClone(descriptor.coveredAt), sourceProviders: [...descriptor.sourceProviders],
     clientPlatform: descriptor.clientPlatform, transportReady: false, recordCounts: recordCounts(records), records,
@@ -148,9 +145,8 @@ function assertVerifiedChunk(verified, expected) {
       || verified.receiptSha256 !== expected.receiptSha256 || verified.receiptBytes.length !== expected.receiptBytes) fail("chunk_conflict");
 }
 function manifestReceipt(manifestText, manifestVersion = EXPORT_SET_MANIFEST_VERSION) {
-  if (!isCompressedExportSetManifestVersion(manifestVersion)) fail("manifest_conflict");
-  const schemaVersion = manifestVersion === EXPORT_SET_MANIFEST_VERSION_V0_2
-    ? EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_2 : EXPORT_SET_MANIFEST_RECEIPT_VERSION;
+  if (manifestVersion !== EXPORT_SET_MANIFEST_VERSION) fail("manifest_conflict");
+  const schemaVersion = EXPORT_SET_MANIFEST_RECEIPT_VERSION;
   return { schemaVersion, manifestSha256: sha256(manifestText), manifestBytes: Buffer.byteLength(manifestText), transportReady: false };
 }
 
@@ -158,18 +154,11 @@ function retainMatchingManifest(currentManifest, manifestText, receiptText) {
   try {
     const retained = JSON.parse(manifestText);
     assertValidExportSetManifest(retained);
-    if (!isCompressedExportSetManifestVersion(retained.schemaVersion)
+    if (retained.schemaVersion !== EXPORT_SET_MANIFEST_VERSION
         || stableJson(retained) !== manifestText) fail("manifest_conflict");
     const receipt = manifestReceipt(manifestText, retained.schemaVersion);
     if (receiptText !== stableJson(receipt)) fail("manifest_conflict");
-    // An existing version keeps its bytes, receipt and historical source ceiling.
-    // Only its validated version-specific header may differ from this replay.
-    const expected = {
-      ...currentManifest,
-      schemaVersion: retained.schemaVersion,
-      manifestContract: retained.manifestContract,
-    };
-    if (stableJson(expected) !== manifestText) fail("manifest_conflict");
+    if (stableJson(currentManifest) !== manifestText) fail("manifest_conflict");
     return { manifest: retained, manifestText, manifestReceipt: receipt };
   } catch {
     fail("manifest_conflict");

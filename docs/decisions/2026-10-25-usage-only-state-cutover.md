@@ -75,6 +75,9 @@ backup/readback and account-observation continuity remain separate gates.
   interpretation and repricing of historical usage.
 - `private/overview-workload-state.json`, retaining the workload comparison
   anchor, baseline and capacity history as unchanged usage computation state.
+  The account-partitioned successor `private/overview-workload-account-state.json`
+  is also preserved byte-for-byte when present. Preservation does not authorize
+  assigning the old unscoped state to any account or converting it implicitly.
 - Existing usage snapshots as retained evidence. They must remain dated and
   provenance-bound; a saved snapshot does not replace the authoritative stores.
 - Explicit source-root selections and primary-root semantics, if needed to

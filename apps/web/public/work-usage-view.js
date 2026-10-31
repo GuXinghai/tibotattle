@@ -417,6 +417,28 @@ export function mountWorkUsageView(options = {}) {
     periodPreloadAllowInactive = false;
   }
 
+  const failedRequestTraces = new WeakMap();
+  function requestClock() {
+    try {
+      const value = windowRef.performance?.now?.();
+      return Number.isFinite(value) ? value : null;
+    } catch { return null; }
+  }
+  function beginRequestTrace(timeoutMs, background = false) {
+    return { startedAt: requestClock(), timeoutMs, background, stage: "request", httpStatus: null };
+  }
+  function finishRequestTrace(trace, phase) {
+    const now = requestClock();
+    const elapsed = trace?.startedAt !== null && trace?.startedAt !== undefined && now !== null
+      ? Math.round(now - trace.startedAt) : null;
+    return Object.freeze({ schemaVersion: "work-usage-request-diagnostic-v1", phase,
+      stage: trace?.stage ?? "unknown",
+      elapsedMs: Number.isSafeInteger(elapsed) && elapsed >= 0 && elapsed <= 86_400_000 ? elapsed : null,
+      timeoutMs: trace?.timeoutMs ?? null,
+      httpStatus: Number.isSafeInteger(trace?.httpStatus) && trace.httpStatus >= 100 && trace.httpStatus <= 599 ? trace.httpStatus : null,
+      background: trace?.background ?? phase === "preload" });
+  }
+
   async function requestPeriodPreload(periodId, baseQuery, anchor, signal) {
     let bodyQuery = {
       ...baseQuery,
@@ -429,6 +451,7 @@ export function mountWorkUsageView(options = {}) {
       const requestController = new AbortController();
       const forwardAbort = () => requestController.abort();
       let preloadTimedOut = false;
+      const trace = beginRequestTrace(PRELOAD_REQUEST_TIMEOUT_MS, true);
       const requestTimer = scheduleLease(
         () => { preloadTimedOut = true; requestController.abort(); },
         PRELOAD_REQUEST_TIMEOUT_MS,
@@ -446,13 +469,16 @@ export function mountWorkUsageView(options = {}) {
           body: JSON.stringify(bodyQuery),
           signal: requestController.signal,
         });
+        trace.httpStatus = http.status;
         if (requestController.signal.aborted)
           throw Object.assign(new Error(preloadTimedOut ? "timeout" : "aborted"), { name: preloadTimedOut ? "TimeoutError" : "AbortError" });
+        trace.stage = "response_body";
         const payload = http.status === 409
           ? await http.json().catch(() => null)
           : http.ok ? await http.json() : null;
         if (requestController.signal.aborted)
           throw Object.assign(new Error(preloadTimedOut ? "timeout" : "aborted"), { name: preloadTimedOut ? "TimeoutError" : "AbortError" });
+        trace.stage = "validation";
         if (http.status === 409) {
           return {
             result: null,
@@ -464,7 +490,7 @@ export function mountWorkUsageView(options = {}) {
           };
         }
         if (!http.ok) {
-          reportFailure(new Error(http.status === 401 || http.status === 403 ? "permission" : "unavailable"), "preload");
+          reportFailure(new Error(http.status === 401 || http.status === 403 ? "permission" : "unavailable"), "preload", trace);
           return { result: null, invalidated: http.status === 401 || http.status === 403 };
         }
         const result = validateWorkUsageResponse(payload);
@@ -485,9 +511,10 @@ export function mountWorkUsageView(options = {}) {
           snapshotId: result.snapshotId,
         };
       } catch (error) {
-        if (preloadTimedOut && !signal.aborted)
-          throw Object.assign(new Error("timeout"), { name: "TimeoutError" });
-        throw error;
+        const failure = preloadTimedOut && !signal.aborted
+          ? Object.assign(new Error("timeout"), { name: "TimeoutError" }) : error;
+        if (failure && typeof failure === "object") failedRequestTraces.set(failure, trace);
+        throw failure;
       } finally {
         clearLeaseTimer(requestTimer);
         signal.removeEventListener("abort", forwardAbort);
@@ -594,6 +621,7 @@ export function mountWorkUsageView(options = {}) {
     const requestController = new AbortController();
     leaseController = requestController;
     let timedOut = false;
+    const trace = beginRequestTrace(10_000);
     const timeout = scheduleLease(() => { timedOut = true; requestController.abort(); }, 10_000);
     try {
       const http = await fetchRef("/api/local/work-usage/query", {
@@ -603,10 +631,18 @@ export function mountWorkUsageView(options = {}) {
         body: JSON.stringify({ schemaVersion: SCHEMA, action: "touch", snapshotId }),
         signal: requestController.signal,
       });
+      trace.httpStatus = http.status;
+      trace.stage = "validation";
+      // The lease belongs to one visible report lifecycle. A late success must
+      // not clear a newer failure; a late timeout must not resurrect an old one.
+      if (token !== serial || leaseController !== requestController
+          || requestController.signal.aborted || !visible()) return;
       if (!http.ok && http.status !== 409) throw new Error(http.status === 401 || http.status === 403 ? "permission" : "unavailable");
       if (http.ok) clearFailure();
       if (http.status === 409 && token === serial && !requestController.signal.aborted && visible()) {
+        trace.stage = "response_body";
         const error = await http.json();
+        trace.stage = "validation";
         if (error.error?.code === "work_usage_snapshot_expired" && token === serial
             && !requestController.signal.aborted && visible()) {
           liveAnchor = null;
@@ -615,7 +651,8 @@ export function mountWorkUsageView(options = {}) {
         }
       }
     } catch (error) {
-      if (!requestController.signal.aborted || timedOut) reportFailure(timedOut ? Object.assign(new Error("timeout"), { name: "TimeoutError" }) : error, "lease");
+      if (token !== serial || leaseController !== requestController || !visible()) return;
+      if (!requestController.signal.aborted || timedOut) reportFailure(timedOut ? Object.assign(new Error("timeout"), { name: "TimeoutError" }) : error, "lease", trace);
     }
     finally {
       clearLeaseTimer(timeout);
@@ -877,7 +914,7 @@ export function mountWorkUsageView(options = {}) {
   const message = el("p", "work-usage-status");
   message.setAttribute("role", "status");
   message.setAttribute("aria-live", "polite");
-  const issue = el("p", "work-usage-issue evidence-warning");
+  const issue = el("p", "work-usage-issue dashboard-action-status error");
   issue.hidden = true;
   issue.setAttribute("role", "status");
   const classifyFailure = error => {
@@ -894,8 +931,9 @@ export function mountWorkUsageView(options = {}) {
       : "unavailable";
     return new Error(reason);
   }
-  function reportFailure(error, phase = "query") {
+  function reportFailure(error, phase = "query", trace = null) {
     const reason = classifyFailure(error);
+    const workUsage = finishRequestTrace(trace ?? failedRequestTraces.get(error), phase);
     if (phase !== "preload") {
       issue.hidden = false;
       issue.textContent = tr("failureReason", { reason: tr(`failure.${reason}`) });
@@ -905,7 +943,7 @@ export function mountWorkUsageView(options = {}) {
     const key = `${phase}:${code}`;
     if (!reportedFailures.has(key)) {
       reportedFailures.add(key);
-      Promise.resolve().then(() => options.onDiagnostic?.({ code, phase })).then(note => {
+      Promise.resolve().then(() => options.onDiagnostic?.({ code, phase, workUsage })).then(note => {
         if (phase !== "preload" && note?.reference && /^TT-[0-9A-HJKMNP-TV-Z]{6}$/u.test(note.reference))
           issue.textContent += ` · ${note.reference}`;
       }).catch(() => {
@@ -926,6 +964,7 @@ export function mountWorkUsageView(options = {}) {
     timer = null;
     stopPeriodPreload();
     if (query.snapshotId) {
+      const trace = beginRequestTrace(null);
       try {
         const cancelled = await fetchRef("/api/local/work-usage/query", {
           method: "POST",
@@ -939,8 +978,10 @@ export function mountWorkUsageView(options = {}) {
             snapshotId: query.snapshotId,
           }),
         });
+        trace.httpStatus = cancelled.status;
+        trace.stage = "validation";
         if (!cancelled.ok) throw new Error("unavailable");
-      } catch (error) { reportFailure(error, "cancel"); }
+      } catch (error) { reportFailure(error, "cancel", trace); }
     }
     delete query.snapshotId;
     delete query.sourceSnapshotId;
@@ -1041,11 +1082,11 @@ export function mountWorkUsageView(options = {}) {
       if (!detail) open.setAttribute("aria-haspopup", "dialog");
       open.disabled = retainedReport();
       const value = byCost ? (row.costUsdExact === null ? null : Number(row.costUsdExact)) : row.tokens;
-      const amount = el("span", "work-usage-rank-amount", byCost ? formatApiMoney(row.costUsdExact) : quantity(row.tokens));
+      const amount = el("span", "work-usage-rank-amount", byCost ? `${formatApiMoney(row.costUsdExact, { trailingSymbol: true })}${row.priceStatus === "partial" ? tr("amountPartial") : ""}` : quantity(row.tokens));
       const share = formatSharePercent(value, total);
       const number = el("span", "work-usage-rank-number");
       number.append(amount);
-      if (byCost ? row.priceStatus !== "complete" : row.incompleteEvents > 0)
+      if (byCost ? row.priceStatus === "unpriced" : row.incompleteEvents > 0)
         number.append(el("small", "work-usage-muted", tr(row.priceStatus === "unpriced" && byCost ? "unpriced" : "partial")));
       const track = el("span", "work-usage-rank-track");
       track.setAttribute("aria-hidden", "true");
@@ -1293,6 +1334,7 @@ export function mountWorkUsageView(options = {}) {
     entry.controller = controller;
     entry.status = "preparing";
     const token = serial;
+    const trace = beginRequestTrace(null);
     const childQuery = { ...query, grouping: "thread", project: entry.project };
     delete childQuery.cursor;
     if (entry.cursor) childQuery.cursor = entry.cursor;
@@ -1307,6 +1349,8 @@ export function mountWorkUsageView(options = {}) {
         body: JSON.stringify(childQuery),
         signal: controller.signal,
       });
+      trace.httpStatus = http.status;
+      trace.stage = "response_body";
       if (http.status === 409) {
         const error = await http.json();
         if (error.error?.code === "work_usage_snapshot_expired" && token === serial
@@ -1316,7 +1360,9 @@ export function mountWorkUsageView(options = {}) {
         }
       }
       if (!http.ok) throw httpFailure(http, await http.json());
-      const result = validateWorkUsageResponse(await http.json());
+      const payload = await http.json();
+      trace.stage = "validation";
+      const result = validateWorkUsageResponse(payload);
       if (
         result.status !== "available" ||
         result.snapshotId !== response.snapshotId ||
@@ -1333,7 +1379,7 @@ export function mountWorkUsageView(options = {}) {
       if (token !== serial || nested !== entry || controller.signal.aborted)
         return;
       entry.status = error.message === "expired" ? "expired" : "unavailable";
-      reportFailure(error);
+      reportFailure(error, "nested", trace);
     }
     if (nested === entry && token === serial) {
       pendingFocus = documentRef.activeElement?.classList?.contains(
@@ -2002,11 +2048,13 @@ export function mountWorkUsageView(options = {}) {
       b.setAttribute("aria-pressed", String(b.dataset.period === query.period));
     sort.control.value = query.sort;
     let requestTimedOut = false;
+    let trace = null;
     const revision = reportRevision;
     try {
       const requestController = background ? new AbortController() : loadController;
       const requestSignal = requestController.signal;
       const forwardAbort = background ? () => requestController.abort() : null;
+      trace = beginRequestTrace(background ? PRELOAD_REQUEST_TIMEOUT_MS : 30_000, background);
       const requestTimer = scheduleLease(() => { requestTimedOut = true; requestController.abort(); }, background ? PRELOAD_REQUEST_TIMEOUT_MS : 30_000);
       requestTimer?.unref?.();
       if (forwardAbort) loadController.signal.addEventListener("abort", forwardAbort, { once: true });
@@ -2023,8 +2071,10 @@ export function mountWorkUsageView(options = {}) {
           body: JSON.stringify(query),
           signal: requestSignal,
         });
+        trace.httpStatus = http.status;
         if (requestSignal.aborted)
           throw Object.assign(new Error("aborted"), { name: "AbortError" });
+        trace.stage = "response_body";
         payload = await http.json();
         if (requestSignal.aborted)
           throw Object.assign(new Error("aborted"), { name: "AbortError" });
@@ -2033,6 +2083,7 @@ export function mountWorkUsageView(options = {}) {
         if (forwardAbort) loadController.signal.removeEventListener("abort", forwardAbort);
       }
       if (token !== serial) return;
+      trace.stage = "validation";
       if (!http.ok && http.status === 409 && recoverExpired) {
         const error = payload;
         if (token !== serial) return;
@@ -2155,7 +2206,7 @@ export function mountWorkUsageView(options = {}) {
     } catch (error) {
       if (token !== serial || error.name === "AbortError" && !requestTimedOut) return;
       if (requestTimedOut) error = Object.assign(new Error("timeout"), { name: "TimeoutError" });
-      reportFailure(error);
+      reportFailure(error, "query", trace);
       if (detailView && detailDialog.open) detailView.markFailed();
       if (retainedReport() && !body.hidden && displayedForQuery())
         setStatus("savedUnavailable", { date: formatLocal(new Date(response.toMs).toISOString()) });

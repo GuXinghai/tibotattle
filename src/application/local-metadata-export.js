@@ -172,7 +172,7 @@ export function createLocalMetadataExportContext(configuration = {}) {
       activityMarkers: safeMarkers.length,
     };
     const bundle = {
-      schemaVersion: "usage-metadata-bundle-v0.1",
+      schemaVersion: "local-usage-metadata-bundle-v1",
       compatibility,
       bundleId,
       participantId: deriveParticipantId(secret),

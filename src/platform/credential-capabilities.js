@@ -16,10 +16,6 @@ export const EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES = Object.freeze({
     service: "app-usagemonitor.account-observation.v1",
     account: "installation",
   }),
-  contributionDevice: Object.freeze({
-    service: "app-usagemonitor.contribution-device.v1",
-    account: "installation",
-  }),
 });
 
 const ERROR_CODES = new Set([

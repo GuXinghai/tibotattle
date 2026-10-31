@@ -365,51 +365,12 @@ test("a missing or stale-stamped store gets the cold refresh deadline", async ()
   }
 });
 
-test("the contribution bundle fences a pass with the publication the companion reports", async () => {
-  const workspace = createWorkspace({ variety: true, files: 8, events: 200, days: 4, seed: 49 });
+test("the local index backend exposes no contribution reader or publication bridge", () => {
+  const workspace = createWorkspace({ files: 1, events: 2, days: 1, seed: 49 });
   try {
-    const indexFile = join(workspace.state, "v2.sqlite");
-    const backend = createLocalIndexBackend({
-      indexFile, secretFile: workspace.secretFile, workerCount: 1, now: () => NOW_MS,
-    });
-    const refreshed = await backend.refreshUnifiedIndex({ codexHome: workspace.codexHome });
-    const { contribution } = backend;
-    assert.deepEqual(Object.keys(contribution).sort(),
-      ["createIndexReader", "createV11Reader", "openIndex", "readPublication"]);
-
-    const database = contribution.openIndex(indexFile, { readOnly: true });
-    try {
-      const first = contribution.readPublication(database);
-      assert.equal(first.fingerprint, refreshed.generation.fingerprint);
-      assert.equal(typeof first.parserVersion, "string");
-      assert.deepEqual(contribution.readPublication(database), first, "reads do not move it");
-
-      // The engine hands the reader only its own ports; the bundle supplies the
-      // store-specific ones.
-      const reader = contribution.createV11Reader(database, {
-        outcomeName: () => "unknown", reasoningEffortName: () => null,
-        fallbackParserVersion: "fallback", accountMarkers: [],
-      });
-      assert.ok(reader.days().length >= 1);
-    } finally {
-      database.close();
-    }
-
-    // A publication that moves is a different proof.
-    appendSyntheticCodexEvents([workspace.receipt.sources.at(-1)], {
-      seed: 7, events: 3, fillerBytesPerEvent: 0, atMs: END_MS - 60_000,
-    });
-    await backend.refreshUnifiedIndex({ codexHome: workspace.codexHome });
-    const database2 = contribution.openIndex(indexFile, { readOnly: true });
-    try {
-      assert.notEqual(contribution.readPublication(database2).fingerprint,
-        refreshed.generation.fingerprint);
-    } finally {
-      database2.close();
-    }
-  } finally {
-    workspace.cleanup();
-  }
+    const backend = createLocalIndexBackend({ indexFile: join(workspace.state, "v2.sqlite"), secretFile: workspace.secretFile, workerCount: 1 });
+    assert.equal(Object.hasOwn(backend, "contribution"), false);
+  } finally { workspace.cleanup(); }
 });
 
 test("the audit is read-only, content-free and sees a derived table that drifted", async () => {

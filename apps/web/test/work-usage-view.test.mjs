@@ -2629,16 +2629,22 @@ test("open details follow publication while retaining thread navigation, page an
 
 test("foreground timeout is visible, recorded and retryable rather than silently cancelled", async (t) => {
   const mounted = mountedLeaseRoot();
+  let now = 100;
+  mounted.windowRef.performance = { now: () => now };
   const notes = [];
   const view = mountWorkUsageView({ ...mounted, t: mountedTranslator,
     onDiagnostic: note => { notes.push(note); },
     fetchRef: (_url, init) => new Promise((_resolve, reject) => init.signal.addEventListener("abort", () => reject(Object.assign(new Error("abort"), { name: "AbortError" })))),
   });
   t.after(() => view.destroy());
+  now += 30_002;
   mounted.runTimer(30_000);
   await settleMountedView();
   assert.match(mounted.root.textContent, /Request timed out/);
   assert.equal(notes[0].code, "work_usage_timeout");
+  assert.deepEqual(notes[0].workUsage, { schemaVersion: "work-usage-request-diagnostic-v1",
+    phase: "query", stage: "request", elapsedMs: 30_002, timeoutMs: 30_000,
+    httpStatus: null, background: false });
   assert.ok(findMounted(mounted.root, n => n.tagName === "BUTTON" && n.textContent === "Retry" && !n.hidden).length);
 });
 
@@ -2711,6 +2717,122 @@ test("review contributions render separately and unlinked reviews never navigate
 });
 
 
+test("a timed-out old lease cannot publish an error after report replacement or destruction", async (t) => {
+  for (const action of ["replace", "destroy"]) await t.test(action, async () => {
+    const harness = mountedLeaseRoot();
+    let rejectTouch;
+    const diagnostics = [];
+    const view = mountWorkUsageView({ ...harness, t: mountedTranslator,
+      onDiagnostic: note => diagnostics.push(note),
+      fetchRef: async (_url, init) => {
+        const query = JSON.parse(init.body);
+        if (query.action === "touch") return new Promise((_resolve, reject) => { rejectTouch = reject; });
+        return httpResponse(PROJECT_ROWS_RESPONSE);
+      },
+    });
+    t.after(() => view.destroy());
+    await settleMountedView();
+    const renewal = harness.runTimer(60_000);
+    await settleMountedView();
+    assert.equal(typeof rejectTouch, "function");
+    harness.runTimer(10_000);
+    if (action === "replace") { view.refresh(); await settleMountedView(); }
+    else view.destroy();
+    rejectTouch(Object.assign(new Error("aborted"), { name: "AbortError" }));
+    await renewal;
+    await settleMountedView();
+    assert.equal(diagnostics.length, 0, "superseded lease cannot report against the current lifecycle");
+    const issues = findMounted(harness.root, node => node.classList.contains("work-usage-issue"));
+    assert.ok(issues.every(issue => issue.hidden), "old lease cannot leave a visible failure");
+  });
+});
+
+test("request diagnostics distinguish response-body waits and unavailable clocks", async t => {
+  for (const clock of ["monotonic", "missing", "backwards"]) await t.test(clock, async t => {
+    const harness = mountedLeaseRoot();
+    let now = 500;
+    if (clock !== "missing") harness.windowRef.performance = { now: () => now };
+    const notes = [];
+    const view = mountWorkUsageView({ ...harness, t: mountedTranslator,
+      onDiagnostic: note => notes.push(note),
+      fetchRef: async (_url, init) => ({ ok: true, status: 200, json: () =>
+        new Promise((_resolve, reject) => init.signal.addEventListener("abort", () =>
+          reject(Object.assign(new Error("private body error"), { name: "AbortError" })))) }),
+    });
+    t.after(() => view.destroy());
+    await settleMountedView();
+    now = clock === "backwards" ? 400 : 30_501;
+    harness.runTimer(30_000);
+    await settleMountedView();
+    assert.deepEqual(notes[0].workUsage, { schemaVersion: "work-usage-request-diagnostic-v1",
+      phase: "query", stage: "response_body", elapsedMs: clock === "monotonic" ? 30_001 : null,
+      timeoutMs: 30_000, httpStatus: 200, background: false });
+    assert.doesNotMatch(JSON.stringify(notes), /private body error/);
+  });
+});
+
+test("lease and speculative preload timeouts keep their own budgets and phases", async t => {
+  for (const phase of ["lease", "preload"]) await t.test(phase, async t => {
+    const harness = mountedLeaseRoot();
+    let now = 100;
+    harness.windowRef.performance = { now: () => now };
+    const notes = [];
+    const view = mountWorkUsageView({ ...harness, t: mountedTranslator,
+      onDiagnostic: note => notes.push(note),
+      fetchRef: async (_url, init) => {
+        const query = JSON.parse(init.body);
+        if (query.action === "touch" || query.sourceSnapshotId)
+          return new Promise((_resolve, reject) => init.signal.addEventListener("abort", () =>
+            reject(Object.assign(new Error("abort"), { name: "AbortError" }))));
+        return httpResponse(phase === "preload" ? warmReport("selected", "Synthetic report") : PROJECT_ROWS_RESPONSE);
+      },
+    });
+    t.after(() => view.destroy());
+    await settleMountedView();
+    const pending = harness.runTimer(phase === "lease" ? 60_000 : 250);
+    await settleMountedView();
+    now += 10_003;
+    harness.runTimer(10_000);
+    await pending;
+    await settleMountedView();
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].code, "work_usage_timeout");
+    assert.deepEqual(notes[0].workUsage, { schemaVersion: "work-usage-request-diagnostic-v1",
+      phase, stage: "request", elapsedMs: 10_003, timeoutMs: 10_000,
+      httpStatus: null, background: phase === "preload" });
+  });
+});
+
+test("nested and cancel failures never masquerade as timed foreground queries", async t => {
+  for (const phase of ["nested", "cancel"]) await t.test(phase, async t => {
+    const harness = mountedLeaseRoot();
+    let now = 200;
+    harness.windowRef.performance = { now: () => now };
+    const notes = [];
+    const view = mountWorkUsageView({ ...harness, t: mountedTranslator,
+      onDiagnostic: note => notes.push(note),
+      fetchRef: async (_url, init) => {
+        const query = JSON.parse(init.body);
+        if (query.action === "cancel" || query.grouping === "thread") {
+          now += 23;
+          if (phase === "cancel") return { ok: false, status: 503 };
+          return { ok: true, status: 200, json: async () => ({ privateField: "private payload" }) };
+        }
+        return httpResponse(PROJECT_ROWS_RESPONSE);
+      },
+    });
+    t.after(() => view.destroy());
+    await settleMountedView();
+    if (phase === "nested") findMounted(harness.root, n => n.classList.contains("work-usage-project-toggle"))[0].click();
+    else findMounted(harness.root, n => n.tagName === "BUTTON" && n.textContent === "Cancel")[0].click();
+    await settleMountedView();
+    assert.equal(notes.length, 1);
+    assert.deepEqual(notes[0].workUsage, { schemaVersion: "work-usage-request-diagnostic-v1",
+      phase, stage: "validation", elapsedMs: 23, timeoutMs: null,
+      httpStatus: phase === "cancel" ? 503 : 200, background: false });
+    assert.doesNotMatch(JSON.stringify(notes), /private payload|project-a|snapshotId/);
+  });
+});
 test("report event before preparing response triggers one current-query read", async () => {
   const harness = mountedLeaseRoot(); harness.root.inert = true;
   const first = deferred(); let calls = 0, active = 0, maximum = 0;

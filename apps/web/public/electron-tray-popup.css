@@ -1,718 +1,179 @@
-/*
- * Monochrome tray appearance (owner direction, 2026-10-18). The popup drops
- * every decorative wash and keeps one neutral ink so it matches the
- * white/black/grey dashboard around it. These `--tray-*` roles remain the
- * only place a future personalized theme colour or background would override.
- */
+/* Compact neutral tray surface. Theme colours enter only through these roles. */
 :root {
-  color-scheme: light dark;
-  --tray-paper: #fff;
-  --tray-ink: #000;
-  --tray-muted: #000;
-  --tray-tertiary: #000;
-  --tray-rule: #e6e6e6;
-  --tray-track: #ececec;
-  --tray-accent: #000;
-  --tray-accent-solid: rgba(0, 0, 0, .82);
-  --tray-accent-partial-fill: rgba(0, 0, 0, .22);
-  --tray-accent-partial-border: rgba(0, 0, 0, .8);
-  --tray-accent-hatch: rgba(0, 0, 0, .55);
-  --tray-control-fill: #f2f2f2;
-  --tray-control-fill-selected: #e0e0e0;
-  --tray-gap: 13px;
-  background: var(--tray-paper);
-  color: var(--tray-ink);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-size: 13px;
+  color-scheme:light dark;
+  --tray-paper:#fff;
+  --tray-ink:#151515;
+  --tray-muted:#666;
+  --tray-tertiary:#888;
+  --tray-rule:#ededed;
+  font:12px/1.4 "Segoe UI",system-ui,sans-serif;
+  background:var(--tray-paper);
+  color:var(--tray-ink)
 }
 
 * {
-  box-sizing: border-box;
+  box-sizing:border-box
 }
-
-/* Presentation styles must never make a disclosure row visible again. */
 [hidden] {
-  display: none !important;
+  display:none!important
 }
 
-html,
-body {
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  height: auto;
-  margin: 0;
-  background: var(--tray-paper);
-  color: var(--tray-ink);
-}
-
-body {
-  overflow-x: hidden;
+html,body {
+  width:100%;
+  min-width:0;
+  margin:0;
+  height:auto;
+  min-height:0;
+  background:var(--tray-paper);
+  color:var(--tray-ink)
 }
 
 .electron-tray-popup {
-  width: 100%;
-  min-width: 0;
-  margin: 0;
-  padding: 16px 18px;
+  width:100%;
+  padding:15px 18px 0
+}
+
+header {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  min-height:20px
+}
+
+h1 {
+  font-size:12px;
+  font-weight:650;
+  margin:0
+}
+#tray-popup-freshness {
+  font-size:10px;
+  color:var(--tray-muted);
+  text-align:right;
+  overflow-wrap:anywhere
+}
+
+.tray-allowances {
+  margin-top:13px
+}
+.tray-allowance {
+  display:grid;
+  grid-template-columns:53px 61px 1fr;
+  align-items:center;
+  gap:0;
+  min-height:32px;
+  font-variant-numeric:tabular-nums
+}
+
+.tray-allowance strong {
+  font-size:19px;
+  font-weight:600;
+  letter-spacing:-.5px
+}
+.tray-reset {
+  font-size:11px;
+  color:var(--tray-muted);
+  text-align:right;
+  overflow-wrap:anywhere
+}
+
+#allowance-unavailable {
+  margin:0;
+  min-height:32px;
+  display:flex;
+  align-items:center;
+  color:var(--tray-muted)
+}
+
+.tray-metrics {
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+  gap:18px;
+  border-top:1px solid var(--tray-rule);
+  margin-top:12px;
+  padding-top:13px
+}
+
+h2 {
+  font-size:10px;
+  font-weight:400;
+  color:var(--tray-muted);
+  margin:0;
+  overflow-wrap:anywhere
+}
+.tray-level {
+  display:block;
+  font-size:15px;
+  font-weight:600;
+  margin-top:5px
+}
+
+.tray-rate {
+  font-size:11px;
+  font-variant-numeric:tabular-nums;
+  margin:4px 0 0;
+  overflow-wrap:anywhere
+}
+.tray-unit {
+  font-size:9px;
+  color:var(--tray-muted)
+}
+
+.tray-open {
+  display:block;
+  width:100%;
+  margin-top:20px;
+  min-height:36px;
+  background:transparent;
+  border:0;
+  border-top:1px solid var(--tray-rule);
+  padding:0;
+  text-align:left;
+  font:11px/1.4 "Segoe UI",system-ui,sans-serif;
+  color:var(--tray-tertiary);
+  cursor:pointer
 }
 
-.electron-tray-popup-header,
-.electron-tray-popup-section-heading,
-.electron-tray-popup-history-metrics,
-.electron-tray-popup-history-endpoints,
-.electron-tray-popup-footer-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+.tray-open span {
+  display:inline-block;
+  padding-bottom:3px;
+  background-image:repeating-linear-gradient(to right,currentColor 0 2px,transparent 2px 3px);
+  background-size:100% 1px;
+  background-position:left bottom;
+  background-repeat:no-repeat
 }
 
-.electron-tray-popup-header {
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--tray-rule);
+.tray-open:not(:disabled) span:hover,.tray-open:focus-visible span {
+  color:var(--tray-ink)
 }
 
-.electron-tray-popup-brand {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
+.tray-open:focus-visible {
+  outline:2px solid var(--tray-muted);
+  outline-offset:-2px
 }
-
-.electron-tray-popup-brand img {
-  flex: 0 0 auto;
-  border-radius: 7px;
-}
-
-.electron-tray-popup-brand-copy {
-  min-width: 0;
-}
-
-.electron-tray-popup h1,
-.electron-tray-popup h2,
-.electron-tray-popup p {
-  margin-top: 0;
-}
-
-.electron-tray-popup h1 {
-  margin-bottom: 1px;
-  color: var(--tray-ink);
-  font-size: 14.5px;
-  font-weight: 600;
-  letter-spacing: -.01em;
-  line-height: 1.2;
-}
-
-.electron-tray-popup h2 {
-  margin-bottom: 0;
-  color: var(--tray-accent);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0;
-  line-height: 1.25;
-  text-transform: none;
-}
-
-.electron-tray-popup-freshness,
-.electron-tray-popup-muted {
-  color: var(--tray-muted);
-  font-size: 10.5px;
-  line-height: 1.35;
-}
-
-.electron-tray-popup-freshness {
-  margin-bottom: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.electron-tray-popup-more {
-  display: grid;
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  place-items: center;
-  background: var(--tray-control-fill);
-  color: var(--tray-ink);
-  font: inherit;
-  font-size: 17px;
-  font-weight: 700;
-  line-height: 1;
-  cursor: pointer;
-}
-
-.electron-tray-popup-section {
-  padding: 13px 0;
-  border-bottom: 1px solid var(--tray-rule);
-}
-
-.electron-tray-popup-allowances {
-  display: grid;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.electron-tray-popup-allowance {
-  position: relative;
-  height: 51px;
-}
-
-.electron-tray-popup-allowance-heading {
-  display: flex;
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.electron-tray-popup-allowance-title {
-  min-width: 0;
-  overflow: hidden;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.electron-tray-popup-allowance-value {
-  flex: 0 0 auto;
-  color: var(--tray-accent);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  line-height: 1.25;
-}
-
-.electron-tray-popup-progress {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  overflow: hidden;
-  width: 100%;
-  height: 7px;
-  border-radius: 999px;
-  background: var(--tray-track);
-}
-
-.electron-tray-popup-progress-fill {
-  display: block;
-  min-width: 0;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--tray-accent);
-  transition: width 180ms ease;
-}
-
-.electron-tray-popup-allowance-detail {
-  position: absolute;
-  top: 18px;
-  right: 0;
-  left: 0;
-  margin-bottom: 0;
-}
-
-.electron-tray-popup-notice {
-  margin: 8px 0 0;
-  color: var(--tray-muted);
-  font-size: 10.5px;
-  line-height: 1.35;
-}
-
-/* The pace section runs the dashboard's greyscale urgency ramp: the darker the
-   left rule, the covered fill and the track hatch, the more urgent the
-   standing. The section itself stays on the plain popup paper, and every tone
-   is derived from `--tray-ink`, so one definition serves light and dark. */
-.electron-tray-popup-pace {
-  --pace-color: color-mix(in srgb, var(--tray-ink) 60%, transparent);
-  --pace-hatch: color-mix(in srgb, var(--tray-ink) 14%, transparent);
-  margin-inline: -10px;
-  padding-inline: 10px;
-  border-left: 3px solid var(--pace-color);
-  border-radius: 7px;
-}
-
-.electron-tray-popup-pace[data-pace-tone="on"] {
-  --pace-color: color-mix(in srgb, var(--tray-ink) 45%, transparent);
-}
-
-.electron-tray-popup-pace[data-pace-tone="insufficient"],
-.electron-tray-popup-pace[data-pace-tone="unavailable"] {
-  --pace-color: color-mix(in srgb, var(--tray-ink) 30%, transparent);
-  --pace-hatch: color-mix(in srgb, var(--tray-ink) 10%, transparent);
-}
-
-.electron-tray-popup-pace[data-pace-tone="over"] {
-  --pace-color: color-mix(in srgb, var(--tray-ink) 80%, transparent);
-  --pace-hatch: color-mix(in srgb, var(--tray-ink) 18%, transparent);
-}
-
-.electron-tray-popup-pace[data-pace-tone="critical"] {
-  --pace-color: var(--tray-ink);
-  --pace-hatch: color-mix(in srgb, var(--tray-ink) 22%, transparent);
-}
-
-.electron-tray-popup-pace > h2 { margin-bottom: 7px; }
-
-.electron-tray-popup-pace-heading {
-  display: grid;
-  gap: 3px;
-}
-
-.electron-tray-popup-pace-heading p { margin-bottom: 0; }
-
-#pace-state {
-  color: var(--tray-ink);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1.3;
-}
-
-#pace-headline {
-  color: var(--tray-ink);
-  font-size: 14px;
-  font-weight: 650;
-  line-height: 1.3;
-  overflow-wrap: anywhere;
-}
-
-#pace-explanation {
-  font-size: 10.5px;
-  line-height: 1.4;
-  overflow-wrap: anywhere;
-}
-
-#pace-evidence {
-  color: var(--tray-ink);
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.electron-tray-popup-pace-timeline { margin-top: 10px; }
-
-.electron-tray-popup-pace-timeline-labels,
-.electron-tray-popup-pace-timeline-foot {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  font-size: 9.5px;
-  line-height: 1.3;
-}
-
-.electron-tray-popup-pace-timeline-labels { align-items: end; }
-.electron-tray-popup-pace-timeline-foot { margin-top: 4px; color: var(--tray-muted); }
-.electron-tray-popup-pace-timeline-labels span,
-.electron-tray-popup-pace-timeline-foot span { min-width: 0; overflow-wrap: anywhere; }
-#pace-outlook { position: relative; display: flex; flex-direction: column; align-items: flex-start; color: var(--tray-ink); }
-#pace-outlook-caption { font-weight: 500; }
-#pace-outlook-duration { font-size: 10px; font-weight: 700; }
-#pace-outlook-duration[tabindex] { text-decoration: underline dotted; text-underline-offset: 2px; cursor: help; }
-#pace-outlook-duration:focus-visible { outline: 2px solid var(--pace-color); outline-offset: 2px; }
-#pace-outlook-tooltip {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
-  z-index: 2;
-  visibility: hidden;
-  width: max-content;
-  max-width: min(280px, calc(100vw - 48px));
-  padding: 6px 8px;
-  border-radius: 5px;
-  background: var(--tray-ink);
-  box-shadow: 0 3px 10px rgba(0, 0, 0, .22);
-  color: var(--tray-paper);
-  font-size: 10px;
-  font-weight: 500;
-  line-height: 1.35;
-  opacity: 0;
-  pointer-events: none;
-  white-space: normal;
-}
-#pace-outlook-duration:is(:hover, :focus-visible) + #pace-outlook-tooltip {
-  visibility: visible;
-  opacity: 1;
-}
-.electron-tray-popup-pace-marker-note {
-  margin: 7px 0 0;
-  color: var(--tray-muted);
-  font-size: 10px;
-  line-height: 1.35;
-}
-#pace-reset, #pace-outcome { text-align: right; }
-
-.electron-tray-popup-pace-track {
-  position: relative;
-  overflow: hidden;
-  width: 100%;
-  height: 12px;
-  margin-top: 6px;
-  border-radius: 999px;
-  background-color: var(--tray-paper);
-  background-image: repeating-linear-gradient(135deg, var(--pace-hatch) 0 5px, transparent 5px 10px);
-}
-
-.electron-tray-popup-pace-fill {
-  position: relative;
-  display: block;
-  overflow: hidden;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--pace-color);
-  transition: width 180ms ease;
-}
-
-/* Repeating soft bands show flow without moving the forecast's covered/dry edge. */
-.electron-tray-popup-pace-fill::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-  background: linear-gradient(105deg,
-    transparent 0 22%,
-    rgba(255, 255, 255, .08) 34%,
-    rgba(255, 255, 255, .36) 47%,
-    rgba(255, 255, 255, .1) 60%,
-    transparent 72% 100%);
-  background-size: 88px 100%;
-  animation: electron-tray-pace-flow 1.8s linear infinite;
-  pointer-events: none;
-}
-
-@keyframes electron-tray-pace-flow {
-  to { background-position-x: 88px; }
-}
-
-.electron-tray-popup-pace-active-marker {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--tray-ink);
-  transform: translateX(-1px);
-}
-
-.electron-tray-popup-range {
-  display: inline-flex;
-  flex: 0 0 auto;
-  gap: 0;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: var(--tray-control-fill);
-}
-
-.electron-tray-popup-range button {
-  width: 52px;
-  min-width: 52px;
-  min-height: 20px;
-  padding: 2px 5px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--tray-ink);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 400;
-  cursor: pointer;
-}
-
-.electron-tray-popup-range button.is-selected,
-.electron-tray-popup-range button:hover:not(:disabled) {
-  background: var(--tray-control-fill-selected);
-  color: var(--tray-ink);
-}
-
-.electron-tray-popup-range button:disabled {
-  cursor: default;
-  opacity: .55;
-}
-
-.electron-tray-popup-history-retained {
-  margin: 7px 0 0;
-}
-
-.electron-tray-popup-history-period {
-  margin: 8px 0 2px;
-  color: var(--tray-muted);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1.3;
-}
-
-.electron-tray-popup-history-metrics {
-  align-items: baseline;
-}
-
-.electron-tray-popup-history-metrics strong {
-  min-width: 0;
-  color: var(--tray-ink);
-  font-size: 20px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-  letter-spacing: -.02em;
-  line-height: 1.15;
-}
-
-.electron-tray-popup-history-metrics span {
-  max-width: 52%;
-  color: var(--tray-muted);
-  font-size: 10.5px;
-  line-height: 1.25;
-  text-align: right;
-}
-
-.electron-tray-popup-history-price {
-  margin: 4px 0 0;
-  color: var(--tray-muted);
-  font-size: 10.5px;
-  line-height: 1.35;
-}
-
-.electron-tray-popup-history-bars {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  align-items: end;
-  gap: 7px;
-  height: 82px;
-  margin-top: 4px;
-  padding: 0;
-  border-bottom: 1px solid var(--tray-rule);
-}
-
-.electron-tray-popup-history-bar {
-  display: flex;
-  align-items: end;
-  justify-content: center;
-  min-width: 0;
-  height: 77px;
-  overflow: hidden;
-  border-radius: 3px 3px 1px 1px;
-  background: transparent;
-  cursor: help;
-}
-
-.electron-tray-popup-history-bar:focus-visible {
-  outline: 2px solid var(--tray-accent);
-  outline-offset: 2px;
-}
-
-.electron-tray-popup-history-fill {
-  display: block;
-  width: 100%;
-  min-height: 2px;
-  border-radius: 3px 3px 1px 1px;
-  background: var(--tray-accent-solid);
-}
-
-.electron-tray-popup-history-bar.evidence-partial {
-  background: transparent;
-}
-
-.electron-tray-popup-history-bar.evidence-partial .electron-tray-popup-history-fill {
-  border: 1px solid var(--tray-accent-partial-border);
-  background-color: var(--tray-accent-partial-fill);
-  background-image: repeating-linear-gradient(
-    135deg,
-    transparent 0 4px,
-    var(--tray-accent-hatch) 4px 5px
-  );
-}
-
-.electron-tray-popup-history-bar.evidence-unavailable {
-  background: transparent;
-}
-
-.electron-tray-popup-history-bar.evidence-unavailable .electron-tray-popup-history-fill {
-  display: none;
-}
-
-.electron-tray-popup-history-bars[data-range="30d"] {
-  grid-template-columns: repeat(30, minmax(0, 1fr));
-  gap: 3px;
-}
-
-.electron-tray-popup-history-detail {
-  height: 2.7em;
-  overflow-y: auto;
-  margin: 3px 0 0;
-  color: var(--tray-muted);
-  font-size: 10.5px;
-  line-height: 1.35;
-}
-
-.electron-tray-popup-history-endpoints {
-  /* Native chart geometry is an 82pt plot plus a 3pt gap and 19pt date axis. */
-  min-height: 19px;
-  margin-top: 3px;
-  color: var(--tray-tertiary);
-  font-size: 9.5px;
-  line-height: 19px;
-}
-
-#history-coverage {
-  margin: 4px 0 0;
-}
-
-.electron-tray-popup-history-unavailable {
-  margin-top: 8px;
-}
-
-.electron-tray-popup-history-unavailable p {
-  margin-bottom: 3px;
-}
-
-.electron-tray-popup-history-unavailable p:first-child {
-  color: var(--tray-ink);
-  font-size: 12px;
-  font-weight: 650;
-}
-
-.electron-tray-popup-history-unavailable p:last-child {
-  margin-bottom: 0;
-}
-
-.electron-tray-popup-footer {
-  display: grid;
-  gap: 8px;
-  padding-top: 13px;
-}
-
-.electron-tray-popup-footer-actions {
-  gap: 8px;
-}
-
-.electron-tray-popup-footer button.electron-tray-popup-customize {
-  flex: 0 0 28px;
-  width: 28px;
-  padding: 2px;
-  font-size: 18px;
-  line-height: 1;
-}
-
-.electron-tray-popup-footer button,
-#cache-section button {
-  min-height: 24px;
-  padding: 3px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: var(--tray-control-fill);
-  color: var(--tray-ink);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 400;
-  cursor: pointer;
-}
-
-.electron-tray-popup-footer button.electron-tray-popup-primary {
-  background: var(--tray-control-fill);
-  color: var(--tray-ink);
-}
-
-.electron-tray-popup-footer button:hover:not(:disabled),
-#cache-section button:hover:not(:disabled),
-.electron-tray-popup-more:hover:not(:disabled) {
-  filter: brightness(.96);
-}
-
-.electron-tray-popup-footer button:disabled,
-#cache-section button:disabled,
-.electron-tray-popup-more:disabled {
-  cursor: default;
-  opacity: .5;
-}
-
-button:focus-visible {
-  outline: 2px solid var(--tray-accent);
-  outline-offset: 2px;
+.tray-open:disabled {
+  cursor:default
 }
 
 .sr-only {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  padding: 0;
-  margin: -1px;
-  overflow: hidden;
-  clip: rect(0, 0, 0, 0);
-  white-space: nowrap;
-  border: 0;
+  position:absolute;
+  width:1px;
+  height:1px;
+  padding:0;
+  margin:-1px;
+  overflow:hidden;
+  clip:rect(0,0,0,0);
+  white-space:nowrap;
+  border:0
 }
 
-@media (max-width: 330px) {
-  .electron-tray-popup {
-    padding-right: 12px;
-    padding-left: 12px;
-  }
-
-  .electron-tray-popup-history-metrics {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .electron-tray-popup-history-metrics span {
-    max-width: none;
-    text-align: left;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .electron-tray-popup-progress-fill,
-  .electron-tray-popup-pace-fill {
-    transition: none;
-  }
-
-  .electron-tray-popup-pace-fill::after {
-    animation: none;
-    content: none;
-  }
-}
-
-@media (prefers-contrast: more) {
+@media(prefers-color-scheme:dark) {
   :root {
-    --tray-rule: currentColor;
-    --tray-track: currentColor;
-  }
+  --tray-paper:#161616;
+  --tray-ink:#f2f2f2;
+  --tray-muted:#aaa;
+  --tray-tertiary:#999;
+  --tray-rule:#333
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --tray-paper: #161616;
-    --tray-ink: #f2f2f2;
-    --tray-muted: #f2f2f2;
-    --tray-tertiary: #f2f2f2;
-    --tray-rule: rgba(255, 255, 255, .22);
-    --tray-track: #3a3a3a;
-    --tray-accent: #f2f2f2;
-    --tray-accent-solid: rgba(242, 242, 242, .82);
-    --tray-accent-partial-fill: rgba(242, 242, 242, .22);
-    --tray-accent-partial-border: rgba(242, 242, 242, .8);
-    --tray-accent-hatch: rgba(242, 242, 242, .55);
-    --tray-control-fill: #262626;
-    --tray-control-fill-selected: #3a3a3a;
-  }
-
-  .electron-tray-popup-footer button.electron-tray-popup-primary {
-    color: var(--tray-ink);
-  }
 }
-
-.electron-tray-popup-sections { display: flex; flex-direction: column; }
-.electron-tray-popup[data-density="compact"] { padding: 10px 14px; }
-.electron-tray-popup[data-density="compact"] .electron-tray-popup-section { padding-block: 8px; margin-block: 4px; }
-/* Compact hides optional reset detail. */
-.electron-tray-popup[data-density="compact"] .electron-tray-popup-allowance-detail { display: none; }
-.electron-tray-popup[data-density="compact"] .electron-tray-popup-allowance { height: 30px; }
-.electron-tray-popup-allowance.is-low .electron-tray-popup-allowance-value { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
-#cache-section button, [data-action="customize"] { color: var(--tray-accent); }
-
-#tray-popup-operation-error:empty { display: none; }

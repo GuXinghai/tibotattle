@@ -710,14 +710,16 @@ export function createDomHelpers(documentRef) {
 }
 
 // Shared accounting-table formats: fixed precision and honest endpoint bounds.
-export function formatApiMoney(value) {
+export function formatApiMoney(value, { trailingSymbol = false } = {}) {
   // Decimal accounting strings stay exact through Intl display rounding.
   const number = numericValue(value);
   if (number === null) return UNKNOWN_DISPLAY_VALUE;
+  const display = amount => trailingSymbol
+    ? `${formatDecimal(amount, 2)}$` : formatMoney(amount, 2);
   if (number > 0 && number < .01) {
-    return `<${formatMoney(.01, 2)}`;
+    return `<${display(.01)}`;
   }
-  return formatMoney(value, 2);
+  return display(value);
 }
 
 /**

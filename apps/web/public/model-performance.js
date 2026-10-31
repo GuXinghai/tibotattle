@@ -185,6 +185,7 @@ export function mountModelPerformance(options = {}) {
   let period = STANDALONE_PERIODS.includes(saved.period) ? saved.period : "all";
   let reportingWindow = sharedReporting ? normalizeReportingWindow(options.reportingWindow) : null;
   let modelId = Object.hasOwn(MODEL_NAMES, saved.model) ? saved.model : null;
+  let preferredModelId = modelId;
   let speedMode = SPEED_MODES.includes(saved.speedMode) ? saved.speedMode : "standard";
   let diagnostics = [], sourceDiagnostics = [], failureCode = null, pendingAttempts = 0;
   let sourceRetryKey = null, sourceRetryAttempts = 0, retrying = false, retryExhausted = false;
@@ -260,7 +261,7 @@ export function mountModelPerformance(options = {}) {
   const visible = () => !root.classList.contains("dashboard-page-inactive") && !documentRef.hidden;
   const remember = () => {
     try {
-      const preference = sharedReporting ? { model: modelId, speedMode } : { period, model: modelId, speedMode };
+      const preference = sharedReporting ? { model: preferredModelId, speedMode } : { period, model: preferredModelId, speedMode };
       windowRef.localStorage.setItem(storageKey, JSON.stringify(preference));
     } catch { /* Nonessential preference. */ }
   };
@@ -570,15 +571,18 @@ export function mountModelPerformance(options = {}) {
       title.id = 'performance-title'; title.tabIndex = -1; title.dataset.performanceFocus = 'heading'; heading.append(title, periods); append(heading);
     }
     const models = payload?.models ? [...payload.models].sort((a,b) => MODEL_ORDER.indexOf(a.id) - MODEL_ORDER.indexOf(b.id)) : [];
-    if (models.length && !models.some(model => model.id === modelId)) {
-      if (modelId) closeDetails(); modelId = models[0].id; selectedInterval = null;
+    // An unavailable model can fall back for this report without replacing the
+    // user's preference. Restore it when its measurements become available.
+    const displayModelId = models.some(model => model.id === preferredModelId) ? preferredModelId : models[0]?.id;
+    if (displayModelId && displayModelId !== modelId) {
+      if (modelId) closeDetails(); modelId = displayModelId; selectedInterval = null;
     }
     const toolbar = element('div', 'performance-toolbar');
     const select = element('select', 'performance-model-select'); select.setAttribute('aria-label', translate('models')); select.dataset.performanceFocus = 'model-select';
     if (!models.length) { const option = element('option', '', translate('models')); option.value = ''; select.append(option); select.disabled = true; }
     for (const model of models) { const option = element('option', '', formatModelName(model.id)); option.value = model.id; select.append(option); }
     select.value = models.length ? modelId : '';
-    select.addEventListener('change', () => { closeDetails(); selectedInterval = null; modelId = select.value; remember(); render(); });
+    select.addEventListener('change', () => { closeDetails(); selectedInterval = null; modelId = preferredModelId = select.value; remember(); render(); });
     const modes = element('div', 'segmented-control performance-modes'); modes.setAttribute('role', 'group'); modes.setAttribute('aria-label', translate('mode'));
     for (const value of SPEED_MODES) {
       const b = button(translate(value), `mode-${value}`, () => {

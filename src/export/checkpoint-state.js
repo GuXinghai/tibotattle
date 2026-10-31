@@ -150,7 +150,7 @@ function normalizePendingTools(value) {
   if (!hasExactlyKeys(value, TOOL_FIELDS)) invalid();
   const normalized = {};
   for (const field of TOOL_FIELDS) {
-    // Match the telemetry schema bound; a larger count is not useful metadata.
+    // Match the local export schema bound; a larger count is not useful metadata.
     if (!nonNegativeInteger(value[field], 1_000_000)) invalid();
     normalized[field] = value[field];
   }

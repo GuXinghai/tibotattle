@@ -42,7 +42,6 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
   const controls = node("div", undefined, "settings-tray-grid");
   const selections = new Map();
   const selectionFields = new Map();
-  const checkboxes = new Map();
   function select(parent, key) {
     const label = node("label", undefined, "settings-field");
     label.append(node("span", t(key)));
@@ -63,46 +62,12 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
       void save(next);
     });
   }
-  function check(parent, key, labelKey = key) {
-    const label = node("label", undefined, "settings-tray-checkbox");
-    const input = node("input");
-    input.type = "checkbox";
-    label.append(input, node("span", t(labelKey)));
-    parent.append(label);
-    checkboxes.set(key, input);
-    listen(input, "change", () => void save({ ...current, [key]: input.checked }));
-  }
   const bar = node("fieldset", undefined, "settings-card settings-tray-group");
   bar.append(node("legend", t("iconAndTooltip")));
-  for (const key of ["iconMode", "meterWindow"]) select(bar, key);
-  check(bar, "emphasizeLow");
   for (const key of ["preset", "barMetric", "resetFormat"]) select(bar, key);
   const capabilityNotice = node("p", "", "settings-tray-note");
   bar.append(capabilityNotice);
-  const popup = node("fieldset", undefined, "settings-card settings-tray-group");
-  popup.append(node("legend", t("panelContent")));
-  const sections = node("div", undefined, "settings-tray-sections");
-  popup.append(sections);
-  select(popup, "historyRange");
-  const totals = node("fieldset", undefined, "settings-tray-totals");
-  totals.append(node("legend", t("metrics")));
-  for (const metric of TRAY_OPTIONS.metrics) {
-    const label = node("label", undefined, "settings-tray-checkbox");
-    const input = node("input");
-    input.type = "checkbox";
-    input.dataset.trayMetric = metric;
-    label.append(input, node("span", t(`option.${metric}`)));
-    totals.append(label);
-    checkboxes.set(`metric.${metric}`, input);
-    listen(input, "change", () => void save({ ...current, metrics: input.checked
-      ? [...current.metrics, metric] : current.metrics.filter((value) => value !== metric) }));
-  }
-  popup.append(totals, node("p", t("usageRule"), "settings-tray-note"));
-  const appearance = node("fieldset", undefined, "settings-card settings-tray-group");
-  appearance.append(node("legend", t("panelAppearance")));
-  select(appearance, "density");
-  check(appearance, "showChart");
-  controls.append(bar, popup, appearance);
+  controls.append(bar);
   const preview = node("section", undefined, "settings-card settings-tray-preview");
   preview.setAttribute("aria-label", t("preview"));
   preview.append(node("h3", t("preview")), node("p", t("example"), "settings-tray-note"));
@@ -116,8 +81,7 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
   }
   stateLabel.append(stateSelect);
   const previewBar = node("div", undefined, "settings-tray-preview-bar");
-  const previewPopup = node("div", undefined, "settings-tray-preview-popup");
-  preview.append(stateLabel, previewBar, previewPopup);
+  preview.append(stateLabel, previewBar);
   listen(stateSelect, "change", () => { exampleState = stateSelect.value; renderPreview(); });
   const actions = node("div", undefined, "settings-tray-actions");
   const undo = node("button", t("undo"), "button");
@@ -150,23 +114,7 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
     bird.alt = "";
     bird.width = bird.height = 22;
     icon.append(bird);
-    if (current.iconMode !== "app") {
-      const meters = node("span", undefined, "settings-tray-preview-meters");
-      const meterWindow = ["five-hour", "weekly"].includes(current.preset) ? current.preset : current.meterWindow;
-      for (const kind of current.iconMode === "dual-meter" ? ["five-hour", "weekly"] : [meterWindow]) {
-        const amount = kind === "five-hour" ? value : week;
-        const track = node("span", undefined, "settings-tray-preview-meter");
-        track.setAttribute("aria-label", `${t(`option.${kind}`)}: ${amount}`);
-        const fill = node("span");
-        fill.style.width = amount === "—" ? "0%" : amount;
-        track.classList.toggle("is-unknown", amount === "—");
-        track.classList.toggle("is-low", current.emphasizeLow && amount !== "—" && Number.parseInt(amount, 10) <= 10);
-        track.append(fill);
-        meters.append(track);
-      }
-      icon.append(meters);
-    }
-    icon.setAttribute("aria-label", t(`option.${current.iconMode}`));
+    icon.setAttribute("aria-label", t("option.app"));
     previewBar.replaceChildren(icon);
     const windows = current.preset === "both" ? [["5h", value], ["7d", week]]
       : current.preset === "icon-only" ? [] : [[current.preset === "five-hour" ? "5h" : "7d", current.preset === "five-hour" ? value : week]];
@@ -176,31 +124,10 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
       const metric = current.barMetric === "remaining" || current.preset === "both" ? `${label} ${amount}`
         : `${label} ${current.barMetric === "remaining-reset" ? `${amount} · ` : ""}${missing || stale || amount === "—" ? "—" : reset}`;
       const text = node("span", metric);
-      text.classList.toggle("is-low", current.emphasizeLow && amount !== "—" && Number.parseInt(amount, 10) <= 10);
       if (capabilities.title !== false) previewBar.append(text);
     }
-    previewPopup.dataset.density = current.density;
-    previewPopup.replaceChildren(node("strong", "Rhetrion"), node("p", t(`state.${exampleState}`), "settings-tray-note"));
-    for (const section of current.sections) {
-      const card = node("section");
-      card.append(node("h4", t(`option.${section}`)));
-      if (section === "allowances") card.append(node("p", `5h ${value} · 7d ${week}`), node("p", missing || stale ? t(`state.${exampleState}`) : reset));
-      if (section === "pace") card.append(node("p", t(missing || stale ? "state.offline" : "examplePace")));
-      if (section === "usage") {
-        card.append(node("p", t(`option.${current.historyRange}`)));
-        for (const item of current.metrics) card.append(node("p", `${t(`option.${item}`)}: ${missing ? "—" : item === "cost" ? "$12.40" : item === "tokens" ? "1.2M" : "86"}`));
-        if (current.showChart) {
-          const chart = node("div", missing ? "—" : "▂ ▄ ▃ ▆ ▂ ▅ ▇", "settings-tray-example-chart");
-          chart.setAttribute("aria-label", t("exampleChart"));
-          card.append(chart);
-        }
-        if (exampleState === "partial") card.append(node("p", t("partialPricing")));
-      }
-      if (section === "cache") card.append(node("p", missing ? "—" : t("exampleCache")));
-      previewPopup.append(card);
-    }
-    previewPopup.append(node("p", t("alwaysAvailable"), "settings-tray-note"));
   }
+
   function render() {
     const locked = busy || !available || status !== "current";
     for (const [key, input] of selections) {
@@ -212,43 +139,7 @@ export function createTraySettingsController({ documentRef, bridge, localizer } 
         caption.textContent = t(labelKey);
         caption.setAttribute("data-i18n", `electron.trayCustomization.${labelKey}`);
       }
-      input.disabled = locked || (key === "barMetric" && (current.preset === "both" || current.preset === "icon-only"))
-        || (key === "meterWindow" && (current.iconMode !== "meter" || ["weekly", "five-hour"].includes(current.preset)));
-    }
-    for (const [key, input] of checkboxes) {
-      input.checked = key.startsWith("metric.") ? current.metrics.includes(key.slice(7)) : current[key];
-      input.disabled = locked;
-    }
-    sections.replaceChildren();
-    const ordered = [...current.sections, ...TRAY_OPTIONS.sections.filter((item) => !current.sections.includes(item))];
-    for (const section of ordered) {
-      const row = node("div", undefined, "settings-tray-section-row");
-      const label = node("label", undefined, "settings-tray-checkbox");
-      const input = node("input");
-      input.type = "checkbox";
-      input.checked = current.sections.includes(section);
-      input.disabled = locked;
-      input.dataset.traySection = section;
-      input.id = `tray-section-${section}`;
-      input.addEventListener("change", () => void save({ ...current, sections: input.checked
-        ? [...current.sections, section] : current.sections.filter((item) => item !== section) }));
-      label.append(input, node("span", t(`option.${section}`)));
-      row.append(label);
-      for (const [direction, offset] of [["up", -1], ["down", 1]]) {
-        const button = node("button", direction === "up" ? "↑" : "↓", "button");
-        button.type = "button";
-        button.dataset.trayMove = `${section}-${direction}`;
-        button.setAttribute("aria-label", t(direction, { section: t(`option.${section}`) }));
-        const index = current.sections.indexOf(section);
-        button.disabled = locked || index < 0 || index + offset < 0 || index + offset >= current.sections.length;
-        button.addEventListener("click", () => {
-          const next = [...current.sections];
-          [next[index], next[index + offset]] = [next[index + offset], next[index]];
-          void save({ ...current, sections: next }, { focusMove: `${section}-${direction}` });
-        });
-        row.append(button);
-      }
-      sections.append(row);
+      input.disabled = locked || (key === "barMetric" && (current.preset === "both" || current.preset === "icon-only"));
     }
     undo.disabled = locked || previous === null;
     // Unknown or unreadable files remain owned by the compatible host version.

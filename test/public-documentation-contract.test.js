@@ -79,10 +79,15 @@ test("recovery guidance preserves original state and separates evidence gates", 
     text("SUPPORT.md"), text("docs/current-status.md"), text("SECURITY.md"),
   ]);
   assert.match(support, /Do not delete the only database, wipe AppData, downgrade a schema/u);
-  assert.match(status, /Real application data has not been moved or converted/u);
-  assert.match(status, /usage-only cutover/u);
-  assert.match(status, /timing conversion, semantic continuity checks/u);
-  assert.match(status, /not a usage-cutover gate/u);
+  assert.match(status, /owner-authorized one-time conversion of the active stable\s+usage state was activated after cold backup, copy conversion and readback/u);
+  assert.match(status, /Do not\s+repeat the migration against accumulated new history, replay the old brand activation or alter\s+its existing startup policy implicitly/u);
+  assert.match(status, /original usage directory, complete cold backup, previous program\s+and private operation receipts are retained/u);
+  assert.match(status, /X, background and generic Chromium\s+state remain outside this upgrade/u);
+  assert.match(status, /Native synthetic\s+tests cover its source preservation, exact known DDL/u);
+  assert.match(status, /Passing a source gate never proves physical Windows, packaged, installed,\s+signed-release, updater or public deployment behavior/u);
+  assert.match(status, /\[usage-only scope\]\(\.\/decisions\/2026-10-25-usage-only-state-cutover\.md\)/u);
+  assert.match(status, /copy-only conversion, semantic continuity/u);
+  assert.match(status, /Operational readback is\s+not a real-data test, and no installed, signed-release or publication gate is\s+claimed/u);
   assert.match(status, /Unexpected credential prompts remain a release blocker/u);
   assert.match(security, /never.*|Never wipe/u);
   assert.match(security, /Source tests, sidecar hashes, staging and\s+unsigned local candidates cannot substitute/u);

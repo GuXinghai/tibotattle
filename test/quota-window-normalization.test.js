@@ -90,6 +90,8 @@ test("provider plan normalization is bounded and never infers a Pro multiplier",
   assert.equal(normalizeProviderPlanType("pro"), "pro");
   assert.equal(normalizeProviderPlanType("edu_plus"), "edu_plus");
   assert.equal(normalizeProviderPlanType("edu_pro"), "edu_pro");
+  assert.equal(normalizeProviderPlanType(" SCI "), "sci");
+  assert.equal(normalizeProviderPlanType("sci_plus"), "sci_plus");
   assert.equal(normalizeProviderPlanType("pro-20x"), "unknown");
   assert.equal(normalizeProviderPlanType("provider-private-plan"), "unknown");
   assert.equal(normalizeProviderPlanType(null), "unknown");

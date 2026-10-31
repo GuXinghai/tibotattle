@@ -86,7 +86,7 @@
   :is(.dashboard-shell, .electron-settings-page) select option:checked { font-weight: 600; text-decoration: underline; text-underline-offset: 4px; }
   :is(.dashboard-shell, .electron-settings-page) select:disabled { cursor: default; }
 }
-html[data-window-background] body:not(.community-site):not(.admin-operator-page) {
+html[data-window-background] body {
   isolation: isolate;
   --paper: transparent; --paper-2: transparent; --white: transparent;
   --surface: transparent; --surface-raised: transparent; --surface-quiet: transparent; --surface-sunken: transparent;
@@ -162,7 +162,7 @@ html[data-window-background] #allowance-screen { --paper: transparent; --surface
   html[data-window-background] body :is(dialog, .info-popover, .performance-tooltip, .refresh-notice-content, [popover], .work-usage-dialog-header, .model-performance-dialog-header)::before,
   html[data-window-background] :is(.dashboard-shell, .electron-settings-page) select::picker(select)::before { content: none; }
   html[data-window-background] :is(.dashboard-shell, .electron-settings-page) select::picker(select) { background: Canvas; color: CanvasText; }
-  html[data-window-background] body:not(.community-site):not(.admin-operator-page) {
+  html[data-window-background] body {
     color: CanvasText; background: Canvas; --ink: CanvasText; --muted: CanvasText; --neutral-ink: CanvasText; --neutral-muted: CanvasText;
   }
 }

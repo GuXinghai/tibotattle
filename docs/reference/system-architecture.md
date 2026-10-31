@@ -18,6 +18,14 @@ feature under the [provider-scope decision](../decisions/2026-10-27-codex-only-p
 
 ## Composition and ownership
 
+`packages/codex-catalog` owns the local reviewed Codex plan and model vocabulary
+through its public root entrypoint. Provider normalization, local analysis and
+the generated dashboard catalog consume it independently of telemetry schemas.
+Plan labels establish identity only; observed quota evidence and accounting
+retain their existing owners. Local export v1 has a separate closed contract; retired telemetry and contribution
+readers, generators and upload surfaces have been removed. File-transaction
+recovery and frozen release evidence retain their own bounded historical readers.
+
 ```mermaid
 flowchart LR
   Shell[Electron lifecycle and IPC] --> Companion[Loopback companion]

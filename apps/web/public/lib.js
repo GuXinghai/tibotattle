@@ -1,211 +1,4 @@
-export {
-  ACCOUNT_SCOPED_TELEMETRY_CONSENT_VERSION,
-  ACCOUNT_SCOPED_TELEMETRY_SCHEMA_VERSION,
-  MAX_TELEMETRY_BROWSER_BYTES,
-  TELEMETRY_ENVELOPE_SCHEMA_VERSION,
-  TELEMETRY_SCHEMA_VERSION,
-  validateAccountScopedTelemetryContribution,
-  validateContributionForUpload,
-  validateTelemetryContribution,
-} from "./telemetry-shared.generated.js";
-export {
-  ENVELOPE_SCHEMA_VERSION,
-  SYNTHETIC_SCHEMA_VERSION,
-  buildSyntheticFixture,
-  bytesToBase64Url,
-  createSyntheticEnvelope,
-  createTelemetryEnvelope,
-  validateSyntheticFixture,
-} from "./telemetry-envelope.js";
-
 import { compact } from "./ui-format.js";
-
-const JSON_WHITESPACE = new Set([" ", "\t", "\n", "\r"]);
-const JSON_SIMPLE_ESCAPES = Object.freeze({
-  '"': '"',
-  "\\": "\\",
-  "/": "/",
-  b: "\b",
-  f: "\f",
-  n: "\n",
-  r: "\r",
-  t: "\t",
-});
-
-function duplicateJsonObjectKeyError() {
-  const error = new SyntaxError(
-    "Duplicate JSON object keys are not accepted.",
-  );
-  error.code = "duplicate_json_object_key";
-  return error;
-}
-
-/**
- * Parse JSON only after verifying that every object has unique member names.
- *
- * Native JSON.parse keeps the last occurrence of a duplicate member, which can
- * hide an earlier privacy-forbidden value before the closed-schema validator
- * sees it. This small recursive-descent preflight intentionally retains no
- * values beyond the current object's member-name set. Error messages never
- * include a key, value, or source excerpt.
- */
-export function parseJsonWithUniqueObjectKeys(serialized) {
-  if (typeof serialized !== "string") {
-    throw new TypeError("JSON input must be a string.");
-  }
-
-  let cursor = 0;
-
-  const invalidJson = () => {
-    throw new SyntaxError("Invalid JSON.");
-  };
-
-  const skipWhitespace = () => {
-    while (JSON_WHITESPACE.has(serialized[cursor])) cursor += 1;
-  };
-
-  const parseString = (decode = true) => {
-    if (serialized[cursor] !== '"') invalidJson();
-    cursor += 1;
-    let decoded = "";
-    while (cursor < serialized.length) {
-      const character = serialized[cursor];
-      cursor += 1;
-      if (character === '"') return decoded;
-      if (character === "\\") {
-        if (cursor >= serialized.length) invalidJson();
-        const escape = serialized[cursor];
-        cursor += 1;
-        if (escape === "u") {
-          const codeUnit = serialized.slice(cursor, cursor + 4);
-          if (!/^[0-9a-f]{4}$/iu.test(codeUnit)) invalidJson();
-          if (decode) {
-            decoded += String.fromCharCode(Number.parseInt(codeUnit, 16));
-          }
-          cursor += 4;
-        } else if (Object.hasOwn(JSON_SIMPLE_ESCAPES, escape)) {
-          if (decode) decoded += JSON_SIMPLE_ESCAPES[escape];
-        } else {
-          invalidJson();
-        }
-        continue;
-      }
-      if (character.codePointAt(0) < 0x20) invalidJson();
-      if (decode) decoded += character;
-    }
-    invalidJson();
-  };
-
-  const parseLiteral = (literal) => {
-    if (serialized.slice(cursor, cursor + literal.length) !== literal) {
-      invalidJson();
-    }
-    cursor += literal.length;
-  };
-
-  const parseNumber = () => {
-    if (serialized[cursor] === "-") cursor += 1;
-    if (serialized[cursor] === "0") {
-      cursor += 1;
-    } else if (/[1-9]/u.test(serialized[cursor] ?? "")) {
-      cursor += 1;
-      while (/\d/u.test(serialized[cursor] ?? "")) cursor += 1;
-    } else {
-      invalidJson();
-    }
-    if (serialized[cursor] === ".") {
-      cursor += 1;
-      if (!/\d/u.test(serialized[cursor] ?? "")) invalidJson();
-      while (/\d/u.test(serialized[cursor] ?? "")) cursor += 1;
-    }
-    if (serialized[cursor] === "e" || serialized[cursor] === "E") {
-      cursor += 1;
-      if (serialized[cursor] === "+" || serialized[cursor] === "-") {
-        cursor += 1;
-      }
-      if (!/\d/u.test(serialized[cursor] ?? "")) invalidJson();
-      while (/\d/u.test(serialized[cursor] ?? "")) cursor += 1;
-    }
-  };
-
-  let parseValue;
-
-  const parseArray = () => {
-    cursor += 1;
-    skipWhitespace();
-    if (serialized[cursor] === "]") {
-      cursor += 1;
-      return;
-    }
-    while (cursor < serialized.length) {
-      parseValue();
-      skipWhitespace();
-      if (serialized[cursor] === "]") {
-        cursor += 1;
-        return;
-      }
-      if (serialized[cursor] !== ",") invalidJson();
-      cursor += 1;
-      skipWhitespace();
-    }
-    invalidJson();
-  };
-
-  const parseObject = () => {
-    cursor += 1;
-    skipWhitespace();
-    const memberNames = new Set();
-    if (serialized[cursor] === "}") {
-      cursor += 1;
-      return;
-    }
-    while (cursor < serialized.length) {
-      const memberName = parseString();
-      if (memberNames.has(memberName)) {
-        throw duplicateJsonObjectKeyError();
-      }
-      memberNames.add(memberName);
-      skipWhitespace();
-      if (serialized[cursor] !== ":") invalidJson();
-      cursor += 1;
-      parseValue();
-      skipWhitespace();
-      if (serialized[cursor] === "}") {
-        cursor += 1;
-        return;
-      }
-      if (serialized[cursor] !== ",") invalidJson();
-      cursor += 1;
-      skipWhitespace();
-    }
-    invalidJson();
-  };
-
-  parseValue = () => {
-    skipWhitespace();
-    const character = serialized[cursor];
-    if (character === "{") {
-      parseObject();
-    } else if (character === "[") {
-      parseArray();
-    } else if (character === '"') {
-      parseString(false);
-    } else if (character === "t") {
-      parseLiteral("true");
-    } else if (character === "f") {
-      parseLiteral("false");
-    } else if (character === "n") {
-      parseLiteral("null");
-    } else {
-      parseNumber();
-    }
-  };
-
-  parseValue();
-  skipWhitespace();
-  if (cursor !== serialized.length) invalidJson();
-  return JSON.parse(serialized);
-}
 
 export function createQuotaTimelineLookup(rows) {
   if (!Array.isArray(rows)) {
@@ -260,54 +53,6 @@ export function createQuotaTimelineLookup(rows) {
       }
       return lower === entries.length ? null : entries[lower];
     }
-  });
-}
-
-export function contributionBatchAdmission({
-  estimatedBatches,
-  participantAdmission = null,
-  localReviewLimit = 100,
-} = {}) {
-  if (!Number.isSafeInteger(estimatedBatches)
-      || estimatedBatches < 0
-      || !Number.isSafeInteger(localReviewLimit)
-      || localReviewLimit < 1) {
-    throw new TypeError("Contribution batch admission inputs are invalid.");
-  }
-  const admissionKnown =
-    ["available", "exhausted"].includes(participantAdmission?.state)
-    && Number.isSafeInteger(participantAdmission?.remainingBatches)
-    && participantAdmission.remainingBatches >= 0
-    && Number.isSafeInteger(participantAdmission?.maximumBatches)
-    && participantAdmission.maximumBatches > 0
-    && participantAdmission.remainingBatches
-      <= participantAdmission.maximumBatches
-    && participantAdmission.state === (
-      participantAdmission.remainingBatches > 0 ? "available" : "exhausted"
-    );
-  const remainingBatches = admissionKnown
-    ? participantAdmission.remainingBatches
-    : null;
-  const exceedsLocalReviewLimit = estimatedBatches > localReviewLimit;
-  const exceedsParticipantAdmission = admissionKnown
-    && estimatedBatches > remainingBatches;
-  return Object.freeze({
-    admissionKnown,
-    remainingBatches,
-    maximumBatches: admissionKnown
-      ? participantAdmission.maximumBatches
-      : null,
-    renewsAt: admissionKnown
-        && typeof participantAdmission.renewsAt === "string"
-      ? participantAdmission.renewsAt
-      : "",
-    localReviewLimit,
-    effectiveBatchLimit: admissionKnown
-      ? Math.min(localReviewLimit, remainingBatches)
-      : localReviewLimit,
-    exceedsLocalReviewLimit,
-    exceedsParticipantAdmission,
-    blocked: exceedsLocalReviewLimit || exceedsParticipantAdmission,
   });
 }
 
@@ -533,23 +278,6 @@ export function formatTokenTotal(usage) {
   return compact(total);
 }
 
-export function safeFilename(participantId) {
-  const suffix = typeof participantId === "string"
-    ? participantId.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 32)
-    : "participant";
-  return `usage-monitor-${suffix || "participant"}-export.json`;
-}
-
-export function safeApiError(payload, fallback) {
-  const candidate = typeof payload?.error === "string"
-    ? payload.error
-    : payload?.error?.code;
-  if (typeof candidate === "string" && /^[A-Za-z0-9_.:-]{1,80}$/.test(candidate)) {
-    return candidate.replace(/_/g, " ");
-  }
-  return fallback;
-}
-
 // Crockford base32 without I, L, O and U, so a reference read aloud or
 // retyped into a support conversation cannot be confused with 1 or 0.
 const DIAGNOSTIC_REFERENCE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -559,28 +287,13 @@ export const DIAGNOSTIC_REFERENCE_PATTERN =
   /^TT-[0-9A-HJKMNP-TV-Z]{6}$/u;
 // Fixed, content-free journey names. A note may only be filed against one of
 // these, so the local log can never accumulate a free-form label.
-export const DIAGNOSTIC_SURFACES = Object.freeze([
-  "automatic_contribution",
-  "community_results",
-  "contribution_connect",
-  "contribution_prepare",
-  "contribution_send",
-  "device_credential_reset",
-  "hosted_identity",
-  "hosted_privacy",
-  "local_refresh",
-  // Retained for diagnostics from older app versions, not a current
-  // self-service hosted deletion action. The companion accepts the same name.
-  "participant_deletion"
-]);
+export const DIAGNOSTIC_SURFACES = Object.freeze(["local_refresh"]);
 const DIAGNOSTIC_SURFACE_SET = new Set(DIAGNOSTIC_SURFACES);
-// The same shape the Worker mints with crypto.randomUUID.
+// A request reference is a UUID, never an account or session identifier.
 const SERVICE_REQUEST_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
-// The same identifier shape both boundaries answer with: SCREAMING_SNAKE from
-// the contribution service, lower_snake from the local companion. Neither can
-// carry a sentence, a path, or a quoted value, so a matching code is safe to
-// branch on and to record. It is still never rendered as copy.
+// Fixed identifier-shaped error codes cannot carry content or a private path.
+// They are used for classification and are never rendered as copy.
 const DIAGNOSTIC_CODE_PATTERN =
   /^(?:[A-Z][A-Z0-9_]{1,63}|[a-z][a-z0-9_]{1,63})$/u;
 
@@ -608,7 +321,7 @@ export function diagnosticSurface(candidate) {
 }
 
 /**
- * The Worker returns a UUID requestId in every error body. Surfacing it lets a
+ * A service may return a UUID requestId in an error body. Surfacing it lets a
  * support conversation join the local reference to one server-side record;
  * anything that is not exactly that shape is discarded.
  */
@@ -887,118 +600,4 @@ export function detectDeviationPeriods(points, {
     minDurationMs,
     hasDriftSeries,
   };
-}
-
-const CONTRIBUTION_REVIEWABLE_QUEUE_STATES = new Set([
-  "ready",
-  "retry_wait",
-  "paused",
-]);
-
-/**
- * Delivery scheduling never changes whether a locally verified payload can be
- * reviewed. A retry deadline or a paused uploader is transport state only.
- */
-export function isContributionReviewableQueueState(state) {
-  return CONTRIBUTION_REVIEWABLE_QUEUE_STATES.has(state);
-}
-
-/**
- * Decide the next local-only review-bootstrap action from the bounded preview.
- * No usable preview is an explicit recovery state; it must never degrade into
- * an indefinitely disabled approval button with no explanation.
- */
-export function contributionReviewBootstrapAction(preview) {
-  if (preview?.status !== "available") return "unavailable";
-  if (preview.state === "empty") {
-    return preview.item === null ? "prepare" : "unavailable";
-  }
-  return isContributionReviewableQueueState(preview.state)
-      && preview.item !== null
-      && typeof preview.item === "object"
-      && !Array.isArray(preview.item)
-    ? "review"
-    : "unavailable";
-}
-
-/**
- * Whether the silent bootstrap may PREPARE a new review instance. Preparing
- * is the bootstrap's only step that mints durable state — a prepared set the
- * v0.1 queue will hold until it delivers or is retired — so it additionally
- * requires a positively read pre-consent verdict from the incremental sync
- * status. An unreadable verdict must never prepare: on an approved device the
- * set could never deliver and would only strand disk and queue weight
- * (observed live 2026-08-19). A consent-version change reads approved with
- * current=false and stays permitted — that ceremony needs its fresh review.
- */
-export function contributionReviewPreparationPermitted(incrementalStatus) {
-  return incrementalStatus?.status === "available"
-    && !(incrementalStatus.consent?.approved === true
-      && incrementalStatus.consent?.current === true);
-}
-
-/**
- * A local preparation or exact-review read crosses native Credential Manager, SQLite,
- * and loopback boundaries. None may leave the contribution ceremony busy
- * forever: after one minute the page exposes its explicit retry so the caller
- * can record a bounded diagnostic, while the local operation remains free to
- * settle safely in the companion.
- */
-export function withContributionReviewDeadline(operation, {
-  timeoutMilliseconds = 60_000,
-  setTimer = setTimeout,
-  clearTimer = clearTimeout,
-} = {}) {
-  if (!Number.isSafeInteger(timeoutMilliseconds)
-      || timeoutMilliseconds < 1
-      || timeoutMilliseconds > 60_000
-      || typeof setTimer !== "function"
-      || typeof clearTimer !== "function") {
-    throw new TypeError("Contribution review deadline is invalid.");
-  }
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimer(() => {
-      if (settled) return;
-      settled = true;
-      const error = new Error("The local contribution review did not finish.");
-      error.code = "local_review_timed_out";
-      reject(error);
-    }, timeoutMilliseconds);
-    Promise.resolve(operation).then(
-      (value) => {
-        if (settled) return;
-        settled = true;
-        clearTimer(timer);
-        resolve(value);
-      },
-      (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimer(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-/**
- * Fence asynchronous review reads by a monotonically increasing generation.
- * A timeout cannot cancel every native/loopback operation already in flight,
- * so callers must also refuse to commit results from any superseded attempt.
- */
-export function createLatestContributionReviewFence() {
-  let generation = 0;
-  return Object.freeze({
-    begin() {
-      generation = generation === Number.MAX_SAFE_INTEGER ? 1 : generation + 1;
-      return generation;
-    },
-    isCurrent(candidate) {
-      return Number.isSafeInteger(candidate) && candidate === generation;
-    },
-    current() {
-      return generation;
-    },
-  });
 }

@@ -7,6 +7,7 @@ import { DatabaseSync } from "node:sqlite";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { assertWindowsOwnerOnly, createProtectedFixtureDirectory } from "./helpers/windows-owner-only-fixture.js";
 import {
   acquireLocalCollectorStateLock,
   commitLocalCollectorState,
@@ -65,7 +66,8 @@ function record(eventKey, observedAt = "2026-08-03T00:00:00.000Z") {
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "local-collector-state-"));
   const stateDirectory = join(root, ".usage-monitor");
-  await mkdir(stateDirectory, { recursive: true });
+  if (process.platform === "win32") createProtectedFixtureDirectory(stateDirectory);
+  else await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
   return {
     root,
     stateDirectory,
@@ -135,9 +137,8 @@ test("SQLite commits collector records and checkpoints atomically", async () => 
     const durable = await readLocalCollectorState({ stateFile: value.stateFile });
     assert.deepEqual(durable.checkpoint, first);
     assert.deepEqual(durable.records, [record("first")]);
-    if (process.platform !== "win32") {
-      assert.equal((await stat(value.stateFile)).mode & 0o777, 0o600);
-    }
+    if (process.platform === "win32") assertWindowsOwnerOnly(value.stateFile);
+    else assert.equal((await stat(value.stateFile)).mode & 0o777, 0o600);
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }
@@ -580,21 +581,40 @@ test("state preparation resolves a committed old JSON journal before importing i
   }
 });
 
-test("state record iteration is bounded by rows rather than a whole-ledger read", async () => {
+test("state record iteration is bounded, exposes stable record IDs, and orders same-time rows", async () => {
   const value = await fixture();
   try {
+    const initialRecords = [record("one"), record("two")];
     await commitLocalCollectorState({
       stateFile: value.stateFile,
       checkpoint: checkpoint(),
-      records: [record("one"), record("two")],
+      records: initialRecords,
     });
-    const keys = [];
+    const rows = [];
     const result = await forEachLocalCollectorRecord({
       stateFile: value.stateFile,
-      onRecord: async (valueRecord) => keys.push(valueRecord.eventKey),
+      onRecord: async (valueRecord, metadata) => rows.push({ eventKey: valueRecord.eventKey, ...metadata }),
     });
     assert.deepEqual(result, { status: "available", recordCount: 2 });
-    assert.deepEqual(keys, ["one", "two"]);
+    assert.deepEqual(rows.map(({ eventKey }) => eventKey), ["one", "two"]);
+    assert.ok(rows.every(({ recordId }) => Number.isSafeInteger(recordId) && recordId > 0));
+
+    // A restarted projection repeats the read against durable rows; it must
+    // observe the same identifiers rather than synthesizing new ones.
+    const replayedRows = [];
+    await forEachLocalCollectorRecord({
+      stateFile: value.stateFile,
+      onRecord: (valueRecord, metadata) => replayedRows.push({ eventKey: valueRecord.eventKey, ...metadata }),
+    });
+    assert.deepEqual(replayedRows, rows, "replaying existing events must keep their durable record IDs");
+
+    const observedRows = [];
+    await forEachLocalCollectorRecord({
+      stateFile: value.stateFile,
+      orderBy: "observed_at",
+      onRecord: (valueRecord, metadata) => observedRows.push({ eventKey: valueRecord.eventKey, ...metadata }),
+    });
+    assert.deepEqual(observedRows, rows, "record ID breaks ties for equal observation timestamps");
   } finally {
     await rm(value.root, { recursive: true, force: true });
   }

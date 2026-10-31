@@ -7,6 +7,7 @@ import {
   CodexAppServerClient,
   CodexAppServerError,
   sanitizeBracketedCodexAccountSnapshotWithSecretLoader,
+  sanitizeCodexAccountSnapshot,
   sanitizeRateLimit,
   sanitizeAccountScope,
   volatileResetCreditInventory,
@@ -47,7 +48,6 @@ import {
   verifyLocalCollectorStateIntegrityOffMain,
 } from "./local-collector-state-integrity-off-main.js";
 import { SPARK_QUOTA_LIMIT_IDS } from "./local-companion-usage-model.js";
-import { sanitizeTelemetryAttributionBinding } from "./contribution/index.js";
 
 const CHECKPOINT_SCHEMA_VERSION = "0.3";
 const { readRolloutLineage } = localCodexLogScanner;
@@ -1320,14 +1320,10 @@ export async function ingestRolloutUpdates({
 
 function windowsFromAppPayload(payload) {
   const envelope = payload?.rateLimits?.rateLimits ? payload.rateLimits : payload;
-  const canonical = sanitizeRateLimit(envelope?.rateLimits ?? envelope);
-  const byLimit = envelope?.rateLimitsByLimitId ?? {};
-  const limits = new Map();
-  if (canonical?.limitId) limits.set(canonical.limitId, canonical);
-  for (const [id, raw] of Object.entries(byLimit)) {
-    const limit = sanitizeRateLimit(raw, id);
-    if (limit) limits.set(limit.limitId, limit);
-  }
+  const normalized=sanitizeCodexAccountSnapshot({
+    rateLimits:envelope?.rateLimits?envelope:{rateLimits:envelope},
+  });
+  const limits=new Map(Object.entries(normalized.byLimitId));
   const windows = [];
   for (const limit of limits.values()) {
     for (const slot of ["primary", "secondary"]) {
@@ -1502,19 +1498,8 @@ async function readOptionalAccount(client) {
   }
 }
 
-async function captureAttributionBinding(readBinding) {
-  try { return typeof readBinding === "function" ? sanitizeTelemetryAttributionBinding(await readBinding()) : null; }
-  catch { return null; }
-}
-
-function matchingCapturedBinding(before, after) {
-  return before !== null && after !== null && before.destinationOrigin === after.destinationOrigin
-    && before.enrollmentNamespace === after.enrollmentNamespace ? before : null;
-}
-
 async function readSanitizedAppServerSnapshot(client, capturedAt, loadAccountObservationSecret,
-  readAccountAttributionBinding = null, clock = () => Date.now(), excludeResetCreditDetails = false) {
-  const bindingBefore = await captureAttributionBinding(readAccountAttributionBinding);
+  clock = () => Date.now(), excludeResetCreditDetails = false) {
   const accountBefore = await readOptionalAccount(client);
   const [rateLimits, accountUsage] = await Promise.all([
     client.readRateLimits({ excludeResetCreditDetails }),
@@ -1526,9 +1511,11 @@ async function readSanitizedAppServerSnapshot(client, capturedAt, loadAccountObs
     capturedAt,
     { loadAccountObservationSecret },
   );
-  const bindingAfter = await captureAttributionBinding(readAccountAttributionBinding);
-  return { ...payload, markerCapturedAt: capturedAt, markerReceivedAt: new Date(clock()).toISOString(),
-    observationBinding: matchingCapturedBinding(bindingBefore, bindingAfter) };
+  return {
+    ...payload,
+    markerCapturedAt: capturedAt,
+    markerReceivedAt: new Date(clock()).toISOString(),
+  };
 }
 
 function derivedResetEventsForAppRecord(payload, record, classifier) {
@@ -1618,7 +1605,6 @@ async function appendAppRecord({
         receivedAt: payload.markerReceivedAt ?? receivedAt,
         accountScope: markerScope,
         source: record.source,
-        observationBinding: sanitizeTelemetryAttributionBinding(payload.observationBinding),
       };
     } else {
       checkpoint.accountScopeMarker = null;
@@ -1762,7 +1748,6 @@ export async function runCollectorOnce({
   clock = () => Date.now(),
   appServerFactory = () => new CodexAppServerClient(),
   loadAccountObservationSecret = null,
-  readAccountAttributionBinding = null,
   resetEventClassifier = null,
   commitState = commitLocalCollectorState,
   saveState = saveLocalCollectorCheckpoint,
@@ -1880,7 +1865,6 @@ export async function runCollectorOnce({
             client,
             capturedAt,
             loadAccountObservationSecret,
-            readAccountAttributionBinding,
             clock,
             excludeResetCreditDetails,
           );
@@ -2107,7 +2091,7 @@ export async function runCollectorOnce({
         if (signal?.aborted) throw new Error("collector_aborted");
         const capturedAt = new Date(clock()).toISOString();
         const payload = await readSanitizedAppServerSnapshot(client, capturedAt, loadAccountObservationSecret,
-          readAccountAttributionBinding, clock, excludeResetCreditDetails);
+          clock, excludeResetCreditDetails);
         if (signal?.aborted) throw new Error("collector_aborted");
         const record = await appendAppRecord({
           payload,
@@ -2254,7 +2238,6 @@ export async function runCollectorForeground({
   appServerFactory = () => new CodexAppServerClient(),
   watchRoot = watch,
   loadAccountObservationSecret = null,
-  readAccountAttributionBinding = null,
   resetEventClassifier = createResetEventClassifier(),
   ingestUpdates = ingestRolloutUpdates,
   maximumRecordBatchSize = MAX_RECORD_BATCH_SIZE,
@@ -2491,7 +2474,6 @@ export async function runCollectorForeground({
     if (!canonical) return canonical;
     const observationEpoch = accountObservationEpoch;
     const markerCapturedAt = new Date(clock()).toISOString();
-    const bindingBefore = await captureAttributionBinding(readAccountAttributionBinding);
     const accountBefore = await readOptionalAccount(connectedClient);
     const accountAfter = await readOptionalAccount(connectedClient);
     // This brackets processing, not the earlier arrival of the notification.
@@ -2503,7 +2485,6 @@ export async function runCollectorForeground({
       rateLimits: { rateLimits: canonical },
       accountUsage: null,
     }, markerCapturedAt, { loadAccountObservationSecret });
-    const bindingAfter = await captureAttributionBinding(readAccountAttributionBinding);
     const markerAccountScope = connectedClient === client && observationEpoch === accountObservationEpoch
       ? payload.accountScope
       : sanitizeAccountScope(null);
@@ -2522,7 +2503,6 @@ export async function runCollectorForeground({
       markerAccountScope,
       markerCapturedAt,
       markerReceivedAt: new Date(clock()).toISOString(),
-      observationBinding: matchingCapturedBinding(bindingBefore, bindingAfter),
       canonical,
       byLimitId: {},
       officialDailyTokens: [],
@@ -2624,7 +2604,7 @@ export async function runCollectorForeground({
         const capturedAt = new Date(clock()).toISOString();
         checkpoint.accountScopeMarker = null;
         const payload = await readSanitizedAppServerSnapshot(connectedClient, capturedAt, loadAccountObservationSecret,
-          readAccountAttributionBinding, clock);
+          clock);
         if (client !== connectedClient || observationEpoch !== accountObservationEpoch) {
           payload.accountScope = sanitizeAccountScope(null);
         }

@@ -1,120 +1,15 @@
 <!doctype html>
-<html lang="en-US">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
-    <title>Rhetrion</title>
-    <link rel="stylesheet" href="./electron-tray-popup.css">
-    <script type="module" src="./electron-tray-popup.js" defer></script>
-  </head>
-  <body data-i18n-root>
-    <main class="electron-tray-popup" id="tray-popup" aria-labelledby="tray-popup-title">
-      <header class="electron-tray-popup-header">
-        <div class="electron-tray-popup-brand">
-          <img src="./app-icon.png" width="29" height="29" alt="" aria-hidden="true">
-          <div class="electron-tray-popup-brand-copy">
-            <h1 id="tray-popup-title">Rhetrion</h1>
-            <p class="electron-tray-popup-freshness" id="tray-popup-freshness" role="status" aria-live="polite">Loading…</p>
-          </div>
-        </div>
-        <button type="button" data-action="more" class="electron-tray-popup-more"
-          data-i18n-aria-label="electron.trayPopover.more" aria-label="More actions"
-          data-i18n-title="electron.trayPopover.more" title="More actions"
-          aria-haspopup="menu">⋯</button>
-      </header>
-
-      <div id="tray-popup-sections" class="electron-tray-popup-sections">
-      <section id="allowances-section" class="electron-tray-popup-section" aria-labelledby="allowance-heading">
-        <h2 id="allowance-heading" data-i18n="electron.trayPopover.allowance">Allowance</h2>
-        <div id="allowance-lanes" class="electron-tray-popup-allowances"></div>
-        <p id="allowance-unavailable" class="electron-tray-popup-notice" hidden></p>
-      </section>
-
-      <section id="pace-section" class="electron-tray-popup-section electron-tray-popup-pace" aria-labelledby="pace-heading" hidden>
-        <h2 id="pace-heading" data-i18n="electron.trayPopover.weeklyPace">Weekly pace</h2>
-        <div class="electron-tray-popup-pace-heading">
-          <p id="pace-state"></p>
-          <p id="pace-headline"></p>
-          <p id="pace-explanation" class="electron-tray-popup-muted"></p>
-          <p id="pace-evidence" class="electron-tray-popup-muted" hidden></p>
-        </div>
-        <div id="pace-timeline" class="electron-tray-popup-pace-timeline" hidden>
-          <div class="electron-tray-popup-pace-timeline-labels">
-            <span id="pace-outlook">
-              <span id="pace-outlook-caption" hidden></span>
-              <strong id="pace-outlook-duration"></strong>
-              <span id="pace-outlook-tooltip" aria-hidden="true"></span>
-            </span>
-            <span id="pace-reset"></span>
-          </div>
-          <div id="pace-track" class="electron-tray-popup-pace-track" role="img">
-            <span id="pace-fill" class="electron-tray-popup-pace-fill"></span>
-            <span id="pace-active-marker" class="electron-tray-popup-pace-active-marker" aria-hidden="true"></span>
-          </div>
-          <div class="electron-tray-popup-pace-timeline-foot">
-            <span id="pace-now"></span>
-            <span id="pace-outcome"></span>
-          </div>
-          <p id="pace-marker-note" class="electron-tray-popup-pace-marker-note" hidden></p>
-        </div>
-      </section>
-
-      <section id="usage-section" class="electron-tray-popup-section" aria-labelledby="history-heading">
-        <div class="electron-tray-popup-section-heading">
-          <h2 id="history-heading" data-i18n="electron.trayPopover.localUsage">Local usage</h2>
-          <div class="electron-tray-popup-range" role="group"
-            data-i18n-aria-label="electron.trayPopover.localUsage"
-            aria-label="Local usage">
-            <button type="button" data-history-range="7d" aria-pressed="true">7d</button>
-            <button type="button" data-history-range="30d" aria-pressed="false">30d</button>
-          </div>
-        </div>
-        <p id="history-retained" class="electron-tray-popup-muted electron-tray-popup-history-retained" hidden></p>
-        <div id="history-available">
-          <p id="history-period" class="electron-tray-popup-history-period"></p>
-          <div class="electron-tray-popup-history-metrics">
-            <strong id="history-tokens"></strong>
-            <span id="history-events"></span>
-          </div>
-          <p id="history-price" class="electron-tray-popup-history-price"></p>
-          <div id="history-bars" class="electron-tray-popup-history-bars" role="group"
-            data-i18n-aria-label="electron.trayPopover.localUsage"
-            aria-label="Local usage"></div>
-          <p id="history-bar-detail" class="electron-tray-popup-history-detail" aria-live="polite" hidden></p>
-          <div id="history-endpoints" class="electron-tray-popup-history-endpoints" aria-hidden="true">
-            <span id="history-start"></span>
-            <span id="history-end"></span>
-          </div>
-          <p id="history-coverage" class="electron-tray-popup-muted" hidden></p>
-        </div>
-        <div id="history-unavailable" class="electron-tray-popup-history-unavailable" hidden>
-          <p id="history-unavailable-title"></p>
-          <p id="history-unavailable-body" class="electron-tray-popup-muted"></p>
-        </div>
-      </section>
-
-      <section id="cache-section" class="electron-tray-popup-section" aria-labelledby="cache-heading" hidden>
-        <h2 id="cache-heading" data-i18n="electron.trayCustomization.option.cache">Cache reuse</h2>
-        <p id="cache-period" class="electron-tray-popup-muted"></p>
-        <p id="cache-summary"></p>
-        <p id="cache-coverage" class="electron-tray-popup-muted"></p>
-        <p id="cache-retained" class="electron-tray-popup-muted"></p>
-        <button type="button" data-action="usage" data-i18n="electron.trayCustomization.usageLink">Open Usage and costs</button>
-      </section>
-      </div>
-      <p id="tray-popup-operation-error" role="status" aria-live="polite"></p>
-      <footer class="electron-tray-popup-footer">
-        <div class="electron-tray-popup-footer-actions">
-          <button type="button" data-action="open" class="electron-tray-popup-primary" data-i18n="electron.tray.open">Open Rhetrion</button>
-          <button type="button" data-action="customize" class="electron-tray-popup-customize"
-            data-i18n-aria-label="electron.tray.customize" aria-label="Customize tray…"
-            data-i18n-title="electron.tray.customize" title="Customize tray…"><span aria-hidden="true">⚙</span></button>
-          <button type="button" data-action="refresh" data-i18n="electron.trayPopover.refresh">Refresh</button>
-        </div>
-      </footer>
-      <div class="sr-only" id="tray-popup-live" role="status" aria-live="polite"></div>
-    </main>
-  </body>
-</html>
+<html lang="en-US"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'">
+<title>Rhetrion</title><link rel="stylesheet" href="./electron-tray-popup.css">
+<script type="module" src="./electron-tray-popup.js" defer></script></head>
+<body data-i18n-root><main class="electron-tray-popup" id="tray-popup" aria-labelledby="tray-popup-title">
+<header><h1 id="tray-popup-title" data-i18n="electron.trayCompact.title">Remaining allowance</h1><span id="tray-popup-freshness" role="status"></span></header>
+<section class="tray-allowances" aria-labelledby="tray-popup-title"><div id="allowance-lanes"></div><p id="allowance-unavailable" role="status" hidden></p></section>
+<section class="tray-metrics" aria-label="API-equivalent rates" data-i18n-aria-label="electron.trayCompact.rates">
+<div><h2 data-i18n="electron.trayCompact.shortTerm">Short-term · 15 min</h2><strong class="tray-level" id="tray-short-level">—</strong><p class="tray-rate"><span id="tray-short-value">—</span> <span class="tray-unit" data-i18n="electron.trayCompact.unit">API equiv. /h</span></p></div>
+<div><h2 data-i18n="electron.trayCompact.trend">Quota trend · 60 min</h2><strong class="tray-level" id="tray-trend-level">—</strong><p class="tray-rate"><span id="tray-trend-value">—</span> <span class="tray-unit" data-i18n="electron.trayCompact.unit">API equiv. /h</span></p></div>
+</section><button type="button" class="tray-open" data-action="open"><span id="tray-popup-open-label" data-i18n="electron.trayCompact.open">Open main window</span></button>
+<p class="sr-only" id="tray-popup-live" role="status" aria-live="polite"></p>
+</main></body></html>

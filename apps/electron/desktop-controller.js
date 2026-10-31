@@ -385,7 +385,6 @@ export function createDesktopController({
   const platform = assertPort(platformServices, [
     "loginItemStatus",
     "setStartAtLogin",
-    "notificationStatus",
     "chooseCodexHome",
     "openSystemSettings",
     "openExternal",
@@ -808,17 +807,11 @@ export function createDesktopController({
         lastReason: "state_unavailable",
       })
       : readNotificationCoordinatorStatus();
-    const permissionStatus = (() => {
-      try {
-        return platform.notificationStatus();
-      } catch {
-        return { permission: "unavailable" };
-      }
-    })();
+    // Capability was initialized behind the verified Windows identity gate.
+    // A Settings read must not call Electron isSupported(): it may register
+    // a toast activator and rewrite the Start Menu shortcut.
     const canSet = notificationCapability(coordinatorStatus);
-    const permission = typeof permissionStatus?.permission === "string"
-      ? permissionStatus.permission
-      : "unavailable";
+    const permission = canSet ? "unknown" : "unavailable";
     return Object.freeze({
       enabled: canSet && coordinatorStatus.enabled,
       threshold: canSet ? coordinatorStatus.threshold : -1,

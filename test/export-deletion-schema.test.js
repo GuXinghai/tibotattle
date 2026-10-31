@@ -93,7 +93,7 @@ function journal(chunkCount = 2, sidecars = []) {
     schemaVersion: EXPORT_DELETION_JOURNAL_VERSION,
     planVersion: EXPORT_DELETION_PLAN_VERSION,
     deletionOrderVersion: EXPORT_DELETION_ORDER_VERSION,
-    exportSetManifestVersion: "usage-export-set-manifest-v0.3",
+    exportSetManifestVersion: "local-export-set-manifest-v1",
     directoryIdentities: {
       workspace: { device: "44", inode: "900" },
       output: { device: "44", inode: "901" },
@@ -318,7 +318,7 @@ test("commit marker and final receipt cannot claim transport, network use, or se
 
 
 test("deletion journal v0.2 has a distinct schema and retains the unchanged v0.1 validator", async () => {
-  assert.equal(EXPORT_DELETION_JOURNAL_VERSION, EXPORT_DELETION_JOURNAL_VERSION_V0_3);
+  assert.equal(EXPORT_DELETION_JOURNAL_VERSION, "usage-export-deletion-journal-v0.4");
   assert.notEqual(EXPORT_DELETION_JOURNAL_SCHEMA_SHA256, EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_2);
   assert.notEqual(exportDeletionJournalSchema, exportDeletionJournalSchemaV0_2);
   assert.equal(EXPORT_DELETION_JOURNAL_SCHEMA_SHA256_V0_1, "8088522cbfa5083cb9766721bdbdd9b8f39685d7eade2a3f6b6b6c79f256dd68");
@@ -345,7 +345,7 @@ test("journal dispatch preserves old bounds and admits only the reviewed manifes
     const value = { ...journal(), schemaVersion, exportSetManifestVersion: "usage-export-set-manifest-v0.4" };
     assert.equal(validateExportDeletionJournal(value).valid, false);
   }
-  for (const schemaVersion of [null, "usage-export-deletion-journal-v0.4", "unknown-v0.2"]) {
+  for (const schemaVersion of [null, "usage-export-deletion-journal-v0.5", "unknown-v0.2"]) {
     assert.equal(validateExportDeletionJournal({ ...journal(), schemaVersion }).valid, false);
   }
 });

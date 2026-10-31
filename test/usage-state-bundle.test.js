@@ -47,9 +47,10 @@ test("every current companion path and legacy collector dependency has an explic
 });
 
 test("workload comparison anchor and capacity history are unchanged usage state", () => {
-  const selected = select([...required, "private/overview-workload-state.json"]);
+  const selected = select([...required, "private/overview-workload-state.json","private/overview-workload-account-state.json"]);
   assert.equal(issue(selected, "unknown_usage_dependency"), undefined);
   assert.equal(selected.privateSelection.find(row => row.relativePath === "private/overview-workload-state.json").action, "preserve_bytes");
+  assert.equal(selected.privateSelection.find(row => row.relativePath === "private/overview-workload-account-state.json").action, "preserve_bytes");
 });
 
 test("timing siblings and source-bound snapshots stay in scope without assuming identity continuity", async () => {

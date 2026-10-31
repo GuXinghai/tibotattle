@@ -236,6 +236,46 @@ function focusHarness() {
     setDocumentHidden: hidden => { documentRef.hidden = hidden; documentVisibilityObserver?.(); } };
 }
 const settle = () => new Promise(resolve => setImmediate(resolve));
+
+test('the selected model survives page navigation and remount without storing measurement data', async () => {
+  const saved = new Map();
+  const storage = { getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, value) };
+  const models = ['gpt-6-sol', 'gpt-6-luna'].map(id => ({ ...structuredClone(payload().models[0]), id, label: id === 'gpt-6-sol' ? 'GPT-6 Sol' : 'GPT-6 Luna' }));
+  const client = { modelPerformance: async (period, { speedMode }) => ({ ...payload(), period, speedMode, models }) };
+  const mount = dom => { dom.windowRef.localStorage = storage; return mountModelPerformance({ ...dom, client, t: (key, values) => translate(key, values, 'en-US') }); };
+  const dom = focusHarness(), view = mount(dom);dom.show();await view.refresh();
+  const select = dom.find('model-select');select.value = 'gpt-6-luna';select.listeners.change();
+  dom.navigate(false);dom.navigate(true);await settle();assert.equal(dom.find('model-select').value, 'gpt-6-luna');
+  view.destroy();
+  const next = focusHarness(), restored = mount(next);next.show();await restored.refresh();
+  assert.equal(next.find('model-select').value, 'gpt-6-luna');
+  const preference = JSON.parse(saved.get('usagemonitor.performance.v1'));
+  assert.deepEqual(Object.keys(preference).sort(), ['model', 'period', 'speedMode']);
+  assert.equal(preference.model, 'gpt-6-luna');restored.destroy();
+});
+
+test('a temporary model fallback cannot replace the user preference on another settings change', async () => {
+  const saved = new Map([['usagemonitor.performance.v1', JSON.stringify({model:'gpt-6-luna',speedMode:'standard'})]]);
+  const dom = focusHarness();dom.windowRef.localStorage = {getItem:key=>saved.get(key)??null,setItem:(key,value)=>saved.set(key,value)};
+  let includePreferred = false;
+  const models = ['gpt-6-sol', 'gpt-6-luna'].map(id=>({...structuredClone(payload().models[0]),id,label:id==='gpt-6-sol'?'GPT-6 Sol':'GPT-6 Luna'}));
+  const view = mountModelPerformance({...dom,t:(key,values)=>translate(key,values,'en-US'),client:{modelPerformance:async(period,{speedMode})=>({...payload(),period,speedMode,models:includePreferred?models:models.slice(0,1)})}});
+  dom.show();await view.refresh();assert.equal(dom.find('model-select').value,'gpt-6-sol');
+  dom.find('mode-fast').listeners.click();await settle();
+  assert.equal(JSON.parse(saved.get('usagemonitor.performance.v1')).model,'gpt-6-luna','persist the chosen model, not the temporary fallback');
+  includePreferred=true;await view.refresh();assert.equal(dom.find('model-select').value,'gpt-6-luna','restore when the selected model returns');
+  dom.find('model-select').value='gpt-6-sol';dom.find('model-select').listeners.change();
+  await view.refresh();assert.equal(dom.find('model-select').value,'gpt-6-sol','a new explicit choice replaces the previous preference');
+  assert.equal(JSON.parse(saved.get('usagemonitor.performance.v1')).model,'gpt-6-sol');view.destroy();
+});
+
+test('a blocked preference store still retains the chosen model within the open view', async () => {
+  const dom=focusHarness();dom.windowRef.localStorage={getItem(){throw new Error('blocked');},setItem(){throw new Error('blocked');}};
+  const models=['gpt-6-sol','gpt-6-luna'].map(id=>({...structuredClone(payload().models[0]),id,label:id==='gpt-6-sol'?'GPT-6 Sol':'GPT-6 Luna'}));
+  const view=mountModelPerformance({...dom,t:(key,values)=>translate(key,values,'en-US'),client:{modelPerformance:async(period,{speedMode})=>({...payload(),period,speedMode,models})}});
+  dom.show();await view.refresh();dom.find('model-select').value='gpt-6-luna';assert.doesNotThrow(()=>dom.find('model-select').listeners.change());
+  dom.navigate(false);dom.navigate(true);await settle();assert.equal(dom.find('model-select').value,'gpt-6-luna');view.destroy();
+});
 const periodPayload = (period, overrides = {}) => ({ ...payload(), ...overrides, period });
 const performanceClient = handler => {
   const calls = [];

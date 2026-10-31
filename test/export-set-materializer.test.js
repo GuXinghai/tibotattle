@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadVerifiedLocalMetadataBundleBytes } from "../src/bundle-verifier.js";
@@ -12,11 +12,7 @@ import {
 } from "../src/export-compression.js";
 import {
   combinedSourcePlanCommitment,
-  EXPORT_SET_CONTRACT_VERSION_V0_2,
-  EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_2,
-  EXPORT_SET_MANIFEST_SCHEMA_SHA256_V0_2,
-  EXPORT_SET_MANIFEST_VERSION_V0_2,
-  EXPORT_SET_MANIFEST_VERSION_V0_3,
+  EXPORT_SET_MANIFEST_VERSION,
   stableJson,
   createExportResourceGuard,
   EXPORT_SET_MANIFEST_BASENAME,
@@ -230,11 +226,12 @@ test("materializer publishes deterministic independently verifiable chunks and a
       maximumRecordsPerChunk: 2,
     });
     assert.deepEqual(validateExportSetManifest(first.manifest), { valid: true, errors: [] });
-    // Frozen literal logical-record golden. This catches a shared
+    // Local export v1 literal logical-record golden includes the new record versions.
+    // This catches a shared
     // scanner/materializer regression that current-run comparisons do not.
     assert.equal(
       first.manifest.totals.logicalRecordsSha256,
-      "23c66a5910c17582ea76d15f095029e5b9e4ff8408646b9bb6efce35f792a5bc",
+      "12e4a12f5eaac2badd7fe21cfeb0130192e1bd8be8dcf37a15192d1cdd188181",
     );
     assert.equal(first.manifest.chunks.length, 3);
     assert.deepEqual(first.manifest.totals.recordCounts, {
@@ -749,15 +746,15 @@ test("a later chunk resource refusal survives the batch facade with its exact er
 async function retainAsV02(value, mutate = () => {}, mutateReceipt = () => {}) {
   const manifestPath = join(value.output, EXPORT_SET_MANIFEST_BASENAME);
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
-  manifest.schemaVersion = EXPORT_SET_MANIFEST_VERSION_V0_2;
+  manifest.schemaVersion = "usage-export-set-manifest-v0.2";
   manifest.manifestContract = {
-    version: EXPORT_SET_CONTRACT_VERSION_V0_2,
-    schemaSha256: EXPORT_SET_MANIFEST_SCHEMA_SHA256_V0_2,
+    version: "export-set-contract-v0.2",
+    schemaSha256: "6f46ca81c32f9ed14cfd47ec5a376961a07f1bf0d14a7adc7413def7c80da4c0",
   };
   mutate(manifest);
   const text = stableJson(manifest);
   const receipt = {
-    schemaVersion: EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_2,
+    schemaVersion: "export-set-manifest-receipt-v0.2",
     manifestSha256: sha256(text), manifestBytes: Buffer.byteLength(text), transportReady: false,
   };
   mutateReceipt(receipt);
@@ -773,24 +770,18 @@ async function retainAsV02(value, mutate = () => {}, mutateReceipt = () => {}) {
   return { manifest, receipt, text };
 }
 
-test("current writer emits v0.3 while an exact completed v0.2 retry retains every artifact byte", async () => {
+test("the current writer rejects a predecessor completed export without rewriting its artifacts", async () => {
   const value = await fixture();
   try {
     const options = { workspaceDirectory: value.workspace, outputDirectory: value.output, secret: SECRET };
-    const current = await materializeLocalExportSet(options);
-    assert.equal(current.manifest.schemaVersion, EXPORT_SET_MANIFEST_VERSION_V0_3);
+    await materializeLocalExportSet(options);
     const retained = await retainAsV02(value);
-    const paths = [EXPORT_SET_MANIFEST_BASENAME, EXPORT_SET_MANIFEST_RECEIPT_BASENAME,
-      ...retained.manifest.chunks.flatMap((entry) => Object.values(exportSetChunkBasenames(entry.index)))];
-    const before = await Promise.all(paths.map(async (name) => [name, await readFile(join(value.output, name))]));
-    const repeated = await materializeLocalExportSet(options);
-    assert.deepEqual(repeated.manifest, retained.manifest);
-    assert.deepEqual(repeated.manifestReceipt, retained.receipt);
-    assert.equal((await verifyLocalExportSet({ directory: value.output })).schemaVersion, EXPORT_SET_MANIFEST_VERSION_V0_2);
-    for (const [name, bytes] of before) assert.deepEqual(await readFile(join(value.output, name)), bytes, name);
-  } finally {
-    await rm(value.root, { recursive: true, force: true });
-  }
+    const names = await readdir(value.output);
+    const before = await Promise.all(names.map(async (name) => [name, await readFile(join(value.output, name))]));
+    await assert.rejects(materializeLocalExportSet(options), { code: "export_set_manifest_conflict" });
+    assert.equal(await readFile(join(value.output, EXPORT_SET_MANIFEST_BASENAME), "utf8"), retained.text);
+    for (const [name, bytes] of before) assert.deepEqual(await readFile(join(value.output, name)), bytes);
+  } finally { await rm(value.root, { recursive: true, force: true }); }
 });
 
 test("retained v0.2 retry refuses semantic, schema, receipt and source-commitment drift without rewriting output", async () => {
@@ -859,11 +850,11 @@ test("current writer and verifier roundtrip aggregate source counts beyond the r
       const result = await materializer.materializeLocalExportSet({
         workspaceDirectory: value.workspace, outputDirectory: value.output, secret: SECRET,
       });
-      assert.equal(result.manifest.schemaVersion, EXPORT_SET_MANIFEST_VERSION_V0_3);
+      assert.equal(result.manifest.schemaVersion, EXPORT_SET_MANIFEST_VERSION);
       assert.equal(result.manifest.sourcePlan.sourceFiles, sourceFiles);
       const verified = await verifyLocalExportSet({ directory: value.output });
       assert.equal(verified.verdict, "passed");
-      assert.equal(verified.schemaVersion, EXPORT_SET_MANIFEST_VERSION_V0_3);
+      assert.equal(verified.schemaVersion, EXPORT_SET_MANIFEST_VERSION);
       assert.deepEqual(verified.recordCounts, { usageEvents: 0, quotaSnapshots: 0, activityMarkers: 0 });
     } finally {
       await rm(value.root, { recursive: true, force: true });

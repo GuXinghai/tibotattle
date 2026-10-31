@@ -1,6 +1,6 @@
 // The closed Codex usage vocabulary the local index and its readers share:
 // parser provenance stamps and the two fixed enumerations whose ordinals are
-// part of the persisted format and of the telemetry contract. Append only.
+// part of the persisted format and of the local usage/export contract. Append only.
 //
 // These names keep their historical `LOCAL_UNIFIED_INDEX_` prefix because
 // they are written into stored parser stamps and tests pin them.
@@ -115,7 +115,7 @@ export const LOCAL_UNIFIED_INDEX_SOURCE_IDENTITY_VERSION =
 
 // A row salvaged from a line that exceeded the bounded-line cap carries this
 // parser version instead. The agreed schema has no "partial" column and the
-// `outcome` enum is fixed by the telemetry contract, so the row-level parser
+// `outcome` enum is fixed by the local usage/export contract, so the row-level parser
 // stamp — which decision 4 of the design exists to provide — is where a
 // degraded row is recorded. Kept in lockstep with the main constant: salvaged
 // rows run the same delta derivation.
@@ -154,7 +154,7 @@ export function isLocalUnifiedIndexBoundaryParserVersion(value) {
 export const RAW_SESSION_UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 
-// Both enums are ordinals into the telemetry contract's fixed member lists.
+// Both enums are ordinals into the local usage/export contract's fixed member lists.
 // Their order is part of the on-disk format: append only, never reorder.
 export const REASONING_EFFORTS = Object.freeze([
   "none",

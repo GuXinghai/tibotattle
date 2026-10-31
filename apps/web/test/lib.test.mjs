@@ -13,11 +13,7 @@ const SEMANTIC_OPEN_TARGET_PLACEHOLDER = APPLICATION_IDENTITY.semanticOpenTarget
 import {
   DIAGNOSTIC_REFERENCE_PATTERN,
   DIAGNOSTIC_SURFACES,
-  buildSyntheticFixture,
-  bytesToBase64Url,
-  contributionBatchAdmission,
   createDiagnosticReference,
-  createLatestContributionReviewFence,
   diagnosticErrorCode,
   diagnosticReferenceSentence,
   diagnosticSurface,
@@ -27,73 +23,33 @@ import {
   HISTORY_INFORMATIONAL_GAP_MAX_SHARE,
   historyCoverageNoticeKind,
   LOCAL_REFRESH_POLLING_WINDOW_MS,
-  createSyntheticEnvelope,
-  createTelemetryEnvelope,
   detectDeviationPeriods,
   historyIndexContinuationDecision,
-  contributionReviewBootstrapAction,
-  contributionReviewPreparationPermitted,
-  withContributionReviewDeadline,
   DEVIATION_DRIFT_THRESHOLD_PP,
   DEVIATION_MIN_DURATION_MS,
   DEVIATION_MERGE_GAP_MS,
-  parseJsonWithUniqueObjectKeys,
-  isContributionReviewableQueueState,
   refreshAccountingStatus,
   refreshQuickResultStatus,
   refreshNeedsContinuation,
-  ACCOUNT_SCOPED_TELEMETRY_SCHEMA_VERSION,
-  ENVELOPE_SCHEMA_VERSION,
-  safeApiError,
-  safeFilename,
-  TELEMETRY_ENVELOPE_SCHEMA_VERSION,
-  validateAccountScopedTelemetryContribution,
-  validateSyntheticFixture,
-  validateTelemetryContribution
 } from "../public/lib.js";
 import {
   CODEX_FIVE_HOUR_ALLOWANCE_MINUTES,
   CODEX_PRIMARY_LIMIT_ID,
   CODEX_SPARK_LIMIT_ID,
   CODEX_WEEKLY_ALLOWANCE_MINUTES,
-  COMMUNITY_SNAPSHOT_SCHEMA_VERSION,
-  CONTRIBUTION_SYNC_PREVIEW_SCHEMA_VERSION,
-  CONTRIBUTION_SYNC_RUN_SCHEMA_VERSION,
-  CONTRIBUTION_SYNC_STATUS_SCHEMA_VERSION,
   formatQuotaWindowDuration,
   isValidQuotaWindowDuration,
   LOCAL_ONBOARDING_SCHEMA_VERSION,
   demoDashboard,
   LocalCompanionClient,
-  normalizeCommunitySnapshot,
-  normalizeContributionSyncStatus,
-  normalizeContributionSyncPreview,
-  normalizeContributionSyncRun,
-  normalizeIncrementalContributionSyncStatus,
-  normalizeContributionDeletionReceipt,
-  normalizeBackendReadiness,
-  normalizeLocalContributionDevicePairing,
-  normalizeLocalContributionPreparation,
   normalizeLocalOnboarding,
   normalizeDashboardPayload,
-  normalizeParticipantCommunityComparison,
-  normalizeParticipantHistory,
-  normalizeParticipantStats,
-  normalizeLocalContributionDeviceDisconnect,
-  normalizeLocalContributionDeviceReset,
-  normalizeLocalContributionDiagnostics,
   normalizeLocalDiagnosticNote,
-  normalizeHostedSignInHandoff,
   normalizeWindowBreakdown,
-  PARTICIPANT_COMMUNITY_COMPARISON_SCHEMA_VERSION,
-  PARTICIPANT_PROFILE_SCHEMA_VERSION,
-  PARTICIPANT_STATS_SCHEMA_VERSION,
   selectAllowancePlanPopulation,
   selectPrimaryCodexQuotaWindow,
   isPrimaryCodexQuotaWindow,
   isPrimaryCodexWeeklyQuotaWindow,
-  SUPPORTED_COMMUNITY_SNAPSHOT_SCHEMA_VERSIONS,
-  SUPPORTED_PARTICIPANT_COMMUNITY_COMPARISON_SCHEMA_VERSIONS
 } from "../public/data-client.js";
 import {
   adaptiveChartTickCount,
@@ -127,9 +83,9 @@ import {
   translatePlural,
 } from "../public/localization.js";
 import {
-  TELEMETRY_PLAN_DISPLAY_NAMES,
-  TELEMETRY_PLAN_TYPES,
-} from "../public/telemetry-shared.generated.js";
+  CODEX_PLAN_DISPLAY_NAMES,
+  CODEX_PLAN_TYPES,
+} from "../public/codex-catalog.generated.js";
 
 // Source extraction asserts code behavior, independently of Git's LF/CRLF
 // working-tree representation. Leave byte reads unchanged.
@@ -353,10 +309,10 @@ async function loadAllowancePlanLabel() {
   const end = appSource.indexOf("\n/**\n * A date-only label", start);
   assert.ok(start >= 0 && end > start, "the allowance plan-label helper is available");
   return Function(
-    "TELEMETRY_PLAN_DISPLAY_NAMES",
-    "TELEMETRY_PLAN_TYPES",
+    "CODEX_PLAN_DISPLAY_NAMES",
+    "CODEX_PLAN_TYPES",
     `${appSource.slice(start, end)}\nreturn { ALLOWANCE_PLAN_LABELS, allowancePlanLabel };`,
-  )(TELEMETRY_PLAN_DISPLAY_NAMES, TELEMETRY_PLAN_TYPES);
+  )(CODEX_PLAN_DISPLAY_NAMES, CODEX_PLAN_TYPES);
 }
 
 /**
@@ -881,63 +837,6 @@ test("deviation detector supports an explicit diagnostic cap", () => {
   assert.equal(result.periods[0].absPeakDriftPp, 12, "the widest period is kept");
 });
 
-test("browser JSON preflight rejects duplicate object keys before parsing", () => {
-  for (const serialized of [
-    '{"prompt":"first","prompt":"second"}',
-    '{"row":{"accountScopeId":"first","accountScopeId":"second"}}',
-    '{"content":"first","\\u0063ontent":"second"}',
-    '{"safeCount":1,"safeCount":1}',
-  ]) {
-    assert.throws(
-      () => parseJsonWithUniqueObjectKeys(serialized),
-      (error) => (
-        error instanceof SyntaxError
-        && error.code === "duplicate_json_object_key"
-        && error.message === "Duplicate JSON object keys are not accepted."
-        && !error.message.includes("prompt")
-        && !error.message.includes("accountScopeId")
-        && !error.message.includes("content")
-        && !error.message.includes("safeCount")
-      ),
-    );
-  }
-});
-
-test("browser JSON preflight preserves canonical JSON object behavior", () => {
-  const serialized = JSON.stringify({
-    schemaVersion: "telemetry-contribution-v0.2",
-    nested: {
-      accountScopeId: "acct_opaque",
-      values: [null, true, false, -12.5e3, "escaped\nvalue"],
-    },
-    siblings: [
-      { repeatedAcrossObjects: 1 },
-      { repeatedAcrossObjects: 2 },
-    ],
-  });
-  assert.deepEqual(
-    parseJsonWithUniqueObjectKeys(serialized),
-    JSON.parse(serialized),
-  );
-  assert.deepEqual(
-    parseJsonWithUniqueObjectKeys(
-      '{"left":{"same":"allowed"},"right":{"same":"allowed"}}',
-    ),
-    {
-      left: { same: "allowed" },
-      right: { same: "allowed" },
-    },
-  );
-  assert.throws(
-    () => parseJsonWithUniqueObjectKeys('{"truncated":'),
-    (error) => (
-      error instanceof SyntaxError
-      && error.code !== "duplicate_json_object_key"
-      && !error.message.includes("truncated")
-    ),
-  );
-});
-
 test("quota timeline lookup preserves latest-at-or-before boundary semantics", () => {
   const rows = [
     { id: "late", observedAt: "2026-07-29T03:00:00.000Z" },
@@ -1176,52 +1075,6 @@ test("accounting progress is explicit work, with no source-counter or ready fall
   }
 });
 
-test("contribution admission uses participant allowance without inventing an unknown limit", () => {
-  const known = contributionBatchAdmission({
-    estimatedBatches: 8,
-    participantAdmission: {
-      state: "available",
-      remainingBatches: 7,
-      maximumBatches: 100,
-      renewsAt: "2026-08-03T00:00:00.000Z",
-    },
-  });
-  assert.equal(known.admissionKnown, true);
-  assert.equal(known.exceedsParticipantAdmission, true);
-  assert.equal(known.blocked, true);
-  assert.equal(known.effectiveBatchLimit, 7);
-  assert.equal(known.renewsAt, "2026-08-03T00:00:00.000Z");
-
-  const exhausted = contributionBatchAdmission({
-    estimatedBatches: 1,
-    participantAdmission: {
-      state: "exhausted",
-      remainingBatches: 0,
-      maximumBatches: 100,
-      renewsAt: "2026-08-03T00:00:00.000Z",
-    },
-  });
-  assert.equal(exhausted.blocked, true);
-  assert.equal(exhausted.effectiveBatchLimit, 0);
-
-  const unknown = contributionBatchAdmission({
-    estimatedBatches: 8,
-    participantAdmission: null,
-  });
-  assert.equal(unknown.admissionKnown, false);
-  assert.equal(unknown.remainingBatches, null);
-  assert.equal(unknown.blocked, false);
-  assert.equal(unknown.effectiveBatchLimit, 100);
-
-  assert.equal(
-    contributionBatchAdmission({
-      estimatedBatches: 101,
-      participantAdmission: null,
-    }).blocked,
-    true,
-  );
-});
-
 test("completed bounded passes continue under the original user action", () => {
   assert.equal(refreshNeedsContinuation({
     outcome: "succeeded",
@@ -1353,345 +1206,6 @@ test("terminal history gaps are informational only when small, coherent, and ful
     history: { ...history, indexedSourceCount: 7_141 },
     accountingProjection,
   }), "warning");
-});
-
-function communitySnapshot() {
-  const releasedTokens = { status: "released", value: 100_000, unit: "tokens_rounded_down" };
-  return {
-    schemaVersion: COMMUNITY_SNAPSHOT_SCHEMA_VERSION,
-    releaseStatus: "published",
-    snapshotId: "community-week:2026-07-13",
-    period: {
-      startAt: "2026-07-13T00:00:00.000Z",
-      endAt: "2026-07-20T00:00:00.000Z"
-    },
-    ingestionCutoffAt: "2026-07-22T00:00:00.000Z",
-    releasedAt: "2026-07-22T00:00:00.000Z",
-    immutable: true,
-    nonOverlapping: true,
-    cohortEligibility: "provider_account_gated_open_cohort",
-    privacyPolicy: {
-      version: "community-weekly-v0.1",
-      minimumProviderAccountParticipants: 20,
-      maturity: {
-        appliesTo: "open_provider_account_cohort",
-        maturityDays: 7,
-        minimumAcceptedCollectionDays: 2,
-        acceptedCollectionDayBasis: "telemetry_contribution_created_at_before_cutoff",
-      },
-    },
-    cells: [{
-      provider: "openai_codex",
-      modelId: "gpt-5.6-sol",
-      metrics: {
-        usageEvents: { status: "released", value: 30, unit: "events_rounded_down" },
-        inputUncachedTokens: releasedTokens,
-        inputCacheReadTokens: releasedTokens,
-        inputCacheWriteTokens: releasedTokens,
-        outputTextTokens: releasedTokens,
-        outputReasoningTokens: releasedTokens,
-        outputCombinedTokens: releasedTokens,
-        toolUnits: { status: "released", value: 10, unit: "tool_units_rounded_down" }
-      }
-    }]
-  };
-}
-
-function safeTelemetry() {
-  const toolClassCounts = {
-    webSearch: 0,
-    fileSearch: 0,
-    codeInterpreter: 0,
-    hostedShell: 0,
-    computerUse: 0,
-    mcp: 0,
-    applyPatch: 0,
-    localShell: 1,
-    subagent: 0,
-    toolGateway: 0,
-    other: 0,
-    unknown: 0
-  };
-  return {
-    schemaVersion: "telemetry-contribution-v0.1",
-    synthetic: false,
-    createdAt: "2026-07-25T14:00:00.000Z",
-    coveredAt: {
-      startAt: "2026-07-25T13:00:00.000Z",
-      endAt: "2026-07-25T13:30:00.000Z"
-    },
-    clientPlatform: "macos",
-    providerPolicyEpoch: "openai_agentic_pool_2026_07_09",
-    usageEvents: [{
-      schemaVersion: "usage-event-v0.1",
-      eventTime: "2026-07-25T13:10:00.000Z",
-      provider: "openai_codex",
-      modelId: "gpt-5.6-sol",
-      modelRecognition: "recognized",
-      modelFingerprint: null,
-      billingSurface: "chatgpt_subscription",
-      speedMode: "standard",
-      apiServiceTier: "standard",
-      reasoningEffort: "high",
-      components: {
-        inputUncachedTokens: 1200,
-        inputCacheReadTokens: 9000,
-        inputCacheWriteTokens: 0,
-        inputCacheWrite5mTokens: null,
-        inputCacheWrite1hTokens: null,
-        outputTextTokens: 800,
-        outputReasoningTokens: 300,
-        outputCombinedTokens: null
-      },
-      totalInputContextTokens: 10200,
-      surface: "local_interactive_unclassified",
-      agentScope: "root",
-      lineageDisposition: "standalone",
-      toolClassCounts,
-      outcome: "completed",
-      eventId: `event:v2:${"a".repeat(64)}`,
-      accounting: {
-        estimatedApiCostUsd: "0.420000",
-        pricingCoveragePercent: 100,
-        unknownBillableUnits: 0,
-        priceBasis: "current_api_prices"
-      }
-    }],
-    quotaSnapshots: [],
-    activityMarkers: [],
-    accounting: {
-      estimatedApiCostUsd: "0.420000",
-      pricedEventCoveragePercent: 100,
-      unknownModelEventCount: 0,
-      unknownBillableUnits: 0,
-      priceBasis: "current_api_prices"
-    }
-  };
-}
-
-function safeAccountScopedTelemetry() {
-  const source = safeTelemetry();
-  return {
-    schemaVersion: ACCOUNT_SCOPED_TELEMETRY_SCHEMA_VERSION,
-    consentVersion: "privacy-safe-telemetry-v0.2",
-    status: "implementation_disabled",
-    synthetic: false,
-    datasetId: `dataset:v1:${"d".repeat(64)}`,
-    partIndex: 1,
-    partCount: 1,
-    completeness: "complete",
-    createdAt: source.createdAt,
-    coveredAt: source.coveredAt,
-    clientPlatform: source.clientPlatform,
-    providerPolicyEpoch: source.providerPolicyEpoch,
-    usageEvents: source.usageEvents.map(({ accounting, ...row }) => ({
-      ...row,
-      schemaVersion: "usage-event-v0.2",
-      accountTrackId: `account-track:v1:${"a".repeat(64)}`,
-      accountingDiagnostic: {
-        ...accounting,
-        status: "untrusted_diagnostic",
-        sourceSchemaVersion: "telemetry-contribution-v0.1"
-      }
-    })),
-    quotaSnapshots: [],
-    activityMarkers: [],
-    accountingDiagnostic: {
-      ...source.accounting,
-      status: "untrusted_diagnostic",
-      sourceSchemaVersion: "telemetry-contribution-v0.1"
-    }
-  };
-}
-
-async function rsaPair() {
-  return webcrypto.subtle.generateKey(
-    {
-      name: "RSA-OAEP",
-      modulusLength: 2048,
-      publicExponent: new Uint8Array([1, 0, 1]),
-      hash: "SHA-256"
-    },
-    true,
-    ["encrypt", "decrypt"]
-  );
-}
-
-async function decryptEnvelope(envelope, privateKey) {
-  const decode = (value) => new Uint8Array(Buffer.from(value, "base64url"));
-  const rawPayloadKey = await webcrypto.subtle.decrypt(
-    { name: "RSA-OAEP" },
-    privateKey,
-    decode(envelope.wrappedKey)
-  );
-  const payloadKey = await webcrypto.subtle.importKey(
-    "raw",
-    rawPayloadKey,
-    { name: "AES-GCM" },
-    false,
-    ["decrypt"]
-  );
-  const plaintext = await webcrypto.subtle.decrypt(
-    { name: "AES-GCM", iv: decode(envelope.iv) },
-    payloadKey,
-    decode(envelope.ciphertext)
-  );
-  return JSON.parse(new TextDecoder().decode(plaintext));
-}
-
-test("the legacy demo fixture remains fixed, synthetic, and content-free", () => {
-  const fixture = buildSyntheticFixture();
-  assert.equal(validateSyntheticFixture(fixture), true);
-  assert.equal(fixture.synthetic, true);
-  assert.equal(fixture.fixtureId, "codex-weekly-demo-v0.1");
-});
-
-test("base64url encoding is unpadded and URL safe", () => {
-  assert.equal(bytesToBase64Url(new Uint8Array([])), "");
-  assert.equal(bytesToBase64Url(new TextEncoder().encode("foo")), "Zm9v");
-  assert.equal(bytesToBase64Url(new Uint8Array([251, 255])), "-_8");
-});
-
-test("synthetic hybrid envelope retains the existing contract", async () => {
-  const pair = await rsaPair();
-  const publicJwk = await webcrypto.subtle.exportKey("jwk", pair.publicKey);
-  const envelope = await createSyntheticEnvelope({
-    publicJwk,
-    keyId: "key:test",
-    cryptoImpl: webcrypto
-  });
-  assert.equal(envelope.schemaVersion, ENVELOPE_SCHEMA_VERSION);
-  assert.equal(envelope.synthetic, true);
-  assert.deepEqual(await decryptEnvelope(envelope, pair.privateKey), buildSyntheticFixture());
-});
-
-test("real privacy-safe telemetry is validated and encrypted without changing its payload", async () => {
-  const payload = safeTelemetry();
-  assert.equal(validateTelemetryContribution(payload), true);
-  const pair = await rsaPair();
-  const publicJwk = await webcrypto.subtle.exportKey("jwk", pair.publicKey);
-  const envelope = await createTelemetryEnvelope({
-    payload,
-    publicJwk,
-    keyId: "key:real-test",
-    cryptoImpl: webcrypto
-  });
-  assert.equal(envelope.schemaVersion, TELEMETRY_ENVELOPE_SCHEMA_VERSION);
-  assert.equal(envelope.synthetic, false);
-  assert.equal("payload" in envelope, false);
-  assert.deepEqual(await decryptEnvelope(envelope, pair.privateKey), payload);
-});
-
-test("account-scoped local-preview telemetry is preflighted and encrypted unchanged", async () => {
-  const payload = safeAccountScopedTelemetry();
-  assert.equal(validateAccountScopedTelemetryContribution(payload), true);
-  const pair = await rsaPair();
-  const publicJwk = await webcrypto.subtle.exportKey("jwk", pair.publicKey);
-  const envelope = await createTelemetryEnvelope({
-    payload,
-    publicJwk,
-    keyId: "key:account-scoped-test",
-    cryptoImpl: webcrypto
-  });
-  assert.equal(envelope.schemaVersion, TELEMETRY_ENVELOPE_SCHEMA_VERSION);
-  assert.deepEqual(await decryptEnvelope(envelope, pair.privateKey), payload);
-});
-
-function telemetryContractFailure(code, detailCode) {
-  return (error) => {
-    assert.equal(error?.code, code);
-    assert.equal(error?.detailCode, detailCode);
-    return true;
-  };
-}
-
-test("account-scoped browser preflight rejects direct account scopes and content fields", () => {
-  const directScope = safeAccountScopedTelemetry();
-  directScope.usageEvents[0].accountTrackId = `account:v1:${"a".repeat(64)}`;
-  assert.throws(
-    () => validateAccountScopedTelemetryContribution(directScope),
-    telemetryContractFailure(
-      "PRIVACY_CANARY_DETECTED",
-      "private_projection_invalid",
-    ),
-  );
-  const content = safeAccountScopedTelemetry();
-  content.usageEvents[0].prompt = "private";
-  assert.throws(
-    () => validateAccountScopedTelemetryContribution(content),
-    telemetryContractFailure(
-      "PRIVACY_CANARY_DETECTED",
-      "private_projection_invalid",
-    ),
-  );
-});
-
-test("browser telemetry validation rejects raw-content-shaped and identity fields", () => {
-  for (const [key, value] of [
-    ["prompt", "private"],
-    ["response", "private"],
-    ["filePath", "/private/project"],
-    ["commandArguments", ["--secret"]],
-    ["email", "person@example.test"],
-    ["participantId", "person_123"]
-  ]) {
-    const payload = safeTelemetry();
-    payload.usageEvents[0][key] = value;
-    assert.throws(
-      () => validateTelemetryContribution(payload),
-      telemetryContractFailure(
-        "PRIVACY_CANARY_DETECTED",
-        "privacy_canary_detected",
-      ),
-    );
-  }
-});
-
-test("browser telemetry validation rejects synthetic, wrong-schema, oversized, and deeply nested inputs", () => {
-  assert.throws(
-    () => validateTelemetryContribution({ synthetic: false }),
-    telemetryContractFailure(
-      "TELEMETRY_RECORD_INVALID",
-      "schema_version_invalid",
-    ),
-  );
-  const synthetic = safeTelemetry();
-  synthetic.synthetic = true;
-  assert.throws(
-    () => validateTelemetryContribution(synthetic),
-    telemetryContractFailure(
-      "TELEMETRY_RECORD_INVALID",
-      "schema_version_invalid",
-    ),
-  );
-  assert.throws(
-    () => validateTelemetryContribution(safeTelemetry(), { maxSerializedBytes: 10 }),
-    telemetryContractFailure(
-      "TELEMETRY_RECORD_INVALID",
-      "maximum_bytes_exceeded",
-    ),
-  );
-  const nested = safeTelemetry();
-  nested.extra = { a: { b: { c: 1 } } };
-  assert.throws(
-    () => validateTelemetryContribution(nested, { maxDepth: 1 }),
-    telemetryContractFailure(
-      "TELEMETRY_RECORD_INVALID",
-      "maximum_depth_exceeded",
-    ),
-  );
-  const tooMany = safeTelemetry();
-  tooMany.usageEvents = Array.from(
-    { length: 201 },
-    () => structuredClone(tooMany.usageEvents[0]),
-  );
-  assert.throws(
-    () => validateTelemetryContribution(tooMany),
-    telemetryContractFailure(
-      "TELEMETRY_RECORD_INVALID",
-      "maximum_array_items_exceeded",
-    ),
-  );
 });
 
 test("local dashboard normalizer accepts artifact rows and keeps stale state explicit", () => {
@@ -2718,67 +2232,6 @@ test("web quota normalization rejects malformed and out-of-range durations", () 
   assert.equal(isValidQuotaWindowDuration(525_601), false);
 });
 
-test("account-scoped normalization keeps generic and seven-day tracks separate", () => {
-  const result = normalizeParticipantStats({
-    schemaVersion: PARTICIPANT_STATS_SCHEMA_VERSION,
-    accountScopedQuotaAnalysis: {
-      schemaVersion: "account-scoped-quota-analysis-v0.1",
-      status: "ready",
-      tracks: [
-        {
-          continuity: {
-            provider: "openai_codex",
-            planType: "pro-20x",
-            planVariant: "pro-20x",
-            limitId: CODEX_PRIMARY_LIMIT_ID,
-            windowDurationMinutes: 43_200,
-            policyEpoch: "openai_agentic_pool_2026_07_09"
-          },
-          calibration: { tracks: [] },
-          rolling: { status: "not_testable" }
-        },
-        {
-          continuity: {
-            provider: "openai_codex",
-            planType: "pro",
-            planVariant: "pro-20x",
-            limitId: CODEX_PRIMARY_LIMIT_ID,
-            windowDurationMinutes: CODEX_WEEKLY_ALLOWANCE_MINUTES,
-            policyEpoch: "openai_agentic_pool_2026_07_09"
-          },
-          calibration: { tracks: [] },
-          rolling: { status: "not_testable" }
-        },
-        {
-          continuity: {
-            provider: "openai_codex",
-            planType: "pro",
-            planVariant: "pro-20x",
-            limitId: CODEX_PRIMARY_LIMIT_ID,
-            windowDurationMinutes: 0,
-            policyEpoch: "openai_agentic_pool_2026_07_09"
-          },
-          calibration: { tracks: [] },
-          rolling: { status: "not_testable" }
-        }
-      ]
-    }
-  });
-  assert.equal(result.accountScopedQuotaAnalysis.status, "ready");
-  assert.deepEqual(
-    result.accountScopedQuotaAnalysis.tracks.map((track) => track.windowDurationMinutes),
-    [43_200, CODEX_WEEKLY_ALLOWANCE_MINUTES]
-  );
-  assert.deepEqual(
-    result.accountScopedQuotaAnalysis.tracks.map((track) => track.planType),
-    ["unknown", "pro"]
-  );
-  assert.doesNotMatch(
-    JSON.stringify(result.accountScopedQuotaAnalysis),
-    /monthly/i
-  );
-});
-
 test("quota presentation keeps Spark separate and weekly surfaces exact", async () => {
   const appSource = await readFile(new URL("../public/app.js", import.meta.url), "utf8");
   assert.match(appSource, /isSparkQuotaLimitId/u);
@@ -2989,562 +2442,6 @@ test("local onboarding is path-free, bounded, and fails closed", async () => {
   assert.deepEqual(calls, ["/api/local/onboarding"]);
 });
 
-test("local contribution queue status remains bounded and fails closed", async () => {
-  const normalized = normalizeContributionSyncStatus({
-    schemaVersion: CONTRIBUTION_SYNC_STATUS_SCHEMA_VERSION,
-    status: "available",
-    paused: false,
-    counts: {
-      pending: 2,
-      inFlight: 1,
-      accepted: 8,
-      retryable: 3,
-      rejected: 1
-    },
-    dueNow: 2,
-    nextAttemptAt: "2026-07-26T13:00:00.000Z",
-    lastAcceptedAt: "2026-07-26T12:00:00.000Z",
-    includesContent: false,
-    includesPaths: false,
-    includesCredentials: false,
-    privatePath: "/Users/private",
-    deviceSecret: "must-not-survive"
-  });
-  assert.equal(normalized.state, "attention");
-  assert.equal(normalized.counts.accepted, 8);
-  assert.equal(Object.hasOwn(normalized, "privatePath"), false);
-  assert.equal(Object.hasOwn(normalized, "deviceSecret"), false);
-
-  assert.deepEqual(
-    normalizeContributionSyncStatus({
-      schemaVersion: CONTRIBUTION_SYNC_STATUS_SCHEMA_VERSION,
-      status: "available",
-      paused: false,
-      counts: {
-        pending: 0,
-        inFlight: 0,
-        accepted: 1,
-        retryable: 0,
-        rejected: 0
-      },
-      dueNow: 0,
-      includesContent: true,
-      includesPaths: false,
-      includesCredentials: false
-    }).state,
-    "unavailable"
-  );
-
-});
-
-test("contribution diagnostics project only fixed, content-free support state", async () => {
-  const payload = {
-    schemaVersion: "local-contribution-diagnostics-v0.1",
-    journeyPhase: "approved_connection_needed",
-    previewState: "retry_wait",
-    queueState: "retry_wait",
-    consent: { approved: true, current: true },
-    signedIn: { observed: true, value: true },
-    pairing: { observed: true, paired: false },
-    recentDiagnosticReferences: [{
-      reference: "TT-7QF3K2",
-      recordedAt: "2026-08-19T13:01:00.000Z",
-    }],
-    includesTokens: false,
-    includesOauthState: false,
-    includesVerifiers: false,
-    includesDeviceIdentifiers: false,
-    includesAccountIdentifiers: false,
-    includesContent: false,
-    includesPaths: false,
-  };
-  const normalized = normalizeLocalContributionDiagnostics(payload);
-  assert.deepEqual(normalized, {
-    status: "available",
-    journeyPhase: "approved_connection_needed",
-    previewState: "retry_wait",
-    queueState: "retry_wait",
-    consent: { approved: true, current: true },
-    signedIn: { observed: true, value: true },
-    pairing: { observed: true, paired: false },
-    recentDiagnosticReferences: [{
-      reference: "TT-7QF3K2",
-      recordedAt: "2026-08-19T13:01:00.000Z",
-    }],
-  });
-  const accountless = {
-    ...payload,
-    journeyPhase: "accountless_active",
-    consent: { approved: false, current: false },
-    signedIn: { observed: false, value: false },
-    pairing: { observed: false, paired: false },
-    accountless: {
-      state: "retry_wait",
-      lastAttemptAt: "2026-09-22T12:00:00.000Z",
-      lastSuccessfulSyncAt: "2026-09-22T11:00:00.000Z",
-      lastAcceptedAt: null,
-      nextAttemptAt: "2026-09-22T12:01:00.000Z",
-      lastFailureCode: "transient_failure",
-    },
-  };
-  const accountlessResult = normalizeLocalContributionDiagnostics(accountless);
-  assert.equal(accountlessResult.status, "available");
-  assert.deepEqual(accountlessResult.accountless, accountless.accountless);
-  assert.equal(Object.isFrozen(accountlessResult.accountless), true);
-  for (const [state, journeyPhase] of [
-    ["off", "accountless_off"], ["unavailable", "accountless_unavailable"],
-    ["paused", "accountless_unavailable"], ["recovery_required", "accountless_unavailable"],
-    ["uploading", "accountless_active"], ["pending", "accountless_active"], ["up_to_date", "accountless_active"],
-  ]) {
-    assert.equal(normalizeLocalContributionDiagnostics({ ...accountless, journeyPhase,
-      accountless: { ...accountless.accountless, state } }).status, "available");
-  }
-  for (const invalid of [
-    { ...accountless, accountless: null },
-    { ...accountless, accountless: { ...accountless.accountless, privatePath: "synthetic-private-canary" } },
-    { ...accountless, accountless: { ...accountless.accountless, lastFailureCode: "synthetic-private-canary" } },
-    { ...accountless, accountless: { ...accountless.accountless, state: "invented_state" } },
-    { ...accountless, accountless: { ...accountless.accountless, lastAttemptAt: "2026-09-22" } },
-    { ...accountless, accountless: { ...accountless.accountless, lastAcceptedAt: undefined } },
-    { ...accountless, consent: { approved: true, current: true } },
-    { ...accountless, signedIn: { observed: true, value: true } },
-    { ...accountless, pairing: { observed: true, paired: true } },
-    { ...accountless, journeyPhase: "accountless_off" },
-    { ...payload, journeyPhase: "accountless_active" },
-    { ...accountless, journeyPhase: "approved_idle" },
-    { ...accountless, token: "synthetic-private-canary" },
-  ]) {
-    const result = normalizeLocalContributionDiagnostics(invalid);
-    assert.equal(result.status, "unavailable");
-    assert.equal(JSON.stringify(result).includes("synthetic-private-canary"), false);
-    assert.equal(Object.hasOwn(result, "accountless"), false);
-  }
-  for (const unsafe of [
-    { ...payload, includesTokens: true },
-    { ...payload, token: "must-not-survive" },
-    { ...payload, path: "/Users/private/canary" },
-    {
-      ...payload,
-      recentDiagnosticReferences: [{
-        reference: "TT-7QF3K2",
-        recordedAt: "/Users/private/canary",
-      }],
-    },
-  ]) {
-    assert.equal(
-      normalizeLocalContributionDiagnostics(unsafe).status,
-      "unavailable",
-    );
-  }
-
-});
-
-test("the retired hosted sign-in handoff DTO is exact-shape and fails closed", () => {
-  const state = "s".repeat(64);
-  const verifier = "v".repeat(64);
-  const startedAt = Date.parse("2026-08-19T12:00:00.000Z");
-  const pending = {
-    schemaVersion: "local-hosted-signin-handoff-v1",
-    status: "pending",
-    provider: "google",
-    state,
-    verifier,
-    startedAt,
-    expiresAt: startedAt + 15 * 60 * 1_000,
-  };
-  assert.deepEqual(normalizeHostedSignInHandoff(pending), {
-    status: "pending",
-    provider: "google",
-    state,
-    verifier,
-    startedAt,
-    expiresAt: startedAt + 15 * 60 * 1_000,
-  });
-  for (const invalid of [
-    { ...pending, proof: "must-not-pass" },
-    { ...pending, verifier: "short" },
-    { ...pending, expiresAt: startedAt + 1 },
-  ]) {
-    assert.equal(normalizeHostedSignInHandoff(invalid).status, "unavailable");
-  }
-
-});
-
-test("the browser client no longer exposes automatic contribution controls", () => {
-  const calls = [];
-  const client = new LocalCompanionClient({
-    fetchImpl: async (...args) => {
-      calls.push(args);
-      throw new Error("retired automatic contribution route was called");
-    }
-  });
-
-  assert.equal(client.automaticContributionStatus, undefined);
-  assert.equal(client.enableAutomaticContribution, undefined);
-  assert.equal(client.disableAutomaticContribution, undefined);
-  assert.deepEqual(calls, []);
-});
-
-test("local reviewed-queue normalizer fails closed and device pairing keeps its fixed request shape", async () => {
-  const privateCanary = "/Users/private/telemetry-secret.json";
-  const previewPayload = {
-    schemaVersion: CONTRIBUTION_SYNC_PREVIEW_SCHEMA_VERSION,
-    status: "available",
-    state: "ready",
-    discoveredSets: 1,
-    newlyQueued: 1,
-    deliveryConfigured: true,
-    networkActivity: false,
-    includesContent: false,
-    includesPaths: false,
-    includesIdentifiers: false,
-    includesCredentials: false,
-    item: {
-      schemaVersion: "telemetry-contribution-v0.1",
-      clientPlatform: "macos",
-      providerPolicyEpoch: "openai_agentic_pool_2026_07_09",
-      coveredAt: {
-        startAt: "2026-07-26T12:00:00.000Z",
-        endAt: "2026-07-26T12:30:00.000Z"
-      },
-      recordCounts: {
-        usageEvents: 2,
-        quotaSnapshots: 1,
-        activityMarkers: 0,
-        total: 3
-      },
-      accounting: {
-        estimatedApiCostUsd: "1.250000",
-        pricedEventCoveragePercent: 100,
-        unknownModelEventCount: 0,
-        unknownBillableUnits: 0,
-        priceBasis: "current_api_prices",
-        verification: "client_declared_unverified"
-      },
-      preparedBytes: 4096,
-      reservedUploadBytes: 16384,
-      attemptCount: 0,
-      nextAttemptAt: "2026-07-26T13:00:00.000Z",
-      privatePath: privateCanary,
-      contributionId: "contribution:private"
-    }
-  };
-  const normalizedPreview = normalizeContributionSyncPreview(previewPayload);
-  assert.equal(normalizedPreview.state, "ready");
-  assert.equal(normalizedPreview.item.recordCounts.total, 3);
-  assert.equal(JSON.stringify(normalizedPreview).includes(privateCanary), false);
-  assert.equal(JSON.stringify(normalizedPreview).includes("contribution:"), false);
-  assert.equal(
-    normalizeContributionSyncPreview({
-      ...previewPayload,
-      includesIdentifiers: true
-    }).status,
-    "unavailable"
-  );
-
-  const runPayload = {
-    schemaVersion: CONTRIBUTION_SYNC_RUN_SCHEMA_VERSION,
-    status: "completed",
-    discoveredSets: 1,
-    newlyQueued: 0,
-    processed: 1,
-    accepted: 1,
-    retryable: 0,
-    rejected: 0,
-    reservedUploadBytes: 16384,
-    bandwidthLimited: false,
-    includesContent: false,
-    includesPaths: false,
-    includesIdentifiers: false,
-    includesCredentials: false,
-    privatePath: privateCanary
-  };
-  assert.deepEqual(normalizeContributionSyncRun(runPayload), {
-    status: "completed",
-    discoveredSets: 1,
-    newlyQueued: 0,
-    processed: 1,
-    accepted: 1,
-    retryable: 0,
-    rejected: 0,
-    reservedUploadBytes: 16384,
-    bandwidthLimited: false
-  });
-
-  const calls = [];
-  const pairedPayload = {
-    schemaVersion: "local-contribution-device-pairing-v0.1",
-    status: "paired",
-    scope: "upload_registration",
-    expiresAt: "2026-07-26T14:00:00.000Z",
-    includesCredentials: false,
-    includesIdentifiers: false
-  };
-  assert.equal(
-    normalizeLocalContributionDevicePairing(pairedPayload).status,
-    "paired"
-  );
-  const client = new LocalCompanionClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      assert.equal(url, "/api/local/contribution/device-pair");
-      const body = pairedPayload;
-      return new Response(JSON.stringify(body), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
-    }
-  });
-  const pairingCode =
-    "um_pair_00000000-0000-4000-8000-000000000000.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-  assert.equal(
-    (await client.pairContributionDevice(pairingCode)).status,
-    "paired"
-  );
-  assert.equal(client.runContributionSyncOnce, undefined);
-  assert.equal(client.setContributionSyncPaused, undefined);
-  assert.deepEqual(calls.map((call) => call.url), [
-    "/api/local/contribution/device-pair"
-  ]);
-  for (const call of calls) {
-    assert.equal(call.options.method, "POST");
-    assert.equal(call.options.headers["X-Usage-Monitor-Local"], "1");
-  }
-  assert.equal(calls[0].options.body, JSON.stringify({ pairingCode }));
-});
-
-test("the local review bootstrap is independent of delivery scheduling", () => {
-  assert.equal(
-    contributionReviewBootstrapAction({
-      status: "available",
-      state: "empty",
-      item: null,
-    }),
-    "prepare",
-    "a clean queue prepares one local review instance",
-  );
-
-  for (const state of ["ready", "retry_wait", "paused"]) {
-    assert.equal(isContributionReviewableQueueState(state), true, state);
-    assert.equal(
-      contributionReviewBootstrapAction({
-        status: "available",
-        state,
-        item: {},
-      }),
-      "review",
-      `${state} changes delivery timing, not whether the verified payload can be reviewed`,
-    );
-  }
-
-  for (const preview of [
-    null,
-    { status: "unavailable", state: "unavailable", item: null },
-    { status: "not_configured", state: "unavailable", item: null },
-    { status: "available", state: "paused", item: null },
-    { status: "available", state: "paused", item: [] },
-  ]) {
-    assert.equal(
-      contributionReviewBootstrapAction(preview),
-      "unavailable",
-      "a missing or unusable review must become an explicit recovery state",
-    );
-  }
-});
-
-test("the prepare bootstrap requires a positively read pre-consent verdict", () => {
-  assert.equal(
-    contributionReviewPreparationPermitted({
-      status: "available",
-      consent: { approved: false, current: false, consentedAt: null },
-    }),
-    true,
-    "a fresh Mac's ceremony prepares its review instance",
-  );
-  assert.equal(
-    contributionReviewPreparationPermitted({
-      status: "available",
-      consent: { approved: true, current: false, consentedAt: "2026-08-08T17:31:13.735Z" },
-    }),
-    true,
-    "a consent-version change legitimately needs a fresh review",
-  );
-  assert.equal(
-    contributionReviewPreparationPermitted({
-      status: "available",
-      consent: { approved: true, current: true, consentedAt: "2026-08-08T17:31:13.735Z" },
-    }),
-    false,
-    "an approved Mac never mints a set the v0.1 queue cannot deliver",
-  );
-  for (const status of [
-    null,
-    undefined,
-    { status: "unavailable", consent: { approved: false, current: false } },
-    { status: "not_configured", consent: { approved: false, current: false } },
-  ]) {
-    assert.equal(
-      contributionReviewPreparationPermitted(status),
-      false,
-      "an unreadable consent verdict must never prepare",
-    );
-  }
-});
-
-test("a local review operation cannot leave onboarding busy forever", async () => {
-  const neverSettles = new Promise(() => {});
-  await assert.rejects(
-    withContributionReviewDeadline(neverSettles, {
-      timeoutMilliseconds: 1,
-    }),
-    (error) => error?.code === "local_review_timed_out",
-  );
-
-  assert.equal(
-    await withContributionReviewDeadline(Promise.resolve("reviewed"), {
-      timeoutMilliseconds: 100,
-    }),
-    "reviewed",
-    "a normal local review is unchanged",
-  );
-  await assert.rejects(
-    withContributionReviewDeadline(Promise.reject(new Error("original")), {
-      timeoutMilliseconds: 100,
-    }),
-    /original/u,
-    "a real failure is not rewritten as a timeout",
-  );
-});
-
-test("late review responses cannot overwrite a newer retry", () => {
-  const fence = createLatestContributionReviewFence();
-  const first = fence.begin();
-  assert.equal(fence.isCurrent(first), true);
-  const retry = fence.begin();
-  assert.equal(fence.isCurrent(first), false, "the superseded response is fenced");
-  assert.equal(fence.isCurrent(retry), true, "only the latest retry may commit");
-  assert.equal(fence.current(), retry);
-});
-
-
-test("local pairing preserves fixed identifier-shaped codes and drops anything else", async () => {
-  const pairingCode =
-    "um_pair_00000000-0000-4000-8000-000000000000.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-  const rejectingClient = (error, status = 409) => new LocalCompanionClient({
-    fetchImpl: async () => new Response(JSON.stringify({
-      schemaVersion: "local-companion-v0.1",
-      error,
-    }), {
-      status,
-      headers: { "Content-Type": "application/json" },
-    }),
-  });
-  // Every fixed companion code survives, so the page can explain the actual
-  // cause instead of collapsing all of them into one vague sentence.
-  for (const [code, status] of [
-    ["contribution_device_recovery_required", 409],
-    ["contribution_device_keychain_access_denied", 409],
-    ["contribution_device_pairing_not_authorized", 403],
-    ["contribution_device_pairing_not_configured", 409],
-    ["sync_in_progress", 409],
-    ["contribution_device_pairing_failed", 502],
-    ["unsupported_media_type", 415],
-    ["request_too_large", 413],
-    ["invalid_json", 400],
-    ["invalid_request", 400],
-  ]) {
-    await assert.rejects(
-      rejectingClient({ code }, status).pairContributionDevice(pairingCode),
-      (error) => error?.status === status && error?.code === code,
-    );
-  }
-
-  // Anything that is not an identifier-shaped code cannot reach the page: a
-  // sentence, a path, a non-string, or an extra member all drop back to a
-  // codeless rejection carrying only the page's own fallback copy.
-  for (const error of [
-    { code: "Pairing failed at /Users/private/state.json" },
-    { code: "MixedCase_Code" },
-    { code: 42 },
-    { code: "contribution_device_recovery_required", detail: "untrusted" },
-  ]) {
-    await assert.rejects(
-      rejectingClient(error).pairContributionDevice(pairingCode),
-      (rejected) => rejected?.status === 409 && rejected?.code === undefined,
-    );
-  }
-});
-
-test("exact prepared review uses a fixed local mutation route", async () => {
-  const calls = [];
-  const client = new LocalCompanionClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify({
-        schemaVersion: "contribution-sync-exact-review-v0.1",
-        status: "available",
-        state: "ready",
-        networkActivity: false,
-        payloadBytes: 100,
-        reviewToken: "r".repeat(43),
-        payload: { schemaVersion: "telemetry-contribution-v0.1" }
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-    }
-  });
-  await client.contributionSyncExactReview();
-  assert.equal(calls[0].url, "/api/local/contribution/sync-inspect-exact");
-  assert.equal(calls[0].options.method, "POST");
-  assert.equal(calls[0].options.headers["X-Usage-Monitor-Local"], "1");
-});
-
-test("local contribution preparation DTO normalization stays bounded and fail closed", () => {
-  const privateCanary = "/Users/private/raw-rollout.jsonl";
-  const payload = {
-    schemaVersion: "local-contribution-preparation-result-v0.1",
-    status: "prepared",
-    coveredAt: {
-      startAt: "2026-07-26T12:00:00.000Z",
-      endAt: "2026-07-26T13:00:00.000Z"
-    },
-    recordCounts: {
-      usageEvents: 10,
-      quotaSnapshots: 2,
-      activityMarkers: 1
-    },
-    privacy: {
-      verdict: "passed",
-      checksPassed: 8,
-      checksFailed: 0,
-      sourceTransportReady: false,
-      provenanceRetained: true
-    },
-    prepared: {
-      schemaVersion: "prepared-contribution-set-v0.1",
-      eligibleSchemaVersion: "telemetry-contribution-v0.1",
-      batchCount: 1,
-      bytes: 4_096
-    },
-    networkActivity: false,
-    includesContent: false,
-    includesPaths: false,
-    includesIdentifiers: false,
-    includesCredentials: false,
-    privatePath: privateCanary
-  };
-  const result = normalizeLocalContributionPreparation(payload);
-  assert.equal(result.status, "prepared");
-  assert.equal(result.recordCounts.usageEvents, 10);
-  assert.equal(result.prepared.bytes, 4_096);
-  assert.equal(JSON.stringify(result).includes(privateCanary), false);
-  assert.equal(
-    normalizeLocalContributionPreparation({
-      ...payload,
-      includesPaths: true
-    }).status,
-    "unavailable"
-  );
-
-});
 
 test("no client-side Google authorization path survives in the shipped modules", async () => {
   const [libSource, appSource, clientSource] = await Promise.all([
@@ -3576,69 +2473,13 @@ test("no client-side Google authorization path survives in the shipped modules",
     /sessionStorage|localStorage/u,
     "dashboard presentation never stores a social handoff",
   );
-  // The only provider URL any of these modules names is the one the service is
-  // required to have built, checked before it is opened.
+  // Retired hosted identity code and provider authorization URLs are absent.
   assert.equal(
     (clientSource.match(/https:\/\/accounts\.google\.com/gu) ?? []).length,
-    1
+    0
   );
   assert.equal(libSource.includes("accounts.google.com"), false);
   assert.equal(appSource.includes("accounts.google.com"), false);
-});
-
-test("backend readiness accepts fail-closed 503 state without calling it ready", async () => {
-  const payload = {
-    status: "not_ready",
-    checks: {
-      lifecycle: "stale",
-      lifecycleFresh: false,
-      quarantineRetentionComplete: true,
-      restoreReplayComplete: true,
-      aggregateRebuildComplete: false,
-      maintenanceCycleMatched: false,
-      quarantineReconciliation: "running",
-      quarantineReconciliationComplete: false
-    },
-    policy: {
-      lifecycleStaleAfterMilliseconds: 3_600_000
-    }
-  };
-  const ready = {
-    ...payload,
-    status: "ready",
-    checks: {
-      lifecycle: "ready",
-      lifecycleFresh: true,
-      quarantineRetentionComplete: true,
-      restoreReplayComplete: true,
-      aggregateRebuildComplete: true,
-      maintenanceCycleMatched: true,
-      quarantineReconciliation: "completed",
-      quarantineReconciliationComplete: true
-    }
-  };
-  assert.deepEqual(normalizeBackendReadiness(ready), {
-    state: "ready",
-    lifecycle: "ready",
-    lifecycleFresh: true,
-    quarantineRetentionComplete: true,
-    restoreReplayComplete: true,
-    aggregateRebuildComplete: true,
-    maintenanceCycleMatched: true,
-    quarantineReconciliation: "completed",
-    quarantineReconciliationComplete: true
-  });
-  assert.equal(
-    normalizeBackendReadiness({
-      ...ready,
-      checks: { ...ready.checks, maintenanceCycleMatched: false }
-    }).state,
-    "unavailable"
-  );
-  assert.equal(
-    normalizeBackendReadiness({ ...payload, leakedPath: "/private/log" }).state,
-    "unavailable"
-  );
 });
 
 test("retired local sharing and hosted handoff wrappers are absent from the browser adapter", () => {
@@ -3659,461 +2500,6 @@ test("retired local sharing and hosted handoff wrappers are absent from the brow
     "prepareContribution",
   ]) assert.equal(client[method], undefined, `${method} is not exposed`);
   assert.deepEqual(calls, []);
-});
-
-test("historical granular deletion receipts remain parse-only and fail closed", () => {
-  const contributionId = "contribution:00000000-0000-4000-8000-000000000001";
-
-  assert.deepEqual(
-    normalizeContributionDeletionReceipt(
-      { deleted: true, contributionId },
-      contributionId
-    ),
-    { deleted: true, contributionId }
-  );
-
-  assert.throws(
-    () => normalizeContributionDeletionReceipt({ deleted: true }, contributionId),
-    /invalid contribution deletion receipt/
-  );
-  assert.throws(
-    () => normalizeContributionDeletionReceipt(
-      {
-        deleted: true,
-        contributionId: "contribution:00000000-0000-4000-8000-000000000002"
-      },
-      contributionId
-    ),
-    /invalid contribution deletion receipt/
-  );
-});
-
-test("community snapshots fail closed and never disclose threshold distance", () => {
-  const published = normalizeCommunitySnapshot(communitySnapshot());
-  assert.equal(published.state, "published");
-  assert.equal(published.minimumParticipants, 20);
-  assert.equal(published.participantCohort, "provider_account");
-  assert.equal(published.cells[0].metrics.usageEvents.value, 30);
-
-  const partialPayload = structuredClone(communitySnapshot());
-  partialPayload.cells[0].metrics.outputReasoningTokens = { status: "suppressed" };
-  assert.equal(normalizeCommunitySnapshot(partialPayload).state, "published_partial");
-  delete partialPayload.cells[0].metrics.outputReasoningTokens;
-  assert.equal(normalizeCommunitySnapshot(partialPayload).state, "unsupported_schema");
-
-  const suppressedPayload = {
-    ...communitySnapshot(),
-    releaseStatus: "suppressed",
-    reason: "minimum_cell_support_not_met",
-    participantCount: 19,
-    cells: []
-  };
-  const suppressed = normalizeCommunitySnapshot(suppressedPayload);
-  assert.equal(suppressed.state, "suppressed");
-  assert.equal(Object.hasOwn(suppressed, "participantCount"), false);
-
-  assert.equal(normalizeCommunitySnapshot({
-    publicationStatus: "development_diagnostic_not_publication_safe"
-  }).state, "development_unsafe");
-  assert.equal(normalizeCommunitySnapshot({
-    ...communitySnapshot(),
-    immutable: false
-  }).state, "unsupported_schema");
-  assert.equal(normalizeCommunitySnapshot({
-    ...communitySnapshot(),
-    releaseStatus: "withdrawn",
-    cells: []
-  }).state, "withdrawn");
-  assert.equal(normalizeCommunitySnapshot({
-    ...communitySnapshot(),
-    releaseStatus: "not_yet_published",
-    cells: []
-  }).state, "not_yet_published");
-});
-
-test("participant v0.2 stats preserve server repricing, coverage states, and speed separation", () => {
-  const result = normalizeParticipantStats({
-    schemaVersion: PARTICIPANT_STATS_SCHEMA_VERSION,
-    totals: {
-      contributions: 2,
-      usageEvents: 10,
-      quotaSnapshots: 4,
-      activityMarkers: 1,
-      apiPriceEquivalentUsd: "12.345678",
-      serverUnknownBillableUnits: 90,
-      fullyPricedEvents: 7,
-      partiallyPricedEvents: 2,
-      unpricedEvents: 1,
-      priceVerification: "server_repriced",
-      standardApiCounterfactualUsd: "11.100000",
-      standardApiCounterfactualEvents: 8
-    },
-    insights: [{ code: "fast_event_share", value: 0.3 }],
-    rollingQuotaMovement: {
-      schemaVersion: "participant-quota-movement-v0.1",
-      status: "conditional_estimate",
-      accountContinuity: "not_transmitted",
-      apiPriceEquivalentCapacityUsd: 617.2839,
-      rows: [{
-        timestamp: "2026-07-25T14:00:00.000Z",
-        windowStartUtc: "2026-07-25T13:00:00.000Z",
-        windowEndUtc: "2026-07-25T14:00:00.000Z",
-        smoothingHours: 1,
-        observedQuotaChangePp: 2,
-        expectedQuotaChangePp: 1.8,
-        apiPriceEquivalentUsd: "11.100000",
-        usageEvents: 8
-      }]
-    }
-  });
-  assert.equal(result.state, "ready");
-  assert.equal(result.totals.apiPriceEquivalentUsd, 12.345678);
-  assert.deepEqual(result.pricingCoverage, {
-    state: "partially_priced",
-    percent: 90,
-    fullyPricedEvents: 7,
-    partiallyPricedEvents: 2,
-    unpricedEvents: 1,
-    unclassifiedEvents: 0
-  });
-  assert.equal(result.standardApiCounterfactual.apiPriceEquivalentUsd, 11.1);
-  assert.equal(result.codexFastObservations.eventShare, 0.3);
-  assert.equal(result.rollingQuotaMovement.rows[0].smoothingHours, 1);
-  assert.equal(result.rollingQuotaMovement.accountContinuity, "not_transmitted");
-});
-
-test("participant stats normalize private account-scoped capacity and sensitivity", () => {
-  const result = normalizeParticipantStats({
-    schemaVersion: PARTICIPANT_STATS_SCHEMA_VERSION,
-    totals: {
-      usageEvents: 20,
-      quotaSnapshots: 24,
-      apiPriceEquivalentUsd: "45.000000",
-      priceVerification: "server_repriced",
-      fullyPricedEvents: 20,
-      partiallyPricedEvents: 0,
-      unpricedEvents: 0
-    },
-    accountScopedQuotaAnalysis: {
-      schemaVersion: "account-scoped-quota-analysis-v0.1",
-      status: "ready",
-      tracks: [{
-        continuity: {
-          provider: "openai_codex",
-          planType: "pro",
-          planVariant: "pro-20x",
-          limitId: "codex",
-          windowDurationMinutes: 10_080,
-          policyEpoch: "openai_agentic_pool_2026_07_09"
-        },
-        calibration: {
-          tracks: [{
-            totalResetCount: 3,
-            estimatedResetCount: 1,
-            resets: [{
-              status: "conditional_estimate",
-              refusalCodes: [],
-              capacityNanousd: 600_000_000_000,
-              sensitivityRangeNanousd: {
-                lower: 500_000_000_000,
-                upper: 700_000_000_000
-              },
-              boundaryCount: 10,
-              displayedSpanPp: 12
-            }]
-          }]
-        },
-        rolling: {
-          status: "conditional_comparison",
-          refusalCodes: [],
-          comparisons: [{ smoothingHours: 1 }, { smoothingHours: 2 }]
-        }
-      }]
-    }
-  });
-  const track = result.accountScopedQuotaAnalysis.tracks[0];
-  assert.equal(result.accountScopedQuotaAnalysis.status, "ready");
-  assert.equal(track.latestCapacityUsd, 600);
-  assert.equal(track.sensitivityLowerUsd, 500);
-  assert.equal(track.sensitivityUpperUsd, 700);
-  assert.equal(track.rollingComparisonCount, 2);
-});
-
-test("private community comparison preserves own clipped versus public rounded semantics", () => {
-  const metrics = Object.fromEntries([
-    ["usageEvents", "events"],
-    ["inputUncachedTokens", "tokens"],
-    ["inputCacheReadTokens", "tokens"],
-    ["inputCacheWriteTokens", "tokens"],
-    ["outputTextTokens", "tokens"],
-    ["outputReasoningTokens", "tokens"],
-    ["outputCombinedTokens", "tokens"],
-    ["toolUnits", "units"]
-  ].map(([name, unit]) => [
-    name,
-    name === "outputReasoningTokens"
-      ? { status: "community_not_released" }
-      : {
-          status: "comparable",
-          participantClippedValue: name === "usageEvents" ? 1 : 900,
-          communityRoundedValue: name === "usageEvents" ? 20 : 0,
-          unit
-        }
-  ]));
-  const normalized = normalizeParticipantCommunityComparison({
-    schemaVersion: PARTICIPANT_COMMUNITY_COMPARISON_SCHEMA_VERSION,
-    status: "ready",
-    snapshotId: "community-weekly:2026-07-20",
-    snapshotRevision: 2,
-    period: {
-      startAt: "2026-07-20T00:00:00.000Z",
-      endAt: "2026-07-27T00:00:00.000Z"
-    },
-    interpretation: "own_clipped_contribution_vs_public_rounded_total",
-    cells: [{
-      provider: "openai_codex",
-      modelId: "gpt-5.6-sol",
-      participantHasActivity: true,
-      metrics,
-      participantCount: 20,
-      accountTrackId: "must-not-survive"
-    }]
-  });
-  assert.equal(normalized.status, "ready");
-  assert.equal(normalized.snapshotRevision, 2);
-  assert.equal(normalized.cells[0].metrics.inputCacheReadTokens.participantClippedValue, 900);
-  assert.equal(normalized.cells[0].metrics.inputCacheReadTokens.communityRoundedValue, 0);
-  assert.equal(normalized.cells[0].metrics.outputReasoningTokens.status, "community_not_released");
-  assert.equal(Object.hasOwn(normalized.cells[0], "participantCount"), false);
-  assert.equal(Object.hasOwn(normalized.cells[0], "accountTrackId"), false);
-
-  const malformed = structuredClone({
-    schemaVersion: PARTICIPANT_COMMUNITY_COMPARISON_SCHEMA_VERSION,
-    status: "ready",
-    snapshotId: "community-weekly:2026-07-20",
-    snapshotRevision: 2,
-    period: {
-      startAt: "2026-07-20T00:00:00.000Z",
-      endAt: "2026-07-27T00:00:00.000Z"
-    },
-    interpretation: "own_clipped_contribution_vs_public_rounded_total",
-    cells: [{
-      provider: "openai_codex",
-      modelId: "gpt-5.6-sol",
-      participantHasActivity: true,
-      metrics
-    }]
-  });
-  malformed.cells[0].metrics.inputCacheReadTokens.status = "comparable";
-  malformed.cells[0].metrics.inputCacheReadTokens.participantClippedValue = -1;
-  assert.equal(
-    normalizeParticipantCommunityComparison(malformed).reason,
-    "comparison_contract_invalid"
-  );
-  assert.equal(normalizeParticipantCommunityComparison({
-    schemaVersion: PARTICIPANT_COMMUNITY_COMPARISON_SCHEMA_VERSION,
-    status: "not_testable",
-    reason: "community_snapshot_not_released",
-    cells: []
-  }).reason, "community_snapshot_not_released");
-});
-
-test("participant history keeps lifecycle and provenance bounded and private", async () => {
-  const contributionId = "contribution:00000000-0000-4000-8000-000000000001";
-  const profile = {
-    schemaVersion: PARTICIPANT_PROFILE_SCHEMA_VERSION,
-    participantId: "private-server-participant-id",
-    createdAt: "2026-07-25T12:00:00.000Z",
-    consentVersion: "privacy-safe-telemetry-v0.1",
-    contributionCount: 1,
-    contributionAdmission: {
-      schemaVersion: "telemetry-contribution-admission-v0.1",
-      state: "available",
-      window: {
-        kind: "fixed_utc",
-        anchor: "monday_00_00_utc",
-        startsAt: "2026-07-27T00:00:00.000Z",
-        endsAt: "2026-08-03T00:00:00.000Z",
-        durationMilliseconds: 604_800_000,
-      },
-      acceptedBatches: 37,
-      remainingBatches: 63,
-      maximumBatches: 100,
-      slotRefundPolicy: "not_refunded_by_contribution_deletion",
-    },
-    historyPolicy: {
-      maximumItems: 101,
-      quarantineRetentionMilliseconds: 604_800_000,
-      canonicalMetadataRetainedAfterQuarantine: true,
-      clientSoftwareVersion: "unavailable_in_transport"
-    },
-    contributions: [{
-      contributionId,
-      status: "accepted",
-      synthetic: false,
-      schemaVersion: "telemetry-contribution-v0.1",
-      transportSchemaVersion: "telemetry-contribution-v0.1",
-      coveredAt: {
-        startAt: "2026-07-25T12:00:00.000Z",
-        endAt: "2026-07-25T12:30:00.000Z"
-      },
-      clientPlatform: "macos",
-      providerPolicyEpoch: "openai_agentic_pool_2026_07_09",
-      recordCounts: { declared: 3, accepted: 2, deduplicated: 1 },
-      serverAccounting: {
-        apiPriceEquivalentUsd: "0.0032",
-        priceBasis: "historical_api_prices",
-        priceEpochBasis: "event_time_when_registry_has_effective_evidence",
-        eventTimeRange: {
-          startAt: "2026-07-25T12:05:00.000Z",
-          endAt: "2026-07-25T12:05:00.000Z"
-        },
-        verification: "server_repriced",
-        registrySha256: "private-projected-away"
-      },
-      quarantine: {
-        state: "retained",
-        scheduledDeletionAt: "2026-08-01T12:00:00.000Z",
-        deletedAt: null,
-        canonicalMetadataRetained: true
-      },
-      createdAt: "2026-07-25T12:00:00.000Z",
-      datasetId: "private-projected-away",
-      accountTrackId: "private-projected-away"
-    }]
-  };
-  const normalized = normalizeParticipantHistory(profile);
-  assert.equal(normalized.state, "ready");
-  assert.equal(normalized.items[0].contributionId, contributionId);
-  assert.equal(normalized.items[0].recordCounts.deduplicated, 1);
-  assert.equal(normalized.items[0].serverAccounting.apiPriceEquivalentUsd, 0.0032);
-  assert.equal(normalized.items[0].serverAccounting.priceBasis, "historical_api_prices");
-  assert.equal(
-    normalized.items[0].serverAccounting.priceEpochBasis,
-    "event_time_when_registry_has_effective_evidence",
-  );
-  assert.deepEqual(normalized.items[0].serverAccounting.eventTimeRange, {
-    startAt: "2026-07-25T12:05:00.000Z",
-    endAt: "2026-07-25T12:05:00.000Z",
-  });
-  assert.equal(normalized.items[0].quarantine.state, "retained");
-  assert.deepEqual(normalized.contributionAdmission, {
-    state: "available",
-    acceptedBatches: 37,
-    remainingBatches: 63,
-    maximumBatches: 100,
-    renewsAt: "2026-08-03T00:00:00.000Z",
-    slotRefundPolicy: "not_refunded_by_contribution_deletion",
-  });
-  assert.equal(Object.hasOwn(normalized, "participantId"), false);
-  assert.equal(Object.hasOwn(normalized.items[0], "datasetId"), false);
-  assert.equal(Object.hasOwn(normalized.items[0], "accountTrackId"), false);
-  assert.equal(Object.hasOwn(normalized.items[0].serverAccounting, "registrySha256"), false);
-
-  const badRetention = structuredClone(profile);
-  badRetention.contributions[0].quarantine.scheduledDeletionAt =
-    "2026-08-02T12:00:00.000Z";
-  assert.equal(normalizeParticipantHistory(badRetention).reason, "invalid_contract");
-
-  // Retention disabled: the service publishes a null window, and every
-  // contribution must then carry a null schedule rather than a stale date.
-  const retentionDisabled = structuredClone(profile);
-  retentionDisabled.historyPolicy.quarantineRetentionMilliseconds = null;
-  retentionDisabled.contributions[0].quarantine.scheduledDeletionAt = null;
-  const disabledHistory = normalizeParticipantHistory(retentionDisabled);
-  assert.equal(disabledHistory.state, "ready");
-  assert.equal(disabledHistory.items[0].quarantine.scheduledDeletionAt, null);
-  assert.equal(disabledHistory.items[0].quarantine.state, "retained");
-
-  const disabledWithSchedule = structuredClone(retentionDisabled);
-  disabledWithSchedule.contributions[0].quarantine.scheduledDeletionAt =
-    "2026-08-01T12:00:00.000Z";
-  assert.equal(
-    normalizeParticipantHistory(disabledWithSchedule).reason,
-    "invalid_contract",
-  );
-
-  const enabledWithoutSchedule = structuredClone(profile);
-  enabledWithoutSchedule.contributions[0].quarantine.scheduledDeletionAt = null;
-  assert.equal(
-    normalizeParticipantHistory(enabledWithoutSchedule).reason,
-    "invalid_contract",
-  );
-
-  // A zero window is a malformed contract, never "delete immediately".
-  const zeroRetention = structuredClone(profile);
-  zeroRetention.historyPolicy.quarantineRetentionMilliseconds = 0;
-  assert.equal(normalizeParticipantHistory(zeroRetention).reason, "invalid_contract");
-
-  const badCounts = structuredClone(profile);
-  badCounts.contributions[0].recordCounts.accepted = 3;
-  assert.equal(normalizeParticipantHistory(badCounts).reason, "invalid_contract");
-
-  const duplicateIds = structuredClone(profile);
-  duplicateIds.contributions.push(structuredClone(profile.contributions[0]));
-  duplicateIds.contributionCount = 2;
-  assert.equal(normalizeParticipantHistory(duplicateIds).reason, "invalid_contract");
-
-  const wrongStatus = structuredClone(profile);
-  wrongStatus.contributions[0].status = "accepted_synthetic";
-  assert.equal(normalizeParticipantHistory(wrongStatus).reason, "invalid_contract");
-
-  const impossibleDeletion = structuredClone(profile);
-  impossibleDeletion.contributions[0].quarantine = {
-    state: "deleted",
-    scheduledDeletionAt: "2026-08-01T12:00:00.000Z",
-    deletedAt: "2026-07-25T11:59:59.000Z",
-    canonicalMetadataRetained: true
-  };
-  assert.equal(normalizeParticipantHistory(impossibleDeletion).reason, "invalid_contract");
-
-  const oversized = structuredClone(profile);
-  oversized.contributions = Array.from({ length: 102 }, () => profile.contributions[0]);
-  oversized.contributionCount = 102;
-  assert.equal(normalizeParticipantHistory(oversized).reason, "invalid_contract");
-
-  const invalidAdmission = structuredClone(profile);
-  invalidAdmission.contributionAdmission.remainingBatches = 64;
-  assert.equal(
-    normalizeParticipantHistory(invalidAdmission).reason,
-    "invalid_contract",
-  );
-
-  const legacyWithoutAdmission = structuredClone(profile);
-  delete legacyWithoutAdmission.contributionAdmission;
-  assert.equal(
-    normalizeParticipantHistory(legacyWithoutAdmission)
-      .contributionAdmission.state,
-    "unknown",
-  );
-
-});
-
-test("participant results fail closed for unverifiable prices and honest not-testable movement", () => {
-  const result = normalizeParticipantStats({
-    schemaVersion: PARTICIPANT_STATS_SCHEMA_VERSION,
-    totals: {
-      usageEvents: 0,
-      apiPriceEquivalentUsd: "999.000000",
-      priceVerification: "client_declared_unverified",
-      fullyPricedEvents: 0,
-      partiallyPricedEvents: 0,
-      unpricedEvents: 0
-    },
-    rollingQuotaMovement: {
-      status: "not_testable",
-      reason: "no_observed_quota_movement",
-      rows: [],
-      accountContinuity: "not_transmitted"
-    }
-  });
-  assert.equal(result.totals.apiPriceEquivalentUsd, null);
-  assert.equal(result.pricingCoverage.state, "not_testable");
-  assert.equal(result.standardApiCounterfactual.state, "not_separately_returned");
-  assert.equal(result.codexFastObservations.state, "not_testable");
-  assert.equal(result.rollingQuotaMovement.status, "not_testable");
-  assert.equal(result.rollingQuotaMovement.reason, "no_observed_quota_movement");
-  assert.equal(normalizeParticipantStats({ schemaVersion: "participant-stats-v0.1" }).state, "unsupported_schema");
 });
 
 
@@ -4241,11 +2627,20 @@ async function createDashboardStartupHarness({
       textContent: "",
       setAttribute() {},
       getAttribute() { return null; },
+      removeAttribute() {},
+      dataset: {},
+      append() {},
+      classList: { toggle() {} },
     });
     return elements.get(selector);
   };
   const context = createContext({
     $: element,
+    onboardingSourceGuidance: () => ({ values: {}, titleKey: "setup.title", summaryKey: "setup.state.readyCopy", checkKey: "setup.check.readable" }),
+    compact: String,
+    clear() {},
+    node: () => ({ append() {} }),
+    localizedNode: () => ({}),
     setLocalizedText(target, key, values = {}) { target.textContent = translate(key, values, "en-US"); },
     window: { setTimeout: (callback) => { queueMicrotask(callback); } },
     document: { documentElement: { dataset: {} } },
@@ -4289,7 +2684,6 @@ async function createDashboardStartupHarness({
       refreshStatus: async () => ({ refresh: { result: {} } }),
       ...Object.fromEntries(Object.entries(client).filter(([key]) => key !== "load")),
     },
-    runsInsideNativeDashboard: () => true,
     // Keep retired renderer scheduling observable: optional readiness reads
     // must not invoke either of these compatibility test spies.
     startElectronStartupRefresh: () => {
@@ -4669,7 +3063,7 @@ test("first run is a truthful install and local preflight journey", async () => 
   assert.doesNotMatch(html, /id="community-contribution-disclosure"/u);
   assert.doesNotMatch(html, /id="electron-accountless-sharing-description"/u);
   assert.doesNotMatch(html, /id="incremental-consent"/u);
-  assert.match(styles, /native-dashboard #setup-card/u);
+  assert.doesNotMatch(styles, /native-dashboard/u);
   assert.match(appSource, /card\.hidden = true;[\s\S]*?card\.setAttribute\("aria-hidden", "true"\)/u);
 
   // The install call to action is one shared module used by both browser
@@ -4800,7 +3194,7 @@ test("timeline keeps time, uncertainty, and primary navigation explicit", async 
   assert.match(appSource, /chart\.status\.unpricedLocalActivity/u);
   assert.doesNotMatch(appSource, /component\.unpricedTokens|tokensWithUnpriced/);
   assert.doesNotMatch(appSource, /accounting\.pricing\.evidenceStarts/);
-  assert.match(styles, /native-dashboard #setup-card/);
+  assert.doesNotMatch(appSource, /runsInsideNativeDashboard/);
   assert.match(appSource, /timelineStatusLabel/);
   // The `recent_7d_partial` pin lived in the preparation preflight estimate,
   // which left with the prepare flow (owner-directed, 2026-08-08); partial
@@ -4862,7 +3256,7 @@ test("timeline keeps time, uncertainty, and primary navigation explicit", async 
   );
   assert.match(
     styles,
-    /body:not\(\.community-site\) > \.topbar \.brand > span \{ display: none; \}/u,
+    /body > \.topbar \.brand > span \{ display: none; \}/u,
     "the local toolbar sheds its wordmark before it can overlap controls",
   );
   assert.match(styles, /grid-template-columns: repeat\(5, minmax\(0, 1fr\)\)/);
@@ -5121,10 +3515,10 @@ test("the historical allowance headline and history use one selected plan withou
   assert.match(plus.label, /Plus/u);
   assert.match(plus.estimate, /\$85/u);
   assert.match(plus.range, /\$68.*\$102/u);
-  assert.match(pro.label, /Pro \(10×\)/u);
+  assert.match(pro.label, /Pro 200/u);
   assert.match(pro.estimate, /\$2400/u);
   assert.match(pro.range, /\$1920.*\$2880/u);
-  assert.match(proInSpanish.label, /Pro \(10×\)/u);
+  assert.match(proInSpanish.label, /Pro 200/u);
   assert.match(proInSpanish.estimate, /\$2400/u);
   for (const [view, planType, value, shown] of [
     [plus, "plus", 85, 2], [pro, "pro", 2_400, 1], [proInSpanish, "pro", 2_400, 2],
@@ -5937,12 +4331,6 @@ test("live timeline couples speed-priced usage to the matching allowance capacit
 
 
 
-test("export filenames and reflected API errors remain bounded", () => {
-  assert.equal(safeFilename("../../private id"), "usage-monitor-privateid-export.json");
-  assert.equal(safeApiError({ error: { code: "INVALID_ENVELOPE" } }, "failed"), "INVALID ENVELOPE");
-  assert.equal(safeApiError({ message: "private server detail" }, "failed"), "failed");
-});
-
 test("every user-visible failure carries a quotable, content-free reference", () => {
   const references = new Set();
   for (let attempt = 0; attempt < 500; attempt += 1) {
@@ -6023,9 +4411,10 @@ test("every user-visible failure carries a quotable, content-free reference", ()
   for (const invalid of ["failed at /Users/private", "a".repeat(81), null, {}]) {
     assert.equal(diagnosticErrorCode(invalid), "");
   }
-  assert.equal(diagnosticSurface("contribution_connect"), "contribution_connect");
+  assert.equal(diagnosticSurface("contribution_connect"), "");
+  assert.equal(diagnosticSurface("local_refresh"), "local_refresh");
   assert.equal(diagnosticSurface("anything_else"), "");
-  assert.ok(DIAGNOSTIC_SURFACES.includes("device_credential_reset"));
+  assert.deepEqual(DIAGNOSTIC_SURFACES, ["local_refresh"]);
 });
 
 test("diagnostic notes are recorded through a fixed, bounded local route", async () => {
@@ -6042,7 +4431,7 @@ test("diagnostic notes are recorded through a fixed, bounded local route", async
   });
   const recorded = await client.recordDiagnosticNote({
     reference: "TT-7QF3K2",
-    surface: "contribution_connect",
+    surface: "local_refresh",
     code: "contribution_device_recovery_required",
     requestId: "0f2c7a11-4b93-4bb2-9a7c-1c0d2e3f4a5b",
   });
@@ -6053,7 +4442,7 @@ test("diagnostic notes are recorded through a fixed, bounded local route", async
   assert.equal(calls[0].options.headers["X-Usage-Monitor-Local"], "1");
   assert.deepEqual(JSON.parse(calls[0].options.body), {
     reference: "TT-7QF3K2",
-    surface: "contribution_connect",
+    surface: "local_refresh",
     code: "contribution_device_recovery_required",
     requestId: "0f2c7a11-4b93-4bb2-9a7c-1c0d2e3f4a5b",
   });
@@ -6062,13 +4451,13 @@ test("diagnostic notes are recorded through a fixed, bounded local route", async
   // forwarded, so nothing free-form can reach the local log.
   await client.recordDiagnosticNote({
     reference: "TT-ZZ0011",
-    surface: "contribution_send",
+    surface: "local_refresh",
     code: "failed reading /Users/private/state.json",
     requestId: "private-value",
   });
   assert.deepEqual(JSON.parse(calls[1].options.body), {
     reference: "TT-ZZ0011",
-    surface: "contribution_send",
+    surface: "local_refresh",
     code: "unknown",
     requestId: "",
   });
@@ -6078,14 +4467,14 @@ test("diagnostic notes are recorded through a fixed, bounded local route", async
   // when there is one to send.
   await client.recordDiagnosticNote({
     reference: "TT-4HJ7M2",
-    surface: "contribution_prepare",
+    surface: "local_refresh",
     code: "export_too_large",
     detail: "export_resource_expanded_record_bytes",
     requestId: "",
   });
   assert.deepEqual(JSON.parse(calls[2].options.body), {
     reference: "TT-4HJ7M2",
-    surface: "contribution_prepare",
+    surface: "local_refresh",
     code: "export_too_large",
     detail: "export_resource_expanded_record_bytes",
     requestId: "",
@@ -6093,7 +4482,7 @@ test("diagnostic notes are recorded through a fixed, bounded local route", async
   for (const detail of ["", "Failed reading /Users/private/state.json", 42]) {
     await client.recordDiagnosticNote({
       reference: "TT-4HJ7M3",
-      surface: "contribution_prepare",
+      surface: "local_refresh",
       code: "export_too_large",
       detail,
       requestId: "",
@@ -6106,7 +4495,7 @@ test("diagnostic notes are recorded through a fixed, bounded local route", async
 
   const callsBeforeInvalid = calls.length;
   for (const invalid of [
-    { reference: "nope", surface: "contribution_send" },
+    { reference: "nope", surface: "local_refresh" },
     { reference: "TT-7QF3K2", surface: "Not A Surface" },
     { reference: "TT-7QF3K2" },
   ]) {
@@ -6131,6 +4520,36 @@ test("diagnostic notes are recorded through a fixed, bounded local route", async
   );
 });
 
+test("work usage diagnostic context is closed, bounded and recorded locally", async () => {
+  const calls = [];
+  const client = new LocalCompanionClient({ fetchImpl: async (_url, options) => {
+    calls.push(JSON.parse(options.body));
+    return new Response(JSON.stringify({ schemaVersion: "local-diagnostic-note-v0.1",
+      status: "recorded", reference: "TT-7QF3K2" }), { status: 200 });
+  } });
+  const workUsage = { schemaVersion: "work-usage-request-diagnostic-v1", phase: "query",
+    stage: "response_body", elapsedMs: 30_001, timeoutMs: 30_000,
+    httpStatus: 200, background: false };
+  await client.recordDiagnosticNote({ reference: "TT-7QF3K2", surface: "local_refresh",
+    code: "work_usage_timeout", workUsage });
+  assert.deepEqual(calls[0].workUsage, workUsage);
+  for (const invalid of [
+    { ...workUsage, privateValue: "sensitive" },
+    { ...workUsage, phase: "secret" },
+    { ...workUsage, elapsedMs: -1 },
+    { ...workUsage, timeoutMs: 12_345 },
+    { ...workUsage, httpStatus: 700 },
+  ]) {
+    await assert.rejects(client.recordDiagnosticNote({ reference: "TT-7QF3K2",
+      surface: "local_refresh", code: "work_usage_timeout", workUsage: invalid }),
+    /Diagnostic note inputs are invalid/u);
+  }
+  await assert.rejects(client.recordDiagnosticNote({ reference: "TT-7QF3K2",
+    surface: "local_refresh", code: "private_error", workUsage }),
+  /Diagnostic note inputs are invalid/u);
+  assert.equal(calls.length, 1);
+});
+
 test("failed diagnostic writes reject and leave the user with only the reference", async () => {
   const client = new LocalCompanionClient({
     fetchImpl: async () => new Response(JSON.stringify({
@@ -6144,7 +4563,7 @@ test("failed diagnostic writes reject and leave the user with only the reference
   await assert.rejects(
     client.recordDiagnosticNote({
       reference: "TT-7QF3K2",
-      surface: "contribution_connect",
+      surface: "local_refresh",
       code: "contribution_device_recovery_required",
       requestId: "",
     }),
@@ -6158,298 +4577,6 @@ test("failed diagnostic writes reject and leave the user with only the reference
       writtenToLocalLog: false,
     }),
     "Reference TT-7QF3K2.",
-  );
-});
-
-test("disconnecting this Mac is a confirmed, non-identifying local transaction", async () => {
-  const calls = [];
-  const client = (payload, status = 200) => new LocalCompanionClient({
-    fetchImpl: async (url, options = {}) => {
-      calls.push({ url, options });
-      return new Response(JSON.stringify(payload), {
-        status,
-        headers: { "Content-Type": "application/json" },
-      });
-    },
-  });
-  const disconnected = await client({
-    schemaVersion: "local-contribution-device-disconnect-v0.1",
-    status: "disconnected",
-    deliveryPaused: true,
-    localCredential: "deleted",
-    localBinding: "removed",
-    hostedDataDeleted: false,
-    includesIdentifiers: false,
-    includesCredentials: false,
-  }).disconnectContributionDevice();
-  assert.deepEqual(disconnected, {
-    status: "disconnected",
-    deliveryPaused: true,
-    localCredential: "deleted",
-    localBinding: "removed",
-  });
-  assert.equal(calls[0].url, "/api/local/contribution/device-disconnect");
-  assert.equal(calls[0].options.method, "POST");
-  assert.equal(calls[0].options.headers["X-Usage-Monitor-Local"], "1");
-  assert.deepEqual(JSON.parse(calls[0].options.body), {
-    confirm: "disconnect_this_mac",
-  });
-
-  // The browser has no business learning the remote device id or receiving a
-  // result that says its service data was deleted. Both claims fail closed.
-  for (const payload of [
-    {
-      schemaVersion: "local-contribution-device-disconnect-v0.1",
-      status: "disconnected",
-      deliveryPaused: true,
-      localCredential: "deleted",
-      localBinding: "removed",
-      hostedDataDeleted: false,
-      includesIdentifiers: true,
-      includesCredentials: false,
-    },
-    {
-      schemaVersion: "local-contribution-device-disconnect-v0.1",
-      status: "disconnected",
-      deliveryPaused: true,
-      localCredential: "deleted",
-      localBinding: "removed",
-      hostedDataDeleted: true,
-      includesIdentifiers: false,
-      includesCredentials: false,
-    },
-    {
-      schemaVersion: "local-contribution-device-disconnect-v0.2",
-      status: "disconnected",
-      deliveryPaused: true,
-      localCredential: "deleted",
-      localBinding: "removed",
-      hostedDataDeleted: false,
-      includesIdentifiers: false,
-      includesCredentials: false,
-    },
-  ]) {
-    assert.equal(
-      normalizeLocalContributionDeviceDisconnect(payload).status,
-      "unavailable",
-    );
-  }
-  assert.equal(
-    normalizeLocalContributionDeviceDisconnect(null).status,
-    "unavailable",
-  );
-
-  await assert.rejects(
-    client({
-      schemaVersion: "local-companion-v0.1",
-      error: { code: "contribution_device_disconnect_cleanup_pending" },
-    }, 409).disconnectContributionDevice(),
-    (error) => error.status === 409
-      && error.code === "contribution_device_disconnect_cleanup_pending",
-  );
-});
-
-test("sealed snapshots stay readable across all released contracts", () => {
-  assert.deepEqual(SUPPORTED_COMMUNITY_SNAPSHOT_SCHEMA_VERSIONS, [
-    "community-weekly-snapshot-v0.1",
-    "community-weekly-snapshot-v0.2",
-    "community-weekly-snapshot-v0.3",
-  ]);
-
-  // A sealed revision is immutable by design, so a week published under the
-  // earlier contract keeps being served and must keep rendering.
-  const v01 = structuredClone(communitySnapshot());
-  v01.schemaVersion = "community-weekly-snapshot-v0.1";
-  delete v01.cohortEligibility;
-  v01.privacyPolicy = {
-    version: "community-weekly-v0.1",
-    minimumIndependentParticipants: 20,
-  };
-  delete v01.cells[0].planType;
-  delete v01.cells[0].planVariant;
-  const earlier = normalizeCommunitySnapshot(v01);
-  assert.equal(earlier.state, "published");
-  assert.equal(earlier.schemaVersion, "community-weekly-snapshot-v0.1");
-  assert.equal(earlier.cells[0].metrics.usageEvents.value, 30);
-  // Plan cohorts arrived with v0.2, so a v0.1 cell says unknown rather than
-  // inventing a cohort or refusing the whole snapshot.
-  assert.equal(earlier.cells[0].planType, "unknown");
-  assert.equal(earlier.cells[0].planVariant, "unknown");
-
-  const v02 = structuredClone(v01);
-  v02.schemaVersion = "community-weekly-snapshot-v0.2";
-  v02.cells[0].planType = "chatgpt_plus";
-  v02.cells[0].planVariant = "standard";
-  const current = normalizeCommunitySnapshot(v02);
-  assert.equal(current.state, "published");
-  assert.equal(current.schemaVersion, "community-weekly-snapshot-v0.2");
-  assert.equal(current.cells[0].planType, "chatgpt_plus");
-  assert.equal(current.cells[0].planVariant, "standard");
-
-  const currentContract = normalizeCommunitySnapshot(communitySnapshot());
-  assert.equal(currentContract.state, "published");
-  assert.equal(currentContract.schemaVersion, "community-weekly-snapshot-v0.3");
-  assert.equal(currentContract.participantCohort, "provider_account");
-  assert.equal(currentContract.minimumParticipants, 20);
-
-  for (const mutate of [
-    (payload) => { payload.cohortEligibility = "independent_people"; },
-    (payload) => { payload.privacyPolicy.version = "community-weekly-v0.0"; },
-    (payload) => { delete payload.privacyPolicy.minimumProviderAccountParticipants; },
-    (payload) => { payload.privacyPolicy.minimumProviderAccountParticipants = 19; },
-    (payload) => { payload.privacyPolicy.maturity.appliesTo = "invite_cohort"; },
-    (payload) => { payload.privacyPolicy.maturity.maturityDays = 6; },
-    (payload) => { payload.privacyPolicy.maturity.minimumAcceptedCollectionDays = 1; },
-    (payload) => {
-      payload.privacyPolicy.maturity.acceptedCollectionDayBasis = "observed_at";
-    },
-  ]) {
-    const broken = structuredClone(communitySnapshot());
-    mutate(broken);
-    assert.equal(normalizeCommunitySnapshot(broken).state, "unsupported_schema");
-  }
-
-  // A cell that claims a cohort under the earlier contract does not get one:
-  // the contract, not the payload, decides whether the field means anything.
-  const spoofed = structuredClone(v01);
-  spoofed.cells[0].planType = "chatgpt_pro";
-  spoofed.cells[0].planVariant = "priority";
-  const ignored = normalizeCommunitySnapshot(spoofed);
-  assert.equal(ignored.cells[0].planType, "unknown");
-  assert.equal(ignored.cells[0].planVariant, "unknown");
-
-  // Every other check stays exactly as strict on the older contract.
-  for (const mutate of [
-    (payload) => { payload.immutable = false; },
-    (payload) => { payload.nonOverlapping = false; },
-    (payload) => { payload.privacyPolicy.minimumIndependentParticipants = 2; },
-    (payload) => { delete payload.cells[0].metrics.toolUnits; },
-    (payload) => { payload.cells[0].metrics.usageEvents.unit = "tokens_rounded_down"; },
-    (payload) => { payload.cells[0].modelId = ""; },
-    (payload) => { payload.ingestionCutoffAt = ""; },
-  ]) {
-    const broken = structuredClone(v01);
-    mutate(broken);
-    assert.equal(normalizeCommunitySnapshot(broken).state, "unsupported_schema");
-  }
-
-  // A contract nobody has released is still refused rather than guessed at.
-  for (const version of [
-    "community-weekly-snapshot-v0.4",
-    "community-weekly-snapshot",
-    "participant-community-comparison-v0.2",
-    "",
-  ]) {
-    const unsupported = structuredClone(communitySnapshot());
-    unsupported.schemaVersion = version;
-    assert.equal(
-      normalizeCommunitySnapshot(unsupported).state,
-      "unsupported_schema",
-    );
-  }
-});
-
-test("participant community comparison reads both released contracts", () => {
-  assert.deepEqual(SUPPORTED_PARTICIPANT_COMMUNITY_COMPARISON_SCHEMA_VERSIONS, [
-    "participant-community-comparison-v0.1",
-    "participant-community-comparison-v0.2",
-  ]);
-  const comparison = (schemaVersion, cell = {}) => ({
-    schemaVersion,
-    status: "ready",
-    snapshotId: "community-weekly:2026-07-20",
-    snapshotRevision: 2,
-    period: {
-      startAt: "2026-07-20T00:00:00.000Z",
-      endAt: "2026-07-27T00:00:00.000Z",
-    },
-    interpretation: "own_clipped_contribution_vs_public_rounded_total",
-    cells: [{
-      provider: "openai_codex",
-      modelId: "gpt-5.6-sol",
-      participantHasActivity: true,
-      metrics: Object.fromEntries([
-        ["usageEvents", "events"],
-        ["inputUncachedTokens", "tokens"],
-        ["inputCacheReadTokens", "tokens"],
-        ["inputCacheWriteTokens", "tokens"],
-        ["outputTextTokens", "tokens"],
-        ["outputReasoningTokens", "tokens"],
-        ["outputCombinedTokens", "tokens"],
-        ["toolUnits", "units"],
-      ].map(([name, unit]) => [name, {
-        status: "comparable",
-        participantClippedValue: 3,
-        communityRoundedValue: 20,
-        unit,
-      }])),
-      ...cell,
-    }],
-  });
-
-  const earlier = normalizeParticipantCommunityComparison(
-    comparison("participant-community-comparison-v0.1"),
-  );
-  assert.equal(earlier.status, "ready");
-  assert.equal(earlier.cells[0].metrics.usageEvents.participantClippedValue, 3);
-  assert.equal(earlier.cells[0].planType, "unknown");
-  assert.equal(earlier.cells[0].planVariant, "unknown");
-  // v0.1 never checked a cohort, so false would be a claim it did not make.
-  assert.equal(earlier.cells[0].cohortMatchesParticipant, "unknown");
-  assert.deepEqual(earlier.participantPlanCohort, {
-    planType: "unknown",
-    planVariant: "unknown",
-  });
-
-  const current = normalizeParticipantCommunityComparison({
-    ...comparison("participant-community-comparison-v0.2", {
-      planType: "chatgpt_plus",
-      planVariant: "standard",
-      cohortMatchesParticipant: true,
-    }),
-    participantPlanCohort: {
-      planType: "chatgpt_plus",
-      planVariant: "standard",
-    },
-  });
-  assert.equal(current.status, "ready");
-  assert.equal(current.cells[0].planType, "chatgpt_plus");
-  assert.equal(current.cells[0].cohortMatchesParticipant, true);
-  assert.deepEqual(current.participantPlanCohort, {
-    planType: "chatgpt_plus",
-    planVariant: "standard",
-  });
-
-  // Cohort claims on a v0.1 payload are ignored, not adopted.
-  const spoofed = normalizeParticipantCommunityComparison(
-    comparison("participant-community-comparison-v0.1", {
-      planType: "chatgpt_pro",
-      cohortMatchesParticipant: true,
-    }),
-  );
-  assert.equal(spoofed.cells[0].planType, "unknown");
-  assert.equal(spoofed.cells[0].cohortMatchesParticipant, "unknown");
-
-  // Everything else remains strict on the older contract.
-  const invalidUnit = comparison("participant-community-comparison-v0.1");
-  invalidUnit.cells[0].metrics.toolUnits.unit = "tokens";
-  assert.equal(
-    normalizeParticipantCommunityComparison(invalidUnit).reason,
-    "comparison_contract_invalid",
-  );
-  const invalidProvider = comparison("participant-community-comparison-v0.1");
-  invalidProvider.cells[0].provider = "unknown_provider";
-  assert.equal(
-    normalizeParticipantCommunityComparison(invalidProvider).reason,
-    "comparison_contract_invalid",
-  );
-
-  // An unreleased contract is still refused.
-  assert.equal(
-    normalizeParticipantCommunityComparison(
-      comparison("participant-community-comparison-v0.3"),
-    ).status,
-    "not_testable",
   );
 });
 
@@ -6766,8 +4893,7 @@ test("self-resolving degraded notes are classed informational and keep the quiet
   const informationalSentences = [
     "Quota tracking started fresh on this computer, so its retained records begin"
       + " on ${trackingStartDate}. Coverage of anything earlier is not claimed.",
-    "Local history indexing is in progress. Complete historical totals will"
-      + " appear after the indexed aggregate is published.",
+    "Local history indexing has no published aggregate. Complete historical totals are unavailable.",
   ];
   for (const sentence of informationalSentences) {
     assert.ok(
@@ -8249,7 +6375,7 @@ test("Monochrome dark appearance is explicit, balanced, and live-updateable", as
   assert.match(styles, /html\[data-theme="dark"\] \{/u);
   assert.match(
     styles,
-    /html\[data-theme="dark"\] body:not\(\.community-site\):not\(\.admin-operator-page\) \{/u,
+    /html\[data-theme="dark"\] body \{/u,
   );
   assert.match(styles, /--paper: #161616;/u);
   assert.match(styles, /--surface-raised: #161616;/u);

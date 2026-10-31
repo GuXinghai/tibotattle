@@ -17,7 +17,6 @@ const ERROR_CODE_REASONS = new Map([
   ["broker_timeout", "timeout"],
   ["adapter_integrity_failed", "adapter_integrity_failed"],
   ["broker_unavailable", "security_unavailable"],
-  ["contribution_device_credential_recovery_required", "migration_required"],
 ]);
 
 const SUPPORT_CODES = Object.freeze({

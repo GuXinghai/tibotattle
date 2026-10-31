@@ -32,12 +32,13 @@ export const WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS = Object.freeze
   // Claude callback. This pair remains in the v1 SQLite constraint so opening
   // the existing audit file never requires rewriting or dropping those rows.
   Object.freeze({ owner: "claude-callback", capability: "claude_callback" }),
+  // Retired contribution credentials are not opened; only existing audit rows remain readable.
   Object.freeze({ owner: "contribution-device", capability: "contribution_device" }),
 ]);
 
 const ACTIVE_AUDIT_CAPABILITY_PAIRS = Object.freeze(
   WINDOWS_CREDENTIAL_OPERATION_AUDIT_CAPABILITY_PAIRS
-    .filter(({ owner }) => owner !== "claude-callback"),
+    .filter(({ owner }) => !["claude-callback", "contribution-device"].includes(owner)),
 );
 
 const OPERATIONS = new Set(["create", "replace", "delete"]);

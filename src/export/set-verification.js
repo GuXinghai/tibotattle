@@ -11,14 +11,9 @@ import {
 } from "./resource-policy.js";
 import {
   assertValidExportSetManifest,
-  EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_1,
-  EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_2,
-  EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_3,
-  EXPORT_SET_MANIFEST_VERSION_V0_1,
-  EXPORT_SET_MANIFEST_VERSION_V0_2,
-  EXPORT_SET_MANIFEST_VERSION_V0_3,
+  EXPORT_SET_MANIFEST_VERSION,
+  EXPORT_SET_MANIFEST_RECEIPT_VERSION,
   exportSetChunkBasenames,
-  isCompressedExportSetManifestVersion,
 } from "./set-schema.js";
 
 const MAXIMUM_MANIFEST_RECEIPT_BYTES = 1024 * 1024;
@@ -379,11 +374,8 @@ function firstRecordFitsPriorChunk(manifest, bundle, firstRow) {
 }
 
 function assertManifestReceipt(receipt, manifestBytes, manifestVersion, hash) {
-  const receiptVersion = new Map([
-    [EXPORT_SET_MANIFEST_VERSION_V0_1, EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_1],
-    [EXPORT_SET_MANIFEST_VERSION_V0_2, EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_2],
-    [EXPORT_SET_MANIFEST_VERSION_V0_3, EXPORT_SET_MANIFEST_RECEIPT_VERSION_V0_3],
-  ]).get(manifestVersion);
+  const receiptVersion = manifestVersion === EXPORT_SET_MANIFEST_VERSION
+    ? EXPORT_SET_MANIFEST_RECEIPT_VERSION : undefined;
   if (receiptVersion === undefined) fail("manifest_receipt");
   const expected = {
     schemaVersion: receiptVersion,
@@ -395,13 +387,7 @@ function assertManifestReceipt(receipt, manifestBytes, manifestVersion, hash) {
 }
 
 function manifestByteTotals(manifest) {
-  if (isCompressedExportSetManifestVersion(manifest.schemaVersion)) {
-    return {
-      decoded: manifest.totals.decodedBundleBytes,
-      encoded: manifest.totals.encodedArtifactBytes,
-    };
-  }
-  return { decoded: manifest.totals.bundleBytes, encoded: 0 };
+  return { decoded: manifest.totals.decodedBundleBytes, encoded: manifest.totals.encodedArtifactBytes };
 }
 
 function snapshotCanonicalArtifact(value, code) {
@@ -585,11 +571,6 @@ export function createLocalExportSetVerifier(options = {}) {
     "loadVerifiedLocalMetadataBundleBytes",
     "bundleVerification.loadVerifiedLocalMetadataBundleBytes",
   );
-  const loadVerifiedLocalMetadataBundleFiles = captureFunctionProperty(
-    bundleVerification,
-    "loadVerifiedLocalMetadataBundleFiles",
-    "bundleVerification.loadVerifiedLocalMetadataBundleFiles",
-  );
   const currentCompatibilityTuple = requireFunction(
     readConfigProperty(
       options,
@@ -638,10 +619,7 @@ export function createLocalExportSetVerifier(options = {}) {
       ) {
         fail("directory");
       }
-      const oppositePattern =
-        isCompressedExportSetManifestVersion(manifestVersion)
-          ? /^chunk-\d{6}\.bundle\.json$/
-          : /^chunk-\d{6}\.bundle\.json\.gz$/;
+      const oppositePattern = /^chunk-\d{6}\.bundle\.json$/;
       if (entries.some((name) => oppositePattern.test(name))) {
         fail("mixed_representation");
       }
@@ -658,24 +636,6 @@ export function createLocalExportSetVerifier(options = {}) {
   }) {
     const names = exportSetChunkBasenames(entry.index, manifest.schemaVersion);
     resourceGuard.observeCanonicalBundle(entry.bundleBytes);
-    if (manifest.schemaVersion === EXPORT_SET_MANIFEST_VERSION_V0_1) {
-      let selectedBundleFile;
-      let selectedReceiptFile;
-      try {
-        selectedBundleFile = files.artifactPath(root, names.bundle);
-        selectedReceiptFile = files.artifactPath(root, names.receipt);
-      } catch (error) {
-        rethrowReviewedOrFail(error, "chunk_metadata");
-      }
-      return snapshotVerifiedBundle(await invokePort(
-        loadVerifiedLocalMetadataBundleFiles,
-        {
-          bundleFile: selectedBundleFile,
-          receiptFile: selectedReceiptFile,
-        },
-        "chunk_metadata",
-      ));
-    }
 
     resourceGuard.observeEncodedArtifact(entry.artifactBytes);
     const artifactBytes = requireByteSequence(await invokePort(
@@ -939,9 +899,7 @@ export function createLocalExportSetVerifier(options = {}) {
         }
         actualDecodedBytes += verified.bundleBytes.byteLength;
         actualReceiptBytes += verified.receiptBytes.byteLength;
-        if (isCompressedExportSetManifestVersion(manifest.schemaVersion)) {
-          actualEncodedBytes += entry.artifactBytes;
-        }
+        actualEncodedBytes += entry.artifactBytes;
         resourceGuard.observeExportSetBytes(
           actualDecodedBytes,
           actualEncodedBytes,

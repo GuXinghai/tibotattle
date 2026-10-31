@@ -3585,3 +3585,22 @@ test("an ambiguous historical bucket removes only that interval, retaining surro
   assert.ok(lane.comparisonIntervals.some(([a,b])=>a<=start+30*60_000&&b>=start+45*60_000));
   assert.ok(lane.comparisonIntervals.some(([a,b])=>a<=start+90*60_000&&b>=start+105*60_000));
 });
+
+
+test("research plan quota observations survive replay-safe cache construction", async () => {
+  for (const planType of ["sci", "sci_plus"]) {
+    const snapshot = weeklySnapshot({ timestamp: "2026-07-27T11:46:00.000Z", usedPercent: 17, planType });
+    const build = () => buildReplaySafeAccountingCache({
+      now: () => NOW,
+      scan: async ({ onRateLimitSnapshot }) => {
+        onRateLimitSnapshot(snapshot);
+        return { diagnostics: {} };
+      },
+    });
+    const cache = await build();
+    assert.equal(cache.quotaTimeline.length, 1);
+    assert.equal(cache.quotaTimeline[0].planType, planType);
+    assert.equal(cache.quotaTimeline[0].usedPercent, 17);
+    assert.deepEqual((await build()).quotaTimeline, cache.quotaTimeline);
+  }
+});

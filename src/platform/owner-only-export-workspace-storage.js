@@ -164,8 +164,8 @@ function decodeSourceIdentity(value, maximum) {
 }
 const DATABASE_NAME = EXPORT_WORKSPACE_DATABASE_BASENAME;
 const EXPORT_WORKSPACE_APPLICATION_ID = 0x55534d34;
-const EXPORT_WORKSPACE_USER_VERSION = 6;
-const EXPORT_WORKSPACE_SCHEMA_SHA256 = "81244b35a407956d11ec8530f4549287c481035dbe1007405d4200959567fb09";
+const EXPORT_WORKSPACE_USER_VERSION = 7;
+const EXPORT_WORKSPACE_SCHEMA_SHA256 = "da0bd8eb5380b3246c4f37ff33ad7dda343c13919b1885cc7c21e94e5dedabf3";
 const DEFAULT_CRASH_RECOVERY_RESERVATION_MS = 5_000;
 const OCCURRENCE_KINDS = new Set(["usage_event", "tool_call"]);
 const SNAPSHOT_KINDS = new Set(["cumulative_usage", "tool_call"]);
@@ -1931,7 +1931,14 @@ async function openExportWorkspace({
   const before = await inspectExistingDatabase(databaseFile);
   const DatabaseSync = await loadSqlite();
   const reader = new DatabaseSync(databaseFile, { readOnly: true });
-  try { validateWorkspaceSchema(reader); } finally { reader.close(); }
+  try {
+    validateWorkspaceSchema(reader);
+    const row = reader.prepare("SELECT value_json FROM workspace_meta WHERE key = 'descriptor'").get();
+    if (!row) fail("schema");
+    const descriptor = parseCanonical(row.value_json);
+    assertDescriptor(descriptor);
+    if (expectedDescriptor && stableJson(descriptor) !== stableJson(expectedDescriptor)) fail("checkpoint_mismatch");
+  } finally { reader.close(); }
   if (process.platform === "win32") await assertDatabaseIdentityUnchanged(databaseFile, before);
   const database = new DatabaseSync(databaseFile, { readOnly: false });
   try {

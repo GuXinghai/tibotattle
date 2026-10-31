@@ -80,6 +80,12 @@ export function createWindowsNormalCandidateCredentialHandover() {
 // A qualified development shell may read the existing fixed observation key.
 // The parent broker refuses creation before any credential mutation can run.
 export function createWindowsDevelopmentReadOnlyCredentialHandover() {
+  return createWindowsExistingObservationCredentialHandover();
+}
+
+// A migrated stable profile is restricted to its existing observation identity.
+// No read miss, retry or account switch may manufacture continuity via creation.
+export function createWindowsExistingObservationCredentialHandover() {
   return createWindowsNormalCandidateCredentialHandoverWithDependencies({
     architecture: process.arch,
     attachBroker: attachDesktopWindowsAccountObservationBroker,
@@ -88,6 +94,11 @@ export function createWindowsDevelopmentReadOnlyCredentialHandover() {
     isAccountObservationBackendError: isWindowsAccountObservationCredentialError,
     platform: process.platform,
   }, true);
+}
+
+export function createWindowsExistingObservationCredentialHandoverForTest(options = {}) {
+  if (!exactObjectKeys(options, NORMAL_CANDIDATE_HANDOVER_TEST_OPTION_KEYS)) throw failure();
+  return createWindowsNormalCandidateCredentialHandoverWithDependencies(options, true);
 }
 
 export function createWindowsDevelopmentReadOnlyCredentialHandoverForTest(options = {}) {

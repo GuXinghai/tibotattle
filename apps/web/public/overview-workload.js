@@ -1,6 +1,7 @@
 const COLORS = {heavy:"var(--workload-heavy)",medium:"var(--workload-medium)",light:"var(--workload-light)",composite:"var(--neutral-ink)",unclassified:"var(--neutral-muted)"};
 const LEVELS=["heavy","medium","light","composite"];
-const PLAN_LABELS={free:'Free',go:'Go',plus:'Plus',pro:'Pro 10×',prolite:'Pro 5×',promax:'Pro Max 25×',team:'Team',business:'Business',enterprise:'Enterprise',edu:'Edu'};
+import { CODEX_PLAN_DISPLAY_NAMES } from './codex-catalog.generated.js';
+const PLAN_LABELS={free:'Free',go:'Go',plus:'Plus',pro:CODEX_PLAN_DISPLAY_NAMES.pro,prolite:CODEX_PLAN_DISPLAY_NAMES.prolite,promax:CODEX_PLAN_DISPLAY_NAMES.promax,team:'Team',business:'Business',enterprise:'Enterprise',edu:'Edu'};
 const finite=(v)=>typeof v==="number"&&Number.isFinite(v);
 const instant=(v)=>typeof v==="string"&&Number.isFinite(Date.parse(v));
 const views=new WeakMap();
@@ -28,8 +29,8 @@ function normalizeUnallocated(value) {
 }
 // Closed projection: never spread companion records into DOM-facing state.
 export function normalizeOverviewWorkload(value) {
-  if(!value||!["overview-workload-v2","overview-workload-v3","overview-workload-v4","overview-workload-v5","overview-workload-v6","overview-workload-v7"].includes(value.schemaVersion))return null;
-  const hasUnallocated=['overview-workload-v5','overview-workload-v6','overview-workload-v7'].includes(value.schemaVersion);
+  if(!value||!["overview-workload-v2","overview-workload-v3","overview-workload-v4","overview-workload-v5","overview-workload-v6","overview-workload-v7","overview-workload-v8","overview-workload-v9"].includes(value.schemaVersion))return null;
+  const hasUnallocated=['overview-workload-v5','overview-workload-v6','overview-workload-v7','overview-workload-v8','overview-workload-v9'].includes(value.schemaVersion);
   const unallocated=hasUnallocated?normalizeUnallocated(value.unallocated):null;
   if(hasUnallocated&&!unallocated)return null;
   const scalar=(x)=>finite(x)&&x>=0?x:null;
@@ -38,28 +39,28 @@ export function normalizeOverviewWorkload(value) {
   const levels=x=>Object.fromEntries(["heavy","medium","light","unclassified"].map(k=>[k,scalar(x[k])]));
   const status=["available","partial","stale","unavailable"].includes(value.status)?value.status:"unavailable";
   function recent(x,minutes){
-    const unknown={windowMinutes:minutes,state:'unknown',level:null,hours:null,ratePpPerHour:null,usdPerWorkHour:null};
-    // Retained v6 had different windows and trend units. Only v7 can supply
+    const unknown={windowMinutes:minutes,state:'unknown',level:null,hours:null,ratePpPerHour:null,usdPerHour:null};
+    // Retained versions had different denominators or grade cuts. Only v9 supplies
     // fresh recent values; a retained last-good grade is not fresh evidence.
-    if(value.schemaVersion!=='overview-workload-v7'||!['available','partial'].includes(status)
-      ||x?.windowMinutes!==minutes||!['working','idle','unknown'].includes(x.state))return unknown;
-    if(x.state==='unknown')return unknown;
-    if(x.state==='idle')return {...unknown,state:'idle'};
-    return {windowMinutes:minutes,state:'working',
+    if(value.schemaVersion!=='overview-workload-v9'||!['available','partial'].includes(status)
+      ||x?.windowMinutes!==minutes||x.state!=='available'||scalar(x.usdPerHour)===null)return unknown;
+    return {windowMinutes:minutes,state:'available',
       level:['heavy','medium','light','unclassified'].includes(x.level)?x.level:'unclassified',
-      hours:scalar(x.hours),ratePpPerHour:scalar(x.ratePpPerHour),usdPerWorkHour:scalar(x.usdPerWorkHour)};
+      hours:scalar(x.hours),ratePpPerHour:scalar(x.ratePpPerHour),usdPerHour:scalar(x.usdPerHour)};
   }
   function quotaTrend(x){
-    const unknown={windowMinutes:60,state:'unknown',ratePpPerHour:null,observedFrom:null,observedThrough:null,coveredMinutes:null,inferred:false};
-    if(value.schemaVersion!=='overview-workload-v7'||!['available','partial'].includes(status)
+    const unknown={windowMinutes:60,state:'unknown',ratePpPerHour:null,usdPerHour:null,level:null,observedFrom:null,observedThrough:null,coveredMinutes:null,inferred:false};
+    if(value.schemaVersion!=='overview-workload-v9'||!['available','partial'].includes(status)
       ||x?.windowMinutes!==60||x.state!=='available'||!finite(x.ratePpPerHour)||x.ratePpPerHour<=0
       ||!instant(x.observedFrom)||!instant(x.observedThrough)||!instant(value.generatedAt))return unknown;
     const from=Date.parse(x.observedFrom),through=Date.parse(x.observedThrough),now=Date.parse(value.generatedAt);
     if(from<now-3600000||through>now||through<=from||x.coveredMinutes!==(through-from)/60000)return unknown;
-    return {...unknown,state:'available',ratePpPerHour:x.ratePpPerHour,observedFrom:x.observedFrom,
+    const usdPerHour=finite(x.usdPerHour)&&x.usdPerHour>0?x.usdPerHour:null;
+    return {...unknown,state:'available',ratePpPerHour:x.ratePpPerHour,usdPerHour,
+      level:usdPerHour!==null&&['heavy','medium','light','unclassified'].includes(x.level)?x.level:null,observedFrom:x.observedFrom,
       observedThrough:x.observedThrough,coveredMinutes:x.coveredMinutes,inferred:x.inferred===true};
   }
-  return {schemaVersion:value.schemaVersion,status:value.schemaVersion!=='overview-workload-v7'&&status!=='unavailable'?'stale':status,
+  return {schemaVersion:value.schemaVersion,status:value.schemaVersion!=='overview-workload-v9'&&status!=='unavailable'?'stale':status,
     generatedAt:instant(value.generatedAt)?value.generatedAt:null,unallocated,
     pricingDetails:{total:Number.isSafeInteger(value.pricingDetails?.total)&&value.pricingDetails.total>=0?value.pricingDetails.total:0,
       truncated:value.pricingDetails?.truncated===true,
@@ -89,7 +90,7 @@ export function normalizeOverviewWorkload(value) {
       actualPp:scalar(value.comparison?.actualPp),expectedPp:scalar(value.comparison?.expectedPp)}};
 }
 
-export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}) {
+export function renderOverviewWorkload(root,data,{translate:t,locale="en-US",currentQuota=undefined}={}) {
   const doc=root.ownerDocument;
   const focused=root.contains?.(doc.activeElement)?doc.activeElement?.dataset?.workloadDiagnosticFocus:null;
   const node=(tag,cls,text)=>{const el=doc.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=text;return el;};
@@ -102,7 +103,7 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
   function lineChart(points,key,valueKey,range=null){
     const svg=svgNode("svg",{viewBox:"0 0 640 210",role:"img","aria-label":t(`workload.title.${key}`)});
     const valid=points.filter(p=>finite(p[valueKey]));
-    if(!valid.length){const label=svgNode("text",{x:320,y:100,"text-anchor":"middle"});label.textContent=t("workload.collecting");svg.append(label);return svg;}
+    if(!valid.length){const label=svgNode("text",{x:320,y:100,"text-anchor":"middle"});label.textContent=t("workload.noAllowanceObservations");svg.append(label);return svg;}
     const times=points.map(p=>Date.parse(p.at)),lo=Math.min(...times),hi=Math.max(lo+1,...times);
     const values=valid.map(p=>p[valueKey]);
     let min=range?.[0]??Math.min(0,...values),max=range?.[1]??Math.max(0,...values);
@@ -124,17 +125,23 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
   }
   root.replaceChildren();root.className="workload-overview";
   const w=data;
+  // Current quota is independently published while historical analysis runs.
+  // This selects an already-normalized display window; it is not a quota ledger.
+  const currentWindow=currentQuota?.status==='available'?currentQuota.windows?.find(q=>
+    q.limitId==='codex'&&q.durationMinutes===10080):null;
+  const remaining=currentQuota===undefined?w?.allowance?.remainingPercent
+    :finite(currentWindow?.remainingPercent)?currentWindow.remainingPercent:null;
   const grid=node("div","workload-grid");root.append(grid);
-  const allowance=card("allowance"),value=node("div","workload-remaining");value.append(node("span","",t("workload.current")),node("strong","",w?.allowance?.remainingPercent===null||!w?"—":`${num(w.allowance.remainingPercent)}%`));
+  const allowance=card("allowance"),value=node("div","workload-remaining");value.append(node("span","",t("workload.current")),node("strong","",finite(remaining)?`${num(remaining)}%`:"—"));
   allowance.append(value,lineChart(w?.allowance?.points??[],"allowance","remainingPercent",[0,100]));grid.append(allowance);
   const workHours=card("hours"),maxHours=Math.max(0,...(w?.workHours??[]).map(x=>x.hours??0));
   for(const level of LEVELS){const item=w?.workHours?.find(x=>x.level===level),val=item?.hours??null;
     const row=node("div",`workload-hours-row ${level==="composite"?"is-composite":""}`);row.dataset.level=level;
     const track=node("div","workload-hour-track"),fill=node("i");fill.style.width=`${maxHours>0&&val!==null?100*val/maxHours:0}%`;fill.style.backgroundColor=COLORS[level];track.append(fill);
     row.append(node("span","",t(`workload.level.${level}`)),track,node("strong","",`${hour(val)}${item?.inferred&&val!==null?' *':''}`));workHours.append(row);}
-  if(['overview-workload-v4','overview-workload-v5','overview-workload-v6','overview-workload-v7'].includes(w?.schemaVersion)){
+  if(['overview-workload-v4','overview-workload-v5','overview-workload-v6','overview-workload-v7','overview-workload-v8','overview-workload-v9'].includes(w?.schemaVersion)){
     workHours.append(node('p','',t('workload.estimateScope',{plan:planLabel(w.planAttribution.estimationPlanType)})));
-    if(w.workHours.every(x=>x.hours===null))workHours.append(node('p','',t('workload.estimateCollecting')));
+    if(w.workHours.every(x=>x.hours===null))workHours.append(node('p','',t('workload.estimateUnavailable')));
   }
   grid.append(workHours);
   const daily=card("daily"),svg=svgNode("svg",{viewBox:"0 0 640 210",role:"img","aria-label":t("workload.title.daily")});
@@ -161,15 +168,23 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
     const section=node('section','workload-load-window');section.dataset.workloadWindow=key;
     const heading=node('div','workload-load-label',t(`workload.${key}`));
     heading.append(node('span','workload-load-period',t('workload.windowMinutes',{minutes})));section.append(heading);
-    const known=key==='shortTerm'&&load?.state==='working'&&finite(load.usdPerWorkHour)&&['light','medium','heavy'].includes(load.level);
-    const label=key==='trend'?load?.state==='available'&&finite(load.ratePpPerHour)?t('workload.quotaRateValue',{value:num(load.ratePpPerHour,2)})+(load.inferred?' *':''):'-'
-      :known?t(`workload.level.${load.level}`):load?.state==='working'&&finite(load.usdPerWorkHour)?t('workload.rateValue',{value:num(load.usdPerWorkHour,2)}):'-';
+    const available=load?.state==='available';
+    const usdRate=load?.usdPerHour;
+    const known=available&&finite(usdRate)&&['light','medium','heavy'].includes(load.level);
+    const label=known?t(`workload.level.${load.level}`):'-';
     const main=node('strong','workload-current-value workload-load-value'+(label==='-'?' is-unavailable':''),label);
-    if(known)main.style.color=COLORS[load.level];section.append(main);loadColumns.append(section);
+    if(known)main.style.color=COLORS[load.level];section.append(main);
+    const converted=available&&finite(usdRate),rawQuota=key==='trend'&&available&&finite(load.ratePpPerHour);
+    const rate=node('p','workload-load-rate');
+    rate.append(node('span','',t(key==='shortTerm'?'workload.rate':converted?'workload.trendRate':'workload.quotaRate')),
+      node('strong','',converted?t(key==='shortTerm'?'workload.rateValue':'workload.trendRateValue',{value:num(usdRate,2)})
+        +(key==='trend'&&load.inferred?' *':''):rawQuota?t('workload.quotaRateValue',{value:num(load.ratePpPerHour,2)})+(load.inferred?' *':''):'-'));
+    if(rawQuota)rate.title=t('workload.quotaRateValue',{value:num(load.ratePpPerHour,2)});
+    section.append(rate);
+    loadColumns.append(section);
   }
   current.append(loadColumns);
-  if(c?.state==='working'){
-  const rate=node("p","workload-current-rate");rate.append(node("span","",t("workload.rate")),node("strong","",finite(c?.usdPerWorkHour)?t("workload.rateValue",{value:num(c.usdPerWorkHour,2)}):"-"));current.append(rate);
+  if(c?.state==='available'){
   const rest=node("p","workload-current-hours");rest.append(node("span","",t("workload.canWork")),node("strong","",finite(c?.hours)?hour(c.hours):"-"));current.append(rest);
   }
   grid.append(current);
@@ -204,7 +219,7 @@ export function renderOverviewWorkload(root,data,{translate:t,locale="en-US"}={}
     const summary=node('summary','',w.pricingDetails?.total
       ?t('workload.diagnostics.unpriced',{count:num(w.pricingDetails.total,0)}):primary
         ?`${t(primary.code.startsWith('runtime_evidence_')?'workload.diagnostics.captureFailed':`workload.error.${primary.stage}`)} · ${t('workload.diagnostics.view')}`
-        :t('workload.diagnostics.failed'));
+        :w.status==='stale'?t('workload.diagnostics.retained'):t('workload.diagnostics.failed'));
     summary.dataset.workloadDiagnosticFocus='summary';
     const otherErrors=w.errors.filter(e=>e.code!=='price_missing').length;
     if(w.pricingDetails?.total&&otherErrors)summary.append(doc.createTextNode(t('workload.diagnostics.other',{count:otherErrors})));

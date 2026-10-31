@@ -47,8 +47,6 @@ const REQUIRED_ROOT_EXECUTABLES = Object.freeze([
   "src/fix-portable-report-width.js",
   "src/verify-weekly-calibration.js",
 ]);
-const REQUIRED_PRODUCT_CONTRIBUTION_ENTRYPOINT =
-  "scripts/build-telemetry-contributions.js";
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
 const DEFAULT_REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..", "..");
 const DEFAULT_INVENTORY_PATH = "tools/tool-inventory.json";
@@ -576,29 +574,6 @@ export async function checkToolInventory({
         ),
       );
     }
-  }
-  const contributionOwner = physicalOwners.get(
-    REQUIRED_PRODUCT_CONTRIBUTION_ENTRYPOINT,
-  );
-  if (contributionOwner === undefined) {
-    issues.push(
-      issue(
-        "unclassified_product_contribution_entrypoint",
-        REQUIRED_PRODUCT_CONTRIBUTION_ENTRYPOINT,
-        "The product contribution preparation entry point must be classified.",
-      ),
-    );
-  } else if (
-    inventory.records[contributionOwner]?.classification
-    !== "shipped_product_operation"
-  ) {
-    issues.push(
-      issue(
-        "misclassified_product_contribution_entrypoint",
-        REQUIRED_PRODUCT_CONTRIBUTION_ENTRYPOINT,
-        "Contribution preparation is shipped product behavior.",
-      ),
-    );
   }
 
   for (const [alias, command] of Object.entries(packageScripts)) {

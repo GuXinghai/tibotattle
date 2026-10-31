@@ -182,9 +182,9 @@ const UPDATE_ERRORS = new Set([
 const LOGIN_ITEM_LABELS = Object.freeze({
   enabled: "Rhetrion starts when you sign in.",
   disabled: "Rhetrion will not start automatically.",
-  "needs-approval": "Your operating system needs approval in Login Items before this can take effect.",
+  "needs-approval": "Allow Rhetrion in Windows Startup apps first.",
   unavailable: "Start at login status is unavailable on this system.",
-  error: "The operating system did not confirm the current Login Item status. Review it before relying on start at login.",
+  error: "Windows did not confirm the start-at-login setting. Review Startup apps.",
 });
 
 const NOTIFICATION_CAPABILITY_LABELS = Object.freeze({

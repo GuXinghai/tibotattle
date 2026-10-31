@@ -656,7 +656,7 @@ async function scanRecordPhase({ workspace, source, checkpoint, secret, bounds, 
                 usage = delta;
                 usagePresence = deltaPresence;
                 // Retained in parser arithmetic but not part of the reviewed
-                  // export diagnostic registry in telemetry v0.1.
+                  // export diagnostic registry in local export v1.
               }
               state.reAnchored = false;
             } else if (last && last.total_tokens > 0) {

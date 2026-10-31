@@ -40,8 +40,6 @@ const REQUIRED_ROOT_EXECUTABLES = [
   "src/fix-portable-report-width.js",
   "src/verify-weekly-calibration.js",
 ];
-const CONTRIBUTION_ENTRYPOINT =
-  "scripts/build-telemetry-contributions.js";
 
 function record(path, overrides = {}) {
   return {
@@ -64,9 +62,7 @@ function fixtureInventory(extraRecords = []) {
   return {
     records: [
       ...REQUIRED_ROOT_EXECUTABLES.map((path) => record(path)),
-      record(CONTRIBUTION_ENTRYPOINT, {
-        classification: "shipped_product_operation",
-      }),
+
       ...extraRecords,
     ],
     reviewedAt: "2026-07-30",
@@ -96,11 +92,6 @@ async function withInventoryFixture({
     await Promise.all([
       ...REQUIRED_ROOT_EXECUTABLES.map(
         (path) => writeFixtureFile(rootDirectory, path, "export {};\n"),
-      ),
-      writeFixtureFile(
-        rootDirectory,
-        CONTRIBUTION_ENTRYPOINT,
-        "export {};\n",
       ),
       writeFixtureFile(
         rootDirectory,
@@ -303,10 +294,10 @@ test("the checked-in inventory classifies every retained tool entry point and np
     true,
     formatToolInventoryReport(result),
   );
-  // 83 records / 84 executable paths with the ordinary synthetic test runner.
+  // 85 current records / 86 paths after telemetry retirement and local generator ownership.
   // Keep exact counts: future executables still require an ownership decision.
-  assert.equal(result.records, 83);
-  assert.equal(result.candidates.length, 84);
+  assert.equal(result.records, 85);
+  assert.equal(result.candidates.length, 86);
   assert.ok(result.aliases >= 25);
 });
 

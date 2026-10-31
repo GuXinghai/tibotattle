@@ -5,7 +5,6 @@ import { isProxy } from "node:util/types";
 import {
   createExportCompatibilityContext,
   createLocalCodexLogScanner,
-  createLocalContributionSyncQueueContext,
   createLocalExportArtifactStorageContext,
   createLocalExportDeletion,
   createLocalExportResourceContext,
@@ -17,8 +16,6 @@ import {
   createLocalMetadataBundleVerificationContext,
   createLocalMetadataExportContext,
 } from "./application/index.js";
-import { syncPreparedContributionEntryOnce } from
-  "./contribution-device-sync.js";
 import {
   assertValidExportRecord,
   createCodexCheckpointStateContext,
@@ -41,7 +38,6 @@ import {
 import {
   createExportSetVerificationStorageContext,
   createLocalCodexLogPorts,
-  createLocalContributionSyncQueueStorageContext,
   createLocalExportSourcePorts,
   createOwnerOnlyExportArtifactStorageContext,
   createOwnerOnlyExportDeletionPreflightInspector,
@@ -69,13 +65,9 @@ import {
   readOwnerOnlyLocalMetadataBundlePair,
   sha256Hex,
 } from "./platform/index.js";
-import {
-  loadVerifiedPreparedContribution,
-  verifyPreparedContributionSet,
-} from "./telemetry-prepared-set.js";
 
 /**
- * The single Node composition root for local source, export, and contribution
+ * The single Node composition root for local source and export
  * workflows. Domain/application owners stay runtime-neutral; this module
  * supplies concrete Node and owner-only platform ports once per process.
  *
@@ -249,12 +241,3 @@ export const localExportSourcePipeline =
       workspace: localExportWorkspace,
     },
   );
-
-export const localContributionSyncQueue =
-  createLocalContributionSyncQueueContext({
-    createStorage: createLocalContributionSyncQueueStorageContext,
-    resolvePath: resolve,
-    verifyPreparedSet: verifyPreparedContributionSet,
-    loadPreparedContribution: loadVerifiedPreparedContribution,
-    syncPreparedEntry: syncPreparedContributionEntryOnce,
-  });

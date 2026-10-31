@@ -6,12 +6,13 @@ import { quotaWindowProjection, usageProjection } from "./local-companion-usage-
 import { forEachLocalCollectorRecord } from "./local-collector-state.js";
 import { setImmediate } from "node:timers/promises";
 import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
-import { createWindowsProtectedStateStore, createWindowsFilesystemAdapter } from "./platform/index.js";
-import { dirname, join } from "node:path";
-import { existsSync } from "node:fs";
+import {createWorkloadAccountStateStore,validateWorkloadAccountState} from './local-index-workload-account-state.js';
 import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
-import { codexPrimaryAllowanceBasis } from "./codex-primary-allowance-basis.js";
 import { readRuntimeModelEvidenceStatus } from './local-index-runtime-model-evidence.js';
+import { localCollectorQuotaRecordScopeToken } from './local-collector-projection.js';
+
+// Identity is private transport metadata, never part of the evidence DTO.
+const quotaContexts=new WeakMap();
 
 const STATE_SCHEMA="overview-workload-state-v3";
 
@@ -23,9 +24,10 @@ export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs,historyF
     throw new TypeError("Invalid workload quota evidence input");
   signal?.throwIfAborted();
   const observations=[],resetEvents=[],historyResetEvents=[];
-  let scope=null,continuityThroughMs=null,count=0;
+  let scope=null,continuityThroughMs=null,count=0,lastIdentity=null,epoch=0;
+  const historyQuota=[],scopedResetEvents=[],comparisonQuota=[];
   const result=await forEachLocalCollectorRecord({stateFile,kinds:["codex_quota_snapshot"],orderBy:"observed_at",
-    onRecord:async record=>{
+    onRecord:async (record,{recordId})=>{
       if(++count>100_000)throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
       if(count%256===0)await setImmediate();
       signal?.throwIfAborted();
@@ -36,12 +38,15 @@ export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs,historyF
         throw Object.assign(new Error("quota_history_invalid"),{code:"quota_history_invalid"});
       const identity=record.accountScope?.status==="available"&&typeof record.accountScope.scopeId==="string"
         ?record.accountScope.scopeId:null;
+      const token=localCollectorQuotaRecordScopeToken(record);
+      if(token!==lastIdentity||token===null)epoch++;
+      lastIdentity=token;
       const windows=[];
       for(const raw of Array.isArray(record.windows)?record.windows:[]){
         const q=quotaWindowProjection(raw);
         if(!q||q.limitId!=="codex"||q.durationMinutes!==10080)continue;
         const resetAtMs=Date.parse(q.resetAt);
-        const value={atMs,usedPercent:q.usedPercent,resetAtMs,planType:q.planType,limitId:q.limitId,
+        const value={atMs,observationOrder:recordId,usedPercent:q.usedPercent,resetAtMs,planType:q.planType,limitId:q.limitId,
           resetKey:`${resetAtMs}:${q.planType}:${q.limitId}`};
         windows.push(value);
       }
@@ -53,6 +58,12 @@ export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs,historyF
           &&event.provider==="openai_codex"&&event.limitId==="codex"&&event.windowDurationMins===10080
           &&Date.parse(event.observedAt)===atMs&&windows.some(q=>q.planType===event.planType))events.push(event);
       }
+      if(token!==null){
+        historyQuota.push(...windows.map(q=>({...q,scopeToken:token,accountKey:`${token}:${epoch}`,evidence:true})));
+        scopedResetEvents.push(...events.map(event=>({token,event})));
+      }
+      if(historyQuota.length>100_000||scopedResetEvents.length>100_000)
+        throw Object.assign(new Error('quota_history_too_large'),{code:'quota_history_too_large'});
       // History reset evidence and this process's strict comparison have
       // different ranges. Reading earlier history must not bind the startup
       // comparison to a previous account or suppress its newer observations.
@@ -65,51 +76,21 @@ export async function readWorkloadQuotaEvidence({stateFile,fromMs,nowMs,historyF
       scope??=identity;
       if(continuityThroughMs!==null)return;
       observations.push(...windows);resetEvents.push(...events);
+      comparisonQuota.push(...windows.map(q=>({...q,accountKey:token===null?null:`${token}:${epoch}`})));
       if(observations.length>100_000||resetEvents.length>100_000)
         throw Object.assign(new Error("quota_history_too_large"),{code:"quota_history_too_large"});
     }});
-  return {status:result.status,observations,resetEvents,historyResetEvents,continuityThroughMs};
+  const evidence={status:result.status,observations,resetEvents,historyResetEvents,continuityThroughMs};
+  quotaContexts.set(evidence,{historyQuota,scopedResetEvents,comparisonQuota});
+  return evidence;
 }
 function validBaseline(b){return b===null||b&&Object.keys(b).length===5
   &&["atMs","usedPercent","resetAtMs","planType","limitId"].every(k=>Object.hasOwn(b,k))
   &&Number.isSafeInteger(b.atMs)&&b.atMs>=0&&Number.isSafeInteger(b.resetAtMs)&&b.resetAtMs>=0
   &&Number.isFinite(b.usedPercent)&&b.usedPercent>=0&&b.usedPercent<=100
   &&/^[a-z0-9_]{1,64}$/u.test(b.planType)&&b.limitId==="codex";}
-function validState(s){
-  if(!s||Object.keys(s).some(k=>!["schemaVersion","comparison","capacityHistory"].includes(k))
-    ||![STATE_SCHEMA,"overview-workload-state-v2","overview-workload-state-v1"].includes(s.schemaVersion))return false;
-  if(s.schemaVersion==="overview-workload-state-v1"){
-    if(!s.comparison||Object.keys(s.comparison).join()!=="anchorMs"||!Number.isSafeInteger(s.comparison.anchorMs)||s.comparison.anchorMs<0)return false;
-  }else if(!s.comparison||Object.keys(s.comparison).length!==(s.schemaVersion===STATE_SCHEMA?4:3)
-    ||!["startedAtMs","capacityUsd","planType"].every(k=>Object.hasOwn(s.comparison,k))
-    ||!Number.isSafeInteger(s.comparison.startedAtMs)||s.comparison.startedAtMs<0
-    ||!(s.comparison.capacityUsd===null||Number.isFinite(s.comparison.capacityUsd)&&s.comparison.capacityUsd>0)
-    ||!(s.comparison.planType===null||/^[a-z0-9_]{1,64}$/u.test(s.comparison.planType))
-    ||s.schemaVersion===STATE_SCHEMA&&(!validBaseline(s.comparison.baseline)
-      ||s.comparison.baseline&&s.comparison.baseline.atMs<s.comparison.startedAtMs))return false;
-  return Array.isArray(s.capacityHistory)&&s.capacityHistory.length<=4096&&s.capacityHistory.every(c=>c
-    &&Object.keys(c).length===5&&["usd","availableAtMs","planType","version","basisId"].every(k=>Object.hasOwn(c,k))
-    &&Number.isFinite(c.usd)&&c.usd>0&&Number.isSafeInteger(c.availableAtMs)&&c.availableAtMs>=0
-    &&(c.planType===null||/^[a-z0-9_]{1,64}$/u.test(c.planType))
-    &&/^[a-f0-9]{64}$/u.test(c.version)
-    &&c.basisId===codexPrimaryAllowanceBasis("unresolved_as_standard").basisId);
-}
-export function workloadStateStore(indexFile){
-  const root=join(dirname(indexFile),"private"),name="overview-workload-state.json",file=join(root,name);
-  let backend=null;
-  const store=()=>backend??=createWindowsProtectedStateStore({rootPath:root,adapter:createWindowsFilesystemAdapter()});
-  return {
-    async read(){if(!existsSync(file))return null;const result=store().readJson(name);
-      if(!validState(result.value))throw Object.assign(new Error("workload_state_invalid"),{code:"workload_state_invalid"});return result.value;},
-    async write(value){if(!validState(value)||value.schemaVersion!==STATE_SCHEMA)throw Object.assign(new Error("workload_state_invalid"),{code:"workload_state_invalid"});
-      const b=store();b.ensureProtectedDirectory();
-      if(existsSync(file)){const previous=b.readJson(name);
-        if(!validState(previous.value))throw Object.assign(new Error("workload_state_invalid"),{code:"workload_state_invalid"});
-        b.replaceJson(name,previous.identity,value);
-      }else b.createJson(name,value);
-      return true;},
-  };
-}
+const validState=validateWorkloadAccountState;
+export const workloadStateStore=createWorkloadAccountStateStore;
 export function workloadState(result){return{schemaVersion:STATE_SCHEMA,
   comparison:{startedAtMs:result.comparison.startedAtMs,capacityUsd:result.comparison.capacityUsd,
     planType:result.comparison.planType,baseline:result.comparison.baseline},capacityHistory:result.capacityHistory};}
@@ -187,15 +168,26 @@ function completeWorkAncestry(database, rows, ancestors, beforeMs) {
 /** Read only committed content-free facts. A failure never erases last-good analytics. */
 export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], capacity = null,
   previous = null, storedState = null, liveSinceMs = nowMs, timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone,
-  sourceFresh = false, declaredSpeedBaselines = [], quotaEvidence = null, signal = null } = {}) {
+  sourceFresh = false, declaredSpeedBaselines = [], quotaEvidence = null, signal = null,
+  accountScopeToken = undefined, previousAccountScopeToken = null } = {}) {
   let database,stage="index";
+  const scoped=accountScopeToken!==undefined;
+  const knownScope=typeof accountScopeToken==='string'&&/^[a-f0-9]{64}$/u.test(accountScopeToken);
+  const context=quotaContexts.get(quotaEvidence);
+  // An unknown or different account cannot inherit a last-good comparison.
+  if(scoped&&(!knownScope||previousAccountScopeToken!==accountScopeToken))previous=null;
   const liveQuota=liveWeeklyQuota(quotaWindows);
   try {
     signal?.throwIfAborted();
     database = openLocalIndexStore(indexFile,{readOnly:true});
     return withReadSnapshot(database,({commitSeq})=>{
       const from = Math.max(0,nowMs-WORKLOAD_POLICY.historyMs);
-      const comparisonFrom=Math.max(0,Math.min(nowMs,liveSinceMs));
+      let comparisonFrom=Math.max(0,Math.min(nowMs,liveSinceMs));
+      if(scoped){
+        const latest=(context?.historyQuota??[]).filter(q=>q.scopeToken===accountScopeToken).at(-1);
+        const epochStart=latest?(context.historyQuota.find(q=>q.accountKey===latest.accountKey)?.atMs??nowMs):nowMs;
+        comparisonFrom=Math.max(comparisonFrom,epochStart);
+      }
       // One preceding weekly cycle closes intervals crossing the seven-day
       // display boundary. A still older anchor is identity/context evidence,
       // never proof that omitted usage was zero.
@@ -222,15 +214,24 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       if(anchor!==null)quotaRows.push(...database.prepare(`${quotaSelect} WHERE q.observed_at_ms=?
         AND q.duration_mins=10080 AND q.admission='admitted' AND q.limit_id='codex' AND ${committedPredicate('q')} LIMIT 100001`).all(anchor));
       if(quotaRows.length>100_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
-      const quota = quotaRows
+      let quota = quotaRows
         .map((q)=>({atMs:q.observed_at_ms,usedPercent:q.used_percent,
-          resetAtMs:q.resets_at_ms,planType:q.plan_type??'unknown',limitId:'codex',accountKey:q.account_key||undefined,
+          resetAtMs:q.resets_at_ms,planType:q.plan_type??'unknown',limitId:'codex',...(q.account_key?{accountKey:`index:${q.account_key}`} : {}),
           resetKey:`${q.resets_at_ms}:${q.plan_type??'unknown'}:codex`}));
+      if(scoped){
+        // Rollout quota facts have no proven collector account identity. Keep
+        // the source facts, but do not assign them to the current account.
+        quota=knownScope?(context?.historyQuota??[]).filter(q=>q.scopeToken===accountScopeToken)
+          .map(({scopeToken,...q})=>q):[];
+      }
       if (current) {
         const atMs=Date.parse(current.observedAt), resetAtMs=Date.parse(current.resetAt ?? current.resetsAt);
         const usedPercent=Number.isFinite(current.usedPercent)?current.usedPercent:100-current.remainingPercent;
+        const matching=quota.filter(q=>q.atMs===atMs&&q.usedPercent===usedPercent&&q.resetAtMs===resetAtMs).at(-1);
         if(Number.isFinite(atMs)&&Number.isFinite(resetAtMs)&&Number.isFinite(usedPercent)) quota.push({atMs,usedPercent,
-          resetAtMs,planType:current.planType??"unknown",limitId:"codex",resetKey:`${resetAtMs}:${current.planType??"unknown"}:codex`});
+          ...(scoped?{accountKey:knownScope?matching?.accountKey??`${accountScopeToken}:current:${atMs}`:null,
+            observationOrder:matching?.observationOrder??Number.MAX_SAFE_INTEGER,conflict:matching?.conflict===true}:{}),
+          resetAtMs,planType:current.planType??"unknown",limitId:"codex",direct:true,resetKey:`${resetAtMs}:${current.planType??"unknown"}:codex`});
       }
       const pricer=createAccountingPricer();
       const usage=[],pricingRecords=[];let pricingIssueCount=0,usageRows=0;
@@ -268,8 +269,9 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const events=completeWorkAncestry(database,workRows,ancestors,workFrom)
         .map((e)=>({key:Buffer.from(e.task_key).toString("hex"),session:String(e.session_id),
           kind:e.kind,atMs:e.observed_at_ms,durationMs:e.duration_ms,ancestors:ancestors.get(String(e.session_id))??[]}));
-      const selected=capacity?.status==="available"&&capacity.planScope?.planType===plan?capacity.scenarios?.[capacity.selectedScenario]:null;
-      const previousState=previous??storedState;
+      const selected=capacity?.status==="available"&&capacity.planScope?.planType===plan
+        &&(!scoped||knownScope&&capacity.accountScopeToken===accountScopeToken)?capacity.scenarios?.[capacity.selectedScenario]:null;
+      const previousState=scoped?(knownScope?storedState:null):previous??storedState;
       // A display plan/window selects calculation inputs, not retained evidence.
       const retainedHistory=previousState?.capacityHistory?.filter((c)=>
         validState({schemaVersion:STATE_SCHEMA,comparison:{startedAtMs:0,capacityUsd:null,planType:null,baseline:null},capacityHistory:[c]}))??[];
@@ -287,7 +289,9 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const before=history.filter(x=>x.availableAtMs<from).at(-1);
       const validHistory=[...(before?[before]:[]),...history.filter(x=>x.availableAtMs>=from)];
       const cap=validHistory.at(-1)??null;
-      const previousComparison=previousState?.comparison;
+      // Scoped comparisons replay the retained current epoch. The old saved
+      // baseline has no durable observation order and cannot prove its epoch.
+      const previousComparison=scoped?null:previousState?.comparison;
       const comparisonCapacityUsd=previousComparison?.startedAtMs===comparisonFrom&&previousComparison.planType===plan
         ?previousComparison.capacityUsd:null;
       const savedBaseline=previousComparison?.startedAtMs===comparisonFrom&&previousComparison.planType===plan
@@ -295,11 +299,14 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const comparisonBaseline=savedBaseline?{...savedBaseline,
         resetKey:`${savedBaseline.resetAtMs}:${savedBaseline.planType}:${savedBaseline.limitId}`}:null;
       stage="aggregation";
-      const state=analyzeWorkload({nowMs,events,usage,quota,estimationPlanType:plan,capacity:cap,capacityHistory:validHistory,liveSinceMs,sourceFresh,timeZone,
-        usageCoverageFromMs:evidenceFrom,quotaResetEvents:quotaEvidence?.historyResetEvents??quotaEvidence?.resetEvents??[],
-        comparisonCapacityUsd,comparisonBaseline,
-        comparisonQuota:quotaEvidence?.observations??[],comparisonResetEvents:quotaEvidence?.resetEvents??[],
-        comparisonContinuityThroughMs:quotaEvidence?.continuityThroughMs??null,
+      const state=analyzeWorkload({nowMs,events,usage,quota,estimationPlanType:plan,capacity:cap,capacityHistory:validHistory,liveSinceMs:comparisonFrom,sourceFresh,timeZone,
+        usageCoverageFromMs:evidenceFrom,quotaResetEvents:scoped
+          ?(context?.scopedResetEvents??[]).filter(x=>x.token===accountScopeToken).map(x=>x.event)
+          :quotaEvidence?.historyResetEvents??quotaEvidence?.resetEvents??[],
+        comparisonCapacityUsd,comparisonBaseline,comparisonAccountKey:scoped?quota.at(-1)?.accountKey??null:null,
+        comparisonQuota:scoped?quota:quotaEvidence?.observations??[],comparisonResetEvents:scoped
+          ?(context?.scopedResetEvents??[]).filter(x=>x.token===accountScopeToken).map(x=>x.event):quotaEvidence?.resetEvents??[],
+        comparisonContinuityThroughMs:scoped?null:quotaEvidence?.continuityThroughMs??null,
         comparisonEvidenceError:quotaEvidence?.errorCode??null});
       let capture;
       try{capture=readRuntimeModelEvidenceStatus(database);}catch{capture={status:'failed',errorCode:'runtime_evidence_checkpoint_invalid'};}

@@ -114,8 +114,8 @@ export function collectR7ReleaseEvidenceRuntimeSourcePaths({
   visit("packages/quota-analysis/src");
   visit("packages/accounting/src");
   appendRegularRuntimeFile("packages/accounting/index.js");
-  visit("packages/telemetry-contract/src");
-  appendRegularRuntimeFile("packages/telemetry-contract/index.js");
+  visit("packages/codex-catalog/src");
+  appendRegularRuntimeFile("packages/codex-catalog/index.js");
   // identity-core was never in this list even though
   // `src/platform/participant-identity.js` imports it, so a package the
   // benchmark can reach went unattested for as long as this scan has existed.
@@ -144,16 +144,15 @@ function workloadSourcePaths(repositoryRoot = new URL("../", import.meta.url)) {
   };
   visitRuntimeJsonDirectory("contracts");
   visitRuntimeJsonDirectory("schemas");
-  visitRuntimeJsonDirectory("packages/telemetry-contract/schemas");
   return [
     ...collectR7ReleaseEvidenceRuntimeSourcePaths({ repositoryRoot }),
     "scripts/r7-materialized-boundary-worker.js",
     "scripts/r7-resource-benchmark-worker.js",
     ...runtimeJsonPaths,
-    "generated/telemetry-v0.1-compatibility.json",
-    "generated/telemetry-v0.1-field-dictionary.json",
+    "generated/local-export-v1-compatibility.json",
+    "generated/local-export-v1-field-dictionary.json",
     "packages/accounting/package.json",
-    "packages/telemetry-contract/package.json",
+    "packages/codex-catalog/package.json",
     "package.json",
     "pnpm-lock.yaml",
     "pnpm-workspace.yaml",

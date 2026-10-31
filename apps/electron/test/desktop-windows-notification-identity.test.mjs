@@ -95,3 +95,17 @@ test("Windows notification identity refuses an unconfigured CLSID without readin
   }), false);
   assert.deepEqual(value.calls, []);
 });
+
+test("an existing shortcut activator must match before any process identity is set", () => {
+  for (const clsid of [null, "", "not-a-guid", "FDA705D7-5644-50E8-8CD2-3005D51B98C6", "{FDA705D7-5644-50E8-8CD2-3005D51B98C5"]) {
+    const value = fixture({ shortcut: { target: EXECUTABLE, appUserModelId: IDENTITY.appUserModelId, toastActivatorClsid: clsid } });
+    assert.equal(prepareWindowsNotificationIdentity({ ...value, platform: "win32", identity: IDENTITY }), false);
+    assert.deepEqual(value.calls.map(call => call[0]), ["readShortcutLink"]);
+  }
+  for (const clsid of [undefined, IDENTITY.toastActivatorClsid, `{${IDENTITY.toastActivatorClsid.toLowerCase()}}`]) {
+    const value = fixture({ shortcut: { target: EXECUTABLE, appUserModelId: IDENTITY.appUserModelId,
+      ...(clsid === undefined ? {} : { toastActivatorClsid: clsid }) } });
+    assert.equal(prepareWindowsNotificationIdentity({ ...value, platform: "win32", identity: IDENTITY }), true);
+    assert.deepEqual(value.calls.map(call => call[0]), ["readShortcutLink", "appUserModelId", "toastActivatorClsid"]);
+  }
+});

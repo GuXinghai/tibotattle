@@ -37,6 +37,7 @@ const require = createRequire(import.meta.url);
 const asar = createRequire(require.resolve("electron-builder"))("@electron/asar");
 const SHELL_FILES = [
   "apps/electron/application-profile.js",
+  "apps/electron/usage-cutover-policy.js",
   "config/application-identity.cjs",
   "config/product-brand.cjs",
   "config/product-brand.js",
@@ -89,6 +90,8 @@ const SHELL_FILES = [
   "apps/electron/x-import/manifest.json",
   "apps/electron/x-import/popup.html",
   "apps/electron/x-import/popup.js",
+  "apps/electron/x-import/registration.js",
+  "apps/electron/x-import/setup.js",
   "apps/electron/x-import/NativeHost.cs",
   "apps/electron/x-import/UsageMonitorXImport.exe",
   "apps/electron/errors.js",
@@ -380,6 +383,8 @@ test("verifies closed release-operation and legacy-read extensions without enabl
     releaseOperation: { approved: true, contractVersion: "windows-release-operation-storage-v1" },
     legacyStateRead: { approved: true, contractVersion: "windows-legacy-state-read-v1" },
     browserProfile: { approved: true, contractVersion: "windows-browser-profile-v2" },
+    reportPublication: { approved: true, contractVersion: "windows-report-publication-v1" },
+    localVolumeQuery: { approved: true, contractVersion: "windows-local-volume-query-v1" },
   };
   await withFixture("win32-x64", { bindingManifestMutation: sidecar => Object.assign(sidecar, extensions) }, async fixture => {
     assert.equal((await verify(fixture, "win32-x64")).status, FIXED_STATUS.verified);

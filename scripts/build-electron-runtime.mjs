@@ -47,9 +47,9 @@ import {
 } from "../apps/local/static-assets.js";
 import {
   RUNTIME_ACCOUNTING_FILES,
+  RUNTIME_CODEX_CATALOG_FILES,
   RUNTIME_IDENTITY_CORE_FILES,
   RUNTIME_QUOTA_ANALYSIS_FILES,
-  RUNTIME_TELEMETRY_CONTRACT_FILES,
   captureWorkspaceRuntimePackages,
   collectRuntimeGraph,
   collectWebModuleGraph,
@@ -150,6 +150,7 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "config/product-brand.cjs",
   "config/product-brand.js",
   "apps/electron/application-profile.js",
+  "apps/electron/usage-cutover-policy.js",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
   "apps/electron/desktop-command.js",
@@ -198,6 +199,8 @@ export const ELECTRON_SHELL_RUNTIME_FILES = Object.freeze([
   "apps/electron/x-import/manifest.json",
   "apps/electron/x-import/popup.html",
   "apps/electron/x-import/popup.js",
+  "apps/electron/x-import/registration.js",
+  "apps/electron/x-import/setup.js",
   "apps/electron/x-import/NativeHost.cs",
   "apps/electron/x-import/UsageMonitorXImport.exe",
   "apps/electron/errors.js",
@@ -290,7 +293,7 @@ const WORKSPACE_RUNTIME_PACKAGE_FILES = Object.freeze({
   "@app-usagemonitor/accounting": RUNTIME_ACCOUNTING_FILES,
   "@app-usagemonitor/identity-core": RUNTIME_IDENTITY_CORE_FILES,
   "@app-usagemonitor/quota-analysis": RUNTIME_QUOTA_ANALYSIS_FILES,
-  "@app-usagemonitor/telemetry-contract": RUNTIME_TELEMETRY_CONTRACT_FILES,
+  "@app-usagemonitor/codex-catalog": RUNTIME_CODEX_CATALOG_FILES,
 });
 
 const SOURCE_FILE_KIND = "companion_source";

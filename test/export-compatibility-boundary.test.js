@@ -32,8 +32,6 @@ function copiedArtifacts() {
       name: schema.name,
       ...copiedArtifact(schema),
     })),
-    consentStatus: copiedArtifact(source.consentStatus),
-    contractStatus: copiedArtifact(source.contractStatus),
     fieldContract: copiedArtifact(source.fieldContract),
     generatedCompatibility: copiedArtifact(
       source.generatedCompatibility,
@@ -140,28 +138,7 @@ test("generated compatibility freshness binds every reviewed file input", () => 
         );
       },
     },
-    {
-      label: "consent status",
-      mutate(artifacts) {
-        artifacts.consentStatus = mutateJsonArtifact(
-          artifacts.consentStatus,
-          (value) => {
-            value.status = `${value.status}-changed`;
-          },
-        );
-      },
-    },
-    {
-      label: "contract status",
-      mutate(artifacts) {
-        artifacts.contractStatus = mutateJsonArtifact(
-          artifacts.contractStatus,
-          (value) => {
-            value.contractFamily = `${value.contractFamily}-changed`;
-          },
-        );
-      },
-    },
+
   ];
 
   for (const { label, mutate } of mutations) {

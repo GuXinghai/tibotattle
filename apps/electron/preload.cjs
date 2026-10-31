@@ -400,6 +400,7 @@ function installDesktopBridge() {
     getXSettings: (...values) => xNoArguments('getXSettings', values),
     cancelXLogin: (...values) => xNoArguments('cancelXLogin', values),
     configureXImport: (...values) => xNoArguments('configureXImport', values),
+    openXImportFolder: (...values) => xNoArguments('openXImportFolder', values),
     logoutX: (...values) => xNoArguments('logoutX', values),
     clearXCache: (...values) => xNoArguments('clearXCache', values),
     listXPosts: (...values) => oneArgument('listXPosts', values, query => {

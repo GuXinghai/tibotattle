@@ -8,6 +8,16 @@ import {
   resolveElectronStartupAppearance,
 } from "../public/desktop-appearance.js";
 
+test("dashboard styles omit retired surfaces and unused tray previews", async () => {
+  const sheets = await Promise.all([
+    "styles.css", "electron-settings.css", "cache-reuse-matrix.css",
+    "model-performance.css", "window-background.css",
+  ].map(name => readFile(new URL(`../public/${name}`, import.meta.url), "utf8")));
+  for (const css of sheets) {
+    assert.doesNotMatch(css, /community-site|admin-operator-page|native-dashboard|community-dot-pulse|settings-tray-(?:section-row|totals|preview-popup|example-chart)/u);
+  }
+});
+
 test("sidebar footer keeps icon-only refresh immediately above Settings", async () => {
   const html = await readFile(new URL("../public/index.html", import.meta.url), "utf8");
   const sidebar = html.match(/<aside class="dashboard-sidebar"[\s\S]*?<\/aside>/u)?.[0];
@@ -36,7 +46,7 @@ test("neutral dashboard themes retain readable text, selected controls and chart
   const contrast=(a,b)=>{const values=[luminance(a),luminance(b)].sort((a,b)=>b-a);return (values[0]+0.05)/(values[1]+0.05);};
   for(const palette of palettes) {
     for(const bg of ["neutral-page","neutral-surface","neutral-hover"]) {
-      for(const fg of ["neutral-ink","neutral-muted"]) assert.ok(contrast(palette[fg],palette[bg])>=4.5,`${fg} on ${bg}`);
+      for(const fg of ["neutral-ink","neutral-muted","neutral-placeholder"]) assert.ok(contrast(palette[fg],palette[bg])>=4.5,`${fg} on ${bg}`);
     }
     assert.ok(contrast(palette["neutral-ink"],palette["neutral-track"])>=3);
     // Workload names are large text, and colours supplement explicit labels.
@@ -44,13 +54,12 @@ test("neutral dashboard themes retain readable text, selected controls and chart
   }
   assert.doesNotMatch(section,/color-scheme:\s*light|var\(--panel[,)]/u);
   assert.doesNotMatch(usage,/(?:color|background|border(?:-bottom)?):[^;{}]*#[\da-f]{3,8}/iu);
-  assert.match(usage,/input::placeholder\s*\{\s*color:var\(--neutral-muted\);\s*opacity:1;/u);
+  assert.match(usage,/input::placeholder\s*\{\s*color:var\(--neutral-placeholder\);\s*opacity:1;/u);
 });
 
 // Owner direction (2026-10-18): the app renders white/black/grey and keeps the
-// workload red/yellow/green as the only hue. The site and operator console keep
-// their own palettes, so this checks only the app-scoped rules and the two
-// app-only sheets.
+// workload red/yellow/green as the only hue. Check the dashboard rules and
+// the two app-only sheets.
 test("app-scoped chrome stays achromatic outside the workload tokens", async () => {
   const [styles, tray, settings, matrix, performance] = await Promise.all([
     readFile(new URL("../public/styles.css", import.meta.url), "utf8"),
@@ -60,7 +69,7 @@ test("app-scoped chrome stays achromatic outside the workload tokens", async () 
     readFile(new URL("../public/model-performance.css", import.meta.url), "utf8"),
   ]);
   const scopedAppRules = (css) =>
-    [...css.matchAll(/body:not\(\.community-site\):not\(\.admin-operator-page\)[^}]*\}/gu)]
+    [...css.matchAll(/(?:^|\n)body[^}]*\}/gu)]
       .map((match) => match[0])
       .join("\n");
   const channels = (literal) => {

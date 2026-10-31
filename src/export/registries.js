@@ -1,11 +1,6 @@
-import {
-  REVIEWED_CODEX_MODEL_IDS,
-  TELEMETRY_MODEL_IDS,
-} from "@app-usagemonitor/telemetry-contract";
-
-// These identify the existing v0.1 wire dictionary, not current provider support.
-export const TELEMETRY_V01_REGISTRY_VERSION = "telemetry-v0.1-registry-2026-10-28.1";
-export const TELEMETRY_V01_REVIEWED_AT = "2026-10-28";
+import { REVIEWED_CODEX_MODEL_IDS } from "@app-usagemonitor/codex-catalog";
+export const LOCAL_EXPORT_REGISTRY_VERSION = "local-export-registry-2026-10-31.1";
+export const LOCAL_EXPORT_REVIEWED_AT = "2026-10-31";
 
 export const OPENAI_CODEX_MODEL_IDS = REVIEWED_CODEX_MODEL_IDS;
 
@@ -60,7 +55,7 @@ export const EXPORT_DIAGNOSTIC_CODES = Object.freeze([
   "unattributed_fork_replay_events_skipped",
 ]);
 
-export const TELEMETRY_PROVIDER_IDS = Object.freeze([
+export const LOCAL_EXPORT_PROVIDER_IDS = Object.freeze([
   "openai_codex",
 ]);
 
@@ -135,22 +130,16 @@ export function recognizedExportLimitId(value) {
   return limitIds.has(normalized) ? normalized : "unknown";
 }
 
-// Only the compatibility tuple consumes this historical serialized dictionary.
-// Product dispatch uses TELEMETRY_PROVIDER_IDS and the Codex-only recognizers.
-// Retaining its identifiers does not register a reader, price card or adapter.
+// The current local export registry has one supported provider.
 export function exportRegistrySnapshot() {
   return {
-    schemaVersion: TELEMETRY_V01_REGISTRY_VERSION,
-    reviewedAt: TELEMETRY_V01_REVIEWED_AT,
+    schemaVersion: LOCAL_EXPORT_REGISTRY_VERSION,
+    reviewedAt: LOCAL_EXPORT_REVIEWED_AT,
     evidence: "reviewed_local_observations_and_repository_fixtures",
     providers: {
       openai_codex: {
         modelIds: [...OPENAI_CODEX_MODEL_IDS],
         limitIds: [...OPENAI_CODEX_LIMIT_IDS],
-      },
-      anthropic_claude_code: {
-        modelIds: TELEMETRY_MODEL_IDS.filter(id => id.startsWith("claude-")).sort(),
-        limitIds: [],
       },
     },
     diagnosticCodes: [...EXPORT_DIAGNOSTIC_CODES],

@@ -12,6 +12,7 @@ const SAFE_ERROR_CODES = new Set([
   "companion_unknown_speed_policy_unavailable",
   "invalid_loopback_origin",
   "unsupported_platform",
+  "usage_cutover_blocked",
   "windows_readiness_unavailable",
   "windows_qualification_launch_override_forbidden",
   "desktop_ipc_unavailable",

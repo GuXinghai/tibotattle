@@ -1,6 +1,6 @@
 import { stableJson } from "./canonical-json.js";
 import {
-  TELEMETRY_V01_REGISTRY_VERSION,
+  LOCAL_EXPORT_REGISTRY_VERSION,
   exportRegistrySnapshot,
 } from "./registries.js";
 import { EXPORT_RESOURCE_POLICY_VERSION } from "./resource-policy.js";
@@ -100,8 +100,6 @@ function snapshotArtifactSet(artifacts) {
     schemas: Object.freeze(schemas),
   };
   for (const name of [
-    "consentStatus",
-    "contractStatus",
     "fieldContract",
     "generatedCompatibility",
     "packageMetadata",
@@ -178,49 +176,16 @@ function buildTupleFromSnapshot({
           },
         },
       },
-      // Retained to keep the versioned compatibility.schema.json v0.1
-      // tuple shape readable. This is historical wire-format metadata,
-      // not an available adapter or a supported source.
-      anthropicClaudeCode: {
-        status: "partial",
-        capabilities: {
-          usageEvents: "implemented",
-          quotaSnapshots: "implemented",
-        },
-        sourceFormats: {
-          transcript: {
-            status: "implemented",
-            sourceFormat: "claude-code-transcript-jsonl",
-            parserVersion: "claude-transcript-export-cursor-v0.2",
-            adapterVersion: "claude-transcript-usage-candidate-v0.2",
-          },
-          statusLine: {
-            status: "implemented",
-            sourceFormat: "claude-statusline-snapshot-v0.2",
-            parserVersion: "claude-statusline-v0.2",
-            adapterVersion: "quota-candidate-normalizer-v0.1",
-          },
-        },
-      },
     },
     registry: {
-      version: TELEMETRY_V01_REGISTRY_VERSION,
+      version: LOCAL_EXPORT_REGISTRY_VERSION,
       sha256: hash(stableJson(reviewedRegistry)),
     },
-    consent: {
-      version: source.consentStatus.value.consentVersion,
-      status: source.consentStatus.value.status,
-      statusSha256: hash(source.consentStatus.bytes),
-    },
     contract: {
-      family: source.contractStatus.value.contractFamily,
-      status: source.contractStatus.value.status,
-      transportReady: source.contractStatus.value.transportReady,
-      externalParticipantsAuthorized:
-        source.contractStatus.value.externalParticipantsAuthorized,
-      backwardCompatibility:
-        source.contractStatus.value.backwardCompatibility,
-      statusSha256: hash(source.contractStatus.bytes),
+      family: "local-export-v1",
+      status: "local_only",
+      transportReady: false,
+      backwardCompatibility: "none",
     },
   };
 }

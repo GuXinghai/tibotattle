@@ -21,7 +21,8 @@ function files(action, names) {
   for (const name of names) definitions.set(name, { kind: "file", action });
 }
 files("preserve_bytes", ["local-index-store-v1.sqlite", "local-unified-index-device-salt-v1",
-  "local-collector-state-v1.sqlite", "private/codex-speed-baseline-v0.1.json", "private/overview-workload-state.json"]);
+  "local-collector-state-v1.sqlite", "private/codex-speed-baseline-v0.1.json", "private/overview-workload-state.json",
+  "private/overview-workload-account-state.json"]);
 files("retain_dated_evidence", ["work-usage-snapshot.json", "private/authoritative-dashboard-snapshot-v1.json"]);
 files("legacy_preservation_review", ["local-unified-index-v1.sqlite", "local-unified-index-v1.sqlite.current",
   "collector-events.jsonl", "collector-events.jsonl.projection-v1.json", "collector-checkpoint-v0.3.json",

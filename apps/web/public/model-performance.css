@@ -88,4 +88,4 @@
  * light/dark pair serves the public tour; in the app the shared roles already
  * carry the monochrome palette, so text follows them.
  */
-body:not(.community-site):not(.admin-operator-page) .model-performance { --ink: var(--text); --muted: var(--text); }
+body .model-performance { --ink: var(--text); --muted: var(--text); }

@@ -461,7 +461,7 @@ test("provider quota metadata validation stays in parity with canonical analysis
   }
 });
 
-async function withRateLimitServer(respond, run) {
+async function withRateLimitServer(respond, run, { timeoutMs = undefined } = {}) {
   const requests = [];
   const child = new EventEmitter();
   child.stdout = new PassThrough();
@@ -472,16 +472,18 @@ async function withRateLimitServer(respond, run) {
       if (request.id !== undefined) {
         const response = request.method === "initialize" ? { result: {} } : respond(request, requests.length);
         if (request.method !== "initialize") requests.push(request);
-        queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: request.id, ...response })}\n`));
+        if (response !== null) {
+          queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: request.id, ...response })}\n`));
+        }
       }
       done();
     },
   });
   child.kill = () => true;
-  const client = new accountFacade.CodexAppServerClient({ spawnProcess: () => child });
+  const client = new accountFacade.CodexAppServerClient({ timeoutMs, spawnProcess: () => child });
   try {
     await client.start();
-    await run(client, requests);
+    await run(client, requests, child);
   } finally {
     client.close();
     child.stdin.destroy();
@@ -489,6 +491,203 @@ async function withRateLimitServer(respond, run) {
     child.stderr.destroy();
   }
 }
+
+test("concurrent quota reads are serialized per app-server client", async () => {
+  await withRateLimitServer((_request, index) => index === 0 ? null : { result: { read: index + 1 } }, async (client, requests, child) => {
+    const first = client.readRateLimits();
+    await new Promise((resolve) => setImmediate(resolve));
+    const second = client.readRateLimits();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests.length, 1);
+    assert.equal(client.pending.size, 1);
+
+    child.stdout.write(`${JSON.stringify({ id: requests[0].id, result: { read: 1 } })}\n`);
+    assert.deepEqual(await first, { read: 1 });
+    assert.deepEqual(await second, { read: 2 });
+    assert.equal(requests.length, 2);
+    assert.equal(client.listenerCount("closed"), 0);
+  });
+});
+
+test("quota serialization spans clients and releases a closed waiter after the active read", async () => {
+  function createUnansweredClient() {
+    const requests = [];
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({
+      write(chunk, _encoding, done) {
+        const request = JSON.parse(chunk.toString("utf8"));
+        if (request.id !== undefined) {
+          if (request.method !== "initialize") requests.push(request);
+          else queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: request.id, result: {} })}\n`));
+        }
+        done();
+      },
+    });
+    child.kill = () => true;
+    return {
+      child,
+      requests,
+      client: new accountFacade.CodexAppServerClient({
+        timeoutMs: 1_000,
+        spawnProcess: () => child,
+      }),
+    };
+  }
+
+  const first = createUnansweredClient();
+  const closedWaiter = createUnansweredClient();
+  const last = createUnansweredClient();
+  const clients = [first, closedWaiter, last];
+  try {
+    await Promise.all(clients.map(({ client }) => client.start()));
+    const firstRead = first.client.readRateLimits();
+    await new Promise((resolve) => setImmediate(resolve));
+    const closedRead = closedWaiter.client.request("account/rateLimits/read", {});
+    const lastRead = last.client.readRateLimits();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(first.requests.length, 1);
+    assert.equal(closedWaiter.requests.length, 0);
+    assert.equal(last.requests.length, 0);
+
+    closedWaiter.client.close();
+    await assert.rejects(closedRead, { code: "temporary_disconnect" });
+    first.child.stdout.write(`${JSON.stringify({ id: first.requests[0].id, result: { source: "first" } })}\n`);
+    assert.deepEqual(await firstRead, { source: "first" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(last.requests.length, 1);
+    last.child.stdout.write(`${JSON.stringify({ id: last.requests[0].id, result: { source: "last" } })}\n`);
+    assert.deepEqual(await lastRead, { source: "last" });
+  } finally {
+    for (const { client, child } of clients) {
+      client.close();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }
+  }
+});
+
+test("a global timeout releases the next client's quota request without accepting the late reply", async () => {
+  function createClient() {
+    const requests = [];
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = new Writable({
+      write(chunk, _encoding, done) {
+        const request = JSON.parse(chunk.toString("utf8"));
+        if (request.id !== undefined) {
+          if (request.method !== "initialize") requests.push(request);
+          else queueMicrotask(() => child.stdout.write(`${JSON.stringify({ id: request.id, result: {} })}\n`));
+        }
+        done();
+      },
+    });
+    child.kill = () => true;
+    return {
+      child,
+      requests,
+      client: new accountFacade.CodexAppServerClient({ timeoutMs: 20, spawnProcess: () => child }),
+    };
+  }
+
+  const first = createClient();
+  const second = createClient();
+  try {
+    await Promise.all([first.client.start(), second.client.start()]);
+    const timedOut = first.client.readRateLimits();
+    const retry = second.client.readRateLimits();
+    await assert.rejects(timedOut, { code: "request_timeout" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(first.client.pending.size, 0);
+    assert.equal(second.requests.length, 1);
+    assert.equal(second.client.pending.size, 1);
+
+    first.child.stdout.write(`${JSON.stringify({ id: first.requests[0].id, result: { stale: true } })}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(second.client.pending.size, 1);
+    second.child.stdout.write(`${JSON.stringify({ id: second.requests[0].id, result: { fresh: true } })}\n`);
+    assert.deepEqual(await retry, { fresh: true });
+  } finally {
+    for (const { client, child } of [first, second]) {
+      client.close();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }
+  }
+});
+
+test("a timed-out quota request ignores its late reply and permits retry", async () => {
+  await withRateLimitServer(() => null, async (client, requests, child) => {
+    const timedOut = client.readRateLimits();
+    await assert.rejects(timedOut, { code: "request_timeout" });
+    assert.equal(client.pending.size, 0);
+
+    const retry = client.readRateLimits();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests.length, 2);
+    assert.notEqual(requests[0].id, requests[1].id);
+    assert.equal(client.pending.size, 1);
+    child.stdout.write(`${JSON.stringify({ id: requests[0].id, result: { stale: true } })}\n`);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(client.pending.size, 1);
+    child.stdout.write(`${JSON.stringify({ id: requests[1].id, result: { fresh: true } })}\n`);
+    assert.deepEqual(await retry, { fresh: true });
+  }, { timeoutMs: 10 });
+});
+
+test("snapshot reads bracket the quota RPC with account reads", async () => {
+  const calls = [];
+  const client = {
+    binary: "synthetic-codex",
+    async start() { calls.push("start"); },
+    async readAccount() { calls.push("account"); return { account: { email: "fixture@example.test" } }; },
+    async readRateLimits() { calls.push("quota"); return { rateLimits: {} }; },
+    async readAccountUsage() { calls.push("usage"); return { dailyUsageBuckets: [] }; },
+    close() { calls.push("close"); },
+  };
+  const snapshot = await appServer.readCodexAccountSnapshot({ createClient: () => client });
+  assert.deepEqual(calls, ["start", "account", "quota", "usage", "account", "close"]);
+  assert.deepEqual(snapshot.account, snapshot.accountAfter);
+  assert.deepEqual(snapshot.accountBefore, snapshot.accountAfter);
+});
+
+test("bracketed snapshot sanitization rejects known changes and keeps unknown identity unattributed", () => {
+  const rateLimits = {
+    ordinaryUsageAllowed: true,
+    rateLimits: {
+      limitId: "codex",
+      planType: "pro",
+      primary: { usedPercent: 25, windowDurationMins: 300, resetsAt: 1_800_000_000 },
+    },
+  };
+  const accountBefore = { account: { email: "before@example.test", planType: "pro" } };
+  const accountAfter = { account: { email: "after@example.test", planType: "pro" } };
+  const options = { accountHmacKey: Buffer.alloc(32, 7) };
+  const capturedAt = "2026-10-31T00:00:00.000Z";
+
+  assert.throws(() => appServer.sanitizeCodexAccountSnapshot({
+    account: accountAfter, accountBefore, accountAfter, rateLimits,
+  }, capturedAt, options), {
+    code: "request_failed",
+    message: "Codex account or plan changed during quota observation",
+  });
+
+  const incomplete = appServer.sanitizeCodexAccountSnapshot({
+    account: accountAfter, accountBefore: null, accountAfter, rateLimits,
+  }, capturedAt, options);
+  assert.equal(incomplete.accountScope.status, "unavailable");
+  assert.equal(incomplete.ordinaryUsageAllowed, null);
+
+  const stable = appServer.sanitizeCodexAccountSnapshot({
+    account: accountAfter, accountBefore: accountAfter, accountAfter, rateLimits,
+  }, capturedAt, options);
+  assert.equal(stable.accountScope.status, "available");
+  assert.equal(stable.ordinaryUsageAllowed, true);
+});
 
 test("rate-limit reads use lightweight capabilities only when explicitly requested and never opt into Reserve", async () => {
   await withRateLimitServer(() => ({ result: { ordinaryUsageAllowed: false } }), async (client, requests) => {

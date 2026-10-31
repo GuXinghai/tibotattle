@@ -3,7 +3,7 @@ import {
   inheritedTierSeed,
   resolveLogicalRolloutHeads,
 } from "./local-index-extract.js";
-import { reviewedModelIdentity } from "@app-usagemonitor/telemetry-contract";
+import { reviewedModelIdentity } from "@app-usagemonitor/codex-catalog";
 import { forEachRolloutLine, ROLLOUT_LINE_BYTES } from "./rollout-line-reader.js";
 import { withStableRolloutSource } from "./rollout-source-snapshot.js";
 

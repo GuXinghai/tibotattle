@@ -54,7 +54,7 @@ test("migration-required guidance preserves legacy state and offers no unavailab
 
 test("unknown or hostile failures collapse to security unavailable", () => {
   const hostile = new Proxy({}, { get() { throw new Error("private detail"); } });
-  for (const value of [undefined, null, {}, hostile]) {
+  for (const value of [undefined, null, {}, hostile, { code: "contribution_device_credential_recovery_required" }]) {
     assert.equal(classifyDesktopSecureStorageFailure(value), "security_unavailable");
     assert.equal(isDesktopSecureStorageFailure(value), false);
   }

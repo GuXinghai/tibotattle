@@ -3,6 +3,7 @@ import test from 'node:test';
 import {formatXClocks,mountXReader,mountXSettings,normalizeXPost,validateXSettings} from '../public/x-reader.js';
 import {loadLocalXHls,mountDesktopXReader} from '../public/x-reader-integration.js';
 import {translate} from '../public/localization.js';
+import {validateXDesktopRequest} from '../../electron/desktop-x-ipc.js';
 
 const post=(id='123',extra={})=>({id,author:{name:'Tibo',handle:'thsottiaux'},createdAt:'2026-10-19T14:59:00.000Z',text:'A post',complete:true,kind:'post',media:[],...extra});
 const flush=async()=>{for(let i=0;i<12;i++)await Promise.resolve();};
@@ -14,11 +15,11 @@ test('first entry checks login without flashing the chooser while status and cac
     const showing=reader.show();
     const panel=walk(fixture.container).find(el=>el.className==='x-reader-login');
     assert.equal(panel.hidden,true);assert.ok(fixture.container.textContent.includes('正在检查登录'));
-    assert.equal(find(fixture.container,'网页登录'),undefined);
+    assert.equal(find(fixture.container,'在应用内登录 X'),undefined);
     if(cacheFirst){finishList({items:[post()],source:'cache',status:{auth:'restoring',operation:'idle'}});await flush();assert.ok(fixture.container.textContent.includes('A post'));assert.equal(panel.hidden,true);}
     finishStatus({auth:'ready',operation:'idle'});await flush();assert.equal(panel.hidden,true);
     finishList({items:[post()],source:'live',status:{auth:'ready',operation:'idle'}});await showing;
-    assert.equal(panel.hidden,true);assert.equal(find(fixture.container,'网页登录'),undefined);assert.ok(fixture.container.textContent.includes('A post'));reader.dispose();
+    assert.equal(panel.hidden,true);assert.equal(find(fixture.container,'在应用内登录 X'),undefined);assert.ok(fixture.container.textContent.includes('A post'));reader.dispose();
   }
 });
 
@@ -99,7 +100,7 @@ test('a confirmed missing session shows login, while initial status read failure
     const reader=mountXReader({container:fixture.container,bridge:bridge({getXStatus:()=>new Promise((resolve,reject)=>{finishStatus=resolve;failStatus=reject;}),listXPosts:()=>new Promise(resolve=>finishList=resolve)})});
     const showing=reader.show();const panel=walk(fixture.container).find(el=>el.className==='x-reader-login');assert.equal(panel.hidden,true);
     if(failed)failStatus(new Error('synthetic'));else finishStatus({auth:'disconnected',operation:'idle'});
-    await flush();assert.equal(panel.hidden,failed);if(failed)assert.ok(find(fixture.container,'重试'));else assert.ok(find(panel,'网页登录'));
+    await flush();assert.equal(panel.hidden,failed);if(failed)assert.ok(find(fixture.container,'重试'));else assert.ok(find(panel,'在应用内登录 X'));
     finishList({items:[]});await showing;reader.dispose();
   }
 });
@@ -116,7 +117,7 @@ test('login failures stay visible in reader and settings and clear after recover
 
 test('IPC login errors render only closed messages, never raw error content',async()=>{
   const fixture=dom();const reader=mountXReader({container:fixture.container,bridge:bridge({getXStatus:async()=>({auth:'disconnected',operation:'idle'}),listXPosts:async()=>({items:[]}),beginXLogin:async()=>{throw new Error('IPC: login_timeout private-synthetic-secret');}})});
-  reader.show();await flush();await find(fixture.container,'网页登录').dispatch('click');await flush();
+  reader.show();await flush();await find(fixture.container,'在应用内登录 X').dispatch('click');await flush();
   assert.ok(fixture.container.textContent.includes('登录超时'));assert.equal(fixture.container.textContent.includes('private-synthetic-secret'),false);reader.dispose();
 });
 function dom(){
@@ -394,15 +395,41 @@ test('login choice can cancel and switch without exposing credentials',async()=>
   const fixture=dom(),methods=[];let cancelled=0;
   const mounted=mountXReader({container:fixture.container,bridge:bridge({getXStatus:async()=>({auth:'disconnected',operation:'idle'}),listXPosts:async()=>({items:[]}),beginXLogin:async({method})=>{methods.push(method);return{auth:'authorizing',operation:'idle'};},cancelXLogin:async()=>{cancelled++;}})});
   await mounted.show();assert.equal(fixture.container.textContent.split('选择登录方式').length-1,1);assert.ok(!fixture.container.textContent.includes('暂无动态'));assert.equal(find(fixture.container,'登录'),undefined);
-  await find(fixture.container,'Session 登录').dispatch('click');await flush();assert.deepEqual(methods,['session']);
+  await find(fixture.container,'从 Chrome 导入').dispatch('click');await flush();assert.deepEqual(methods,['session']);
   await find(fixture.container,'返回，选择其他方式').dispatch('click');await flush();assert.equal(cancelled,1);
-  await find(fixture.container,'网页登录').dispatch('click');assert.deepEqual(methods,['session','web']);mounted.dispose();
+  await find(fixture.container,'在应用内登录 X').dispatch('click');assert.deepEqual(methods,['session','web']);mounted.dispose();
 });
 test('import bridge codes have precise UI states and a false configure result remains visible',async()=>{
-  for(const[code,label]of [['bridge_ready','本机桥接已就绪'],['import_ready','等待从 Chrome 导入会话'],['bridge_unavailable','本机桥接配置失败'],['not_configured','尚未配置本机桥接']]){
-    const fixture=dom();const mounted=mountXReader({container:fixture.container,translate:key=>translate(key,{},'zh-Hans'),bridge:bridge({getXStatus:async()=>({auth:'authorizing',loginMethod:'session',operation:'idle',import:{code}}),listXPosts:async()=>({items:[]}),configureXImport:async()=>({configured:false,code:'bridge_ready'})})});
+  for(const[code,label]of [['bridge_ready','本机桥接已就绪'],['import_ready','请在已登录的 Chrome X 标签页中点击“导入当前 X 会话”。'],['bridge_unavailable','本机桥接配置失败'],['not_configured','尚未配置本机桥接']]){
+    const fixture=dom();const mounted=mountXReader({container:fixture.container,translate:key=>translate(key,{},'zh-Hans'),bridge:bridge({getXStatus:async()=>({auth:'authorizing',loginMethod:'session',loginStage:'waiting_import',operation:'idle',import:{configured:code==='import_ready',code}}),listXPosts:async()=>({items:[]}),configureXImport:async()=>({configured:false,code:'bridge_ready'})})});
     await mounted.show();assert.ok(fixture.container.textContent.includes(label),code);await find(fixture.container,'配置 Chrome 导入').dispatch('click');assert.ok(fixture.container.textContent.includes('本机桥接配置失败'));mounted.dispose();
   }
+});
+
+test('non-store import guide hides private paths and opens only the fixed folder after confirmed setup',async()=>{
+  const f=dom();let reveals=0,configured=false;
+  const status=()=>({auth:'authorizing',loginMethod:'session',operation:'idle',loginStage:'waiting_import',
+    import:{configured,code:configured?'import_ready':'not_configured',extensionDirectory:'C:\\synthetic\\must-not-render'}});
+  const api=bridge({getXStatus:async()=>status(),listXPosts:async()=>({items:[]}),
+    configureXImport:async()=>{configured=true;return status().import;},openXImportFolder:async(...args)=>{assert.equal(args.length,0);reveals++;}});
+  const reader=mountXReader({container:f.container,bridge:api});await reader.show();
+  assert.ok(f.container.textContent.includes('加载已解压的扩展程序'));assert.ok(f.container.textContent.includes('无需扩展'));
+  assert.ok(!f.container.textContent.includes('must-not-render'));assert.equal(find(f.container,'打开扩展目录'),undefined);
+  await find(f.container,'准备或修复 Chrome 导入').dispatch('click');await find(f.container,'打开扩展目录').dispatch('click');
+  assert.equal(reveals,1);reader.dispose();
+});
+
+test('settings expose the same non-store setup, preserve explicit failure and discard cancelled late results',async()=>{
+  const f=dom();let configured=false,release;
+  const status=()=>({auth:'authorizing',loginMethod:'session',operation:'idle',loginStage:'waiting_import',import:{configured,code:'import_ready'}});
+  const api=bridge({getXStatus:async()=>status(),configureXImport:()=>new Promise(resolve=>{release=resolve;})});
+  const settings=mountXSettings({container:f.container,bridge:api});settings.show();await flush();
+  assert.ok(f.container.textContent.includes('加载已解压的扩展程序'));
+  const pending=find(f.container,'准备或修复 Chrome 导入').dispatch('click');await flush();
+  assert.equal(find(f.container,'准备或修复 Chrome 导入').disabled,true);
+  release({configured:false});await pending;assert.ok(f.container.textContent.includes('本机桥接配置失败'));
+  const late=find(f.container,'准备或修复 Chrome 导入').dispatch('click');settings.hide();configured=true;release({configured:true});await late;
+  assert.equal(f.container.textContent.includes('本机桥接已就绪'),false);settings.dispose();
 });
 test('Session login distinguishes waiting for Chrome from verifying the delivered session',async()=>{
   const fixture=dom();let code='import_ready';
@@ -422,7 +449,7 @@ test('Session progress renders precise steps in reader and settings, with challe
   for(const[stage,label]of Object.entries({checking_bridge:'检查本机桥接',waiting_import:'点击“导入当前 X 会话”',validating:'校验导入数据',preparing:'准备独立登录会话',writing:'写入候选会话',connecting:'连接 X',verifying:'验证 X 登录',saving:'保存登录状态',challenge:'需要在 X 完成验证'})){
     status={...status,auth:stage==='challenge'?'challenge':'authorizing',loginStage:stage};reader.handleUpdate(status);settings.handleUpdate(status);
     assert.ok(fixture.container.textContent.includes(label),stage);assert.ok(settingsFixture.container.textContent.includes(label),stage);
-    if(['connecting','verifying','saving','challenge'].includes(stage))assert.equal(Boolean(find(fixture.container,'配置 Chrome 导入')),false,stage);
+    if(['connecting','verifying','saving','challenge'].includes(stage))assert.equal(Boolean(find(fixture.container,'准备或修复 Chrome 导入')),false,stage);
   }
   await find(fixture.container,'打开 X 窗口').dispatch('click');await flush();assert.deepEqual(methods,['web']);
   status={auth:'disconnected',operation:'error',error:'offline',loginMethod:null,loginStage:null,loginFailureStage:'connecting'};reader.handleUpdate(status);settings.handleUpdate(status);
@@ -443,12 +470,139 @@ test('full text prefetch has at most two concurrent requests and ignores hidden 
   await mounted.show();await flush();assert.equal(pending.length,2);pending.shift()();await flush();assert.equal(max,2);assert.equal(pending.length,2);
   mounted.hide();for(const resolve of pending)resolve();await flush();assert.equal(max,2);mounted.dispose();
 });
-test('settings reject invalid scheduling and keep proxy and notification controls explicit',async()=>{
-  const value={refreshMinutes:5,proxyMode:'system',proxyPort:10809,notifyPosts:false,notifyReplies:false};assert.equal(validateXSettings(value),true);
-  for(const refreshMinutes of [0,1.5,-2,NaN])assert.equal(validateXSettings({...value,refreshMinutes}),false);
-  assert.equal(validateXSettings({...value,refreshMinutes:-1}),true);assert.equal(validateXSettings({...value,proxyPort:65536}),false);
-  const fixture=dom(),saved=[];const mounted=mountXSettings({container:fixture.container,bridge:bridge({setXSettings:async value=>{saved.push(value);return value;}})});await flush();
-  const interval=walk(fixture.container).find(el=>el.id==='x-setting-refreshMinutes');interval.value='-1';await find(fixture.container,'保存').dispatch('click');assert.equal(saved[0].refreshMinutes,-1);
-  interval.value='8';mounted.refreshLocale({locale:'en-US'});assert.equal(interval.value,'8');assert.ok(find(fixture.container,'Save'));mounted.refreshLocale({locale:'zh-Hans'});
-  interval.value='0';await find(fixture.container,'保存').dispatch('click');assert.equal(saved.length,1);mounted.dispose();
+test('settings login actions follow confirmed authentication, not content or notification errors',async()=>{
+  const fixture=dom();let finishStatus;
+  const api=bridge({getXStatus:()=>new Promise(resolve=>finishStatus=resolve)});
+  const settings=mountXSettings({container:fixture.container,bridge:api});
+  const actions=()=>Object.fromEntries(['在应用内登录 X','从 Chrome 导入','返回，选择其他方式','退出登录'].map(label=>[label,!find(fixture.container,label).hidden]));
+  const expectActions=(web,session,other,logout)=>assert.deepEqual(Object.values(actions()),[web,session,other,logout]);
+  expectActions(false,false,false,false);
+  finishStatus({auth:'ready',operation:'idle'});await flush();
+  expectActions(false,false,false,true);
+  for(const error of ['pagination_pending','offline','parser_changed']){
+    settings.handleUpdate({auth:'ready',operation:'error',error,notificationsAvailable:false});
+    expectActions(false,false,false,true);
+  }
+  settings.refreshLocale({locale:'en-US'});
+  assert.equal(find(fixture.container,'Import from Chrome').hidden,true);
+  settings.refreshLocale({locale:'zh-Hans'});
+  for(const auth of ['disconnected','expired','challenge']){
+    settings.handleUpdate({auth,operation:'idle',loginMethod:null});
+    expectActions(true,true,false,false);
+  }
+  for(const auth of ['authorizing','challenge'])for(const loginMethod of ['web','session']){
+    settings.handleUpdate({auth,loginMethod,operation:'idle'});
+    expectActions(false,false,true,false);
+  }
+  for(const auth of ['restoring','future']){
+    settings.handleUpdate({auth,operation:'idle'});
+    expectActions(false,false,false,false);
+  }
+  settings.dispose();
+});
+
+test('settings retain the logout action and restore login choices only after confirmed logout',async()=>{
+  const fixture=dom();let auth='ready',logoutCalls=0;
+  const settings=mountXSettings({container:fixture.container,bridge:bridge({
+    getXStatus:async()=>({auth,operation:'idle'}),
+    logoutX:async()=>{logoutCalls++;auth='disconnected';},
+  })});
+  await flush();
+  assert.equal(find(fixture.container,'退出登录').hidden,false);
+  await find(fixture.container,'退出登录').dispatch('click');await flush();
+  assert.equal(logoutCalls,1);
+  assert.equal(find(fixture.container,'退出登录').hidden,true);
+  assert.equal(find(fixture.container,'在应用内登录 X').hidden,false);
+  settings.dispose();
+});
+
+test('a failed settings status read does not invent a logout or expose login choices',async()=>{
+  const fixture=dom();
+  const settings=mountXSettings({container:fixture.container,bridge:bridge({
+    getXStatus:async()=>{throw new Error('synthetic');},
+  })});
+  await flush();
+  for(const label of ['在应用内登录 X','从 Chrome 导入','返回，选择其他方式','退出登录'])
+    assert.equal(find(fixture.container,label).hidden,true);
+  settings.handleUpdate({auth:'ready',operation:'idle'});
+  settings.show();await flush();
+  assert.equal(find(fixture.container,'退出登录').hidden,false);
+  for(const label of ['在应用内登录 X','从 Chrome 导入','返回，选择其他方式'])
+    assert.equal(find(fixture.container,label).hidden,true);
+  settings.dispose();
+});
+
+test('settings save numeric edits on Enter or blur, never on typing, and have no save button',async()=>{
+  let state={refreshMinutes:5,proxyMode:'system',proxyPort:10809,notifyPosts:false,notifyReplies:false};const saved=[];
+  const fixture=dom(),mounted=mountXSettings({container:fixture.container,bridge:bridge({setXSettings:async patch=>{validateXDesktopRequest({action:'setXSettings',args:{value:patch}});saved.push(patch);return state={...state,...patch};}})});await flush();
+  const interval=walk(fixture.container).find(el=>el.id==='x-setting-refreshMinutes');
+  assert.equal(find(fixture.container,'保存'),undefined);
+  interval.value='-1';await interval.dispatch('input');assert.equal(saved.length,0);
+  await interval.dispatch('keydown',{key:'Enter'});assert.deepEqual(saved.map(value=>value.refreshMinutes),[-1]);
+  await interval.dispatch('blur');assert.equal(saved.length,1,'Enter followed by blur is not another write');
+  interval.value='8';mounted.refreshLocale({locale:'en-US'});assert.equal(interval.value,'8');assert.equal(find(fixture.container,'Save'),undefined);mounted.refreshLocale({locale:'zh-Hans'});
+  await interval.dispatch('blur');assert.equal(state.refreshMinutes,8);
+  for(const bad of ['','0','1.5','-2','2147483648']){interval.value=bad;await interval.dispatch('blur');assert.equal(state.refreshMinutes,8);assert.equal(interval.value,'8');}
+  assert.equal(saved.length,2);mounted.dispose();
+});
+
+test('settings switches and proxy selection save only their own field, preserving unfinished numeric drafts',async()=>{
+  let state={refreshMinutes:5,proxyMode:'system',proxyPort:10809,notifyPosts:false,notifyReplies:false};const saved=[];
+  const fixture=dom(),mounted=mountXSettings({container:fixture.container,bridge:bridge({setXSettings:async patch=>{validateXDesktopRequest({action:'setXSettings',args:{value:patch}});saved.push(patch);return state={...state,...patch};}})});await flush();
+  const control=key=>walk(fixture.container).find(el=>el.id===`x-setting-${key}`);
+  control('proxyPort').value='';await control('proxyPort').dispatch('input');
+  control('notifyPosts').checked=true;await control('notifyPosts').dispatch('change');
+  control('proxy').value='local';await control('proxy').dispatch('change');
+  assert.deepEqual(saved.map(value=>[value.notifyPosts,value.proxyMode,value.proxyPort]),[[true,'system',10809],[true,'local',10809]]);
+  assert.equal(state.proxyPort,10809);assert.equal(control('proxyPort').value,'');
+  await control('proxyPort').dispatch('blur');assert.equal(control('proxyPort').value,'10809');assert.equal(saved.length,2);
+  control('proxyPort').value='65536';await control('proxyPort').dispatch('keydown',{key:'Enter'});assert.equal(saved.length,2);
+  control('proxyPort').value='10808';await control('proxyPort').dispatch('blur');assert.equal(state.proxyPort,10808);mounted.dispose();
+});
+
+test('settings serialize rapid toggles and do not lose a return to the original value',async()=>{
+  let state={refreshMinutes:5,proxyMode:'system',proxyPort:10809,notifyPosts:false,notifyReplies:false};const saved=[],pending=[];
+  const fixture=dom(),mounted=mountXSettings({container:fixture.container,bridge:bridge({setXSettings:patch=>{saved.push(patch);return new Promise(resolve=>pending.push(()=>resolve(state={...state,...patch})));}})});await flush();
+  const control=key=>walk(fixture.container).find(el=>el.id===`x-setting-${key}`);
+  control('notifyPosts').checked=true;const first=control('notifyPosts').dispatch('change');await flush();
+  control('notifyReplies').checked=true;const second=control('notifyReplies').dispatch('change');
+  control('notifyPosts').checked=false;const third=control('notifyPosts').dispatch('change');await flush();assert.equal(saved.length,1);
+  pending.shift()();await first;await flush();assert.equal(saved.length,2);
+  pending.shift()();await second;await flush();assert.equal(saved.length,3);
+  pending.shift()();await third;
+  assert.deepEqual(saved.map(value=>[value.notifyPosts,value.notifyReplies]),[[true,false],[true,true],[false,true]]);
+  assert.equal(state.notifyPosts,false);assert.equal(state.notifyReplies,true);assert.equal(control('notifyPosts').checked,false);mounted.dispose();
+});
+
+test('settings save failure restores the confirmed field without leaking the raw error',async()=>{
+  const fixture=dom(),mounted=mountXSettings({container:fixture.container,bridge:bridge({setXSettings:async()=>{throw Object.assign(new Error('private raw error'),{code:'storage_unavailable'});}})});await flush();
+  const proxy=walk(fixture.container).find(el=>el.id==='x-setting-proxy');proxy.value='local';await proxy.dispatch('change');
+  assert.equal(proxy.value,'system');assert.ok(fixture.container.textContent.includes('X 本地存储不可用'));assert.equal(fixture.container.textContent.includes('private raw error'),false);
+  mounted.dispose();
+});
+
+test('settings ignore stale reloads and keep newer numeric edits after a failed save',async()=>{
+  const fixture=dom();let getCount=0,finishLoad,rejectSave;
+  const base={refreshMinutes:5,proxyMode:'system',proxyPort:10809,notifyPosts:false,notifyReplies:false};
+  const mounted=mountXSettings({container:fixture.container,bridge:bridge({getXSettings:()=>++getCount===1?Promise.resolve(base):new Promise(resolve=>finishLoad=resolve),setXSettings:()=>new Promise((_resolve,reject)=>rejectSave=reject)})});await flush();
+  mounted.show();await flush();
+  const interval=walk(fixture.container).find(el=>el.id==='x-setting-refreshMinutes');interval.value='6';const saving=interval.dispatch('keydown',{key:'Enter'});await flush();
+  interval.value='9';await interval.dispatch('input');finishLoad(base);await flush();assert.equal(interval.value,'9');
+  rejectSave(new Error('synthetic'));await saving;assert.equal(interval.value,'9','failed earlier edit cannot overwrite the newer draft');mounted.dispose();
+});
+
+test('settings wait for confirmed initial values and discard unsent work after disposal',async()=>{
+  const fixture=dom(),base={refreshMinutes:5,proxyMode:'system',proxyPort:10809,notifyPosts:false,notifyReplies:false};
+  let finishLoad,finishSave,calls=0;
+  const mounted=mountXSettings({container:fixture.container,bridge:bridge({
+    getXSettings:()=>new Promise(resolve=>finishLoad=resolve),
+    setXSettings:value=>{calls++;return new Promise(resolve=>finishSave=()=>resolve(value));},
+  })});
+  const control=key=>walk(fixture.container).find(el=>el.id===`x-setting-${key}`);
+  const posts=control('notifyPosts'),replies=control('notifyReplies');
+  assert.equal(posts.disabled,true);posts.checked=true;await posts.dispatch('change');assert.equal(calls,0);
+  finishLoad(base);await flush();assert.equal(posts.disabled,false);assert.equal(posts.checked,false);
+  posts.checked=true;const first=posts.dispatch('change');await flush();
+  replies.checked=true;const second=replies.dispatch('change');mounted.dispose();
+  finishSave();await first;await second;assert.equal(calls,1,'disposed view cannot start a queued write');
 });

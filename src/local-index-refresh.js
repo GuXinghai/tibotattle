@@ -626,7 +626,7 @@ export async function refreshLocalIndex({
   try { lstatSync(resolvedIndexFile); present = true; }
   catch (error) { if (error?.code !== "ENOENT") throw fixedError("local_index_unavailable"); }
   if (present) {
-    const prior = readLocalIndexIdentityBeforeMigration(resolvedIndexFile);
+    const prior = readLocalIndexIdentityBeforeMigration(resolvedIndexFile, { currentOnly: true });
     existingIdentity ||= prior.hasFacts;
   }
   const saltFile = secretFile ?? defaultLocalIndexSecretFile(resolvedIndexFile);

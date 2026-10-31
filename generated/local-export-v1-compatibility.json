@@ -1,0 +1,86 @@
+{
+  "contract": {
+    "backwardCompatibility": "none",
+    "family": "local-export-v1",
+    "status": "local_only",
+    "transportReady": false
+  },
+  "fieldContract": {
+    "sha256": "df1f9013445db46f8e68a4f695d11fd42d427621cd01490c9efd34599daf9987",
+    "version": "local-export-field-dictionary-v1"
+  },
+  "implementation": {
+    "checkpointParserVersion": "codex-checkpoint-state-v0.3",
+    "checkpointScanVersion": "codex-export-checkpoint-scan-v0.9",
+    "exporterVersion": "0.3.0-draft.3",
+    "packageName": "app-usagemonitor",
+    "packageVersion": "0.1.27",
+    "resourcePolicyVersion": "g1-r3-candidate-0.5"
+  },
+  "providerAdapters": {
+    "openaiCodex": {
+      "capabilities": {
+        "quotaSnapshots": {
+          "collector": "implemented",
+          "rollout": "implemented"
+        },
+        "usageEvents": "implemented"
+      },
+      "sourceFormats": {
+        "collectorQuota": {
+          "adapterVersion": "quota-candidate-normalizer-v0.1",
+          "parserVersion": "codex-collector-quota-candidate-v0.1",
+          "sourceFormat": "codex-collector-jsonl-v0.3",
+          "status": "implemented"
+        },
+        "rollout": {
+          "adapterVersion": "codex-metadata-export-v6",
+          "parserVersion": "codex-log-scan-v13",
+          "sourceFormat": "codex-rollout-jsonl",
+          "status": "implemented"
+        }
+      },
+      "status": "implemented"
+    }
+  },
+  "registry": {
+    "sha256": "76c8982b7a6fc6135bfd83878189ae1a066f5dbec85bc29f97b722f3bc11edb3",
+    "version": "local-export-registry-2026-10-31.1"
+  },
+  "schemas": {
+    "members": [
+      {
+        "id": "https://app-usagemonitor.local/schemas/local-export-v1/activity-marker.schema.json",
+        "name": "activity-marker.schema.json",
+        "sha256": "b4ead022173a857e27e1c69aec0e5ac91cbae6b132f86009612027e40711aa24"
+      },
+      {
+        "id": "https://app-usagemonitor.local/schemas/local-export-v1/bundle.schema.json",
+        "name": "bundle.schema.json",
+        "sha256": "f510ac8dfbe0a966603cc656113a92c26a3f12eefa2cadd5fcc00546d5ecf02d"
+      },
+      {
+        "id": "https://app-usagemonitor.local/schemas/local-export-v1/compatibility.schema.json",
+        "name": "compatibility.schema.json",
+        "sha256": "faa17358c162c14c42db4107d15644ffb95b8f643340837073613d8a8d6b541f"
+      },
+      {
+        "id": "https://app-usagemonitor.local/schemas/local-export-v1/privacy-receipt.schema.json",
+        "name": "privacy-receipt.schema.json",
+        "sha256": "af143ae562f11c41191dc5abe9e620f71b0d5d4ee5dc9e1c18acd0645db71f3f"
+      },
+      {
+        "id": "https://app-usagemonitor.local/schemas/local-export-v1/quota-snapshot.schema.json",
+        "name": "quota-snapshot.schema.json",
+        "sha256": "86bb16df5af100a79c619dff9536b925f8b134586433e2ed628cc5bd21dee48e"
+      },
+      {
+        "id": "https://app-usagemonitor.local/schemas/local-export-v1/usage-event.schema.json",
+        "name": "usage-event.schema.json",
+        "sha256": "4f5f1c9b9246611af73515d31b77557cb765183b2dcab801a67ed5ef7cd3a4b8"
+      }
+    ],
+    "setSha256": "e29804d16bd1fa88608daf5841d2d36eb03440b0f5738df6571d7e75b2a3b6b4"
+  },
+  "tupleVersion": "local-export-compatibility-v1"
+}

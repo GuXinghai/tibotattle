@@ -37,10 +37,6 @@ export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
     file: "app.js",
     type: "text/javascript; charset=utf-8",
   }),
-  "/community-data.js": Object.freeze({
-    file: "community-data.js",
-    type: "text/javascript; charset=utf-8",
-  }),
   "/data-client.js": Object.freeze({
     file: "data-client.js",
     type: "text/javascript; charset=utf-8",
@@ -131,8 +127,8 @@ export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
     file: "model-visuals.js",
     type: "text/javascript; charset=utf-8",
   }),
-  "/model-catalog.generated.js": Object.freeze({
-    file: "model-catalog.generated.js",
+  "/codex-catalog.generated.js": Object.freeze({
+    file: "codex-catalog.generated.js",
     type: "text/javascript; charset=utf-8",
   }),
   "/model-performance.js": Object.freeze({
@@ -145,14 +141,6 @@ export const LOCAL_COMPANION_STATIC_FILES = Object.freeze({
   }),
   "/navigation.js": Object.freeze({
     file: "navigation.js",
-    type: "text/javascript; charset=utf-8",
-  }),
-  "/telemetry-shared.generated.js": Object.freeze({
-    file: "telemetry-shared.generated.js",
-    type: "text/javascript; charset=utf-8",
-  }),
-  "/telemetry-envelope.js": Object.freeze({
-    file: "telemetry-envelope.js",
     type: "text/javascript; charset=utf-8",
   }),
   "/ui-format.js": Object.freeze({

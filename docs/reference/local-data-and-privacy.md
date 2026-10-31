@@ -82,6 +82,57 @@ Persistent candidate sessions require verified Electron cookie encryption and
 owner-protected session directories; those properties need artifact/runtime
 qualification, not only source assertions.
 
+X settings expose login or import choices only after a confirmed disconnected,
+expired or verification-required state. A confirmed connected state offers
+logout; an active login can be cancelled. A pending or failed status read does
+not imply disconnection or replace the last confirmed state. Content and
+notification errors do not expose login choices while authentication remains
+confirmed.
+
+X settings save automatically through the closed settings bridge. Proxy and
+notification switches save on change; numeric refresh/port edits validate and
+save on Enter or blur. Only the committed field uses its draft value; other
+fields come from the last confirmed settings. Invalid input or a refused save
+keeps the prior effective setting and shows a fixed localized error. Late
+responses cannot replace newer drafts, and an unmounted view starts no queued
+writes.
+
+Chrome import is an optional bundled unpacked extension; there is no store
+publication or automatic browser installation. Explicit configure prepares or
+repairs only the app's fixed bridge assets and its exact current-user Native
+Messaging registration, with readback of both registry views. Protected setup
+intent and receipt records bind the reviewed asset version and hashes without
+cookies or account data. Routine import may update only intact, previously
+approved assets and only after read-only registration checks; missing approval,
+changed resources or an unfinished different target blocks it. The user opens
+the fixed extension folder and authorizes loading the unpacked extension in
+Chrome. Folder reveal targets a fixed main-process path; the renderer cannot
+provide a path and the private path is not shown. Cookies are read only after a
+normal X tab and application preflight, on the user's import action. This flow
+does not import an old X profile or registry binding.
+
+## Local Windows notifications
+
+Notification capability initialization requires checked stable package
+metadata and a Start Menu shortcut whose executable target and AppUserModelID
+match this application. A present toast activator CLSID must also match the
+fixed product identity. NSIS may leave that property absent before the first
+verified launch; the runtime sets the fixed process identity before Electron
+initializes its notification presenter. A conflicting identity is refused and
+is never silently replaced or accepted as continuous.
+
+Electron's support probe can initialize its presenter and write shortcut or COM
+activation state, so it runs when the identity-gated delivery capability is
+constructed. Settings reads use that initialized capability and do not repeat
+the native probe. A ready capability leaves OS permission unknown; it does not
+prove that Windows showed an alert or allowed it. Quota and fixed-copy test
+notifications navigate to the allowance view when clicked; X notifications
+keep their separate post-navigation behavior. Synthetic event tests establish
+source wiring only; physical Windows display and click activation require qualification against the
+exact running artifact. Existing mismatched shortcuts or stale COM targets need
+separately authorized installation or scoped repair; reading Settings or a
+synthetic test does not authorize system changes.
+
 Validated public post text, public author names/handles, publication times,
 reply/quote relationships and media references are stored in a protected X
 cache separate from the usage index. This owner-approved public-content cache
@@ -112,11 +163,10 @@ refresh and background keepalive; user-triggered page reads remain available.
 
 Codex is the only supported usage provider. Claude Code/Desktop collection,
 transcript ingestion/export, callback and status-line lifecycle, and
-Anthropic-specific pricing are retired. Existing versioned generic
-telemetry/export formats and provider-accounting snapshot formats are preserved
-only to identify or read already-retained bytes. Their original contract-status
-fields remain unchanged; preservation does not imply a frozen, published, or
-active contract. The one historical credential-audit pair (`owner=claude-callback`,
+Anthropic-specific pricing are retired. Retired telemetry/export payload readers and contribution source are removed.
+Current local export v1 rejects their versions without converting or deleting
+retained files. Frozen accounting/release evidence and committed file-transaction
+journals retain their separately bounded historical readback. The one historical credential-audit pair (`owner=claude-callback`,
 `capability=claude_callback`) may be read under bounded historical contracts;
 the pair is read-only and cannot authorize new credential preparation or a
 lease. No status-line JSON or Claude settings reader remains. The product
@@ -191,9 +241,9 @@ companion entries are beneath `companion-state` unless a row states otherwise:
 | `inference-timing-v2/source-<Codex-home digest>/timing-experiment.sqlite` (development source) | Separate owner-only timing sidecar: one row per completed turn, counts/durations/coverage, local HMAC keys, source cursors and bounded pending state. No raw content or IDs. | Maximum 256 MiB per selected source; measurement method 2 and SQLite user version 12, with an exact `usage-monitor-timing-identity-v1` metadata marker. Existing older or foreign identities are inspected read-only and refused; only the independent transition package may reconcile their HMAC keys on a verified copy. The legacy unscoped sidecar is preserved without reading or migrating its unknown source provenance; first use rebuilds measurements from retained source logs. Incompatible stores, including version 1, are preserved and refused. Display periods do not delete evidence or migrate the accounting index. |
 | `inference-timing-v2/source-<Codex-home digest>/tool-free-v1/timing-experiment.sqlite` (development source) | Independent supplement for reconciled single-response turns without tools, plus its own source cursors and bounded scalar pending state. Shares the original private timing correlation key for local joins only. | Maximum 256 MiB; measurement method 3 and SQLite user version 13, bound to the same identity marker. Unconverted stores are refused before writable reopening; the original primary store remains separate. An incompatible or unavailable supplement does not hide original measurements. |
 | `local-collector-state-v1.sqlite` | App-server quota observations, checkpoints, dedupe, locks, and replay-safe collector state. | Accumulates until a separately authorized, receipt-backed cleanup or reviewed migration/retention workflow. |
-| `private/` settings/handoff state | Fast-mode preference and speed baselines. Retired contribution settings and OAuth handle are preserved, not read. | Settings persist. |
+| `private/` settings/handoff state | Fast-mode preference and speed baselines. The protected `overview-workload-account-state.json` stores comparison inputs and capacity history in bounded partitions keyed by the existing hashed local account scope; those keys never enter dashboard DTOs. The older unscoped `overview-workload-state.json` remains untouched and is not reused as account-bound state. Unknown identity does not read or write an account partition. Retired contribution settings and OAuth handle are preserved, not read. | Settings persist. |
 | Retired prepared contribution/review directories and queue | Preserved spools and queue state from removed contribution sharing; not read or written. | Preserved untouched; deletion needs a receipt-backed workflow. |
-| Diagnostics log | Fixed error/status codes and opaque support references. | Bounded, content-free local diagnostics only. |
+| Diagnostics log | Fixed error/status codes and opaque support references; failed work-usage requests may also retain a versioned, closed phase/stage, monotonic elapsed time, configured timeout, HTTP status and background flag. No query, name, thread/snapshot ID, path, response body or raw error is retained. | Bounded, content-free local diagnostics only; existing records are unchanged. See the [request contract](api-surface.md#report-failure-diagnostics). |
 | Profile `chromium/` data | Loopback dashboard browser data; no hosted account session is configured. X browser sessions are isolated in their separately protected directories. | Preserved with the profile. X logout and X cache clearing are separate scoped actions, not a whole-profile erase. |
 
 Preserved Windows contribution device bindings, automatic settings/progress/instance locks
@@ -312,6 +362,18 @@ unattributed records retain their original status. This does not grant productio
 updater, installer, or signing policy.
 
 The current desktop has no whole-profile erase or general identity-reset control.
+For an explicitly marked usage-cutover target, the protected
+`usage-cutover-policy-v1.json` record is a startup interlock. Prepared,
+unreadable, malformed or unknown records block before the companion and
+observation broker are composed. An activated policy permits only the existing
+account-observation identity; a missing credential remains unavailable and
+cannot create a replacement. The fixed record contains an operation UUID,
+schema, phase and identity policy, not a credential, account identifier or
+source path. It is not a conversion receipt, does not establish migration
+compatibility, and is not an authenticated rollback detector. Ordinary profiles
+without the record keep their existing startup policy. Removing the record is
+not a supported recovery step.
+
 The explicit CLI export-identity operations are capability-specific;
 they are not permission to rotate the index salt or delete unrelated credentials.
 An unavailable Credential Manager entry is an availability condition, not proof

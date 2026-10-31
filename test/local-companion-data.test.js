@@ -30,6 +30,15 @@ import { readLocalIndexProjection } from "../src/local-index-backend.js";
 import { usageProjection } from "../src/local-companion-usage-model.js";
 import { readLocalIndexWindowBreakdown } from "../src/local-index-window-breakdown.js";
 import { refreshLocalIndexAccountingCache } from "../src/local-index-accounting-cache.js";
+import { createProtectedFixtureDirectory } from "./helpers/windows-owner-only-fixture.js";
+
+async function createFixtureStateDirectory(root) {
+  const path = join(root, ".usage-monitor");
+  // POSIX mode bits do not establish the protected owner-only DACL required
+  // by collector SQLite on Windows. Create valid synthetic state up front.
+  if (process.platform === "win32") createProtectedFixtureDirectory(path);
+  else await mkdir(path, { recursive: true, mode: 0o700 });
+}
 
 const ARTIFACT_FILES = {
   gradient: "2026-07-24-simple-quota-gradient-artifact.json",
@@ -39,6 +48,7 @@ const ARTIFACT_FILES = {
 
 async function fixtureRoot() {
   const root = await mkdtemp(join(tmpdir(), "local-companion-data-"));
+  await createFixtureStateDirectory(root);
   const reportDirectory = join(root, ".usage-monitor", "legacy-reports");
   await mkdir(reportDirectory, { recursive: true });
   for (const [kind, file] of Object.entries(ARTIFACT_FILES)) {
@@ -390,7 +400,7 @@ test("local reset reconstruction breaks at an unattributed account read", async 
 test("local companion relays bounded durations and selects a deterministic primary window", async () => {
   const root = await mkdtemp(join(tmpdir(), "local-companion-generic-quota-"));
   try {
-    await mkdir(join(root, ".usage-monitor"));
+    await createFixtureStateDirectory(root);
     await writeFile(
       join(root, ".usage-monitor", "collector-events.jsonl"),
       `${JSON.stringify({
@@ -559,7 +569,7 @@ test("fresh local usage does not relabel an old Codex quota observation as live"
 test("local companion excludes invalid quota windows before presentation", async () => {
   const root = await mkdtemp(join(tmpdir(), "local-companion-invalid-quota-"));
   try {
-    await mkdir(join(root, ".usage-monitor"));
+    await createFixtureStateDirectory(root);
     const validWindow = {
       limitId: "codex",
       slot: "primary",
@@ -618,7 +628,7 @@ test("local companion excludes invalid quota windows before presentation", async
 test("a completed bounded tail is projected as useful partial recent coverage", async () => {
   const root = await mkdtemp(join(tmpdir(), "local-companion-partial-tail-"));
   try {
-    await mkdir(join(root, ".usage-monitor"));
+    await createFixtureStateDirectory(root);
     await writeFile(
       join(root, ".usage-monitor", "collector-events.jsonl"),
       `${JSON.stringify({
@@ -678,7 +688,7 @@ test("a completed bounded tail is projected as useful partial recent coverage", 
 test("missing and malformed artifacts fail closed while collector evidence remains available", async () => {
   const root = await mkdtemp(join(tmpdir(), "local-companion-missing-"));
   try {
-    await mkdir(join(root, ".usage-monitor"));
+    await createFixtureStateDirectory(root);
     await writeFile(join(root, ".usage-monitor", "collector-events.jsonl"), "", { mode: 0o600 });
     await writeFile(
       join(root, ".usage-monitor", "collector-checkpoint-v0.3.json"),
@@ -1287,7 +1297,7 @@ test("closed v2 real-data projection exposes no session, account, path or filena
     const stateDirectory = join(root, ".usage-monitor");
     const codexHome = join(root, "codex-home");
     const sessions = join(codexHome, "sessions");
-    await mkdir(stateDirectory, { recursive: true, mode: 0o700 });
+    await createFixtureStateDirectory(root);
     await mkdir(sessions, { recursive: true });
     const indexFile = join(stateDirectory, "local-unified-index-v1.sqlite");
     // Synthetic identifier-shaped and path-shaped values. None may reach the
@@ -1371,8 +1381,10 @@ test("a deferred unified projection publishes a loading history receipt", async 
       },
     });
     assert.ok(snapshot.overview.warnings.some((warning) => (
-      warning.includes("Local history indexing is in progress")
+      warning.includes("Local history indexing has no published aggregate")
     )));
+    assert.ok(snapshot.overview.warnings.every(warning =>
+      !/indexing is in progress|indexing is still advancing/u.test(warning)));
   } finally {
     await rm(root, { recursive: true });
   }

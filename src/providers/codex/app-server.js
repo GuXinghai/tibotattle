@@ -16,6 +16,7 @@ import { normalizeProviderQuotaWindow } from "./quota-normalization.js";
 import { RELEASE_VERSION } from "../../../config/release-manifest.js";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
+let rateLimitReadTail = Promise.resolve();
 const BINARY_VERSION_TIMEOUT_MS = 5_000;
 const BINARY_VERSION_MAXIMUM_BYTES = 4_096;
 const CODEX_BINARY_DIAGNOSTIC_SCHEMA_VERSION = "codex-binary-diagnostic-v0.2";
@@ -367,6 +368,15 @@ export class CodexAppServerClient extends EventEmitter {
   }
 
   request(method, params, { requestId = null } = {}) {
+    if (method === "account/rateLimits/read") {
+      return this.readRateLimits({
+        excludeResetCreditDetails: params?.excludeResetCreditDetails === true,
+      });
+    }
+    return this.#sendRequest(method, params, { requestId });
+  }
+
+  #sendRequest(method, params, { requestId = null } = {}) {
     if (!this.child?.stdin?.writable) {
       return Promise.reject(new CodexAppServerError("temporary_disconnect", "Codex app-server is not writable"));
     }
@@ -387,20 +397,64 @@ export class CodexAppServerClient extends EventEmitter {
     return true;
   }
 
-  async readRateLimits({ excludeResetCreditDetails = false } = {}) {
+  readRateLimits(options = {}) {
+    // Quota reads are stateful observations. Keep one wire request active at a
+    // time, including the legacy-parameter retry, while preserving each
+    // caller's requested projection. A rejected or timed-out read releases the
+    // queue so the next poll can retry.
+    const previous = rateLimitReadTail;
+    let release;
+    rateLimitReadTail = new Promise((resolve) => { release = resolve; });
+    const operation = (async () => {
+      await previous;
+      try {
+        if (this.closed) {
+          throw new CodexAppServerError("temporary_disconnect", "Codex app-server client closed");
+        }
+        return await this.#readRateLimits(options);
+      } finally {
+        release();
+      }
+    })();
+    return this.#raceClose(operation);
+  }
+
+  #raceClose(operation) {
+    if (this.closed) {
+      return Promise.reject(new CodexAppServerError("temporary_disconnect", "Codex app-server client closed"));
+    }
+    return new Promise((resolve, reject) => {
+      const cleanup = () => this.removeListener("closed", onClose);
+      const onClose = () => {
+        cleanup();
+        reject(new CodexAppServerError("temporary_disconnect", "Codex app-server client closed"));
+      };
+      this.once("closed", onClose);
+      operation.then((value) => {
+        cleanup();
+        resolve(value);
+      }, (error) => {
+        cleanup();
+        reject(error);
+      });
+      if (this.closed) onClose();
+    });
+  }
+
+  async #readRateLimits({ excludeResetCreditDetails = false } = {}) {
     // Passive readers must never advertise automatic Luna Reserve fallback.
     const params = excludeResetCreditDetails === true && this.rateLimitParamsSupported
       ? { excludeResetCreditDetails: true }
       : undefined;
     try {
-      return await this.request("account/rateLimits/read", params);
+      return await this.#sendRequest("account/rateLimits/read", params);
     } catch (error) {
       // Older servers can reject object params. Retry that protocol failure
       // once, without params; auth, timeout and transport failures propagate.
       if (params === undefined || error.code !== "request_failed"
           || ![-32600, -32602].includes(error.rpcCode)) throw error;
       this.rateLimitParamsSupported = false;
-      return this.request("account/rateLimits/read");
+      return this.#sendRequest("account/rateLimits/read");
     }
   }
 
@@ -415,6 +469,7 @@ export class CodexAppServerClient extends EventEmitter {
   close() {
     if (this.closed) return;
     this.closed = true;
+    this.emit("closed");
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
       pending.reject(new CodexAppServerError("temporary_disconnect", "Codex app-server client closed"));
@@ -425,16 +480,27 @@ export class CodexAppServerClient extends EventEmitter {
   }
 }
 
-export async function readCodexAccountSnapshot({ timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
-  const client = new CodexAppServerClient({ timeoutMs });
+export async function readCodexAccountSnapshot({
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  createClient = (options) => new CodexAppServerClient(options),
+} = {}) {
+  const client = createClient({ timeoutMs });
   try {
     await client.start();
-    const [account, rateLimits, accountUsage] = await Promise.all([
-      client.readAccount(),
+    const accountBefore = await client.readAccount();
+    const [rateLimits, accountUsage] = await Promise.all([
       client.readRateLimits(),
       client.readAccountUsage(),
     ]);
-    return { account, rateLimits, accountUsage, binary: client.binary };
+    const accountAfter = await client.readAccount();
+    return {
+      account: accountAfter,
+      accountBefore,
+      accountAfter,
+      rateLimits,
+      accountUsage,
+      binary: client.binary,
+    };
   } finally {
     client.close();
   }
@@ -575,12 +641,27 @@ export function sanitizeCodexAccountSnapshot(snapshot, capturedAt, {
   if (canonical === null) {
     throw new Error("Codex returned a malformed canonical rate-limit snapshot");
   }
-  const byLimitId = Object.fromEntries(
-    Object.entries(raw.rateLimitsByLimitId ?? {}).flatMap(([id, limit]) => {
+  const additional = Object.entries(raw.rateLimitsByLimitId ?? {}).flatMap(([id, limit]) => {
       const sanitized = sanitizeRateLimit(limit, id);
       return sanitized === null ? [] : [[sanitized.limitId, sanitized]];
-    }),
-  );
+    });
+  // The canonical entry and keyed entries are representations of ONE response,
+  // not sequential observations. Validate before an object/map can overwrite one.
+  const slots=new Map(),windows=new Map();
+  for(const limit of [canonical,...additional.map(([,limit])=>limit)]){
+    for(const slot of ['primary','secondary']){
+      const window=limit[slot];if(window===null)continue;
+      const slotKey=JSON.stringify([limit.limitId,slot]);
+      const value=JSON.stringify([window.usedPercent,window.windowDurationMins,window.resetsAt]);
+      const windowKey=JSON.stringify([limit.limitId,window.windowDurationMins,window.resetsAt]);
+      if(slots.has(slotKey)&&slots.get(slotKey)!==value
+        ||windows.has(windowKey)&&windows.get(windowKey)!==window.usedPercent){
+        throw new CodexAppServerError('malformed_output','Conflicting quota windows in one app-server response');
+      }
+      slots.set(slotKey,value);windows.set(windowKey,window.usedPercent);
+    }
+  }
+  const byLimitId = Object.fromEntries(additional);
   if (!Object.hasOwn(byLimitId, canonical.limitId)) {
     byLimitId[canonical.limitId] = canonical;
   }
@@ -591,14 +672,48 @@ export function sanitizeCodexAccountSnapshot(snapshot, capturedAt, {
         .filter((bucket) => typeof bucket?.startDate === "string" && Number.isFinite(bucket?.tokens))
         .map((bucket) => ({ date: bucket.startDate, tokens: bucket.tokens }))
     : [];
+  const currentAccount = Object.hasOwn(snapshot, "accountAfter")
+    ? snapshot.accountAfter
+    : snapshot.account;
   const providerPlanType = normalizeProviderPlanType(
-    snapshot.account?.account?.planType ?? canonical.planType,
+    currentAccount?.account?.planType ?? canonical.planType,
   );
-  const accountScope = sanitizeAccountScope(deriveOpenAIAccountScope(snapshot.account, {
+  let accountScope = sanitizeAccountScope(deriveOpenAIAccountScope(currentAccount, {
     secret: accountHmacKey,
     planType: providerPlanType,
     unavailableSecretReason: accountCredentialUnavailableReason,
   }));
+  if (Object.hasOwn(snapshot, "accountBefore") || Object.hasOwn(snapshot, "accountAfter")) {
+    const afterAccount = Object.hasOwn(snapshot, "accountAfter")
+      ? snapshot.accountAfter
+      : snapshot.account;
+    const before = sanitizeAccountScope(deriveOpenAIAccountScope(snapshot.accountBefore, {
+      secret: accountHmacKey,
+      planType: normalizeProviderPlanType(snapshot.accountBefore?.account?.planType ?? canonical.planType),
+      unavailableSecretReason: accountCredentialUnavailableReason,
+    }));
+    const after = sanitizeAccountScope(deriveOpenAIAccountScope(afterAccount, {
+      secret: accountHmacKey,
+      planType: normalizeProviderPlanType(snapshot.accountAfter?.account?.planType ?? canonical.planType),
+      unavailableSecretReason: accountCredentialUnavailableReason,
+    }));
+    if (before.status !== "available" || after.status !== "available") {
+      accountScope = after.status === "unavailable" ? after : before;
+    } else {
+      const knownPlans = new Set([
+        before.planType,
+        after.planType,
+        canonical.planType,
+        ...additional.map(([, limit]) => limit.planType),
+      ].filter((plan) => plan !== null && plan !== "unknown"));
+      if (before.scopeId !== after.scopeId || knownPlans.size > 1) {
+        throw new CodexAppServerError(
+          "request_failed",
+          "Codex account or plan changed during quota observation",
+        );
+      }
+    }
+  }
 
   const result = {
     capturedAt,
@@ -679,47 +794,14 @@ export async function sanitizeCodexAccountSnapshotWithSecretLoader(snapshot, cap
 }
 
 /**
- * A matching account read on each side of an observation is still only
- * provisional account evidence, not an exact bridge to a rollout occurrence.
- * Keep the quota/usage evidence when either account read is unavailable or the
- * reads disagree, but do not attach an account to that evidence.
+ * A matching account read on each side is provisional evidence, not an exact
+ * bridge to a rollout occurrence. Unknown identity remains unattributed;
+ * a known account or plan change invalidates the quota observation entirely.
  */
 export async function sanitizeBracketedCodexAccountSnapshotWithSecretLoader(snapshot, capturedAt, {
   loadAccountObservationSecret,
 } = {}) {
-  const loaded = await loadAccountObservationSecretSafely(loadAccountObservationSecret);
-  try {
-    const result = sanitizeCodexAccountSnapshot({
-      account: snapshot.accountAfter,
-      rateLimits: snapshot.rateLimits,
-      accountUsage: snapshot.accountUsage,
-    }, capturedAt, {
-      accountHmacKey: loaded.secret,
-      accountCredentialUnavailableReason: loaded.unavailableReason,
-    });
-    const before = sanitizeAccountScope(deriveOpenAIAccountScope(snapshot.accountBefore, {
-      secret: loaded.secret,
-      planType: normalizeProviderPlanType(snapshot.accountBefore?.account?.planType ?? result.canonical.planType),
-      unavailableSecretReason: loaded.unavailableReason,
-    }));
-    const after = result.accountScope;
-    if (before.status !== "available" || after.status !== "available") {
-      result.accountScope = after.status === "unavailable" ? after : before;
-      result.ordinaryUsageAllowed = null;
-      return result;
-    }
-    const knownPlans = new Set([
-      before.planType,
-      after.planType,
-      result.canonical.planType,
-      ...Object.values(result.byLimitId).map((limit) => limit.planType),
-    ].filter((plan) => plan !== null && plan !== "unknown"));
-    if (before.scopeId !== after.scopeId || knownPlans.size > 1) {
-      result.accountScope = sanitizeAccountScope(null);
-      result.ordinaryUsageAllowed = null;
-    }
-    return result;
-  } finally {
-    loaded.secret?.fill(0);
-  }
+  return sanitizeCodexAccountSnapshotWithSecretLoader(snapshot, capturedAt, {
+    loadAccountObservationSecret,
+  });
 }

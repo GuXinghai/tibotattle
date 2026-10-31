@@ -259,19 +259,11 @@ test("bracketed account sanitation uses one disposable root lease and preserves 
   assert.deepEqual(result.officialDailyTokens, [{ date: "2026-07-23", tokens: 10 }]);
   assert.equal(JSON.stringify(result).includes("fixture@example.test"), false);
 
-  const conflicts = [
+  const unknownBrackets = [
     { accountBefore: null },
     { accountAfter: null },
-    { accountAfter: { account: { email: "different.fixture@example.test", planType: "pro" } } },
-    { accountBefore: { account: { email: "bracket.fixture@example.test", planType: "plus" } } },
-    { accountAfter: { account: { email: "bracket.fixture@example.test", planType: "plus" } } },
-    { rateLimits: { rateLimits: { ...snapshot.rateLimits.rateLimits, planType: "plus" } } },
-    { rateLimits: {
-      ...snapshot.rateLimits,
-      rateLimitsByLimitId: { codex_bengalfox: { ...snapshot.rateLimits.rateLimits, limitId: "codex_bengalfox", planType: "plus" } },
-    } },
   ];
-  for (const conflict of conflicts) {
+  for (const conflict of unknownBrackets) {
     const result = await sanitizeBracketedCodexAccountSnapshotWithSecretLoader({ ...snapshot, ...conflict }, "2026-07-23T00:00:00.000Z", {
       loadAccountObservationSecret: async () => Buffer.alloc(32, 77),
     });
@@ -281,6 +273,24 @@ test("bracketed account sanitation uses one disposable root lease and preserves 
     assert.equal(result.canonical.primary.usedPercent, 25, "account uncertainty must not discard the quota evidence");
     assert.deepEqual(result.officialDailyTokens, [{ date: "2026-07-23", tokens: 10 }]);
     assert.equal(JSON.stringify(result).includes("fixture@example.test"), false);
+  }
+
+  const knownSwitches = [
+    { accountAfter: { account: { email: "different.fixture@example.test", planType: "pro" } } },
+    { accountBefore: { account: { email: "bracket.fixture@example.test", planType: "plus" } } },
+    { accountAfter: { account: { email: "bracket.fixture@example.test", planType: "plus" } } },
+    { rateLimits: { rateLimits: { ...snapshot.rateLimits.rateLimits, planType: "plus" } } },
+    { rateLimits: {
+      ...snapshot.rateLimits,
+      rateLimitsByLimitId: { codex_bengalfox: { ...snapshot.rateLimits.rateLimits, limitId: "codex_bengalfox", planType: "plus" } },
+    } },
+  ];
+  for (const changed of knownSwitches) {
+    await assert.rejects(() => sanitizeBracketedCodexAccountSnapshotWithSecretLoader({ ...snapshot, ...changed }, "2026-07-23T00:00:00.000Z", {
+      loadAccountObservationSecret: async () => Buffer.alloc(32, 77),
+    }), (error) => error.code === "request_failed"
+      && error.message === "Codex account or plan changed during quota observation"
+      && !error.message.includes("bracket.fixture@example.test"));
   }
 });
 
@@ -473,6 +483,23 @@ test("report inputs apply an effective derived correction without mutating raw o
   assert.equal(corrected[0].windows[0].local.apiPricing.totalTokens, 90);
   assert.deepEqual(corrected[0].windows[0].local.apiPricing.warningCounts, {});
   assert.equal(corrected[0].windows[0].local.apiPricing.correctionRecordId, "correction-a");
+});
+
+test('one quota response rejects contradictory canonical/keyed windows before overwrite',()=>{
+  const limit={limitId:'codex',planType:'pro',primary:{usedPercent:21,windowDurationMins:10080,resetsAt:1784854800},secondary:null};
+  const snapshot=(keyed)=>({rateLimits:{rateLimits:limit,rateLimitsByLimitId:keyed}});
+  const bad={...limit,primary:{...limit.primary,usedPercent:36}};
+  const refusal=error=>error.code==='malformed_output'&&!error.message.includes('36');
+  assert.throws(()=>sanitizeCodexAccountSnapshot(snapshot({codex:bad})),refusal);
+  assert.throws(()=>sanitizeCodexAccountSnapshot(snapshot({alias_one:limit,alias_two:bad})),refusal);
+  assert.throws(()=>sanitizeCodexAccountSnapshot(snapshot({codex:{...limit,primary:{...limit.primary,resetsAt:1784854900}}})),refusal);
+  assert.throws(()=>sanitizeCodexAccountSnapshot({rateLimits:{rateLimits:{...limit,secondary:bad.primary}}}),refusal);
+  assert.equal(sanitizeCodexAccountSnapshot(snapshot({codex:structuredClone(limit)})).byLimitId.codex.primary.usedPercent,21);
+  // Distinct families/durations and successive responses are not contradictions.
+  assert.equal(sanitizeCodexAccountSnapshot(snapshot({spark:{...bad,limitId:'codex_bengalfox'}})).byLimitId.codex_bengalfox.primary.usedPercent,36);
+  assert.equal(sanitizeCodexAccountSnapshot({rateLimits:{rateLimits:{...limit,secondary:{...bad.primary,windowDurationMins:300}}}}).canonical.secondary.usedPercent,36);
+  assert.equal(sanitizeCodexAccountSnapshot({rateLimits:{rateLimits:bad}}).canonical.primary.usedPercent,36);
+  assert.equal(sanitizeCodexAccountSnapshot({rateLimits:{rateLimits:limit}}).canonical.primary.usedPercent,21);
 });
 
 test("Codex sanitizer rejects malformed quota windows instead of persisting invalid dates", () => {

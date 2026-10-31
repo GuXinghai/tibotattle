@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash,randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,14 @@ import {
 } from "../src/local-companion-data.js";
 import { commitLocalCollectorState, prepareLocalCollectorState } from "../src/local-collector-state.js";
 import { readLocalCollectorProjection } from "../src/local-collector-projection.js";
+import {createProtectedFixtureDirectory} from './helpers/windows-owner-only-fixture.js';
+
+async function syntheticStateRoot(prefix){
+  if(process.platform!=='win32')return mkdtemp(join(tmpdir(),prefix));
+  const root=join(tmpdir(),prefix+randomUUID());
+  createProtectedFixtureDirectory(root);
+  return root;
+}
 
 const instant = (minute) => new Date(Date.UTC(2026, 9, 21) + minute * 60_000).toISOString();
 const deferred = () => {
@@ -28,6 +36,7 @@ const quota = (minute, scopeToken = "synthetic-account-a") => {
   };
   return {
     scopeToken: scopeToken === null ? null : createHash("sha256").update(scopeToken).digest("hex"),
+    epoch: 1,
     quota: { status: "available", observedAt,
       accountAttribution: scopeToken === null ? "unattributed" : "attributed_pseudonymous",
       windows: [window] },
@@ -51,12 +60,12 @@ const snapshot = (minute = 0, generation = 1) => ({
   gradient: {}, weekly: {}, quality: {},
 });
 
-async function scopedCandidate(minute, scopeId, generation = 2) {
-  const root = await mkdtemp(join(tmpdir(), "quota-scope-synthetic-"));
+async function scopedCandidate(minute, scopeId, generation = 2, priorRecords = []) {
+  const root = await syntheticStateRoot("quota-scope-synthetic-");
   const stateFile = join(root, "collector.sqlite");
   try {
     await prepareLocalCollectorState({ stateFile });
-    await commitLocalCollectorState({ stateFile, checkpoint: {}, records: [{
+    await commitLocalCollectorState({ stateFile, checkpoint: {}, records: [...priorRecords,{
       schemaVersion: "0.3", kind: "codex_quota_snapshot", provider: "openai_codex",
       source: "app_server_read", observedAt: instant(minute), receivedAt: instant(minute),
       accountScope: scopeId === null ? { status: "unavailable" } : {
@@ -81,7 +90,98 @@ async function scopedCandidate(minute, scopeId, generation = 2) {
   }
 }
 
-test("quota publication reads and clones only its component, retaining usage evaluation and inputs", async () => {
+test('quick quota publication retains same-account workload and clears it on account change or loss',async()=>{
+  let candidate=await scopedCandidate(1,'synthetic-account-a');
+  let current=quota(2,'synthetic-account-a');
+  const store=new LocalCompanionDataStore({builder:async()=>candidate,quotaReader:async()=>current});
+  await store.initialize();
+  const prior=store.getOverview();
+  await store.publishQuota();
+  assert.deepEqual(store.getOverview().workload,prior.workload);
+  current=quota(3,'synthetic-account-b');
+  await store.publishQuota();
+  assert.equal(store.getOverview().workload,null);
+  candidate=await scopedCandidate(3,'synthetic-account-b');
+  await store.reload();
+  assert.notEqual(store.getOverview().workload,null);
+  current=quota(4,null);
+  await store.publishQuota();
+  assert.equal(store.getOverview().workload,null);
+  assert.doesNotMatch(JSON.stringify(store.getOverview()),/synthetic-account|scopeToken/);
+});
+
+test('same-account quota publishes a changed value at the same timestamp without retaining old hours',async()=>{
+  const candidate=await scopedCandidate(1,'synthetic-account-a');
+  candidate.overview.workload={...candidate.overview.workload,
+    allowance:{remainingPercent:64,observedAt:instant(1),points:[]},
+    workHours:[{level:'composite',hours:10,ratePpPerHour:6.4}],current:{hours:10}};
+  let current=quota(1);
+  const store=new LocalCompanionDataStore({builder:async()=>candidate,quotaReader:async()=>current});
+  await store.initialize();
+  current={...current,quota:{...current.quota,windows:current.quota.windows.map(w=>({...w,usedPercent:21,remainingPercent:79}))},
+    quotaWindows:current.quotaWindows.map(w=>({...w,usedPercent:21,remainingPercent:79}))};
+  assert.equal((await store.publishQuota()).published,true);
+  const value=store.getOverview();
+  assert.equal(value.quota.windows[0].remainingPercent,79);
+  assert.equal(value.workload.workHours[0].hours,null);
+  assert.equal(value.workload.current.hours,null);
+  assert.equal(value.workload.workHours[0].ratePpPerHour,6.4);
+  assert.equal((await store.publishQuota()).published,false);
+});
+
+test('full publication orders same-time quota by durable record order before request completion order',async()=>{
+  let candidate=await scopedCandidate(1,'synthetic-account-a');
+  const current={...quota(1),recordOrder:2};
+  current.quota.windows[0]={...current.quota.windows[0],usedPercent:21,remainingPercent:79};
+  current.quotaWindows[0]={...current.quotaWindows[0],usedPercent:21,remainingPercent:79};
+  const store=new LocalCompanionDataStore({builder:async()=>candidate,quotaReader:async()=>current});
+  await store.initialize();
+  await store.publishQuota();
+  await store.reload(); // An older source row must not replace the fast publication.
+  assert.equal(store.getOverview().quota.windows[0].remainingPercent,79);
+  const earlier=Array.from({length:2},(_,i)=>({schemaVersion:'0.3',kind:'codex_tool_class_event',
+    eventKey:`synthetic-order-${i}`,observedAt:instant(0),toolClass:'other'}));
+  candidate=await scopedCandidate(1,'synthetic-account-a',3,earlier);
+  await store.reload(); // Row 3 is newer than row 2 despite the same timestamp.
+  assert.equal(store.getOverview().quota.windows[0].remainingPercent,99);
+  assert.doesNotMatch(JSON.stringify(store.getOverview()),/recordOrder|recordId|scopeToken|scopeId/);
+});
+
+test('quick publication rejects a lower durable order at the same timestamp',async()=>{
+  const candidate=await scopedCandidate(1,'synthetic-account-a');
+  let current={...quota(1),recordOrder:3};
+  current.quota.windows[0]={...current.quota.windows[0],usedPercent:21,remainingPercent:79};
+  const store=new LocalCompanionDataStore({builder:async()=>candidate,quotaReader:async()=>current});
+  await store.initialize();
+  assert.equal((await store.publishQuota()).published,true);
+  current={...quota(1),recordOrder:2};
+  assert.equal((await store.publishQuota()).published,false);
+  assert.equal(store.getOverview().quota.windows[0].remainingPercent,79);
+});
+
+test('quick same-time A-B-A evidence clears old workload even if A returns with identical values',async()=>{
+  const root=await syntheticStateRoot('quota-epoch-synthetic-'),stateFile=join(root,'collector.sqlite');
+  try{
+    const row=scope=>({schemaVersion:'0.3',kind:'codex_quota_snapshot',provider:'openai_codex',source:'app_server_read',
+      observedAt:instant(1),accountScope:{status:'available',version:'openai-account-v1',scopeId:scope},
+      windows:[{limitId:'codex',slot:'primary',planType:'pro',usedPercent:1,windowDurationMins:300,resetsAt:Date.parse(instant(120))/1000}]});
+    await commitLocalCollectorState({stateFile,checkpoint:{},records:[{...row('synthetic-account-a'),eventKey:'epoch-a-1'}]});
+    const candidate=await scopedCandidate(1,'synthetic-account-a');
+    const store=new LocalCompanionDataStore({builder:async()=>candidate,
+      quotaReader:()=>readLocalCompanionQuota({collectorStateFile:stateFile,now:()=>Date.parse(instant(10))})});
+    await store.initialize();
+    assert.notEqual(store.getOverview().workload,null);
+    await commitLocalCollectorState({stateFile,checkpoint:{},records:[{...row('synthetic-account-b'),eventKey:'epoch-b'},
+      {...row('synthetic-account-a'),eventKey:'epoch-a-2'}]});
+    assert.equal((await store.publishQuota()).published,true);
+    assert.equal(store.getOverview().workload,null);
+    assert.equal(store.getOverview().quota.windows[0].remainingPercent,99);
+    await assert.rejects(store.reload(),{code:'local_companion_snapshot_publication_scope_changed'});
+    assert.doesNotMatch(JSON.stringify(store.getOverview()),/"(?:epoch|recordOrder|scopeToken|scopeId)"\s*:/);
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test("quota publication retains usage evaluation and clears workload whose account is unproven", async () => {
   let builds = 0;
   let current = quota(1);
   const store = new LocalCompanionDataStore({
@@ -97,9 +197,10 @@ test("quota publication reads and clones only its component, retaining usage eva
   });
   const after = getOverview();
   assert.equal(builds, 1);
-  for (const field of ["generatedAt", "usage", "accounting", "timeline", "workload", "freshness"]) {
+  for (const field of ["generatedAt", "usage", "accounting", "timeline", "freshness"]) {
     assert.deepEqual(after[field], before[field], field);
   }
+  assert.equal(after.workload,null);
   assert.equal(after.quota.observedAt, instant(1));
   assert.equal(after.quotaFreshness.latestObservedAt, instant(1));
   assert.equal(store.getDesktopShellDisplayEvidence().freshness.status, "live");
@@ -290,7 +391,7 @@ test("full publication rejects superseded generations and cancelled builders", a
 });
 
 test("narrow collector projection uses existing normalization and preserves observed time and unknown identity", async () => {
-  const root = await mkdtemp(join(tmpdir(), "quota-publication-synthetic-"));
+  const root = await syntheticStateRoot("quota-publication-synthetic-");
   const stateFile = join(root, "collector.sqlite");
   try {
     const records = Array.from({ length: 300 }, (_, index) => ({
@@ -332,9 +433,9 @@ test("narrow collector projection uses existing normalization and preserves obse
       ...records.at(-1), schemaVersion: "unrecognized", observedAt: instant(6), receivedAt: instant(6),
     }] });
     const conflicting = await readLocalCompanionQuota(options);
-    assert.equal(conflicting.scopeToken, null);
+    assert.equal(conflicting.scopeToken,createHash('sha256').update('synthetic-account-b').digest('hex'));
     assert.equal(conflicting.quota.observedAt, instant(5));
-    assert.equal(conflicting.quota.accountAttribution, "unattributed");
+    assert.equal(conflicting.quota.accountAttribution, "attributed_pseudonymous");
     const abort = new AbortController();
     setImmediate(() => abort.abort());
     await assert.rejects(readLocalCompanionQuota({ ...options, signal: abort.signal }),

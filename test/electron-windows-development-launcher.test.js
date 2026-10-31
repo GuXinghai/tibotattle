@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -33,7 +33,7 @@ test("Windows development distribution wrapper is self-contained", async () => {
   assert.match(wrapper, /^@echo off\r?\n/u);
   assert.match(wrapper, /set "APP=%~dp0win-unpacked\\usage-monitor\.exe"/u);
   assert.match(wrapper, /set "LAUNCHER=%~dp0UsageMonitor-Windows-Development-Launcher\.mjs"/u);
-  assert.match(wrapper, /set "PROFILE=%LOCALAPPDATA%\\UsageMonitor\\electron-user-test\\win32-x64\\profile"/u);
+  assert.match(wrapper, /set "PROFILE=%LOCALAPPDATA%\\UsageMonitor\\electron-user-test\\win32-x64\\profile-v2"/u);
   assert.match(wrapper, /set "ELECTRON_RUN_AS_NODE=1"/u);
   assert.match(wrapper, /"%APP%" "%LAUNCHER%" --app "%APP%" --profile "%PROFILE%"/u);
   assert.match(wrapper, /set "ELECTRON_RUN_AS_NODE="/u);
@@ -84,6 +84,17 @@ test("Windows development profile and child environment stay private and credent
     const appPath = join(root, "candidate", "usage-monitor.exe");
     const profilePath = join(root, "profile");
     const profile = await prepareWindowsDevelopmentProfile({ appPath, profilePath });
+    await assert.rejects(lstat(profile.state), { code: "ENOENT" },
+      "the native companion must create its own protected state root");
+    for (const name of ["Roaming", "Local"]) {
+      const directory = join(profile.home, "AppData", name);
+      assert.equal((await lstat(directory)).isDirectory(), true,
+        "Windows known-folder lookup needs standard directories below the synthetic USERPROFILE");
+    }
+    const retained = join(profile.home, "AppData", "Roaming", "retained.txt");
+    await writeFile(retained, "synthetic retained state");
+    await prepareWindowsDevelopmentProfile({ appPath, profilePath });
+    assert.equal(await readFile(retained, "utf8"), "synthetic retained state");
     const environment = buildWindowsDevelopmentEnvironment({
       profile,
       environment: {

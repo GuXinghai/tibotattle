@@ -191,7 +191,7 @@ export function createPrivacySafeBundleVerifier({
       ? "passed"
       : "failed";
     const receipt = {
-      schemaVersion: "privacy-receipt-v0.1",
+      schemaVersion: "local-export-privacy-receipt-v1",
       compatibility: structuredClone(bundle.compatibility),
       createdAt: new Date(createdAt).toISOString(),
       bundleId: bundle.bundleId,

@@ -12,7 +12,7 @@ import {
   sanitizeQuotaLimitDisplayName,
   sanitizeQuotaLimitId,
 } from "@app-usagemonitor/quota-analysis";
-import { TELEMETRY_PLAN_TYPES } from "@app-usagemonitor/telemetry-contract";
+import { CODEX_PLAN_TYPES } from "@app-usagemonitor/codex-catalog";
 import {
   codexModelAllowanceTrack,
   codexModelApiPriceEquivalentApplicable,
@@ -72,7 +72,7 @@ export const SPARK_QUOTA_LIMIT_IDS = Object.freeze([
   "codex_bengalfox",
   "codex-spark",
 ]);
-export const KNOWN_PLANS = new Set(TELEMETRY_PLAN_TYPES);
+export const KNOWN_PLANS = new Set(CODEX_PLAN_TYPES);
 export const KNOWN_SLOTS = new Set(["primary", "secondary"]);
 export const TIMELINE_BUCKET_MS = 15 * 60 * 1_000;
 export const MAX_QUOTA_TIMELINE_POINTS = 10_000;

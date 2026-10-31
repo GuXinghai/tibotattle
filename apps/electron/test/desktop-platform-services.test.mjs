@@ -74,7 +74,7 @@ test("platform services use only native-picker paths and fixed open targets", as
     shell: {
       openExternal: async (...values) => opened.push(values),
     },
-    Notification: { isSupported: () => true },
+    Notification: { isSupported: () => { throw new Error("notification query must not run"); } },
     validateCodexHome: async (path) => {
       validated.push(path);
       return "/private/Users/adam/custom-codex";
@@ -103,11 +103,8 @@ test("platform services use only native-picker paths and fixed open targets", as
       (error) => error?.code === "desktop_codex_thread_url_invalid",
     );
   }
-  assert.deepEqual(services.notificationStatus(), {
-    permission: "unknown",
-    available: true,
-    detail: "Operating system permission is shown here. Whether alerts work is shown above.",
-  });
+  assert.equal(Object.hasOwn(services, "notificationStatus"), false,
+    "generic platform queries cannot initialize Electron notifications");
   assert.deepEqual(services.about(), {
     version: "0.1.16",
     build: "parity-123",

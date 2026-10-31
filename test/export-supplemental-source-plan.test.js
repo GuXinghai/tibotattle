@@ -47,7 +47,7 @@ function activityPlan() {
 
 function usageRecord(id = "a", tokens = 10) {
   return {
-    schemaVersion: "usage-event-v0.1",
+    schemaVersion: "local-usage-event-v1",
     eventTime: "2026-07-24T12:30:00.000Z",
     provider: "openai_codex",
     modelId: "gpt-5.6-sol",

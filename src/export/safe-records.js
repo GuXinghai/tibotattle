@@ -7,9 +7,9 @@ import {
   ExportResourceLimitError,
 } from "./resource-policy.js";
 import { CODEX_COLLECTOR_CANDIDATE_VERSION } from "./versions.js";
-import { TELEMETRY_PLAN_TYPES } from "@app-usagemonitor/telemetry-contract";
+import { CODEX_PLAN_TYPES } from "@app-usagemonitor/codex-catalog";
 
-const PLAN_TYPES = new Set(TELEMETRY_PLAN_TYPES);
+const PLAN_TYPES = new Set(CODEX_PLAN_TYPES);
 const SESSION_SCOPE_PATTERN = /^session:v1:[a-f0-9]{64}$/u;
 const ACCOUNT_SCOPE_SUBJECT_PATTERN = /^openai-account:v1:[A-Za-z0-9_-]{43}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
@@ -153,7 +153,7 @@ function createEmptySafeToolClassCounts() {
 }
 
 /**
- * Map the scanner's already-classified tool category to a reviewed telemetry
+ * Map the scanner's already-classified tool category to a reviewed export
  * field. Unknown and future scanner categories deliberately collapse to the
  * coarse `unknown` bucket, so raw tool names cannot cross this boundary.
  */
@@ -267,7 +267,7 @@ function quotaStateIdentitySubject(snapshot) {
 function normalizeCodexUsageEvent(secret, event, toolClassCounts = createEmptySafeToolClassCounts()) {
   if (!event.sourceScopeId) throw new Error("Missing privacy-safe session scope for usage event");
   const usage = {
-    schemaVersion: "usage-event-v0.1",
+    schemaVersion: "local-usage-event-v1",
     eventTime: boundedIso(event.timestamp, "usage event timestamp"),
     provider: "openai_codex",
     ...usageModelDeclaration(secret, event),
@@ -304,7 +304,7 @@ function normalizeCodexQuotaSnapshot(secret, event) {
   const observedTime = boundedIso(event.timestamp, "quota snapshot timestamp");
   const limitId = recognizedExportLimitId(event.window.limitId);
   const snapshot = {
-    schemaVersion: "quota-snapshot-v0.1",
+    schemaVersion: "local-quota-snapshot-v1",
     observedTime,
     receivedTime: observedTime,
     provider: "openai_codex",
@@ -408,7 +408,7 @@ function normalizeCodexCollectorQuotaCandidate(secret, candidate) {
   }
   const accountScopeId = deriveAccountScopeId(secret, candidate.accountScopeSubject);
   const snapshot = {
-    schemaVersion: "quota-snapshot-v0.1",
+    schemaVersion: "local-quota-snapshot-v1",
     observedTime: candidate.observedTime,
     receivedTime: candidate.receivedTime,
     provider: "openai_codex",
@@ -447,7 +447,7 @@ function normalizeActivityMarker(secret, marker, bounds) {
     ? marker.accountScope.scopeId
     : "unattributed";
   const safe = {
-    schemaVersion: "export-activity-marker-v0.1",
+    schemaVersion: "local-export-activity-marker-v1",
     observedTime,
     surface: marker.surface,
     state: marker.state,

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 import { createXImportRequestGate } from '../desktop-x-import.js';
 import { normalizeXImportCookies, createXImportFrameReader, encodeXImportFrame, X_IMPORT_EXTENSION_ID, X_IMPORT_MAX_BYTES } from '../x-import/contract.js';
 
@@ -86,4 +87,26 @@ test('extension identity is pinned; reader has no persisted cookies, remote scri
   const popup = await readFile(new URL('../x-import/popup.js', import.meta.url), 'utf8');
   assert.ok(popup.indexOf("type: 'import-preflight'") < popup.indexOf('chrome.cookies.getAllCookieStores'));
   assert.doesNotMatch(popup, /chrome\.storage|clipboard|console\.|fetch\(/);
+});
+
+test('popup connection checks and rejected preflight never read cookies; requests remain single-flight', async () => {
+  const code = await readFile(new URL('../x-import/popup.js', import.meta.url), 'utf8');
+  const elements = Object.fromEntries(['check', 'import', 'status'].map(id => [id, { disabled: false, textContent: '',
+    addEventListener(_name, handler) { this.click = handler; } }]));
+  const calls = []; let release, reads = 0;
+  runInNewContext(code, { URL, document: { getElementById: id => elements[id] }, chrome: {
+    runtime: { sendNativeMessage: async (_host, request) => {
+      calls.push(request.type);
+      if (request.type === 'bridge-check') return new Promise(resolve => { release = resolve; });
+      return { code: 'import_not_pending', ok: false };
+    } }, tabs: { query: async () => [{ id: 1, url: 'https://x.com/home', incognito: false }] },
+    cookies: { getAllCookieStores: async () => { reads++; return []; }, getAll: async () => { reads++; return []; } },
+  } });
+  const checking = elements.check.click();
+  assert.equal(elements.check.disabled, true); assert.equal(elements.import.disabled, true);
+  await elements.import.click(); assert.deepEqual(calls, ['bridge-check']); assert.equal(reads, 0);
+  release({ code: 'bridge_ready' }); await checking;
+  assert.equal(elements.import.disabled, false);
+  await elements.import.click(); assert.deepEqual(calls, ['bridge-check', 'import-preflight']); assert.equal(reads, 0);
+  assert.equal(elements.check.disabled, false); assert.match(elements.status.textContent, /从 Chrome 导入/u);
 });

@@ -178,19 +178,19 @@ export const DESKTOP_OVERLAY_MESSAGES = Object.freeze({
     "es": "Continuar",
   }),
   "electron.firstRun.loginRegistration.detail": Object.freeze({
-    "en-US": "{appName} will continue starting now. You can review or approve this setting in Login Items.",
-    "zh-Hans": "{appName} 将继续启动。你可以在系统的“登录项”设置中查看或批准此设置。",
-    "es": "{appName} continuará iniciándose ahora. Puedes revisar o aprobar esta configuración en Elementos de inicio.",
+    "en-US": "{appName} will continue starting now. You can review or approve this setting in Windows Startup apps settings.",
+    "zh-Hans": "{appName} 将继续启动。你可以在 Windows“启动应用”设置中查看或批准此设置。",
+    "es": "{appName} seguirá iniciándose ahora. Puedes revisar o aprobar esta opción en las aplicaciones de inicio de Windows.",
   }),
   "electron.firstRun.loginRegistration.message": Object.freeze({
     "en-US": "The operating system did not confirm Start at login.",
     "zh-Hans": "操作系统尚未确认“登录时启动”设置。",
-    "es": "El sistema operativo no confirmó el inicio de sesión automático.",
+    "es": "El sistema operativo no confirmó el inicio de la aplicación al iniciar sesión.",
   }),
   "electron.firstRun.loginRegistration.openSettings": Object.freeze({
-    "en-US": "Open Login Items Settings",
-    "zh-Hans": "打开登录项设置",
-    "es": "Abrir configuración de elementos de inicio",
+    "en-US": "Open Windows Startup apps settings",
+    "zh-Hans": "打开 Windows“启动应用”设置",
+    "es": "Abrir la configuración de aplicaciones de inicio de Windows",
   }),
   "electron.firstRun.loginRegistration.title": Object.freeze({
     "en-US": "{appName} will continue without Start at login",

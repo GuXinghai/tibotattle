@@ -614,6 +614,7 @@ export async function launchDesktopRuntime({
     locale: activeDesktopLocale,
     systemLocales: desktopSystemLocales,
     windowsIdentityReady: windowsNotificationIdentityReady,
+    onClick: () => lifecycle?.navigateDashboardSection("allowance"),
   });
   const notificationDelivery = Object.freeze({
     status() {
@@ -722,6 +723,10 @@ export async function launchDesktopRuntime({
       xImport = createDesktopXImport({
         protectedStore: protectedStore(join(settingsRootPath, "x-import")),
         onImport: (cookies, permit) => xService.importCookies(cookies, permit),
+        revealFolder: path => {
+          if (typeof runtime.shell?.showItemInFolder !== 'function') throw new Error('x_import_unavailable');
+          runtime.shell.showItemInFolder(path);
+        },
       });
     } catch (error) {
       // An unavailable optional reader must not prevent offline local analysis.
@@ -820,6 +825,7 @@ export async function launchDesktopRuntime({
         locale: value,
         systemLocales: desktopSystemLocales,
         windowsIdentityReady: windowsNotificationIdentityReady,
+        onClick: () => lifecycle?.navigateDashboardSection("allowance"),
       });
     } catch {
       // A copy/catalog failure must not make a persisted language change
@@ -1111,7 +1117,11 @@ export async function launchDesktopRuntime({
       xIpcInstallation = installDesktopXIpc({
         ipcMain: runtime.ipcMain,
         service: xPort,
-        importBridge: { configure: async () => {
+        importBridge: { reveal: async () => {
+          await xInitialized;
+          if (!xImport) throw new Error("X import unavailable");
+          return xImport.reveal();
+        }, configure: async () => {
           await xInitialized;
           if (!xImport) throw new Error("X import unavailable");
           return xImport.configure();

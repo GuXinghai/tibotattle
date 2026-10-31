@@ -66,10 +66,6 @@ function loginDetail(status, textOptions = {}) {
   return desktopText("electron.settings.login.status.unavailable", {}, textOptions);
 }
 
-function notificationDetail(textOptions = {}) {
-  return desktopText("electron.settings.notifications.permissionStatus", {}, textOptions);
-}
-
 function normalizeWindowsLoginItem(settings) {
   if (settings?.openAtLogin === true
       && settings?.executableWillLaunchAtLogin !== false) return "enabled";
@@ -270,7 +266,6 @@ export function createDesktopPlatformServices({
   app,
   dialog,
   shell,
-  Notification,
   platform = process.platform,
   homeDirectory = homedir(),
   environment = process.env,
@@ -373,25 +368,6 @@ export function createDesktopPlatformServices({
       : after.status === "disabled";
     if (confirmed) return after;
     return loginResult("error", true);
-  }
-
-  function notificationStatus() {
-    // Electron's main process can establish whether desktop notifications are
-    // supported, but operating-system authorization belongs to the BrowserWindow's
-    // Notification API. The Settings page requests it from a user gesture and
-    // reports the resulting granted/denied state. Do not present the absence
-    // of a main-process permission query as an operating-system denial.
-    let available = false;
-    try {
-      available = Notification?.isSupported?.() === true;
-    } catch {
-      available = false;
-    }
-    return Object.freeze({
-      permission: available ? "unknown" : "unavailable",
-      available,
-      detail: notificationDetail(textOptions),
-    });
   }
 
   async function chooseCodexHome() {
@@ -506,7 +482,6 @@ export function createDesktopPlatformServices({
     setLocale,
     loginItemStatus,
     setStartAtLogin,
-    notificationStatus,
     chooseCodexHome,
     openSystemSettings,
     openExternal,

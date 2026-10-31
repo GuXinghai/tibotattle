@@ -9,7 +9,7 @@ import {
   sanitizeQuotaLimitDisplayName,
   sanitizeQuotaLimitId,
 } from "@app-usagemonitor/quota-analysis";
-import { TELEMETRY_PLAN_TYPES } from "@app-usagemonitor/telemetry-contract";
+import { CODEX_PLAN_TYPES } from "@app-usagemonitor/codex-catalog";
 
 export function createCodexCollectorExportContext(configuration) {
 const {
@@ -35,7 +35,7 @@ const ACCOUNT_SCOPE_VERSION = "openai-account-v1";
 const ACCOUNT_SCOPE_PATTERN = /^openai-account:v1:[A-Za-z0-9_-]{43}$/u;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/u;
-const PLAN_TYPES = new Set(TELEMETRY_PLAN_TYPES);
+const PLAN_TYPES = new Set(CODEX_PLAN_TYPES);
 const LIMIT_IDS = new Set(["codex", "codex-spark"]);
 const SOURCES = new Set(["app_server_read", "app_server_notification"]);
 const SLOTS = new Set(["primary", "secondary"]);

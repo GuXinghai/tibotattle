@@ -6,4 +6,4 @@ export const CODEX_COLLECTOR_CANDIDATE_VERSION =
 export const EXPORT_CHECKPOINT_PARSER_VERSION =
   "codex-checkpoint-state-v0.3";
 export const CODEX_METADATA_ADAPTER_VERSION = "codex-metadata-export-v6";
-export const EXPORT_COMPATIBILITY_TUPLE_VERSION = "usage-export-compatibility-v0.1";
+export const EXPORT_COMPATIBILITY_TUPLE_VERSION = "local-export-compatibility-v1";

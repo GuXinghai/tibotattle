@@ -2,9 +2,12 @@
 const host = 'com.usagemonitor.x_session_import';
 const status = document.getElementById('status');
 const check = document.getElementById('check'), button = document.getElementById('import');
+let busy = false;
+function begin() { if (busy) return false; busy = true; check.disabled = button.disabled = true; return true; }
+function end() { busy = false; check.disabled = button.disabled = false; }
 const messages = {
   bridge_ready: '本机连接正常，未读取 Cookie。', app_not_running: '请先打开 Rhetrion。',
-  import_not_pending: '请先在 Rhetrion 选择 Session 登录。', import_expired: '导入请求已取消或过期，请重新选择 Session 登录。',
+  import_not_pending: '请先在 Rhetrion 选择“从 Chrome 导入”。', import_expired: '导入请求已取消或过期，请重新选择“从 Chrome 导入”。',
   imported: '会话已交给 Rhetrion，请在应用中检查登录结果。', import_failed: '导入未完成，原有登录保持不变。',
   verification_pending: '会话已交给 Rhetrion，正在验证 X 是否接受。请在应用中查看结果。',
   invalid_import: '会话格式不受支持，未执行导入。', no_logged_in_session: '没有找到完整的 X 登录会话。',
@@ -15,13 +18,13 @@ function failed(error) {
   status.textContent = /not found/i.test(message) ? 'Chrome 找不到本机桥接注册（host_not_found）。请在应用中重新配置。' : '本机连接失败，请在应用中检查桥接配置。';
 }
 check.addEventListener('click', async () => {
-  check.disabled = true;
+  if (!begin()) return;
   status.textContent = '正在检查本机连接…';
   try { show(await chrome.runtime.sendNativeMessage(host, { version: 1, type: 'bridge-check' })); }
-  catch (error) { failed(error); } finally { check.disabled = false; }
+  catch (error) { failed(error); } finally { end(); }
 });
 button.addEventListener('click', async () => {
-  button.disabled = true; let cookies = [], payload = [];
+  if (!begin()) return; let cookies = [], payload = [];
   status.textContent = '正在检查导入授权…';
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -42,5 +45,5 @@ button.addEventListener('click', async () => {
     const response = await chrome.runtime.sendNativeMessage(host, { version: 1, type: 'x-cookie-import', permit: permit.permit, cookies: payload });
     show(response);
   } catch (error) { failed(error); }
-  finally { cookies.length = 0; payload.length = 0; button.disabled = false; }
+  finally { cookies.length = 0; payload.length = 0; end(); }
 });

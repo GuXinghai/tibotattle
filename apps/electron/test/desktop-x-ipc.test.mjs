@@ -16,6 +16,20 @@ test('sandbox preload accepts scoped refresh and forced details while rejecting 
   for(const args of [[],[{}],[{tab:'media',url:'https://x.com'}],[{tab:'unknown'}]])await assert.rejects(bridge.refreshX(...args));
   for(const query of [{id:'123',force:1},{id:'123',force:undefined},{id:'123',force:true,cursor:'safe'},{id:'123',force:true,extra:true}])await assert.rejects(bridge.getXPost(query));
   assert.equal(calls.length,3);
+  await bridge.openXImportFolder();assert.equal(calls.at(-1).request.action,'openXImportFolder');
+  for(const args of [[{}],['C:\\synthetic\\outside'],[{path:'C:\\synthetic\\outside'}]])await assert.rejects(bridge.openXImportFolder(...args));
+  assert.equal(calls.length,4);
+});
+
+test('import folder reveal is a fixed authorized main-process action with no renderer path or leaked failure',async()=>{
+  let handler,calls=0;
+  installDesktopXIpc({ipcMain:{handle(_c,fn){handler=fn;}},authorize:e=>e.trusted===true,service:{},
+    importBridge:{reveal:async()=>{calls++;return{ok:true};}}});
+  await assert.rejects(handler({}, {action:'openXImportFolder',args:{}}),{code:'x_untrusted_context'});assert.equal(calls,0);
+  for(const args of [{path:'C:\\synthetic\\outside'},{url:'file:///synthetic'},[]])assert.throws(()=>validateXDesktopRequest({action:'openXImportFolder',args}));
+  assert.deepEqual(await handler({trusted:true},{action:'openXImportFolder',args:{}}),{ok:true});assert.equal(calls,1);
+  installDesktopXIpc({ipcMain:{handle(_c,fn){handler=fn;}},authorize:()=>true,service:{},importBridge:{reveal(){throw Error('synthetic private path');}}});
+  await assert.rejects(handler({}, {action:'openXImportFolder',args:{}}),e=>e.code==='x_operation_failed'&&!e.message.includes('private'));
 });
 
 test('manual refresh is scoped and force detail reads have a closed contract',async()=>{

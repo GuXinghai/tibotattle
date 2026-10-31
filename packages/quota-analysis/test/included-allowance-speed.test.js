@@ -69,7 +69,7 @@ test("the explicit consumption basis prevents subscription credits from inheriti
     assert.equal(value.weight, null);
     assert.equal(value.reasonCode, "consumption_basis_unavailable");
   }
-  for (const changed of [{ provider: "unsupported_provider" }, { billingSurface: "openai_api" }]) {
+  for (const changed of [{ provider: "anthropic_claude_code" }, { billingSurface: "openai_api" }, { billingSurface: "claude_subscription" }]) {
     const value = includedAllowanceSpeedWeight({ ...BASE, ...changed });
     assert.equal(value.status, "not_applicable");
     assert.equal(value.weight, null);

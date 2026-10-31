@@ -18,6 +18,7 @@ import {
   sep,
 } from "node:path";
 import { defaultExportStateDirectory } from "./export-identity.js";
+import { createWindowsFilesystemAdapter } from "./platform/index.js";
 
 export const LOCAL_ONBOARDING_SCHEMA_VERSION = "local-onboarding-v0.2";
 export const MAXIMUM_OBSERVED_ROLLOUT_FILES = 100;
@@ -261,12 +262,19 @@ export function prepareLocalInstallationRoots({
     throw configurationError();
   }
   try {
-    const created = mkdirSync(selectedStateRoot, {
-      recursive: true,
-      mode: 0o700,
-    });
-    if (created !== undefined) {
-      assertDirectory(selectedStateRoot, { ownerOnly: true });
+    if (process.platform === "win32") {
+      // POSIX mode bits do not create a protected Windows DACL. Create the
+      // root through the same native boundary its SQLite children require;
+      // an existing unsafe root is rejected without repairing its permissions.
+      createWindowsFilesystemAdapter().ensureDirectory(selectedStateRoot);
+    } else {
+      const created = mkdirSync(selectedStateRoot, {
+        recursive: true,
+        mode: 0o700,
+      });
+      if (created !== undefined) {
+        assertDirectory(selectedStateRoot, { ownerOnly: true });
+      }
     }
   } catch {
     throw configurationError();

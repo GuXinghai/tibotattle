@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { join } from "node:path";
+import { DESKTOP_TRAY_DEFAULTS } from "../desktop-tray-preferences.js";
 
 import {
   createDesktopActionInterface,
@@ -12,15 +13,11 @@ import {
 import {
   createDesktopTrayIconFactory,
   createDesktopTrayTemplate,
-  extractDesktopTrayTemplateBitmap,
   resolveDesktopApplicationIcon,
   resolveDesktopTrayIcon,
   APP_ICON_RELATIVE_PATH,
   STATUS_PLACEHOLDER,
   TRAY_ICON_RELATIVE_PATH,
-  TRAY_ICON_SIZE,
-  TRAY_TEMPLATE_CROP_INSET_RATIO,
-  TRAY_TEMPLATE_CROP_SIZE_RATIO,
 } from "../desktop-tray.js";
 
 function actionRecorder() {
@@ -234,53 +231,21 @@ test("tray check-for-updates is enabled only for an injected bounded capability"
   assert.deepEqual(calls, ["checkForUpdates"]);
 });
 
-function nativeImageFixture({
-  sourceEmpty = false,
-  resizedEmpty = false,
-  includeTemplate = true,
-} = {}) {
-  const calls = {
-    createFromPath: [],
-    crop: [],
-    resize: [],
-    template: [],
-  };
-  const resized = {
-    isEmpty: () => resizedEmpty,
-  };
-  if (includeTemplate) {
-    resized.setTemplateImage = (value) => calls.template.push(value);
-  }
+function nativeImageFixture({ sourceEmpty = false } = {}) {
+  const calls = { createFromPath: [], crop: [], resize: [], template: [] };
   const source = {
     isEmpty: () => sourceEmpty,
-    getSize: () => ({ width: 1_024, height: 1_024 }),
-    crop: (options) => {
-      calls.crop.push(options);
-      return source;
-    },
-    resize: (options) => {
-      calls.resize.push(options);
-      return resized;
-    },
+    crop() { calls.crop.push(true); throw Error("ICO must stay file-backed"); },
+    resize() { calls.resize.push(true); throw Error("ICO must stay file-backed"); },
+    toBitmap() { throw Error("ICO must not become a bitmap"); },
+    setTemplateImage() { calls.template.push(true); },
   };
-  return {
-    calls,
-    source,
-    resized,
-    nativeImage: {
-      createFromPath: (value) => {
-        calls.createFromPath.push(value);
-        return source;
-      },
-    },
-  };
+  return { calls, source, nativeImage: {
+    createFromPath(value) { calls.createFromPath.push(value); return source; },
+  } };
 }
 
-
-
-
-
-test("real packaged bird asset produces a sparse template, not a white plate", async () => {
+test("approved colour master retains its sparse artwork and anti-aliased colour edges", async () => {
   const { readFile } = await import("node:fs/promises");
   const { inflateSync } = await import("node:zlib");
   const assetPath = new URL("../../web/public/app-icon.png", import.meta.url);
@@ -345,54 +310,51 @@ test("real packaged bird asset produces a sparse template, not a white plate", a
     previous = row;
   }
 
-  // Sample the same crop into the 64px BGRA surface used by nativeImage.
-  const cropX = Math.floor(width * TRAY_TEMPLATE_CROP_INSET_RATIO);
-  const cropY = Math.floor(height * TRAY_TEMPLATE_CROP_INSET_RATIO);
-  const cropWidth = Math.round(width * TRAY_TEMPLATE_CROP_SIZE_RATIO);
-  const cropHeight = Math.round(height * TRAY_TEMPLATE_CROP_SIZE_RATIO);
-  const bitmap = Buffer.alloc(64 * 64 * 4);
-  for (let y = 0; y < 64; y += 1) {
-    for (let x = 0; x < 64; x += 1) {
-      const sourceX = Math.min(width - 1, cropX + Math.floor(x * cropWidth / 64));
-      const sourceY = Math.min(height - 1, cropY + Math.floor(y * cropHeight / 64));
-      const source = (sourceY * width + sourceX) * 4;
-      const target = (y * 64 + x) * 4;
-      bitmap[target] = rgba[source + 2];
-      bitmap[target + 1] = rgba[source + 1];
-      bitmap[target + 2] = rgba[source];
-      bitmap[target + 3] = rgba[source + 3];
-    }
-  }
-  const extracted = extractDesktopTrayTemplateBitmap(bitmap);
-  assert.ok(extracted, "real asset should produce a template bitmap");
-  let retained = 0;
-  let transparent = 0;
-  for (let index = 3; index < extracted.length; index += 4) {
-    if (extracted[index] > 0) retained += 1;
-    if (extracted[index] === 0) transparent += 1;
-  }
-  // The bird occupies a meaningful but bounded part of the crop. A flat
-  // plate would retain nearly all 4,096 pixels; a missing/blank mark retains
-  // none. Keep these bounds deliberately broad around the reviewed asset.
-  assert.ok(retained >= 500, `expected bird occupancy, got ${retained}`);
-  assert.ok(transparent >= 800, `expected plate removal, got ${transparent}`);
+  assert.equal(rgba[3], 0, "master corners remain transparent");
+  assert.ok(rgba.some((value, i) => i % 4 === 3 && value > 0 && value < 255));
 });
 
-test("Windows tray icon resolution uses the same fixed asset without template mode", () => {
+test("Windows tray preserves the file-backed ICO across status and legacy mode changes", () => {
   const fixture = nativeImageFixture();
-  const result = resolveDesktopTrayIcon({
-    nativeImage: fixture.nativeImage,
-    resourceRoot: "/trusted/app",
-    platform: "win32",
-  });
-  assert.equal(result, fixture.resized);
-  assert.deepEqual(fixture.calls.createFromPath, [
-    join("/trusted/app", TRAY_ICON_RELATIVE_PATH),
-  ]);
+  const factory = createDesktopTrayIconFactory({ nativeImage: fixture.nativeImage, resourceRoot: "/trusted/app" });
+  for (const iconMode of ["app", "meter", "dual-meter"]) for (const status of ["fresh", "analyzing", "stale", "unavailable"]) {
+    assert.equal(factory.resolve({ status }, { preferences: { ...DESKTOP_TRAY_DEFAULTS, iconMode } }), fixture.source);
+  }
+  assert.equal(TRAY_ICON_RELATIVE_PATH, "apps/electron/assets/app.ico");
+  assert.deepEqual(fixture.calls.createFromPath, [join("/trusted/app", TRAY_ICON_RELATIVE_PATH)]);
+  assert.deepEqual(fixture.calls.crop, []);
+  assert.deepEqual(fixture.calls.resize, []);
   assert.deepEqual(fixture.calls.template, []);
 });
 
-test("application icon resolution uses the colour asset separately from the tray mask", () => {
+test("tray ICO contains separate reviewed native-size colour PNG frames", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const bytes = await readFile(new URL("../assets/app.ico", import.meta.url));
+  assert.equal(bytes.readUInt16LE(0), 0);
+  assert.equal(bytes.readUInt16LE(2), 1);
+  assert.equal(bytes.readUInt16LE(4), 7);
+  let next = 6 + 7 * 16;
+  const sizes = [];
+  for (let i = 0; i < 7; i++) {
+    const offset = 6 + i * 16;
+    const width = bytes[offset] || 256, height = bytes[offset + 1] || 256;
+    const length = bytes.readUInt32LE(offset + 8), start = bytes.readUInt32LE(offset + 12);
+    assert.equal(width, height);
+    assert.equal(start, next);
+    assert.ok(start + length <= bytes.length);
+    const png = bytes.subarray(start, start + length);
+    assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+    assert.equal(png.toString("ascii", 12, 16), "IHDR");
+    assert.equal(png.readUInt32BE(16), width);
+    assert.equal(png.readUInt32BE(20), height);
+    assert.equal(png[25], 6, "RGBA frames preserve transparency");
+    next += length; sizes.push(width);
+  }
+  assert.deepEqual(sizes, [16, 24, 32, 48, 64, 128, 256]);
+  assert.equal(next, bytes.length);
+});
+
+test("application icon resolution uses the colour master without tray composition", () => {
   const fixture = nativeImageFixture();
   const result = resolveDesktopApplicationIcon({
     nativeImage: fixture.nativeImage,
@@ -417,13 +379,6 @@ test("tray icon resolution fails closed for missing, empty, and invalid images",
     platform: "win32",
   }), undefined);
   assert.deepEqual(emptySource.calls.resize, []);
-
-  const emptyResized = nativeImageFixture({ resizedEmpty: true });
-  assert.equal(resolveDesktopTrayIcon({
-    nativeImage: emptyResized.nativeImage,
-    resourceRoot: "/trusted/app",
-    platform: "win32",
-  }), undefined);
 
   assert.equal(resolveDesktopTrayIcon({
     nativeImage: {

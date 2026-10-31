@@ -170,9 +170,6 @@ function capabilityPair(capability) {
   if (capability === EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation) {
     return EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.accountObservation;
   }
-  if (capability === EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice) {
-    return EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES.contributionDevice;
-  }
   fail("invalid_capability");
 }
 
@@ -226,7 +223,7 @@ function validateOperationLeaseContext(context) {
  * frozen capability objects above, never arbitrary service/account strings.
  *
  * This adapter does not claim compare-and-swap semantics. The participant,
- * account-observation, callback, and contribution callers must hold their
+ * account-observation callers must hold their
  * existing operation leases around create, replace, and delete transactions.
  */
 export function createWindowsCredentialManagerBackend(options = {}) {

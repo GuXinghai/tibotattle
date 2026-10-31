@@ -9,7 +9,7 @@ Scope: all files under `src/`. Apply the repository root guidance first.
 - `platform/` owns filesystem, process, Windows Credential Manager/credential, and
   operating-system adapters.
 - `providers/` owns untrusted provider parsing and normalization.
-- `contribution/`, `export/`, and `reporting/` own their domain contracts and
+- `export/` and `reporting/` own their domain contracts and
   expose reviewed entrypoints.
 - Root-level modules include composition roots and migration-era compatibility
   debt. Do not add a new direct dependency on a legacy facade merely because one

@@ -208,7 +208,10 @@ test("quota account publication evidence crosses the worker internally without e
     }] });
     const conflicting = await readLocalCollectorProjectionOffMain({ stateFile, nowMs: NOW_MS,
       summarizeUsageEvents: false });
-    assert.equal(localCollectorQuotaPublicationScope(conflicting), null);
+    const later=localCollectorQuotaPublicationScope(conflicting);
+    assert.notEqual(later.scopeToken,scope.scopeToken);
+    assert.ok(later.recordOrder>scope.recordOrder);
+    assert.equal(later.observedAt,scope.observedAt);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

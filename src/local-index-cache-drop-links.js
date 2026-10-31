@@ -1,6 +1,6 @@
 import { lstatSync } from "node:fs";
 import { setImmediate as cooperativeYield } from "node:timers/promises";
-import { codexCacheReasoningConfiguration } from "@app-usagemonitor/telemetry-contract";
+import { codexCacheReasoningConfiguration } from "@app-usagemonitor/codex-catalog";
 
 import { REASONING_EFFORTS, reasoningEffortOrdinal } from "./codex-usage-vocabulary.js";
 import { readLocalIndexGenerationIdentity } from "./local-index-companion-source.js";

@@ -359,6 +359,7 @@ async function fixture() {
     join(staticRoot, "index.html"),
     `<!doctype html><meta name="usage-monitor-semantic-open-target" content="${SEMANTIC_OPEN_TARGET_PLACEHOLDER}"><title>Rhetrion</title>`,
   );
+  await writeFile(join(staticRoot, "codex-catalog.generated.js"), "export const CODEX_PLAN_TYPES = [];" );
   await writeFile(join(staticRoot, "app.js"), "export const app = true;");
   await writeFile(join(staticRoot, "data-client.js"), "export const client = true;");
   await writeFile(join(staticRoot, "lib.js"), "export const lib = true;");
@@ -368,14 +369,6 @@ async function fixture() {
   await writeFile(
     join(staticRoot, "localization.js"),
     "export const localization = true;",
-  );
-  await writeFile(
-    join(staticRoot, "telemetry-shared.generated.js"),
-    "export const telemetry = true;",
-  );
-  await writeFile(
-    join(staticRoot, "telemetry-envelope.js"),
-    "export const envelope = true;",
   );
   await writeFile(join(staticRoot, "styles.css"), "body { color: black; }");
   await writeFile(
@@ -642,6 +635,7 @@ test("loopback server exposes only fixed API, static, and report routes", async 
     assert.equal((await fetch(`${base}/data-client.js`)).status, 200);
     assert.equal((await fetch(`${base}/localization.js`)).status, 200);
     for (const [path, type] of [
+      ["codex-catalog.generated.js", "text/javascript; charset=utf-8"],
       ["model-performance.js", "text/javascript; charset=utf-8"],
       ["dashboard-report-preload.js", "text/javascript; charset=utf-8"],
       ["model-performance.css", "text/css; charset=utf-8"],
@@ -650,10 +644,9 @@ test("loopback server exposes only fixed API, static, and report routes", async 
       assert.equal(asset.status, 200, path);
       assert.equal(asset.headers.get("content-type"), type, path);
     }
-    assert.equal(
-      (await fetch(`${base}/telemetry-shared.generated.js`)).status,
-      200,
-    );
+    for (const retired of ["telemetry-shared.generated.js", "telemetry-envelope.js", "model-catalog.generated.js", "community-data.js"]) {
+      assert.equal((await fetch(`${base}/${retired}`)).status, 404, retired);
+    }
     const brandIcon = await fetch(`${base}/app-icon.png`);
     assert.equal(brandIcon.status, 200);
     assert.equal(brandIcon.headers.get("content-type"), "image/png");
@@ -2585,6 +2578,42 @@ test("CLI port zero prints its actual ready URL and honors explicit roots", asyn
     }
     await rm(files.root, { recursive: true });
   }
+});
+
+test("work-usage diagnostic context survives the protected loopback log boundary", async () => {
+  const files = await fixture();
+  const diagnosticsLogFile = join(files.stateRoot, "diagnostics-v0.1.log");
+  const app = await startLocalCompanionServer({ ...files, dataStore: fakeStore(),
+    refreshRunner: async () => ({}), diagnosticsLogFile, port: 0 });
+  try {
+    const base = `http://127.0.0.1:${app.port}`;
+    const headers = { "Content-Type": "application/json", "X-Usage-Monitor-Local": "1", Origin: base };
+    const workUsage = { schemaVersion: "work-usage-request-diagnostic-v1", phase: "query",
+      stage: "response_body", elapsedMs: 30_012, timeoutMs: 30_000, httpStatus: 200, background: false };
+    const note = { reference: "TT-ABC123", surface: "local_refresh", code: "work_usage_timeout", requestId: "", workUsage };
+    const post = value => fetch(`${base}/api/local/diagnostics/note`, { method: "POST", headers, body: JSON.stringify(value) });
+    const response = await post(note);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).reference, note.reference);
+    const before = await readFile(diagnosticsLogFile, "utf8");
+    const logged = JSON.parse(before.trim());
+    assert.equal(logged.reference, note.reference);
+    assert.equal(logged.schemaVersion, "local-diagnostic-note-v0.1");
+    assert.deepEqual(logged.workUsage, workUsage);
+    for (const change of [null, [], {}, { ...workUsage, path: "private path" },
+      { ...workUsage, schemaVersion: "future" }, { ...workUsage, phase: "private name" },
+      { ...workUsage, stage: "private body" }, { ...workUsage, elapsedMs: -1 },
+      { ...workUsage, elapsedMs: 86_400_001 }, { ...workUsage, elapsedMs: 1.5 },
+      { ...workUsage, timeoutMs: 42 }, { ...workUsage, httpStatus: 99 },
+      { ...workUsage, httpStatus: 600 }, { ...workUsage, background: "false" }]) {
+      const rejected = await post({ ...note, workUsage: change });
+      assert.equal(rejected.status, 400);
+      assert.equal((await rejected.json()).error.code, "invalid_request");
+    }
+    for (const change of [{ surface: "desktop_background" }, { code: "snapshot_unavailable" }, { extra: "private" }])
+      assert.equal((await post({ ...note, ...change })).status, 400);
+    assert.equal(await readFile(diagnosticsLogFile, "utf8"), before, "rejected context never changes the log");
+  } finally { await app.close(); await rm(files.root, { recursive: true }); }
 });
 
 test("diagnostic notes are bounded, fixed-vocabulary, and land in a local log", async () => {

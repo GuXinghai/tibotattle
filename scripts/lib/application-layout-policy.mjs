@@ -5,7 +5,7 @@ const APPLICATION_DEFINITIONS = [
     allowedPackages: [
       "accounting",
       "quota-analysis",
-      "telemetry-contract",
+      "codex-catalog",
     ],
   },
   {

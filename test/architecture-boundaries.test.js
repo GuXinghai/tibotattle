@@ -113,33 +113,14 @@ test("reporting implementation requires its reviewed public index", async () => 
   );
 });
 
-test("contribution implementation requires its sole reviewed public index", async () => {
-  await withFixtureTree(
-    {
-      "src/contribution/telemetry-v01-projection.js":
-        "export const buildTelemetryContributionsFromBundle = true;",
-    },
-    async (rootDirectory) => {
-      const result = await checkArchitectureBoundaries({
-        baseline: [],
-        rootDirectory,
-      });
-
+test("retired contribution and telemetry trees cannot be recreated or baselined", async () => {
+  for (const path of ["src/contribution/index.js", "packages/telemetry-contract/index.js"]) {
+    await withFixtureTree({ [path]: "export const retired = true;" }, async (rootDirectory) => {
+      const result = await checkArchitectureBoundaries({ baseline: [], rootDirectory });
       assert.equal(result.ok, false);
-      assert.deepEqual(
-        result.violations.map(({ category, importer, target }) => ({
-          category,
-          importer,
-          target,
-        })),
-        [{
-          category: "contribution_owner_public_entrypoint",
-          importer: "src/contribution/index.js",
-          target: "src/contribution/index.js",
-        }],
-      );
-    },
-  );
+      assert.ok(result.violations.some(({ category }) => category === "retired_production_source_path"));
+    });
+  }
 });
 
 test("extracts static, dynamic, and export-from imports without reading prose as code", async () => {
@@ -177,7 +158,7 @@ test("permits supported dependency directions and ignores tests and tooling", as
     {
       "apps/local/server.js": `
         import { shared } from "../../src/shared.js";
-        import { contract } from "@usage-monitor/telemetry-contract";
+        import { contract } from "@usage-monitor/codex-catalog";
       `,
       "apps/local/scripts/check.mjs":
         'import "../../../src/forbidden-only-in-tooling.js";',
@@ -185,12 +166,12 @@ test("permits supported dependency directions and ignores tests and tooling", as
         'import "../../../src/forbidden-only-in-tests.js";',
       "apps/local/runtime.d.ts":
         "type RuntimeModule = typeof import(runtimePath);",
-      "packages/telemetry-contract/package.json": JSON.stringify({
-        name: "@usage-monitor/telemetry-contract",
+      "packages/codex-catalog/package.json": JSON.stringify({
+        name: "@usage-monitor/codex-catalog",
       }),
-      "packages/telemetry-contract/src/index.js":
+      "packages/codex-catalog/src/index.js":
         'export { local } from "./local.js";',
-      "packages/telemetry-contract/src/local.js":
+      "packages/codex-catalog/src/local.js":
         "export const local = true;",
       "src/shared.js":
         'export { quota } from "../shared/quota.js";',
@@ -719,16 +700,16 @@ test("resolves first-party workspace package names before applying boundaries", 
 test("owned root source must consume an allowed workspace package through its public root", async () => {
   await withFixtureTree(
     {
-      "packages/telemetry-contract/index.js":
+      "packages/unused-contract/index.js":
         "export const publicValue = true;",
-      "packages/telemetry-contract/package.json": JSON.stringify({
-        name: "@fixture/telemetry-contract",
+      "packages/unused-contract/package.json": JSON.stringify({
+        name: "@fixture/unused-contract",
         exports: "./index.js",
       }),
-      "packages/telemetry-contract/src/private.js":
+      "packages/unused-contract/src/private.js":
         "export const privateValue = true;",
       "src/providers/codex/client.js":
-        'import { privateValue } from "@fixture/telemetry-contract/src/private.js";',
+        'import { privateValue } from "@fixture/unused-contract/src/private.js";',
     },
     async (rootDirectory) => {
       const result = await checkArchitectureBoundaries({
@@ -749,8 +730,8 @@ test("owned root source must consume an allowed workspace package through its pu
         [{
           category: "workspace_package_public_api",
           importer: "src/providers/codex/client.js",
-          specifier: "@fixture/telemetry-contract/src/private.js",
-          target: "packages/telemetry-contract/src/private.js",
+          specifier: "@fixture/unused-contract/src/private.js",
+          target: "packages/unused-contract/src/private.js",
         }],
       );
     },
@@ -760,14 +741,14 @@ test("owned root source must consume an allowed workspace package through its pu
 test("owned root source may consume an allowed workspace package through its bare public root", async () => {
   await withFixtureTree(
     {
-      "packages/telemetry-contract/index.js":
+      "packages/codex-catalog/index.js":
         "export const publicValue = true;",
-      "packages/telemetry-contract/package.json": JSON.stringify({
-        name: "@fixture/telemetry-contract",
+      "packages/codex-catalog/package.json": JSON.stringify({
+        name: "@fixture/codex-catalog",
         exports: "./index.js",
       }),
       "src/providers/codex/client.js":
-        'import { publicValue } from "@fixture/telemetry-contract";',
+        'import { publicValue } from "@fixture/codex-catalog";',
     },
     async (rootDirectory) => {
       const result = await checkArchitectureBoundaries({
@@ -1103,13 +1084,13 @@ test("local composition may import application and platform facades but not prov
     {
       "apps/local/server.js": [
         'import "../../src/application/index.js";',
-        'import "../../src/platform/telemetry-envelope.js";',
+        'import "../../src/platform/index.js";',
         'import "../../src/providers/codex/account.js";',
         "",
       ].join("\n"),
       "src/application/index.js":
         "export const application = true;",
-      "src/platform/telemetry-envelope.js":
+      "src/platform/index.js":
         "export const envelope = true;",
       "src/providers/codex/account.js":
         "export const account = true;",
@@ -1141,7 +1122,7 @@ test("the local app may use its reviewed package roots", async () => {
       "apps/local/server.js": [
         'import "@fixture/accounting";',
         'import "@fixture/quota-analysis";',
-        'import "@fixture/telemetry-contract";',
+        'import "@fixture/codex-catalog";',
         "",
       ].join("\n"),
       "packages/accounting/index.js":
@@ -1162,10 +1143,10 @@ test("the local app may use its reviewed package roots", async () => {
         name: "@fixture/identity-core",
         exports: "./index.js",
       }),
-      "packages/telemetry-contract/index.js":
+      "packages/codex-catalog/index.js":
         "export const telemetry = true;",
-      "packages/telemetry-contract/package.json": JSON.stringify({
-        name: "@fixture/telemetry-contract",
+      "packages/codex-catalog/package.json": JSON.stringify({
+        name: "@fixture/codex-catalog",
         exports: "./index.js",
       }),
     },
@@ -1190,7 +1171,7 @@ for (const fixture of [
     packageDirectory: "accounting",
     packageName: "@fixture/accounting",
   },
-  ...["accounting", "quota-analysis", "telemetry-contract"].map((packageDirectory) => ({
+  ...["accounting", "quota-analysis", "codex-catalog"].map((packageDirectory) => ({
     app: "worker",
     packageDirectory,
     packageName: `@fixture/${packageDirectory}`,
@@ -1229,7 +1210,7 @@ test("permits every reviewed source-owner dependency row through exact public fa
     {
       "apps/local/server.js": [
         'import { application } from "../../src/application/index.js";',
-        'import { envelope } from "../../src/platform/telemetry-envelope.js";',
+        'import { envelope } from "../../src/platform/index.js";',
         "export const composition = { application, envelope };",
         "",
       ].join("\n"),
@@ -1245,10 +1226,10 @@ test("permits every reviewed source-owner dependency row through exact public fa
         name: "@fixture/quota-analysis",
         exports: "./index.js",
       }),
-      "packages/telemetry-contract/index.js":
+      "packages/codex-catalog/index.js":
         "export const telemetry = true;",
-      "packages/telemetry-contract/package.json": JSON.stringify({
-        name: "@fixture/telemetry-contract",
+      "packages/codex-catalog/package.json": JSON.stringify({
+        name: "@fixture/codex-catalog",
         exports: "./index.js",
       }),
       "src/application/index.js":
@@ -1256,38 +1237,28 @@ test("permits every reviewed source-owner dependency row through exact public fa
       "src/application/run.js": [
         'import { account } from "../providers/codex/account.js";',
         'import { exported } from "../export/index.js";',
-        'import { contribution } from "../contribution/index.js";',
         'import { report } from "../reporting/index.js";',
         'import { accounting } from "@fixture/accounting";',
         'import { quota } from "@fixture/quota-analysis";',
-        'import { telemetry } from "@fixture/telemetry-contract";',
+        'import { telemetry } from "@fixture/codex-catalog";',
         "export const application = {",
-        "  account, accounting, contribution, exported, quota, report, telemetry,",
+        "  account, accounting, exported, quota, report, telemetry,",
         "};",
-        "",
-      ].join("\n"),
-      "src/contribution/index.js": [
-        'import { accounting } from "@fixture/accounting";',
-        'import { exported } from "../export/index.js";',
-        'import { identity } from "@fixture/identity-core";',
-        'import { telemetry } from "@fixture/telemetry-contract";',
-        "export const contribution = { accounting, exported, identity, telemetry };",
         "",
       ].join("\n"),
       "src/export/index.js": [
         'import { account } from "../providers/codex/account.js";',
-        'import { telemetry } from "@fixture/telemetry-contract";',
+        'import { telemetry } from "@fixture/codex-catalog";',
         "export const exported = { account, telemetry };",
         "",
       ].join("\n"),
-      "src/platform/telemetry-envelope.js": [
+      "src/platform/index.js": [
         'import { identity } from "@fixture/identity-core";',
-        'import { telemetry } from "@fixture/telemetry-contract";',
-        "export const envelope = { identity, telemetry };",
+        "export const envelope = { identity };",
         "",
       ].join("\n"),
       "src/providers/codex/account-scope.js": [
-        'import { telemetry } from "@fixture/telemetry-contract";',
+        'import { telemetry } from "@fixture/codex-catalog";',
         "export const account = telemetry;",
         "",
       ].join("\n"),
@@ -1350,17 +1321,17 @@ for (const fixture of [
     category: "source_owner_dependency_direction",
     label: "provider-to-platform dependencies instead of injected adapters",
     files: {
-      "src/platform/telemetry-envelope.js":
+      "src/platform/index.js":
         "export const envelope = true;",
       "src/providers/codex/client.js":
-        'import { envelope } from "../../platform/telemetry-envelope.js";',
+        'import { envelope } from "../../platform/index.js";',
     },
   },
   {
     category: "source_owner_dependency_direction",
     label: "reverse platform-to-provider dependencies",
     files: {
-      "src/platform/telemetry-envelope.js":
+      "src/platform/index.js":
         'import { account } from "../providers/codex/account.js";',
       "src/providers/codex/account.js":
         "export const account = true;",
@@ -1370,12 +1341,12 @@ for (const fixture of [
     category: "source_owner_dependency_direction",
     label: "provider dependencies on higher-level feature owners",
     files: {
-      "src/contribution/ingest.js":
+      "src/reporting/ingest.js":
         "export const ingest = true;",
-      "src/contribution/index.js":
+      "src/reporting/index.js":
         'export { ingest } from "./ingest.js";',
       "src/providers/codex/client.js":
-        'import { ingest } from "../../contribution/index.js";',
+        'import { ingest } from "../../reporting/index.js";',
     },
   },
   {
@@ -1390,19 +1361,19 @@ for (const fixture of [
   },
   {
     category: "source_owner_dependency_direction",
-    label: "export dependencies on contribution",
+    label: "export dependencies on reporting",
     files: {
-      "src/contribution/index.js":
+      "src/reporting/index.js":
         "export const contribution = true;",
       "src/export/index.js":
-        'import { contribution } from "../contribution/index.js";',
+        'import { contribution } from "../reporting/index.js";',
     },
   },
   {
     category: "source_owner_dependency_direction",
-    label: "contribution dependencies on providers",
+    label: "reporting dependencies on providers",
     files: {
-      "src/contribution/index.js":
+      "src/reporting/index.js":
         'import { account } from "../providers/codex/account.js";',
       "src/providers/codex/account.js":
         "export const account = true;",
@@ -1423,8 +1394,8 @@ for (const fixture of [
     label: "application dependencies on concrete platform modules",
     files: {
       "src/application/index.js":
-        'import { envelope } from "../platform/telemetry-envelope.js";',
-      "src/platform/telemetry-envelope.js":
+        'import { envelope } from "../platform/index.js";',
+      "src/platform/index.js":
         "export const envelope = true;",
     },
   },
@@ -1476,8 +1447,8 @@ for (const fixture of [
   {
     importer: "src/reporting/index.js",
     owner: "reporting",
-    packageDirectory: "telemetry-contract",
-    packageName: "@fixture/telemetry-contract",
+    packageDirectory: "codex-catalog",
+    packageName: "@fixture/codex-catalog",
   },
 ]) {
   test(`rejects an unapproved package dependency from the ${fixture.owner} owner`, async () => {
@@ -1598,7 +1569,6 @@ test("structural source-owner and cycle categories cannot be baselined", async (
     },
     async (rootDirectory) => {
       const baseline = [
-        "contribution_owner_public_entrypoint",
         "production_import_cycle",
         "retired_production_source_path",
         "source_owner_dependency_direction",
@@ -1618,9 +1588,8 @@ test("structural source-owner and cycle categories cannot be baselined", async (
       });
 
       assert.equal(result.ok, false);
-      assert.equal(result.baselineIssues.length, 5);
+      assert.equal(result.baselineIssues.length, 4);
       for (const category of [
-        "contribution_owner_public_entrypoint",
         "production_import_cycle",
         "retired_production_source_path",
         "source_owner_dependency_direction",
@@ -1697,9 +1666,25 @@ test("the retired source ledger remains exact and normalized", () => {
     "src/metadata-exporter.js",
     "src/price-registry.js",
     "src/tier-semantics.js",
+    "src/application/local-contribution-preparation.js",
+    "src/application/local-contribution-sync-queue.js",
+    "src/application/local-prepared-contribution.js",
+    "src/contribution-device-capability.js",
+    "src/contribution-device-client.js",
+    "src/contribution-device-sync.js",
+    "src/local-contribution-preparation.js",
+    "src/platform/local-contribution-sync-queue-storage.js",
+    "src/platform/owner-only-prepared-contribution-storage.js",
+    "src/platform/telemetry-envelope.js",
+    "src/prepared-contribution-compatibility-internal.js",
+    "src/real-local-backend-acceptance.js",
+    "src/telemetry-contribution-builder.js",
+    "src/telemetry-prepared-set.js",
   ]);
   assert.deepEqual(RETIRED_PRODUCTION_TREE_PATHS, [
     "apps/cloud-run",
+    "packages/telemetry-contract",
+    "src/contribution",
     "src/providers/claude",
   ]);
 });
@@ -1798,11 +1783,11 @@ for (const fixture of [
   },
   {
     dependencyFiles: {
-      "src/platform/telemetry-envelope.js":
+      "src/platform/index.js":
         "export const dependency = true;",
     },
     label: "the platform owner",
-    specifier: "../../platform/telemetry-envelope.js",
+    specifier: "../../platform/index.js",
   },
 ]) {
   test(`the Codex provider cannot import ${fixture.label}`, async () => {
@@ -1891,4 +1876,21 @@ test("rejects malformed or undocumented baseline entries", async () => {
       );
     },
   );
+});
+
+
+test("Codex catalog dependencies cannot cross into another workspace package in either direction", async () => {
+  for (const reverse of [false, true]) {
+    const files = {
+      "packages/fixture/package.json": JSON.stringify({ name: "@fixture/fixture", exports: "./index.js" }),
+      "packages/fixture/index.js": reverse ? 'export const contract = [];' : 'import { plans } from "@fixture/codex-catalog"; export const contract = plans;',
+      "packages/codex-catalog/package.json": JSON.stringify({ name: "@fixture/codex-catalog", exports: "./index.js" }),
+      "packages/codex-catalog/index.js": reverse ? 'import { contract } from "@fixture/fixture"; export const plans = contract;' : 'export const plans = [];',
+    };
+    await withFixtureTree(files, async (rootDirectory) => {
+      const result = await checkArchitectureBoundaries({ baseline: [], rootDirectory });
+      assert.equal(result.ok, false);
+      assert.ok(result.violations.some(({ category }) => category === "packages_dependency_direction"));
+    });
+  }
 });

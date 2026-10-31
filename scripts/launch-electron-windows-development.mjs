@@ -50,7 +50,7 @@ const DEFAULT_PROFILE_PATH = join(
   ".release-build",
   "electron-user-test",
   "win32-x64",
-  "profile",
+  "profile-v2",
 );
 const WINDOWS_TARGET = "win32-x64";
 const WINDOWS_APP_NAME = "usage-monitor.exe";
@@ -64,7 +64,6 @@ const PROFILE_DIRECTORY_NAMES = Object.freeze([
   "appdata",
   "localappdata",
   "codex",
-  "state",
   "config",
   "data",
   "cache",
@@ -317,6 +316,12 @@ export async function prepareWindowsDevelopmentProfile({
     ensurePrivateDirectory(paths.userData),
     ...PROFILE_DIRECTORY_NAMES.map((name) => ensurePrivateDirectory(join(paths.root, name))),
   ]);
+  // Windows known-folder lookup can resolve through USERPROFILE rather than
+  // APPDATA/LOCALAPPDATA. Electron queries that default before pinning its
+  // isolated profile; both standard directories must already exist.
+  for (const name of ["Roaming", "Local"]) {
+    await ensurePrivateDirectory(join(paths.home, "AppData", name));
+  }
   return paths;
 }
 

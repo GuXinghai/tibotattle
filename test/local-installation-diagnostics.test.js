@@ -22,6 +22,10 @@ import {
   prepareLocalInstallationRoots,
   projectLocalOnboarding,
 } from "../src/local-installation-diagnostics.js";
+import {
+  createWindowsFilesystemAdapter,
+  prepareProtectedSqliteDatabaseFile,
+} from "../src/platform/index.js";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "local-installation-"));
@@ -58,6 +62,29 @@ test("installation roots separate immutable resources from owner-only state", as
     if (process.platform !== "win32") {
       const metadata = await lstat(files.stateRoot);
       assert.equal(metadata.mode & 0o777, 0o700);
+    } else {
+      const adapter = createWindowsFilesystemAdapter();
+      const before = adapter.inspectPath(files.stateRoot);
+      assert.equal(before.daclProtected, true);
+      assert.equal(before.nonOwnerAllow, false);
+      assert.equal(before.broadAccess, false);
+      const database = prepareProtectedSqliteDatabaseFile({
+        adapter,
+        path: join(files.stateRoot, "synthetic.sqlite"),
+        createIfMissing: true,
+      });
+      assert.equal(database.created, true,
+        "the installation root must support protected SQLite creation immediately");
+      const unsafeRoot = join(files.root, "unprotected-existing-state");
+      await mkdir(unsafeRoot);
+      const unsafeBefore = adapter.inspectPath(unsafeRoot);
+      assert.equal(unsafeBefore.daclProtected, false);
+      assert.throws(() => prepareLocalInstallationRoots({
+        resourceRoot: files.resourceRoot,
+        stateRoot: unsafeRoot,
+      }), { code: "USAGE_MONITOR_LOCAL_INSTALLATION_INVALID" });
+      assert.deepEqual(adapter.inspectPath(unsafeRoot), unsafeBefore,
+        "rejection must preserve the existing directory and its permissions");
     }
     assert.equal(defaultLocalCompanionStateRoot({
       homeDirectory: "C:\\Users\\example",

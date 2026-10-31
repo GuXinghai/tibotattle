@@ -1,7 +1,7 @@
 import { validateXDetailQuery, validateXQuery, validateXSettings, X_SESSION_ERRORS } from './desktop-x-contract.js';
 
 export const X_IPC_CHANNEL = 'usagemonitor:x-reader:v1';
-const EMPTY = new Set(['getXStatus', 'cancelXLogin', 'getXSettings', 'logoutX', 'clearXCache', 'configureXImport']);
+const EMPTY = new Set(['getXStatus', 'cancelXLogin', 'getXSettings', 'logoutX', 'clearXCache', 'configureXImport', 'openXImportFolder']);
 const ACTIONS = new Set([...EMPTY, 'refreshX', 'listXPosts', 'getXPost', 'beginXLogin', 'setXSettings']);
 function exact(value, keys) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -41,6 +41,7 @@ export function installDesktopXIpc({ ipcMain, service, importBridge, authorize }
     setXSettings: args => service.setSettings(args.value),
     logoutX: () => service.logout(),
     clearXCache: () => service.clearCache(),
+    openXImportFolder: () => importBridge.reveal(),
     configureXImport: async () => {
       const configured = await importBridge.configure();
       const status = await service.getStatus();

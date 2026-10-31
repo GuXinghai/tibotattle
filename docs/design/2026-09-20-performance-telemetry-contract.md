@@ -2,10 +2,17 @@
 title: Daily model performance telemetry requirements
 date: 2026-09-20
 type: spec
-status: in-progress
+status: historical
 ---
 
 # Daily model performance telemetry requirements
+
+Historical design and qualification record for the source revisions named below.
+Legacy performance upload schemas and contribution source were removed on
+2026-10-31. Their recorded implementation/test claims below apply only to the
+original checkpoints; they are not current product behavior. Local measurement
+semantics and timing-store boundaries remain independently useful design evidence.
+Current authority is the [schema lifecycle](../reference/schema-contracts.md).
 
 This specification qualifies the separate daily performance stream alongside
 the [v1.2 implementation plan](../plans/2026-09-20-turn-boundary-telemetry-plan.md).
@@ -347,9 +354,9 @@ not all present in the older foundation base:
 | `src/contribution/telemetry-v11-sync.js` | Exact legacy capability formats; performance cannot be appended transparently. |
 | `src/application/local-incremental-contribution-sync.js` | Existing shared pause/retry state; independent delivery needs separate stream state. |
 
-The foundation's [histogram primitive](../../packages/telemetry-contract/src/performance-histogram.js),
-[daily record validator](../../packages/telemetry-contract/src/telemetry-performance-v1.js)
-and [schema factory](../../packages/telemetry-contract/src/telemetry-performance-v1-schemas.js)
+The foundation's histogram primitive (retired source),
+daily record validator (retired source)
+and schema factory (retired source)
 implement measurement validation. The
 [Codex parser](../../src/providers/codex/inference-timing.js) qualifies local
 rows and daily projector `src/contribution/performance-daily.js` (removed 2026-10-13)

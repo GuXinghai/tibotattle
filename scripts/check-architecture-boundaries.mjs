@@ -67,7 +67,6 @@ const DECLARATION_FILE_PATTERN = /\.d\.(?:cts|mts|ts)$/u;
 const PRODUCT_SOURCE_KINDS = new Set(["app", "package", "shared", "src"]);
 const SOURCE_OWNER_AREAS = new Set([
   "application",
-  "contribution",
   "export",
   "platform",
   "reporting",
@@ -80,9 +79,6 @@ const OWNED_SOURCE_OWNER_KINDS = new Set([
 const REVIEWED_SOURCE_OWNER_PUBLIC_ENTRYPOINTS = new Set([
   "src/application/index.js",
   "src/application/local-review.js",
-  "src/application/local-contribution-preparation.js",
-  "src/application/local-prepared-contribution.js",
-  "src/contribution/index.js",
   "src/export/bundle-verification.js",
   "src/export/canonical-json.js",
   "src/export/index.js",
@@ -94,18 +90,11 @@ const REVIEWED_SOURCE_OWNER_PUBLIC_ENTRYPOINTS = new Set([
   // out of the shared index used by portable/local-only client exports.
   "src/platform/windows-account-observation-credential.js",
   "src/platform/windows-credential-manager-probe.js",
-  "src/platform/owner-only-prepared-contribution-storage.js",
-  "src/platform/telemetry-envelope.js",
   "src/providers/codex/account.js",
   "src/providers/codex/logs.js",
   "src/reporting/index.js",
 ]);
 const REQUIRED_SOURCE_OWNER_PUBLIC_ENTRYPOINTS = Object.freeze([
-  Object.freeze({
-    area: "contribution",
-    category: "contribution_owner_public_entrypoint",
-    entrypoint: "src/contribution/index.js",
-  }),
   Object.freeze({
     area: "reporting",
     category: "reporting_owner_public_entrypoint",
@@ -114,21 +103,15 @@ const REQUIRED_SOURCE_OWNER_PUBLIC_ENTRYPOINTS = Object.freeze([
 ]);
 const SOURCE_OWNER_ALLOWED_PACKAGES = new Map([
   ["application", new Set([
+    "codex-catalog",
     "accounting",
     "quota-analysis",
-    "telemetry-contract",
   ])],
-  ["contribution", new Set([
-    "accounting",
-    "identity-core",
-    "telemetry-contract",
-  ])],
-  ["export", new Set(["telemetry-contract"])],
+  ["export", new Set(["codex-catalog"])],
   ["platform", new Set([
     "identity-core",
-    "telemetry-contract",
   ])],
-  ["provider", new Set(["quota-analysis", "telemetry-contract"])],
+  ["provider", new Set(["codex-catalog", "quota-analysis"])],
   ["reporting", new Set([
     "accounting",
     "quota-analysis",
@@ -145,7 +128,6 @@ const APPLICATIONS_BY_ROOT = Object.freeze(
     .sort((left, right) => right.root.length - left.root.length),
 );
 const NON_BASELINABLE_ARCHITECTURE_CATEGORIES = new Set([
-  "contribution_owner_public_entrypoint",
   "production_import_cycle",
   "retired_production_source_path",
   "reporting_owner_public_entrypoint",
@@ -167,12 +149,6 @@ const VERIFIED_NATIVE_BINDING_REQUIRE_EXPRESSION =
   "requireBinding = (path) => require(path)";
 
 export const ARCHITECTURE_BOUNDARY_CATEGORIES = Object.freeze({
-  contribution_owner_public_entrypoint: Object.freeze({
-    description:
-      "The contribution owner must expose its reviewed public entrypoint whenever contribution implementation source is present.",
-    remediation:
-      "Create src/contribution/index.js and route every external contribution caller through that facade before retaining contribution implementation modules.",
-  }),
   reporting_owner_public_entrypoint: Object.freeze({
     description:
       "The reporting owner must expose its reviewed public entrypoint whenever reporting implementation source is present.",
@@ -297,7 +273,6 @@ export const LEGACY_STORAGE_DIRECT_IMPORTERS = Object.freeze([
   "src/r7-resource-benchmark-fixture.js",
   "src/r7-resource-benchmark-schema.js",
   "src/r7-resource-benchmark.js",
-  "src/real-local-backend-acceptance.js",
   "src/replay-safe-accounting-cache.js",
   "src/verify-weekly-calibration.js",
 ]);
@@ -368,6 +343,20 @@ export const RETIRED_PRODUCTION_SOURCE_PATHS = Object.freeze([
   "src/metadata-exporter.js",
   "src/price-registry.js",
   "src/tier-semantics.js",
+  "src/application/local-contribution-preparation.js",
+  "src/application/local-contribution-sync-queue.js",
+  "src/application/local-prepared-contribution.js",
+  "src/contribution-device-capability.js",
+  "src/contribution-device-client.js",
+  "src/contribution-device-sync.js",
+  "src/local-contribution-preparation.js",
+  "src/platform/local-contribution-sync-queue-storage.js",
+  "src/platform/owner-only-prepared-contribution-storage.js",
+  "src/platform/telemetry-envelope.js",
+  "src/prepared-contribution-compatibility-internal.js",
+  "src/real-local-backend-acceptance.js",
+  "src/telemetry-contribution-builder.js",
+  "src/telemetry-prepared-set.js",
 ]);
 const RETIRED_PRODUCTION_SOURCE_PATH_SET = new Set(
   RETIRED_PRODUCTION_SOURCE_PATHS,
@@ -380,6 +369,8 @@ const RETIRED_PRODUCTION_SOURCE_PATH_SET = new Set(
  */
 export const RETIRED_PRODUCTION_TREE_PATHS = Object.freeze([
   "apps/cloud-run",
+  "packages/telemetry-contract",
+  "src/contribution",
   "src/providers/claude",
 ]);
 const RETIRED_PRODUCTION_TREE_PATH_SET = new Set(
@@ -536,13 +527,10 @@ function sourceOwnerDependencyDirectionViolation(importer, target) {
   if (importerOwner.area === "export") {
     return destinationOwner.kind !== "provider";
   }
-  if (importerOwner.area === "contribution") {
-    return destinationOwner.area !== "export";
-  }
   if (importerOwner.area === "application") {
     return !(
       destinationOwner.kind === "provider"
-      || new Set(["contribution", "export", "reporting"]).has(
+      || new Set(["export", "reporting"]).has(
         destinationOwner.area,
       )
     );

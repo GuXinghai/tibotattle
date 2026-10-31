@@ -27,16 +27,11 @@ const SCRIPT_FILE = fileURLToPath(import.meta.url);
 export const REPOSITORY_ROOT = resolve(dirname(SCRIPT_FILE), "..");
 const OWNER_MARKER_NAME = ".rhetrion-isolated-test-root";
 const ALLOWED_REPORTERS = new Set(["dot", "spec", "tap"]);
-const TEST_FILE_PATH = /^(?:test|apps\/(?:web\/test|electron\/test|local)|packages\/(?:accounting|identity-core|quota-analysis|telemetry-contract|i18n)\/test)\/[^/]+\.test\.(?:js|mjs)$/u;
+const TEST_FILE_PATH = /^(?:test|apps\/(?:web\/test|electron\/test|local)|packages\/(?:accounting|identity-core|quota-analysis|codex-catalog|i18n)\/test)\/[^/]+\.test\.(?:js|mjs)$/u;
 
 const LOCAL_TEST_FILES = Object.freeze([
   "test/local-companion-data.test.js",
   "test/local-companion-refresh.test.js",
-  "test/local-contribution-preparation.test.js",
-  "test/real-local-backend-acceptance.test.js",
-  "test/telemetry-contribution-builder.test.js",
-  "test/contribution-device-sync.test.js",
-  "test/contribution-sync-queue.test.js",
 ]);
 
 const SUITE_DIRECTORIES = Object.freeze({

@@ -1,7 +1,5 @@
-// Shared browser-side localization policy for the loopback dashboard and the
-// public community site. Its canonical catalog mirror ships locally: both
-// surfaces are shipped as ordinary static ES modules, and a locale choice must
-// work while the local companion is offline.
+// Browser-side localization for the loopback dashboard. The canonical catalog
+// mirror ships locally so language selection works offline.
 
 import {
   CATALOGS,
@@ -119,12 +117,12 @@ function interpolate(message, values = {}) {
 // Match only these sentences and bounded numeric/date slots: arbitrary service
 // or provider text remains raw and cannot be interpreted as product copy.
 const EVIDENCE_WARNING_MESSAGES = Object.freeze({
-  "loading": ["Local history indexing is in progress. Complete historical totals will appear after the indexed aggregate is published.", "本地历史索引正在进行。已索引汇总发布后，才会显示完整历史总计。", "La indexación del historial local está en curso. Los totales históricos completos aparecerán cuando se publique el agregado indexado."],
+  "loading": ["Local history indexing has no published aggregate. Complete historical totals are unavailable.", "本地历史汇总尚未发布，暂不显示完整历史总计。", "No hay un agregado publicado del historial local. Los totales históricos completos no están disponibles."],
   "partialIndex": ["The unified local index is readable but only partially covered. Usage totals and timelines are withheld until a complete generation-bound publication is available.", "统一本地索引可读取，但覆盖不完整。完整且与当前索引版本一致的结果发布前，不显示用量总计和时间线。", "El índice local unificado se puede leer, pero su cobertura es parcial. Los totales y las cronologías no se muestran hasta disponer de una publicación completa vinculada a la generación del índice."],
   "missingIndex": ["The unified local index has not been built yet. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "尚未建立统一本地索引。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado aún no se ha creado. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
   "unavailableIndex": ["The unified local index is unavailable. Usage totals and timelines remain unavailable until a complete generation-bound publication is available.", "统一本地索引不可用。完整且与当前索引版本一致的结果发布前，用量总计和时间线不可用。", "El índice local unificado no está disponible. Los totales y las cronologías seguirán sin estar disponibles hasta contar con una publicación completa vinculada a la generación del índice."],
   "newerBuild": ["This local history was created by a newer application build. This build cannot refresh its usage totals or timelines; install a compatible newer build. The retained local history has not been deleted.", "本地历史由较新版本的应用创建。当前版本无法更新其用量总计和时间线，请安装兼容的较新版本。保留的本地历史未被删除。", "Este historial local se creó con una versión más reciente de la aplicación. Esta versión no puede actualizar sus totales ni cronologías; instala una versión posterior compatible. El historial local conservado no se ha eliminado."],
-  "indexing": ["History indexing is still advancing. Complete historical totals stay hidden until an indexed aggregate is available.", "历史索引仍在进行。已索引的汇总结果可用前，不显示完整历史总计。", "La indexación del historial sigue avanzando. Los totales históricos completos no se muestran hasta disponer de un agregado indexado."],
+  "indexing": ["History indexing has no complete aggregate available. Complete historical totals remain unavailable.", "尚无可用的完整历史汇总，暂不显示完整历史总计。", "No hay un agregado completo del historial disponible. Los totales históricos completos siguen sin estar disponibles."],
   "summaryUnavailable": ["The history scan is complete, but the current accounting summary is unavailable. Update local usage to retry.", "历史扫描已完成，但当前用量汇总不可用。请更新本地用量以重试。", "El análisis del historial ha terminado, pero el resumen contable actual no está disponible. Actualiza el uso local para reintentar."],
   "priceRegistry": ["Official API prices changed. Cached price estimates are withheld until the next local replay rebuilds them with the current registry.", "官方 API 价格已变更。下次本地重放按最新价格重新计算前，不显示缓存中的价格估算。", "Los precios oficiales de API han cambiado. Las estimaciones en caché no se muestran hasta que la siguiente reproducción local las recalcule con el registro vigente."],
   "accountingChanged": ["Historical event-time accounting changed. The prior cache is withheld until the next local replay rebuilds it.", "历史事件时间核算方式已变更。下次本地重放重新计算前，不显示旧缓存。", "Ha cambiado la contabilidad histórica por hora del evento. La caché anterior no se muestra hasta que la siguiente reproducción local la reconstruya."],
@@ -135,7 +133,7 @@ const EVIDENCE_WARNING_MESSAGES = Object.freeze({
   "collectorOld": ["The newest retained collector evidence is more than {minutes} minutes old. This is expected after an idle stretch; any newer usage is counted on the next collector pass.", "最近保留的采集证据已有超过 {minutes} 分钟未更新。闲置一段时间后出现此状态属正常现象；较新的用量会在下次采集时计入。", "La evidencia más reciente conservada por el recolector tiene más de {minutes} minutos. Es normal tras un período de inactividad; el uso posterior se contará en la siguiente pasada."],
   "indexMissingRecent": ["The unified local index has not been built yet. Usage history and the broadest period are bounded to the recent {days}-day collector window until it is.", "尚未建立统一本地索引。在索引建立前，用量历史和最长查看范围仅涵盖最近 {days} 天的采集记录。", "El índice local unificado aún no se ha creado. Hasta entonces, el historial de uso y el período más amplio se limitan a los últimos {days} días del recolector."],
   "indexUnreadableRecent": ["The unified local index is unreadable. Usage history and the broadest period are bounded to the recent {days}-day collector window until it recovers.", "统一本地索引无法读取。在恢复前，用量历史和最长查看范围仅涵盖最近 {days} 天的采集记录。", "El índice local unificado no se puede leer. Hasta que se recupere, el historial de uso y el período más amplio se limitan a los últimos {days} días del recolector."],
-  "indexBehind": ["The unified local index is {minutes} minutes behind the newest collector evidence and catches up on the next refresh.", "统一本地索引比最新采集证据落后 {minutes} 分钟，会在下次刷新时追上。", "El índice local unificado va {minutes} minutos por detrás de la evidencia más reciente del recolector y se pondrá al día en la siguiente actualización."],
+  "indexBehind": ["The unified local index is {minutes} minutes behind the newest collector evidence.", "统一本地索引比最新采集证据落后 {minutes} 分钟。", "El índice local unificado va {minutes} minutos por detrás de la evidencia más reciente del recolector."],
   "priceEvidenceStart": ["Verified OpenAI price evidence was reviewed beginning {date}; events without a recognized or separately evidenced card remain unpriced.", "经核实的 OpenAI 价格证据自 {date} 起接受审核；没有可识别价格表或单独证据的事件仍保持未定价。", "La revisión de la evidencia verificada de precios de OpenAI comienza el {date}; los eventos sin una tabla reconocida o evidencia independiente quedan sin precio."],
   "coverageGrowing": ["Indexed-history totals currently cover {indexed}/{sources} discovered sources and expand as later foreground refreshes advance the index.", "已索引历史总计目前覆盖已发现来源中的 {indexed}/{sources} 个；后续前台刷新推进索引时，覆盖范围会扩大。", "Los totales del historial indexado cubren actualmente {indexed}/{sources} fuentes descubiertas y se ampliarán a medida que las próximas actualizaciones en primer plano hagan avanzar el índice."],
   "excludedSources": ["Excluded from indexed history: {skipped} {sourcenoun} across {threads} {threadnoun} did not pass local validation. Their usage remains unavailable.", "未计入已索引历史：{threads} 个会话中的 {skipped} 个来源未通过本地验证，其用量仍不可用。", "Excluidas del historial indexado: {skipped} fuentes de {threads} conversaciones no superaron la validación local. Su uso sigue sin estar disponible."],
@@ -173,9 +171,7 @@ export const WEB_MESSAGES = Object.freeze({
   ...Object.fromEntries(Object.keys(CATALOGS[DEFAULT_LOCALE])
     .filter((key) => key.startsWith("allowance.")
       || key.startsWith("trends.")
-      || key.startsWith("contribution.")
       || key.startsWith("refresh.")
-      || key.startsWith("continuityConsent.")
       || key.startsWith("page.")
       || key.startsWith("reporting.")
       || key.startsWith("setup.")
@@ -183,7 +179,6 @@ export const WEB_MESSAGES = Object.freeze({
       || key.startsWith("usageSimple.")
       || key.startsWith("workload.")
       || key.startsWith("performance.")
-      || key.startsWith("performanceConsent.")
       || key.startsWith("dashboard.overview.")
       || key.startsWith("dashboard.views.")
       || key === "dashboard.notice.details"
@@ -192,7 +187,6 @@ export const WEB_MESSAGES = Object.freeze({
       || key.startsWith("appearance.")
       || key.startsWith("background.")
       || key.startsWith("x.")
-      || key.startsWith("site.features.")
       || key.startsWith("accounting.cacheContinuity.matrix.")
       || key.startsWith("trends.")
       || key.startsWith("electron.")
@@ -984,18 +978,6 @@ export const WEB_MESSAGES = Object.freeze({
   "divergence.speed.fast": ["fast", "快速", "rápida"],
   "divergence.speed.standard": ["standard", "标准", "estándar"],
   "divergence.speed.unknown": ["unknown", "未知", "desconocida"],
-  "contribution.signInCancelled": ["{provider} sign-in was cancelled. Nothing was uploaded.", "已取消 {provider} 登录。未上传任何内容。", "Se canceló el inicio de sesión con {provider}. No se cargó nada."],
-  "contribution.signInStarting": ["Starting {provider} sign-in…", "正在开始 {provider} 登录…", "Iniciando sesión con {provider}…"],
-  "contribution.signInIncomplete": ["{provider} sign-in did not complete. Nothing was uploaded. You can try again.", "{provider} 登录未完成。未上传任何内容。你可以重试。", "El inicio de sesión con {provider} no se completó. No se cargó nada. Puedes intentarlo de nuevo."],
-  "contribution.signInDiscarded": ["{message} For safety, this page discarded the one-time sign-in; sign in again before retrying.", "{message} 为安全起见，此页面已丢弃一次性登录；重试前请重新登录。", "{message} Por seguridad, esta página descartó el inicio de sesión de un solo uso; vuelve a iniciar sesión antes de reintentar."],
-  "contribution.enrollmentPaused": ["New contribution enrollment is currently paused. Local reporting is unaffected.", "新的贡献注册目前已暂停。本地报告不受影响。", "La inscripción de nuevas contribuciones está actualmente en pausa. Los informes locales no se ven afectados."],
-  "contribution.enrollmentPausedNoUpload": ["New contribution enrollment is currently paused. Local reporting is unaffected, and nothing was uploaded.", "新的贡献注册目前已暂停。本地报告不受影响，且未上传任何内容。", "La inscripción de nuevas contribuciones está actualmente en pausa. Los informes locales no se ven afectados y no se cargó nada."],
-  "contribution.enrollmentPausedButton": ["New enrollment paused", "新的注册已暂停", "Nueva inscripción en pausa"],
-  "contribution.newEnrollmentPausedSignInWorks": ["New sign-ups are paused. Contributed before? Signing in reconnects you.", "新用户注册已暂停。以前贡献过？登录即可重新连接。", "Las nuevas inscripciones están en pausa. ¿Ya contribuiste antes? Inicia sesión para reconectarte."],
-  "contribution.identityGenericSession": ["Signed in for hosted contribution", "已登录以进行托管贡献", "Sesión iniciada para contribución alojada"],
-  "contribution.signOutStarting": ["Signing out securely…", "正在安全退出登录…", "Cerrando sesión de forma segura…"],
-  "contribution.signOutForgetting": ["Forgetting this unfinished sign-in…", "正在忘记这次未完成的登录…", "Olvidando este inicio de sesión incompleto…"],
-  "contribution.signOutFailed": ["The service could not confirm sign-out, so you are still signed in. Nothing was changed; check your connection and try again.", "服务无法确认退出登录，因此你仍处于登录状态。没有任何更改；请检查连接后重试。", "El servicio no pudo confirmar el cierre de sesión, por lo que sigues con la sesión iniciada. No se cambió nada; comprueba tu conexión e inténtalo de nuevo."],
   // Standalone capitalized forms (owner-directed, 2026-08-10): the period is
   // now the whole detail line under Recorded activity — the "event-time API
   // equivalent" caption is gone — so the mid-sentence "the …" phrasing left
@@ -1194,26 +1176,6 @@ export const WEB_MESSAGES = Object.freeze({
     "{appName} 无法读取本地审阅状态。请选择“再次检查”。未上传任何内容。",
     "{appName} no pudo leer el estado de revisión local. Elige Comprobar de nuevo. No se cargó nada.",
   ],
-  "contribution.diagnostics.copy": [
-    "Copy diagnostics",
-    "复制诊断信息",
-    "Copiar diagnóstico",
-  ],
-  "contribution.diagnostics.copying": [
-    "Copying…",
-    "正在复制…",
-    "Copiando…",
-  ],
-  "contribution.diagnostics.copied": [
-    "Diagnostics copied",
-    "诊断信息已复制",
-    "Diagnóstico copiado",
-  ],
-  "contribution.diagnostics.failed": [
-    "Could not copy diagnostics",
-    "无法复制诊断信息",
-    "No se pudo copiar el diagnóstico",
-  ],
   "consent.syncProgress": [
     "Sync: {synced} of {total} days synced · {pending} pending.",
     "同步：{total} 天中已同步 {synced} 天 · 待同步 {pending} 天。",
@@ -1335,158 +1297,27 @@ export const WEB_MESSAGES = Object.freeze({
   "installer.assurance.message": ["Signed installer with a published SHA-256 checksum.", "已签名的安装程序，并公布 SHA-256 校验和。", "Instalador firmado con suma de comprobación SHA-256 publicada."],
 
   "installer.assurance.details": ["Security and verification", "安全与验证", "Seguridad y verificación"],
-  "community.daily.title": ["Community daily activity", "社区每日活动", "Actividad comunitaria diaria"],
-  "community.reportedCause": ["Reported cause: {code}.", "报告原因：{code}。", "Causa informada: {code}."],
-  "community.serviceReference": ["Service reference {reference}.", "服务参考：{reference}。", "Referencia del servicio {reference}."],
-  "community.released": ["Released", "已发布", "Publicado"],
-  "community.metric.usageEvents": ["Usage events", "用量事件", "Eventos de uso"],
-  "community.metric.allTokens": ["All tokens", "全部 Token", "Todos los tokens"],
-  "community.daily.state.serviceUnavailable": ["Daily community activity is temporarily unavailable. We can't tell whether any day has been published.", "每日社区活动暂时不可用。这并不能说明是否已发布任何日期。", "La actividad comunitaria diaria no está disponible temporalmente. Esto no indica si se ha publicado algún día."],
-  "community.daily.state.unsupportedSchema": ["The daily community series cannot be displayed safely with this version of {appName}.", "此版本的 {appName} 无法安全显示每日社区序列。", "La serie comunitaria diaria no se puede mostrar de forma segura con esta versión de {appName}."],
-  "community.daily.state.nonePublished": ["No daily community activity has been published for the year window yet.", "此一年窗口内尚未发布任何每日社区活动。", "Todavía no se ha publicado actividad comunitaria diaria para la ventana anual."],
-  "community.daily.seriesAvailable": ["Daily series available", "每日序列可用", "Serie diaria disponible"],
-  "community.daily.seriesUnavailable": ["Daily series unavailable", "每日序列不可用", "Serie diaria no disponible"],
-  "community.daily.noneYet": ["No daily activity published yet", "尚未发布每日活动", "Aún no se ha publicado actividad diaria"],
   // Retained-evidence copy, shared by every community view that can serve a
   // payload this browser already received. It states the age and says plainly
   // that nothing was estimated, because a reader must never be unable to tell
   // retained figures from current ones.
-  "community.daily.seriesCached": ["Cached daily series", "缓存的每日序列", "Serie diaria en caché"],
-  "community.cached.chip": ["Showing cached figures", "显示缓存数据", "Mostrando cifras en caché"],
-  "community.cached.notice": ["Couldn't reach the service, so these are the figures this browser last received, {age}. They aren't current, and nothing has been estimated to fill the gap.", "无法连接服务，因此这里显示的是此浏览器上次收到的数据，时间为{age}。这些数据不是最新的，也没有通过估算来填补缺口。", "No se pudo contactar con el servicio, así que estas son las cifras que este navegador recibió por última vez, {age}. No están actualizadas y no se ha estimado nada para rellenar el hueco."],
-  "community.daily.failedLoad": ["The daily community series could not be loaded. Nothing is inferred from a failed request.", "无法加载每日社区序列。失败的请求不会推断任何结果。", "No se pudo cargar la serie comunitaria diaria. No se infiere nada de una solicitud fallida."],
   // Frames the four figures wherever they are shown outside the activity
   // band. In the hero they sit above the download, where an unlabelled set of
   // totals would read as the reader's own usage rather than the community's.
-  "community.contribution.heroHeading": ["Contributed by the community so far", "社区迄今的贡献", "Aportado por la comunidad hasta ahora"],
-  "community.daily.activitySummary": ["Explore the contribution history", "探索贡献历史", "Explorar el historial de contribuciones"],
-  "community.daily.activityHeading": ["Community activity over time", "社区活动趋势", "Actividad de la comunidad a lo largo del tiempo"],
-  "community.daily.activityCopy": ["Delayed, aggregate daily totals from optional contributions. No prompts, responses or account details are included.", "来自可选贡献的延迟汇总每日总量。此公开视图不包含提示词、回复或账户详情。", "Totales diarios agregados y diferidos de contribuciones opcionales. Esta vista pública no incluye prompts, respuestas ni datos de cuentas."],
-  "community.daily.activityThrough": ["Activity through", "活动截至", "Actividad hasta"],
-  "community.daily.activityThroughDetail": ["Most recent community day", "最近的社区活动日期", "Día más reciente de la comunidad"],
-  "community.daily.apiEquivalentSpend": ["Total API-equivalent spend", "API 等价金额总支出", "Gasto total equivalente de API"],
-  "community.daily.apiEquivalentSpendDetail.complete": ["Across {days} shared days in USD; not an actual bill", "跨 {days} 个共享日期，以美元计；非实际账单", "En {days} días compartidos, en USD; no es una factura real"],
-  "community.daily.apiEquivalentSpendDetail.partial": ["Priced portion across {pricedDays} of {days} shared days in USD; not an actual bill", "{days} 个共享日期中 {pricedDays} 天的已定价部分，以美元计；非实际账单", "Parte con precio de {pricedDays} de {days} días compartidos, en USD; no es una factura real"],
-  "community.daily.apiEquivalentSpendDetail.unavailable": ["API-equivalent spend unavailable; not an actual bill", "API 等价金额支出不可用；非实际账单", "Gasto equivalente de API no disponible; no es una factura real"],
-  "community.daily.turnsCounted": ["Turns counted", "已计入的轮次", "Turnos contabilizados"],
-  "community.daily.turnsCountedDetail": ["Usage events across {days} shared days", "跨 {days} 个共享日期的用量事件", "Eventos de uso en {days} días compartidos"],
-  "community.daily.allTokensCounted": ["All tokens counted", "已计入的全部 Token", "Todos los tokens contabilizados"],
-  "community.daily.allTokensCountedDetail": ["Input and output across {days} shared days", "跨 {days} 个共享日期的输入与输出", "Entrada y salida en {days} días compartidos"],
-  "community.daily.latestDay": ["Latest published day", "最新发布日期", "Último día publicado"],
-  "community.daily.revision": ["Revision", "修订", "Revisión"],
-  "community.daily.revisionAge": ["Revision age", "修订时长", "Antigüedad de la revisión"],
-  "community.daily.publishedDays": ["Published days in window", "窗口内已发布天数", "Días publicados en la ventana"],
-  "community.daily.recomputeNote": ["Late contributions can update a day; this view always shows the newest published totals.", "迟到的贡献可能会更新某一天；此视图始终显示最新发布的总量。", "Las contribuciones tardías pueden actualizar un día; esta vista siempre muestra los totales publicados más recientes."],
-  "community.daily.chartLabel": ["Daily community activity chart", "每日社区活动图表", "Gráfico de actividad comunitaria diaria"],
-  "community.daily.chartDescription": ["Usage events per published day as bars, with all input and output tokens as a line on a second axis. Unpublished days and unavailable token totals appear as gaps.", "每个已发布日期的用量事件以柱形显示，全部输入和输出 Token 以第二坐标轴上的折线显示。未发布的日期和不可用的 Token 总量显示为空缺。", "Los eventos de uso por día publicado se muestran como barras, y todos los tokens de entrada y salida como una línea en un segundo eje. Los días sin publicar y los totales de tokens no disponibles aparecen como huecos."],
-  "community.daily.seriesFilling": ["The daily series is still filling in. Dots mark the few published days so far.", "每日序列仍在补充中。圆点标记目前已发布的少量日期。", "La serie diaria todavía se está completando. Los puntos marcan los pocos días publicados hasta ahora."],
-  "community.daily.detailedDays": ["View the daily series ({count} days)", "查看每日序列（{count} 天）", "Ver la serie diaria ({count} días)"],
-  "community.daily.metricsCaption": ["Delayed daily community activity totals", "延迟的每日社区活动总量", "Totales diferidos de actividad comunitaria diaria"],
-  "community.daily.day": ["Day", "日期", "Día"],
-  "community.daily.quotaObservations": ["Quota observations", "额度观测", "Observaciones de cuota"],
-  "community.daily.contributingDevices": ["Contributing devices", "贡献设备", "Dispositivos contribuyentes"],
   // The community cache-retention lane. The two rate columns keep the names
   // the lane publishes rather than a friendlier reading of them: the site
   // presents the published claim and does not redefine it. The measurement
   // caveats below are part of the claim, not decoration — the gap basis
   // overstates a real idle pause, so the short bands must not be read as an
   // answer to "how long can I wait".
-  "community.cacheRetention.summary": ["Cache retention by pause length", "按暂停时长划分的缓存保留情况", "Retención de caché por duración de la pausa"],
-  "community.cacheRetention.caption": ["Cached input kept across pauses between consecutive requests", "连续请求之间的暂停期内保留的缓存输入", "Entrada en caché conservada durante las pausas entre solicitudes consecutivas"],
-  "community.cacheRetention.measuresCopy": ["Each row groups the gaps between two consecutive requests, not the pauses between your turns. A single turn can send several requests, so a row does not describe how you work.", "每一行汇总的是两次连续请求之间的间隔，而不是你两个轮次之间的停顿。一个轮次可能发送多次请求，因此某一行并不能描述你的工作方式。", "Cada fila agrupa los intervalos entre dos solicitudes consecutivas, no las pausas entre tus turnos. Un solo turno puede enviar varias solicitudes, así que una fila no describe cómo trabajas."],
-  "community.cacheRetention.gapBasisCaveat": ["Every gap is measured from the end of one response to the end of the next, so it overstates the real idle pause by the later request\u2019s own duration. That error grows with response time, so the bands under ten minutes do not answer how long you can wait; the bands from ten minutes up do.", "每个间隔都是从上一次响应结束测量到下一次响应结束，因此会把真实的空闲停顿高估后一次请求本身的耗时。该误差随响应时间增大，所以十分钟以下的区间无法回答你能等多久；十分钟及以上的区间可以。", "Cada intervalo se mide desde el final de una respuesta hasta el final de la siguiente, por lo que sobrestima la pausa real en la duración de la solicitud posterior. Ese error crece con el tiempo de respuesta, así que las bandas de menos de diez minutos no responden cuánto puedes esperar; las de diez minutos en adelante sí."],
-  "community.cacheRetention.noEvidenceNote": ["A dash means no gap of that length was measured. It is not a reuse rate of 0%.", "短横线表示未测到该长度的间隔，并不表示复用率为 0%。", "Un guion significa que no se midió ningún intervalo de esa duración. No es una tasa de reutilización del 0 %."],
-  "community.cacheRetention.concentrationNote": ["Sources counts the distinct participants behind a band, and Largest source is the biggest single share of it. A band with few sources, or one dominant source, describes those contributors rather than the community.", "“来源数”表示某个区间背后的不同参与者数量，“最大来源占比”表示其中单个来源所占的最大份额。来源很少或存在一个主导来源的区间，描述的是这些贡献者，而不是整个社区。", "«Fuentes» cuenta los participantes distintos detrás de una banda y «Fuente mayor» es la mayor porción individual. Una banda con pocas fuentes, o con una dominante, describe a esos contribuyentes y no a la comunidad."],
-  "community.cacheRetention.excludedNote": ["Excluded before these rates: {insufficient} without enough evidence, {contracted} where the context contracted, and {ties} unordered ties.", "在计算这些比率前已排除：{insufficient} 个证据不足，{contracted} 个上下文收缩，{ties} 个顺序无法判定。", "Excluidos antes de estas tasas: {insufficient} sin evidencia suficiente, {contracted} con contexto contraído y {ties} empates sin orden."],
-  "community.cacheRetention.column.pause": ["Pause between requests", "请求之间的暂停", "Pausa entre solicitudes"],
-  "community.cacheRetention.column.reusedMoreThanHalf": ["Reused over half", "复用超过一半", "Reutilizó más de la mitad"],
-  "community.cacheRetention.columnNote": ["Both columns compare against the PREVIOUS request's cached amount: over half means more than half of it was still cached, and all of it means at least as much was. The second is a subset of the first.", "两列均与上一次请求的缓存量比较：“复用超过一半”表示其中超过一半仍被缓存，“全部复用”表示缓存量不少于上一次。后者是前者的子集。", "Ambas columnas se comparan con la cantidad en caché de la solicitud ANTERIOR: «más de la mitad» significa que más de la mitad seguía en caché y «todo» que había al menos la misma cantidad. La segunda es un subconjunto de la primera."],
-  "community.cacheRetention.column.matchedOrExceeded": ["Reused all of it", "全部复用", "Reutilizó todo"],
-  "community.cacheRetention.column.adjacencies": ["Gaps measured", "已测间隔数", "Intervalos medidos"],
-  "community.cacheRetention.column.sessions": ["Sessions", "会话数", "Sesiones"],
-  "community.cacheRetention.column.contributors": ["Sources", "来源数", "Fuentes"],
-  "community.cacheRetention.column.topContributorShare": ["Largest source", "最大来源占比", "Fuente mayor"],
-  "community.cacheRetention.band.underOneMinute": ["Under 1 minute", "1 分钟以内", "Menos de 1 minuto"],
-  "community.cacheRetention.band.oneToTwoMinutes": ["1\u20132 minutes", "1\u20132 分钟", "1\u20132 minutos"],
-  "community.cacheRetention.band.twoToFiveMinutes": ["2\u20135 minutes", "2\u20135 分钟", "2\u20135 minutos"],
-  "community.cacheRetention.band.fiveToTenMinutes": ["5\u201310 minutes", "5\u201310 分钟", "5\u201310 minutos"],
-  "community.cacheRetention.band.tenToThirtyMinutes": ["10\u201330 minutes", "10\u201330 分钟", "10\u201330 minutos"],
-  "community.cacheRetention.band.thirtyMinutesToOneHour": ["30 minutes\u20131 hour", "30 分钟\u20131 小时", "30 minutos\u20131 hora"],
-  "community.cacheRetention.band.oneToTwoHours": ["1\u20132 hours", "1\u20132 小时", "1\u20132 horas"],
-  "community.cacheRetention.band.twoToSixHours": ["2\u20136 hours", "2\u20136 小时", "2\u20136 horas"],
-  "community.cacheRetention.band.sixToTwentyFourHours": ["6\u201324 hours", "6\u201324 小时", "6\u201324 horas"],
-  "community.cacheRetention.band.overTwentyFourHours": ["24 hours to 7 days", "24 小时至 7 天", "De 24 horas a 7 días"],
   // The community allowance series. Aggregate dollar-equivalent estimates and
   // participant counts are owner-approved for publication; the participant
   // count is part of the claim and always rendered as visible copy.
-  "community.hero.context": ["Community view", "社区视图", "Vista de la comunidad"],
-  "community.allowance.headingLegacy": ["Pro 20x-equivalent allowance", "Pro 20x 等值额度", "Asignación equivalente a Pro 20x"],
-  "community.allowance.heading": ["Pro 10x-equivalent allowance", "Pro 10x 等值额度", "Asignación equivalente a Pro 10x"],
-  "community.allowance.heroCopyLegacy": ["Estimated weekly API-price value: Pro 20× equivalent overall and by model; each plan's own week in By plan.", "估计每周 API 价格价值：汇总和按模型使用 Pro 20× 等值；按方案显示各方案自身的一周额度。", "Valor semanal estimado a precios de API: equivalente Pro 20× en conjunto y por modelo; la semana propia de cada plan en Por plan."],
-  "community.allowance.heroCopy": ["Estimated weekly API-price value: Pro 10× equivalent overall and by model; each plan's own week in By plan.", "估计每周 API 价格价值：汇总和按模型使用 Pro 10× 等值；按方案显示各方案自身的一周额度。", "Valor semanal estimado a precios de API: equivalente Pro 10× en conjunto y por modelo; la semana propia de cada plan en Por plan."],
-  "community.allowance.dialogEyebrow": ["Community view", "社区视图", "Vista de la comunidad"],
-  "community.allowance.dialogTitle": ["Community allowance history", "社区额度历史", "Historial de asignación comunitaria"],
-  "community.allowance.dialogCopy": ["Hover, tap or use arrow keys to inspect a day.", "悬停、轻点或使用方向键查看某一天。", "Pasa el cursor, toca o usa las flechas para examinar un día."],
-  "community.allowance.dialogRange": ["Time range", "时间范围", "Intervalo de tiempo"],
-  "community.allowance.viewLabel": ["Allowance graph view", "额度图表视图", "Vista del gráfico de asignación"],
-  "community.allowance.viewAggregate": ["Aggregate", "汇总", "Agregado"],
-  "community.allowance.viewPlans": ["By plan", "按方案", "Por plan"],
-  "community.allowance.viewModels": ["By model", "按模型", "Por modelo"],
-  "community.privacy.heading": ["Community publication", "社区发布", "Publicación comunitaria"],
-  "community.privacy.sample": ["Eligible contributions from signed-in or accountless installations can enter the public community sample. A contribution source is an installation/account track, not a unique person or verified OpenAI account. Separate installations may submit overlapping history. Receiving an upload does not itself publish it.", "符合条件的已登录或无需登录安装实例的贡献均可纳入公开社区样本。一个贡献来源指一个安装实例／账户轨迹，不代表唯一用户或经验证的 OpenAI 账户。不同安装实例可能提交重叠历史。收到上传并不等于发布。", "Las contribuciones elegibles de instalaciones con o sin inicio de sesión pueden formar parte de la muestra pública. Una fuente de contribución es un registro de instalación/cuenta, no una persona única ni una cuenta de OpenAI verificada. Distintas instalaciones pueden enviar historial solapado. Recibir una carga no implica publicarla."],
-  "community.privacy.smallSample": ["The daily view publishes activity totals and API-price-equivalent allowance estimates, including comparisons by plan and model. Estimates and visible sample counts may be based on a single source. Small samples are uncertain and can reveal that source’s estimated capacity, even though no source identifiers are published. This is not a guarantee of anonymity.", "每日视图发布活动总量和 API 等价金额额度估计，包括按方案和模型的比较。估计值和可见样本数可能仅基于一个来源。小样本存在不确定性，即使不公开来源标识，也可能透露该来源的估计额度。这不保证匿名性。", "La vista diaria publica totales de actividad y estimaciones de asignación equivalentes a precios de API, con comparaciones por plan y modelo. Las estimaciones y los recuentos visibles pueden basarse en una sola fuente. Las muestras pequeñas son inciertas y pueden revelar su capacidad estimada, aunque no se publiquen identificadores de las fuentes. Esto no garantiza el anonimato."],
-  "community.privacy.publicationRules": ["Daily publication has no minimum source count or per-source cap. Plan and model comparisons use closed UTC dates and omit stale, incomplete, or unstable estimates. Previously released sealed weekly snapshots retain their original eligibility rules, delay, account thresholds, per-account caps, and rounding. Those rules do not apply to the daily view.", "每日发布不设最少来源数或单一来源上限。方案和模型比较使用已结束的 UTC 日期，并省略过时、不完整或不稳定的估计。此前发布并封存的每周快照保留其原有资格规则、延迟、账户数量门槛、单账户上限和取整规则。这些规则不适用于每日视图。", "La publicación diaria no exige un mínimo de fuentes ni impone un límite por fuente. Las comparaciones por plan y modelo usan fechas UTC cerradas y omiten estimaciones obsoletas, incompletas o inestables. Las instantáneas semanales selladas ya publicadas conservan sus reglas originales de elegibilidad, retraso, umbrales de cuentas, límites por cuenta y redondeo. Esas reglas no se aplican a la vista diaria."],
-  "community.sample.sourcesSummary": ["About these sources", "关于这些来源", "Acerca de estas fuentes"],
-  "community.sample.sourcesDisclosure": ["Contributions can come from signed-in or accountless installations. A source is an installation/account track, not a unique person or verified OpenAI account. Separate installations may include overlapping history.", "贡献可来自已登录或无需登录的安装实例。一个来源指一个安装实例／账户轨迹，不代表唯一用户或经验证的 OpenAI 账户。不同安装实例可能包含重叠历史。", "Las contribuciones pueden proceder de instalaciones con o sin inicio de sesión. Una fuente es un registro de instalación/cuenta, no una persona única ni una cuenta de OpenAI verificada. Distintas instalaciones pueden incluir historial solapado."],
-  "community.allowance.smallSampleDisclosure": ["Small samples, including a single source, are uncertain and may reveal that source’s estimated capacity. Source identifiers stay private.", "小样本可能仅有一个来源，存在不确定性，也可能透露该来源的估计额度。来源标识不公开。", "Las muestras pequeñas, incluso de una sola fuente, son inciertas y pueden revelar su capacidad estimada. Los identificadores de las fuentes son privados."],
-  "community.allowance.planChartLabel": ["Community allowance by plan", "按方案显示社区额度", "Asignación comunitaria por plan"],
-  "community.allowance.modelChartLabel": ["Community allowance by model", "按模型显示社区额度", "Asignación comunitaria por modelo"],
-  "community.allowance.planChartDescription": ["Each plan’s own estimated week at API prices, on its own scale. Shading shows the middle 80% of qualified reset fits. Missing days remain gaps. Arrow keys inspect individual points.", "按 API 价格分别估计每个方案自身的一周额度，并使用各自刻度。阴影显示合格重置拟合的中间 80%。缺失日期保持为空缺。使用方向键查看各点。", "La semana estimada de cada plan a precios de API, con su propia escala. El sombreado muestra el 80% central de los ajustes válidos. Los días ausentes quedan vacíos. Las flechas recorren los puntos."],
-  "community.allowance.modelChartDescriptionLegacy": ["A separate full-week Pro 20×-equivalent estimate for each identified model. Dot size reflects contribution sources, not reset fits. No uncertainty band is available. Missing days remain gaps. Arrow keys inspect individual points.", "每个可识别模型单独显示完整一周的 Pro 20× 等值估计。点的大小表示贡献来源数，而非重置拟合数。不提供不确定性区间。缺失日期保持为空缺。使用方向键查看各点。", "Una estimación semanal completa equivalente a Pro 20× por modelo identificado. El tamaño del punto indica fuentes de contribución, no ajustes de reinicio. No hay banda de incertidumbre. Los días ausentes quedan vacíos. Las flechas recorren los puntos."],
-  "community.allowance.modelChartDescription": ["A separate full-week Pro 10×-equivalent estimate for each identified model. Dot size reflects contribution sources, not reset fits. No uncertainty band is available. Missing days remain gaps. Arrow keys inspect individual points.", "每个可识别模型单独显示完整一周的 Pro 10× 等值估计。点的大小表示贡献来源数，而非重置拟合数。不提供不确定性区间。缺失日期保持为空缺。使用方向键查看各点。", "Una estimación semanal completa equivalente a Pro 10× por modelo identificado. El tamaño del punto indica fuentes de contribución, no ajustes de reinicio. No hay banda de incertidumbre. Los días ausentes quedan vacíos. Las flechas recorren los puntos."],
-  "community.allowance.planMethodLegacy": ["Shading shows the middle 80% of qualifying reset fits. Missing days stay gaps.", "阴影表示合格重置拟合的中间 80%。缺失日期保持为空隙。", "El sombreado muestra el 80 % central de los ajustes de restablecimiento válidos. Los días ausentes quedan como huecos."],
-  "community.allowance.planMethod": ["Shading shows the middle 80% of qualifying reset fits. Missing days stay gaps.", "阴影表示合格重置拟合的中间 80%。缺失日期保持为空隙。", "El sombreado muestra el 80 % central de los ajustes de restablecimiento válidos. Los días ausentes quedan como huecos."],
-  "community.allowance.modelMethodLegacy": ["A full Pro 20× week spent on one model, at API prices. Only stable, identified fits appear; counts are contribution sources, not reset fits. History uses evidence through each day; missing or unstable estimates stay gaps. Model availability is not implied.", "将完整的 Pro 20× 周额度用于单一模型，按 API 价格计值。仅展示稳定且可识别的拟合；计数为贡献来源数，并非重置拟合数。历史仅使用截至当日的证据；缺失或不稳定的估计保持为空缺。不表示模型当前可用。", "Una semana Pro 20× completa en un modelo, a precios de API. Solo ajustes estables e identificados; se cuentan fuentes de contribución, no ajustes de reinicio. El historial usa evidencia hasta cada fecha; las estimaciones ausentes o inestables dejan huecos. No implica disponibilidad del modelo."],
-  "community.allowance.modelMethod": ["A full Pro 10× week spent on one model, at API prices. Only stable, identified fits appear; counts are contribution sources, not reset fits. History uses evidence through each day; missing or unstable estimates stay gaps. Model availability is not implied.", "将完整的 Pro 10× 周额度用于单一模型，按 API 价格计值。仅展示稳定且可识别的拟合；计数为贡献来源数，并非重置拟合数。历史仅使用截至当日的证据；缺失或不稳定的估计保持为空缺。不表示模型当前可用。", "Una semana Pro 10× completa en un modelo, a precios de API. Solo ajustes estables e identificados; se cuentan fuentes de contribución, no ajustes de reinicio. El historial usa evidencia hasta cada fecha; las estimaciones ausentes o inestables dejan huecos. No implica disponibilidad del modelo."],
-  "community.allowance.cardsCaption": ["API-equivalent USD / week", "API 等价金额美元 / 周", "USD equivalentes de API / semana"],
-  "community.allowance.referenceEquivalentLegacy": ["Pro 20x-equivalent: {value}/week", "Pro 20x 等效：每周 {value}", "Equivalente Pro 20x: {value}/semana"],
-  "community.allowance.referenceEquivalent": ["Pro 10x-equivalent: {value}/week", "Pro 10x 等效：每周 {value}", "Equivalente Pro 10x: {value}/semana"],
-  "community.allowance.actualPlanValue": ["This plan: {value}/week at API prices", "此方案：按 API 价格每周 {value}", "Este plan: {value}/semana a precios de API"],
-  "community.allowance.legendFocus": ["Select a legend to focus; select it again to show all.", "选择图例以聚焦；再次选择以显示全部。", "Selecciona una leyenda para destacar; repite para ver todas."],
-  "community.allowance.breakdownsUnavailable": ["This breakdown can't be shown publicly yet. The aggregate and community activity views are separate.", "此分类明细尚未提供公开展示。汇总视图与社区活动视图仍然独立。", "Este desglose aún no está disponible para su publicación. Las vistas agregada y de actividad comunitaria siguen siendo independientes."],
-  "community.allowance.dialogClose": ["Close", "关闭", "Cerrar"],
-  "community.allowance.state.serviceUnavailable": ["The community allowance series is temporarily unavailable. We can't tell whether any estimate has been published.", "社区额度序列暂时不可用。这并不能说明是否已发布任何估计。", "La serie comunitaria de asignación no está disponible temporalmente. Esto no indica si se ha publicado alguna estimación."],
-  "community.allowance.state.unsupportedSchema": ["The community allowance series cannot be displayed safely with this version of {appName}.", "此版本的 {appName} 无法安全显示社区额度序列。", "La serie comunitaria de asignación no se puede mostrar de forma segura con esta versión de {appName}."],
-  "community.allowance.state.nonePublished": ["No community days have been published for the year window yet.", "此一年窗口内尚未发布任何社区日期。", "Todavía no se ha publicado ningún día comunitario para la ventana anual."],
-  "community.allowance.available": ["Allowance estimates available", "额度估计可用", "Estimaciones de asignación disponibles"],
-  "community.allowance.unavailable": ["Allowance estimates unavailable", "额度估计不可用", "Estimaciones de asignación no disponibles"],
-  "community.allowance.accumulating": ["Estimates still accumulating", "估计仍在累积中", "Las estimaciones aún se están acumulando"],
-  "community.allowance.modelsAccumulating": ["No estimates for identified models have been published yet. A plan or aggregate estimate doesn't give a reliable rate for each model, and missing or unstable model data stays a gap.", "已发布历史中尚无可识别的模型估计。方案或汇总估计并不能确定每个模型的可靠费率；缺失或不稳定的模型证据保持为空缺。", "Aún no hay estimaciones de modelos identificados en el historial publicado. Una estimación por plan o agregada no establece una tasa fiable para cada modelo; la evidencia ausente o inestable deja huecos."],
-  "community.allowance.noModelEstimate": ["No published estimate yet", "暂无已发布估计", "Aún no hay estimación publicada"],
-  "community.allowance.updating": ["Merged history updating", "合并历史正在更新", "Actualizando el historial combinado"],
-  "community.allowance.updatingCopy": ["The merged allowance history is updating. Daily activity remains available below.", "合并后的额度历史正在更新。下方的每日活动仍然可用。", "El historial combinado de asignación se está actualizando. La actividad diaria sigue disponible más abajo."],
-  "community.allowance.stillAccumulating": ["Allowance estimates are still building up. Days have been published, but no reset fit has qualified yet. The daily activity below shows contributions arriving.", "额度估计仍在累积中。已有发布的日期，但尚无合格的重置拟合——下方的每日活动显示贡献正在到达。", "Las estimaciones de asignación aún se están acumulando. Existen días publicados, pero ningún ajuste de restablecimiento ha calificado todavía; la actividad diaria más abajo muestra que las contribuciones están llegando."],
-  "community.allowance.noneInRange": ["No allowance estimates fall inside this range. Select All to see every published estimate.", "此范围内没有额度估计。选择“全部”以查看所有已发布的估计。", "Ninguna estimación de asignación cae dentro de este intervalo. Selecciona Todo para ver todas las estimaciones publicadas."],
-  "community.allowance.perWindow": ["per 7 days, API-price equivalent", "每 7 天，API 等价金额", "por 7 días, equivalente al precio de API"],
-  "community.allowance.bandSentence": ["Plausible range {lower}–{upper} (middle 80% of reset fits).", "合理范围 {lower}–{upper}（重置拟合的中间 80%）。", "Rango plausible {lower}–{upper} (80 % central de los ajustes de restablecimiento)."],
-  "community.allowance.latestLabel": ["Latest published estimate ({day}):", "最新发布的估计（{day}）：", "Última estimación publicada ({day}):"],
   // Composition template so each locale keeps its own punctuation between the
   // latest-label, account-count, and fit-count fragments.
-  "community.allowance.caveatSentence": ["{latest} {accounts}, {fits}.", "{latest}{accounts}，{fits}。", "{latest} {accounts}, {fits}."],
-  "community.allowance.legendCentral": ["Central estimate (median of reset fits)", "中心估计（重置拟合的中位数）", "Estimación central (mediana de los ajustes de restablecimiento)"],
-  "community.allowance.legendBand": ["Plausible range (middle 80%)", "合理范围（中间 80%）", "Rango plausible (80 % central)"],
-  "community.allowance.legendDots": ["Dot size = reset fits behind the day", "圆点大小 = 该日背后的重置拟合数", "Tamaño del punto = ajustes de restablecimiento detrás del día"],
-  "community.allowance.chartLabel": ["Community allowance estimate chart", "社区额度估计图表", "Gráfico de estimación de asignación comunitaria"],
-  "community.allowance.chartDescriptionLegacy": ["Combined Pro 20x-equivalent seven-day allowance value in API-equivalent dollars per published day: a central line, a shaded middle-80% range where published, and dots sized by the number of qualifying reset fits. Days without estimates appear as gaps.", "每个已发布日期的合并 Pro 20x 等值七天额度价值（API 等价美元）：一条中心线、发布时的中间 80% 阴影范围，以及按合格重置拟合数量确定大小的圆点。没有估计的日期显示为空缺。", "Valor combinado equivalente a Pro 20x de la asignación de siete días en dólares equivalentes de API por día publicado: una línea central, un rango sombreado del 80 % central donde se publicó y puntos cuyo tamaño refleja el número de ajustes de restablecimiento válidos. Los días sin estimaciones aparecen como huecos."],
-  "community.allowance.chartDescription": ["Combined Pro 10x-equivalent seven-day allowance value in API-equivalent dollars per published day: a central line, a shaded middle-80% range where published, and dots sized by the number of qualifying reset fits. Days without estimates appear as gaps.", "每个已发布日期的合并 Pro 10x 等值七天额度价值（API 等价美元）：一条中心线、发布时的中间 80% 阴影范围，以及按合格重置拟合数量确定大小的圆点。没有估计的日期显示为空缺。", "Valor combinado equivalente a Pro 10x de la asignación de siete días en dólares equivalentes de API por día publicado: una línea central, un rango sombreado del 80 % central donde se publicó y puntos cuyo tamaño refleja el número de ajustes de restablecimiento válidos. Los días sin estimaciones aparecen como huecos."],
-  "community.allowance.sparseNote": ["The allowance series is still filling in. Dots mark the few published estimates so far.", "额度序列仍在补充中。圆点标记目前已发布的少量估计。", "La serie de asignación todavía se está completando. Los puntos marcan las pocas estimaciones publicadas hasta ahora."],
   // Compact strings for the on-chart hover tooltip: a small caption under the
   // central dollar value, and a single-line plausible-range row (the legend and
   // headline carry the full-sentence forms).
-  "community.allowance.tooltipCentralCaption": ["central estimate", "中心估计", "estimación central"],
-  "community.allowance.tooltipRange": ["Plausible range {lower}–{upper}", "合理范围 {lower}–{upper}", "Rango plausible {lower}–{upper}"],
-  "community.allowance.methodNote": ["Each point combines qualifying reset fits from the trailing 30 days after normalizing supported personal plans to a Pro 10× equivalent (Pro ×1, Pro 5× ×2, Pro Max 25× ×0.4, Plus ×10). The line is the median, the range is the middle 80%, and every fit passes the shared calibration gates including the 25-point observed-span floor. Unsupported plans are excluded; late data republishes the day.", "每个点都汇总过去 30 天内的合格重置拟合，并将支持的个人方案换算为 Pro 10× 等值（Pro ×1、Pro 5× ×2、Pro Max 25× ×0.4、Plus ×10）。折线为中位数，区间为中间 80%；每个拟合均通过共享校准门槛，包括 25 个百分点的观测跨度下限。不支持的方案会被排除；迟到的数据会重新发布对应日期。", "Cada punto combina los ajustes de restablecimiento válidos de los últimos 30 días tras normalizar los planes personales compatibles a un equivalente de Pro 10× (Pro ×1, Pro 5× ×2, Pro Max 25× ×0,4 y Plus ×10). La línea es la mediana, el rango es el 80 % central y cada ajuste supera las puertas de calibración compartidas, incluido el mínimo de 25 puntos de amplitud observada. Los planes no compatibles se excluyen; los datos tardíos vuelven a publicar el día."],
-  "community.allowance.methodNoteLegacy": ["Each point combines qualifying reset fits from the trailing 30 days after normalizing supported personal plans to a Pro 20x equivalent (Pro ×1, Pro 5x ×4, Plus ×20). The line is the median, the range is the middle 80%, and every fit passes the shared calibration gates recorded with that published basis. Unsupported plans are excluded; late data republishes the day.", "每个点都汇总过去 30 天内的合格重置拟合，并将支持的个人方案换算为 Pro 20x 等值（Pro ×1、Pro 5x ×4、Plus ×20）。折线为中位数，区间为中间 80%；每个拟合均通过共享校准门槛，以已发布的换算基准为准。不支持的方案会被排除；迟到的数据会重新发布对应日期。", "Cada punto combina los ajustes de restablecimiento válidos de los últimos 30 días tras normalizar los planes personales compatibles a un equivalente de Pro 20x (Pro ×1, Pro 5x ×4 y Plus ×20). La línea es la mediana, el rango es el 80 % central y cada ajuste supera las puertas de calibración compartidas, registradas con esa base publicada. Los planes no compatibles se excluyen; los datos tardíos vuelven a publicar el día."],
   "installer.requiresWindows": ["Requires Windows {version} or later · {architecture}", "需要 Windows {version} 或更高版本 · {architecture}", "Requiere Windows {version} o posterior · {architecture}"],
   "aria.downloadWindows": ["Download {appName} for Windows", "下载适用于 Windows 的 {appName}", "Descargar {appName} para Windows"],
   "aria.windowsDownload": ["Windows download", "Windows 下载", "Descarga para Windows"],
@@ -1603,14 +1434,6 @@ export const WEB_PLURAL_MESSAGES = Object.freeze({
     one: ["{count} sustained divergence period in this range.", "此范围内有 {count} 个持续背离时段。", "{count} período de divergencia sostenida en este intervalo."],
     other: ["{count} sustained divergence periods in this range.", "此范围内有 {count} 个持续背离时段。", "{count} períodos de divergencia sostenida en este intervalo."],
   }),
-  "contribution.deduplicatedRecord": Object.freeze({
-    one: ["{count} deduplicated record", "{count} 条去重记录", "{count} registro deduplicado"],
-    other: ["{count} deduplicated records", "{count} 条去重记录", "{count} registros deduplicados"],
-  }),
-  "contribution.batch": Object.freeze({
-    one: ["{count} contribution batch", "{count} 个贡献批次", "{count} lote de contribución"],
-    other: ["{count} contribution batches", "{count} 个贡献批次", "{count} lotes de contribución"],
-  }),
   "format.durationMinute": Object.freeze({
     one: ["{count} minute", "{count} 分钟", "{count} minuto"],
     other: ["{count} minutes", "{count} 分钟", "{count} minutos"],
@@ -1643,18 +1466,6 @@ export const WEB_PLURAL_MESSAGES = Object.freeze({
   // The community allowance caveat: the participant count backing every point
   // is visible copy. API participantCount fields retain their existing meaning;
   // public labels do not claim unique people or verified provider accounts.
-  "community.allowance.accountCount": Object.freeze({
-    one: ["from {count} contribution source", "来自 {count} 个贡献来源", "de {count} fuente de contribución"],
-    other: ["from {count} contribution sources", "来自 {count} 个贡献来源", "de {count} fuentes de contribución"],
-  }),
-  "community.allowance.shortAccountCount": Object.freeze({
-    one: ["{count} source", "{count} 个来源", "{count} fuente"],
-    other: ["{count} sources", "{count} 个来源", "{count} fuentes"],
-  }),
-  "community.allowance.fitCount": Object.freeze({
-    one: ["{count} qualifying reset fit in the trailing 30 days", "过去 30 天内 {count} 个合格重置拟合", "{count} ajuste de restablecimiento que califica en los últimos 30 días"],
-    other: ["{count} qualifying reset fits in the trailing 30 days", "过去 30 天内 {count} 个合格重置拟合", "{count} ajustes de restablecimiento que califican en los últimos 30 días"],
-  }),
   // The Allowance history chart's honest empty reason: fits exist in the
   // selected range, and the span floor filtered every one of them.
   "weekly.chart.emptyBelowFloor": Object.freeze({

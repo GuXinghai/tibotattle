@@ -13,14 +13,14 @@ const SECRET = Buffer.alloc(32, 51);
 
 function bundleWithQuota(snapshot) {
   return {
-    schemaVersion: "usage-metadata-bundle-v0.1",
+    schemaVersion: "local-usage-metadata-bundle-v1",
     compatibility: exportCompatibilityTuple(),
     bundleId: `bundle:v1:${"a".repeat(64)}`,
     participantId: `participant:v1:${"b".repeat(64)}`,
     createdAt: "2026-07-24T13:00:00.000Z",
     coveredAt: { startAt: "2026-07-24T12:00:00.000Z", endAt: "2026-07-24T13:00:00.000Z" },
     sourceProviders: [snapshot.provider],
-    clientPlatform: "macos",
+    clientPlatform: "windows",
     transportReady: false,
     recordCounts: { usageEvents: 0, quotaSnapshots: 1, activityMarkers: 0 },
     records: { usageEvents: [], quotaSnapshots: [snapshot], activityMarkers: [] },
@@ -117,7 +117,7 @@ test("privacy gate accepts the implemented OpenAI collector quota family", () =>
 
 test("hex-derived identifiers pass the scanner and credential-shaped ID values fail closed", () => {
   const usage = {
-    schemaVersion: "usage-event-v0.1",
+    schemaVersion: "local-usage-event-v1",
     eventTime: "2026-07-24T12:02:00.000Z",
     provider: "openai_codex",
     modelId: "gpt-5.6-sol",

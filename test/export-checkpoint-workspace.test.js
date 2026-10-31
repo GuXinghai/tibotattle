@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stableJson } from "../src/export/canonical-json.js";
 import { exportCompatibilityTuple } from "../src/export-contract.js";
 import { deriveParticipantId } from "../src/export-identity.js";
 import { EXPORT_RESOURCE_POLICY_VERSION } from "../src/export-resource-policy.js";
@@ -27,7 +28,7 @@ function privateKey(label) {
 
 function usageRecord(id = "a", tokens = 10) {
   return {
-    schemaVersion: "usage-event-v0.1",
+    schemaVersion: "local-usage-event-v1",
     eventTime: "2026-07-24T12:30:00.000Z",
     provider: "openai_codex",
     modelId: "gpt-5.6-sol",
@@ -346,7 +347,8 @@ test("workspace v6 round-trips exact U64 device and U128 inode identity strings"
   }
 });
 
-test("legacy workspace v5 marker is rejected without changing its database bytes or sidecars", async () => {
+test("predecessor and newer workspace markers are refused before writable state or sidecars", async () => {
+  for (const version of [4, 5, 6, 8]) {
   const value = await fixture();
   let workspace;
   try {
@@ -362,7 +364,7 @@ test("legacy workspace v5 marker is rejected without changing its database bytes
     const database = new DatabaseSync(databaseFile);
     try {
       // Synthetic incompatibility marker only; no production workspace is used.
-      database.exec("PRAGMA user_version=5");
+      database.exec(`PRAGMA user_version=${version}`);
     } finally {
       database.close();
     }
@@ -377,6 +379,7 @@ test("legacy workspace v5 marker is rejected without changing its database bytes
   } finally {
     workspace?.close();
     await rm(value.root, { recursive: true, force: true });
+  }
   }
 });
 
@@ -530,4 +533,24 @@ test("checkpoint workspace rejects unrecognized columns and executable schema ob
       }
     });
   }
+});
+
+test("a current workspace with retired compatibility is rejected without writable configuration", async () => {
+  const value = await fixture();
+  try {
+    const workspace = await createExportWorkspace({ directory: value.workspace, descriptor: value.descriptor, sourcePlan: value.sourcePlan });
+    const path = workspace.databaseFile;
+    workspace.close();
+    const { DatabaseSync } = await import("node:sqlite");
+    const database = new DatabaseSync(path);
+    const descriptor = structuredClone(value.descriptor);
+    descriptor.compatibility.tupleVersion = "usage-export-compatibility-v0.1";
+    database.prepare("UPDATE workspace_meta SET value_json = ? WHERE key = 'descriptor'").run(stableJson(descriptor));
+    database.close();
+    const before = await readFile(path);
+    const names = (await readdir(value.workspace)).sort();
+    await assert.rejects(openExportWorkspace({ directory: value.workspace }), { code: "export_workspace_schema" });
+    assert.deepEqual(await readFile(path), before);
+    assert.deepEqual((await readdir(value.workspace)).sort(), names);
+  } finally { await rm(value.root, { recursive: true, force: true }); }
 });

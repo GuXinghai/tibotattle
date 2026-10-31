@@ -45,9 +45,6 @@ export {
   localPlatformName,
 } from "./local-export-source-ports.js";
 export {
-  createLocalContributionSyncQueueStorageContext,
-} from "./local-contribution-sync-queue-storage.js";
-export {
   WINDOWS_BINDING_PROVENANCE_CONTRACT_VERSION,
   WINDOWS_PRODUCTION_READINESS,
   WINDOWS_PRODUCTION_READINESS_CONTRACT_VERSION,

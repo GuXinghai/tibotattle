@@ -31,7 +31,7 @@ test("every fixed companion projection warning has translated presentation copy"
 
 test("bounded companion warning templates retain counts, dates and missing-evidence qualifications", () => {
   const fixtures = [
-    "The unified local index is 17 minutes behind the newest collector evidence and catches up on the next refresh.",
+    "The unified local index is 17 minutes behind the newest collector evidence.",
     "Verified OpenAI price evidence was reviewed beginning 2026-08-01; events without a recognized or separately evidenced card remain unpriced.",
     "Indexed-history totals currently cover 11/23 discovered sources and expand as later foreground refreshes advance the index.",
     "Indexed-history totals include 11 of 23 verified sources. 12 sources across 3 threads did not pass local validation, so this result has limited history coverage; missing usage remains unavailable rather than zero.",
@@ -59,9 +59,9 @@ test("bounded companion warning templates retain counts, dates and missing-evide
 
 test("warning localization recognizes only closed source-owned sentences", () => {
   for (const value of [null, {}, "synthetic user text", "Time intervals",
-    "The unified local index is synthetic/path minutes behind the newest collector evidence and catches up on the next refresh.",
-    "The unified local index is 9999999999999999 minutes behind the newest collector evidence and catches up on the next refresh.",
-    "The unified local index is 17 minutes behind the newest collector evidence and catches up on the next refresh.\n",
+    "The unified local index is synthetic/path minutes behind the newest collector evidence.",
+    "The unified local index is 9999999999999999 minutes behind the newest collector evidence.",
+    "The unified local index is 17 minutes behind the newest collector evidence.\n",
     "Excluded from indexed history: 1 private-source across 1 thread did not pass local validation. Their usage remains unavailable.",
   ]) assert.equal(evidenceWarningLocalization(value), null);
 });

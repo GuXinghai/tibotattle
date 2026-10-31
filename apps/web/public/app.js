@@ -1,3 +1,4 @@
+import { CODEX_PLAN_TYPES, CODEX_PLAN_DISPLAY_NAMES } from "./codex-catalog.generated.js";
 import { mountSettingsPage } from "./electron-settings.js";
 import { mountLocalRefreshPause } from "./local-refresh-pause.js";
 import { mountDesktopXReader } from "./x-reader-integration.js";
@@ -59,10 +60,6 @@ import {
   evidenceWarningLocalization,
 } from "./localization.js";
 import {
-  TELEMETRY_PLAN_DISPLAY_NAMES,
-  TELEMETRY_PLAN_TYPES,
-} from "./telemetry-shared.generated.js";
-import {
   compact,
   formatCodexThreadParts,
   formatApiMoney,
@@ -109,8 +106,7 @@ function applyNativeAppearanceTheme(theme) {
   return true;
 }
 
-// WKWebView installs this handoff at document start, before the stylesheet can
-// paint. Electron applies nativeTheme before creating its BrowserWindow, so
+// Electron applies nativeTheme before creating its BrowserWindow, so
 // Chromium's effective color-scheme synchronously covers its first render.
 // Reapplying both here owns live Settings changes and keeps the browser metadata
 // in step without reloading a dashboard or losing in-memory state.
@@ -1060,21 +1056,6 @@ function renderLocalOnboarding(value) {
   localOnboarding = value;
   const card = $("#setup-card");
   if (!card) return;
-  if (runsInsideNativeDashboard()) {
-    card.hidden = true;
-    card.setAttribute("aria-hidden", "true");
-    setJourneyState(
-      dashboard?.mode === "demo"
-        ? "demo-mode"
-        : dashboard
-          ? "local-ready"
-          : value && value.state !== "unavailable"
-            ? "needs-local-setup"
-            : "first-run",
-    );
-    updateLocalActionButtons();
-    return;
-  }
   if (!value || value.state === "unavailable") {
     card.hidden = true;
     setJourneyState(
@@ -1472,7 +1453,8 @@ function renderDashboard(data) {
   overviewRoot.querySelector(".overview-panels").hidden = true;
   let workloadRoot = $("#overview-workload");
   if (!workloadRoot) { workloadRoot = node("div"); workloadRoot.id="overview-workload"; overviewRoot.append(workloadRoot); }
-  renderOverviewWorkload(workloadRoot,data.workload,{translate:t,locale:getFormattingLocale()});
+  renderOverviewWorkload(workloadRoot,data.workload,{translate:t,locale:getFormattingLocale(),
+    currentQuota:{status:data.quotaWindows.length?'available':'unavailable',windows:data.quotaWindows}});
   observationFreshnessClock.update(data);
   // This optional lookup must never delay the native readiness marker or the
   // accounting render. Only the first-column cells are updated when it lands.
@@ -2389,17 +2371,14 @@ function renderCalibrationModelRates(capacityByModel, modelCostShares) {
 // ---------------------------------------------------------------------------
 
 // The friendly name the dashboard prints for a reported Codex plan. The keys
-// are Codex's own KnownPlan vocabulary (TELEMETRY_PLAN_TYPES) verbatim. Product
+// are Codex's own KnownPlan vocabulary (CODEX_PLAN_TYPES) verbatim. Product
 // labels state the configured personal-plan ratios independently of upstream
 // display aliases; the Pro rename does not alter the recorded plan identity.
 // Plans without a configured ratio are named without a fabricated number.
 // "unknown" is Codex's sentinel for an unnamed plan and is deliberately
 // absent, so it - like any unmapped or empty reading - draws no label.
 const ALLOWANCE_PLAN_LABELS = Object.freeze({
-  ...TELEMETRY_PLAN_DISPLAY_NAMES,
-  pro: "Pro (10×)",
-  prolite: "Pro Lite (5×)",
-  promax: "Pro Max 25×",
+  ...CODEX_PLAN_DISPLAY_NAMES,
   self_serve_business_prolite: "Business · Pro Lite (5×)",
   self_serve_business_usage_based: "Business · usage-based",
   enterprise_cbp_automation: "Enterprise · automation",
@@ -2414,7 +2393,7 @@ const ALLOWANCE_PLAN_LABELS = Object.freeze({
  */
 function allowancePlanLabel(planType) {
   const candidate = typeof planType === "string" ? planType.trim() : "";
-  return TELEMETRY_PLAN_TYPES.includes(candidate)
+  return CODEX_PLAN_TYPES.includes(candidate)
     && Object.hasOwn(ALLOWANCE_PLAN_LABELS, candidate)
     ? ALLOWANCE_PLAN_LABELS[candidate]
     : "";
@@ -9882,11 +9861,6 @@ async function reloadLocalEvidenceAfterNativeRefresh() {
   }
 }
 
-function runsInsideNativeDashboard() {
-  return document.documentElement.classList.contains("native-dashboard")
-    || document.body?.classList.contains("native-dashboard");
-}
-
 function runsInsideElectronDashboard() {
   return globalThis.window?.usageMonitorDesktop?.version === "v1";
 }
@@ -9948,7 +9922,7 @@ const LOCAL_COMPANION_ERROR_COPY = {
  * The sentence itself always comes from a map written here or from the caller's
  * fallback; no server string is ever rendered.
  */
-async function describeFailure({ surface, error, messages = {}, fallback }) {
+async function describeFailure({ surface, error, messages = {}, fallback, workUsage }) {
   const reference = createDiagnosticReference();
   const code = diagnosticErrorCode(error?.code);
   const requestId = serviceRequestId(error?.requestId);
@@ -9971,7 +9945,8 @@ async function describeFailure({ surface, error, messages = {}, fallback }) {
       surface: diagnosticSurface(surface),
       code,
       detail: detailCode,
-      requestId
+      requestId,
+      ...(workUsage === undefined ? {} : { workUsage })
     });
     writtenToLocalLog = recorded?.status === "recorded"
       && recorded.reference === reference;
@@ -10224,9 +10199,9 @@ const workUsageView = mountWorkUsageView({
     usageSimpleFilters = filters;
     renderUsageSimpleModels(usageSimpleModelAccounting, usageSimpleModelsUnavailable);
   },
-  async onDiagnostic({ code }) {
+  async onDiagnostic({ code, workUsage }) {
     const result = await describeFailure({
-      surface: "local_refresh", error: { code }, fallback: t("workUsage.error"),
+      surface: "local_refresh", error: { code }, fallback: t("workUsage.error"), workUsage,
     });
     if (result.localNote !== "recorded") throw new Error("work_usage_diagnostic_failed");
     return { reference: result.reference, localNote: result.localNote };

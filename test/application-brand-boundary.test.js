@@ -7,7 +7,7 @@ import brand from "../config/product-brand.cjs";
 import { collectRuntimeGraph, RUNTIME_EXPECTED_EXTERNAL_SPECIFIERS } from "../scripts/lib/runtime-closure.mjs";
 
 test("domain and version dependency closures cannot select a product brand", async () => {
-  for (const [entrypoint, expectedExternalSpecifiers] of [["src/local-usage-explainer.js", RUNTIME_EXPECTED_EXTERNAL_SPECIFIERS], ["src/providers/codex/app-server.js", ["@app-usagemonitor/telemetry-contract"]]]) {
+  for (const [entrypoint, expectedExternalSpecifiers] of [["src/local-usage-explainer.js", RUNTIME_EXPECTED_EXTERNAL_SPECIFIERS], ["src/providers/codex/app-server.js", ["@app-usagemonitor/codex-catalog"]]]) {
     const graph = await collectRuntimeGraph({ entrypoint: resolve(entrypoint), expectedExternalSpecifiers });
     for (const file of graph.files) {
       assert.doesNotMatch(file.replaceAll("\\", "/"), /\/product-brand\.(?:cjs|js)$/u);

@@ -471,6 +471,7 @@ async function appendDiagnosticNote({
     surface: note.surface,
     code: note.code,
     requestId: note.requestId,
+    ...(note.workUsage === undefined ? {} : { workUsage: note.workUsage }),
     ...(note.step === undefined ? {} : { step: note.step }),
     ...(note.detail === undefined ? {} : { detail: note.detail }),
     ...(note.measurements === undefined
@@ -656,6 +657,22 @@ function boundedRequestStatus(error) {
   return error?.code === "request_too_large" ? 413 : 400;
 }
 
+function normalizeWorkUsageDiagnostic(value) {
+  const keys = ["schemaVersion", "phase", "stage", "elapsedMs", "timeoutMs", "httpStatus", "background"];
+  if (!value || typeof value !== "object" || Array.isArray(value)
+      || Object.keys(value).length !== keys.length || keys.some(key => !Object.hasOwn(value, key))
+      || value.schemaVersion !== "work-usage-request-diagnostic-v1"
+      || !["query", "lease", "preload", "nested", "cancel"].includes(value.phase)
+      || !["request", "response_body", "validation", "unknown"].includes(value.stage)
+      || !(value.elapsedMs === null || Number.isSafeInteger(value.elapsedMs) && value.elapsedMs >= 0 && value.elapsedMs <= 86_400_000)
+      || !(value.timeoutMs === null || [10_000, 30_000].includes(value.timeoutMs))
+      || !(value.httpStatus === null || Number.isSafeInteger(value.httpStatus) && value.httpStatus >= 100 && value.httpStatus <= 599)
+      || typeof value.background !== "boolean") return null;
+  return Object.freeze({ schemaVersion: value.schemaVersion, phase: value.phase,
+    stage: value.stage, elapsedMs: value.elapsedMs, timeoutMs: value.timeoutMs,
+    httpStatus: value.httpStatus, background: value.background });
+}
+
 async function authorizeDiagnosticNote(request, response) {
   if (!sameOrigin(request)
       || request.headers["x-usage-monitor-local"] !== "1") {
@@ -673,8 +690,12 @@ async function authorizeDiagnosticNote(request, response) {
     );
     return null;
   }
-  const keys = Object.keys(value).sort().join("\0");
+  const hasContext = Object.hasOwn(value, "workUsage");
+  const workUsage = hasContext ? normalizeWorkUsageDiagnostic(value.workUsage) : undefined;
+  const keys = Object.keys(value).filter(key => key !== "workUsage").sort().join("\0");
   if (keys !== "code\0reference\0requestId\0surface"
+      || (hasContext && (workUsage === null || value.surface !== "local_refresh"
+        || !/^work_usage_(?:timeout|invalid_response|expired|unavailable|permission|capacity|network)$/u.test(value.code)))
       || !DIAGNOSTIC_REFERENCE.test(value.reference)
       || !DIAGNOSTIC_SURFACES.has(value.surface)
       || !DIAGNOSTIC_ERROR_CODE.test(value.code)
@@ -689,6 +710,7 @@ async function authorizeDiagnosticNote(request, response) {
     surface: value.surface,
     code: value.code,
     requestId: value.requestId,
+    ...(hasContext ? { workUsage } : {}),
   });
 }
 

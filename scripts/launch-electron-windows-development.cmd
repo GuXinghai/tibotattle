@@ -6,7 +6,7 @@ if not "%~1"=="" (
 )
 set "APP=%~dp0win-unpacked\usage-monitor.exe"
 set "LAUNCHER=%~dp0UsageMonitor-Windows-Development-Launcher.mjs"
-set "PROFILE=%LOCALAPPDATA%\UsageMonitor\electron-user-test\win32-x64\profile"
+set "PROFILE=%LOCALAPPDATA%\UsageMonitor\electron-user-test\win32-x64\profile-v2"
 if not exist "%APP%" (
   echo The unpacked usage-monitor.exe was not found beside this wrapper.
   exit /b 3

@@ -32,10 +32,12 @@ import {
 import {
   acquireLocalCollectorStateLock,
   commitLocalCollectorState,
+  prepareLocalCollectorState,
   readLocalCollectorRecords,
   readLocalCollectorState,
 } from "../src/local-collector-state.js";
 import { createResetEventClassifier } from "@app-usagemonitor/quota-analysis";
+import { createProtectedFixtureDirectory,assertWindowsOwnerOnly } from './helpers/windows-owner-only-fixture.js';
 
 const virtualCollectorStatePaths = new Map();
 
@@ -59,6 +61,11 @@ async function readFile(path, options) {
 async function stat(path) {
   const virtual = virtualCollectorState(path);
   return statNative(virtual?.stateFile ?? path);
+}
+
+async function assertProtectedStateFile(path){
+  if(process.platform==='win32')assertWindowsOwnerOnly(virtualCollectorState(path)?.stateFile??path);
+  else assert.equal((await stat(path)).mode&0o777,0o600);
 }
 
 test("collector discovery defaults leave room for the resumable archive index", () => {
@@ -114,6 +121,17 @@ function tierRecord(timestamp, serviceTier, { omitTier = false } = {}) {
   });
 }
 
+test('collector refuses contradictory windows from one raw or sanitized response',()=>{
+  const payload=appPayload(21),limit=payload.rateLimits;
+  const conflict={...limit,primary:{...limit.primary,usedPercent:36}};
+  const options={source:'app_server_read',receivedAt:'2026-07-23T00:00:00.000Z'};
+  assert.throws(()=>appServerSnapshotRecord({...payload,rateLimitsByLimitId:{codex:conflict}},options),{code:'malformed_output'});
+  assert.throws(()=>appServerSnapshotRecord({accountScope:{status:'unavailable'},canonical:limit,byLimitId:{codex:conflict}},options),{code:'malformed_output'});
+  assert.equal(appServerSnapshotRecord({...payload,rateLimitsByLimitId:{codex:structuredClone(limit)}},options).windows[0].usedPercent,21);
+  assert.equal(appServerSnapshotRecord(appPayload(36),options).windows[0].usedPercent,36);
+  assert.equal(appServerSnapshotRecord(appPayload(21),options).windows[0].usedPercent,21);
+});
+
 function appPayload(percent = 2) {
   return {
     rateLimits: {
@@ -136,6 +154,7 @@ async function collectorFixture(lines = []) {
   const rollout = join(sessions, "rollout-2026-07-23T00-00-00-fixture.jsonl");
   await writeFile(rollout, lines.length ? `${lines.join("\n")}\n` : "");
   const stateFile = join(root, "state", "local-collector-state-v1.sqlite");
+  if(process.platform==='win32')createProtectedFixtureDirectory(join(root,'state'));
   const dataFile = join(root, "state", "events.virtual");
   const checkpointFile = join(root, "state", "checkpoint.virtual");
   virtualCollectorStatePaths.set(dataFile, { stateFile, kind: "records" });
@@ -331,8 +350,8 @@ test("run-once restarts from byte checkpoints without duplicate records", async 
     assert.equal(first.rolloutRecordsWritten, 2);
     assert.equal(second.rolloutRecordsWritten, 0);
     assert.equal((await readLines(fixture.dataFile)).length, 2);
-    assert.equal((await stat(fixture.dataFile)).mode & 0o777, 0o600);
-    assert.equal((await stat(fixture.checkpointFile)).mode & 0o777, 0o600);
+    await assertProtectedStateFile(fixture.dataFile);
+    await assertProtectedStateFile(fixture.checkpointFile);
   } finally {
     await rm(fixture.root, { recursive: true });
   }
@@ -1708,10 +1727,14 @@ test("Spark windows in a fresh snapshot leave the codex notification evidence in
 test("a fresh app-server account marker provisionally scopes only new nearby rollout events", async () => {
   const fixture = await collectorFixture();
   const accountSecret = Buffer.alloc(32, 81);
+  let accountReads = 0;
   class ScopedClient {
     async start() {}
     async readRateLimits() { return appPayload(2); }
-    async readAccount() { return { account: { email: "private.owner@example.test", planType: "pro" } }; }
+    async readAccount() {
+      accountReads += 1;
+      return { account: { email: "private.owner@example.test", planType: "pro" } };
+    }
     async readAccountUsage() { return { dailyUsageBuckets: [] }; }
     close() {}
   }
@@ -1723,6 +1746,7 @@ test("a fresh app-server account marker provisionally scopes only new nearby rol
       loadAccountObservationSecret: async () => Buffer.from(accountSecret),
       clock: () => Date.parse("2026-07-23T00:01:00.000Z"),
     });
+    assert.equal(accountReads, 2, "full collection brackets quota with account reads");
     assert.equal(
       firstRefresh.refresh.notificationEvidence?.source,
       "app_server_read",
@@ -1755,51 +1779,39 @@ test("a fresh app-server account marker provisionally scopes only new nearby rol
   }
 });
 
-test("prospective marker binding is captured on both sides and never attached from later settings", async () => {
-  const binding = { destinationOrigin: "https://community.example.test", enrollmentNamespace: "synthetic_enrollment_marker" };
-  for (const mode of ["matching", "changed", "unbound", "failed", "extra_field"]) {
-    const fixture = await collectorFixture();
-    let epoch = Date.parse("2026-07-23T00:01:00.000Z");
-    let bindingReads = 0;
-    class BoundClient {
-      async start() {}
-      async readAccount() {
-        epoch += 1_000;
-        return { account: { email: "binding.fixture@example.test", planType: "pro" } };
-      }
-      async readRateLimits() { epoch += 1_000; return appPayload(2); }
-      async readAccountUsage() { return { dailyUsageBuckets: [] }; }
-      close() {}
+test("local account markers exclude hosted attribution and keep observation timing", async () => {
+  const fixture = await collectorFixture();
+  let epoch = Date.parse("2026-07-23T00:01:00.000Z");
+  class LocalClient {
+    async start() {}
+    async readAccount() {
+      epoch += 1_000;
+      return { account: { email: "local.fixture@example.test", planType: "pro" } };
     }
-    try {
-      await runCollectorOnce({
-        ...fixture, staleAfterMs: 0, skipRolloutIngestion: true, clock: () => epoch,
-        appServerFactory: () => new BoundClient(), loadAccountObservationSecret: async () => Buffer.alloc(32, 81),
-        readAccountAttributionBinding: async () => {
-          bindingReads += 1;
-          if (mode === "failed" && bindingReads === 2) throw new Error("private-binding-canary");
-          if (mode === "unbound") return null;
-          if (mode === "extra_field") return { ...binding, rawAccount: "private-binding-canary" };
-          return mode === "changed" && bindingReads === 2
-            ? { ...binding, enrollmentNamespace: "synthetic_repaired_enrollment" } : binding;
-        },
-      });
-      assert.equal(bindingReads, 2, mode);
-      const first = JSON.parse(await readFile(fixture.checkpointFile, "utf8")).accountScopeMarker;
-      assert.equal(first.accountScope.status, "available", mode);
-      assert.equal(first.capturedAt, "2026-07-23T00:01:00.000Z", mode);
-      assert.equal(first.receivedAt, "2026-07-23T00:01:03.000Z", mode);
-      assert.deepEqual(first.observationBinding, mode === "matching" ? binding : null, mode);
-      epoch += 10_000;
-      await runCollectorOnce({ ...fixture, refreshStale: false, skipRolloutIngestion: true, clock: () => epoch,
-        readAccountAttributionBinding: async () => assert.fail("later settings must not bind old evidence") });
-      const checkpoint = await readFile(fixture.checkpointFile, "utf8");
-      assert.deepEqual(JSON.parse(checkpoint).accountScopeMarker, first, mode);
-      assert.equal(checkpoint.includes("private-binding-canary"), false, mode);
-      assert.equal(checkpoint.includes("binding.fixture@example.test"), false, mode);
-    } finally {
-      await rm(fixture.root, { recursive: true });
-    }
+    async readRateLimits() { epoch += 1_000; return appPayload(2); }
+    async readAccountUsage() { return { dailyUsageBuckets: [] }; }
+    close() {}
+  }
+  try {
+    await runCollectorOnce({
+      ...fixture, staleAfterMs: 0, skipRolloutIngestion: true, clock: () => epoch,
+      appServerFactory: () => new LocalClient(),
+      loadAccountObservationSecret: async () => Buffer.alloc(32, 81),
+    });
+    const first = JSON.parse(await readFile(fixture.checkpointFile, "utf8")).accountScopeMarker;
+    assert.deepEqual(Object.keys(first).sort(), [
+      "accountScope", "capturedAt", "receivedAt", "source", "version",
+    ]);
+    assert.equal(first.accountScope.status, "available");
+    assert.equal(first.capturedAt, "2026-07-23T00:01:00.000Z");
+    assert.equal(first.receivedAt, "2026-07-23T00:01:03.000Z");
+    epoch += 10_000;
+    await runCollectorOnce({ ...fixture, refreshStale: false, skipRolloutIngestion: true, clock: () => epoch });
+    const checkpoint = await readFile(fixture.checkpointFile, "utf8");
+    assert.deepEqual(JSON.parse(checkpoint).accountScopeMarker, first);
+    assert.equal(checkpoint.includes("local.fixture@example.test"), false);
+  } finally {
+    await rm(fixture.root, { recursive: true });
   }
 });
 
@@ -1875,7 +1887,7 @@ test("a same-record plan conflict clears the marker without dropping usage or re
   }
 });
 
-test("logout, failed account/quota reads and account/plan races durably invalidate an earlier marker", async () => {
+test("known account/plan races reject the quota snapshot while unavailable identity stays unattributed", async () => {
   for (const failure of ["logout", "account_read", "account_switch", "account_plan", "quota_plan", "quota_read", "start", "commit"]) {
     const fixture = await collectorFixture();
     let reads = 0;
@@ -1901,21 +1913,46 @@ test("logout, failed account/quota reads and account/plan races durably invalida
     }
     try {
       await seedCollectorAccountMarker(fixture);
-      await runCollectorOnce({
+      const checkpointBefore = JSON.parse(await readFile(fixture.checkpointFile, "utf8"));
+      const quotaRecordsBefore = (await readLines(fixture.dataFile))
+        .filter((row) => row.kind === "codex_quota_snapshot");
+      const result = await runCollectorOnce({
         ...fixture, staleAfterMs: 0, skipRolloutIngestion: true,
         appServerFactory: () => new InvalidatingClient(),
         loadAccountObservationSecret: async () => Buffer.alloc(32, 81),
         clock: () => Date.parse("2026-07-23T00:01:01.000Z"),
         ...(failure === "commit" ? { commitState: async () => { throw new Error("Synthetic commit failure"); } } : {}),
       });
-      assert.equal(JSON.parse(await readFile(fixture.checkpointFile, "utf8")).accountScopeMarker, null, failure);
+      const checkpointAfter = JSON.parse(await readFile(fixture.checkpointFile, "utf8"));
+      assert.equal(checkpointAfter.accountScopeMarker, null, failure);
+      const quotaRecordsAfter = (await readLines(fixture.dataFile))
+        .filter((row) => row.kind === "codex_quota_snapshot");
+      if (["account_switch", "account_plan", "quota_plan"].includes(failure)) {
+        assert.equal(result.refresh.errorCode, "request_failed", failure);
+        assert.equal(result.refresh.recordWritten, false, failure);
+        assert.deepEqual(quotaRecordsAfter, quotaRecordsBefore, `${failure}: reject mismatched quota evidence`);
+        assert.equal(checkpointAfter.lastQuotaObservedAt, checkpointBefore.lastQuotaObservedAt, failure);
+      } else if (["logout", "account_read"].includes(failure)) {
+        assert.equal(result.refresh.errorCode, null, failure);
+        assert.equal(result.refresh.recordWritten, true, failure);
+        assert.equal(quotaRecordsAfter.length, quotaRecordsBefore.length + 1, failure);
+        assert.equal(quotaRecordsAfter.at(-1).accountScope.status, "unavailable", failure);
+      } else {
+        assert.equal(result.refresh.recordWritten, false, failure);
+        assert.deepEqual(quotaRecordsAfter, quotaRecordsBefore, failure);
+        assert.equal(checkpointAfter.lastQuotaObservedAt, checkpointBefore.lastQuotaObservedAt, failure);
+      }
       await appendFile(fixture.rollout, `${tokenRecord("2026-07-23T00:01:02.000Z", usage(10), usage(10), 4)}\n`);
       await runCollectorOnce({ ...fixture, refreshStale: false, clock: () => Date.parse("2026-07-23T00:01:03.000Z") });
       const records = await readLines(fixture.dataFile);
       const usageRecord = records.find((row) => row.kind === "codex_rollout_usage_snapshot");
       assert.equal(usageRecord.accountScope.status, "unavailable", failure);
       assert.equal(usageRecord.components.input_uncached_tokens, 10, failure);
-      assert.ok(records.some((row) => row.source === "app_server_read" && row.windows[0].usedPercent === 2), failure);
+      assert.deepEqual(
+        records.filter((row) => row.source === "app_server_read").map((row) => row.windows[0].usedPercent),
+        [2, ...(["logout", "account_read"].includes(failure) ? [3] : [])],
+        `${failure}: no mismatched or failed snapshot may replace the last good quota record`,
+      );
       assert.equal(JSON.stringify(records).includes("fixture@example.test"), false, failure);
       assert.equal(JSON.stringify(records).includes("DO-NOT-LEAK"), false, failure);
     } finally {
@@ -1998,7 +2035,7 @@ test("run-once distinguishes an app-server authentication failure without losing
     assert.equal(result.refresh.attempted, true);
     assert.equal(result.refresh.errorCode, "authentication_failure");
     assert.equal(result.diagnostics.appServerErrorCounts.authentication_failure, 1);
-    assert.equal((await stat(fixture.checkpointFile)).mode & 0o777, 0o600);
+    await assertProtectedStateFile(fixture.checkpointFile);
   } finally {
     await rm(fixture.root, { recursive: true });
   }
@@ -2348,6 +2385,7 @@ test("foreground degrades to reconciliation when recursive watchers fail asynchr
 
 test("foreground consumes a notification, reconnects, and shuts down cleanly", async () => {
   const fixture = await collectorFixture();
+  await prepareLocalCollectorState({ stateFile: fixture.stateFile });
   const controller = new AbortController();
   let factoryCalls = 0;
   class FakeClient extends EventEmitter {
@@ -2556,6 +2594,7 @@ test("a duplicate unavailable notification still clears a newer account marker",
 test("foreground account-change and disconnect signals invalidate the marker before queued usage", async () => {
   for (const signalName of ["accountChanged", "disconnect"]) {
     const fixture = await collectorFixture();
+    await prepareLocalCollectorState({ stateFile: fixture.stateFile });
     const controller = new AbortController();
     let activeClient;
     let foreground;
@@ -2607,6 +2646,9 @@ test("foreground account-change and disconnect signals invalidate the marker bef
 
 test("foreground coalesces a notification burst to one pending payload and re-reads the switched account", async () => {
   const fixture = await collectorFixture();
+  // This test observes notifications, not concurrent creation of a SQLite DB.
+  // Complete fixture initialization before polling its records.
+  await prepareLocalCollectorState({stateFile:fixture.stateFile});
   const controller = new AbortController();
   const secret = Buffer.alloc(32, 83);
   let currentEmail = "first.burst@example.test";
@@ -2686,15 +2728,17 @@ test("foreground coalesces a notification burst to one pending payload and re-re
 
     const records = await readLines(fixture.dataFile);
     const notifications = records.filter((record) => record.source === "app_server_notification");
-    assert.deepEqual(notifications.map((record) => record.windows[0].usedPercent), [3, 100]);
-    assert.equal(notifications[0].accountScope.status, "unavailable", "a switch during the read bracket cannot be attributed");
-    assert.equal(notifications[1].accountScope.status, "unavailable", "a later account read cannot label a notification queued under another account marker");
+    assert.deepEqual(notifications.map((record) => record.windows[0].usedPercent), [100]);
+    assert.equal(notifications[0].accountScope.status, "unavailable", "a later account read cannot label a notification queued under another account marker");
+    assert.equal(result.diagnostics.ingestionErrorCounts["rate_limit_notification:request_failed"], 1,
+      "a notification whose account changed during the bracket is discarded");
     const rollout = records.find((record) => record.kind === "codex_rollout_usage_snapshot");
     const expected = deriveOpenAIAccountScope({ account: { email: currentEmail } }, { secret, planType: "pro" });
     assert.equal(rollout.accountScope.scopeId, expected.scopeId);
     assert.equal(credentialLoads, 3, "initial read plus two processed notifications load the capability");
     assert.equal(result.resourceActivity.rateLimitNotificationEvents, 101);
-    assert.equal(result.resourceActivity.rateLimitNotificationOperations, 1);
+    assert.equal(result.resourceActivity.rateLimitNotificationOperations, 2,
+      "a rejected account-switch bracket drains the latest coalesced payload in a fresh operation");
     assert.equal(result.resourceActivity.rateLimitNotificationPayloadsProcessed, 2);
     assert.equal(result.resourceActivity.rateLimitNotificationPayloadsCoalesced, 99);
     assert.equal(result.resourceActivity.maximumPendingRateLimitNotifications, 1);
@@ -2795,6 +2839,7 @@ test("foreground ingestion queue recovers after one transient failure", async ()
   const fixture = await collectorFixture();
   const controller = new AbortController();
   let attempts = 0;
+  let hardStop;
   class MinimalClient extends EventEmitter {
     async start() {}
     async readRateLimits() { return appPayload(2); }
@@ -2803,10 +2848,9 @@ test("foreground ingestion queue recovers after one transient failure", async ()
     close() {}
   }
   try {
-    // SQLite initialization and its first durable transaction can take longer
-    // than the old JSON checkpoint write on a cold filesystem. Leave enough
-    // time for the scheduled reconciliation to demonstrate recovery.
-    setTimeout(() => controller.abort(), 300);
+    // Stop after the recovery attempt instead of racing a fixed short deadline
+    // against cold SQLite initialization and the reconciliation timer.
+    hardStop = setTimeout(() => controller.abort(), 10_000);
     const result = await runCollectorForeground({
       ...fixture,
       signal: controller.signal,
@@ -2820,14 +2864,19 @@ test("foreground ingestion queue recovers after one transient failure", async ()
           error.code = "EIO";
           throw error;
         }
-        return ingestRolloutUpdates(options);
+        const ingested = await ingestRolloutUpdates(options);
+        queueMicrotask(() => controller.abort());
+        return ingested;
       },
       clock: () => Date.parse("2026-07-23T00:01:00.000Z"),
     });
+    clearTimeout(hardStop);
     assert.equal(result.shutdown, "clean");
     assert.ok(attempts >= 2);
     assert.equal(result.diagnostics.ingestionErrorCounts["rollout_ingestion:EIO"], 1);
   } finally {
+    clearTimeout(hardStop);
+    controller.abort();
     await rm(fixture.root, { recursive: true });
   }
 });

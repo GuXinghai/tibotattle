@@ -52,8 +52,8 @@ export const RUNTIME_WEB_MODULE_ENTRYPOINTS = Object.freeze([
 ]);
 
 export const RUNTIME_ALLOWED_GENERATED_FILES = Object.freeze([
-  "generated/telemetry-v0.1-compatibility.json",
-  "generated/telemetry-v0.1-field-dictionary.json",
+  "generated/local-export-v1-compatibility.json",
+  "generated/local-export-v1-field-dictionary.json",
 ]);
 const RUNTIME_ALLOWED_GENERATED_FILE_SET = new Set(
   RUNTIME_ALLOWED_GENERATED_FILES,
@@ -61,9 +61,9 @@ const RUNTIME_ALLOWED_GENERATED_FILE_SET = new Set(
 
 export const RUNTIME_EXPECTED_EXTERNAL_SPECIFIERS = Object.freeze([
   "@app-usagemonitor/accounting",
+  "@app-usagemonitor/codex-catalog",
   "@app-usagemonitor/identity-core",
   "@app-usagemonitor/quota-analysis",
-  "@app-usagemonitor/telemetry-contract",
   "ajv",
   "runcost/browser",
 ]);
@@ -74,12 +74,12 @@ export const RUNTIME_WORKSPACE_PACKAGE_EXTERNALS = Object.freeze({
 
 export const RUNTIME_PINNED_PACKAGES = Object.freeze({
   "@app-usagemonitor/accounting": RELEASE_VERSION,
+  "@app-usagemonitor/codex-catalog": RELEASE_VERSION,
   "@app-usagemonitor/identity-core": RELEASE_VERSION,
   "@app-usagemonitor/quota-analysis": RELEASE_VERSION,
-  "@app-usagemonitor/telemetry-contract": RELEASE_VERSION,
   ajv: "8.20.0",
   "fast-deep-equal": "3.1.3",
-  "fast-uri": "3.1.8",
+  "fast-uri": "3.1.9",
   "json-schema-traverse": "1.0.0",
   "require-from-string": "2.0.2",
   runcost: "0.2.1",
@@ -92,7 +92,7 @@ export const RUNTIME_PINNED_PACKAGE_TREE_DIGESTS = Object.freeze({
   ajv: "7fecaf9a9ff3f41dabc7f7d762c7fecb8384c38a3c0dd4e6da0f3b3ef04569ca",
   "fast-deep-equal":
     "6c98665ed0585630ce02fbf064e6ed854f8e6546cb1e534158dbfbc18e05aa85",
-  "fast-uri": "b380065466657791cc189222f94d2a99ea57d28208f17a865b8047d112626bef",
+  "fast-uri": "b33d8cdbc9ffa1ffff6d9666909df8fa30341ffe625d30b26be5c1cbac9e77aa",
   "json-schema-traverse":
     "71ac31baf5e8476eb746605c96d1961a1e7474d4491828506602cbf17b5c5af6",
   "require-from-string":
@@ -100,34 +100,16 @@ export const RUNTIME_PINNED_PACKAGE_TREE_DIGESTS = Object.freeze({
   runcost: "873e747570e3dfeced68ada15d5144734356a8fc084d2618cb4f73565bd6929b",
 });
 
-const TELEMETRY_CONTRACT_PACKAGE_NAME =
-  "@app-usagemonitor/telemetry-contract";
 const ACCOUNTING_PACKAGE_NAME = "@app-usagemonitor/accounting";
 const QUOTA_ANALYSIS_PACKAGE_NAME = "@app-usagemonitor/quota-analysis";
 const IDENTITY_CORE_PACKAGE_NAME = "@app-usagemonitor/identity-core";
 
-export const RUNTIME_TELEMETRY_CONTRACT_FILES = Object.freeze([
+export const RUNTIME_CODEX_CATALOG_FILES = Object.freeze([
   "index.js",
   "package.json",
-  "src/admin-model-history.js",
-  "src/constants.js",
-  "src/envelope.js",
-  "src/errors.js",
   "src/model-catalog-contract.js",
   "src/model-catalog.js",
-  "src/performance-histogram.js",
-  "src/primitives.js",
-  "src/telemetry-performance-v1-schemas.js",
-  "src/telemetry-performance-v1.js",
-  "src/telemetry-v0.1.js",
-  "src/telemetry-v0.2.js",
-  "src/telemetry-v1.1-domain.js",
-  "src/telemetry-v1.1-schemas.js",
-  "src/telemetry-v1.1.js",
-  "src/telemetry-v1.2-domain.js",
-  "src/telemetry-v1.2-schemas.js",
-  "src/telemetry-v1.2.js",
-  "src/upload.js",
+  "src/plans.js",
 ]);
 
 export const RUNTIME_ACCOUNTING_FILES = Object.freeze([
@@ -168,6 +150,13 @@ const packageRoot = (name) => join(
 
 export const RUNTIME_WORKSPACE_PACKAGE_DEFINITIONS = Object.freeze([
   Object.freeze({
+    inputDirectory: "packages/codex-catalog",
+    name: "@app-usagemonitor/codex-catalog",
+    root: packageRoot("@app-usagemonitor/codex-catalog"),
+    runtimeFiles: RUNTIME_CODEX_CATALOG_FILES,
+    version: RUNTIME_PINNED_PACKAGES["@app-usagemonitor/codex-catalog"],
+  }),
+  Object.freeze({
     inputDirectory: "packages/accounting",
     name: ACCOUNTING_PACKAGE_NAME,
     root: packageRoot(ACCOUNTING_PACKAGE_NAME),
@@ -187,13 +176,6 @@ export const RUNTIME_WORKSPACE_PACKAGE_DEFINITIONS = Object.freeze([
     root: packageRoot(QUOTA_ANALYSIS_PACKAGE_NAME),
     runtimeFiles: RUNTIME_QUOTA_ANALYSIS_FILES,
     version: RUNTIME_PINNED_PACKAGES[QUOTA_ANALYSIS_PACKAGE_NAME],
-  }),
-  Object.freeze({
-    inputDirectory: "packages/telemetry-contract",
-    name: TELEMETRY_CONTRACT_PACKAGE_NAME,
-    root: packageRoot(TELEMETRY_CONTRACT_PACKAGE_NAME),
-    runtimeFiles: RUNTIME_TELEMETRY_CONTRACT_FILES,
-    version: RUNTIME_PINNED_PACKAGES[TELEMETRY_CONTRACT_PACKAGE_NAME],
   }),
 ]);
 

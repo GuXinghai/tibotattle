@@ -4,7 +4,7 @@
   "entries": [
     {
       "file": "apps/local/server.test.mjs",
-      "win32BranchCount": 3,
+      "win32BranchCount": 2,
       "classification": "posix-only-assertion",
       "followUp": "Replace omitted owner-mode and development identity assertions with Windows ACL contract tests; the unreadable fixture uses a synthetic EACCES inspector on Windows."
     },
@@ -13,6 +13,12 @@
       "win32BranchCount": 3,
       "classification": "posix-only-assertion",
       "followUp": "Keep the development secret-file reader fail-closed on Windows until a native owner ACL assertion replaces POSIX mode checks."
+    },
+    {
+      "file": "test/cli-report-publication.test.js",
+      "win32BranchCount": 1,
+      "classification": "native-windows-qualification",
+      "followUp": "Retain protected Windows report publication with explicit synthetic CLI inputs; portable checks do not qualify native handle or installed-artifact behavior."
     },
     {
       "file": "test/codex-config-service-tier-privacy.test.js",
@@ -37,12 +43,6 @@
       "win32BranchCount": 2,
       "classification": "native-windows-qualification",
       "followUp": "Revisit the teardown exception when Node's synchronous SQLite binding releases Windows delete-sharing locks before process exit."
-    },
-    {
-      "file": "test/contribution-sync-queue.test.js",
-      "win32BranchCount": 2,
-      "classification": "windows-equivalent-needed",
-      "followUp": "Replace mode and symlink policy with owner ACL and reparse-point checks."
     },
     {
       "file": "test/correction-migration.test.js",
@@ -75,12 +75,6 @@
       "followUp": "Add a native Windows abrupt-process-termination SQLite recovery fixture."
     },
     {
-      "file": "test/local-contribution-preparation.test.js",
-      "win32BranchCount": 3,
-      "classification": "posix-only-assertion",
-      "followUp": "Replace omitted review, prepared-set, and failure-path mode assertions with native owner ACL validation."
-    },
-    {
       "file": "test/local-installation-diagnostics.test.js",
       "win32BranchCount": 3,
       "classification": "windows-equivalent-needed",
@@ -93,40 +87,22 @@
       "followUp": "Replace the omitted owner-mode metadata rejection with a native owner ACL test."
     },
     {
+      "file": "test/pre-release-index-conversion.test.js",
+      "win32BranchCount": 1,
+      "classification": "native-windows-qualification",
+      "followUp": "Retain native Windows x64 copy-conversion and preservation checks; synthetic source validation does not qualify a real profile cutover."
+    },
+    {
+      "file": "test/pre-release-index-sqlite-lifecycle.test.js",
+      "win32BranchCount": 2,
+      "classification": "native-windows-qualification",
+      "followUp": "Retain physical Windows fixed-volume and protected SQLite journal checks separately from portable contract and installed-app evidence."
+    },
+    {
       "file": "test/prospective-collector-cli.test.js",
       "win32BranchCount": 2,
       "classification": "windows-equivalent-needed",
       "followUp": "Replace POSIX mode and symlink assertions with ACL and reparse-point checks."
-    },
-    {
-      "file": "test/telemetry-contribution-builder.test.js",
-      "win32BranchCount": 1,
-      "classification": "posix-only-assertion",
-      "followUp": "Replace the omitted materialized-file mode assertion with a native owner ACL assertion."
-    },
-    {
-      "file": "test/windows-credential-manager-probe.test.js",
-      "win32BranchCount": 1,
-      "classification": "native-windows-qualification",
-      "followUp": "Run on native Windows x64; non-Windows hosts skip the native binding round trip."
-    },
-    {
-      "file": "test/windows-credential-manager.test.js",
-      "win32BranchCount": 2,
-      "classification": "native-windows-qualification",
-      "followUp": "Run all four fixed production credential lifecycles on native Windows x64 with the audited Credential Manager binding and confirm cleanup."
-    },
-    {
-      "file": "test/windows-credential-mutex-native.test.js",
-      "win32BranchCount": 4,
-      "classification": "native-windows-qualification",
-      "followUp": "Run same-capability contention, different-capability independence, abrupt-process recovery, and worker-termination cleanup on native Windows x64."
-    },
-    {
-      "file": "test/windows-credential-mutex.test.js",
-      "win32BranchCount": 1,
-      "classification": "native-windows-qualification",
-      "followUp": "Load and exercise the reviewed native named-mutex binding on Windows x64."
     },
     {
       "file": "test/windows-filesystem-security.test.js",
@@ -139,6 +115,12 @@
       "win32BranchCount": 1,
       "classification": "native-windows-qualification",
       "followUp": "Run filesystem assertions on native Windows x64; cross-host path semantics remain separately tested."
+    },
+    {
+      "file": "test/windows-report-publication-native.test.js",
+      "win32BranchCount": 1,
+      "classification": "native-windows-qualification",
+      "followUp": "Retain physical Windows handle-bound publication, reparse/link refusal and interruption checks; do not infer signed artifact qualification."
     }
   ]
 }

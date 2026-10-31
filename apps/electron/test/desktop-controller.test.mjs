@@ -1,6 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+test("Settings snapshots use guarded delivery state without probing legacy native support", async () => {
+  for (const blocked of [false, true]) {
+    let probes = 0;
+    const value = fixture({
+      platformOverrides: { notificationStatus() { probes++; throw new Error("native registration is forbidden on read"); } },
+      ...(blocked ? { actionOverrides: { notificationCoordinator: {
+        initialize: async () => {}, setPreferences: async () => {},
+        status: () => ({ state: "unavailable", delivery: "windows_identity_unavailable" }),
+      } } } : {}),
+    });
+    for (let i = 0; i < 3; i++) {
+      const snapshot = await value.controller.handlers.getSettings({});
+      assert.equal(snapshot.settings.notifications.permission, blocked ? "unavailable" : "unknown");
+    }
+    assert.equal(probes, 0);
+    value.controller.dispose();
+  }
+});
+
 import { DESKTOP_DEFAULT_SETTINGS } from "../desktop-contract.js";
 import {
   createDesktopController,

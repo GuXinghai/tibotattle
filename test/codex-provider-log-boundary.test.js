@@ -261,7 +261,7 @@ test("Codex provider production imports stay inside the provider and approved ru
         category = "accounting_or_pricing";
       } else if (
         specifier.startsWith("@app-usagemonitor/")
-        && specifier !== "@app-usagemonitor/telemetry-contract"
+        && specifier !== "@app-usagemonitor/codex-catalog"
       ) {
         category = "unapproved_first_party_package";
       } else if (specifier.startsWith(".") || specifier.startsWith("/")) {

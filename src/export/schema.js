@@ -1,12 +1,12 @@
 import Ajv from "ajv";
 import { safeValidationErrors } from "./safe-validation-errors.js";
 
-import activityMarkerSchema from "../../schemas/telemetry-v0.1/activity-marker.schema.json" with { type: "json" };
-import bundleSchema from "../../schemas/telemetry-v0.1/bundle.schema.json" with { type: "json" };
-import compatibilitySchema from "../../schemas/telemetry-v0.1/compatibility.schema.json" with { type: "json" };
-import privacyReceiptSchema from "../../schemas/telemetry-v0.1/privacy-receipt.schema.json" with { type: "json" };
-import quotaSnapshotSchema from "../../schemas/telemetry-v0.1/quota-snapshot.schema.json" with { type: "json" };
-import usageEventSchema from "../../schemas/telemetry-v0.1/usage-event.schema.json" with { type: "json" };
+import activityMarkerSchema from "../../schemas/local-export-v1/activity-marker.schema.json" with { type: "json" };
+import bundleSchema from "../../schemas/local-export-v1/bundle.schema.json" with { type: "json" };
+import compatibilitySchema from "../../schemas/local-export-v1/compatibility.schema.json" with { type: "json" };
+import privacyReceiptSchema from "../../schemas/local-export-v1/privacy-receipt.schema.json" with { type: "json" };
+import quotaSnapshotSchema from "../../schemas/local-export-v1/quota-snapshot.schema.json" with { type: "json" };
+import usageEventSchema from "../../schemas/local-export-v1/usage-event.schema.json" with { type: "json" };
 
 const schemas = Object.freeze({
   compatibility: compatibilitySchema,

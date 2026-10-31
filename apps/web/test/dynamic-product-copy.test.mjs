@@ -17,7 +17,7 @@ function element(tag = "span", className = "", textContent = "") {
 }
 
 test("recognized evidence warnings localize while unknown text retains the raw boundary", () => {
-  const warning = "Local history indexing is in progress. Complete historical totals will appear after the indexed aggregate is published.";
+  const warning = "Local history indexing has no published aggregate. Complete historical totals are unavailable.";
   for (const locale of ["zh-Hans", "en-US", "es", "zh-Hans"]) {
     const list = element("ul");
     const context = createContext({ EVIDENCE_WARNING_ROUTES: [], EVIDENCE_WARNING_FALLBACK: "#warnings",
@@ -28,9 +28,10 @@ test("recognized evidence warnings localize while unknown text retains the raw b
     });
     runInContext(productionFunction("evidenceWarningTarget") + "\n" + productionFunction("renderEvidenceWarnings"), context);
     context.renderEvidenceWarnings({ warnings: [warning,
-      "History indexing is still advancing. Complete historical totals stay hidden until an indexed aggregate is available.", "Ready"] });
+      "History indexing has no complete aggregate available. Complete historical totals remain unavailable.", "Ready"] });
     assert.equal(list.children.length, 2, "the redundant indexing notice is omitted without hiding other warnings");
     assert.equal(list.children[0].textContent, translate("dashboard.warning.loading", {}, locale));
+    assert.doesNotMatch(list.children[0].textContent, /正在|in progress|está en curso/iu);
     assert.equal(list.children[0].attributes["data-i18n-skip"], undefined);
     assert.equal(list.children[0].className, "evidence-warning informational");
     assert.equal(list.children[1].textContent, "Ready");

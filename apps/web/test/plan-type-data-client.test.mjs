@@ -2,9 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   normalizeDashboardPayload,
-  normalizeParticipantStats,
 } from "../public/data-client.js";
-import { TELEMETRY_PLAN_TYPES } from "../public/telemetry-shared.generated.js";
+import { CODEX_PLAN_TYPES } from "../public/codex-catalog.generated.js";
 
 test("web timeline normalization retains canonical plans and maps arbitrary strings to unknown", () => {
   const normalized = normalizeDashboardPayload({
@@ -45,7 +44,7 @@ test("web timeline normalization retains canonical plans and maps arbitrary stri
 });
 
 test("web quota windows expose only known provider plan types as plan evidence", () => {
-  const knownPlanTypes = [...TELEMETRY_PLAN_TYPES];
+  const knownPlanTypes = [...CODEX_PLAN_TYPES];
   const normalized = normalizeDashboardPayload({
     quotaWindows: [
       ...knownPlanTypes.map((planType, index) => ({
@@ -87,32 +86,4 @@ test("web quota windows expose only known provider plan types as plan evidence",
     JSON.stringify(normalized.quotaWindows),
     /provider-private-plan|pro-20x/u,
   );
-});
-
-test("private quota analysis normalizes malformed provider plan labels to unknown", () => {
-  const normalized = normalizeParticipantStats({
-    schemaVersion: "participant-stats-v0.2",
-    rollingQuotaMovement: {
-      schemaVersion: "participant-quota-movement-v0.1",
-      status: "not_testable",
-      planType: "pro-20x",
-    },
-    accountScopedQuotaAnalysis: {
-      schemaVersion: "account-scoped-quota-analysis-v0.1",
-      status: "ready",
-      tracks: [{
-        continuity: {
-          provider: "openai_codex",
-          planType: "provider-private-plan",
-          limitId: "codex",
-          windowDurationMinutes: 43_200,
-        },
-        calibration: { tracks: [] },
-        rolling: { status: "not_testable" },
-      }],
-    },
-  });
-
-  assert.equal(normalized.rollingQuotaMovement.planType, "unknown");
-  assert.equal(normalized.accountScopedQuotaAnalysis.tracks[0].planType, "unknown");
 });

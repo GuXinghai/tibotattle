@@ -3,14 +3,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import fc from "fast-check";
 import {
-  TELEMETRY_PROVIDER_IDS, exportModelProvider, exportRegistrySnapshot, recognizedExportModelId,
+  LOCAL_EXPORT_PROVIDER_IDS, exportModelProvider, exportRegistrySnapshot, recognizedExportModelId,
 } from "../src/export/index.js";
 import { exportSchemas, validateExportRecord } from "../src/export-schema.js";
 import { exportCompatibilityTuple } from "../src/export-contract.js";
 
 function usageEvent() {
   return {
-    schemaVersion: "usage-event-v0.1",
+    schemaVersion: "local-usage-event-v1",
     eventTime: "2026-07-24T12:00:00.000Z",
     provider: "openai_codex",
     modelId: "gpt-5.6-sol",
@@ -57,7 +57,7 @@ function usageEvent() {
 
 function quotaSnapshot() {
   return {
-    schemaVersion: "quota-snapshot-v0.1",
+    schemaVersion: "local-quota-snapshot-v1",
     observedTime: "2026-07-24T12:00:00.000Z",
     receivedTime: "2026-07-24T12:00:00.000Z",
     provider: "openai_codex",
@@ -80,7 +80,7 @@ function quotaSnapshot() {
 
 function activityMarker() {
   return {
-    schemaVersion: "export-activity-marker-v0.1",
+    schemaVersion: "local-export-activity-marker-v1",
     observedTime: "2026-07-24T12:00:00.000Z",
     surface: "controlled_experiment",
     state: "pulse",
@@ -94,14 +94,14 @@ function activityMarker() {
 
 function bundleWithDiagnostic(code) {
   return {
-    schemaVersion: "usage-metadata-bundle-v0.1",
+    schemaVersion: "local-usage-metadata-bundle-v1",
     compatibility: exportCompatibilityTuple(),
     bundleId: `bundle:v1:${"f".repeat(64)}`,
     participantId: `participant:v1:${"0".repeat(64)}`,
     createdAt: "2026-07-24T12:00:00.000Z",
     coveredAt: { startAt: "2026-07-24T11:00:00.000Z", endAt: "2026-07-24T12:00:00.000Z" },
     sourceProviders: ["openai_codex"],
-    clientPlatform: "macos",
+    clientPlatform: "windows",
     transportReady: false,
     recordCounts: { usageEvents: 0, quotaSnapshots: 0, activityMarkers: 0 },
     records: { usageEvents: [], quotaSnapshots: [], activityMarkers: [] },
@@ -111,7 +111,7 @@ function bundleWithDiagnostic(code) {
 
 function privacyReceipt() {
   return {
-    schemaVersion: "privacy-receipt-v0.1",
+    schemaVersion: "local-export-privacy-receipt-v1",
     compatibility: exportCompatibilityTuple(),
     createdAt: "2026-07-24T12:00:00.000Z",
     bundleId: `bundle:v1:${"f".repeat(64)}`,
@@ -193,16 +193,12 @@ test("arbitrary source-like fields cannot pass the strict usage schema", () => {
   ), { numRuns: 100 });
 });
 
-test("the Codex registry appends Terra while preserving the historical schema vocabulary", () => {
+test("the local export registry uses only the current reviewed Codex catalog", () => {
   const registry = exportRegistrySnapshot();
   const historicalModelIds = exportSchemas.usageEvent.properties.modelId.enum;
-  // New reviewed IDs append; preserve every historical value and ordinal.
-  assert.equal(historicalModelIds.at(-1), "gpt-6.1-terra");
-  assert.equal(
-    createHash("sha256").update(JSON.stringify(historicalModelIds.slice(0, -1))).digest("hex"),
-    "0eda40785735e36f956754ced532e805a3502f24e4dee32c8183acfa742fd89a",
-  );
-  assert.deepEqual(TELEMETRY_PROVIDER_IDS, ["openai_codex"]);
+  assert.deepEqual(historicalModelIds, ["unknown", ...registry.providers.openai_codex.modelIds]);
+  assert.deepEqual(Object.keys(registry.providers), ["openai_codex"]);
+  assert.deepEqual(LOCAL_EXPORT_PROVIDER_IDS, ["openai_codex"]);
   assert.equal(recognizedExportModelId("claude-sonnet-5"), null);
   assert.equal(exportModelProvider("claude-sonnet-5"), "unknown");
   for (const id of registry.providers.openai_codex.modelIds) {
@@ -355,7 +351,7 @@ test("sessionless quota snapshots are limited to account-level OpenAI collector 
   claude.slot = "seven_day";
   claude.snapshotSource = "status_line";
   claude.providerSurface = "general_usage";
-  assert.equal(validateExportRecord("quotaSnapshot", claude).valid, true);
+  assert.equal(validateExportRecord("quotaSnapshot", claude).valid, false);
   claude.sessionScopeId = null;
   assert.equal(validateExportRecord("quotaSnapshot", claude).valid, false);
 });

@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { refreshLocalIndex } from '../src/local-index-refresh.js';
 import { createWindowsFilesystemAdapter } from '../src/platform/index.js';
 import { createLocalIndexWriter, loadCatalog, LOCAL_INDEX_PARSER_VERSION, LOCAL_INDEX_STORE_USER_VERSION, openLocalIndexStore, openLocalIndexEvidenceStore, readLocalIndexIdentityBeforeMigration } from '../src/local-index-store.js';
 
-const LEGACY_PARSER = 'local-index-rollout-typed-v2+unified-rollout-typed-v21';
 function fixture() {
-  const root = mkdtempSync(join(tmpdir(), 'local-index-store-v7-'));
+  const root = resolve('.release-build', `local-index-schema9-${randomUUID()}`);
+  createWindowsFilesystemAdapter().ensureDirectory(root);
   const state = join(root, 'state'); createWindowsFilesystemAdapter().ensureDirectory(state);
   return { root, state, file: join(state, 'index.sqlite'), cleanup() {
-    assert.ok(resolve(root).startsWith(join(resolve(tmpdir()), 'local-index-store-v7-')));
+    assert.ok(resolve(root).startsWith(join(resolve('.release-build'), 'local-index-schema9-')));
     assert.equal(lstatSync(root).isSymbolicLink(), false); rmSync(root, { recursive: true, force: true });
   } };
 }
@@ -27,75 +27,101 @@ function seed(file) {
   const accountScopeId = writer.internAccountScope({ status: 'unattributed', reason: 'synthetic', planType: null, scopeLocal: null });
   const source = writer.registerSource({ sourceLocal: Buffer.alloc(32, 2), ordinal: 37, sessionId, surfaceId, path: 'synthetic.jsonl', rolloutKey: 'synthetic', sizeBytes: 120, mtimeMs: 1 });
   writer.writeUsageEvent({ sourceId: source.id, sourceOffset: 100, observedAtMs: 1000, eventKey: Buffer.alloc(32, 3), sessionId, accountScopeId, modelId, tierId, surfaceId, reasoningEffort: 1, tokensInUncached: 50, tokensInCacheRead: 20, tokensOutCombined: 5 });
-  writer.commitSourceState(source.id, { sessionId, surfaceId, path: 'synthetic.jsonl', rolloutKey: 'synthetic', sizeBytes: 120, mtimeMs: 1, scannedBytes: 120, carryTierRaw: 'priority', carryTierObservedAtMs: 1000, carryTierSource: 'turn_override', diagnostics: { tokenCounts: 1 } });
+  writer.commitSourceState(source.id, { sessionId, surfaceId, path: 'synthetic.jsonl', rolloutKey: 'synthetic', sizeBytes: 120, mtimeMs: 1, scannedBytes: 120, diagnostics: { tokenCounts: 1 } });
   writer.commit();
-  // Construct actual predecessor schema on a synthetic fixture only; no real
-  // index is relabelled or downgraded.
-  for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all()) db.exec(`DROP TRIGGER ${row.name}`);
-  db.exec('ALTER TABLE store_state DROP COLUMN calculation_revision; ALTER TABLE source DROP COLUMN carry_tier_source; PRAGMA user_version=6');
-  db.prepare("UPDATE meta SET value=? WHERE key='parser_version'").run(LEGACY_PARSER);
-  db.prepare('UPDATE source SET parser_version=?').run(LEGACY_PARSER);
   db.close();
-}
-function makeV8Copy(file) {
-  openLocalIndexStore(file).close();
-  const db = new DatabaseSync(file);
-  try {
-    // Reconstruct the v8 predecessor only in this disposable fixture copy.
-    db.exec('DROP TRIGGER IF EXISTS calculation_source_update; ALTER TABLE source DROP COLUMN carry_tier_source; PRAGMA user_version=8');
-  } finally { db.close(); }
 }
 function durableRows(file) {
   const db = new DatabaseSync(file, { readOnly: true });
-  try { return { events: db.prepare('SELECT * FROM usage_event').all(), sources: db.prepare('SELECT * FROM source').all().map(({ carry_tier_source: _carryTierSource, ...row }) => row), diagnostics: db.prepare('SELECT * FROM source_diagnostic').all(), sequence: db.prepare('SELECT * FROM store_state').all(), schema: db.prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() }; }
+  try { return { events: db.prepare('SELECT * FROM usage_event').all(), sources: db.prepare('SELECT * FROM source').all(), diagnostics: db.prepare('SELECT * FROM source_diagnostic').all(), sequence: db.prepare('SELECT * FROM store_state').all(), schema: db.prepare("SELECT type,name,sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name").all() }; }
   finally { db.close(); }
 }
 
-test('v6 copy migrates forward without changing facts, ordinals or cursors', () => {
-  const f = fixture();
+// Ordinary runtime is current-only; the standalone converter owns old copies.
+function predecessor(file, version) {
+  seed(file);
+  const db = new DatabaseSync(file);
   try {
-    seed(f.file); const before = durableRows(f.file); const copy = join(f.state, 'copy.sqlite');
-    copyFileSync(f.file, copy);
-    assert.deepEqual(readLocalIndexIdentityBeforeMigration(copy), { hasFacts: true });
-    assert.throws(() => openLocalIndexStore(copy, { readOnly: true }), { code: 'local_index_family_mismatch' });
-    const db = openLocalIndexStore(copy);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9);
-    assert.equal(db.prepare('SELECT carry_tier_source FROM source').get().carry_tier_source, null,
-      'v6 carry provenance remains unknown after the additive v9 migration');
-    assert.equal(db.prepare("SELECT value FROM meta WHERE key='parser_version'").get().value, LOCAL_INDEX_PARSER_VERSION);
-    assert.equal(loadCatalog(db).values().next().value.deferred_tail_bytes, 0);
-    db.close(); const after = durableRows(copy);
-    for (const key of ['events', 'sources', 'diagnostics']) assert.deepEqual(after[key], before[key]);
-    assert.equal(after.sequence[0].commit_seq, before.sequence[0].commit_seq);
-    assert.equal(after.sequence[0].calculation_revision, 0);
-    const original = new DatabaseSync(f.file, { readOnly: true });
-    assert.equal(original.prepare('PRAGMA user_version').get().user_version, 6); original.close();
-    assert.equal(LOCAL_INDEX_STORE_USER_VERSION, 9); assert.equal(LOCAL_INDEX_PARSER_VERSION, 'local-index-rollout-typed-v3+unified-rollout-typed-v22');
-  } finally { f.cleanup(); }
-});
+    for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all()) db.exec(`DROP TRIGGER ${row.name}`);
+    db.exec('ALTER TABLE source DROP COLUMN carry_tier_source');
+    if (version < 8) db.exec('ALTER TABLE store_state DROP COLUMN calculation_revision');
+    db.exec(`PRAGMA journal_mode=DELETE; PRAGMA user_version=${version}`);
+  } finally { db.close(); }
+}
 
-test('existing v4 and v5 forward paths continue through v6, v8 and v9', () => {
+test('predecessors are preserved and refused before pragmas on every ordinary open, including repeated attempts', () => {
   const f = fixture();
   try {
-    for (const version of [4, 5]) {
-      const file = join(f.state, `legacy-${version}.sqlite`); seed(file); const before = durableRows(file);
-      const legacy = new DatabaseSync(file); legacy.exec(`PRAGMA user_version=${version}`); legacy.close();
-      const migrated = openLocalIndexStore(file); assert.equal(migrated.prepare('PRAGMA user_version').get().user_version, 9); migrated.close();
-      const after = durableRows(file);
-      for (const key of ['events', 'sources', 'diagnostics']) assert.deepEqual(after[key], before[key]);
-      assert.equal(after.sequence[0].commit_seq, before.sequence[0].commit_seq);
+    for (const version of [4, 5, 6, 7, 8]) {
+      const file = join(f.state, `old-${version}.sqlite`); predecessor(file, version);
+      const before = readFileSync(file);
+      assert.deepEqual(readLocalIndexIdentityBeforeMigration(file), { hasFacts: true });
+      assert.throws(() => readLocalIndexIdentityBeforeMigration(file, { currentOnly: true }), { code: 'local_index_family_mismatch' });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        for (const options of [{ readOnly: true }, {}, { create: true }]) {
+          assert.throws(() => openLocalIndexStore(file, options), { code: 'local_index_family_mismatch' });
+        }
+        assert.throws(() => openLocalIndexEvidenceStore(file), { code: 'local_index_family_mismatch' });
+        assert.deepEqual(readFileSync(file), before);
+        assert.equal(existsSync(`${file}-wal`), false);
+        assert.equal(existsSync(`${file}-shm`), false);
+      }
     }
   } finally { f.cleanup(); }
 });
 
-test('future store rejects reads and writes before journal-mode changes', () => {
+test('refresh refuses an empty v8 predecessor before salt creation or source discovery', async () => {
   const f = fixture();
   try {
-    seed(f.file); const future = new DatabaseSync(f.file); future.exec('PRAGMA journal_mode=DELETE; PRAGMA user_version=10'); future.close();
-    const digest = () => createHash('sha256').update(readFileSync(f.file)).digest('hex'); const before = digest();
+    const db = openLocalIndexStore(f.file, { create: true });
+    for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_source_%'").all()) db.exec(`DROP TRIGGER ${row.name}`);
+    db.exec('ALTER TABLE source DROP COLUMN carry_tier_source; PRAGMA journal_mode=DELETE; PRAGMA user_version=8'); db.close();
+    const before = readFileSync(f.file), secretFile = join(f.state, 'original-salt-must-not-be-created');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(refreshLocalIndex({ codexHome: join(f.root, 'no-external-source'), indexFile: f.file, secretFile, workerCount: 1 }), { code: 'local_index_family_mismatch' });
+      assert.equal(existsSync(secretFile), false);
+      assert.deepEqual(readFileSync(f.file), before);
+      assert.equal(existsSync(`${f.file}-wal`), false); assert.equal(existsSync(`${f.file}-shm`), false);
+    }
+  } finally { f.cleanup(); }
+});
+
+test('future store rejects every reader and writer before journal-mode changes', () => {
+  const f = fixture();
+  try {
+    seed(f.file); const db = new DatabaseSync(f.file);
+    db.exec('PRAGMA journal_mode=DELETE; PRAGMA user_version=10'); db.close();
+    const before = readFileSync(f.file);
     for (const options of [{ readOnly: true }, {}, { create: true }]) assert.throws(() => openLocalIndexStore(f.file, options), { code: 'local_index_newer_version' });
+    assert.throws(() => openLocalIndexEvidenceStore(f.file), { code: 'local_index_newer_version' });
     assert.throws(() => readLocalIndexIdentityBeforeMigration(f.file), { code: 'local_index_newer_version' });
-    assert.equal(digest(), before); assert.equal(existsSync(`${f.file}-wal`), false); assert.equal(existsSync(`${f.file}-shm`), false);
+    assert.deepEqual(readFileSync(f.file), before);
+    assert.equal(existsSync(`${f.file}-wal`), false); assert.equal(existsSync(`${f.file}-shm`), false);
+  } finally { f.cleanup(); }
+});
+
+test('schema 9 provenance survives read/write/evidence reopen and participates in transactional invalidation', () => {
+  const f = fixture();
+  try {
+    seed(f.file);
+    const db = openLocalIndexStore(f.file);
+    try {
+      assert.equal(LOCAL_INDEX_STORE_USER_VERSION, 9);
+      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9);
+      assert.ok(db.prepare('PRAGMA table_info(source)').all().some(row => row.name === 'carry_tier_source'));
+      const revision = () => db.prepare('SELECT calculation_revision n FROM store_state').get().n;
+      const before = revision();
+      db.exec("BEGIN IMMEDIATE; UPDATE source SET carry_tier_raw='priority',carry_tier_observed_at_ms=1000,carry_tier_source='turn_override'");
+      assert.ok(revision() > before); db.exec('ROLLBACK'); assert.equal(revision(), before);
+      db.exec("UPDATE source SET carry_tier_raw='priority',carry_tier_observed_at_ms=1000,carry_tier_source='turn_override'");
+      assert.throws(() => db.exec("UPDATE source SET carry_tier_source='guessed'"));
+      assert.equal(db.prepare('PRAGMA quick_check').get().quick_check, 'ok');
+    } finally { db.close(); }
+    for (const open of [file => openLocalIndexStore(file, { readOnly: true }), openLocalIndexStore, openLocalIndexEvidenceStore]) {
+      const reopened = open(f.file);
+      try { assert.equal(reopened.prepare('SELECT carry_tier_source FROM source').get().carry_tier_source, 'turn_override'); }
+      finally { reopened.close(); }
+    }
   } finally { f.cleanup(); }
 });
 
@@ -115,61 +141,6 @@ test('deferred tail diagnostic survives reopen and rejects negative or unknown d
   } finally { f.cleanup(); }
 });
 
-
-test('v7 migration is atomic on trigger-install failure and retries without rewriting retained evidence', () => {
-  const f = fixture();
-  try {
-    seed(f.file);
-    const legacy = new DatabaseSync(f.file);
-    legacy.exec(`PRAGMA user_version=7;
-      CREATE TRIGGER calculation_source_insert AFTER INSERT ON source BEGIN SELECT 1; END;`);
-    legacy.close();
-    const before = durableRows(f.file);
-    assert.throws(() => openLocalIndexStore(f.file), { code: 'local_index_unavailable' });
-    assert.deepEqual(durableRows(f.file), before, 'failed migration leaves schema and retained facts intact');
-    const repair = new DatabaseSync(f.file);
-    assert.equal(repair.prepare('PRAGMA user_version').get().user_version, 7);
-    assert.equal(repair.prepare('PRAGMA table_info(store_state)').all().some(row => row.name === 'calculation_revision'), false);
-    repair.exec('DROP TRIGGER calculation_source_insert'); repair.close();
-    const db = openLocalIndexStore(f.file);
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9);
-    assert.equal(db.prepare('SELECT calculation_revision n FROM store_state').get().n, 0);
-    assert.equal(db.prepare('SELECT COUNT(*) n FROM usage_event').get().n, 1);
-    db.close();
-  } finally { f.cleanup(); }
-});
-
-test('v8 carry-source migration rolls back completely and retries from the synthetic copy', () => {
-  const f = fixture();
-  try {
-    seed(f.file);
-    makeV8Copy(f.file);
-    const before = durableRows(f.file);
-    const originalExec = DatabaseSync.prototype.exec;
-    try {
-      DatabaseSync.prototype.exec = function (sql) {
-        if (sql.includes("CREATE TRIGGER calculation_source_update")) {
-          throw new Error("synthetic v9 source trigger failure");
-        }
-        return originalExec.call(this, sql);
-      };
-      assert.throws(() => openLocalIndexStore(f.file), { code: "local_index_unavailable" });
-    } finally { DatabaseSync.prototype.exec = originalExec; }
-
-    const unchanged = new DatabaseSync(f.file, { readOnly: true });
-    try {
-      assert.equal(unchanged.prepare('PRAGMA user_version').get().user_version, 8);
-      assert.equal(unchanged.prepare('PRAGMA table_info(source)').all().some(row => row.name === 'carry_tier_source'), false);
-    } finally { unchanged.close(); }
-    assert.deepEqual(durableRows(f.file), before, 'failed v8→v9 migration leaves the synthetic schema and retained evidence unchanged');
-
-    const repaired = openLocalIndexStore(f.file);
-    try {
-      assert.equal(repaired.prepare('PRAGMA user_version').get().user_version, 9);
-      assert.equal(repaired.prepare('SELECT carry_tier_source FROM source').get().carry_tier_source, null);
-    } finally { repaired.close(); }
-  } finally { f.cleanup(); }
-});
 
 test('semantic revision covers full evidence distinctions and rolls back with interrupted writes', () => {
   const f = fixture();
@@ -213,11 +184,11 @@ test('semantic revision covers full evidence distinctions and rolls back with in
   } finally { f.cleanup(); }
 });
 
-test('v8 capture triggers and tier carry provenance migrate forward only on writable opens', () => {
+test('current-schema capture triggers are corrected only on writable opens without changing evidence', () => {
   for (const open of [openLocalIndexStore, openLocalIndexEvidenceStore]) {
     const f = fixture();
     try {
-      seed(f.file); makeV8Copy(f.file);
+      seed(f.file); openLocalIndexStore(f.file).close();
       const legacy = new DatabaseSync(f.file);
       try {
         for (const operation of ['INSERT', 'UPDATE', 'DELETE']) {
@@ -227,10 +198,9 @@ test('v8 capture triggers and tier carry provenance migrate forward only on writ
         }
       } finally { legacy.close(); }
       const before = durableRows(f.file);
-      assert.throws(() => openLocalIndexStore(f.file, { readOnly: true }), {
-        code: 'local_index_family_mismatch',
-      });
-      assert.deepEqual(durableRows(f.file), before, 'a read-only v8 open must refuse without migrating or changing triggers');
+      const readonly = openLocalIndexStore(f.file, { readOnly: true });
+      readonly.close();
+      assert.deepEqual(durableRows(f.file), before, 'read-only diagnostics must never correct persisted triggers');
       const originalExec = DatabaseSync.prototype.exec;
       try {
         DatabaseSync.prototype.exec = function (sql) {
@@ -239,29 +209,15 @@ test('v8 capture triggers and tier carry provenance migrate forward only on writ
         };
         assert.throws(() => open(f.file), { code: 'local_index_unavailable' });
       } finally { DatabaseSync.prototype.exec = originalExec; }
-      const migratedButUnretired = durableRows(f.file);
-      assert.equal(migratedButUnretired.sequence[0].commit_seq, before.sequence[0].commit_seq);
-      assert.deepEqual(migratedButUnretired.events, before.events);
-      assert.deepEqual(migratedButUnretired.sources, before.sources);
-      assert.deepEqual(migratedButUnretired.diagnostics, before.diagnostics);
-      assert.equal(migratedButUnretired.sequence[0].calculation_revision, before.sequence[0].calculation_revision);
-      const interrupted = new DatabaseSync(f.file, { readOnly: true });
-      try {
-        assert.equal(interrupted.prepare('PRAGMA user_version').get().user_version, 9,
-          'the additive schema migration commits before the independent trigger retirement');
-        assert.equal(interrupted.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_runtime_model_evidence_%'").get().n, 3,
-          'a failed trigger-retirement transaction leaves its three legacy triggers intact');
-        assert.equal(interrupted.prepare('SELECT carry_tier_source FROM source').get().carry_tier_source, null);
-      } finally { interrupted.close(); }
+      assert.deepEqual(durableRows(f.file), before, 'a partial correction rolls back all trigger changes');
       const writer = open(f.file);
       try {
         assert.equal(writer.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_runtime_model_evidence_%'").get().n, 0);
         assert.equal(writer.prepare('PRAGMA user_version').get().user_version, 9);
-        assert.equal(writer.prepare('SELECT carry_tier_source FROM source').get().carry_tier_source, null);
       } finally { writer.close(); }
       const after = durableRows(f.file);
       for (const key of ['events', 'sources', 'diagnostics', 'sequence']) assert.deepEqual(after[key], before[key]);
-      assert.match(after.schema.find(row => row.type === 'table' && row.name === 'source').sql, /carry_tier_source TEXT/u);
+      assert.deepEqual(after.schema, before.schema.filter(row => !row.name.startsWith('calculation_runtime_model_evidence_')));
       open(f.file).close();
       assert.deepEqual(durableRows(f.file), after, 'the forward correction is idempotent');
     } finally { f.cleanup(); }

@@ -1,17 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import Ajv from "ajv";
 import { APP_OFFICIAL_PRICE_CARDS } from "@app-usagemonitor/accounting";
-import {
-  REVIEWED_MODEL_CATALOG, REVIEWED_CODEX_MODEL_IDS, TELEMETRY_MODEL_IDS,
-  REVIEWED_MODEL_CATALOG_VERSION, assertReviewedModelCatalogCompleteness,
-  reviewedModelIdentity, codexRequestReasoningEffort, parseTelemetryContribution,
-  codexCacheReasoningConfiguration,
-} from "@app-usagemonitor/telemetry-contract";
-import * as browser from "../apps/web/public/telemetry-shared.generated.js";
+import { REVIEWED_MODEL_CATALOG, REVIEWED_CODEX_MODEL_IDS, REVIEWED_MODEL_CATALOG_VERSION, assertReviewedModelCatalogCompleteness, reviewedModelIdentity, codexRequestReasoningEffort, codexCacheReasoningConfiguration } from "@app-usagemonitor/codex-catalog";
+import * as browser from "../apps/web/public/codex-catalog.generated.js";
 import { recognizedCodexModelId, codexModelPricingStatus, codexModelAllowanceTrack } from "../src/export/registries.js";
-import { telemetryV01Golden } from "./fixtures/telemetry-contract-vectors.mjs";
+import { exportSchemas } from "../src/export-schema.js";
 
 test("reviewed identity catalog covers priced OpenAI models and explicit aliases, never provider tools", () => {
   const models = REVIEWED_MODEL_CATALOG;
@@ -25,7 +19,7 @@ test("reviewed identity catalog covers priced OpenAI models and explicit aliases
     assert.equal(reviewedModelIdentity(id).priceModelId, id);
     assert.equal(reviewedModelIdentity(id).pricingStatus, "published");
   }
-  assert.equal(TELEMETRY_MODEL_IDS.length, new Set(TELEMETRY_MODEL_IDS).size);
+  assert.equal(REVIEWED_CODEX_MODEL_IDS.length, new Set(REVIEWED_CODEX_MODEL_IDS).size);
   for (const entry of models) {
     assert.equal(Object.isFrozen(entry), true);
     assert.equal(recognizedCodexModelId(entry.id.toUpperCase()), entry.id);
@@ -42,56 +36,20 @@ test("reviewed identity catalog covers priced OpenAI models and explicit aliases
   }
 });
 
-test("active catalog is Codex-only while frozen telemetry enums retain legacy IDs", async () => {
+test("browser and current local export consume the same closed Codex catalog", () => {
   assert.deepEqual(browser.REVIEWED_MODEL_CATALOG, REVIEWED_MODEL_CATALOG);
-  assert.deepEqual(browser.TELEMETRY_MODEL_IDS, TELEMETRY_MODEL_IDS);
-  // Existing enum positions remain stable; newly reviewed identities append.
-  assert.deepEqual(TELEMETRY_MODEL_IDS.slice(0, 15), [
-    "unknown", "gpt-4.1", "gpt-5", "gpt-5.4", "gpt-5.4-mini", "gpt-5.5",
-    "gpt-5.5-codex", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra",
-    "claude-fable-5", "claude-haiku-4-5-20251001", "claude-opus-4-8",
-    "claude-sonnet-4-6", "claude-sonnet-5",
-  ]);
-  assert.deepEqual(TELEMETRY_MODEL_IDS.slice(-9), [
-    "gpt-6-luna",
-    "gpt-6.1-astra", "claude-fable-5-1", "claude-mythos-5-1",
-    "claude-opus-5", "claude-opus-5-5", "gpt-6.1-sol", "gpt-5.1-codex-max", "gpt-6.1-terra",
-  ]);
-  assert.equal(reviewedModelIdentity("claude-sonnet-5"), null);
-  assert.equal(browser.reviewedModelIdentity("claude-sonnet-5"), null);
-  const schema = JSON.parse(await readFile(new URL("../packages/telemetry-contract/schemas/v0.2/usage-event.schema.json", import.meta.url), "utf8"));
-  assert.deepEqual([...schema.properties.modelId.enum].sort(), [...TELEMETRY_MODEL_IDS].sort());
-  const validateId = new Ajv().compile(schema.properties.modelId);
+  assert.deepEqual(browser.REVIEWED_CODEX_MODEL_IDS, REVIEWED_CODEX_MODEL_IDS);
+  assert.equal(browser.REVIEWED_MODEL_CATALOG_VERSION, REVIEWED_MODEL_CATALOG_VERSION);
+  assert.deepEqual(exportSchemas.usageEvent.properties.modelId.enum, ["unknown", ...REVIEWED_CODEX_MODEL_IDS]);
+  const validateId = new Ajv().compile(exportSchemas.usageEvent.properties.modelId);
   for (const modelId of REVIEWED_CODEX_MODEL_IDS) {
-    const record = telemetryV01Golden();
-    record.usageEvents[0].modelId = modelId;
-    assert.equal(validateId(modelId), true);
-    assert.equal(parseTelemetryContribution(record), record);
-    assert.equal(browser.parseTelemetryContribution(record), record);
-    record.usageEvents[0].provider = "anthropic_claude_code";
-    assert.throws(() => parseTelemetryContribution(record));
+    assert.equal(validateId(modelId), true, modelId);
+    assert.deepEqual(browser.reviewedModelIdentity(modelId), reviewedModelIdentity(modelId));
   }
-  for (const modelId of ["gpt-6t", "o3-private", "unknown-model-content"]) assert.equal(validateId(modelId), false);
-});
-
-test("the frozen v0.1 parser still reads legacy provider bytes outside the active catalog", () => {
-  const legacy = telemetryV01Golden();
-  const event = legacy.usageEvents[0];
-  event.provider = "anthropic_claude_code";
-  event.modelId = "claude-sonnet-5";
-  event.billingSurface = "claude_subscription";
-  event.components.outputTextTokens = null;
-  event.components.outputReasoningTokens = null;
-  event.components.outputCombinedTokens = 1100;
-  const quota = legacy.quotaSnapshots[0];
-  quota.provider = "anthropic_claude_code";
-  quota.limitId = "unknown";
-  quota.snapshotSource = "status_line";
-  quota.providerSurface = "general_usage";
-  legacy.providerPolicyEpoch = "anthropic_unknown";
-
-  assert.equal(reviewedModelIdentity(event.modelId), null);
-  assert.equal(parseTelemetryContribution(legacy), legacy);
+  for (const modelId of ["claude-sonnet-5", "gpt-6t", "o3-private", "unknown-model-content"]) {
+    assert.equal(validateId(modelId), false, modelId);
+    assert.equal(browser.reviewedModelIdentity(modelId), null);
+  }
 });
 
 test("requested effort mapping is model-specific and does not assert cache or effective update state", () => {

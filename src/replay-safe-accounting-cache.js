@@ -52,7 +52,7 @@ import {
   planEraForInterval,
   SEVEN_DAY_WINDOW_MINUTES,
 } from "@app-usagemonitor/quota-analysis";
-import { TELEMETRY_PLAN_TYPES } from "@app-usagemonitor/telemetry-contract";
+import { CODEX_PLAN_TYPES } from "@app-usagemonitor/codex-catalog";
 import {
   addComponentCosts as addComponentCostsApproximate,
   emptyComponentCosts,
@@ -467,7 +467,7 @@ const SURFACES = new Set([
 ]);
 const AGENT_SCOPES = new Set(["root", "subagent", "automation", "unknown"]);
 const LINEAGE = new Set(["standalone", "forked", "parent_linked", "unknown"]);
-const QUOTA_PLANS = new Set(TELEMETRY_PLAN_TYPES);
+const QUOTA_PLANS = new Set(CODEX_PLAN_TYPES);
 const QUOTA_SLOTS = new Set(["primary", "secondary"]);
 
 // The exact shape Date#toISOString produces for years 0000 through 9999. A

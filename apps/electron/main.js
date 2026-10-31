@@ -7,6 +7,7 @@ import {
   pinApplicationProfilePaths,
 } from "./application-profile.js";
 import identity from "../../config/application-identity.cjs";
+import { readUsageCutoverStartupPolicy, USAGE_CUTOVER_POLICY_MAX_BYTES } from "./usage-cutover-policy.js";
 import brand from "../../config/product-brand.cjs";
 import { dirname, resolve, win32 } from "node:path";
 import { readFile } from "node:fs/promises";
@@ -20,6 +21,7 @@ import { ELECTRON_ENTRY_FAILURE_DIAGNOSTIC, shellError } from "./errors.js";
 import { assertElectronPlatformGate } from "./platform-gate.js";
 import {
   createWindowsNormalCandidateCredentialHandover,
+  createWindowsExistingObservationCredentialHandover,
   createWindowsDevelopmentReadOnlyCredentialHandover,
 } from "./desktop-windows-accountless-credential.js";
 import {
@@ -944,6 +946,11 @@ export async function launchElectronShell({
     // A local-QA launch must never inherit production sending or updating.
     const productionEnabled = productionDistribution !== null
       && environment.USAGE_MONITOR_TEST_LANE === undefined;
+    const usageCutoverPolicy = productionEnabled
+      ? readUsageCutoverStartupPolicy(createWindowsProtectedStateStore({
+        adapter: createWindowsFilesystemAdapter({ platform, architecture }),
+        rootPath: app.getPath("userData"), maxBytes: USAGE_CUTOVER_POLICY_MAX_BYTES,
+      })) : null;
     // Exact stable Windows candidates select the fixed FD4 account-observation
     // adapter. Qualification and installed lifecycle evidence remain separate
     // from this source selection.
@@ -965,7 +972,9 @@ export async function launchElectronShell({
       && platform === "win32"
       && architecture === "x64"
       && productionDistribution.target === "win32-x64"
-      ? createWindowsNormalCandidateCredentialHandover()
+      ? usageCutoverPolicy === null
+        ? createWindowsNormalCandidateCredentialHandover()
+        : createWindowsExistingObservationCredentialHandover()
       : platform === "win32" && architecture === "x64"
         && qualificationContext !== null && qualificationContext !== undefined
         && preparation.applicationProfile === "development"

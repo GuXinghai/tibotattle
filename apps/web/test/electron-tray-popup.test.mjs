@@ -1,201 +1,17 @@
-import { normalizeDashboardPayload } from "../public/data-client.js";
+import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
-
-import {
-  bootstrapTrayPopup,
-  createTrayPopupProjection,
-  observeTrayPopupContentHeight,
-  renderTrayPopup,
-  requestTrayPopupAction,
-  TRAY_POPUP_SCHEMA_VERSION,
-} from "../public/electron-tray-popup.js";
-import {
-  SUPPORTED_LOCALES,
-  translate,
-} from "../public/localization.js";
-import { TRAY_DEFAULTS } from "../public/electron-tray-preferences.js";
-
+import { createTrayPopupProjection, renderTrayPopup, requestTrayPopupAction, observeTrayPopupContentHeight, bootstrapTrayPopup, TRAY_POPUP_ACTIONS } from "../public/electron-tray-popup.js";
+import { SUPPORTED_LOCALES, translate } from "../public/localization.js";
 const NOW = "2026-09-04T18:00:00.000Z";
-
-function usageRow(day, hour, {
-  events = 1,
-  tokens = 100,
-  cost = 0.01,
-  partial = 0,
-  unpriced = 0,
-} = {}) {
-  return {
-    startAt: `2026-09-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:00:00.000Z`,
-    endAt: `2026-09-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:15:00.000Z`,
-    usageEvents: events,
-    totalTokens: tokens,
-    apiPriceEquivalentUsd: cost,
-    pricingCoverage: {
-      fullyPricedEvents: events - partial - unpriced,
-      partiallyPricedEvents: partial,
-      unpricedEvents: unpriced,
-    },
-  };
-}
-
-function period(periodId, overrides = {}) {
-  const events = overrides.events ?? 12;
-  return {
-    periodId,
-    periodLabel: periodId === "7d" ? "Last seven days" : "Last thirty days",
-    events,
-    totalTokens: overrides.totalTokens ?? 1_200,
-    apiPriceEquivalentUsd: overrides.apiPriceEquivalentUsd ?? 1.25,
-    pricingCoverage: {
-      fullyPricedEvents: overrides.fullyPricedEvents ?? events,
-      partiallyPricedEvents: overrides.partiallyPricedEvents ?? 0,
-      unpricedEvents: overrides.unpricedEvents ?? 0,
-    },
-  };
-}
-
-function fixture({ accountingProjection = "available", historyStatus = "complete" } = {}) {
-  return {
-    state: "live",
-    freshness: {
-      status: "live",
-      latestObservedAt: NOW,
-      ageSeconds: 15,
-      staleAfterSeconds: 1_800,
-      accountingStatus: accountingProjection,
-      accountingAgeSeconds: 15,
-    },
-    quotaWindows: [
-      {
-        id: "codex-5h",
-        limitId: "codex",
-        durationMinutes: 300,
-        usedPercent: 25,
-        remainingPercent: 75,
-        resetAt: "2026-09-04T20:00:00.000Z",
-        observedAt: NOW,
-        status: "live",
-      },
-      {
-        id: "codex-7d",
-        limitId: "codex",
-        durationMinutes: 10_080,
-        usedPercent: 40,
-        remainingPercent: 60,
-        resetAt: "2026-09-07T20:00:00.000Z",
-        observedAt: NOW,
-        status: "live",
-      },
-      {
-        id: "spark",
-        limitId: "codex_bengalfox",
-        durationMinutes: 300,
-        usedPercent: 1,
-        remainingPercent: 99,
-        status: "live",
-      },
-    ],
-    weekly: {
-      paceOutlook: {
-        schemaVersion: "local-weekly-pace-outlook-v0.1",
-        status: "available",
-        standing: "under",
-        critical: false,
-        earlyEstimate: false,
-        remainingPercent: 60,
-        resetsAt: "2026-09-07T20:00:00.000Z",
-        observationCount: 5,
-        elapsedHours: 72,
-        rates: {
-          activePercentagePointsPerHour: 0.3,
-          overallPercentagePointsPerHour: 0.2,
-          headlinePercentagePointsPerHour: 0.2,
-          sustainablePercentagePointsPerHour: 60 / 74,
-          ratio: 0.2 / (60 / 74),
-        },
-        projection: {
-          hoursToReset: 74,
-          coveredHours: 74,
-          dryHours: 0,
-          sparePercent: 45.2,
-          projectedExhaustionAt: null,
-        },
-        track: {
-          coveredFraction: 1,
-          activeExhaustionFraction: null,
-        },
-      },
-      paceForecast: {
-        schemaVersion: "local-weekly-pace-forecast-v0.2",
-        status: "available",
-        currentUsedPercent: 40,
-        remainingPercent: 60,
-        resetsAt: "2026-09-07T20:00:00.000Z",
-        pace: {
-          method: "median_adjacent_quota_slope",
-          sampleCount: 4,
-          elapsedHours: 72,
-          movementPp: 15,
-          activePercentagePointsPerHour: 0.3,
-          overallPercentagePointsPerHour: 0.2,
-        },
-        observationCount: 5,
-        etaAt: "2026-09-07T10:00:00.000Z",
-        hoursToExhaustion: 64,
-        hoursToReset: 74,
-      },
-    },
-    accounting: {
-      projection: accountingProjection === "retained"
-        ? {
-          status: "retained",
-          retainedAt: "2026-09-04T17:00:00.000Z",
-          coveredAt: {
-            startAt: "2026-08-06T00:00:00.000Z",
-            endAt: "2026-09-04T17:00:00.000Z",
-          },
-        }
-        : {
-          status: accountingProjection,
-          reason: accountingProjection === "available" ? null : "local_unified_index_unavailable",
-          terminal: accountingProjection !== "available",
-        },
-      periods: [
-        period("7d"),
-        period("30d", { events: 42, totalTokens: 4_200 }),
-      ],
-      historyCoverage: {
-        status: "complete",
-        sourceCount: 8,
-        indexedSourceCount: 8,
-        pendingSourceCount: 0,
-        skippedSourceCount: 0,
-      },
-    },
-    timeline: {
-      bucketMinutes: 15,
-      usage: [
-        usageRow(4, 17, { events: 2, tokens: 200, cost: 0.02 }),
-        usageRow(3, 13, { events: 3, tokens: 300, cost: 0.03 }),
-        usageRow(2, 8, { events: 0, tokens: 0, cost: 0 }),
-        usageRow(1, 9, { events: 1, tokens: 100, cost: 0.01 }),
-        usageRow(28, 9, { events: 1, tokens: 100, cost: 0.01 }),
-        usageRow(20, 9, { events: 1, tokens: 100, cost: 0.01 }),
-      ],
-      history: {
-        status: historyStatus,
-        source: "unified_local_index",
-        coveredAt: {
-          startAt: "2026-08-06T00:00:00.000Z",
-          endAt: NOW,
-        },
-      },
-    },
-  };
-}
-
+function fixture() { return {
+  freshness:{status:"live",latestObservedAt:NOW,staleAfterSeconds:1800},
+  quotaWindows:[300,10080].map((durationMinutes,i)=>({limitId:"codex",slot:"primary",durationMinutes,usedPercent:25+i*15,remainingPercent:75-i*15,observedAt:NOW,status:"live",resetAt:i?"2026-09-07T20:00:00.000Z":"2026-09-04T20:00:00.000Z"})),
+  workload:{schemaVersion:"overview-workload-v9",status:"available",generatedAt:NOW,unallocated:{totalIntervals:0,plans:[],records:[],truncated:false},
+    current:{windowMinutes:15,state:"available",usdPerHour:12.8,level:"medium"},
+    trend:{windowMinutes:60,state:"available",ratePpPerHour:1,usdPerHour:8.4,level:"light",observedFrom:"2026-09-04T17:40:00Z",observedThrough:NOW,coveredMinutes:20,inferred:false}}
+}; }
+const project=data=>createTrayPopupProjection(data,{now:NOW});
 class FakeElement {
   constructor(dataset = {}) {
     this.dataset = { ...dataset };
@@ -249,19 +65,9 @@ class FakeDocument {
     this.listeners = new Map();
     this.documentElement = new FakeElement();
     this.elements = new Map();
-    for (const id of [
-      "tray-popup", "allowance-lanes", "allowance-unavailable", "history-available",
-      "history-unavailable", "history-unavailable-title", "history-unavailable-body",
-      "history-period", "history-tokens", "history-events", "history-price",
-      "history-start", "history-end", "history-coverage", "history-retained",
-      "history-bars", "history-bar-detail", "pace-section", "pace-state", "pace-headline",
-      "pace-explanation", "pace-evidence", "pace-timeline", "pace-outlook",
-      "pace-outlook-caption", "pace-outlook-duration", "pace-outlook-tooltip", "pace-reset",
-      "pace-track", "pace-now", "pace-outcome", "pace-marker-note",
-      "pace-fill", "pace-active-marker", "tray-popup-freshness", "tray-popup-live",
-    ]) this.elements.set(id, new FakeElement());
+    for (const id of ["tray-popup", "allowance-lanes", "allowance-unavailable", "tray-popup-freshness", "tray-popup-live", "tray-popup-open-label", "tray-short-level", "tray-short-value", "tray-trend-level", "tray-trend-value"]) this.elements.set(id, new FakeElement());
     this.ranges = [new FakeElement({ historyRange: "7d" }), new FakeElement({ historyRange: "30d" })];
-    this.actions = [new FakeElement({ action: "open" }), new FakeElement({ action: "refresh" }), new FakeElement({ action: "more" })];
+    this.actions = [new FakeElement({ action: "open" })];
   }
 
   createElement() {
@@ -308,104 +114,105 @@ function tick() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
-test("tray popup assets are local, bounded, and wired as a visual surface", async () => {
-  const html = await readFile(new URL("../public/electron-tray-popup.html", import.meta.url), "utf8");
-  const css = await readFile(new URL("../public/electron-tray-popup.css", import.meta.url), "utf8");
-  const js = await readFile(new URL("../public/electron-tray-popup.js", import.meta.url), "utf8");
-  assert.match(html, /electron-tray-popup\.css/u);
-  assert.match(html, /electron-tray-popup\.js/u);
-  assert.match(html, /data-i18n-root/u);
-  assert.match(html, /id="allowance-lanes"/u);
-  assert.match(html, /id="history-start"/u);
-  assert.match(html, /id="history-end"/u);
-  // The compact pace feature is initially hidden and becomes visible only
-  // after a current weekly allowance binds the validated outlook.
-  assert.match(html, /id="pace-section"[^>]*hidden/u);
-  assert.match(html, /id="pace-headline"/u);
-  assert.match(html, /id="pace-outcome"/u);
-  assert.match(html, /id="pace-track"/u);
-  assert.match(html, /id="pace-outlook-duration"/u);
-  assert.match(html, /id="pace-outlook-tooltip" aria-hidden="true"/u);
-  assert.match(html, /id="history-bars"/u);
-  assert.match(html, /data-history-range="7d"/u);
-  assert.match(html, /data-history-range="30d"/u);
-  assert.match(html, /data-action="open"/u);
-  assert.match(html, /data-action="refresh"/u);
-  assert.match(html, /data-action="more"/u);
-  assert.match(html, /aria-haspopup="menu"/u);
-  assert.doesNotMatch(html, /Not a subscription bill/u);
-  assert.doesNotMatch(html, /Usage overview/u);
-  assert.doesNotMatch(html, /https?:\/\//u);
-  assert.match(js, /function buildWeeklyPace/u);
-  assert.match(js, /function renderWeeklyPace/u);
-  assert.match(js, /observeTrayPopupContentHeight/u);
-  assert.match(js, /reportContentHeight/u);
-  assert.match(js, /totalTokens/u);
-  assert.match(js, /visibilitychange/u);
-  assert.match(js, /data-tray-popup-ready/u);
-  assert.doesNotMatch(js, /recalculateDetailedAccounting/u);
-  assert.match(css, /width:\s*100%/u);
-  assert.doesNotMatch(css, /min-height:\s*100vh/u);
-  assert.match(css, /repeating-linear-gradient/u);
-  assert.match(css, /\[hidden\][\s\S]*display:\s*none\s*!important/u);
-  assert.match(css, /prefers-reduced-motion/u);
-  assert.match(css, /prefers-color-scheme:\s*dark/u);
+
+test("compact assets expose only the existing open action with local CSP and neutral theme roles", async()=>{
+  const html=await readFile(new URL('../public/electron-tray-popup.html',import.meta.url),'utf8');
+  const css=await readFile(new URL('../public/electron-tray-popup.css',import.meta.url),'utf8');
+  assert.deepEqual([...html.matchAll(/data-action="([^"]+)"/g)].map(x=>x[1]),['open']);
+  assert.doesNotMatch(html,/data-history-range|<details|pace-section|history-bars|data-action="refresh"|https?:/);
+  assert.match(html,/script-src 'self'/);assert.doesNotMatch(html,/<script[^>]*>[^<]+/);
+  assert.match(css,/currentColor 0 2px,transparent 2px 3px/);assert.match(css,/background-size:100% 1px/);
+  assert.match(css,/span:hover/);assert.match(css,/focus-visible/);assert.match(css,/prefers-color-scheme:dark/);
+  assert.match(css,/--tray-tertiary:#888/);assert.doesNotMatch(css,/content:.*↗|100vh|#174f45|#e52b21/i);
+});
+test("single and missing allowance windows never invent an unreported lane",()=>{
+  for(const durations of [[300,10080],[10080],[300],[]]){
+    const f=fixture();f.quotaWindows=f.quotaWindows.filter(x=>durations.includes(x.durationMinutes));
+    const p=project(f);assert.deepEqual(p.allowances.map(x=>x.durationMinutes),durations);
+    assert.equal(p.workload.current.usdPerHour,12.8);
+    const doc=new FakeDocument();renderTrayPopup(doc,p);
+    assert.equal(doc.getElementById('allowance-lanes').children.length,durations.length);
+    assert.equal(doc.getElementById('allowance-unavailable').hidden,durations.length>0);
+  }
+});
+test("independent stale lanes hide numeric claims without hiding a valid sibling",()=>{
+  const f=fixture();f.quotaWindows[0].observedAt='2026-09-04T17:29:59.000Z';
+  const p=project(f);assert.equal(p.allowances[0].state,'stale');assert.equal(p.allowances[0].remainingPercent,null);
+  assert.equal(p.allowances[1].remainingPercent,60);
+  const doc=new FakeDocument();renderTrayPopup(doc,p);
+  assert.equal(doc.getElementById('allowance-lanes').children[0].children[1].textContent,'—');
+  assert.equal(doc.getElementById('allowance-lanes').children[0].children[2].textContent,'Out of date');
+});
+test("quota admission rejects invalid percentages, dates, future observations and passed resets",()=>{
+  for(const mutate of [x=>x.usedPercent=90,x=>x.remainingPercent=-1,x=>x.resetAt='bad',x=>x.resetAt='2026-10-04T18:00:00.000Z',x=>x.resetAt='2026-09-04T17:59:59.000Z',x=>x.observedAt='2026-09-04T18:01:00.000Z']){
+    const f=fixture();mutate(f.quotaWindows[0]);const p=project(f);
+    assert.notEqual(p.allowances[0].state,'available');assert.equal(p.allowances[0].remainingPercent,null);
+    assert.equal(p.allowances[1].remainingPercent,60);
+  }
+});
+test("quota admission selects the explicit primary before recency and never borrows a sibling",()=>{
+  const f=fixture();const other={...f.quotaWindows[1],slot:'secondary',remainingPercent:80,usedPercent:20};
+  f.quotaWindows.push(other,{...other,limitId:'codex_bengalfox'});assert.equal(project(f).allowances[1].remainingPercent,60);
+  f.quotaWindows[1].observedAt='2026-09-04T17:20:00.000Z';assert.equal(project(f).allowances[1].state,'stale');
+  f.quotaWindows=f.quotaWindows.filter(x=>x.slot!=='primary');assert.equal(project(f).allowances[0].remainingPercent,80);
+});
+test("freshness follows the clock rather than serialized age, and all stale pools use one notice",()=>{
+  const f=fixture();f.freshness.ageSeconds=1;
+  const p=createTrayPopupProjection(f,{now:'2026-09-04T18:30:00.001Z'});
+  assert.equal(p.freshness.status,'stale');assert.equal(p.allowances[0].remainingPercent,null);
+  const doc=new FakeDocument();renderTrayPopup(doc,p);assert.equal(doc.getElementById('allowance-lanes').children.length,0);
+  assert.equal(doc.getElementById('allowance-unavailable').textContent,'Out of date');
+});
+test("both rates use the shared v9 contract and preserve unknown grades, zero and inference",()=>{
+  const f=fixture();f.workload.current.usdPerHour=0;f.workload.current.level='unclassified';f.workload.trend.inferred=true;
+  const p=project(f);assert.equal(p.workload.current.usdPerHour,0);assert.equal(p.workload.current.level,null);
+  const doc=new FakeDocument();renderTrayPopup(doc,p);
+  assert.equal(doc.getElementById('tray-short-level').textContent,'—');assert.equal(doc.getElementById('tray-short-value').textContent,'US$0');
+  assert.match(doc.getElementById('tray-trend-value').textContent,/≈ US\$8.4 \*/);
+  assert.deepEqual(Object.keys(p.workload.current),['windowMinutes','state','usdPerHour','level','inferred']);
+  assert.ok(Object.isFrozen(p.workload.current));
+});
+test("each rate fails closed independently on missing price, old contract and stale or future evidence",()=>{
+  for(const mutate of [f=>f.workload.schemaVersion='overview-workload-v8',f=>f.workload.status='stale',f=>f.workload.generatedAt='2026-09-04T17:40:00.000Z',f=>f.workload.generatedAt='2026-09-04T18:01:00.000Z']){
+    const f=fixture();mutate(f);assert.equal(project(f).workload.current.state,'unknown');assert.equal(project(f).workload.trend.state,'unknown');
+  }
+  for(const mutate of [x=>x.usdPerHour=null,x=>x.usdPerHour=-1,x=>x.windowMinutes=60]){
+    const f=fixture();mutate(f.workload.current);assert.equal(project(f).workload.current.state,'unknown');assert.equal(project(f).workload.trend.state,'available');
+  }
+  const f=fixture();f.workload.trend.observedFrom='2026-09-04T16:00:00Z';assert.equal(project(f).workload.trend.state,'unknown');assert.equal(project(f).workload.current.state,'available');
+});
+test("account replacement and offline data cannot retain the prior account's displayed figures",()=>{
+  const doc=new FakeDocument();renderTrayPopup(doc,project(fixture()));
+  renderTrayPopup(doc,project({freshness:{status:'offline'}}));
+  assert.equal(doc.getElementById('allowance-lanes').children.length,0);assert.equal(doc.getElementById('tray-short-value').textContent,'—');
+  assert.equal(doc.getElementById('tray-trend-value').textContent,'—');
+});
+test("legacy composition preferences cannot hide the new compact evidence",()=>{
+  const doc=new FakeDocument();renderTrayPopup(doc,project(fixture()),{preferences:{sections:[],metrics:[],density:'compact'}});
+  assert.equal(doc.getElementById('allowance-lanes').children.length,2);assert.equal(doc.getElementById('tray-short-level').textContent,'Medium');
+});
+test("compact copy is translated and the only bridge action has no extra arguments",()=>{
+  for(const locale of SUPPORTED_LOCALES)for(const key of ['title','fiveHour','weekly','shortTerm','trend','unit','open','unknown','stale','offline'])assert.notEqual(translate('electron.trayCompact.'+key,{},locale),'electron.trayCompact.'+key);
+  const calls=[];const bridge={requestAction:x=>calls.push(x)};
+  assert.deepEqual(TRAY_POPUP_ACTIONS,['open']);assert.equal(requestTrayPopupAction(bridge,'open'),true);
+  for(const action of ['refresh','more','customize','usage','file:///private'])assert.equal(requestTrayPopupAction(bridge,action),false);
+  assert.equal(requestTrayPopupAction(bridge,'open','secret'),false);assert.deepEqual(calls,['open']);
 });
 
-// Owner direction (2026-10-18): the app is monochrome, so the tray popup keeps
-// one neutral ink and a greyscale pace ramp. This pins the ramp so the popup
-// cannot quietly drift back to its old green/amber/red tones.
-test("tray popup palette stays monochrome with a greyscale pace ramp", async () => {
-  const css = await readFile(new URL("../public/electron-tray-popup.css", import.meta.url), "utf8");
-  assert.match(css, /--tray-paper: #fff;/u);
-  assert.match(css, /--tray-ink: #000;/u);
-  assert.match(css, /--tray-paper: #161616;/u);
-  assert.match(css, /--tray-ink: #f2f2f2;/u);
-  assert.doesNotMatch(css, /--tray-critical|#174f45|#e52b21|#a2571a|#76aa9c|#efb56f|#26312b/iu);
-  const tone = (name) =>
-    css.match(new RegExp(`\\.electron-tray-popup-pace\\[data-pace-tone="${name}"\\][^\\{]*\\{([^}]*)\\}`, "u"))?.[1] ?? "";
-  assert.match(tone("over"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 80%, transparent\);/u);
-  assert.match(tone("on"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 45%, transparent\);/u);
-  assert.match(tone("insufficient"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 30%, transparent\);/u);
-  assert.match(tone("unavailable"), /--pace-color: color-mix\(in srgb, var\(--tray-ink\) 30%, transparent\);/u);
-  assert.match(tone("critical"), /--pace-color: var\(--tray-ink\);/u);
-  // No tone carries a background wash any more.
-  assert.doesNotMatch(css, /--pace-wash/u);
-});
-
-test("rendered action labels interpolate the product name", () => {
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, createTrayPopupProjection(fixture(), { now: NOW, timeZone: "UTC" }), {
-    // A non-native host keeps the established action-bridge behavior; only a
-    // host that supplies onModel starts Refresh in the conservative state.
-    bridge: { requestAction() {} },
-  });
-  assert.equal(documentRef.actions[0].textContent, "Open Rhetrion");
-  assert.equal(documentRef.actions[1].textContent, "Refresh");
-  assert.equal(documentRef.actions[2].textContent, "⋯");
-  assert.equal(documentRef.actions[2].attributes.get("aria-label"), "More actions");
-  assert.equal(documentRef.actions[1].disabled, false);
-  assert.doesNotMatch(documentRef.actions[0].textContent, /\{appName\}/u);
-});
-
-test("header and allowance rows use the compact native wording", () => {
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, createTrayPopupProjection(fixture(), { now: NOW, timeZone: "UTC" }));
-  assert.equal(documentRef.getElementById("tray-popup-freshness").textContent, "Live");
-  const allowance = documentRef.getElementById("allowance-lanes").children[0];
-  assert.equal(allowance.children[0].children[1].textContent, "75% remaining");
-  assert.equal(allowance.children[1].textContent, "Resets in 2h 0m");
-
-  const updated = new FakeDocument();
-  renderTrayPopup(updated, createTrayPopupProjection(fixture(), {
-    now: "2026-09-04T18:05:00.000Z",
-    timeZone: "UTC",
-  }), {
-    bridge: { requestAction() {} },
-    requiresMainModel: true,
-    mainModel: { status: "fresh", refreshEnabled: true },
-  });
-  assert.match(updated.getElementById("tray-popup-freshness").textContent, /Updated 5 minutes ago/u);
+test("tray freshness does not call startup or unknown evidence collecting",()=>{
+  const doc=new FakeDocument();
+  const t=(key)=>({
+    "electron.trayCompact.starting":"Starting",
+    "electron.trayCompact.noObservation":"No observation",
+    "electron.trayPopover.headerUpdating":"Updating",
+    "electron.trayPopover.headerUpdated":"Updated {age}",
+  })[key]??key;
+  renderTrayPopup(doc,project(fixture()),{t,mainModel:{status:"starting",refreshEnabled:false}});
+  assert.equal(doc.getElementById("tray-popup-freshness").textContent,"Starting");
+  renderTrayPopup(doc,project({...fixture(),freshness:{status:"unknown",latestObservedAt:null,staleAfterSeconds:1800}}),{t});
+  assert.equal(doc.getElementById("tray-popup-freshness").textContent,"No observation");
+  renderTrayPopup(doc,project({...fixture(),freshness:{status:"live",latestObservedAt:null,staleAfterSeconds:1800}}),{t});
+  assert.equal(doc.getElementById("tray-popup-freshness").textContent,"No observation");
 });
 
 test("content-height reporting follows intrinsic changes through the narrow bridge", () => {
@@ -452,550 +259,6 @@ test("content-height reporting follows intrinsic changes through the narrow brid
   assert.equal(FakeResizeObserver.latest.disconnected, true);
 });
 
-test("the popup's pacing and history messages stay translated in every shipped locale", () => {
-  for (const locale of SUPPORTED_LOCALES) {
-    for (const key of [
-      "electron.trayPopover.weeklyPace",
-      "electron.trayPopover.localHistory",
-      "electron.trayPopover.pricingPartial",
-      "electron.trayPopover.allowance",
-      "electron.trayPopover.localUsage",
-      "electron.trayPopover.notSubscriptionBill",
-      "electron.trayPopover.retainedHistory",
-      "electron.trayPopover.refresh",
-      "electron.trayPopover.paceUnavailable",
-      "electron.trayPopover.paceRefreshNeeded",
-      "electron.trayPopover.paceEstimatedRunout",
-      "electron.trayPopover.paceInDuration",
-      "electron.trayPopover.paceActiveMarker",
-    ]) {
-      const value = translate(key, { duration: "2d 3h" }, locale);
-      assert.equal(typeof value, "string");
-      assert.notEqual(value.trim(), "", `${locale} ${key}`);
-      assert.doesNotMatch(value, /\{[A-Za-z]/u, `${locale} ${key}`);
-    }
-  }
-});
-
-test("projection keeps the normal Codex lanes and exact shared pace outlook", () => {
-  const projection = createTrayPopupProjection(fixture(), { now: NOW, timeZone: "UTC" });
-  assert.equal(projection.schemaVersion, TRAY_POPUP_SCHEMA_VERSION);
-  assert.deepEqual(projection.allowances.map((row) => row.durationMinutes), [300, 10_080]);
-  assert.deepEqual(projection.allowances.map((row) => row.remainingPercent), [75, 60]);
-  assert.equal(projection.weeklyPace.status, "available");
-  assert.equal(projection.weeklyPace.pace.overallPercentagePointsPerHour, 0.2);
-  assert.equal(projection.weeklyPace.resetsAt, "2026-09-07T20:00:00.000Z");
-  assert.equal(projection.weeklyPace.outlook.kind, "reset_first");
-  assert.equal(projection.weeklyPace.outlook.standing, "under");
-  assert.equal(projection.weeklyPace.outlook.ratio, 0.2 / (60 / 74));
-  assert.equal(projection.weeklyPace.outlook.coveredFraction, 1);
-  assert.equal(Object.hasOwn(projection, "accountId"), false);
-  assert.equal(Object.hasOwn(projection, "raw"), false);
-});
-
-test("weekly pace renders only for a current allowance bound to its valid outlook", () => {
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, createTrayPopupProjection(fixture(), { now: NOW, timeZone: "UTC" }));
-  assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.equal(documentRef.getElementById("pace-state").textContent, "Under sustainable pace");
-  assert.equal(documentRef.getElementById("pace-section").dataset.paceTone, "under");
-  assert.equal(documentRef.getElementById("pace-headline").textContent,
-    "At this pace, the weekly allowance lasts to the reset.");
-  assert.match(documentRef.getElementById("pace-explanation").textContent, /0\.2×/u);
-  assert.equal(documentRef.getElementById("pace-outcome").textContent, "About 45% left at reset");
-  assert.equal(documentRef.getElementById("pace-timeline").hidden, false);
-  assert.equal(documentRef.getElementById("pace-fill").style.width, "100%");
-  assert.equal(documentRef.getElementById("pace-outlook-caption").hidden, true);
-  assert.equal(documentRef.getElementById("pace-outlook-duration").textContent, "Allowance lasts to reset");
-  assert.equal(documentRef.getElementById("pace-outlook-duration").attributes.has("aria-label"), false);
-  assert.equal(documentRef.getElementById("pace-marker-note").hidden, true);
-  assert.match(documentRef.getElementById("pace-track").attributes.get("aria-label"), /Resets in 3d 2h/u);
-  assert.equal(documentRef.getElementById("pace-track").attributes.has("aria-valuenow"), false);
-
-  const stale = fixture();
-  stale.freshness.latestObservedAt = "2026-09-04T17:29:59.000Z";
-  const staleDocument = new FakeDocument();
-  renderTrayPopup(staleDocument, createTrayPopupProjection(stale, { now: NOW, timeZone: "UTC" }));
-  assert.equal(staleDocument.getElementById("pace-section").hidden, true);
-
-  const mismatched = fixture();
-  mismatched.quotaWindows[1].remainingPercent = 61;
-  const mismatchedDocument = new FakeDocument();
-  renderTrayPopup(mismatchedDocument, createTrayPopupProjection(mismatched, { now: NOW, timeZone: "UTC" }));
-  assert.equal(mismatchedDocument.getElementById("pace-section").hidden, true);
-});
-
-test("a bound exhausted weekly pool renders a critical observed state without a forecast ratio", () => {
-  const data = fixture();
-  Object.assign(data.quotaWindows[1], { usedPercent: 100, remainingPercent: 0 });
-  const outlook = data.weekly.paceOutlook;
-  Object.assign(outlook, { status: "exhausted", standing: "over", critical: true, remainingPercent: 0 });
-  outlook.rates = { activePercentagePointsPerHour: null, overallPercentagePointsPerHour: null,
-    headlinePercentagePointsPerHour: null, sustainablePercentagePointsPerHour: 0, ratio: null };
-  Object.assign(outlook.projection, { coveredHours: 0, dryHours: 74, sparePercent: 0, projectedExhaustionAt: null });
-  Object.assign(outlook.track, { coveredFraction: 0, activeExhaustionFraction: null });
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.equal(projection.weeklyPace.status, "exhausted");
-  assert.equal(projection.weeklyPace.outlook.kind, "exhausted");
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, projection);
-  assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.equal(documentRef.getElementById("pace-section").dataset.paceTone, "critical");
-  assert.equal(documentRef.getElementById("pace-state").textContent, "Allowance already exhausted");
-  assert.equal(documentRef.getElementById("pace-timeline").hidden, true);
-  assert.equal(documentRef.getElementById("pace-explanation").textContent, "");
-  assert.match(documentRef.getElementById("pace-reset").textContent, /Resets in/u);
-  const badRatio = structuredClone(data);
-  badRatio.weekly.paceOutlook.rates.ratio = 2;
-  assert.equal(createTrayPopupProjection(badRatio, { now: NOW }).weeklyPace.status, "unavailable");
-  data.quotaWindows[1].remainingPercent = 1;
-  assert.equal(createTrayPopupProjection(data, { now: NOW }).weeklyPace.status, "unavailable");
-});
-
-test("switching usage history range preserves the same current weekly pace", () => {
-  const data = fixture();
-  const seven = createTrayPopupProjection(data, { now: NOW, range: "7d", timeZone: "UTC" });
-  const thirty = createTrayPopupProjection(data, { now: NOW, range: "30d", timeZone: "UTC" });
-  assert.deepEqual(thirty.weeklyPace, seven.weeklyPace);
-  assert.equal(seven.history.dayCount, 7);
-  assert.equal(thirty.history.dayCount, 30);
-
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, seven);
-  const headline = documentRef.getElementById("pace-headline").textContent;
-  renderTrayPopup(documentRef, thirty);
-  assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.equal(documentRef.getElementById("pace-headline").textContent, headline);
-  assert.equal(documentRef.getElementById("history-period").textContent, "Last 30 days");
-});
-
-test("weekly pace explains a verified zero-observation state without estimating", () => {
-  const data = fixture();
-  const outlook = data.weekly.paceOutlook;
-  outlook.status = "unavailable";
-  outlook.standing = null;
-  outlook.remainingPercent = null;
-  outlook.resetsAt = null;
-  outlook.observationCount = 0;
-  outlook.elapsedHours = null;
-  outlook.rates = Object.fromEntries(Object.keys(outlook.rates).map((key) => [key, null]));
-  outlook.projection = Object.fromEntries(Object.keys(outlook.projection).map((key) => [key, null]));
-  outlook.track = Object.fromEntries(Object.keys(outlook.track).map((key) => [key, null]));
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.equal(projection.weeklyPace.status, "insufficient_observations");
-
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, projection);
-  assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.equal(documentRef.getElementById("pace-state").textContent, "Insufficient evidence");
-  assert.match(documentRef.getElementById("pace-headline").textContent, /Two fresh weekly allowance readings/u);
-  assert.equal(documentRef.getElementById("pace-timeline").hidden, true);
-});
-
-test("critical weekly pace explains the dry stretch with matching timeline geometry", async () => {
-  const css = await readFile(new URL("../public/electron-tray-popup.css", import.meta.url), "utf8");
-  const data = fixture();
-  const outlook = data.weekly.paceOutlook;
-  outlook.standing = "over";
-  outlook.critical = true;
-  outlook.rates.activePercentagePointsPerHour = 3;
-  outlook.rates.overallPercentagePointsPerHour = 2;
-  outlook.rates.headlinePercentagePointsPerHour = 2;
-  outlook.rates.ratio = 2 / (60 / 74);
-  outlook.projection.coveredHours = 30;
-  outlook.projection.dryHours = 44;
-  outlook.projection.sparePercent = 0;
-  outlook.projection.projectedExhaustionAt = "2026-09-06T00:00:00.000Z";
-  outlook.track.coveredFraction = 30 / 74;
-  outlook.track.activeExhaustionFraction = 20 / 74;
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.equal(projection.weeklyPace.status, "available");
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, projection, {
-    localFormatter: () => "Sep 6, 12:00 AM EDT",
-  });
-  assert.equal(documentRef.getElementById("pace-section").dataset.paceTone, "critical");
-  assert.equal(documentRef.getElementById("pace-headline").textContent,
-    "At this pace, the weekly allowance runs out in 1d 6h.");
-  assert.equal(documentRef.getElementById("pace-outcome").textContent, "Nothing left for 1d 20h");
-  assert.equal(documentRef.getElementById("pace-outlook-caption").textContent, "Estimated run-out");
-  assert.equal(documentRef.getElementById("pace-outlook-duration").textContent, "In 1d 6h");
-  assert.equal(documentRef.getElementById("pace-outlook-tooltip").textContent,
-    "Projected to run out Sep 6, 12:00 AM EDT");
-  assert.match(documentRef.getElementById("pace-outlook-duration").attributes.get("aria-label"),
-    /Estimated run-out.*In 1d 6h.*Sep 6, 12:00 AM EDT/u);
-  assert.equal(documentRef.getElementById("pace-outlook-duration").attributes.get("tabindex"), "0");
-  assert.equal(documentRef.getElementById("pace-marker-note").hidden, false);
-  assert.match(documentRef.getElementById("pace-marker-note").textContent,
-    /keep using it without a pause/u);
-  assert.match(documentRef.getElementById("pace-explanation").textContent, /2\.5×/u);
-  assert.equal(documentRef.getElementById("pace-fill").style.width, `${(30 / 74) * 100}%`);
-  assert.equal(documentRef.getElementById("pace-active-marker").style.left, `${(20 / 74) * 100}%`);
-  assert.match(documentRef.getElementById("pace-track").attributes.get("aria-label"), /Nothing left for 1d 20h/u);
-  assert.match(css, /data-pace-tone="critical"/u);
-  assert.match(css, /background-image: repeating-linear-gradient/u);
-  assert.match(css, /#pace-outlook-duration:is\(:hover, :focus-visible\) \+ #pace-outlook-tooltip/u);
-
-  renderTrayPopup(documentRef, createTrayPopupProjection(fixture(), { now: NOW, timeZone: "UTC" }));
-  assert.equal(documentRef.getElementById("pace-outlook-caption").hidden, true);
-  assert.equal(documentRef.getElementById("pace-outlook-duration").attributes.has("aria-label"), false);
-  assert.equal(documentRef.getElementById("pace-outlook-duration").attributes.has("tabindex"), false);
-  assert.equal(documentRef.getElementById("pace-outlook-tooltip").textContent, "");
-  assert.equal(documentRef.getElementById("pace-marker-note").hidden, true);
-});
-
-test("an early pace estimate stays visibly qualified", () => {
-  const data = fixture();
-  data.weekly.paceOutlook.observationCount = 2;
-  data.weekly.paceOutlook.earlyEstimate = true;
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" }));
-  assert.equal(documentRef.getElementById("pace-evidence").hidden, false);
-  assert.equal(documentRef.getElementById("pace-evidence").textContent, "Early estimate");
-});
-
-test("an older forecast remains readable without inventing timeline geometry", () => {
-  const data = fixture();
-  delete data.weekly.paceOutlook;
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.equal(projection.weeklyPace.status, "available");
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, projection);
-  assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.match(documentRef.getElementById("pace-headline").textContent, /Projected to run out/u);
-  assert.equal(documentRef.getElementById("pace-timeline").hidden, true);
-  assert.equal(documentRef.getElementById("pace-explanation").textContent, "");
-});
-
-test("clock-format customization updates the timeline reset label", () => {
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, createTrayPopupProjection(fixture(), { now: NOW, timeZone: "UTC" }), {
-    preferences: { ...TRAY_DEFAULTS, resetFormat: "clock" },
-    localFormatter: () => "Sep 7, 4:00 PM",
-  });
-  assert.equal(documentRef.getElementById("pace-reset").textContent, "Resets at Sep 7, 4:00 PM");
-  assert.equal(documentRef.getElementById("pace-timeline").hidden, false);
-});
-
-test("allowance claims retain stale observations only until their own future reset", () => {
-  const data = fixture();
-  data.quotaWindows[0].usedPercent = 24.4;
-  data.quotaWindows[0].remainingPercent = 75.6;
-  data.quotaWindows[1].observedAt = "2026-09-04T17:29:59.000Z";
-  const oneCurrentLane = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.deepEqual(oneCurrentLane.allowances.map((row) => row.durationMinutes), [300, 10_080]);
-  assert.equal(oneCurrentLane.allowances[1].stale, true);
-  assert.equal(oneCurrentLane.allowances[0].remainingPercent, 76);
-
-  const resetPassed = fixture();
-  resetPassed.quotaWindows[0].resetAt = "2026-09-04T17:59:59.000Z";
-  assert.deepEqual(
-    createTrayPopupProjection(resetPassed, { now: NOW, timeZone: "UTC" })
-      .allowances.map((row) => row.durationMinutes),
-    [10_080],
-  );
-
-  const stale = fixture();
-  stale.freshness.latestObservedAt = "2026-09-04T17:29:59.000Z";
-  assert.deepEqual(
-    createTrayPopupProjection(stale, { now: NOW, timeZone: "UTC" }).allowances.map(row => row.stale),
-    [true, true],
-  );
-});
-
-test("tray freshness follows wall time instead of a frozen serialized status or age", () => {
-  const data = fixture();
-  data.freshness.status = "live";
-  data.freshness.ageSeconds = 1;
-  const stale = createTrayPopupProjection(data, {
-    now: "2026-09-04T18:30:00.001Z",
-    timeZone: "UTC",
-  });
-  assert.equal(stale.freshness.status, "stale");
-  assert.equal(stale.freshness.ageSeconds, 1_800.001);
-  assert.deepEqual(stale.allowances.map((row) => row.stale), [true, true]);
-  assert.equal(stale.weeklyPace.status, "unavailable");
-
-  data.freshness.status = "stale";
-  data.freshness.ageSeconds = 999_999;
-  const current = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.equal(current.freshness.status, "live");
-  assert.deepEqual(current.allowances.map((row) => row.stale), [false, false]);
-  assert.equal(current.weeklyPace.status, "available");
-});
-
-test("allowance admission rejects an inconsistent percentage and an overlong provider window", () => {
-  const inconsistent = fixture();
-  inconsistent.quotaWindows[0].usedPercent = 90;
-  assert.deepEqual(
-    createTrayPopupProjection(inconsistent, { now: NOW, timeZone: "UTC" })
-      .allowances.map((row) => row.durationMinutes),
-    [10_080],
-  );
-
-  const overlong = fixture();
-  overlong.quotaWindows[0].resetAt = "2026-10-04T18:00:00.000Z";
-  assert.deepEqual(
-    createTrayPopupProjection(overlong, { now: NOW, timeZone: "UTC" })
-      .allowances.map((row) => row.durationMinutes),
-    [10_080],
-  );
-});
-
-test("allowance and weekly pace share the native primary then newest lane selection", () => {
-  const primary = fixture();
-  const secondaryWeekly = {
-    ...primary.quotaWindows[1],
-    slot: "secondary",
-    usedPercent: 39,
-    remainingPercent: 61,
-  };
-  const explicitPrimaryWeekly = {
-    ...primary.quotaWindows[1],
-    slot: "primary",
-  };
-  primary.quotaWindows = [primary.quotaWindows[0], secondaryWeekly, explicitPrimaryWeekly];
-  const primaryProjection = createTrayPopupProjection(primary, { now: NOW, timeZone: "UTC" });
-  assert.equal(
-    primaryProjection.allowances.find((row) => row.durationMinutes === 10_080)?.remainingPercent,
-    60,
-  );
-  assert.equal(primaryProjection.weeklyPace.status, "available");
-
-  const newest = fixture();
-  const olderWeekly = {
-    ...newest.quotaWindows[1],
-    slot: "secondary",
-    usedPercent: 39,
-    remainingPercent: 61,
-    observedAt: "2026-09-04T17:55:00.000Z",
-  };
-  const newestWeekly = {
-    ...newest.quotaWindows[1],
-    slot: "secondary",
-  };
-  newest.quotaWindows = [newest.quotaWindows[0], olderWeekly, newestWeekly];
-  const newestProjection = createTrayPopupProjection(newest, { now: NOW, timeZone: "UTC" });
-  assert.equal(
-    newestProjection.allowances.find((row) => row.durationMinutes === 10_080)?.remainingPercent,
-    60,
-  );
-  assert.equal(newestProjection.weeklyPace.status, "available");
-});
-
-test("pace outlook rejects malformed geometry and a different weekly reset", () => {
-  const malformed = fixture();
-  malformed.weekly.paceOutlook.track.coveredFraction = 1.1;
-  assert.equal(
-    createTrayPopupProjection(malformed, { now: NOW, timeZone: "UTC" })
-      .weeklyPace.status,
-    "unavailable",
-  );
-
-  const mismatchedReset = fixture();
-  mismatchedReset.quotaWindows[1].remainingPercent = 61;
-  assert.equal(
-    createTrayPopupProjection(mismatchedReset, { now: NOW, timeZone: "UTC" })
-      .weeklyPace.status,
-    "unavailable",
-  );
-
-  const malformedExhaustion = fixture();
-  malformedExhaustion.weekly.paceOutlook.projection.projectedExhaustionAt = "later";
-  assert.equal(
-    createTrayPopupProjection(malformedExhaustion, { now: NOW, timeZone: "UTC" })
-      .weeklyPace.status,
-    "unavailable",
-  );
-});
-
-test("pace outlook expires when its reset binding is stale or already passed", () => {
-  const stale = createTrayPopupProjection(fixture(), {
-    now: "2026-09-04T19:00:00.000Z",
-    timeZone: "UTC",
-  });
-  assert.equal(stale.weeklyPace.status, "unavailable");
-  assert.equal(stale.allowances.find((allowance) => allowance.durationMinutes === 10_080)?.stale, true);
-
-  const agedOutlook = createTrayPopupProjection(fixture(), {
-    now: "2026-09-04T18:03:00.000Z",
-    timeZone: "UTC",
-  });
-  assert.equal(agedOutlook.weeklyPace.status, "unavailable");
-  const agedDocument = new FakeDocument();
-  renderTrayPopup(agedDocument, agedOutlook);
-  assert.equal(agedDocument.getElementById("pace-section").hidden, false);
-  assert.equal(agedDocument.getElementById("pace-timeline").hidden, true);
-  assert.match(agedDocument.getElementById("pace-headline").textContent, /Refresh to check/u);
-
-  const expired = createTrayPopupProjection(fixture(), {
-    now: "2026-09-08T00:00:00.000Z",
-    timeZone: "UTC",
-  });
-  assert.equal(expired.weeklyPace.status, "unavailable");
-});
-
-test("a history-range repaint reloads an aged outlook from the companion", async () => {
-  const shiftFixture = (ageMs) => {
-    const offset = Date.now() - ageMs - Date.parse(NOW);
-    return JSON.parse(JSON.stringify(fixture()).replace(
-      /2026-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z/gu,
-      (value) => new Date(Date.parse(value) + offset).toISOString(),
-    ));
-  };
-  const documentRef = new FakeDocument();
-  let calls = 0;
-  const client = {
-    async load() {
-      calls += 1;
-      return shiftFixture(calls === 1 ? 3 * 60_000 : 5_000);
-    },
-  };
-  await bootstrapTrayPopup({ windowRef: fakeWindow(), documentRef, client });
-  assert.equal(calls, 1);
-  assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.equal(documentRef.getElementById("pace-timeline").hidden, true);
-
-  documentRef.ranges[1].dispatch("click");
-  await tick();
-  assert.equal(calls, 2);
-  assert.equal(documentRef.getElementById("history-period").textContent, "Last 30 days");
-  assert.equal(documentRef.getElementById("pace-section").hidden, false);
-  assert.equal(documentRef.getElementById("pace-timeline").hidden, false);
-  assert.match(documentRef.getElementById("pace-headline").textContent, /lasts to the reset/u);
-});
-
-test("history uses existing 15-minute buckets, preserves measured zero, and leaves gaps unknown", () => {
-  const seven = createTrayPopupProjection(fixture(), { now: NOW, range: "7d", timeZone: "UTC" });
-  assert.equal(seven.history.dayCount, 7);
-  assert.equal(seven.history.days.length, 7);
-  const byDay = new Map(seven.history.days.map((day) => [day.key, day]));
-  assert.equal(byDay.get("2026-09-02").usageEvents, 0);
-  assert.equal(byDay.get("2026-09-02").evidence, "available");
-  assert.equal(byDay.get("2026-08-30").usageEvents, null);
-  assert.equal(byDay.get("2026-08-30").evidence, "unavailable");
-  assert.equal(seven.history.status, "complete");
-
-  const thirty = createTrayPopupProjection(fixture(), { now: NOW, range: "30d", timeZone: "UTC" });
-  assert.equal(thirty.history.dayCount, 30);
-  assert.equal(thirty.history.days.length, 30);
-  assert.equal(thirty.history.days.some((day) => day.usageEvents === null), true);
-  assert.equal(thirty.history.period.periodId, "30d");
-});
-
-test("partial pricing and retained accounting stay visibly qualified", () => {
-  const data = fixture({ accountingProjection: "retained", historyStatus: "partial" });
-  data.accounting.periods[0] = period("7d", {
-    events: 3,
-    totalTokens: 300,
-    apiPriceEquivalentUsd: 0.02,
-    fullyPricedEvents: 2,
-    partiallyPricedEvents: 1,
-  });
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.equal(projection.accounting.status, "retained");
-  assert.equal(projection.accounting.retained, true);
-  assert.equal(projection.history.status, "partial");
-  assert.equal(projection.history.pricingState, "partial");
-  assert.equal(projection.history.period.pricingState, "partial");
-});
-
-test("compact history keeps tokens primary and makes partial coverage explicit", () => {
-  const data = fixture({ accountingProjection: "retained", historyStatus: "partial" });
-  data.accounting.periods[0] = period("7d", {
-    events: 3,
-    totalTokens: 1_200,
-    apiPriceEquivalentUsd: 1.25,
-    fullyPricedEvents: 2,
-    partiallyPricedEvents: 1,
-  });
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" }));
-  assert.match(documentRef.getElementById("history-period").textContent, /Last 7 days/u);
-  assert.match(documentRef.getElementById("history-tokens").textContent, /tokens$/u);
-  assert.equal(documentRef.getElementById("history-events").textContent, "3 local usage changes");
-  assert.match(documentRef.getElementById("history-price").textContent, /Known API-price equivalent.*Partial pricing/u);
-  assert.match(documentRef.getElementById("history-coverage").textContent, /Coverage: \d+ complete · \d+ partial · \d+ unavailable/u);
-  assert.match(documentRef.getElementById("history-start").textContent, /Aug|Sep/u);
-  assert.match(documentRef.getElementById("history-end").textContent, /Sep/u);
-  assert.equal(documentRef.getElementById("history-retained").textContent, "Showing the last completed analysis.");
-  assert.equal(
-    documentRef.getElementById("history-bars").children.some((bar) =>
-      bar.className.includes("evidence-partial")),
-    true,
-  );
-  const bar = documentRef.getElementById("history-bars").children.find((candidate) =>
-    candidate.attributes.get("title")?.includes("tokens"));
-  assert.ok(bar);
-  assert.match(bar.attributes.get("title"), /tokens.*\$0\.01/u);
-  assert.equal(bar.attributes.get("tabindex"), "0");
-  assert.equal(documentRef.getElementById("history-bar-detail").hidden, false);
-  assert.equal(documentRef.getElementById("history-bar-detail").textContent, "");
-  bar.dispatch("mouseenter");
-  assert.equal(documentRef.getElementById("history-bar-detail").hidden, false);
-  assert.match(documentRef.getElementById("history-bar-detail").textContent, /tokens.*\$0\.01/u);
-  documentRef.getElementById("history-bar-detail").hidden = true;
-  bar.dispatch("focus");
-  assert.equal(documentRef.getElementById("history-bar-detail").hidden, false);
-});
-
-test("unavailable accounting never turns absent history into zero", () => {
-  const projection = createTrayPopupProjection(
-    fixture({ accountingProjection: "unavailable", historyStatus: "complete" }),
-    { now: NOW, timeZone: "UTC" },
-  );
-  assert.equal(projection.accounting.status, "unavailable");
-  assert.equal(projection.accounting.period, null);
-  assert.equal(projection.history.status, "unavailable");
-  assert.equal(projection.history.days.every((day) => day.usageEvents === null), true);
-});
-
-test("unavailable accounting hides the numeric history and chart", () => {
-  const projection = createTrayPopupProjection(
-    fixture({ accountingProjection: "unavailable", historyStatus: "complete" }),
-    { now: NOW, timeZone: "UTC" },
-  );
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, projection);
-  assert.equal(documentRef.getElementById("history-available").hidden, true);
-  assert.equal(documentRef.getElementById("history-unavailable").hidden, false);
-  assert.equal(documentRef.getElementById("history-bars").children.length, 0);
-  assert.equal(
-    documentRef.getElementById("history-unavailable-title").textContent,
-    "Local usage history is not available yet",
-  );
-});
-
-test("missing daily history does not label available aggregate accounting unavailable", () => {
-  const data = fixture({ historyStatus: "unavailable" });
-  data.timeline.usage = [];
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.notEqual(projection.history.period, null);
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, projection);
-  const copy = documentRef.getElementById("history-coverage").textContent;
-  assert.match(copy, /Coverage: 0 complete · 0 partial · 7 unavailable/u);
-  assert.doesNotMatch(copy, /Local usage history is not available yet/u);
-});
-
-test("history keeps fractional currency totals when rows include integer-priced buckets", () => {
-  const data = fixture();
-  data.timeline.usage.push(usageRow(4, 18, { events: 1, tokens: 100, cost: 1 }));
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  const day = projection.history.days.find((row) => row.key === "2026-09-04");
-  assert.equal(day.apiPriceEquivalentUsd, 1.02);
-  assert.equal(day.usageEvents, 3);
-  assert.equal(day.totalTokens, 300);
-});
-
-test("oversized timeline input fails closed instead of silently showing a complete tail", () => {
-  const data = fixture();
-  data.timeline.usage = Array.from({ length: 3_001 }, () => usageRow(4, 17));
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  assert.equal(projection.history.status, "unavailable");
-  assert.equal(projection.history.days.every((day) => day.usageEvents === null), true);
-});
-
 test("hidden popup model events wait for visibility before reading the companion", async () => {
   const documentRef = new FakeDocument("hidden");
   const windowRef = fakeWindow();
@@ -1024,55 +287,6 @@ test("hidden popup model events wait for visibility before reading the companion
   await tick();
   assert.equal(loadCalls, 1);
   assert.equal(documentRef.documentElement.attributes.get("data-tray-popup-ready"), "true");
-});
-
-test("native model disables Refresh immediately without hidden companion reads", async () => {
-  const documentRef = new FakeDocument("hidden");
-  const windowRef = fakeWindow();
-  let modelListener;
-  let loadCalls = 0;
-  let actionCalls = 0;
-  const client = {
-    async load() {
-      loadCalls += 1;
-      return {};
-    },
-  };
-  const bridge = {
-    onModel(listener) {
-      modelListener = listener;
-    },
-    requestAction() {
-      actionCalls += 1;
-    },
-  };
-
-  await bootstrapTrayPopup({ windowRef: { ...windowRef, usageMonitorTrayPopover: bridge }, documentRef, client });
-  const refresh = documentRef.actions.find((button) => button.dataset.action === "refresh");
-  assert.equal(refresh.disabled, true);
-  assert.equal(loadCalls, 0);
-
-  modelListener({ status: "starting", refreshEnabled: false });
-  assert.equal(refresh.disabled, true);
-  assert.equal(documentRef.getElementById("tray-popup-freshness").textContent, "Preparing usage");
-  assert.equal(loadCalls, 0);
-
-  // Lifecycle remains fail-closed even if a malformed status event claims it
-  // can refresh while analyzing.
-  modelListener({ status: "analyzing", refreshEnabled: true });
-  assert.equal(refresh.disabled, true);
-  assert.equal(documentRef.getElementById("tray-popup-freshness").textContent, "Updating…");
-  refresh.dispatch("click");
-  assert.equal(actionCalls, 0);
-  assert.equal(loadCalls, 0);
-
-  modelListener({ status: "fresh", refreshEnabled: true });
-  assert.equal(refresh.disabled, false);
-  assert.equal(loadCalls, 0);
-
-  modelListener({ status: "unknown", refreshEnabled: true });
-  assert.equal(refresh.disabled, true);
-  assert.equal(loadCalls, 0);
 });
 
 test("native popup visibility gates visible-DOM loads and reopens on the host signal", async () => {
@@ -1163,87 +377,11 @@ test("visible popup model events coalesce in-flight reads and fence one follow-u
   assert.equal(loadCalls, 3);
 });
 
-test("tray bridge admits only the reviewed no-secret actions", () => {
-  const calls = [];
-  const bridge = { requestAction: (...args) => calls.push(args) };
-  assert.equal(requestTrayPopupAction(bridge, "open"), true);
-  assert.equal(requestTrayPopupAction(bridge, "refresh"), true);
-  assert.equal(requestTrayPopupAction(bridge, "more"), true);
-  assert.equal(requestTrayPopupAction(bridge, "weekly"), false);
-  assert.equal(requestTrayPopupAction(bridge, "open", "unexpected"), false);
-  assert.equal(requestTrayPopupAction(null, "open"), false);
-  assert.deepEqual(calls, [["open"], ["refresh"], ["more"]]);
-});
-
-
-test("allowance list includes only current provider-reported windows", async () => {
-  const documentRef = new FakeDocument();
-  const data = fixture();
-  data.quotaWindows = data.quotaWindows.filter((row) => row.durationMinutes !== 300);
-  renderTrayPopup(documentRef, createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" }));
-  const [current] = documentRef.getElementById("allowance-lanes").children;
-  assert.equal(documentRef.getElementById("allowance-lanes").children.length, 1);
-  assert.equal(current.children[0].children[0].textContent, "Seven-day allowance");
-  assert.match(current.children[1].className, /electron-tray-popup-allowance-detail/u);
-  const css = await readFile(new URL("../public/electron-tray-popup.css", import.meta.url), "utf8");
-  assert.match(css, /\[data-density="compact"\] \.electron-tray-popup-allowance-detail \{ display: none; \}/u);
-  assert.match(css, /\[data-density="compact"\] \.electron-tray-popup-allowance \{ height: 30px; \}/u);
-});
-
-
-test("token bars use complete matching accounting coverage when only typed tool history is partial", () => {
-  const data = fixture({ historyStatus: "partial" });
-  data.timeline.history.reason = "typed_tool_history_partial";
-  data.accounting.generation = "12";
-  data.accounting.generationMatched = true;
-  data.accounting.historyCoverage = {
-    status: "complete", phase: "complete", sourceCount: 2, indexedSourceCount: 2,
-    pendingSourceCount: 0, skippedSourceCount: 0, sourceBytes: 100, indexedBytes: 100,
-    generatedAt: NOW, errorCode: null,
-    coveredAt: { startAt: "2026-08-06T00:00:00.000Z", endAt: NOW },
-  };
-  const history = (value) => createTrayPopupProjection(value, { now: NOW, timeZone: "UTC" }).history;
-  assert.equal(history(data).days.find(day => day.key === "2026-09-03").evidence, "available");
-  assert.equal(history(data).days.find(day => day.key === "2026-09-04").evidence, "partial", "current day is still incomplete");
-  for (const change of [
-    copy => { copy.timeline.history.reason = "unified_index_partial"; },
-    copy => { copy.accounting.generationMatched = false; },
-    copy => { copy.accounting.generation = null; },
-    copy => { copy.accounting.historyCoverage.pendingSourceCount = 1; },
-    copy => { copy.accounting.historyCoverage.skippedSourceCount = 1; },
-    copy => { copy.accounting.historyCoverage.indexedBytes = 99; },
-    copy => { copy.accounting.historyCoverage.status = "partial"; },
-  ]) {
-    const copy = structuredClone(data); change(copy);
-    assert.equal(history(copy).days.find(day => day.key === "2026-09-03").evidence, "partial");
-  }
-  const bounded = structuredClone(data);
-  bounded.accounting.historyCoverage.coveredAt.startAt = "2026-09-03T12:00:00.000Z";
-  assert.equal(history(bounded).days.find(day => day.key === "2026-09-02").evidence, "unavailable");
-  assert.equal(history(bounded).days.find(day => day.key === "2026-09-03").evidence, "partial");
-});
-
-
-test("normalization preserves the companion's top-level timeline source for token history", () => {
-  const data = fixture();
-  data.timeline.source = "unified_local_index";
-  delete data.timeline.history.source;
-  assert.equal(normalizeDashboardPayload(data).timeline.history.source, "unified_local_index");
-  data.timeline.history.source = "recent_collector_window";
-  assert.equal(normalizeDashboardPayload(data).timeline.history.source, "recent_collector_window");
-});
-
-
-test("stale allowance rendering is explicit and never presents a current pace forecast", () => {
-  const data = fixture();
-  data.quotaWindows.forEach(row => { row.observedAt = "2026-09-04T16:24:00.000Z"; });
-  const projection = createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" });
-  const documentRef = new FakeDocument();
-  renderTrayPopup(documentRef, projection);
-  assert.match(documentRef.getElementById("allowance-lanes").children[0].children[0].children[1].textContent, /75%.*Stale/u);
-  assert.equal(documentRef.getElementById("pace-section").hidden, true);
-  for (const state of ["offline", "unavailable", "demo"]) {
-    data.freshness.status = state;
-    assert.deepEqual(createTrayPopupProjection(data, { now: NOW, timeZone: "UTC" }).allowances, []);
-  }
+test("failed companion reads remove live claims and a retry replaces the failed snapshot",async()=>{
+  const doc=new FakeDocument();const windowRef=fakeWindow();let reads=0,listener;
+  const f=fixture();f.freshness.latestObservedAt=new Date().toISOString();f.quotaWindows.forEach(x=>{x.observedAt=f.freshness.latestObservedAt;x.resetAt=new Date(Date.now()+3600000).toISOString();});f.workload.generatedAt=f.freshness.latestObservedAt;
+  await bootstrapTrayPopup({documentRef:doc,windowRef:{...windowRef,usageMonitorTrayPopover:{requestAction(){},onModel(x){listener=x;}}},client:{async load(){reads++;if(reads===2)throw new Error('private path');return f;}}});
+  listener({status:'fresh',refreshEnabled:true});await tick();assert.equal(doc.getElementById('allowance-lanes').children.length,0);
+  assert.equal(doc.getElementById('tray-short-value').textContent,'—');assert.equal(doc.getElementById('tray-popup-freshness').textContent,'Disconnected');
+  listener({status:'fresh',refreshEnabled:true});await tick();assert.equal(doc.getElementById('allowance-lanes').children.length,2);
 });

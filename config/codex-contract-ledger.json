@@ -64,18 +64,21 @@
     },
     {
       "displayName": "Pro (More)",
+      "productDisplayName": "Pro 200",
       "firstReviewedOn": "2026-08-25",
       "lifecycle": "active",
       "rawValue": "pro"
     },
     {
       "displayName": "Pro",
+      "productDisplayName": "Pro 100",
       "firstReviewedOn": "2026-08-25",
       "lifecycle": "active",
       "rawValue": "prolite"
     },
     {
       "displayName": "Pro (Max)",
+      "productDisplayName": "Pro 500",
       "firstReviewedOn": "2026-09-24",
       "lifecycle": "active",
       "note": "The KnownPlan raw value and display name are source-verified, and reviewed ChatGPT-bundled and PATH codex-cli 0.160.0 generate promax in PlanType. Product expectations remain Pro 10x for pro and Pro Max 25x for promax; provider allowance and window semantics remain unverified.",
@@ -146,6 +149,20 @@
       "firstReviewedOn": "2026-08-25",
       "lifecycle": "active",
       "rawValue": "edu_pro"
+    },
+    {
+      "displayName": "Academic Researchers",
+      "firstReviewedOn": "2026-10-31",
+      "lifecycle": "active",
+      "rawValue": "sci",
+      "note": "Source-verified identity only; entitlement, quota capacity and window semantics remain unverified."
+    },
+    {
+      "displayName": "Academic Researchers Plus",
+      "firstReviewedOn": "2026-10-31",
+      "lifecycle": "active",
+      "rawValue": "sci_plus",
+      "note": "Source-verified identity only; entitlement, quota capacity and window semantics remain unverified."
     }
   ],
   "schemaVersion": "codex-contract-ledger-v0.1",
@@ -163,9 +180,9 @@
     "branch": "main",
     "path": "codex-rs/protocol/src/auth.rs",
     "repository": "openai/codex",
-    "reviewedOn": "2026-10-04",
-    "reviewedRevision": "550eb50545a78468a09ce86b82426338640ef22d",
-    "sourceSha256": "0ab901e92eaaa9ac87d1aa5ba94c1bdc72696e922062f318e2c8e308462a3856"
+    "reviewedOn": "2026-10-31",
+    "reviewedRevision": "275a9a89b6a2689b5b5a8b3b4aa5dc3c02e7d64a",
+    "sourceSha256": "dcae6a282263f505572575703849ce71ae8ab3faef4f909ac57d5aee113ca6ea"
   },
   "verifiedContracts": [
     {

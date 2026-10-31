@@ -994,7 +994,7 @@ export async function forEachLocalCollectorRecord({
       ? " ORDER BY observed_at_ms ASC, record_id ASC"
       : " ORDER BY record_id ASC";
     const statement = database.prepare(
-      `SELECT record_json FROM records${where}${order}`,
+      `SELECT record_id, record_json FROM records${where}${order}`,
     );
     for (const row of statement.iterate(...(selectedKinds ?? []))) {
       let record;
@@ -1003,7 +1003,7 @@ export async function forEachLocalCollectorRecord({
       } catch {
         throw fixedError("local_collector_state_corrupt");
       }
-      await onRecord(record);
+      await onRecord(record, { recordId: row.record_id });
       recordCount += 1;
     }
     return { status: "available", recordCount };

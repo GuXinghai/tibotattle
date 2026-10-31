@@ -5,7 +5,6 @@ import {
   EXPORT_IDENTITY_KEYCHAIN_CAPABILITIES,
 } from "../src/platform/credential-capabilities.js";
 import { selectProductionAccountObservationSecret } from "../src/account-observation-production.js";
-import { createProductionContributionDeviceBackend } from "../src/contribution-device-capability.js";
 import { selectProductionParticipantIdentity } from "../src/export-identity-production.js";
 import {
   WINDOWS_PRODUCTION_READINESS,
@@ -283,11 +282,5 @@ test("production selectors remain closed while the manager reports qualification
     windowsReadiness: readiness,
     createWindowsBackend,
   }), (error) => error.code === "ACCOUNT_OBSERVATION_PRODUCTION_BACKEND_UNAVAILABLE");
-  assert.throws(() => createProductionContributionDeviceBackend({
-    platform: "win32",
-    architecture: "x64",
-    windowsReadiness: readiness,
-    createWindowsBackend,
-  }), (error) => error.code === "contribution_device_invalid_configuration");
-  assert.equal(constructions, 3);
+  assert.equal(constructions, 2);
 });

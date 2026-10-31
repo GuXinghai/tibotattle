@@ -6,7 +6,7 @@ on:
       - ".github/workflows/codex-contract-drift.yml"
       - "config/codex-contract-ledger.json"
       - "package.json"
-      - "packages/telemetry-contract/src/constants.js"
+      - "packages/codex-catalog/src/plans.js"
       - "scripts/check-codex-contract-drift.mjs"
       - "test/codex-contract-drift.test.js"
       - "test/fixtures/codex-*.rs"
@@ -18,7 +18,7 @@ on:
       - ".github/workflows/codex-contract-drift.yml"
       - "config/codex-contract-ledger.json"
       - "package.json"
-      - "packages/telemetry-contract/src/constants.js"
+      - "packages/codex-catalog/src/plans.js"
       - "scripts/check-codex-contract-drift.mjs"
       - "test/codex-contract-drift.test.js"
       - "test/fixtures/codex-*.rs"
@@ -112,7 +112,7 @@ jobs:
             --package-lock=false \
             --save=false \
             "@openai/codex@$codex_version"
-          test -f "$RUNNER_TEMP/codex-release/node_modules/.bin/codex.cmd"
+          test -f "$RUNNER_TEMP/codex-release/node_modules/@openai/codex/bin/codex.js"
 
       - name: Compare current source and latest released binary
         if: github.event_name != 'pull_request'
@@ -120,7 +120,7 @@ jobs:
           node ./scripts/check-codex-contract-drift.mjs \
             --source-file "$RUNNER_TEMP/openai-codex-auth.rs" \
             --source-revision "${{ steps.upstream-source.outputs.revision }}" \
-            --binary "standalone_latest=$RUNNER_TEMP/codex-release/node_modules/.bin/codex.cmd" \
+            --binary "standalone_latest=$RUNNER_TEMP/codex-release/node_modules/@openai/codex/bin/codex.js" \
             --require-binary \
             --report "$RUNNER_TEMP/codex-contract-live.json" \
             --summary "$GITHUB_STEP_SUMMARY"

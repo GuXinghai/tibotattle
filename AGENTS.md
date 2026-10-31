@@ -17,7 +17,7 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 | Security or privacy-sensitive work | `SECURITY.md` |
 | Core product/domain code | `src/AGENTS.md` |
 | Codex ingestion or provider normalization | `src/providers/codex/AGENTS.md` |
-| Contribution projection or prepared sets | `src/contribution/AGENTS.md` |
+| Reviewed Codex plan and model vocabulary | `packages/codex-catalog/AGENTS.md` |
 | Local companion, dashboard API, or unified index | `apps/local/AGENTS.md` |
 | Browser dashboard or public web UI | `apps/web/AGENTS.md` |
 | Electron desktop lifecycle, IPC, settings, shell integration, installer, updater, migration, or signing | `apps/electron/AGENTS.md` |
@@ -25,7 +25,6 @@ Prefer principles, constraints and verifiable outcomes over canned examples.
 | Pseudonym derivation or identity continuity | `packages/identity-core/AGENTS.md` |
 | Quota calibration, rolling windows, or forecasts | `packages/quota-analysis/AGENTS.md` |
 | Locale negotiation, catalogs, or browser i18n mirror | `packages/i18n/AGENTS.md` |
-| Telemetry fields, privacy, schemas, or compatibility | `packages/telemetry-contract/AGENTS.md` |
 | Native Windows filesystem or credential security | `native/AGENTS.md` |
 | GitHub workflows, actions, attestations, or release trust | `.github/AGENTS.md` |
 | Build, generator, verification, or release tooling | `scripts/AGENTS.md` |

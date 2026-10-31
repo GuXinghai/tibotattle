@@ -149,17 +149,13 @@ test("identity core preserves validation order and content-free errors", () => {
 });
 
 test("identity core consumers use only the reviewed package root", async () => {
-  const [platformSource, contributionSource, implementationSource] =
+  const [platformSource, implementationSource] =
     await Promise.all([
       readFile(
         new URL(
           "../src/platform/participant-identity.js",
           import.meta.url,
         ),
-        "utf8",
-      ),
-      readFile(
-        new URL("../src/contribution/account-track.js", import.meta.url),
         "utf8",
       ),
       readFile(
@@ -170,7 +166,7 @@ test("identity core consumers use only the reviewed package root", async () => {
         "utf8",
       ),
     ]);
-  for (const source of [platformSource, contributionSource]) {
+  for (const source of [platformSource]) {
     assert.match(source, /from "@app-usagemonitor\/identity-core"/u);
     assert.doesNotMatch(source, /@app-usagemonitor\/identity-core\//u);
   }

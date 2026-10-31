@@ -53,7 +53,7 @@ Use reviewed public facades. Keep packages platform-neutral, local HTTP loopback
 and renderer capabilities narrow. Preserve replay safety, sparse evidence,
 forward-only schemas, cancellation and recoverable state transitions.
 
-Change canonical inputs and regenerate i18n/telemetry mirrors through their owned
+Change canonical inputs and regenerate i18n/Codex catalog mirrors and local export artifacts through their owned
 commands. Never hand-edit `generated/` or generated contracts. R7 receipt regeneration
 is a protected environment-specific operation, not routine validation.
 

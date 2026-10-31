@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { TRAY_DEFAULTS, normalizeTrayPreferences, validTrayPreferences } from "../public/electron-tray-preferences.js";
 import { createTraySettingsController } from "../public/electron-tray-settings.js";
-import { applyTrayPopupPreferences, createTrayPopupProjection } from "../public/electron-tray-popup.js";
 import { SUPPORTED_LOCALES, translate } from "../public/localization.js";
 
 class Element {
@@ -69,17 +68,6 @@ test("a rejected save retains confirmed values and readable error; newer setting
   assert.match(text(doc.root), /newer version of the app/);
 });
 
-test("section controls preserve exact order, keyboard focus and prevent empty visible usage", async () => {
-  const doc = documentFixture(); const calls = [];
-  const controller = createTraySettingsController({ documentRef: doc, bridge: { async setTrayPreferences(tray) { calls.push(tray); return { settings: { tray } }; }, async restoreTrayDefaults() {} } });
-  controller.update({ tray: TRAY_DEFAULTS });
-  const move = doc.root.querySelector('[data-tray-move="usage-up"]'); move.focus(); await move.dispatch("click");
-  assert.deepEqual(calls.at(-1).sections, ["allowances", "usage", "pace"]);
-  assert.equal(doc.activeElement.dataset.trayMove, "usage-up");
-  const usage = doc.getElementById("tray-section-usage"); usage.checked = false; usage.focus(); await usage.dispatch("change");
-  assert.deepEqual(calls.at(-1).sections, ["allowances", "pace"]);
-  assert.equal(doc.activeElement.id, "tray-section-usage");
-});
 
 test("preview states are isolated examples and partial allowances never borrow the available lane", async () => {
   const doc = documentFixture();
@@ -92,26 +80,6 @@ test("preview states are isolated examples and partial allowances never borrow t
   assert.match(text(doc.root), /Example data only/);
 });
 
-test("popup composition applies selected metrics, density and cache evidence qualifiers", () => {
-  const ids = ["tray-popup", "allowances-section", "usage-section", "pace-section", "cache-section", "history-tokens", "history-events", "history-price", "history-bars", "history-endpoints", "cache-period", "cache-summary", "cache-coverage", "cache-retained"];
-  const elements = new Map(ids.map((id) => [id, { dataset: {}, style: {}, textContent: "", hidden: false }]));
-  const doc = { getElementById(id) { return elements.get(id); } };
-  const preferences = { ...TRAY_DEFAULTS, sections: ["cache", "usage"], metrics: ["cost"], showChart: false, density: "compact" };
-  applyTrayPopupPreferences(doc, { accounting: { retained: true }, cacheSummary: { status: "available", comparableReturns: 10, reusedMoreThanHalfReturns: 8, reusePercent: 80, coverageStatus: "incomplete" } }, preferences);
-  assert.equal(elements.get("allowances-section").hidden, true);
-  assert.equal(elements.get("cache-section").style.order, "0");
-  assert.equal(elements.get("history-tokens").hidden, true);
-  assert.equal(elements.get("history-price").hidden, false);
-  assert.equal(elements.get("history-bars").hidden, true);
-  assert.equal(elements.get("tray-popup").dataset.density, "compact");
-  assert.match(elements.get("cache-summary").textContent, /80% of comparable follow-ups/);
-  assert.match(elements.get("cache-coverage").textContent, /incomplete/);
-  assert.match(elements.get("cache-retained").textContent, /Last known/);
-  applyTrayPopupPreferences(doc, { accounting: {}, cacheSummary: { status: "available", comparableReturns: 0, reusePercent: null, coverageStatus: "complete" } }, preferences);
-  assert.match(elements.get("cache-summary").textContent, /No comparable/);
-  assert.doesNotMatch(elements.get("cache-summary").textContent, /0%/);
-  assert.equal(createTrayPopupProjection({ accounting: { trayCacheSummary: { periods: [{ periodId: "7d", status: "available", reusePercent: 80 }] } } }).cacheSummary, null);
-});
 
 test("every customization message is present in each shipped language", () => {
   for (const locale of SUPPORTED_LOCALES) {
@@ -127,8 +95,12 @@ test("tray customization uses the shared Settings typography instead of browser 
   assert.match(css, /settings-panel\[data-settings-panel="tray"\][\s\S]*?font-family: var\(--sans\)/u);
   assert.match(css, /\.settings-tray-group legend[\s\S]*?font-family: var\(--sans\)/u);
   assert.match(css, /\.settings-tray-checkbox[\s\S]*?font-family: var\(--sans\)/u);
-  assert.match(css, /\.settings-tray-preview-popup > strong[\s\S]*?font-family: var\(--sans\)/u);
+  assert.match(css, /\.settings-tray-preview h3[\s\S]*?font-family: var\(--sans\)/u);
+  assert.doesNotMatch(css, /settings-tray-(?:section-row|totals|preview-popup|example-chart)/u);
   assert.doesNotMatch(css, /#267466/u);
+  const iconRule = css.match(/\.settings-tray-preview-icon\s*\{([^}]+)\}/u)?.[1] ?? "";
+  assert.match(iconRule, /background: transparent/u);
+  assert.match(iconRule, /color: #242424/u);
 });
 
 
@@ -157,4 +129,12 @@ test("tray preview opens only in a modal and closes without changing saved prefe
   await dialog.children[0].dispatch("click"); assert.equal(open,false);
   assert.equal(writes,0);
   await button.dispatch("click"); controller.teardown(); assert.equal(open,false);
+});
+
+test("settings omit retired popup and meter controls while preserving saved bytes on tooltip edits",async()=>{
+ const doc=documentFixture();const writes=[];const tray={...TRAY_DEFAULTS,sections:['cache','usage'],metrics:['cost'],density:'compact',showChart:false};
+ const controller=createTraySettingsController({documentRef:doc,bridge:{async setTrayPreferences(value){writes.push(value);return {settings:{tray:value}};},async restoreTrayDefaults(){}}});controller.update({tray});
+ for(const id of ['tray-density','tray-historyRange','tray-section-usage','tray-iconMode','tray-meterWindow'])assert.equal(doc.getElementById(id),null);
+ const mode=doc.getElementById('tray-preset');mode.value='both';await mode.dispatch('change');
+ for(const field of ['sections','metrics','density','showChart','iconMode','meterWindow','emphasizeLow'])assert.deepEqual(writes[0][field],tray[field]);
 });

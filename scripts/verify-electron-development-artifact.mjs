@@ -44,6 +44,8 @@ import {
   WINDOWS_RELEASE_OPERATION_CONTRACT,
   WINDOWS_LEGACY_STATE_READ_CONTRACT,
   WINDOWS_BROWSER_PROFILE_CONTRACT,
+  WINDOWS_REPORT_PUBLICATION_CONTRACT,
+  WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT,
 } from "../src/platform/windows-filesystem.js";
 
 const SCRIPT_FILE = fileURLToPath(import.meta.url);
@@ -71,6 +73,7 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "config/product-brand.cjs",
   "config/product-brand.js",
   "apps/electron/application-profile.js",
+  "apps/electron/usage-cutover-policy.js",
   "config/electron-production-distribution.cjs",
   "apps/electron/companion-supervisor.js",
   "apps/electron/desktop-automatic-refresh-cadence.js",
@@ -120,6 +123,8 @@ export const ELECTRON_SHELL_FILES = Object.freeze([
   "apps/electron/x-import/manifest.json",
   "apps/electron/x-import/popup.html",
   "apps/electron/x-import/popup.js",
+  "apps/electron/x-import/registration.js",
+  "apps/electron/x-import/setup.js",
   "apps/electron/x-import/NativeHost.cs",
   "apps/electron/x-import/UsageMonitorXImport.exe",
   "apps/electron/errors.js",
@@ -626,6 +631,8 @@ function validateNativeManifestShape(value) {
     ["releaseOperation", WINDOWS_RELEASE_OPERATION_CONTRACT, true],
     ["legacyStateRead", WINDOWS_LEGACY_STATE_READ_CONTRACT, true],
     ["browserProfile", WINDOWS_BROWSER_PROFILE_CONTRACT, true],
+    ["reportPublication", WINDOWS_REPORT_PUBLICATION_CONTRACT, true],
+    ["localVolumeQuery", WINDOWS_LOCAL_VOLUME_QUERY_CONTRACT, true],
   ];
   const manifestKeys = [...WINDOWS_NATIVE_MANIFEST_KEYS,
     ...extensions.filter(([name]) => Object.hasOwn(value, name)).map(([name]) => name)];
