@@ -946,7 +946,7 @@ main .settings-window[data-dashboard-page] { width: 100%; margin: 0; padding: 0 
 .settings-window .settings-header { border: 0; padding-bottom: 20px; }
 .settings-window .settings-header h1 { font-family: var(--sans); font-size: 2rem; }
 .settings-window .settings-bridge-status:not(.is-unavailable) { display: none; }
-.settings-window .settings-tabs { position: static; padding: 0; margin: 0; gap: 24px; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+.settings-window .settings-tabs { position: static; padding: 0; margin: 0; gap: 24px; border: 0; border-bottom: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
 .settings-window .settings-tab { flex: 0 1 auto; min-width: 0; min-height: 44px; padding: 0 0 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--ink); background: transparent; box-shadow: none; }
 .settings-window .settings-tab[aria-selected="true"] { border-bottom-color: currentColor; font-weight: 700; }
 .settings-window .settings-panels { margin-top: 24px; }
