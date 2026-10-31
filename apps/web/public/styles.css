@@ -591,11 +591,10 @@ h1 {
   flex-direction: column;
   gap: var(--space-1);
   min-width: 210px;
-  padding: var(--pad-tile) var(--space-5);
-  border: 1px solid var(--line);
-  border-inline-start: 3px solid var(--freshness-accent, var(--muted));
-  border-radius: var(--radius-md);
-  background: var(--freshness-surface, var(--surface-quiet));
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
 }
 .freshness-card span, .freshness-card small { color: var(--muted); font-size: .68rem; }
 .freshness-card strong {
@@ -2733,10 +2732,9 @@ body .allowance-model-spark { --allowance-color: color-mix(in srgb, var(--ink) 6
   flex-direction: row; flex-wrap: wrap; align-items: baseline; justify-content: flex-end;
   gap: 2px 10px; min-width: 0; padding: 0; border: 0; background: none; box-shadow: none;
 }
-.dashboard-page-header .freshness-card > span { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; }
+.dashboard-page-header .freshness-card > span { display: inline-flex; align-items: center; gap: 0; font-size: 12.5px; }
 .dashboard-page-header .freshness-card > span::before {
-  width: 7px; height: 7px; border-radius: var(--radius-round);
-  background: var(--freshness-accent, var(--muted)); content: "";
+  display: none;
 }
 .dashboard-page-header .freshness-card strong { font-family: var(--sans); font-size: 13px; font-weight: var(--weight-semibold); }
 .dashboard-page-header .freshness-card small { font-size: 12.5px; }

@@ -4933,6 +4933,16 @@ test("self-resolving degraded notes are classed informational and keep the quiet
   }
 });
 
+test("freshness presentation has no decorative frame or leading dot", async () => {
+  const styles = await readFile(new URL("../public/styles.css", import.meta.url), "utf8");
+  const freshnessRule = styles.match(/\.freshness-card \{([\s\S]*?)\n\}/u)?.[1] ?? "";
+  assert.match(freshnessRule, /padding: 0;/u);
+  assert.match(freshnessRule, /border: 0;/u);
+  assert.match(freshnessRule, /border-radius: 0;/u);
+  assert.match(freshnessRule, /background: transparent;/u);
+  assert.match(styles, /\.dashboard-page-header \.freshness-card > span::before \{\n  display: none;\n\}/u);
+});
+
 // ---------------------------------------------------------------------------
 // Session-rejected repair fallback (owner-reported repair loop, 2026-08-08).
 // A stored session the service no longer recognizes must produce ONE sign-in
