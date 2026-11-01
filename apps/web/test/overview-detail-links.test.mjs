@@ -36,7 +36,7 @@ test("Overview price and comparison cards open the views that explain them", () 
 });
 
 test("the details dialog title uses the visible heading instead of hidden status badges", () => {
-  assert.match(layout, /const heading = summary\.querySelector\("h1, h2, h3, h4, strong"\);/u);
+  assert.match(layout, /const heading = summary\.querySelector\?\.\("h1, h2, h3, h4, strong"\);/u);
   assert.match(layout, /title\.textContent = \(heading\?\.textContent \?\? summary\.textContent\)\.trim\(\);/u);
 });
 

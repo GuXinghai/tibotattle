@@ -1118,6 +1118,7 @@ function renderLocalOnboarding(value) {
   const setupMode = compactSetup ? "ready" : "attention";
   card.open = false;
   card.dataset.setupMode = setupMode;
+  card.dataset.setupSource = value.sourceStatus;
   setLocalizedText($("#setup-title"), boundedPause
     ? "setup.state.continueTitle"
     : ready ? "setup.title"
@@ -10330,8 +10331,26 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   documentRef.addEventListener("click", event => {
     const summary = event.target.closest?.("summary");
     const details = summary?.parentElement;
-    if (details?.tagName !== "DETAILS" || !main.contains(details) || details.closest?.("dialog")
-        || typeof dialog.showModal !== "function") return;
+    if (details?.tagName !== "DETAILS" || !main.contains(details)
+        || details.closest?.("dialog")) return;
+    // A missing or unreadable Codex folder needs the native folder picker, not
+    // another explanation. Keep the details dialog for browsers and other
+    // setup problems where the native bridge cannot act.
+    if (details.id === "setup-card"
+        && ["codex_home_missing", "codex_home_unreadable"].includes(details.dataset.setupSource)
+        && typeof globalThis.usageMonitorDesktop?.chooseCodexHome === "function") {
+      event.preventDefault();
+      void (async () => {
+        try {
+          await globalThis.usageMonitorDesktop.chooseCodexHome();
+          if (typeof checkLocalSetup === "function") await checkLocalSetup();
+        } catch {
+          // A cancelled or failed picker leaves the setup row available.
+        }
+      })();
+      return;
+    }
+    if (typeof dialog.showModal !== "function") return;
     event.preventDefault();
     disclosure = details;
     dialog.dataset.disclosure = details.id;
@@ -10339,7 +10358,7 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     dialogPage = documentRef.body.dataset.dashboardPage;
     // Use the visible heading, not status badges such as the hidden "Ready"
     // label, which otherwise leak into the modal title.
-    const heading = summary.querySelector("h1, h2, h3, h4, strong");
+    const heading = summary.querySelector?.("h1, h2, h3, h4, strong");
     title.textContent = (heading?.textContent ?? summary.textContent).trim();
     // Move the actual nodes so incoming measurements/retry handlers remain live.
     content.append(...[...details.children].filter(child => child !== summary));

@@ -46,6 +46,7 @@ function onboardingHarness(locale = "en-US") {
   const ready = { state: "ready", sourceStatus: "ready", stateWritable: true, rolloutFilesPresent: true, rolloutFilesObserved: 3 };
   const card = get("#setup-card");
   card.tagName = "DETAILS";
+  card.id = "setup-card";
   const summary = element("SUMMARY");
   summary.textContent = "Local setup";
   const body = element();
@@ -81,12 +82,18 @@ function onboardingHarness(locale = "en-US") {
     while (frames.length) frames.shift()();
   };
   settleLayout();
+  const clickSummary = () => {
+    const event = { target: summary, preventDefault() { this.defaultPrevented = true; } };
+    for (const handler of listeners.get("click")) handler(event);
+    assert.equal(event.defaultPrevented, true, "the summary opens its native action or modal instead of expanding Overview");
+    return event;
+  };
   return { context, get, card, ready, dialog, content, body, summary, settleLayout,
+    clickSummary,
     setLocale(value) { locale = value; },
     open() {
-      const event = { target: summary, preventDefault() { this.defaultPrevented = true; } };
-      for (const handler of listeners.get("click")) handler(event);
-      assert.equal(event.defaultPrevented, true, "the summary opens a modal instead of expanding Overview");
+      clickSummary();
+      assert.equal(dialog.open, true, "the summary opens the details modal");
     },
     update: (value = ready) => context.renderLocalOnboarding(value),
   };
@@ -99,7 +106,7 @@ test("setup failures render in the selected language and update after language c
   assert.equal(h.get("#setup-title").textContent, "找不到你的 Codex 文件夹");
   assert.match(h.get("#setup-summary").textContent, /设置中选择现有的 Codex 文件夹/u);
   assert.doesNotMatch(h.get("#setup-summary").textContent, /Mac|System Settings/u);
-  assert.match(h.get("#setup-note").textContent, /不会分析日志，也不会上传/u);
+  assert.match(h.get("#setup-note").textContent, /不会读取日志或上传数据/u);
   h.setLocale("en-US");
   h.update(missing);
   assert.equal(h.get("#setup-title").textContent, "Can't find your Codex folder");
@@ -112,6 +119,21 @@ test("setup failures render in the selected language and update after language c
     assert.match(h.get("#setup-title").textContent, /[\u4e00-\u9fff]/u, sourceStatus);
     assert.match(h.get("#setup-summary").textContent, /[\u4e00-\u9fff]/u, sourceStatus);
   }
+});
+
+test("a missing Codex folder opens the native picker instead of the details dialog", async () => {
+  const h = onboardingHarness();
+  let chosen = 0;
+  h.context.usageMonitorDesktop = { chooseCodexHome: async () => { chosen += 1; } };
+  h.update({
+    ...h.ready, state: "needs_setup", sourceStatus: "codex_home_missing",
+    customCodexHomeConfigured: true,
+  });
+  assert.equal(h.card.dataset.setupSource, "codex_home_missing");
+  h.clickSummary();
+  await new Promise(setImmediate);
+  assert.equal(chosen, 1);
+  assert.equal(h.dialog.open, false);
 });
 
 test("setup dialog keeps live details across readiness refreshes and restores content and focus on close", () => {
