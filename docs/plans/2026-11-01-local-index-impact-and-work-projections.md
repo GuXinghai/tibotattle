@@ -1118,6 +1118,12 @@ The live open is recorded in the
 ## Remaining gate
 
 The protected-copy and live-open gates for this v11 conversion are complete.
+A packaged development candidate also rendered the v11 dashboard from an
+isolated copy of the real index; that smoke is recorded in the
+[development UI receipt](../receipts/2026-11-02-local-index-v11-development-ui-smoke.md).
+It used an isolated profile and an empty Codex home, so it is not installed-app
+or stable-profile qualification.
+
 Owner-profile phase receipt (step 0), installed-app rendering and native
 qualification, packaging, signing, updater and release evidence remain separate
 gates. A future live index with different bytes needs its own protected copy and
