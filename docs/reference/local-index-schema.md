@@ -48,8 +48,11 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
   applies both steps in one transaction and advances directly to 11: it adds
   the impact manifest tables and indexes, then replaces the derived
   `work_rollup` with the tiered key, creates `workload_bucket` and marks both
-  projections pending. A version 10 open performs only the second step. An
-  interrupted v9 open rolls back to 9; no intermediate v10 is published.
+  projections pending. Before installing the tiered definitions it drops the
+  five legacy `work_rollup_*` triggers, which live on `usage_event` and
+  `source` and therefore survive dropping the derived table. A version 10 open
+  performs only the second step. An interrupted v9 open rolls back to 9; no
+  intermediate v10 is published.
   Neither migration reads or rewrites source, fact or cursor rows. The
   standalone historical v8→v9 copy tool remains its own protected operation and
   is retired under version 11.
@@ -716,8 +719,9 @@ unknown), `model_id`, `tier_id`, `account_scope_id`, `shape`, `ctx_class`,
   update are trigger-covered. The update trigger removes the old contribution,
   prunes an emptied row and accumulates the new one.
 - It is rebuilt together with `usage_rollup` when the registry basis moves.
-  The v10→v11 migration discards the old untiered rows and marks the projection
-  pending; a bounded backfill rebuilds it from committed facts.
+  The v10→v11 migration discards the old untiered rows, replaces the five
+  legacy trigger definitions before the new table is usable, and marks the
+  projection pending; a bounded backfill rebuilds it from committed facts.
 
 ### `workload_bucket`
 

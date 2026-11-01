@@ -204,6 +204,24 @@ function triggerSql() {
 
 export const WORK_ROLLUP_TRIGGER_SCHEMA = triggerSql();
 
+// Triggers live on `usage_event` and `source`, so dropping the derived
+// `work_rollup` table does not remove them. The v9 definitions use the old
+// conflict key; a migration must drop them before installing the tiered v11
+// definitions, or every usage_event insert fails to prepare.
+export const WORK_ROLLUP_TRIGGER_NAMES = Object.freeze([
+  "work_rollup_insert",
+  "work_rollup_delete",
+  "work_rollup_update",
+  "work_rollup_cursor_advance",
+  "work_rollup_cursor_retreat",
+]);
+
+export function dropWorkRollupTriggers(database) {
+  for (const name of WORK_ROLLUP_TRIGGER_NAMES) {
+    database.exec(`DROP TRIGGER IF EXISTS ${name}`);
+  }
+}
+
 /** Rebuild the table from the committed facts. Inside the caller's transaction. */
 export function rebuildWorkRollups(database) {
   database.exec("DELETE FROM work_rollup");

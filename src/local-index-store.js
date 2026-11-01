@@ -8,6 +8,7 @@ import {
   PAIRING_TRIGGER_SCHEMA,
 } from "./local-index-pairing.js";
 import {
+  dropWorkRollupTriggers,
   pruneEmptyWorkRollups,
   rebuildWorkRollups,
   WORK_ROLLUP_SCHEMA,
@@ -701,9 +702,12 @@ function applyV9ToV10(database) {
 }
 
 function applyV10ToV11(database) {
-  // The old table is reconstructible from committed facts. Dropping it also
-  // drops its triggers; recreate both projections from their canonical DDL.
+  // The old table is reconstructible from committed facts. Its triggers are
+  // attached to `usage_event` and `source`, so dropping the table is not
+  // enough: the v9 conflict key must be removed before the tiered definitions
+  // are installed. Recreate both projections from their canonical DDL.
   database.exec("DROP TABLE IF EXISTS work_rollup");
+  dropWorkRollupTriggers(database);
   database.exec(WORK_ROLLUP_SCHEMA);
   database.exec(WORK_ROLLUP_TRIGGER_SCHEMA);
   database.exec(WORKLOAD_BUCKET_SCHEMA);

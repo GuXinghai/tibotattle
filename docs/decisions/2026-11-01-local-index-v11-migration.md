@@ -14,8 +14,9 @@ store performs one bounded, forward-only DDL migration to schema 11:
 - a v9 input applies the v9 -> v10 impact tables and the v10 -> v11 work
   projections in one transaction and becomes 11 directly;
 - a v10 input applies only the v11 step: replacing the derived `work_rollup`
-  with the tiered key, creating `workload_bucket`, installing their triggers
-  and marking both projections `pending`;
+  with the tiered key, dropping the five legacy `work_rollup_*` triggers that
+  are attached to `usage_event` and `source`, creating `workload_bucket`,
+  installing the tiered triggers and marking both projections `pending`;
 - an interrupted v9 migration rolls back to v9; an intermediate v10 file is
   never published;
 - no source, fact, cursor, salt, quota or accounting row is rewritten;
