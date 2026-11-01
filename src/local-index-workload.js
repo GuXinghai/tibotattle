@@ -306,8 +306,8 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         // the preceding receipt bin. Expand those buckets to preserve bins.
         const startEdges=new Set(database.prepare(`SELECT DISTINCT u.observed_at_ms AS at
           FROM usage_event u WHERE u.observed_at_ms>=? AND u.observed_at_ms<=?
-          AND (u.observed_at_ms % ?)=0 AND ${committedPredicate("u")}`)
-          .all(bucketOf(evidenceFrom),nowMs,BUCKET_MS).map((row)=>Number(row.at)));
+          AND (u.observed_at_ms % ${BUCKET_MS})=0 AND ${committedPredicate("u")}`)
+          .all(bucketOf(evidenceFrom),nowMs).map((row)=>Number(row.at)));
         for(const e of events){addBoundary(e.atMs);if(Number.isFinite(e.durationMs))addBoundary(e.atMs-e.durationMs);}
         for(const q of quotaRows){addBoundary(q.observed_at_ms);addBoundary(q.resets_at_ms);}
         if(current){addBoundary(Date.parse(current.observedAt));addBoundary(Date.parse(current.resetAt??current.resetsAt));}

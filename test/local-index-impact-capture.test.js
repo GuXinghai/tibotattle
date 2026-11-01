@@ -305,6 +305,30 @@ test("unknown manifest vocabularies are rejected before publication", () => {
         writer.recordSourceChange(badPartition);
         writer.commit();
       }, { code: "local_index_impact_partition_kind_invalid" });
+
+      const badBasis = change(sourceId);
+      badBasis.partitions = [{ ...badBasis.partitions[0], basisKind: "private_path" }];
+      assert.throws(() => {
+        writer.begin();
+        writer.recordSourceChange(badBasis);
+        writer.commit();
+      }, { code: "local_index_impact_basis_kind_invalid" });
+
+      const badStatus = change(sourceId);
+      badStatus.partitions = [{ ...badStatus.partitions[0], status: "private_path" }];
+      assert.throws(() => {
+        writer.begin();
+        writer.recordSourceChange(badStatus);
+        writer.commit();
+      }, { code: "local_index_impact_partition_status_invalid" });
+
+      const badGap = change(sourceId);
+      badGap.gaps = [{ byteStart: 0, byteEnd: 1, reason: "private_path", confidence: "exact" }];
+      assert.throws(() => {
+        writer.begin();
+        writer.recordSourceChange(badGap);
+        writer.commit();
+      }, { code: "local_index_impact_gap_reason_invalid" });
       assert.equal(db.prepare("SELECT COUNT(*) AS n FROM publication").get().n, 0);
     } finally {
       db.close();

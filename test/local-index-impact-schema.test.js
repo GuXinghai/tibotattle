@@ -336,6 +336,24 @@ test("manifest retention removes old changes and advances the proven-since floor
   }
 });
 
+test("repair queue DDL rejects unknown scope and reason vocabularies", () => {
+  const f = workspace();
+  try {
+    const db = openLocalIndexStore(f.file, { create: true });
+    try {
+      const insert = db.prepare(`INSERT INTO repair_queue(
+        scope_kind, scope_key, priority, reason, status, created_at_ms, updated_at_ms)
+        VALUES (?, ?, 1, ?, 'queued', 0, 0)`);
+      assert.throws(() => insert.run("private_scope", "key", "projection_backfill"), /CHECK/u);
+      assert.throws(() => insert.run("projection_backfill", "key", "private_reason"), /CHECK/u);
+    } finally {
+      db.close();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("impact schema creation is additive and idempotent", () => {
   const f = workspace();
   try {

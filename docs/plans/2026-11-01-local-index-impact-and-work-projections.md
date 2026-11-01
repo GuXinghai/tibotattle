@@ -1026,7 +1026,10 @@ working tree:
 
 Observed times may be signed; byte offsets remain non-negative. The
 `workload_bucket_observed` index is created by the v11 DDL rather than only on a
-later writable open.
+later writable open. A partial `usage_event_five_minute_start` index keeps the
+exact-start boundary check small. A synthetic protected-copy rehearsal now
+upgrades a v9 copy, verifies the original remains v9 and fact-equal, runs the
+bounded backfill to both projections `ready`, and audits both to zero.
 
 ## Validation run
 
@@ -1036,6 +1039,7 @@ Passed on the reviewed working tree:
 node --test test/local-index-impact-capture.test.js \
   test/local-index-impact-schema.test.js \
   test/local-index-quota-impact.test.js \
+  test/local-index-v11-migration-rehearsal.test.js \
   test/local-index-work-projection.test.js
 node --test test/local-index-work-usage.test.js \
   test/local-index-workload.test.js \

@@ -68,6 +68,12 @@ export const WORKLOAD_BUCKET_SCHEMA = `
 
   CREATE INDEX IF NOT EXISTS workload_bucket_observed
     ON workload_bucket(bucket_start_ms, session_id);
+
+  -- The workload reader asks which buckets contain an event exactly on a
+  -- five-minute start. A partial index keeps that boundary scan small.
+  CREATE INDEX IF NOT EXISTS usage_event_five_minute_start
+    ON usage_event(observed_at_ms)
+    WHERE (observed_at_ms % ${WORKLOAD_BUCKET_MS})=0;
 `;
 
 function keyExpressions(row) {
