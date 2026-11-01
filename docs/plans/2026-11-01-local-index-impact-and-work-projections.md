@@ -1095,15 +1095,30 @@ not prepare any `usage_event` insert. The v10->v11 step now drops all five
 legacy trigger names before installing the tiered definitions, and a regression
 test starts from a v10 store carrying the legacy triggers.
 
-The original index was never opened writable. This closes the protected-copy
-gate for this rehearsal, not the first live writable open, owner-profile
-receipt, installed artifact or release. The exact environment and command are
-recorded in the [rehearsal receipt](../receipts/2026-11-02-local-index-v11-protected-copy-rehearsal.md).
+At the time of this copy rehearsal the original index was not opened writable.
+This closes the protected-copy gate for this rehearsal. The exact environment
+and command are recorded in the
+[rehearsal receipt](../receipts/2026-11-02-local-index-v11-protected-copy-rehearsal.md).
+
+## Live writable open (2026-11-02)
+
+The owner then explicitly authorized the first live writable open. Live files
+were re-hashed against the rehearsal source, a byte-identical v9 backup was
+written to the quarantine volume, and no process held the database, WAL or SHM.
+The live store migrated from v9 to v11 in one transaction, preserved all
+4,219 sources, 550,560 usage events, 477,665 quota occurrences and 42,136 work
+facts, and finished the 44-call bounded backfill in 398,012 ms. Both projections
+were `ready`, both audits were zero, full `integrity_check` was `ok`, and all
+five work triggers were tiered. The v9 backup and the audited v11 copy remain;
+no restore was performed.
+
+The live open is recorded in the
+[live-open receipt](../receipts/2026-11-02-local-index-v11-live-open.md).
 
 ## Remaining gate
 
-The protected-copy rehearsal above satisfies the copy check for v11. The first
-live writable open, owner-profile phase receipt, installed-app rendering and
-release evidence remain separate gates. Before that open, retain the protected
-copy and repeat the copy-side checks on the then-current live index; do not
-treat an older copy as proof for different bytes.
+The protected-copy and live-open gates for this v11 conversion are complete.
+Owner-profile phase receipt (step 0), installed-app rendering and native
+qualification, packaging, signing, updater and release evidence remain separate
+gates. A future live index with different bytes needs its own protected copy and
+checks; do not treat this conversion as proof for later bytes.

@@ -14,7 +14,9 @@ index and a writable open of that copy only. The copy migrated from schema 9 to
 `foreign_key_check` and full `integrity_check`, completed the bounded work
 projection backfill, and audited both projections to zero. The five original
 files remained byte-identical, including WAL and SHM; the original index was
-never opened writable.
+not opened writable during this rehearsal. A later owner-authorized live open
+is recorded in the
+[live-open receipt](./2026-11-02-local-index-v11-live-open.md).
 
 This receipt proves one protected-copy rehearsal on one Windows x64 host. It
 does not prove the first live writable open, an owner-profile phase receipt,
@@ -107,7 +109,8 @@ labels or the installed dashboard.
 
 # What this does not prove
 
-- It does not authorize or perform the first live writable open.
+- It does not authorize or perform the first live writable open; that later
+  operation has its own receipt.
 - It does not supply the owner-runtime phase receipt or close profile step 0.
 - It does not qualify an installed app, native rendering, packaging, signing,
   updater, public deployment or release.
