@@ -65,6 +65,9 @@ export const WORKLOAD_BUCKET_SCHEMA = `
     last_at_ms INTEGER,
     PRIMARY KEY(bucket_start_ms, session_id, model_id, tier_id,
                 account_scope_id, shape, ctx_class)) STRICT, WITHOUT ROWID;
+
+  CREATE INDEX IF NOT EXISTS workload_bucket_observed
+    ON workload_bucket(bucket_start_ms, session_id);
 `;
 
 function keyExpressions(row) {

@@ -360,10 +360,12 @@ Provide `upgradeLocalIndexV9ToV10(database)` as a connection-only helper:
 6. `COMMIT`.
 
 No backfill runs inside this transaction. DDL is transactional; a failure
-leaves the v9 file untouched. The first writable open performs this additive
-v9 -> v10 migration; read-only v9 opens remain fail-closed. A protected copy
+leaves the v9 file untouched. The first writable open uses
+`upgradeLocalIndexV9ToV11(database)` to apply both the manifest and work
+projection steps in one transaction, so a v9 input never becomes a visible
+intermediate v10. Read-only v9/v10 opens remain fail-closed. A protected copy
 before that first live writable open is still required. After conversion only
-v10 is supported; there is no dual-version runtime.
+v11 is supported; there is no dual-version runtime.
 
 `upgradeLocalIndexV10ToV11(database)` replaces `work_rollup` with the
 v2 key, creates `workload_bucket` and its triggers, and inserts pending
@@ -438,6 +440,12 @@ queries use the `(source_id, source_offset)` clustering and stay bounded to one
 source. A source with no facts records zero counts and no time range. A
 discovery rejection or presence change records a coverage partition, not a
 usage time range, unless facts were also removed.
+
+A full replacement or range rescan is recorded as a bounded full-source impact
+even when event count and observed-time bounds are unchanged, because token,
+model, tier, flag or diagnostic content can still differ. When quota facts
+change, every canonical observation referenced by the old or new summary is
+expanded, including an in-place re-rank that keeps the same canonical id.
 
 Phase 1 does not create one row per 15-minute or five-minute bucket. Time ranges
 are the safe upper bound; bucket-level impact rows are a later refinement.
@@ -968,9 +976,8 @@ existing 1,000,000-usage-event ceiling on the underlying workload read.
 # Implementation receipt (2026-11-01)
 
 Synthetic only. The change was developed on top of `63f078d7`; this receipt
-records that working tree before the change series was committed. No live
-index, owner profile, rollout, installed artifact, release or deployment was
-read or migrated.
+records the reviewed working tree. No live index, owner profile, rollout,
+installed artifact, release or deployment was read or migrated.
 
 ## Projection row measurement
 
@@ -997,9 +1004,33 @@ statement is now half-open and the non-projection path passes `nowMs + 1`.
 `test/local-index-workload.test.js` includes two adjacent boundary buckets
 sharing an edge event and asserts the bucket and raw reads agree.
 
+## Post-review corrections
+
+An independent review found five blocking gaps; all are closed in the reviewed
+working tree:
+
+- workload bucket expansion now treats the 7-day display edge, the 15-minute
+  current edge, the 60-minute trend edge and the comparison start as raw
+  boundaries, and expands buckets containing an exact five-minute start event
+  so receipt bins are preserved;
+- `source_replace` and `range_rescan` record a bounded full-source impact even
+  when count and observed-time bounds are unchanged, because token/model/tier/
+  flag/diagnostic content can still differ;
+- a quota fact change expands every referenced canonical observation, including
+  an in-place re-rank that keeps the same canonical id;
+- a v9 input applies v9 -> v10 and v10 -> v11 in one transaction; an injected
+  failure rolls back to v9 and leaves no intermediate v10;
+- modes, reasons, partition kinds, basis kinds, statuses and repair scopes are
+  closed vocabularies enforced by the DDL and writer, with a bounded prefix and
+  `manifest_complete = 0` instead of an abort above 256 changes.
+
+Observed times may be signed; byte offsets remain non-negative. The
+`workload_bucket_observed` index is created by the v11 DDL rather than only on a
+later writable open.
+
 ## Validation run
 
-Passed on the working tree:
+Passed on the reviewed working tree:
 
 ```text
 node --test test/local-index-impact-capture.test.js \
@@ -1018,6 +1049,13 @@ npm run test:preflight
 npm run architecture:check
 npm run docs:check
 ```
+
+All local-index test files except the goldens were also run together. Three
+failures reproduce at `c12deb62` and are not caused by this change:
+`local-index-accounting-cache` expects an older stage-name list,
+`local-index-boundary` reports three pre-existing import-ledger entries, and
+`local-index-usage-explainer` expects an identity field the reader does not
+return. They remain open outside this slice.
 
 `test/local-index-goldens.test.js` still reports the same three pre-existing
 differences (Standard work identities, usage-report digests and calibration

@@ -27,8 +27,8 @@ import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 // stored with each usage fact, so accounting reads them from the store.
 // Review-family attribution separately verifies bounded session headers.
 // Committed facts preserve per-event speed tiers. The v11 day rollup keeps a
-// tier in its key, but this reader still consumes raw events until the
-// differential cutover is complete.
+// tier in its key; this reader uses it for exact whole UTC days and stays on
+// raw events for partial days, cleared last instants or a pending projection.
 
 const MAX_WORK_CELLS = 50_000;
 const WORK_RESOLVE_CONCURRENCY = 12;

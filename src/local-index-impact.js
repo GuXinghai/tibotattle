@@ -39,14 +39,68 @@ export const PROJECTION_STATUS = Object.freeze([
   "pending", "building", "ready", "stale", "deferred",
 ]);
 
+export const IMPACT_PARTITION_STATUSES = Object.freeze([
+  "dirty", "pending", "ready", "unknown",
+]);
+
+export const PARTITION_KINDS = Object.freeze([
+  "usage_time_range", "work_time_range", "session", "lineage_component",
+  "quota_time_range", "accounting_window", "coverage", "quota_observation",
+]);
+
+export const BASIS_KINDS = Object.freeze([
+  "fact_delta", "quota_canonical", "quota_observation", "lineage_snapshot",
+  "coverage",
+]);
+
+// Closed code vocabularies. A new production reason needs an explicit schema
+// migration; do not accept free-form errors, paths or account identifiers.
+export const SOURCE_CHANGE_REASONS = Object.freeze([
+  "model_attribution_recovery",
+  "boundary_changed",
+  "response_reconciliation",
+  "segment_mismatch",
+  "parser_version",
+  "identity_changed",
+  "cursor_invalid",
+  "same_size_changed",
+  "compressed_changed",
+  "quarantine_changed",
+  "shrink",
+  "session_rescan",
+  "dependency_quarantine_changed",
+  "dependency_quarantine",
+  "cold_build",
+  "rediscovered",
+  "discovery_absent",
+  "runtime_model_evidence",
+  "codex_rollout_content_invalid",
+  "codex_rollout_tail_incomplete",
+  "codex_rollout_lineage_invalid",
+  "codex_rollout_compression_unsupported",
+  "codex_rollout_filename_identity_mismatch",
+  "codex_rollout_generation_ambiguous",
+  "codex_rollout_checkpoint_history_unsupported",
+]);
+
+export const REPAIR_SCOPE_KINDS = Object.freeze([
+  "projection_backfill", "usage_time_range", "work_time_range", "session",
+  "coverage", "integrity_gap",
+]);
+
+export const REPAIR_REASONS = Object.freeze([
+  "projection_backfill", "integrity_gap", "coverage",
+]);
+
+const sqlList = (values) => values.map((value) => `'${value}'`).join(", ");
+
 export const IMPACT_SCHEMA = `
   -- One durable row per published commit, including commits with no source
   -- change. commit_log remains the bounded display summary.
   CREATE TABLE IF NOT EXISTS publication(
     commit_seq INTEGER PRIMARY KEY CHECK(commit_seq >= 1),
     committed_at_ms INTEGER NOT NULL CHECK(committed_at_ms >= 0),
-    kind TEXT NOT NULL CHECK(kind IN (
-      'cold', 'refresh', 'verify', 'maintenance', 'fact_correction')),
+    kind TEXT NOT NULL CHECK(kind IN (${sqlList(PUBLICATION_KINDS)})),
     manifest_complete INTEGER NOT NULL CHECK(manifest_complete IN (0, 1)),
     source_change_count INTEGER NOT NULL CHECK(source_change_count >= 0)
   ) STRICT;
@@ -56,10 +110,8 @@ export const IMPACT_SCHEMA = `
     commit_seq INTEGER NOT NULL REFERENCES publication(commit_seq)
       CHECK(commit_seq >= 1),
     source_id INTEGER NOT NULL REFERENCES source,
-    mode TEXT NOT NULL CHECK(mode IN (
-      'new', 'append', 'range_rescan', 'source_replace', 'quarantine_gap',
-      'presence_changed', 'semantic_noop', 'fact_correction')),
-    reason TEXT,
+    mode TEXT NOT NULL CHECK(mode IN (${sqlList(SOURCE_CHANGE_MODES)})),
+    reason TEXT CHECK(reason IS NULL OR reason IN (${sqlList(SOURCE_CHANGE_REASONS)})),
     old_file_id TEXT,
     new_file_id TEXT,
     old_scanned_bytes INTEGER,
@@ -76,8 +128,7 @@ export const IMPACT_SCHEMA = `
   -- lineage or diagnostic facts independently.
   CREATE TABLE IF NOT EXISTS change_fact_count(
     change_id INTEGER NOT NULL REFERENCES source_change ON DELETE CASCADE,
-    fact_kind TEXT NOT NULL CHECK(fact_kind IN (
-      'usage', 'quota', 'tool', 'work', 'lineage_snapshot', 'diagnostic')),
+    fact_kind TEXT NOT NULL CHECK(fact_kind IN (${sqlList(FACT_KINDS)})),
     old_count INTEGER NOT NULL CHECK(old_count >= 0),
     new_count INTEGER NOT NULL CHECK(new_count >= 0),
     old_min_at_ms INTEGER,
@@ -91,16 +142,16 @@ export const IMPACT_SCHEMA = `
   -- the final projection key; time ranges are valid partitions.
   CREATE TABLE IF NOT EXISTS impact_partition(
     change_id INTEGER NOT NULL REFERENCES source_change ON DELETE CASCADE,
-    partition_kind TEXT NOT NULL,
+    partition_kind TEXT NOT NULL CHECK(partition_kind IN (${sqlList(PARTITION_KINDS)})),
     partition_key TEXT NOT NULL CHECK(length(partition_key) BETWEEN 1 AND 512),
     lower_ms INTEGER,
     upper_ms INTEGER,
     session_id INTEGER REFERENCES session,
     lineage_component_id INTEGER,
     account_scope_id INTEGER REFERENCES account_scope,
-    basis_kind TEXT NOT NULL,
-    basis_key TEXT,
-    status TEXT NOT NULL CHECK(status IN ('dirty', 'pending', 'ready', 'unknown')),
+    basis_kind TEXT NOT NULL CHECK(basis_kind IN (${sqlList(BASIS_KINDS)})),
+    basis_key TEXT CHECK(basis_key IS NULL OR length(basis_key) BETWEEN 1 AND 512),
+    status TEXT NOT NULL CHECK(status IN (${sqlList(IMPACT_PARTITION_STATUSES)})),
     PRIMARY KEY(change_id, partition_kind, partition_key, basis_kind)
   ) STRICT, WITHOUT ROWID;
 
@@ -112,8 +163,8 @@ export const IMPACT_SCHEMA = `
     byte_end INTEGER,
     event_lower_ms INTEGER,
     event_upper_ms INTEGER,
-    reason TEXT NOT NULL,
-    confidence TEXT NOT NULL CHECK(confidence IN ('exact', 'bounded', 'unknown')),
+    reason TEXT NOT NULL CHECK(reason IN (${sqlList(SOURCE_CHANGE_REASONS)})),
+    confidence TEXT NOT NULL CHECK(confidence IN (${sqlList(IMPACT_CONFIDENCE)})),
     created_at_ms INTEGER NOT NULL CHECK(created_at_ms >= 0),
     repair_status TEXT NOT NULL CHECK(repair_status IN (
       'open', 'queued', 'repaired', 'superseded')),
@@ -129,23 +180,21 @@ export const IMPACT_SCHEMA = `
     computed_at_ms INTEGER,
     attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt >= 0),
     updated_at_ms INTEGER,
-    status TEXT NOT NULL CHECK(status IN (
-      'pending', 'building', 'ready', 'stale', 'deferred')),
+    status TEXT NOT NULL CHECK(status IN (${sqlList(PROJECTION_STATUS)})),
     PRIMARY KEY(projection_name, partition_key)
   ) STRICT, WITHOUT ROWID;
 
   CREATE TABLE IF NOT EXISTS repair_queue(
     queue_id INTEGER PRIMARY KEY,
-    scope_kind TEXT NOT NULL,
+    scope_kind TEXT NOT NULL CHECK(scope_kind IN (${sqlList(REPAIR_SCOPE_KINDS)})),
     scope_key TEXT NOT NULL CHECK(length(scope_key) BETWEEN 1 AND 512),
     lower_ms INTEGER,
     upper_ms INTEGER,
     priority INTEGER NOT NULL,
-    reason TEXT NOT NULL,
+    reason TEXT NOT NULL CHECK(reason IN (${sqlList(REPAIR_REASONS)})),
     attempt INTEGER NOT NULL DEFAULT 0 CHECK(attempt >= 0),
     next_retry_at_ms INTEGER,
-    status TEXT NOT NULL CHECK(status IN (
-      'queued', 'leased', 'running', 'deferred', 'done', 'failed')),
+    status TEXT NOT NULL CHECK(status IN (${sqlList(REPAIR_STATUS)})),
     lease_owner TEXT,
     lease_expires_at_ms INTEGER,
     created_at_ms INTEGER NOT NULL CHECK(created_at_ms >= 0),
@@ -185,13 +234,15 @@ export function createLocalIndexImpactSchema(database) {
  * of a published change.
  */
 export function quotaDependencyPartitions(database, {
-  oldIds = [], newIds = [], sessionId = null, limit = 100,
+  oldIds = [], newIds = [], sessionId = null, limit = 100, includeAll = false,
 } = {}) {
   const safeLimit = Number.isSafeInteger(limit) && limit > 0 ? limit : 100;
   const oldSet = new Set(oldIds);
   const newSet = new Set(newIds);
   const changed = [...new Set([...oldSet, ...newSet])]
-    .filter((id) => !(oldSet.has(id) && newSet.has(id)))
+    // A source append can re-rank an observation already referenced by both
+    // sides. When quota facts changed, every referenced id is a safe dependency.
+    .filter((id) => includeAll || !(oldSet.has(id) && newSet.has(id)))
     .filter((id) => Number.isSafeInteger(id) && id > 0)
     .sort((left, right) => left - right);
   const partitions = [];
@@ -216,7 +267,7 @@ export function quotaDependencyPartitions(database, {
       lowerMs,
       upperMs,
       sessionId,
-      basisKind: "canonical_dependency",
+      basisKind: "quota_observation",
       status: "dirty",
     });
     for (const ref of refs) {
@@ -241,7 +292,7 @@ export function quotaDependencyPartitions(database, {
       lowerMs: range.lowerMs,
       upperMs: range.upperMs,
       sessionId: range.sessionId,
-      basisKind: "canonical_dependency",
+      basisKind: "quota_observation",
       status: "dirty",
     });
   }

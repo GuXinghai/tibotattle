@@ -11,10 +11,13 @@ Rhetrion remains unpublished. A v9 or v10 local-index store is pre-release
 state, not a supported historical format. The first writable open of such a
 store performs one bounded, forward-only DDL migration to schema 11:
 
-- v9 -> v10 adds the impact-manifest tables and indexes;
-- v10 -> v11 replaces the derived `work_rollup` with the tiered key, creates
-  `workload_bucket`, installs their triggers and marks both projections
-  `pending`;
+- a v9 input applies the v9 -> v10 impact tables and the v10 -> v11 work
+  projections in one transaction and becomes 11 directly;
+- a v10 input applies only the v11 step: replacing the derived `work_rollup`
+  with the tiered key, creating `workload_bucket`, installing their triggers
+  and marking both projections `pending`;
+- an interrupted v9 migration rolls back to v9; an intermediate v10 file is
+  never published;
 - no source, fact, cursor, salt, quota or accounting row is rewritten;
 - the old `work_rollup` is derived data reconstructible from committed
   `usage_event` rows and is never source evidence.
@@ -45,7 +48,10 @@ authoritative until the converted copy passes readback:
 
 Migration failure rolls back and leaves the input file at its prior version.
 A failed or absent protected copy blocks live writable open; it is not a reason
-to relabel, delete or hand-repair the store.
+to relabel, delete or hand-repair the store. SQLite cannot prove that a copy
+exists, so this protection is an explicit operator precondition. The runtime
+gate is the version check and the single migration transaction, not a marker
+that could be set without an actual copy.
 
 # Projection semantics
 

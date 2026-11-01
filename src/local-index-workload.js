@@ -296,6 +296,18 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         const boundary=new Set();
         const addBoundary=(at)=>{if(Number.isFinite(at))boundary.add(bucketOf(at));};
         addBoundary(evidenceFrom);addBoundary(nowMs);
+        // The analyzer clips usage at these edges with inclusive/exclusive
+        // comparisons. A bucket that straddles one of them must stay raw, or
+        // pre-window events are priced at the last in-window instant.
+        addBoundary(from);addBoundary(comparisonFrom);
+        addBoundary(nowMs-WORKLOAD_POLICY.currentMs);
+        addBoundary(nowMs-WORKLOAD_POLICY.trendMs);
+        // receiptBucket assigns an event exactly on a five-minute boundary to
+        // the preceding receipt bin. Expand those buckets to preserve bins.
+        const startEdges=new Set(database.prepare(`SELECT DISTINCT u.observed_at_ms AS at
+          FROM usage_event u WHERE u.observed_at_ms>=? AND u.observed_at_ms<=?
+          AND (u.observed_at_ms % ?)=0 AND ${committedPredicate("u")}`)
+          .all(bucketOf(evidenceFrom),nowMs,BUCKET_MS).map((row)=>Number(row.at)));
         for(const e of events){addBoundary(e.atMs);if(Number.isFinite(e.durationMs))addBoundary(e.atMs-e.durationMs);}
         for(const q of quotaRows){addBoundary(q.observed_at_ms);addBoundary(q.resets_at_ms);}
         if(current){addBoundary(Date.parse(current.observedAt));addBoundary(Date.parse(current.resetAt??current.resetsAt));}
@@ -318,7 +330,7 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
         const rawBuckets=new Set();
         for(const b of bucketRows.iterate(bucketOf(evidenceFrom),bucketOf(nowMs))){
           const start=Number(b.bucket_start_ms);
-          if(boundary.has(start)||b.last_at_ms===null){rawBuckets.add(start);continue;}
+          if(boundary.has(start)||startEdges.has(start)||b.last_at_ms===null){rawBuckets.add(start);continue;}
           if(++usageRows>1_000_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
           if(usageRows%1024===0)signal?.throwIfAborted();
           const atMs=Number(b.last_at_ms),classIndex=Number(b.ctx_class);

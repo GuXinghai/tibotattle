@@ -45,9 +45,11 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
   must not be relabelled.
 - Version 4 through version 8 are not migrated by ordinary runtime; they fail
   closed as reviewed historical predecessors. A writable open of version 9
-  advances to 10 by atomically adding the impact manifest tables and indexes.
-  Version 10 advances to 11 by replacing the derived `work_rollup` with the
-  tiered key, creating `workload_bucket` and marking both projections pending.
+  applies both steps in one transaction and advances directly to 11: it adds
+  the impact manifest tables and indexes, then replaces the derived
+  `work_rollup` with the tiered key, creates `workload_bucket` and marks both
+  projections pending. A version 10 open performs only the second step. An
+  interrupted v9 open rolls back to 9; no intermediate v10 is published.
   Neither migration reads or rewrites source, fact or cursor rows. The
   standalone historical v8→v9 copy tool remains its own protected operation and
   is retired under version 11.
@@ -831,8 +833,9 @@ change. A watermark at or below that floor cannot prove it saw every change and
 must rebuild its bounded component instead of assuming no impact.
 
 The manifest does not contain source paths, raw session UUIDs or account
-identifiers. Reasons and modes are closed vocabularies; impact keys use internal
-store ids and time ranges.
+identifiers. Modes, reasons, partition kinds, basis kinds, statuses and repair
+scopes are closed vocabularies enforced by both the DDL and the writer; impact
+keys use internal store ids and time ranges.
 
 ## Work projections
 
@@ -863,8 +866,9 @@ partially built projection cannot make a project directory disappear.
 
 The workload reader uses `workload_bucket` for buckets that contain no quota
 observation/reset, declared-speed boundary, work/task boundary, local-midnight
-crossing or cleared `last_at_ms`; those boundary buckets are expanded to raw
-events. `priced` coverage is combined across buckets exactly as across events.
+crossing, display/current/trend/comparison window edge, exact five-minute start
+event or cleared `last_at_ms`; those buckets are expanded to raw events.
+`priced` coverage is combined across buckets exactly as across events.
 
 ## Generation and publication
 

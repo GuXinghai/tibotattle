@@ -1143,13 +1143,18 @@ async function runRefresh({
       : { lower: Math.min(...values), upper: Math.max(...values) };
   }
 
-  function factCounts(oldImpact, newImpact) {
+  function factCounts(oldImpact, newImpact, { forceFull = false } = {}) {
     const rows = [];
     for (const factKind of ["usage", "quota", "tool", "work", "lineage", "diagnostic"]) {
       const oldFact = oldImpact[factKind];
       const newFact = newImpact[factKind];
-      if (oldFact.count === newFact.count
-          && oldFact.min === newFact.min && oldFact.max === newFact.max) continue;
+      const unchanged = oldFact.count === newFact.count
+        && oldFact.min === newFact.min && oldFact.max === newFact.max;
+      // A full source replacement can change fact content without changing
+      // count or observed-time bounds. Keep every non-empty kind in the
+      // bounded impact set instead of claiming nothing changed.
+      if (unchanged && !forceFull) continue;
+      if (forceFull && oldFact.count === 0 && newFact.count === 0) continue;
       rows.push({
         factKind: factKind === "lineage" ? "lineage_snapshot" : factKind,
         oldCount: oldFact.count,
@@ -1163,11 +1168,16 @@ async function runRefresh({
     return rows;
   }
 
-  function impactPartitions(state, oldImpact, newImpact, mode) {
+  function impactPartitions(state, oldImpact, newImpact, mode, { forceFull = false } = {}) {
     const partitions = [];
+    const factDiffers = (oldFact, newFact) => forceFull
+      ? oldFact.count > 0 || newFact.count > 0
+        || oldFact.min !== null || newFact.min !== null
+        || oldFact.max !== null || newFact.max !== null
+      : !(oldFact.count === newFact.count
+        && oldFact.min === newFact.min && oldFact.max === newFact.max);
     const addRange = (kind, oldFact, newFact) => {
-      if (oldFact.count === newFact.count
-          && oldFact.min === newFact.min && oldFact.max === newFact.max) return;
+      if (!factDiffers(oldFact, newFact)) return;
       const range = unionRange(oldFact, newFact);
       partitions.push({
         partitionKind: kind,
@@ -1182,14 +1192,20 @@ async function runRefresh({
     addRange("usage_time_range", oldImpact.usage, newImpact.usage);
     addRange("work_time_range", oldImpact.work, newImpact.work);
     addRange("quota_time_range", oldImpact.quota, newImpact.quota);
+    const sameIds = (left, right) => left.size === right.size
+      && [...left].every((id) => right.has(id));
+    const quotaChanged = factDiffers(oldImpact.quota, newImpact.quota)
+      || !sameIds(oldImpact.quota.ids ?? new Set(), newImpact.quota.ids ?? new Set());
     const quotaDependencies = quotaDependencyPartitions(database, {
       oldIds: oldImpact.quota.ids ?? [],
       newIds: newImpact.quota.ids ?? [],
       sessionId: state.sessionId ?? null,
+      includeAll: forceFull || quotaChanged,
     });
     partitions.push(...quotaDependencies.partitions);
     if (quotaDependencies.truncated) partitions.truncated = true;
-    if (partitions.length > 0 && state.sessionId !== null) {
+    const lineageChanged = factDiffers(oldImpact.lineage, newImpact.lineage);
+    if ((partitions.length > 0 || lineageChanged) && state.sessionId !== null) {
       partitions.push({
         partitionKind: "session",
         partitionKey: `session:${state.sessionId}`,
@@ -1198,7 +1214,8 @@ async function runRefresh({
         status: "pending",
       });
     }
-    if (newImpact.usage.count !== oldImpact.usage.count) {
+    if (newImpact.usage.count !== oldImpact.usage.count
+        || forceFull && (oldImpact.usage.count > 0 || newImpact.usage.count > 0)) {
       const range = unionRange(oldImpact.usage, newImpact.usage);
       partitions.push({
         partitionKind: "accounting_window",
@@ -1270,13 +1287,17 @@ async function runRefresh({
   function recordSourceImpact({
     state, info, row, mode, reason, oldImpact, newImpact, newScannedBytes, gaps = [],
   }) {
-    const changed = factCounts(oldImpact, newImpact);
+    // A full replacement can rewrite fact content with the same count and
+    // observed-time bounds. A replacement is therefore a bounded full-source
+    // impact until a later stage proves a narrower diff.
+    const forceFull = mode === "source_replace" || mode === "range_rescan";
+    const changed = factCounts(oldImpact, newImpact, { forceFull });
     const confidence = mode === "quarantine_gap"
       ? "bounded"
       : changed.some((fact) => fact.oldMinAtMs === null && fact.newMinAtMs === null
         && (fact.oldCount > 0 || fact.newCount > 0))
         ? "bounded" : "exact";
-    const partitions = impactPartitions(state, oldImpact, newImpact, mode);
+    const partitions = impactPartitions(state, oldImpact, newImpact, mode, { forceFull });
     if (partitions.truncated) writer.markManifestIncomplete();
     writer.recordSourceChange({
       sourceId: state.sourceId,

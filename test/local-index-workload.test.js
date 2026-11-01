@@ -13,6 +13,35 @@ import {createWindowsFilesystemAdapter,createWindowsProtectedStateStore} from ".
 const at=Date.parse("2026-09-01T00:00:00Z"),M=60000;
 const line=(atMs,type,payload)=>JSON.stringify({timestamp:new Date(atMs).toISOString(),type,payload})+"\n";
 
+function writeUsageStore(indexFile,rows){
+  const db=openLocalIndexStore(indexFile,{create:true});
+  const writer=createLocalIndexWriter(db);
+  try{
+    writer.begin();
+    const sessionId=writer.internSession(Buffer.alloc(32,1),"11111111-1111-4111-8111-111111111111");
+    const modelId=writer.internModel("gpt-5.1-codex-max","recognized");
+    const tierId=writer.internTier({apiServiceTier:"standard",billingSurface:"chatgpt_subscription",
+      codexSpeedMode:"standard",tierSource:"turn_override",providerTierRaw:"default"});
+    const surfaceId=writer.internSurface({agentScope:"root",surface:"codex",threadSource:"cli",
+      lineageDisposition:"standalone"});
+    const accountScopeId=writer.internAccountScope({status:"available",reason:null,planType:"pro",
+      scopeLocal:Buffer.alloc(32,9)});
+    const source=writer.registerSource({sourceLocal:Buffer.alloc(32,2),ordinal:0,sessionId,surfaceId,
+      path:"synthetic.jsonl",rolloutKey:"synthetic",sizeBytes:1000,mtimeMs:1});
+    rows.forEach((row,index)=>{
+      const {model,...values}=row;
+      const rowModelId=model===undefined?modelId:writer.internModel(model,"missing");
+      writer.writeUsageEvent({sourceId:source.id,sourceOffset:100+index,
+        eventKey:Buffer.alloc(32,3+index),sessionId,accountScopeId,modelId:rowModelId,tierId,surfaceId,
+        reasoningEffort:1,tokensInUncached:1000,tokensInCacheRead:0,tokensInCacheWrite:0,
+        tokensOutText:50,tokensOutReasoning:50,tokensOutCombined:100,...values});
+    });
+    writer.commitSourceState(source.id,{sessionId,surfaceId,path:"synthetic.jsonl",rolloutKey:"synthetic",
+      sizeBytes:1000,mtimeMs:1,scannedBytes:1000,diagnostics:{tokenCounts:rows.length}});
+    writer.commit();
+  }finally{db.close();}
+}
+
 function comparableWorkload(value){
   const copy=structuredClone(value);
   copy.pricingDetails?.records?.sort((left,right)=>
@@ -110,6 +139,55 @@ test('adjacent raw buckets do not double count an event on their shared edge',as
     setStatus('ready');
     const bucketed=readLocalIndexWorkload(options);
     assert.equal(bucketed.pricingDetails.total,raw.pricingDetails.total);
+    assert.deepEqual(workloadDifferences(comparableWorkload(bucketed),comparableWorkload(raw)),[]);
+  }finally{w.cleanup();}
+});
+
+test('bucket expansion preserves the display and analysis window edges',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const indexFile=join(w.state,'window-edges.sqlite'),now=Date.parse("2026-09-09T00:02:00Z");
+    const currentStart=now-15*M,from=now-7*24*60*M;
+    writeUsageStore(indexFile,[
+      {observedAtMs:currentStart-M,totalInputContext:1000},
+      {observedAtMs:currentStart+M,totalInputContext:1000},
+      {observedAtMs:from-M},
+      {observedAtMs:from+M},
+    ]);
+    const setStatus=(status)=>{const raw=new DatabaseSync(indexFile);try{
+      raw.prepare("UPDATE projection_watermark SET status=? WHERE projection_name='workload_bucket'").run(status);
+    }finally{raw.close();}};
+    const options={indexFile,nowMs:now,timeZone:'UTC',sourceFresh:true};
+    setStatus('pending');
+    const raw=readLocalIndexWorkload(options);
+    setStatus('ready');
+    const bucketed=readLocalIndexWorkload(options);
+    assert.ok(raw.current.usdPerHour>0);
+    assert.equal(bucketed.current.usdPerHour,raw.current.usdPerHour);
+    assert.equal(bucketed.pricingDetails.total,raw.pricingDetails.total);
+    assert.deepEqual(workloadDifferences(comparableWorkload(bucketed),comparableWorkload(raw)),[]);
+  }finally{w.cleanup();}
+});
+
+test('an event exactly on a five-minute start keeps the receipt bin boundary',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const indexFile=join(w.state,'start-edge.sqlite'),now=Date.parse("2026-09-01T00:20:00Z");
+    const bucketStart=now-10*M;
+    writeUsageStore(indexFile,[
+      {observedAtMs:bucketStart,model:"gpt-unpriced-synthetic"},
+      {observedAtMs:bucketStart+3*M,model:"gpt-unpriced-synthetic"},
+    ]);
+    const setStatus=(status)=>{const raw=new DatabaseSync(indexFile);try{
+      raw.prepare("UPDATE projection_watermark SET status=? WHERE projection_name='workload_bucket'").run(status);
+    }finally{raw.close();}};
+    const options={indexFile,nowMs:now,timeZone:'UTC'};
+    setStatus('pending');
+    const raw=readLocalIndexWorkload(options);
+    setStatus('ready');
+    const bucketed=readLocalIndexWorkload(options);
+    assert.equal(raw.pricingDetails.records.length,2);
+    assert.equal(bucketed.pricingDetails.records.length,2);
     assert.deepEqual(workloadDifferences(comparableWorkload(bucketed),comparableWorkload(raw)),[]);
   }finally{w.cleanup();}
 });

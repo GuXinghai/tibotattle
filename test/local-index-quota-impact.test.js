@@ -74,7 +74,7 @@ test("a changed canonical quota observation expands to every referencing source"
     assert.equal(truncated, false);
     const quota = partitions.find((row) => row.partitionKind === "quota_observation");
     assert.equal(quota.partitionKey, `quota_observation:${quotaId}`);
-    assert.equal(quota.basisKind, "canonical_dependency");
+    assert.equal(quota.basisKind, "quota_observation");
     assert.equal(quota.lowerMs, 1_000);
     assert.equal(quota.upperMs, 1_500);
     const usage = partitions.filter((row) => row.partitionKind === "usage_time_range");
@@ -84,6 +84,15 @@ test("a changed canonical quota observation expands to every referencing source"
         `usage_time_range:${sources[1]}:${sessionId}`].sort(),
     );
     assert.deepEqual(usage.map((row) => row.lowerMs).sort(), [1_000, 1_500]);
+
+    // An in-place canonical re-rank keeps the same id on both sides. When the
+    // source's quota facts changed, every referenced id is a safe dependency.
+    const reranked = quotaDependencyPartitions(database, {
+      oldIds: [quotaId], newIds: [quotaId], sessionId, includeAll: true,
+    });
+    assert.ok(reranked.partitions.some((row) => row.partitionKind === "quota_observation"
+      && row.partitionKey === `quota_observation:${quotaId}`));
+    assert.equal(reranked.partitions.filter((row) => row.partitionKind === "usage_time_range").length, 2);
   } finally {
     database.close();
     rmSync(root, { recursive: true, force: true });

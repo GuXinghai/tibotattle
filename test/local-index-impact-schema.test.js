@@ -15,6 +15,7 @@ import {
   openLocalIndexStore,
   upgradeLocalIndexV9ToV10,
   upgradeLocalIndexV10ToV11,
+  upgradeLocalIndexV9ToV11,
 } from "../src/local-index-store.js";
 
 const IMPACT_TABLES = [
@@ -256,6 +257,38 @@ test("v9 -> v10 adds only manifest objects and can be followed by v11", () => {
   }
 });
 
+test("a failed v9 -> v11 chain rolls back to v9 without an intermediate v10", () => {
+  const f = workspace();
+  try {
+    seed(f.file);
+    downgradeToV9(f.file);
+    const db = new DatabaseSync(f.file);
+    try {
+      const original = db.exec.bind(db);
+      let injected = false;
+      db.exec = (sql) => {
+        if (!injected && String(sql).includes("PRAGMA user_version=11")) {
+          injected = true;
+          throw new Error("injected migration failure");
+        }
+        return original(sql);
+      };
+      assert.throws(() => upgradeLocalIndexV9ToV11(db), /injected migration failure/u);
+      assert.equal(db.prepare("PRAGMA user_version").get().user_version, 9);
+      assert.equal(db.prepare(
+        "SELECT name FROM sqlite_schema WHERE type='table' AND name='publication'",
+      ).get(), undefined);
+      assert.equal(db.prepare(
+        "SELECT name FROM sqlite_schema WHERE type='table' AND name='workload_bucket'",
+      ).get(), undefined);
+    } finally {
+      db.close();
+    }
+  } finally {
+    f.cleanup();
+  }
+});
+
 test("manifest retention removes old changes and advances the proven-since floor", () => {
   const f = workspace();
   try {
@@ -267,7 +300,7 @@ test("manifest retention removes old changes and advances the proven-since floor
       for (let index = 0; index < 5; index += 1) {
         writer.begin();
         writer.recordSourceChange({
-          sourceId, mode: "append", reason: "retention_test",
+          sourceId, mode: "append", reason: "boundary_changed",
           oldEventCount: index, newEventCount: index + 1, confidence: "exact",
           factCounts: [{
             factKind: "usage", oldCount: index, newCount: index + 1,
