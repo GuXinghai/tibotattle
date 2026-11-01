@@ -35,6 +35,11 @@ test("Overview price and comparison cards open the views that explain them", () 
   for (const [, href] of links) assertReachable(href);
 });
 
+test("the details dialog title uses the visible heading instead of hidden status badges", () => {
+  assert.match(layout, /const heading = summary\.querySelector\("h1, h2, h3, h4, strong"\);/u);
+  assert.match(layout, /title\.textContent = \(heading\?\.textContent \?\? summary\.textContent\)\.trim\(\);/u);
+});
+
 test("only the primary seven-day allowance card links to Allowance changes", () => {
   const block = source.slice(source.indexOf("function renderQuotaCards("),
     source.indexOf("function providerReportedPlanEvidence("));

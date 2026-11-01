@@ -10337,7 +10337,10 @@ function mountDashboardLayout({ documentRef, windowRef }) {
     dialog.dataset.disclosure = details.id;
     opener = summary;
     dialogPage = documentRef.body.dataset.dashboardPage;
-    title.textContent = summary.textContent.trim();
+    // Use the visible heading, not status badges such as the hidden "Ready"
+    // label, which otherwise leak into the modal title.
+    const heading = summary.querySelector("h1, h2, h3, h4, strong");
+    title.textContent = (heading?.textContent ?? summary.textContent).trim();
     // Move the actual nodes so incoming measurements/retry handlers remain live.
     content.append(...[...details.children].filter(child => child !== summary));
     details.open = false;
