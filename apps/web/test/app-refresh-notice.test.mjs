@@ -11,6 +11,21 @@ const end = source.indexOf("\nbootstrapDashboard();", start);
 assert.ok(start >= 0 && end > start, "overview publication polling function is present");
 const pollingSource = source.slice(start, end);
 
+test("refresh notice popover stays inside the viewport", () => {
+  const start = source.indexOf("function refreshNoticeLeft(");
+  const end = source.indexOf("\n}\n\nfunction positionRefreshNotice", start) + 2;
+  assert.ok(start >= 0 && end > start, "refresh notice positioning helper is present");
+  const context = {};
+  runInNewContext(`${source.slice(start, end)}
+    result = [
+      refreshNoticeLeft({ right: 143.42 }, 420, 958),
+      refreshNoticeLeft({ right: 900 }, 420, 958),
+      refreshNoticeLeft({ right: 950 }, 420, 958),
+      refreshNoticeLeft({ right: 300 }, 368, 400),
+    ];`, context);
+  assert.deepEqual([...context.result], [16, 480, 522, 16]);
+});
+
 test("overview refresh failures use localized safe copy instead of internal codes", async () => {
   for (const locale of ["en-US", "zh-Hans", "es"]) {
     for (const statusName of ["failed", "cancelled"]) {

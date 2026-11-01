@@ -724,6 +724,38 @@ function positionInformationPopover(popover, button) {
   popover.style.top = `${Math.round(top)}px`;
 }
 
+// The refresh notice is a `<details>` anchored to a topbar control. Its
+// content used to be pinned with `right: 0`; when the control sat near the
+// left edge, the 420px panel extended past the window and the left text was
+// clipped. Keep the preferred right alignment only while the whole panel fits.
+function refreshNoticeLeft(anchor, width, viewportWidth, padding = 16) {
+  const preferred = anchor.right - width;
+  return Math.min(
+    Math.max(padding, preferred),
+    Math.max(padding, viewportWidth - width - padding),
+  );
+}
+
+function positionRefreshNotice() {
+  const notice = $("#connection-notice");
+  if (!notice?.open) return;
+  const summary = notice.querySelector("summary");
+  const content = notice.querySelector(".refresh-notice-content");
+  if (!summary || !content) return;
+  const anchor = summary.getBoundingClientRect();
+  const noticeLeft = notice.getBoundingClientRect().left;
+  const padding = 16;
+  const viewportWidth = window.innerWidth;
+  const width = Math.min(
+    content.getBoundingClientRect().width || 420,
+    Math.max(1, viewportWidth - padding * 2),
+  );
+  const left = refreshNoticeLeft(anchor, width, viewportWidth, padding);
+  content.style.right = "auto";
+  content.style.left = `${Math.round(left - noticeLeft)}px`;
+  content.style.width = `${Math.round(width)}px`;
+}
+
 function closeInformationPopover({ restoreFocus = false } = {}) {
   const current = activeInformationPopover;
   if (!current) return;
@@ -940,6 +972,7 @@ function renderConnectionNotice() {
   $("#connection-check").hidden = !showCheck;
   $("#demo-button").hidden = !showDemo;
   notice.hidden = false;
+  if (notice.open) positionRefreshNotice();
 }
 
 function hideConnectionNotice() {
@@ -10173,6 +10206,7 @@ window.addEventListener("resize", () => {
   if (dashboard && !$("#timeline").inert) scheduleUsageTimelineRender();
   const current = activeInformationPopover;
   if (current) positionInformationPopover(current.popover, current.button);
+  if ($("#connection-notice")?.open) positionRefreshNotice();
 });
 let allowanceChartResizeFrame = null;
 window.addEventListener("resize", () => {
@@ -10320,6 +10354,9 @@ function mountDashboardLayout({ documentRef, windowRef }) {
   dialog.addEventListener("close", restore);
   documentRef.querySelector("#overview-details-close")?.addEventListener("click", () => dialog.close());
   const refreshNotice = documentRef.querySelector("#connection-notice");
+  refreshNotice?.addEventListener("toggle", () => {
+    if (refreshNotice.open) positionRefreshNotice();
+  });
   documentRef.addEventListener("click", event => {
     if (refreshNotice?.open && !refreshNotice.contains(event.target)) refreshNotice.open = false;
   });

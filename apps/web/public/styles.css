@@ -3797,7 +3797,7 @@ body[data-dashboard-page] #overview-screen { display: block; }
 }
 .refresh-notice > summary span { flex: none; text-decoration: underline; }
 .refresh-notice-content {
-  position: absolute; z-index: 100; top: calc(100% + 12px); right: 0;
+  position: absolute; z-index: 100; top: calc(100% + 12px); right: auto; left: 0;
   width: min(420px, calc(100vw - 32px)); max-height: 60vh; overflow: auto;
   padding: 18px; border: 1px solid var(--line); border-radius: 12px;
   color: var(--ink); background: var(--surface);
