@@ -9,7 +9,13 @@ status: maintained
 
 The owner-authorized one-time upgrade has completed; see
 [current status](../current-status.md). This procedure remains a manual recovery
-reference, not a request to run conversion again against new active history.
+reference for the historical v8 -> v9 copy only. Under store schema 11 the
+entrypoint refuses with `TARGET_VERSION_UNSUPPORTED`. The current build performs
+the one-time v9/v10 -> v11 DDL migration on the first writable open after a
+protected copy; there is no standalone v9/v10 conversion entrypoint. See the
+[local-index v11 migration decision](../decisions/2026-11-01-local-index-v11-migration.md).
+Do not run this procedure against new active history or relabel a v9 output as
+current v11 state.
 
 This is the standalone index-copy step for the
 [one-time pre-release upgrade](../decisions/2026-10-27-pre-release-state-migration.md).

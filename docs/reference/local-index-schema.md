@@ -29,7 +29,7 @@ local-only and never leave the owner-only file.
 | File name | `local-index-store-v1.sqlite` | Stable machine path in the state root. The `v1` is a name, not the schema version. |
 | `PRAGMA application_id` | `1431128370` (`0x554D4932`) | Format guard. A mismatch fails with `local_index_family_mismatch`. |
 | `meta.family` | `local-index-store` | Logical family, written once at creation. |
-| `PRAGMA user_version` | `9` | Format version. A writer migrates 4 through 8 forward transactionally; read-only open requires 9. |
+| `PRAGMA user_version` | `11` | Format version. Ordinary runtime opens only 11. The first writable open of a v9 store runs v9→v10→v11; a v10 store runs v10→v11. Read-only older opens remain refused. The historical v8→v9 copy tool is retired under v11. |
 | Parser stamp | `local-index-rollout-typed-v3+unified-rollout-typed-v22` | Bounds legacy overlap by occurrence, rejects conflicting response copies and retains captured request speed. Existing present sources reparse under the new semantics; original records and retained absent-source facts remain untouched. |
 | Telemetry publication parser label | `unified-rollout-typed-v22` | The shared extractor revision fits the existing v1.1/v1.2 wire contract. Internal store stamps and the publication fingerprint retain store provenance; no hosted schema is widened. |
 | Commit sequence | `store_state.commit_seq` | Monotonic publication counter. Readers key their caches and the companion generation id off it. |
@@ -40,17 +40,27 @@ Fail-closed rules, in the order `openLocalIndexStore` applies them:
 - A wrong `application_id` refuses the file with `local_index_family_mismatch`.
   `meta.family` is written at creation and checked again inside the v8→v9
   conversion transaction.
-- A `user_version` greater than 9 fails with `local_index_newer_version`. The
+- A `user_version` greater than 11 fails with `local_index_newer_version`. The
   guard runs before write-mode configuration and schema migration; the file
   must not be relabelled.
-- A version-4 or version-5 writer adds the missing work and runtime-evidence structures transactionally and advances to 6, then upgrades the cursor contract to 7 without deleting facts. Version 7 advances to 8 by atomically adding the calculation revision and its semantic-change triggers. Version 8 advances to 9 by atomically adding nullable `source.carry_tier_source` and replacing the source calculation-revision triggers. Interrupted installation rolls back and can be retried.
+- Version 4 through version 8 are not migrated by ordinary runtime; they fail
+  closed as reviewed historical predecessors. A writable open of version 9
+  advances to 10 by atomically adding the impact manifest tables and indexes.
+  Version 10 advances to 11 by replacing the derived `work_rollup` with the
+  tiered key, creating `workload_bucket` and marking both projections pending.
+  Neither migration reads or rewrites source, fact or cursor rows. The
+  standalone historical v8→v9 copy tool remains its own protected operation and
+  is retired under version 11.
   Refresh first performs a bounded read-only identity inspection accepting only
-  the reviewed v4/v5/v6/v7/v8 predecessors or current v9, validates the existing device salt,
-  and only then opens the writer. This inspection exposes no database handle or
-  old-format projection and makes no schema changes. Missing salt, foreign state,
-  and newer versions are refused before any migration or salt creation.
-  Earlier versions and read-only version-4/version-5/version-6/version-7/version-8 opens fail with
-  `local_index_family_mismatch`; readers never migrate state.
+  the one-time v9/v10 predecessors or current v11, validates the existing device
+  salt, and only then opens the writer. This inspection exposes no database
+  handle or old-format projection and makes no schema changes. Missing salt,
+  foreign state, and newer versions are refused before any migration or salt
+  creation. Version 4 through version 8 and read-only version-4 through
+  version-10 opens fail with `local_index_family_mismatch`; readers never
+  migrate state. Only a writable v9 or v10 open performs the additive migration.
+  The [v11 migration decision](../decisions/2026-11-01-local-index-v11-migration.md)
+  defines its protected-copy and claim boundary.
 - A writer must see WAL mode after `PRAGMA journal_mode = WAL`, otherwise it
   fails with `local_index_journal_mode_refused`.
 
@@ -100,10 +110,10 @@ timer until a global refresh retries it. No UI report is published by the timer.
 Queued receipts do not advance `calculation_revision`: accounting reads the
 published usage facts, not this queue. Applying or retracting a model repair at
 the foreground boundary updates `usage_event` and advances both the calculation
-revision and publication sequence. A validated writable v9 open atomically
+revision and publication sequence. A validated writable v11 open atomically
 retires only the three earlier `calculation_runtime_model_evidence_*` triggers
 when present. Read-only opens never perform this correction. It preserves all
-receipts, facts, cursors, revision values and the v9 physical schema; repeated
+receipts, facts, cursors, revision values and the v11 physical schema; repeated
 opens do not repeat the DDL.
 Missing logs, capture failures, replacement and observed coverage gaps remain
 distinct. Closing the companion stops capture and cannot protect upstream logs
@@ -136,8 +146,9 @@ previously unattributed, not-yet-evaluated sources enter the repair queue.
 | Sources | `source`, `source_segment` | One row per rollout ever seen: identity, cursor, digests, carried state and quarantine. |
 | Facts | `usage_event`, `usage_event_boundary`, `tool_class_fact`, `work_lifecycle_fact`, `lineage_snapshot` | Typed usage, request boundaries, tool classes, task lifecycle and fork-replay membership. |
 | Diagnostics | `source_diagnostic` | Counts per closed diagnostic code, per source. |
-| Aggregates | `rollup_context_start`, `usage_rollup`, `work_rollup` | Derived sums maintained by triggers (see below). |
+| Aggregates | `rollup_context_start`, `usage_rollup`, `work_rollup`, `workload_bucket` | Derived sums maintained by triggers (see below). |
 | Cache-impact pairs | `cache_candidate`, `session_positive` | Derived pair and count tables maintained by triggers (see below). |
+| Impact manifest | `publication`, `source_change`, `change_fact_count`, `impact_partition`, `integrity_gap`, `projection_watermark`, `repair_queue` | Durable per-publication change summaries, bounded impact regions, unknown gaps and projection watermarks. These tables describe changes; they do not make facts authoritative. |
 
 Reader-only secondary indexes are created after a bulk load and whenever a
 store with sources is opened for writing: `usage_event_observed`,
@@ -312,7 +323,7 @@ The checkpoint workspace retains a private,
 domain-separated proof alongside each opaque response identity; identical copies
 deduplicate and conflicting evidence poisons that workspace. Old proofless
 checkpoints fail version compatibility rather than silently resuming. These
-semantic revisions do not change the physical index schema version 9.
+semantic revisions do not change the physical index schema version 11.
 
 Unknown models and missing/conflicting evidence remain model `unknown`, with
 unknown tier and unpriced amounts; Token counts remain available.
@@ -635,7 +646,7 @@ only after identity/stat and committed-prefix digest checks; a mismatching
 prefix rescans instead of retaining stale facts. The cursor can remain below
 `size_bytes` only with the exact persisted deferred-byte diagnostic. Completing
 the newline atomically publishes the record, new cursor, totals and digests;
-repeated refreshes do not count it again. A v9 store refuses older readers and
+repeated refreshes do not count it again. A v11 store refuses older readers and
 writers through the version gate; do not relabel it to run an older app.
 
 Cold builds read new sources in parallel lanes. Those lanes write facts beyond
@@ -675,6 +686,11 @@ Key: `bucket_ms` (15-minute UTC bucket), `model_id`, `tier_id`, `surface_id`,
   are each registry boundary and the token after it (`rollup_context_start`).
 - Measures: `events` and the six token sums, with NULL counted as zero inside a
   sum only because the shape key keeps NULL and zero groups apart.
+- The only supported production mutation of `usage_event` is runtime model
+  attribution, which changes `model_id` and `flags`. `model_id` has its own
+  update trigger; `flags` is not part of this key. No production path updates a
+  token, observed-time or context column. A future path that does must add the
+  matching update trigger rather than rely on this closed set.
 
 Nothing stored here is a price. The registry fingerprint is kept in
 `meta.rollup_basis`. When a writable open finds that the fingerprint differs
@@ -683,15 +699,37 @@ are never regrouped from rollouts.
 
 ### `work_rollup`
 
-Key: `day_ms` (UTC day), `session_id`, `work_directory_id` (0 for unknown),
-`model_id`, `account_scope_id`, `shape`, `ctx_class`, `prov`.
+Schema 11 key: `day_ms` (UTC day), `session_id`, `work_directory_id` (0 for
+unknown), `model_id`, `tier_id`, `account_scope_id`, `shape`, `ctx_class`,
+`prov`.
 
 - `prov` bits: `0` partial parse, `1` cache-write assumed zero, `2` status-only
   quota report.
 - Measures: `events`, the six token sums and `last_at_ms`. `last_at_ms` is the
   one non-additive value. A delete that removes a group's latest event clears
-  it to NULL, and the reader recomputes it from the day's events.
+  it to NULL, and the reader falls back to raw events for that day. A key or
+  measure update also clears it rather than claiming the new event time is the
+  group maximum.
+- Insert, delete, cursor advance/retreat and every participating key/measure
+  update are trigger-covered. The update trigger removes the old contribution,
+  prunes an emptied row and accumulates the new one.
 - It is rebuilt together with `usage_rollup` when the registry basis moves.
+  The v10→v11 migration discards the old untiered rows and marks the projection
+  pending; a bounded backfill rebuilds it from committed facts.
+
+### `workload_bucket`
+
+Five-minute UTC projection for the overview workload reader. Key:
+`bucket_start_ms`, `session_id`, `model_id`, `tier_id`, `account_scope_id`,
+`shape`, `ctx_class`. Measures: `events`, the six token sums and `last_at_ms`.
+No price is stored. `account_scope_id` keeps a future account-scoped view from
+silently mixing scopes.
+
+The same insert/delete/cursor/update trigger matrix applies. A cleared
+`last_at_ms` is explicit and recomputed or expanded by the reader; it is never
+treated as zero activity. `workload_bucket` has its own pending/ready watermark
+and is not part of the work-usage rollup. It is rebuilt with `work_rollup` when
+the registry context basis moves.
 
 ### Cache-impact pairs
 
@@ -715,40 +753,118 @@ snapshot. It is read-only, returns counts only, and never repairs:
 | --- | --- | --- |
 | `auditRollups` | `usage_rollup` with a regrouping of committed usage events | Rows missing, extra or different, plus rows with `events <= 0` |
 | `auditWorkRollups` | `work_rollup` with a regrouping of committed usage events, including `last_at_ms` where stored | Rows missing, extra or different, `last_at_ms` mismatches, and rows with `events <= 0` |
+| `auditWorkloadBuckets` | `workload_bucket` with a regrouping of committed usage events, including `last_at_ms` where stored | Rows missing, extra or different, `last_at_ms` mismatches, and rows with `events <= 0` |
 | `auditPairing` | `cache_candidate` and `session_positive` with a regrouping of committed facts | Rows missing or extra in either direction, and rows with `events <= 0` |
 
-The result is `{ status: "audited", commitSeq, rollup, work, pairing,
-consistent }`, where `consistent` is true only when all three counts are zero.
-A missing or unreadable store returns `{ status: "unavailable", consistent:
-false }`. The audit does not create a store, does not take a write lock and does
-not change `commit_seq`.
+The result is `{ status: "audited", commitSeq, rollup, work, workload, pairing,
+projections, consistent }`. Each projection also reports its watermark status.
+`consistent` is true only when all four counts are zero and both projections
+are `ready`; an empty `pending` projection is not called consistent. A missing
+or unreadable store returns `{ status: "unavailable", consistent: false }`. The
+audit does not create a store, does not take a write lock and does not change
+`commit_seq`.
 
 The backend runs a separate maintenance worker after its first completed
 ingestion in each process, including a restart after an unclean shutdown, and
 at the next completed refresh at least 24 hours after the last successful audit.
 Clean restarts also audit; no clean-shutdown marker is inferred. This is an
 idle ingestion boundary before generation/accounting reads, not a report path
-or an independent timer. Failed or cancelled maintenance remains due.
+or an independent timer. Failed or cancelled maintenance remains due. A
+pending projection is retried on the next refresh so bounded backfill batches
+can finish; a fully consistent audit caches the daily interval.
 
 The worker audits a read snapshot first. On drift it acquires `BEGIN IMMEDIATE`,
-rechecks all three oracles under the writer lock, rebuilds only mismatched
-derived tables from committed facts and verifies them again. Repair and a
-`verify` commit that advances `commit_seq` are atomic, so publication-dependent
-caches cannot reuse the pre-repair generation. Clean audits never advance the
-sequence. No rollout is read, no source ordinal is changed, and no schema,
-salt or absent-source fact is replaced. Cancellation terminates the worker;
-SQLite rolls back any uncommitted transaction. Failure preserves the last
-committed state and blocks this refresh's downstream publication.
+rechecks the oracles under the writer lock, rebuilds only mismatched ready
+derived tables from committed facts and verifies them again. A pending
+projection is built by bounded range batches instead of a competing full
+rebuild. Each batch commits separately and leaves its queue cursor at the last
+completed range, so cancellation or WAL pressure resumes rather than restarting.
+Only the final readiness transition publishes a `verify` commit; per-batch
+commits do not advance `commit_seq`. A `stale` projection is rebuilt from
+committed facts under the same WAL gates and becomes ready in the atomic
+`verify` publication. Repair and that publication are atomic, so
+publication-dependent caches cannot reuse the pre-repair generation. Clean
+audits never advance the sequence. No rollout is read, no source ordinal is
+changed, and no schema, salt or absent-source fact is replaced. Cancellation
+terminates the worker; SQLite rolls back any uncommitted transaction. Failure
+preserves the last committed state and blocks this refresh's downstream
+publication.
 
-Maintenance returns counts only, with `status: "audited"` or `"repaired"`.
-For a repair the counts describe the pre-repair differences and `consistent`
-is true only after verification. A missing or incompatible store fails closed.
+Maintenance returns counts only, with `status: "audited"`, `"repaired"` or
+`"pending"`. For a repair the counts describe the pre-repair differences and
+`consistent` is true only after verification. A missing or incompatible store
+fails closed.
 Before repair, the worker uses the refresher's WAL/free-disk ceiling and reserves
 twice the current store page footprint, including WAL frame overhead, under
 the writer lock. Insufficient headroom returns
 `local_index_maintenance_deferred`, rolls back and leaves maintenance due. This
 is a conservative admission budget, not a measured schema-v4 WAL soak result.
 SQLite's native lock wait may delay cancellation until its five-second timeout.
+
+## Impact manifest
+
+Schema 10 added the durable impact manifest tables and schema 11 keeps them
+unchanged. The serial per-source refresh path writes `publication`,
+`source_change`, `change_fact_count`, `impact_partition` and `integrity_gap`
+rows in the same transaction as the facts and cursor. Cold lane builds,
+discovery rejections, presence changes and direct runtime model corrections
+record their own changes. A correction with more than 256 affected sources, or
+with no attributable source, marks the publication `manifest_complete = 0`
+rather than claiming a complete list. The manifest is descriptive: readers use
+committed facts or a projection whose watermark and basis agree, under the
+existing publication fence. `projection_watermark` records each work
+projection's pending/building/ready/stale state, and `repair_queue` holds the
+bounded backfill cursor keyed by projection name.
+
+`publication.manifest_complete` is the durable completeness record that
+`commit_log` cannot provide after its 100-row trim. A change with no safe upper
+bound records an explicit `integrity_gap`; it is never converted to zero usage
+or zero activity. Per-fact-kind counts cover usage, quota, tool, work, lineage
+snapshot and diagnostic rows. A changed canonical `quota_observation` adds a
+`quota_observation` partition and the referencing usage ranges from every
+source, never only the source that produced the occurrence.
+
+Maintenance retains the newest 50,000 `source_change` rows by default. Older
+changes, their child counts/partitions and unreferenced older publications are
+removed; `meta.impact_manifest_since_change_id` advances to the highest removed
+change. A watermark at or below that floor cannot prove it saw every change and
+must rebuild its bounded component instead of assuming no impact.
+
+The manifest does not contain source paths, raw session UUIDs or account
+identifiers. Reasons and modes are closed vocabularies; impact keys use internal
+store ids and time ranges.
+
+## Work projections
+
+Schema 11 replaces `work_rollup` with the tiered v2 key and adds
+`workload_bucket`. Both are derived from committed `usage_event` rows; the
+migration never reads a rollout. Their `projection_watermark` rows start
+`pending` and are built by bounded, resumable backfill ranges:
+
+- ranges align to a UTC day for `work_rollup` and five minutes for
+  `workload_bucket`;
+- each range deletes and regroups only its own derived rows, then commits and
+  advances the `repair_queue` cursor;
+- a source append or rescan after a range was built is handled by the normal
+  projection triggers, not by replaying the range;
+- cancellation or WAL exhaustion leaves the last completed range and the queue
+  cursor pending;
+- audit runs when all ranges finish. Zero differences marks both projections
+  `ready` and publishes exactly one `verify` commit; nonzero differences mark
+  the projection `stale` for a full derived rebuild.
+
+Readers use the projection only while the relevant watermark is `ready` and
+the registry context basis still matches. Work usage reads a whole UTC day from
+`work_rollup` only when the day lies inside one cut interval and every row has
+an exact `last_at_ms`; partial days, cleared last instants and a pending
+projection stay on committed events. Work usage directory discovery likewise
+falls back to committed `usage_event` rows while the rollup is pending, so a
+partially built projection cannot make a project directory disappear.
+
+The workload reader uses `workload_bucket` for buckets that contain no quota
+observation/reset, declared-speed boundary, work/task boundary, local-midnight
+crossing or cleared `last_at_ms`; those boundary buckets are expanded to raw
+events. `priced` coverage is combined across buckets exactly as across events.
 
 ## Generation and publication
 
@@ -763,7 +879,7 @@ one build. Rediscovered unchanged sources restore `present` in a transaction
 without replaying retained facts; that transition advances publication and
 calculation revisions.
 
-The v9 `calculation_revision` advances transactionally for material fact,
+The v11 `calculation_revision` advances transactionally for material fact,
 dimension, ownership/order, coverage and diagnostic changes. Metadata-only
 cursor/stat updates may leave it unchanged; the global publication sequence
 still advances. Background runtime-evidence capture is an unapplied queue and
