@@ -56,6 +56,12 @@ test('exact receipt persists, reprices once, retains tokens and repairs rollups 
    assert.equal(db.prepare('SELECT m.model_id FROM usage_event u JOIN model m ON m.id=u.model_id').get().model_id,'gpt-6-astra');
    assert.equal(db.prepare('PRAGMA user_version').get().user_version,LOCAL_INDEX_STORE_USER_VERSION);
    assert.equal(auditRollups(db),0);assert.equal(auditPairing(db),0);
+   assert.equal(db.prepare('SELECT manifest_complete FROM publication ORDER BY commit_seq DESC LIMIT 1').get().manifest_complete,1);
+   const correction=db.prepare(`SELECT c.mode,c.reason,p.partition_kind,p.status
+     FROM source_change c JOIN impact_partition p USING(change_id)
+     WHERE c.mode='fact_correction' AND p.partition_kind='usage_time_range'
+     ORDER BY c.change_id DESC LIMIT 1`).get();
+   assert.equal(correction.reason,'runtime_model_evidence');assert.equal(correction.status,'dirty');
    assert.doesNotMatch(JSON.stringify(db.prepare('SELECT * FROM runtime_model_evidence').all()),/synthetic-response|synthetic-turn|10000000-0000/);
   }finally{db.close();}
   const repeat=await captureRuntimeModelEvidence(options(w,[row()]));assert.equal(repeat.readRows,0);assert.equal(repeat.applied,0);assert.equal(repeat.capturedNow,0);
@@ -109,14 +115,20 @@ test('background evidence writes never recover or delete a foreground provisiona
  }finally{w.cleanup();}
 });
 
-test('v5 forward migration preserves facts and adds only the new evidence store',async()=>{
+test('v5 predecessor is refused without a forward migration or evidence table',async()=>{
  const w=await fixture();try{const before=facts(w.indexFile),db=openLocalIndexStore(w.indexFile);
   // Reconstruct the actual predecessor on synthetic state: v5 did not have
   // v8 calculation triggers or its revision column.
   for(const trigger of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all())db.exec(`DROP TRIGGER ${trigger.name}`);
   db.exec('ALTER TABLE store_state DROP COLUMN calculation_revision; ALTER TABLE source DROP COLUMN carry_tier_source; DROP TABLE runtime_model_evidence; PRAGMA user_version=5');db.close();
+  // Ordinary runtime is current-only. The standalone historical copy tool owns
+  // predecessors; a live v5 file must fail closed without adding evidence state.
   assert.throws(()=>openLocalIndexStore(w.indexFile,{readOnly:true}),{code:'local_index_family_mismatch'});
-  const migrated=openLocalIndexStore(w.indexFile);migrated.close();assert.deepEqual(facts(w.indexFile),before);
+  assert.throws(()=>openLocalIndexStore(w.indexFile),{code:'local_index_family_mismatch'});
+  const raw=new DatabaseSync(w.indexFile,{readOnly:true});
+  try{assert.deepEqual(raw.prepare(`SELECT hex(event_key) identity,observed_at_ms,tokens_in_uncached,tokens_in_cache_read,tokens_in_cache_write,tokens_out_text,tokens_out_reasoning,tokens_out_combined FROM usage_event ORDER BY source_id,source_offset`).all(),before);
+    assert.equal(raw.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='table' AND name='runtime_model_evidence'").get().n,0);}
+  finally{raw.close();}
  }finally{w.cleanup();}
 });
 

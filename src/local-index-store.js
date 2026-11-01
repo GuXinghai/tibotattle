@@ -11,8 +11,16 @@ import {
   pruneEmptyWorkRollups,
   rebuildWorkRollups,
   WORK_ROLLUP_SCHEMA,
+  WORK_ROLLUP_SCHEMA_VERSION,
   WORK_ROLLUP_TRIGGER_SCHEMA,
 } from "./local-index-work-rollup.js";
+import {
+  pruneEmptyWorkloadBuckets,
+  rebuildWorkloadBuckets,
+  WORKLOAD_BUCKET_SCHEMA,
+  WORKLOAD_BUCKET_SCHEMA_VERSION,
+  WORKLOAD_BUCKET_TRIGGER_SCHEMA,
+} from "./local-index-workload-bucket.js";
 import {
   contextClassStarts,
   pruneEmptyRollups,
@@ -21,6 +29,13 @@ import {
   ROLLUP_SCHEMA,
   ROLLUP_TRIGGER_SCHEMA,
 } from "./local-index-rollup.js";
+import {
+  createLocalIndexImpactSchema,
+  FACT_KINDS,
+  IMPACT_CONFIDENCE,
+  IMPACT_SCHEMA_VERSION,
+  SOURCE_CHANGE_MODES,
+} from "./local-index-impact.js";
 
 // The local index store.
 //
@@ -42,7 +57,8 @@ import {
 
 export const LOCAL_INDEX_STORE_FAMILY = "local-index-store";
 export const LOCAL_INDEX_STORE_APPLICATION_ID = 0x554d4932;
-export const LOCAL_INDEX_STORE_USER_VERSION = 9;
+export const LOCAL_INDEX_STORE_USER_VERSION = 11;
+export { IMPACT_SCHEMA_VERSION };
 // A confirmed native response receipt repaired this derived model. Reparse clears it.
 export const EVENT_FLAG_RUNTIME_MODEL = 32;
 // Increment when reviewed identity additions can repair previously unknown
@@ -374,6 +390,10 @@ const SECONDARY_INDEX_SCHEMA = `
   CREATE INDEX IF NOT EXISTS quota_observation_series
     ON quota_observation(limit_id, duration_mins, observed_at_ms,
                          slot, plan_type, used_percent, resets_at_ms);
+  -- Covers the five-minute workload window read without introducing a second
+  -- headline index for the day-level work rollup.
+  CREATE INDEX IF NOT EXISTS workload_bucket_observed
+    ON workload_bucket(bucket_start_ms, session_id);
 `;
 
 function fixedError(code) {
@@ -456,7 +476,9 @@ function configure(database, { readOnly, bulkLoad = false }) {
   database.enableDefensive?.(true);
 }
 
-function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
+function assertFamily(database, {
+  allowWorkloadPredecessor = false, allowOneTimePredecessor = false,
+} = {}) {
   const applicationId = database.prepare("PRAGMA application_id").get().application_id;
   const userVersion = database.prepare("PRAGMA user_version").get().user_version;
   if (applicationId !== LOCAL_INDEX_STORE_APPLICATION_ID) {
@@ -467,14 +489,17 @@ function assertFamily(database, { allowWorkloadPredecessor = false } = {}) {
     throw fixedError("local_index_newer_version");
   }
   if (userVersion < LOCAL_INDEX_STORE_USER_VERSION
-        && !(allowWorkloadPredecessor && [4,5,6,7,8].includes(userVersion))) {
+        && !(allowWorkloadPredecessor && [4,5,6,7,8,9,10].includes(userVersion))
+        && !(allowOneTimePredecessor && [9, 10].includes(userVersion))) {
     throw fixedError("local_index_family_mismatch");
   }
 }
 
 /** Identity-only preflight for reviewed forward migrations. This never
  * returns a database handle or permits projections/writes against old state. */
-export function readLocalIndexIdentityBeforeMigration(file, { currentOnly = false } = {}) {
+export function readLocalIndexIdentityBeforeMigration(file, {
+  currentOnly = false, oneTimePredecessor = false,
+} = {}) {
   const path = resolve(file);
   assertOwnerOnlyDirectory(dirname(path));
   assertOwnerOnlyTarget(path, { allowMissing: false });
@@ -482,7 +507,10 @@ export function readLocalIndexIdentityBeforeMigration(file, { currentOnly = fals
   try {
     database = new DatabaseSync(path, { readOnly: true, timeout: 5_000 });
     configure(database, { readOnly: true });
-    assertFamily(database, { allowWorkloadPredecessor: !currentOnly });
+    assertFamily(database, {
+      allowWorkloadPredecessor: !currentOnly,
+      allowOneTimePredecessor: oneTimePredecessor,
+    });
     if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
       throw fixedError("local_index_family_mismatch");
     }
@@ -582,9 +610,18 @@ function initialize(database) {
     database.exec(ROLLUP_SCHEMA);
     database.exec(PAIRING_SCHEMA);
     database.exec(WORK_ROLLUP_SCHEMA);
+    database.exec(WORKLOAD_BUCKET_SCHEMA);
+    createLocalIndexImpactSchema(database);
     database.prepare(`
-      INSERT INTO meta(key, value) VALUES ('family', ?), ('parser_version', ?)`)
-      .run(LOCAL_INDEX_STORE_FAMILY, LOCAL_INDEX_PARSER_VERSION);
+      INSERT INTO meta(key, value) VALUES
+        ('family', ?), ('parser_version', ?),
+        ('impact_schema_version', ?), ('impact_manifest_since_change_id', '0'),
+        ('work_rollup_schema_version', ?), ('workload_bucket_schema_version', ?)`)
+      .run(LOCAL_INDEX_STORE_FAMILY, LOCAL_INDEX_PARSER_VERSION, String(IMPACT_SCHEMA_VERSION),
+        String(WORK_ROLLUP_SCHEMA_VERSION), String(WORKLOAD_BUCKET_SCHEMA_VERSION));
+    database.prepare(`
+      INSERT INTO projection_watermark(projection_name, partition_key, status)
+      VALUES ('work_rollup', 'all', 'ready'), ('workload_bucket', 'all', 'ready')`).run();
     // An empty store has nothing to group; this records the thresholds the
     // triggers classify against. The triggers go in last so the rebuild's
     // empty grouping is not counted twice.
@@ -592,6 +629,7 @@ function initialize(database) {
     database.exec(ROLLUP_TRIGGER_SCHEMA);
     database.exec(PAIRING_TRIGGER_SCHEMA);
     database.exec(WORK_ROLLUP_TRIGGER_SCHEMA);
+    database.exec(WORKLOAD_BUCKET_TRIGGER_SCHEMA);
     database.prepare("INSERT INTO store_state(id, commit_seq) VALUES (1, 0)").run();
     installCalculationRevisionTriggers(database);
     database.exec(`
@@ -638,6 +676,87 @@ export function upgradeLocalIndexV8ToV9(database) {
   }
 }
 
+/**
+ * One-time v9 -> v10 conversion. Adds only the impact manifest tables and
+ * indexes; no source or fact row is read, rewritten or deleted. Work projection
+ * tables are added by the v10 -> v11 migration.
+ */
+export function upgradeLocalIndexV9ToV10(database) {
+  if (database.isTransaction) throw fixedError("local_index_upgrade_transaction_active");
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (database.prepare("PRAGMA application_id").get().application_id !== LOCAL_INDEX_STORE_APPLICATION_ID
+        || database.prepare("PRAGMA user_version").get().user_version !== 9) {
+      throw fixedError("local_index_upgrade_version_mismatch");
+    }
+    if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
+      throw fixedError("local_index_family_mismatch");
+    }
+    createLocalIndexImpactSchema(database);
+    database.prepare(`
+      INSERT INTO meta(key, value) VALUES ('impact_schema_version', ?), ('impact_manifest_since_change_id', '0')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run(String(IMPACT_SCHEMA_VERSION));
+    database.exec("PRAGMA user_version=10");
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+/**
+ * One-time v10 -> v11 conversion. Replaces the derived day-level `work_rollup`
+ * with the tiered key and creates the five-minute `workload_bucket`. Source
+ * rows, facts and cursors are not read or rewritten; the old derived rows are
+ * discarded and both projections are marked pending for bounded backfill.
+ */
+export function upgradeLocalIndexV10ToV11(database) {
+  if (database.isTransaction) throw fixedError("local_index_upgrade_transaction_active");
+  database.exec("BEGIN IMMEDIATE");
+  try {
+    if (database.prepare("PRAGMA application_id").get().application_id !== LOCAL_INDEX_STORE_APPLICATION_ID
+        || database.prepare("PRAGMA user_version").get().user_version !== 10) {
+      throw fixedError("local_index_upgrade_version_mismatch");
+    }
+    if (database.prepare("SELECT value FROM meta WHERE key='family'").get()?.value !== LOCAL_INDEX_STORE_FAMILY) {
+      throw fixedError("local_index_family_mismatch");
+    }
+    // The old table is reconstructible from committed facts. Dropping it also
+    // drops its triggers; recreate both projections from their canonical DDL.
+    database.exec("DROP TABLE IF EXISTS work_rollup");
+    database.exec(WORK_ROLLUP_SCHEMA);
+    database.exec(WORK_ROLLUP_TRIGGER_SCHEMA);
+    database.exec(WORKLOAD_BUCKET_SCHEMA);
+    database.exec(WORKLOAD_BUCKET_TRIGGER_SCHEMA);
+    database.prepare(`
+      INSERT INTO meta(key, value) VALUES
+        ('work_rollup_schema_version', ?), ('workload_bucket_schema_version', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value`)
+      .run(String(WORK_ROLLUP_SCHEMA_VERSION), String(WORKLOAD_BUCKET_SCHEMA_VERSION));
+    const commitSeq = Number(database.prepare(
+      "SELECT commit_seq FROM store_state WHERE id=1",
+    ).get().commit_seq);
+    const now = Date.now();
+    database.prepare(`
+      INSERT INTO projection_watermark(projection_name, partition_key,
+        last_change_seq, last_change_id, basis_fingerprint, computed_at_ms,
+        attempt, updated_at_ms, status)
+      VALUES ('work_rollup', 'all', ?, NULL, NULL, NULL, 0, ?, 'pending'),
+             ('workload_bucket', 'all', ?, NULL, NULL, NULL, 0, ?, 'pending')
+      ON CONFLICT(projection_name, partition_key) DO UPDATE SET
+        last_change_seq = excluded.last_change_seq, last_change_id = NULL,
+        computed_at_ms = NULL, attempt = 0, updated_at_ms = excluded.updated_at_ms,
+        status = 'pending'`)
+      .run(commitSeq, now, commitSeq, now);
+    database.exec("PRAGMA user_version=11");
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 // Background receipt capture shares the database but must never run ingestion recovery
 // while the foreground writer has intentionally committed provisional source batches.
 export function openLocalIndexEvidenceStore(file){return openLocalIndexStore(file,{[EVIDENCE_WRITE]:true});}
@@ -657,8 +776,18 @@ export function openLocalIndexStore(file, {
   let database;
   try {
     database = new DatabaseSync(path, { readOnly, timeout: 5_000 });
-    // Reject newer/foreign files before any write-mode connection pragmas.
-    if (existed) assertFamily(database);
+    // A writable open performs the narrow v9 -> v10 -> v11 DDL migration once.
+    // Read-only opens still refuse older versions; all older versions fail
+    // closed rather than migrating under a reader.
+    if (existed) {
+      let userVersion = database.prepare("PRAGMA user_version").get().user_version;
+      if (!readOnly && userVersion === 9) {
+        upgradeLocalIndexV9ToV10(database);
+        userVersion = 10;
+      }
+      if (!readOnly && userVersion === 10) upgradeLocalIndexV10ToV11(database);
+      assertFamily(database);
+    }
     configure(database, { readOnly, bulkLoad });
     if (!existed) initialize(database);
     // Pre-release predecessor conversion belongs to the standalone copy tool.
@@ -668,7 +797,16 @@ export function openLocalIndexStore(file, {
     if (!readOnly && !evidenceOnly) {
       // A registry revision that moved a context threshold invalidates the
       // key; the rollups are regrouped from the facts, never from rollouts.
-      reconcileRollups(database, undefined, rebuildWorkRollups);
+      reconcileRollups(database, undefined, (target) => {
+        rebuildWorkRollups(target);
+        rebuildWorkloadBuckets(target);
+        // The derived rows now reflect the new registry basis. Keep the
+        // projection watermark's basis stamp in step with the rebuild.
+        target.prepare(`
+          UPDATE projection_watermark
+          SET basis_fingerprint=(SELECT value FROM meta WHERE key='rollup_basis')
+          WHERE partition_key='all'`).run();
+      });
       repairProvisional(database);
     }
   } catch (error) {
@@ -684,6 +822,7 @@ const SECONDARY_INDEX_NAMES = [
   "usage_event_observed", "usage_event_session",
   "quota_occurrence_canonical", "quota_occurrence_observed",
   "quota_observation_series", "usage_event_pairing", "usage_event_quota",
+  "workload_bucket_observed",
 ];
 
 /**
@@ -773,6 +912,7 @@ export function repairProvisional(database) {
     }
     pruneEmptyRollups(database);
     pruneEmptyWorkRollups(database);
+    pruneEmptyWorkloadBuckets(database);
     database.exec("COMMIT");
   } catch (error) {
     try { database.exec("ROLLBACK"); } catch { /* keep the original failure */ }
@@ -969,6 +1109,29 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       INSERT INTO commit_log(seq, committed_at_ms, kind, sources_changed,
         events_added, events_removed) VALUES (?, ?, ?, ?, ?, ?)`),
     trimLog: database.prepare("DELETE FROM commit_log WHERE seq <= ?"),
+    publication: database.prepare(`
+      INSERT INTO publication(commit_seq, committed_at_ms, kind,
+        manifest_complete, source_change_count) VALUES (?, ?, ?, ?, ?)`),
+    sourceChange: database.prepare(`
+      INSERT INTO source_change(commit_seq, source_id, mode, reason,
+        old_file_id, new_file_id, old_scanned_bytes, new_scanned_bytes,
+        old_size_bytes, new_size_bytes, old_event_count, new_event_count,
+        confidence, created_at_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    changeFactCount: database.prepare(`
+      INSERT INTO change_fact_count(change_id, fact_kind, old_count, new_count,
+        old_min_at_ms, old_max_at_ms, new_min_at_ms, new_max_at_ms)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`),
+    impactPartition: database.prepare(`
+      INSERT INTO impact_partition(change_id, partition_kind, partition_key,
+        lower_ms, upper_ms, session_id, lineage_component_id, account_scope_id,
+        basis_kind, basis_key, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    integrityGap: database.prepare(`
+      INSERT INTO integrity_gap(source_id, byte_start, byte_end,
+        event_lower_ms, event_upper_ms, reason, confidence, created_at_ms,
+        repair_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'open')`),
   };
 
   const modelIds = new Map();
@@ -995,6 +1158,28 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
   let eventsAdded = 0;
   let eventsRemoved = 0;
   let nextOrdinal = null;
+  let pendingChanges = [];
+  let manifestIncomplete = false;
+
+  function clearPendingChanges() {
+    pendingChanges = [];
+    manifestIncomplete = false;
+  }
+
+  function assertImpactText(value, name, maximum = 512) {
+    if (typeof value !== "string" || value.length < 1 || value.length > maximum) {
+      throw fixedError(`local_index_impact_${name}_invalid`);
+    }
+    return value;
+  }
+
+  function assertImpactTime(value, name) {
+    if (value !== null && value !== undefined
+        && (!Number.isSafeInteger(value) || value < 0)) {
+      throw fixedError(`local_index_impact_${name}_invalid`);
+    }
+    return value ?? null;
+  }
 
   function assertTransaction() {
     if (!transaction) throw fixedError("local_index_transaction_required");
@@ -1018,6 +1203,107 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
     return id;
   }
 
+  function publishPendingChanges(seq, committedAtMs, kind) {
+    statements.publication.run(
+      seq, committedAtMs, kind, manifestIncomplete ? 0 : 1, pendingChanges.length,
+    );
+    for (const change of pendingChanges) {
+      if (!Number.isSafeInteger(change.sourceId) || change.sourceId < 1) {
+        throw fixedError("local_index_impact_source_invalid");
+      }
+      if (!SOURCE_CHANGE_MODES.includes(change.mode)) {
+        throw fixedError("local_index_impact_mode_invalid");
+      }
+      if (!IMPACT_CONFIDENCE.includes(change.confidence)) {
+        throw fixedError("local_index_impact_confidence_invalid");
+      }
+      const reason = change.reason === null || change.reason === undefined
+        ? null : assertImpactText(change.reason, "reason", 64);
+      const oldFileId = change.oldFileId ?? null;
+      const newFileId = change.newFileId ?? null;
+      for (const value of [oldFileId, newFileId]) {
+        if (value !== null && (typeof value !== "string" || value.length > 128)) {
+          throw fixedError("local_index_impact_file_id_invalid");
+        }
+      }
+      const oldCount = change.oldEventCount ?? 0;
+      const newCount = change.newEventCount ?? 0;
+      if (!Number.isSafeInteger(oldCount) || oldCount < 0
+          || !Number.isSafeInteger(newCount) || newCount < 0) {
+        throw fixedError("local_index_impact_event_count_invalid");
+      }
+      const inserted = statements.sourceChange.run(
+        seq, change.sourceId, change.mode, reason,
+        oldFileId, newFileId,
+        assertImpactTime(change.oldScannedBytes, "old_cursor"),
+        assertImpactTime(change.newScannedBytes, "new_cursor"),
+        assertImpactTime(change.oldSizeBytes, "old_size"),
+        assertImpactTime(change.newSizeBytes, "new_size"),
+        oldCount, newCount, change.confidence,
+        Number.isSafeInteger(change.createdAtMs) ? change.createdAtMs : committedAtMs,
+      );
+      const changeId = Number(inserted.lastInsertRowid);
+      for (const fact of change.factCounts ?? []) {
+        if (!FACT_KINDS.includes(fact.factKind)) {
+          throw fixedError("local_index_impact_fact_kind_invalid");
+        }
+        if (!Number.isSafeInteger(fact.oldCount) || fact.oldCount < 0
+            || !Number.isSafeInteger(fact.newCount) || fact.newCount < 0) {
+          throw fixedError("local_index_impact_fact_count_invalid");
+        }
+        statements.changeFactCount.run(
+          changeId, fact.factKind, fact.oldCount, fact.newCount,
+          assertImpactTime(fact.oldMinAtMs, "old_min"),
+          assertImpactTime(fact.oldMaxAtMs, "old_max"),
+          assertImpactTime(fact.newMinAtMs, "new_min"),
+          assertImpactTime(fact.newMaxAtMs, "new_max"),
+        );
+      }
+      for (const partition of change.partitions ?? []) {
+        const partitionKind = assertImpactText(partition.partitionKind, "partition_kind", 64);
+        const partitionKey = assertImpactText(partition.partitionKey, "partition_key");
+        const basisKind = assertImpactText(partition.basisKind, "basis_kind", 64);
+        const status = partition.status ?? "dirty";
+        if (!["dirty", "pending", "ready", "unknown"].includes(status)) {
+          throw fixedError("local_index_impact_partition_status_invalid");
+        }
+        const sessionId = partition.sessionId ?? null;
+        const lineageComponentId = partition.lineageComponentId ?? null;
+        const accountScopeId = partition.accountScopeId ?? null;
+        for (const value of [sessionId, lineageComponentId, accountScopeId]) {
+          if (value !== null && (!Number.isSafeInteger(value) || value < 1)) {
+            throw fixedError("local_index_impact_partition_id_invalid");
+          }
+        }
+        statements.impactPartition.run(
+          changeId, partitionKind, partitionKey,
+          assertImpactTime(partition.lowerMs, "partition_lower"),
+          assertImpactTime(partition.upperMs, "partition_upper"),
+          sessionId, lineageComponentId, accountScopeId,
+          basisKind, partition.basisKey ?? null, status,
+        );
+      }
+      for (const gap of change.gaps ?? []) {
+        if (!Number.isSafeInteger(gap.byteStart) || gap.byteStart < 0
+            || (gap.byteEnd !== null && gap.byteEnd !== undefined
+              && (!Number.isSafeInteger(gap.byteEnd) || gap.byteEnd < gap.byteStart))) {
+          throw fixedError("local_index_impact_gap_invalid");
+        }
+        if (!IMPACT_CONFIDENCE.includes(gap.confidence)) {
+          throw fixedError("local_index_impact_confidence_invalid");
+        }
+        statements.integrityGap.run(
+          change.sourceId, gap.byteStart, gap.byteEnd ?? null,
+          assertImpactTime(gap.eventLowerMs, "gap_lower"),
+          assertImpactTime(gap.eventUpperMs, "gap_upper"),
+          assertImpactText(gap.reason, "gap_reason", 64),
+          gap.confidence,
+          Number.isSafeInteger(gap.createdAtMs) ? gap.createdAtMs : committedAtMs,
+        );
+      }
+    }
+  }
+
   return {
     begin() {
       if (transaction) throw fixedError("local_index_transaction_open");
@@ -1026,6 +1312,26 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       transactions += 1;
       eventsAdded = 0;
       eventsRemoved = 0;
+      clearPendingChanges();
+    },
+    /**
+     * Buffer one impact-manifest change for the pending publication. The rows
+     * are written at commit, after the publication sequence is allocated.
+     */
+    recordSourceChange(change) {
+      assertTransaction();
+      if (change === null || typeof change !== "object" || Array.isArray(change)) {
+        throw fixedError("local_index_impact_change_invalid");
+      }
+      if (pendingChanges.length >= 256) {
+        throw fixedError("local_index_impact_change_limit");
+      }
+      pendingChanges.push({ ...change });
+    },
+    /** Mark a publication whose impact could not be fully described. */
+    markManifestIncomplete() {
+      assertTransaction();
+      manifestIncomplete = true;
     },
     beginSourceCandidate(sourceId) {
       assertTransaction();
@@ -1063,12 +1369,17 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
     commit({ kind = "refresh", sourcesChanged = 1, bumpSeq = true } = {}) {
       assertTransaction();
       if (candidateSource !== null) throw fixedError("local_index_candidate_unfinished");
+      if (!bumpSeq && pendingChanges.length > 0) {
+        throw fixedError("local_index_publication_required");
+      }
       let seq = null;
       try {
         if (bumpSeq) {
           seq = Number(statements.nextSeq.get().commit_seq);
+          const committedAtMs = Date.now();
+          publishPendingChanges(seq, committedAtMs, kind);
           statements.logCommit.run(
-            seq, Date.now(), kind, sourcesChanged, eventsAdded, eventsRemoved,
+            seq, committedAtMs, kind, sourcesChanged, eventsAdded, eventsRemoved,
           );
           statements.trimLog.run(seq - 100);
         }
@@ -1076,14 +1387,17 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       } catch (error) {
         try { database.exec("ROLLBACK"); } catch { /* keep the original failure */ }
         transaction = false;
+        clearPendingChanges();
         throw error;
       }
       transaction = false;
+      clearPendingChanges();
       return seq;
     },
     rollback() {
       if (!transaction) return;
       stopCandidate();
+      clearPendingChanges();
       try { database.exec("ROLLBACK"); } finally {
         transaction = false;
         for (const cache of [modelIds, tierIds, surfaceIds, scopeIds, sessionIds, workDirectoryIds, quotaIds]) cache.clear();
@@ -1322,6 +1636,7 @@ export function createLocalIndexWriter(database, { deviceSalt = null } = {}) {
       if (removed > 0 || retreated > 0) {
         pruneEmptyRollups(database);
         pruneEmptyWorkRollups(database);
+        pruneEmptyWorkloadBuckets(database);
       }
       eventsRemoved += removed;
       return removed;

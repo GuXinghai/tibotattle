@@ -777,10 +777,12 @@ async function verifyTargetRootAfterConversion(native, destinationRoot, destinat
 
 /** One-time v8 copy conversion. The caller supplies a protected empty root. */
 export async function convertPreReleaseIndexCopy(options) {
+  // The v8 -> v9 copy tool is historical. It must refuse before touching a
+  // path once the store's current target is no longer v9.
+  if (LOCAL_INDEX_STORE_USER_VERSION !== TARGET_VERSION) fail("TARGET_VERSION_UNSUPPORTED");
   const input = validateOptions(options);
   cancelled(input.signal);
   if (process.platform !== "win32" || process.arch !== "x64") fail("UNSUPPORTED_PLATFORM");
-  if (LOCAL_INDEX_STORE_USER_VERSION !== TARGET_VERSION) fail("TARGET_VERSION_UNSUPPORTED");
   if (retainedResources.size > 0) fail("CLOSE_FAILED");
 
   let native;

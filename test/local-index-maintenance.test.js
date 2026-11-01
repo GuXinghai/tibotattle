@@ -36,7 +36,9 @@ test("worker repairs all derived tables without changing facts or carried identi
     const repeated = await maintainLocalIndex({ indexFile });
     assert.equal(repeated.status, "audited");
     assert.equal(repeated.commitSeq, result.commitSeq, "clean audits never advance publication");
-    assert.deepEqual(Object.keys(result).sort(), ["commitSeq", "consistent", "pairing", "rollup", "status", "work"]);
+    assert.deepEqual(Object.keys(result).sort(), [
+      "commitSeq", "consistent", "pairing", "projections", "rollup", "status", "work", "workload",
+    ]);
     assert.ok(!JSON.stringify(result).includes(workspace.root));
   } finally { workspace.cleanup(); }
 });

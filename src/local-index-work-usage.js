@@ -12,10 +12,12 @@ import { declaredSpeedModeAt } from "./codex-speed-baseline.js";
 import { usageProjection } from "./local-companion-usage-model.js";
 import {
   committedPredicate,
+  rollupBasisCurrent,
   rollupKeyExpressions,
   storedContextStarts,
 } from "./local-index-rollup.js";
 import { readCommitSeq } from "./local-index-store.js";
+import { readWorkProjectionStatuses } from "./local-index-work-projection-backfill.js";
 import { defaultLocalUnifiedIndexSecretPath, localDigest, readExistingDeviceSalt } from "./local-device-salt.js";
 import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 
@@ -24,8 +26,9 @@ import { createAccountingPricer } from "./replay-safe-accounting-cache.js";
 // Per-fact inputs (working directory, session, model, tokens, provenance) are
 // stored with each usage fact, so accounting reads them from the store.
 // Review-family attribution separately verifies bounded session headers.
-// Committed facts preserve per-event speed tiers; the old
-// daily work rollups cannot price mixed-speed days because they omit tiers.
+// Committed facts preserve per-event speed tiers. The v11 day rollup keeps a
+// tier in its key, but this reader still consumes raw events until the
+// differential cutover is complete.
 
 const MAX_WORK_CELLS = 50_000;
 const WORK_RESOLVE_CONCURRENCY = 12;
@@ -134,8 +137,15 @@ export async function readLocalIndexWorkUsage({
   const projects = {};
   const worktrees = {};
   const projectByDirectory = new Map([[0, null]]);
-  const directoriesUsed = new Set(database.prepare(
-    "SELECT DISTINCT work_directory_id AS id FROM work_rollup WHERE events > 0",
+  // The v11 work rollup is built by a bounded backfill and may be pending
+  // after migration. Directory discovery must not silently become empty while
+  // that runs, so use committed facts until the projection is ready.
+  const workProjectionReady = readWorkProjectionStatuses(database).work_rollup?.status === "ready"
+    && rollupBasisCurrent(database);
+  const directoriesUsed = new Set((workProjectionReady
+    ? database.prepare("SELECT DISTINCT work_directory_id AS id FROM work_rollup WHERE events > 0")
+    : database.prepare(`SELECT DISTINCT u.work_directory_id AS id FROM usage_event u
+        WHERE u.work_directory_id IS NOT NULL AND ${committedPredicate("u")}`)
   ).all().map((row) => Number(row.id)));
   // Each distinct directory may cost a Git process, so they run side by side,
   // bounded. Results are applied in id order, so the output does not depend on
@@ -190,11 +200,17 @@ export async function readLocalIndexWorkUsage({
   }
 
   const commitSeq = readCommitSeq(database);
+  const gap = database.prepare(`
+    SELECT 1 AS present FROM integrity_gap
+    WHERE repair_status IN ('open', 'queued')
+      AND (event_lower_ms IS NULL OR event_upper_ms IS NULL
+        OR (event_upper_ms > ? AND event_lower_ms < ?))
+    LIMIT 1`).get(windowFrom, windowTo);
   const generation = Object.freeze({
     status: "complete",
     id: commitSeq,
     commitSeq,
-    usageProvenanceComplete: true,
+    usageProvenanceComplete: gap === undefined,
   });
   const core = createWorkUsageCollectorCore({
     generation,
@@ -231,10 +247,10 @@ export async function readLocalIndexWorkUsage({
   };
   const allNull = (components) => Object.values(components).every((value) => value === null);
 
-  // Aggregate facts with their tier and context band retained. The old work
-  // rollup omits tiers, so it cannot price a mixed-speed day correctly. Query
-  // one UTC day at a time and yield between days to keep cancellation and the
-  // companion event loop responsive even for an all-history report.
+  // Aggregate facts with their tier and context band retained. A full UTC day
+  // is read from the v11 work rollup only when it lies inside one cut interval
+  // and every row has an exact last instant. Partial days, cleared last_at_ms,
+  // a stale context basis and a pending projection use raw committed events.
   const lowest = Math.min(...periods.map(period => period.fromMs));
   const highest = Math.max(...periods.map(period => period.toMs));
   const dayMs = 86_400_000;
@@ -265,29 +281,65 @@ export async function readLocalIndexWorkUsage({
     SUM(u.tokens_out_reasoning) AS out_reasoning, SUM(u.tokens_out_combined) AS out_combined
     FROM usage_event u WHERE u.observed_at_ms >= ? AND u.observed_at_ms < ? AND ${committedPredicate("u")}
     GROUP BY u.session_id, directory_id, u.model_id, u.account_scope_id, u.tier_id, shape, ctx_class, prov`);
+  const workDayRows = workProjectionReady
+    ? database.prepare(`SELECT day_ms, session_id, work_directory_id AS directory_id,
+        model_id, account_scope_id, tier_id, shape, ctx_class, prov, events,
+        last_at_ms, in_uncached, in_cache_read, in_cache_write,
+        out_text, out_reasoning, out_combined
+        FROM work_rollup WHERE day_ms = ? AND events > 0`)
+    : null;
+
+  function addAggregate(row, { firstAt, lastAt, directoryId }) {
+    const components = componentsOf(row);
+    const prov = Number(row.prov);
+    const statusOnly = (prov & 4) !== 0 && allNull(components);
+    const modelId = models.get(Number(row.model_id));
+    const session = sessions.get(Number(row.session_id));
+    if (session === undefined) return;
+    const classIndex = Number(row.ctx_class);
+    core.add({
+      observedAtMs: firstAt, lastAtMs: lastAt,
+      accountScopeId: Number(row.account_scope_id), sessionLocal: session.local, sessionUuid: session.uuid,
+      modelId, components, statusOnly,
+      project: projectFor(session.uuid, directoryId),
+      cacheWriteAssumedZero: (prov & 2) !== 0, partial: (prov & 1) !== 0,
+      price: statusOnly ? { amount: null, status: "unpriced" } : priceOf({
+        observedAt: new Date(firstAt).toISOString(), model: modelId,
+        totalInputContextTokens: classIndex < 0 ? null : classIndex === 0 ? 0 : starts[classIndex - 1],
+        components, tierSemantics: tiers.get(Number(row.tier_id)) ?? {}, surfaceClassification: {}, accountScope: {},
+      }),
+      weight: Number(row.events),
+    });
+  }
+
   for (let interval = 0; interval + 1 < ordered.length; interval += 1) {
     const finishAggregate = timing.start("work_aggregate");
     signal?.throwIfAborted();
-    for (const row of grouped.iterate(ordered[interval], ordered[interval + 1])) {
-      const components = componentsOf(row);
-      const prov = Number(row.prov);
-      const statusOnly = (prov & 4) !== 0 && allNull(components);
-      const modelId = models.get(Number(row.model_id));
-      const session = sessions.get(Number(row.session_id));
-      const classIndex = Number(row.ctx_class);
-      core.add({
-        observedAtMs: Number(row.first_at), lastAtMs: Number(row.last_at),
-        accountScopeId: Number(row.account_scope_id), sessionLocal: session.local, sessionUuid: session.uuid,
-        modelId, components, statusOnly,
-        project: projectFor(session.uuid, Number(row.directory_id)),
-        cacheWriteAssumedZero: (prov & 2) !== 0, partial: (prov & 1) !== 0,
-        price: statusOnly ? { amount: null, status: "unpriced" } : priceOf({
-          observedAt: new Date(Number(row.first_at)).toISOString(), model: modelId,
-          totalInputContextTokens: classIndex < 0 ? null : classIndex === 0 ? 0 : starts[classIndex - 1],
-          components, tierSemantics: tiers.get(Number(row.tier_id)) ?? {}, surfaceClassification: {}, accountScope: {},
-        }),
-        weight: Number(row.events),
-      });
+    const intervalStart = ordered[interval];
+    const intervalEnd = ordered[interval + 1];
+    let handledByRollup = false;
+    if (workDayRows !== null
+        && intervalStart % dayMs === 0 && intervalEnd - intervalStart === dayMs) {
+      const rows = workDayRows.all(intervalStart);
+      if (rows.length > 0 && rows.every(row => row.last_at_ms !== null)) {
+        for (const row of rows) {
+          addAggregate(row, {
+            firstAt: intervalStart,
+            lastAt: Number(row.last_at_ms),
+            directoryId: Number(row.directory_id),
+          });
+        }
+        handledByRollup = true;
+      }
+    }
+    if (!handledByRollup) {
+      for (const row of grouped.iterate(intervalStart, intervalEnd)) {
+        addAggregate(row, {
+          firstAt: Number(row.first_at),
+          lastAt: Number(row.last_at),
+          directoryId: Number(row.directory_id),
+        });
+      }
     }
     finishAggregate();
     await new Promise(resolve => setImmediate(resolve));

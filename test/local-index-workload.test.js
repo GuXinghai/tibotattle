@@ -5,13 +5,114 @@ import {writeFile,appendFile,readFile,rm} from "node:fs/promises";
 import {DatabaseSync} from "node:sqlite";
 import {createWorkspace} from "./helpers/local-index-facts.js";
 import {refreshLocalIndex} from "../src/local-index-refresh.js";
-import {openLocalIndexStore} from "../src/local-index-store.js";
+import {createLocalIndexWriter,openLocalIndexStore} from "../src/local-index-store.js";
 import {readLocalIndexWorkload,readWorkloadQuotaEvidence,workloadStateStore,workloadState} from "../src/local-index-backend.js";
 import {codexPrimaryAllowanceBasis} from "../src/codex-primary-allowance-basis.js";
 import {commitLocalCollectorState} from "../src/local-collector-state.js";
 import {createWindowsFilesystemAdapter,createWindowsProtectedStateStore} from "../src/platform/index.js";
 const at=Date.parse("2026-09-01T00:00:00Z"),M=60000;
 const line=(atMs,type,payload)=>JSON.stringify({timestamp:new Date(atMs).toISOString(),type,payload})+"\n";
+
+function comparableWorkload(value){
+  const copy=structuredClone(value);
+  copy.pricingDetails?.records?.sort((left,right)=>
+    String(left.at).localeCompare(String(right.at))||String(left.model).localeCompare(String(right.model))
+    ||String(left.reason).localeCompare(String(right.reason)));
+  return copy;
+}
+
+// Aggregate bucket pricing sums the same doubles in a different order. Allow
+// only that binary-float reordering noise; every structure, string, integer,
+// coverage flag and classification must still match exactly.
+function workloadDifferences(expected,actual,path='$',out=[]){
+  if(typeof expected==='number'&&typeof actual==='number'){
+    if(!Object.is(expected,actual)&&Math.abs(expected-actual)>1e-9*Math.max(1,Math.abs(expected),Math.abs(actual)))
+      out.push({path,expected,actual});
+    return out;
+  }
+  if(expected===null||actual===null||typeof expected!=='object'||typeof actual!=='object'){
+    if(expected!==actual)out.push({path,expected,actual});
+    return out;
+  }
+  if(Array.isArray(expected)!==Array.isArray(actual)){
+    out.push({path,expected:'array-ness',actual:'array-ness'});return out;
+  }
+  if(Array.isArray(expected)){
+    if(expected.length!==actual.length){out.push({path:`${path}.length`,expected:expected.length,actual:actual.length});return out;}
+    for(let i=0;i<expected.length;i++)workloadDifferences(expected[i],actual[i],`${path}[${i}]`,out);
+    return out;
+  }
+  const keys=new Set([...Object.keys(expected),...Object.keys(actual)]);
+  for(const key of keys)workloadDifferences(expected[key],actual[key],`${path}.${key}`,out);
+  return out;
+}
+
+test('the v11 workload bucket read is exact against raw events, including a cleared last instant',async()=>{
+  const w=createWorkspace({variety:true,files:6,events:180,days:4});
+  try{
+    const indexFile=join(w.state,'bucket-diff.sqlite');
+    await refreshLocalIndex({codexHome:w.codexHome,indexFile,secretFile:w.secretFile,workerCount:1});
+    const read=()=>readLocalIndexWorkload({indexFile,nowMs:at,timeZone:'UTC'});
+    const setStatus=(status)=>{const db=new DatabaseSync(indexFile);try{
+      db.prepare("UPDATE projection_watermark SET status=? WHERE projection_name='workload_bucket'").run(status);
+    }finally{db.close();}};
+    setStatus('pending');
+    const raw=read();
+    setStatus('ready');
+    const bucketed=read();
+    assert.deepEqual(workloadDifferences(comparableWorkload(bucketed),comparableWorkload(raw)),[]);
+    const db=new DatabaseSync(indexFile);let bucket;
+    try{
+      bucket=db.prepare("SELECT bucket_start_ms FROM workload_bucket WHERE events>0 ORDER BY bucket_start_ms LIMIT 1").get().bucket_start_ms;
+      db.prepare("UPDATE workload_bucket SET last_at_ms=NULL WHERE bucket_start_ms=?").run(bucket);
+    }finally{db.close();}
+    assert.deepEqual(workloadDifferences(comparableWorkload(read()),comparableWorkload(raw)),[]);
+  }finally{w.cleanup();}
+});
+
+test('adjacent raw buckets do not double count an event on their shared edge',async()=>{
+  const w=createWorkspace({files:1,events:1});
+  try{
+    const indexFile=join(w.state,'bucket-edge.sqlite'),BUCKET=5*M;
+    const start=Date.parse("2026-09-01T00:00:00Z");
+    const db=openLocalIndexStore(indexFile,{create:true});
+    const writer=createLocalIndexWriter(db);
+    try{
+      writer.begin();
+      const sessionId=writer.internSession(Buffer.alloc(32,1),"11111111-1111-4111-8111-111111111111");
+      const modelId=writer.internModel("gpt-5.1-codex-max","recognized");
+      const tierId=writer.internTier({apiServiceTier:"default",billingSurface:"chatgpt_subscription",
+        codexSpeedMode:"standard",tierSource:"turn_override",providerTierRaw:"default"});
+      const surfaceId=writer.internSurface({agentScope:"root",surface:"codex",threadSource:"cli",
+        lineageDisposition:"standalone"});
+      const accountScopeId=writer.internAccountScope({status:"available",reason:null,planType:"pro",
+        scopeLocal:Buffer.alloc(32,9)});
+      const source=writer.registerSource({sourceLocal:Buffer.alloc(32,2),ordinal:0,sessionId,surfaceId,
+        path:"synthetic.jsonl",rolloutKey:"synthetic",sizeBytes:1000,mtimeMs:1});
+      for(const [index,observedAtMs] of [start,start+BUCKET].entries())
+        writer.writeUsageEvent({sourceId:source.id,sourceOffset:100+index,observedAtMs,
+          eventKey:Buffer.alloc(32,3+index),sessionId,accountScopeId,modelId,tierId,surfaceId,
+          reasoningEffort:1,tokensInUncached:50,tokensInCacheRead:20,tokensOutCombined:5});
+      writer.commitSourceState(source.id,{sessionId,surfaceId,path:"synthetic.jsonl",rolloutKey:"synthetic",
+        sizeBytes:1000,mtimeMs:1,scannedBytes:1000,diagnostics:{tokenCounts:2}});
+      writer.commit();
+    }finally{db.close();}
+    const setStatus=(status)=>{const raw=new DatabaseSync(indexFile);try{
+      raw.prepare("UPDATE projection_watermark SET status=? WHERE projection_name='workload_bucket'").run(status);
+    }finally{raw.close();}};
+    const options={indexFile,nowMs:start+10*M,timeZone:'UTC',declaredSpeedBaselines:[
+      {mode:"standard",firstSeenAt:new Date(start).toISOString(),
+        lastSeenAt:new Date(start+BUCKET).toISOString()}]};
+    // Both buckets are boundary buckets, so the reader expands each to raw
+    // events. The event at start+BUCKET belongs only to the second bucket.
+    setStatus('pending');
+    const raw=readLocalIndexWorkload(options);
+    setStatus('ready');
+    const bucketed=readLocalIndexWorkload(options);
+    assert.equal(bucketed.pricingDetails.total,raw.pricingDetails.total);
+    assert.deepEqual(workloadDifferences(comparableWorkload(bucketed),comparableWorkload(raw)),[]);
+  }finally{w.cleanup();}
+});
 
 test('reader preserves old-plan history, infers unknown labels and leaves persisted occurrences unchanged',async()=>{
   const w=createWorkspace({files:1,events:1});
@@ -210,7 +311,7 @@ test("work lifecycle survives cold, incremental, replay and reopen without leaki
     const saltBefore=await readFile(w.secretFile);
     await refreshLocalIndex(options);
     db=openLocalIndexStore(indexFile,{readOnly:true});
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version,9);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version,11);
     assert.equal(db.prepare("SELECT COUNT(*) n FROM work_lifecycle_fact").get().n,2);db.close();
     assert.deepEqual(await readFile(w.secretFile),saltBefore);
     const result=readLocalIndexWorkload({indexFile,nowMs:at+11*M,sourceFresh:true});

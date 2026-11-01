@@ -1,7 +1,8 @@
 import { analyzeWorkload, normalizeQuotaResetEvent, WORKLOAD_POLICY } from "@app-usagemonitor/quota-analysis";
 import { quotaWeightedApiPriceEquivalent } from "@app-usagemonitor/accounting";
 import { openLocalIndexStore, withReadSnapshot } from "./local-index-store.js";
-import { committedPredicate } from "./local-index-rollup.js";
+import { committedPredicate, rollupBasisCurrent, storedContextStarts } from "./local-index-rollup.js";
+import { readWorkProjectionStatuses } from "./local-index-work-projection-backfill.js";
 import { quotaWindowProjection, usageProjection } from "./local-companion-usage-model.js";
 import { forEachLocalCollectorRecord } from "./local-collector-state.js";
 import { setImmediate } from "node:timers/promises";
@@ -15,6 +16,15 @@ import { localCollectorQuotaRecordScopeToken } from './local-collector-projectio
 const quotaContexts=new WeakMap();
 
 const STATE_SCHEMA="overview-workload-state-v3";
+const BUCKET_MS=5*60_000;
+const bucketOf=(atMs)=>Math.floor(atMs/BUCKET_MS)*BUCKET_MS;
+function componentsOf(row){
+  const shape=Number(row.shape);
+  const value=(bit,sum)=>((shape>>bit)&1)===1?null:Number(sum);
+  return {input_uncached_tokens:value(0,row.in_uncached),input_cache_read_tokens:value(1,row.in_cache_read),
+    input_cache_write_tokens:value(2,row.in_cache_write),output_text_tokens:value(3,row.out_text),
+    output_reasoning_tokens:value(4,row.out_reasoning),output_combined_tokens:value(5,row.out_combined)};
+}
 
 // Private, bounded projection: account handles are compared here and never
 // returned. The comparison stops at a change or loss of established identity.
@@ -233,33 +243,6 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
             observationOrder:matching?.observationOrder??Number.MAX_SAFE_INTEGER,conflict:matching?.conflict===true}:{}),
           resetAtMs,planType:current.planType??"unknown",limitId:"codex",direct:true,resetKey:`${resetAtMs}:${current.planType??"unknown"}:codex`});
       }
-      const pricer=createAccountingPricer();
-      const usage=[],pricingRecords=[];let pricingIssueCount=0,usageRows=0;
-      for(const r of database.prepare(`SELECT u.*,m.model_id,t.codex_speed_mode,t.api_service_tier
-        FROM usage_event u JOIN model m ON m.id=u.model_id JOIN tier_semantics t ON t.id=u.tier_id
-        WHERE u.observed_at_ms>=? AND u.observed_at_ms<=? AND ${committedPredicate("u")}
-        ORDER BY u.observed_at_ms,u.source_id,u.source_offset`).iterate(evidenceFrom,nowMs)) {
-        if(++usageRows>1_000_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
-        if(usageRows%1024===0)signal?.throwIfAborted();
-        const record={observedAt:new Date(r.observed_at_ms).toISOString(),model:r.model_id,
-          totalInputContextTokens:r.total_input_context,components:{input_uncached_tokens:r.tokens_in_uncached,
-            input_cache_read_tokens:r.tokens_in_cache_read,input_cache_write_tokens:r.tokens_in_cache_write,
-            output_text_tokens:r.tokens_out_text,output_reasoning_tokens:r.tokens_out_reasoning,output_combined_tokens:r.tokens_out_combined},
-          tierSemantics:{codexSpeedMode:r.codex_speed_mode,apiServiceTier:r.api_service_tier}};
-        const p=usageProjection(record,declaredSpeedModeAt(declaredSpeedBaselines,r.observed_at_ms)??"unknown",pricer);
-        if(!p || p.isSpark)continue;
-        const speed=["standard","fast","ultrafast"].includes(p.speed)?p.speed
-          :["standard","fast","ultrafast"].includes(p.declaredSpeed)?p.declaredSpeed:"standard";
-        const weighted=quotaWeightedApiPriceEquivalent({apiPriceEquivalentUsd:p.apiPriceEquivalentUsd,
-          model:p.model,mode:speed,eventTime:record.observedAt,standardPriceCardIds:p.priceCardIds,
-          totalInputContextTokens:r.total_input_context});
-        const priced=p.pricingCoverageStatus==="fully_priced"&&Number.isFinite(weighted.usd);
-        usage.push({atMs:r.observed_at_ms,session:String(r.session_id),usd:weighted.usd,priced});
-        if(!priced&&r.observed_at_ms>=from){pricingIssueCount++;if(pricingRecords.length<2000)pricingRecords.push({at:record.observedAt,
-          model:p.model,reason:p.model==='unknown'?'model_unknown':'price_incomplete',tokens:p.totalTokens,
-          inputUncached:r.tokens_in_uncached,cacheRead:r.tokens_in_cache_read,
-          output:r.tokens_out_combined??(r.tokens_out_text===null||r.tokens_out_reasoning===null?null:r.tokens_out_text+r.tokens_out_reasoning)});}
-      }
       const ancestors=workAncestors(database);
       const workFrom=Math.max(0,evidenceFrom-24*3600000);
       const workRows=database.prepare(`SELECT w.* FROM work_lifecycle_fact w
@@ -269,6 +252,88 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const events=completeWorkAncestry(database,workRows,ancestors,workFrom)
         .map((e)=>({key:Buffer.from(e.task_key).toString("hex"),session:String(e.session_id),
           kind:e.kind,atMs:e.observed_at_ms,durationMs:e.duration_ms,ancestors:ancestors.get(String(e.session_id))??[]}));
+
+      const pricer=createAccountingPricer();
+      const usage=[],pricingRecords=[];let pricingIssueCount=0,usageRows=0;
+      const pushPriced=(record,atMs,session,weight=1)=>{
+        const p=usageProjection(record,declaredSpeedModeAt(declaredSpeedBaselines,atMs)??"unknown",pricer);
+        if(!p || p.isSpark)return;
+        const speed=["standard","fast","ultrafast"].includes(p.speed)?p.speed
+          :["standard","fast","ultrafast"].includes(p.declaredSpeed)?p.declaredSpeed:"standard";
+        const weighted=quotaWeightedApiPriceEquivalent({apiPriceEquivalentUsd:p.apiPriceEquivalentUsd,
+          model:p.model,mode:speed,eventTime:record.observedAt,standardPriceCardIds:p.priceCardIds,
+          totalInputContextTokens:record.totalInputContextTokens});
+        const priced=p.pricingCoverageStatus==="fully_priced"&&Number.isFinite(weighted.usd);
+        usage.push({atMs,session,usd:weighted.usd,priced});
+        if(!priced&&atMs>=from){pricingIssueCount+=weight;if(pricingRecords.length<2000){
+          const c=record.components;
+          pricingRecords.push({at:record.observedAt,
+            model:p.model,reason:p.model==='unknown'?'model_unknown':'price_incomplete',tokens:p.totalTokens,
+            inputUncached:c.input_uncached_tokens,cacheRead:c.input_cache_read_tokens,
+            output:c.output_combined_tokens??(c.output_text_tokens===null||c.output_reasoning_tokens===null?null:c.output_text_tokens+c.output_reasoning_tokens)});}}
+      };
+      const rawUsageStmt=database.prepare(`SELECT u.*,m.model_id,t.codex_speed_mode,t.api_service_tier
+        FROM usage_event u JOIN model m ON m.id=u.model_id JOIN tier_semantics t ON t.id=u.tier_id
+        WHERE u.observed_at_ms>=? AND u.observed_at_ms<? AND ${committedPredicate("u")}
+        ORDER BY u.observed_at_ms,u.source_id,u.source_offset`);
+      const addRawUsage=(r)=>{
+        if(++usageRows>1_000_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
+        if(usageRows%1024===0)signal?.throwIfAborted();
+        pushPriced({observedAt:new Date(r.observed_at_ms).toISOString(),model:r.model_id,
+          totalInputContextTokens:r.total_input_context,components:{input_uncached_tokens:r.tokens_in_uncached,
+            input_cache_read_tokens:r.tokens_in_cache_read,input_cache_write_tokens:r.tokens_in_cache_write,
+            output_text_tokens:r.tokens_out_text,output_reasoning_tokens:r.tokens_out_reasoning,output_combined_tokens:r.tokens_out_combined},
+          tierSemantics:{codexSpeedMode:r.codex_speed_mode,apiServiceTier:r.api_service_tier}},
+        r.observed_at_ms,String(r.session_id),1);
+      };
+      const bucketProjectionReady=readWorkProjectionStatuses(database).workload_bucket?.status==="ready"
+        &&rollupBasisCurrent(database);
+      if(!bucketProjectionReady){
+        // The statement is half-open; the reader's window includes nowMs.
+        for(const r of rawUsageStmt.iterate(evidenceFrom,nowMs+1))addRawUsage(r);
+      }else{
+        const starts=storedContextStarts(database);
+        const boundary=new Set();
+        const addBoundary=(at)=>{if(Number.isFinite(at))boundary.add(bucketOf(at));};
+        addBoundary(evidenceFrom);addBoundary(nowMs);
+        for(const e of events){addBoundary(e.atMs);if(Number.isFinite(e.durationMs))addBoundary(e.atMs-e.durationMs);}
+        for(const q of quotaRows){addBoundary(q.observed_at_ms);addBoundary(q.resets_at_ms);}
+        if(current){addBoundary(Date.parse(current.observedAt));addBoundary(Date.parse(current.resetAt??current.resetsAt));}
+        for(const baseline of declaredSpeedBaselines){addBoundary(Date.parse(baseline.firstSeenAt));addBoundary(Date.parse(baseline.lastSeenAt));}
+        const dateFormatter=new Intl.DateTimeFormat("en-CA",{timeZone,year:"numeric",month:"2-digit",day:"2-digit"});
+        let previousDate=null;
+        for(let at=bucketOf(evidenceFrom);at<=nowMs;at+=BUCKET_MS){
+          const date=dateFormatter.format(new Date(at));
+          if(previousDate!==null&&date!==previousDate){addBoundary(at);addBoundary(at-BUCKET_MS);}
+          previousDate=date;
+        }
+        for(const event of quotaEvidence?.historyResetEvents??[])addBoundary(Date.parse(event.observedAt));
+        for(const event of quotaEvidence?.resetEvents??[])addBoundary(Date.parse(event.observedAt));
+        const bucketRows=database.prepare(`SELECT b.bucket_start_ms,b.session_id,b.model_id,b.tier_id,
+          b.shape,b.ctx_class,b.events,b.last_at_ms,b.in_uncached,b.in_cache_read,b.in_cache_write,
+          b.out_text,b.out_reasoning,b.out_combined,m.model_id AS model_name,t.codex_speed_mode,t.api_service_tier
+          FROM workload_bucket b JOIN model m ON m.id=b.model_id JOIN tier_semantics t ON t.id=b.tier_id
+          WHERE b.bucket_start_ms>=? AND b.bucket_start_ms<=? AND b.events>0
+          ORDER BY b.bucket_start_ms,b.session_id,b.model_id,b.tier_id,b.account_scope_id,b.shape,b.ctx_class`);
+        const rawBuckets=new Set();
+        for(const b of bucketRows.iterate(bucketOf(evidenceFrom),bucketOf(nowMs))){
+          const start=Number(b.bucket_start_ms);
+          if(boundary.has(start)||b.last_at_ms===null){rawBuckets.add(start);continue;}
+          if(++usageRows>1_000_000)throw Object.assign(new Error('workload_context_too_large'),{code:'workload_context_too_large'});
+          if(usageRows%1024===0)signal?.throwIfAborted();
+          const atMs=Number(b.last_at_ms),classIndex=Number(b.ctx_class);
+          pushPriced({observedAt:new Date(atMs).toISOString(),model:b.model_name,
+            totalInputContextTokens:classIndex<0?null:classIndex===0?0:starts[classIndex-1],
+            components:componentsOf(b),tierSemantics:{codexSpeedMode:b.codex_speed_mode,apiServiceTier:b.api_service_tier}},
+          atMs,String(b.session_id),Number(b.events));
+        }
+        for(const start of rawBuckets){
+          // Half-open: an event on the next bucket's start belongs to exactly
+          // one expanded bucket, never to both sides of the edge.
+          const rawFrom=Math.max(start,evidenceFrom),rawTo=Math.min(start+BUCKET_MS,nowMs+1);
+          for(const r of rawUsageStmt.iterate(rawFrom,rawTo))addRawUsage(r);
+        }
+      }
       const selected=capacity?.status==="available"&&capacity.planScope?.planType===plan
         &&(!scoped||knownScope&&capacity.accountScopeToken===accountScopeToken)?capacity.scenarios?.[capacity.selectedScenario]:null;
       const previousState=scoped?(knownScope?storedState:null):previous??storedState;
@@ -299,8 +364,13 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
       const comparisonBaseline=savedBaseline?{...savedBaseline,
         resetKey:`${savedBaseline.resetAtMs}:${savedBaseline.planType}:${savedBaseline.limitId}`}:null;
       stage="aggregation";
+      // A gap intersecting the window is unknown coverage, never idle time.
+      const usageGap=database.prepare(`SELECT 1 AS present FROM integrity_gap
+        WHERE repair_status IN ('open','queued')
+          AND (event_lower_ms IS NULL OR event_upper_ms IS NULL
+            OR (event_upper_ms>? AND event_lower_ms<?)) LIMIT 1`).get(evidenceFrom,nowMs);
       const state=analyzeWorkload({nowMs,events,usage,quota,estimationPlanType:plan,capacity:cap,capacityHistory:validHistory,liveSinceMs:comparisonFrom,sourceFresh,timeZone,
-        usageCoverageFromMs:evidenceFrom,quotaResetEvents:scoped
+        usageCoverageFromMs:usageGap?Math.max(evidenceFrom,nowMs):evidenceFrom,quotaResetEvents:scoped
           ?(context?.scopedResetEvents??[]).filter(x=>x.token===accountScopeToken).map(x=>x.event)
           :quotaEvidence?.historyResetEvents??quotaEvidence?.resetEvents??[],
         comparisonCapacityUsd,comparisonBaseline,comparisonAccountKey:scoped?quota.at(-1)?.accountKey??null:null,
@@ -308,6 +378,7 @@ export function readLocalIndexWorkload({ indexFile, nowMs, quotaWindows = [], ca
           ?(context?.scopedResetEvents??[]).filter(x=>x.token===accountScopeToken).map(x=>x.event):quotaEvidence?.resetEvents??[],
         comparisonContinuityThroughMs:scoped?null:quotaEvidence?.continuityThroughMs??null,
         comparisonEvidenceError:quotaEvidence?.errorCode??null});
+      if(usageGap){state.errors.push({code:'integrity_gap',stage:'index'});state.status='partial';}
       let capture;
       try{capture=readRuntimeModelEvidenceStatus(database);}catch{capture={status:'failed',errorCode:'runtime_evidence_checkpoint_invalid'};}
       if(capture.errorCode){state.errors.push({code:capture.errorCode,stage:'index'});state.status='partial';}

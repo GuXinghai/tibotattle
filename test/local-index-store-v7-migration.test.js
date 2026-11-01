@@ -9,11 +9,11 @@ import { createWindowsFilesystemAdapter } from '../src/platform/index.js';
 import { createLocalIndexWriter, loadCatalog, LOCAL_INDEX_PARSER_VERSION, LOCAL_INDEX_STORE_USER_VERSION, openLocalIndexStore, openLocalIndexEvidenceStore, readLocalIndexIdentityBeforeMigration } from '../src/local-index-store.js';
 
 function fixture() {
-  const root = resolve('.release-build', `local-index-schema9-${randomUUID()}`);
+  const root = resolve('.release-build', `local-index-schema11-${randomUUID()}`);
   createWindowsFilesystemAdapter().ensureDirectory(root);
   const state = join(root, 'state'); createWindowsFilesystemAdapter().ensureDirectory(state);
   return { root, state, file: join(state, 'index.sqlite'), cleanup() {
-    assert.ok(resolve(root).startsWith(join(resolve('.release-build'), 'local-index-schema9-')));
+    assert.ok(resolve(root).startsWith(join(resolve('.release-build'), 'local-index-schema11-')));
     assert.equal(lstatSync(root).isSymbolicLink(), false); rmSync(root, { recursive: true, force: true });
   } };
 }
@@ -42,8 +42,13 @@ function predecessor(file, version) {
   seed(file);
   const db = new DatabaseSync(file);
   try {
+    for (const table of ["repair_queue", "projection_watermark", "integrity_gap",
+      "impact_partition", "change_fact_count", "source_change", "publication"]) {
+      db.exec(`DROP TABLE IF EXISTS ${table}`);
+    }
+    db.prepare("DELETE FROM meta WHERE key IN ('impact_schema_version','impact_manifest_since_change_id')").run();
     for (const row of db.prepare("SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_%'").all()) db.exec(`DROP TRIGGER ${row.name}`);
-    db.exec('ALTER TABLE source DROP COLUMN carry_tier_source');
+    if (version < 9) db.exec('ALTER TABLE source DROP COLUMN carry_tier_source');
     if (version < 8) db.exec('ALTER TABLE store_state DROP COLUMN calculation_revision');
     db.exec(`PRAGMA journal_mode=DELETE; PRAGMA user_version=${version}`);
   } finally { db.close(); }
@@ -90,7 +95,7 @@ test('future store rejects every reader and writer before journal-mode changes',
   const f = fixture();
   try {
     seed(f.file); const db = new DatabaseSync(f.file);
-    db.exec('PRAGMA journal_mode=DELETE; PRAGMA user_version=10'); db.close();
+    db.exec('PRAGMA journal_mode=DELETE; PRAGMA user_version=12'); db.close();
     const before = readFileSync(f.file);
     for (const options of [{ readOnly: true }, {}, { create: true }]) assert.throws(() => openLocalIndexStore(f.file, options), { code: 'local_index_newer_version' });
     assert.throws(() => openLocalIndexEvidenceStore(f.file), { code: 'local_index_newer_version' });
@@ -100,14 +105,14 @@ test('future store rejects every reader and writer before journal-mode changes',
   } finally { f.cleanup(); }
 });
 
-test('schema 9 provenance survives read/write/evidence reopen and participates in transactional invalidation', () => {
+test('schema 11 provenance survives read/write/evidence reopen and participates in transactional invalidation', () => {
   const f = fixture();
   try {
     seed(f.file);
     const db = openLocalIndexStore(f.file);
     try {
-      assert.equal(LOCAL_INDEX_STORE_USER_VERSION, 9);
-      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9);
+      assert.equal(LOCAL_INDEX_STORE_USER_VERSION, 11);
+      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 11);
       assert.ok(db.prepare('PRAGMA table_info(source)').all().some(row => row.name === 'carry_tier_source'));
       const revision = () => db.prepare('SELECT calculation_revision n FROM store_state').get().n;
       const before = revision();
@@ -213,7 +218,7 @@ test('current-schema capture triggers are corrected only on writable opens witho
       const writer = open(f.file);
       try {
         assert.equal(writer.prepare("SELECT COUNT(*) n FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_runtime_model_evidence_%'").get().n, 0);
-        assert.equal(writer.prepare('PRAGMA user_version').get().user_version, 9);
+        assert.equal(writer.prepare('PRAGMA user_version').get().user_version, 11);
       } finally { writer.close(); }
       const after = durableRows(f.file);
       for (const key of ['events', 'sources', 'diagnostics', 'sequence']) assert.deepEqual(after[key], before[key]);

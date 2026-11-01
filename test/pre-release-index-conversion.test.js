@@ -19,6 +19,7 @@ import {
   PRE_RELEASE_INDEX_ALTERED_STORE_STATE_SQL,
 } from "../scripts/lib/pre-release-index-v8-schema.mjs";
 import { loadWindowsLegacyStateReadBinding } from "../src/platform/index.js";
+import { LOCAL_INDEX_STORE_USER_VERSION } from "../src/local-index-store.js";
 import { assertWindowsOwnerOnly } from "./helpers/windows-owner-only-fixture.js";
 
 const FILE_NAME = "local-index-store-v1.sqlite";
@@ -182,6 +183,17 @@ function sourceSnapshot(fixture) {
   };
 }
 
+// The v8 -> v9 converter is historical. Current v10 runtime retires it; the
+// original safety suite remains available for a checkout whose target is v9.
+const CONVERTER_RETIRED = LOCAL_INDEX_STORE_USER_VERSION !== 9;
+
+if (CONVERTER_RETIRED) {
+  test("the v8 to v9 pre-release converter is retired under the current store version", async () => {
+    await assert.rejects(convertPreReleaseIndexCopy({}), fixedFailure("TARGET_VERSION_UNSUPPORTED"));
+  });
+}
+
+if (!CONVERTER_RETIRED) {
 test('the exact historical ALTER-created store_state spelling preserves rows and schema SQL', { skip: NATIVE_SKIP }, async t => {
   const fixture = await makeFixture(t, { alteredStoreState: true });
   const result = await convertPreReleaseIndexCopy(fixture.options());
@@ -453,3 +465,4 @@ test("the physical v8 fixture derives from the pinned pre-v9 writer rather than 
   // The fixture DDL and SQL hashes are pinned to 63e8753a in the canonical
   // schema artifact; it contains the actual v8 source table and trigger SQL.
 });
+}

@@ -55,6 +55,10 @@ import {
   reasoningEffortOrdinal,
 } from "./local-index-store.js";
 import {
+  quotaDependencyPartitions,
+  sourceImpactSummary,
+} from "./local-index-impact.js";
+import {
   SEGMENT_BYTES,
   classifyFromStat,
   createSegmentTap,
@@ -626,7 +630,9 @@ export async function refreshLocalIndex({
   try { lstatSync(resolvedIndexFile); present = true; }
   catch (error) { if (error?.code !== "ENOENT") throw fixedError("local_index_unavailable"); }
   if (present) {
-    const prior = readLocalIndexIdentityBeforeMigration(resolvedIndexFile, { currentOnly: true });
+    const prior = readLocalIndexIdentityBeforeMigration(resolvedIndexFile, {
+      currentOnly: true, oneTimePredecessor: true,
+    });
     existingIdentity ||= prior.hasFacts;
   }
   const saltFile = secretFile ?? defaultLocalIndexSecretFile(resolvedIndexFile);
@@ -875,6 +881,11 @@ async function runRefresh({
     writer.begin();
     try {
       for (const { info, row, code } of rejected) {
+        const state = {
+          sourceId: Number(row.id),
+          sessionId: row.session_id === null ? null : Number(row.session_id),
+        };
+        const oldImpact = impactSummary(state);
         counts.usageEventsRemoved += writer.deleteSourceFacts(Number(row.id));
         if (row.session_id !== null) writer.clearLineageSnapshots(Number(row.session_id));
         writer.commitSourceState(Number(row.id), {
@@ -885,6 +896,12 @@ async function runRefresh({
           scannedBytes: 0, quarantineCode: code, snapshotsPersisted: false,
           turnContextSeen: false, carryTotals: null, replaceSegments: true,
           diagnostics: {},
+        });
+        const newImpact = impactSummary(state);
+        recordSourceImpact({
+          state, info, row, mode: "quarantine_gap", reason: code,
+          oldImpact, newImpact, newScannedBytes: 0,
+          gaps: quarantineGaps(info, oldImpact, code),
         });
         counts.discoverySourcesRejected += 1;
       }
@@ -1112,6 +1129,175 @@ async function runRefresh({
     return state;
   }
 
+  function impactSummary(state) {
+    return sourceImpactSummary(database, {
+      sourceId: state.sourceId, sessionId: state.sessionId ?? null,
+    });
+  }
+
+  function unionRange(oldFact, newFact) {
+    const values = [oldFact.min, oldFact.max, newFact.min, newFact.max]
+      .filter((value) => value !== null);
+    return values.length === 0
+      ? { lower: null, upper: null }
+      : { lower: Math.min(...values), upper: Math.max(...values) };
+  }
+
+  function factCounts(oldImpact, newImpact) {
+    const rows = [];
+    for (const factKind of ["usage", "quota", "tool", "work", "lineage", "diagnostic"]) {
+      const oldFact = oldImpact[factKind];
+      const newFact = newImpact[factKind];
+      if (oldFact.count === newFact.count
+          && oldFact.min === newFact.min && oldFact.max === newFact.max) continue;
+      rows.push({
+        factKind: factKind === "lineage" ? "lineage_snapshot" : factKind,
+        oldCount: oldFact.count,
+        newCount: newFact.count,
+        oldMinAtMs: oldFact.min,
+        oldMaxAtMs: oldFact.max,
+        newMinAtMs: newFact.min,
+        newMaxAtMs: newFact.max,
+      });
+    }
+    return rows;
+  }
+
+  function impactPartitions(state, oldImpact, newImpact, mode) {
+    const partitions = [];
+    const addRange = (kind, oldFact, newFact) => {
+      if (oldFact.count === newFact.count
+          && oldFact.min === newFact.min && oldFact.max === newFact.max) return;
+      const range = unionRange(oldFact, newFact);
+      partitions.push({
+        partitionKind: kind,
+        partitionKey: `${kind}:${state.sourceId}`,
+        lowerMs: range.lower,
+        upperMs: range.upper,
+        sessionId: state.sessionId ?? null,
+        basisKind: "fact_delta",
+        status: "dirty",
+      });
+    };
+    addRange("usage_time_range", oldImpact.usage, newImpact.usage);
+    addRange("work_time_range", oldImpact.work, newImpact.work);
+    addRange("quota_time_range", oldImpact.quota, newImpact.quota);
+    const quotaDependencies = quotaDependencyPartitions(database, {
+      oldIds: oldImpact.quota.ids ?? [],
+      newIds: newImpact.quota.ids ?? [],
+      sessionId: state.sessionId ?? null,
+    });
+    partitions.push(...quotaDependencies.partitions);
+    if (quotaDependencies.truncated) partitions.truncated = true;
+    if (partitions.length > 0 && state.sessionId !== null) {
+      partitions.push({
+        partitionKind: "session",
+        partitionKey: `session:${state.sessionId}`,
+        sessionId: state.sessionId,
+        basisKind: "fact_delta",
+        status: "pending",
+      });
+    }
+    if (newImpact.usage.count !== oldImpact.usage.count) {
+      const range = unionRange(oldImpact.usage, newImpact.usage);
+      partitions.push({
+        partitionKind: "accounting_window",
+        partitionKey: "current",
+        lowerMs: range.lower,
+        upperMs: range.upper,
+        sessionId: state.sessionId ?? null,
+        basisKind: "fact_delta",
+        status: "pending",
+      });
+    }
+    if (mode === "new" || mode === "quarantine_gap") {
+      partitions.push({
+        partitionKind: "coverage",
+        partitionKey: `source:${state.sourceId}`,
+        sessionId: state.sessionId ?? null,
+        basisKind: "coverage",
+        status: mode === "quarantine_gap" ? "unknown" : "pending",
+      });
+    }
+    return partitions;
+  }
+
+  function recordPresenceImpact(row, status, reason) {
+    const state = {
+      sourceId: Number(row.id),
+      sessionId: row.session_id === null || row.session_id === undefined
+        ? null : Number(row.session_id),
+    };
+    const impact = impactSummary(state);
+    writer.recordSourceChange({
+      sourceId: state.sourceId,
+      mode: "presence_changed",
+      reason,
+      oldFileId: row.file_id ?? null,
+      newFileId: row.file_id ?? null,
+      oldScannedBytes: Number(row.scanned_bytes),
+      newScannedBytes: Number(row.scanned_bytes),
+      oldSizeBytes: Number(row.size_bytes),
+      newSizeBytes: Number(row.size_bytes),
+      oldEventCount: impact.usage.count,
+      newEventCount: impact.usage.count,
+      confidence: "exact",
+      factCounts: [],
+      partitions: [{
+        partitionKind: "coverage",
+        partitionKey: `source:${state.sourceId}`,
+        sessionId: state.sessionId,
+        basisKind: "coverage",
+        status,
+      }],
+      gaps: [],
+      createdAtMs: now(),
+    });
+  }
+
+  function quarantineGaps(info, oldImpact, reason) {
+    return [{
+      byteStart: 0,
+      byteEnd: Number(info.size ?? 0),
+      eventLowerMs: oldImpact.usage.min,
+      eventUpperMs: oldImpact.usage.max,
+      reason,
+      confidence: "bounded",
+      createdAtMs: now(),
+    }];
+  }
+
+  function recordSourceImpact({
+    state, info, row, mode, reason, oldImpact, newImpact, newScannedBytes, gaps = [],
+  }) {
+    const changed = factCounts(oldImpact, newImpact);
+    const confidence = mode === "quarantine_gap"
+      ? "bounded"
+      : changed.some((fact) => fact.oldMinAtMs === null && fact.newMinAtMs === null
+        && (fact.oldCount > 0 || fact.newCount > 0))
+        ? "bounded" : "exact";
+    const partitions = impactPartitions(state, oldImpact, newImpact, mode);
+    if (partitions.truncated) writer.markManifestIncomplete();
+    writer.recordSourceChange({
+      sourceId: state.sourceId,
+      mode,
+      reason: reason ?? null,
+      oldFileId: row?.file_id ?? null,
+      newFileId: info.fileId ?? null,
+      oldScannedBytes: row === undefined ? 0 : Number(row.scanned_bytes),
+      newScannedBytes,
+      oldSizeBytes: row === undefined ? 0 : Number(row.size_bytes),
+      newSizeBytes: Number(info.size ?? 0),
+      oldEventCount: oldImpact.usage.count,
+      newEventCount: newImpact.usage.count,
+      confidence,
+      factCounts: changed,
+      partitions,
+      gaps,
+      createdAtMs: now(),
+    });
+  }
+
   function cursorState(info, state, outcome, extra = {}) {
     return {
       sessionId: state.sessionId,
@@ -1210,8 +1396,17 @@ async function runRefresh({
     writer.begin();
     try {
       let restored = 0;
-      for (const [, row] of reappeared) restored += writer.markPresent(Number(row.id));
-      for (const [, row] of absent) writer.markAbsent(Number(row.id));
+      for (const [, row] of reappeared) {
+        const changed = writer.markPresent(Number(row.id));
+        if (changed > 0) {
+          restored += changed;
+          recordPresenceImpact(row, "pending", "rediscovered");
+        }
+      }
+      for (const [, row] of absent) {
+        writer.markAbsent(Number(row.id));
+        recordPresenceImpact(row, "unknown", "discovery_absent");
+      }
       writer.commit({ kind: "refresh", sourcesChanged: absent.length + restored,
         bumpSeq: absent.length + restored > 0 });
     } catch (error) {
@@ -1352,11 +1547,19 @@ async function runRefresh({
           writer.begin();
           try {
             const state = timing.measureSync("index_source_state",()=>stateFor(info, row));
+            const oldImpact = impactSummary(state);
             if (dependencyUnavailable(info)) {
               counts.usageEventsRemoved += writer.deleteSourceFacts(state.sourceId);
               writer.commitSourceState(state.sourceId, quarantineState(
                 info, state, "codex_rollout_lineage_invalid",
               ));
+              const newImpact = impactSummary(state);
+              recordSourceImpact({
+                state, info, row, mode: "quarantine_gap",
+                reason: "dependency_quarantine",
+                oldImpact, newImpact, newScannedBytes: 0,
+                gaps: quarantineGaps(info, oldImpact, "dependency_quarantine"),
+              });
               markUnavailable(info);
               counts.sourcesQuarantined += 1;
               writer.commit({ kind: "refresh" });
@@ -1479,6 +1682,12 @@ async function runRefresh({
               writer.commitSourceState(state.sourceId, quarantineState(
                 info, state, quarantineReason, diagnostics,
               ));
+              const newImpact = impactSummary(state);
+              recordSourceImpact({
+                state, info, row, mode: "quarantine_gap", reason: quarantineReason,
+                oldImpact, newImpact, newScannedBytes: 0,
+                gaps: quarantineGaps(info, oldImpact, quarantineReason),
+              });
               markUnavailable(info);
               counts.sourcesQuarantined += 1;
               writer.commit({ kind: "refresh" });
@@ -1516,6 +1725,14 @@ async function runRefresh({
               replaceSegments: !resuming,
               diagnostics,
             }));
+            const newImpact = impactSummary(state);
+            const impactMode = candidate
+              ? "semantic_noop"
+              : mode === "new" ? "new" : resuming ? "append" : "source_replace";
+            recordSourceImpact({
+              state, info, row, mode: impactMode, reason: plan.reason ?? null,
+              oldImpact, newImpact, newScannedBytes: outcome.read.nextOffset,
+            });
             counts.bytesScanned += Math.max(0, outcome.read.nextOffset - startOffset);
             counts[mode === "new" ? "sourcesNew" : resuming ? "sourcesResumed" : "sourcesRescanned"] += 1;
             writer.commit({ kind: "refresh" });
@@ -1582,6 +1799,7 @@ async function runRefresh({
         const state = sourceStates.get(info);
         writer.begin();
         try {
+          const oldImpact = message.final === true ? impactSummary(state) : null;
           if (message.snapshotReset === true) {
             writer.clearLineageSnapshots(state.sessionId);
             for (const key of message.snapshotSeedKeys ?? []) {
@@ -1607,6 +1825,13 @@ async function runRefresh({
               writer.commitSourceState(state.sourceId, quarantineState(
                 info, state, message.quarantineReason, diagnostics,
               ));
+              const newImpact = impactSummary(state);
+              recordSourceImpact({
+                state, info, row: undefined, mode: "quarantine_gap",
+                reason: message.quarantineReason, oldImpact, newImpact,
+                newScannedBytes: 0,
+                gaps: quarantineGaps(info, oldImpact, message.quarantineReason),
+              });
               markUnavailable(info);
               counts.sourcesQuarantined += 1;
             } else {
@@ -1616,6 +1841,13 @@ async function runRefresh({
                 writer.commitSourceState(state.sourceId, quarantineState(
                   info, state, "codex_rollout_lineage_invalid", diagnostics,
                 ));
+                const newImpact = impactSummary(state);
+                recordSourceImpact({
+                  state, info, row: undefined, mode: "quarantine_gap",
+                  reason: "dependency_quarantine", oldImpact, newImpact,
+                  newScannedBytes: 0,
+                  gaps: quarantineGaps(info, oldImpact, "dependency_quarantine"),
+                });
                 counts.sourcesQuarantined += 1;
               } else {
                 writer.commitSourceState(state.sourceId, cursorState(info, state, {
@@ -1644,6 +1876,12 @@ async function runRefresh({
                   replaceSegments: true,
                   diagnostics,
                 }));
+                const newImpact = impactSummary(state);
+                recordSourceImpact({
+                  state, info, row: undefined, mode: "new",
+                  reason: "cold_build", oldImpact, newImpact,
+                  newScannedBytes: cursor.nextOffset,
+                });
                 counts.bytesScanned += cursor.nextOffset;
                 counts.sourcesNew += 1;
               }

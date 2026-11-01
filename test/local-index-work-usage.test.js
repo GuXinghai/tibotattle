@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 
 import { refreshLocalIndex } from "../src/local-index-refresh.js";
@@ -13,6 +14,78 @@ const CORPUS = {
   variety: true, files: 50, events: 3_000, days: 12, seed: 29,
   fillerBytesPerEvent: 0, quotaRate: 1, endAt: "2026-09-01T00:00:00.000Z",
 };
+
+function comparableWorkUsage(value) {
+  const copy = structuredClone(value);
+  for (const period of Object.values(copy.periods)) {
+    for (const snapshot of Object.values(period.snapshots)) {
+      delete snapshot.metadata.observedAt;
+      snapshot.cells.sort((left, right) => left.id.localeCompare(right.id));
+      for (const cell of snapshot.cells) {
+        for (const key of ["threads", "projects", "worktrees", "models"]) {
+          cell[key]?.sort();
+        }
+      }
+      snapshot.autoReviewThreads?.sort();
+    }
+  }
+  return copy;
+}
+
+test("the v11 day rollup read is exact against raw events, including a cleared last instant", async () => {
+  const workspace = createWorkspace({ ...CORPUS, files: 6, events: 180, days: 5 });
+  try {
+    const file = join(workspace.state, "rollup-diff.sqlite");
+    const options = {
+      codexHome: workspace.codexHome, indexFile: file, secretFile: workspace.secretFile,
+      workerCount: 1,
+    };
+    await refreshLocalIndex(options);
+    const readNow = async () => {
+      const database = openLocalIndexStore(file, { readOnly: true });
+      try {
+        return await readLocalIndexWorkUsage({
+          database, indexFile: file, codexHome: workspace.codexHome,
+          secretFile: workspace.secretFile, nowMs: END_MS,
+        });
+      } finally {
+        database.close();
+      }
+    };
+    const setStatus = (status) => {
+      const database = new DatabaseSync(file);
+      try {
+        database.prepare(
+          "UPDATE projection_watermark SET status=? WHERE projection_name='work_rollup'",
+        ).run(status);
+      } finally {
+        database.close();
+      }
+    };
+
+    setStatus("pending");
+    const raw = await readNow();
+    setStatus("ready");
+    const rolled = await readNow();
+    assert.deepEqual(comparableWorkUsage(rolled), comparableWorkUsage(raw));
+
+    const database = new DatabaseSync(file);
+    let day;
+    try {
+      day = database.prepare(
+        "SELECT day_ms FROM work_rollup WHERE events > 0 ORDER BY day_ms LIMIT 1",
+      ).get().day_ms;
+      database.prepare("UPDATE work_rollup SET last_at_ms=NULL WHERE day_ms=?").run(day);
+    } finally {
+      database.close();
+    }
+    const fallback = await readNow();
+    assert.deepEqual(comparableWorkUsage(fallback), comparableWorkUsage(raw),
+      "a cleared last instant falls back to raw events for that day");
+  } finally {
+    workspace.cleanup();
+  }
+});
 
 test("the work breakdown from stored facts keeps its invariants at every boundary", async () => {
   const workspace = createWorkspace(CORPUS);

@@ -102,13 +102,14 @@ test("the runner publishes the v2 generation and the snapshot reads the cache bu
       before.overview.accounting.generationFingerprint, first.unifiedIndex.generation.fingerprint,
     );
 
-    // Nothing was collected and nothing grew: the same publication, the same
-    // cache, no work.
+    // Nothing was collected and nothing grew, so the index publication is
+    // unchanged. The synthetic corpus has no origin evidence, so the runner
+    // must not claim calculation reuse even though the index did not move.
     written = 0;
     const idle = await runner();
     assert.equal(idle.unifiedIndex.unchanged, true);
     assert.equal(idle.unifiedIndex.generation.id, first.unifiedIndex.generation.id);
-    assert.equal(idle.accounting.refreshStatus, "reused");
+    assert.equal(idle.accounting.refreshStatus, "rebuilt");
 
     // New events advance the publication; the cache follows it.
     appendSyntheticCodexEvents(workspace.receipt.sources.slice(0, 2), {
@@ -204,8 +205,18 @@ test("the projection reader callbacks plug into the cached reader and honour the
 
     const identity = readLocalIndexGenerationIdentity({ indexFile });
     const projection = await readLocalIndexCompanionProjection({ indexFile, nowMs: NOW_MS });
+    const database = new DatabaseSync(indexFile, { readOnly: true });
+    let calculationRevision;
+    try {
+      calculationRevision = Number(database.prepare(
+        "SELECT calculation_revision FROM store_state WHERE id=1",
+      ).get().calculation_revision);
+    } finally {
+      database.close();
+    }
     assert.deepEqual(identity, {
       id: projection.generation.id, fingerprint: projection.generation.fingerprint,
+      calculationRevision,
     });
     assert.equal(readLocalIndexGenerationIdentity({ indexFile: join(workspace.state, "none") }), null);
 
@@ -386,9 +397,15 @@ test("the audit is read-only, content-free and sees a derived table that drifted
     const clean = backend.audit();
     assert.equal(clean.status, "audited");
     assert.equal(clean.consistent, true);
-    assert.deepEqual([clean.rollup, clean.work, clean.pairing], [0, 0, 0]);
-    assert.deepEqual(Object.keys(clean).sort(),
-      ["commitSeq", "consistent", "pairing", "rollup", "status", "work"]);
+    assert.deepEqual([clean.rollup, clean.work, clean.workload, clean.pairing], [0, 0, 0, 0]);
+    assert.deepEqual(Object.keys(clean).sort(), [
+      "commitSeq", "consistent", "pairing", "projections", "rollup", "status", "work", "workload",
+    ]);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(clean.projections)
+        .map(([name, value]) => [name, value.status])),
+      { work_rollup: "ready", workload_bucket: "ready" },
+    );
 
     const database = new DatabaseSync(indexFile);
     try {

@@ -6,10 +6,10 @@ import {
 // Work-usage rollups.
 //
 // The work breakdown groups usage by thread (session), working directory,
-// model and account scope, over four rolling periods. Everything it needs per
-// group is additive, so a group is stored once per UTC day:
+// model, tier and account scope, over four rolling periods. Everything it needs
+// per group is additive, so a group is stored once per UTC day:
 //
-//   day_ms, session_id, work_directory_id (0 = unknown), model_id,
+//   day_ms, session_id, work_directory_id (0 = unknown), model_id, tier_id,
 //   account_scope_id, shape and ctx_class as in usage_rollup, and
 //   prov: bit 0 partial parse, bit 1 cache write assumed zero,
 //         bit 2 status update (quota with no spend)
@@ -23,11 +23,12 @@ import {
 // latest event of a row cannot cheaply find the next one, so it clears the
 // value; readers recompute a cleared value from the day's events.
 
+export const WORK_ROLLUP_SCHEMA_VERSION = 2;
 export const WORK_ROLLUP_DAY_MS = 86_400_000;
 
 const KEY_COLUMNS = Object.freeze([
-  "day_ms", "session_id", "work_directory_id", "model_id", "account_scope_id",
-  "shape", "ctx_class", "prov",
+  "day_ms", "session_id", "work_directory_id", "model_id", "tier_id",
+  "account_scope_id", "shape", "ctx_class", "prov",
 ]);
 
 const SUM_COLUMNS = Object.freeze([
@@ -39,12 +40,21 @@ const SUM_COLUMNS = Object.freeze([
   ["out_combined", "tokens_out_combined"],
 ]);
 
+// Columns whose mutation changes the key or a stored measure. Every one is
+// covered by the update trigger; a new key column must be added here.
+const UPDATE_COLUMNS = Object.freeze([
+  "session_id", "work_directory_id", "model_id", "tier_id", "account_scope_id",
+  "observed_at_ms", "flags", ...SUM_COLUMNS.map(([, source]) => source),
+  "total_input_context",
+]);
+
 export const WORK_ROLLUP_SCHEMA = `
   CREATE TABLE IF NOT EXISTS work_rollup(
     day_ms INTEGER NOT NULL,
     session_id INTEGER NOT NULL,
     work_directory_id INTEGER NOT NULL,
     model_id INTEGER NOT NULL,
+    tier_id INTEGER NOT NULL,
     account_scope_id INTEGER NOT NULL,
     shape INTEGER NOT NULL,
     ctx_class INTEGER NOT NULL,
@@ -57,7 +67,7 @@ export const WORK_ROLLUP_SCHEMA = `
     out_reasoning INTEGER NOT NULL,
     out_combined INTEGER NOT NULL,
     last_at_ms INTEGER,
-    PRIMARY KEY(day_ms, session_id, work_directory_id, model_id,
+    PRIMARY KEY(day_ms, session_id, work_directory_id, model_id, tier_id,
                 account_scope_id, shape, ctx_class, prov)) STRICT, WITHOUT ROWID;
 `;
 
@@ -70,6 +80,7 @@ function keyExpressions(row) {
     session_id: `${row}.session_id`,
     work_directory_id: `COALESCE(${row}.work_directory_id, 0)`,
     model_id: `${row}.model_id`,
+    tier_id: `${row}.tier_id`,
     account_scope_id: `${row}.account_scope_id`,
     shape: usage.shape,
     ctx_class: usage.ctx_class,
@@ -95,6 +106,31 @@ export function workRollupGroupSql({ alias = "u", where = committedPredicate("u"
     GROUP BY ${KEY_COLUMNS.join(", ")}`;
 }
 
+/** A grouping restricted to one half-open observed-time range. */
+export function workRollupRangeSql(fromMs, toMs, { alias = "u", sign = 1 } = {}) {
+  const where = `${committedPredicate(alias)} AND ${alias}.observed_at_ms >= ${fromMs}`
+    + ` AND ${alias}.observed_at_ms < ${toMs}`;
+  return workRollupGroupSql({ alias, where, sign });
+}
+
+/**
+ * Replace one half-open time range with a fresh grouping of its committed
+ * facts. The caller owns the transaction. This is the bounded backfill unit.
+ */
+export function rebuildWorkRollupRange(database, fromMs, toMs) {
+  if (!Number.isSafeInteger(fromMs) || !Number.isSafeInteger(toMs) || fromMs >= toMs) {
+    throw new TypeError("invalid work rollup range");
+  }
+  database.prepare(
+    "DELETE FROM work_rollup WHERE day_ms >= ? AND day_ms < ?",
+  ).run(fromMs, toMs);
+  const keyList = KEY_COLUMNS.join(", ");
+  const sumList = SUM_COLUMNS.map(([target]) => target).join(", ");
+  database.exec(`
+    INSERT INTO work_rollup(${keyList}, events, ${sumList}, last_at_ms)
+    ${workRollupRangeSql(fromMs, toMs)}`);
+}
+
 function triggerSql() {
   const added = keyExpressions("NEW");
   const removed = keyExpressions("OLD");
@@ -106,6 +142,7 @@ function triggerSql() {
         last_at_ms = ${clearLast ? "NULL" : "MAX(last_at_ms, excluded.last_at_ms)"};`;
   const range = (from, to) => `u.source_id = NEW.id AND u.source_offset > ${from}`
     + ` AND u.source_offset <= ${to}`;
+  const keyMatch = KEY_COLUMNS.map((name) => `${name} = ${removed[name]}`).join("\n        AND ");
   return `
     CREATE TRIGGER IF NOT EXISTS work_rollup_insert AFTER INSERT ON usage_event
     WHEN NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id = NEW.source_id)
@@ -123,7 +160,26 @@ function triggerSql() {
         events = events - 1,
         ${sums("OLD").map(([target, expression]) => `${target} = ${target} - ${expression}`).join(",\n        ")},
         last_at_ms = CASE WHEN last_at_ms = OLD.observed_at_ms THEN NULL ELSE last_at_ms END
-      WHERE ${KEY_COLUMNS.map((name) => `${name} = ${removed[name]}`).join("\n        AND ")};
+      WHERE ${keyMatch};
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS work_rollup_update
+    AFTER UPDATE OF ${UPDATE_COLUMNS.join(", ")} ON usage_event
+    WHEN OLD.source_offset <= (SELECT scanned_bytes FROM source WHERE id = OLD.source_id)
+      AND NEW.source_offset <= (SELECT scanned_bytes FROM source WHERE id = NEW.source_id)
+    BEGIN
+      UPDATE work_rollup SET
+        events = events - 1,
+        ${sums("OLD").map(([target, expression]) => `${target} = ${target} - ${expression}`).join(",\n        ")},
+        last_at_ms = CASE WHEN last_at_ms = OLD.observed_at_ms THEN NULL ELSE last_at_ms END
+      WHERE ${keyMatch};
+      DELETE FROM work_rollup WHERE ${keyMatch} AND events = 0;
+      INSERT INTO work_rollup(${keyList}, events, ${sumList}, last_at_ms)
+      VALUES (${KEY_COLUMNS.map((name) => added[name]).join(", ")}, 1,
+          ${sums("NEW").map(([, expression]) => expression).join(", ")}, NEW.observed_at_ms)
+      -- The old row may still hold later events; a new maximum is not the
+      -- true maximum. A cleared value is explicit and recomputed by readers.
+      ${accumulate(true)}
     END;
 
     CREATE TRIGGER IF NOT EXISTS work_rollup_cursor_advance

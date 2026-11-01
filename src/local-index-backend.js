@@ -21,6 +21,8 @@ import {
   withReadSnapshot,
 } from "./local-index-store.js";
 import { auditWorkRollups } from "./local-index-work-rollup.js";
+import { auditWorkloadBuckets } from "./local-index-workload-bucket.js";
+import { readWorkProjectionStatuses } from "./local-index-work-projection-backfill.js";
 import { readLocalIndexWindowBreakdown } from "./local-index-window-breakdown.js";
 import {reconcileRuntimeModelEvidence} from './local-index-runtime-model-evidence.js';
 import { createLocalRefreshTimer } from "./local-refresh-timing.js";
@@ -117,8 +119,14 @@ export function createLocalIndexBackend({
     if (maintenanceRuns.has(file)) return maintenanceRuns.get(file);
     const run = (async () => {
       const result = await maintenance({ indexFile: file, signal });
-      if (result?.consistent !== true) throw fixedError("local_index_maintenance_failed");
-      maintainedAt.set(file, now());
+      // A bounded v11 projection backfill is not a failure. Only cache a fully
+      // consistent audit; pending or deferred work is retried on the next
+      // refresh so several small batches can finish without a restart.
+      if (result?.consistent !== true
+          && result?.status !== "pending" && result?.status !== "deferred") {
+        throw fixedError("local_index_maintenance_failed");
+      }
+      if (result?.consistent === true) maintainedAt.set(file, now());
       return result;
     })();
     maintenanceRuns.set(file, run);
@@ -281,16 +289,22 @@ export function createLocalIndexBackend({
     try {
       database = openLocalIndexStore(file, { readOnly: true });
       return withReadSnapshot(database, ({ commitSeq }) => {
+        const projections = readWorkProjectionStatuses(database);
+        const ready = (name) => projections[name]?.status === "ready";
         const rollup = auditRollups(database);
-        const work = auditWorkRollups(database);
+        const work = ready("work_rollup") ? auditWorkRollups(database) : 0;
+        const workload = ready("workload_bucket") ? auditWorkloadBuckets(database) : 0;
         const pairing = auditPairing(database);
         return Object.freeze({
           status: "audited",
           commitSeq,
           rollup,
           work,
+          workload,
           pairing,
-          consistent: rollup === 0 && work === 0 && pairing === 0,
+          projections,
+          consistent: rollup === 0 && work === 0 && workload === 0 && pairing === 0
+            && ready("work_rollup") && ready("workload_bucket"),
         });
       });
     } catch {

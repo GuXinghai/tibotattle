@@ -7,7 +7,11 @@ import test from "node:test";
 import { localCodexLogScanner } from "../src/local-node-runtime.js";
 import { extractRolloutUsage } from "../src/local-index-extract.js";
 import { LOCAL_UNIFIED_INDEX_PARSER_VERSION, isLocalUnifiedIndexBoundaryParserVersion } from "../src/codex-usage-vocabulary.js";
-import { openLocalIndexStore } from "../src/local-index-store.js";
+import {
+  openLocalIndexStore,
+  upgradeLocalIndexV8ToV9,
+  upgradeLocalIndexV9ToV10,
+} from "../src/local-index-store.js";
 import { countRows, refreshCodexHome, withReadOnlyStore } from "./helpers/local-index-rollout-store.js";
 import { usageProjection } from "../src/local-companion-usage-model.js";
 import { cumulativeSnapshotKey, normalizeTokenUsage } from "../src/providers/codex/logs.js";
@@ -353,32 +357,40 @@ test("synthetic v8 copy keeps old carry provenance unobserved after forward migr
     line(1, "turn_context", { model: "gpt-6-astra", service_tier: "priority" }),
     count(2, firstTotal, firstTotal),
   ]);
-  const v9Source = join(value.root, "v9-source.sqlite");
+  const v10Source = join(value.root, "v10-source.sqlite");
   const v8Copy = join(value.root, "synthetic-v8-copy.sqlite");
   try {
-    await refreshCodexHome(value.root, { indexFile: v9Source });
-    await copyFile(v9Source, v8Copy);
+    await refreshCodexHome(value.root, { indexFile: v10Source });
+    await copyFile(v10Source, v8Copy);
     const legacy = new DatabaseSync(v8Copy);
     try {
-      legacy.exec(`DROP TRIGGER IF EXISTS calculation_source_update;
-        ALTER TABLE source DROP COLUMN carry_tier_source;
-        PRAGMA user_version=8`);
+      for (const table of ["repair_queue", "projection_watermark", "integrity_gap",
+        "impact_partition", "change_fact_count", "source_change", "publication"]) {
+        legacy.exec(`DROP TABLE IF EXISTS ${table}`);
+      }
+      legacy.prepare("DELETE FROM meta WHERE key IN ('impact_schema_version','impact_manifest_since_change_id')").run();
+      for (const row of legacy.prepare(
+        "SELECT name FROM sqlite_master WHERE type='trigger' AND name LIKE 'calculation_source_%'",
+      ).all()) legacy.exec(`DROP TRIGGER ${row.name}`);
+      legacy.exec("ALTER TABLE source DROP COLUMN carry_tier_source; PRAGMA user_version=8");
+      upgradeLocalIndexV8ToV9(legacy);
+      upgradeLocalIndexV9ToV10(legacy);
     } finally { legacy.close(); }
 
     await appendFile(value.path, `${count(3, secondTotal, vector(100))}\n`);
     await refreshCodexHome(value.root, { indexFile: v8Copy });
 
     withReadOnlyStore(v8Copy, (database) => {
-      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 9);
+      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 11);
       assert.equal(database.prepare("SELECT carry_tier_source FROM source").get().carry_tier_source, null);
     });
     assert.deepEqual(tierSources(v8Copy), [
       { codex_speed_mode: "fast", tier_source: "turn_override" },
       { codex_speed_mode: "unknown", tier_source: "unobserved" },
     ]);
-    assert.deepEqual(tierSources(v9Source), [
+    assert.deepEqual(tierSources(v10Source), [
       { codex_speed_mode: "fast", tier_source: "turn_override" },
-    ], "the original synthetic v9 source copy remains untouched");
+    ], "the original synthetic v10 source copy remains untouched");
   } finally { await rm(value.root, { recursive: true }); }
 });
 
