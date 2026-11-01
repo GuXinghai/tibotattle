@@ -85,6 +85,26 @@ SHA-256 values. The original database, WAL, SHM, device salt and collector
 state were not opened writable or changed. The copy remains isolated for
 readback; it is not a replacement for the owner's live store.
 
+# Reader smoke (added after the migration run)
+
+A read-only reader pass ran on the same final copy after the audits. It used the
+copy's device salt and an empty synthetic Codex project root, so project labels
+are not owner-profile evidence; the event aggregates are.
+
+- `readLocalIndexWorkUsage` returned `status: available`. The `all` period
+  contained 550,560 events, matching the committed usage-event count. The 24h,
+  7d and 30d periods contained 4,049, 58,450 and 260,430 events.
+- `readLocalIndexWorkload` returned `overview-workload-v9` with seven UTC daily
+  buckets from 2026-10-25 through 2026-10-31 and nonzero work coverage
+  (243,799,133 ms). Its status was `partial` because it explicitly reported one
+  `work_boundary_incomplete`, one `quota_reset_ambiguous` and one
+  `price_missing` error.
+
+The partial result is the intended representation: those unknowns are surfaced
+as bounded errors and are not converted to zero activity. This smoke proves the
+copy's reader paths return; it does not qualify the owner profile's project
+labels or the installed dashboard.
+
 # What this does not prove
 
 - It does not authorize or perform the first live writable open.
