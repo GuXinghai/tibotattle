@@ -1069,9 +1069,41 @@ were not regenerated here.
 Not run: real-index writable open, real migration, native credential
 qualification, packaging, installation, signing or publication.
 
+The 2026-11-02 section below records a later protected-copy rehearsal. It does
+not turn this source-only receipt into live-open, installed-app or release
+evidence.
+
+## Protected live-copy rehearsal (2026-11-02)
+
+The owner authorized a read-only copy of the current stable profile's
+`companion-state` and a writable open of that copy only. The copy was a v9
+store with 4,219 sources, 550,560 usage events, 477,665 quota occurrences and
+42,136 work facts. Migration to v11 preserved every fact count, passed
+`quick_check`, full `integrity_check` and `foreign_key_check`, and left the
+original five files byte-identical (including WAL and SHM).
+
+The bounded backfill required 44 maintenance calls (at most eight batches of
+20,000 events each) and about 12 minutes. Both projections reached `ready`;
+`work_rollup` held 13,280 rows and `workload_bucket` 75,050 rows. Both audits
+returned zero and full `integrity_check` returned `ok`.
+
+The rehearsal exposed a real migration defect: v9 installed the
+`work_rollup_*` triggers on `usage_event` and `source`, so dropping the derived
+table did not remove them. `CREATE TRIGGER IF NOT EXISTS` then kept the
+untiered definitions, whose conflict key omitted `tier_id`; the writer could
+not prepare any `usage_event` insert. The v10->v11 step now drops all five
+legacy trigger names before installing the tiered definitions, and a regression
+test starts from a v10 store carrying the legacy triggers.
+
+The original index was never opened writable. This closes the protected-copy
+gate for this rehearsal, not the first live writable open, owner-profile
+receipt, installed artifact or release. The exact environment and command are
+recorded in the [rehearsal receipt](../receipts/2026-11-02-local-index-v11-protected-copy-rehearsal.md).
+
 ## Remaining gate
 
-Before the first live writable open, take the protected copy described by the
-[v11 migration decision](../decisions/2026-11-01-local-index-v11-migration.md)
-and verify source/fact equality, `quick_check`, `foreign_key_check`, projection
-backfill/audit and last-good quota/workload readability on the copy.
+The protected-copy rehearsal above satisfies the copy check for v11. The first
+live writable open, owner-profile phase receipt, installed-app rendering and
+release evidence remain separate gates. Before that open, retain the protected
+copy and repeat the copy-side checks on the then-current live index; do not
+treat an older copy as proof for different bytes.
